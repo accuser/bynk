@@ -497,6 +497,18 @@ pub(crate) enum IrExprKind {
     /// `?` operator's early-return desugar is P6.3's row, a second future
     /// producer of this same node).
     Return { value: Box<IrExpr> },
+    /// The `HttpResult.NotFound` sentinel `Option[T]?`'s own desugar
+    /// early-returns on `None` (ADR 0177) — [`lower::lower_question_ir`]'s
+    /// own construction, never sourced from user syntax (no bynk source
+    /// text spells `HttpResult.NotFound`; the shipped string emitter
+    /// hand-writes this exact text as boilerplate, `emitter/lower.rs`'s own
+    /// `ExprKind::Question` arm). Deliberately its own zero-payload variant,
+    /// not routed through [`GlobalRef`]: that type resolves a *source*
+    /// identifier against `TypedCommons::types`, and `HttpResult` is a
+    /// checker built-in with no `TypeDecl` there to resolve against at all
+    /// ([`GlobalRef`]'s own doc comment already names this exact case as
+    /// out of its scope, "dropped during implementation").
+    HttpResultNotFound,
     /// A call, classified by P6.0's `Callee` — no adaptation needed here,
     /// `Callee` already resolves identity the way this module's other
     /// `DefId`-shaped slots do. Lowering deferred to P6.2.

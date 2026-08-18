@@ -803,6 +803,28 @@ JSON-codec-root detection, gated on the same `Question`/`Is` closure P6.22 alrea
 abandoned conversion hit. Zero-diff bless confirmed. `ast_importers` unaffected — `emitter.rs` remains
 counted for its many other reasons.
 
+**Nineteenth: `?`'s real IR desugar lands (P6.15), closing half of the load-bearing gap this section's
+own P6.3 correction and Provider/Service corrections above named.** `lower_question_ir` generalises the
+reference's own `Match{Ok,Err}` sketch (`bynk-greenfield-compiler.md` §6.4) to bynk's actual
+two-scrutinee-shape semantics — an `Option[T]?` matches `Some`/`None`, not `Ok`/`Err`, and early-returns
+a new `IrExprKind::HttpResultNotFound` sentinel on `None` rather than any `Err` construction; a
+`Result[T,E]?` does match the reference's own shape, propagating the scrutinee unchanged or, under a
+declared `embeds` conversion (via a new `embed_conversion_ir`, the IR-native sibling of the string
+emitter's own `embed_conversion`), constructing a wrapped `Err`. Reuses P6.4/P6.5's already-shipped
+`Match`/`IrArm`/`IrPat::Variant` machinery rather than a bespoke opaque node — genuine decomposition,
+matching R6.7's own normative-desugar mandate, not deferral to a future printer. New infrastructure:
+`LowerIrCtx::return_ty`, set by each of the four real body-lowering entry points, the piece
+`embed_conversion_ir` needs to know the *enclosing* function's own declared error type (mirroring the
+string emitter's own identical `LowerCtx::return_ty` field). Verified by three unit tests (Option-lift,
+bare Result propagation, declared-embeds conversion), not bless — dormant as of this slice, same posture
+#1225's own construction-side fix landed under (no shipped emitter path reaches `lower_expr_ir`'s
+`Question` arm yet; P6.2's own emitter-side cutover, P6.21 in the completion plan, still hasn't landed).
+Full reasoning: `design/pending/p6-15-question-ir-lowering.md`'s own ADR before it's consumed at merge.
+
+`Is` remains open — its own R5.9/R5.10 deferral (#1157's own Decision D) is a distinct design question
+this slice does not settle, and per this track's own risk-tracking discipline should be re-verified
+before scoping rather than assumed still to hold.
+
 ---
 
 ## 7. Out of scope — forward references, not refusals
