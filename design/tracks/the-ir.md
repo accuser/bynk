@@ -1007,6 +1007,21 @@ by a full zero-diff bless against the entire e2e fixture corpus: byte-identical 
 every fixture, confirming the `Callee`-driven read reproduces every dispatch decision the name-matched
 code made. Full reasoning: `design/pending/p6-21-partial-callee-driven-call-dispatch.md`'s own ADR.
 
+**Twenty-fifth: P6.21's incremental approach continues into `lower_method_call` itself — four of its
+own ~20 branches converted.** The storage `Map`/`Set`/`Cache`/`Log` branches (`<field>.<op>(…)` on a
+`store` field) were each guarded by `!cx.is_local(&id.name)`, the same name-matched-receiver pattern
+the Twenty-fourth entry just closed for `lower_call`. Each now reads `Callee::Store`/`Callee::Query`
+instead (`Map`/`Log` get both, per `checker.rs`'s own per-kind dispatch; `Set`/`Cache` get only
+`Store`). Each branch's own kind-detecting side-table lookup
+(`cx.is_agent_store_map`/`set`/`agent_store_cache_ttl`/`agent_store_log_retain`) stays — it answers a
+different question (*which* store kind this is, needed to pick the right branch) than the one
+`Callee` settles (*is* this really a store op on this receiver at all). Left untouched: the held-map
+branch (a different, real-time concept), `Cell` (never reaches these branches — bound into ordinary
+local scope, so `cx.is_local` is already `true`), and the remaining ~15 branches (`HttpResult`
+statics, `Events.emit`, parsing intrinsics, the kernel-method fallthrough, …). Verified by a full
+zero-diff bless against the entire e2e fixture corpus. Full reasoning:
+`design/pending/p6-21-store-map-set-cache-log-callee-dispatch.md`'s own ADR.
+
 ## 7. Out of scope — forward references, not refusals
 
 | Item | Phase | Entry condition |
