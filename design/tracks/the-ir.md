@@ -953,6 +953,44 @@ per-unit, immediately after that unit's own `checker::certify`, never a cross-un
 Not scoped here; named as a real forward reference (§7) rather than left as a silently-stale "not
 yet started" row.
 
+**Twenty-third: P6.23 (re-route `EventSubscriberShape` through `IrItem::Service`) is not safe to
+build yet — a real, larger blocker than P6.20's, found by the same empirical-verification discipline
+before committing to a slice.** Unlike P6.20, this one is architecturally viable: `EventSubscriberShape`
+(§6, sixteenth entry) is already built from each file's own *live* `CheckedProgram`
+(`project.rs:1438` `checker::certify`, `:1469-1488` the raw walk this slice would replace) — the same
+"extract now, merge into a durable accumulator" shape `unit_callees` already uses successfully, not
+`plan_agent_given_deps`'s pre-check compose phase. A real `&CheckedProgram` is in scope at exactly the
+right point to call `lower_service_item_ir`.
+
+The problem is what that call does once reached: `lower_service_item_ir` lowers every handler's own
+*body* (`lower_service_handler_ir` → `lower_service_handler_body_ir`), not just its signature —
+`IrItem::Service` has zero shipped call sites today, so this would be the first time any real service
+body reaches this pass. A `catch_unwind` probe wrapping `lower_service_item_ir` over every
+`CommonsItem::Service` in the full `bynkc` e2e corpus (mirroring P6.20-pre's own verification) found
+**~51 panics across 20 distinct services**, five distinct root causes:
+
+- **"no Callee recorded for this call" (27 instances).** The panic's own message names the cause:
+  Decision C (#1143) deliberately left `HttpResult`/`QueueResult` bare-variant *construction* and
+  `Events.emit` unclassified — real, common, production shapes (e.g. `commerce/order.bynk`'s
+  `Events.emit[PaymentConfirmed](...)`, the exact construct #1232/#1233's own `EventSubscriberShape`
+  exists to describe) that `lower_call_ir` cannot yet render.
+- **bare ident `Ack` (19 instances).** A bare nullary `QueueResult` variant used as a value — the
+  `Callee`-adjacent sibling of the bare-store-field gap P6.20-pre (Twenty-second entry above) just
+  closed, but for `QueueResult` variants instead of store fields; same `lower_ident_ir` fallback.
+- **"no recorded type for ExprId" (3 instances, all `commerce.order`/`markPaid`).** A genuine ADR 0334
+  violation, not a missing feature — `bynk-emit::ir::lower` and `bynk-check` disagreeing about which
+  expressions a certified unit contains. Not yet root-caused; distinct in kind from the four `todo!()`
+  gaps above and needs its own investigation before being folded into the same fix.
+- **"handler parameter `body`'s type does not resolve" (2 instances).** A resolve-miss on a service
+  handler's own declared parameter type — needs tracing against whichever fixture triggers it.
+
+Reverted (no diff) after the probe confirmed the finding; not fixed here. Given the number of
+distinct root causes — several of them real design questions in their own right, the same weight
+`Question`/`Is` each got their own ADR for — this is scoped as its own future investigation-and-fix
+pass, not attempted in the same turn that found it. P6.23 stays a real, open row (unlike P6.20): the
+architecture supports it, the remaining gaps are the kind this track has already closed several times
+over, just not yet closed for these specific shapes.
+
 ## 7. Out of scope — forward references, not refusals
 
 | Item | Phase | Entry condition |
