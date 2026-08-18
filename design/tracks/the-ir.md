@@ -1071,6 +1071,27 @@ refers to, for `record_agent_call`'s bookkeeping and the `#908` rename resolutio
 `Callee` now settles. Verified by a full zero-diff bless against the entire e2e fixture corpus. Full
 reasoning: `design/pending/p6-21-agent-method-callee-dispatch.md`'s own ADR.
 
+**Twenty-ninth: P6.22's own gating on "P6.21 full completion" doesn't hold — traced directly, its two
+named functions are already Callee-driven, and its real remaining blocker is P6.23's own checker-side
+sink, not `lower_method_call`.** `unit_table_uses_emit` and `called_cross_context_services`
+(`project.rs`) are the two functions the completion plan names for P6.22 ("`unit_table_uses_emit`/
+`called_cross_context_services` → `IrExpr` walk"). Both already read the checker's own resolved
+`Callee` directly — `unit_table_uses_emit` reads `Callee::Capability{cap:"Events", op:"emit"}`
+(landed as part of #1187's own slice 6, its own doc comment says so explicitly), `called_cross_context_services`
+reads `Callee::Cross{unit, service}` (same landing) — neither re-derives its own answer from raw AST
+today. The only remaining piece the plan's own phrasing ("→ `IrExpr` walk") actually names is a pure
+mechanism swap: `emitter::walk_block_exprs` (a raw `bynk_syntax::ast::Block`/`Expr` tree-walker, safe
+and already working in production) for an equivalent walk over a fully-lowered `IrExpr` tree. That
+swap has no correctness payoff on its own — the classification these two functions read is already
+correct — its only value is retiring one more raw-AST-walking call site toward `ast_importers`. And it
+cannot be attempted at all without first lowering every handler/agent/provider body in a `UnitTable` to
+`IrExpr` via `ir::lower`, which is exactly the operation the Twenty-third entry's own probe found
+panics on **~51 real bodies** (`Events.emit`/`HttpResult`/`QueueResult` construction, the same gap
+task tracking names as P6.23's checker-side sink). P6.22's real dependency is that sink, not
+`lower_method_call`'s own remaining branches — the plan's original P6.21→P6.22 edge should read
+P6.23-sink→P6.22. Not scoped further here; both P6.22 and the rest of P6.23 wait on the same one
+piece of future work.
+
 ## 7. Out of scope — forward references, not refusals
 
 | Item | Phase | Entry condition |
