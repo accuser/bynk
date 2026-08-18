@@ -19,7 +19,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use bynk_check::checker::{self, Callee, CheckedProgram, Ty, TyId, TypedCommons};
+use bynk_check::checker::{self, Callee, CheckedProgram, Ty, TyId, TypedCommons, Types};
 use bynk_syntax::ast::{
     ActorDecl, AgentDecl, BinOp, Block, CapRef, CapabilityDecl, CapabilityOp, EventPattern,
     EventPatternValue, Expr, ExprId, ExprKind, FieldInit, FnDecl, FnName, Handler, HandlerKind,
@@ -35,10 +35,10 @@ use crate::emitter::{
 };
 use crate::ir::{
     ActorBinder, ActorSeamIr, BindingMode, CacheIr, CapRefIr, CommitShape, ConnectionBinder,
-    ConstVal, CorsIr, EventPatternIr, EventPatternValueIr, Exhaustive, GlobalRef, IndexIr, IrArm,
-    IrBinOp, IrExpr, IrExprKind, IrHandler, IrInterpPart, IrItem, IrPat, IrPredicate, IrStmt,
-    MatchForm, OpSig, PolicyIr, ProtocolIr, ProviderBody, ProviderOpIr, SecurityIr, StoreFieldIr,
-    StoreKindIr, TypeShape,
+    ConstVal, CorsIr, EventPatternIr, EventPatternValueIr, Exhaustive, FnSig, GlobalRef, IndexIr,
+    IrArm, IrBinOp, IrExpr, IrExprKind, IrHandler, IrInterpPart, IrItem, IrPat, IrPredicate,
+    IrStmt, MatchForm, OpSig, PolicyIr, ProtocolIr, ProviderBody, ProviderOpIr, SecurityIr,
+    StoreFieldIr, StoreKindIr, TypeShape,
 };
 
 /// The lowering pass's own working state: the certified program's typed
@@ -1677,6 +1677,62 @@ pub(crate) fn lower_op_sig_ir_from_commons(op: &CapabilityOp, commons: &TypedCom
             .iter()
             .map(|tp| tp.name.name.clone())
             .collect(),
+        params,
+        return_ty,
+    }
+}
+
+/// P6.18: [`crate::ir::FnSig`]'s own constructor — a `fn`'s own resolved
+/// signature, for a call site holding only that fn's *declaring* unit's own
+/// combined types (`bynk_check::symbols::combined_types_for`'s return shape),
+/// never a `CheckedProgram`. The one real call site
+/// (`bynk-emit/src/project.rs`'s `build_emit_unit_ctx`) reads a `uses`-
+/// imported *foreign* unit's own attached methods, whose own `CheckedProgram`
+/// does not survive past that unit's own `check_unit_files` iteration — the
+/// same "dropped before any later, project-wide pass runs" shape
+/// `unit_callees` (#1202)/`EventSubscriberShape` (#1232) both work around,
+/// except here no project-wide accumulator is needed at all: unlike a
+/// `Callee`/event-subscriber-shape classification (checker-only facts, never
+/// re-derivable from raw declarations alone), a fn signature's own
+/// `params`/`return_type` are ordinary type references, resolvable from that
+/// unit's own declared types the same way [`lower_op_sig_ir_from_commons`]
+/// already resolves a capability op's — so a bare types map is sufficient,
+/// the same non-`CheckedProgram` scope that function already established.
+///
+/// Only the method's own `[T, …]` list seeds the rigid-variable scope, not
+/// its generic receiver's — the one real caller (`emit_forwarded_methods`)
+/// never renders `self`'s own type through this value at all (it takes the
+/// *consumer* context's own rebranded type name directly), so resolving
+/// `fn_receiver_ty` here would be dead work.
+pub(crate) fn lower_fn_sig_ir_from_types(
+    f: &FnDecl,
+    types: &HashMap<String, Arc<TypeDecl>>,
+    tys: &Types,
+) -> FnSig {
+    let type_vars: HashSet<String> = f
+        .type_params
+        .iter()
+        .map(|tp| tp.name.name.clone())
+        .collect();
+    let unit_ty = || tys.intern(Ty::Unit);
+    let params: Vec<(String, TyId)> = f
+        .params
+        .iter()
+        .map(|p| {
+            let ty = checker::resolve_type_ref_in(&p.type_ref, types, &type_vars, tys)
+                .unwrap_or_else(unit_ty);
+            (p.name.name.clone(), ty)
+        })
+        .collect();
+    let return_ty = checker::resolve_type_ref_in(&f.return_type, types, &type_vars, tys)
+        .unwrap_or_else(unit_ty);
+    let name = match &f.name {
+        FnName::Method { method_name, .. } => method_name.name.clone(),
+        FnName::Free(id) => id.name.clone(),
+    };
+    FnSig {
+        name,
+        has_self: f.has_self,
         params,
         return_ty,
     }
