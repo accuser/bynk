@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "P6.20-pre: bynk-emit::ir::lower now lowers a bare `store Map[K,V]` field name used as a **value** (not a method-call receiver) to a new IrExprKind::StoreQuery(String), instead of panicking. Found empirically, not assumed: the completion plan for #1137 called for verifying — before P6.20 — that real fixture-corpus agent/provider bodies don't hit lower_ident_ir's other fallback todo!()s beyond Question/Is; a direct catch_unwind probe over every agent/provider in the full e2e fixture corpus found 4 real panics (Sales/orders via `lines.joinOn(orders, ...)`, an argument-position bare-Map reference per ADR 0120; Inventory/items, Ledger/balances via `.entries`/`.keys`/`.values`, a FieldAccess-receiver-position bare-Map reference per ADR 0184) — all four now resolve cleanly, confirmed by re-running the same probe against the full corpus with zero remaining panics. Only Cell fields were ever bound into lower_handler_body_ir's own scope (v0.81's implicit-deref rule); Map fields are not value types (StoreField's own doc comment) so a real fix couldn't just widen that binding — a new LowerIrCtx.store_queryable table plus a new IrExprKind variant, mirroring checker.rs's own ExprKind::Ident dispatch (Ty::Query(V), ADR 0120) rather than re-deriving it. Set/Cache/Log fields deliberately excluded — checker-unreachable there, not merely untested (review of #1240 found Log was wrongly included in the first draft: bynk-check never special-cases a bare Log value the way it does Map). The store-field dispatch is checked immediately after the existing cx.lookup guard, matching the checker's own precedence (review of #1240 found the first draft checked it last, which silently mis-resolved a store field colliding with a free fn or nullary variant of the same name). Dormant as of this slice (same posture as Question/Is); verified by four unit tests (two AST shapes, a shadowing local, a colliding free fn), not bless"
----
+# 0339 — A bare `store Map`/`store Log` field used as a value gets its own `IrExprKind::StoreQuery`, not a widened `Local` binding
 
-## ADR: store-query-ir-lowering
-
-title: A bare `store Map`/`store Log` field used as a value gets its own `IrExprKind::StoreQuery`, not a widened `Local` binding
+- **Status:** Accepted (v0.248.7)
 
 summary: Closes a real gap the completion plan for #1137 flagged as unverified before P6.20 — found empirically via a direct panic probe over the full fixture corpus, not assumed from the plan's own optimistic dependency graph
 
