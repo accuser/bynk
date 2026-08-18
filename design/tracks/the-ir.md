@@ -422,7 +422,7 @@ already documents.
 | **P6.6** | Declarations as `IrItem` (Part 6.6): `Type`/`Fn`/`Agent`/`Service`/`Actor`/`Capability`/`Provider` — closes the emitter reading AST declarations directly (`EmitProjectCtx`'s 28 fields, 5 with no readers) | R6.13 | P6.1–P6.3 |
 | **P6.7** | Store-field state shape and index tables derived in the IR (`StoreFieldIr`, `StoreKindIr`) rather than at emission time | R6.14 | P6.6 |
 | **P6.8** | `CommitShape` as IR data, not emitter control flow | R6.15 | P6.6, P6.7 |
-| **P6.9** | Handler-invocation origin-independence — no IR node branches on caller kind | R6.16 | P6.6, P6.8 (needs its own investigation at proposal time — this settling pass did not trace the shipped wrapper-selection rule R6.16's own rationale names in full) |
+| **P6.9** | ~~Handler-invocation origin-independence — no IR node branches on caller kind~~ **Closed by investigation (P6.24b, 2026-08-18) — already discharged, no code change needed.** See the slice-history entry below. | R6.16 | — |
 
 **Correction (2026-08-18): P6.3's own row landed partially, silently, without ever being recorded in
 this section's own slice-history prose below.** Confirmed live against `ir/lower.rs`: 3 of the row's
@@ -857,6 +857,36 @@ bare receiver, or-pattern). Full reasoning: `design/pending/p6-16-is-ir-lowering
 Both slices dormant as of landing — no shipped emitter path reaches `lower_expr_ir`'s `Question`/`Is`
 arms yet (P6.2's own emitter-side cutover, P6.21 in the completion plan, still hasn't landed). Zero-diff
 bless confirmed regardless.
+
+**Twenty-first: P6.9/R6.16's own investigation runs — first time, per this section's own P6.9 row —
+and closes with no code change needed.** R6.16's exact wording, traced to its source
+(`design/bynk-design-notes.md:379`, §9 "Separations Enforced," "Invocation source vs handler logic"):
+"An agent's handler is invoked identically whether the caller is another agent, a service that has
+just finished validating an external request, the runtime delivering a platform event (alarm,
+WebSocket frame, queue message), or a unit test harness. The agent never branches on origin." Traced
+against the real shipped code on two fronts:
+
+- **The IR itself is structurally incapable of the branch R6.16 forbids.** `IrHandlerKind` (`ir.rs`)
+  selects which *declared* handler a request reaches (routing, a separate concern this same design-notes
+  section names distinctly as "Service work vs domain work") — not how one handler behaves once
+  reached. `IrHandler` carries no caller/origin field at all; its own doc comment already states an
+  agent handler's `binder` is `None` unconditionally by construction (`bynk.actor.by_on_agent`,
+  `context_checks.rs:2986-2996` rejects a `by` clause on an agent handler outright). There is no slot
+  anywhere in the IR that could hold "who called this."
+- **Every real dispatch path in `emitter/workers.rs`/`emitter/workers_entry.rs` converges on one call
+  shape.** HTTP bearer/OIDC/sum-actor wrappers, the agent-to-agent internal-call seam
+  (`X-Bynk-Caller` header → `deps.identity`, `workers_entry.rs:1372-1378`), cron, queue, and
+  WebSocket-open all resolve `deps.identity`/`deps.who` at the boundary and then call the identical
+  `handlers.{sname}.{method_key}(...args, deps)` — the target handler function never branches on which
+  wrapper reached it. R8.13 (`bynk-greenfield-compiler.md:1452-1470`, "verification is emitted at the
+  boundary... this is R6.16 discharged") documents only the HTTP auth three-way as R6.16's discharge;
+  the actual shipped code extends the identical boundary-resolution pattern to every other origin R6.16
+  names, not just HTTP.
+
+No live violation found. P6.9's own table row is closed above by investigation, not by a slice — the
+first case in this track where a proposed row's own answer turns out to be "already true, nothing to
+build," the same "state the delta explicitly, don't imply it" discipline this track's own §5 already
+established for slices that land real conversions with zero probe movement.
 
 ---
 
