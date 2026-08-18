@@ -1,0 +1,4 @@
+---
+level: patch
+changelog: "Fixes for #1238's own bot review, landed after that PR merged: LowerIrCtx::set_return_ty no longer panics on a resolve miss (it did so eagerly for every fn/handler/provider-op body lowered, including the vast majority that contain no `?` at all — the same documented miss-possible case lower_service_handler_signature_ir already degrades gracefully for), embed_conversion_ir's checker::compatible arguments now match check_question's own (operand_err, fn_err) order, Return/HttpResultNotFound nodes carry their own returned-value type (was Unit) matching wrap_body_return's convention, and Question/Is's synthetic temp names now go through one shared fresh_tmp counter instead of fixed names (avoiding a duplicate-const collision if two `?`/`is` land in one function under a future hoisting printer)"
+---
