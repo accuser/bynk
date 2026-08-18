@@ -1490,8 +1490,20 @@ fn lower_method_call(
     // synchronous (the durable write is the single end-of-handler flush), so an
     // awaited expression suffices. `update` on an absent key throws (a fault →
     // nothing commits).
+    //
+    // P6.21 (partial, continued): the receiver test reads the checker's own
+    // `Callee::Store`/`Callee::Query` (P6.0) instead of `!cx.is_local(&id.name)`
+    // — a real instance of R6.5's name-matched-receiver defect class, the same
+    // one `body_writes_state`/#1196 already closed for write-detection.
+    // `cx.is_agent_store_map` stays: it answers a different question (which
+    // *kind* of store field this is, needed to pick this branch over
+    // Set/Cache/Log/Cell's own), not the shadowing question `Callee` already
+    // settles.
     if let ExprKind::Ident(id) = &receiver.kind
-        && !cx.is_local(&id.name)
+        && matches!(
+            cx.commons().callee(e.id),
+            Some(Callee::Store { .. } | Callee::Query { .. })
+        )
         && cx.is_agent_store_map(&id.name)
     {
         let var = cx.agent_store_var().to_string();
@@ -1555,8 +1567,13 @@ fn lower_method_call(
     // v0.83: a storage-`Set` operation — `<set>.<op>(…)` on a `store Set[T]` field.
     // Lowers to an entry op over `__state.<set>` (a `Record<string, boolean>`):
     // `add`/`remove` mutate the working record, `contains`/`size` read it.
+    //
+    // P6.21 (partial, continued): reads `Callee::Store` (P6.0) instead of
+    // `!cx.is_local(&id.name)` — see the storage-`Map` branch above for the
+    // full reasoning. `Set` never gets `Callee::Query` (checker.rs's own
+    // `StoreField::Set` arm records only `Store`), unlike `Map`/`Log`.
     if let ExprKind::Ident(id) = &receiver.kind
-        && !cx.is_local(&id.name)
+        && matches!(cx.commons().callee(e.id), Some(Callee::Store { .. }))
         && cx.is_agent_store_set(&id.name)
     {
         let var = cx.agent_store_var().to_string();
@@ -1576,8 +1593,12 @@ fn lower_method_call(
     // `Clock`: every op but `remove` reads `now()` (an awaited `Effect`), so the
     // op is an async IIFE. `put`/`update`/`upsert` stamp `exp = now() + ttl`;
     // `get`/`contains`/`size` treat an entry past `exp` as absent.
+    //
+    // P6.21 (partial, continued): reads `Callee::Store` instead of
+    // `!cx.is_local(&id.name)` — see the storage-`Map` branch above. `Cache`
+    // never gets `Callee::Query`, same as `Set`.
     if let ExprKind::Ident(id) = &receiver.kind
-        && !cx.is_local(&id.name)
+        && matches!(cx.commons().callee(e.id), Some(Callee::Store { .. }))
         && let Some(ttl) = cx.agent_store_cache_ttl(&id.name)
     {
         let var = cx.agent_store_var().to_string();
@@ -1616,8 +1637,17 @@ fn lower_method_call(
     // `store Log[T]` field (an array of `{ t, v }`). `append` stamps the clock
     // and pushes (pruning past `@retain`); the time-window roots and the general
     // query vocabulary lower to a lazy pipeline over the entry values.
+    //
+    // P6.21 (partial, continued): reads `Callee::Store`/`Callee::Query`
+    // instead of `!cx.is_local(&id.name)` — see the storage-`Map` branch
+    // above. `Log` gets both variants, same as `Map` (`append` is `Store`;
+    // the window-root/query vocabulary is `Query`, checker.rs's own
+    // `StoreField::Log` arm).
     if let ExprKind::Ident(id) = &receiver.kind
-        && !cx.is_local(&id.name)
+        && matches!(
+            cx.commons().callee(e.id),
+            Some(Callee::Store { .. } | Callee::Query { .. })
+        )
         && let Some(retain) = cx.agent_store_log_retain(&id.name)
     {
         let var = cx.agent_store_var().to_string();
