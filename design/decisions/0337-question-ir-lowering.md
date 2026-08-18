@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "P6.15: `bynk-emit::ir::lower`'s `ExprKind::Question` (`?`) now lowers to a real `IrExprKind::Match`, generalising the reference document's own `Match{Ok,Err}` sketch to bynk's actual two-scrutinee-shape desugar — closing the load-bearing gap that blocked `IrItem::Provider`/`IrItem::Service` from ever getting a real emitter call site (internal only, no shipped emitter consumer of this dormant construction path exists yet — byte-identical output, confirmed by a zero-diff bless run)"
----
+# 0337 — `?`'s real IR desugar generalises the reference's own `Match{Ok,Err}` sketch to bynk's actual two-scrutinee-shape semantics
 
-## ADR: question-ir-lowering
-title: `?`'s real IR desugar generalises the reference's own `Match{Ok,Err}` sketch to bynk's actual two-scrutinee-shape semantics
-summary: Resolves P6.15 by lowering `ExprKind::Question` to a real `IrExprKind::Match`, reusing P6.4/P6.5's pattern/match machinery rather than a bespoke opaque node, and adds `IrExprKind::HttpResultNotFound` plus `LowerIrCtx::return_ty` threading as the two pieces of new infrastructure this needed
+- **Status:** Accepted (v0.248.4)
 
 **Context.** `bynk-greenfield-compiler.md`'s own desugaring table (§6.4) sketches `Question(e)` as
 `Match { scrutinee: e, arms: [Ok(v) => v, Err(e) => Return(Err(convert(e)))] }` — a single, uniform
