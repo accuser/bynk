@@ -1022,6 +1022,28 @@ statics, `Events.emit`, parsing intrinsics, the kernel-method fallthrough, …).
 zero-diff bless against the entire e2e fixture corpus. Full reasoning:
 `design/pending/p6-21-store-map-set-cache-log-callee-dispatch.md`'s own ADR.
 
+**Twenty-sixth: attempted the same conversion for `lower_method_call`'s built-in static-constructor
+branches (`List`/`Map.empty`, `Int`/`Float.parse`, `Duration.millis`, `Instant.fromEpochMillis`,
+`Bytes.fromUtf8`/`fromBase64`/`empty`, `Stream.of`) — reverted, a real gap found, not fixed.** Each
+branch's guard was rewritten to read `Callee::Intrinsic { ns, op }` instead of `id.name == X`, mirroring
+the Twenty-fifth entry's own pattern (and, for `List`/`Map`/`Duration`/`Instant`/`Bytes`/`Stream`,
+closing a real latent gap the emitter's own guard had: unlike every other converted branch, these never
+checked `cx.is_local(&id.name)` at all — the checker's own `ctx.lookup(X).is_none()` guard, present
+before every one of these `Callee::Intrinsic` insertions in `calls.rs`, is strictly more correct). A
+full zero-diff bless caught two real regressions before merge: `814_messages_icu_date_styles` and
+`917_bytes_in_test_case` both emitted an `/* unknown */` placeholder where `Instant.fromEpochMillis`/
+`Bytes.fromBase64`/`fromUtf8` used to lower correctly. Both failing call sites are inside a `.test.bynk`
+body (`tests { case "..." { ... } }`) — `Callee::Intrinsic` is not reliably recorded for these
+constructs when checked inside `ctx.in_test_body`, a gap distinct from (and not yet root-caused
+against) the already-known "5 desugar rows are `ctx.in_test_body`-gated" finding from the seventeenth
+entry. The exact mechanism wasn't traced further (no explicit `in_test_body` short-circuit was found in
+`check_method_call`'s own path to the `Intrinsic` insertions, so the gap likely lives further upstream —
+in how a test-case body's own `Ctx`/`callees` map is threaded and merged, not in `check_method_call`
+itself). Reverted cleanly (confirmed zero diff against `main` after revert) rather than land a
+regression. **Any future slice converting a `lower_method_call` branch must verify against the full
+corpus — test-body fixtures included — before trusting `Callee` is populated there**, not assume the
+storage-field/agent/sum-ctor branches' own clean bless generalizes.
+
 ## 7. Out of scope — forward references, not refusals
 
 | Item | Phase | Entry condition |
