@@ -688,6 +688,7 @@ fn finish_build(run: RunChecks, import_ext: ImportExt) -> Result<ProjectOutput, 
             unit_consumes_aliases,
             unit_tables,
             unit_callees,
+            unit_event_subscriber_shapes,
             unit_uses,
             unit_flattened,
             adapter_bindings,
@@ -708,6 +709,7 @@ fn finish_build(run: RunChecks, import_ext: ImportExt) -> Result<ProjectOutput, 
                 unit_consumes_aliases,
                 unit_tables,
                 unit_callees,
+                unit_event_subscriber_shapes,
                 unit_uses,
                 unit_flattened,
                 adapter_bindings,
@@ -1250,6 +1252,23 @@ fn emit_unit(
     });
 }
 
+/// P6.x (#1232): a unit's own declared event-subscriber service shape,
+/// captured at that unit's own check time (its `CheckedProgram` does not
+/// survive past `check_unit_files`'s per-file loop) so a *different* unit's
+/// `emit_composition_root` can later decide whether its own subscriber to
+/// this service wants the event envelope forwarded, without re-walking this
+/// unit's raw `UnitTable`. Pure syntax, zero `TyId` dependency — the same two
+/// facts `wants_envelope` already read before this issue, just captured at
+/// the producing unit's own check time instead of cross-unit at compose
+/// time. Realises the project-wide accumulator #1226's Candidate A scoped
+/// but left unimplemented, sized like #1187's own `unit_callees` (#1202) —
+/// the direct precedent this mirrors at every touch point below.
+#[derive(Debug, Clone, Copy, Default)]
+struct EventSubscriberShape {
+    two_param_handler: bool,
+    schema_dispatch: bool,
+}
+
 /// Phase 8d/8e: resolve + check (and, in build mode, emit) every source file in
 /// one production unit. The per-file `continue`s stay internal to this loop, so
 /// a file that fails resolution/checking is skipped without abandoning the unit.
@@ -1303,6 +1322,12 @@ fn check_unit_files(
     // (`RunChecks::Checked::unit_callees`'s own doc comment has the full
     // grounding for why this exists).
     unit_callees: &mut HashMap<ExprId, bynk_check::checker::Callee>,
+    // P6.x (#1232): this unit's own declared event-subscriber service
+    // shapes, keyed by service name — see `EventSubscriberShape`'s own doc
+    // comment. Populated the same way as `unit_callees` above: merged from
+    // each file's own `CheckedProgram` before it is dropped at the end of
+    // this loop's iteration.
+    event_subscriber_shapes: &mut HashMap<String, EventSubscriberShape>,
 ) {
     // Emit-prologue tables invariant across every file of this unit — built
     // once here rather than once per file (see `EmitUnitCtx`).
@@ -1386,6 +1411,34 @@ fn check_unit_files(
             };
             keep.then(|| (*id, c.clone()))
         }));
+        // P6.x (#1232): capture this file's own event-subscriber service
+        // shapes before `program` is dropped at the end of this iteration —
+        // same insertion point, same reasoning as `unit_callees.extend`
+        // above. Field-compatible with the raw-`UnitTable` walk this
+        // replaces (`UnitTable.services: HashMap<String, ServiceDecl>`,
+        // `bynk-check/src/symbols.rs`): `program.program().commons.items`'s
+        // `CommonsItem::Service` produces the same AST type, so
+        // `s.handlers`/`s.protocol`/`s.name` line up exactly.
+        for item in &program.program().commons.items {
+            if let CommonsItem::Service(s) = item
+                && let ServiceProtocol::Events {
+                    schema_dispatch, ..
+                } = &s.protocol
+            {
+                let two_param_handler = s
+                    .handlers
+                    .iter()
+                    .find(|h| matches!(h.kind, HandlerKind::Event))
+                    .is_some_and(|h| h.params.len() == 2);
+                event_subscriber_shapes.insert(
+                    s.name.name.clone(),
+                    EventSubscriberShape {
+                        two_param_handler,
+                        schema_dispatch: schema_dispatch.is_some(),
+                    },
+                );
+            }
+        }
         emit_unit(
             name,
             kind,
@@ -1463,6 +1516,11 @@ enum RunChecks {
         // every call site's full classification project-wide for the rest
         // of the build on spec.
         unit_callees: HashMap<String, HashMap<ExprId, bynk_check::checker::Callee>>,
+        // P6.x (#1232): each unit's own declared event-subscriber service
+        // shapes, merged across its files — see `EventSubscriberShape`'s own
+        // doc comment. Threaded the same way as `unit_callees` immediately
+        // above.
+        unit_event_subscriber_shapes: HashMap<String, HashMap<String, EventSubscriberShape>>,
         unit_flattened: HashMap<String, HashMap<String, String>>,
         adapter_bindings: HashMap<String, AdapterBinding>,
         npm_deps: std::collections::BTreeMap<String, String>,
@@ -1803,6 +1861,11 @@ fn run_checks(
     // own files inside the loop below.
     let mut unit_callees: HashMap<String, HashMap<ExprId, bynk_check::checker::Callee>> =
         HashMap::new();
+    // P6.x (#1232): one `EventSubscriberShape` map per unit, merged across
+    // that unit's own files inside the loop below — same shape as
+    // `unit_callees` immediately above.
+    let mut unit_event_subscriber_shapes: HashMap<String, HashMap<String, EventSubscriberShape>> =
+        HashMap::new();
 
     // v0.119 (testing track slice 7, ADR 0155): a project-wide fold over every
     // parsed file, producing the identical `HashSet` regardless of which unit
@@ -1895,6 +1958,9 @@ fn run_checks(
             &schema_effective_versions,
             tys,
             unit_callees.entry(name.clone()).or_default(),
+            unit_event_subscriber_shapes
+                .entry(name.clone())
+                .or_default(),
         );
     }
 
@@ -2007,6 +2073,7 @@ fn run_checks(
         unit_consumes_aliases,
         unit_tables,
         unit_callees,
+        unit_event_subscriber_shapes,
         unit_flattened,
         adapter_bindings,
         npm_deps,
@@ -2032,6 +2099,8 @@ fn build_output(
     unit_consumes_aliases: HashMap<String, HashMap<String, String>>,
     unit_tables: HashMap<String, UnitTable>,
     unit_callees: HashMap<String, HashMap<ExprId, bynk_check::checker::Callee>>,
+    // P6.x (#1232): see `EventSubscriberShape`'s own doc comment.
+    unit_event_subscriber_shapes: HashMap<String, HashMap<String, EventSubscriberShape>>,
     // v0.177 (#643): needed to build each context's *own* combined type table,
     // so its contract hashes are computed from the same namespace a caller sees.
     unit_uses: HashMap<String, Vec<String>>,
@@ -2103,6 +2172,7 @@ fn build_output(
                 &unit_consumes_aliases,
                 &unit_tables,
                 &unit_callees,
+                &unit_event_subscriber_shapes,
                 &adapter_bindings,
                 &unit_flattened,
                 // D1: thread `env` through composeApp only when a native
@@ -2915,6 +2985,10 @@ fn emit_composition_root(
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
     unit_tables: &HashMap<String, UnitTable>,
     unit_callees: &HashMap<String, HashMap<ExprId, bynk_check::checker::Callee>>,
+    // P6.x (#1232): see `EventSubscriberShape`'s own doc comment. Read by
+    // `wants_envelope` below instead of walking a *different, already-
+    // consumed* unit's raw `UnitTable` directly.
+    unit_event_subscriber_shapes: &HashMap<String, HashMap<String, EventSubscriberShape>>,
     adapter_bindings: &HashMap<String, AdapterBinding>,
     unit_flattened: &HashMap<String, HashMap<String, String>>,
     // v0.19 (decision 0025, D1): when the program's closure reaches a
@@ -3139,24 +3213,10 @@ fn emit_composition_root(
                         // undeclared — `emit_service` inserts a synthetic
                         // `env` parameter in that case, and needs the value
                         // to line up positionally.
-                        let wants_envelope = unit_tables
+                        let wants_envelope = unit_event_subscriber_shapes
                             .get(sub_ctx)
-                            .and_then(|t| t.services.get(sub_svc))
-                            .is_some_and(|s| {
-                                let declared = s
-                                    .handlers
-                                    .iter()
-                                    .find(|h| matches!(h.kind, HandlerKind::Event))
-                                    .is_some_and(|h| h.params.len() == 2);
-                                declared
-                                    || matches!(
-                                        &s.protocol,
-                                        ServiceProtocol::Events {
-                                            schema_dispatch: Some(_),
-                                            ..
-                                        }
-                                    )
-                            });
+                            .and_then(|m| m.get(sub_svc))
+                            .is_some_and(|shape| shape.two_param_handler || shape.schema_dispatch);
                         let call_args = if wants_envelope {
                             "ev.payload as any, ev.envelope"
                         } else {
