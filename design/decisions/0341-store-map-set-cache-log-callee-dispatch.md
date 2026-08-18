@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "P6.21 (partial, continued): emitter/lower.rs's lower_method_call now reads the checker's own Callee::Store/Callee::Query classification (P6.0) for storage Map/Set/Cache/Log operations, instead of !cx.is_local(&id.name) — a real instance of R6.5's name-matched-receiver defect class, the same one body_writes_state/#1196 already closed for write-detection. The per-kind side-table lookups (cx.is_agent_store_map/set, cx.agent_store_cache_ttl, cx.agent_store_log_retain) stay unchanged: they answer a different question (which store kind this field is, needed to route to the right branch) than the shadowing question Callee already settles. Held-map connection ops (a different, real-time concept) and Cell (never reaches these branches — bound into ordinary scope, not name-matched) are untouched, as are the four branches this session's own earlier P6.21 slice already left alone (HttpResult/QueueResult bare-variant construction, Events.emit — no Callee recorded for these at all) and the rest of lower_method_call's own ~15 remaining branches. Verified by a full zero-diff bless against the entire e2e fixture corpus"
----
+# 0341 — `lower_method_call`'s storage Map/Set/Cache/Log branches read `Callee::Store`/`Callee::Query` instead of `!cx.is_local(&id.name)` — continuing P6.21's own bounded, incremental approach
 
-## ADR: store-map-set-cache-log-callee-dispatch
-
-title: `lower_method_call`'s storage Map/Set/Cache/Log branches read `Callee::Store`/`Callee::Query` instead of `!cx.is_local(&id.name)` — continuing P6.21's own bounded, incremental approach
+- **Status:** Accepted (v0.248.9)
 
 summary: Extends the same pattern the first P6.21 PR established for `lower_call` (agent construction, sum-variant construction) to four of `lower_method_call`'s own ~20 branches — the ones with the clearest, most directly precedented `Callee` backing
 
