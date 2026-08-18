@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "P6.16: bynk-emit::ir::lower's ExprKind::Is (`value is Pattern`) now lowers to a real IrExpr — a forced receiver-temp Block wrapping either a new IrExprKind::RefinedCheck (for `is DeclaredRefinedType`) or a recursive boolean-test walk over the pattern (Wildcard/Binding/Literal/Variant-with-nested-payloads/Or), reusing P6.4's already-shipped IrPat/lower_pattern_ir rather than re-deriving pattern structure. Scoped narrower than R5.9/R5.10's combined framing suggested: traced directly against the shipped desugar, lower_is itself never constructs a narrowing binding (R5.9's own cross-site `&&`/`if` scope-propagation machinery is a separate, still-open design question this slice does not settle) — only the forced receiver temp (R5.10) is `is`'s own concern, and that's what this slice builds. Dormant as of this slice; verified by unit tests (refined-type check, bare/nested variant tests, or-pattern), not bless"
----
+# 0338 — `is`'s real IR desugar builds only what `lower_is` itself constructs — a forced-temp Block plus a boolean test, not R5.9's separate narrowing-binding machinery
 
-## ADR: is-ir-lowering
-title: `is`'s real IR desugar builds only what `lower_is` itself constructs — a forced-temp Block plus a boolean test, not R5.9's separate narrowing-binding machinery
-summary: Resolves P6.16 by tracing the shipped `lower_is` directly rather than trusting #1157's own Decision D framing, finding R5.9 (narrowing-scope recording) belongs to a different, later consumer than `Is`'s own lowering
+- **Status:** Accepted (v0.248.6)
 
 **Context.** `design/tracks/the-ir.md`'s own P6.4 row (#1157) deferred both `Is` and R5.9/R5.10 together, under one "Decision D" note: "R5.9's scope-recording and R5.10's forced-temp are properties of `is`'s own future `IrExpr`/`IrStmt` construction." Read at face value, that groups the two as one combined prerequisite for `Is`'s own lowering. Tracing the shipped desugar (`emitter/lower.rs`'s `lower_is`) directly found otherwise: `lower_is` itself constructs exactly two things — a forced receiver temp (`is_receiver_ref_forced`, R5.10) and a boolean test (a JS expression string, never a narrowing *binding*). The narrowing binding R5.9 describes (`const n = <temp> as Quantity`, scoped into a following `if`/`&&` branch) is applied *separately*, by `gather_is_bindings_for_emit` at the `&&`/`if` call sites that consume `is`'s own boolean result — not by `lower_is` itself. R5.9's own rationale text confirms this reading independently: it names the memoization hazard (`is_binding_cache`, keyed by span) as living in the checker's own `collect_is_bindings`, applied "at exactly two sites, `&&`/`implies` right operands and an `if` then-block" — sites `Is`'s own lowering never reaches.
 
