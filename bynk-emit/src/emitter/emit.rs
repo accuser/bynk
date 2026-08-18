@@ -15,7 +15,7 @@ use crate::project::EmitProjectCtx;
 use bynk_check::checker::{TypedCommons, Types};
 
 use crate::ir::lower::{HandlerSignatureIr, body_writes_state, lower_actor_seam_ir};
-use crate::ir::{ActorSeamIr, OpSig, ProtocolIr, StoreFieldIr, StoreKindIr, TypeShape};
+use crate::ir::{ActorSeamIr, FnSig, OpSig, ProtocolIr, StoreFieldIr, StoreKindIr, TypeShape};
 
 use super::*;
 
@@ -395,34 +395,38 @@ fn emit_attached_methods(
 /// (a consumer-branded `self` is a structural subtype of `__Commons{name}`, so
 /// no argument cast is needed).
 ///
-/// `methods` are the imported type's attached method declarations, threaded in
+/// `methods` are the imported type's attached method signatures, threaded in
 /// via [`EmitProjectCtx::imported_methods`] (the consumer context's own
 /// `TypedCommons` merges the imported *types* but not their fn items). They
-/// arrive pre-sorted by method name so emission is deterministic.
-pub(crate) fn emit_forwarded_methods(out: &mut String, type_name: &str, methods: &[FnDecl]) {
+/// arrive pre-sorted by name so emission is deterministic.
+///
+/// P6.18: reads [`FnSig`] (the declaring unit's own resolved `params`/
+/// `return_ty`) rather than a raw `FnDecl`'s `TypeRef`s — `self`'s own type
+/// still comes from `type_name` directly, the *consumer* context's own
+/// rebranded name, never resolved through `FnSig` at all (a method's own
+/// generic receiver plays no part in what gets forwarded here).
+pub(crate) fn emit_forwarded_methods(
+    out: &mut String,
+    type_name: &str,
+    methods: &[FnSig],
+    tys: &Arc<Types>,
+) {
     for f in methods {
-        let FnName::Method { method_name, .. } = &f.name else {
-            continue;
-        };
         let mut params: Vec<String> = Vec::new();
         let mut args: Vec<String> = Vec::new();
         if f.has_self {
             params.push(format!("self: {type_name}"));
             args.push("self".to_string());
         }
-        for p in &f.params {
-            params.push(format!(
-                "{}: {}",
-                ts_ident(&p.name.name),
-                ts_type_ref(&p.type_ref)
-            ));
-            args.push(ts_ident(&p.name.name));
+        for (name, ty) in &f.params {
+            params.push(format!("{}: {}", ts_ident(name), ts_ty(*ty, tys)));
+            args.push(ts_ident(name));
         }
-        let ret = ts_type_ref(&f.return_type);
+        let ret = ts_ty(f.return_ty, tys);
         writeln!(
             out,
             "  {method}({params}): {ret} {{ return __Commons{type_name}.{method}({args}) as unknown as {ret}; }},",
-            method = method_name.name,
+            method = f.name,
             params = params.join(", "),
             args = args.join(", "),
         )

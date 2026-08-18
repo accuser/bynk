@@ -26,7 +26,10 @@ use std::sync::Arc;
 
 use crate::emitter;
 use crate::ir::CapRefIr;
-use crate::ir::lower::{lower_handler_given_ir, lower_provider_given_ir};
+use crate::ir::FnSig;
+use crate::ir::lower::{
+    lower_fn_sig_ir_from_types, lower_handler_given_ir, lower_provider_given_ir,
+};
 use bynk_check::check_pipeline::{self, prepare_unit_check_ctx};
 use bynk_check::checker;
 use bynk_check::checker::{TyId, Types};
@@ -986,7 +989,7 @@ fn collect_history_target_agents(parsed: &[ParsedFile]) -> HashSet<String> {
 /// to be an identical rebuild (several nested nested loops over `unit_info`)
 /// on every emitted file of a multi-file context.
 struct EmitUnitCtx {
-    imported_methods: HashMap<String, Vec<FnDecl>>,
+    imported_methods: HashMap<String, Vec<FnSig>>,
     /// The workers-mode-rewritten view is the only one `emit_unit` reads —
     /// the pre-rewrite table is an intermediate of computing it, not exposed
     /// separately.
@@ -995,10 +998,42 @@ struct EmitUnitCtx {
     file_decl_index: FileDeclIndex,
 }
 
+/// P6.18: a `uses`-imported type's own combined visible types (one level,
+/// matching `bynk_check::symbols::combined_types_for`'s identical shape) —
+/// the narrow resolution scope [`ir::lower::lower_fn_sig_ir_from_types`]
+/// needs for that unit's own attached methods. Reimplemented against
+/// `UnitInfo` rather than calling `combined_types_for` directly: that
+/// function takes the flat, project-wide `unit_tables`/`unit_uses` maps
+/// `build_emit_unit_ctx`'s own caller never threads this deep (only the
+/// coarser, already-merged `unit_info` reaches here) — rebuilding those two
+/// maps from `unit_info` on every call would be needless O(units) cloning
+/// for a per-unit prologue already called once per emitted unit.
+fn combined_types_for_unit_info(
+    unit: &str,
+    unit_info: &BTreeMap<String, UnitInfo>,
+) -> HashMap<String, Arc<TypeDecl>> {
+    let mut out: HashMap<String, Arc<TypeDecl>> = HashMap::new();
+    let Some(info) = unit_info.get(unit) else {
+        return out;
+    };
+    for (n, d) in &info.table.types {
+        out.insert(n.clone(), d.clone());
+    }
+    for t in &info.uses {
+        if let Some(used) = unit_info.get(t) {
+            for (n, d) in &used.table.types {
+                out.entry(n.clone()).or_insert_with(|| d.clone());
+            }
+        }
+    }
+    out
+}
+
 fn build_emit_unit_ctx(
     name: &str,
     unit_info: &BTreeMap<String, UnitInfo>,
     target: BuildTarget,
+    tys: &Arc<Types>,
 ) -> EmitUnitCtx {
     let info = &unit_info[name];
     // v0.132.1 (#481): gather the attached methods of every `uses`-imported type
@@ -1006,23 +1041,35 @@ fn build_emit_unit_ctx(
     // forwards these onto the consumer's rebranded const so a call like
     // `Cents.fromInt(n)` type-checks. Sorted by method name for deterministic
     // emission (the resolver stores instance/static methods in `HashMap`s).
-    let mut imported_methods: HashMap<String, Vec<FnDecl>> = HashMap::new();
+    //
+    // P6.18: each method's own `params`/`return_type` now resolve to a real
+    // `TyId` (`ir::lower::lower_fn_sig_ir_from_types`) against the
+    // *declaring* unit's own visible types, rather than carrying the raw
+    // `FnDecl` (and its unresolved `TypeRef`s) all the way to
+    // `emit_forwarded_methods`. `Free`-named entries (never present in
+    // practice — `ResolverMethodTable` only ever collects attached methods,
+    // `bynk-check/src/resolver.rs:47`) are skipped, matching
+    // `emit_forwarded_methods`'s own pre-existing `FnName::Method` filter
+    // one step earlier rather than lowering a signature nothing renders.
+    let mut imported_methods: HashMap<String, Vec<FnSig>> = HashMap::new();
     for t in &info.uses {
         let Some(used) = unit_info.get(t) else {
             continue;
         };
+        let used_types = combined_types_for_unit_info(t, unit_info);
         for (type_name, mt) in &used.table.methods {
             let entry = imported_methods.entry(type_name.clone()).or_default();
-            entry.extend(mt.instance.values().map(|f| f.as_ref().clone()));
-            entry.extend(mt.statics.values().map(|f| f.as_ref().clone()));
+            entry.extend(
+                mt.instance
+                    .values()
+                    .chain(mt.statics.values())
+                    .filter(|f| matches!(f.name, FnName::Method { .. }))
+                    .map(|f| lower_fn_sig_ir_from_types(f, &used_types, tys)),
+            );
         }
     }
-    let method_key = |f: &FnDecl| match &f.name {
-        FnName::Method { method_name, .. } => method_name.name.clone(),
-        FnName::Free(id) => id.name.clone(),
-    };
     for decls in imported_methods.values_mut() {
-        decls.sort_by_key(&method_key);
+        decls.sort_by_key(|sig| sig.name.clone());
     }
     let mut imported_decl_paths: HashMap<String, HashMap<String, PathBuf>> = HashMap::new();
     for t in &info.uses {
@@ -1331,7 +1378,7 @@ fn check_unit_files(
 ) {
     // Emit-prologue tables invariant across every file of this unit — built
     // once here rather than once per file (see `EmitUnitCtx`).
-    let unit_ctx = build_emit_unit_ctx(name, unit_info, target);
+    let unit_ctx = build_emit_unit_ctx(name, unit_info, target, tys);
     let check_ctx = prepare_unit_check_ctx(kind, unit_info, combined_types, imported_from_kind);
 
     for &i in indices {
@@ -3438,7 +3485,11 @@ pub(crate) struct EmitProjectCtx {
     /// *types* but not their fn items, so `emit_context_rebrands` reads this to
     /// forward `Cents.fromInt(…)` and friends onto the rebranded const. Empty
     /// for commons units and for contexts with no such imports.
-    pub imported_methods: HashMap<String, Vec<FnDecl>>,
+    ///
+    /// P6.18: each entry is a resolved [`FnSig`] (the declaring unit's own
+    /// `params`/`return_ty`, already `TyId`-typed), not a raw `FnDecl` —
+    /// see [`build_emit_unit_ctx`]'s own doc comment for why.
+    pub imported_methods: HashMap<String, Vec<FnSig>>,
     /// Which conditional `runtime.ts` helpers this file's emission referenced.
     ///
     /// Unlike every field above, this is an **output**, not an input: emission

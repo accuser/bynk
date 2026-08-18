@@ -760,6 +760,28 @@ giving `IrItem::Service` its first real emitter call site (gated, per that corre
 readers above — collapse into ordinary IR reads instead of each inventing its own project-wide
 plumbing.
 
+**Addendum (2026-08-18): P6.3's own test-body-only deferral (`Expect`/`Val`/`Wire`/`Observation`/
+`Trace`, `Statement::Expect`) was already a formal, cited decision at landing time — #1145's own
+Decision C — not an open question this track's own §6 correction above (P6.3 completeness) left
+unresolved.** Every one of those five `todo!()`s in `ir/lower.rs` already names `#1145, Decision C`
+directly in its own message; that correction's "permanent-residue, not open work" framing restates a
+decision already made in code, it does not make a new one. Recorded here so a future reader does not
+mistake the correction for a still-open carve-out decision.
+
+**Seventeenth: `EmitProjectCtx::imported_methods` reads a resolved `FnSig`, not a raw `FnDecl`
+(P6.18).** `emit_forwarded_methods` (the `uses`-imported-type attached-method forwarder, #481) now
+takes `&[FnSig]` — each entry's `params`/`return_ty` a real `TyId`, resolved by a new narrow reader,
+`lower_fn_sig_ir_from_types(f, types, tys)`, against the *declaring* unit's own visible types. Not
+`IrItem::Fn`: that variant mandates lowering a real `body: IrExpr`, which still hits the `Question`/
+`Is` gap (§6's own P6.3 correction above) for no benefit here — nothing this call site renders ever
+reads a method body, only its signature, the same "signature-only, no body, no `CheckedProgram`
+needed" shape [`OpSig`]/`lower_op_sig_ir_from_commons` already established for a capability op.
+Confirmed correctness against real forwarded-method fixtures (`255_context_uses_commons_static_method`
+and siblings — an instance method with `self` plus a static method) via zero-diff bless; `self`'s own
+type still comes from the *consumer* context's own rebranded name directly, never resolved through
+`FnSig` (a method's generic receiver plays no part in what's forwarded). `ast_importers` unaffected —
+`emitter/emit.rs` (where the conversion lands) was never one of the counted files.
+
 ---
 
 ## 7. Out of scope — forward references, not refusals

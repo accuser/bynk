@@ -1689,7 +1689,7 @@ fn emit_context_rebrands(
             // this context's own `commons` (only imported *types* are merged);
             // they arrive via `ctx.imported_methods`, keyed by type name.
             if let Some(methods) = ctx.imported_methods.get(name) {
-                emit_forwarded_methods(out, name, methods);
+                emit_forwarded_methods(out, name, methods, &commons.ty_intern);
             }
             writeln!(out, "}};").unwrap();
         }

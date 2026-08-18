@@ -997,6 +997,33 @@ pub(crate) struct OpSig {
     pub return_ty: TyId,
 }
 
+/// P6.18: a `fn`'s own resolved signature, with no `body` and no `receiver` —
+/// the narrow, [`OpSig`]-shaped sibling a *foreign* unit's attached method
+/// needs when only its signature will ever be rendered (`emit_attached_
+/// methods`' delegating forward at [`crate::emitter::emit::emit_forwarded_
+/// methods`]), never its body. Deliberately not [`IrItem::Fn`]: that variant
+/// mandates lowering `body: IrExpr` through [`lower::lower_fn_body_ir`],
+/// which still `todo!()`s on `ExprKind::Question`/`Is` (design/tracks/
+/// the-ir.md §6's own P6.3 correction) — forcing every `uses`-imported
+/// method through that gate for a signature nothing here ever reads would
+/// make this reader strictly less total than the raw-`TypeRef` code it
+/// replaces, for zero benefit. [`lower::lower_fn_sig_ir_from_types`] resolves
+/// `params`/`return_ty` in the scope the method's own `[T, …]` list names
+/// (mirroring [`lower_op_sig_ir_from_commons`]'s identical `type_params`
+/// treatment) — a genuinely unresolvable name degrades to `Ty::Unit`,
+/// deliberately, the same non-panicking posture `OpSig` already established:
+/// nothing checker-side actually validates an attached method's own
+/// `params`/`return_type` against the *importing* context's own visible
+/// types (only the declaring commons' own checking does), so a resolve miss
+/// here is an expected, not exceptional, state.
+#[derive(Debug, Clone)]
+pub(crate) struct FnSig {
+    pub name: String,
+    pub has_self: bool,
+    pub params: Vec<(String, TyId)>,
+    pub return_ty: TyId,
+}
+
 /// P6.11's real `ProtocolIr` ([DECISION A], #1171) — one variant per
 /// `bynk_syntax::ast::ServiceProtocol` variant, [`lower::lower_protocol_ir`]'s
 /// own return value. The reference's own sketch specifies only two of the
