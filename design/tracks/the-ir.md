@@ -991,6 +991,22 @@ pass, not attempted in the same turn that found it. P6.23 stays a real, open row
 architecture supports it, the remaining gaps are the kind this track has already closed several times
 over, just not yet closed for these specific shapes.
 
+**Twenty-fourth: P6.21's own (a)/(b) question (Twenty-second entry, correction paragraph) resolved by
+doing (a) first, incrementally, only where it's safe today.** `emitter/lower.rs`'s `lower_call` had
+two branches with real `Callee` backing and two without. Converted the two that do: agent construction
+(`AgentName(key)`, was `cx.local_agents.contains(&name.name)`) now reads `Callee::AgentInit` directly;
+sum-variant construction (`Won(prize)`, was `call_is_sum_variant`'s own name-matched `sum_name`/
+`call_name` string comparison) now reads `Callee::Ctor { sum, tag }` directly — `call_is_sum_variant`
+retired, its one call site gone. Both are real instances of R6.5's own name-matched-receiver defect
+class, not just a refactor — the same correctness upgrade `body_writes_state`/#1196 already delivered
+for `Callee::Store`. Left untouched, deliberately: `HttpResult`/`QueueResult` bare-variant construction
+and `Events.emit` (no `Callee` recorded for either, per the Twenty-third entry's own finding — a real,
+separate, cross-crate design decision, not attempted here) and `lower_method_call` itself (the larger,
+~20-branch, ~900-line dispatcher — this is a bounded first step, not the full P6.21 cutover). Verified
+by a full zero-diff bless against the entire e2e fixture corpus: byte-identical generated output for
+every fixture, confirming the `Callee`-driven read reproduces every dispatch decision the name-matched
+code made. Full reasoning: `design/pending/p6-21-partial-callee-driven-call-dispatch.md`'s own ADR.
+
 ## 7. Out of scope — forward references, not refusals
 
 | Item | Phase | Entry condition |

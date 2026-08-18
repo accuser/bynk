@@ -6,7 +6,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use bynk_check::checker::{NamedKind, Ty, TyId, TypedCommons};
+use bynk_check::checker::{Callee, NamedKind, Ty, TyId, TypedCommons};
 
 use crate::ir::{ConstVal, EventPatternIr, EventPatternValueIr};
 
@@ -755,20 +755,6 @@ fn write_line(out: &mut String, indent: usize, line: &str) {
     }
     out.push_str(line);
     out.push('\n');
-}
-
-/// True when a bare `Call` whose result type is the sum `sum_name` is actually a
-/// variant constructor of that sum (e.g. `Won(prize)` for `Outcome`), as opposed
-/// to an ordinary function that merely *returns* the sum (e.g.
-/// `classify(n) -> Outcome`). Only the former is qualified to `Sum.Variant(...)`.
-fn call_is_sum_variant(cx: &LowerCtx, sum_name: &str, call_name: &str) -> bool {
-    if let Some(decl) = cx.commons().types.get(sum_name)
-        && let TypeBody::Sum(s) = &decl.body
-    {
-        s.variants.iter().any(|v| v.name.name == call_name)
-    } else {
-        false
-    }
 }
 
 /// The raw TypeScript form of a compile-time literal that v0.9.4 may admit as a
@@ -4189,27 +4175,40 @@ fn lower_call(e: &Expr, name: &Ident, args: &[Expr], cx: &mut LowerCtx) -> Lower
             args_lowered.join(", ")
         ));
     }
-    // v0.9.2: agent instantiation `AgentName(key)` lowers to the
-    // generated `__makeAgentName(key)` factory, which obtains the
-    // instance for this key (lookup-or-create against the registry in
-    // bundle mode, or a typed DO proxy in workers mode). Skipped when
-    // this Call is the receiver of a MethodCall — that path folds
-    // construction and the method invocation together.
-    if cx.local_agents.contains(&name.name) && args_lowered.len() == 1 {
-        return pre.finish(cx.agent_construct(&name.name, &args_lowered[0]));
+    // P6.21 (real P6.2 cutover, partial — #1143/#1140's `Callee` classification
+    // read back instead of re-derived): agent instantiation `AgentName(key)`
+    // lowers to the generated `__makeAgentName(key)` factory, which obtains
+    // the instance for this key (lookup-or-create against the registry in
+    // bundle mode, or a typed DO proxy in workers mode). Skipped when this
+    // Call is the receiver of a MethodCall — that path folds construction
+    // and the method invocation together. Previously guarded by
+    // `cx.local_agents.contains(&name.name)`, a name-matched re-derivation
+    // of what the checker's own `Callee::AgentInit` already resolved once —
+    // the same defect class `block_writes_state`'s receiver-name matching
+    // carried before #1196 converted it to read `Callee::Store` directly.
+    if matches!(cx.commons().callee(e.id), Some(Callee::AgentInit(_))) {
+        let key_expr = args_lowered.first().unwrap_or_else(|| {
+            panic!(
+                "bynk internal error (ADR 0334): Callee::AgentInit records agent construction \
+                 `{}(...)` with {} args, but every AgentDecl declares exactly one key field — \
+                 the checker already accepted this call",
+                name.name,
+                args_lowered.len()
+            )
+        });
+        return pre.finish(cx.agent_construct(&name.name, key_expr));
     }
-    if let Some(Ty::Named {
-        kind: NamedKind::Sum,
-        name: type_name,
-        ..
-    }) = cx.commons().expr_ty(e.id).as_deref()
-        && type_name != &name.name
-        && call_is_sum_variant(cx, type_name, &name.name)
-    {
+    // P6.21: sum-variant construction is `Callee::Ctor` — reads the sum
+    // type's own name and the variant's own tag straight off the checker's
+    // classification instead of `call_is_sum_variant`'s own name-matched
+    // `sum_name`/`call_name` string comparison against the call's checked
+    // type (the same re-derivation this whole `Callee` precedent, P6.0,
+    // exists to close).
+    if let Some(Callee::Ctor { sum, tag }) = cx.commons().callee(e.id) {
         return pre.finish(format!(
             "{}.{}({})",
-            type_name,
-            name.name,
+            sum.name.name,
+            tag,
             args_lowered.join(", ")
         ));
     }
