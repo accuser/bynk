@@ -160,7 +160,7 @@
 use std::sync::Arc;
 
 use bynk_check::checker::{Callee, TyId};
-use bynk_syntax::ast::{BaseType, FnDecl, HandlerKind, Refinement, SchemaVersionPattern, TypeDecl};
+use bynk_syntax::ast::{BaseType, FnDecl, Refinement, SchemaVersionPattern, TypeDecl};
 use bynk_syntax::span::Span;
 
 pub(crate) mod lower;
@@ -1068,12 +1068,15 @@ pub(crate) enum ProtocolIr {
         /// [DECISION B]: `SchemaVersionPattern` reused verbatim from
         /// `bynk_syntax::ast` rather than flattened to `Option<i64>` — an
         /// ordinary `Clone` enum with no arena identity, the same "reused,
-        /// not adapted" treatment `IrHandler::kind` already gets, and its
-        /// own doc comment states that a future range pattern (`via
-        /// schema(2..)`) is additive to this exact enum, not a breaking
-        /// rename of whoever already matches on it. The `SchemaDispatch`
-        /// wrapper itself is dropped — it carries only this `pattern` plus
-        /// a parse-only `span`.
+        /// not adapted" treatment `IrHandler::kind` originally got (P6.24a
+        /// converted that one field to a real IR-native mirror,
+        /// [`IrHandlerKind`], once a real consumer needed to match on it
+        /// without spelling `bynk_syntax::ast` — this field has no such
+        /// consumer yet), and its own doc comment states that a future
+        /// range pattern (`via schema(2..)`) is additive to this exact
+        /// enum, not a breaking rename of whoever already matches on it.
+        /// The `SchemaDispatch` wrapper itself is dropped — it carries only
+        /// this `pattern` plus a parse-only `span`.
         schema_dispatch: Option<SchemaVersionPattern>,
     },
 }
@@ -1511,10 +1514,13 @@ pub(crate) struct ConnectionBinder {
 /// handler's own resolved shape, [`lower::lower_handler_ir`]'s own return
 /// value. Six of the reference's own eight sketched fields are its
 /// verbatim shape (`bynk-greenfield-compiler.md:1169-1177`) under this module's
-/// already-established substitutions: `kind: HandlerKind` reused verbatim
-/// from `bynk_syntax::ast` (an ordinary `Clone`/`PartialEq` enum with no
-/// arena identity — the same "reused, not adapted" treatment
-/// [`IrExprKind::Call`]'s own `Callee` payload already got); `params`/
+/// already-established substitutions: `kind: IrHandlerKind` — originally
+/// `HandlerKind` reused verbatim from `bynk_syntax::ast` (the same "reused,
+/// not adapted" treatment `IrExprKind::Call`'s own `Callee` payload got),
+/// converted to a real IR-native mirror by P6.24a once a purely-structural
+/// emitter reader (no body, no `IrItem::Service`) needed to match on it
+/// without spelling `bynk_syntax::ast` — see [`IrHandlerKind`]'s own doc
+/// comment; `params`/
 /// `given` are this module's standard "no arena" substitution (`params:
 /// Vec<(String, TyId)>` mirrors [`IrItem::Fn::params`] exactly; `given:
 /// Vec<String>` reads each `CapRef::key()`, the same identity
@@ -1575,9 +1581,49 @@ pub(crate) struct ConnectionBinder {
 /// `bynk.actor.by_on_agent` (`context_checks.rs:2986-2996`) rejects any
 /// `by` clause on an agent handler outright, so [`lower::lower_handler_ir`]
 /// never has one to lower in the first place.
+/// P6.24a: an IR-native mirror of [`bynk_syntax::ast::HandlerKind`] — a
+/// field-for-field copy, not a re-export. Every field (`HttpMethod`, a
+/// route `path: String`, a cron `expr: String`) is already fully resolved
+/// at parse time; nothing here ever needed `TyId`/`CheckedProgram`, so
+/// [`lower::lower_handler_kind_ir`] is a pure, unconditional conversion —
+/// unlike almost everything else in this module, it carries no ADR 0334
+/// totality story because it can never fail to resolve.
+///
+/// Exists because [`IrHandler::kind`] was still typed as the raw AST enum
+/// (confirmed live, #1184's own review) — the one field on an otherwise
+/// fully IR-native struct that still forced any reader down to
+/// `bynk_syntax::ast` for a check as simple as "is this an HTTP handler."
+/// R6.16 (handler-invocation origin-independence, P6.9) is this type's own
+/// real destination; giving `emitter.rs`'s several purely-structural
+/// `HandlerKind`/`ServiceProtocol` scans (no body needed, no `IrItem::
+/// Service` required) somewhere IR-native to route through first is what
+/// this slice actually lands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum IrHandlerKind {
+    Call,
+    Http { method: IrHttpMethod, path: String },
+    Cron { expr: String },
+    Message,
+    Open,
+    Close,
+    Event,
+}
+
+/// [`IrHandlerKind::Http`]'s own method field — a field-for-field mirror of
+/// [`bynk_syntax::ast::HttpMethod`], same reasoning as [`IrHandlerKind`]
+/// itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum IrHttpMethod {
+    Get,
+    Post,
+    Put,
+    Patch,
+    Delete,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct IrHandler {
-    pub kind: HandlerKind,
+    pub kind: IrHandlerKind,
     pub params: Vec<(String, TyId)>,
     pub given: Vec<String>,
     /// The actor name(s) a `by` clause names — see this struct's own doc

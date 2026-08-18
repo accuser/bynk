@@ -782,6 +782,27 @@ type still comes from the *consumer* context's own rebranded name directly, neve
 `FnSig` (a method's generic receiver plays no part in what's forwarded). `ast_importers` unaffected —
 `emitter/emit.rs` (where the conversion lands) was never one of the counted files.
 
+**Eighteenth: `IrHandler::kind` becomes a real IR-native `IrHandlerKind`/`IrHttpMethod` (P6.24a),
+unblocking five of `emitter.rs`'s purely-structural handler-kind/protocol checks (P6.19's own
+tractable sub-scope).** Correction to this track's own completion-plan sequencing, found while scoping
+rather than assumed: `IrHandler::kind` was still typed as raw `bynk_syntax::ast::HandlerKind` (#1184's
+own review already named this gap), meaning even a fully-built `IrItem::Service` would not have let a
+reader match on handler kind without spelling `bynk_syntax::ast` — P6.24a needed to precede this part of
+P6.19, not follow it, the reverse of the completion plan's own original gating guess. Both land together
+here since P6.24a's value is only provable by an actual consumer. `emitter.rs`'s `has_http`/`has_queue`/
+`hosts_ws_open`/`hosts_ws_inbound`/`subscribed_event_type_names` — none of which read a handler *body*,
+all of which were already safe regardless of the `Question`/`Is` gap — now match `IrHandlerKind`/
+`ProtocolIr` instead of raw `HandlerKind`/`ServiceProtocol`, the latter via a new `TypedCommons`-only
+`lower_protocol_ir_from_commons` (mirroring `lower_op_sig_ir`/`lower_op_sig_ir_from_commons`'s existing
+split, for a call site — `emit_project_imports` — with no `&CheckedProgram` to hand it). The other ~15
+`CommonsItem::Service`/`Capability` sites this file still matches on were surveyed and found to fall into
+three categories, none of them this slice's business: already IR-routed (the main `emit_service`/
+`emit_capability` entry points, #1198/#1193); raw `Block`/`Expr` body walks for cross-context-call/
+JSON-codec-root detection, gated on the same `Question`/`Is` closure P6.22 already waits on; or feeding
+`bynk_check::wire`'s codec/boundary-type machinery, the same cross-crate blocker `serialisation.rs`'s own
+abandoned conversion hit. Zero-diff bless confirmed. `ast_importers` unaffected — `emitter.rs` remains
+counted for its many other reasons.
+
 ---
 
 ## 7. Out of scope — forward references, not refusals
