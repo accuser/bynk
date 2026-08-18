@@ -375,6 +375,28 @@ pub(crate) enum IrExprKind {
     /// A bare reference to something with no scope of its own — narrowly
     /// scoped per Decision C; see [`GlobalRef`].
     Global(GlobalRef),
+    /// A bare `store Map[K, V]` or `store Log[T]` field name used as a
+    /// **value**, not a method-call receiver (`Callee::Store`/`Callee::Query`
+    /// already lower those separately) and not a `Cell` (those are bound
+    /// into scope as an ordinary [`IrExprKind::Local`], v0.81's "implicit
+    /// deref" rule — see [`crate::ir::lower::lower_handler_body_ir`]'s own
+    /// doc comment). The checker types this expression `Ty::Query(V)`
+    /// (ADR 0120 for `Map`, ADR 0121 for `Log`) *without* ever binding the
+    /// name into its own value scope (`bynk-check/src/checker.rs`'s
+    /// `ExprKind::Ident` dispatch, `ctx.lookup(...).is_none() &&
+    /// ctx.store_fields.get(...)`, checked *before* falling through to
+    /// `check_ident`) — a lazy query over the field's current values, not a
+    /// snapshot. Reached two ways: a bare argument position (`lines.
+    /// joinOn(orders, ...)`) and, unrecognised until this variant existed,
+    /// the receiver of a `.entries`/`.keys`/`.values` [`IrExprKind::Field`]
+    /// (ADR 0184) — `ExprKind::FieldAccess`'s own lowering always lowers its
+    /// `receiver` unconditionally, so a bare store-map/log field reached
+    /// there the same unbound-ident path an argument-position reference
+    /// does. Carries only the field's own name — every consumer already has
+    /// the enclosing `IrItem::Agent`'s `state: Vec<StoreFieldIr>` to look the
+    /// kind back up in, the same "identity, not a copy" posture
+    /// `Callee::Store::field`/`GlobalRef::tag` already established.
+    StoreQuery(String),
     /// Record construction. `fields` is always complete — every field the
     /// record declares is present, exactly once, a shorthand field (`{ x }`)
     /// resolved to its full `(name, value)` pair during lowering same as
