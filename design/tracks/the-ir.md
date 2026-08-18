@@ -999,6 +999,30 @@ lands.** `block_writes_state`'s name-matched receiver — the "strongest single 
 for R6.5 per the reference's own text — is not closed by this settling pass; it is closed by a specific
 future slice. Named here so a reviewer of any interim state knows the gap is real, not latent.
 
+**Correction (2026-08-18): the write-detection half of this risk is already closed, pre-dating this
+correction — this paragraph is stale.** `body_writes_state` (`bynk-emit/src/ir/lower.rs:1249`) reads
+`Callee::Store` directly off `TypedCommons` — no name-matched receiver, no `StoreFieldIr`/
+`CommitShape`/`IrHandler` assembly needed (landed as #1196). `block_writes_state`'s own name-matched
+`mutating_op` is confirmed deleted (`emitter.rs:779`'s own comment cites it as gone), and
+`body_writes_state` is wired into real emission (`emitter/emit.rs:3302`,
+`is_store_agent && body_writes_state(&h.body, commons)`), not merely built and unused. What P6.2's
+real remaining cutover (informally "P6.21" in a later completion-plan draft) still closes is
+`lower_method_call`/`lower_call`'s own **codegen dispatch** — which TS template to emit for a given
+`Callee` — not a correctness/data-loss gap. A scoping pass for that slice (2026-08-18) found
+`bynk-emit::ir::lower`'s own `lower_call_ir` (`ir/lower.rs:3151`) specializes only `Callee::Ctor`;
+every other `Callee` variant (`Store`/`Query`/`Kernel`/`Intrinsic`/`Capability`/`Cross`/`Agent`/…) is
+packaged as-is with no "how to render as TS" decision made anywhere in `bynk-emit::ir` yet — so this
+slice is not a mechanical "read from an existing Callee-driven render" the way the original plan
+phrased it; a real render layer would need building for the first time. Not scoped further here — a
+future slice proposal needs to resolve, explicitly, whether this is (a) a surgical swap of each
+`lower_method_call` branch's own receiver-detection test for a `Callee`-classified one, keeping every
+existing template body (bounded, low-risk), or (b) a full "render TS purely from `IrExpr::Call`"
+rewrite (materially larger — the per-`Callee::Store`-kind codegen logic doesn't exist yet). No real
+dependency on P6.20 was found either way — `the-ir.md`'s own P6.2 row (§6) already lists its
+dependencies as P6.0/P6.1 only, and `lower_method_call`/`lower_call` are reached from ordinary
+post-check handler/service-body lowering, independent of `project.rs`'s own (non-viable, see the
+correction above) compose-time enumerator.
+
 **The evidence ages.** Every fact, line number and quotation in this doc was measured against `main`
 at the commit this settling PR is opened from, 9 August 2026 — except §3.7 (Q7), measured separately
 against `main`@`7f5115ee`, 12 August 2026, and stamped inline with its own date for exactly this reason.
