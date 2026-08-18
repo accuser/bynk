@@ -2609,7 +2609,10 @@ fn emit_test_case_function(
         test_suites::register_call_record_types(&mut resolved, target_name, unit_tables);
         let mut throwaway_errors: Vec<CompileError> = Vec::new();
         let mut throwaway_refs = RefSink::new();
-        typed.expr_types = test_suites::typecheck_case_body(
+        // P6.21 review: `callees` is real output here now, not discarded —
+        // see `typecheck_case_body`'s own doc comment for why a test-case
+        // body's `Callee` classification was previously lost entirely.
+        (typed.expr_types, typed.callees) = test_suites::typecheck_case_body(
             target_name,
             &case.body,
             case.span,
@@ -3387,7 +3390,9 @@ fn emit_test_history_property_function(
             scope.insert(run_var.to_string(), tys.intern(step_ty));
             let mut throwaway_errors: Vec<CompileError> = Vec::new();
             let mut throwaway_refs2 = RefSink::new();
-            typed.expr_types = test_suites::typecheck_case_body(
+            // P6.21 review: `callees` is real output here now — see
+            // `typecheck_case_body`'s own doc comment.
+            (typed.expr_types, typed.callees) = test_suites::typecheck_case_body(
                 target_name,
                 &prop.forall.body,
                 prop.span,

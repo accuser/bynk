@@ -1044,6 +1044,21 @@ regression. **Any future slice converting a `lower_method_call` branch must veri
 corpus — test-body fixtures included — before trusting `Callee` is populated there**, not assume the
 storage-field/agent/sum-ctor branches' own clean bless generalizes.
 
+**Twenty-seventh: the Twenty-sixth entry's own gap, root-caused and fixed — the Intrinsic conversion
+re-applied.** `bynk-check::test_suites::typecheck_case_body` (the emit path's own re-check of a
+`.test.bynk` case/property body, so lowering has full checked-type information) computed a real
+`callees` map internally but only ever returned `expr_types` — `callees` was silently discarded at the
+end of the function. Its two real consumers in `bynk-emit/src/project/tests_emit.rs` only ever captured
+`typed.expr_types`, leaving `typed.callees` (a real `pub` field on `TypedCommons`) at its default-empty
+value for every test-case/property body in the project — this, not an `in_test_body` short-circuit
+inside `check_method_call`, is why `cx.commons().callee(e.id)` always returned `None` for a
+`Bytes`/`Instant` call reached from a test body. Fixed: `typecheck_case_body` now returns
+`(expr_types, callees)`; both real call sites destructure both. With `typed.callees` genuinely
+populated, the Twenty-sixth entry's own reverted conversion is re-applied verbatim. Verified by a full
+zero-diff bless against the entire e2e corpus, including the exact two fixtures
+(`814_messages_icu_date_styles`, `917_bytes_in_test_case`) that caught the original gap. Full reasoning:
+`design/pending/p6-21-intrinsic-callee-dispatch-and-test-body-fix.md`'s own ADR.
+
 ## 7. Out of scope — forward references, not refusals
 
 | Item | Phase | Entry condition |
