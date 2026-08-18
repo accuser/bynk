@@ -1736,11 +1736,26 @@ fn lower_method_call(
     // `Map.empty()`. The checker recorded the instantiated type;
     // emit it explicitly so the TS value doesn't infer as `never[]`
     // / `Map<unknown, unknown>` outside contextually-typed positions.
-    if let ExprKind::Ident(id) = &receiver.kind
-        && (id.name == LIST || id.name == MAP)
-        && method.name == "empty"
+    //
+    // P6.21 (partial, continued — the earlier #1247 attempt reverted this
+    // exact conversion after a zero-diff bless caught it silently dropping
+    // `Instant`/`Bytes` statics inside `.test.bynk` bodies; root-caused and
+    // fixed separately — `typecheck_case_body` now returns its own
+    // `callees` map instead of discarding it, so `Callee::Intrinsic` is
+    // populated for test-case bodies too): reads `Callee::Intrinsic` (P6.0)
+    // instead of `id.name == LIST || id.name == MAP` plus
+    // `!cx.commons().types.contains_key` — the checker's own
+    // `check_method_call` already resolves the identical shadowing question
+    // (`ctx.lookup(...).is_none() && !ctx.input.types.contains_key(...)`,
+    // `calls.rs`) before ever recording this `Callee`, closing a real gap
+    // the emitter's own guard left open: no `cx.is_local(&id.name)` check,
+    // unlike every other branch this session already converted.
+    if let ExprKind::Ident(_) = &receiver.kind
+        && matches!(
+            cx.commons().callee(e.id),
+            Some(Callee::Intrinsic { ns, op }) if (*ns == LIST || *ns == MAP) && op == "empty"
+        )
         && args.is_empty()
-        && !cx.commons().types.contains_key(&id.name)
     {
         match cx.commons().expr_ty(e.id).as_deref() {
             Some(Ty::List(t)) => {
@@ -1763,9 +1778,17 @@ fn lower_method_call(
     // rejected first. `Int` requires a safe integer (the honest
     // runtime "overflow → None"); `Float` requires finite (the 0040
     // posture).
+    // P6.21 (partial, continued): reads `Callee::Intrinsic` instead of
+    // `id.name == INT || id.name == FLOAT` — see the `List`/`Map` branch
+    // above. `Int`/`Float` are lexically reserved (the parser only admits
+    // them here followed by `.`), so unlike `List`/`Map` this specific guard
+    // never had a real shadowing gap to close — converted for consistency
+    // with every other static-constructor branch in this function.
     if let ExprKind::Ident(id) = &receiver.kind
-        && (id.name == INT || id.name == FLOAT)
-        && method.name == "parse"
+        && matches!(
+            cx.commons().callee(e.id),
+            Some(Callee::Intrinsic { ns, op }) if (*ns == INT || *ns == FLOAT) && op == "parse"
+        )
         && args.len() == 1
     {
         let s = pre.lower(&args[0], cx);
@@ -1781,9 +1804,17 @@ fn lower_method_call(
     // v0.86 (ADR 0112): `Duration.millis(n)` — the runtime `Int`→`Duration`
     // constructor. A `Duration` lowers to its milliseconds, so this is the
     // identity on the argument.
-    if let ExprKind::Ident(id) = &receiver.kind
-        && id.name == DURATION
-        && method.name == "millis"
+    //
+    // P6.21 (partial, continued): reads `Callee::Intrinsic` instead of
+    // `id.name == DURATION` — see the `List`/`Map` branch above for why this
+    // closes a real shadowing gap the bare name check left open (the checker
+    // itself guards `ctx.lookup(DURATION).is_none()` before ever recording
+    // this `Callee`; the same applies to `Instant`/`Bytes`/`Stream` below).
+    if let ExprKind::Ident(_) = &receiver.kind
+        && matches!(
+            cx.commons().callee(e.id),
+            Some(Callee::Intrinsic { ns, op }) if *ns == DURATION && op == "millis"
+        )
         && args.len() == 1
     {
         let inner = pre.lower(&args[0], cx);
@@ -1791,9 +1822,11 @@ fn lower_method_call(
     }
     // v0.90 (ADR 0114): `Instant.fromEpochMillis(n)` — an `Instant` lowers to
     // its epoch milliseconds, so this is the identity on the argument.
-    if let ExprKind::Ident(id) = &receiver.kind
-        && id.name == INSTANT
-        && method.name == "fromEpochMillis"
+    if let ExprKind::Ident(_) = &receiver.kind
+        && matches!(
+            cx.commons().callee(e.id),
+            Some(Callee::Intrinsic { ns, op }) if *ns == INSTANT && op == "fromEpochMillis"
+        )
         && args.len() == 1
     {
         let inner = pre.lower(&args[0], cx);
@@ -1803,8 +1836,8 @@ fn lower_method_call(
     // UTF-8 encoding of a string (total); `fromBase64` is a guarded base64
     // decode returning `Option` (`None` on invalid base64); `empty` is the
     // zero octet sequence.
-    if let ExprKind::Ident(id) = &receiver.kind
-        && id.name == BYTES
+    if let ExprKind::Ident(_) = &receiver.kind
+        && matches!(cx.commons().callee(e.id), Some(Callee::Intrinsic { ns, .. }) if *ns == BYTES)
     {
         match (method.name.as_str(), args.len()) {
             ("fromUtf8", 1) => {
@@ -1825,9 +1858,11 @@ fn lower_method_call(
     // v0.100: `Stream.of(xs)` — the deterministic in-memory source. A `Stream`
     // lowers to a host async iterable; `of` wraps a list as an async generator.
     // Emitted inline (no runtime import), like the collection kernels.
-    if let ExprKind::Ident(id) = &receiver.kind
-        && id.name == STREAM
-        && method.name == "of"
+    if let ExprKind::Ident(_) = &receiver.kind
+        && matches!(
+            cx.commons().callee(e.id),
+            Some(Callee::Intrinsic { ns, op }) if *ns == STREAM && op == "of"
+        )
         && args.len() == 1
     {
         let xs = pre.lower(&args[0], cx);

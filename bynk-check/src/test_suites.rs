@@ -1072,10 +1072,17 @@ fn target_test_services(table: Option<&UnitTable>) -> HashMap<String, checker::T
 }
 
 /// Type-check a test `case`/`property` body against the target unit's privileges,
-/// returning the inferred `expr_types` map. The **check** path feeds real
-/// diagnostic/ref sinks; the **emit** path reuses it with throwaway sinks to give
-/// the case-body lowering full type information (so collection kernels — notably
-/// `trace(Cap.op)`'s `List[…]` methods — dispatch on the receiver's checked type).
+/// returning the inferred `expr_types` map and the `Callee` classification
+/// recorded alongside it. The **check** path feeds real diagnostic/ref sinks;
+/// the **emit** path reuses it with throwaway sinks to give the case-body
+/// lowering full type information (so collection kernels — notably
+/// `trace(Cap.op)`'s `List[…]` methods — dispatch on the receiver's checked
+/// type) *and* full `Callee` information (P6.21 review: the emit path's own
+/// `callees` accumulator was previously built here and silently discarded —
+/// `bynk-emit`'s `synthetic_typed_commons_for_target` never received it, so
+/// `Callee::Intrinsic`/`Store`/etc. were never recorded for anything inside a
+/// `.test.bynk` body, even though this function computed them correctly all
+/// along).
 #[allow(clippy::too_many_arguments)]
 pub fn typecheck_case_body(
     target_name: &str,
@@ -1089,7 +1096,10 @@ pub fn typecheck_case_body(
     // `run: List[Step]` binding for a history property.
     initial_scope: HashMap<String, checker::TyId>,
     tys: &Arc<Types>,
-) -> HashMap<ExprId, checker::TypedExpr> {
+) -> (
+    HashMap<ExprId, checker::TypedExpr>,
+    HashMap<ExprId, checker::Callee>,
+) {
     let mut expr_types: HashMap<ExprId, checker::TypedExpr> = HashMap::new();
     let mut callees: HashMap<ExprId, checker::Callee> = HashMap::new();
     // Synthesise an Effect[Result[(), ValidationError]] return type as a
@@ -1164,7 +1174,7 @@ pub fn typecheck_case_body(
             callees: &mut callees,
         },
     );
-    expr_types
+    (expr_types, callees)
 }
 
 #[allow(clippy::too_many_arguments)]
