@@ -422,7 +422,7 @@ already documents.
 | **P6.6** | Declarations as `IrItem` (Part 6.6): `Type`/`Fn`/`Agent`/`Service`/`Actor`/`Capability`/`Provider` — closes the emitter reading AST declarations directly (`EmitProjectCtx`'s 28 fields, 5 with no readers) | R6.13 | P6.1–P6.3 |
 | **P6.7** | Store-field state shape and index tables derived in the IR (`StoreFieldIr`, `StoreKindIr`) rather than at emission time | R6.14 | P6.6 |
 | **P6.8** | `CommitShape` as IR data, not emitter control flow | R6.15 | P6.6, P6.7 |
-| **P6.9** | ~~Handler-invocation origin-independence — no IR node branches on caller kind~~ **Closed by investigation (P6.24b, 2026-08-18) — already discharged, no code change needed.** See the slice-history entry below. | R6.16 | — |
+| **P6.9** | ~~Handler-invocation origin-independence — no IR node branches on caller kind~~ **Closed by investigation (P6.24b, 2026-08-18) — already discharged, no code change needed.** See the slice-history entry below. | R6.16 | ~~P6.6, P6.8~~ |
 
 **Correction (2026-08-18): P6.3's own row landed partially, silently, without ever being recorded in
 this section's own slice-history prose below.** Confirmed live against `ir/lower.rs`: 3 of the row's
@@ -455,9 +455,11 @@ gap with a named exclusion for `ir.rs`/`ir/lower.rs`, so the probe can now genui
 remaining slices land. The prose criterion (§5) is still the true target — a reader of this or any
 later P6.x slice should not read "last row in the table" as "this slice reaches the completion probe."
 
-**The table above is the "build the IR" decomposition — every row shipped** (P6.0–P6.9 as listed,
-plus `Agent`/`Service`/`Capability`/`Provider`/the websocket lifecycle slices §3.7 names as landed
-past this table's own original scope, `Actor` settled as a deliberate non-build). It is not the
+**The table above is the "build the IR" decomposition — every row landed** (P6.0–P6.8 as shipped
+slices, P6.9 closed by investigation (P6.24b) as already-discharged — no code change needed, see the
+slice-history entry below — plus `Agent`/`Service`/`Capability`/`Provider`/the websocket lifecycle
+slices §3.7 names as landed past this table's own original scope, `Actor` settled as a deliberate
+non-build). It is not the
 **cutover** decomposition §5's own completion criterion actually needs — the slice order for
 switching `emitter.rs`/`emitter/lower.rs` themselves over to read `bynk-emit::ir` is scoped
 separately in #1187 (opened once `Provider` and the `ast_importers` redefinition — the two blockers
@@ -869,19 +871,28 @@ against the real shipped code on two fronts:
 - **The IR itself is structurally incapable of the branch R6.16 forbids.** `IrHandlerKind` (`ir.rs`)
   selects which *declared* handler a request reaches (routing, a separate concern this same design-notes
   section names distinctly as "Service work vs domain work") — not how one handler behaves once
-  reached. `IrHandler` carries no caller/origin field at all; its own doc comment already states an
+  reached. `IrHandler` carries no caller/*identity* field; its own doc comment already states an
   agent handler's `binder` is `None` unconditionally by construction (`bynk.actor.by_on_agent`,
-  `context_checks.rs:2986-2996` rejects a `by` clause on an agent handler outright). There is no slot
-  anywhere in the IR that could hold "who called this."
+  `context_checks.rs:2986-2996` rejects a `by` clause on an agent handler outright). The one field
+  that *does* vary by invocation channel, `connection: Option<ConnectionBinder>` (`ir.rs:1673`, `Some`
+  iff the handler is a `from websocket` `on open`/`on message`/`on close`), does not violate R6.16
+  either — it binds the socket for owned-vs-borrowed linearity, not caller identity, and
+  `lower_handler_ir` never sets it for an agent handler at all (its own doc comment says so). Named
+  here explicitly rather than left for a later reader to rediscover: it is the field that most looks
+  like a counterexample to "no slot anywhere," and isn't one.
 - **Every real dispatch path in `emitter/workers.rs`/`emitter/workers_entry.rs` converges on one call
-  shape.** HTTP bearer/OIDC/sum-actor wrappers, the agent-to-agent internal-call seam
-  (`X-Bynk-Caller` header → `deps.identity`, `workers_entry.rs:1372-1378`), cron, queue, and
-  WebSocket-open all resolve `deps.identity`/`deps.who` at the boundary and then call the identical
+  shape, whether or not it minted an identity to get there.** The origins that carry an identity —
+  HTTP bearer/OIDC/sum-actor wrappers (`workers.rs:957,1048,1224`) and the agent-to-agent internal-call
+  seam (`X-Bynk-Caller` header → `deps.identity`, `workers_entry.rs:1372-1378`) — resolve it at the
+  boundary. The origins that carry none — cron (`workers.rs:670`), queue (`:689`), and plain HTTP with
+  no actor (`:966,983`) — forward a bare `deps` with no injection at all, not a different shape, just
+  nothing to inject. Either way every wrapper calls the identical
   `handlers.{sname}.{method_key}(...args, deps)` — the target handler function never branches on which
-  wrapper reached it. R8.13 (`bynk-greenfield-compiler.md:1452-1470`, "verification is emitted at the
-  boundary... this is R6.16 discharged") documents only the HTTP auth three-way as R6.16's discharge;
-  the actual shipped code extends the identical boundary-resolution pattern to every other origin R6.16
-  names, not just HTTP.
+  wrapper reached it, nor on whether that wrapper minted an identity. R8.13
+  (`bynk-greenfield-compiler.md:1452-1470`, "verification is emitted at the boundary... this is R6.16
+  discharged") documents only the HTTP auth three-way as R6.16's discharge; the actual shipped code
+  extends the identical boundary-resolution-or-nothing pattern to every other origin R6.16 names, not
+  just HTTP.
 
 No live violation found. P6.9's own table row is closed above by investigation, not by a slice — the
 first case in this track where a proposed row's own answer turns out to be "already true, nothing to
