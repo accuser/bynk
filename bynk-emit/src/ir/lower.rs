@@ -1602,18 +1602,27 @@ pub(crate) fn lower_agent_item_ir(agent: &AgentDecl, program: &CheckedProgram) -
             _ => None,
         })
         .collect();
-    // P6.20-pre: `Set`/`Cache` fields are deliberately excluded — the
-    // checker's own `ExprKind::Ident` dispatch (`checker.rs:3477-3481`,
-    // `emitter/lower.rs`'s `is_agent_store_map`/`is_agent_store_log`
-    // siblings) only special-cases `Map`/`Log` for a bare-value reference; a
-    // bare `Set`/`Cache` field name is not checker-legal there at all
-    // (`bynk.resolve.unknown_name` on a certified program), so leaving it
-    // out of this table and falling through to `lower_ident_ir`'s own
-    // `todo!()` is correct — structurally unreachable, not merely unhandled.
+    // P6.20-pre (review of #1240): only `Map` fields, not `Log`/`Set`/
+    // `Cache`. The shipped emitter's own `is_agent_store_log`
+    // (`emitter/lower.rs:4117`, "v0.95 ADR 0121") suggested `Log` belonged
+    // here alongside `Map` — but `bynk-check` itself never special-cases
+    // `StoreField::Log` in a bare-value or `FieldAccess` dispatch the way it
+    // does `StoreField::Map` (`checker.rs:3477-3481` for the bare-value
+    // case, `checker/expressions.rs:2592` for `.entries`/`.keys`/`.values`,
+    // ADR 0184); grep confirms every other `StoreField::Log` site in
+    // `bynk-check` is an unrelated `:=`-target check, a method dispatch, or
+    // the table build. A bare `store Log` field used as a value is
+    // therefore not checker-legal today (`bynk.resolve.unknown_name` on a
+    // certified program) — the same bucket `Set`/`Cache` are already in,
+    // for the same reason: leaving it out of this table and falling through
+    // to `lower_ident_ir`'s own `todo!()` is correct, structurally
+    // unreachable rather than merely unhandled. If a future checker slice
+    // makes a bare `Log` value legal, this table (and `ir.rs`'s own
+    // `StoreQuery` doc comment) need revisiting alongside it.
     let store_queryable: HashSet<String> = state
         .iter()
         .filter_map(|f| match f.kind {
-            StoreKindIr::Map(_, _) | StoreKindIr::Log(_, _) => Some(f.field.clone()),
+            StoreKindIr::Map(_, _) => Some(f.field.clone()),
             _ => None,
         })
         .collect();
@@ -3284,6 +3293,24 @@ fn lower_ident_ir(name: &str, cx: &LowerIrCtx) -> IrExprKind {
     if cx.lookup(name).is_some() {
         return IrExprKind::Local(name.to_string());
     }
+    // P6.20-pre (review of #1240): checked immediately after `cx.lookup`,
+    // matching the checker's own precedence — `checker.rs:3477-3481` runs
+    // `ctx.lookup(...).is_none() && ctx.store_fields.get(...)` and returns
+    // *before* `check_ident` (where a free-fn reference or a nullary variant
+    // resolve) ever sees the name; the shipped emitter's own
+    // `is_agent_store_map`/`is_agent_store_log` (`emitter/lower.rs:4111,4117`)
+    // put the same check ahead of its own variant-construction branch. This
+    // was originally checked *last* here, which only happens to agree with
+    // the checker when no other candidate shares the store field's name — a
+    // store `Map` field colliding with a free fn of the same name hit the
+    // free-fn `todo!()` below instead of `StoreQuery`, and colliding with a
+    // nullary variant silently returned the wrong node (`Global`) instead.
+    // The `cx.lookup(name).is_some()` guard just above already gives this
+    // check the one shadowing property it actually needs (a local or `Cell`
+    // field wins), so moving it here loses nothing.
+    if cx.store_queryable.contains(name) {
+        return IrExprKind::StoreQuery(name.to_string());
+    }
     if cx.program.fns.contains_key(name) {
         todo!(
             "bare ident `{name}` names a free function used as a value — Callee/Lambda-adjacent, \
@@ -3295,14 +3322,6 @@ fn lower_ident_ir(name: &str, cx: &LowerIrCtx) -> IrExprKind {
             sum,
             tag: name.to_string(),
         });
-    }
-    // P6.20-pre: a bare `store Map`/`store Log` field used as a value —
-    // mirrors `checker.rs`'s own `ExprKind::Ident` dispatch
-    // (`ctx.lookup(...).is_none() && ctx.store_fields.get(...)`, ADR
-    // 0120/0121), checked last so a local or `Cell` field sharing the name
-    // (already caught by the `cx.lookup` check above) is never shadowed.
-    if cx.store_queryable.contains(name) {
-        return IrExprKind::StoreQuery(name.to_string());
     }
     todo!(
         "bare ident `{name}` is neither a locally-bound name, a free function, nor a bare \
@@ -7223,12 +7242,14 @@ agent Inventory {
     }
 
     /// [`lower_handler_ir`]'s own `store_queryable` parameter (P6.20-pre) —
-    /// the `Map`/`Log` sibling of [`agent_store_cells`] above.
+    /// the `Map` sibling of [`agent_store_cells`] above. `Log` is not
+    /// included — see [`lower_agent_item_ir`]'s own `store_queryable`
+    /// construction for why (review of #1240).
     fn agent_store_queryable(_program: &CheckedProgram, agent: &AgentDecl) -> HashSet<String> {
         agent
             .store_fields
             .iter()
-            .filter(|f| matches!(f.kind.head.name.as_str(), "Map" | "Log"))
+            .filter(|f| f.kind.head.name == "Map")
             .map(|f| f.name.name.clone())
             .collect()
     }
@@ -7588,6 +7609,14 @@ fn passThroughQuery(q: Query[Int]) -> Query[Int] {
   q
 }
 
+-- P6.20-pre (review of #1240): a free fn sharing a name with `Ledger`'s own
+-- `entries` store field — pins that the store-field dispatch wins (checked
+-- immediately after `cx.lookup`, ahead of the free-fn probe), not the other
+-- way around.
+fn entries(n: Int) -> Int {
+  n
+}
+
 agent Ledger {
   key id: String
   store balance: Cell[Int] = 0
@@ -7624,6 +7653,21 @@ agent Ledger {
   -- the real fixture corpus (`lines.joinOn(orders, ...)`).
   on call passEntries() -> Effect[Query[Int]] {
     Effect.pure(passThroughQuery(entries))
+  }
+
+  -- P6.20-pre (review of #1240): the store field `entries` and the free fn
+  -- `entries` (declared above, colliding by name) both exist — the checker
+  -- resolves the bare reference to the store field's own `Query[Int]`
+  -- before `check_ident` (where a free-fn reference would resolve) ever
+  -- sees it, so this must lower to StoreQuery, not panic on the free-fn arm.
+  on call bareEntriesCollidesWithAFreeFn() -> Effect[Query[Int]] {
+    Effect.pure(entries)
+  }
+
+  -- P6.20-pre (review of #1240): a handler param named `entries` shadows
+  -- the store field of the same name — must lower to Local, not StoreQuery.
+  on call shadowedEntries(entries: Query[Int]) -> Effect[Query[Int]] {
+    Effect.pure(entries)
   }
 }
 "#,
@@ -7893,6 +7937,63 @@ agent Ledger {
             matches!(&args[0].kind, IrExprKind::StoreQuery(name) if name == "entries"),
             "expected the bare argument `entries` to lower to StoreQuery, got {:?}",
             args[0].kind
+        );
+    }
+
+    #[test]
+    fn handler_ir_bare_store_map_field_wins_over_a_colliding_free_fn_of_the_same_name() {
+        // Review of #1240 (finding 1): the store-field dispatch must be
+        // checked *before* the free-fn probe in `lower_ident_ir`'s own
+        // ladder, matching the checker's own precedence
+        // (`checker.rs:3477-3481` returns before `check_ident` — where a
+        // free-fn reference resolves — ever sees the name). Before that
+        // fix, `entries` colliding with the free fn `entries` declared in
+        // `handler_ir_fixture` hit the free-fn `todo!()` instead.
+        let program = handler_ir_fixture();
+        let ir = handler_ir_of(&program, "bareEntriesCollidesWithAFreeFn");
+        let IrExprKind::Block { tail, .. } = &ir.body.kind else {
+            panic!("expected a Block with a tail, got {:?}", ir.body.kind)
+        };
+        let IrExprKind::Return { value } = &tail.kind else {
+            panic!("expected the tail to wrap in Return, got {:?}", tail.kind)
+        };
+        let IrExprKind::Pure { value } = &value.kind else {
+            panic!(
+                "expected Effect.pure(...) to lower to Pure, got {:?}",
+                value.kind
+            )
+        };
+        assert!(
+            matches!(&value.kind, IrExprKind::StoreQuery(name) if name == "entries"),
+            "expected the store field to win over the colliding free fn, got {:?}",
+            value.kind
+        );
+    }
+
+    #[test]
+    fn handler_ir_a_local_param_shadowing_a_store_map_field_name_lowers_to_local() {
+        // Review of #1240 (finding 1): the `cx.lookup(name).is_some()` guard
+        // at the very top of `lower_ident_ir` is the one shadowing property
+        // the store-field dispatch actually depends on — pin it directly,
+        // independent of where in the ladder the store-field check sits.
+        let program = handler_ir_fixture();
+        let ir = handler_ir_of(&program, "shadowedEntries");
+        let IrExprKind::Block { tail, .. } = &ir.body.kind else {
+            panic!("expected a Block with a tail, got {:?}", ir.body.kind)
+        };
+        let IrExprKind::Return { value } = &tail.kind else {
+            panic!("expected the tail to wrap in Return, got {:?}", tail.kind)
+        };
+        let IrExprKind::Pure { value } = &value.kind else {
+            panic!(
+                "expected Effect.pure(...) to lower to Pure, got {:?}",
+                value.kind
+            )
+        };
+        assert!(
+            matches!(&value.kind, IrExprKind::Local(name) if name == "entries"),
+            "expected the shadowing param to win over the store field, got {:?}",
+            value.kind
         );
     }
 
