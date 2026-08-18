@@ -431,7 +431,8 @@ this section's own slice-history prose below.** Confirmed live against `ir/lower
 `:2352` `Expect`, `:2359` `Val`, `:2363` `Wire`, `:2367` `Observation`, `:2371` `Trace`, plus
 `lower_stmt`'s own `:1977` `Statement::Expect`) — but 5 of those 7 (`Expect`/`Val`/`Wire`/
 `Observation`/`Trace`, and the `Statement::Expect` gap) are reachable only when
-`ctx.in_test_body` is set, and `bynk-check/src/checker.rs:1325` is the *only* site that ever sets it —
+`ctx.in_test_body` is set, and `bynk-check/src/checker.rs:1325` is the only site that ever sets it
+`true` (five other sites set it `false`) —
 meaning those five are unreachable from any shipped handler/provider/agent body today, the same
 permanent-residue shape `project/tests_emit.rs` already has in `AST_IMPORTER_EXCEPTIONS` (§5), not
 open engineering work. Only **`Question`** and **`Is`** are real, production-reachable gaps — and per
@@ -534,11 +535,12 @@ site yet.)
 which is a different, narrower claim.** P6.14 (#1186, `e87691ff`, 2026-08-12) landed
 `IrItem::Provider{def, cap, body: ProviderBody}` (`ir.rs:855-875`) with `ProviderBody::Bynk{given,
 ops: Vec<ProviderOpIr>}`/`ProviderBody::External{given}`, and `lower_provider_item_ir`/
-`lower_provider_op_ir` (`ir/lower.rs:1698,1719`) do lower a provider op's real body through
+`lower_provider_op_ir` (`ir/lower.rs:1698,1825`) do lower a provider op's real body through
 `lower_expr_ir`, not just its signature. This landed *before* §3.7 (Q7)'s own snapshot date but was
 never folded into this doc's prose — confirmed live: `IrItem::Provider`/`lower_provider_item_ir`/
 `lower_provider_op_ir` have zero references anywhere in `emitter*.rs`/`project.rs` outside comments
-and `ir/lower.rs`'s own unit tests. The reason is named in `lower_provider_op_ir`'s own doc comment:
+and `ir/lower.rs`'s own unit tests. The reason is named in `lower_provider_given_ir`'s own doc comment
+(`ir/lower.rs:1719-1745`, the sibling reader `lower_provider_item_ir` also calls):
 `lower_expr_ir` still `todo!()`s on `ExprKind::Question` and `ExprKind::Is`, and a real provider op
 body routinely uses `?`. So the accurate status is: **built and tested, blocked on the same
 `Question`/`Is` gap this section's own P6.3 row left open** (see the P6.3 correction below), not
@@ -555,14 +557,15 @@ accumulator is a *bespoke*, purpose-built raw-AST walk (`project.rs:1266`, popul
 though the latter already carries materially the same two facts (`ProtocolIr::Events`'s
 `schema_dispatch: Option<SchemaVersionPattern>` field, `ir.rs:1018,1050`). The reason, confirmed by
 grep: `IrItem::Service`/`lower_service_item_ir` have **zero** shipped emitter call sites anywhere —
-the only two references outside `ir/lower.rs` itself are comments in `emitter.rs:420` and
-`emitter/wrangler.rs:46` explaining why those sites *don't* use it. This is independent, corroborating
-evidence for the same finding P6.14/#1186's own correction above makes for `Provider`: this track has
-now built real `IrItem` data for `Service` and `Provider` that nothing in the shipped emitter actually
-reads yet, and new slices are choosing to build fresh bespoke plumbing around that gap rather than
-close it. See the fresh completion-plan work opened after this landing for a proposed sequencing that
-treats closing the `Question`/`Is` gap as the load-bearing prerequisite for finally giving both real
-call sites.
+outside the `ir` module (which carries its own doc-comment references, e.g. `ir.rs:1161-1162`'s own
+"nothing in the shipped emitter constructs a real `IrItem::Service` yet"), the only two references are
+comments in `emitter.rs:420` and `emitter/wrangler.rs:46` explaining why those sites *don't* use it.
+This is independent, corroborating evidence for the same finding P6.14/#1186's own correction above
+makes for `Provider`: this track has now built real `IrItem` data for `Service` and `Provider` that
+nothing in the shipped emitter actually reads yet, and new slices are choosing to build fresh bespoke
+plumbing around that gap rather than close it. Closing the `Question`/`Is` gap is the load-bearing
+prerequisite for finally giving both real call sites — a slice sequence for that is proposed but not
+yet issue-numbered as of this correction.
 
 **Slice 6 (`project.rs` cleanup) is not yet ready, contrary to this table's own "once (1)–(5) land,
 whatever's left here is residue" framing.** A scoping pass (2026-08-14) found `project.rs` holds zero
