@@ -1875,6 +1875,38 @@ of either file), or a second re-settling (§6a.D's own precedent) naming 7 — o
 plan didn't reach — as this track's own true floor, the same "confirm, don't assume" discipline §5 and
 §9 both already call for. Neither has happened yet; this plan's own remit ends here, not at retirement.
 
+### 6b. The retirement plan (P6.42 onward)
+
+**Provenance.** Assembled 19 August 2026, in response to an explicit request to drive this track to
+retirement rather than leave it at §6a's own hand-off point. Four research passes (three parallel
+explorations of `project.rs`, `emitter.rs`, and `emitter/emit.rs`'s remaining surface, followed by an
+independent design pass verifying the highest-stakes claims against the tree directly) corrected §6a's
+closing paragraph on its most consequential point: `project.rs`'s claimed blocker
+(`in_memory_logical_path`'s `SourceUnit` match) is a verbatim re-implementation of
+`bynk_syntax::ast::SourceUnit::name()`, which already exists — not a structural read. `project.rs`
+clears, and `project/diagnostics.rs` (counted only through the P6.26-review super-glob rule,
+inheriting from `project.rs`, with zero AST references of its own) clears with it. Scope: land every
+genuinely convertible declaration-read the research found (Phase G clears `project.rs`; Phase H
+converts `emitter.rs`/`emitter/emit.rs`/`emitter/lower.rs`'s in-scope reads without expecting probe
+movement, since both `emit.rs` and `lower.rs` stay counted through their own `use super::*;` while
+`emitter.rs` imports the AST), then one re-settling (Phase I) naming the floor — **5**,
+`bynk-emit/src/emitter{,/**}` exactly — on that evidence, and retiring the track.
+
+**Phase G — `project.rs` to zero. Landed: P6.42.**
+
+**Fifty-third: P6.42 — `project.rs` and `project/diagnostics.rs` drop their two false AST coupling
+channels.** `in_memory_logical_path`'s own `SourceUnit::{Commons,Context,Adapter,Suite}` match
+(`project.rs:645-650`) was a byte-for-byte re-implementation of `SourceUnit::name()`
+(`bynk-syntax/src/ast.rs:213-221`), not a structural read — replaced with `unit.name()`, which drops
+`SourceUnit` from `project.rs`'s own import list entirely (nothing else in the file names it).
+`project/diagnostics.rs`'s `use super::*;` (its only import) existed to reach two names,
+`PathBuf` and `CompileError`; replaced with direct imports of both, which drops the module's only
+inheritance channel into `project.rs`'s still-AST-importing parent. `ast_importers`: **7 → 6** —
+`project/diagnostics.rs` alone, confirmed live (`project.rs` itself still imports the AST via its
+remaining six names, so this slice does not yet touch it). Zero-diff bless over the full e2e corpus,
+`cargo test --workspace`, and `cargo clippy --workspace --all-targets` all pass unchanged — a pure
+dedup with no behavioural surface. Full reasoning: `design/pending/p6-42-source-unit-name-dedup.md`.
+
 | Item | Phase | Entry condition |
 |---|---|---|
 | `Question`'s own three-way desugar fork — what `IrExprKind` an `expr?` lowers to | 6, unproposed | a slice proposal for P6.3's desugaring table (§6) reaches `Question` specifically; #1225 (§6, fourteenth slice) settled the *construction*-side identity question this depends on but explicitly does not settle this one |

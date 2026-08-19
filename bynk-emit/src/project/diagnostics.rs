@@ -1,5 +1,7 @@
-use super::*;
+use std::path::PathBuf;
+
 use bynk_project::AttributedError;
+use bynk_syntax::error::CompileError;
 
 // P4.1 (#1115): `ProjectAnalysis`/`ContextSequenceInfo`/`ContextBoundaryInfo`
 // relocated verbatim (Decision C) to `bynk-check/src/analysis.rs`, alongside
