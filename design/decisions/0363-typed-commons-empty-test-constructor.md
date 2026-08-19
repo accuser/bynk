@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "P6.38: emitter/lower.rs's idempotency_scoping_tests module reads a new TypedCommons::empty() (bynk-check) instead of hand-building an empty Commons/QualifiedName itself -- this module's own last bynk_syntax::ast dependency, per the AST-free test-constructor option P6.33 named. Does not clear emitter/lower.rs: P6.37 already found this file's own remaining production surface (system_http_route_body's TypeRef field, the two HttpMethod::from_ident sites) has no available IR-native alternative, so the file stays counted regardless -- this slice closes only the test-residue half of R6.13's own \"known gap\" paragraph for this file, not the file as a whole. ast_importers unaffected (7)."
----
+# 0363 — `TypedCommons::empty()` (bynk-check) replaces `emitter/lower.rs`'s hand-built empty `Commons` test fixture
 
-## ADR: typed-commons-empty-test-constructor
-
-title: `TypedCommons::empty()` (bynk-check) replaces `emitter/lower.rs`'s hand-built empty `Commons` test fixture
+- **Status:** Accepted (v0.249.15)
 
 summary: Phase E of the #1137 completion plan (`design/tracks/the-ir.md` §6a, P6.38) — closes the test-residue half of this file's own R6.13 gap; does not clear the file, per P6.37's own finding
 

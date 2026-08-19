@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0363](0363-typed-commons-empty-test-constructor.md) | **`TypedCommons::empty()` (bynk-check) replaces `emitter/lower.rs`'s hand-built empty `Commons` test fixture** (v0.249.15) — `TypedCommons::empty()` (bynk-check) replaces `emitter/lower.rs`'s hand-built empty `Commons` test fixture | Accepted (v0.249.15) |
 | [0362](0362-body-mode-handler-kind-ir.md) | **`BodyMode::TestCase::test_service_handlers` carries `IrHandlerKind`; `system_http_route_body`/`HttpMethod::from_ident` found narrower in scope than the plan's own row** (v0.249.14) — `BodyMode::TestCase::test_service_handlers` carries `IrHandlerKind`; `system_http_route_body`/`HttpMethod::from_ident` found narrower in scope than the plan's own row | Accepted (v0.249.14) |
 | [0361](0361-item-enumerator-scoping-correction.md) | **P6.36's own `lower_unit_items_ir` enumerator is not the right shape for either of its two intended consumers** (v0.249.13) — P6.36's own `lower_unit_items_ir` enumerator is not the right shape for either of its two intended consumers | Accepted (v0.249.13) |
 | [0360](0360-actor-seam-investigation.md) | **`EmitProjectCtx::actors` precomputation investigated and declined — relocates, not removes, the AST dependency, at real risk to a security-sensitive path** (v0.249.12) — `EmitProjectCtx::actors` precomputation investigated and declined — relocates, not removes, the AST dependency, at real risk to a security-sensitive path | Accepted (v0.249.12) |
