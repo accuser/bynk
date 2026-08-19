@@ -253,6 +253,16 @@ impl ParsedFile {
         }
     }
 
+    /// P6.x (#1137): does this file declare a `messages { … }` block? The one
+    /// predicate a `messages`-bundle emitter needs — whether to inject the
+    /// `bynk.locale` `render` fallback import — without the caller having to
+    /// walk [`items`](Self::items) and match [`CommonsItem::Messages`] itself.
+    pub fn declares_messages(&self) -> bool {
+        self.items()
+            .iter()
+            .any(|it| matches!(it, CommonsItem::Messages(_)))
+    }
+
     pub fn uses(&self) -> &Vec<UsesDecl> {
         match &self.unit {
             SourceUnit::Commons(c) => &c.uses,
