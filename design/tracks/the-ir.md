@@ -1438,11 +1438,11 @@ others outside P6.35's own scope).
 
 **Phase F — IR-side residue (R6.13, invisible to the probe by construction — §5's own "known gap"
 paragraph).** Per P6.24a's own framing, pair each converted field with its reader cutover; do not land
-mirrors speculatively. **P6.39** — delete the six AST-typed `ir.rs` fields with zero production readers
-(`GlobalRef::sum`, `IrExprKind::Record::def`, `IrItem::Type::def`, `IrItem::Fn::def` — which has no
-production call site at all, so this slice also decides whether `IrItem::Fn` survives as a dormant
-constructor — `IrExprKind::RefinedCheck::{base, refinement}`, `IrPat::Refined::refinement`); cheapest
-remaining R6.13 work in the track. **P6.40** — `ProtocolIr::Events::schema_dispatch` gets an IR-native
+mirrors speculatively. **P6.39 — landed, four of six.** `GlobalRef::sum`, `IrExprKind::Record::def`,
+`IrItem::Type::def`, `IrItem::Fn::def` deleted (`IrItem::Fn` survives as a dormant constructor, minus
+`def`). `IrExprKind::RefinedCheck::{base, refinement}`/`IrPat::Refined::refinement` investigated and
+left as-is — load-bearing semantic payload for a dormant node, not redundant metadata; see this
+section's own Fiftieth entry above. **P6.40** — `ProtocolIr::Events::schema_dispatch` gets an IR-native
 mirror of the one-variant `SchemaVersionPattern::Literal(i64)`, cutting over its one real reader
 (`emit.rs:1509`), pinned by `1232_events_envelope_schema_dispatch_bare`. **P6.41** —
 `TypeShape::Refined::{base, refinement}`, the largest IR-side item: needs mirrors of `BaseType`,
@@ -1801,6 +1801,30 @@ counted on that basis regardless. `ast_importers`: **7 → 7**, unaffected. Veri
 bless against the entire e2e corpus and a full `cargo test --workspace`, including the three tests
 `idempotency_scoping_tests` itself carries. Full reasoning:
 `design/pending/p6-38-typed-commons-empty-test-constructor.md`'s own ADR.
+
+**Fiftieth: P6.39 — four zero-production-reader AST-typed `ir.rs` fields deleted; two others
+investigated and found load-bearing, not redundant, per §6a's own Phase F.** Deleted `GlobalRef::sum`,
+`IrExprKind::Record::def`, `IrItem::Type::def`, and `IrItem::Fn::def` — each re-verified directly
+against the tree first (not assumed from the earlier grounding pass that first named them): all four
+read only by test assertions, `IrItem::Fn`'s own constructor (`lower_fn_item_ir`) has no production
+call site anywhere at all, and `IrItem::Type::def`'s one production consumer already ignored it via
+`..`. All four are redundant identity metadata — nothing not already recoverable from another field or
+the caller's own context.
+
+**A real correction on the other two, not an oversight.** `IrExprKind::RefinedCheck::{base,
+refinement}` and `IrPat::Refined::refinement` were *not* deleted. Both nodes' own doc comments state
+their purpose plainly — "a refined-type/inline-predicate boolean check," "`p 'where' predicate`" — and
+`base`/`refinement` *are* what gets checked, not a redundant cross-reference to it; `RefinedCheck`'s
+own `value: Box<IrExpr>` field alone cannot express what check to run without them. This differs
+categorically from the four deleted fields: those cached an identity available elsewhere, these carry
+the dormant node's *only* copy of its own semantic content. Both nodes are unreached by any shipped
+emitter path today (P6.2's own emitter-side cutover hasn't landed) — the same "zero readers because
+nothing has been wired to it yet" shape `Question`/`Is` were in before P6.15/P6.16, not "zero readers
+because the field is redundant." A plan row that reads "zero production readers" as license to delete
+without checking which category a field falls into will get this wrong; left as-is here.
+`ast_importers` unaffected — invisible to the probe by construction (`ir.rs`/`ir/lower.rs` excluded).
+Verified by the full `ir::lower` unit suite (134/134) and a full zero-diff bless against the entire
+e2e corpus. Full reasoning: `design/pending/p6-39-ir-zero-reader-fields.md`'s own ADR.
 
 ## 7. Out of scope — forward references, not refusals
 
