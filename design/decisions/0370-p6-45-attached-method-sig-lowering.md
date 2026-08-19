@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "P6.45: combined_types_for_unit_info moves to bynk-check::symbols, next to combined_types_for; the FnName::Method filter folds into a new lower_attached_fn_sig_ir_from_types (bynk-emit/src/ir/lower.rs). ast_importers: unaffected (6)."
----
+# 0370 — `combined_types_for_unit_info` relocates to `bynk-check::symbols`; the `FnName::Method` filter folds into `lower_attached_fn_sig_ir_from_types`
 
-## ADR: p6-45-attached-method-sig-lowering
-
-title: `combined_types_for_unit_info` relocates to `bynk-check::symbols`; the `FnName::Method` filter folds into `lower_attached_fn_sig_ir_from_types`
+- **Status:** Accepted (v0.249.22)
 
 summary: Continues Phase G of the #1137 retirement plan — one owner-side relocation, one filter folded behind an existing IR-lowering boundary
 
