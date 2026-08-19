@@ -1342,11 +1342,14 @@ did not materialize — zero-diff bless confirmed.
 
 **Phase C — declaration-read conversions (evidence for §6a.D).** Each slice below is a
 `Callee`/`IrItem`-reads-the-decision conversion in the established P6.21 idiom; none clears a file on
-its own, but together they are what §6a.D needs before ruling on the codec layer. **P6.29** —
-`cap_op_param_names` (`emitter/lower.rs:1141`) reads a new `capability_ops_ir` helper in `ir/lower.rs`
-wrapping the already-existing `lower_capability_item_ir`/`IrItem::Capability`, losing its
-`CommonsItem::Capability`/`c.ops` by-name walk; preserve both current behaviours (first match in item
-order, empty-vec not panic on miss). **P6.30** — `emit_worker_compose` (`emitter/workers.rs:34`) reads
+its own, but together they are what §6a.D needs before ruling on the codec layer. **P6.29 — landed.**
+`cap_op_param_names` (`emitter/lower.rs`) reads a new `capability_op_sig_from_commons` helper in
+`ir/lower.rs` — see this section's own Fortieth entry above (the plan named `lower_capability_item_ir`
+as the wrapping target; landed differently, wrapping `lower_op_sig_ir_from_commons` instead, since
+`lower_capability_item_ir` needs a `&CheckedProgram` this call site never has). Both current
+behaviours preserved exactly (first match in item order, empty result not panic on miss).
+`ast_importers`: **8 → 8**, unaffected, exactly as predicted. **P6.30** — `emit_worker_compose`
+(`emitter/workers.rs:34`) reads
 `IrHandlerKind`/`ProtocolIr` for its nine `HandlerKind`/`ServiceProtocol` matches, via the existing
 `lower_handler_kind_ir`/`lower_protocol_ir_from_commons`; risk is real — `lower_actor_seam_ir` tries
 resolvers in a fixed `Sum`→`Bearer`→`Oidc`→`Caller` order and `workers.rs:389`'s own comment records
@@ -1491,6 +1494,24 @@ immediately before it — the same `Option`-filtering `ty_to_type_ref` already d
 `emitter/runtime_use.rs` cleared. Verified by a full zero-diff bless against the entire e2e corpus —
 the push-time-to-drain-time filtering-order risk this section's own Phase B entry named did not
 materialize. Full reasoning: `design/pending/p6-28-runtime-use-tyid.md`'s own ADR.
+
+**Fortieth: P6.29 — `cap_op_param_names` reads `ir::lower::capability_op_sig_from_commons` instead of
+walking `CommonsItem::Capability` by hand, per §6a's own Phase C.** `LowerCtx`/`ModuleCtx` carry only
+a `&TypedCommons`, never a `&CheckedProgram`, so the existing `CheckedProgram`-driven
+`lower_capability_item_ir` was not directly callable from this call site — the same reason
+`lower_op_sig_ir_from_commons` exists as `lower_op_sig_ir`'s own commons-only sibling. Added
+`capability_op_sig_from_commons(commons, cap, op) -> Option<OpSig>` to `ir/lower.rs` (excluded from
+`ast_importers`) as the `TypedCommons`-only counterpart to `lower_capability_item_ir`, wrapping the
+existing `lower_op_sig_ir_from_commons`. The walk itself is unchanged, only relocated — "find the op
+named `op` on the capability named `cap`" still has no IR-native replacement, so this still reads
+`TypedCommons::commons.items` directly, the same acknowledgment #1187's own scoping pass already made
+for this exact spot. Both of the original loop's behaviours are preserved precisely: first match in
+item order, and an empty result rather than a panic on no match anywhere — pinned by a new unit test
+against the same fixture `lower_capability_item_ir_assembles_ops_in_declaration_order` already uses.
+`ast_importers`: **8 → 8**, unaffected — `emitter/lower.rs` was never counted *because* of this one
+site; it retains other, still-open AST names (Q7-surviving body-rendering params). Verified by a full
+zero-diff bless against the entire e2e corpus and a full `cargo test --workspace`. Full reasoning:
+`design/pending/p6-29-cap-op-param-names-ir.md`'s own ADR.
 
 ## 7. Out of scope — forward references, not refusals
 

@@ -22,10 +22,11 @@ use std::sync::Arc;
 use bynk_check::checker::{self, Callee, CheckedProgram, NamedKind, Ty, TyId, TypedCommons, Types};
 use bynk_syntax::ast::{
     ActorDecl, AgentDecl, BaseType, BinOp, Block, CapRef, CapabilityDecl, CapabilityOp,
-    EventPattern, EventPatternValue, Expr, ExprId, ExprKind, FieldInit, FnDecl, FnName, Handler,
-    HandlerKind, HttpMethod, InterpPart, Invariant, LambdaExpr, LiteralValue, MatchArm, MatchBody,
-    Pattern, PatternBindingKind, ProviderDecl, ProviderOp, QualifiedName, ServiceDecl,
-    ServiceProtocol, Statement, StoreField, Transition, TypeBody, TypeDecl, UnaryOp, expr_children,
+    CommonsItem, EventPattern, EventPatternValue, Expr, ExprId, ExprKind, FieldInit, FnDecl,
+    FnName, Handler, HandlerKind, HttpMethod, InterpPart, Invariant, LambdaExpr, LiteralValue,
+    MatchArm, MatchBody, Pattern, PatternBindingKind, ProviderDecl, ProviderOp, QualifiedName,
+    ServiceDecl, ServiceProtocol, Statement, StoreField, Transition, TypeBody, TypeDecl, UnaryOp,
+    expr_children,
 };
 use bynk_syntax::span::Span;
 
@@ -1738,6 +1739,39 @@ pub(crate) fn lower_capability_item_ir(cap: &CapabilityDecl, program: &CheckedPr
             .map(|op| lower_op_sig_ir(op, program))
             .collect(),
     }
+}
+
+/// P6.29 (design/tracks/the-ir.md §6a): the `TypedCommons`-only counterpart to
+/// [`lower_capability_item_ir`], for call sites (`emitter/lower.rs`'s
+/// `cap_op_param_names`) that have a `TypedCommons` in hand but no
+/// `CheckedProgram` — `LowerCtx`/`ModuleCtx` never carry one (see
+/// [`lower_op_sig_ir_from_commons`], this function's own single-op sibling,
+/// for the identical reason it exists as a separate entry point rather than a
+/// thin wrapper over the `CheckedProgram`-driven [`lower_op_sig_ir`]).
+///
+/// Resolves one capability operation's signature by name — "find the op
+/// named `op` on the capability named `cap`" has no IR-native replacement
+/// (nothing indexes capabilities by name once lowered), so this still walks
+/// `TypedCommons::commons.items` the same way the code it replaces did.
+/// First match in item order; `None` on no match, mirroring the caller's own
+/// prior fallthrough-to-empty behaviour exactly.
+pub(crate) fn capability_op_sig_from_commons(
+    commons: &TypedCommons,
+    cap: &str,
+    op: &str,
+) -> Option<OpSig> {
+    commons.commons.items.iter().find_map(|item| {
+        let CommonsItem::Capability(c) = item else {
+            return None;
+        };
+        if c.name.name != cap {
+            return None;
+        }
+        c.ops
+            .iter()
+            .find(|o| o.name.name == op)
+            .map(|o| lower_op_sig_ir_from_commons(o, commons))
+    })
 }
 
 /// P6.12 (#1173): lower one capability operation's own signature into a real
@@ -9334,6 +9368,44 @@ capability Store {
             &*program.program().ty_intern.get(ops[1].params[1].1),
             Ty::Base(bynk_syntax::ast::BaseType::Int)
         ));
+    }
+
+    /// P6.29 (design/tracks/the-ir.md §6a): pins `capability_op_sig_from_commons`
+    /// against the same fixture as its `CheckedProgram`-driven sibling above —
+    /// same param names/order, found by name alone from `TypedCommons`, no
+    /// `CheckedProgram` needed at the call site (`emitter/lower.rs`'s
+    /// `cap_op_param_names` only ever had one).
+    #[test]
+    fn capability_op_sig_from_commons_finds_the_named_op() {
+        let program = checked_context_program(
+            r#"
+context demo
+
+capability Store {
+  fn get(key: String) -> Effect[Int]
+  fn put(key: String, value: Int) -> Effect[()]
+}
+"#,
+        );
+        let commons = program.program();
+
+        let get = capability_op_sig_from_commons(commons, "Store", "get")
+            .expect("Store.get should resolve");
+        assert_eq!(get.params.len(), 1);
+        assert_eq!(get.params[0].0, "key");
+
+        let put = capability_op_sig_from_commons(commons, "Store", "put")
+            .expect("Store.put should resolve");
+        assert_eq!(put.params.len(), 2);
+        assert_eq!(put.params[0].0, "key");
+        assert_eq!(put.params[1].0, "value");
+
+        // Same fallthrough-to-`None` behaviour the by-hand AST walk it
+        // replaces had, for both an unknown capability and a known
+        // capability's unknown op — mirrors `cap_op_param_names`'s own prior
+        // fallthrough-to-empty-`Vec` at the caller.
+        assert!(capability_op_sig_from_commons(commons, "NoSuchCap", "get").is_none());
+        assert!(capability_op_sig_from_commons(commons, "Store", "no_such_op").is_none());
     }
 
     #[test]

@@ -1135,28 +1135,16 @@ pub(crate) fn lower_expr(e: &Expr, cx: &mut LowerCtx) -> Lowered {
 /// The parameter names of a capability operation, looked up from the capability
 /// declarations in scope (v0.117). Used to destructure a recorded call's
 /// arguments for a `with` predicate and to build `trace(Cap.op)` records.
-/// #1187's own closing scoping pass: the declaration lookup itself stays a
-/// by-name walk (nothing IR-native replaces "find the op named `op` on the
-/// capability named `cap`"), but the parameter list itself now reads
-/// `lower_op_sig_ir_from_commons`'s already-resolved `OpSig::params`
-/// instead of a second, independent `o.params.iter().map(|p| p.name.name...)`
-/// extraction — one source of truth for a capability op's own parameter
-/// order and names, matching `#1193`'s own established `emit_capability`
-/// precedent for the rest of an op's signature.
+/// P6.29 (design/tracks/the-ir.md §6a): the declaration lookup itself now reads
+/// `crate::ir::lower::capability_op_sig_from_commons` — still a by-name walk
+/// under the hood (nothing IR-native replaces "find the op named `op` on the
+/// capability named `cap`"), but relocated to `ir/lower.rs` (excluded from
+/// `ast_importers` — the `Ast → Ir` lowering pass's own job), so this file no
+/// longer spells `bynk_syntax::ast::CommonsItem` itself.
 fn cap_op_param_names(cx: &LowerCtx, cap: &str, op: &str) -> Vec<String> {
-    for item in &cx.commons().commons.items {
-        if let bynk_syntax::ast::CommonsItem::Capability(c) = item
-            && c.name.name == cap
-            && let Some(o) = c.ops.iter().find(|o| o.name.name == op)
-        {
-            return crate::ir::lower::lower_op_sig_ir_from_commons(o, cx.commons())
-                .params
-                .into_iter()
-                .map(|(name, _)| name)
-                .collect();
-        }
-    }
-    Vec::new()
+    crate::ir::lower::capability_op_sig_from_commons(cx.commons(), cap, op)
+        .map(|sig| sig.params.into_iter().map(|(name, _)| name).collect())
+        .unwrap_or_default()
 }
 
 /// Lower an observation (v0.117) to a `Bool` JavaScript expression over the
