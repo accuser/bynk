@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "P6.50: emitter/emit.rs's dead build_deps_object_ty deleted (zero callers workspace-wide), and is_effectful_return moves into ir/lower.rs -- fixing a backwards Ast<->Ir dependency where the lowering pass was calling up into the emitter it should only ever be called from. ast_importers: unaffected (5)."
----
+# 0375 — Dead code deleted; `is_effectful_return` relocates to fix a backwards `Ast ⇄ Ir` dependency
 
-## ADR: p6-50-dead-code-and-backwards-dependency
-
-title: Dead code deleted; `is_effectful_return` relocates to fix a backwards `Ast ⇄ Ir` dependency
+- **Status:** Accepted (v0.249.27)
 
 summary: Opens Phase H of the #1137 retirement plan — first of the `emitter.rs`/`emit.rs`/`lower.rs` conversions that close real defects without moving the probe
 

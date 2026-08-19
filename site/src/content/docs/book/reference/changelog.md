@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.249.27** | "P6.50: emitter/emit.rs's dead build_deps_object_ty deleted (zero callers workspace-wide), and is_effectful_return moves into ir/lower.rs -- fixing a backwards Ast<->Ir dependency where the lowering pass was calling up into the emitter it should only ever be called from. ast_importers: unaffected (5)." |
 | **v0.249.26** | "P6.49: project.rs's own bynk_syntax::ast import deleted entirely -- its last pre-check TypeRef walk relocates to a new ParsedFile::history_target_agent_names() (bynk-project), and TypeDecl/FnDecl/Visibility/ActorDecl are re-exported from the bynk-check modules whose own public API was already parameterised by them. ast_importers: 6 -> 5 -- project.rs clears (project/diagnostics.rs cleared with it back in P6.42). Phase G of the #1137 retirement plan complete." |
 | **v0.249.25** | "P6.48: emitter::walk_unit_table_bodies (emitter.rs, already counted) replaces two hand-rolled copies of the same service/agent/provider body walk in project.rs's unit_table_uses_emit and called_cross_context_services. ast_importers: unaffected (6) -- project.rs's Block/Expr sites cleared, but the file was already counted on other names." |
 | **v0.249.24** | "P6.47: lower_event_subscriber_shapes_ir (bynk-emit/src/ir/lower.rs) absorbs the ServiceProtocol::Events pre-filter guarding lower_service_item_ir, and EventSubscriberShape moves to ir.rs -- project.rs's per-file loop becomes one call. ast_importers: unaffected (6)." |
