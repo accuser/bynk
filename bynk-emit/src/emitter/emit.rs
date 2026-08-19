@@ -1226,11 +1226,12 @@ pub(crate) fn emit_provider(
             .iter()
             .map(|p| format!("{}: {}", ts_ident(&p.name.name), ts_type_ref(&p.type_ref)))
             .collect();
-        let async_kw = if is_effectful_return(&op.return_type) {
-            "async "
-        } else {
-            ""
-        };
+        // P6.55 (design/tracks/the-ir.md §6b): computed once, not twice —
+        // `async_tail` below used to call `is_effectful_return(&op.return_type)`
+        // again for the identical value (the same duplicate-computation
+        // pattern P6.54 fixed in `emit_agent`).
+        let effectful = is_effectful_return(&op.return_type);
+        let async_kw = if effectful { "async " } else { "" };
         writeln!(
             out,
             "  {async_kw}{name}({params}): {ret} {{",
@@ -1253,7 +1254,10 @@ pub(crate) fn emit_provider(
                 handler: HandlerShared {
                     // The provider's `given` capabilities are in scope in its
                     // bodies, and resolve against the injected `this.deps`.
-                    capabilities: p.given.iter().map(|c| c.key().to_string()).collect(),
+                    capabilities: crate::ir::lower::lower_provider_given_ir(p)
+                        .into_iter()
+                        .map(|c| c.name)
+                        .collect(),
                     cap_deps_expr: if p.given.is_empty() {
                         "deps".to_string()
                     } else {
@@ -1273,13 +1277,12 @@ pub(crate) fn emit_provider(
         )
         .with_source_map(source_map);
         cx.local_agents = ctx.local_agents.clone();
-        let async_tail = is_effectful_return(&op.return_type);
         emit_block_as_function_body_with_return(
             out,
             &op.body,
             &mut cx,
             INDENT_STEP * 2,
-            async_tail,
+            effectful,
             Some(&op.return_type),
         );
         writeln!(out, "  }}").unwrap();

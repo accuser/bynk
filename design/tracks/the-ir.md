@@ -2109,6 +2109,21 @@ reads a field. `CapRef` dropped from `emit.rs`'s import list entirely. `ast_impo
 (5)**. Zero-diff bless over the full e2e corpus, `cargo test --workspace`, `cargo clippy --workspace
 --all-targets` all pass unchanged. Full reasoning: `design/pending/p6-54-inconsistent-ir-reads.md`.
 
+**Sixty-sixth: P6.55 — `emit_provider` stops re-deriving `op.return_type`'s own effectfulness
+twice; the full `ProviderShapeIr` sketch scoped back down.** Same correction P6.53 made for
+`AgentShapeIr`: tracing each proposed read's own downstream consumer first found
+`p.provider_name.name`/`p.capability.name`/`op.name.name` buy nothing (`p: &ProviderDecl`/`op:
+&ProviderOp` stay required regardless). The concretely justified defects were narrower and matched
+patterns already fixed elsewhere in this same file this phase: `is_effectful_return(&op.return_type)`
+called twice for the same op (P6.54's `emit_agent` fix, same shape, different function) and
+`HandlerShared::capabilities` re-deriving `CapRef::key()` when `lower_provider_given_ir(p)` was
+already called two lines above for the deps type (P6.54's third pattern, one more site). Both fixed.
+`lower_provider_item_ir` stays unwired to a production call site — real, tested (`ir/lower.rs`'s own
+unit tests exercise it directly), but production-unreached, the same accurate state P6.53 left
+`lower_agent_item_ir` in. `ast_importers`: **unaffected (5)**. Zero-diff bless over the full e2e
+corpus, `cargo test --workspace`, `cargo clippy --workspace --all-targets` all pass unchanged. Full
+reasoning: `design/pending/p6-55-provider-op-dedup.md`.
+
 | Item | Phase | Entry condition |
 |---|---|---|
 | `Question`'s own three-way desugar fork — what `IrExprKind` an `expr?` lowers to | 6, unproposed | a slice proposal for P6.3's desugaring table (§6) reaches `Question` specifically; #1225 (§6, fourteenth slice) settled the *construction*-side identity question this depends on but explicitly does not settle this one |
