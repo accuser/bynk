@@ -1428,8 +1428,13 @@ enumerator wouldn't supply either, without the expense and risk of a full `Check
 a full body-lowering pass... just to discard it"). **P6.37 — landed, narrower than estimated.**
 `test_service_handlers` converted to `IrHandlerKind`; `system_http_route_body` and the two
 `HttpMethod::from_ident` sites investigated and left as raw AST — see this section's own Forty-eighth
-entry above. `ast_importers`: **7 → 7**, unaffected. **P6.38** — the AST-free `TypedCommons` test
-constructor P6.33 chose, clearing `emitter/lower.rs`'s last `#[cfg(test)]` residue.
+entry above. `ast_importers`: **7 → 7**, unaffected. **P6.38 — landed.** `TypedCommons::empty()`
+(`bynk-check`) closes `emitter/lower.rs`'s last `#[cfg(test)]` residue — see this section's own
+Forty-ninth entry above. Does **not** clear the file, per P6.37's own finding above (`ast_importers`:
+**7 → 7**). Phase E closed: P6.34 (investigated, no code), P6.35, P6.37, P6.38 landed;
+`emitter/lower.rs` remains counted (`system_http_route_body`, `HttpMethod::from_ident`, Q7 params),
+`project.rs` remains counted (`own_contract_hashes`, `build_output`'s own declaration reads, and
+others outside P6.35's own scope).
 
 **Phase F — IR-side residue (R6.13, invisible to the probe by construction — §5's own "known gap"
 paragraph).** Per P6.24a's own framing, pair each converted field with its reader cutover; do not land
@@ -1466,25 +1471,32 @@ confirmed exactly as predicted.** ~~P6.28 9→8 (`runtime_use.rs` cleared)~~ **l
 as predicted.** ~~P6.29–P6.32 8→8 (decision conversions, no file clears)~~ **landed, confirmed exactly
 as predicted, though P6.30/P6.31 each found real `ServiceProtocol`-check residue narrower than
 estimated (see their own entries above).** ~~P6.33 8→7, `emitter/serialisation.rs` excluded~~
-**landed** — Phase D's own ruling, not the "8→8 or redefined" this row first hedged. Live today,
-post-P6.33: **7**. P6.34–P6.36 7→6 if `project.rs` clears (conditional on the P6.35 finding below —
-and `project/diagnostics.rs` clears in the same moment `project.rs` itself does, automatically) ·
-P6.37–P6.38 6→5 (`emitter/lower.rs` cleared) · remainder 5→2 (`workers.rs`, `workers_entry.rs`,
-`emitter.rs` — **caveat**: P6.30/P6.31 each already found a `ServiceProtocol` residue neither file can
-close without threading a new `TypedCommons` parameter through, so "cleared" here is this row's own
-original optimism, not confirmed — the real number for these two may be a residual floor > 0, to be
-measured once Phase E's own project.rs work lands, not assumed now) · `emitter/emit.rs`'s own eventual
-floor, if any, is likewise not yet known (§6a's own intro, above).
+**landed** — Phase D's own ruling, not the "8→8 or redefined" this row first hedged. ~~P6.34 7→7
+(investigation)~~ **landed, no code — the "blocking three files" framing did not hold (Forty-sixth
+entry).** ~~P6.35 7→6 if `own_contract_hashes` excluded~~ **landed at 7→7 — `own_contract_hashes` was
+never excluded (Decision 3, Forty-fourth entry); named as a future residual-floor candidate instead,
+not removed now (Forty-fifth entry).** ~~P6.36 7→7~~ **landed as a scoping correction, no enumerator
+built (Forty-seventh entry).** ~~P6.37–P6.38 7→6, `emitter/lower.rs` cleared~~ **landed at 7→7 — the
+file does not clear.** Both slices confirmed directly what this paragraph's own prior caveat only
+suspected: `emitter/lower.rs`'s remaining production surface (`system_http_route_body`'s `TypeRef`
+field, two `HttpMethod::from_ident` sites) has no available IR-native alternative on either the
+storage or the consumer side (Forty-eighth entry) — the file is *not* one relocation away from
+clearing, it is permanently blocked on the same grounds P6.33 ruled the codec renderer phase-7 for.
+Live today, post-P6.38: **7**, unchanged since P6.33. `workers.rs`/`workers_entry.rs` carry the
+identical shape of residue (P6.30/P6.31's own `ServiceProtocol` findings) — neither is expected to
+clear without the same kind of parameter-threading this track has consistently declined as
+disproportionate. `emit.rs`'s own eventual floor remains unmeasured (§6a's own intro, above). The
+committed target for the remainder of this plan is **not** "several files reach 0" — it is: land the
+remaining mechanical/investigative rows (§6a's own unlanded portion, if any) and then retire on the
+probe's *actual* floor, whatever that turns out to be, per §5's own "confirm, don't assume" discipline.
 
-**One new dependency the probe hardening introduces, not yet reflected in the ordering above:**
-`emitter/lower.rs`/`emitter/emit.rs` still carry `use super::*;`, so per the same rule, *neither can
-register as cleared while `emitter.rs` itself still imports the AST* — regardless of how empty their
-own explicit lists get. P6.37–P6.38's own "`emitter/lower.rs` cleared" step is only real if
-`emitter.rs` has already cleared by then, or if that same slice also drops `lower.rs`'s own `use
-super::*;` (this section's own Thirty-seventh entry above names removing it as separate, deferred
-future work — this is the moment that deferral becomes load-bearing) — a real re-sequencing question
-for whichever slice actually proposes P6.37, not resolved
-here.
+**Moot in practice, recorded for provenance:** `emitter/lower.rs`/`emitter/emit.rs` still carry `use
+super::*;`, so per the probe-hardening rule (Thirty-seventh entry), neither could register as cleared
+while `emitter.rs` itself still imports the AST, regardless of how empty their own explicit lists got.
+P6.37/P6.38 never reached the point where this mattered — `emitter/lower.rs` stayed counted on its own,
+independent, `use super::*;`-unrelated grounds (`system_http_route_body`, `HttpMethod::from_ident`), so
+the `use super::*;` question was never the binding constraint for this file in practice. Still real for
+`emit.rs`, whenever its own turn comes.
 
 **Every pending file for this plan states the movement explicitly, including "unaffected" — P6.26's
 deliberate increase was the one entry in this trajectory that reads as a regression if not narrated as
@@ -1773,6 +1785,22 @@ P6.31's route tables already established and left alone. `ast_importers`: **7 �
 residue P6.38 targets next). Verified by a full zero-diff bless against the entire e2e corpus and a
 full `cargo test --workspace`. Full reasoning:
 `design/pending/p6-37-body-mode-handler-kind-ir.md`'s own ADR.
+
+**Forty-ninth: P6.38 — `TypedCommons::empty()` (`bynk-check`) replaces `emitter/lower.rs`'s hand-built
+empty-`Commons` test fixture, closing the test-residue half of this file's own R6.13 gap, per §6a's
+own Phase E.** Added `TypedCommons::empty()` to `bynk-check/src/checker.rs` — an exact port of the
+`idempotency_scoping_tests` module's own hand-built fixture (empty `Commons` in `Fragment` form, every
+table empty, a fresh `Types` intern), the option P6.33 named and deferred. `bynk-check` already owns
+both `TypedCommons` and `Commons`, so spelling the AST type there costs nothing against this probe
+(scans only `bynk-emit/src`); `emitter/lower.rs`'s own test helper now calls it, dropping its
+`use bynk_syntax::ast::{Commons, CommonsForm, QualifiedName};` entirely — this file's last
+`#[cfg(test)]`-scoped AST reference. **Does not clear the file** — P6.37's own investigation already
+found `emitter/lower.rs`'s remaining production surface (`system_http_route_body`'s `TypeRef` field,
+the two `HttpMethod::from_ident` sites) has no available IR-native alternative, so the file stays
+counted on that basis regardless. `ast_importers`: **7 → 7**, unaffected. Verified by a full zero-diff
+bless against the entire e2e corpus and a full `cargo test --workspace`, including the three tests
+`idempotency_scoping_tests` itself carries. Full reasoning:
+`design/pending/p6-38-typed-commons-empty-test-constructor.md`'s own ADR.
 
 ## 7. Out of scope — forward references, not refusals
 
