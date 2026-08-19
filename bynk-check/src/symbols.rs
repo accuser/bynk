@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use crate::checker::CapabilityInfo;
 use crate::index::{IndexBuilder, ProjectIndex, RefSink, SiteRef, SymbolKind};
+use crate::project_model::UnitInfo;
 use crate::resolver::{self, MethodTable as ResolverMethodTable};
 use bynk_project::{ParsedFile, UnitKind};
 use bynk_syntax::ast::{
@@ -1136,6 +1137,37 @@ pub fn combined_types_for(
                 for (n, d) in &used.types {
                     out.entry(n.clone()).or_insert_with(|| d.clone());
                 }
+            }
+        }
+    }
+    out
+}
+
+/// P6.18: a `uses`-imported type's own combined visible types (one level,
+/// matching [`combined_types_for`]'s identical shape) — the narrow resolution
+/// scope a signature-lowering pass needs for that unit's own attached
+/// methods. Reimplemented against [`UnitInfo`] rather than calling
+/// `combined_types_for` directly: that function takes the flat, project-wide
+/// `unit_tables`/`unit_uses` maps a per-unit emission prologue doesn't thread
+/// this deep (only the coarser, already-merged `unit_info` reaches there) —
+/// rebuilding those two maps from `unit_info` on every call would be needless
+/// O(units) cloning for a per-unit prologue already called once per emitted
+/// unit.
+pub fn combined_types_for_unit_info(
+    unit: &str,
+    unit_info: &BTreeMap<String, UnitInfo>,
+) -> HashMap<String, Arc<TypeDecl>> {
+    let mut out: HashMap<String, Arc<TypeDecl>> = HashMap::new();
+    let Some(info) = unit_info.get(unit) else {
+        return out;
+    };
+    for (n, d) in &info.table.types {
+        out.insert(n.clone(), d.clone());
+    }
+    for t in &info.uses {
+        if let Some(used) = unit_info.get(t) {
+            for (n, d) in &used.table.types {
+                out.entry(n.clone()).or_insert_with(|| d.clone());
             }
         }
     }

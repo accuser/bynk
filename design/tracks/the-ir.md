@@ -1936,6 +1936,19 @@ bless over the full e2e corpus, `cargo test --workspace`, `cargo clippy --worksp
 all pass unchanged. Full reasoning:
 `design/pending/p6-44-discover-event-subscribers-relocation.md`.
 
+**Fifty-sixth: P6.45 — `combined_types_for_unit_info` relocates to `bynk-check::symbols`; the
+`FnName::Method` filter folds into a new `lower_attached_fn_sig_ir_from_types`.** Two sites from one
+shared prologue (`build_emit_unit_ctx`'s attached-method gathering). `combined_types_for_unit_info`
+moved next to `combined_types_for` — always expressible in `bynk-check` terms, since `UnitInfo`
+itself is already `bynk-check`-owned (`bynk-check/src/project_model.rs`). The `FnName::Method` filter
+in front of `lower_fn_sig_ir_from_types` folded into a new sibling,
+`lower_attached_fn_sig_ir_from_types(mt: &MethodTable, types, tys) -> Vec<FnSig>`, in the excluded
+`ir/lower.rs`, so the raw `FnName` read never has to leave that module. No behavioural change.
+`ast_importers`: **unaffected (6)** — `FnName` gone from `project.rs`'s import list entirely; Phase G
+continues in P6.46–P6.49. Zero-diff bless over the full e2e corpus, `cargo test --workspace`, `cargo
+clippy --workspace --all-targets` all pass unchanged. Full reasoning:
+`design/pending/p6-45-attached-method-sig-lowering.md`.
+
 | Item | Phase | Entry condition |
 |---|---|---|
 | `Question`'s own three-way desugar fork — what `IrExprKind` an `expr?` lowers to | 6, unproposed | a slice proposal for P6.3's desugaring table (§6) reaches `Question` specifically; #1225 (§6, fourteenth slice) settled the *construction*-side identity question this depends on but explicitly does not settle this one |

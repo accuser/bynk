@@ -28,7 +28,7 @@ use crate::emitter;
 use crate::ir::CapRefIr;
 use crate::ir::FnSig;
 use crate::ir::lower::{
-    lower_fn_sig_ir_from_types, lower_handler_given_ir, lower_provider_given_ir,
+    lower_attached_fn_sig_ir_from_types, lower_handler_given_ir, lower_provider_given_ir,
 };
 use bynk_check::check_pipeline::{self, prepare_unit_check_ctx};
 use bynk_check::checker;
@@ -44,7 +44,7 @@ use bynk_check::project_model::{
 use bynk_check::requirements::RequirementSink;
 use bynk_check::resolver::{self, MethodTable as ResolverMethodTable, ResolvedCommons};
 use bynk_syntax::ast::{
-    Block, CommonsItem, FnDecl, FnName, HandlerKind, ServiceProtocol, TypeDecl, TypeRef, Visibility,
+    Block, CommonsItem, FnDecl, HandlerKind, ServiceProtocol, TypeDecl, TypeRef, Visibility,
 };
 use bynk_syntax::error::CompileError;
 use bynk_syntax::lexer;
@@ -991,37 +991,6 @@ struct EmitUnitCtx {
     file_decl_index: FileDeclIndex,
 }
 
-/// P6.18: a `uses`-imported type's own combined visible types (one level,
-/// matching `bynk_check::symbols::combined_types_for`'s identical shape) —
-/// the narrow resolution scope [`ir::lower::lower_fn_sig_ir_from_types`]
-/// needs for that unit's own attached methods. Reimplemented against
-/// `UnitInfo` rather than calling `combined_types_for` directly: that
-/// function takes the flat, project-wide `unit_tables`/`unit_uses` maps
-/// `build_emit_unit_ctx`'s own caller never threads this deep (only the
-/// coarser, already-merged `unit_info` reaches here) — rebuilding those two
-/// maps from `unit_info` on every call would be needless O(units) cloning
-/// for a per-unit prologue already called once per emitted unit.
-fn combined_types_for_unit_info(
-    unit: &str,
-    unit_info: &BTreeMap<String, UnitInfo>,
-) -> HashMap<String, Arc<TypeDecl>> {
-    let mut out: HashMap<String, Arc<TypeDecl>> = HashMap::new();
-    let Some(info) = unit_info.get(unit) else {
-        return out;
-    };
-    for (n, d) in &info.table.types {
-        out.insert(n.clone(), d.clone());
-    }
-    for t in &info.uses {
-        if let Some(used) = unit_info.get(t) {
-            for (n, d) in &used.table.types {
-                out.entry(n.clone()).or_insert_with(|| d.clone());
-            }
-        }
-    }
-    out
-}
-
 fn build_emit_unit_ctx(
     name: &str,
     unit_info: &BTreeMap<String, UnitInfo>,
@@ -1036,7 +1005,7 @@ fn build_emit_unit_ctx(
     // emission (the resolver stores instance/static methods in `HashMap`s).
     //
     // P6.18: each method's own `params`/`return_type` now resolve to a real
-    // `TyId` (`ir::lower::lower_fn_sig_ir_from_types`) against the
+    // `TyId` (`ir::lower::lower_attached_fn_sig_ir_from_types`) against the
     // *declaring* unit's own visible types, rather than carrying the raw
     // `FnDecl` (and its unresolved `TypeRef`s) all the way to
     // `emit_forwarded_methods`. `Free`-named entries (never present in
@@ -1049,16 +1018,10 @@ fn build_emit_unit_ctx(
         let Some(used) = unit_info.get(t) else {
             continue;
         };
-        let used_types = combined_types_for_unit_info(t, unit_info);
+        let used_types = bynk_check::symbols::combined_types_for_unit_info(t, unit_info);
         for (type_name, mt) in &used.table.methods {
             let entry = imported_methods.entry(type_name.clone()).or_default();
-            entry.extend(
-                mt.instance
-                    .values()
-                    .chain(mt.statics.values())
-                    .filter(|f| matches!(f.name, FnName::Method { .. }))
-                    .map(|f| lower_fn_sig_ir_from_types(f, &used_types, tys)),
-            );
+            entry.extend(lower_attached_fn_sig_ir_from_types(mt, &used_types, tys));
         }
     }
     for decls in imported_methods.values_mut() {
