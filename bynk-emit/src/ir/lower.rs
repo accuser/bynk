@@ -564,14 +564,17 @@ fn lower_handler_signature_ir(h: &Handler, cx: &LowerIrCtx) -> HandlerSignatureI
 /// [`lower_handler_ir`]/[`lower_service_handler_ir`] unconditionally lower
 /// the handler's own body into a real `IrExpr` (`IrHandler::body` is not
 /// `Option`), and an ordinary `from http` handler's body routinely uses `?`
-/// propagation (`ExprKind::Question`, still `todo!()` — its own three-way
-/// desugar fork over `Option[T]?`/`Result[T,E]?`/an `embeds` conversion is
-/// its own separate design question, #1225) or an `is`-expression
-/// (`ExprKind::Is`, also still `todo!()`) — either still panics `lower_expr_ir`
-/// today. (The sibling `Ok`/`Err`/`Some`/`None` gap this comment used to cite
-/// alongside them is resolved as of #1225's own ADR — `Ok`/`Err`/`Some`/
-/// `None` construction alone no longer blocks a real `IrHandler`; `Question`/
-/// `Is` still do.) Building a real `IrHandler` at `emit_service`'s own call
+/// propagation (`ExprKind::Question`) or an `is`-expression (`ExprKind::Is`).
+/// **Correction (P6.25, 2026-08-19): both landed** — `Question` as P6.15
+/// (ADR 0337, [`lower_question_ir`], decomposing to `IrExprKind::Match` per
+/// #1225's own `Ok`/`Err`/`Some`/`None` identity precedent) and `Is` as P6.16
+/// (ADR 0338, [`lower_is_ir`], a forced-temp `Let` discharging R5.10). Neither
+/// is reached from this call site or any other shipped emitter path yet —
+/// `emitter/lower.rs`'s own P6.2 `Call`/`Lambda` cutover hasn't landed — so
+/// the reasoning below (a real `IrHandler` here would still panic on other,
+/// still-unconverted constructs reachable from an ordinary `from http` body)
+/// stands, just not on `Question`/`Is` specifically anymore. Building a real
+/// `IrHandler` at `emit_service`'s own call
 /// site would panic on exactly the ordinary Http services this slice needs
 /// to keep working. Mirrors
 /// [`body_writes_state`]'s own precedent (#1196): a narrow, standalone
@@ -1945,17 +1948,18 @@ pub(crate) fn lower_provider_item_ir(provider: &ProviderDecl, program: &CheckedP
 /// [`lower_provider_item_ir`]'s own full assembly (#1187's Provider
 /// `given`/deps-wiring slice) — the standalone entry point
 /// `bynk-emit/src/project.rs`'s `instantiate_provider_expr` actually calls.
-/// Building a real `IrItem::Provider` there would be unsafe for a `Bynk`
-/// provider specifically: `ProviderBody::Bynk::ops` unconditionally lowers
-/// every op's body through `lower_provider_op_ir` → `lower_expr_ir`, which
-/// still can't handle every expression shape a real op body can contain —
-/// `?` propagation (`ExprKind::Question`) and an `is`-expression
-/// (`ExprKind::Is`) both remain `todo!()`. (#1225's own ADR closed the
-/// sibling `Ok`/`Err`/`Some`/`None` construction gap this comment used to
-/// cite here — not itself sufficient to make a real op body safe to build,
-/// since `Question`/`Is` are unaffected, the identical remaining gap that
-/// keeps `Agent`/`Service`'s own full `IrItem` construction impractical at
-/// their emitter call sites, #1196/#1198's own findings.) This function
+/// Building a real `IrItem::Provider` there would still need care for a
+/// `Bynk` provider specifically: `ProviderBody::Bynk::ops` unconditionally
+/// lowers every op's body through `lower_provider_op_ir` → `lower_expr_ir`,
+/// which does not yet handle every expression shape a real op body can
+/// contain. **Correction (P6.25, 2026-08-19): `?` propagation
+/// (`ExprKind::Question`) and an `is`-expression (`ExprKind::Is`) are no
+/// longer among those gaps** — both landed (P6.15/ADR 0337, P6.16/ADR 0338,
+/// following #1225's own `Ok`/`Err`/`Some`/`None` construction fix) — but
+/// `lower_expr_ir` still has two production-reachable `todo!()`s
+/// (`lower_call_ir`'s missing-`Callee` guard and a bare ident naming a free
+/// fn used as a value, P6.2 territory), so a real op body is not yet
+/// unconditionally safe to build; the risk has just narrowed. This function
 /// never touches `ops`/bodies, so it carries none of that risk;
 /// [`lower_provider_item_ir`] itself now calls it too, rather than
 /// hand-duplicating the one-line `map`.
@@ -2953,10 +2957,15 @@ pub(crate) fn lower_expr_ir(e: &Expr, cx: &mut LowerIrCtx) -> IrExpr {
         // This flat `Or`/`Not` pair has nowhere to carry an `is` binding from
         // the antecedent into the consequent (`p is Foo(x) implies f(x)`,
         // the reason the string emitter's own `Implies` handling exists,
-        // `emitter/lower.rs:4332`'s `lower_and_with_is`) — unreachable today
-        // since `ExprKind::Is` is still a `todo!()` three arms below, but
-        // this arm needs revisiting, not inheriting by default, once P6.4
-        // lands `Is`.
+        // `emitter/lower.rs:4332`'s `lower_and_with_is`). Correction (P6.25,
+        // 2026-08-19): `ExprKind::Is` landed (P6.16/ADR 0338) — this gap is
+        // real and reachable now, not hypothetical. ADR 0338 traced `Is`
+        // itself and found the narrowing binding is never `Is`'s own concern
+        // (it's applied by `&&`/`implies`/`if`'s own consuming call sites),
+        // so this arm's own missing binding-carry is R5.9's still-open,
+        // still-unscoped cross-site narrowing-propagation gap (design/tracks/
+        // the-ir.md §7), not a P6.4/`Is`-landing prerequisite as this comment
+        // used to say.
         ExprKind::BinOp(BinOp::Implies, lhs, rhs) => IrExpr {
             kind: IrExprKind::Or {
                 // `Not`'s own type is Bool — the same type `Implies` itself
@@ -3637,8 +3646,11 @@ fn lower_record_spread_ir(
 /// P6.4 (design/tracks/the-ir.md §6, #1157): `&Pattern -> IrPat`, tested
 /// standalone against real certified programs. Since P6.5 (#1159), also
 /// reached indirectly through [`lower_expr_ir`]'s `Match` arm (via
-/// [`lower_arm_ir`]) — `Question`/`Is` stay `todo!()`, each for its own
-/// reason, unaffected by `Match` becoming real.
+/// [`lower_arm_ir`]). `Question`/`Is` landed separately (P6.15/ADR 0337,
+/// P6.16/ADR 0338, corrected P6.25) — `Question` reuses this same `IrPat`
+/// machinery (its own `IrExprKind::Match` desugar, per its ADR), `Is` does
+/// not (`lower_is_ir` calls [`lower_pattern_ir`] directly, not through
+/// `Match`).
 ///
 /// `scrutinee_ty` is the type of whatever value this particular pattern
 /// matches against — the match's own discriminant at the top level, or a
@@ -8790,9 +8802,11 @@ service Outbox from queue("orders") {
     /// body no longer panics `lower_service_handler_ir` either. The general
     /// claim this test's own name makes still holds regardless (a real
     /// `IrHandler` is still unsafe to build unconditionally at
-    /// `emit_service`'s call site — an ordinary `from http` body just as
-    /// routinely hits the still-open `?`/`is` gaps, `ExprKind::Question`/
-    /// `ExprKind::Is`, instead), so the fixture stays as-is rather than
+    /// `emit_service`'s call site — correction, P6.25, 2026-08-19:
+    /// `ExprKind::Question`/`ExprKind::Is` no longer among the reasons why,
+    /// both landed as P6.15/ADR 0337 and P6.16/ADR 0338; `lower_expr_ir`'s
+    /// two remaining production-reachable `todo!()`s are P6.2-territory
+    /// `Callee`/free-fn gaps instead), so the fixture stays as-is rather than
     /// chasing a body shape that still panics today.
     #[test]
     fn service_handler_signature_lowers_without_touching_a_body_that_constructs_ok() {
