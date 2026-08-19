@@ -1445,12 +1445,10 @@ left as-is — load-bearing semantic payload for a dormant node, not redundant m
 section's own Fiftieth entry above. **P6.40 — landed.** `ProtocolIr::Events::schema_dispatch` flattens
 to `Option<i64>` directly (no mirror enum needed for a one-variant wrapper), cutting over its one real
 reader — see this section's own Fifty-first entry above. `ast_importers`: **7 → 7**, unaffected.
-**P6.41** —
-`TypeShape::Refined::{base, refinement}`, the largest IR-side item: needs mirrors of `BaseType`,
-`Refinement`/`RefinementPred`/`PredKind`, and `IntBound`/`FloatBound` specifically keep source lexemes
-for byte-stable emission, so the mirror is a near-copy rather than a clean abstraction — open with an
-ADR arguing whether building it is worth it at all; a legitimate candidate for §6a.D's phase-7 bucket;
-schedule last, or defer.
+**P6.41 — landed as a ruling, not a build.** `TypeShape::Refined::{base, refinement}` traced directly
+into `emit_refined_type`/`emit_refined_checks`'s own TS-rendering — the same phase-7 question P6.33
+already settled — and ruled out on that basis, not built. See this section's own Fifty-second entry
+above, which also assesses what Phase F's own completion means (and doesn't mean) for retirement.
 
 **Not scheduled, recorded rather than left ambiguous.** `lower_method_call`'s `Ty`-keyed kernel
 fallthrough (`emitter/lower.rs:2278-2436`) maps 1:1 onto the checker's existing `Callee::Kernel { recv,
@@ -1843,7 +1841,39 @@ zero-diff bless against the entire e2e corpus, including `1232_events_envelope_s
 — the fixture that specifically pins this exact guard — and a full `cargo test --workspace`. Full
 reasoning: `design/pending/p6-40-schema-dispatch-ir-native.md`'s own ADR.
 
-## 7. Out of scope — forward references, not refusals
+**Fifty-second: P6.41 — `TypeShape::Refined::{base, refinement}` ruled phase 7, not built; closes
+Phase F and this completion plan's own remaining named rows.** Traced directly rather than assumed
+from this row's own framing: both fields flow straight from `emitter.rs`'s `type_shape_for` into
+`RefinedShape`, consumed by `emitter/emit.rs`'s `emit_refined_type`/`emit_refined_checks` — functions
+that write `export type`/`export const`/predicate-check TS source text directly, matching `base`
+against `BaseType::Int`/`Float` and `refinement` against `PredKind`'s own closed set to generate
+validation strings. The identical "how do I render this checker type as TS source" question P6.33
+already ruled belongs to phase 7's eventual printer, not phase 6's IR construction. Building an
+`IrRefinement`/IR-native `BaseType` mirror now would mean constructing printer infrastructure for a
+consumer this track's own §2 scope already excludes — the same reasoning P6.33 applied to
+`emitter/serialisation.rs`. The lexeme-preservation requirement (`IntBound`/`FloatBound` keep source
+text for byte-stable emission) makes the case for building this mirror *weaker* than the four fields
+P6.39 already deleted: there is no redundancy to remove here, only a faithful AST reuse with no
+IR-native alternative that would actually simplify anything. No source changes. `ast_importers`
+unaffected — invisible to the probe by construction. Full reasoning:
+`design/pending/p6-41-refined-shape-deferred.md`'s own ADR.
+
+**§6a is now fully landed — every row in Phases A through F has either shipped, been closed by
+investigation, or been ruled out of scope with reasoning.** What this does and does not mean for
+retirement (§12): `ast_importers` reads **7**, not the 0 §5's own completion criterion names — three
+files remain counted for reasons this plan traced directly rather than left as estimates:
+`emitter/lower.rs` (`system_http_route_body`'s `TypeRef`, `HttpMethod::from_ident`, both phase-7-
+adjacent per the same reasoning as this entry), `project.rs` (`own_contract_hashes`, ruled the same way
+by P6.33, plus `build_output`'s own declaration reads never brought into this plan's own scope), and
+`emitter.rs`/`emitter/emit.rs` (real, substantial declaration-read surface this plan's own Phase E/F
+rows never reached — `collect_external_references`'s per-variant walk, `write_header`'s remaining
+checks, and more). None of these three is a probe artefact or an oversight; each has a traced, written
+reason. Retiring this track on `ast_importers` = 7 requires either: a fresh slice-decomposition pass
+scoping `emitter.rs`/`emitter/emit.rs`'s own remaining surface (this plan never attempted that — its
+own Phase B–F rows were the specific items the original grounding pass named, not a systematic sweep
+of either file), or a second re-settling (§6a.D's own precedent) naming 7 — or some smaller number this
+plan didn't reach — as this track's own true floor, the same "confirm, don't assume" discipline §5 and
+§9 both already call for. Neither has happened yet; this plan's own remit ends here, not at retirement.
 
 | Item | Phase | Entry condition |
 |---|---|---|
