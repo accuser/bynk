@@ -157,10 +157,8 @@
 //! deferred, its own already-tracked blocker unchanged by this slice (see
 //! [`IrItem`]'s own doc comment).
 
-use std::sync::Arc;
-
 use bynk_check::checker::{Callee, TyId};
-use bynk_syntax::ast::{BaseType, FnDecl, Refinement, SchemaVersionPattern, TypeDecl};
+use bynk_syntax::ast::{BaseType, Refinement, SchemaVersionPattern};
 use bynk_syntax::span::Span;
 
 pub(crate) mod lower;
@@ -211,9 +209,13 @@ pub(crate) enum ConstVal {
 /// precedent (P6.0) exists to avoid. Left for a slice that either adds that
 /// sink or accepts re-deriving it, not built worse here to hit a self-set
 /// scope target.
+/// P6.39 (design/tracks/the-ir.md §6a): the owning sum's own `Arc<TypeDecl>`
+/// (`sum`) was dropped — the "unique owner" test above still runs to
+/// disambiguate, but had no reader for the `TypeDecl` itself (verified: zero
+/// production sites, only a test assertion). `tag` alone is this variant's
+/// whole payload now.
 #[derive(Debug, Clone)]
 pub(crate) struct GlobalRef {
-    pub sum: Arc<TypeDecl>,
     pub tag: String,
 }
 
@@ -411,10 +413,10 @@ pub(crate) enum IrExprKind {
     /// field order once evaluation order and declaration order diverge
     /// (`RecordSpread`'s own lowering, `ir/lower.rs`'s
     /// `lower_record_spread_ir`, is the one producer where they can).
-    Record {
-        def: Arc<TypeDecl>,
-        fields: Vec<(String, IrExpr)>,
-    },
+    /// P6.39: `def: Arc<TypeDecl>` dropped — zero production readers
+    /// (verified), only test assertions. `fields` alone is this variant's
+    /// whole payload now.
+    Record { fields: Vec<(String, IrExpr)> },
     /// Sum-variant construction — a user-declared sum's own constructor
     /// (`Circle(n)`/`Shape.Circle(n)`, driven by `Callee::Ctor`) *and*, as
     /// of the #1225 ADR, the four built-in constructors `Ok`/`Err`/`Some`/
@@ -778,17 +780,18 @@ pub(crate) enum IrInterpPart {
 #[derive(Debug, Clone)]
 pub(crate) enum IrItem {
     /// A `type` declaration. `shape` covers all three real [`TypeShape`]
-    /// forms.
-    Type {
-        def: Arc<TypeDecl>,
-        shape: TypeShape,
-    },
+    /// forms. P6.39: `def: Arc<TypeDecl>` dropped — its one production
+    /// consumer (`emitter.rs`'s `type_shape_for` call site) already ignored
+    /// it via `..`, and no other reader existed.
+    Type { shape: TypeShape },
     /// A `fn` declaration — free function or method alike (`FnName::Free`/
     /// `FnName::Method`); which `IrItem::Fn`s a future printer re-attaches
     /// under which `IrItem::Type`'s own namespace (R8.1) is phase 7's own
-    /// concern, not decided here.
+    /// concern, not decided here. P6.39: `def: Arc<FnDecl>` dropped —
+    /// `lower_fn_item_ir` (the one constructor) has no production call site
+    /// at all today; every other field remains, so the constructor and this
+    /// variant both survive, just without the raw declaration.
     Fn {
-        def: Arc<FnDecl>,
         /// The method receiver's own type, generic in the owning type's own
         /// rigid variables (e.g. `Box[A]`'s `self` is `Ty::Named { name:
         /// "Box", args: [Ty::Var("A")], .. }`) — `None` for a free function.

@@ -924,10 +924,7 @@ pub(crate) fn lower_type_item_ir(decl: &Arc<TypeDecl>, program: &CheckedProgram)
             opaque: true,
         },
     };
-    IrItem::Type {
-        def: Arc::clone(decl),
-        shape,
-    }
+    IrItem::Type { shape }
 }
 
 /// P6.6 (#1161): lower a `fn` declaration into a real [`IrItem::Fn`] —
@@ -939,14 +936,11 @@ pub(crate) fn lower_type_item_ir(decl: &Arc<TypeDecl>, program: &CheckedProgram)
 /// `IrItem::Type`'s own namespace (R8.1) is phase 7's own concern, not
 /// decided here.
 ///
-/// Takes `f: &Arc<FnDecl>`, not a bare `&FnDecl` — `def` reuses this exact
-/// `Arc`, the identity substitution [`IrItem`]'s own doc comment claims
-/// (`Record`/`GlobalRef`/[`lower_type_item_ir`]'s own `Arc::clone(decl)`
-/// all reuse the program's own handle the same way): a fresh `Arc::new`
-/// would both lose pointer identity against `TypedCommons.fns`/
-/// `Callee::Fn`/`Callee::Method` (no way back from an `IrItem::Fn` to the
-/// call sites that reference the same declaration except by re-comparing
-/// names) and deep-clone the whole body AST for every fn in a unit.
+/// Takes `f: &Arc<FnDecl>` for a cheap clone into
+/// [`lower_fn_body_ir`]/[`fn_receiver_ty`]/[`fn_rigid_type_vars`]'s own calls
+/// below, not because this constructor itself keeps a copy any more — P6.39
+/// dropped `IrItem::Fn::def` (no production reader ever read it back; this
+/// constructor has no production call site at all today either).
 pub(crate) fn lower_fn_item_ir(f: &Arc<FnDecl>, program: &CheckedProgram) -> IrItem {
     let type_vars = fn_rigid_type_vars(f, program.program());
     let cx = LowerIrCtx::new(program, type_vars);
@@ -976,7 +970,6 @@ pub(crate) fn lower_fn_item_ir(f: &Arc<FnDecl>, program: &CheckedProgram) -> IrI
     });
     let effectful = matches!(&*program.program().ty_intern.get(ret), Ty::Effect(_));
     IrItem::Fn {
-        def: Arc::clone(f),
         receiver,
         params,
         ret,
@@ -2848,12 +2841,6 @@ pub(crate) fn lower_expr_ir(e: &Expr, cx: &mut LowerIrCtx) -> IrExpr {
 
         ExprKind::RecordConstruction { fields, .. } => IrExpr {
             kind: IrExprKind::Record {
-                // The checker already validated `type_name` and rejected a
-                // mismatched/unknown one — `ty` above (a `Ty::Named` for this
-                // exact construction) is this node's own resolved type, so
-                // the declaring `TypeDecl` comes from there, not by
-                // re-resolving `type_name` a second time.
-                def: named_decl(ty, cx),
                 fields: fields
                     .iter()
                     .map(|f| {
@@ -3431,9 +3418,8 @@ fn lower_ident_ir(name: &str, expr_id: Option<ExprId>, cx: &LowerIrCtx) -> IrExp
              P6.2 territory, not a Global reference"
         )
     }
-    if let Some(sum) = nullary_variant_owner(name, cx) {
+    if nullary_variant_owner(name, cx).is_some() {
         return IrExprKind::Global(GlobalRef {
-            sum,
             tag: name.to_string(),
         });
     }
@@ -3667,7 +3653,7 @@ fn lower_record_spread_ir(
         kind: IrExprKind::Block {
             stmts,
             tail: Box::new(IrExpr {
-                kind: IrExprKind::Record { def, fields },
+                kind: IrExprKind::Record { fields },
                 ty,
                 span,
             }),
@@ -4138,7 +4124,6 @@ commons demo {
         let IrExprKind::Global(g) = &tail.kind else {
             panic!("expected Global, got {:?}", tail.kind)
         };
-        assert_eq!(g.sum.name.name, "Outcome");
         assert_eq!(g.tag, "Miss");
     }
 
@@ -4177,13 +4162,11 @@ commons demo {
         let explicit_ir = lower_fn(&program, "explicit");
         let explicit_tail = fn_tail(&explicit_ir);
         let IrExprKind::Record {
-            def: explicit_def,
             fields: explicit_fields,
         } = &explicit_tail.kind
         else {
             panic!("explicit: expected Record, got {:?}", explicit_tail.kind)
         };
-        assert_eq!(explicit_def.name.name, "Point");
         assert_eq!(explicit_fields.len(), 2);
         assert_eq!(explicit_fields[0].0, "x");
         assert!(matches!(
@@ -4199,13 +4182,11 @@ commons demo {
         let shorthand_ir = lower_fn(&program, "shorthand");
         let shorthand_tail = fn_tail(&shorthand_ir);
         let IrExprKind::Record {
-            def: shorthand_def,
             fields: shorthand_fields,
         } = &shorthand_tail.kind
         else {
             panic!("shorthand: expected Record, got {:?}", shorthand_tail.kind)
         };
-        assert_eq!(shorthand_def.name.name, "Point");
         assert_eq!(shorthand_fields.len(), 2);
         assert_eq!(shorthand_fields[0].0, "x");
         assert!(matches!(&shorthand_fields[0].1.kind, IrExprKind::Local(n) if n == "x"));
@@ -5511,10 +5492,9 @@ commons demo {
         assert_eq!(local, "__spread_base_0");
         assert!(matches!(&value.kind, IrExprKind::Local(n) if n == "p"));
 
-        let IrExprKind::Record { def, fields } = &block_tail.kind else {
+        let IrExprKind::Record { fields } = &block_tail.kind else {
             panic!("expected Record, got {:?}", block_tail.kind)
         };
-        assert_eq!(def.name.name, "Point");
         assert_eq!(fields.len(), 3);
 
         // `x: 0` — a full-form override.
@@ -6349,10 +6329,9 @@ commons demo {
         );
         let decl = find_type(&program, "Box");
         let item = lower_type_item_ir(decl, &program);
-        let IrItem::Type { def, shape } = &item else {
+        let IrItem::Type { shape } = &item else {
             panic!("expected IrItem::Type, got {item:?}")
         };
-        assert_eq!(def.name.name, "Box");
         let TypeShape::Record { fields } = shape else {
             panic!("expected TypeShape::Record, got {shape:?}")
         };
@@ -6498,7 +6477,6 @@ commons demo {
 
         let two_params = find_fn_arc(&program, "two_params");
         let IrItem::Fn {
-            def,
             receiver,
             params,
             ret,
@@ -6508,11 +6486,6 @@ commons demo {
         else {
             unreachable!()
         };
-        assert!(
-            Arc::ptr_eq(&def, two_params),
-            "def should reuse the program's own Arc, not a fresh clone"
-        );
-        assert_eq!(def.name.display(), "two_params");
         assert!(receiver.is_none(), "a free function has no receiver");
         assert_eq!(params.len(), 2);
         assert_eq!(params[0].0, "a");
@@ -6544,7 +6517,6 @@ commons demo {
 
         let method = find_fn_arc(&program, "Box.get");
         let IrItem::Fn {
-            def,
             receiver,
             params,
             ret,
@@ -6554,11 +6526,6 @@ commons demo {
         else {
             unreachable!()
         };
-        assert!(
-            Arc::ptr_eq(&def, method),
-            "def should reuse the program's own Arc, not a fresh clone"
-        );
-        assert_eq!(def.name.display(), "Box.get");
         assert!(params.is_empty(), "self is not a param — see receiver");
         let Some(receiver_ty) = receiver else {
             panic!("expected Box.get to carry a receiver")
