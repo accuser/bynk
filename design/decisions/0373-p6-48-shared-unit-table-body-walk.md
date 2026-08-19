@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "P6.48: emitter::walk_unit_table_bodies (emitter.rs, already counted) replaces two hand-rolled copies of the same service/agent/provider body walk in project.rs's unit_table_uses_emit and called_cross_context_services. ast_importers: unaffected (6) -- project.rs's Block/Expr sites cleared, but the file was already counted on other names."
----
+# 0373 — `emitter::walk_unit_table_bodies` replaces two hand-rolled `project.rs` body walks
 
-## ADR: p6-48-shared-unit-table-body-walk
-
-title: `emitter::walk_unit_table_bodies` replaces two hand-rolled `project.rs` body walks
+- **Status:** Accepted (v0.249.25)
 
 summary: Continues Phase G of the #1137 retirement plan — one behavioural change surfaced and verified safe against the full fixture corpus, not assumed
 

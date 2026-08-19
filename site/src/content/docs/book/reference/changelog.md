@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.249.25** | "P6.48: emitter::walk_unit_table_bodies (emitter.rs, already counted) replaces two hand-rolled copies of the same service/agent/provider body walk in project.rs's unit_table_uses_emit and called_cross_context_services. ast_importers: unaffected (6) -- project.rs's Block/Expr sites cleared, but the file was already counted on other names." |
 | **v0.249.24** | "P6.47: lower_event_subscriber_shapes_ir (bynk-emit/src/ir/lower.rs) absorbs the ServiceProtocol::Events pre-filter guarding lower_service_item_ir, and EventSubscriberShape moves to ir.rs -- project.rs's per-file loop becomes one call. ast_importers: unaffected (6)." |
 | **v0.249.23** | "P6.46: two owner-side accessors replace raw AST walks in project.rs -- ParsedFile::declares_messages() (bynk-project) and bynk_check::symbols::cron_and_queue_triggers() (bynk-check). ast_importers: unaffected (6)." |
 | **v0.249.22** | "P6.45: combined_types_for_unit_info moves to bynk-check::symbols, next to combined_types_for; the FnName::Method filter folds into a new lower_attached_fn_sig_ir_from_types (bynk-emit/src/ir/lower.rs). ast_importers: unaffected (6)." |
