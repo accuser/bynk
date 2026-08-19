@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "P6.54: emit_service/emit_make_surface/emit_agent/topo_order_providers/cross_context_caps_used/cross_context_cap_namespaces read the IR already in scope (or reachable via an existing lowering function) instead of re-deriving the same fact from the raw AST a second time. ast_importers: unaffected (5)."
----
+# 0379 — `emit.rs` stops re-deriving facts it already has an IR reading for
 
-## ADR: p6-54-inconsistent-ir-reads
-
-title: `emit.rs` stops re-deriving facts it already has an IR reading for
+- **Status:** Accepted (v0.249.31)
 
 summary: Not conversions but inconsistencies — each site sat beside a place that had already done the identical resolution through the IR
 
