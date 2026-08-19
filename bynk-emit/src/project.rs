@@ -31,6 +31,7 @@ use crate::ir::FnSig;
 use crate::ir::lower::{
     lower_attached_fn_sig_ir_from_types, lower_handler_given_ir, lower_provider_given_ir,
 };
+use bynk_check::actors::ActorDecl;
 use bynk_check::check_pipeline::{self, prepare_unit_check_ctx};
 use bynk_check::checker;
 use bynk_check::checker::{ExprId, TyId, Types};
@@ -40,11 +41,11 @@ use bynk_check::hints::HintSink;
 use bynk_check::index::{ProjectIndex, RefSink};
 use bynk_check::locals::LocalsSink;
 use bynk_check::project_model::{
-    self, AdapterBinding, UnitInfo, handler_cross_caps, resolve_consume_prefix,
+    self, AdapterBinding, FnDecl, TypeDecl, UnitInfo, Visibility, handler_cross_caps,
+    resolve_consume_prefix,
 };
 use bynk_check::requirements::RequirementSink;
 use bynk_check::resolver::{self, MethodTable as ResolverMethodTable, ResolvedCommons};
-use bynk_syntax::ast::{FnDecl, TypeDecl, TypeRef, Visibility};
 use bynk_syntax::error::CompileError;
 use bynk_syntax::lexer;
 use bynk_syntax::parser;
@@ -954,20 +955,11 @@ fn ts_string_literal(s: &str) -> String {
 /// exported `__bynkDriveHistory_<Agent>` driver on membership, so a non-targeted
 /// agent's emission is unchanged.
 fn collect_history_target_agents(parsed: &[ParsedFile]) -> HashSet<String> {
-    let mut set = HashSet::new();
-    for pf in parsed {
-        let Some(test) = pf.test() else { continue };
-        for prop in &test.properties {
-            for b in &prop.forall.bindings {
-                if let TypeRef::History(inner, _) = &b.type_ref
-                    && let TypeRef::Named(id) = &**inner
-                {
-                    set.insert(id.name.clone());
-                }
-            }
-        }
-    }
-    set
+    parsed
+        .iter()
+        .flat_map(|pf| pf.history_target_agent_names())
+        .map(String::from)
+        .collect()
 }
 
 /// Phase 8e: build the emitter context for one checked source file and render
@@ -2271,8 +2263,8 @@ fn build_output(
                 let service_consumes: Vec<String> = service_consumes.into_iter().collect();
                 // P6.x cutover slice 2 (#1191): collected here, not inside
                 // `emit_wrangler_toml` itself, so that function's own file
-                // needs no `bynk_syntax::ast` match. P6.46 (#1137): the walk
-                // itself relocated to `bynk_check::symbols::cron_and_queue_triggers`
+                // needs no raw-AST match. P6.46 (#1137): the walk itself
+                // relocated to `bynk_check::symbols::cron_and_queue_triggers`
                 // — a pure function of `table`, `project.rs`'s own remaining
                 // AST contact here was incidental to where the loop happened
                 // to be written, not structural.
@@ -2583,10 +2575,10 @@ fn plan_agent_given_deps(
     for (agent, a) in agents {
         // #1187's slice 6 (Agent/Service given wiring): reads bynk-emit::ir's
         // own CapRefIr (lower_handler_given_ir — a standalone reader mirroring
-        // lower_provider_given_ir, #1200) instead of walking
-        // bynk_syntax::ast::CapRef directly. `caps` stays keyed by bare name
-        // (declaration-order-first dedup across every handler), just storing
-        // CapRefIr instead of CapRef.
+        // lower_provider_given_ir, #1200) instead of walking the raw AST
+        // CapRef directly. `caps` stays keyed by bare name (declaration-order-
+        // first dedup across every handler), just storing CapRefIr instead of
+        // CapRef.
         let mut caps: std::collections::BTreeMap<String, CapRefIr> =
             std::collections::BTreeMap::new();
         for h in &a.handlers {
@@ -2728,7 +2720,7 @@ pub(crate) fn instantiate_provider_expr(
     // #1187's Provider given/deps-wiring slice: reads bynk-emit::ir's own
     // CapRefIr (lower_provider_given_ir — a standalone reader, never a full
     // IrItem::Provider; see that function's own doc comment for why) instead
-    // of walking bynk_syntax::ast::CapRef directly.
+    // of walking the raw AST CapRef directly.
     let given: Vec<CapRefIr> = lower_provider_given_ir(provider);
     let deps_obj = if given.is_empty() {
         None
@@ -3288,7 +3280,7 @@ pub(crate) struct EmitProjectCtx {
     /// v0.47: the context's actor declarations (merged across files), keyed by
     /// name. Used to resolve a handler's Bearer verification seam in `emit.rs`
     /// regardless of which file declares the actor.
-    pub actors: HashMap<String, bynk_syntax::ast::ActorDecl>,
+    pub actors: HashMap<String, ActorDecl>,
     /// Events slice 3b (#978): each locally-declared event's resolved
     /// `@schema(N)` version (or `1` if absent), merged across files the same
     /// way `actors` is above — `Events.emit[E]`'s lowering site only has

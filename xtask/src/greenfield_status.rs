@@ -1377,6 +1377,20 @@ fn ide_emit_edge(root: &Path) -> Probe {
 /// nothing here has been resisting an available IR-native alternative; none exists. The
 /// re-settling found no clean way to shrink this file's AST surface further without
 /// building printer infrastructure this track's own §2 scope already excludes.
+///
+/// P6.49 (`the-ir.md` §6b, 19 August 2026): `project.rs` — R6.13's own still-open
+/// declaration-read surface named at the top of this doc block, above — cleared
+/// **without joining this list**. Nine slices (P6.42–P6.49) relocated its remaining
+/// declaration reads to the `bynk-check`/`bynk-project` crates that already own the
+/// data (`SourceUnit::name()`, `own_contract_hashes`, `discover_event_subscribers`,
+/// `combined_types_for_unit_info`, two owner-side accessors,
+/// `lower_event_subscriber_shapes_ir`, `walk_unit_table_bodies`) or re-exported a type
+/// from a `bynk-check` module whose own public API was already parameterised by it
+/// (`TypeDecl`/`FnDecl`/`Visibility` from `project_model`, `ActorDecl` from `actors` —
+/// the P6.27 `ExprId` precedent, applied four more times). This is the evidence this
+/// exclusion list's own entries above are real, earned exclusions and not a standing
+/// habit: the harder file cleared its own way, on its own schedule, with zero new
+/// entries here.
 const AST_IMPORTER_EXCEPTIONS: &[&str] = &[
     "ir.rs",
     "ir/lower.rs",
@@ -1940,11 +1954,21 @@ mod tests {
     /// just the pure predicate — the survivor set the PR's own named-vs-prefix
     /// argument depends on: the four named exclusions drop out (`ir/`'s legitimate
     /// `Ast → Ir` pair, `project/tests_emit.rs`'s Q7-settled `Ir → String` case, and
-    /// `emitter/serialisation.rs`'s phase-7 codec renderer), `project.rs` and
-    /// `emitter/workers.rs` (R6.13's still-open AST-declaration reads, the latter
-    /// standing in for `emitter.rs`/`emitter/lower.rs` themselves) do not.
+    /// `emitter/serialisation.rs`'s phase-7 codec renderer), while `emitter.rs`/
+    /// `emitter/lower.rs`/`emitter/workers.rs` do not.
+    ///
+    /// P6.49 (design/tracks/the-ir.md §6b): `project.rs` and `project/diagnostics.rs`
+    /// join the *excluded* side of this assertion — the opposite of what this test
+    /// checked before. `project.rs` cleared without joining
+    /// [`AST_IMPORTER_EXCEPTIONS`]: nine slices (P6.42–P6.49) either relocated its
+    /// remaining declaration reads to the `bynk-check`/`bynk-project` crates that
+    /// already own the data, or re-exported a type from a `bynk-check` module whose
+    /// own public API was already parameterised by it (the P6.27 `ExprId` precedent,
+    /// applied to `TypeDecl`/`FnDecl`/`Visibility`/`ActorDecl`) — real, verified
+    /// movement, not a probe exemption. `project/diagnostics.rs` rides on it, per the
+    /// same super-glob rule this file's own regression guard below pins.
     #[test]
-    fn ast_importers_excludes_the_named_pairs_but_counts_project_rs() {
+    fn ast_importers_excludes_the_named_pairs_and_project_rs() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
         let dir = root.join("bynk-emit/src");
         let counted: BTreeSet<String> = ast_importer_files(&root)
@@ -1960,7 +1984,8 @@ mod tests {
         assert!(!counted.contains("ir/lower.rs"));
         assert!(!counted.contains("project/tests_emit.rs"));
         assert!(!counted.contains("emitter/serialisation.rs"));
-        assert!(counted.contains("project.rs"));
+        assert!(!counted.contains("project.rs"));
+        assert!(!counted.contains("project/diagnostics.rs"));
         assert!(counted.contains("emitter.rs"));
         assert!(counted.contains("emitter/lower.rs"));
         assert!(counted.contains("emitter/workers.rs"));

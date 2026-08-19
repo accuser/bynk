@@ -14,10 +14,21 @@
 use std::collections::HashMap;
 
 use bynk_syntax::ast::{
-    ActorDecl, BinOp, ByClause, Expr, ExprKind, Handler, HandlerKind, ServiceProtocol, TypeRef,
-    UnaryOp,
+    BinOp, ByClause, Expr, ExprKind, Handler, HandlerKind, ServiceProtocol, TypeRef, UnaryOp,
 };
 use bynk_syntax::span::Span;
+
+/// P6.49 (design/tracks/the-ir.md §6b), following P6.27's `ExprId` precedent:
+/// every reader in this module — [`bearer_seam_for`], [`oidc_seam_for`],
+/// [`signature_seam_for`], [`sum_members_for`], [`caller_binder_for`] — is
+/// already parameterised by `&HashMap<String, ActorDecl>`. `bynk-emit` clones
+/// and forwards this table (`project.rs`'s `EmitProjectCtx::actors`,
+/// `emitter/workers.rs`/`workers_entry.rs`'s own `actors` parameters) without
+/// ever reading an `ActorDecl` field itself — P6.34 investigated and declined
+/// resolving it earlier, since `bynk-emit`'s own `lower_actor_seam_ir` needs
+/// the raw declarations to do its own resolution; this re-export changes the
+/// import path, not that data flow.
+pub use bynk_syntax::ast::ActorDecl;
 
 /// The authentication scheme — a closed, compiler-known set (ADR Q1). Sealed
 /// now, openable later by widening this enum.

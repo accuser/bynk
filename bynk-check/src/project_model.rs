@@ -53,6 +53,14 @@ use bynk_project::{
     normalize_rel, parse_sources, read_adapter_binding, read_source,
 };
 use bynk_syntax::ast::*;
+/// P6.49 (design/tracks/the-ir.md §6b), following P6.27's `ExprId` precedent
+/// (`checker.rs:39`): re-exported because this module's own public API —
+/// [`compose_unit_symbols`]'s `combined_types`/`combined_fns`,
+/// [`collect_unit_methods`]'s return, and [`UnitInfo::exports`]'s value type
+/// — is already parameterised by these three types. `bynk-emit` only ever
+/// plumbs the resulting tables through to other `bynk-check` calls; it never
+/// matches a variant of any of the three.
+pub use bynk_syntax::ast::{FnDecl, TypeDecl, Visibility};
 use bynk_syntax::error::CompileError;
 use bynk_syntax::lexer;
 use bynk_syntax::parser;
