@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "P6.44: discover_event_subscribers moves to bynk-check::symbols, next to build_cross_context_info -- the sibling function its own doc comment already pointed at. ast_importers: unaffected (6)."
----
+# 0369 — `discover_event_subscribers` relocates to `bynk-check::symbols`
 
-## ADR: p6-44-discover-event-subscribers-relocation
-
-title: `discover_event_subscribers` relocates to `bynk-check::symbols`
+- **Status:** Accepted (v0.249.21)
 
 summary: Continues Phase G of the #1137 retirement plan — owner-side relocation, not a conversion
 
