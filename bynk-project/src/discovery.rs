@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use bynk_syntax::ast::{
     AdapterDecl, Case, Commons, CommonsItem, ConsumesDecl, ExportsDecl, SourceUnit, SuiteDecl,
-    TestTier, Trivia, UsesDecl,
+    TestTier, Trivia, TypeRef, UsesDecl,
 };
 use bynk_syntax::error::CompileError;
 use bynk_syntax::lexer;
@@ -307,6 +307,24 @@ impl ParsedFile {
             SourceUnit::Suite(t) => Some(t),
             _ => None,
         }
+    }
+
+    /// v0.119 (ADR 0155): the agent names this file's own `for all run:
+    /// History[Agent]` properties drive — `emit_agent` gates the exported
+    /// `__bynkDriveHistory_<Agent>` driver on membership. Empty for a
+    /// non-suite file, or a suite with no such property.
+    pub fn history_target_agent_names(&self) -> impl Iterator<Item = &str> {
+        self.test()
+            .into_iter()
+            .flat_map(|t| &t.properties)
+            .flat_map(|prop| &prop.forall.bindings)
+            .filter_map(|b| match &b.type_ref {
+                TypeRef::History(inner, _) => match inner.as_ref() {
+                    TypeRef::Named(id) => Some(id.name.as_str()),
+                    _ => None,
+                },
+                _ => None,
+            })
     }
 
     /// v0.118: a suite whose *effective* tier is `system` is emitted through

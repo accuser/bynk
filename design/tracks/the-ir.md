@@ -1991,6 +1991,31 @@ list; Phase G's final slice is P6.49. Zero-diff bless over the full e2e corpus, 
 --workspace`, `cargo clippy --workspace --all-targets` all pass unchanged. Full reasoning:
 `design/pending/p6-48-shared-unit-table-body-walk.md`.
 
+**Sixtieth: P6.49 — `project.rs` clears `ast_importers` entirely, closing Phase G.** The last two
+sites: `collect_history_target_agents`'s pre-check `TypeRef::History`/`TypeRef::Named` walk over every
+test suite's `for all run: History[Agent]` properties relocated as `ParsedFile::
+history_target_agent_names()` (`bynk-project/src/discovery.rs`, beside `test()`/`declares_messages()`)
+— the same owner-side-accessor shape P6.46 established, just not caught until this slice's own final
+review of the import list. `TypeDecl`/`FnDecl`/`Visibility` re-exported from `bynk_check::project_model`
+(`compose_unit_symbols`'s/`collect_unit_methods`'s/`UnitInfo::exports`'s own already-parameterised
+types) and `ActorDecl` from `bynk_check::actors` (all five seam-resolution functions already take
+`&HashMap<String, ActorDecl>`) — the P6.27 `ExprId` precedent, applied case-by-case per the decision
+that exposing an existing dependency is legitimate but cosmetic aliasing of a genuinely-walked type is
+not. P6.34's `EmitProjectCtx::actors` decline stands untouched — this changes the import path, not
+the data flow a security-sensitive resolution still needs raw. Three comments spelling the literal
+probe string reworded without changing their meaning. `ast_importers`: **6 → 5** — confirmed live,
+`project.rs` no longer appears in `grep -rl bynk_syntax::ast bynk-emit/src`. **No new
+`AST_IMPORTER_EXCEPTIONS` entry** — real movement, not a probe exemption, and the exclusion list's own
+doc block now records this as evidence its four existing entries are earned, not habitual.
+`xtask/src/greenfield_status.rs`'s survivor-set test renames
+(`ast_importers_excludes_the_named_pairs_but_counts_project_rs` →
+`ast_importers_excludes_the_named_pairs_and_project_rs`) and flips its `project.rs`/
+`project/diagnostics.rs` assertions to `!contains` — the other three probe tests unaffected.
+**Closes Phase G.** Zero-diff bless over the full e2e corpus, with `185_adapter_given_workers`
+(actor/adapter-adjacent, given this slice's `bynk-check::actors` touch) inspected individually, `cargo
+test --workspace`, `cargo clippy --workspace --all-targets` all pass unchanged. Full reasoning:
+`design/pending/p6-49-project-rs-clears.md`.
+
 | Item | Phase | Entry condition |
 |---|---|---|
 | `Question`'s own three-way desugar fork — what `IrExprKind` an `expr?` lowers to | 6, unproposed | a slice proposal for P6.3's desugaring table (§6) reaches `Question` specifically; #1225 (§6, fourteenth slice) settled the *construction*-side identity question this depends on but explicitly does not settle this one |
