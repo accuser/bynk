@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "P6.32: emitter.rs's three near-identical file_mentions_json_error/_http_result/_connection predicates now share one marker-parameterised recursive TypeRef walk (type_ref_mentions) instead of each hand-rolling its own ~20-line copy, differing only in which wrapper variant stops the recursion. file_mentions_json_error and file_mentions_http_result's outer CommonsItem enumerations were also byte-identical and now share one commons_mentions_type helper; file_mentions_connection keeps its own distinct outer walk (it additionally checks agent store fields, a Connection can live nowhere else) but reuses the same shared inner walk. Four new unit tests pin the marker-vs-recurse truth table explicitly, since a marker's own wrapper variant stops the recursion (matching each original's own unconditional true arm) rather than also searching its own inner type. Deliberately did not convert to a TyId-based walk -- these are declared signature/type positions with no resolved TyId available without threading checker resolution through every call site, out of proportion to a pure deduplication. ast_importers unaffected (8) -- these three functions were never why emitter.rs is counted."
----
+# 0357 — `file_mentions_json_error`/`_http_result`/`_connection` share one marker-parameterised `TypeRef` walk
 
-## ADR: file-mentions-shared-walk
-
-title: `file_mentions_json_error`/`_http_result`/`_connection` share one marker-parameterised `TypeRef` walk
+- **Status:** Accepted (v0.249.9)
 
 summary: Phase C of the #1137 completion plan (`design/tracks/the-ir.md` §6a, P6.32) — the highest semantic-risk slice in this phase (drives conditional runtime imports), landed as a scoped deduplication rather than the plan's own more ambitious "`TyId` walk" framing
 
