@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "P6.39: deleted four of the six AST-typed ir.rs fields named as having zero production readers -- GlobalRef::sum, IrExprKind::Record::def, IrItem::Type::def, IrItem::Fn::def -- each verified to have no reader outside a test assertion (IrItem::Fn's own constructor, lower_fn_item_ir, has no production call site at all). The other two, IrExprKind::RefinedCheck::{base, refinement} and IrPat::Refined::refinement, were investigated and found not to fit this slice: unlike the four deleted fields (redundant identity metadata another field or the caller's own context already carries), these two are the dormant node's own semantic payload -- what refinement to test -- and removing them would gut the variant's meaning rather than clean up a redundancy, the same category error a naive read of \"zero production readers\" invites for a node no shipped emitter path has reached yet (the same shape Question/Is were in before P6.15/P6.16 wired them into a real call site). Left as-is. ast_importers unaffected (invisible to the probe -- ir.rs/ir/lower.rs are excluded files)."
----
+# 0364 — Four zero-production-reader AST-typed `ir.rs` fields deleted; two others investigated and found to be load-bearing, not redundant
 
-## ADR: ir-zero-reader-fields
-
-title: Four zero-production-reader AST-typed `ir.rs` fields deleted; two others investigated and found to be load-bearing, not redundant
+- **Status:** Accepted (v0.249.16)
 
 summary: Phase F of the #1137 completion plan (`design/tracks/the-ir.md` §6a, P6.39) — R6.13's own field-level gap, invisible to `ast_importers` by construction
 
