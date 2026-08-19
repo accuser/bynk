@@ -1359,12 +1359,10 @@ P6.30.** `emitter/workers_entry.rs`'s eight `HandlerKind` sites (not 15 — the 
 folded in the file's three `ServiceProtocol` checks, which are not convertible here for the same
 reason P6.30 found) dispatch on `IrHandlerKind` — see this section's own Forty-second entry above.
 `HttpRoute`/`QueueRoute`'s own fields deliberately left unwidened, per this row's own guidance.
-`ast_importers`: **8 → 8**, unaffected. **P6.32** — `emitter.rs`'s three
-near-identical `file_mentions_json_error`/`_http_result`/`_connection` predicates (`:812`, `:865`,
-`:916`) collapse onto one shared `TyId` walk; highest semantic risk in this phase, since these three
-booleans gate conditional runtime imports and a false negative is a `tsc --strict` failure — convert
-the inner `TypeRef` recursion first, keep the outer `CommonsItem` enumeration, and only fold that in
-once bless is clean. `ast_importers` unaffected by all four (no file clears).
+`ast_importers`: **8 → 8**, unaffected. **P6.32 — landed, as a `TypeRef` deduplication rather than the
+`TyId` walk this row first proposed** (see this section's own Forty-third entry above for why).
+`ast_importers`: **8 → 8**, unaffected. Phase C closed — `ast_importers` unaffected by all four of its
+slices (no file clears in Phase C; only Phase B's P6.28 cleared one).
 
 **Phase D — the re-settling (§6a's highest-value item).** **P6.33** — a doc-only re-settling PR
 (`design/tracks/README.md` lifecycle step 4) answering, explicitly, whether the `TypeRef`-driven
@@ -1551,6 +1549,27 @@ widening them is a design question for §6a.D, not a mechanical conversion to ma
 `ast_importers`: **8 → 8**, unaffected — `emitter/workers_entry.rs` retains other, still-open AST
 names. Verified by a full zero-diff bless against the entire e2e corpus and a full `cargo test
 --workspace`. Full reasoning: `design/pending/p6-31-workers-entry-handler-kind-ir.md`'s own ADR.
+
+**Forty-third: P6.32 — `emitter.rs`'s three `file_mentions_*` predicates share one
+marker-parameterised `TypeRef` walk, closing Phase C, per §6a.** **Scoping correction: not a `TyId`
+walk**, as the plan's own P6.32 row described — these three predicates walk *declared* signature/type
+positions, which carry a raw `TypeRef` with no pre-resolved `TyId` anywhere in `TypedCommons` (unlike
+an expression position); resolving one at every declaration site three predicates iterate over would
+be real scope creep for a slice whose actual defect is duplication, not representation. Landed as a
+`TypeRef`-based deduplication instead: a `TypeRefMarker` enum (`JsonError`/`HttpResult`/`Connection`)
+plus one shared `type_ref_mentions` replaces all three ~20-line hand-written inner walks, which
+differed from each other in exactly one line (which wrapper variant stops the recursion). Equivalence
+is exact: `marker == <variant> || type_ref_mentions(inner, marker)` short-circuits to `true` without
+recursing when `t` matches the marker's own wrapper, precisely reproducing each original's own
+unconditional `=> true` arm. `file_mentions_json_error`/`_http_result`'s outer `CommonsItem`
+enumerations were byte-identical and now share `commons_mentions_type`; `file_mentions_connection`
+keeps its own distinct outer walk (it also checks agent `store_fields`) but reuses the shared inner
+walk. Four new unit tests pin the truth table directly, including the specific subtlety a naive
+unification could get wrong — a marker's own wrapper stops the recursion rather than also searching
+its own inner type. `ast_importers`: **8 → 8**, unaffected. Verified by a full zero-diff bless against
+the entire e2e corpus (the primary gate for this slice's own named risk — a wrong equivalence shows up
+as a spurious or missing runtime import) and a full `cargo test --workspace`. Full reasoning:
+`design/pending/p6-32-file-mentions-shared-walk.md`'s own ADR.
 
 ## 7. Out of scope — forward references, not refusals
 
