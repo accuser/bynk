@@ -307,14 +307,13 @@ beyond what §11 front-loads; every slice citing `Closes-Rule:`.
 ## 5. The completion criterion
 
 Same principle as every prior track on this trajectory: a slice is complete when the old path is
-**deleted**, not when the new home merely exists alongside it. Here: `ast_importers` reads **0** —
-unlike R3.5's own 4/4 floor (four `#[cfg(test)]` assertion strings with a structural reason to survive
-retirement), no analogous carve-out is known for this probe today. That is a claim to verify at
-completion, not assume now: if a lowering-pass unit test needs to hand-construct an `Ast` node directly
-rather than parsing real source text (this codebase's own established preference — see
-`bynk-check/src/secrets.rs`'s own test-authoring note from P5.5, "parsing real source rather than
-hand-building a `Handler`"), the probe could carry its own small residue the way `emit_diagnostics` and
-`fs_below_driver` both did. Confirm, don't assume, per §9's own "the evidence ages" discipline.
+**deleted**, not when the new home merely exists alongside it. Here: `ast_importers` reads **5** —
+not the 0 this section originally named. §6b's own retirement plan (19 August 2026) is what answers
+the "confirm, don't assume" charge this paragraph itself issued: a carve-out *is* now known, named,
+and per-file argued (below), the way R3.5's own 4/4 floor was — not assumed, traced. `project.rs` and
+`project/diagnostics.rs` cleared entirely (P6.42–P6.49, no exclusion-list growth); `emitter.rs`,
+`emitter/emit.rs`, `emitter/lower.rs`, `emitter/workers.rs`, `emitter/workers_entry.rs` did not, each
+for a structural reason recorded where it was found, not asserted here.
 
 `bynk-emit/src/emitter/lower.rs`'s `stmts: &mut Vec<String>`-adjacent AST-walking functions either no
 longer exist or call only into `bynk-emit::ir`'s lowering pass; every declaration-emission site reads
@@ -397,11 +396,49 @@ the evidence changed because #1187's own scoping work is what surfaced these two
 
 `ast_importers` reads **7** with all three names excluded (8 minus `project/tests_emit.rs`) —
 `runtime_use.rs`, `emitter.rs`, `emitter/lower.rs`, `emitter/workers.rs`, `emitter/serialisation.rs`,
-`emitter/workers_entry.rs`, and `project.rs` remain counted. This is not a new floor — §5's own
-completion criterion (`ast_importers` = **0**) is unchanged by this correction, only what the probe
-excludes; `emitter.rs`/`emitter/lower.rs`'s own declaration-reading surface, and `project.rs` generally,
-remain genuinely reachable by future P6.2/P6.6-class slices the way this section's own slice history
-already documents.
+`emitter/workers_entry.rs`, and `project.rs` remain counted. This *was* not a new floor when written —
+`emitter.rs`/`emitter/lower.rs`'s own declaration-reading surface, and `project.rs` generally, were
+genuinely reachable by future P6.2/P6.6-class slices, and the record of that reachability is what
+§6a/§6b's own slice histories became.
+
+**Re-settled 19 August 2026 (§6b's own retirement plan, P6.58).** `runtime_use.rs` and `project.rs`
+both cleared (P6.28 and P6.42–P6.49 respectively) without joining `AST_IMPORTER_EXCEPTIONS` — real
+movement, traced and landed, not a redefinition of what the probe counts. What remains is
+`ast_importers` = **5**: `emitter.rs`, `emitter/emit.rs`, `emitter/lower.rs`, `emitter/workers.rs`,
+`emitter/workers_entry.rs` — exactly `bynk-emit/src/emitter{,/**}`, the TypeScript-rendering subtree.
+Each file's own reason, traced rather than asserted:
+
+- **`emitter.rs`** — ~60% of its own ~348 AST-name references are blocked on three structural facts,
+  each independently confirmed against the tree (§6b's own research, not reasserted here): (a) there
+  is no unit-level IR — every `lower_*_item_ir` function takes the AST declaration *as its own input*,
+  so reaching an `IrItem` still requires already holding the AST item; the prerequisite (a cross-unit
+  `CheckedProgram` persistence layer) is §7's own "unopened, no trigger yet" row; (b) `bynk_check::
+  checker::Ty::Base` is parameterised by `bynk_syntax::ast::BaseType` (`checker.rs:277`), forcing the
+  AST import into even the fully IR-native `ts_ty`; (c) `ir.rs` has no `IrExpr` children iterator to
+  replace `ast::expr_children`/`statement_exprs`, and the external-reference walk this blocks
+  additionally needs the *source-declared* name a resolved `Ty::Named` erases (the #527/#507
+  exhaustiveness fix's own head-vs-argument distinction). Every genuinely convertible site this
+  track's own research found (P6.51–P6.57's own slices) landed; the residue is what's left after that
+  sweep, not what the sweep never attempted.
+- **`emitter/emit.rs`** / **`emitter/lower.rs`** — each is counted *twice over*: by their own residue
+  (Q7 body-rendering imports, permanent under §3.7; `emit.rs`'s own phase-7 codec-adjacent family) and
+  by the P6.26-review super-glob rule, which keeps both counted regardless of their own import list's
+  size for as long as `emitter.rs:39` itself imports the AST. Neither can clear before `emitter.rs`
+  does, structurally, independent of any further work inside either file.
+- **`emitter/workers.rs`** / **`emitter/workers_entry.rs`** — declaration reads needing a
+  `TypedCommons` that P6.30/P6.31 found genuinely not in scope: both `emit_worker_compose`/
+  `emit_worker_entry` hold only a `UnitTable`, unlike the sibling call sites elsewhere in `emitter.rs`
+  P6.52 found *did* have a `TypedCommons` and converted.
+
+**This is a floor, not five leftovers, because it names one boundary**: the residue is exactly the
+rendering subtree phase 7's own printer (`bynk-ts`) inherits (§7's own forward-reference row, revised
+below). `AST_IMPORTER_EXCEPTIONS` does **not** grow to reach this floor — excluding all five would
+make the probe read 0 while measuring nothing (`ast_importer_exceptions_still_exist_and_still_import_the_ast`
+would pass vacuously); excluding only `emitter/lower.rs` (the strongest single candidate, since
+#1210's own review ground for rejecting it — `cap_op_param_names`'s live `CommonsItem::Capability`
+walk — no longer exists, P6.29 converted it) would buy a floor of 4 at the cost of the clean subtree
+statement above; and file-granularity exclusion is the same harm the #1176 exclusion's own
+"named not prefixed" discipline, and decision 2 of §6b's own retirement plan, both already rule out.
 
 ---
 
@@ -1875,6 +1912,13 @@ of either file), or a second re-settling (§6a.D's own precedent) naming 7 — o
 plan didn't reach — as this track's own true floor, the same "confirm, don't assume" discipline §5 and
 §9 both already call for. Neither has happened yet; this plan's own remit ends here, not at retirement.
 
+**Both of the two ways out this paragraph named were taken, not chosen between.** §6b (below) is both
+the "fresh slice-decomposition pass" this paragraph says never happened (Phase G/H, P6.42–P6.57 — a
+systematic pass over `project.rs`'s and `emitter.rs`/`emit.rs`/`lower.rs`'s own remaining surface, not
+just the specific items the original grounding pass had named) *and* the "second re-settling"
+(P6.58) — landed in that order deliberately, so the re-settling's own floor argument rests on evidence
+the sweep produced rather than an estimate made ahead of it.
+
 ### 6b. The retirement plan (P6.42 onward)
 
 **Provenance.** Assembled 19 August 2026, in response to an explicit request to drive this track to
@@ -2164,10 +2208,50 @@ an emitted key string's own construction path: zero-diff bless over the full e2e
 `tsc_verify.rs` checks, `cargo test --workspace`, `cargo clippy --workspace --all-targets` all pass
 unchanged. Full reasoning: `design/pending/p6-57-http-method-ir-native.md`.
 
+**Phase I — re-settle, then retire. Landed: P6.58.**
+
+**Sixty-ninth: P6.58 — re-settles §5 at a floor of 5; breaks the §5/§7 deadlock; names §12's
+retirement condition. Doc-only.** §5's own two claims corrected in place (not restated elsewhere):
+the opening paragraph's "`ast_importers` reads 0 … no analogous carve-out is known" becomes "reads 5
+… a carve-out is now known, named, and per-file argued" — the answer to the "confirm, don't assume"
+charge that same paragraph issued; the closing "not a new floor" paragraph replaced with the actual
+floor argument, one entry per surviving file, each citing its own structural blocker rather than a
+bare count (`emitter.rs`'s three clusters — no unit-level IR, `Ty::Base(BaseType)`'s cross-crate
+coupling, no `IrExpr` children iterator plus the source-declared-name requirement `Ty::Named` erases;
+`emit.rs`/`lower.rs` counted twice over, by residue and by the P6.26-review super-glob rule;
+`workers.rs`/`workers_entry.rs` as `UnitTable`-only call sites per P6.30/P6.31). §6a's own closing
+paragraph (Fifty-second entry) offered exactly two ways out of its own hand-off point — recorded here
+that P6.42–P6.58 took both, in deliberate order: the systematic sweep (§6b Phases G/H) first, so the
+re-settling's own floor argument rests on evidence the sweep produced, not an estimate made ahead of
+it. `AST_IMPORTER_EXCEPTIONS` does **not** grow to reach this floor, with the reasoning recorded
+alongside the floor argument itself (§5): excluding all five would make the probe read 0 while
+measuring nothing; excluding only `emitter/lower.rs` (its own strongest candidate, since #1210's
+stated rejection ground no longer holds) would buy a floor of 4 at the cost of the clean subtree
+statement; file-granularity exclusion is the harm the #1176 exclusion's own "named not prefixed"
+discipline already rules out. The `bynk-ts` forward-reference row (§7, whose own missing heading this
+slice also adds) amends from "probe reads 0" to "probe reads its named floor, and the residue is
+exactly the rendering subtree `bynk-ts` inherits" — breaking a genuine circularity neither §5 nor §7
+had named before: ~52 `emitter.rs` references (`ts_type_ref*`/`ts_base`/`ty_to_type_ref`/
+`pred_condition_and_message`) are `bynk-ts`'s own work by P6.33's ruling, so the renderer family
+cannot leave before `bynk-ts` exists, and `bynk-ts` could not start under the old wording until the
+renderer family left. §12 now names the retirement condition as this floor. No source changes;
+`ast_importers`: **unaffected (5)**. Verified: `cargo xtask check-pending`, `cargo xtask
+greenfield-status` (table unchanged), a full re-read of §5/§7/§12 for internal consistency. Full
+reasoning: `design/pending/p6-58-resettle-floor-of-five.md`.
+
+## 7. Forward references
+
+Items this track's own scope (§2) excludes, named so a later track knows where to pick them up rather
+than rediscovering them — the same practice every track on this trajectory follows (`project-model.md`
+§3.5, `semantics-in-the-checker.md` §8). This section's own heading was missing until P6.58 (§6b) added
+it — seven `§7` pointers elsewhere in this document dangled against an unheaded table for as long as
+the gap existed (first recorded, not fixed, at line 760 of an earlier revision); fixed here, the last
+chance before this doc is deleted at retirement.
+
 | Item | Phase | Entry condition |
 |---|---|---|
 | `Question`'s own three-way desugar fork — what `IrExprKind` an `expr?` lowers to | 6, unproposed | a slice proposal for P6.3's desugaring table (§6) reaches `Question` specifically; #1225 (§6, fourteenth slice) settled the *construction*-side identity question this depends on but explicitly does not settle this one |
-| The `bynk-ts` tree and printer | 7 | this track's probe (`ast_importers`) reads 0 (§5) |
+| The `bynk-ts` tree and printer | 7 | this track's probe (`ast_importers`) reads its named floor (**5**, §5), and every file in the residue is either Q7-settled body rendering or `TypeRef`-driven codec/type rendering — the surface `bynk-ts` is for. Amended by P6.58 (§6b) from "reads 0": ~52 references in `emitter.rs` alone (`ts_type_ref`/`_with`/`_qualified`/`_qualified_multi`, `ts_base`, `ty_to_type_ref`, `pred_condition_and_message`) are `bynk-ts`'s own work by P6.33's ruling — `pred_condition_and_message`'s own doc comment says it is the *one shared mapping* for `emit::emit_pred_check` **and** `serialisation::emit_inline_pred_check`, i.e. already half-consumed by a file this track excludes on exactly that phase-7 ground. The renderer family cannot leave `bynk-emit` until `bynk-ts` exists to receive it; `bynk-ts` could not start under the original condition until the renderer family left. Something had to give; the probe target gave, not the phase boundary |
 | Carving `bynk-ir`/`bynk-lower` as their own crates, per the reference's own target graph (Part 10) | 7 | `bynk-ts` exists and gives the IR a genuine second consumer — R10.3's own trigger, not this track's appetite (§3.3, Q3) |
 | Severing `bynk-emit`'s dependency on `bynk-check` | 7 or later | the IR is proven complete enough (post this track) that `bynk-emit`'s remaining `Ir → TsProgram` logic never falls back to a `bynk-check` type — not one of this phase's own reference rules (trajectory §3 omits R10.1/R10.2 from phase 6's list) |
 | Part 14's E7 (durable capability-provider transactional participation) | *unopened — no trigger yet* | a real durable `Idempotency` (or equivalent) provider proposal appearing, not the worked exercise alone (§3.6, Q6) |
@@ -2278,7 +2362,11 @@ settling pass (numbers assigned at merge by the stamp; referred to by letter unt
 ## 12. Retirement
 
 Mirrors every prior track on this trajectory: retires when §6's probe (`ast_importers`) reads its named
-floor (**0**, per §5 — confirm no test-fixture residue survives, the same caution every prior floor
-needed) and every slice named to reach it has landed. The retirement PR removes this doc, appends its
-closing summary to `../archive/retired-tracks.md`, and closes the spine issue
-([#1137](https://github.com/accuser/bynk/issues/1137)).
+floor (**5**, per §5 — confirm no test-fixture residue survives, the same caution every prior floor
+needed) and every slice named to reach it (§6a's P6.25–P6.41, §6b's P6.42–P6.58) has landed. The
+retirement PR (P6.59) removes this doc, appends its closing summary — carrying forward the five-file
+floor's own per-file argument and the amended `bynk-ts` entry condition (§7), since both live in tables
+this doc's own deletion would otherwise take with it — to `../archive/retired-tracks.md`, and closes
+the spine issue ([#1137](https://github.com/accuser/bynk/issues/1137)). The probe itself is not
+deleted: `ast_importers` stays gated at 5, a regression ratchet phase 7 inherits and drives down as it
+builds the printer this floor's own residue names.
