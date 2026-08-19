@@ -26,8 +26,8 @@ use bynk_syntax::ast::{
     CommonsItem, EventPattern, EventPatternValue, Expr, ExprId, ExprKind, FieldInit, FnDecl,
     FnName, Handler, HandlerKind, HttpMethod, InterpPart, Invariant, LambdaExpr, LiteralValue,
     MatchArm, MatchBody, Pattern, PatternBindingKind, ProviderDecl, ProviderOp, QualifiedName,
-    ServiceDecl, ServiceProtocol, Statement, StoreField, Transition, TypeBody, TypeDecl, UnaryOp,
-    expr_children,
+    ServiceDecl, ServiceProtocol, Statement, StoreField, Transition, TypeBody, TypeDecl, TypeRef,
+    UnaryOp, expr_children,
 };
 use bynk_syntax::span::Span;
 
@@ -559,6 +559,21 @@ fn lower_handler_signature_ir(h: &Handler, cx: &LowerIrCtx) -> HandlerSignatureI
     (params, given, ret, effectful)
 }
 
+/// P6.50 (design/tracks/the-ir.md §6b): a return type's own syntactic
+/// `Effect[...]` wrapper — `TypeRef::Effect(_, _)`, not the *resolved*
+/// `Ty::Effect(_)` shape [`lower_handler_signature_ir`] reads above via
+/// `cx.program.ty_intern`. Relocated here from `emitter/emit.rs` (its
+/// original home, `#[allow(dead_code)]`-free and with eight call sites
+/// across `emit.rs`/`workers.rs`/`workers_entry.rs`) because
+/// [`lower_service_handler_signature_ir`] below was already calling *up*
+/// into it (`crate::emitter::is_effectful_return`) — the `Ast → Ir` boundary
+/// running backwards, an `Ir`-side lowering function reaching into the
+/// `emitter` module it should only ever be called *from*. `emit.rs` and
+/// friends now call `crate::ir::lower::is_effectful_return` instead.
+pub(crate) fn is_effectful_return(r: &TypeRef) -> bool {
+    matches!(r, TypeRef::Effect(_, _))
+}
+
 /// #1187's slice 5 (the `Service` emitter cutover): `emit_service`'s own
 /// standalone entry point for a handler's resolved *signature* only —
 /// `params`/`ret`/`effectful`, never the body. Deliberately does not build
@@ -604,8 +619,8 @@ fn lower_handler_signature_ir(h: &Handler, cx: &LowerIrCtx) -> HandlerSignatureI
 /// resolution gap).
 ///
 /// `effectful` is computed from `h.return_type`'s own AST shape
-/// (`TypeRef::Effect(..)`, matching [`crate::emitter::is_effectful_return`]
-/// exactly), not from the *resolved* `ret`'s `Ty::Effect(_)` shape — a
+/// (`TypeRef::Effect(..)`, matching [`is_effectful_return`] exactly), not
+/// from the *resolved* `ret`'s `Ty::Effect(_)` shape — a
 /// resolution miss on `ret` (falling back to `Ty::Unit` below) must not
 /// silently flip an `Effect[Nope]`-returning handler to non-effectful; the
 /// top-level `Effect[...]` wrapper is always syntactically determinable
@@ -629,7 +644,7 @@ pub(crate) fn lower_service_handler_signature_ir(
     let ret = cx
         .resolve_type_ref(&h.return_type)
         .unwrap_or_else(|| cx.unit_ty());
-    let effectful = crate::emitter::is_effectful_return(&h.return_type);
+    let effectful = is_effectful_return(&h.return_type);
     (params, given, ret, effectful)
 }
 

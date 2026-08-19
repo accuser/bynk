@@ -20,7 +20,9 @@ use bynk_syntax::ast::{
     TypeDecl, TypeParam, TypeRef,
 };
 
-use crate::ir::lower::{HandlerSignatureIr, body_writes_state, lower_actor_seam_ir};
+use crate::ir::lower::{
+    HandlerSignatureIr, body_writes_state, is_effectful_return, lower_actor_seam_ir,
+};
 use crate::ir::{ActorSeamIr, FnSig, OpSig, ProtocolIr, StoreFieldIr, StoreKindIr, TypeShape};
 
 use super::*;
@@ -638,10 +640,6 @@ fn emit_contract_guarded_body(out: &mut String, f: &FnDecl, cx: &mut LowerCtx, a
         .unwrap();
     }
     writeln!(out, "  return result;").unwrap();
-}
-
-pub(crate) fn is_effectful_return(r: &TypeRef) -> bool {
-    matches!(r, TypeRef::Effect(_, _))
 }
 
 /// Synthesise a TypeScript-safe method name for an `on http METHOD path`
@@ -2347,18 +2345,6 @@ pub(crate) fn type_ref_named_root(r: &TypeRef) -> Option<&str> {
         TypeRef::Named(id) => Some(id.name.as_str()),
         _ => None,
     }
-}
-
-#[allow(dead_code)]
-fn build_deps_object_ty(given: &[Ident]) -> String {
-    if given.is_empty() {
-        return "{}".to_string();
-    }
-    let parts: Vec<String> = given
-        .iter()
-        .map(|c| format!("{}: {}", c.name, c.name))
-        .collect();
-    format!("{{ {} }}", parts.join("; "))
 }
 
 /// True when a type has a boundary deserialiser (ADR 0124 rehydration gate). A
