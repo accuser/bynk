@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "P6.33: re-settled the #1137 completion plan's own Phase D question -- does the TypeRef-driven JSON/wire codec layer belong to phase 6 or phase 7? Ruled phase 7: emitter/serialisation.rs holds no CommonsItem-declaration-read surface at all, only the codec renderer itself, the same \"how do I render this as TS source\" question Q7 already settled belongs to the eventual printer. serialisation.rs joins AST_IMPORTER_EXCEPTIONS on those grounds (a phase boundary, not Q7 residue or test-only reach); emitter.rs was considered and rejected for the same treatment since it mixes real, still-open declaration-read surface in among its own codec-adjacent TypeRef sites. Also ruled: Q7 rendering-signature params were already settled by Q7 itself, not a new question; project.rs's own_contract_hashes is a wire-format concern named as a likely future residual floor, not excluded now since project.rs has other convertible surface; IrExprKind::Call's own Callee field is ruled entirely out of R6.13's frame (bynk-check-internal, not bynk-emit's business). ast_importers: 8 -> 7."
----
+# 0358 — The `TypeRef`-driven JSON/wire codec layer is ruled phase-7 printer work; `emitter/serialisation.rs` joins `AST_IMPORTER_EXCEPTIONS`
 
-## ADR: codec-layer-resettling
-
-title: The `TypeRef`-driven JSON/wire codec layer is ruled phase-7 printer work; `emitter/serialisation.rs` joins `AST_IMPORTER_EXCEPTIONS`
+- **Status:** Accepted (v0.249.10)
 
 summary: Phase D of the #1137 completion plan (`design/tracks/the-ir.md` §6a) — the re-settling this track's own lifecycle step 4 calls for, closing the plan's own highest-value open question
 

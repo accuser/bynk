@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0358](0358-codec-layer-resettling.md) | **The `TypeRef`-driven JSON/wire codec layer is ruled phase-7 printer work; `emitter/serialisation.rs` joins `AST_IMPORTER_EXCEPTIONS`** (v0.249.10) — The `TypeRef`-driven JSON/wire codec layer is ruled phase-7 printer work; `emitter/serialisation.rs` joins `AST_IMPORTER_EXCEPTIONS` | Accepted (v0.249.10) |
 | [0357](0357-file-mentions-shared-walk.md) | **`file_mentions_json_error`/`_http_result`/`_connection` share one marker-parameterised `TypeRef` walk** (v0.249.9) — `file_mentions_json_error`/`_http_result`/`_connection` share one marker-parameterised `TypeRef` walk | Accepted (v0.249.9) |
 | [0356](0356-workers-entry-handler-kind-ir.md) | **`emitter/workers_entry.rs`'s eight `HandlerKind` matches dispatch on `IrHandlerKind`; `HttpRoute`/`QueueRoute` and `ServiceProtocol` left as named residue** (v0.249.8) — `emitter/workers_entry.rs`'s eight `HandlerKind` matches dispatch on `IrHandlerKind`; `HttpRoute`/`QueueRoute` and `ServiceProtocol` left as named residue | Accepted (v0.249.8) |
 | [0355](0355-worker-compose-handler-kind-ir.md) | **`emit_worker_compose` dispatches on `IrHandlerKind`, not raw AST `HandlerKind`; `ProtocolIr` conversion found not reachable here** (v0.249.7) — `emit_worker_compose` dispatches on `IrHandlerKind`, not raw AST `HandlerKind`; `ProtocolIr` conversion found not reachable here | Accepted (v0.249.7) |
