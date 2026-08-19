@@ -1329,18 +1329,18 @@ that the probe itself needed hardening against it, not just the source. `ast_imp
 (not the 7 → 8 first predicted — the probe fix's own `project/diagnostics.rs` catch is the
 difference), with no AST/IR name collision found (no aliasing was needed after all).
 
-**Phase B — cheap decouplings.** **P6.27** — re-export `ExprId` from `bynk-check` (`pub use
-bynk_syntax::ast::ExprId;` in `checker.rs`) and retarget `project.rs:46`/`emitter.rs:2157`; enabling
-only, `ast_importers` unaffected on its own, since Q2 already settled `HashMap<ExprId, _>` stays and the
-checker's public API already keys `expr_types` by `ExprId`. **P6.28** — `RuntimeUse::json_codec_roots`
-carries `TyId` instead of `TypeRef`; its two push sites (`emitter/lower.rs:2483,2504`) already hold a
-`TyId` and call `ty_to_type_ref` only to satisfy this field's type, so the conversion moves to the
-single drain site (`project/tests_emit.rs:1658`, an excluded file) immediately before
-`collect_codec_closure`. Deliberately **not** gated on the codec layer's own phase-6-vs-7 question
-(§6a.D) — `ast_importers`: **8 → 7**, `emitter/runtime_use.rs` cleared, the first file to reach zero
-under this plan. Risk: `ty_to_type_ref` drops functions/effects/type-vars via its `Option` return, so
-filtering moves from push-time to drain-time; zero-diff bless is the gate, and a diff means filtering
-should stay at the push sites with a cheap `Ty`-shape test instead.
+**Phase B — cheap decouplings.** **P6.27 — landed.** Re-exported `ExprId` from `bynk-check` (`pub use
+bynk_syntax::ast::ExprId;` in `checker.rs`) and retargeted `project.rs:46`/`emitter.rs:2157` — see this
+section's own Thirty-eighth entry above. `ast_importers`: **9 → 9**, unaffected, exactly as predicted.
+**P6.28** — `RuntimeUse::json_codec_roots` carries `TyId` instead of `TypeRef`; its two push sites
+(`emitter/lower.rs:2483,2504`) already hold a `TyId` and call `ty_to_type_ref` only to satisfy this
+field's type, so the conversion moves to the single drain site (`project/tests_emit.rs:1658`, an
+excluded file) immediately before `collect_codec_closure`. Deliberately **not** gated on the codec
+layer's own phase-6-vs-7 question (§6a.D) — `ast_importers`: **9 → 8**, `emitter/runtime_use.rs`
+cleared, the first file to reach zero under this plan. Risk: `ty_to_type_ref` drops
+functions/effects/type-vars via its `Option` return, so filtering moves from push-time to drain-time;
+zero-diff bless is the gate, and a diff means filtering should stay at the push sites with a cheap
+`Ty`-shape test instead.
 
 **Phase C — declaration-read conversions (evidence for §6a.D).** Each slice below is a
 `Callee`/`IrItem`-reads-the-decision conversion in the established P6.21 idiom; none clears a file on
@@ -1433,9 +1433,10 @@ than folding into this plan.
 7→7 (doc-only)~~ **landed** · ~~P6.26 7→9~~ **landed at 9, not the 8 first predicted** — review
 (#1259) hardened the probe itself to also count a `use super::*;` child of an AST-importing parent,
 which correctly catches `project/diagnostics.rs` alongside the predicted `emit.rs`, +1 over the
-original estimate. Live today, post-P6.26: **9**. Every step below shifts by the same +1 baseline;
-figures are re-stated, not re-derived, since nothing about the underlying slice work changed: P6.27
-9→9 (enabling) · P6.28 9→**8** (`runtime_use.rs` cleared) · P6.29–P6.32 8→8 (decision conversions, no
+original estimate. Every step below shifts by the same +1 baseline; figures are re-stated, not
+re-derived, since nothing about the underlying slice work changed: ~~P6.27 9→9 (enabling)~~ **landed,
+confirmed exactly as predicted.** Live today, post-P6.27: **9**. P6.28 9→**8** (`runtime_use.rs`
+cleared) · P6.29–P6.32 8→8 (decision conversions, no
 file clears) · P6.33 8→8 or redefined (re-settling) · P6.34–P6.36 8→7 if `project.rs` clears
 (conditional on P6.33's finding — and, per the probe hardening above, `project/diagnostics.rs` clears
 in the same moment `project.rs` itself does, automatically, not as its own separate slice) ·
@@ -1456,6 +1457,23 @@ here.
 deliberate increase was the one entry in this trajectory that reads as a regression if not narrated as
 one**, and `design/greenfield-status.md` was updated in the same commit as P6.26, per
 `greenfield_status_table_is_current`'s own requirement.
+
+**Thirty-eighth: P6.27 — `bynk_check::checker::ExprId` re-exports `bynk_syntax::ast::ExprId`; both of
+`bynk-emit`'s direct-`ExprId` sites (`project.rs`, `emitter.rs`'s `sum_owner_of_variant`) read it from
+there, per §6a's own Phase B.** Added `pub use bynk_syntax::ast::ExprId;` to `bynk-check/src/
+checker.rs`, next to its own existing private `use bynk_syntax::ast::*;` — exposing an identity type
+the checker's public API already keys `expr_types`/`Callee` by (`HashMap<ExprId, _>`), not a new
+dependency. `project.rs` dropped its separate `use bynk_syntax::ast::ExprId;` line in favour of
+importing it alongside `TyId`/`Types` from `bynk_check::checker`; `emitter.rs` dropped `ExprId` from
+its own P6.26 explicit AST list the same way, un-qualifying `sum_owner_of_variant`'s parameter.
+`bynk-emit::ir` (excluded from the probe) keeps its own direct `bynk_syntax::ast::ExprId` import
+unchanged — the `Ast → Ir` lowering pass's own job, out of scope here. `ast_importers`: **9 → 9**,
+unaffected, exactly as §6a's own Phase B predicted — neither file was counted because of `ExprId`
+specifically, each has other, still-open AST names remaining. Purely enabling: every later slice
+touching either file's `ExprId`-keyed call sites now has a `bynk-check`-local name to reach it by.
+Verified by a full zero-diff bless against the entire e2e corpus (a same-type import retarget cannot
+alter emitted output) and a full `cargo test --workspace`. Full reasoning:
+`design/pending/p6-27-reexport-exprid-from-bynk-check.md`'s own ADR.
 
 ## 7. Out of scope — forward references, not refusals
 

@@ -35,9 +35,9 @@ use bynk_check::builtin_names::methods::{
     TRAVERSE_TRY,
 };
 use bynk_check::builtin_names::types::*;
-use bynk_check::checker::{CheckedProgram, NamedKind, Ty, TyId, TypedCommons, Types};
+use bynk_check::checker::{CheckedProgram, ExprId, NamedKind, Ty, TyId, TypedCommons, Types};
 use bynk_syntax::ast::{
-    AgentDecl, BaseType, BinOp, Block, CommonsItem, Expr, ExprId, ExprKind, FnDecl, FnName, Ident,
+    AgentDecl, BaseType, BinOp, Block, CommonsItem, Expr, ExprKind, FnDecl, FnName, Ident,
     InterpPart, MatchBody, MessagesDecl, ObservationMatcher, Param, Pattern, PredKind, ServiceDecl,
     Statement, TypeBody, TypeDecl, TypeRef, expr_children, statement_exprs,
 };
@@ -2156,11 +2156,7 @@ fn collect_refs_in_expr(
 /// the checker's expression type), return the owning sum's name — the same
 /// test the lowering uses to qualify it as `Type.Variant` (see the
 /// `ExprKind::Ident` arm of `lower_expr_into`).
-fn sum_owner_of_variant(
-    name: &str,
-    id: bynk_syntax::ast::ExprId,
-    commons: &TypedCommons,
-) -> Option<String> {
+fn sum_owner_of_variant(name: &str, id: ExprId, commons: &TypedCommons) -> Option<String> {
     if let Some(Ty::Named {
         kind: NamedKind::Sum,
         name: type_name,

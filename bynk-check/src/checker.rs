@@ -31,6 +31,13 @@ use bynk_syntax::ast::*;
 use bynk_syntax::error::{Applicability, CompileError};
 use bynk_syntax::span::Span;
 
+/// P6.27 (design/tracks/the-ir.md §6a): re-exported so a checker consumer keying
+/// off `expr_types`/`Callee` (both `HashMap<ExprId, _>`, Q2's own settled totality
+/// story) can name `ExprId` through `bynk-check` alone, without also depending on
+/// `bynk_syntax::ast` directly just to spell this one identity type — the same
+/// public-dependency-already-exists shape as `Ty`/`TyId` below.
+pub use bynk_syntax::ast::ExprId;
+
 mod calls;
 mod expressions;
 mod kernels;

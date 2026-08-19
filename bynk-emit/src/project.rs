@@ -32,7 +32,7 @@ use crate::ir::lower::{
 };
 use bynk_check::check_pipeline::{self, prepare_unit_check_ctx};
 use bynk_check::checker;
-use bynk_check::checker::{TyId, Types};
+use bynk_check::checker::{ExprId, TyId, Types};
 use bynk_check::expr_types::ExprTypeSink;
 use bynk_check::firstparty::{self, Platform};
 use bynk_check::hints::HintSink;
@@ -43,7 +43,6 @@ use bynk_check::project_model::{
 };
 use bynk_check::requirements::RequirementSink;
 use bynk_check::resolver::{self, MethodTable as ResolverMethodTable, ResolvedCommons};
-use bynk_syntax::ast::ExprId;
 use bynk_syntax::ast::{
     Block, CommonsItem, FnDecl, FnName, HandlerKind, ServiceProtocol, SourceUnit, TypeDecl,
     TypeRef, Visibility,
