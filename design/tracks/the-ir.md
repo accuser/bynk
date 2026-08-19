@@ -1949,6 +1949,19 @@ continues in P6.46–P6.49. Zero-diff bless over the full e2e corpus, `cargo tes
 clippy --workspace --all-targets` all pass unchanged. Full reasoning:
 `design/pending/p6-45-attached-method-sig-lowering.md`.
 
+**Fifty-seventh: P6.46 — two owner-side accessors replace raw AST walks in `project.rs`.**
+`ParsedFile::declares_messages()` (`bynk-project/src/discovery.rs`, beside `items()`) replaces a raw
+`pf.items().iter().any(|it| matches!(it, CommonsItem::Messages(_)))` — the predicate a `messages`-
+bundle emitter needs, not the match itself. `bynk_check::symbols::cron_and_queue_triggers(table:
+&UnitTable) -> (Vec<String>, Vec<String>)` (beside `discover_event_subscribers`) replaces the cron/
+queue-gathering loop `project.rs:2327-2350`'s own comment already recorded as "relocated, unchanged
+in substance" out of `emit_wrangler_toml` by a prior slice (#1191) — the walk itself was left sitting
+over `table`, a type `project.rs` never owned either. No behavioural change. `ast_importers`:
+**unaffected (6)** — `HandlerKind` now gone from `project.rs`'s import list entirely; Phase G
+continues in P6.47–P6.49. Zero-diff bless over the full e2e corpus, `cargo test --workspace`, `cargo
+clippy --workspace --all-targets` all pass unchanged. Full reasoning:
+`design/pending/p6-46-owner-side-accessors.md`.
+
 | Item | Phase | Entry condition |
 |---|---|---|
 | `Question`'s own three-way desugar fork — what `IrExprKind` an `expr?` lowers to | 6, unproposed | a slice proposal for P6.3's desugaring table (§6) reaches `Question` specifically; #1225 (§6, fourteenth slice) settled the *construction*-side identity question this depends on but explicitly does not settle this one |

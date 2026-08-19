@@ -44,7 +44,7 @@ use bynk_check::project_model::{
 use bynk_check::requirements::RequirementSink;
 use bynk_check::resolver::{self, MethodTable as ResolverMethodTable, ResolvedCommons};
 use bynk_syntax::ast::{
-    Block, CommonsItem, FnDecl, HandlerKind, ServiceProtocol, TypeDecl, TypeRef, Visibility,
+    Block, CommonsItem, FnDecl, ServiceProtocol, TypeDecl, TypeRef, Visibility,
 };
 use bynk_syntax::error::CompileError;
 use bynk_syntax::lexer;
@@ -1143,11 +1143,7 @@ fn emit_unit(
     let mut extra_import_lines: Vec<String> = agent_deps_plan
         .map(|p| p.imports.clone())
         .unwrap_or_default();
-    if pf
-        .items()
-        .iter()
-        .any(|it| matches!(it, CommonsItem::Messages(_)))
-    {
+    if pf.declares_messages() {
         let render_path = unit_ctx
             .imported_decl_paths_emit
             .get("bynk.locale")
@@ -2330,28 +2326,12 @@ fn build_output(
                 let service_consumes: Vec<String> = service_consumes.into_iter().collect();
                 // P6.x cutover slice 2 (#1191): collected here, not inside
                 // `emit_wrangler_toml` itself, so that function's own file
-                // needs no `bynk_syntax::ast` match — `project.rs` already
-                // does (this loop is the relocated match, unchanged in
-                // substance: same `HandlerKind::Cron`/`ServiceProtocol::Queue`
-                // shapes, same sort+dedup, just one call frame up).
-                let mut crons: Vec<String> = Vec::new();
-                let mut queues: Vec<String> = Vec::new();
-                for service in table.services.values() {
-                    for handler in &service.handlers {
-                        if let HandlerKind::Cron { expr } = &handler.kind {
-                            crons.push(expr.clone());
-                        }
-                    }
-                    // v0.44: one queue binding per service, on the
-                    // `from queue("name")` header.
-                    if let ServiceProtocol::Queue { name } = &service.protocol {
-                        queues.push(name.clone());
-                    }
-                }
-                crons.sort();
-                crons.dedup();
-                queues.sort();
-                queues.dedup();
+                // needs no `bynk_syntax::ast` match. P6.46 (#1137): the walk
+                // itself relocated to `bynk_check::symbols::cron_and_queue_triggers`
+                // — a pure function of `table`, `project.rs`'s own remaining
+                // AST contact here was incidental to where the loop happened
+                // to be written, not structural.
+                let (crons, queues) = bynk_check::symbols::cron_and_queue_triggers(table);
                 let wrangler = emitter::emit_wrangler_toml(
                     ctx_name,
                     table,

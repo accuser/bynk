@@ -9,8 +9,8 @@ use crate::resolver::{self, MethodTable as ResolverMethodTable};
 use bynk_project::{ParsedFile, UnitKind};
 use bynk_syntax::ast::{
     ActorDecl, AgentDecl, BaseType, Block, CapRef, CapabilityDecl, CommonsItem, EventDecl,
-    ExportKind, Expr, ExprId, ExprKind, FnDecl, FnName, Ident, Param, ProviderDecl, ServiceDecl,
-    ServiceProtocol, Trivia, TypeBody, TypeDecl, TypeRef, Visibility,
+    ExportKind, Expr, ExprId, ExprKind, FnDecl, FnName, HandlerKind, Ident, Param, ProviderDecl,
+    ServiceDecl, ServiceProtocol, Trivia, TypeBody, TypeDecl, TypeRef, Visibility,
 };
 use bynk_syntax::error::CompileError;
 use bynk_syntax::span::Span;
@@ -983,6 +983,30 @@ pub fn discover_event_subscribers(
         subs.sort();
     }
     out
+}
+
+/// P6.x (#1137): one context's own cron expressions (`on cron "expr"`) and
+/// queue names (`from queue("name")`), sorted and deduped — the two `wrangler.toml`
+/// binding lists a context's own compose entry needs. `v0.44`: one queue binding
+/// per service, on the `from queue(...)` header.
+pub fn cron_and_queue_triggers(table: &UnitTable) -> (Vec<String>, Vec<String>) {
+    let mut crons: Vec<String> = Vec::new();
+    let mut queues: Vec<String> = Vec::new();
+    for service in table.services.values() {
+        for handler in &service.handlers {
+            if let HandlerKind::Cron { expr } = &handler.kind {
+                crons.push(expr.clone());
+            }
+        }
+        if let ServiceProtocol::Queue { name } = &service.protocol {
+            queues.push(name.clone());
+        }
+    }
+    crons.sort();
+    crons.dedup();
+    queues.sort();
+    queues.dedup();
+    (crons, queues)
 }
 
 /// v0.15: validate one `given` capability reference. A bare reference must name
