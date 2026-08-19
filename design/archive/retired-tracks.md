@@ -808,3 +808,85 @@ imposed; entries keep the order they were retired in.
   the trajectory) — its own reference-doc rationale ("move the checks first and the IR only has to carry
   what emission needs") is exactly the boundary this track drew, category by category, rather than
   leaving as a fuzzy architectural preference for phase 6 to reopen.
+- **`the-ir.md`** — phase 6 of [`../bynk-compiler-trajectory.md`](../bynk-compiler-trajectory.md), spine
+  [#1137](https://github.com/accuser/bynk/issues/1137): `bynk-emit` gains a typed IR
+  (`ir.rs`/`ir/lower.rs`, both landing inside `bynk-emit` rather than as the reference's own separate
+  `bynk-ir`/`bynk-lower` crates — [ADR 0332](../decisions/0332-the-ir-crate-location.md), Part 10's
+  own crate split deferred to phase 7 for want of a second consumer), and the emitter's own dispatch
+  decisions move off re-derived AST name-matching onto reads of a resolved `Callee`/`IrItem`/`TyId`
+  value. Settled across three front-loaded design questions
+  ([ADR 0332](../decisions/0332-the-ir-crate-location.md) — crate location;
+  [ADR 0333](../decisions/0333-the-ir-callee-in-bynk-check.md) — `Callee` classification is new
+  `bynk-check` work R6.10 commissions, not phase-5 scope missed;
+  [ADR 0334](../decisions/0334-the-ir-lowering-totality-discipline.md) — a certified-program-only
+  lowering pass enforces `IrExpr`'s total-by-construction guarantee without needing R4.9's `IndexVec`
+  conversion first), then run as three arcs. The **IR construction** arc (P6.0–P6.24, ~25 slices)
+  built `Callee` classification, `IrExpr`/`IrItem`/`IrHandler` and their lowering pass, closing R6.5's
+  data-loss defect structurally (`body_writes_state` reads `Callee::Store` directly — no
+  name-matched receiver, the "strongest single argument" the ADR-0076 trigger check named) along the
+  way — landmarks include the `?`/`is` desugars
+  ([ADR 0337](../decisions/0337-question-ir-lowering.md)/[ADR 0338](../decisions/0338-is-ir-lowering.md))
+  and the `lower_service_item_ir` safety probe reaching zero panics across the whole fixture corpus,
+  down from ~51 ([ADR 0347](../decisions/0347-remaining-root-causes-closed.md)). The **completion
+  plan** arc (§6a, P6.25–P6.41, its own eighteen slices) made the `ast_importers` probe itself
+  false-zero-resistant (a `use super::*;` glob-inheritance hardening a code review caught,
+  [#1259](https://github.com/accuser/bynk/pull/1259)) and converted every declaration-read the
+  original grounding pass had named, closing at a probe reading of 7 — three files short of the 0
+  first named, each for a reason traced rather than assumed, with its own remit explicitly ending
+  short of retirement. The **retirement plan** arc (§6b, P6.42–P6.58, seventeen slices) took both
+  routes §6a's own hand-off point had named and left untaken: a systematic sweep of
+  `project.rs`'s and `emitter.rs`/`emit.rs`/`lower.rs`'s own remaining surface (Phases G/H), then a
+  second re-settling (P6.58) arguing the result. `project.rs` cleared entirely — nine slices relocated
+  its remaining reads to the `bynk-check`/`bynk-project` crates that already owned the data, or
+  re-exported a type from a `bynk-check` module whose own public API was already parameterised by it
+  (the [ADR 0352](../decisions/0352-reexport-exprid-from-bynk-check.md)-style `ExprId` precedent, applied four
+  more times), landing `ast_importers` at 5 and clearing `project/diagnostics.rs` with it (it rode on
+  `project.rs` via the same glob-inheritance rule). Phase H's own conversions closed several
+  independent live defects along the way without moving the probe at all — a shadowing hazard in
+  cross-context call detection re-derived syntactically instead of reading the checker's own resolved
+  `Callee::Cross`, duplicated store-field-annotation walks that could silently diverge, and a
+  backwards `Ast ⇄ Ir` dependency where the lowering pass called up into the emitter — while three
+  originally-planned conversions (a full `AgentShapeIr`/`ProviderShapeIr` mirror, and a `TypeShape`
+  route for two `emitter.rs` predicates) were traced against their own real consumers and declined
+  rather than force-built, each for a written reason.
+
+  **`ast_importers` retires at 5, not 0 — the criterion re-settled (P6.58), not missed.** The floor is
+  `bynk-emit/src/emitter{,/**}` exactly: `emitter.rs` (~60% of its own remaining AST references
+  blocked on three structural facts — no unit-level IR, since every `lower_*_item_ir` function takes
+  the AST declaration as its own input; `bynk_check::checker::Ty::Base`'s own `BaseType` parameter
+  forcing the AST import into even the fully IR-native `ts_ty`; no `IrExpr` children iterator to
+  replace `expr_children`/`statement_exprs`, compounded by an external-reference walk needing the
+  source-declared name a resolved `Ty::Named` erases); `emitter/emit.rs` and `emitter/lower.rs`
+  (each counted twice over — by their own Q7-settled body-rendering/phase-7-codec residue and by the
+  same glob-inheritance rule, independent of either file's own content, for as long as `emitter.rs`
+  itself imports the AST); `emitter/workers.rs` and `emitter/workers_entry.rs` (declaration reads
+  needing a `TypedCommons` two slices confirmed genuinely isn't in scope at their own call sites).
+  `AST_IMPORTER_EXCEPTIONS` did not grow to reach this floor at any point in either arc. Breaks a
+  circularity neither the original completion criterion nor phase 7's own forward-reference had named:
+  phase 7's `bynk-ts` printer's entry condition was "this track's probe reads 0," but ~52 references in
+  `emitter.rs` alone are `bynk-ts`'s own work by the codec re-settling's ruling
+  ([ADR 0358](../decisions/0358-codec-layer-resettling.md)) — one shared predicate-message mapping is
+  literally half-consumed by the already-excluded codec renderer — so the renderer family could never
+  leave before `bynk-ts` existed to receive it, and `bynk-ts` could never start under the old wording
+  until the renderer family left. `bynk-ts`'s own entry condition now reads the named floor plus that
+  boundary, not a literal zero this phase's own scope could never have reached.
+
+  Surface lives in `bynk-emit/src/ir.rs`, `ir/lower.rs` (both new), `emitter.rs`, `emitter/emit.rs`,
+  `emitter/lower.rs`, `emitter/workers.rs`, `emitter/workers_entry.rs` (the five files the floor names),
+  `project.rs` (cleared), `bynk-check/src/checker.rs` (`Callee`), `resolver.rs`, `contract.rs`,
+  `actors.rs`, `project_model.rs`, and `bynk-project/src/discovery.rs`. Fifty-one ADRs
+  (0332–0382) carry its decisions in full; `xtask/src/greenfield_status.rs`'s own `ast_importers`
+  probe stays in the tree, gated, reading 5 — not deleted at retirement, a regression ratchet phase 7
+  inherits and drives down as it builds the printer this floor's own residue names. **Deferred follow-ons,
+  named rather than left implicit** (the track's own §7, "Forward references," carries the full
+  entry-condition table): the `bynk-ts` tree and printer itself, gated on this floor
+  (phase 7); carving `bynk-ir`/`bynk-lower` as their own crates once `bynk-ts` gives the IR a second
+  consumer (phase 7); severing `bynk-emit`'s remaining `bynk-check` dependency (phase 7 or later);
+  a cross-unit `CheckedProgram` persistence layer — the real prerequisite for a full
+  `IrItem::Agent`/`Provider` enumerator `project.rs`'s own compose-time wiring still wants — named
+  *unopened, no trigger yet*, not scoped; `Question`'s own three-way desugar fork for R5.9 (unproposed);
+  three narrowly-scoped `TypedCommons`-only helpers for `write_header`'s own remaining
+  declaration-content checks, and a full `AgentShapeIr` beyond the store-field-kind dedup P6.53 landed
+  (both unproposed, and may turn out to be the same helper). Retired 19 August 2026. Opens phase 7 (the
+  printer, per the trajectory) inheriting a named, argued rendering-subtree boundary instead of a
+  probe reading zero with no map of what's inside it.
