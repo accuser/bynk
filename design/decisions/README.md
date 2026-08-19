@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0371](0371-p6-46-owner-side-accessors.md) | **Two owner-side accessors — `ParsedFile::declares_messages()` and `cron_and_queue_triggers()` — replace raw AST walks in `project.rs`** (v0.249.23) — Two owner-side accessors — `ParsedFile::declares_messages()` and `cron_and_queue_triggers()` — replace raw AST walks in `project.rs` | Accepted (v0.249.23) |
 | [0370](0370-p6-45-attached-method-sig-lowering.md) | **`combined_types_for_unit_info` relocates to `bynk-check::symbols`; the `FnName::Method` filter folds into `lower_attached_fn_sig_ir_from_types`** (v0.249.22) — `combined_types_for_unit_info` relocates to `bynk-check::symbols`; the `FnName::Method` filter folds into `lower_attached_fn_sig_ir_from_types` | Accepted (v0.249.22) |
 | [0369](0369-p6-44-discover-event-subscribers-relocation.md) | **`discover_event_subscribers` relocates to `bynk-check::symbols`** (v0.249.21) — `discover_event_subscribers` relocates to `bynk-check::symbols` | Accepted (v0.249.21) |
 | [0368](0368-p6-43-own-contract-hashes-relocation.md) | **`own_contract_hashes` relocates into `bynk-check::contract`, sharing one `CrossContextService` projection with `build_cross_context_info`** (v0.249.20) — `own_contract_hashes` relocates into `bynk-check::contract`, sharing one `CrossContextService` projection with `build_cross_context_info` | Accepted (v0.249.20) |

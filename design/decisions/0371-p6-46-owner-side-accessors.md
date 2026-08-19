@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "P6.46: two owner-side accessors replace raw AST walks in project.rs -- ParsedFile::declares_messages() (bynk-project) and bynk_check::symbols::cron_and_queue_triggers() (bynk-check). ast_importers: unaffected (6)."
----
+# 0371 — Two owner-side accessors — `ParsedFile::declares_messages()` and `cron_and_queue_triggers()` — replace raw AST walks in `project.rs`
 
-## ADR: p6-46-owner-side-accessors
-
-title: Two owner-side accessors — `ParsedFile::declares_messages()` and `cron_and_queue_triggers()` — replace raw AST walks in `project.rs`
+- **Status:** Accepted (v0.249.23)
 
 summary: Continues Phase G of the #1137 retirement plan — both walks read data `project.rs` never owned, just happened to hold a reference to
 
