@@ -195,11 +195,16 @@ pub(crate) fn emit_worker_compose(
     }
     // v0.104 (real-time track slice 3b): a `from websocket` upgrade route resolves
     // the hosting Durable Object by serialising the transfer key, exactly as agent
-    // call sites do.
+    // call sites do. P6.30 (design/tracks/the-ir.md §6a): reads the checker-
+    // classified `IrHandlerKind` (P6.24a's own pure, unconditional mirror) rather
+    // than matching the raw AST `HandlerKind` directly.
     let has_ws_open = table.services.values().any(|s| {
-        s.handlers
-            .iter()
-            .any(|h| matches!(h.kind, HandlerKind::Open))
+        s.handlers.iter().any(|h| {
+            matches!(
+                crate::ir::lower::lower_handler_kind_ir(&h.kind),
+                crate::ir::IrHandlerKind::Open
+            )
+        })
     });
     if has_ws_open {
         runtime_imports.push("serialiseAgentKey");
@@ -379,11 +384,26 @@ pub(crate) fn emit_worker_compose(
         let mut cron_idx = 0usize;
         let mut queue_idx = 0usize;
         for h in &service.handlers {
-            match &h.kind {
-                HandlerKind::Call => {
+            // P6.30 (design/tracks/the-ir.md §6a): dispatches on the checker-
+            // classified `IrHandlerKind` (P6.24a's own pure, unconditional
+            // mirror) rather than the raw AST `HandlerKind` directly — the
+            // *decision* of which wrapper to call is now IR-driven, even
+            // though each wrapper's own body-rendering signature stays
+            // AST-parameter-driven (Q7-settled, §3.7). `emit_worker_compose`
+            // has no `TypedCommons`/`CheckedProgram` in scope (only a
+            // `table: &UnitTable`), so the `Http` arm re-derives `method`/
+            // `path` from the original `h.kind` for the wrapper calls below
+            // rather than threading `IrHttpMethod`/`String` through every
+            // wrapper's own still-AST-typed signature — the same
+            // dispatch-vs-render split, applied here.
+            match crate::ir::lower::lower_handler_kind_ir(&h.kind) {
+                crate::ir::IrHandlerKind::Call => {
                     emit_call_wrapper(&mut out, sname, h, &table.actors);
                 }
-                HandlerKind::Http { method, path } => {
+                crate::ir::IrHandlerKind::Http { .. } => {
+                    let HandlerKind::Http { method, path } = &h.kind else {
+                        unreachable!("lower_handler_kind_ir is a pure structural mirror")
+                    };
                     // v0.151: a single-actor `Oidc` handler gets the JWKS
                     // verification wrapper. v0.52: a multi-actor sum handler gets
                     // the first-wins resolution wrapper; otherwise the
@@ -425,29 +445,33 @@ pub(crate) fn emit_worker_compose(
                         }
                     }
                 }
-                HandlerKind::Cron { .. } => {
+                crate::ir::IrHandlerKind::Cron { .. } => {
                     emit_cron_wrapper(&mut out, sname, cron_idx, h);
                     cron_idx += 1;
                 }
-                HandlerKind::Message => {
+                crate::ir::IrHandlerKind::Message => {
                     // v0.106 (slice 3b-iii): a `from websocket` `on message` is an
                     // *inbound* handler that runs in the connection-hosting Durable
                     // Object (`webSocketMessage`), not at the edge — no compose
                     // wrapper. A `from queue` `on message` is the queue consumer.
+                    // Still a raw `ServiceProtocol` match (not `ProtocolIr`,
+                    // P6.30): `emit_worker_compose` has no `TypedCommons` in
+                    // scope to lower it with, unlike `lower_handler_kind_ir`
+                    // above, which needs none.
                     if matches!(service.protocol, ServiceProtocol::WebSocket { .. }) {
                         continue;
                     }
                     emit_queue_wrapper(&mut out, sname, queue_idx, h);
                     queue_idx += 1;
                 }
-                HandlerKind::Open => {
+                crate::ir::IrHandlerKind::Open => {
                     let seam = bynk_check::actors::bearer_seam_for(h, &table.actors);
                     let local_agents: HashSet<String> = table.agents.keys().cloned().collect();
                     emit_websocket_upgrade(&mut out, sname, h, seam.as_ref(), &local_agents);
                 }
                 // v0.106 (slice 3b-iii): `on close` runs in the DO (`webSocketClose`),
                 // not at the edge — no compose wrapper.
-                HandlerKind::Close => {}
+                crate::ir::IrHandlerKind::Close => {}
                 // Events track, slice 0 (spine #936): unlike the WS
                 // lifecycle handlers above, an `on event` handler's body
                 // *does* need a compose-surface wrapper — it is reached from
@@ -456,7 +480,7 @@ pub(crate) fn emit_worker_compose(
                 // this context's edge traffic, and not HTTP-routable, hence
                 // no route table entry — just a plain wrapper like `on
                 // call`'s).
-                HandlerKind::Event => {
+                crate::ir::IrHandlerKind::Event => {
                     emit_event_wrapper(&mut out, sname, h, &service.protocol);
                 }
             }
