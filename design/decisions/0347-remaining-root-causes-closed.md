@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "P6.23: the two remaining root causes from the safety probe are root-caused and fixed, bringing lower_service_item_ir's own panic count from ~51 across 20 services down to zero across the entire e2e fixture corpus. (1) lower_service_handler_ir called the agent-oriented lower_handler_signature_ir (which correctly panics on a resolve miss for an agent handler, whose own param type the checker does guarantee resolves) instead of its real sibling lower_service_handler_signature_ir -- already graceful (falls back to Unit) since it was written, but never reached from this call site; lower_service_handler_body_ir's own param loop carried the identical panic independently and is fixed the same way. (2) a qualified nullary sum-variant reference (Region.International) parses as ExprKind::FieldAccess, but the checker's own check_field_access intercepts this shape -- a bare-Ident receiver naming a declared sum type owning a matching variant -- before ever independently type-checking the receiver, so the receiver's own ExprId never gets a recorded type; lower_expr_ir's FieldAccess arm now mirrors that same dispatch instead of unconditionally recursing into the receiver, producing IrExprKind::Variant directly. Verified by the full ir:: unit suite (133/133, two new pinning tests) and a full zero-diff bless against the entire e2e fixture corpus. lower_service_item_ir (and by extension a real IrItem::Service enumerator) is now safe to call on every real production service body in the corpus"
----
+# 0347 — `lower_service_item_ir` now lowers every real service body in the fixture corpus cleanly — P6.23's safety probe reaches zero
 
-## ADR: remaining-root-causes-closed
-
-title: `lower_service_item_ir` now lowers every real service body in the fixture corpus cleanly — P6.23's safety probe reaches zero
+- **Status:** Accepted (v0.248.15)
 
 summary: Root-causes and fixes the two remaining panic classes the P6.23 safety investigation found, both narrow, real bugs rather than design questions — completing the safety-verification work this track's own completion plan called for before wiring `IrItem::Service` into any real consumer
 
