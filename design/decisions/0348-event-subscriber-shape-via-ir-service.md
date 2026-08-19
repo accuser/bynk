@@ -1,11 +1,6 @@
----
-level: minor
-changelog: "P6.23: project.rs's EventSubscriberShape accumulator now reads two_param_handler/schema_dispatch off a real IrItem::Service (lower_service_item_ir, P6.11), instead of walking a matching service's own s.handlers/s.protocol directly. The cheap ServiceProtocol::Events pre-filter stays -- a structural check of which services even have a shape to capture, not a resurrected raw-AST read -- before paying for a full body-lowering pass on a matching service. Safe as of #1254 (the P6.23 safety investigation this closes): a catch_unwind probe wrapping lower_service_item_ir across the entire e2e fixture corpus found zero panics, down from ~51 when the investigation began. This is the first real, shipped emitter call site for IrItem::Service/lower_service_item_ir -- dormant since P6.11 (#1171). Verified by a full zero-diff bless against the entire e2e fixture corpus, including 1232_events_envelope_schema_dispatch_bare, the fixture that pins the schema_dispatch half of this exact predicate. ast_importers unaffected (project.rs was already counted)"
----
+# 0348 — `EventSubscriberShape` reads `IrItem::Service` instead of walking the raw AST — the first real, shipped call site for the dormant `lower_service_item_ir`
 
-## ADR: event-subscriber-shape-via-ir-service
-
-title: `EventSubscriberShape` reads `IrItem::Service` instead of walking the raw AST — the first real, shipped call site for the dormant `lower_service_item_ir`
+- **Status:** Accepted (v0.249)
 
 summary: Completes P6.23 now that its own prerequisite safety gap is closed (#1251-#1254) — the architecture was already sound, and the body-lowering path it depends on is now proven safe on every real corpus body
 
