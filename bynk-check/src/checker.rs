@@ -701,6 +701,38 @@ pub struct TypedCommons {
 }
 
 impl TypedCommons {
+    /// A `TypedCommons` with no declarations — a pure-data test fixture, so a
+    /// consuming crate's own test exercising only the `TypedCommons`-shaped
+    /// part of some function doesn't need to hand-construct a
+    /// `Commons`/`QualifiedName` itself (`bynk_syntax::ast` types, invisible
+    /// to `bynk-check` but not to a consumer whose own probe tracks that
+    /// dependency — P6.38, `design/tracks/the-ir.md` §6a).
+    pub fn empty() -> Self {
+        TypedCommons {
+            commons: Commons {
+                name: QualifiedName {
+                    parts: Vec::new(),
+                    span: Default::default(),
+                },
+                items: Vec::new(),
+                uses: Vec::new(),
+                documentation: None,
+                form: CommonsForm::Fragment,
+                span: Default::default(),
+                trivia: Default::default(),
+                trailing_comments: Vec::new(),
+            },
+            types: HashMap::new(),
+            fns: HashMap::new(),
+            methods: HashMap::new(),
+            expr_types: HashMap::new(),
+            callees: HashMap::new(),
+            warnings: Vec::new(),
+            ty_intern: Arc::new(Types::new()),
+            actor_bindings: HashMap::new(),
+        }
+    }
+
     /// T3.6b (R4.1): this unit's intern table — what every `TyId` reachable
     /// from `expr_types` resolves against.
     /// Returns the `Rc` handle rather than a bare `&Types` so a caller that
