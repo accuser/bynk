@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "P6.52: collect_handler_labels's and ws_open_hosts_for's ServiceProtocol::WebSocket matches read lower_protocol_ir_from_commons instead. WsOpenHost::{out_type,in_type} carry TyId, not &TypeRef, cascading through four renderers and deleting the resolve_ty closure's second argument. ast_importers: unaffected (5)."
----
+# 0377 — `collect_handler_labels`'s and `ws_open_hosts_for`'s `ServiceProtocol::WebSocket` matches read `lower_protocol_ir_from_commons` instead
 
-## ADR: p6-52-ws-protocol-ir-native
-
-title: `collect_handler_labels`'s and `ws_open_hosts_for`'s `ServiceProtocol::WebSocket` matches read `lower_protocol_ir_from_commons` instead
+- **Status:** Accepted (v0.249.29)
 
 summary: Corrects the record — P6.30/P6.31's "not reachable" finding does not apply to these two call sites, which hold a `TypedCommons` directly
 

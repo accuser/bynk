@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0377](0377-p6-52-ws-protocol-ir-native.md) | **`collect_handler_labels`'s and `ws_open_hosts_for`'s `ServiceProtocol::WebSocket` matches read `lower_protocol_ir_from_commons` instead** (v0.249.29) — `collect_handler_labels`'s and `ws_open_hosts_for`'s `ServiceProtocol::WebSocket` matches read `lower_protocol_ir_from_commons` instead | Accepted (v0.249.29) |
 | [0376](0376-p6-51-handler-kind-ir-native.md) | **Every `HandlerKind` read in `emitter/emit.rs` reads `lower_handler_kind_ir` instead** (v0.249.28) — Every `HandlerKind` read in `emitter/emit.rs` reads `lower_handler_kind_ir` instead | Accepted (v0.249.28) |
 | [0375](0375-p6-50-dead-code-and-backwards-dependency.md) | **Dead code deleted; `is_effectful_return` relocates to fix a backwards `Ast ⇄ Ir` dependency** (v0.249.27) — Dead code deleted; `is_effectful_return` relocates to fix a backwards `Ast ⇄ Ir` dependency | Accepted (v0.249.27) |
 | [0374](0374-p6-49-project-rs-clears.md) | **`project.rs` clears `ast_importers` entirely — closes Phase G of the #1137 retirement plan** (v0.249.26) — `project.rs` clears `ast_importers` entirely — closes Phase G of the #1137 retirement plan | Accepted (v0.249.26) |
