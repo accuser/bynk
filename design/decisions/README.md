@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0374](0374-p6-49-project-rs-clears.md) | **`project.rs` clears `ast_importers` entirely — closes Phase G of the #1137 retirement plan** (v0.249.26) — `project.rs` clears `ast_importers` entirely — closes Phase G of the #1137 retirement plan | Accepted (v0.249.26) |
 | [0373](0373-p6-48-shared-unit-table-body-walk.md) | **`emitter::walk_unit_table_bodies` replaces two hand-rolled `project.rs` body walks** (v0.249.25) — `emitter::walk_unit_table_bodies` replaces two hand-rolled `project.rs` body walks | Accepted (v0.249.25) |
 | [0372](0372-p6-47-event-subscriber-shapes-relocation.md) | **`lower_event_subscriber_shapes_ir` absorbs the `Events` pre-filter it guards** (v0.249.24) — `lower_event_subscriber_shapes_ir` absorbs the `Events` pre-filter it guards | Accepted (v0.249.24) |
 | [0371](0371-p6-46-owner-side-accessors.md) | **Two owner-side accessors — `ParsedFile::declares_messages()` and `cron_and_queue_triggers()` — replace raw AST walks in `project.rs`** (v0.249.23) — Two owner-side accessors — `ParsedFile::declares_messages()` and `cron_and_queue_triggers()` — replace raw AST walks in `project.rs` | Accepted (v0.249.23) |

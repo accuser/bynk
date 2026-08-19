@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.249.26** | "P6.49: project.rs's own bynk_syntax::ast import deleted entirely -- its last pre-check TypeRef walk relocates to a new ParsedFile::history_target_agent_names() (bynk-project), and TypeDecl/FnDecl/Visibility/ActorDecl are re-exported from the bynk-check modules whose own public API was already parameterised by them. ast_importers: 6 -> 5 -- project.rs clears (project/diagnostics.rs cleared with it back in P6.42). Phase G of the #1137 retirement plan complete." |
 | **v0.249.25** | "P6.48: emitter::walk_unit_table_bodies (emitter.rs, already counted) replaces two hand-rolled copies of the same service/agent/provider body walk in project.rs's unit_table_uses_emit and called_cross_context_services. ast_importers: unaffected (6) -- project.rs's Block/Expr sites cleared, but the file was already counted on other names." |
 | **v0.249.24** | "P6.47: lower_event_subscriber_shapes_ir (bynk-emit/src/ir/lower.rs) absorbs the ServiceProtocol::Events pre-filter guarding lower_service_item_ir, and EventSubscriberShape moves to ir.rs -- project.rs's per-file loop becomes one call. ast_importers: unaffected (6)." |
 | **v0.249.23** | "P6.46: two owner-side accessors replace raw AST walks in project.rs -- ParsedFile::declares_messages() (bynk-project) and bynk_check::symbols::cron_and_queue_triggers() (bynk-check). ast_importers: unaffected (6)." |

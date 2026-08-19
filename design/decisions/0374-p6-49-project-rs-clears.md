@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "P6.49: project.rs's own bynk_syntax::ast import deleted entirely -- its last pre-check TypeRef walk relocates to a new ParsedFile::history_target_agent_names() (bynk-project), and TypeDecl/FnDecl/Visibility/ActorDecl are re-exported from the bynk-check modules whose own public API was already parameterised by them. ast_importers: 6 -> 5 -- project.rs clears (project/diagnostics.rs cleared with it back in P6.42). Phase G of the #1137 retirement plan complete."
----
+# 0374 — `project.rs` clears `ast_importers` entirely — closes Phase G of the #1137 retirement plan
 
-## ADR: p6-49-project-rs-clears
-
-title: `project.rs` clears `ast_importers` entirely — closes Phase G of the #1137 retirement plan
+- **Status:** Accepted (v0.249.26)
 
 summary: The last pre-check `TypeRef` walk relocates as an owner-side accessor; four re-exports carry the rest, each argued against an already-parameterised `bynk-check` API, not added for the probe's sake
 
