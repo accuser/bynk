@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "P6.57: IrHttpMethod gains from_ident(); emitter/lower.rs's two HttpMethod::from_ident sites read it instead. Corrects P6.37's stated reason for leaving system_http_route_body's TypeRef field alone -- the resolution context does exist, the real reason is a lossy round-trip with no probe payoff. Closes Phase H of the #1137 retirement plan. ast_importers: unaffected (5)."
----
+# 0382 — `emitter/lower.rs`'s `HttpMethod::from_ident` sites read `IrHttpMethod`; P6.37's stated reason for `system_http_route_body` corrected
 
-## ADR: p6-57-http-method-ir-native
-
-title: `emitter/lower.rs`'s `HttpMethod::from_ident` sites read `IrHttpMethod`; P6.37's stated reason for `system_http_route_body` corrected
+- **Status:** Accepted (v0.249.34)
 
 summary: Closes Phase H — after this slice, `emitter/lower.rs`'s residue is provably 100% Q7 body-rendering plus phase-7 codec, not untried
 
