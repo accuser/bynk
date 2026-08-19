@@ -7,6 +7,11 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use bynk_check::checker::{Callee, NamedKind, Ty, TyId, TypedCommons};
+use bynk_syntax::ast::{
+    BaseType, BinOp, Block, Expr, ExprKind, FieldInit, Ident, InterpPart, LambdaExpr, LiteralValue,
+    MatchArm, MatchBody, ObservationExpr, ObservationMatcher, Pattern, PatternBindingKind,
+    PredKind, Refinement, Statement, TypeBody, TypeDecl, TypeRef, UnaryOp,
+};
 
 use crate::ir::{ConstVal, EventPatternIr, EventPatternValueIr};
 

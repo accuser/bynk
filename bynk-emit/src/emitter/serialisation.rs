@@ -13,7 +13,7 @@
 use std::fmt::Write as _;
 use std::sync::Arc;
 
-use bynk_syntax::ast::*;
+use bynk_syntax::ast::{BaseType, PredKind, TypeBody, TypeDecl, TypeRef};
 
 use crate::emitter::RuntimeUse;
 use bynk_check::wire_default::lower_field_default_wire;
@@ -1507,6 +1507,7 @@ fn ts_inner_type(t: &TypeRef, qual: &Qual) -> String {
 #[cfg(test)]
 mod default_lowering_tests {
     use super::*;
+    use bynk_syntax::ast::{CommonsItem, Expr, RecordField};
     use std::collections::HashMap;
 
     /// Parses `src` as a single-file commons and returns its `types` table
