@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "P6.53: emit_agent's store-field-kind dispatch (Cell/Map/Set/Cache/Log membership, plus Cache's @ttl and Log's @retain values) reads state's already-computed StoreKindIr instead of re-deriving via f.kind.head.name string comparison and a second f.annotations walk. ast_importers: unaffected (5)."
----
+# 0378 — `emit_agent`'s store-field-kind dispatch reads `StoreKindIr` instead of re-deriving it
 
-## ADR: p6-53-agent-store-field-kind-dedup
-
-title: `emit_agent`'s store-field-kind dispatch reads `StoreKindIr` instead of re-deriving it
+- **Status:** Accepted (v0.249.30)
 
 summary: Scoped down from the originally-planned full `AgentShapeIr` after tracing its actual downstream consumers — this slice keeps the concretely-justified defect closure and defers the rest
 

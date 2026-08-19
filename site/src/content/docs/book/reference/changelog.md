@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.249.30** | "P6.53: emit_agent's store-field-kind dispatch (Cell/Map/Set/Cache/Log membership, plus Cache's @ttl and Log's @retain values) reads state's already-computed StoreKindIr instead of re-deriving via f.kind.head.name string comparison and a second f.annotations walk. ast_importers: unaffected (5)." |
 | **v0.249.29** | "P6.52: collect_handler_labels's and ws_open_hosts_for's ServiceProtocol::WebSocket matches read lower_protocol_ir_from_commons instead. WsOpenHost::{out_type,in_type} carry TyId, not &TypeRef, cascading through four renderers and deleting the resolve_ty closure's second argument. ast_importers: unaffected (5)." |
 | **v0.249.28** | "P6.51: IrHttpMethod gains as_str(); every HandlerKind read in emitter/emit.rs (collect_handler_labels, emit_service, emit_make_surface, emit_agent, ws_open_hosts_for -- 20+ sites) now reads lower_handler_kind_ir instead of matching the raw AST HandlerKind. ast_importers: unaffected (5) -- emit.rs stays counted via use super::*." |
 | **v0.249.27** | "P6.50: emitter/emit.rs's dead build_deps_object_ty deleted (zero callers workspace-wide), and is_effectful_return moves into ir/lower.rs -- fixing a backwards Ast<->Ir dependency where the lowering pass was calling up into the emitter it should only ever be called from. ast_importers: unaffected (5)." |
