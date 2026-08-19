@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "P6.43: own_contract_hashes moves into bynk-check::contract, sharing one cross_context_service_for projection with build_cross_context_info -- the caller-side and callee-side CrossContextService views were two hand-written copies agreeing only by convention; now one function. ast_importers: unaffected (6)."
----
+# 0368 — `own_contract_hashes` relocates into `bynk-check::contract`, sharing one `CrossContextService` projection with `build_cross_context_info`
 
-## ADR: p6-43-own-contract-hashes-relocation
-
-title: `own_contract_hashes` relocates into `bynk-check::contract`, sharing one `CrossContextService` projection with `build_cross_context_info`
+- **Status:** Accepted (v0.249.20)
 
 summary: Fixes a real duplication hazard (two independently-maintained copies of the same projection, agreeing only by convention) while also clearing the probe-visible AST reference it forced into `bynk-emit`
 
