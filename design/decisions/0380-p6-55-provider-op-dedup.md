@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "P6.55: emit_provider stops calling is_effectful_return(&op.return_type) twice for the same op, and its own capabilities extraction reads lower_provider_given_ir instead of re-deriving CapRef::key(). The originally-planned full ProviderShapeIr scoped back down after tracing found no real consumer for the rest. ast_importers: unaffected (5)."
----
+# 0380 — `emit_provider` stops re-deriving `op.return_type`'s own effectfulness twice; the full `ProviderShapeIr` sketch scoped back down
 
-## ADR: p6-55-provider-op-dedup
-
-title: `emit_provider` stops re-deriving `op.return_type`'s own effectfulness twice; the full `ProviderShapeIr` sketch scoped back down
+- **Status:** Accepted (v0.249.32)
 
 summary: Same correction P6.53 made for `AgentShapeIr` — traced each proposed read's own downstream consumer before building anything, found most of it unjustified
 

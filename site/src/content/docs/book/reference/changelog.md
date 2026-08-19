@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.249.32** | "P6.55: emit_provider stops calling is_effectful_return(&op.return_type) twice for the same op, and its own capabilities extraction reads lower_provider_given_ir instead of re-deriving CapRef::key(). The originally-planned full ProviderShapeIr scoped back down after tracing found no real consumer for the rest. ast_importers: unaffected (5)." |
 | **v0.249.31** | "P6.54: emit_service/emit_make_surface/emit_agent/topo_order_providers/cross_context_caps_used/cross_context_cap_namespaces read the IR already in scope (or reachable via an existing lowering function) instead of re-deriving the same fact from the raw AST a second time. ast_importers: unaffected (5)." |
 | **v0.249.30** | "P6.53: emit_agent's store-field-kind dispatch (Cell/Map/Set/Cache/Log membership, plus Cache's @ttl and Log's @retain values) reads state's already-computed StoreKindIr instead of re-deriving via f.kind.head.name string comparison and a second f.annotations walk. ast_importers: unaffected (5)." |
 | **v0.249.29** | "P6.52: collect_handler_labels's and ws_open_hosts_for's ServiceProtocol::WebSocket matches read lower_protocol_ir_from_commons instead. WsOpenHost::{out_type,in_type} carry TyId, not &TypeRef, cascading through four renderers and deleting the resolve_ty closure's second argument. ast_importers: unaffected (5)." |
