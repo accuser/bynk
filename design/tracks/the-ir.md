@@ -1141,6 +1141,35 @@ design questions, left for their own follow-up. Verified by the full `ir::` unit
 full zero-diff bless against the entire e2e corpus. Full reasoning:
 `design/pending/p6-23-bare-http-queue-result-ir-lowering.md`'s own ADR.
 
+**Thirty-third: P6.23's safety probe reaches zero — the two remaining root causes, both real, narrow
+bugs, closed.** The `commerce.order`/`markPaid` and `demo`/`Api` panics the Thirty-second entry left
+open, root-caused directly:
+
+- **`lower_service_handler_ir` called the wrong signature function.** `lower_handler_signature_ir` —
+  the *agent*-oriented reader, which rightly panics on a resolve miss (an agent handler's own param
+  type IS checker-guaranteed to resolve) — instead of `lower_service_handler_signature_ir`, this
+  function's own real sibling, already graceful (`cx.unit_ty()`) since it was written but never
+  reached from this call site. Swapped. `lower_service_handler_body_ir`'s own param loop carried the
+  identical panic independently and is fixed the same way. Pinned directly against
+  `1199_service_handler_unresolvable_param_type_no_ice`'s own real shape (an HTTP handler param
+  naming an undeclared type — `check_http_handler` validates a param's name only, never its type).
+- **Qualified nullary variant construction misread as field access.** `Region.International` parses
+  as `ExprKind::FieldAccess`, but the checker's own `check_field_access` intercepts this exact shape
+  (a bare-`Ident` receiver naming a declared sum type owning a matching variant) *before* ever
+  independently type-checking the receiver — so the receiver's own `ExprId` never gets a recorded
+  type, and `lower_expr_ir`'s unconditional recursion into it panicked on ADR 0334's own "no recorded
+  type" guard. Fixed by mirroring the checker's dispatch (same `cx.lookup(...).is_none()` shadowing
+  guard): a matching receiver now produces `IrExprKind::Variant` directly — the `FieldAccess`-reached
+  third form of the identical construction `lower_call_ir`'s own `Callee::Ctor` arm already produces
+  for the `Call`/`ConstructorCall` forms.
+
+`lower_service_item_ir`'s own panic count is now **zero across the entire e2e fixture corpus** — down
+from ~51 across 20 services when this investigation began. Real, measured completion of the plan's own
+"verify empirically" risk item: the architecture was already sound, and the body-lowering path it
+depends on now is too. Verified by the full `ir::` unit suite (133/133, two new tests) and a full
+zero-diff bless against the entire e2e corpus. Full reasoning:
+`design/pending/p6-23-remaining-root-causes-closed.md`'s own ADR.
+
 ## 7. Out of scope — forward references, not refusals
 
 | Item | Phase | Entry condition |
