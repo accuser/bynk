@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "P6.28: RuntimeUse::json_codec_roots now carries the checker's own TyId instead of a re-derived TypeRef -- both push sites in emitter/lower.rs already held the TyId before converting it, purely to satisfy this field's old type, so the conversion moves to the single drain site (project/tests_emit.rs) immediately before collect_codec_closure, the one remaining consumer that is still genuinely TypeRef-driven. emitter/ty_to_type_ref is now pub(crate) so that drain site (a sibling module tree, not a descendant of emitter) can call it. ast_importers: 9 -> 8, emitter/runtime_use.rs cleared -- the first file this completion plan has fully cleared."
----
+# 0353 — `RuntimeUse::json_codec_roots` carries `TyId`, not `TypeRef`; the `TypeRef` conversion moves from two push sites to the one drain site
 
-## ADR: runtime-use-tyid
-
-title: `RuntimeUse::json_codec_roots` carries `TyId`, not `TypeRef`; the `TypeRef` conversion moves from two push sites to the one drain site
+- **Status:** Accepted (v0.249.5)
 
 summary: Phase B of the #1137 completion plan (`design/tracks/the-ir.md` §6a, P6.28) — the first slice to fully clear a file
 
