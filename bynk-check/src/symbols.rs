@@ -9,7 +9,7 @@ use bynk_project::{ParsedFile, UnitKind};
 use bynk_syntax::ast::{
     ActorDecl, AgentDecl, BaseType, Block, CapRef, CapabilityDecl, CommonsItem, EventDecl,
     ExportKind, Expr, ExprId, ExprKind, FnDecl, FnName, Ident, Param, ProviderDecl, ServiceDecl,
-    Trivia, TypeBody, TypeDecl, TypeRef, Visibility,
+    ServiceProtocol, Trivia, TypeBody, TypeDecl, TypeRef, Visibility,
 };
 use bynk_syntax::error::CompileError;
 use bynk_syntax::span::Span;
@@ -853,8 +853,8 @@ pub fn build_cross_context_info(
     > = HashMap::new();
     // Events track, slice 0 (spine #936): each consumed context's own event
     // names, so a subscriber's `from Events(E)` can be checked against a
-    // foreign owner too — mirrors `discover_event_subscribers` (`project.rs`),
-    // which already resolves ownership this same way for wiring.
+    // foreign owner too — mirrors `discover_event_subscribers` below, which
+    // already resolves ownership this same way for wiring.
     let mut consumed_event_names: HashMap<String, std::collections::HashSet<String>> =
         HashMap::new();
     for t in &consumed_contexts {
@@ -925,6 +925,63 @@ pub fn build_cross_context_info(
         flattened_caps: HashMap::new(),
         consumed_event_names,
     }
+}
+
+/// Events track, slice 0 (spine #936): project-wide "who subscribes to what"
+/// — for every `service ... from Events(E) { on event ... }` anywhere in the
+/// project, resolve `E` to its *owning* context (the one whose `events` table
+/// actually declares it — bare-name resolution, since `TypeRef` has no dotted
+/// form) and group subscribers under `(owning_context, event_type_name)`. No
+/// prior art to reuse: cross-context wiring elsewhere is driven by an
+/// explicit author-written `consumes` clause, resolved eagerly in
+/// `phase_resolve_consumes`; this is the first wiring driven by an *implicit*
+/// relationship (a bare event-type name shared between a publisher's `event`
+/// declaration and a subscriber's `from Events(E)` header) — the same
+/// ownership resolution [`build_cross_context_info`]'s own `consumed_event_names`
+/// performs above, for the same reason (#936, events track slice 0).
+pub fn discover_event_subscribers(
+    unit_tables: &HashMap<String, UnitTable>,
+    unit_consumes: &HashMap<String, Vec<String>>,
+) -> BTreeMap<(String, String), Vec<(String, String)>> {
+    let mut out: BTreeMap<(String, String), Vec<(String, String)>> = BTreeMap::new();
+    for (ctx_name, table) in unit_tables {
+        for (svc_name, svc) in &table.services {
+            let ServiceProtocol::Events { event_type, .. } = &svc.protocol else {
+                continue;
+            };
+            let TypeRef::Named(id) = event_type else {
+                continue;
+            };
+            let name = &id.name;
+            let owner = if table.events.contains_key(name) {
+                Some(ctx_name.clone())
+            } else {
+                unit_consumes.get(ctx_name).and_then(|consumed| {
+                    consumed
+                        .iter()
+                        .find(|c| {
+                            unit_tables
+                                .get(c.as_str())
+                                .is_some_and(|t| t.events.contains_key(name))
+                        })
+                        .cloned()
+                })
+            };
+            if let Some(owner) = owner {
+                out.entry((owner, name.clone()))
+                    .or_default()
+                    .push((ctx_name.clone(), svc_name.clone()));
+            }
+        }
+    }
+    // `unit_tables`/`table.services` are `HashMap`s, so the pushes above race
+    // across builds — a multi-subscriber event's dispatch order (and so the
+    // emitted `__eventsDispatch` closure's `await sub1; await sub2;`
+    // sequence) would otherwise vary build to build with no source change.
+    for subs in out.values_mut() {
+        subs.sort();
+    }
+    out
 }
 
 /// v0.15: validate one `given` capability reference. A bare reference must name

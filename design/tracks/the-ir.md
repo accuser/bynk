@@ -1925,6 +1925,17 @@ Phase G continues in P6.44–P6.49. Zero-diff bless over the full e2e corpus, wi
 contract-hash change is the kind a green bless could hide behind an unchanged byte count if the
 projection diverged subtly). Full reasoning: `design/pending/p6-43-own-contract-hashes-relocation.md`.
 
+**Fifty-fifth: P6.44 — `discover_event_subscribers` relocates to `bynk-check::symbols`.** Moved
+verbatim next to `build_cross_context_info`, the sibling function `symbols.rs`'s own
+`consumed_event_names` comment already named as performing the identical ownership resolution one
+context at a time — the two were already understood as siblings living in the wrong crate relative
+to each other. `project.rs`'s call site and `emitter/events_fanout.rs`'s doc comment retarget to the
+new path. No behavioural change. `ast_importers`: **unaffected (6)** — `ServiceProtocol`/`TypeRef`
+both survive this slice via other `project.rs` call sites; Phase G continues in P6.45–P6.49. Zero-diff
+bless over the full e2e corpus, `cargo test --workspace`, `cargo clippy --workspace --all-targets`
+all pass unchanged. Full reasoning:
+`design/pending/p6-44-discover-event-subscribers-relocation.md`.
+
 | Item | Phase | Entry condition |
 |---|---|---|
 | `Question`'s own three-way desugar fork — what `IrExprKind` an `expr?` lowers to | 6, unproposed | a slice proposal for P6.3's desugaring table (§6) reaches `Question` specifically; #1225 (§6, fourteenth slice) settled the *construction*-side identity question this depends on but explicitly does not settle this one |

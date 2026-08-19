@@ -2215,7 +2215,8 @@ fn build_output(
     // `composeApp` dispatches in-process; Workers mode uses it to size each
     // publishing context's fan-out DO routing table and wrangler.toml
     // Service Bindings.
-    let event_subscribers = discover_event_subscribers(&unit_tables, &unit_consumes);
+    let event_subscribers =
+        bynk_check::symbols::discover_event_subscribers(&unit_tables, &unit_consumes);
 
     match target {
         BuildTarget::Bundle => {
@@ -2980,62 +2981,6 @@ pub(crate) fn unit_table_uses_emit(
             .agents
             .values()
             .any(|a| a.handlers.iter().any(|h| body_uses_emit(&h.body, callees)))
-}
-
-/// Events track, slice 0 (spine #936): project-wide "who subscribes to
-/// what" — for every `service ... from Events(E) { on event ... }`
-/// anywhere in the project, resolve `E` to its *owning* context (the one
-/// whose `events` table actually declares it — bare-name resolution, since
-/// `TypeRef` has no dotted form) and group subscribers under
-/// `(owning_context, event_type_name)`. No prior art to reuse: cross-context
-/// wiring elsewhere is driven by an explicit author-written `consumes`
-/// clause, resolved eagerly in `phase_resolve_consumes`; this is the first
-/// wiring driven by an *implicit* relationship (a bare event-type name
-/// shared between a publisher's `event` declaration and a subscriber's
-/// `from Events(E)` header).
-fn discover_event_subscribers(
-    unit_tables: &HashMap<String, UnitTable>,
-    unit_consumes: &HashMap<String, Vec<String>>,
-) -> BTreeMap<(String, String), Vec<(String, String)>> {
-    let mut out: BTreeMap<(String, String), Vec<(String, String)>> = BTreeMap::new();
-    for (ctx_name, table) in unit_tables {
-        for (svc_name, svc) in &table.services {
-            let ServiceProtocol::Events { event_type, .. } = &svc.protocol else {
-                continue;
-            };
-            let TypeRef::Named(id) = event_type else {
-                continue;
-            };
-            let name = &id.name;
-            let owner = if table.events.contains_key(name) {
-                Some(ctx_name.clone())
-            } else {
-                unit_consumes.get(ctx_name).and_then(|consumed| {
-                    consumed
-                        .iter()
-                        .find(|c| {
-                            unit_tables
-                                .get(c.as_str())
-                                .is_some_and(|t| t.events.contains_key(name))
-                        })
-                        .cloned()
-                })
-            };
-            if let Some(owner) = owner {
-                out.entry((owner, name.clone()))
-                    .or_default()
-                    .push((ctx_name.clone(), svc_name.clone()));
-            }
-        }
-    }
-    // `unit_tables`/`table.services` are `HashMap`s, so the pushes above race
-    // across builds — a multi-subscriber event's dispatch order (and so the
-    // emitted `__eventsDispatch` closure's `await sub1; await sub2;`
-    // sequence) would otherwise vary build to build with no source change.
-    for subs in out.values_mut() {
-        subs.sort();
-    }
-    out
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -7,7 +7,7 @@
 //! is re-exported the same way, except an event fan-out has no backing
 //! `AgentDecl` to emit from, so this is hand-built rather than reusing
 //! `emit_agent`. The subscriber registry (who gets `E`) is fully compile-time
-//! known (`discover_event_subscribers` in `project.rs`), so it is baked in as
+//! known (`bynk_check::symbols::discover_event_subscribers`), so it is baked in as
 //! a literal routing table rather than carried on the wire.
 
 use std::collections::BTreeMap;
