@@ -20,6 +20,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use bynk_check::checker::{self, Callee, CheckedProgram, NamedKind, Ty, TyId, TypedCommons, Types};
+use bynk_check::resolver::MethodTable;
 use bynk_syntax::ast::{
     ActorDecl, AgentDecl, BaseType, BinOp, Block, CapRef, CapabilityDecl, CapabilityOp,
     CommonsItem, EventPattern, EventPatternValue, Expr, ExprId, ExprKind, FieldInit, FnDecl,
@@ -1907,6 +1908,29 @@ pub(crate) fn lower_fn_sig_ir_from_types(
         params,
         return_ty,
     }
+}
+
+/// P6.x (#1137): [`lower_fn_sig_ir_from_types`] over an entire
+/// [`MethodTable`]'s own instance + static entries — the attached-method
+/// gathering [`bynk-emit`'s `build_emit_unit_ctx`] needs for a `uses`-imported
+/// type. Filters to [`FnName::Method`] before lowering: `ResolverMethodTable`
+/// only ever collects attached methods in practice (`bynk-check/src/resolver.rs`'s
+/// own doc comment on [`MethodTable`]), but the filter stays as a defensive
+/// match rather than an assumption, matching the caller's own pre-existing
+/// posture one step earlier — this just moves that posture in front of the
+/// lowering call instead of behind it, so the `FnName` read (and the filter
+/// itself) never has to leave this module.
+pub(crate) fn lower_attached_fn_sig_ir_from_types(
+    mt: &MethodTable,
+    types: &HashMap<String, Arc<TypeDecl>>,
+    tys: &Types,
+) -> Vec<FnSig> {
+    mt.instance
+        .values()
+        .chain(mt.statics.values())
+        .filter(|f| matches!(f.name, FnName::Method { .. }))
+        .map(|f| lower_fn_sig_ir_from_types(f, types, tys))
+        .collect()
 }
 
 /// P6.24a: pure, unconditional [`HandlerKind`] → [`IrHandlerKind`]
