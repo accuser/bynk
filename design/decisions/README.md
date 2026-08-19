@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0381](0381-p6-56-emitter-declaration-reads.md) | **`called_consumed_services` reads `Callee::Cross`; six other proposed `emitter.rs` sites investigated and declined** (v0.249.33) — `called_consumed_services` reads `Callee::Cross`; six other proposed `emitter.rs` sites investigated and declined | Accepted (v0.249.33) |
 | [0380](0380-p6-55-provider-op-dedup.md) | **`emit_provider` stops re-deriving `op.return_type`'s own effectfulness twice; the full `ProviderShapeIr` sketch scoped back down** (v0.249.32) — `emit_provider` stops re-deriving `op.return_type`'s own effectfulness twice; the full `ProviderShapeIr` sketch scoped back down | Accepted (v0.249.32) |
 | [0379](0379-p6-54-inconsistent-ir-reads.md) | **`emit.rs` stops re-deriving facts it already has an IR reading for** (v0.249.31) — `emit.rs` stops re-deriving facts it already has an IR reading for | Accepted (v0.249.31) |
 | [0378](0378-p6-53-agent-store-field-kind-dedup.md) | **`emit_agent`'s store-field-kind dispatch reads `StoreKindIr` instead of re-deriving it** (v0.249.30) — `emit_agent`'s store-field-kind dispatch reads `StoreKindIr` instead of re-deriving it | Accepted (v0.249.30) |

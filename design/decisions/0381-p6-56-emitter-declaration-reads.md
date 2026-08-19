@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "P6.56: called_consumed_services reads the checker's own resolved Callee::Cross instead of reconstructing cross-context-ness syntactically -- a live shadowing-hazard defect closed. Five other emitter.rs sites this row proposed (collect_json_codec_roots, refined_or_opaque_base/emit_context_rebrands, sum_owner_of_variant, positional_field_name, ts_binop) investigated and declined, each for a traced, written reason. ast_importers: unaffected (5)."
----
+# 0381 — `called_consumed_services` reads `Callee::Cross`; six other proposed `emitter.rs` sites investigated and declined
 
-## ADR: p6-56-emitter-declaration-reads
-
-title: `called_consumed_services` reads `Callee::Cross`; six other proposed `emitter.rs` sites investigated and declined
+- **Status:** Accepted (v0.249.33)
 
 summary: One real defect closed; the rest of this plan row's own scope did not survive tracing against the tree — six honest declines, not force-fits
 
