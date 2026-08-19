@@ -1332,15 +1332,13 @@ difference), with no AST/IR name collision found (no aliasing was needed after a
 **Phase B — cheap decouplings.** **P6.27 — landed.** Re-exported `ExprId` from `bynk-check` (`pub use
 bynk_syntax::ast::ExprId;` in `checker.rs`) and retargeted `project.rs:46`/`emitter.rs:2157` — see this
 section's own Thirty-eighth entry above. `ast_importers`: **9 → 9**, unaffected, exactly as predicted.
-**P6.28** — `RuntimeUse::json_codec_roots` carries `TyId` instead of `TypeRef`; its two push sites
-(`emitter/lower.rs:2483,2504`) already hold a `TyId` and call `ty_to_type_ref` only to satisfy this
-field's type, so the conversion moves to the single drain site (`project/tests_emit.rs:1658`, an
-excluded file) immediately before `collect_codec_closure`. Deliberately **not** gated on the codec
-layer's own phase-6-vs-7 question (§6a.D) — `ast_importers`: **9 → 8**, `emitter/runtime_use.rs`
-cleared, the first file to reach zero under this plan. Risk: `ty_to_type_ref` drops
-functions/effects/type-vars via its `Option` return, so filtering moves from push-time to drain-time;
-zero-diff bless is the gate, and a diff means filtering should stay at the push sites with a cheap
-`Ty`-shape test instead.
+**P6.28 — landed.** `RuntimeUse::json_codec_roots` carries `TyId` instead of `TypeRef`; its two push
+sites (`emitter/lower.rs:2483,2504`) already held a `TyId` and called `ty_to_type_ref` only to satisfy
+this field's type, so the conversion moved to the single drain site (`project/tests_emit.rs:1658`, an
+excluded file) immediately before `collect_codec_closure` — see this section's own Thirty-ninth entry
+above. `ast_importers`: **9 → 8**, `emitter/runtime_use.rs` cleared, the first file to reach zero
+under this plan, exactly as predicted. The named risk (filtering moving from push-time to drain-time)
+did not materialize — zero-diff bless confirmed.
 
 **Phase C — declaration-read conversions (evidence for §6a.D).** Each slice below is a
 `Callee`/`IrItem`-reads-the-decision conversion in the established P6.21 idiom; none clears a file on
@@ -1435,8 +1433,8 @@ than folding into this plan.
 which correctly catches `project/diagnostics.rs` alongside the predicted `emit.rs`, +1 over the
 original estimate. Every step below shifts by the same +1 baseline; figures are re-stated, not
 re-derived, since nothing about the underlying slice work changed: ~~P6.27 9→9 (enabling)~~ **landed,
-confirmed exactly as predicted.** Live today, post-P6.27: **9**. P6.28 9→**8** (`runtime_use.rs`
-cleared) · P6.29–P6.32 8→8 (decision conversions, no
+confirmed exactly as predicted.** ~~P6.28 9→8 (`runtime_use.rs` cleared)~~ **landed, confirmed exactly
+as predicted.** Live today, post-P6.28: **8**. P6.29–P6.32 8→8 (decision conversions, no
 file clears) · P6.33 8→8 or redefined (re-settling) · P6.34–P6.36 8→7 if `project.rs` clears
 (conditional on P6.33's finding — and, per the probe hardening above, `project/diagnostics.rs` clears
 in the same moment `project.rs` itself does, automatically, not as its own separate slice) ·
@@ -1474,6 +1472,25 @@ touching either file's `ExprId`-keyed call sites now has a `bynk-check`-local na
 Verified by a full zero-diff bless against the entire e2e corpus (a same-type import retarget cannot
 alter emitted output) and a full `cargo test --workspace`. Full reasoning:
 `design/pending/p6-27-reexport-exprid-from-bynk-check.md`'s own ADR.
+
+**Thirty-ninth: P6.28 — `RuntimeUse::json_codec_roots` carries `TyId`, not `TypeRef`; the first slice
+in this completion plan to fully clear a file, per §6a's own Phase B.** Both push sites in
+`emitter/lower.rs`'s `lower_json_codec_call` already resolved the target as a `TyId`
+(`expr_types.get(...).map(|te| &te.ty)` / `Ty::Result(t, _)`) before calling `ty_to_type_ref` for their
+own, separate codec-rendering use (`serialise_expr`/`ts_type_ref_qualified`/`deserialise_expr`) — the
+`note_json_codec_root(tref.clone())` push existed only to satisfy `RuntimeUse`'s own field type, one
+call downstream of a conversion already happening for an unrelated reason. `json_codec_roots` is now
+`RefCell<Vec<TyId>>`; both push sites push the `TyId` (`arg_ty`/`t`, both `Copy`) they already hold,
+their own `tref` local untouched. `project/tests_emit.rs`'s drain (the one remaining consumer,
+`bynk_check::wire::collect_codec_closure`, still genuinely `TypeRef`-driven) converts once,
+immediately before it — the same `Option`-filtering `ty_to_type_ref` already did, just relocated.
+`emitter::ty_to_type_ref` is now `pub(crate)` so `project/tests_emit.rs` (a sibling module tree of
+`emitter`, not a descendant, so it could not reach a private `fn` there) can call it. Deliberately
+**not** gated on §6a.D's own codec-layer phase-6-vs-7 finding — this slice only moves *where* the
+`TypeRef` conversion happens, not whether it happens at all. `ast_importers`: **9 → 8**,
+`emitter/runtime_use.rs` cleared. Verified by a full zero-diff bless against the entire e2e corpus —
+the push-time-to-drain-time filtering-order risk this section's own Phase B entry named did not
+materialize. Full reasoning: `design/pending/p6-28-runtime-use-tyid.md`'s own ADR.
 
 ## 7. Out of scope — forward references, not refusals
 

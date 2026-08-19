@@ -1661,7 +1661,20 @@ fn emit_test_module(
     // for a workers cross-context caller's consumed-boundary types. Plain
     // `function` declarations hoist, and this is a pure append after every
     // `module_smb` merge above, so it disturbs no earlier source-map offset.
-    let json_codec_roots = runtime_use.take_json_codec_roots();
+    //
+    // P6.28 (design/tracks/the-ir.md §6a): `take_json_codec_roots` now returns
+    // the checker's own `TyId`s, not `TypeRef`s — converted back here, once,
+    // right before the one remaining consumer (`collect_codec_closure`) that is
+    // still genuinely `TypeRef`-driven, rather than at each of the two push
+    // sites in `emitter/lower.rs`. A root `ty_to_type_ref` rejects (functions,
+    // effects, type variables) is silently dropped, the same filtering the old
+    // push-time conversion already did — moving where the filter runs, not what
+    // it filters.
+    let json_codec_roots: Vec<TypeRef> = runtime_use
+        .take_json_codec_roots()
+        .into_iter()
+        .filter_map(|ty| crate::emitter::ty_to_type_ref(ty, tys))
+        .collect();
     if !json_codec_roots.is_empty() {
         let synthetic =
             synthetic_typed_commons_for_target(target_name, unit_tables, unit_uses, tys);

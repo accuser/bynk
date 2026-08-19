@@ -966,8 +966,13 @@ fn file_mentions_connection(commons: &TypedCommons) -> bool {
 
 /// v0.22b: a checker `Ty` rendered back to a `TypeRef` for the codec
 /// machinery (which is `TypeRef`-driven). `None` for types the codec
-/// rejects anyway (functions, effects, type variables).
-fn ty_to_type_ref(t: TyId, tys: &Arc<Types>) -> Option<TypeRef> {
+/// rejects anyway (functions, effects, type variables). `pub(crate)` since
+/// P6.28 (design/tracks/the-ir.md §6a): `project/tests_emit.rs`'s own drain
+/// of `RuntimeUse::json_codec_roots` (a sibling module tree, not a
+/// descendant of `emitter`) needs this same conversion, once, right before
+/// `collect_codec_closure` — the one remaining consumer still genuinely
+/// `TypeRef`-driven.
+pub(crate) fn ty_to_type_ref(t: TyId, tys: &Arc<Types>) -> Option<TypeRef> {
     let sp = bynk_syntax::span::Span::new(0, 0);
     Some(match &*tys.get(t) {
         Ty::Base(b) => TypeRef::Base(*b, sp),

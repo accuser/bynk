@@ -2483,9 +2483,11 @@ fn lower_json_codec_call(
             // of their own — record the root so the module that spliced this
             // body in can generate its own `serialise_*`/`deserialise_*` closure,
             // the same way a workers cross-context caller generates one for a
-            // consumed context's boundary types (#661).
+            // consumed context's boundary types (#661). P6.28: pushes the `TyId`
+            // already in hand, not a re-derived `TypeRef` — `tref` below still
+            // exists for this call site's own, separate codec-rendering use.
             if cx.in_test_scaffold() {
-                cx.runtime_use().note_json_codec_root(tref.clone());
+                cx.runtime_use().note_json_codec_root(arg_ty);
             }
             let v = pre.lower(&args[0], cx);
             let ser = serialisation::serialise_expr(&tref, &v, cx.runtime_use());
@@ -2505,8 +2507,11 @@ fn lower_json_codec_call(
             } else {
                 ts_ty(t, tys)
             };
+            // P6.28: pushes the `TyId` already in hand, not a re-derived
+            // `TypeRef` — `tref` above still exists for this call site's own,
+            // separate codec-rendering use.
             if cx.in_test_scaffold() {
-                cx.runtime_use().note_json_codec_root(tref.clone());
+                cx.runtime_use().note_json_codec_root(t);
             }
             // #914: the wrapper below names `Result`, `JsonValue` and `JsonError`
             // in its own signature and body, whichever arm the inner deserialiser
