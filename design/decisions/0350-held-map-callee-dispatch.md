@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "P6.21: emitter/lower.rs's lower_method_call now reads Callee::Store/Callee::Query (P6.0) to detect a held store Map[K, Connection] field's method receiver, instead of the raw !cx.is_local(&id.name) name check -- another real instance of R6.5's name-matched-receiver defect class. A held map's entry ops (put/remove/contains/size/get) resolve as Callee::Store and its lifted query ops (e.g. parTraverse) resolve as Callee::Query, through the same checker StoreField::Map dispatch as any ordinary storage map -- both variants are matched, mirroring the ordinary (non-held) Map branch's own guard. agent_held_map_frame stays as a separate side-table lookup: it answers which kind of store field this is (held vs ordinary), not the shadowing question Callee already settles. Caught and fixed a real regression during development (a too-narrow Callee::Store-only guard silently excluded Callee::Query ops like parTraverse, producing a redundant double-wrapped IIFE for held-map broadcast fixtures) before landing -- confirmed by a zero-diff bless against the entire e2e fixture corpus, including 238_websocket_inbound_workers, the fixture that caught the too-narrow guard."
----
+# 0350 — `lower_method_call`'s held-`Map[K, Connection]` branch reads `Callee::Store`/`Callee::Query` instead of `!cx.is_local`
 
-## ADR: held-map-callee-dispatch
-
-title: `lower_method_call`'s held-`Map[K, Connection]` branch reads `Callee::Store`/`Callee::Query` instead of `!cx.is_local`
+- **Status:** Accepted (v0.249.2)
 
 summary: Closes another of `lower_method_call`'s remaining name-matched-receiver branches, following the same pattern already applied to ordinary storage, agent-method, constructor, and `Events.emit` dispatch
 

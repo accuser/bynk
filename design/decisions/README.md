@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0350](0350-held-map-callee-dispatch.md) | **`lower_method_call`'s held-`Map[K, Connection]` branch reads `Callee::Store`/`Callee::Query` instead of `!cx.is_local`** (v0.249.2) — `lower_method_call`'s held-`Map[K, Connection]` branch reads `Callee::Store`/`Callee::Query` instead of `!cx.is_local` | Accepted (v0.249.2) |
 | [0349](0349-events-emit-callee-dispatch.md) | **`lower_method_call`'s `Events.emit` branch reads `Callee::Capability` instead of a bare name match** (v0.249.1) — `lower_method_call`'s `Events.emit` branch reads `Callee::Capability` instead of a bare name match | Accepted (v0.249.1) |
 | [0348](0348-event-subscriber-shape-via-ir-service.md) | **`EventSubscriberShape` reads `IrItem::Service` instead of walking the raw AST — the first real, shipped call site for the dormant `lower_service_item_ir`** (v0.249) — `EventSubscriberShape` reads `IrItem::Service` instead of walking the raw AST — the first real, shipped call site for the dormant `lower_service_item_ir` | Accepted (v0.249) |
 | [0347](0347-remaining-root-causes-closed.md) | **`lower_service_item_ir` now lowers every real service body in the fixture corpus cleanly — P6.23's safety probe reaches zero** (v0.248.15) — `lower_service_item_ir` now lowers every real service body in the fixture corpus cleanly — P6.23's safety probe reaches zero | Accepted (v0.248.15) |
