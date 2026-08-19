@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "P6.47: lower_event_subscriber_shapes_ir (bynk-emit/src/ir/lower.rs) absorbs the ServiceProtocol::Events pre-filter guarding lower_service_item_ir, and EventSubscriberShape moves to ir.rs -- project.rs's per-file loop becomes one call. ast_importers: unaffected (6)."
----
+# 0372 — `lower_event_subscriber_shapes_ir` absorbs the `Events` pre-filter it guards
 
-## ADR: p6-47-event-subscriber-shapes-relocation
-
-title: `lower_event_subscriber_shapes_ir` absorbs the `Events` pre-filter it guards
+- **Status:** Accepted (v0.249.24)
 
 summary: Phase G's riskiest slice — moves a live emission-shaping walk, verified against the full fixture corpus including the fixture pinning this exact codepath
 
