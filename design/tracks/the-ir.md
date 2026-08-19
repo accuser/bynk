@@ -1400,16 +1400,15 @@ still P6.38's to close.
 
 **Phase E — post-settling conversions**, scope confirmed by P6.33's ruling (the codec is phase-7, Q7
 params are not decisions — both now settled, not merely assumed).
-**P6.34** — under investigation as this row was written: `ModuleCtx::actors` (a naming slip —
-correctly `EmitProjectCtx::actors: HashMap<String, ActorDecl>`, `project.rs:3478`) was to become a
-precomputed per-handler `ActorSeamIr`. See this section's own upcoming investigation entry (below,
-landing separately per the P6.9/P6.24b precedent — a doc-only PR when a slice's own investigation
-finds no code change warranted) for why the "blocking three files" framing does not hold: only
-`emit.rs` consumes this field (`workers.rs`/`workers_entry.rs` reach actor data through the unrelated
-`UnitTable::actors`, already counted separately), and even for `emit.rs`, `lower_actor_seam_ir`'s own
-signature requires the raw actor declarations to do its own resolution — precomputing would relocate,
-not remove, the dependency, at real risk to a security-sensitive verification path (Bearer/Oidc/
-Signature seam resolution) for no probe movement. **P6.35 — landed.** The remainder of `project.rs`'s
+**P6.34 — closed by investigation, no code change needed** (P6.9/P6.24b precedent — see this section's
+own Forty-sixth entry below for the full account). `ModuleCtx::actors` was a naming slip — correctly
+`EmitProjectCtx::actors: HashMap<String, ActorDecl>` (`project.rs:3478`) — and the "blocking three
+files" framing did not hold: only `emit.rs` consumes this field (`workers.rs`/`workers_entry.rs` reach
+actor data through the unrelated `UnitTable::actors`, already counted separately), and even for
+`emit.rs`, `lower_actor_seam_ir`'s own signature requires the raw actor declarations to do its own
+resolution — precomputing would relocate, not remove, the dependency, at real risk to a
+security-sensitive verification path (Bearer/Oidc/Signature seam resolution) for no probe movement.
+Not pursued. **P6.35 — landed.** The remainder of `project.rs`'s
 plumbing: `plan_agent_given_deps@2670`'s last `&AgentDecl` annotation is gone (type inference now
 carries it) — see this section's own Forty-fifth entry above. `unit_table_uses_emit`/
 `called_cross_context_services`'s own `Expr`/`Block` residue investigated and found the same
@@ -1680,6 +1679,38 @@ retains other, still-open AST surface outside this row's scope (`own_contract_ha
 own declaration reads, and others). Verified by a full zero-diff bless against the entire e2e corpus
 and a full `cargo test --workspace`. Full reasoning:
 `design/pending/p6-35-project-plumbing-finish.md`'s own ADR.
+
+**Forty-sixth: P6.34 — closed by investigation, no code change needed, per the P6.9/P6.24b
+precedent.** This row's own premise, re-examined directly against the tree: `EmitProjectCtx::actors:
+HashMap<String, ActorDecl>` (`project.rs:3478` — the row's own "`ModuleCtx::actors`" was a naming
+slip; `ModuleCtx` itself carries no `actors` field) is populated once (`project.rs:1250`,
+`actors: info.table.actors.clone()`) and read at exactly three sites, **all in `emitter/emit.rs`**:
+`lower_actor_seam_ir(handler, &ctx.actors)` (the per-handler Bearer/Oidc/Sum/Caller seam resolution)
+and `any_service_binds_caller`/`caller_binder_for` (a project-wide "does any service bind a `Caller`
+actor" check). **The "blocking three files" claim does not hold.** `emitter/workers.rs` and
+`emitter/workers_entry.rs` reach actor data through an entirely separate route —
+`bynk_check::symbols::UnitTable::actors`, threaded via their own `table: &UnitTable` parameter, already
+counted independently in each file's own AST surface — never through `EmitProjectCtx`. Neither file
+touches this field at all.
+
+**Even for `emit.rs`, precomputing does not remove the dependency — it relocates it, for no probe
+movement, at real risk to a security-sensitive path.** `lower_actor_seam_ir`'s own signature (defined
+in `ir/lower.rs`, an excluded file) requires `&HashMap<String, ActorDecl>` to do its own resolution —
+matching a handler's `by_clause` binder name against declared actors is inherently a raw-declaration
+lookup, the lowering pass's own necessary input, the same shape P6.33's Decision 1 already established
+isn't this track's fixable target. Precomputing a per-handler cache (keyed by, e.g., `(service_name,
+handler_index)` — this row's own flagged "needs its own ADR on the handler-key shape") would move
+*where* the raw lookup happens (from `emit.rs`, per-handler, to `project.rs`, at `EmitProjectCtx`-build
+time) without removing the AST type from the picture at all — `project.rs` is already counted for
+other, unrelated reasons (P6.35's own remaining rows, `own_contract_hashes`), so this would not move
+`ast_importers` even if built. Weighed against that zero probe benefit: `lower_actor_seam_ir` resolves
+Bearer/Oidc/Signature/Caller identity verification — a fail-closed, security-sensitive seam per the
+handler's own standing comments — and introducing a new indexing/lookup mechanism here carries a real
+correctness risk (a wrong key mapping silently applying one handler's seam to another) that this
+track's own scope does not require taking on. Not pursued. `emit.rs`'s own `ActorDecl` import remains,
+alongside its own larger, genuinely open declaration-read surface (Phase E/F's remaining rows) — this
+finding does not change `emit.rs`'s eventual floor either way. `ast_importers` unaffected (**7 → 7**,
+no code change). Full reasoning: `design/pending/p6-34-actor-seam-investigation.md`'s own ADR.
 
 ## 7. Out of scope — forward references, not refusals
 
