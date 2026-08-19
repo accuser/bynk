@@ -811,31 +811,65 @@ pub(crate) fn walk_block_exprs(b: &Block, f: &mut impl FnMut(&Expr)) {
     }
 }
 
-/// v0.22b: whether any signature or type declaration in this file names
-/// `JsonError` — drives the conditional `type JsonError` runtime import.
-fn file_mentions_json_error(commons: &TypedCommons) -> bool {
-    fn in_type_ref(t: &TypeRef) -> bool {
-        match t {
-            TypeRef::JsonError(_) => true,
-            TypeRef::Result(a, b, _) | TypeRef::Map(a, b, _) => in_type_ref(a) || in_type_ref(b),
-            TypeRef::Option(a, _)
-            | TypeRef::Effect(a, _)
-            | TypeRef::HttpResult(a, _)
-            | TypeRef::Query(a, _)
-            | TypeRef::Stream(a, _)
-            | TypeRef::Connection(a, _)
-            | TypeRef::History(a, _)
-            | TypeRef::List(a, _) => in_type_ref(a),
-            TypeRef::Fn(params, ret, _) => params.iter().any(in_type_ref) || in_type_ref(ret),
-            // v0.157 (ADR 0183): recurse into a generic application's arguments.
-            TypeRef::App { args, .. } => args.iter().any(in_type_ref),
-            TypeRef::Base(..)
-            | TypeRef::Named(_)
-            | TypeRef::QueueResult(_)
-            | TypeRef::ValidationError(_)
-            | TypeRef::Unit(_) => false,
+/// P6.32 (design/tracks/the-ir.md §6a): the one built-in wrapper type
+/// [`type_ref_mentions`] is looking for — `file_mentions_json_error`/
+/// `_http_result`/`_connection` used to carry three separately hand-written
+/// copies of the identical recursive walk below, differing in exactly one
+/// line each (which wrapper variant stops the recursion and reports `true`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TypeRefMarker {
+    JsonError,
+    HttpResult,
+    Connection,
+}
+
+/// The shared recursive walk `file_mentions_json_error`/`_http_result`/
+/// `_connection` each used to hand-roll their own copy of. `marker`'s own
+/// wrapper variant reports `true` immediately without recursing into its
+/// payload (matching each original function's own `=> true` arm exactly —
+/// `matches!(marker, ..) || type_ref_mentions(a, marker)` short-circuits on
+/// the left, so the right side never evaluates when `t` itself is a match);
+/// every other wrapper variant recurses into its inner type(s) exactly as
+/// each original's own "recurse" bucket did.
+fn type_ref_mentions(t: &TypeRef, marker: TypeRefMarker) -> bool {
+    match t {
+        TypeRef::JsonError(_) => marker == TypeRefMarker::JsonError,
+        TypeRef::HttpResult(a, _) => {
+            marker == TypeRefMarker::HttpResult || type_ref_mentions(a, marker)
         }
+        TypeRef::Connection(a, _) => {
+            marker == TypeRefMarker::Connection || type_ref_mentions(a, marker)
+        }
+        TypeRef::Result(a, b, _) | TypeRef::Map(a, b, _) => {
+            type_ref_mentions(a, marker) || type_ref_mentions(b, marker)
+        }
+        TypeRef::Option(a, _)
+        | TypeRef::Effect(a, _)
+        | TypeRef::Query(a, _)
+        | TypeRef::Stream(a, _)
+        | TypeRef::History(a, _)
+        | TypeRef::List(a, _) => type_ref_mentions(a, marker),
+        TypeRef::Fn(params, ret, _) => {
+            params.iter().any(|p| type_ref_mentions(p, marker)) || type_ref_mentions(ret, marker)
+        }
+        // v0.157 (ADR 0183): recurse into a generic application's arguments.
+        TypeRef::App { args, .. } => args.iter().any(|a| type_ref_mentions(a, marker)),
+        TypeRef::Base(..)
+        | TypeRef::Named(_)
+        | TypeRef::QueueResult(_)
+        | TypeRef::ValidationError(_)
+        | TypeRef::Unit(_) => false,
     }
+}
+
+/// The shared outer walk `file_mentions_json_error`/`_http_result` used to
+/// hand-roll two byte-identical copies of (P6.32) — every signature or type
+/// declaration in the file, checked via [`type_ref_mentions`].
+/// `file_mentions_connection` keeps its own distinct outer walk (a
+/// `Connection` can additionally live in a `store` field, which neither
+/// marker below can) rather than being folded in here.
+fn commons_mentions_type(commons: &TypedCommons, marker: TypeRefMarker) -> bool {
+    let in_type_ref = |t: &TypeRef| type_ref_mentions(t, marker);
     let sig = |params: &[Param], ret: &TypeRef| {
         params.iter().any(|p| in_type_ref(&p.type_ref)) || in_type_ref(ret)
     };
@@ -858,6 +892,12 @@ fn file_mentions_json_error(commons: &TypedCommons) -> bool {
         CommonsItem::Event(e) => e.body.fields.iter().any(|f| in_type_ref(&f.type_ref)),
         CommonsItem::Actor(_) | CommonsItem::Messages(_) => false,
     })
+}
+
+/// v0.22b: whether any signature or type declaration in this file names
+/// `JsonError` — drives the conditional `type JsonError` runtime import.
+fn file_mentions_json_error(commons: &TypedCommons) -> bool {
+    commons_mentions_type(commons, TypeRefMarker::JsonError)
 }
 
 /// v0.153 (ADR 0177): true if any signature or type declaration in this file
@@ -867,50 +907,7 @@ fn file_mentions_json_error(commons: &TypedCommons) -> bool {
 /// conditional `HttpResult` runtime import in both single-file and project
 /// headers, so the import can never be missing nor spuriously added.
 fn file_mentions_http_result(commons: &TypedCommons) -> bool {
-    fn in_type_ref(t: &TypeRef) -> bool {
-        match t {
-            TypeRef::HttpResult(..) => true,
-            TypeRef::Result(a, b, _) | TypeRef::Map(a, b, _) => in_type_ref(a) || in_type_ref(b),
-            TypeRef::Option(a, _)
-            | TypeRef::Effect(a, _)
-            | TypeRef::Query(a, _)
-            | TypeRef::Stream(a, _)
-            | TypeRef::Connection(a, _)
-            | TypeRef::History(a, _)
-            | TypeRef::List(a, _) => in_type_ref(a),
-            TypeRef::Fn(params, ret, _) => params.iter().any(in_type_ref) || in_type_ref(ret),
-            // v0.157 (ADR 0183): recurse into a generic application's arguments.
-            TypeRef::App { args, .. } => args.iter().any(in_type_ref),
-            TypeRef::Base(..)
-            | TypeRef::Named(_)
-            | TypeRef::QueueResult(_)
-            | TypeRef::ValidationError(_)
-            | TypeRef::JsonError(_)
-            | TypeRef::Unit(_) => false,
-        }
-    }
-    let sig = |params: &[Param], ret: &TypeRef| {
-        params.iter().any(|p| in_type_ref(&p.type_ref)) || in_type_ref(ret)
-    };
-    commons.commons.items.iter().any(|item| match item {
-        CommonsItem::Fn(f) => sig(&f.params, &f.return_type),
-        CommonsItem::Service(s) => s.handlers.iter().any(|h| sig(&h.params, &h.return_type)),
-        CommonsItem::Agent(a) => a.handlers.iter().any(|h| sig(&h.params, &h.return_type)),
-        CommonsItem::Capability(c) => c.ops.iter().any(|op| sig(&op.params, &op.return_type)),
-        CommonsItem::Provider(p) => p.ops.iter().any(|op| sig(&op.params, &op.return_type)),
-        CommonsItem::Type(t) => match &t.body {
-            TypeBody::Record(r) => r.fields.iter().any(|f| in_type_ref(&f.type_ref)),
-            TypeBody::Sum(s) => s
-                .variants
-                .iter()
-                .any(|v| v.payload.iter().any(|p| in_type_ref(&p.type_ref))),
-            TypeBody::Refined { .. } | TypeBody::Opaque { .. } => false,
-        },
-        // An `event` registers into the `types` table and is checked over
-        // the same record-field path as `CommonsItem::Type`'s `Record` arm.
-        CommonsItem::Event(e) => e.body.fields.iter().any(|f| in_type_ref(&f.type_ref)),
-        CommonsItem::Actor(_) | CommonsItem::Messages(_) => false,
-    })
+    commons_mentions_type(commons, TypeRefMarker::HttpResult)
 }
 
 /// v0.102: true if a file's signatures or store fields mention `Connection[F]`,
@@ -918,28 +915,7 @@ fn file_mentions_http_result(commons: &TypedCommons) -> bool {
 /// sites: capability-operation returns, service/agent handler parameters, and
 /// `store` field value types (`Map[K, Connection]` / `Cell[Option[Connection]]`).
 fn file_mentions_connection(commons: &TypedCommons) -> bool {
-    fn in_type_ref(t: &TypeRef) -> bool {
-        match t {
-            TypeRef::Connection(..) => true,
-            TypeRef::Result(a, b, _) | TypeRef::Map(a, b, _) => in_type_ref(a) || in_type_ref(b),
-            TypeRef::Option(a, _)
-            | TypeRef::Effect(a, _)
-            | TypeRef::HttpResult(a, _)
-            | TypeRef::Query(a, _)
-            | TypeRef::Stream(a, _)
-            | TypeRef::History(a, _)
-            | TypeRef::List(a, _) => in_type_ref(a),
-            TypeRef::Fn(params, ret, _) => params.iter().any(in_type_ref) || in_type_ref(ret),
-            // v0.157 (ADR 0183): recurse into a generic application's arguments.
-            TypeRef::App { args, .. } => args.iter().any(in_type_ref),
-            TypeRef::Base(..)
-            | TypeRef::Named(_)
-            | TypeRef::QueueResult(_)
-            | TypeRef::ValidationError(_)
-            | TypeRef::JsonError(_)
-            | TypeRef::Unit(_) => false,
-        }
-    }
+    let in_type_ref = |t: &TypeRef| type_ref_mentions(t, TypeRefMarker::Connection);
     let sig = |params: &[Param], ret: &TypeRef| {
         params.iter().any(|p| in_type_ref(&p.type_ref)) || in_type_ref(ret)
     };
@@ -4714,5 +4690,73 @@ mod inject_runtime_imports_tests {
             inject_runtime_imports(other.clone(), SPEC, BYTES_RUNTIME_IMPORTS),
             other
         );
+    }
+}
+
+/// P6.32 (design/tracks/the-ir.md §6a): pins the marker-parameterised
+/// `type_ref_mentions` against the exact truth table its three former
+/// hand-rolled copies (`file_mentions_json_error`/`_http_result`/
+/// `_connection`) each implemented independently — in particular, that a
+/// marker's own wrapper variant stops the recursion (matching the original
+/// `=> true` arms) rather than also searching that variant's own inner type,
+/// and that a non-matching wrapper variant recurses rather than reporting
+/// `false` outright.
+#[cfg(test)]
+mod type_ref_mentions_tests {
+    use super::*;
+
+    fn base(b: BaseType) -> TypeRef {
+        TypeRef::Base(b, bynk_syntax::span::Span::new(0, 0))
+    }
+
+    fn http_result(inner: TypeRef) -> TypeRef {
+        TypeRef::HttpResult(Box::new(inner), bynk_syntax::span::Span::new(0, 0))
+    }
+
+    fn connection(inner: TypeRef) -> TypeRef {
+        TypeRef::Connection(Box::new(inner), bynk_syntax::span::Span::new(0, 0))
+    }
+
+    fn json_error() -> TypeRef {
+        TypeRef::JsonError(bynk_syntax::span::Span::new(0, 0))
+    }
+
+    #[test]
+    fn a_markers_own_wrapper_matches_regardless_of_its_inner_type() {
+        // `HttpResult[String]` matches the `HttpResult` marker even though its
+        // own inner type (`String`) does not itself mention `HttpResult` —
+        // the wrapper variant itself is the match, mirroring each original
+        // function's own unconditional `=> true` arm.
+        let t = http_result(base(BaseType::String));
+        assert!(type_ref_mentions(&t, TypeRefMarker::HttpResult));
+        assert!(!type_ref_mentions(&t, TypeRefMarker::Connection));
+        assert!(!type_ref_mentions(&t, TypeRefMarker::JsonError));
+    }
+
+    #[test]
+    fn a_non_matching_wrapper_still_recurses_into_its_inner_type() {
+        // `HttpResult[Connection[String]]` does not match the `HttpResult`
+        // marker itself when the marker is `Connection` — it must still find
+        // the `Connection` nested one level in.
+        let t = http_result(connection(base(BaseType::String)));
+        assert!(type_ref_mentions(&t, TypeRefMarker::Connection));
+        assert!(type_ref_mentions(&t, TypeRefMarker::HttpResult));
+        assert!(!type_ref_mentions(&t, TypeRefMarker::JsonError));
+    }
+
+    #[test]
+    fn json_error_has_no_inner_type_to_recurse_into() {
+        let t = json_error();
+        assert!(type_ref_mentions(&t, TypeRefMarker::JsonError));
+        assert!(!type_ref_mentions(&t, TypeRefMarker::HttpResult));
+        assert!(!type_ref_mentions(&t, TypeRefMarker::Connection));
+    }
+
+    #[test]
+    fn a_plain_base_type_matches_no_marker() {
+        let t = base(BaseType::Int);
+        assert!(!type_ref_mentions(&t, TypeRefMarker::JsonError));
+        assert!(!type_ref_mentions(&t, TypeRefMarker::HttpResult));
+        assert!(!type_ref_mentions(&t, TypeRefMarker::Connection));
     }
 }
