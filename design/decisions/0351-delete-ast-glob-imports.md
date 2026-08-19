@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "P6.26: deleted the five `use bynk_syntax::ast::*;` glob imports in bynk-emit (emitter.rs, project.rs, emitter/workers.rs, emitter/workers_entry.rs, emitter/serialisation.rs), adding each file its own explicit, minimal import list -- a mechanical no-behaviour-change refactor. emitter/emit.rs and emitter/lower.rs each carried a module-level `use super::*;` inheriting emitter.rs's own glob (Rust's own privacy rule makes a parent module's private `use` visible to descendant modules), so both also gained their own direct explicit list -- but that `use super::*;` channel itself was narrowed, not closed: emit.rs (4,632 lines, 168 AST type references, previously zero literal occurrences of the counted string) still inherits whatever emitter.rs continues to expose. Review (#1259) found this left a durable false-zero hazard for a future slice that deletes a child's own list while the channel and the parent's own AST dependency both remain, so the ast_importers probe itself (xtask/src/greenfield_status.rs) now also counts any file with a module-level `use super::*;` whose parent module still imports the AST -- catching not just emit.rs/lower.rs but project/diagnostics.rs, a third, currently AST-free file exposed to the identical latent channel. ast_importers rises 7 -> 9 as a direct, deliberate consequence of both changes -- the probe becoming durably honest, not a regression."
----
+# 0351 — `bynk-emit`'s five `use bynk_syntax::ast::*;` globs become explicit per-file imports; the `ast_importers` probe learns to see through `use super::*;`
 
-## ADR: delete-ast-glob-imports
-
-title: `bynk-emit`'s five `use bynk_syntax::ast::*;` globs become explicit per-file imports; the `ast_importers` probe learns to see through `use super::*;`
+- **Status:** Accepted (v0.249.3)
 
 summary: Phase A of the #1137 completion plan (`design/tracks/the-ir.md` §6a, P6.26) — makes the `ast_importers` probe trustworthy, and durably so, before any further conversion slice lands
 
