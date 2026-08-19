@@ -2271,7 +2271,7 @@ fn build_output(
                 // `consumed_types[ctx_name]`, so the two sides cannot disagree.
                 let own_types =
                     bynk_check::symbols::combined_types_for(ctx_name, &unit_tables, &unit_uses);
-                let own_contracts = own_contract_hashes(table, &own_types);
+                let own_contracts = bynk_check::contract::own_contract_hashes(table, &own_types);
                 let binding_modules: HashMap<String, String> = adapter_bindings
                     .iter()
                     .map(|(n, b)| {
@@ -2477,7 +2477,7 @@ fn build_output(
                     };
                     let dep_types =
                         bynk_check::symbols::combined_types_for(dep, &unit_tables, &unit_uses);
-                    let all = own_contract_hashes(dep_table, &dep_types);
+                    let all = bynk_check::contract::own_contract_hashes(dep_table, &dep_types);
                     let hashes: std::collections::BTreeMap<String, String> = all
                         .into_iter()
                         .filter(|(svc, _)| services.contains(svc))
@@ -2487,7 +2487,7 @@ fn build_output(
                     }
                 }
                 if let Some(manifest) = emitter::contracts::emit_contracts_manifest(
-                    &own_contract_hashes(table, &own_types),
+                    &bynk_check::contract::own_contract_hashes(table, &own_types),
                     &expects,
                 ) {
                     compiled.push(CompiledFile {
@@ -3597,47 +3597,6 @@ fn called_cross_context_services(
         for op in &provider.ops {
             emitter::walk_block_exprs(&op.body, &mut visit);
         }
-    }
-    out
-}
-
-/// v0.177 (#643): a context's own `on call` contract hashes, keyed by service
-/// name — the constants its Worker entry compares an incoming
-/// `X-Bynk-Contract` against.
-///
-/// Built by projecting each local `on call` handler into the **same**
-/// `CrossContextService` shape the resolver hands a *caller* for the same
-/// service (`symbols.rs`'s `build_cross_context_info`), and hashing it from the
-/// same combined type table. That symmetry is the whole correctness argument: a
-/// caller and a callee compiled from one source tree must agree, or the check
-/// fires on every call instead of only on real skew.
-fn own_contract_hashes(
-    table: &UnitTable,
-    own_types: &HashMap<String, Arc<bynk_syntax::ast::TypeDecl>>,
-) -> std::collections::BTreeMap<String, String> {
-    let mut out = std::collections::BTreeMap::new();
-    for (sname, sdecl) in &table.services {
-        let Some(handler) = sdecl
-            .handlers
-            .iter()
-            .find(|h| matches!(h.kind, HandlerKind::Call))
-        else {
-            continue;
-        };
-        let svc = bynk_check::resolver::CrossContextService {
-            name: sname.clone(),
-            params: handler
-                .params
-                .iter()
-                .map(|p| (p.name.name.clone(), p.type_ref.clone()))
-                .collect(),
-            return_type: handler.return_type.clone(),
-            span: sdecl.span,
-        };
-        out.insert(
-            sname.clone(),
-            bynk_check::contract::service_contract_hash(&svc, own_types),
-        );
     }
     out
 }

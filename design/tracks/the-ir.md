@@ -1907,6 +1907,24 @@ remaining six names, so this slice does not yet touch it). Zero-diff bless over 
 `cargo test --workspace`, and `cargo clippy --workspace --all-targets` all pass unchanged — a pure
 dedup with no behavioural surface. Full reasoning: `design/pending/p6-42-source-unit-name-dedup.md`.
 
+**Fifty-fourth: P6.43 — `own_contract_hashes` relocates into `bynk-check::contract`, sharing one
+`cross_context_service_for` projection with `build_cross_context_info`.** Re-reading the function
+against `symbols.rs`'s `build_cross_context_info` found something P6.33's own re-settling did not:
+`project.rs:3628-3651` and `symbols.rs:868-889` were field-for-field identical eight-line
+`CrossContextService` projections from a `ServiceDecl`'s `on call` handler, kept in sync only by
+convention — a real duplication hazard, since a divergence between them is exactly the caller/callee
+skew the contract-hash mechanism exists to catch, invisible to it because both sides would agree with
+themselves while disagreeing with each other. Extracted the shared projection to
+`bynk_check::resolver::cross_context_service_for`; `own_contract_hashes` moved in full to
+`bynk_check::contract`, next to `service_contract_hash`, and now calls the same projection
+`build_cross_context_info`'s own per-service loop calls. The hash *derivation* stays exactly as
+P6.33 ruled it — permanently AST-bound, unchanged byte-for-byte — only the duplicated *projection*
+moved. `ast_importers`: **unaffected (6)** — `project.rs` still counted on its remaining nine names;
+Phase G continues in P6.44–P6.49. Zero-diff bless over the full e2e corpus, with the
+`X-Bynk-Contract`-emitting fixtures inspected by eye per this slice's own extra caution (a
+contract-hash change is the kind a green bless could hide behind an unchanged byte count if the
+projection diverged subtly). Full reasoning: `design/pending/p6-43-own-contract-hashes-relocation.md`.
+
 | Item | Phase | Entry condition |
 |---|---|---|
 | `Question`'s own three-way desugar fork — what `IrExprKind` an `expr?` lowers to | 6, unproposed | a slice proposal for P6.3's desugaring table (§6) reaches `Question` specifically; #1225 (§6, fourteenth slice) settled the *construction*-side identity question this depends on but explicitly does not settle this one |
