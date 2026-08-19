@@ -37,10 +37,10 @@ use crate::emitter::{
 };
 use crate::ir::{
     ActorBinder, ActorSeamIr, BindingMode, CacheIr, CapRefIr, CommitShape, ConnectionBinder,
-    ConstVal, CorsIr, EventPatternIr, EventPatternValueIr, Exhaustive, FnSig, GlobalRef, IndexIr,
-    IrArm, IrBinOp, IrExpr, IrExprKind, IrHandler, IrHandlerKind, IrHttpMethod, IrInterpPart,
-    IrItem, IrPat, IrPredicate, IrStmt, MatchForm, OpSig, PolicyIr, ProtocolIr, ProviderBody,
-    ProviderOpIr, SecurityIr, StoreFieldIr, StoreKindIr, TypeShape,
+    ConstVal, CorsIr, EventPatternIr, EventPatternValueIr, EventSubscriberShape, Exhaustive, FnSig,
+    GlobalRef, IndexIr, IrArm, IrBinOp, IrExpr, IrExprKind, IrHandler, IrHandlerKind, IrHttpMethod,
+    IrInterpPart, IrItem, IrPat, IrPredicate, IrStmt, MatchForm, OpSig, PolicyIr, ProtocolIr,
+    ProviderBody, ProviderOpIr, SecurityIr, StoreFieldIr, StoreKindIr, TypeShape,
 };
 
 /// The lowering pass's own working state: the certified program's typed
@@ -1719,6 +1719,58 @@ pub(crate) fn lower_service_item_ir(service: &ServiceDecl, program: &CheckedProg
             .collect(),
         policy: lower_policy_ir(service),
     }
+}
+
+/// P6.47 (design/tracks/the-ir.md §6b): every `from Events(E)` service in
+/// `program`'s own unit, captured as an [`crate::ir::EventSubscriberShape`]
+/// keyed by service name — see that struct's own doc comment for why this is
+/// captured now rather than re-derived cross-unit at compose time. Absorbs
+/// the `ServiceProtocol::Events` pre-filter this function's own single call
+/// site used to apply externally: [`lower_service_item_ir`] unconditionally
+/// lowers every handler's own *body* (not just its declared shape), so the
+/// guard stays first here too — a cheap, structural pre-filter (which
+/// services even have a shape to capture), not a resurrected raw-AST *read*
+/// — before paying for a full lowering pass on a matching service. Safe as
+/// of #1254: a `catch_unwind` probe wrapping [`lower_service_item_ir`] across
+/// the entire e2e fixture corpus found zero panics, down from ~51 when the
+/// P6.23 investigation first ran.
+pub(crate) fn lower_event_subscriber_shapes_ir(
+    program: &CheckedProgram,
+) -> HashMap<String, EventSubscriberShape> {
+    let mut out = HashMap::new();
+    for item in &program.program().commons.items {
+        if let CommonsItem::Service(s) = item
+            && matches!(&s.protocol, ServiceProtocol::Events { .. })
+        {
+            let IrItem::Service {
+                protocol:
+                    ProtocolIr::Events {
+                        schema_dispatch, ..
+                    },
+                handlers,
+                ..
+            } = lower_service_item_ir(s, program)
+            else {
+                panic!(
+                    "bynk internal error: lower_service_item_ir did not return \
+                     IrItem::Service{{ protocol: ProtocolIr::Events, .. }} for a service \
+                     whose own AST protocol is ServiceProtocol::Events"
+                )
+            };
+            let two_param_handler = handlers
+                .iter()
+                .find(|h| matches!(h.kind, IrHandlerKind::Event))
+                .is_some_and(|h| h.params.len() == 2);
+            out.insert(
+                s.name.name.clone(),
+                EventSubscriberShape {
+                    two_param_handler,
+                    schema_dispatch: schema_dispatch.is_some(),
+                },
+            );
+        }
+    }
+    out
 }
 
 /// P6.12 (#1173): assemble a capability declaration into a real

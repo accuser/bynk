@@ -26,6 +26,7 @@ use std::sync::Arc;
 
 use crate::emitter;
 use crate::ir::CapRefIr;
+use crate::ir::EventSubscriberShape;
 use crate::ir::FnSig;
 use crate::ir::lower::{
     lower_attached_fn_sig_ir_from_types, lower_handler_given_ir, lower_provider_given_ir,
@@ -43,9 +44,7 @@ use bynk_check::project_model::{
 };
 use bynk_check::requirements::RequirementSink;
 use bynk_check::resolver::{self, MethodTable as ResolverMethodTable, ResolvedCommons};
-use bynk_syntax::ast::{
-    Block, CommonsItem, FnDecl, ServiceProtocol, TypeDecl, TypeRef, Visibility,
-};
+use bynk_syntax::ast::{Block, FnDecl, TypeDecl, TypeRef, Visibility};
 use bynk_syntax::error::CompileError;
 use bynk_syntax::lexer;
 use bynk_syntax::parser;
@@ -1251,23 +1250,6 @@ fn emit_unit(
     });
 }
 
-/// P6.x (#1232): a unit's own declared event-subscriber service shape,
-/// captured at that unit's own check time (its `CheckedProgram` does not
-/// survive past `check_unit_files`'s per-file loop) so a *different* unit's
-/// `emit_composition_root` can later decide whether its own subscriber to
-/// this service wants the event envelope forwarded, without re-walking this
-/// unit's raw `UnitTable`. Pure syntax, zero `TyId` dependency — the same two
-/// facts `wants_envelope` already read before this issue, just captured at
-/// the producing unit's own check time instead of cross-unit at compose
-/// time. Realises the project-wide accumulator #1226's Candidate A scoped
-/// but left unimplemented, sized like #1187's own `unit_callees` (#1202) —
-/// the direct precedent this mirrors at every touch point below.
-#[derive(Debug, Clone, Copy, Default)]
-struct EventSubscriberShape {
-    two_param_handler: bool,
-    schema_dispatch: bool,
-}
-
 /// Phase 8d/8e: resolve + check (and, in build mode, emit) every source file in
 /// one production unit. The per-file `continue`s stay internal to this loop, so
 /// a file that fails resolution/checking is skipped without abandoning the unit.
@@ -1413,50 +1395,13 @@ fn check_unit_files(
         // P6.23 (review of #1254): captures this file's own
         // event-subscriber service shapes the same way as before —
         // before `program` is dropped at the end of this iteration, same
-        // insertion point as `unit_callees.extend` above — but now reads
-        // them off a real `IrItem::Service` (`lower_service_item_ir`,
-        // P6.11/#1171) instead of walking `s.handlers`/`s.protocol`
-        // directly. `lower_service_item_ir` lowers every handler's own
-        // *body* (not just its declared shape), so the `ServiceProtocol::
-        // Events` guard stays first — a cheap, structural pre-filter
-        // (which services even have a shape to capture), not a
-        // resurrected raw-AST *read* — before paying for a full lowering
-        // pass on a matching service. Safe as of #1254: a `catch_unwind`
-        // probe wrapping `lower_service_item_ir` across the entire e2e
-        // fixture corpus found zero panics, down from ~51 when the P6.23
-        // investigation first ran.
-        for item in &program.program().commons.items {
-            if let CommonsItem::Service(s) = item
-                && matches!(&s.protocol, ServiceProtocol::Events { .. })
-            {
-                let crate::ir::IrItem::Service {
-                    protocol:
-                        crate::ir::ProtocolIr::Events {
-                            schema_dispatch, ..
-                        },
-                    handlers,
-                    ..
-                } = crate::ir::lower::lower_service_item_ir(s, &program)
-                else {
-                    panic!(
-                        "bynk internal error: lower_service_item_ir did not return \
-                         IrItem::Service{{ protocol: ProtocolIr::Events, .. }} for a service \
-                         whose own AST protocol is ServiceProtocol::Events"
-                    )
-                };
-                let two_param_handler = handlers
-                    .iter()
-                    .find(|h| matches!(h.kind, crate::ir::IrHandlerKind::Event))
-                    .is_some_and(|h| h.params.len() == 2);
-                event_subscriber_shapes.insert(
-                    s.name.name.clone(),
-                    EventSubscriberShape {
-                        two_param_handler,
-                        schema_dispatch: schema_dispatch.is_some(),
-                    },
-                );
-            }
-        }
+        // insertion point as `unit_callees.extend` above. P6.47 (#1137):
+        // the walk itself (including the `ServiceProtocol::Events`
+        // pre-filter guarding `lower_service_item_ir` — see that
+        // function's own doc comment for why the guard stays) relocated to
+        // `ir::lower::lower_event_subscriber_shapes_ir`, an excluded file.
+        event_subscriber_shapes
+            .extend(crate::ir::lower::lower_event_subscriber_shapes_ir(&program));
         emit_unit(
             name,
             kind,
