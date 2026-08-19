@@ -13,6 +13,12 @@ use std::sync::Arc;
 
 use crate::project::EmitProjectCtx;
 use bynk_check::checker::{TypedCommons, Types};
+use bynk_syntax::ast::{
+    ActorDecl, AgentDecl, BaseType, CapRef, CapabilityDecl, CommonsItem, Expr, ExprKind, FnDecl,
+    FnName, Handler, HandlerKind, HttpMethod, Ident, MessageEntry, MessagesDecl, Param, PredKind,
+    ProviderDecl, RecordField, Refinement, SchemaVersionPattern, ServiceDecl, ServiceProtocol,
+    StoreField, TypeBody, TypeDecl, TypeParam, TypeRef,
+};
 
 use crate::ir::lower::{HandlerSignatureIr, body_writes_state, lower_actor_seam_ir};
 use crate::ir::{ActorSeamIr, FnSig, OpSig, ProtocolIr, StoreFieldIr, StoreKindIr, TypeShape};

@@ -26,6 +26,12 @@ use crate::emitter::RuntimeUse;
 use crate::emitter::source_map::SourceMapBuilder;
 use bynk_check::checker::Types;
 use bynk_check::test_suites::{self, ResolvedStub};
+use bynk_syntax::ast::{
+    ArgPattern, BaseType, BinOp, Block, CapabilityOp, Case, Commons, CommonsForm, CommonsItem,
+    Expr, ExprKind, FnDecl, FnName, Ident, Param, PredKind, PropertyDecl, QualifiedName,
+    Refinement, SeqOutcome, Statement, StubClause, StubRhs, Trivia, TypeBody, TypeDecl, TypeRef,
+    Visibility,
+};
 use bynk_syntax::span::Span;
 use std::sync::Arc;
 

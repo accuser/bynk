@@ -19,7 +19,9 @@ use crate::emitter::{
 };
 use crate::project::{ImportExt, LocaleNegotiationArgs, UnitTable};
 use bynk_check::symbols::MessageBundleInfo;
-use bynk_syntax::ast::*;
+use bynk_syntax::ast::{
+    ActorDecl, ExprKind, Handler, HandlerKind, HttpMethod, ServiceProtocol, TypeRef,
+};
 
 /// Where `compose.ts` imports the runtime from — it sits two levels below the
 /// out root (`<out>/workers/<worker>/compose.ts`).

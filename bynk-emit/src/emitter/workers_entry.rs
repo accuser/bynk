@@ -12,7 +12,9 @@ use std::sync::Arc;
 use crate::emitter::http_handler_method_name;
 use crate::emitter::ts_ident;
 use crate::project::UnitTable;
-use bynk_syntax::ast::*;
+use bynk_syntax::ast::{
+    BaseType, Handler, HandlerKind, HttpMethod, LimitsPolicy, ServiceProtocol, TypeDecl, TypeRef,
+};
 
 use crate::emitter::RuntimeUse;
 

@@ -44,7 +44,10 @@ use bynk_check::project_model::{
 use bynk_check::requirements::RequirementSink;
 use bynk_check::resolver::{self, MethodTable as ResolverMethodTable, ResolvedCommons};
 use bynk_syntax::ast::ExprId;
-use bynk_syntax::ast::*;
+use bynk_syntax::ast::{
+    Block, CommonsItem, FnDecl, FnName, HandlerKind, ServiceProtocol, SourceUnit, TypeDecl,
+    TypeRef, Visibility,
+};
 use bynk_syntax::error::CompileError;
 use bynk_syntax::lexer;
 use bynk_syntax::parser;

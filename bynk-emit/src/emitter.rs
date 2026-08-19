@@ -36,7 +36,11 @@ use bynk_check::builtin_names::methods::{
 };
 use bynk_check::builtin_names::types::*;
 use bynk_check::checker::{CheckedProgram, NamedKind, Ty, TyId, TypedCommons, Types};
-use bynk_syntax::ast::*;
+use bynk_syntax::ast::{
+    AgentDecl, BaseType, BinOp, Block, CommonsItem, Expr, ExprId, ExprKind, FnDecl, FnName, Ident,
+    InterpPart, MatchBody, MessagesDecl, ObservationMatcher, Param, Pattern, PredKind, ServiceDecl,
+    Statement, TypeBody, TypeDecl, TypeRef, expr_children, statement_exprs,
+};
 
 pub mod contracts;
 pub(crate) mod events_fanout;
