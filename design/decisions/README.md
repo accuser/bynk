@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0356](0356-workers-entry-handler-kind-ir.md) | **`emitter/workers_entry.rs`'s eight `HandlerKind` matches dispatch on `IrHandlerKind`; `HttpRoute`/`QueueRoute` and `ServiceProtocol` left as named residue** (v0.249.8) — `emitter/workers_entry.rs`'s eight `HandlerKind` matches dispatch on `IrHandlerKind`; `HttpRoute`/`QueueRoute` and `ServiceProtocol` left as named residue | Accepted (v0.249.8) |
 | [0355](0355-worker-compose-handler-kind-ir.md) | **`emit_worker_compose` dispatches on `IrHandlerKind`, not raw AST `HandlerKind`; `ProtocolIr` conversion found not reachable here** (v0.249.7) — `emit_worker_compose` dispatches on `IrHandlerKind`, not raw AST `HandlerKind`; `ProtocolIr` conversion found not reachable here | Accepted (v0.249.7) |
 | [0354](0354-cap-op-param-names-ir.md) | **`cap_op_param_names` reads `ir::lower::capability_op_sig_from_commons` instead of walking `CommonsItem::Capability` by hand** (v0.249.6) — `cap_op_param_names` reads `ir::lower::capability_op_sig_from_commons` instead of walking `CommonsItem::Capability` by hand | Accepted (v0.249.6) |
 | [0353](0353-runtime-use-tyid.md) | **`RuntimeUse::json_codec_roots` carries `TyId`, not `TypeRef`; the `TypeRef` conversion moves from two push sites to the one drain site** (v0.249.5) — `RuntimeUse::json_codec_roots` carries `TyId`, not `TypeRef`; the `TypeRef` conversion moves from two push sites to the one drain site | Accepted (v0.249.5) |

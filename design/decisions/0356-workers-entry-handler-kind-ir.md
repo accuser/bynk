@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "P6.31: emitter/workers_entry.rs's eight HandlerKind matches (route collection for HTTP/cron/queue/websocket-open/event handlers) now dispatch on the checker-classified IrHandlerKind instead of the raw AST HandlerKind directly -- same pattern P6.30 established in emitter/workers.rs. The HttpRoute-building arm re-derives method/path from the original AST for HttpRoute's own still-AST-typed fields (Q7-settled); the Cron arm's expr is a plain String in both forms, so no re-derivation was needed there. HttpRoute/QueueRoute's own struct fields (method: HttpMethod, handler: Handler, msg_type: Option<TypeRef>) and the file's three ServiceProtocol checks are left as raw AST -- emit_worker_entry has no TypedCommons in scope (the same constraint P6.30 found), and widening HttpRoute/QueueRoute or IrHandler is an explicit stop-and-defer per the completion plan rather than a speculative widening. ast_importers unaffected (8) -- workers_entry.rs retains other, still-open AST names."
----
+# 0356 — `emitter/workers_entry.rs`'s eight `HandlerKind` matches dispatch on `IrHandlerKind`; `HttpRoute`/`QueueRoute` and `ServiceProtocol` left as named residue
 
-## ADR: workers-entry-handler-kind-ir
-
-title: `emitter/workers_entry.rs`'s eight `HandlerKind` matches dispatch on `IrHandlerKind`; `HttpRoute`/`QueueRoute` and `ServiceProtocol` left as named residue
+- **Status:** Accepted (v0.249.8)
 
 summary: Phase C of the #1137 completion plan (`design/tracks/the-ir.md` §6a, P6.31) — the sibling conversion to P6.30, in `workers.rs`'s entry-point counterpart
 
