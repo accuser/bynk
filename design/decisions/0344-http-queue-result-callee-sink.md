@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "P6.21/P6.23 (checker-side): bynk-check's checker.rs now records Callee::Intrinsic for HttpResult/QueueResult bare-variant construction at all 8 real dispatch sites (bare Ident, Call, ConstructorCall, FieldAccess for HttpResult's nullary form, MethodCall) -- the sink GlobalRef's own doc comment in bynk-emit's ir.rs named as the reason Decision C (#1143) left this shape out of scope entirely: the checker's own disambiguation (expected/ctx.return_ty peeling, deciding whether NotFound resolves to HttpResult or a same-named user sum variant) is contextual/position-dependent, so a downstream reader had no recorded decision to read back without re-deriving the same logic. Purely additive -- no existing Callee entry is overwritten, no control flow or diagnostic changes, so this PR is zero-diff by construction (nothing reads the new entries yet). Verified by the full bynk-check unit suite (157/157) plus a full zero-diff bless against the entire e2e fixture corpus"
----
+# 0344 — `Callee::Intrinsic` now covers `HttpResult`/`QueueResult` bare-variant construction — the sink Decision C's own exclusion said a future slice would need
 
-## ADR: http-queue-result-callee-sink
-
-title: `Callee::Intrinsic` now covers `HttpResult`/`QueueResult` bare-variant construction — the sink Decision C's own exclusion said a future slice would need
+- **Status:** Accepted (v0.248.12)
 
 summary: Closes the checker-side half of the gap this track's own P6.21/P6.23 investigations both independently found — no `Callee` classification existed for `HttpResult`/`QueueResult` variant construction at all, forcing the emitter's own dispatchers to keep re-deriving it from bare names
 
