@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "P6.21 (closing the last gap): emitter/lower.rs's remaining HttpResult/QueueResult branches now read the Callee::Intrinsic sink #1251 added, instead of a bare id.name == HTTP_RESULT check (lower_method_call's qualified-with-args and qualified-nullary forms) or a Ty::HttpResult/Ty::QueueResult type check plus a bare http_variant/queue_variant keyword lookup (lower_ident's bare-nullary form, lower_call's bare-with-args form). The qualified-with-args forms close a real instance of R6.5's name-matched-receiver defect class the same way every other P6.21 slice this session did; the two type-checked forms were already immune to name-matching and are converted for consistency with the rest of this module, not a new defect closure. Verified by a full zero-diff bless against the entire e2e fixture corpus, including test-body fixtures. This closes P6.21's own HttpResult/QueueResult gap in full -- every real dispatch site in emitter/lower.rs for these two built-in result types is now Callee-driven"
----
+# 0345 — The last of `emitter/lower.rs`'s `HttpResult`/`QueueResult` branches read `Callee::Intrinsic` — P6.21's own gap fully closed
 
-## ADR: http-queue-result-emitter-consumption
-
-title: The last of `emitter/lower.rs`'s `HttpResult`/`QueueResult` branches read `Callee::Intrinsic` — P6.21's own gap fully closed
+- **Status:** Accepted (v0.248.13)
 
 summary: Wires the emitter side to the checker-side sink #1251 just added, completing the HttpResult/QueueResult half of P6.21's incremental conversion across all six real dispatch sites
 
