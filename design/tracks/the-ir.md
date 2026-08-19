@@ -1261,24 +1261,45 @@ only unconverted receiver-detection path left in the module — it dispatches on
 checked type already, not a name match, and is not suspected to carry the same defect. Full
 reasoning: `design/pending/p6-21-held-map-callee-dispatch.md`'s own ADR.
 
-**Thirty-seventh: P6.26 — the five `use bynk_syntax::ast::*;` globs (and two `use super::*;`
-glob-inheritors) become explicit per-file imports, per §6a's own Phase A.** Deleted
-`emitter.rs`/`project.rs`/`emitter/workers.rs`/`emitter/workers_entry.rs`/`emitter/serialisation.rs`'s
-glob imports and added a direct, explicit `use bynk_syntax::ast::{...};` list to each — plus to
-`emitter/lower.rs`, `emitter/emit.rs`, and `project/tests_emit.rs` (an excluded file, also broken by
-`project.rs`'s glob removal since it too inherits via `use super::*;`), none of which previously
-imported the AST module directly at all. Each file's list was determined by removing the globs,
-running `cargo check --all-targets` (to also surface `#[cfg(test)]`-only usages, not just `cargo
-build`'s production-only view), and collecting every "cannot find type/value" error's name per file —
-not hand-enumerated from source reading, the same discipline this section's own re-grounding used. No
-AST/IR name collisions were found; the rebuild succeeded with zero unused-import warnings on the first
-pass once every collected name was added, so no aliasing was needed. `ast_importers`: **7 → 8**, as
-§6a itself predicted — entirely attributable to `emitter/emit.rs` (4,632 lines, 168 AST type
-references, previously invisible to the probe by construction) becoming counted for the first time; no
-other file gained AST visibility. This is the probe becoming honest, not a regression. Verified by a
-full zero-diff bless against the entire e2e corpus (an imports-only change cannot alter emitted
-output) and a full `cargo test --workspace`. `design/greenfield-status.md`'s own committed table is
-updated in the same commit. Full reasoning: `design/pending/p6-26-delete-ast-glob-imports.md`'s own
+**Thirty-seventh: P6.26 — the five `use bynk_syntax::ast::*;` globs become explicit per-file imports;
+the `ast_importers` probe itself learns to see through `use super::*;`, per §6a's own Phase A.**
+Deleted `emitter.rs`/`project.rs`/`emitter/workers.rs`/`emitter/workers_entry.rs`/
+`emitter/serialisation.rs`'s glob imports and added a direct, explicit `use bynk_syntax::ast::{...};`
+list to each — plus to `emitter/lower.rs`, `emitter/emit.rs`, and `project/tests_emit.rs` (an excluded
+file, also broken by `project.rs`'s glob removal since it too inherits via `use super::*;`), none of
+which previously imported the AST module directly at all. Each file's list was determined by removing
+the globs, running `cargo check --all-targets` (to also surface `#[cfg(test)]`-only usages, not just
+`cargo build`'s production-only view), and collecting every "cannot find type/value" error's name per
+file — not hand-enumerated from source reading. No AST/IR name collisions were found; the rebuild
+succeeded with zero unused-import warnings once every collected name was added, so no aliasing was
+needed.
+
+**Review (#1259) found a real gap in what "became explicit per-file imports" actually means for
+`emitter/lower.rs`/`emitter/emit.rs`, and fixed it before landing rather than after.** Neither file's
+own `use super::*;` was deleted — both also pull non-AST names from `emitter.rs` through it, so
+removing it is separate, future work — meaning the inheritance *channel* stays open even though both
+files are now self-sufficient for AST names today. Several names appear in both `emitter.rs`'s list
+and `emit.rs`'s (`Expr`, `ExprKind`, `TypeRef`, `TypeDecl`, `Ident`, `BaseType`, `Statement`, `Block`),
+so a future slice that converts `emit.rs`'s real usage but deletes its own explicit list, believing
+the file done, would still compile via inheritance for as long as `emitter.rs` keeps any overlapping
+name — reproducing this exact slice's own false-zero hazard one level up, invisibly. Fixed at the
+probe, not just in prose: `ast_importer_files` (`xtask/src/greenfield_status.rs`) now also counts any
+file with a module-level `use super::*;` whose sibling parent module still imports the AST, regardless
+of what the child's own text says. This is a strictly conservative, durable rule — it also newly
+counts `project/diagnostics.rs`, a third file carrying the identical inheritance shape from
+AST-importing `project.rs`, confirmed genuinely AST-free in its own body today but equally exposed to
+the same latent channel going forward. Two new unit tests pin both the detection logic (a nested
+`#[cfg(test)] mod tests { use super::*; }` must not false-positive — it inherits its own immediately
+enclosing module, not the grandparent file) and this exact regression scenario against the live tree.
+
+`ast_importers`: **7 → 9** (not the 7 → 8 first predicted) — `emitter/emit.rs` counted for its 168 now
+visible AST references (the source change alone already caught `emit.rs`/`lower.rs`, since each
+carries its own literal import text), plus `project/diagnostics.rs` newly counted by the probe fix,
+the one genuinely new file the inheritance rule adds. This is the probe becoming *durably* honest, not
+a regression. Verified by a full zero-diff bless against the entire e2e corpus (a `bynk-emit`
+imports-only change cannot alter emitted output) and a full `cargo test --workspace`, including the
+two new `xtask` unit tests and `greenfield_status_table_is_current`. `design/greenfield-status.md`'s
+own committed table is updated in the same commit. Full reasoning: `design/pending/p6-26-delete-ast-glob-imports.md`'s own
 ADR.
 
 ### 6a. The completion plan (P6.25 onward)
@@ -1300,10 +1321,13 @@ than reversing it.
 **Phase A — make the probe honest (blocking). Landed.** **P6.25** — the scoping correction above,
 doc-only. **P6.26** — deleted the five `use bynk_syntax::ast::*;` globs (`emitter.rs:39`,
 `project.rs:47`, `emitter/workers.rs:22`, `emitter/workers_entry.rs:15`,
-`emitter/serialisation.rs:16`) and the two `use super::*;` glob-inheritors (`emitter/lower.rs:13`,
-`emitter/emit.rs:20`), replacing each with an explicit import list — see this section's own
-Thirty-seventh entry above for the full account. `ast_importers`: **7 → 8**, exactly as predicted
-below, with no AST/IR name collision found (no aliasing was needed after all).
+`emitter/serialisation.rs:16`) and gave `emitter/lower.rs`/`emitter/emit.rs` (both still `use
+super::*;` for non-AST names) their own explicit AST import too, replacing each with an explicit
+import list — see this section's own Thirty-seventh entry above for the full account, including
+review's own finding that the `use super::*;` *channel* had to stay open (separate future work) and
+that the probe itself needed hardening against it, not just the source. `ast_importers`: **7 → 9**
+(not the 7 → 8 first predicted — the probe fix's own `project/diagnostics.rs` catch is the
+difference), with no AST/IR name collision found (no aliasing was needed after all).
 
 **Phase B — cheap decouplings.** **P6.27** — re-export `ExprId` from `bynk-check` (`pub use
 bynk_syntax::ast::ExprId;` in `checker.rs`) and retarget `project.rs:46`/`emitter.rs:2157`; enabling
@@ -1406,15 +1430,31 @@ used as a value) is real and production-reachable, P6.2 territory, and warrants 
 than folding into this plan.
 
 **Expected `ast_importers` trajectory** (starting from the corrected live figure, **7**): ~~P6.25
-7→7 (doc-only)~~ **landed** · ~~P6.26 7→**8** (`emit.rs` made visible, deliberately)~~ **landed,
-confirmed exactly as predicted** · P6.27 8→8 (enabling) · P6.28 8→**7** (`runtime_use.rs` cleared) ·
-P6.29–P6.32 7→7 (decision conversions, no file clears) · P6.33 7→7 or redefined (re-settling) ·
-P6.34–P6.36 7→6 if `project.rs` clears (conditional on P6.33's finding) · P6.37–P6.38 6→5
-(`emitter/lower.rs` cleared) · remainder 5→2 (`workers.rs`, `workers_entry.rs`, `emitter.rs` cleared) ·
-only if P6.33 rules the codec phase-6, 2→0 (`emit.rs`, `serialisation.rs`). Live today, post-P6.26:
-**8**. **Every pending file for this plan states the movement explicitly, including "unaffected" —
-P6.26's deliberate increase was the one entry in this trajectory that reads as a regression if not
-narrated as one**, and `design/greenfield-status.md` was updated in the same commit as P6.26, per
+7→7 (doc-only)~~ **landed** · ~~P6.26 7→9~~ **landed at 9, not the 8 first predicted** — review
+(#1259) hardened the probe itself to also count a `use super::*;` child of an AST-importing parent,
+which correctly catches `project/diagnostics.rs` alongside the predicted `emit.rs`, +1 over the
+original estimate. Live today, post-P6.26: **9**. Every step below shifts by the same +1 baseline;
+figures are re-stated, not re-derived, since nothing about the underlying slice work changed: P6.27
+9→9 (enabling) · P6.28 9→**8** (`runtime_use.rs` cleared) · P6.29–P6.32 8→8 (decision conversions, no
+file clears) · P6.33 8→8 or redefined (re-settling) · P6.34–P6.36 8→7 if `project.rs` clears
+(conditional on P6.33's finding — and, per the probe hardening above, `project/diagnostics.rs` clears
+in the same moment `project.rs` itself does, automatically, not as its own separate slice) ·
+P6.37–P6.38 7→6 (`emitter/lower.rs` cleared) · remainder 6→2 (`workers.rs`, `workers_entry.rs`,
+`emitter.rs` cleared) · only if P6.33 rules the codec phase-6, 2→0 (`emit.rs`, `serialisation.rs`).
+
+**One new dependency the probe hardening introduces, not yet reflected in the ordering above:**
+`emitter/lower.rs`/`emitter/emit.rs` still carry `use super::*;`, so per the same rule, *neither can
+register as cleared while `emitter.rs` itself still imports the AST* — regardless of how empty their
+own explicit lists get. P6.37–P6.38's own "`emitter/lower.rs` cleared" step is only real if
+`emitter.rs` has already cleared by then, or if that same slice also drops `lower.rs`'s own `use
+super::*;` (this section's own Thirty-seventh entry above names removing it as separate, deferred
+future work — this is the moment that deferral becomes load-bearing) — a real re-sequencing question
+for whichever slice actually proposes P6.37, not resolved
+here.
+
+**Every pending file for this plan states the movement explicitly, including "unaffected" — P6.26's
+deliberate increase was the one entry in this trajectory that reads as a regression if not narrated as
+one**, and `design/greenfield-status.md` was updated in the same commit as P6.26, per
 `greenfield_status_table_is_current`'s own requirement.
 
 ## 7. Out of scope — forward references, not refusals

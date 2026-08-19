@@ -1371,15 +1371,53 @@ fn is_named_ast_importer(rel_path: &Path) -> bool {
     AST_IMPORTER_EXCEPTIONS.contains(&rel.as_str())
 }
 
+/// Is `contents` a module (not a nested block) that glob-imports its parent —
+/// i.e. does it carry a top-level (column-0) `use super::*;`? Rust's own privacy
+/// rule makes a parent module's private `use` visible to descendant modules, so a
+/// file matching this can expose `bynk_syntax::ast` names it never spells itself
+/// (P6.26 review, #1259) — deliberately column-0 only, so a `use super::*;`
+/// *inside* a nested `#[cfg(test)] mod tests { .. }` block (glob-importing its own
+/// immediately-enclosing module, not the grandparent file on disk) doesn't
+/// false-positive this check.
+fn has_module_level_super_glob(contents: &str) -> bool {
+    contents.lines().any(|line| line == "use super::*;")
+}
+
+/// For `rel_path` = `<dir>/<file>.rs`, does the sibling module file `<dir>.rs`
+/// (the parent module a top-level `use super::*;` in `rel_path` would inherit
+/// from) itself contain `bynk_syntax::ast`? `None` if `rel_path` has no such
+/// parent (a file directly under `bynk-emit/src`, e.g. `emitter.rs` itself).
+fn super_glob_parent_imports_ast(dir: &Path, rel_path: &Path) -> Option<bool> {
+    let parent_dir = rel_path.parent()?;
+    if parent_dir.as_os_str().is_empty() {
+        return None;
+    }
+    let parent_file = dir.join(parent_dir).with_extension("rs");
+    Some(
+        std::fs::read_to_string(&parent_file)
+            .is_ok_and(|contents| contents.contains("bynk_syntax::ast")),
+    )
+}
+
 /// The files [`ast_importers`] counts: `bynk-emit/src` files whose contents match
-/// `bynk_syntax::ast`, excluding [`AST_IMPORTER_EXCEPTIONS`]. Split out from
-/// [`ast_importers`] so a test can assert on the actual survivor set, not just its
-/// length (#1184 review).
+/// `bynk_syntax::ast` **or** that inherit it from an AST-importing parent through a
+/// top-level `use super::*;` (P6.26 review, #1259 — a file that stops spelling the
+/// AST module directly by deleting its own explicit import, while a live `use
+/// super::*;` still channels a still-AST-importing parent's names in, must stay
+/// counted; otherwise a future partial conversion could silently drop this probe
+/// without the underlying AST dependency actually being gone), excluding
+/// [`AST_IMPORTER_EXCEPTIONS`]. Split out from [`ast_importers`] so a test can
+/// assert on the actual survivor set, not just its length (#1184 review).
 fn ast_importer_files(root: &Path) -> Vec<PathBuf> {
     let dir = root.join("bynk-emit/src");
     rust_files(&dir)
         .into_iter()
-        .filter(|(_, contents)| contents.contains("bynk_syntax::ast"))
+        .filter(|(path, contents)| {
+            contents.contains("bynk_syntax::ast")
+                || (has_module_level_super_glob(contents)
+                    && super_glob_parent_imports_ast(&dir, path.strip_prefix(&dir).unwrap_or(path))
+                        .unwrap_or(false))
+        })
         .filter(|(path, _)| !is_named_ast_importer(path.strip_prefix(&dir).unwrap_or(path)))
         .map(|(path, _)| path)
         .collect()
@@ -1903,6 +1941,57 @@ mod tests {
         assert!(counted.contains("emitter.rs"));
         assert!(counted.contains("emitter/lower.rs"));
         assert!(counted.contains("emitter/workers.rs"));
+    }
+
+    /// P6.26 review (#1259): a module-level `use super::*;` is a real inheritance
+    /// channel (Rust's own privacy rule makes a parent's private `use` visible to
+    /// descendants) — must be detected — but a `use super::*;` nested inside a
+    /// `#[cfg(test)] mod tests { .. }` block glob-imports its own *immediately
+    /// enclosing* module, not the grandparent file on disk, and must not
+    /// false-positive.
+    #[test]
+    fn module_level_super_glob_detection_ignores_nested_test_mod() {
+        assert!(has_module_level_super_glob(
+            "use std::fmt;\nuse super::*;\n"
+        ));
+        assert!(!has_module_level_super_glob(
+            "fn f() {}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n}\n"
+        ));
+    }
+
+    /// P6.26 review (#1259): pins the real scenario the review found —
+    /// `emitter/emit.rs` and `emitter/lower.rs` both carry a live, module-level
+    /// `use super::*;` inheriting from `emitter.rs`, which itself still imports
+    /// `bynk_syntax::ast` directly. Regression guard: if a future slice deletes
+    /// either child's own explicit AST import while this inheritance channel and
+    /// the parent's own AST dependency both remain, [`ast_importer_files`] must
+    /// keep counting it rather than silently dropping the probe.
+    #[test]
+    fn super_glob_children_of_an_ast_importing_parent_are_detected() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
+        let dir = root.join("bynk-emit/src");
+        for rel in ["emitter/emit.rs", "emitter/lower.rs"] {
+            let contents = std::fs::read_to_string(dir.join(rel))
+                .unwrap_or_else(|e| panic!("{rel:?} does not exist: {e}"));
+            assert!(
+                has_module_level_super_glob(&contents),
+                "{rel:?} no longer carries a module-level `use super::*;` — this \
+                 regression guard (and the false-zero hazard it pins) no longer applies \
+                 and may be deleted"
+            );
+            assert_eq!(
+                super_glob_parent_imports_ast(&dir, Path::new(rel)),
+                Some(true),
+                "{rel:?}'s parent (`emitter.rs`) no longer imports bynk_syntax::ast — \
+                 update this guard's expectation"
+            );
+        }
+        // A file directly under `bynk-emit/src` (no directory component) has no
+        // `use super::*;` parent to inherit from.
+        assert_eq!(
+            super_glob_parent_imports_ast(&dir, Path::new("emitter.rs")),
+            None
+        );
     }
 
     // --- fs_below_driver / test_density (trailing `#[cfg(test)] mod tests {}`) ---
