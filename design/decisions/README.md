@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0367](0367-p6-42-source-unit-name-dedup.md) | **`project.rs`/`project/diagnostics.rs` drop two false AST coupling channels — opens the #1137 retirement plan's Phase G** (v0.249.19) — `project.rs`/`project/diagnostics.rs` drop two false AST coupling channels — opens the #1137 retirement plan's Phase G | Accepted (v0.249.19) |
 | [0366](0366-refined-shape-deferred.md) | **`TypeShape::Refined::{base, refinement}` ruled phase 7, not built — closes Phase F and this completion plan's own remaining rows** (v0.249.18) — `TypeShape::Refined::{base, refinement}` ruled phase 7, not built — closes Phase F and this completion plan's own remaining rows | Accepted (v0.249.18) |
 | [0365](0365-schema-dispatch-ir-native.md) | **`ProtocolIr::Events::schema_dispatch` flattens to `Option<i64>`, cutting over its one real reader** (v0.249.17) — `ProtocolIr::Events::schema_dispatch` flattens to `Option<i64>`, cutting over its one real reader | Accepted (v0.249.17) |
 | [0364](0364-ir-zero-reader-fields.md) | **Four zero-production-reader AST-typed `ir.rs` fields deleted; two others investigated and found to be load-bearing, not redundant** (v0.249.16) — Four zero-production-reader AST-typed `ir.rs` fields deleted; two others investigated and found to be load-bearing, not redundant | Accepted (v0.249.16) |

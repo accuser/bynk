@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "P6.42: project.rs's in_memory_logical_path stops re-implementing SourceUnit::name(), and project/diagnostics.rs drops its use super::*; -- two false AST coupling channels, no behavioural change. ast_importers: 7 -> 6 (project/diagnostics.rs cleared; project.rs itself still counted, six names remain)."
----
+# 0367 — `project.rs`/`project/diagnostics.rs` drop two false AST coupling channels — opens the #1137 retirement plan's Phase G
 
-## ADR: p6-42-source-unit-name-dedup
-
-title: `project.rs`/`project/diagnostics.rs` drop two false AST coupling channels — opens the #1137 retirement plan's Phase G
+- **Status:** Accepted (v0.249.19)
 
 summary: `in_memory_logical_path` was re-implementing `SourceUnit::name()` byte-for-byte; `project/diagnostics.rs`'s only import need was two names, not the whole parent module
 
