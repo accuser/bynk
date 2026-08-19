@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "P6.35: plan_agent_given_deps (project.rs) no longer spells an explicit &AgentDecl type annotation -- the loop body's own a.handlers field access already pins the element type through inference, the same fully-mechanical finish the completion plan named for this function. Investigated and confirmed, no code change needed: unit_table_uses_emit/called_cross_context_services's own remaining Block/Expr sites are walk_block_exprs's own callback signature, the same Q7-deferred body-walking-plumbing shape as every other still-AST-typed rendering parameter in this track -- no IR-native body walker exists to route through instead until a future P6.2 emitter-side cutover lands, so this is not fixable within this slice's scope. instantiate_provider_expr confirmed already AST-free, as the plan itself already found. ast_importers unaffected (7) -- project.rs retains other, still-open AST surface (own_contract_hashes, build_output's declaration reads, etc)."
----
+# 0359 — `plan_agent_given_deps` drops its last explicit `&AgentDecl` annotation; `unit_table_uses_emit`/`called_cross_context_services`'s `Block`/`Expr` residue found structural, not fixable here
 
-## ADR: project-plumbing-finish
-
-title: `plan_agent_given_deps` drops its last explicit `&AgentDecl` annotation; `unit_table_uses_emit`/`called_cross_context_services`'s `Block`/`Expr` residue found structural, not fixable here
+- **Status:** Accepted (v0.249.11)
 
 summary: Phase E of the #1137 completion plan (`design/tracks/the-ir.md` §6a, P6.35) — the mechanical part of this row lands; the rest is investigated and found out of reach, not silently converted
 
