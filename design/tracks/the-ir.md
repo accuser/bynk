@@ -1962,6 +1962,21 @@ continues in P6.47–P6.49. Zero-diff bless over the full e2e corpus, `cargo tes
 clippy --workspace --all-targets` all pass unchanged. Full reasoning:
 `design/pending/p6-46-owner-side-accessors.md`.
 
+**Fifty-eighth: P6.47 — `lower_event_subscriber_shapes_ir` absorbs the `Events` pre-filter it
+guards.** Phase G's riskiest slice (a live emission-shaping walk, not a pure relocation) — a per-file
+loop matching `CommonsItem::Service`/`ServiceProtocol::Events` before calling
+`lower_service_item_ir` and capturing an `EventSubscriberShape` moved whole into `ir/lower.rs` as
+`lower_event_subscriber_shapes_ir(program: &CheckedProgram)`, same guard (deliberate — the lowering
+call is unconditional over every handler body, so the guard is a real cost-avoidance, not raw-AST
+residue), same panic invariant, unchanged in substance. `EventSubscriberShape` itself relocates to
+`ir.rs`, beside `ProtocolIr::Events`. `project.rs`'s loop becomes one call. `ast_importers`:
+**unaffected (6)** — `CommonsItem`/`ServiceProtocol` both gone from `project.rs`'s import list;
+Phase G's remaining surface is P6.48–P6.49. Zero-diff bless over the full e2e corpus, with
+`1232_events_envelope_schema_dispatch_bare` (the fixture pinning this exact codepath) checked
+individually per this slice's own extra caution, `cargo test --workspace`, `cargo clippy --workspace
+--all-targets` all pass unchanged. Full reasoning:
+`design/pending/p6-47-event-subscriber-shapes-relocation.md`.
+
 | Item | Phase | Entry condition |
 |---|---|---|
 | `Question`'s own three-way desugar fork — what `IrExprKind` an `expr?` lowers to | 6, unproposed | a slice proposal for P6.3's desugaring table (§6) reaches `Question` specifically; #1225 (§6, fourteenth slice) settled the *construction*-side identity question this depends on but explicitly does not settle this one |

@@ -1142,6 +1142,20 @@ pub(crate) enum ProtocolIr {
     },
 }
 
+/// #1226/#1187 slice 6: the two facts a service's own event-subscriber
+/// *shape* needs, captured at that unit's own check time (its
+/// `CheckedProgram` does not survive past `check_unit_files`'s per-file loop)
+/// so a *different* unit's own composition root can later decide whether its
+/// subscriber to this service wants the event envelope forwarded, without
+/// re-walking this unit's raw `UnitTable`. Pure syntax, zero `TyId`
+/// dependency. Produced by [`lower::lower_event_subscriber_shapes_ir`], sized
+/// like #1187's own `unit_callees` (#1202) accumulator.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct EventSubscriberShape {
+    pub two_param_handler: bool,
+    pub schema_dispatch: bool,
+}
+
 /// The payload of `ProtocolIr::Events`'s own `pattern` — a `from
 /// Events(E { field: value, .. })` structural filter, [DECISION C] (#1171).
 /// **Not** `bynk_syntax::ast::EventPattern` reused verbatim, unlike
