@@ -44,8 +44,7 @@ use bynk_check::project_model::{
 use bynk_check::requirements::RequirementSink;
 use bynk_check::resolver::{self, MethodTable as ResolverMethodTable, ResolvedCommons};
 use bynk_syntax::ast::{
-    Block, CommonsItem, FnDecl, FnName, HandlerKind, ServiceProtocol, SourceUnit, TypeDecl,
-    TypeRef, Visibility,
+    Block, CommonsItem, FnDecl, FnName, HandlerKind, ServiceProtocol, TypeDecl, TypeRef, Visibility,
 };
 use bynk_syntax::error::CompileError;
 use bynk_syntax::lexer;
@@ -641,15 +640,7 @@ fn in_memory_logical_path(source: &str) -> PathBuf {
     let parts: Option<Vec<String>> = lexer::tokenize(source)
         .ok()
         .and_then(|tokens| parser::parse_unit(&tokens, source).ok())
-        .map(|unit| {
-            let name = match &unit {
-                SourceUnit::Commons(c) => &c.name,
-                SourceUnit::Context(c) => &c.name,
-                SourceUnit::Adapter(a) => &a.name,
-                SourceUnit::Suite(t) => &t.target,
-            };
-            name.parts.iter().map(|i| i.name.clone()).collect()
-        });
+        .map(|unit| unit.name().parts.iter().map(|i| i.name.clone()).collect());
     match parts {
         Some(p) if !p.is_empty() => {
             let mut path = PathBuf::from(p.join("/"));
