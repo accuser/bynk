@@ -448,8 +448,54 @@ settled `IrExprKind` shape decided first, the same way #1225 settled `Ok`/`Err`/
 identity question before building it. `Is` additionally needs R5.9/R5.10 un-deferred (#1157's own
 Decision D) before it can land.
 
-**Completion probe:** `ast_importers` = **0** (§5) — live today at **9**, gated
-(`greenfield_status_table_is_current`). §5's own P6.9 correction (#1167) named why the prior,
+**Correction (2026-08-19, P6.25): the correction immediately above is itself stale — both `Question`
+and `Is` have since landed, and the P6.22 row below is discharged.** `Question` shipped as **P6.15**
+(ADR 0337, `ir/lower.rs:2252-2416`): no opaque `Question` IR node — it decomposes to
+`IrExprKind::Match` reusing P6.4/P6.5's `IrArm`/`IrPat::Variant`, with a new `IrExprKind::
+HttpResultNotFound` sentinel and `LowerIrCtx::return_ty` as its own settled prerequisites, following
+#1225's `Ok`/`Err`/`Some`/`None` identity precedent exactly as anticipated above. `Is` shipped as
+**P6.16** (ADR 0338, `ir/lower.rs:2479-2523`): a forced-temp `Let` discharges R5.10 in full; ADR 0338
+traced `lower_is` directly and found it never constructs a narrowing binding, so **R5.9's own
+cross-site propagation (`&&`/`implies`/`if`) was explicitly re-scoped away from `Is`** rather than
+being a prerequisite — it remains open and unscoped, named again in §7's table. Both slices are
+verified by unit tests and zero-diff bless, but are **dormant**: no shipped emitter path reaches
+either arm yet (P6.2's own emitter-side cutover, `lower_method_call`/`lower_call`, remains 100%
+raw-AST-driven). Six stale doc comments elsewhere in `ir/lower.rs` (`:567-570`, `:1171-1177`,
+`:1952-1955`, `:2957`, `:6938-6940`, `:8794-8795`) still assert otherwise and are corrected in the
+same commit as this note, without their own slice history entries (comment-only, no probe effect).
+
+Separately: **the §6 P6.22 row is discharged, not merely narrowed.** `unit_table_uses_emit`
+(`project.rs:2951`) and `called_cross_context_services` (`project.rs:3554`) both read
+`Callee::Capability`/`Callee::Cross` today — confirmed live. What remains at either call site is
+`ExprId`/`Block`/`Expr` plumbing (category (c), not a declaration read), tracked under the completion
+plan below rather than as an open P6.22 slice.
+
+**Completion probe — and a false-zero hazard found while re-grounding this section.** `ast_importers`
+= **0** (§5) is still the target, and live today at **7** (§5's own count, confirmed unchanged since).
+But **the probe itself can be driven to 0 without the cutover actually happening**: `emitter.rs:39`,
+`project.rs:47`, `emitter/workers.rs:22`, `emitter/workers_entry.rs:15` and
+`emitter/serialisation.rs:16` all carry `use bynk_syntax::ast::*;`, and `emitter/lower.rs:13` /
+`emitter/emit.rs:20` both inherit the glob via `use super::*;`. `emitter/emit.rs` — 4,632 lines — holds
+**168 distinct AST type references and zero literal occurrences of the counted string**, making it
+structurally invisible to `ast_importers` today. Converting every currently-*counted* file to 0 would
+therefore certify a cutover `emit.rs` never received. The completion plan below closes this gap first,
+deliberately, before any conversion slice: deleting the five globs makes the count **rise** (7→8) as
+`emit.rs` becomes visible, which is the probe becoming honest, not a regression — read as such if you
+are diffing `design/greenfield-status.md` against a prior state.
+
+**The completion plan.** The remaining cutover is sequenced below as Phases A–F (slices P6.25–P6.41),
+covering: probe integrity (this slice + the glob deletion), two cheap decouplings that clear a file
+outright (`ExprId` re-export, `RuntimeUse`'s codec-root `TyId` conversion), the declaration-read
+conversions that give the re-settling slice its evidence, a re-settling PR deciding whether the
+`TypeRef`-driven JSON/wire codec layer belongs to this phase or phase 7, the conversions that follow
+from that finding, and the IR-side residue (R6.13's field-level gap, invisible to the probe) named in
+§5's own "known gap" paragraph above. Per this section's own remit (candidate decomposition, not a
+guarantee — §9), the committed target under current scope is **`ast_importers` = 2**
+(`emitter/emit.rs`, `emitter/serialisation.rs`), not 0 — the re-settling slice decides what those two
+become. Full slice table: see the addition to this section's own decomposition table above, entries
+P6.25–P6.41, and the corresponding slice-history entries as each lands.
+
+Prior text below, retained for provenance: §5's own P6.9 correction (#1167) named why the prior,
 unexcluded crate-wide count could never reach 0 while `bynk-emit::ir` exists at all; #1176 closed that
 gap with a named exclusion for `ir.rs`/`ir/lower.rs`, so the probe can now genuinely reach 0 as the
 remaining slices land. The prose criterion (§5) is still the true target — a reader of this or any
@@ -1214,6 +1260,144 @@ against the entire e2e corpus, including every held-map fixture (`235_held_conne
 only unconverted receiver-detection path left in the module — it dispatches on the receiver's own
 checked type already, not a name match, and is not suspected to carry the same defect. Full
 reasoning: `design/pending/p6-21-held-map-callee-dispatch.md`'s own ADR.
+
+### 6a. The completion plan (P6.25 onward)
+
+**Provenance.** Assembled 19 August 2026 by re-grounding this section against the tree rather than
+against its own prior prose (the same discipline §1 demonstrates on the spine issue that opened this
+track) — three explorations of the current `ast_importers` surface, the `todo!()`/desugar state, and
+this repo's own track/pending-file/PR conventions, followed by an independent design pass stress-testing
+the sequencing. Two scoping decisions were made explicitly rather than left implicit: fix the probe's
+own integrity before converting anything (§6a.A), and convert every in-scope declaration-read but
+re-settle — not silently claim — the `TypeRef`-driven codec layer's phase-6-vs-phase-7 membership
+(§6a.D). Under that scoping, **the committed target is `ast_importers` = 2, not 0**; §6a.D decides what
+those two become. Slices continue this section's own numbering; each becomes its own PR per
+`design/tracks/README.md`'s lifecycle step 3, citing this subsection rather than a dedicated sub-issue
+— current practice for this track (P6.20 onward) has moved away from the earlier `proposal`/`accepted`
+issue lifecycle §3's own provenance note used through #1193, and this plan follows that drift rather
+than reversing it.
+
+**Phase A — make the probe honest (blocking).** **P6.25** (this slice) — the scoping correction above,
+doc-only. **P6.26** — delete the five `use bynk_syntax::ast::*;` globs (`emitter.rs:39`, `project.rs:47`,
+`emitter/workers.rs:22`, `emitter/workers_entry.rs:15`, `emitter/serialisation.rs:16`) and the two
+`use super::*;` glob-inheritors (`emitter/lower.rs:13`, `emitter/emit.rs:20`), replacing each with an
+explicit import list. `ast_importers`: **7 → 8** (`emitter/emit.rs` becomes visible; no other file gains
+AST names — `emitter/events_fanout.rs` has exactly one AST name and it is inside a doc comment,
+`project/diagnostics.rs` has none). This must land before any conversion slice below, or `emit.rs`'s 168
+references convert with no probe feedback at all. Risk: AST/IR name collisions now both in scope
+(`Handler`, `Record`, `Sum`, `Call`, `Match`) — alias the AST side (`ast::Handler as AstHandler`), not
+the IR side, so later deletions shrink the alias list rather than rename it.
+
+**Phase B — cheap decouplings.** **P6.27** — re-export `ExprId` from `bynk-check` (`pub use
+bynk_syntax::ast::ExprId;` in `checker.rs`) and retarget `project.rs:46`/`emitter.rs:2157`; enabling
+only, `ast_importers` unaffected on its own, since Q2 already settled `HashMap<ExprId, _>` stays and the
+checker's public API already keys `expr_types` by `ExprId`. **P6.28** — `RuntimeUse::json_codec_roots`
+carries `TyId` instead of `TypeRef`; its two push sites (`emitter/lower.rs:2483,2504`) already hold a
+`TyId` and call `ty_to_type_ref` only to satisfy this field's type, so the conversion moves to the
+single drain site (`project/tests_emit.rs:1658`, an excluded file) immediately before
+`collect_codec_closure`. Deliberately **not** gated on the codec layer's own phase-6-vs-7 question
+(§6a.D) — `ast_importers`: **8 → 7**, `emitter/runtime_use.rs` cleared, the first file to reach zero
+under this plan. Risk: `ty_to_type_ref` drops functions/effects/type-vars via its `Option` return, so
+filtering moves from push-time to drain-time; zero-diff bless is the gate, and a diff means filtering
+should stay at the push sites with a cheap `Ty`-shape test instead.
+
+**Phase C — declaration-read conversions (evidence for §6a.D).** Each slice below is a
+`Callee`/`IrItem`-reads-the-decision conversion in the established P6.21 idiom; none clears a file on
+its own, but together they are what §6a.D needs before ruling on the codec layer. **P6.29** —
+`cap_op_param_names` (`emitter/lower.rs:1141`) reads a new `capability_ops_ir` helper in `ir/lower.rs`
+wrapping the already-existing `lower_capability_item_ir`/`IrItem::Capability`, losing its
+`CommonsItem::Capability`/`c.ops` by-name walk; preserve both current behaviours (first match in item
+order, empty-vec not panic on miss). **P6.30** — `emit_worker_compose` (`emitter/workers.rs:34`) reads
+`IrHandlerKind`/`ProtocolIr` for its nine `HandlerKind`/`ServiceProtocol` matches, via the existing
+`lower_handler_kind_ir`/`lower_protocol_ir_from_commons`; risk is real — `lower_actor_seam_ir` tries
+resolvers in a fixed `Sum`→`Bearer`→`Oidc`→`Caller` order and `workers.rs:389`'s own comment records
+this file *used to* check `oidc` before `sum`, the same shadowing-order hazard class the held-map slice
+above just caught by bless. **P6.31** — `emitter/workers_entry.rs`'s route tables (`HttpRoute`,
+`QueueRoute`) and 15 `HandlerKind`/`ServiceProtocol` sites go IR-native the same way; if `IrHandler`
+can't carry enough to render, stop and let §6a.D decide rather than widening it speculatively (P6.24a's
+own framing: a mirror's value is only provable by an actual consumer). **P6.32** — `emitter.rs`'s three
+near-identical `file_mentions_json_error`/`_http_result`/`_connection` predicates (`:812`, `:865`,
+`:916`) collapse onto one shared `TyId` walk; highest semantic risk in this phase, since these three
+booleans gate conditional runtime imports and a false negative is a `tsc --strict` failure — convert
+the inner `TypeRef` recursion first, keep the outer `CommonsItem` enumeration, and only fold that in
+once bless is clean. `ast_importers` unaffected by all four (no file clears).
+
+**Phase D — the re-settling (§6a's highest-value item).** **P6.33** — a doc-only re-settling PR
+(`design/tracks/README.md` lifecycle step 4) answering, explicitly, whether the `TypeRef`-driven
+JSON/wire codec layer belongs to phase 6 or phase 7: (1) `emitter/serialisation.rs`'s ~110 `TypeRef`
+sites plus `bynk_check::wire::collect_codec_closure`; (2) whether a body/header-rendering function's
+own AST-typed parameter (`h: &Handler`, ~20 sites in `emitter.rs`, 8 each in `workers.rs`/
+`emitter/lower.rs`) counts as an AST-walking *decision* under §5's prose criterion, or is Q7-settled
+residue the probe should stop counting — if the latter, `ast_importers` needs redefining
+per-decision-site rather than per-file substring, or the exception list grows; (3) `project.rs:3619`'s
+`own_contract_hashes`, cross-crate-blocked by `bynk_check::resolver::CrossContextService`/
+`contract::service_contract_hash` taking `TypeRef`/`Arc<TypeDecl>` by definition with a real
+caller/callee hash-symmetry correctness requirement against `symbols.rs::build_cross_context_info`; (4)
+`IrExprKind::Call { callee: Callee }` — `bynk_check::checker::Callee` itself carries `Arc<FnDecl>`/
+`Arc<TypeDecl>` across six variants with many non-emit readers, invisible to the probe but squarely
+R6.13. Also settles the `#[cfg(test)]` residue neither production conversion can remove
+(`serialisation.rs:1516-1551`, whose *return type* is AST because the function under test is
+TypeRef-driven; `emitter/lower.rs:5963`'s hand-built `Commons`) — an AST-free `TypedCommons` test
+constructor in `bynk-check`, exception-list growth, or relocating the test module. Any
+`AST_IMPORTER_EXCEPTIONS` change updates `ast_importer_exclusion_is_named_not_prefixed` and
+`greenfield_status_table_is_current` in the same PR.
+
+**Phase E — post-settling conversions**, scope contingent on P6.33's finding (sequenced here assuming
+the codec is ruled phase-7 and Q7 params are ruled not-decisions, the more defensible reading).
+**P6.34** — `ModuleCtx::actors: HashMap<String, ActorDecl>` (`project.rs:3476`) becomes a precomputed
+per-handler `ActorSeamIr`; a hidden multi-file dependency, since this one field is threaded to
+`workers_entry.rs:1367` and read by `emit.rs:1421`, blocking three files at once — needs its own ADR on
+the handler-key shape (`(service, kind, index)` today, not a stable name). **P6.35** — the remainder of
+`project.rs`'s plumbing: `plan_agent_given_deps@2670` (only its `&AgentDecl` annotation left),
+`unit_table_uses_emit`/`called_cross_context_services` (only `Expr`/`Block` types left, per this
+section's own P6.22 discharge note above), and `instantiate_provider_expr@2818` (already AST-free — its
+contact is via `UnitTable::providers`, a `bynk-check` type — say so rather than leaving it looking
+unconverted); clears `project.rs` only if P6.33 ruled `own_contract_hashes` out and P6.34 landed.
+**P6.36** — `collect_external_references`/`write_header` read a new `lower_unit_items_ir` enumerator;
+needs its own ADR, since the enumerator cannot be total (`IrItem` has no `Actor`/`Messages`/`Event`/
+`Const` variant) and silently skipping unrepresentable items is wrong here specifically —
+`CommonsItem::Event` contributes via `as_type_decl()`, and dropping it would silently lose a real
+external reference; split `write_header` (a two-variant question) from `collect_external_references`
+(needs totality) if the risk proves out on contact. **P6.37** — `emitter/lower.rs`'s `BodyMode` fields
+(`test_service_handlers`, `system_http_route_body`, the two `HttpMethod::from_ident` sites) go
+`TyId`/IR-native, mirrored in `emitter.rs`. **P6.38** — the AST-free `TypedCommons` test constructor
+P6.33 chose, clearing `emitter/lower.rs`'s last `#[cfg(test)]` residue.
+
+**Phase F — IR-side residue (R6.13, invisible to the probe by construction — §5's own "known gap"
+paragraph).** Per P6.24a's own framing, pair each converted field with its reader cutover; do not land
+mirrors speculatively. **P6.39** — delete the six AST-typed `ir.rs` fields with zero production readers
+(`GlobalRef::sum`, `IrExprKind::Record::def`, `IrItem::Type::def`, `IrItem::Fn::def` — which has no
+production call site at all, so this slice also decides whether `IrItem::Fn` survives as a dormant
+constructor — `IrExprKind::RefinedCheck::{base, refinement}`, `IrPat::Refined::refinement`); cheapest
+remaining R6.13 work in the track. **P6.40** — `ProtocolIr::Events::schema_dispatch` gets an IR-native
+mirror of the one-variant `SchemaVersionPattern::Literal(i64)`, cutting over its one real reader
+(`emit.rs:1509`), pinned by `1232_events_envelope_schema_dispatch_bare`. **P6.41** —
+`TypeShape::Refined::{base, refinement}`, the largest IR-side item: needs mirrors of `BaseType`,
+`Refinement`/`RefinementPred`/`PredKind`, and `IntBound`/`FloatBound` specifically keep source lexemes
+for byte-stable emission, so the mirror is a near-copy rather than a clean abstraction — open with an
+ADR arguing whether building it is worth it at all; a legitimate candidate for §6a.D's phase-7 bucket;
+schedule last, or defer.
+
+**Not scheduled, recorded rather than left ambiguous.** `lower_method_call`'s `Ty`-keyed kernel
+fallthrough (`emitter/lower.rs:2278-2436`) maps 1:1 onto the checker's existing `Callee::Kernel { recv,
+op }` (same 14 arms, same order, same `TyId`, per this section's own Thirty-sixth-entry note above), but
+buys uniformity, not correctness — it never reads a name, so it carries none of the shadowing hazard the
+rest of P6.21 closed — and moves the probe not at all; worth doing only as a same-PR cleanup riding
+another slice. R5.9 (cross-site narrowing propagation across `&&`/`implies`/`if`) stays open and
+unscoped per ADR 0338's own re-scoping (above). `ir/lower.rs:3386` (a bare ident naming a free function
+used as a value) is real and production-reachable, P6.2 territory, and warrants its own proposal rather
+than folding into this plan.
+
+**Expected `ast_importers` trajectory** (starting from the corrected live figure, **7**): P6.25 7→7
+(doc-only) · P6.26 7→**8** (`emit.rs` made visible, deliberately) · P6.27 8→8 (enabling) · P6.28 8→**7**
+(`runtime_use.rs` cleared) · P6.29–P6.32 7→7 (decision conversions, no file clears) · P6.33 7→7 or
+redefined (re-settling) · P6.34–P6.36 7→6 if `project.rs` clears (conditional on P6.33's finding) ·
+P6.37–P6.38 6→5 (`emitter/lower.rs` cleared) · remainder 5→2 (`workers.rs`, `workers_entry.rs`,
+`emitter.rs` cleared) · only if P6.33 rules the codec phase-6, 2→0 (`emit.rs`, `serialisation.rs`).
+**Every pending file for this plan states the movement explicitly, including "unaffected" — P6.26's
+deliberate increase is the one entry in this trajectory that reads as a regression if not narrated as
+one**, and `design/greenfield-status.md` updates in the same PR as P6.26 and P6.28 or
+`greenfield_status_table_is_current` fails.
 
 ## 7. Out of scope — forward references, not refusals
 
