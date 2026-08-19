@@ -75,7 +75,17 @@ pub(crate) fn emit_worker_entry(
     for sname in &service_names {
         let service = table.services.get(*sname).unwrap();
         for h in &service.handlers {
-            if let HandlerKind::Http { method, path } = &h.kind {
+            // P6.31 (design/tracks/the-ir.md §6a): dispatches on `IrHandlerKind`
+            // (P6.24a's own pure, unconditional mirror), re-deriving `method`/
+            // `path` from the original `h.kind` for `HttpRoute`'s own still-
+            // AST-typed fields (Q7-settled — `HttpRoute::method`/`handler`
+            // stay AST until phase 7's printer).
+            if let crate::ir::IrHandlerKind::Http { .. } =
+                crate::ir::lower::lower_handler_kind_ir(&h.kind)
+            {
+                let HandlerKind::Http { method, path } = &h.kind else {
+                    unreachable!("lower_handler_kind_ir is a pure structural mirror")
+                };
                 http_routes.push(HttpRoute {
                     service: (*sname).clone(),
                     method: *method,
@@ -148,11 +158,16 @@ pub(crate) fn emit_worker_entry(
         let service = table.services.get(*sname).unwrap();
         let mut cron_idx = 0usize;
         for h in &service.handlers {
-            if let HandlerKind::Cron { expr } = &h.kind {
+            // P6.31: dispatches on `IrHandlerKind`; `expr` is a plain `String`
+            // in both, so no AST re-derivation is needed here (unlike the
+            // `Http` arm above).
+            if let crate::ir::IrHandlerKind::Cron { expr } =
+                crate::ir::lower::lower_handler_kind_ir(&h.kind)
+            {
                 cron_routes.push(CronRoute {
                     service: (*sname).clone(),
                     index: cron_idx,
-                    expr: expr.clone(),
+                    expr,
                     has_param: !h.params.is_empty(),
                 });
                 cron_idx += 1;
@@ -168,7 +183,14 @@ pub(crate) fn emit_worker_entry(
         let service = table.services.get(*sname).unwrap();
         let mut queue_idx = 0usize;
         for h in &service.handlers {
-            if let HandlerKind::Message = &h.kind {
+            // P6.31: dispatches on `IrHandlerKind` (no fields to re-derive
+            // here). `service.protocol` stays raw `ServiceProtocol` — this
+            // function has no `TypedCommons` in scope, the same constraint
+            // P6.30 found in `emit_worker_compose`.
+            if matches!(
+                crate::ir::lower::lower_handler_kind_ir(&h.kind),
+                crate::ir::IrHandlerKind::Message
+            ) {
                 // v0.44: the bound queue name lives on the service header
                 // (`from queue("name")`), not on the handler.
                 let ServiceProtocol::Queue { name } = &service.protocol else {
@@ -195,7 +217,10 @@ pub(crate) fn emit_worker_entry(
     for sname in &service_names {
         let service = table.services.get(*sname).unwrap();
         for h in &service.handlers {
-            if matches!(h.kind, HandlerKind::Open) {
+            if matches!(
+                crate::ir::lower::lower_handler_kind_ir(&h.kind),
+                crate::ir::IrHandlerKind::Open
+            ) {
                 ws_open_routes.push((*sname, h));
             }
         }
@@ -207,9 +232,12 @@ pub(crate) fn emit_worker_entry(
     // envelope before dispatching (see the `/_bynk/event/` block below).
     let has_event_services = service_names.iter().any(|sname| {
         table.services.get(*sname).is_some_and(|s| {
-            s.handlers
-                .iter()
-                .any(|h| matches!(h.kind, HandlerKind::Event))
+            s.handlers.iter().any(|h| {
+                matches!(
+                    crate::ir::lower::lower_handler_kind_ir(&h.kind),
+                    crate::ir::IrHandlerKind::Event
+                )
+            })
         })
     });
 
@@ -331,11 +359,12 @@ pub(crate) fn emit_worker_entry(
     let _ = writeln!(out, "        switch (servicePath) {{");
     for sname in &service_names {
         let service = table.services.get(*sname).unwrap();
-        let Some(h) = service
-            .handlers
-            .iter()
-            .find(|h| matches!(h.kind, HandlerKind::Call))
-        else {
+        let Some(h) = service.handlers.iter().find(|h| {
+            matches!(
+                crate::ir::lower::lower_handler_kind_ir(&h.kind),
+                crate::ir::IrHandlerKind::Call
+            )
+        }) else {
             continue;
         };
 
@@ -440,9 +469,12 @@ pub(crate) fn emit_worker_entry(
         .iter()
         .filter(|sname| {
             table.services.get(**sname).is_some_and(|s| {
-                s.handlers
-                    .iter()
-                    .any(|h| matches!(h.kind, HandlerKind::Event))
+                s.handlers.iter().any(|h| {
+                    matches!(
+                        crate::ir::lower::lower_handler_kind_ir(&h.kind),
+                        crate::ir::IrHandlerKind::Event
+                    )
+                })
             })
         })
         .copied()
@@ -488,7 +520,12 @@ pub(crate) fn emit_worker_entry(
             let h = table.services[*sname]
                 .handlers
                 .iter()
-                .find(|h| matches!(h.kind, HandlerKind::Event))
+                .find(|h| {
+                    matches!(
+                        crate::ir::lower::lower_handler_kind_ir(&h.kind),
+                        crate::ir::IrHandlerKind::Event
+                    )
+                })
                 .expect("event_services filtered to services with an Event handler");
             let dser_payload =
                 deserialise_call(&h.params[0].type_ref, "payload", "$.payload", &runtime_use);

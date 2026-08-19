@@ -1354,11 +1354,12 @@ estimated.** `emit_worker_compose` (`emitter/workers.rs:34`) reads `IrHandlerKin
 out **not reachable** here (`emit_worker_compose` has no `TypedCommons` in scope), so the one
 `ServiceProtocol::WebSocket` check stays raw AST, named rather than silently left unconverted. The
 named seam-ordering risk was already closed by review of #1209 before this slice started.
-`ast_importers`: **8 → 8**, unaffected. **P6.31** — `emitter/workers_entry.rs`'s route tables
-(`HttpRoute`,
-`QueueRoute`) and 15 `HandlerKind`/`ServiceProtocol` sites go IR-native the same way; if `IrHandler`
-can't carry enough to render, stop and let §6a.D decide rather than widening it speculatively (P6.24a's
-own framing: a mirror's value is only provable by an actual consumer). **P6.32** — `emitter.rs`'s three
+`ast_importers`: **8 → 8**, unaffected. **P6.31 — landed, narrower than estimated, same shape as
+P6.30.** `emitter/workers_entry.rs`'s eight `HandlerKind` sites (not 15 — the plan's own estimate
+folded in the file's three `ServiceProtocol` checks, which are not convertible here for the same
+reason P6.30 found) dispatch on `IrHandlerKind` — see this section's own Forty-second entry above.
+`HttpRoute`/`QueueRoute`'s own fields deliberately left unwidened, per this row's own guidance.
+`ast_importers`: **8 → 8**, unaffected. **P6.32** — `emitter.rs`'s three
 near-identical `file_mentions_json_error`/`_http_result`/`_connection` predicates (`:812`, `:865`,
 `:916`) collapse onto one shared `TyId` walk; highest semantic risk in this phase, since these three
 booleans gate conditional runtime imports and a false negative is a `tsc --strict` failure — convert
@@ -1534,6 +1535,22 @@ materially less risk than estimated. `ast_importers`: **8 → 8**, unaffected �
 retains other, still-open AST names. Verified by a full zero-diff bless against the entire e2e corpus
 and a full `cargo test --workspace`. Full reasoning:
 `design/pending/p6-30-worker-compose-handler-kind-ir.md`'s own ADR.
+
+**Forty-second: P6.31 — `emitter/workers_entry.rs`'s eight `HandlerKind` matches dispatch on
+`IrHandlerKind`, the sibling conversion to P6.30's, per §6a's own Phase C.** Route-collection for
+`http_routes`/`cron_routes`/`queue_routes`/`ws_open_routes` and the `Call`/`Event` handler lookups all
+converted the same way: the `Cron` arm's `expr` is a plain `String` in both `HandlerKind` and
+`IrHandlerKind`, so it binds and uses directly, no re-derivation; the `Http` arm (building `HttpRoute`,
+whose own fields stay AST-typed, Q7-settled) re-derives `method`/`path` from `h.kind` via the same
+`unreachable!()`-guarded pattern P6.30 established; the remaining six sites are plain `matches!`
+predicates with no fields to extract. **Same constraint P6.30 found, confirmed here too:**
+`emit_worker_entry` has no `TypedCommons` in scope, so the file's three `ServiceProtocol` checks stay
+raw AST, named rather than silently left unconverted. `HttpRoute::method`/`::handler` and
+`QueueRoute::msg_type` are likewise left alone — per this plan's own explicit guidance for this slice,
+widening them is a design question for §6a.D, not a mechanical conversion to make unilaterally.
+`ast_importers`: **8 → 8**, unaffected — `emitter/workers_entry.rs` retains other, still-open AST
+names. Verified by a full zero-diff bless against the entire e2e corpus and a full `cargo test
+--workspace`. Full reasoning: `design/pending/p6-31-workers-entry-handler-kind-ir.md`'s own ADR.
 
 ## 7. Out of scope — forward references, not refusals
 
