@@ -28,7 +28,7 @@ use crate::ir::lower::{
     lower_store_field_shape_ir, lower_type_item_ir,
 };
 use crate::ir::{IrItem, TypeShape};
-use crate::project::{BuildTarget, EmitProjectCtx, ImportExt, UnitKind};
+use crate::project::{BuildTarget, EmitProjectCtx, ImportExt, UnitKind, UnitTable};
 use bynk_check::builtin_names::map_query;
 use bynk_check::builtin_names::methods::{
     FOLD_EFF, FOR_EACH, PAR_TRAVERSE, PAR_TRAVERSE_ALL, PAR_TRAVERSE_TRY, RAW, TRAVERSE_ALL,
@@ -808,6 +808,33 @@ pub(crate) fn walk_block_exprs(b: &Block, f: &mut impl FnMut(&Expr)) {
     exprs.push(&b.tail);
     for e in exprs {
         walk_exprs(e, f);
+    }
+}
+
+/// P6.48 (design/tracks/the-ir.md §6b): every handler/op body in `table` —
+/// every service handler, every agent handler, every provider op — visited
+/// via [`walk_block_exprs`]. The shared walk `project::unit_table_uses_emit`'s
+/// own `body_uses_emit` and `project::called_cross_context_services` each
+/// hand-rolled a separate copy of, over exactly the same three `UnitTable`
+/// collections in the same order. Lives here (already counted regardless by
+/// [`ast_importers`]) so those two `project.rs` callers need only a `&Expr`
+/// closure parameter, never a `&Block` or `&bynk_syntax::ast::Expr` of their
+/// own.
+pub(crate) fn walk_unit_table_bodies(table: &UnitTable, f: &mut impl FnMut(&Expr)) {
+    for service in table.services.values() {
+        for h in &service.handlers {
+            walk_block_exprs(&h.body, f);
+        }
+    }
+    for agent in table.agents.values() {
+        for h in &agent.handlers {
+            walk_block_exprs(&h.body, f);
+        }
+    }
+    for provider in table.providers.values() {
+        for op in &provider.ops {
+            walk_block_exprs(&op.body, f);
+        }
     }
 }
 
