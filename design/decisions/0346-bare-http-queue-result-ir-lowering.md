@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "P6.23 (real progress): bynk-emit::ir::lower's lower_ident_ir now lowers a bare HttpResult/QueueResult nullary variant reference (NotFound, Ack) to a real IrExprKind::Call{callee: Callee::Intrinsic, args: []}, the same shape lower_call_ir already produces for the call-with-args sibling (Retry(reason)), instead of panicking. lower_ident_ir gained a new expr_id: Option<ExprId> parameter (Some at its one real call site with a genuine ExprId, None at its two shorthand-record-field call sites which have no ExprId of their own) so it can consult the checker's own Callee::Intrinsic sink (#1251). This is the bare-value sibling of P6.20-pre's own IrExprKind::StoreQuery fix, closing the gap GlobalRef's own doc comment named as the reason HttpResult/QueueResult were dropped from Decision C's scope during implementation. Fixed an existing test whose own proof technique relied on this bug as a signal (a_queue_services_on_message_handler_reaches_ordinary_body_lowering_not_the_websocket_deferral used to prove a queue message handler is not deferred to the WebSocket path by asserting the body panicked on this exact gap; now asserts the real lowered shape directly). Re-running the P6.23 safety probe (a catch_unwind wrapper over lower_service_item_ir across the full e2e corpus) after this fix plus #1251/#1252 found panics dropped from ~51 across 20 services to 5 across 1 service -- the two remaining root causes (a genuine ADR 0334 checker/IR-lowering type-disagreement, and a handler-param resolve-miss) are real bugs, not design questions, and stay for their own follow-up. Verified by the full ir:: unit suite (131/131) and a full zero-diff bless against the entire e2e fixture corpus"
----
+# 0346 — `lower_ident_ir` lowers a bare `HttpResult`/`QueueResult` nullary variant to a real `IrExprKind::Call` — the bare-value sibling of P6.20-pre's own store-field fix
 
-## ADR: bare-http-queue-result-ir-lowering
-
-title: `lower_ident_ir` lowers a bare `HttpResult`/`QueueResult` nullary variant to a real `IrExprKind::Call` — the bare-value sibling of P6.20-pre's own store-field fix
+- **Status:** Accepted (v0.248.14)
 
 summary: Closes the last of the shapes `GlobalRef`'s own doc comment named as dropped from Decision C's scope for lack of a sink — now real via #1251's `Callee::Intrinsic` — and measurably shrinks P6.23's own remaining safety gap from ~51 panics across 20 services to 5 across 1
 
