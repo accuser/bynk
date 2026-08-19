@@ -1170,6 +1170,17 @@ depends on now is too. Verified by the full `ir::` unit suite (133/133, two new 
 zero-diff bless against the entire e2e corpus. Full reasoning:
 `design/pending/p6-23-remaining-root-causes-closed.md`'s own ADR.
 
+**Thirty-fourth: P6.23 itself lands — `EventSubscriberShape` reads a real `IrItem::Service`, the
+first shipped call site `lower_service_item_ir` has ever had.** With the Thirty-third entry's own
+safety probe at zero, `project.rs`'s `two_param_handler`/`schema_dispatch` capture (`#1232`) now calls
+`lower_service_item_ir(s, &program)` instead of walking `s.handlers`/`s.protocol` directly — the
+cheap `ServiceProtocol::Events` pre-filter stays in front (a structural "which services have a shape
+at all" check, not a resurrected raw-AST read of the data itself), avoiding a full body-lowering pass
+on every non-Events service just to discard it. Verified by a full zero-diff bless against the entire
+e2e corpus, including `1232_events_envelope_schema_dispatch_bare` — the fixture that specifically pins
+the `schema_dispatch` half of this predicate. `ast_importers` unaffected (`project.rs` was already
+counted). Full reasoning: `design/pending/p6-23-event-subscriber-shape-via-ir-service.md`'s own ADR.
+
 ## 7. Out of scope — forward references, not refusals
 
 | Item | Phase | Entry condition |
