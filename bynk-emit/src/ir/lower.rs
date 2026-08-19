@@ -656,14 +656,23 @@ fn lower_service_handler_body_ir(
     if let Some(connection) = connection {
         cx.bind("connection".to_string(), connection.ty);
     }
+    // Review of #1253 (P6.23 root-cause pass): degrades to `cx.unit_ty()`
+    // on a resolve miss instead of panicking, matching this function's own
+    // signature-only sibling, `lower_service_handler_signature_ir`, one
+    // call away — an inconsistency this pass's own review process should
+    // have caught the moment the signature-only reader picked up the
+    // graceful fallback. Not an ADR 0334 violation to begin with: a
+    // service/HTTP handler's own param type is never actually
+    // resolution-checked — the fixture pinning this directly,
+    // `1199_service_handler_unresolvable_param_type_no_ice`, names why:
+    // `check_http_handler` validates a param's *name* only, never its
+    // declared type, and `resolver.rs`'s own passes skip `CommonsItem::
+    // Service` entirely — so panicking here on a state the checker itself
+    // accepts was the actual bug, not the miss.
     for p in &h.params {
-        let ty = cx.resolve_type_ref(&p.type_ref).unwrap_or_else(|| {
-            panic!(
-                "bynk internal error (ADR 0334): handler parameter `{}`'s type does not resolve \
-                 in this pass's own scope, but the checker already accepted this handler",
-                p.name.name
-            )
-        });
+        let ty = cx
+            .resolve_type_ref(&p.type_ref)
+            .unwrap_or_else(|| cx.unit_ty());
         cx.bind(p.name.name.clone(), ty);
     }
     if let Some(binder) = binder {
@@ -746,7 +755,17 @@ pub(crate) fn lower_service_handler_ir(
     program: &CheckedProgram,
 ) -> IrHandler {
     let cx = LowerIrCtx::new(program, HashSet::new());
-    let (params, given, ret, effectful) = lower_handler_signature_ir(h, &cx);
+    // Review of #1253 (P6.23 root-cause pass): was `lower_handler_signature_ir`
+    // (the agent-oriented signature reader, which panics on a resolve miss —
+    // correct for an agent handler's own param type, which the checker does
+    // guarantee resolves) — the wrong sibling for a *service* handler, whose
+    // own param type is not resolution-checked at all
+    // (`1199_service_handler_unresolvable_param_type_no_ice` pins it; see
+    // `lower_service_handler_body_ir`'s own matching fix). Swapped for
+    // `lower_service_handler_signature_ir`, this function's own real
+    // sibling, already graceful (`cx.unit_ty()` on a miss) since it was
+    // written — this call site was simply never updated to use it.
+    let (params, given, ret, effectful) = lower_service_handler_signature_ir(h, program);
     // Read straight off `h.by_clause`, not derived from `binder` below —
     // review of #1180: `binder` alone loses the gate itself for a
     // binder-less `by <Actor>` (`ActorBinder`'s own doc comment already
@@ -2830,14 +2849,45 @@ pub(crate) fn lower_expr_ir(e: &Expr, cx: &mut LowerIrCtx) -> IrExpr {
             ty,
             span,
         },
-        ExprKind::FieldAccess { receiver, field } => IrExpr {
-            kind: IrExprKind::Field {
-                base: Box::new(lower_expr_ir(receiver, cx)),
-                field: field.name.clone(),
-            },
-            ty,
-            span,
-        },
+        ExprKind::FieldAccess { receiver, field } => {
+            // P6.23 root-cause pass (review of #1253): a qualified nullary
+            // sum-variant reference (`Region.Domestic`) parses as an
+            // ordinary `FieldAccess`, but the checker's own
+            // `check_field_access` (`expressions.rs`) intercepts this shape
+            // — `receiver` bare-names a declared sum type owning a variant
+            // tagged `field.name` — *before* ever independently
+            // type-checking `receiver` itself; it returns the variant's own
+            // type directly, so `receiver`'s own `ExprId` never gets a
+            // recorded type. The generic `lower_expr_ir(receiver, cx)`
+            // recursion below then panics on ADR 0334's own "no recorded
+            // type" guard. Mirrors the checker's dispatch (same
+            // `cx.lookup(...).is_none()` shadowing guard) instead of
+            // re-deriving it, rather than lowering `receiver` at all.
+            if let ExprKind::Ident(id) = &receiver.kind
+                && cx.lookup(&id.name).is_none()
+                && let Some(decl) = cx.program.types.get(&id.name)
+                && let TypeBody::Sum(s) = &decl.body
+                && s.variants.iter().any(|v| v.name.name == field.name)
+            {
+                IrExpr {
+                    kind: IrExprKind::Variant {
+                        tag: field.name.clone(),
+                        payload: Vec::new(),
+                    },
+                    ty,
+                    span,
+                }
+            } else {
+                IrExpr {
+                    kind: IrExprKind::Field {
+                        base: Box::new(lower_expr_ir(receiver, cx)),
+                        field: field.name.clone(),
+                    },
+                    ty,
+                    span,
+                }
+            }
+        }
         ExprKind::ListLit(elems) => IrExpr {
             kind: IrExprKind::List {
                 elems: elems.iter().map(|el| lower_expr_ir(el, cx)).collect(),
@@ -8814,6 +8864,93 @@ service Api from http {
         assert!(
             matches!(callee, Callee::Intrinsic { ns, op } if *ns == QUEUE_RESULT && op == "Ack"),
             "expected Callee::Intrinsic {{ ns: QUEUE_RESULT, op: \"Ack\" }}, got {callee:?}"
+        );
+    }
+
+    #[test]
+    fn a_qualified_nullary_sum_variant_reference_lowers_to_variant_not_field_access() {
+        // Review of #1253 (P6.23 root-cause pass): `Region.Domestic` parses
+        // as `ExprKind::FieldAccess`, but the checker's own
+        // `check_field_access` intercepts this shape (a bare-Ident receiver
+        // naming a declared sum type owning a variant tagged `field.name`)
+        // *before* ever independently type-checking the receiver — so
+        // `receiver`'s own ExprId never gets a recorded type, and the naive
+        // "always recurse into `lower_expr_ir(receiver, cx)`" reading
+        // panicked on ADR 0334's own "no recorded type" guard. Pins the
+        // real corpus shape that found this
+        // (`966_event_field_default_cross_context`'s own
+        // `Region.International` inside a record field value).
+        let program = checked_context_program(
+            r#"
+context demo
+
+type Region = enum { Domestic, International }
+
+type Order = { id: String, region: Region }
+
+fn pack(id: String) -> Order {
+  Order { id: id, region: Region.International }
+}
+"#,
+        );
+        let f = program.program().fns.get("pack").unwrap();
+        let mut cx = LowerIrCtx::new(&program, HashSet::new());
+        cx.bind(
+            "id".to_string(),
+            program
+                .program()
+                .ty_intern
+                .intern(Ty::Base(BaseType::String)),
+        );
+        let body = lower_expr_ir(&f.body.tail, &mut cx);
+        let IrExprKind::Record { fields, .. } = &body.kind else {
+            panic!("expected a Record construction, got {:?}", body.kind)
+        };
+        let (_, region_value) = fields
+            .iter()
+            .find(|(name, _)| name == "region")
+            .expect("Order has a `region` field");
+        assert!(
+            matches!(&region_value.kind, IrExprKind::Variant { tag, payload } if tag == "International" && payload.is_empty()),
+            "expected `Region.International` to lower to a nullary Variant, got {:?}",
+            region_value.kind
+        );
+    }
+
+    #[test]
+    fn a_service_handler_param_with_an_unresolvable_type_falls_back_to_unit_not_a_panic() {
+        // Review of #1253 (P6.23 root-cause pass): `lower_service_handler_ir`
+        // called the agent-oriented `lower_handler_signature_ir` (which
+        // rightly panics on a resolve miss — the checker does guarantee an
+        // *agent* handler's own param type resolves) instead of its real
+        // sibling, `lower_service_handler_signature_ir` — already graceful
+        // (`cx.unit_ty()` on a miss) since it was written, but never reached
+        // from this call site. `lower_service_handler_body_ir`'s own param
+        // loop carried the identical panic independently. Both fixed;
+        // pinned directly against `1199_service_handler_unresolvable_
+        // param_type_no_ice`'s own real shape — an HTTP handler param
+        // naming an undeclared type, which the checker accepts
+        // (`check_http_handler` validates a param's name only).
+        let program = checked_context_program(
+            r#"
+context demo
+
+service Api from http {
+  on POST("/x") (body: Nope) -> Effect[HttpResult[String]] by v: Visitor {
+    Effect.pure(Ok("hi"))
+  }
+}
+"#,
+        );
+        let service = find_service(&program, "Api");
+        let handler = &service.handlers[0];
+        let ir = lower_service_handler_ir(handler, &service.protocol, &program);
+        assert_eq!(ir.params.len(), 1);
+        assert_eq!(ir.params[0].0, "body");
+        assert_eq!(
+            ir.params[0].1,
+            program.program().ty_intern.intern(Ty::Unit),
+            "an unresolvable param type falls back to Unit, matching lower_protocol_ir's own posture"
         );
     }
 
