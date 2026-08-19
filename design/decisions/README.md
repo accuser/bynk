@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0376](0376-p6-51-handler-kind-ir-native.md) | **Every `HandlerKind` read in `emitter/emit.rs` reads `lower_handler_kind_ir` instead** (v0.249.28) — Every `HandlerKind` read in `emitter/emit.rs` reads `lower_handler_kind_ir` instead | Accepted (v0.249.28) |
 | [0375](0375-p6-50-dead-code-and-backwards-dependency.md) | **Dead code deleted; `is_effectful_return` relocates to fix a backwards `Ast ⇄ Ir` dependency** (v0.249.27) — Dead code deleted; `is_effectful_return` relocates to fix a backwards `Ast ⇄ Ir` dependency | Accepted (v0.249.27) |
 | [0374](0374-p6-49-project-rs-clears.md) | **`project.rs` clears `ast_importers` entirely — closes Phase G of the #1137 retirement plan** (v0.249.26) — `project.rs` clears `ast_importers` entirely — closes Phase G of the #1137 retirement plan | Accepted (v0.249.26) |
 | [0373](0373-p6-48-shared-unit-table-body-walk.md) | **`emitter::walk_unit_table_bodies` replaces two hand-rolled `project.rs` body walks** (v0.249.25) — `emitter::walk_unit_table_bodies` replaces two hand-rolled `project.rs` body walks | Accepted (v0.249.25) |

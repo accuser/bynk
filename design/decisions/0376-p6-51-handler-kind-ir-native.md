@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "P6.51: IrHttpMethod gains as_str(); every HandlerKind read in emitter/emit.rs (collect_handler_labels, emit_service, emit_make_surface, emit_agent, ws_open_hosts_for -- 20+ sites) now reads lower_handler_kind_ir instead of matching the raw AST HandlerKind. ast_importers: unaffected (5) -- emit.rs stays counted via use super::*."
----
+# 0376 — Every `HandlerKind` read in `emitter/emit.rs` reads `lower_handler_kind_ir` instead
 
-## ADR: p6-51-handler-kind-ir-native
-
-title: Every `HandlerKind` read in `emitter/emit.rs` reads `lower_handler_kind_ir` instead
+- **Status:** Accepted (v0.249.28)
 
 summary: One total conversion replaces every hand-written `HandlerKind` match across five functions — 32 places to miss a new handler kind become one
 
