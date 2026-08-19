@@ -2093,6 +2093,22 @@ fixtures whose source actually declares `@ttl`/`@retain`) checked individually, 
 built here, with no consumer this slice actually found. Full reasoning:
 `design/pending/p6-53-agent-store-field-kind-dedup.md`.
 
+**Sixty-fifth: P6.54 — `emit.rs` stops re-deriving facts it already has an IR reading for.**
+Re-verifying this row's own line citations against the tree first found one already resolved as a
+side effect of an earlier slice (`emit_service`'s `async_kw`/`async_tail` already read `ir_effectful`,
+not a stale-cited `is_effectful_return` call). Six real sites converted: `emit_service`'s
+`schema_dispatch_env_binder` prologue reads `ir_params` instead of `handler.params.get(1)`/`.first()`;
+`emit_agent`'s per-handler loop stopped calling `is_effectful_return(&h.return_type)` twice for the
+same handler; `cross_context_caps_used`/`cross_context_cap_namespaces` and three separate
+`HandlerShared::capabilities` sites (`emit_service`, `emit_agent`, `emit_ws_do_method`) all now read
+`lower_handler_given_ir`/`lower_provider_given_ir` instead of independently re-deriving the same
+`CapRef::key()`/`::prefix()` extraction; `topo_order_providers`'s dependency walk reads
+`CapRefIr::context.is_none()` the same way. `emit.rs`'s two `ActorDecl` forwarding-parameter imports
+retarget to P6.49's `bynk_check::actors::ActorDecl` re-export, for consistency — neither site ever
+reads a field. `CapRef` dropped from `emit.rs`'s import list entirely. `ast_importers`: **unaffected
+(5)**. Zero-diff bless over the full e2e corpus, `cargo test --workspace`, `cargo clippy --workspace
+--all-targets` all pass unchanged. Full reasoning: `design/pending/p6-54-inconsistent-ir-reads.md`.
+
 | Item | Phase | Entry condition |
 |---|---|---|
 | `Question`'s own three-way desugar fork — what `IrExprKind` an `expr?` lowers to | 6, unproposed | a slice proposal for P6.3's desugaring table (§6) reaches `Question` specifically; #1225 (§6, fourteenth slice) settled the *construction*-side identity question this depends on but explicitly does not settle this one |

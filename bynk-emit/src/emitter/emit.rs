@@ -12,11 +12,12 @@ use std::fmt::Write as _;
 use std::sync::Arc;
 
 use crate::project::EmitProjectCtx;
+use bynk_check::actors::ActorDecl;
 use bynk_check::checker::{TyId, TypedCommons, Types};
 use bynk_syntax::ast::{
-    ActorDecl, AgentDecl, BaseType, CapRef, CapabilityDecl, CommonsItem, Expr, ExprKind, FnDecl,
-    FnName, Handler, HttpMethod, Ident, MessageEntry, MessagesDecl, Param, PredKind, ProviderDecl,
-    RecordField, Refinement, ServiceDecl, StoreField, TypeBody, TypeDecl, TypeParam, TypeRef,
+    AgentDecl, BaseType, CapabilityDecl, CommonsItem, Expr, ExprKind, FnDecl, FnName, Handler,
+    HttpMethod, Ident, MessageEntry, MessagesDecl, Param, PredKind, ProviderDecl, RecordField,
+    Refinement, ServiceDecl, StoreField, TypeBody, TypeDecl, TypeParam, TypeRef,
 };
 
 use crate::ir::lower::{
@@ -801,11 +802,11 @@ pub(crate) fn topo_order_providers(
         }
         visited.insert(node.to_string());
         if let Some(p) = providers.get(node) {
-            let mut deps: Vec<&str> = p
-                .given
+            let given = crate::ir::lower::lower_provider_given_ir(p);
+            let mut deps: Vec<&str> = given
                 .iter()
-                .filter(|d| !d.is_cross_context())
-                .map(|d| d.key())
+                .filter(|d| d.context.is_none())
+                .map(|d| d.name.as_str())
                 .filter(|n| providers.contains_key(*n))
                 .collect();
             deps.sort_unstable();
@@ -1416,8 +1417,8 @@ pub(crate) fn emit_service(
                 ..
             } = protocol
         {
-            match handler.params.get(1) {
-                Some(env_param) => Some(ts_ident(&env_param.name.name)),
+            match ir_params.get(1) {
+                Some((env_param_name, _)) => Some(ts_ident(env_param_name)),
                 None => {
                     params.insert(1, "__bynkSchemaEnv: EventEnvelope".to_string());
                     Some("__bynkSchemaEnv".to_string())
@@ -1471,10 +1472,9 @@ pub(crate) fn emit_service(
             module,
             BodyMode::ServiceHandler {
                 handler: HandlerShared {
-                    capabilities: handler
-                        .given
-                        .iter()
-                        .map(|c| c.key().to_string())
+                    capabilities: crate::ir::lower::lower_handler_given_ir(handler)
+                        .into_iter()
+                        .map(|c| c.name)
                         .collect::<HashSet<_>>(),
                     // #934: the qualified handler name `Idempotency.dedup`/
                     // `remember` key scoping prefixes onto the developer-supplied
@@ -1511,14 +1511,16 @@ pub(crate) fn emit_service(
         // in one place, since they all call into this same generated method.
         // `handler.params[0]`'s type is guaranteed to equal the header's
         // event type by `check_service_protocols`'s param-type-agreement
-        // check, so testing its fields here is sound.
+        // check, so testing its own name (read off `ir_params`, the
+        // already-lowered signature `emit_service`'s own loop already
+        // holds — P6.54) here is sound.
         if handler_kind_ir == IrHandlerKind::Event
             && let ProtocolIr::Events {
                 pattern: Some(pattern),
                 ..
             } = protocol
-            && let Some(param) = handler.params.first()
-            && let Some(guard) = event_pattern_guard_ir(&ts_ident(&param.name.name), Some(pattern))
+            && let Some((param_name, _)) = ir_params.first()
+            && let Some(guard) = event_pattern_guard_ir(&ts_ident(param_name), Some(pattern))
         {
             let prologue = format!(
                 "{}if (!({guard})) return undefined;\n",
@@ -1735,26 +1737,25 @@ pub(crate) fn cross_context_caps_used(
             _ => continue,
         };
         for h in handlers {
-            for c in &h.given {
+            for c in crate::ir::lower::lower_handler_given_ir(h) {
                 // Events track, slice 0 (spine #936): `Events.emit` is
                 // intercepted entirely at the call site (release-at-commit
                 // buffering) and never calls through a constructed provider
                 // — unlike every other capability, there is no
                 // `EventsProvider` for compose to build, so the first-party
                 // `Events` must not appear in any context's deps interface.
-                let is_first_party_events = c.key() == "Events"
-                    && info.flattened_caps.get(c.key()).map(String::as_str) == Some("bynk");
+                let is_first_party_events = c.name == "Events"
+                    && info.flattened_caps.get(&c.name).map(String::as_str) == Some("bynk");
                 if is_first_party_events {
                     continue;
                 }
-                if let Some(prefix) = c.prefix() {
-                    if let Some(consumed) = info.resolve_prefix(&prefix) {
-                        seen.entry(c.key().to_string()).or_insert(consumed);
+                if let Some(prefix) = &c.context {
+                    if let Some(consumed) = info.resolve_prefix(prefix) {
+                        seen.entry(c.name.clone()).or_insert(consumed);
                     }
-                } else if let Some(unit) = info.flattened_caps.get(c.key()) {
+                } else if let Some(unit) = info.flattened_caps.get(&c.name) {
                     // v0.17: a bare flattened capability is a cross-unit dep too.
-                    seen.entry(c.key().to_string())
-                        .or_insert_with(|| unit.clone());
+                    seen.entry(c.name.clone()).or_insert_with(|| unit.clone());
                 }
             }
         }
@@ -1770,16 +1771,16 @@ pub(crate) fn cross_context_cap_namespaces(
     info: &bynk_check::resolver::CrossContextInfo,
 ) -> std::collections::BTreeSet<String> {
     let mut out = std::collections::BTreeSet::new();
-    let mut collect = |given: &[CapRef]| {
+    let mut collect = |given: Vec<crate::ir::CapRefIr>| {
         for c in given {
-            if let Some(prefix) = c.prefix()
-                && let Some(consumed) = info.resolve_prefix(&prefix)
+            if let Some(prefix) = &c.context
+                && let Some(consumed) = info.resolve_prefix(prefix)
             {
                 out.insert(consumed);
-            } else if c.prefix().is_none()
+            } else if c.context.is_none()
                 // v0.17: a bare flattened capability imports its interface from
                 // the consumed unit's module.
-                && let Some(unit) = info.flattened_caps.get(c.key())
+                && let Some(unit) = info.flattened_caps.get(&c.name)
             {
                 out.insert(unit.clone());
             }
@@ -1787,9 +1788,15 @@ pub(crate) fn cross_context_cap_namespaces(
     };
     for item in &commons.commons.items {
         match item {
-            CommonsItem::Service(s) => s.handlers.iter().for_each(|h| collect(&h.given)),
-            CommonsItem::Agent(a) => a.handlers.iter().for_each(|h| collect(&h.given)),
-            CommonsItem::Provider(p) => collect(&p.given),
+            CommonsItem::Service(s) => s
+                .handlers
+                .iter()
+                .for_each(|h| collect(crate::ir::lower::lower_handler_given_ir(h))),
+            CommonsItem::Agent(a) => a
+                .handlers
+                .iter()
+                .for_each(|h| collect(crate::ir::lower::lower_handler_given_ir(h))),
+            CommonsItem::Provider(p) => collect(crate::ir::lower::lower_provider_given_ir(p)),
             _ => {}
         }
     }
@@ -3379,10 +3386,9 @@ pub(crate) fn emit_agent(
             module,
             BodyMode::AgentHandler {
                 handler: HandlerShared {
-                    capabilities: h
-                        .given
-                        .iter()
-                        .map(|c| c.key().to_string())
+                    capabilities: crate::ir::lower::lower_handler_given_ir(h)
+                        .into_iter()
+                        .map(|c| c.name)
                         .collect::<HashSet<_>>(),
                     handler_scope: Some(format!(
                         "{}.{}.{}",
@@ -3406,7 +3412,11 @@ pub(crate) fn emit_agent(
         for p in &h.params {
             cx.declare_binder(&p.name.name);
         }
-        let async_tail = is_effectful_return(&h.return_type);
+        // P6.54 (design/tracks/the-ir.md §6b): computed once, not twice —
+        // `async_kw` below used to call `is_effectful_return(&h.return_type)`
+        // again for the identical value.
+        let effectful = is_effectful_return(&h.return_type);
+        let async_tail = effectful;
         // A writing store handler's body sits one level deeper, inside the
         // implicit-commit closure.
         let body_indent = if writes_state {
@@ -3453,11 +3463,7 @@ pub(crate) fn emit_agent(
         }
         params.push(format!("deps: {deps_ty}"));
         let ret = ts_type_ref(&h.return_type);
-        let async_kw = if is_effectful_return(&h.return_type) {
-            "async "
-        } else {
-            ""
-        };
+        let async_kw = if effectful { "async " } else { "" };
         let method = h
             .method_name
             .as_ref()
@@ -3981,10 +3987,9 @@ fn emit_ws_do_method(
         module,
         BodyMode::WsDoMethod {
             handler: HandlerShared {
-                capabilities: h
-                    .given
-                    .iter()
-                    .map(|c| c.key().to_string())
+                capabilities: crate::ir::lower::lower_handler_given_ir(h)
+                    .into_iter()
+                    .map(|c| c.name)
                     .collect::<HashSet<_>>(),
                 // #934: the hosting agent + lifecycle method name
                 // (`open`/`message`/`close`).
