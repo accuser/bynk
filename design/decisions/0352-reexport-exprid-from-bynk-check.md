@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "P6.27: re-exported bynk_syntax::ast::ExprId as bynk_check::checker::ExprId and retargeted bynk-emit's two direct-ExprId sites (project.rs, emitter.rs's sum_owner_of_variant) to it -- enabling only, no behaviour change. The checker's own public API already traffics in ExprId (expr_types and Callee are both HashMap<ExprId, _>, Q2's own settled totality story), so this exposes an already-public dependency rather than adding one, and preserves the exact identity the checker keyed by (a bynk-emit-local id type would not). ast_importers unaffected (9) -- neither retargeted site was the reason either file was counted."
----
+# 0352 — `bynk_check::checker::ExprId` re-exports `bynk_syntax::ast::ExprId`; `bynk-emit`'s two direct-`ExprId` sites read it from there instead
 
-## ADR: reexport-exprid-from-bynk-check
-
-title: `bynk_check::checker::ExprId` re-exports `bynk_syntax::ast::ExprId`; `bynk-emit`'s two direct-`ExprId` sites read it from there instead
+- **Status:** Accepted (v0.249.4)
 
 summary: Phase B of the #1137 completion plan (`design/tracks/the-ir.md` §6a, P6.27) — a cheap decoupling, enabling later slices rather than moving the probe itself
 
