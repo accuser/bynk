@@ -24,13 +24,14 @@
 //!    consumed type in its own namespace, where its rebranding would make the
 //!    same type render differently.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write as _;
 use std::sync::Arc;
 
 use bynk_syntax::ast::{PredKind, Refinement, TypeBody, TypeDecl, TypeRef};
 
-use crate::resolver::CrossContextService;
+use crate::resolver::{CrossContextService, cross_context_service_for};
+use crate::symbols::UnitTable;
 
 /// The canonical normal form of one `on call` service contract.
 ///
@@ -334,6 +335,33 @@ pub fn service_contract_hash(
     types: &HashMap<String, Arc<TypeDecl>>,
 ) -> String {
     contract_hash(&service_normal_form(svc, types))
+}
+
+/// v0.177 (#643): a context's own `on call` contract hashes, keyed by service
+/// name — the constants its Worker entry compares an incoming
+/// `X-Bynk-Contract` against.
+///
+/// Built by projecting each local `on call` handler into the **same**
+/// [`CrossContextService`] shape [`crate::symbols::build_cross_context_info`]
+/// hands a *caller* for the same service, via the one shared projection
+/// [`cross_context_service_for`], and hashing it from the same combined type
+/// table. That symmetry is the whole correctness argument: a caller and a
+/// callee compiled from one source tree must agree, or the check fires on
+/// every call instead of only on real skew — sharing the projection makes the
+/// agreement structural rather than two hand-written copies staying in sync
+/// by convention.
+pub fn own_contract_hashes(
+    table: &UnitTable,
+    own_types: &HashMap<String, Arc<TypeDecl>>,
+) -> BTreeMap<String, String> {
+    let mut out = BTreeMap::new();
+    for (sname, sdecl) in &table.services {
+        let Some(svc) = cross_context_service_for(sname, sdecl) else {
+            continue;
+        };
+        out.insert(sname.clone(), service_contract_hash(&svc, own_types));
+    }
+    out
 }
 
 #[cfg(test)]

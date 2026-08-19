@@ -8,8 +8,8 @@ use crate::resolver::{self, MethodTable as ResolverMethodTable};
 use bynk_project::{ParsedFile, UnitKind};
 use bynk_syntax::ast::{
     ActorDecl, AgentDecl, BaseType, Block, CapRef, CapabilityDecl, CommonsItem, EventDecl,
-    ExportKind, Expr, ExprId, ExprKind, FnDecl, FnName, HandlerKind, Ident, Param, ProviderDecl,
-    ServiceDecl, Trivia, TypeBody, TypeDecl, TypeRef, Visibility,
+    ExportKind, Expr, ExprId, ExprKind, FnDecl, FnName, Ident, Param, ProviderDecl, ServiceDecl,
+    Trivia, TypeBody, TypeDecl, TypeRef, Visibility,
 };
 use bynk_syntax::error::CompileError;
 use bynk_syntax::span::Span;
@@ -866,27 +866,9 @@ pub fn build_cross_context_info(
         consumed_event_names.insert(t.clone(), other_table.events.keys().cloned().collect());
         let mut svcs: HashMap<String, resolver::CrossContextService> = HashMap::new();
         for (sname, sdecl) in &other_table.services {
-            let Some(handler) = sdecl
-                .handlers
-                .iter()
-                .find(|h| matches!(h.kind, HandlerKind::Call))
-            else {
-                continue;
-            };
-            let params: Vec<(String, TypeRef)> = handler
-                .params
-                .iter()
-                .map(|p| (p.name.name.clone(), p.type_ref.clone()))
-                .collect();
-            svcs.insert(
-                sname.clone(),
-                resolver::CrossContextService {
-                    name: sname.clone(),
-                    params,
-                    return_type: handler.return_type.clone(),
-                    span: sdecl.span,
-                },
-            );
+            if let Some(svc) = resolver::cross_context_service_for(sname, sdecl) {
+                svcs.insert(sname.clone(), svc);
+            }
         }
         consumed_services.insert(t.clone(), svcs);
 

@@ -193,6 +193,32 @@ pub struct CrossContextService {
     pub span: bynk_syntax::span::Span,
 }
 
+/// Project one local `on call` handler into the [`CrossContextService`] shape
+/// both sides of a cross-context contract check need — a caller resolving a
+/// *consumed* service ([`crate::symbols::build_cross_context_info`]) and a
+/// callee stamping its *own* `X-Bynk-Contract` constant
+/// ([`crate::contract::own_contract_hashes`]). Sharing this one projection is
+/// the whole correctness argument for that symmetry: if the two sides ever
+/// diverged, a working deployment would 409 on every call instead of only on
+/// real skew. `None` when `sdecl` has no `on call` handler (e.g. an
+/// events-only or queue-only service).
+pub fn cross_context_service_for(name: &str, sdecl: &ServiceDecl) -> Option<CrossContextService> {
+    let handler = sdecl
+        .handlers
+        .iter()
+        .find(|h| matches!(h.kind, HandlerKind::Call))?;
+    Some(CrossContextService {
+        name: name.to_string(),
+        params: handler
+            .params
+            .iter()
+            .map(|p| (p.name.name.clone(), p.type_ref.clone()))
+            .collect(),
+        return_type: handler.return_type.clone(),
+        span: sdecl.span,
+    })
+}
+
 impl CrossContextInfo {
     /// Returns the qualified name of the consumed context this prefix refers
     /// to, treating `prefix` as either an alias or a full qualified name.
