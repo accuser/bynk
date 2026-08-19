@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "P6.58: re-settles design/tracks/the-ir.md §5 at ast_importers = 5 (not 0), with a per-file structural argument for each of the five surviving files. Breaks the §5/§7 circularity between this track's own completion criterion and phase 7's bynk-ts entry condition. Names §12's retirement condition. Doc-only, no AST_IMPORTER_EXCEPTIONS growth."
----
+# 0383 — `design/tracks/the-ir.md` re-settles §5 at `ast_importers` = 5, breaks the §5/§7 deadlock, names §12's retirement condition
 
-## ADR: p6-58-resettle-floor-of-five
-
-title: `design/tracks/the-ir.md` re-settles §5 at `ast_importers` = 5, breaks the §5/§7 deadlock, names §12's retirement condition
+- **Status:** Accepted (v0.249.35)
 
 summary: Doc-only — the evidence for this floor is the whole of §6b (P6.42–P6.57), not asserted here for the first time
 
