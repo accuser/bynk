@@ -1092,6 +1092,22 @@ task tracking names as P6.23's checker-side sink). P6.22's real dependency is th
 P6.23-sink→P6.22. Not scoped further here; both P6.22 and the rest of P6.23 wait on the same one
 piece of future work.
 
+**Thirtieth: the checker-side sink the Twenty-third/Twenty-ninth entries both named — landed.**
+`bynk-check/src/checker.rs`'s own `type_of` now records `Callee::Intrinsic` for `HttpResult`/
+`QueueResult` bare-variant construction at all 8 real dispatch sites (bare `Ident`, `Call`,
+`ConstructorCall` for both; `FieldAccess`/`MethodCall`'s own qualified forms for `HttpResult` only —
+no equivalent `QueueResult` site exists in either shape). Each insertion mirrors the sibling
+`StoreField::Cell` arm a few lines below the `MethodCall` site, reusing `Callee::Intrinsic` rather than
+adding a new variant — this is exactly the "built-in static constructor with no declaring type" shape
+that variant already covers. Purely additive: every insertion sits inside a branch already resolved to
+construct the variant, so nothing changes for anything not yet reading it — confirmed empirically, not
+just by inspection, via the full `bynk-check` unit suite (157/157 unchanged) and a full zero-diff bless
+against the entire e2e corpus. This is the sink `GlobalRef`'s own doc comment (P6.1, Decision C) said a
+future slice would need to add "or accept re-deriving it" — the first option is now real. Unblocks, as
+real follow-up work still to land: `lower_method_call`/`lower_call`'s own remaining `HttpResult`/
+`QueueResult` branches (closing P6.21's last gap), and 27 of P6.23's ~51 corpus panics. Full reasoning:
+`design/pending/p6-23-http-queue-result-callee-sink.md`'s own ADR.
+
 ## 7. Out of scope — forward references, not refusals
 
 | Item | Phase | Entry condition |

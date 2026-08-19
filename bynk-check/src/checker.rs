@@ -3496,6 +3496,17 @@ pub(crate) fn type_of(expr: &Expr, expected: Option<TyId>, ctx: &mut Ctx) -> Opt
                     .unwrap_or(false)
                     || peel_to_http_result(ctx.return_ty, tys).is_some();
                 if http_implied || !user_owns {
+                    // P6.21/P6.23 (review of #1244/#1247): `Callee::Intrinsic`
+                    // recorded here — Decision C's own known-excluded shape
+                    // (`ir.rs`'s `GlobalRef` doc comment names it) now has the
+                    // sink that comment said a future slice would need to add.
+                    ctx.callees.insert(
+                        expr.id,
+                        Callee::Intrinsic {
+                            ns: HTTP_RESULT,
+                            op: v.name.to_string(),
+                        },
+                    );
                     check_http_variant(id.span, v, &[], expected, ctx)
                 } else {
                     check_ident(id, expected, ctx)
@@ -3506,6 +3517,13 @@ pub(crate) fn type_of(expr: &Expr, expected: Option<TyId>, ctx: &mut Ctx) -> Opt
                     || peel_to_queue_result(ctx.return_ty, tys))
             {
                 // v0.44: a bare QueueResult variant (`Ack`) in a queue handler.
+                ctx.callees.insert(
+                    expr.id,
+                    Callee::Intrinsic {
+                        ns: QUEUE_RESULT,
+                        op: qv.name.to_string(),
+                    },
+                );
                 check_queue_variant(id.span, qv, &[], ctx)
             } else {
                 check_ident(id, expected, ctx)
@@ -3542,6 +3560,13 @@ pub(crate) fn type_of(expr: &Expr, expected: Option<TyId>, ctx: &mut Ctx) -> Opt
                         })
                 };
                 if http_implied || !owned_elsewhere() {
+                    ctx.callees.insert(
+                        expr.id,
+                        Callee::Intrinsic {
+                            ns: HTTP_RESULT,
+                            op: v.name.to_string(),
+                        },
+                    );
                     check_http_variant(expr.span, v, args, expected, ctx)
                 } else {
                     // Falling straight to `check_call` (rather than the
@@ -3555,6 +3580,13 @@ pub(crate) fn type_of(expr: &Expr, expected: Option<TyId>, ctx: &mut Ctx) -> Opt
                     || peel_to_queue_result(ctx.return_ty, tys))
             {
                 // v0.44: a QueueResult variant call (`Retry(reason)`).
+                ctx.callees.insert(
+                    expr.id,
+                    Callee::Intrinsic {
+                        ns: QUEUE_RESULT,
+                        op: qv.name.to_string(),
+                    },
+                );
                 check_queue_variant(expr.span, qv, args, ctx)
             } else {
                 check_call(name, type_args, args, expr.span, expected, expr.id, ctx)
@@ -3580,6 +3612,13 @@ pub(crate) fn type_of(expr: &Expr, expected: Option<TyId>, ctx: &mut Ctx) -> Opt
         } => {
             if type_name.name == HTTP_RESULT {
                 if let Some(v) = http_variant(&method.name) {
+                    ctx.callees.insert(
+                        expr.id,
+                        Callee::Intrinsic {
+                            ns: HTTP_RESULT,
+                            op: v.name.to_string(),
+                        },
+                    );
                     check_http_variant(expr.span, v, args, expected, ctx)
                 } else {
                     ctx.errors.push(CompileError::new(
@@ -3591,6 +3630,13 @@ pub(crate) fn type_of(expr: &Expr, expected: Option<TyId>, ctx: &mut Ctx) -> Opt
                 }
             } else if type_name.name == QUEUE_RESULT {
                 if let Some(qv) = queue_variant(&method.name) {
+                    ctx.callees.insert(
+                        expr.id,
+                        Callee::Intrinsic {
+                            ns: QUEUE_RESULT,
+                            op: qv.name.to_string(),
+                        },
+                    );
                     check_queue_variant(expr.span, qv, args, ctx)
                 } else {
                     ctx.errors.push(CompileError::new(
@@ -3637,6 +3683,13 @@ pub(crate) fn type_of(expr: &Expr, expected: Option<TyId>, ctx: &mut Ctx) -> Opt
                         ));
                         return None;
                     }
+                    ctx.callees.insert(
+                        expr.id,
+                        Callee::Intrinsic {
+                            ns: HTTP_RESULT,
+                            op: v.name.to_string(),
+                        },
+                    );
                     check_http_variant(field.span, v, &[], expected, ctx)
                 } else {
                     ctx.errors.push(CompileError::new(
@@ -3821,6 +3874,13 @@ pub(crate) fn type_of(expr: &Expr, expected: Option<TyId>, ctx: &mut Ctx) -> Opt
                 && id.name == HTTP_RESULT
             {
                 if let Some(v) = http_variant(&method.name) {
+                    ctx.callees.insert(
+                        expr.id,
+                        Callee::Intrinsic {
+                            ns: HTTP_RESULT,
+                            op: v.name.to_string(),
+                        },
+                    );
                     check_http_variant(expr.span, v, args, expected, ctx)
                 } else {
                     ctx.errors.push(CompileError::new(
