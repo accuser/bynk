@@ -1458,24 +1458,43 @@ fn check_unit_files(
             };
             keep.then(|| (*id, c.clone()))
         }));
-        // P6.x (#1232): capture this file's own event-subscriber service
-        // shapes before `program` is dropped at the end of this iteration —
-        // same insertion point, same reasoning as `unit_callees.extend`
-        // above. Field-compatible with the raw-`UnitTable` walk this
-        // replaces (`UnitTable.services: HashMap<String, ServiceDecl>`,
-        // `bynk-check/src/symbols.rs`): `program.program().commons.items`'s
-        // `CommonsItem::Service` produces the same AST type, so
-        // `s.handlers`/`s.protocol`/`s.name` line up exactly.
+        // P6.23 (review of #1254): captures this file's own
+        // event-subscriber service shapes the same way as before —
+        // before `program` is dropped at the end of this iteration, same
+        // insertion point as `unit_callees.extend` above — but now reads
+        // them off a real `IrItem::Service` (`lower_service_item_ir`,
+        // P6.11/#1171) instead of walking `s.handlers`/`s.protocol`
+        // directly. `lower_service_item_ir` lowers every handler's own
+        // *body* (not just its declared shape), so the `ServiceProtocol::
+        // Events` guard stays first — a cheap, structural pre-filter
+        // (which services even have a shape to capture), not a
+        // resurrected raw-AST *read* — before paying for a full lowering
+        // pass on a matching service. Safe as of #1254: a `catch_unwind`
+        // probe wrapping `lower_service_item_ir` across the entire e2e
+        // fixture corpus found zero panics, down from ~51 when the P6.23
+        // investigation first ran.
         for item in &program.program().commons.items {
             if let CommonsItem::Service(s) = item
-                && let ServiceProtocol::Events {
-                    schema_dispatch, ..
-                } = &s.protocol
+                && matches!(&s.protocol, ServiceProtocol::Events { .. })
             {
-                let two_param_handler = s
-                    .handlers
+                let crate::ir::IrItem::Service {
+                    protocol:
+                        crate::ir::ProtocolIr::Events {
+                            schema_dispatch, ..
+                        },
+                    handlers,
+                    ..
+                } = crate::ir::lower::lower_service_item_ir(s, &program)
+                else {
+                    panic!(
+                        "bynk internal error: lower_service_item_ir did not return \
+                         IrItem::Service{{ protocol: ProtocolIr::Events, .. }} for a service \
+                         whose own AST protocol is ServiceProtocol::Events"
+                    )
+                };
+                let two_param_handler = handlers
                     .iter()
-                    .find(|h| matches!(h.kind, HandlerKind::Event))
+                    .find(|h| matches!(h.kind, crate::ir::IrHandlerKind::Event))
                     .is_some_and(|h| h.params.len() == 2);
                 event_subscriber_shapes.insert(
                     s.name.name.clone(),
