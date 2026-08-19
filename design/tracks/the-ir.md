@@ -1348,13 +1348,14 @@ its own, but together they are what §6a.D needs before ruling on the codec laye
 as the wrapping target; landed differently, wrapping `lower_op_sig_ir_from_commons` instead, since
 `lower_capability_item_ir` needs a `&CheckedProgram` this call site never has). Both current
 behaviours preserved exactly (first match in item order, empty result not panic on miss).
-`ast_importers`: **8 → 8**, unaffected, exactly as predicted. **P6.30** — `emit_worker_compose`
-(`emitter/workers.rs:34`) reads
-`IrHandlerKind`/`ProtocolIr` for its nine `HandlerKind`/`ServiceProtocol` matches, via the existing
-`lower_handler_kind_ir`/`lower_protocol_ir_from_commons`; risk is real — `lower_actor_seam_ir` tries
-resolvers in a fixed `Sum`→`Bearer`→`Oidc`→`Caller` order and `workers.rs:389`'s own comment records
-this file *used to* check `oidc` before `sum`, the same shadowing-order hazard class the held-map slice
-above just caught by bless. **P6.31** — `emitter/workers_entry.rs`'s route tables (`HttpRoute`,
+`ast_importers`: **8 → 8**, unaffected, exactly as predicted. **P6.30 — landed, narrower than
+estimated.** `emit_worker_compose` (`emitter/workers.rs:34`) reads `IrHandlerKind` for its
+`HandlerKind` matches — see this section's own Forty-first entry above. `ProtocolIr` conversion turned
+out **not reachable** here (`emit_worker_compose` has no `TypedCommons` in scope), so the one
+`ServiceProtocol::WebSocket` check stays raw AST, named rather than silently left unconverted. The
+named seam-ordering risk was already closed by review of #1209 before this slice started.
+`ast_importers`: **8 → 8**, unaffected. **P6.31** — `emitter/workers_entry.rs`'s route tables
+(`HttpRoute`,
 `QueueRoute`) and 15 `HandlerKind`/`ServiceProtocol` sites go IR-native the same way; if `IrHandler`
 can't carry enough to render, stop and let §6a.D decide rather than widening it speculatively (P6.24a's
 own framing: a mirror's value is only provable by an actual consumer). **P6.32** — `emitter.rs`'s three
@@ -1512,6 +1513,27 @@ against the same fixture `lower_capability_item_ir_assembles_ops_in_declaration_
 site; it retains other, still-open AST names (Q7-surviving body-rendering params). Verified by a full
 zero-diff bless against the entire e2e corpus and a full `cargo test --workspace`. Full reasoning:
 `design/pending/p6-29-cap-op-param-names-ir.md`'s own ADR.
+
+**Forty-first: P6.30 — `emit_worker_compose` dispatches on `IrHandlerKind`, not raw AST `HandlerKind`;
+`ProtocolIr` found not reachable here, per §6a's own Phase C.** Converted both remaining raw-AST
+dispatch sites — the `has_ws_open` predicate and the main seven-arm per-handler wrapper-selection
+match — to read `lower_handler_kind_ir(&h.kind)`'s `IrHandlerKind` result (P6.24a's own pure,
+unconditional mirror, no `TypedCommons`/`CheckedProgram` needed). The `Http` arm's body still needs
+AST-typed `method`/`path` for its Q7-settled, still-AST-parameter-driven wrapper functions
+(`emit_http_wrapper` and siblings, threaded through many further AST-typed helpers) — re-derives them
+from the original `h.kind` via a safe `let HandlerKind::Http { .. } = &h.kind else { unreachable!() }`
+rather than cascading a signature change well beyond this slice. **A real scoping finding, narrower
+than this plan's own P6.30 row estimated:** the plan named `lower_protocol_ir_from_commons` as
+reachable for the `Message` arm's `ServiceProtocol::WebSocket` check; it is not — `emit_worker_compose`
+has no `TypedCommons` in scope, only a `table: &UnitTable` (a project-wide compose-time symbol table),
+and threading one through just for this check is out of proportion to this slice. Left as raw AST,
+named explicitly. The plan's own named risk (a handler-shape ordering hazard in `lower_actor_seam_ir`'s
+`Sum`→`Bearer`→`Oidc`→`Caller` resolution) turned out already closed by review of #1209 before this
+slice started — confirmed live in the `Http` arm's own standing comment — so this slice carried
+materially less risk than estimated. `ast_importers`: **8 → 8**, unaffected — `emitter/workers.rs`
+retains other, still-open AST names. Verified by a full zero-diff bless against the entire e2e corpus
+and a full `cargo test --workspace`. Full reasoning:
+`design/pending/p6-30-worker-compose-handler-kind-ir.md`'s own ADR.
 
 ## 7. Out of scope — forward references, not refusals
 
