@@ -1400,15 +1400,23 @@ still P6.38's to close.
 
 **Phase E — post-settling conversions**, scope confirmed by P6.33's ruling (the codec is phase-7, Q7
 params are not decisions — both now settled, not merely assumed).
-**P6.34** — `ModuleCtx::actors: HashMap<String, ActorDecl>` (`project.rs:3476`) becomes a precomputed
-per-handler `ActorSeamIr`; a hidden multi-file dependency, since this one field is threaded to
-`workers_entry.rs:1367` and read by `emit.rs:1421`, blocking three files at once — needs its own ADR on
-the handler-key shape (`(service, kind, index)` today, not a stable name). **P6.35** — the remainder of
-`project.rs`'s plumbing: `plan_agent_given_deps@2670` (only its `&AgentDecl` annotation left),
-`unit_table_uses_emit`/`called_cross_context_services` (only `Expr`/`Block` types left, per this
-section's own P6.22 discharge note above), and `instantiate_provider_expr@2818` (already AST-free — its
-contact is via `UnitTable::providers`, a `bynk-check` type — say so rather than leaving it looking
-unconverted); clears `project.rs` only if P6.33 ruled `own_contract_hashes` out and P6.34 landed.
+**P6.34** — under investigation as this row was written: `ModuleCtx::actors` (a naming slip —
+correctly `EmitProjectCtx::actors: HashMap<String, ActorDecl>`, `project.rs:3478`) was to become a
+precomputed per-handler `ActorSeamIr`. See this section's own upcoming investigation entry (below,
+landing separately per the P6.9/P6.24b precedent — a doc-only PR when a slice's own investigation
+finds no code change warranted) for why the "blocking three files" framing does not hold: only
+`emit.rs` consumes this field (`workers.rs`/`workers_entry.rs` reach actor data through the unrelated
+`UnitTable::actors`, already counted separately), and even for `emit.rs`, `lower_actor_seam_ir`'s own
+signature requires the raw actor declarations to do its own resolution — precomputing would relocate,
+not remove, the dependency, at real risk to a security-sensitive verification path (Bearer/Oidc/
+Signature seam resolution) for no probe movement. **P6.35 — landed.** The remainder of `project.rs`'s
+plumbing: `plan_agent_given_deps@2670`'s last `&AgentDecl` annotation is gone (type inference now
+carries it) — see this section's own Forty-fifth entry above. `unit_table_uses_emit`/
+`called_cross_context_services`'s own `Expr`/`Block` residue investigated and found the same
+Q7-deferred, no-IR-alternative shape P6.33 ruled the codec renderer into phase 7 for — not converted.
+`instantiate_provider_expr@2818` confirmed already AST-free. `project.rs` does **not** clear from this
+slice — it retains `own_contract_hashes` (P6.33's own named residual-floor candidate) and other
+declaration-read surface outside this row's scope.
 **P6.36** — `collect_external_references`/`write_header` read a new `lower_unit_items_ir` enumerator;
 needs its own ADR, since the enumerator cannot be total (`IrItem` has no `Actor`/`Messages`/`Event`/
 `Const` variant) and silently skipping unrepresentable items is wrong here specifically —
@@ -1654,6 +1662,24 @@ this file's own discipline for any `AST_IMPORTER_EXCEPTIONS` change. Verified by
 against the entire e2e corpus (a pure exclusion-list change touches no emission code, but
 `serialisation.rs` itself was untouched either way) and a full `cargo test --workspace`. Full
 reasoning: `design/pending/p6-33-codec-layer-resettling.md`'s own ADR.
+
+**Forty-fifth: P6.35 — `plan_agent_given_deps` drops its last explicit `&AgentDecl` annotation;
+`unit_table_uses_emit`/`called_cross_context_services`'s `Block`/`Expr` residue investigated and found
+structural, per §6a's own Phase E.** `agents: Vec<(&String, &bynk_syntax::ast::AgentDecl)>` no longer
+names the AST type — `Vec<_>` infers it from the loop body's own `a.handlers` field access, the one
+remaining literal spelling in an otherwise already-`CapRefIr`-driven function (#1187's slice 6).
+`unit_table_uses_emit`/`called_cross_context_services`'s own *decisions* already read
+`Callee::Capability`/`Callee::Cross`; what remains — `body: &Block` and the `Fn(&Expr)` callback
+`crate::emitter::walk_block_exprs` itself requires — is Q7-deferred body-walking plumbing with no
+IR-native alternative to route through (bodies are not lowered to IR at any call site these functions
+reach, since P6.2's own emitter-side `Call`/`Lambda` cutover hasn't landed) — the identical shape
+P6.33 just ruled the codec renderer into phase 7 for. Left as raw AST, named rather than converted.
+`instantiate_provider_expr` re-confirmed already AST-free (its only "provider" contact is
+`UnitTable::providers`, a `bynk-check` type). `ast_importers`: **7 → 7**, unaffected — `project.rs`
+retains other, still-open AST surface outside this row's scope (`own_contract_hashes`, `build_output`'s
+own declaration reads, and others). Verified by a full zero-diff bless against the entire e2e corpus
+and a full `cargo test --workspace`. Full reasoning:
+`design/pending/p6-35-project-plumbing-finish.md`'s own ADR.
 
 ## 7. Out of scope — forward references, not refusals
 

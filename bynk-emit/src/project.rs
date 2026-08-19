@@ -2695,8 +2695,10 @@ fn plan_agent_given_deps(
 
     let mut referenced: BTreeSet<String> = BTreeSet::new();
     let mut exprs: HashMap<String, String> = HashMap::new();
-    let mut agents: Vec<(&String, &bynk_syntax::ast::AgentDecl)> =
-        info.table.agents.iter().collect();
+    // P6.35 (design/tracks/the-ir.md §6a): no explicit `&AgentDecl` annotation
+    // needed — the loop body's own `a.handlers` field access below already
+    // pins the element type through inference.
+    let mut agents: Vec<_> = info.table.agents.iter().collect();
     agents.sort_by_key(|(n, _)| (*n).clone());
     for (agent, a) in agents {
         // #1187's slice 6 (Agent/Service given wiring): reads bynk-emit::ir's
