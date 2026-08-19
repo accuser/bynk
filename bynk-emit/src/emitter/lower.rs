@@ -1721,9 +1721,17 @@ fn lower_method_call(
     // v0.9: explicit `HttpResult.Variant(args)` construction. The
     // checker has already recorded the expression's type — emit it
     // directly through the runtime's HttpResult namespace.
-    if let ExprKind::Ident(id) = &receiver.kind
-        && id.name == HTTP_RESULT
-        && http_variant(&method.name).is_some()
+    //
+    // P6.21/P6.23 (review of #1251): reads `Callee::Intrinsic` (the sink
+    // #1251 added) instead of `id.name == HTTP_RESULT` — closes the last
+    // real instance of R6.5's name-matched-receiver defect class this
+    // session's own P6.21 slices left open, since Decision C originally
+    // excluded this shape for lack of a `Callee` to read.
+    if let ExprKind::Ident(_) = &receiver.kind
+        && matches!(
+            cx.commons().callee(e.id),
+            Some(Callee::Intrinsic { ns, .. }) if *ns == HTTP_RESULT
+        )
     {
         let args_lowered: Vec<String> = args.iter().map(|a| pre.lower(a, cx)).collect();
         return pre.finish(format!(
@@ -4188,17 +4196,24 @@ fn lower_ident(e: &Expr, id: &Ident, cx: &mut LowerCtx) -> String {
     }
     // v0.9: a nullary HttpResult variant (whose checker type is
     // `HttpResult[_]`) constructs an HttpResult.<Variant>.
+    //
+    // P6.21/P6.23 (review of #1251): reads `Callee::Intrinsic` instead of
+    // the `Ty::HttpResult`/`Ty::QueueResult` type check plus a bare
+    // `http_variant`/`queue_variant` keyword lookup — consistency with
+    // every other static-constructor branch in this module, not a new
+    // defect closure: the resolved-type guard here was already immune to
+    // name-matching (a shadowing local never types as `Ty::HttpResult`).
     if matches!(
-        cx.commons().expr_ty(e.id).as_deref(),
-        Some(Ty::HttpResult(_))
-    ) && http_variant(&id.name).is_some()
-    {
+        cx.commons().callee(e.id),
+        Some(Callee::Intrinsic { ns, .. }) if *ns == HTTP_RESULT
+    ) {
         return format!("HttpResult.{}", id.name);
     }
     // v0.44: a nullary QueueResult variant (`Ack`) constructs `QueueResult.Ack`.
-    if matches!(cx.commons().expr_ty(e.id).as_deref(), Some(Ty::QueueResult))
-        && bynk_syntax::ast::queue_variant(&id.name).is_some()
-    {
+    if matches!(
+        cx.commons().callee(e.id),
+        Some(Callee::Intrinsic { ns, .. }) if *ns == QUEUE_RESULT
+    ) {
         return format!("QueueResult.{}", id.name);
     }
     // A bare ident whose name matches a declared variant of a sum
@@ -4236,11 +4251,15 @@ fn lower_call(e: &Expr, name: &Ident, args: &[Expr], cx: &mut LowerCtx) -> Lower
     // Bare variant constructor with payload → qualify.
     let args_lowered: Vec<String> = args.iter().map(|a| pre.lower(a, cx)).collect();
     // v0.9: HttpResult variant call.
+    //
+    // P6.21/P6.23 (review of #1251): reads `Callee::Intrinsic` instead of
+    // the `Ty::HttpResult`/`Ty::QueueResult` type check plus a bare
+    // keyword lookup — consistency with the bare-`Ident` sibling in
+    // `lower_ident`, not a new defect closure.
     if matches!(
-        cx.commons().expr_ty(e.id).as_deref(),
-        Some(Ty::HttpResult(_))
-    ) && http_variant(&name.name).is_some()
-    {
+        cx.commons().callee(e.id),
+        Some(Callee::Intrinsic { ns, .. }) if *ns == HTTP_RESULT
+    ) {
         return pre.finish(format!(
             "HttpResult.{}({})",
             name.name,
@@ -4248,9 +4267,10 @@ fn lower_call(e: &Expr, name: &Ident, args: &[Expr], cx: &mut LowerCtx) -> Lower
         ));
     }
     // v0.44: a QueueResult variant call (`Retry(reason)`) → `QueueResult.Retry(...)`.
-    if matches!(cx.commons().expr_ty(e.id).as_deref(), Some(Ty::QueueResult))
-        && bynk_syntax::ast::queue_variant(&name.name).is_some()
-    {
+    if matches!(
+        cx.commons().callee(e.id),
+        Some(Callee::Intrinsic { ns, .. }) if *ns == QUEUE_RESULT
+    ) {
         return pre.finish(format!(
             "QueueResult.{}({})",
             name.name,
@@ -4669,9 +4689,16 @@ fn lower_field_access(e: &Expr, receiver: &Expr, field: &Ident, cx: &mut LowerCt
         });
     }
     // v0.9: `HttpResult.Variant` (nullary).
-    if let ExprKind::Ident(id) = &receiver.kind
-        && id.name == HTTP_RESULT
-        && http_variant(&field.name).is_some()
+    //
+    // P6.21/P6.23 (review of #1251): reads `Callee::Intrinsic` instead of
+    // `id.name == HTTP_RESULT` — see the `MethodCall` sibling above (this
+    // module's own qualified-with-args `HttpResult.Variant(args)` branch)
+    // for the full reasoning.
+    if let ExprKind::Ident(_) = &receiver.kind
+        && matches!(
+            cx.commons().callee(e.id),
+            Some(Callee::Intrinsic { ns, .. }) if *ns == HTTP_RESULT
+        )
     {
         return pre.finish(format!("HttpResult.{}", field.name));
     }

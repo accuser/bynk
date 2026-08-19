@@ -1108,6 +1108,18 @@ real follow-up work still to land: `lower_method_call`/`lower_call`'s own remain
 `QueueResult` branches (closing P6.21's last gap), and 27 of P6.23's ~51 corpus panics. Full reasoning:
 `design/pending/p6-23-http-queue-result-callee-sink.md`'s own ADR.
 
+**Thirty-first: P6.21's own `HttpResult`/`QueueResult` gap closed in full.** All six real dispatch
+sites in `emitter/lower.rs` for these two built-in result types (`lower_method_call`'s
+qualified-with-args and qualified-nullary forms, `lower_ident`'s bare-nullary forms, `lower_call`'s
+bare-with-args forms) now read the `Callee::Intrinsic` sink the Thirtieth entry added. Two of the six
+(the qualified-with-args forms) were genuinely name-matched (`id.name == HTTP_RESULT`) — real R6.5
+defect instances, closed the same way every other branch this session converted. The other four were
+already guarded by the expression's own resolved type (`Ty::HttpResult(_)`/`Ty::QueueResult`), already
+immune to shadowing — converted for consistency with the rest of the module, not a new correctness fix,
+the same posture `Int`/`Float.parse`'s own earlier conversion took. Verified by a full zero-diff bless
+against the entire e2e corpus, including the test-body fixtures that caught #1247's own regression.
+Full reasoning: `design/pending/p6-21-http-queue-result-emitter-consumption.md`'s own ADR.
+
 ## 7. Out of scope — forward references, not refusals
 
 | Item | Phase | Entry condition |
