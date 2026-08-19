@@ -12,17 +12,16 @@ use std::fmt::Write as _;
 use std::sync::Arc;
 
 use crate::project::EmitProjectCtx;
-use bynk_check::checker::{TypedCommons, Types};
+use bynk_check::checker::{TyId, TypedCommons, Types};
 use bynk_syntax::ast::{
     ActorDecl, AgentDecl, BaseType, CapRef, CapabilityDecl, CommonsItem, Expr, ExprKind, FnDecl,
     FnName, Handler, HttpMethod, Ident, MessageEntry, MessagesDecl, Param, PredKind, ProviderDecl,
-    RecordField, Refinement, ServiceDecl, ServiceProtocol, StoreField, TypeBody, TypeDecl,
-    TypeParam, TypeRef,
+    RecordField, Refinement, ServiceDecl, StoreField, TypeBody, TypeDecl, TypeParam, TypeRef,
 };
 
 use crate::ir::lower::{
     HandlerSignatureIr, body_writes_state, is_effectful_return, lower_actor_seam_ir,
-    lower_handler_kind_ir,
+    lower_handler_kind_ir, lower_protocol_ir_from_commons,
 };
 use crate::ir::{
     ActorSeamIr, FnSig, IrHandlerKind, IrHttpMethod, OpSig, ProtocolIr, StoreFieldIr, StoreKindIr,
@@ -704,7 +703,10 @@ pub(crate) fn collect_handler_labels(commons: &TypedCommons) -> Option<String> {
                             (n, format!("cron \"{expr}\""))
                         }
                         IrHandlerKind::Message
-                            if matches!(s.protocol, ServiceProtocol::WebSocket { .. }) =>
+                            if matches!(
+                                lower_protocol_ir_from_commons(&s.protocol, commons),
+                                ProtocolIr::WebSocket { .. }
+                            ) =>
                         {
                             ("message".to_string(), "WebSocket message".to_string())
                         }
@@ -3575,7 +3577,7 @@ pub(crate) fn emit_agent(
         // client end. The verified identity and route arguments ride in a trusted
         // internal header (the DO is only reachable through the Worker).
         for host in &ws_open_hosts {
-            emit_ws_open_fetch_branch(out, host);
+            emit_ws_open_fetch_branch(out, host, tys);
         }
         writeln!(
             out,
@@ -3814,12 +3816,17 @@ pub(crate) fn emit_agent(
 struct WsOpenHost<'a> {
     service: &'a str,
     handler: &'a Handler,
-    out_type: &'a TypeRef,
+    // P6.52 (design/tracks/the-ir.md §6b): `TyId`, not `&'a TypeRef` — read
+    // off `ProtocolIr::WebSocket` (`lower_protocol_ir_from_commons`) once at
+    // `ws_open_hosts_for`'s own construction site, instead of every renderer
+    // below re-resolving the raw `ServiceProtocol::WebSocket` frame types
+    // itself.
+    out_ty: TyId,
     // v0.106 (slice 3b-iii): the service's inbound `in` frame type and its optional
     // `on message`/`on close` handlers — run in this same DO (`webSocketMessage`/
     // `webSocketClose`), with identity + route args recovered from the socket
     // attachment the `on open` accept wrote.
-    in_type: &'a TypeRef,
+    in_ty: TyId,
     message: Option<&'a Handler>,
     close: Option<&'a Handler>,
     seam: Option<bynk_check::actors::BearerSeam>,
@@ -3863,7 +3870,9 @@ fn ws_open_hosts_for<'a>(
         let CommonsItem::Service(s) = item else {
             continue;
         };
-        let ServiceProtocol::WebSocket { out_type, in_type } = &s.protocol else {
+        let ProtocolIr::WebSocket { out_ty, in_ty } =
+            lower_protocol_ir_from_commons(&s.protocol, commons)
+        else {
             continue;
         };
         for h in &s.handlers {
@@ -3877,8 +3886,8 @@ fn ws_open_hosts_for<'a>(
                 hosts.push(WsOpenHost {
                     service: &s.name.name,
                     handler: h,
-                    out_type,
-                    in_type,
+                    out_ty,
+                    in_ty,
                     message: s
                         .handlers
                         .iter()
@@ -3915,7 +3924,7 @@ fn emit_ws_do_method(
 ) {
     let mut params = vec![format!(
         "connection: Connection<{}>",
-        ts_type_ref(host.out_type)
+        ts_ty(host.out_ty, commons.tys())
     )];
     for p in &h.params {
         params.push(format!(
@@ -4002,7 +4011,7 @@ fn emit_ws_do_method(
 /// authenticated; this accepts the socket, reconstructs the route arguments and
 /// identity from the trusted internal header, runs the on-open body, and returns
 /// the `101` handing the client end back.
-fn emit_ws_open_fetch_branch(out: &mut String, host: &WsOpenHost<'_>) {
+fn emit_ws_open_fetch_branch(out: &mut String, host: &WsOpenHost<'_>, tys: &Arc<Types>) {
     let h = host.handler;
     let path = format!("/_bynk/ws/open/{}", host.service);
     let method = ws_open_do_method_name(host.service);
@@ -4040,7 +4049,7 @@ fn emit_ws_open_fetch_branch(out: &mut String, host: &WsOpenHost<'_>) {
     writeln!(
         out,
         "      const connection = acceptHibernatableConnection<{}>(this.state, __pair.server{meta_arg});",
-        ts_type_ref(host.out_type)
+        ts_ty(host.out_ty, tys)
     )
     .unwrap();
     let mut call_args = vec!["connection".to_string()];
@@ -4101,7 +4110,7 @@ fn emit_ws_dispatch_handlers(
     if !host.has_inbound() {
         return;
     }
-    let out_ts = ts_type_ref(host.out_type);
+    let out_ts = ts_ty(host.out_ty, tys);
     let att_ty = "{ connId: string; identity: string; args: unknown[] }";
     // The firing socket's minimal structural surface (attachment + send/close), so
     // emitted code stays free of `@cloudflare/workers-types`.
@@ -4110,7 +4119,22 @@ fn emit_ws_dispatch_handlers(
 
     if let Some(m) = host.message {
         let method = ws_message_do_method_name(host.service);
-        let decode = serialisation::deserialise_expr(host.in_type, "__json", "frame", runtime_use);
+        // P6.52 (design/tracks/the-ir.md §6b): `host.in_ty` round-trips back
+        // to a `TypeRef` for `serialisation::deserialise_expr`, the excluded
+        // codec renderer's own boundary (P6.33 ruled it phase 7, `TypeRef`-
+        // driven by definition). `ty_to_type_ref` only returns `None` for a
+        // function/effect/type-variable `Ty` — none of which a `from
+        // websocket` service's own `in:` frame type can ever resolve to,
+        // since `check_service_protocols` already constrains it to a
+        // codec-eligible type before this function ever runs.
+        let in_type = ty_to_type_ref(host.in_ty, tys).unwrap_or_else(|| {
+            panic!(
+                "bynk internal error: a `from websocket` service's own `in:` frame type did \
+                 not round-trip to a TypeRef, but check_service_protocols already certified it \
+                 codec-eligible"
+            )
+        });
+        let decode = serialisation::deserialise_expr(&in_type, "__json", "frame", runtime_use);
         writeln!(
             out,
             "  async webSocketMessage(ws: {ws_ty}, message: string | ArrayBuffer): Promise<void> {{"
@@ -4161,7 +4185,7 @@ fn emit_ws_dispatch_handlers(
                 .unwrap_or(tys.intern(bynk_check::checker::Ty::Unit))
         };
         for p in &m.params {
-            if resolve_ty(&p.type_ref) == resolve_ty(host.in_type) {
+            if resolve_ty(&p.type_ref) == host.in_ty {
                 call_args.push("__dec.value".to_string());
             } else {
                 call_args.push(format!(

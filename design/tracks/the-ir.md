@@ -2050,6 +2050,25 @@ emitted TS-shaping decisions: zero-diff bless over the full e2e corpus, all six 
 checks, `cargo test --workspace`, `cargo clippy --workspace --all-targets` all pass unchanged. Full
 reasoning: `design/pending/p6-51-handler-kind-ir-native.md`.
 
+**Sixty-third: P6.52 — `collect_handler_labels`'s and `ws_open_hosts_for`'s `ServiceProtocol::
+WebSocket` matches read `lower_protocol_ir_from_commons` instead.** Corrects the record:
+P6.30/P6.31's own "not reachable" finding for `ProtocolIr` was specific to `emit_worker_compose`/
+`emit_worker_entry` (`UnitTable`-only); these two `emit.rs` call sites already hold `commons:
+&TypedCommons` directly. `ws_open_hosts_for`'s own conversion cascades further than the guard alone —
+`WsOpenHost::{out_type, in_type}` go from `&'a TypeRef` to `TyId`, since the lowering call already
+resolves both frame types, which cascades through three `ts_type_ref` render sites (now `ts_ty`,
+`emit_ws_open_fetch_branch` gaining a threaded `tys` parameter) and the `serialisation::
+deserialise_expr` codec boundary (round-trips `host.in_ty` back via `ty_to_type_ref`, panicking with
+an explicit internal-error message on the `None` case a certified program cannot actually produce —
+the ADR 0334 posture this track has used throughout). The `resolve_ty` closure survives for the
+message handler's own still-AST param type, but loses its now-redundant second argument.
+`ServiceProtocol` dropped from `emit.rs`'s import list entirely. `ast_importers`: **unaffected (5)**.
+Verified with extra care given the codec-boundary touch: zero-diff bless over the full e2e corpus,
+all six `tsc_verify.rs` checks, the live `ws_behaviour.rs` behavioural test (opens a socket and
+exchanges frames against the emitted output, not just diffs bytes), `cargo test --workspace`, `cargo
+clippy --workspace --all-targets` all pass unchanged. Full reasoning:
+`design/pending/p6-52-ws-protocol-ir-native.md`.
+
 | Item | Phase | Entry condition |
 |---|---|---|
 | `Question`'s own three-way desugar fork — what `IrExprKind` an `expr?` lowers to | 6, unproposed | a slice proposal for P6.3's desugaring table (§6) reaches `Question` specifically; #1225 (§6, fourteenth slice) settled the *construction*-side identity question this depends on but explicitly does not settle this one |
