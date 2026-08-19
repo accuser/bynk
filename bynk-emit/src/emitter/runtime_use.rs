@@ -79,7 +79,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
-use bynk_syntax::ast::TypeRef;
+use bynk_check::checker::TyId;
 
 /// Per-module accumulator of conditional runtime-helper references.
 ///
@@ -97,13 +97,19 @@ pub(crate) struct RuntimeUse {
     /// the suite's target (and its `uses`). Empty (the default) on every other
     /// emission path, where every name renders bare.
     json_codec_qual: RefCell<HashMap<String, String>>,
-    /// #917: the `Json.decode[T]`/`Json.encode` target type-refs a test-scaffold
+    /// #917: the `Json.decode[T]`/`Json.encode` target types a test-scaffold
     /// module's case/property/stub bodies actually reached for, collected as they
     /// lower. `emit_test_module` drains this once all bodies are lowered to
     /// compute the codec closure those bodies need — the unit module they import
     /// exports the type but no codec, so a test-scaffold module generates its own
     /// (#661's caller-generates-its-own-codec pattern, applied to test scaffolding).
-    json_codec_roots: RefCell<Vec<TypeRef>>,
+    /// P6.28 (design/tracks/the-ir.md §6a): stored as the checker's own resolved
+    /// `TyId` rather than a re-derived `TypeRef` — both push sites already hold
+    /// the `TyId` before converting it for their own, separate codec-rendering
+    /// use, so this field no longer needs its own `TypeRef` conversion at push
+    /// time; the drain site converts once, immediately before the one consumer
+    /// (`collect_codec_closure`) that is still genuinely `TypeRef`-driven.
+    json_codec_roots: RefCell<Vec<TyId>>,
 }
 
 impl RuntimeUse {
@@ -144,16 +150,16 @@ impl RuntimeUse {
         self.json_codec_qual.borrow()
     }
 
-    /// #917: record a `Json.decode[T]`/`Json.encode` target type-ref a
-    /// test-scaffold body reached for, so the module that spliced it in can
-    /// generate the codec helper its delegating call needs.
-    pub fn note_json_codec_root(&self, t: TypeRef) {
+    /// #917: record a `Json.decode[T]`/`Json.encode` target type a test-scaffold
+    /// body reached for, so the module that spliced it in can generate the codec
+    /// helper its delegating call needs.
+    pub fn note_json_codec_root(&self, t: TyId) {
         self.json_codec_roots.borrow_mut().push(t);
     }
 
     /// Drain the accumulated `Json` codec roots — called once, after every
     /// case/property/stub body in the module has lowered.
-    pub fn take_json_codec_roots(&self) -> Vec<TypeRef> {
+    pub fn take_json_codec_roots(&self) -> Vec<TyId> {
         std::mem::take(&mut *self.json_codec_roots.borrow_mut())
     }
 
