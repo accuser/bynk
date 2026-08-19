@@ -1,0 +1,18 @@
+---
+level: patch
+changelog: "P6.21: emitter/lower.rs's lower_method_call now reads Callee::Capability{cap:\"Events\", op:\"emit\"} (P6.0) to detect an Events.emit[E](event) call, instead of the raw id.name == \"Events\" && method.name == \"emit\" name match -- another real instance of R6.5's name-matched-receiver defect class, the same one project.rs's own unit_table_uses_emit already closed for the identical classification. cx.is_first_party_events() stays as a separate, still-needed guard: it answers which provider/target the emitted TS should call, a different question than whether this expression is really an Events.emit capability call at all. Verified by a full zero-diff bless against the entire e2e fixture corpus, including every Events.emit call site in the corpus. No probe movement (project.rs was already counted)."
+---
+
+## ADR: events-emit-callee-dispatch
+
+title: `lower_method_call`'s `Events.emit` branch reads `Callee::Capability` instead of a bare name match
+
+summary: Closes the last of the three name-matched-receiver branches P6.21's Twenty-fourth/Twenty-fifth entries left open in `lower_method_call`, following the same pattern already applied to storage, agent-method, and constructor dispatch
+
+**Context.** `lower_method_call`'s `Events.emit[E](event)` branch detected its own receiver with `id.name == "Events" && method.name == "emit"` — a bare identifier-name match, immune neither to shadowing (a local or free binding also named `Events`) nor to any other value that happens to share the name. Every other branch in this module converted by P6.21 so far (storage `Map`/`Set`/`Cache`/`Log`, agent-method calls, agent construction, sum-variant construction, `HttpResult`/`QueueResult`) went through the identical fix: read the checker's own `Callee` classification, resolved once and stored in `TypedCommons::callees`, instead of re-deriving it from a name.
+
+`Callee::Capability { cap: "Events", op: "emit" }` already exists and is already read for the identical classification elsewhere in the project — `project.rs`'s `unit_table_uses_emit` reads this exact `Callee` variant to answer the project-wide "does this unit ever call `Events.emit`" question. `emitter/lower.rs`'s own `lower_method_call` was the one remaining place still re-deriving the same fact from a bare name.
+
+**Decision.** Replace the `ExprKind::Ident(id) if id.name == "Events" && method.name == "emit"` test with `ExprKind::Ident(_)` plus `matches!(cx.commons().callee(e.id), Some(Callee::Capability { cap, op }) if cap == "Events" && op == "emit")`. `cx.is_first_party_events()` stays unchanged as a separate guard — it answers a different question (is *this unit's* `Events` capability actually backed by the first-party runtime implementation, i.e. which provider/target the emitted TS should call) than the one `Callee` settles (is this expression really an `Events.emit` capability call at all).
+
+**Consequences.** Verified by a full zero-diff bless against the entire `bynkc` e2e fixture corpus, including every real `Events.emit` call site in the corpus — byte-identical generated output confirms the `Callee`-driven read reproduces the name-matched read's own answer for every real case. `ast_importers` unaffected. This closes the last of the three branches the Twenty-fourth/Twenty-fifth track-doc entries left open in `lower_method_call` (held-map ops and the `Ty`-keyed kernel-method fallthrough remain, tracked separately — the former is a distinct real-time concept never checked against `Callee`, the latter dispatches on the receiver's checked type already and is not suspected to carry the same defect).

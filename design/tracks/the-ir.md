@@ -1181,6 +1181,20 @@ e2e corpus, including `1232_events_envelope_schema_dispatch_bare` — the fixtur
 the `schema_dispatch` half of this predicate. `ast_importers` unaffected (`project.rs` was already
 counted). Full reasoning: `design/pending/p6-23-event-subscriber-shape-via-ir-service.md`'s own ADR.
 
+**Thirty-fifth: P6.21's last name-matched-receiver branch closed — `lower_method_call`'s
+`Events.emit` dispatch.** Read `Callee::Capability { cap: "Events", op: "emit" }` (already resolved
+by the checker, P6.0) instead of `id.name == "Events" && method.name == "emit"` — the same fix already
+applied to storage, agent-method, agent/sum-variant construction, and `HttpResult`/`QueueResult`.
+`project.rs`'s own `unit_table_uses_emit` already reads this exact `Callee` for the identical
+classification project-wide; `emitter/lower.rs` was the one remaining raw-name-matched reader.
+`cx.is_first_party_events()` stays as a separate guard — it answers which provider/target the emitted
+TS should call, not whether this is really an `Events.emit` capability call. Verified by a full
+zero-diff bless against the entire e2e corpus, including every real `Events.emit` call site.
+`ast_importers` unaffected. Held-map ops (a distinct real-time concept never checked against `Callee`)
+and the `Ty`-keyed kernel-method fallthrough (dispatches on checked type already, not suspected to
+carry the same defect) remain the only unconverted parts of `lower_method_call`. Full reasoning:
+`design/pending/p6-21-events-emit-callee-dispatch.md`'s own ADR.
+
 ## 7. Out of scope — forward references, not refusals
 
 | Item | Phase | Entry condition |

@@ -1918,9 +1918,21 @@ fn lower_method_call(
     // publishing context's own compose wires to the Cloudflare fan-out DO
     // (Workers) or an in-process dispatch closure (Bundle) — see
     // `emit_events_fanout_do`/`project.rs`'s `__eventsDispatch` construction.
-    if let ExprKind::Ident(id) = &receiver.kind
-        && id.name == "Events"
-        && method.name == "emit"
+    // P6.21 (continued, review of #1254): reads `Callee::Capability` (P6.0)
+    // instead of `id.name == "Events" && method.name == "emit"` — a real
+    // instance of R6.5's name-matched-receiver defect class, the same one
+    // every other branch in this module already closed. `unit_table_uses_
+    // emit` (`project.rs`) already reads this exact `Callee` for the
+    // identical classification, project-wide. `cx.is_first_party_events()`
+    // stays: it answers a different question (is *this unit's* `Events`
+    // capability actually the first-party runtime implementation, not
+    // which provider/target the emitted TS should call at all) than the
+    // one `Callee` settles.
+    if let ExprKind::Ident(_) = &receiver.kind
+        && matches!(
+            cx.commons().callee(e.id),
+            Some(Callee::Capability { cap, op }) if cap == "Events" && op == "emit"
+        )
         && cx.is_first_party_events()
     {
         let event_name = type_args
