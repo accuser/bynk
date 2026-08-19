@@ -15,15 +15,19 @@ use crate::project::EmitProjectCtx;
 use bynk_check::checker::{TypedCommons, Types};
 use bynk_syntax::ast::{
     ActorDecl, AgentDecl, BaseType, CapRef, CapabilityDecl, CommonsItem, Expr, ExprKind, FnDecl,
-    FnName, Handler, HandlerKind, HttpMethod, Ident, MessageEntry, MessagesDecl, Param, PredKind,
-    ProviderDecl, RecordField, Refinement, ServiceDecl, ServiceProtocol, StoreField, TypeBody,
-    TypeDecl, TypeParam, TypeRef,
+    FnName, Handler, HttpMethod, Ident, MessageEntry, MessagesDecl, Param, PredKind, ProviderDecl,
+    RecordField, Refinement, ServiceDecl, ServiceProtocol, StoreField, TypeBody, TypeDecl,
+    TypeParam, TypeRef,
 };
 
 use crate::ir::lower::{
     HandlerSignatureIr, body_writes_state, is_effectful_return, lower_actor_seam_ir,
+    lower_handler_kind_ir,
 };
-use crate::ir::{ActorSeamIr, FnSig, OpSig, ProtocolIr, StoreFieldIr, StoreKindIr, TypeShape};
+use crate::ir::{
+    ActorSeamIr, FnSig, IrHandlerKind, IrHttpMethod, OpSig, ProtocolIr, StoreFieldIr, StoreKindIr,
+    TypeShape,
+};
 
 use super::*;
 
@@ -648,7 +652,21 @@ fn emit_contract_guarded_body(out: &mut String, f: &FnDecl, cx: &mut LowerCtx, a
 /// segments (`:name`) become `Param_name` to remain distinct from literal
 /// segments. (v0.9 §5.3)
 pub(crate) fn http_handler_method_name(method: HttpMethod, path: &str) -> String {
-    let mut s = format!("http_{}", method.as_str());
+    http_handler_method_name_from_str(method.as_str(), path)
+}
+
+/// P6.51 (design/tracks/the-ir.md §6b): [`http_handler_method_name`]'s own
+/// `IrHttpMethod` sibling, for the call sites that already hold an
+/// `IrHandlerKind::Http`'s own resolved method rather than the raw AST
+/// `HandlerKind::Http`'s. Both share [`http_handler_method_name_from_str`],
+/// since the two `HttpMethod`/`IrHttpMethod` enums render to identical
+/// strings via their own respective `as_str()`.
+pub(crate) fn http_handler_method_name_ir(method: IrHttpMethod, path: &str) -> String {
+    http_handler_method_name_from_str(method.as_str(), path)
+}
+
+fn http_handler_method_name_from_str(method: &str, path: &str) -> String {
+    let mut s = format!("http_{method}");
     for seg in path.split('/').filter(|s| !s.is_empty()) {
         s.push('_');
         if let Some(rest) = seg.strip_prefix(':') {
@@ -675,35 +693,37 @@ pub(crate) fn collect_handler_labels(commons: &TypedCommons) -> Option<String> {
             CommonsItem::Service(s) => {
                 let (mut cron_idx, mut queue_idx) = (0usize, 0usize);
                 for h in &s.handlers {
-                    let pair = match &h.kind {
-                        HandlerKind::Http { method, path } => (
-                            http_handler_method_name(*method, path),
+                    let pair = match lower_handler_kind_ir(&h.kind) {
+                        IrHandlerKind::Http { method, path } => (
+                            http_handler_method_name_ir(method, &path),
                             format!("{} \"{}\"", method.as_str(), path),
                         ),
-                        HandlerKind::Cron { expr } => {
+                        IrHandlerKind::Cron { expr } => {
                             let n = cron_handler_method_name(&s.name.name, cron_idx);
                             cron_idx += 1;
                             (n, format!("cron \"{expr}\""))
                         }
-                        HandlerKind::Message
+                        IrHandlerKind::Message
                             if matches!(s.protocol, ServiceProtocol::WebSocket { .. }) =>
                         {
                             ("message".to_string(), "WebSocket message".to_string())
                         }
-                        HandlerKind::Message => {
+                        IrHandlerKind::Message => {
                             let n = queue_handler_method_name(&s.name.name, queue_idx);
                             queue_idx += 1;
                             (n, "message".to_string())
                         }
-                        HandlerKind::Call => {
+                        IrHandlerKind::Call => {
                             ("call".to_string(), handler_op_label("call", &h.params))
                         }
-                        HandlerKind::Open => ("open".to_string(), "WebSocket open".to_string()),
-                        HandlerKind::Close => ("close".to_string(), "WebSocket close".to_string()),
+                        IrHandlerKind::Open => ("open".to_string(), "WebSocket open".to_string()),
+                        IrHandlerKind::Close => {
+                            ("close".to_string(), "WebSocket close".to_string())
+                        }
                         // Events track, slice 0 (spine #936): exactly one
                         // `on event` per `from Events(E)` service (no
                         // pattern-refinement fan-out yet, so no index).
-                        HandlerKind::Event => ("event".to_string(), "event".to_string()),
+                        IrHandlerKind::Event => ("event".to_string(), "event".to_string()),
                     };
                     entries.push(pair);
                 }
@@ -1324,8 +1344,9 @@ pub(crate) fn emit_service(
         // (`__wsOpen`/`__wsMessage`/`__wsClose`, DECISION A), driven by the edge
         // upgrade / `webSocketMessage` / `webSocketClose`, not from here. (On bundle
         // these are callable surface methods a `TestConnection` test drives.)
-        let is_ws_handler = matches!(handler.kind, HandlerKind::Open | HandlerKind::Close)
-            || (ws_proto && matches!(handler.kind, HandlerKind::Message));
+        let handler_kind_ir = lower_handler_kind_ir(&handler.kind);
+        let is_ws_handler = matches!(handler_kind_ir, IrHandlerKind::Open | IrHandlerKind::Close)
+            || (ws_proto && matches!(handler_kind_ir, IrHandlerKind::Message));
         // Events track, slice 0 (spine #936): unlike the WebSocket lifecycle
         // handlers above, `on event` has no *other* place its body could go
         // on Workers — a WS lifecycle handler's real body lives in the
@@ -1339,27 +1360,27 @@ pub(crate) fn emit_service(
             continue;
         }
         emit_doc_block(out, handler.documentation.as_deref(), INDENT_STEP);
-        let kind_name = match &handler.kind {
-            HandlerKind::Call => "call".to_string(),
-            HandlerKind::Http { method, path } => http_handler_method_name(*method, path),
-            HandlerKind::Cron { .. } => {
+        let kind_name = match &handler_kind_ir {
+            IrHandlerKind::Call => "call".to_string(),
+            IrHandlerKind::Http { method, path } => http_handler_method_name_ir(*method, path),
+            IrHandlerKind::Cron { .. } => {
                 let name = cron_handler_method_name(&s.name.name, cron_idx);
                 cron_idx += 1;
                 name
             }
             // v0.106: a `from websocket` `on message` is the inbound surface method.
-            HandlerKind::Message if ws_proto => "message".to_string(),
-            HandlerKind::Message => {
+            IrHandlerKind::Message if ws_proto => "message".to_string(),
+            IrHandlerKind::Message => {
                 let name = queue_handler_method_name(&s.name.name, queue_idx);
                 queue_idx += 1;
                 name
             }
             // v0.103/v0.106: the WebSocket lifecycle surface methods.
-            HandlerKind::Open => "open".to_string(),
-            HandlerKind::Close => "close".to_string(),
+            IrHandlerKind::Open => "open".to_string(),
+            IrHandlerKind::Close => "close".to_string(),
             // Events track, slice 0 (spine #936): exactly one `on event` per
             // `from Events(E)` service.
-            HandlerKind::Event => "event".to_string(),
+            IrHandlerKind::Event => "event".to_string(),
         };
         // For service handlers the operation name is the handler kind
         // (e.g. `call`). v0.5 has only one handler kind, so the service is a
@@ -1387,7 +1408,7 @@ pub(crate) fn emit_service(
         // could write, so it can never collide with a declared one. The two
         // envelope-forwarding call sites (`workers.rs`, `project.rs`) widen
         // their own condition to match, so the value actually arrives here.
-        let schema_dispatch_env_binder = if handler.kind == HandlerKind::Event
+        let schema_dispatch_env_binder = if handler_kind_ir == IrHandlerKind::Event
             && let ProtocolIr::Events {
                 schema_dispatch: Some(_),
                 ..
@@ -1489,7 +1510,7 @@ pub(crate) fn emit_service(
         // `handler.params[0]`'s type is guaranteed to equal the header's
         // event type by `check_service_protocols`'s param-type-agreement
         // check, so testing its fields here is sound.
-        if handler.kind == HandlerKind::Event
+        if handler_kind_ir == IrHandlerKind::Event
             && let ProtocolIr::Events {
                 pattern: Some(pattern),
                 ..
@@ -2094,7 +2115,7 @@ pub(crate) fn emit_make_surface(out: &mut String, commons: &TypedCommons, ctx: &
         let handler = s
             .handlers
             .iter()
-            .find(|h| matches!(h.kind, HandlerKind::Call));
+            .find(|h| matches!(lower_handler_kind_ir(&h.kind), IrHandlerKind::Call));
         let Some(h) = handler else { continue };
         let async_kw = if is_effectful_return(&h.return_type) {
             "async "
@@ -3402,17 +3423,17 @@ pub(crate) fn emit_agent(
             .method_name
             .as_ref()
             .map(|m| m.name.clone())
-            .unwrap_or_else(|| match &h.kind {
-                HandlerKind::Call => "call".to_string(),
+            .unwrap_or_else(|| match lower_handler_kind_ir(&h.kind) {
+                IrHandlerKind::Call => "call".to_string(),
                 // HTTP/cron/queue/open handlers are service-only (rejected in
                 // agents by the parser); these arms are defensive and unreachable
                 // here.
-                HandlerKind::Http { .. }
-                | HandlerKind::Cron { .. }
-                | HandlerKind::Message
-                | HandlerKind::Open
-                | HandlerKind::Close
-                | HandlerKind::Event => "call".to_string(),
+                IrHandlerKind::Http { .. }
+                | IrHandlerKind::Cron { .. }
+                | IrHandlerKind::Message
+                | IrHandlerKind::Open
+                | IrHandlerKind::Close
+                | IrHandlerKind::Event => "call".to_string(),
             });
         writeln!(
             out,
@@ -3674,7 +3695,10 @@ pub(crate) fn emit_agent(
         let hs: Vec<&Handler> = a
             .handlers
             .iter()
-            .filter(|h| matches!(h.kind, HandlerKind::Call) && h.method_name.is_some())
+            .filter(|h| {
+                matches!(lower_handler_kind_ir(&h.kind), IrHandlerKind::Call)
+                    && h.method_name.is_some()
+            })
             .collect();
         let driver = format!("__bynkDriveHistory_{}", a.name.name);
         let factory = agent_factory_name(&a.name.name);
@@ -3843,7 +3867,7 @@ fn ws_open_hosts_for<'a>(
             continue;
         };
         for h in &s.handlers {
-            if !matches!(h.kind, HandlerKind::Open) {
+            if !matches!(lower_handler_kind_ir(&h.kind), IrHandlerKind::Open) {
                 continue;
             }
             if let crate::emitter::websocket::WsOpenShape::One(t) =
@@ -3858,11 +3882,11 @@ fn ws_open_hosts_for<'a>(
                     message: s
                         .handlers
                         .iter()
-                        .find(|h| matches!(h.kind, HandlerKind::Message)),
+                        .find(|h| matches!(lower_handler_kind_ir(&h.kind), IrHandlerKind::Message)),
                     close: s
                         .handlers
                         .iter()
-                        .find(|h| matches!(h.kind, HandlerKind::Close)),
+                        .find(|h| matches!(lower_handler_kind_ir(&h.kind), IrHandlerKind::Close)),
                     seam: bynk_check::actors::bearer_seam_for(h, actors),
                 });
             }

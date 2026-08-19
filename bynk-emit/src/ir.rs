@@ -1696,6 +1696,20 @@ pub(crate) enum IrHttpMethod {
     Delete,
 }
 
+impl IrHttpMethod {
+    /// P6.51 (design/tracks/the-ir.md §6b): field-for-field mirror of
+    /// [`bynk_syntax::ast::HttpMethod::as_str`].
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            IrHttpMethod::Get => "GET",
+            IrHttpMethod::Post => "POST",
+            IrHttpMethod::Put => "PUT",
+            IrHttpMethod::Patch => "PATCH",
+            IrHttpMethod::Delete => "DELETE",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct IrHandler {
     pub kind: IrHandlerKind,

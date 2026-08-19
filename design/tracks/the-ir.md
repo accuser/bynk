@@ -2034,6 +2034,22 @@ imports the relocated function directly. `ast_importers`: **unaffected (5)**. Ze
 the full e2e corpus, `cargo test --workspace`, `cargo clippy --workspace --all-targets` all pass
 unchanged. Full reasoning: `design/pending/p6-50-dead-code-and-backwards-dependency.md`.
 
+**Sixty-second: P6.51 — every `HandlerKind` read in `emit.rs` reads `lower_handler_kind_ir` instead.**
+The single largest mechanical conversion this phase's own research found: roughly 20 hand-written
+`HandlerKind::` matches across five functions (`collect_handler_labels`, `emit_service`,
+`emit_make_surface`, `emit_agent`, `ws_open_hosts_for`) converted to match the existing, pure
+`lower_handler_kind_ir(&HandlerKind) -> IrHandlerKind` instead — same arms, same guards.
+`emit_service`'s own loop computes `handler_kind_ir` once per handler and reuses it across four
+former separate matches. `IrHttpMethod` gained `as_str()`; a new `http_handler_method_name_ir` shares
+its body with the existing `http_handler_method_name` via a private `_from_str` helper, closing both
+of `emit.rs`'s own `HandlerKind::Http` sites without widening the six-call-site function's own
+signature (`emitter/lower.rs`'s two remaining `HttpMethod::from_ident` sites are P6.57's target, not
+this slice's). `HandlerKind` dropped from `emit.rs`'s import list entirely. `ast_importers`:
+**unaffected (5)**. Verified with `tsc --strict` in addition to the usual gates, since this changes
+emitted TS-shaping decisions: zero-diff bless over the full e2e corpus, all six `tsc_verify.rs`
+checks, `cargo test --workspace`, `cargo clippy --workspace --all-targets` all pass unchanged. Full
+reasoning: `design/pending/p6-51-handler-kind-ir-native.md`.
+
 | Item | Phase | Entry condition |
 |---|---|---|
 | `Question`'s own three-way desugar fork — what `IrExprKind` an `expr?` lowers to | 6, unproposed | a slice proposal for P6.3's desugaring table (§6) reaches `Question` specifically; #1225 (§6, fourteenth slice) settled the *construction*-side identity question this depends on but explicitly does not settle this one |
