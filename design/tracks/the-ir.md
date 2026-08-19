@@ -2016,6 +2016,24 @@ doc block now records this as evidence its four existing entries are earned, not
 test --workspace`, `cargo clippy --workspace --all-targets` all pass unchanged. Full reasoning:
 `design/pending/p6-49-project-rs-clears.md`.
 
+**Phase H — the emitter conversions. Landed: P6.50.** No slice in this phase moves `ast_importers` —
+`emit.rs`/`emitter/lower.rs` stay counted through their own `use super::*;` while `emitter.rs`
+imports the AST, and `emitter.rs` itself is ~60% structurally blocked. Every slice here is justified
+on defect-closure, deduplication, or layering grounds instead, which is the entire point of
+"convert-then-settle": Phase I's re-settling can only claim the residue is *structural* if this phase
+actually tried.
+
+**Sixty-first: P6.50 — dead code deleted; `is_effectful_return` relocates to fix a backwards `Ast ⇄
+Ir` dependency.** `build_deps_object_ty` (`emitter/emit.rs`, zero callers workspace-wide) deleted
+outright. `is_effectful_return` — `ir/lower.rs`'s own `lower_service_handler_signature_ir` was
+calling *up* into `crate::emitter::is_effectful_return`, the lowering pass reaching into the emitter
+module it should only ever be called from — moved into `ir/lower.rs` itself, next to its one caller
+that already documented its exact semantics. `emitter/lower.rs`'s own separate call site (reached via
+a `use super::*;`/`pub(crate) use emit::*;` glob chain that broke once the function moved) now
+imports the relocated function directly. `ast_importers`: **unaffected (5)**. Zero-diff bless over
+the full e2e corpus, `cargo test --workspace`, `cargo clippy --workspace --all-targets` all pass
+unchanged. Full reasoning: `design/pending/p6-50-dead-code-and-backwards-dependency.md`.
+
 | Item | Phase | Entry condition |
 |---|---|---|
 | `Question`'s own three-way desugar fork — what `IrExprKind` an `expr?` lowers to | 6, unproposed | a slice proposal for P6.3's desugaring table (§6) reaches `Question` specifically; #1225 (§6, fourteenth slice) settled the *construction*-side identity question this depends on but explicitly does not settle this one |

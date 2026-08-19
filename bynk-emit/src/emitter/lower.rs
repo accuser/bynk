@@ -13,6 +13,7 @@ use bynk_syntax::ast::{
     PredKind, Refinement, Statement, TypeBody, TypeDecl, TypeRef, UnaryOp,
 };
 
+use crate::ir::lower::is_effectful_return;
 use crate::ir::{ConstVal, EventPatternIr, EventPatternValueIr};
 
 use super::*;
