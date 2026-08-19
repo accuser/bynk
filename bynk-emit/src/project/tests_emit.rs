@@ -1126,7 +1126,7 @@ fn block_uses_observation(block: &Block) -> bool {
 /// into `bynk.test.service_no_call_handler` instead of a silent runtime crash.
 fn target_service_handler_kinds(
     table: Option<&UnitTable>,
-) -> HashMap<String, Vec<bynk_syntax::ast::HandlerKind>> {
+) -> HashMap<String, Vec<crate::ir::IrHandlerKind>> {
     let Some(t) = table else {
         return HashMap::new();
     };
@@ -1135,7 +1135,10 @@ fn target_service_handler_kinds(
         .map(|(name, decl)| {
             (
                 name.clone(),
-                decl.handlers.iter().map(|h| h.kind.clone()).collect(),
+                decl.handlers
+                    .iter()
+                    .map(|h| crate::ir::lower::lower_handler_kind_ir(&h.kind))
+                    .collect(),
             )
         })
         .collect()

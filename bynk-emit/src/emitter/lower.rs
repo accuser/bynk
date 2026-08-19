@@ -71,7 +71,7 @@ pub fn lower_test_case_body(
     typed: &mut TypedCommons,
     cross_context: &bynk_check::resolver::CrossContextInfo,
     test_services: HashSet<String>,
-    test_service_handlers: HashMap<String, Vec<bynk_syntax::ast::HandlerKind>>,
+    test_service_handlers: HashMap<String, Vec<crate::ir::IrHandlerKind>>,
     test_agents: HashSet<String>,
     source: &str,
     rel_path: &str,
@@ -2131,7 +2131,6 @@ fn lower_method_call(
             Some(identity) => format!("{{ ...deps, identity: ({identity} as any) }}"),
             None => "deps".to_string(),
         };
-        use bynk_syntax::ast::HandlerKind as HK;
         // http address: the method is an HTTP verb and the first argument is the
         // route pattern string. The key is a pure function of verb + path; the
         // remaining args are the handler's positional params.
@@ -2147,14 +2146,17 @@ fn lower_method_call(
         }
         // cron/queue address: the emitted key is position-indexed among the
         // service's same-kind handlers, so recover the index from the handler
-        // list. cron drops the leading schedule string; queue passes the message.
+        // list. cron drops the leading schedule string; queue passes the
+        // message. P6.37 (design/tracks/the-ir.md §6a): reads `IrHandlerKind`
+        // (P6.24a's own pure, unconditional mirror) rather than the raw AST
+        // `HandlerKind` this map used to store.
         if let Some(handlers) = cx.test_service_handlers(&id.name) {
             if method.name == "schedule"
                 && let Some(ExprKind::StrLit(expr)) = args.first().map(|a| &a.kind)
             {
                 let mut idx = 0usize;
                 for h in handlers {
-                    if let HK::Cron { expr: e } = h {
+                    if let crate::ir::IrHandlerKind::Cron { expr: e } = h {
                         if e == expr {
                             break;
                         }
@@ -2167,7 +2169,11 @@ fn lower_method_call(
                 all.push(deps_expr);
                 return pre.finish(format!("{}.{}({})", id.name, key, all.join(", ")));
             }
-            if method.name == "message" && handlers.iter().any(|h| matches!(h, HK::Message)) {
+            if method.name == "message"
+                && handlers
+                    .iter()
+                    .any(|h| matches!(h, crate::ir::IrHandlerKind::Message))
+            {
                 // A `from queue` service binds exactly one queue and declares one
                 // `on message` handler, so the position index is 0.
                 let key = crate::emitter::queue_handler_method_name(&id.name, 0);
