@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0349](0349-events-emit-callee-dispatch.md) | **`lower_method_call`'s `Events.emit` branch reads `Callee::Capability` instead of a bare name match** (v0.249.1) — `lower_method_call`'s `Events.emit` branch reads `Callee::Capability` instead of a bare name match | Accepted (v0.249.1) |
 | [0348](0348-event-subscriber-shape-via-ir-service.md) | **`EventSubscriberShape` reads `IrItem::Service` instead of walking the raw AST — the first real, shipped call site for the dormant `lower_service_item_ir`** (v0.249) — `EventSubscriberShape` reads `IrItem::Service` instead of walking the raw AST — the first real, shipped call site for the dormant `lower_service_item_ir` | Accepted (v0.249) |
 | [0347](0347-remaining-root-causes-closed.md) | **`lower_service_item_ir` now lowers every real service body in the fixture corpus cleanly — P6.23's safety probe reaches zero** (v0.248.15) — `lower_service_item_ir` now lowers every real service body in the fixture corpus cleanly — P6.23's safety probe reaches zero | Accepted (v0.248.15) |
 | [0346](0346-bare-http-queue-result-ir-lowering.md) | **`lower_ident_ir` lowers a bare `HttpResult`/`QueueResult` nullary variant to a real `IrExprKind::Call` — the bare-value sibling of P6.20-pre's own store-field fix** (v0.248.14) — `lower_ident_ir` lowers a bare `HttpResult`/`QueueResult` nullary variant to a real `IrExprKind::Call` — the bare-value sibling of P6.20-pre's own store-field fix | Accepted (v0.248.14) |

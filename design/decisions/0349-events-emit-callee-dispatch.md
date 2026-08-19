@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "P6.21: emitter/lower.rs's lower_method_call now reads Callee::Capability{cap:\"Events\", op:\"emit\"} (P6.0) to detect an Events.emit[E](event) call, instead of the raw id.name == \"Events\" && method.name == \"emit\" name match -- another real instance of R6.5's name-matched-receiver defect class, the same one project.rs's own unit_table_uses_emit already closed for the identical classification. cx.is_first_party_events() stays as a separate, still-needed guard: it answers which provider/target the emitted TS should call, a different question than whether this expression is really an Events.emit capability call at all. Verified by a full zero-diff bless against the entire e2e fixture corpus, including every Events.emit call site in the corpus. No probe movement (project.rs was already counted)."
----
+# 0349 — `lower_method_call`'s `Events.emit` branch reads `Callee::Capability` instead of a bare name match
 
-## ADR: events-emit-callee-dispatch
-
-title: `lower_method_call`'s `Events.emit` branch reads `Callee::Capability` instead of a bare name match
+- **Status:** Accepted (v0.249.1)
 
 summary: Closes the last of the three name-matched-receiver branches P6.21's Twenty-fourth/Twenty-fifth entries left open in `lower_method_call`, following the same pattern already applied to storage, agent-method, and constructor dispatch
 
