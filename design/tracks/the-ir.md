@@ -1416,12 +1416,16 @@ Q7-deferred, no-IR-alternative shape P6.33 ruled the codec renderer into phase 7
 `instantiate_provider_expr@2818` confirmed already AST-free. `project.rs` does **not** clear from this
 slice — it retains `own_contract_hashes` (P6.33's own named residual-floor candidate) and other
 declaration-read surface outside this row's scope.
-**P6.36** — `collect_external_references`/`write_header` read a new `lower_unit_items_ir` enumerator;
-needs its own ADR, since the enumerator cannot be total (`IrItem` has no `Actor`/`Messages`/`Event`/
-`Const` variant) and silently skipping unrepresentable items is wrong here specifically —
-`CommonsItem::Event` contributes via `as_type_decl()`, and dropping it would silently lose a real
-external reference; split `write_header` (a two-variant question) from `collect_external_references`
-(needs totality) if the risk proves out on contact. **P6.37** — `emitter/lower.rs`'s `BodyMode` fields
+**P6.36 — not implementable as this row described, per the P6.20 scoping-correction precedent** (full
+account in this section's own Forty-seventh entry below). The named totality risk proved out on
+contact, and a second problem surfaced beyond it: `collect_external_references` genuinely needs every
+`CommonsItem` variant, including the three `IrItem` cannot represent, so no enumerator — total or not
+— is the right shape for it; `write_header`'s own remaining matches turned out to need either an
+already-landed `Callee`/`IrHandlerKind` read (no work left) or a genuine declaration-content read
+(`agent_needs_rehydrate`, `agent_has_held_storage`, `invariants`/`transitions` presence) that a single
+enumerator wouldn't supply either, without the expense and risk of a full `CheckedProgram`-gated
+`IrItem::Agent` assembly this track has elsewhere deliberately avoided (P6.23's own precedent: "avoiding
+a full body-lowering pass... just to discard it"). **P6.37** — `emitter/lower.rs`'s `BodyMode` fields
 (`test_service_handlers`, `system_http_route_body`, the two `HttpMethod::from_ident` sites) go
 `TyId`/IR-native, mirrored in `emitter.rs`. **P6.38** — the AST-free `TypedCommons` test constructor
 P6.33 chose, clearing `emitter/lower.rs`'s last `#[cfg(test)]` residue.
@@ -1712,6 +1716,44 @@ alongside its own larger, genuinely open declaration-read surface (Phase E/F's r
 finding does not change `emit.rs`'s eventual floor either way. `ast_importers` unaffected (**7 → 7**,
 no code change). Full reasoning: `design/pending/p6-34-actor-seam-investigation.md`'s own ADR.
 
+**Forty-seventh: P6.36 — scoping correction, not implementable as this row described, per the P6.20
+precedent** (`db73f789`, "not implementable as the plan described"). This row proposed one
+`lower_unit_items_ir` enumerator serving both `collect_external_references` and `write_header`,
+already flagging the totality risk as its own open question. Traced directly against both functions:
+
+**`collect_external_references` cannot use any `IrItem` enumerator, total or partial.** It walks every
+`CommonsItem` variant *by design* — a reference-collection pass that exists to decide what a file's
+own header needs to import, so missing a variant is a real correctness bug (a silently missing
+import), not a style gap. Three of its nine match arms are variants `IrItem` has no equivalent for at
+all (`Actor`, `Messages`, and — via `EventDecl::as_type_decl()` — `Event`, which the row's own text
+already named). A "partial" enumerator covering only `IrItem`'s six variants would need this function
+to *also* keep its own direct `CommonsItem::{Actor,Messages,Event}` arms alongside it — two dispatches
+doing the same job side by side, not the one-enumerator simplification this row envisioned. Not
+pursued; the function's own per-variant `CommonsItem` match stays.
+
+**`write_header`'s own remaining `CommonsItem` matches turned out to need no single replacement
+either — most are already at their real floor, not converted-around.** Re-examined match by match:
+`has_agent` and `hosts_ws_open`'s own outer `CommonsItem::Service`/`Agent` arms are bare kind
+classification with no declaration content read — Q7-adjacent, the same "outer match decides which
+handler/body-rendering path, not itself a re-derivable decision" shape this track has left alone
+elsewhere (§3.7). `has_agent_uses_emit`'s own inner check already reads `commons.callees`
+(`block_uses_emit`) and `hosts_ws_open`'s own inner check already reads `lower_handler_kind_ir` — both
+already `Callee`/IR-driven; only the outer classification is raw AST, for the reason above. What
+*does* read genuine declaration content — `has_agent_invariants`'s `!a.invariants.is_empty() ||
+!a.transitions.is_empty()`, `has_rehydration_gate`'s `agent_needs_rehydrate(a, ...)`, and the held-
+storage check's `agent_has_held_storage(a)` — would need either a new, narrowly-scoped commons-only
+helper per check (real, buildable, but three separate small decisions, not one enumerator) or the full
+`CheckedProgram`-gated `lower_agent_item_ir` (both `write_header`'s own two call sites, `emit`/
+`emit_project`, do hold a real `&CheckedProgram`, so this is not P6.20's own compose-time blocker) —
+but the latter would lower a whole agent's state/handlers/invariants/transitions, including full body
+lowering per handler, just to answer three boolean presence questions, the identical "expensive pass
+run just to discard almost all of it" shape P6.23's own precedent (`EventSubscriberShape`) deliberately
+guarded against with a cheap pre-filter. Neither shape is what this row proposed; neither was pursued
+here. Named as unscoped future work (§7), not silently converted or silently left looking finished.
+
+`ast_importers` unaffected (**7 → 7**, no code change). Full reasoning:
+`design/pending/p6-36-item-enumerator-scoping-correction.md`'s own ADR.
+
 ## 7. Out of scope — forward references, not refusals
 
 | Item | Phase | Entry condition |
@@ -1723,6 +1765,7 @@ no code change). Full reasoning: `design/pending/p6-34-actor-seam-investigation.
 | Part 14's E7 (durable capability-provider transactional participation) | *unopened — no trigger yet* | a real durable `Idempotency` (or equivalent) provider proposal appearing, not the worked exercise alone (§3.6, Q6) |
 | Incrementality — query granularity, `UnitSignature`, the firewall | 8 | phases 0, 3 and 4 complete (already true; phase 8 itself waits on phase 7 per the trajectory's stated order) |
 | A cross-unit `CheckedProgram` persistence layer, the real prerequisite for a full `IrItem::Agent`/`Provider` enumerator in `project.rs`'s own compose-time wiring (`plan_agent_given_deps`/`instantiate_provider_expr`, formerly "P6.20" in a completion-plan draft) | *unopened — no trigger yet* | a real need for cross-unit post-check state at compose time beyond the syntactic `CapRef`/`given`-clause reads `lower_handler_given_ir`/`lower_provider_given_ir` already cover — see the slice-history correction above for why this is a different-natured architectural change, not a routine conversion |
+| Three narrowly-scoped `TypedCommons`-only helpers for `write_header`'s own remaining declaration-content checks (`agent_needs_rehydrate`, `agent_has_held_storage`, invariant/transition presence) — formerly bundled into "P6.36" | 6, unproposed | a slice proposal argues each is worth its own small helper (the `lower_op_sig_ir_from_commons`/`capability_op_sig_from_commons` shape) rather than accepting the raw AST reads as permanently cheap and low-risk (they carry no shadowing hazard, unlike the `Callee`-class defects P6.21 closed) — see the slice-history correction above (Forty-seventh) |
 
 ---
 
