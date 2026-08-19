@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "P6.29: cap_op_param_names (emitter/lower.rs) reads a new capability_op_sig_from_commons helper in ir/lower.rs instead of walking CommonsItem::Capability/c.ops by hand -- the walk itself is unchanged (nothing IR-native replaces \"find the op named op on the capability named cap\" as a lookup), just relocated to an excluded file. Both current behaviours preserved exactly: first match in item order, empty result (not a panic) when the capability or op is not found. ast_importers unaffected (8) -- emitter/lower.rs has other, still-open AST names remaining."
----
+# 0354 — `cap_op_param_names` reads `ir::lower::capability_op_sig_from_commons` instead of walking `CommonsItem::Capability` by hand
 
-## ADR: cap-op-param-names-ir
-
-title: `cap_op_param_names` reads `ir::lower::capability_op_sig_from_commons` instead of walking `CommonsItem::Capability` by hand
+- **Status:** Accepted (v0.249.6)
 
 summary: Phase C of the #1137 completion plan (`design/tracks/the-ir.md` §6a, P6.29) — a declaration-read conversion, evidence for the §6a.D re-settling rather than a file clear
 
