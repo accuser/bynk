@@ -2124,6 +2124,28 @@ unit tests exercise it directly), but production-unreached, the same accurate st
 corpus, `cargo test --workspace`, `cargo clippy --workspace --all-targets` all pass unchanged. Full
 reasoning: `design/pending/p6-55-provider-op-dedup.md`.
 
+**Sixty-seventh: P6.56 — `called_consumed_services` reads `Callee::Cross`; six other proposed
+`emitter.rs` sites investigated and declined.** This plan row named seven sites; tracing each against
+the tree found one genuinely convertible. `called_consumed_services` reconstructed cross-context-ness
+syntactically (`flatten_emit_ident_chain` + `CrossContextInfo::resolve_prefix`) when the checker's own
+`Callee::Cross { unit, service }` already performed the identical resolution once, at check time —
+the same shadowing-hazard class `block_uses_emit` closed for `Events.emit`, and the conversion
+`project::called_cross_context_services` already made (this function calls itself "a copy" of that
+one). The highest-value item in this phase — a live correctness defect, not a tidy. Six others
+declined, each recorded in-place: `collect_json_codec_roots` (`Json.encode`/`decode` resolves as a
+no-declaration-needed built-in static, never through `Callee` classification — no IR-native value
+exists to read); `refined_or_opaque_base`/`emit_context_rebrands`/`is_refined_is_check` (`TypeShape::
+Refined`'s own `base` field is still raw AST `BaseType` per P6.41's own ruling — zero reduction in
+AST-type surface for a new `CheckedProgram` dependency); `sum_owner_of_variant`/`positional_field_name`
+(both need only a variant's own name, answerable by a zero-cost string comparison today — routing
+through `TypeShape::Sum` would resolve every payload field's own `TyId` for every variant just to
+answer that, plus a new panic path neither site has); `ts_binop` (net-zero, as this row's own text
+already flagged — its sole caller holds an AST `BinOp` regardless). `ast_importers`: **unaffected
+(5)**. Zero-diff bless over the full e2e corpus, with `1203_cross_context_call_shadowed_by_local`
+(the fixture pinning this exact shadowing-hazard class) checked individually, `cargo test
+--workspace`, `cargo clippy --workspace --all-targets` all pass unchanged. Full reasoning:
+`design/pending/p6-56-emitter-declaration-reads.md`.
+
 | Item | Phase | Entry condition |
 |---|---|---|
 | `Question`'s own three-way desugar fork — what `IrExprKind` an `expr?` lowers to | 6, unproposed | a slice proposal for P6.3's desugaring table (§6) reaches `Question` specifically; #1225 (§6, fourteenth slice) settled the *construction*-side identity question this depends on but explicitly does not settle this one |
