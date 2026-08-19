@@ -1034,6 +1034,15 @@ pub(crate) fn ty_to_type_ref(t: TyId, tys: &Arc<Types>) -> Option<TypeRef> {
 
 /// v0.22b: collect the `Json.encode`/`Json.decode[T]` target type-refs in
 /// this file's bodies — the roots of the module-local codec-helper closure.
+///
+/// P6.56 (design/tracks/the-ir.md §6b): the `receiver`/`method`-name match
+/// below (`is this a Json.encode/decode call`) was investigated for a
+/// `Callee`-based conversion and declined — `resolver.rs` resolves
+/// `Json.encode`/`decode` as a no-declaration-needed built-in static
+/// (alongside `List.empty`/`Map.empty`/`Duration.millis`/…), never through
+/// the `Callee`-classification machinery `Callee::Kernel`/`::Intrinsic`
+/// populate; `commons.callees` carries no entry for this call site at all.
+/// There is no IR-native value to read here.
 fn collect_json_codec_roots(commons: &TypedCommons) -> Vec<TypeRef> {
     let tys = commons.tys();
     let mut roots: Vec<TypeRef> = Vec::new();
@@ -1567,6 +1576,16 @@ fn emit_consumed_context_helpers(
 /// over the emitter's AST view (`commons`) — the caller-side codec set follows
 /// the *called* subset, not the callee's full provided surface, so it stays in
 /// step with what the contract manifest records under `expects`.
+///
+/// P6.56 (design/tracks/the-ir.md §6b): reads the checker's own
+/// already-resolved `Callee::Cross { unit, service }` for each visited call
+/// site instead of reconstructing cross-context-ness syntactically
+/// (`flatten_emit_ident_chain` on a `MethodCall` receiver, then
+/// `info.resolve_prefix`) — the identical resolution `CrossContextInfo::
+/// resolve_prefix` already performed once, at check time, per call site
+/// (`project::called_cross_context_services`'s own #1187 conversion, the
+/// direct precedent this mirrors). Same shadowing-hazard class `block_uses_emit`
+/// closed for `Events.emit`.
 fn called_consumed_services(
     commons: &TypedCommons,
     info: &bynk_check::resolver::CrossContextInfo,
@@ -1576,13 +1595,10 @@ fn called_consumed_services(
         return out;
     }
     let mut visit = |e: &Expr| {
-        if let ExprKind::MethodCall {
-            receiver, method, ..
-        } = &e.kind
-            && let Some(chain) = flatten_emit_ident_chain(receiver)
-            && let Some(target) = info.resolve_prefix(&chain)
+        if let Some(bynk_check::checker::Callee::Cross { unit, service }) =
+            commons.callees.get(&e.id)
         {
-            out.entry(target).or_default().insert(method.name.clone());
+            out.entry(unit.clone()).or_default().insert(service.clone());
         }
     };
     for item in &commons.commons.items {
@@ -1711,6 +1727,14 @@ fn emit_context_rebrands(
 
 /// If a type declaration is a refined or opaque base type, return its base
 /// (both lower to a branded base with a `.of` / `.unsafe` constructor object).
+///
+/// P6.56 (design/tracks/the-ir.md §6b): investigated routing this through
+/// `TypeShape::Refined` and declined — that variant's own `base` field is
+/// `bynk_syntax::ast::BaseType` (P6.41 ruled it stays, phase 7 — the bounds
+/// keep source lexemes for byte-stable emission), so this function's own
+/// `Option<BaseType>` return type is identical either way. Converting would
+/// add a `CheckedProgram`/`TypedCommons` dependency this function doesn't
+/// have today for zero reduction in AST-type surface.
 fn refined_or_opaque_base(decl: &TypeDecl) -> Option<BaseType> {
     match &decl.body {
         TypeBody::Refined { base, .. } | TypeBody::Opaque { base, .. } => Some(*base),
@@ -2164,6 +2188,16 @@ fn collect_refs_in_expr(
 /// the checker's expression type), return the owning sum's name — the same
 /// test the lowering uses to qualify it as `Type.Variant` (see the
 /// `ExprKind::Ident` arm of `lower_expr_into`).
+///
+/// P6.56 (design/tracks/the-ir.md §6b): investigated routing variant
+/// membership through a `TypedCommons`-only `TypeShape::Sum` lowering and
+/// declined, not built — `lower_type_item_ir`'s own `TypeBody::Sum` arm
+/// resolves every payload field's own `TyId` for every variant (an
+/// `.unwrap_or_else(|| panic!(..))` on any resolution miss), just to answer
+/// a name-membership question this call site can settle with a zero-cost,
+/// infallible string comparison today. `positional_field_name` below has
+/// the identical shape and the identical verdict, for the identical
+/// reason.
 fn sum_owner_of_variant(name: &str, id: ExprId, commons: &TypedCommons) -> Option<String> {
     if let Some(Ty::Named {
         kind: NamedKind::Sum,
@@ -3872,6 +3906,12 @@ impl<'a> LowerCtx<'a> {
     /// v0.13: true when `value is Name` is a *refinement* check — the value is a
     /// base/refined value and `Name` is a refined type — rather than a sum
     /// variant test. Mirrors the checker's disambiguation.
+    ///
+    /// P6.56 (design/tracks/the-ir.md §6b): `name_refined` reads only
+    /// `TypeBody`'s own discriminant, never `base`/`refinement` — the two
+    /// fields `TypeShape::Refined` would add real construction cost for
+    /// (`refined_or_opaque_base`'s own doc comment has the full reasoning).
+    /// Investigated and declined on the identical grounds.
     fn is_refined_is_check(&self, value: &Expr, name: &str) -> bool {
         let value_baseish = matches!(
             self.commons().expr_ty(value.id).as_deref(),
@@ -3910,6 +3950,10 @@ impl<'a> LowerCtx<'a> {
     /// Resolve the payload field name for the i-th positional binding of
     /// a variant. Built-ins are recognised by name; user variants are
     /// looked up via the type tables.
+    ///
+    /// P6.56 (design/tracks/the-ir.md §6b): see `sum_owner_of_variant`'s own
+    /// doc comment (`emitter.rs`) — a `TypeShape::Sum`-routed conversion was
+    /// investigated and declined here on the identical grounds.
     fn positional_field_name(
         &self,
         discriminant_ty: Option<TyId>,
@@ -4243,6 +4287,12 @@ fn ts_ty(t: TyId, tys: &Arc<Types>) -> String {
     }
 }
 
+/// P6.56 (design/tracks/the-ir.md §6b): mirrors `IrBinOp` (`ir.rs`)
+/// field-for-field, but converting this function to take `IrBinOp` was
+/// investigated and declined — its sole caller (`emitter/lower.rs`) holds
+/// an AST `BinOp` from `ExprKind::BinOp` and separately compares `op ==
+/// BinOp::Eq` a few lines away; converting here would only relocate the
+/// AST read into that still-AST-walking caller, net zero.
 fn ts_binop(op: BinOp) -> &'static str {
     match op {
         // `implies` has no single TS operator — `lower_bin_op` rewrites it to
