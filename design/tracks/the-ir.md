@@ -1195,6 +1195,26 @@ and the `Ty`-keyed kernel-method fallthrough (dispatches on checked type already
 carry the same defect) remain the only unconverted parts of `lower_method_call`. Full reasoning:
 `design/pending/p6-21-events-emit-callee-dispatch.md`'s own ADR.
 
+**Thirty-sixth: `lower_method_call`'s held-`Map[K, Connection]` branch closed — the last real
+name-matched-receiver branch in the module besides the `Ty`-keyed kernel fallthrough.** Read
+`Callee::Store`/`Callee::Query` instead of `!cx.is_local(&id.name)` — held-map entry ops
+(`put`/`remove`/`contains`/`size`/`get`) resolve `Callee::Store`, lifted query ops (e.g.
+`parTraverse`) resolve `Callee::Query`, through the same checker `StoreField::Map` dispatch as
+any ordinary storage map (`store_ops.rs`'s own doc comment confirms this — only query
+*accessors*, `.entries`/`.keys`/`.values`, are statically rejected on a held map, a separate rule
+unrelated to `Callee` classification). **A real regression was caught before landing**: the first
+attempt matched `Callee::Store` only, and zero-diff bless caught a real diff in
+`238_websocket_inbound_workers` — `conns.parTraverse(...)` (a `Callee::Query` op) fell through
+the too-narrow guard onto a later generic fallthrough, producing a redundant double-wrapped IIFE
+(semantically equivalent, but a real diff). Fixed by matching both `Callee` variants, mirroring
+the ordinary Map branch's own guard immediately below it. Re-verified by a full zero-diff bless
+against the entire e2e corpus, including every held-map fixture (`235_held_connection`,
+`238_websocket_inbound_workers`, `340_ws_broadcast_try`, `338_ws_broadcast_collect_all`).
+`ast_importers` unaffected. `lower_method_call`'s `Ty`-keyed kernel-method fallthrough is now the
+only unconverted receiver-detection path left in the module — it dispatches on the receiver's own
+checked type already, not a name match, and is not suspected to carry the same defect. Full
+reasoning: `design/pending/p6-21-held-map-callee-dispatch.md`'s own ADR.
+
 ## 7. Out of scope — forward references, not refusals
 
 | Item | Phase | Entry condition |

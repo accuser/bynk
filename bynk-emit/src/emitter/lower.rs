@@ -1452,8 +1452,23 @@ fn lower_method_call(
     // `remove` resolves-closes-deletes (the §2.9 "removes-and-closes" contract). The
     // record mutation is staged in `__state` and flushed by the same end-of-handler
     // commit as any other persisted field.
+    // P6.21 (partial, continued): the receiver test reads the checker's own
+    // `Callee::Store`/`Callee::Query` (P6.0) instead of
+    // `!cx.is_local(&id.name)` — a real instance of R6.5's name-matched-
+    // receiver defect class. A held `store Map[K, Connection]` field's
+    // method calls resolve through the same `StoreField::Map` checker
+    // dispatch as any other storage map — entry ops (`put`/`remove`/
+    // `contains`/`size`/`get`) as `Callee::Store`, lifted query ops (e.g.
+    // `parTraverse`) as `Callee::Query` — so both variants are matched here,
+    // mirroring the ordinary (non-held) Map branch's own guard just below.
+    // `agent_held_map_frame` stays: it answers which *kind* of store field
+    // this is (held vs ordinary), not the shadowing question `Callee`
+    // already settles.
     if let ExprKind::Ident(id) = &receiver.kind
-        && !cx.is_local(&id.name)
+        && matches!(
+            cx.commons().callee(e.id),
+            Some(Callee::Store { .. } | Callee::Query { .. })
+        )
         && let Some(f_ts) = cx.agent_held_map_frame(&id.name).cloned()
     {
         let var = cx.agent_store_var().to_string();
