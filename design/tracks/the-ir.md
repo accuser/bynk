@@ -1425,10 +1425,11 @@ already-landed `Callee`/`IrHandlerKind` read (no work left) or a genuine declara
 (`agent_needs_rehydrate`, `agent_has_held_storage`, `invariants`/`transitions` presence) that a single
 enumerator wouldn't supply either, without the expense and risk of a full `CheckedProgram`-gated
 `IrItem::Agent` assembly this track has elsewhere deliberately avoided (P6.23's own precedent: "avoiding
-a full body-lowering pass... just to discard it"). **P6.37** — `emitter/lower.rs`'s `BodyMode` fields
-(`test_service_handlers`, `system_http_route_body`, the two `HttpMethod::from_ident` sites) go
-`TyId`/IR-native, mirrored in `emitter.rs`. **P6.38** — the AST-free `TypedCommons` test constructor
-P6.33 chose, clearing `emitter/lower.rs`'s last `#[cfg(test)]` residue.
+a full body-lowering pass... just to discard it"). **P6.37 — landed, narrower than estimated.**
+`test_service_handlers` converted to `IrHandlerKind`; `system_http_route_body` and the two
+`HttpMethod::from_ident` sites investigated and left as raw AST — see this section's own Forty-eighth
+entry above. `ast_importers`: **7 → 7**, unaffected. **P6.38** — the AST-free `TypedCommons` test
+constructor P6.33 chose, clearing `emitter/lower.rs`'s last `#[cfg(test)]` residue.
 
 **Phase F — IR-side residue (R6.13, invisible to the probe by construction — §5's own "known gap"
 paragraph).** Per P6.24a's own framing, pair each converted field with its reader cutover; do not land
@@ -1753,6 +1754,25 @@ here. Named as unscoped future work (§7), not silently converted or silently le
 
 `ast_importers` unaffected (**7 → 7**, no code change). Full reasoning:
 `design/pending/p6-36-item-enumerator-scoping-correction.md`'s own ADR.
+
+**Forty-eighth: P6.37 — `BodyMode::TestCase::test_service_handlers` carries `IrHandlerKind`; the
+row's other two sites investigated and left as raw AST, per §6a's own Phase E.**
+`test_service_handlers` converted cleanly: its only use (recovering a cron/queue handler's own
+position index among same-kind handlers) only ever matches `Cron { expr: String }`/`Message`, both of
+which `IrHandlerKind` mirrors exactly — the field, its accessor, `emitter.rs`'s own `BodyMode`
+definition, and `project/tests_emit.rs`'s `target_service_handler_kinds` builder (excluded file, no
+probe cost either way) all converted. `system_http_route_body`'s own `TypeRef` field has no `TyId` to
+convert to — its construction site (`emit_system_http_support`) walks a pre-check `UnitTable` with no
+`TypedCommons`/`tys` resolution context in scope, the same "no resolution context at this pipeline
+stage" shape P6.20/P6.34 both found — and its sole consumer, `serialise_expr_via`, is P6.33's own
+ruled-phase-7 codec renderer; nothing on either end to convert to or from. The two
+`HttpMethod::from_ident` sites feed `http_handler_method_name`, a Q7-deferred rendering-key utility
+taking `HttpMethod` by value — the identical downstream-Q7-consumer shape P6.30's `Http` arm and
+P6.31's route tables already established and left alone. `ast_importers`: **7 → 7**, unaffected —
+`emitter/lower.rs` retains other, still-open AST surface (these two, Q7 params, and the `#[cfg(test)]`
+residue P6.38 targets next). Verified by a full zero-diff bless against the entire e2e corpus and a
+full `cargo test --workspace`. Full reasoning:
+`design/pending/p6-37-body-mode-handler-kind-ir.md`'s own ADR.
 
 ## 7. Out of scope — forward references, not refusals
 

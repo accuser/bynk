@@ -3075,8 +3075,10 @@ pub(crate) enum BodyMode {
         /// cron (`svc.schedule("…")`) or queue (`svc.message(m)`) address can
         /// recover the position index the emitted key encodes (`cron_<svc>_<i>` /
         /// `queue_…`). http keys are a pure function of verb + path and need no
-        /// lookup here.
-        test_service_handlers: HashMap<String, Vec<bynk_syntax::ast::HandlerKind>>,
+        /// lookup here. P6.37 (design/tracks/the-ir.md §6a): `IrHandlerKind`
+        /// (P6.24a's own pure, unconditional mirror), not the raw AST
+        /// `HandlerKind` this field used to store.
+        test_service_handlers: HashMap<String, Vec<crate::ir::IrHandlerKind>>,
     },
     /// An integration test `case` body (`lower_integration_case_body`).
     IntegrationCase {
@@ -3550,10 +3552,7 @@ impl<'a> LowerCtx<'a> {
     }
 
     /// v0.182 (#664): the ordered handler kinds of the test service `name`.
-    pub(crate) fn test_service_handlers(
-        &self,
-        name: &str,
-    ) -> Option<&[bynk_syntax::ast::HandlerKind]> {
+    pub(crate) fn test_service_handlers(&self, name: &str) -> Option<&[crate::ir::IrHandlerKind]> {
         match &self.mode {
             BodyMode::TestCase {
                 test_service_handlers,
