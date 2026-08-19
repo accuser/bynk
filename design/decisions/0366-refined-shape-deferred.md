@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "P6.41: TypeShape::Refined::{base, refinement} investigated and ruled phase 7, not built. Both fields flow directly into emitter/emit.rs's emit_refined_type/emit_refined_checks, which generate TS validation source text (export type/export const, predicate checks) -- the identical \"how do I render this type as TS\" class of question P6.33 already ruled the JSON/wire codec renderer belongs to phase 7's eventual printer, not phase 6's IR construction. Building an IrRefinement/IrBaseType mirror now would mean building printer infrastructure for a consumer this track's own §2 scope already excludes, and per the plan's own finding the bounds (IntBound/FloatBound) deliberately keep source lexemes for byte-stable emission, so the mirror would be a near-copy rather than a clean IR abstraction -- weaker grounds for building it than the four fields P6.39 already deleted, which had a real redundant-metadata case for removal. No code changes. ast_importers unaffected -- invisible to the probe by construction."
----
+# 0366 — `TypeShape::Refined::{base, refinement}` ruled phase 7, not built — closes Phase F and this completion plan's own remaining rows
 
-## ADR: refined-shape-deferred
-
-title: `TypeShape::Refined::{base, refinement}` ruled phase 7, not built — closes Phase F and this completion plan's own remaining rows
+- **Status:** Accepted (v0.249.18)
 
 summary: Phase F of the #1137 completion plan (`design/tracks/the-ir.md` §6a, P6.41) — the row the plan itself flagged as a phase-7 candidate; investigation confirms it
 
