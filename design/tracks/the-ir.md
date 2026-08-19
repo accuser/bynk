@@ -1442,9 +1442,10 @@ mirrors speculatively. **P6.39 — landed, four of six.** `GlobalRef::sum`, `IrE
 `IrItem::Type::def`, `IrItem::Fn::def` deleted (`IrItem::Fn` survives as a dormant constructor, minus
 `def`). `IrExprKind::RefinedCheck::{base, refinement}`/`IrPat::Refined::refinement` investigated and
 left as-is — load-bearing semantic payload for a dormant node, not redundant metadata; see this
-section's own Fiftieth entry above. **P6.40** — `ProtocolIr::Events::schema_dispatch` gets an IR-native
-mirror of the one-variant `SchemaVersionPattern::Literal(i64)`, cutting over its one real reader
-(`emit.rs:1509`), pinned by `1232_events_envelope_schema_dispatch_bare`. **P6.41** —
+section's own Fiftieth entry above. **P6.40 — landed.** `ProtocolIr::Events::schema_dispatch` flattens
+to `Option<i64>` directly (no mirror enum needed for a one-variant wrapper), cutting over its one real
+reader — see this section's own Fifty-first entry above. `ast_importers`: **7 → 7**, unaffected.
+**P6.41** —
 `TypeShape::Refined::{base, refinement}`, the largest IR-side item: needs mirrors of `BaseType`,
 `Refinement`/`RefinementPred`/`PredKind`, and `IntBound`/`FloatBound` specifically keep source lexemes
 for byte-stable emission, so the mirror is a near-copy rather than a clean abstraction — open with an
@@ -1825,6 +1826,22 @@ without checking which category a field falls into will get this wrong; left as-
 `ast_importers` unaffected — invisible to the probe by construction (`ir.rs`/`ir/lower.rs` excluded).
 Verified by the full `ir::lower` unit suite (134/134) and a full zero-diff bless against the entire
 e2e corpus. Full reasoning: `design/pending/p6-39-ir-zero-reader-fields.md`'s own ADR.
+
+**Fifty-first: P6.40 — `ProtocolIr::Events::schema_dispatch` flattens to `Option<i64>`, cutting over
+its one real reader, per §6a's own Phase F.** `SchemaVersionPattern` has exactly one variant,
+`Literal(i64)` — the field's own `[DECISION B]` doc comment already deferred converting it until a
+real consumer needed to match on it without spelling `bynk_syntax::ast`; `emitter/emit.rs`'s `via
+schema(N)` guard prologue is that consumer, confirmed live (it already destructured
+`SchemaVersionPattern::Literal(version)` to interpolate `version` into the generated TS guard).
+Flattened directly to `Option<i64>` rather than introducing a one-variant IR-native mirror enum purely
+to re-wrap a single integer — `ir/lower.rs`'s construction site destructures the AST enum once, at the
+`Ast → Ir` boundary (an excluded file, exactly its job), and `emit.rs`'s consumer now binds the `i64`
+directly, dropping its own destructuring line entirely. Removed `SchemaVersionPattern` from both
+`emit.rs`'s and `ir.rs`'s own explicit AST import lists as a direct consequence. `ast_importers`:
+**7 → 7**, unaffected — `emit.rs` retains its own much larger remaining surface. Verified by a full
+zero-diff bless against the entire e2e corpus, including `1232_events_envelope_schema_dispatch_bare`
+— the fixture that specifically pins this exact guard — and a full `cargo test --workspace`. Full
+reasoning: `design/pending/p6-40-schema-dispatch-ir-native.md`'s own ADR.
 
 ## 7. Out of scope — forward references, not refusals
 

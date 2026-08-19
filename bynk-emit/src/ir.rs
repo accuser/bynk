@@ -158,7 +158,7 @@
 //! [`IrItem`]'s own doc comment).
 
 use bynk_check::checker::{Callee, TyId};
-use bynk_syntax::ast::{BaseType, Refinement, SchemaVersionPattern};
+use bynk_syntax::ast::{BaseType, Refinement};
 use bynk_syntax::span::Span;
 
 pub(crate) mod lower;
@@ -1128,19 +1128,17 @@ pub(crate) enum ProtocolIr {
     Events {
         event: TyId,
         pattern: Option<EventPatternIr>,
-        /// [DECISION B]: `SchemaVersionPattern` reused verbatim from
-        /// `bynk_syntax::ast` rather than flattened to `Option<i64>` — an
-        /// ordinary `Clone` enum with no arena identity, the same "reused,
-        /// not adapted" treatment `IrHandler::kind` originally got (P6.24a
-        /// converted that one field to a real IR-native mirror,
-        /// [`IrHandlerKind`], once a real consumer needed to match on it
-        /// without spelling `bynk_syntax::ast` — this field has no such
-        /// consumer yet), and its own doc comment states that a future
-        /// range pattern (`via schema(2..)`) is additive to this exact
-        /// enum, not a breaking rename of whoever already matches on it.
-        /// The `SchemaDispatch` wrapper itself is dropped — it carries only
-        /// this `pattern` plus a parse-only `span`.
-        schema_dispatch: Option<SchemaVersionPattern>,
+        /// P6.40 (design/tracks/the-ir.md §6a): flattened to `Option<i64>` —
+        /// `SchemaVersionPattern` has exactly one variant (`Literal(i64)`),
+        /// so once a real consumer needed to match on it
+        /// (`emitter/emit.rs`'s `via schema(N)` guard prologue), mirroring
+        /// the single-payload `i64` directly was simpler than introducing a
+        /// one-variant IR-native enum purely to re-wrap it. A future range
+        /// pattern (`via schema(2..)`) widens this field's own shape when it
+        /// lands, not before. The `SchemaDispatch` wrapper itself stays
+        /// dropped — it carried only this `pattern` plus a parse-only
+        /// `span`.
+        schema_dispatch: Option<i64>,
     },
 }
 

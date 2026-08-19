@@ -16,8 +16,8 @@ use bynk_check::checker::{TypedCommons, Types};
 use bynk_syntax::ast::{
     ActorDecl, AgentDecl, BaseType, CapRef, CapabilityDecl, CommonsItem, Expr, ExprKind, FnDecl,
     FnName, Handler, HandlerKind, HttpMethod, Ident, MessageEntry, MessagesDecl, Param, PredKind,
-    ProviderDecl, RecordField, Refinement, SchemaVersionPattern, ServiceDecl, ServiceProtocol,
-    StoreField, TypeBody, TypeDecl, TypeParam, TypeRef,
+    ProviderDecl, RecordField, Refinement, ServiceDecl, ServiceProtocol, StoreField, TypeBody,
+    TypeDecl, TypeParam, TypeRef,
 };
 
 use crate::ir::lower::{HandlerSignatureIr, body_writes_state, lower_actor_seam_ir};
@@ -1512,12 +1512,11 @@ pub(crate) fn emit_service(
         // envelope binder is either the user's own declared `env` name or
         // the synthetic one inserted above.
         if let ProtocolIr::Events {
-            schema_dispatch: Some(dispatch),
+            schema_dispatch: Some(version),
             ..
         } = protocol
             && let Some(env_binder) = &schema_dispatch_env_binder
         {
-            let SchemaVersionPattern::Literal(version) = dispatch;
             let prologue = format!(
                 "{}if (!({env_binder}.schemaVersion === {version})) return undefined;\n",
                 " ".repeat(INDENT_STEP * 2)

@@ -1439,7 +1439,10 @@ pub(crate) fn lower_protocol_ir_from_commons(
                 .resolve_type_ref(event_type)
                 .unwrap_or_else(|| cx.unit_ty()),
             pattern: pattern.as_ref().map(lower_event_pattern_ir),
-            schema_dispatch: schema_dispatch.as_ref().map(|d| d.pattern.clone()),
+            schema_dispatch: schema_dispatch.as_ref().map(|d| {
+                let bynk_syntax::ast::SchemaVersionPattern::Literal(version) = d.pattern;
+                version
+            }),
         },
     }
 }
