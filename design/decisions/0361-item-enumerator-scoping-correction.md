@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "P6.36 scoping correction: not implementable as the completion plan described, per the P6.20 precedent. The plan proposed one lower_unit_items_ir enumerator serving both collect_external_references and write_header. collect_external_references genuinely needs every CommonsItem variant for correctness (a missed variant is a silently missing runtime import), and three of its nine match arms are variants IrItem has no equivalent for at all (Actor, Messages, and Event via as_type_decl()) -- no enumerator, total or partial, is the right shape for it. write_header's own remaining CommonsItem matches turned out to need no single replacement either: most are already at their real floor (bare outer kind classification, or already reading commons.callees/IrHandlerKind for the actual decision), and the few that read genuine declaration content would need either three separate small commons-only helpers or the full CheckedProgram-gated lower_agent_item_ir -- the latter being the exact \"expensive pass run just to discard almost all of it\" shape this track already guarded against elsewhere (P6.23's own precedent). Neither shape is what the plan proposed; neither was pursued. Named as unscoped future work. ast_importers unaffected (7)."
----
+# 0361 — P6.36's own `lower_unit_items_ir` enumerator is not the right shape for either of its two intended consumers
 
-## ADR: item-enumerator-scoping-correction
-
-title: P6.36's own `lower_unit_items_ir` enumerator is not the right shape for either of its two intended consumers
+- **Status:** Accepted (v0.249.13)
 
 summary: Phase E of the #1137 completion plan (`design/tracks/the-ir.md` §6a) — a scoping correction, per the P6.20 precedent, for the row the plan itself flagged as its own highest re-scope risk
 
