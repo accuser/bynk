@@ -2635,10 +2635,22 @@ pub(crate) fn emit_agent(
     // Handler bodies lower as bare reads / `:=` over `__state`, with an implicit
     // commit at handler end.
     let is_store_agent = true;
+    // P6.53 (design/tracks/the-ir.md §6b): membership reads `state`'s own
+    // typed `StoreKindIr::Cell` instead of a string comparison against
+    // `f.kind.head.name` — a user type genuinely named `Cell` (with a
+    // different arity or an unrelated shape) cannot silently pass this
+    // check when the field's own already-checked kind says otherwise. The
+    // field's own `TypeRef`/`init` stay AST-typed (rendering parameters
+    // outside this slice's scope).
     let effective_fields: Vec<RecordField> = a
         .store_fields
         .iter()
-        .filter(|f| f.kind.head.name == "Cell" && f.kind.args.len() == 1)
+        .filter(|f| {
+            matches!(
+                store_field_ty.get(f.name.name.as_str()),
+                Some(StoreKindIr::Cell(_))
+            )
+        })
         .map(|f| RecordField {
             name: f.name.clone(),
             type_ref: f.kind.args[0].clone(),
@@ -2715,10 +2727,17 @@ pub(crate) fn emit_agent(
             (n.name.clone(), ts)
         })
         .collect();
+    // P6.53 (design/tracks/the-ir.md §6b): typed membership, same reasoning
+    // as `effective_fields` above.
     let store_map_fields: Vec<(&Ident, &TypeRef)> = if is_store_agent {
         a.store_fields
             .iter()
-            .filter(|f| f.kind.head.name == "Map" && f.kind.args.len() == 2)
+            .filter(|f| {
+                matches!(
+                    store_field_ty.get(f.name.name.as_str()),
+                    Some(StoreKindIr::Map(..))
+                )
+            })
             .filter(|f| !held_map_names.contains(&f.name.name))
             .map(|f| (&f.name, &f.kind.args[1]))
             .collect()
@@ -2760,10 +2779,17 @@ pub(crate) fn emit_agent(
     // rehydration check below, which still validates against a raw `TypeRef`
     // (`serialisation.rs`'s own `TypeRef`-driven boundary, out of this
     // slice's scope).
+    // P6.53 (design/tracks/the-ir.md §6b): typed membership, same reasoning
+    // as `effective_fields` above.
     let store_set_fields: Vec<(&Ident, &TypeRef)> = if is_store_agent {
         a.store_fields
             .iter()
-            .filter(|f| f.kind.head.name == "Set" && f.kind.args.len() == 1)
+            .filter(|f| {
+                matches!(
+                    store_field_ty.get(f.name.name.as_str()),
+                    Some(StoreKindIr::Set(_))
+                )
+            })
             .map(|f| (&f.name, &f.kind.args[0]))
             .collect()
     } else {
@@ -2782,20 +2808,26 @@ pub(crate) fn emit_agent(
     // v0.87 (ADR 0113): `store Cache[K, V] @ttl(d)` fields — a value record plus
     // a per-entry expiry instant. `(name, V, ttl-millis)`; the ttl is the field's
     // `@ttl` Duration literal (validated by the checker).
+    // P6.53 (design/tracks/the-ir.md §6b): `ttl` reads `state`'s own
+    // already-computed `StoreKindIr::Cache(_, _, ttl)` (`store_field_ty`,
+    // built above from `lower_store_field_shape_ir` →
+    // `store_field_kind_and_indexed` → `duration_millis_annotation`)
+    // instead of re-walking `f.annotations`/`ExprKind::DurationLit` a
+    // second time — the two walks could diverge and emit a wrong TTL with
+    // nothing to catch it. `?` on a miss preserves the original's own
+    // defensive drop (an internal-consistency signal, not a real-world
+    // case: every `Cache`-kind field in `a.store_fields` has a matching
+    // `StoreKindIr::Cache` entry by construction).
     let store_cache_fields: Vec<(&Ident, &TypeRef, i64)> = if is_store_agent {
         a.store_fields
             .iter()
             .filter(|f| f.kind.head.name == "Cache" && f.kind.args.len() == 2)
             .filter_map(|f| {
-                let ttl = f
-                    .annotations
-                    .iter()
-                    .find(|an| an.name.name == "ttl")
-                    .and_then(|an| match an.args.first().map(|arg| &arg.value.kind) {
-                        Some(ExprKind::DurationLit { millis, .. }) => Some(*millis),
-                        _ => None,
-                    })?;
-                Some((&f.name, &f.kind.args[1], ttl))
+                let StoreKindIr::Cache(_, _, ttl) = store_field_ty.get(f.name.name.as_str())?
+                else {
+                    return None;
+                };
+                Some((&f.name, &f.kind.args[1], *ttl))
             })
             .collect()
     } else {
@@ -2808,17 +2840,22 @@ pub(crate) fn emit_agent(
     // v0.95 (ADR 0121): `store Log[T] [@retain(d)]` fields — an ordered array of
     // `{ t, v }` entries. `(name, T, optional retain-millis)`; the retain (from
     // `@retain`) prunes on append.
+    // P6.53 (design/tracks/the-ir.md §6b): same dedup as `store_cache_fields`
+    // above — `retain` reads `StoreKindIr::Log(_, retain)` instead of
+    // re-walking `f.annotations` a second time. Every `Log`-kind field in
+    // `a.store_fields` has a matching `StoreKindIr::Log` entry by
+    // construction; `.and_then` (not `?`) preserves the original's own
+    // per-field presence (every filtered field stays, `retain` is simply
+    // `None` when the field has no `@retain`).
     let store_log_fields: Vec<(&Ident, &TypeRef, Option<i64>)> = if is_store_agent {
         a.store_fields
             .iter()
             .filter(|f| f.kind.head.name == "Log" && f.kind.args.len() == 1)
             .map(|f| {
-                let retain = f
-                    .annotations
-                    .iter()
-                    .find(|an| an.name.name == "retain")
-                    .and_then(|an| match an.args.first().map(|arg| &arg.value.kind) {
-                        Some(ExprKind::DurationLit { millis, .. }) => Some(*millis),
+                let retain = store_field_ty
+                    .get(f.name.name.as_str())
+                    .and_then(|kind| match kind {
+                        StoreKindIr::Log(_, retain) => *retain,
                         _ => None,
                     });
                 (&f.name, &f.kind.args[0], retain)
