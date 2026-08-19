@@ -1120,6 +1120,27 @@ the same posture `Int`/`Float.parse`'s own earlier conversion took. Verified by 
 against the entire e2e corpus, including the test-body fixtures that caught #1247's own regression.
 Full reasoning: `design/pending/p6-21-http-queue-result-emitter-consumption.md`'s own ADR.
 
+**Thirty-second: `bynk-emit::ir::lower`'s own bare `HttpResult`/`QueueResult` gap closed — P6.23's
+remaining safety blocker shrinks from ~51 panics across 20 services to 5 across 1.** `lower_ident_ir`
+(the dormant IR pass's own bare-ident dispatch, distinct from the string-emitting `emitter/lower.rs`
+the Thirty-first entry just closed) still panicked on a bare nullary `Ack`/`NotFound` reference — the
+bare-value sibling of P6.20-pre's own `IrExprKind::StoreQuery` fix, and the last shape `GlobalRef`'s
+own doc comment named as dropped from Decision C's scope for lack of a sink. Gained an
+`expr_id: Option<ExprId>` parameter (`Some` at its one real call site, `None` at the two shorthand
+record-field sites, which have no real `ExprId` and never reach the new check regardless) to consult
+`Callee::Intrinsic`, wrapping a match into `IrExprKind::Call { callee, args: [] }` — the same shape
+`lower_call_ir` already gives the call-with-args sibling. A pre-existing test's own proof technique
+relied on this exact bug as a signal (proving a queue `on message` handler reaches ordinary body
+lowering, not the WebSocket deferral gate, by asserting the body panicked on this gap specifically) —
+rewritten to assert the real lowered shape directly (`connection.is_none()` plus the `Call` structure)
+now that the gap is closed. Re-running the P6.23 safety probe after this fix (on top of the Thirtieth/
+Thirty-first entries) found the panic count drop from ~51 across 20 distinct services to **5, all
+inside one unit** (`commerce.order`/`markPaid`) — the two remaining root causes (a genuine ADR 0334
+checker/IR-lowering type-disagreement, and a handler-param resolve-miss) are real, narrow bugs, not
+design questions, left for their own follow-up. Verified by the full `ir::` unit suite (131/131) and a
+full zero-diff bless against the entire e2e corpus. Full reasoning:
+`design/pending/p6-23-bare-http-queue-result-ir-lowering.md`'s own ADR.
+
 ## 7. Out of scope — forward references, not refusals
 
 | Item | Phase | Entry condition |
