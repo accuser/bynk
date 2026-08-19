@@ -78,7 +78,6 @@ each track's spine issue; this table is deliberately just the map.
 |---|---|---|---|
 | [`documentation.md`](documentation.md) | [#557](https://github.com/accuser/bynk/issues/557) | Slicing (slice 0 shipped) | Documentation & web presence: the Astro + Starlight migration, a CI snippet-verification harness, playground integration seams |
 | [`idempotency-capability.md`](idempotency-capability.md) | [#921](https://github.com/accuser/bynk/issues/921) | Slicing (slice 0 shipped, #929; call-site key scoping follow-up shipped, #934) | The `Idempotency` capability: mechanical dedup for at-least-once delivery, per design notes §4, §12 |
-| [`the-ir.md`](the-ir.md) | [#1137](https://github.com/accuser/bynk/issues/1137) | Settling | Phase 6 of the compiler trajectory — `bynk-emit` consumes a typed intermediate representation and names no AST type |
 
 (`documentation.md` pre-dates the GitHub-native flow, so its doc was
 committed by an ordinary PR rather than a settling draft PR; the spine issue
@@ -131,15 +130,19 @@ an architectural judgment call worth re-examining. Q3 folded into that same
 finding. All six named slices shipped (P5.0–P5.5), closing R3.5 in full;
 `emit_diagnostics` reads 4/6 (true/naive), true=4 the named floor — see
 `retired-tracks.md`'s closing summary for why naive doesn't also reach 4.
-`the-ir.md` is the eleventh, phase 6 of the same trajectory, entry-gated on
-`semantics-in-the-checker.md`'s own retirement note ("Opens phase 6 (the IR,
-per the trajectory)"). Spine [#1137](https://github.com/accuser/bynk/issues/1137);
-its settling draft PR argues six design questions, including a real finding
-of its own — the reference's own target crate graph (`bynk-greenfield-compiler.md`
-Part 10) names `bynk-ir`/`bynk-lower` crates the trajectory's own phase-6
-prose never mentions building, settled as deliberately deferred to phase 7
-rather than built now (R10.3's own "carve at the moment a dependency
-appears" discipline).
+`the-ir.md` (now retired) was the eleventh, phase 6 of the same trajectory,
+entry-gated on `semantics-in-the-checker.md`'s own retirement note ("Opens
+phase 6 (the IR, per the trajectory)"). Spine
+[#1137](https://github.com/accuser/bynk/issues/1137); its settling draft PR
+argued six design questions, including a real finding of its own — the
+reference's own target crate graph (`bynk-greenfield-compiler.md` Part 10)
+names `bynk-ir`/`bynk-lower` crates the trajectory's own phase-6 prose never
+mentions building, settled as deliberately deferred to phase 7 rather than
+built now (R10.3's own "carve at the moment a dependency appears"
+discipline). Its own gated probe, `ast_importers`, retired at a re-settled
+floor of 5, not the 0 first named — see `retired-tracks.md`'s closing
+summary for the per-file argument and the phase-7 entry-condition amendment
+this forced.
 `agent-capability-encapsulation.md` is a committed Draft that appears in
 neither this table nor `retired-tracks.md`; it predates this row's addition
 and needs a spine issue or a retirement — tracked separately, not by this

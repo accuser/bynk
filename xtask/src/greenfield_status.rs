@@ -1319,7 +1319,8 @@ fn ide_emit_edge(root: &Path) -> Probe {
 /// permanent-carve-out discipline [`NAMED_FS_EXCEPTIONS`] and [`emit_diagnostics`]'s
 /// registry cross-reference already use. An `Ast → Ir` lowering pass importing
 /// `bynk_syntax::ast` is that pass's entire job, not the AST-walking this track is
-/// closing (`the-ir.md` §5's own P6.9 correction, #1167) — but `project.rs` also
+/// closing (phase 6's own P6.9 correction, #1167 — see the retired `the-ir.md`'s
+/// closing summary, `design/archive/retired-tracks.md`) — but `project.rs` also
 /// imports `bynk_syntax::ast` today (`EmitProjectCtx` holding `ActorDecl`/`AgentDecl`
 /// fields directly), and that *is* exactly the still-open R6.13 defect this probe
 /// tracks (P6.6: "closes the emitter reading AST declarations directly"). A
@@ -1332,9 +1333,11 @@ fn ide_emit_edge(root: &Path) -> Probe {
 /// (`Arc<TypeDecl>`, `Arc<FnDecl>`, `HandlerKind`, `Refinement`, `SchemaVersionPattern`)
 /// rather than IR-native equivalents — an emitter reading e.g. `IrHandler::kind`, which
 /// *is* `ast::HandlerKind`, touches the AST without ever spelling `bynk_syntax::ast`
-/// itself, so it is invisible to this probe by construction. `ast_importers` = 0 proves
-/// no *remaining* file outside these two imports the AST module directly; it does not
-/// by itself prove every `IrItem` field is AST-free (`the-ir.md` §5's own added note).
+/// itself, so it is invisible to this probe by construction. `ast_importers` reading
+/// its retired floor (5 — `design/archive/retired-tracks.md`'s own closing summary
+/// has the per-file argument) proves no *remaining* file outside these two and the
+/// five-file rendering subtree imports the AST module directly; it does not by
+/// itself prove every `IrItem` field is AST-free.
 ///
 /// #1187's own closing scoping pass adds one more, on different grounds than the
 /// `ir.rs`/`ir/lower.rs` pair above: `project/tests_emit.rs` was deliberately *not*
@@ -1342,9 +1345,9 @@ fn ide_emit_edge(root: &Path) -> Probe {
 /// `ast_importer_exclusion_is_named_not_prefixed` test below used to assert exactly
 /// that) — #1187's own scoping pass found new evidence changing that: its test/suite
 /// case bodies call `emitter::lower_block_to_async_body`/`lower_test_case_body`/
-/// `lower_integration_case_body` directly (the Q7-settled body-rendering pass,
-/// `the-ir.md` §3.7 — `emitter/lower.rs` keeps hand-writing TypeScript source text
-/// after this track's cutover, the printer that would change that is phase 7's), and
+/// `lower_integration_case_body` directly (the Q7-settled body-rendering pass —
+/// `emitter/lower.rs` keeps hand-writing TypeScript source text after phase 6's
+/// cutover, the printer that would change that is phase 7's), and
 /// its own `driver_param_ty`/`strip_effect_httpresult` read a handler's *declared*
 /// param/return `TypeRef` with no corresponding `TyId` available at that call site
 /// (the same caller-reads-callee's-raw-declared-shape pattern #661 established for
@@ -1358,13 +1361,15 @@ fn ide_emit_edge(root: &Path) -> Probe {
 /// untouched AST-*declaration* reads with no such gate: `emitter.rs`'s own
 /// `CommonsItem::Service`/`svc.protocol` walk (consumed-event-root collection) and
 /// `emitter/lower.rs`'s own `cap_op_param_names` (`CommonsItem::Capability`/`c.ops`)
-/// are exactly the P6.2/P6.6-class conversions this track's own §6 table still lists
-/// as in scope, not body-rendering. Excluding either file would have hidden that real,
-/// fixable surface from this probe the same way a path-prefix rule would — the harm
-/// the named-not-prefixed discipline above exists to prevent, just at file granularity
-/// instead of directory granularity.
+/// were exactly the P6.2/P6.6-class conversions phase 6's own slice decomposition
+/// still listed as in scope at the time, not body-rendering. Excluding either file
+/// would have hidden that real, fixable surface from this probe the same way a
+/// path-prefix rule would — the harm the named-not-prefixed discipline above exists
+/// to prevent, just at file granularity instead of directory granularity. (Both
+/// converted their own reachable surface later, without joining this list — phase 6's
+/// closing summary, `design/archive/retired-tracks.md`, has the account.)
 ///
-/// P6.33 (`the-ir.md` §6a.D re-settling, 19 August 2026): `emitter/serialisation.rs`
+/// P6.33 (phase 6's own §6a.D re-settling, 19 August 2026): `emitter/serialisation.rs`
 /// joins the list, on grounds distinct from every entry above — not Q7 body-rendering,
 /// not test-only reach, but a phase boundary. Unlike `emitter.rs`/`emitter/lower.rs`,
 /// this file holds no `CommonsItem`-declaration-read surface at all (confirmed:
@@ -1376,9 +1381,9 @@ fn ide_emit_edge(root: &Path) -> Probe {
 /// eventual printer (phase 7, `bynk-ts`) — this file has no `use crate::ir` at all, so
 /// nothing here has been resisting an available IR-native alternative; none exists. The
 /// re-settling found no clean way to shrink this file's AST surface further without
-/// building printer infrastructure this track's own §2 scope already excludes.
+/// building printer infrastructure phase 6's own scope already excluded.
 ///
-/// P6.49 (`the-ir.md` §6b, 19 August 2026): `project.rs` — R6.13's own still-open
+/// P6.49 (phase 6's own §6b, 19 August 2026): `project.rs` — R6.13's own still-open
 /// declaration-read surface named at the top of this doc block, above — cleared
 /// **without joining this list**. Nine slices (P6.42–P6.49) relocated its remaining
 /// declaration reads to the `bynk-check`/`bynk-project` crates that already own the
@@ -1391,6 +1396,18 @@ fn ide_emit_edge(root: &Path) -> Probe {
 /// exclusion list's own entries above are real, earned exclusions and not a standing
 /// habit: the harder file cleared its own way, on its own schedule, with zero new
 /// entries here.
+///
+/// **P6.58/P6.59, 19 August 2026: phase 6 (`the-ir.md`, spine #1137) retired at this
+/// probe reading 5, not 0.** The floor is exactly `bynk-emit/src/emitter{,/**}` —
+/// `emitter.rs`, `emitter/emit.rs`, `emitter/lower.rs`, `emitter/workers.rs`,
+/// `emitter/workers_entry.rs` — the TypeScript-rendering subtree phase 7's own printer
+/// inherits; each file's own structural reason, and the full slice history behind
+/// every correction this doc block narrates, live in `design/archive/retired-tracks.md`
+/// now that `the-ir.md` itself is gone. This exclusion list does **not** grow to
+/// reach that floor — the floor is a fact about `AST_IMPORTER_EXCEPTIONS`'s own
+/// four entries staying exactly these four, not a fifth argument for adding to them.
+/// The probe itself stays gated, unchanged, reading 5: a regression ratchet phase 7
+/// inherits and drives down as it builds the printer this floor's own residue names.
 const AST_IMPORTER_EXCEPTIONS: &[&str] = &[
     "ir.rs",
     "ir/lower.rs",
@@ -1457,11 +1474,12 @@ fn ast_importer_files(root: &Path) -> Vec<PathBuf> {
 }
 
 /// R6.13. Files in `bynk-emit/src` that import `bynk_syntax::ast`, excluding
-/// [`AST_IMPORTER_EXCEPTIONS`] — phase 6 (the AST import surface `bynk-emit` still
-/// depends on directly). #1176: the unexcluded, crate-wide count could never reach 0
-/// while `bynk-emit::ir`'s lowering pass exists at all; this exclusion is what lets the
-/// probe track the track's real completion criterion (`the-ir.md` §5) instead of a
-/// floor this track's own IR module structurally cannot clear.
+/// [`AST_IMPORTER_EXCEPTIONS`] — phase 6's own remaining AST import surface (retired,
+/// spine #1137; `design/archive/retired-tracks.md` has the closing summary). #1176:
+/// the unexcluded, crate-wide count could never reach 0 while `bynk-emit::ir`'s
+/// lowering pass exists at all; this exclusion is what let the probe track phase 6's
+/// real completion criterion instead of a floor its own IR module structurally could
+/// not clear. Gated at 5, phase 6's own retired floor, for phase 7 to drive down.
 fn ast_importers(root: &Path) -> Probe {
     Probe {
         name: "ast_importers",
@@ -1899,8 +1917,8 @@ mod tests {
 
     /// The exclusion is named, not prefixed: `ir.rs`/`ir/lower.rs` are the lowering
     /// pass's own legitimate `Ast → Ir` import; `project/tests_emit.rs` is the
-    /// Q7-settled (`the-ir.md` §3.7) `Ir → String` half that keeps hand-writing
-    /// TypeScript by calling straight into `emitter.rs`'s own body-rendering, and
+    /// Q7-settled `Ir → String` half that keeps hand-writing TypeScript by calling
+    /// straight into `emitter.rs`'s own body-rendering, and
     /// keeps reading a handler's declared param/return `TypeRef` with no `TyId`
     /// available at that call site — but `project.rs` (which also imports
     /// `bynk_syntax::ast`, via `EmitProjectCtx`) must stay counted, and so, per
@@ -1957,7 +1975,7 @@ mod tests {
     /// `emitter/serialisation.rs`'s phase-7 codec renderer), while `emitter.rs`/
     /// `emitter/lower.rs`/`emitter/workers.rs` do not.
     ///
-    /// P6.49 (design/tracks/the-ir.md §6b): `project.rs` and `project/diagnostics.rs`
+    /// P6.49 (phase 6's own §6b): `project.rs` and `project/diagnostics.rs`
     /// join the *excluded* side of this assertion — the opposite of what this test
     /// checked before. `project.rs` cleared without joining
     /// [`AST_IMPORTER_EXCEPTIONS`]: nine slices (P6.42–P6.49) either relocated its
