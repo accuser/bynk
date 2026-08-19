@@ -2146,6 +2146,24 @@ already flagged — its sole caller holds an AST `BinOp` regardless). `ast_impor
 --workspace`, `cargo clippy --workspace --all-targets` all pass unchanged. Full reasoning:
 `design/pending/p6-56-emitter-declaration-reads.md`.
 
+**Sixty-eighth: P6.57 — `emitter/lower.rs`'s `HttpMethod::from_ident` sites read `IrHttpMethod`;
+corrects P6.37's stated reason for `system_http_route_body`. Closes Phase H.** `IrHttpMethod` gains
+`from_ident`, alongside P6.51's `as_str()`; both call sites (a system-http test-address call's own
+verb classification) now match it and pass the result to P6.51's `http_handler_method_name_ir`.
+**Corrects the record**: P6.37's own Forty-eighth entry states `system_http_route_body`'s `TypeRef`
+field has "no `TypedCommons`/`tys` resolution context in scope" — traced and found half wrong:
+`emit_system_http_support`'s caller (`emit_integration_module`, `project/tests_emit.rs`) already
+holds `tys: &Arc<Types>` and builds `integration_typed_commons(...)` six lines later. The context
+exists; the field stays AST-typed anyway, for the *other* half of P6.37's own reasoning that does
+hold — the sole consumer is P6.33's own ruled-phase-7 codec renderer, and the round-trip through it
+is lossy (`Option` on both ends, a silent `None` downgrading emitted output with no probe payoff
+regardless). `ast_importers`: **unaffected (5)**. **After this slice, `emitter/lower.rs`'s residue is
+provably 100% Q7 body-rendering plus phase-7 codec — nothing untried remains, the evidence Phase I's
+re-settling needs.** Verified with `tsc --strict` in addition to the usual gates, since this changes
+an emitted key string's own construction path: zero-diff bless over the full e2e corpus, all six
+`tsc_verify.rs` checks, `cargo test --workspace`, `cargo clippy --workspace --all-targets` all pass
+unchanged. Full reasoning: `design/pending/p6-57-http-method-ir-native.md`.
+
 | Item | Phase | Entry condition |
 |---|---|---|
 | `Question`'s own three-way desugar fork — what `IrExprKind` an `expr?` lowers to | 6, unproposed | a slice proposal for P6.3's desugaring table (§6) reaches `Question` specifically; #1225 (§6, fourteenth slice) settled the *construction*-side identity question this depends on but explicitly does not settle this one |

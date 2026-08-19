@@ -14,7 +14,7 @@ use bynk_syntax::ast::{
 };
 
 use crate::ir::lower::is_effectful_return;
-use crate::ir::{ConstVal, EventPatternIr, EventPatternValueIr};
+use crate::ir::{ConstVal, EventPatternIr, EventPatternValueIr, IrHttpMethod};
 
 use super::*;
 
@@ -2030,7 +2030,7 @@ fn lower_method_call(
     // a driver (`__sysdrive_<svc>_<key>(rest, sub)`), not a direct handler call.
     if let ExprKind::Ident(id) = &receiver.kind
         && cx.is_system_http_service(&id.name)
-        && let Some(verb) = bynk_syntax::ast::HttpMethod::from_ident(&method.name)
+        && let Some(verb) = IrHttpMethod::from_ident(&method.name)
         && let Some(first) = args.first()
         && let ExprKind::StrLit(path) = &first.kind
     {
@@ -2048,7 +2048,7 @@ fn lower_method_call(
                 path
             ));
         }
-        let key = crate::emitter::http_handler_method_name(verb, path);
+        let key = crate::emitter::http_handler_method_name_ir(verb, path);
         let sub = cx
             .call_site_identity
             .clone()
@@ -2135,11 +2135,11 @@ fn lower_method_call(
         // http address: the method is an HTTP verb and the first argument is the
         // route pattern string. The key is a pure function of verb + path; the
         // remaining args are the handler's positional params.
-        if let Some(verb) = bynk_syntax::ast::HttpMethod::from_ident(&method.name)
+        if let Some(verb) = IrHttpMethod::from_ident(&method.name)
             && let Some(first) = args.first()
             && let ExprKind::StrLit(path) = &first.kind
         {
-            let key = crate::emitter::http_handler_method_name(verb, path);
+            let key = crate::emitter::http_handler_method_name_ir(verb, path);
             let rest: Vec<String> = args[1..].iter().map(|a| pre.lower(a, cx)).collect();
             let mut all = rest;
             all.push(deps_expr);

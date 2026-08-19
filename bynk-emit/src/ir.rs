@@ -1708,6 +1708,19 @@ impl IrHttpMethod {
             IrHttpMethod::Delete => "DELETE",
         }
     }
+
+    /// P6.57 (design/tracks/the-ir.md §6b): field-for-field mirror of
+    /// [`bynk_syntax::ast::HttpMethod::from_ident`].
+    pub(crate) fn from_ident(s: &str) -> Option<IrHttpMethod> {
+        match s {
+            "GET" => Some(IrHttpMethod::Get),
+            "POST" => Some(IrHttpMethod::Post),
+            "PUT" => Some(IrHttpMethod::Put),
+            "PATCH" => Some(IrHttpMethod::Patch),
+            "DELETE" => Some(IrHttpMethod::Delete),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
