@@ -2784,7 +2784,7 @@ pub(crate) fn lower_expr_ir(e: &Expr, cx: &mut LowerIrCtx) -> IrExpr {
         },
 
         ExprKind::Ident(id) => IrExpr {
-            kind: lower_ident_ir(&id.name, cx),
+            kind: lower_ident_ir(&id.name, Some(e.id), cx),
             ty,
             span,
         },
@@ -2817,7 +2817,7 @@ pub(crate) fn lower_expr_ir(e: &Expr, cx: &mut LowerIrCtx) -> IrExpr {
                                     )
                                 });
                                 IrExpr {
-                                    kind: lower_ident_ir(&f.name.name, cx),
+                                    kind: lower_ident_ir(&f.name.name, None, cx),
                                     ty: local_ty,
                                     span: f.name.span,
                                 }
@@ -3289,9 +3289,30 @@ fn lower_lambda_ir(e: &Expr, lambda: &LambdaExpr, cx: &mut LowerIrCtx) -> IrExpr
 /// point (it has no `store_fields`/`agent_state_ty`/`actor_binding`
 /// parameter to carry them), not merely unexcluded; each needs its own
 /// resolved-identity plumbing this slice does not commission (Decision C).
-fn lower_ident_ir(name: &str, cx: &LowerIrCtx) -> IrExprKind {
+fn lower_ident_ir(name: &str, expr_id: Option<ExprId>, cx: &LowerIrCtx) -> IrExprKind {
     if cx.lookup(name).is_some() {
         return IrExprKind::Local(name.to_string());
+    }
+    // P6.21/P6.23 (review of #1251/#1252): a bare `HttpResult`/`QueueResult`
+    // nullary variant reference (`NotFound`, `Ack`) — Decision C's own
+    // originally-in-scope case (`GlobalRef`'s own doc comment names it),
+    // dropped for lack of a sink until #1251 added `Callee::Intrinsic` for
+    // it. Lowers the same way `lower_call_ir` already lowers the
+    // call-with-args sibling (`Retry(reason)`) — a generic
+    // `IrExprKind::Call` wrapping the `Callee`, empty `args` for the
+    // nullary case — so both forms of the same variant share one shape.
+    // Checked by per-expression `Callee` lookup, not by name: unlike
+    // `store_queryable` above, there is no re-derivation/shadowing question
+    // that could make this check's own *position* in the ladder wrong — the
+    // checker already decided, once, whether *this* expression is this
+    // shape, so a miss here just falls through, correctly, to whichever
+    // check actually matches.
+    if let Some(callee @ Callee::Intrinsic { .. }) = expr_id.and_then(|id| cx.callee(id)) {
+        return IrExprKind::Call {
+            callee: callee.clone(),
+            targs: Vec::new(),
+            args: Vec::new(),
+        };
     }
     // P6.20-pre (review of #1240): checked immediately after `cx.lookup`,
     // matching the checker's own precedence — `checker.rs:3477-3481` runs
@@ -3475,7 +3496,7 @@ fn lower_record_spread_ir(
                         )
                     });
                     IrExpr {
-                        kind: lower_ident_ir(&f.name.name, cx),
+                        kind: lower_ident_ir(&f.name.name, None, cx),
                         ty: local_ty,
                         span: f.name.span,
                     }
@@ -3847,6 +3868,7 @@ fn lower_exhaustive_ir(arms: &[MatchArm]) -> Exhaustive {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bynk_check::builtin_names::types::QUEUE_RESULT;
     use bynk_check::checker::CheckedProgram;
     use bynk_check::hints::HintSink;
     use bynk_check::index::RefSink;
@@ -8754,23 +8776,45 @@ service Api from http {
     }
 
     #[test]
-    #[should_panic(expected = "neither a locally-bound name")]
     fn a_queue_services_on_message_handler_reaches_ordinary_body_lowering_not_the_websocket_deferral()
      {
         // The highest-value protocol test: proves the WebSocket deferral
         // gate in `lower_service_handler_ir` keys on the `(kind, protocol)`
         // *pair*, not on `HandlerKind::Message` alone — the same literal
-        // variant is also a WebSocket inbound frame. This panics on the
-        // pre-existing bare-nullary-built-in-variant gap (`Ack`,
-        // `lower_ident_ir`'s own final `todo!()` — see
-        // `queue_service_fixture`'s own doc comment), **not** on the
-        // WebSocket-specific "synthetic leading" message — proof this
-        // handler got past the gate the WebSocket deferral guards, not
-        // caught by it.
+        // variant is also a WebSocket inbound frame. Originally proved by
+        // this panicking on the bare-nullary-built-in-variant gap (`Ack`,
+        // `lower_ident_ir`'s own final `todo!()`) rather than the
+        // WebSocket-specific "synthetic leading" message — #1251/#1252/
+        // review-of-#1252 closed that gap for real (`Callee::Intrinsic`),
+        // so the body now lowers cleanly; the same property is proved
+        // directly instead: `connection` is `None` (only a `from websocket`
+        // lifecycle handler ever gets one, `lower_handler_ir`'s own doc
+        // comment), and the body actually reaches and lowers the `Ack`
+        // reference — a `Callee::Intrinsic { ns: QUEUE_RESULT, op: "Ack" }`
+        // call with no args, the same shape a `Retry(reason)` call-form
+        // sibling already lowers to.
         let program = queue_service_fixture();
         let service = find_service(&program, "Outbox");
         let handler = find_service_handler(service, &HandlerKind::Message);
-        let _ = lower_service_handler_ir(handler, &service.protocol, &program);
+        let ir = lower_service_handler_ir(handler, &service.protocol, &program);
+        assert!(
+            ir.connection.is_none(),
+            "a queue on message handler is not a WebSocket lifecycle handler"
+        );
+        let IrExprKind::Block { tail, .. } = &ir.body.kind else {
+            panic!("expected a Block, got {:?}", ir.body.kind)
+        };
+        let IrExprKind::Return { value } = &tail.kind else {
+            panic!("expected the tail to wrap in Return, got {:?}", tail.kind)
+        };
+        let IrExprKind::Call { callee, args, .. } = &value.kind else {
+            panic!("expected Ack to lower to a Call, got {:?}", value.kind)
+        };
+        assert!(args.is_empty());
+        assert!(
+            matches!(callee, Callee::Intrinsic { ns, op } if *ns == QUEUE_RESULT && op == "Ack"),
+            "expected Callee::Intrinsic {{ ns: QUEUE_RESULT, op: \"Ack\" }}, got {callee:?}"
+        );
     }
 
     #[test]
