@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "P6.34: closed by investigation, no code change needed (P6.9/P6.24b precedent). The completion plan's own P6.34 row proposed precomputing EmitProjectCtx::actors into a per-handler ActorSeamIr, describing it as a hidden dependency blocking emitter/workers.rs, emitter/workers_entry.rs, and emitter/emit.rs. Traced directly: only emit.rs reads this field (workers.rs/workers_entry.rs reach actor data through the unrelated bynk_check::symbols::UnitTable::actors, already counted independently) -- the \"blocking three files\" framing did not hold. Even for emit.rs, lower_actor_seam_ir's own signature requires the raw actor declarations to do its own by_clause-binder resolution; precomputing would relocate, not remove, the AST dependency (project.rs is already counted for unrelated reasons, so this would not move ast_importers even if built), while introducing a new indexing mechanism into a security-sensitive, fail-closed identity-verification path (Bearer/Oidc/Signature/Caller seam resolution) for zero probe benefit. Not pursued. ast_importers unaffected (7)."
----
+# 0360 — `EmitProjectCtx::actors` precomputation investigated and declined — relocates, not removes, the AST dependency, at real risk to a security-sensitive path
 
-## ADR: actor-seam-investigation
-
-title: `EmitProjectCtx::actors` precomputation investigated and declined — relocates, not removes, the AST dependency, at real risk to a security-sensitive path
+- **Status:** Accepted (v0.249.12)
 
 summary: Phase E of the #1137 completion plan (`design/tracks/the-ir.md` §6a, P6.34) — closed by investigation rather than shipped, per the P6.9/P6.24b precedent for a slice whose own premise doesn't survive contact with the tree
 
