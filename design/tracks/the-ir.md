@@ -2069,6 +2069,30 @@ exchanges frames against the emitted output, not just diffs bytes), `cargo test 
 clippy --workspace --all-targets` all pass unchanged. Full reasoning:
 `design/pending/p6-52-ws-protocol-ir-native.md`.
 
+**Sixty-fourth: P6.53 — `emit_agent`'s store-field-kind dispatch reads `StoreKindIr` instead of
+re-deriving it; the full `AgentShapeIr` sketch scoped back down.** §6b's own P6.53 row proposed a full
+`AgentShapeIr`/`AgentHandlerShapeIr` pair for roughly 55 `emit_agent` reads; tracing each read's own
+downstream consumer before building anything (P6.24a's discipline) found most of that scope
+unjustified — `a.name.name`'s ~18 sites buy nothing (`a: &AgentDecl` stays required regardless), and
+the invariant/transition name reads sit inside loops that need the full `Invariant`/`Transition`
+struct for `.predicate` anyway (their one real name-only consumer is `write_header`'s own remaining
+checks, already the residual table's own separate item, §7). The concretely justified defect was
+narrower: five store-field membership filters (`f.kind.head.name == "Cell"/"Map"/"Set"/"Cache"/"Log"`,
+string comparison) and a *second* `f.annotations` walk for `Cache`'s `@ttl`/`Log`'s `@retain`, both
+already computed once by `lower_store_field_shape_ir` and sitting unused in `state`'s own
+`store_field_ty: HashMap<&str, &StoreKindIr>` (built at the top of the function, one prior consumer).
+All five now check the typed `StoreKindIr` variant instead of the string comparison; `Cache`/`Log`'s
+own `ttl`/`retain` read `StoreKindIr::Cache(_,_,ttl)`/`StoreKindIr::Log(_,retain)` directly. Two real
+defects closed: a same-named user type (`Cell`/`Map`/etc.) could previously mis-match a field's own
+string-compared kind; the TTL/retain duplication could silently diverge with nothing to catch it.
+`ast_importers`: **unaffected (5)**. Verified with extra care given the store-field-value touch:
+zero-diff bless over the full e2e corpus, with `227_store_cache_agent`/`228_store_log_agent` (the two
+fixtures whose source actually declares `@ttl`/`@retain`) checked individually, `cargo test
+--workspace`, `cargo clippy --workspace --all-targets` all pass unchanged. The originally-sketched
+`AgentShapeIr`'s remaining scope stays recorded in §7 as its own, separately-proposable item — not
+built here, with no consumer this slice actually found. Full reasoning:
+`design/pending/p6-53-agent-store-field-kind-dedup.md`.
+
 | Item | Phase | Entry condition |
 |---|---|---|
 | `Question`'s own three-way desugar fork — what `IrExprKind` an `expr?` lowers to | 6, unproposed | a slice proposal for P6.3's desugaring table (§6) reaches `Question` specifically; #1225 (§6, fourteenth slice) settled the *construction*-side identity question this depends on but explicitly does not settle this one |
@@ -2079,6 +2103,7 @@ clippy --workspace --all-targets` all pass unchanged. Full reasoning:
 | Incrementality — query granularity, `UnitSignature`, the firewall | 8 | phases 0, 3 and 4 complete (already true; phase 8 itself waits on phase 7 per the trajectory's stated order) |
 | A cross-unit `CheckedProgram` persistence layer, the real prerequisite for a full `IrItem::Agent`/`Provider` enumerator in `project.rs`'s own compose-time wiring (`plan_agent_given_deps`/`instantiate_provider_expr`, formerly "P6.20" in a completion-plan draft) | *unopened — no trigger yet* | a real need for cross-unit post-check state at compose time beyond the syntactic `CapRef`/`given`-clause reads `lower_handler_given_ir`/`lower_provider_given_ir` already cover — see the slice-history correction above for why this is a different-natured architectural change, not a routine conversion |
 | Three narrowly-scoped `TypedCommons`-only helpers for `write_header`'s own remaining declaration-content checks (`agent_needs_rehydrate`, `agent_has_held_storage`, invariant/transition presence) — formerly bundled into "P6.36" | 6, unproposed | a slice proposal argues each is worth its own small helper (the `lower_op_sig_ir_from_commons`/`capability_op_sig_from_commons` shape) rather than accepting the raw AST reads as permanently cheap and low-risk (they carry no shadowing hazard, unlike the `Callee`-class defects P6.21 closed) — see the slice-history correction above (Forty-seventh) |
+| A full `AgentShapeIr` (agent `def`/`key`, invariant/transition presence) mirroring `emit_agent`'s own remaining `AgentDecl` reads — scoped down from "P6.53" after tracing found no real consumer for the parts beyond the store-field-kind dedup that slice actually landed | 6, unproposed | a slice proposal names a real consumer beyond `write_header`'s own row above (the two may turn out to be the same helper) — see the slice-history correction above (Sixty-fourth) |
 
 ---
 
