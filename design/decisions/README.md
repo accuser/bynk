@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0355](0355-worker-compose-handler-kind-ir.md) | **`emit_worker_compose` dispatches on `IrHandlerKind`, not raw AST `HandlerKind`; `ProtocolIr` conversion found not reachable here** (v0.249.7) — `emit_worker_compose` dispatches on `IrHandlerKind`, not raw AST `HandlerKind`; `ProtocolIr` conversion found not reachable here | Accepted (v0.249.7) |
 | [0354](0354-cap-op-param-names-ir.md) | **`cap_op_param_names` reads `ir::lower::capability_op_sig_from_commons` instead of walking `CommonsItem::Capability` by hand** (v0.249.6) — `cap_op_param_names` reads `ir::lower::capability_op_sig_from_commons` instead of walking `CommonsItem::Capability` by hand | Accepted (v0.249.6) |
 | [0353](0353-runtime-use-tyid.md) | **`RuntimeUse::json_codec_roots` carries `TyId`, not `TypeRef`; the `TypeRef` conversion moves from two push sites to the one drain site** (v0.249.5) — `RuntimeUse::json_codec_roots` carries `TyId`, not `TypeRef`; the `TypeRef` conversion moves from two push sites to the one drain site | Accepted (v0.249.5) |
 | [0352](0352-reexport-exprid-from-bynk-check.md) | **`bynk_check::checker::ExprId` re-exports `bynk_syntax::ast::ExprId`; `bynk-emit`'s two direct-`ExprId` sites read it from there instead** (v0.249.4) — `bynk_check::checker::ExprId` re-exports `bynk_syntax::ast::ExprId`; `bynk-emit`'s two direct-`ExprId` sites read it from there instead | Accepted (v0.249.4) |

@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "P6.30: emit_worker_compose (emitter/workers.rs) dispatches on the checker-classified IrHandlerKind instead of matching the raw AST HandlerKind directly, for both its has_ws_open predicate and its main per-handler wrapper-selection match -- the decision of which wrapper to call is now IR-driven, though each wrapper's own body-rendering signature stays AST-parameter-driven (Q7-settled). emit_worker_compose has no TypedCommons/CheckedProgram in scope (only a table: &UnitTable), so the one remaining raw ServiceProtocol::WebSocket check inside the Message arm stays AST-typed -- lower_protocol_ir_from_commons is not reachable here without threading a new parameter through, a real scoping finding narrower than the completion plan's own estimate for this slice. ast_importers unaffected (8) -- workers.rs retains other, still-open AST names."
----
+# 0355 — `emit_worker_compose` dispatches on `IrHandlerKind`, not raw AST `HandlerKind`; `ProtocolIr` conversion found not reachable here
 
-## ADR: worker-compose-handler-kind-ir
-
-title: `emit_worker_compose` dispatches on `IrHandlerKind`, not raw AST `HandlerKind`; `ProtocolIr` conversion found not reachable here
+- **Status:** Accepted (v0.249.7)
 
 summary: Phase C of the #1137 completion plan (`design/tracks/the-ir.md` §6a, P6.30) — a declaration-read conversion narrower in scope than first estimated, and says so
 
