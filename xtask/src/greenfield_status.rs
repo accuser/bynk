@@ -1363,7 +1363,26 @@ fn ide_emit_edge(root: &Path) -> Probe {
 /// fixable surface from this probe the same way a path-prefix rule would — the harm
 /// the named-not-prefixed discipline above exists to prevent, just at file granularity
 /// instead of directory granularity.
-const AST_IMPORTER_EXCEPTIONS: &[&str] = &["ir.rs", "ir/lower.rs", "project/tests_emit.rs"];
+///
+/// P6.33 (`the-ir.md` §6a.D re-settling, 19 August 2026): `emitter/serialisation.rs`
+/// joins the list, on grounds distinct from every entry above — not Q7 body-rendering,
+/// not test-only reach, but a phase boundary. Unlike `emitter.rs`/`emitter/lower.rs`,
+/// this file holds no `CommonsItem`-declaration-read surface at all (confirmed:
+/// `grep -c bynk_syntax::ast` finds only its one `use` line and its `#[cfg(test)]`
+/// module) — its entire AST surface, ~120 sites, *is* the `TypeRef`-driven JSON/wire
+/// codec renderer (`emit_record_codec`/`emit_sum_codec`/`serialise_expr`/
+/// `deserialise_expr`/`ts_inner_type` and siblings). Rendering a checker type as TS
+/// codec source text is the same class of question Q7 already settled belongs to the
+/// eventual printer (phase 7, `bynk-ts`) — this file has no `use crate::ir` at all, so
+/// nothing here has been resisting an available IR-native alternative; none exists. The
+/// re-settling found no clean way to shrink this file's AST surface further without
+/// building printer infrastructure this track's own §2 scope already excludes.
+const AST_IMPORTER_EXCEPTIONS: &[&str] = &[
+    "ir.rs",
+    "ir/lower.rs",
+    "project/tests_emit.rs",
+    "emitter/serialisation.rs",
+];
 
 /// Is `rel_path` (relative to `bynk-emit/src`) one of [`AST_IMPORTER_EXCEPTIONS`]?
 fn is_named_ast_importer(rel_path: &Path) -> bool {
@@ -1884,6 +1903,7 @@ mod tests {
         assert!(is_named_ast_importer(Path::new("ir.rs")));
         assert!(is_named_ast_importer(Path::new("ir/lower.rs")));
         assert!(is_named_ast_importer(Path::new("project/tests_emit.rs")));
+        assert!(is_named_ast_importer(Path::new("emitter/serialisation.rs")));
         assert!(!is_named_ast_importer(Path::new("project.rs")));
         assert!(!is_named_ast_importer(Path::new("emitter.rs")));
         assert!(!is_named_ast_importer(Path::new("emitter/lower.rs")));
@@ -1914,13 +1934,15 @@ mod tests {
 
     /// #1184 review, extended by #1187's own closing scoping pass (and narrowed by
     /// review of #1210, which found `emitter.rs`/`emitter/lower.rs` still hold live,
-    /// in-scope AST-declaration reads and must stay counted): exercises the real
-    /// filter over the live tree, not just the pure predicate — the survivor set the
-    /// PR's own named-vs-prefix argument depends on: the three named exclusions drop
-    /// out (`ir/`'s legitimate `Ast → Ir` pair, plus `project/tests_emit.rs`'s
-    /// Q7-settled `Ir → String` case), `project.rs` and `emitter/workers.rs` (R6.13's
-    /// still-open AST-declaration reads, the latter standing in for
-    /// `emitter.rs`/`emitter/lower.rs` themselves) do not.
+    /// in-scope AST-declaration reads and must stay counted) and by P6.33's own
+    /// re-settling (`emitter/serialisation.rs`, a phase boundary rather than a
+    /// declaration-read exemption): exercises the real filter over the live tree, not
+    /// just the pure predicate — the survivor set the PR's own named-vs-prefix
+    /// argument depends on: the four named exclusions drop out (`ir/`'s legitimate
+    /// `Ast → Ir` pair, `project/tests_emit.rs`'s Q7-settled `Ir → String` case, and
+    /// `emitter/serialisation.rs`'s phase-7 codec renderer), `project.rs` and
+    /// `emitter/workers.rs` (R6.13's still-open AST-declaration reads, the latter
+    /// standing in for `emitter.rs`/`emitter/lower.rs` themselves) do not.
     #[test]
     fn ast_importers_excludes_the_named_pairs_but_counts_project_rs() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
@@ -1937,6 +1959,7 @@ mod tests {
         assert!(!counted.contains("ir.rs"));
         assert!(!counted.contains("ir/lower.rs"));
         assert!(!counted.contains("project/tests_emit.rs"));
+        assert!(!counted.contains("emitter/serialisation.rs"));
         assert!(counted.contains("project.rs"));
         assert!(counted.contains("emitter.rs"));
         assert!(counted.contains("emitter/lower.rs"));

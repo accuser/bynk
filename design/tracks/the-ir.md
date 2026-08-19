@@ -489,11 +489,19 @@ outright (`ExprId` re-export, `RuntimeUse`'s codec-root `TyId` conversion), the 
 conversions that give the re-settling slice its evidence, a re-settling PR deciding whether the
 `TypeRef`-driven JSON/wire codec layer belongs to this phase or phase 7, the conversions that follow
 from that finding, and the IR-side residue (R6.13's field-level gap, invisible to the probe) named in
-§5's own "known gap" paragraph above. Per this section's own remit (candidate decomposition, not a
-guarantee — §9), the committed target under current scope is **`ast_importers` = 2**
-(`emitter/emit.rs`, `emitter/serialisation.rs`), not 0 — the re-settling slice decides what those two
-become. Full slice table: see the addition to this section's own decomposition table above, entries
-P6.25–P6.41, and the corresponding slice-history entries as each lands.
+§5's own "known gap" paragraph above.
+
+**Correction (P6.33, 19 August 2026): the re-settling landed** — see this section's own Forty-fourth
+entry below for the full ruling. `emitter/serialisation.rs` joined `AST_IMPORTER_EXCEPTIONS`: its
+entire AST surface is the `TypeRef`-driven codec renderer, the same "how do I render this as TS source"
+question Q7 already settled belongs to phase 7's eventual printer, and the file holds no declaration-
+read surface of its own kind to convert. `ast_importers`'s own completion criterion is unchanged at
+**0** — this is not a new floor, it is the same discipline `ir.rs`/`ir/lower.rs`'s own #1176 exclusion
+already established: the probe measures *this track's* AST-walking-decision surface, not a floor that
+structurally can never clear. `emitter/emit.rs` was **not** excluded — unlike `serialisation.rs`, it
+carries real, still-open declaration-read surface (Phase E/F) alongside its own codec-adjacent
+`TypeRef` sites, so its own eventual floor (if any) is a question for whichever future slice actually
+isolates it as `emit.rs`'s *only* remaining reason, not assumed now.
 
 Prior text below, retained for provenance: §5's own P6.9 correction (#1167) named why the prior,
 unexcluded crate-wide count could never reach 0 while `bynk-emit::ir` exists at all; #1176 closed that
@@ -1311,8 +1319,10 @@ this repo's own track/pending-file/PR conventions, followed by an independent de
 the sequencing. Two scoping decisions were made explicitly rather than left implicit: fix the probe's
 own integrity before converting anything (§6a.A), and convert every in-scope declaration-read but
 re-settle — not silently claim — the `TypeRef`-driven codec layer's phase-6-vs-phase-7 membership
-(§6a.D). Under that scoping, **the committed target is `ast_importers` = 2, not 0**; §6a.D decides what
-those two become. Slices continue this section's own numbering; each becomes its own PR per
+(§6a.D). §6a.D has since landed (Forty-fourth entry below): `emitter/serialisation.rs` — a phase-7
+codec renderer with no declaration-read surface of its own — is excluded, and `ast_importers`'s own
+completion criterion stays **0**; `emitter/emit.rs`'s own eventual floor, if any, is not yet known and
+is not assumed. Slices continue this section's own numbering; each becomes its own PR per
 `design/tracks/README.md`'s lifecycle step 3, citing this subsection rather than a dedicated sub-issue
 — current practice for this track (P6.20 onward) has moved away from the earlier `proposal`/`accepted`
 issue lifecycle §3's own provenance note used through #1193, and this plan follows that drift rather
@@ -1364,28 +1374,32 @@ reason P6.30 found) dispatch on `IrHandlerKind` — see this section's own Forty
 `ast_importers`: **8 → 8**, unaffected. Phase C closed — `ast_importers` unaffected by all four of its
 slices (no file clears in Phase C; only Phase B's P6.28 cleared one).
 
-**Phase D — the re-settling (§6a's highest-value item).** **P6.33** — a doc-only re-settling PR
-(`design/tracks/README.md` lifecycle step 4) answering, explicitly, whether the `TypeRef`-driven
-JSON/wire codec layer belongs to phase 6 or phase 7: (1) `emitter/serialisation.rs`'s ~110 `TypeRef`
-sites plus `bynk_check::wire::collect_codec_closure`; (2) whether a body/header-rendering function's
-own AST-typed parameter (`h: &Handler`, ~20 sites in `emitter.rs`, 8 each in `workers.rs`/
-`emitter/lower.rs`) counts as an AST-walking *decision* under §5's prose criterion, or is Q7-settled
-residue the probe should stop counting — if the latter, `ast_importers` needs redefining
-per-decision-site rather than per-file substring, or the exception list grows; (3) `project.rs:3619`'s
-`own_contract_hashes`, cross-crate-blocked by `bynk_check::resolver::CrossContextService`/
-`contract::service_contract_hash` taking `TypeRef`/`Arc<TypeDecl>` by definition with a real
-caller/callee hash-symmetry correctness requirement against `symbols.rs::build_cross_context_info`; (4)
-`IrExprKind::Call { callee: Callee }` — `bynk_check::checker::Callee` itself carries `Arc<FnDecl>`/
-`Arc<TypeDecl>` across six variants with many non-emit readers, invisible to the probe but squarely
-R6.13. Also settles the `#[cfg(test)]` residue neither production conversion can remove
-(`serialisation.rs:1516-1551`, whose *return type* is AST because the function under test is
-TypeRef-driven; `emitter/lower.rs:5963`'s hand-built `Commons`) — an AST-free `TypedCommons` test
-constructor in `bynk-check`, exception-list growth, or relocating the test module. Any
-`AST_IMPORTER_EXCEPTIONS` change updates `ast_importer_exclusion_is_named_not_prefixed` and
-`greenfield_status_table_is_current` in the same PR.
+**Phase D — the re-settling (§6a's highest-value item). Landed.** **P6.33** — a doc-only re-settling PR
+(`design/tracks/README.md` lifecycle step 4) ruling on the four questions this row originally posed —
+full reasoning in this section's own Forty-fourth entry below, summarised here:
 
-**Phase E — post-settling conversions**, scope contingent on P6.33's finding (sequenced here assuming
-the codec is ruled phase-7 and Q7 params are ruled not-decisions, the more defensible reading).
+1. **The codec renderers** (`emitter/serialisation.rs`'s ~110 `TypeRef` sites plus
+   `bynk_check::wire::collect_codec_closure`) — **ruled phase 7.** `serialisation.rs` joins
+   `AST_IMPORTER_EXCEPTIONS`.
+2. **Q7 signature params** (`h: &Handler` and siblings) — **not a new question.** §3.7 (Q7) already
+   settled this when it opened: the functions' own `Lowered`-returning, string-writing shape survives
+   the cutover unchanged, only the *decisions* they re-derive move to `IrExpr`/`IrItem` reads. No probe
+   redefinition needed; this session's own P6.30/P6.31 slices are a live demonstration of the pattern
+   working.
+3. **`own_contract_hashes`** — **ruled a wire-format/contract concern, permanently cross-crate-blocked**,
+   not excluded now (`project.rs` still has other, genuinely convertible surface via P6.34/P6.35) but
+   named as `project.rs`'s own likely eventual residual floor once that other work lands.
+4. **`IrExprKind::Call { callee: Callee }`** — **ruled out of R6.13's own frame entirely.** R6.13 targets
+   `bynk-emit`; `Callee` lives in `bynk-check`, and changing its own representation is a `bynk-check`-
+   wide API question this track's own boundary (§1's "`bynk-emit` names no AST type") does not reach.
+   Named so it is not silently lost, not deferred as future work.
+
+`ast_importers`: **8 → 7**, `emitter/serialisation.rs` excluded. The `#[cfg(test)]` residue question
+for that file is moot now (whole file excluded); `emitter/lower.rs:5963`'s own residue is unaffected,
+still P6.38's to close.
+
+**Phase E — post-settling conversions**, scope confirmed by P6.33's ruling (the codec is phase-7, Q7
+params are not decisions — both now settled, not merely assumed).
 **P6.34** — `ModuleCtx::actors: HashMap<String, ActorDecl>` (`project.rs:3476`) becomes a precomputed
 per-handler `ActorSeamIr`; a hidden multi-file dependency, since this one field is threaded to
 `workers_entry.rs:1367` and read by `emit.rs:1421`, blocking three files at once — needs its own ADR on
@@ -1437,12 +1451,18 @@ which correctly catches `project/diagnostics.rs` alongside the predicted `emit.r
 original estimate. Every step below shifts by the same +1 baseline; figures are re-stated, not
 re-derived, since nothing about the underlying slice work changed: ~~P6.27 9→9 (enabling)~~ **landed,
 confirmed exactly as predicted.** ~~P6.28 9→8 (`runtime_use.rs` cleared)~~ **landed, confirmed exactly
-as predicted.** Live today, post-P6.28: **8**. P6.29–P6.32 8→8 (decision conversions, no
-file clears) · P6.33 8→8 or redefined (re-settling) · P6.34–P6.36 8→7 if `project.rs` clears
-(conditional on P6.33's finding — and, per the probe hardening above, `project/diagnostics.rs` clears
-in the same moment `project.rs` itself does, automatically, not as its own separate slice) ·
-P6.37–P6.38 7→6 (`emitter/lower.rs` cleared) · remainder 6→2 (`workers.rs`, `workers_entry.rs`,
-`emitter.rs` cleared) · only if P6.33 rules the codec phase-6, 2→0 (`emit.rs`, `serialisation.rs`).
+as predicted.** ~~P6.29–P6.32 8→8 (decision conversions, no file clears)~~ **landed, confirmed exactly
+as predicted, though P6.30/P6.31 each found real `ServiceProtocol`-check residue narrower than
+estimated (see their own entries above).** ~~P6.33 8→7, `emitter/serialisation.rs` excluded~~
+**landed** — Phase D's own ruling, not the "8→8 or redefined" this row first hedged. Live today,
+post-P6.33: **7**. P6.34–P6.36 7→6 if `project.rs` clears (conditional on the P6.35 finding below —
+and `project/diagnostics.rs` clears in the same moment `project.rs` itself does, automatically) ·
+P6.37–P6.38 6→5 (`emitter/lower.rs` cleared) · remainder 5→2 (`workers.rs`, `workers_entry.rs`,
+`emitter.rs` — **caveat**: P6.30/P6.31 each already found a `ServiceProtocol` residue neither file can
+close without threading a new `TypedCommons` parameter through, so "cleared" here is this row's own
+original optimism, not confirmed — the real number for these two may be a residual floor > 0, to be
+measured once Phase E's own project.rs work lands, not assumed now) · `emitter/emit.rs`'s own eventual
+floor, if any, is likewise not yet known (§6a's own intro, above).
 
 **One new dependency the probe hardening introduces, not yet reflected in the ordering above:**
 `emitter/lower.rs`/`emitter/emit.rs` still carry `use super::*;`, so per the same rule, *neither can
@@ -1570,6 +1590,70 @@ its own inner type. `ast_importers`: **8 → 8**, unaffected. Verified by a full
 the entire e2e corpus (the primary gate for this slice's own named risk — a wrong equivalence shows up
 as a spurious or missing runtime import) and a full `cargo test --workspace`. Full reasoning:
 `design/pending/p6-32-file-mentions-shared-walk.md`'s own ADR.
+
+**Forty-fourth: P6.33 — the codec-layer re-settling, closing Phase D, §6a's own highest-value item.**
+A doc-only PR (`design/tracks/README.md` lifecycle step 4) ruling on the four questions §6a's own
+Phase D row posed, argued in full here rather than merely summarised (§6a's own P6.33 paragraph above
+carries the summary):
+
+1. **Do the `TypeRef`-driven JSON/wire codec renderers (`emitter/serialisation.rs`'s ~110 sites plus
+   `bynk_check::wire::collect_codec_closure`) belong to phase 6 or phase 7?** Ruled **phase 7.**
+   `serialisation.rs` holds no `CommonsItem`-declaration-read surface at all — confirmed live
+   (`grep -c bynk_syntax::ast` finds only its own `use` line and its `#[cfg(test)]` module) — and no
+   `use crate::ir` either, meaning nothing in this file has been resisting an available IR-native
+   alternative; none exists to resist. Its entire AST surface *is* the question "how do I render this
+   checker type as TS codec source text" — the identical class of question §3.7 (Q7) already settled
+   belongs to the eventual printer (phase 7, `bynk-ts`), just applied to types instead of expressions.
+   `emitter/serialisation.rs` joins `AST_IMPORTER_EXCEPTIONS`, on grounds distinct from every prior
+   entry: not Q7 body-rendering residue, not test-only reach, but a phase boundary. `ast_importers`:
+   **8 → 7.** `emitter/emit.rs` was considered for the same treatment and **rejected** — unlike
+   `serialisation.rs`, it holds real, still-open declaration-read surface (Phase E/F's own remaining
+   rows) genuinely mixed in among its own codec-adjacent `TypeRef` sites, so excluding it now would
+   repeat exactly the harm the "named not prefixed" discipline (§5) exists to prevent: hiding real,
+   fixable work behind a convenient boundary. `emit.rs`'s own eventual floor, if the mixture leaves one
+   after Phase E/F lands, is a question for whichever future slice actually isolates it — not assumed
+   here.
+2. **Does a body/header-rendering function's own AST-typed parameter (`h: &Handler` and siblings) count
+   as an AST-walking *decision* under §5's prose criterion?** Ruled **not a new question at all.** §3.7
+   (Q7) already answered this when it opened this track's cutover: *"the functions' own `Lowered`-
+   returning, string-writing shape survives the cutover unchanged"* — only the decisions those functions
+   *re-derive* (dispatch, `Callee` classification, commit shape) move to IR reads. This session's own
+   P6.30/P6.31 slices are a live demonstration: the *dispatch* (which wrapper to call) now reads
+   `IrHandlerKind`, while the wrapper's own `h: &Handler`/`method: HttpMethod` rendering parameters
+   stayed exactly as Q7 said they should. No probe redefinition needed; the exception list does not
+   grow on this account.
+3. **`project.rs`'s `own_contract_hashes`** — cross-crate-blocked by `bynk_check::resolver::
+   CrossContextService`/`contract::service_contract_hash`, which take `TypeRef`/`Arc<TypeDecl>` by
+   definition, with a real caller/callee hash-symmetry correctness requirement against
+   `symbols.rs::build_cross_context_info` neither function can be changed without touching the other.
+   Ruled a **wire-format/contract concern**, structurally the same shape as the codec renderers above,
+   but **not** added to `AST_IMPORTER_EXCEPTIONS` now — `project.rs` still carries other, genuinely
+   convertible declaration-read surface (P6.34/P6.35, not yet landed), and excluding the whole file
+   today would hide that real work the same way excluding `emit.rs` would have. Named instead as
+   `project.rs`'s own likely eventual residual floor: once P6.34–P6.36 land, if `own_contract_hashes`
+   is the *only* remaining reason `project.rs` is counted, that is the moment to name it in
+   `AST_IMPORTER_EXCEPTIONS` — a decision for that future slice, on then-current evidence, not
+   pre-committed here.
+4. **`IrExprKind::Call { callee: Callee }`** — `bynk_check::checker::Callee` itself carries
+   `Arc<FnDecl>`/`Arc<TypeDecl>` across six variants (`Fn`, `Static`, `Method`, `Ctor`, `Refine`,
+   `Unsafe`), with many non-emit readers throughout the checker. Ruled **out of R6.13's own frame
+   entirely** — not deferred to phase 7, not named as future work, simply out of scope: R6.13 and this
+   whole track's own boundary (§1's "`bynk-emit` names no AST type") target `bynk-emit`; `Callee` is a
+   `bynk-check`-internal representation choice, embedded throughout the checker's own dispatch and
+   shadowing logic, invisible to `ast_importers` by construction (the probe only scans `bynk-emit/src`)
+   and unreachable by any phase-7 printer either. Named explicitly so a future reader does not
+   mistakenly go looking for a phase-6 or phase-7 slice to close it.
+
+Also closes the `#[cfg(test)]` residue §5's own "known gap" paragraph named for `serialisation.rs`
+(`:1516-1551`, whose *return type* is AST because the function under test is `TypeRef`-driven) — moot
+now that the whole file is excluded, not a separate fix. `emitter/lower.rs:5963`'s own hand-built
+`Commons` residue is unrelated and unaffected, still P6.38's to close. `ast_importer_exclusion_is_
+named_not_prefixed` and `greenfield_status_table_is_current`'s own tests, plus a new fourth assertion
+in `ast_importers_excludes_the_named_pairs_but_counts_project_rs`, were updated in the same commit, per
+this file's own discipline for any `AST_IMPORTER_EXCEPTIONS` change. Verified by a full zero-diff bless
+against the entire e2e corpus (a pure exclusion-list change touches no emission code, but
+`serialisation.rs` itself was untouched either way) and a full `cargo test --workspace`. Full
+reasoning: `design/pending/p6-33-codec-layer-resettling.md`'s own ADR.
 
 ## 7. Out of scope — forward references, not refusals
 
