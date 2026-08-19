@@ -1977,6 +1977,20 @@ individually per this slice's own extra caution, `cargo test --workspace`, `carg
 --all-targets` all pass unchanged. Full reasoning:
 `design/pending/p6-47-event-subscriber-shapes-relocation.md`.
 
+**Fifty-ninth: P6.48 — `emitter::walk_unit_table_bodies` replaces two hand-rolled `project.rs` body
+walks.** Added in `emitter.rs` (already counted, so a free `&Expr` parameter);
+`called_cross_context_services`'s own walk already matched the shared walker's exact
+service/agent/provider scope, zero-risk swap. `unit_table_uses_emit`'s own walk covered only
+services/agents (no providers) — using the shared, wider walker is a real behavioural widening, not
+a pure relocation, **verified rather than assumed**: zero-diff bless over the full e2e corpus found
+no fixture with a provider op body calling `Events.emit`, so the wider scan changes no emitted
+output today; recorded per §5's own "confirm, don't assume" discipline, not left implicit, since a
+future provider op that does call `Events.emit` would now correctly gate on it where it silently
+would not have before. `ast_importers`: **unaffected (6)** — `Block` gone from `project.rs`'s import
+list; Phase G's final slice is P6.49. Zero-diff bless over the full e2e corpus, `cargo test
+--workspace`, `cargo clippy --workspace --all-targets` all pass unchanged. Full reasoning:
+`design/pending/p6-48-shared-unit-table-body-walk.md`.
+
 | Item | Phase | Entry condition |
 |---|---|---|
 | `Question`'s own three-way desugar fork — what `IrExprKind` an `expr?` lowers to | 6, unproposed | a slice proposal for P6.3's desugaring table (§6) reaches `Question` specifically; #1225 (§6, fourteenth slice) settled the *construction*-side identity question this depends on but explicitly does not settle this one |

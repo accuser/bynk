@@ -44,7 +44,7 @@ use bynk_check::project_model::{
 };
 use bynk_check::requirements::RequirementSink;
 use bynk_check::resolver::{self, MethodTable as ResolverMethodTable, ResolvedCommons};
-use bynk_syntax::ast::{Block, FnDecl, TypeDecl, TypeRef, Visibility};
+use bynk_syntax::ast::{FnDecl, TypeDecl, TypeRef, Visibility};
 use bynk_syntax::error::CompileError;
 use bynk_syntax::lexer;
 use bynk_syntax::parser;
@@ -2843,32 +2843,19 @@ pub(crate) fn unit_table_uses_emit(
         );
         return false;
     };
-    fn body_uses_emit(
-        body: &Block,
-        callees: &HashMap<ExprId, bynk_check::checker::Callee>,
-    ) -> bool {
-        let mut found = false;
-        crate::emitter::walk_block_exprs(body, &mut |e| {
-            if !found
-                && matches!(
-                    callees.get(&e.id),
-                    Some(bynk_check::checker::Callee::Capability { cap, op })
-                        if cap == "Events" && op == "emit"
-                )
-            {
-                found = true;
-            }
-        });
-        found
-    }
-    table
-        .services
-        .values()
-        .any(|s| s.handlers.iter().any(|h| body_uses_emit(&h.body, callees)))
-        || table
-            .agents
-            .values()
-            .any(|a| a.handlers.iter().any(|h| body_uses_emit(&h.body, callees)))
+    let mut found = false;
+    emitter::walk_unit_table_bodies(table, &mut |e| {
+        if !found
+            && matches!(
+                callees.get(&e.id),
+                Some(bynk_check::checker::Callee::Capability { cap, op })
+                    if cap == "Events" && op == "emit"
+            )
+        {
+            found = true;
+        }
+    });
+    found
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3411,26 +3398,11 @@ fn called_cross_context_services(
         );
         return out;
     };
-    let mut visit = |e: &bynk_syntax::ast::Expr| {
+    emitter::walk_unit_table_bodies(table, &mut |e| {
         if let Some(bynk_check::checker::Callee::Cross { unit, service }) = callees.get(&e.id) {
             out.entry(unit.clone()).or_default().insert(service.clone());
         }
-    };
-    for service in table.services.values() {
-        for h in &service.handlers {
-            emitter::walk_block_exprs(&h.body, &mut visit);
-        }
-    }
-    for agent in table.agents.values() {
-        for h in &agent.handlers {
-            emitter::walk_block_exprs(&h.body, &mut visit);
-        }
-    }
-    for provider in table.providers.values() {
-        for op in &provider.ops {
-            emitter::walk_block_exprs(&op.body, &mut visit);
-        }
-    }
+    });
     out
 }
 
