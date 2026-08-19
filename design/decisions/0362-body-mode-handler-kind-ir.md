@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "P6.37: BodyMode::TestCase's test_service_handlers field (a per-service list of handler kinds a test case's cron/queue address lowering recovers a position index from) now carries IrHandlerKind instead of the raw AST HandlerKind, mirrored in project/tests_emit.rs's own target_service_handler_kinds builder. Investigated and left as raw AST, narrower than the plan's own row: system_http_route_body's TypeRef field has no resolved TyId available at its own construction site (a pre-check UnitTable walk, no checker resolution context in scope) and its sole consumer, serialise_expr_via, is P6.33's own ruled-phase-7 codec renderer -- converting it would have no real target to convert to. The two HttpMethod::from_ident sites feed http_handler_method_name, a Q7-deferred rendering-key utility taking HttpMethod by value, the same downstream-Q7-consumer shape found throughout this plan's own Phase C/E slices. ast_importers unaffected (7) -- emitter/lower.rs retains other, still-open AST surface."
----
+# 0362 — `BodyMode::TestCase::test_service_handlers` carries `IrHandlerKind`; `system_http_route_body`/`HttpMethod::from_ident` found narrower in scope than the plan's own row
 
-## ADR: body-mode-handler-kind-ir
-
-title: `BodyMode::TestCase::test_service_handlers` carries `IrHandlerKind`; `system_http_route_body`/`HttpMethod::from_ident` found narrower in scope than the plan's own row
+- **Status:** Accepted (v0.249.14)
 
 summary: Phase E of the #1137 completion plan (`design/tracks/the-ir.md` §6a, P6.37) — the achievable third of this row lands; the rest investigated and found out of reach, matching this phase's own recurring pattern
 
