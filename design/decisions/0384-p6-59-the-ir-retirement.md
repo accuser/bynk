@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "P6.59: phase 6 (the-ir.md, spine #1137) retires. ast_importers reads its named floor, 5 -- the bynk-emit/src/emitter{,/**} rendering subtree, argued file by file in the closing summary. design/tracks/the-ir.md deleted; its closing summary appended to design/archive/retired-tracks.md; the trajectory doc's phase-6 row and the probe's own doc comments re-point at the archive. Opens phase 7 (the printer)."
----
+# 0384 — Phase 6 (`the-ir.md`, spine #1137) retires — `ast_importers` at its named floor of 5
 
-## ADR: p6-59-the-ir-retirement
-
-title: Phase 6 (`the-ir.md`, spine #1137) retires — `ast_importers` at its named floor of 5
+- **Status:** Accepted (v0.249.36)
 
 summary: The retirement PR itself — deletes the track doc, archives its closing summary, re-points every doc that named it, closes the spine issue
 

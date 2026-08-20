@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0384](0384-p6-59-the-ir-retirement.md) | **Phase 6 (`the-ir.md`, spine #1137) retires — `ast_importers` at its named floor of 5** (v0.249.36) — Phase 6 (`the-ir.md`, spine #1137) retires — `ast_importers` at its named floor of 5 | Accepted (v0.249.36) |
 | [0383](0383-p6-58-resettle-floor-of-five.md) | **`design/tracks/the-ir.md` re-settles §5 at `ast_importers` = 5, breaks the §5/§7 deadlock, names §12's retirement condition** (v0.249.35) — `design/tracks/the-ir.md` re-settles §5 at `ast_importers` = 5, breaks the §5/§7 deadlock, names §12's retirement condition | Accepted (v0.249.35) |
 | [0382](0382-p6-57-http-method-ir-native.md) | **`emitter/lower.rs`'s `HttpMethod::from_ident` sites read `IrHttpMethod`; P6.37's stated reason for `system_http_route_body` corrected** (v0.249.34) — `emitter/lower.rs`'s `HttpMethod::from_ident` sites read `IrHttpMethod`; P6.37's stated reason for `system_http_route_body` corrected | Accepted (v0.249.34) |
 | [0381](0381-p6-56-emitter-declaration-reads.md) | **`called_consumed_services` reads `Callee::Cross`; six other proposed `emitter.rs` sites investigated and declined** (v0.249.33) — `called_consumed_services` reads `Callee::Cross`; six other proposed `emitter.rs` sites investigated and declined | Accepted (v0.249.33) |
