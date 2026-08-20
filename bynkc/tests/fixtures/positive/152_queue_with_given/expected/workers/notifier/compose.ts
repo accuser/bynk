@@ -11,7 +11,7 @@ export function compose(env: Env) {
   const Sender = new handlers.StubSender();
   const deps = { Sender };
   return {
-    async queue_notify_0(message: any) {
+    async queue_notify_0(message: handlers.Notification) {
       return handlers.notify.queue_notify_0(message, deps);
     },
   };

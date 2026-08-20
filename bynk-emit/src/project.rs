@@ -3090,10 +3090,22 @@ fn emit_composition_root(
                             .get(sub_ctx)
                             .and_then(|m| m.get(sub_svc))
                             .is_some_and(|shape| shape.two_param_handler || shape.schema_dispatch);
+                        // P7.2: deferred, not narrowed — a first attempt used the
+                        // event's own bare name directly (`EventDecl::as_type_decl`
+                        // keys the synthetic `TypeDecl` on it), on the theory that
+                        // an event doubles as a named type. It broke real
+                        // `tsc --strict` fixtures ("Cannot find name") — the bare
+                        // name isn't necessarily in scope at this dispatch site
+                        // (cross-context: publisher and subscriber are different
+                        // units), the same qualification problem
+                        // `ts_type_ref_qualified` exists to solve for handler
+                        // wrappers elsewhere in this crate. Needs the same kind of
+                        // scoped qualification, not a bare name — more than a
+                        // same-line fix.
                         let call_args = if wants_envelope {
-                            "ev.payload as any, ev.envelope"
+                            "ev.payload as any, ev.envelope".to_string()
                         } else {
-                            "ev.payload as any"
+                            "ev.payload as any".to_string()
                         };
                         format!(
                             "try {{ await {sub_ns}.{sub_svc}.event({call_args}, {sub_ns}Deps); }} catch (e) {{ console.error(\"EventsFanout delivery failed\", {{ event: ev.type, service: {sub_svc:?}, error: String(e) }}); }}"

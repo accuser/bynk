@@ -45,9 +45,9 @@ export function deserialise_Sku(json: JsonValue, path: string = "$"): Result<Sku
   if (typeof json !== "string") {
     return Err({ kind: "StructuralMismatch", path, expected: "string", actual: typeof json });
   }
-  const validated = (typeof (Sku as any).of === "function")
-    ? (Sku as any).of(json)
-    : Ok(json as unknown as Sku);
+  const validated = (typeof (Sku as unknown as { of?: (json: unknown) => Result<unknown, ValidationError> }).of === "function")
+    ? (Sku as unknown as { of: (json: unknown) => Result<unknown, ValidationError> }).of(json)
+    : (Ok(json as unknown as Sku) as Result<unknown, ValidationError>);
   if (validated.tag === "Err") {
     return Err({ kind: "RefinementViolation", path, violation: validated.error });
   }

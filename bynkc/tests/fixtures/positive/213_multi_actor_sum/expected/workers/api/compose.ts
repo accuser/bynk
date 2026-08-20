@@ -10,7 +10,7 @@ export interface Env {
 export function compose(env: Env) {
   const deps = {  };
   return {
-    async http_GET_notes_Param_id(request: Request, id: any) {
+    async http_GET_notes_Param_id(request: Request, id: string) {
       let __who: any = undefined;
       if (__who === undefined) {
         const __authz = request.headers.get("Authorization");

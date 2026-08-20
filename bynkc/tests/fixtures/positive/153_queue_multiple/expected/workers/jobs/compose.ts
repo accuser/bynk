@@ -10,10 +10,10 @@ export interface Env {
 export function compose(env: Env) {
   const deps = {  };
   return {
-    async queue_highWorker_0(message: any) {
+    async queue_highWorker_0(message: handlers.Job) {
       return handlers.highWorker.queue_highWorker_0(message, deps);
     },
-    async queue_lowWorker_0(message: any) {
+    async queue_lowWorker_0(message: handlers.Job) {
       return handlers.lowWorker.queue_lowWorker_0(message, deps);
     },
   };

@@ -10,7 +10,7 @@ export interface Env {
 export function compose(env: Env) {
   const deps = {  };
   return {
-    async http_PUT_items_Param_id(id: any, body: any) {
+    async http_PUT_items_Param_id(id: handlers.ItemId, body: handlers.UpdateItem) {
       return handlers.api.http_PUT_items_Param_id(id, body, deps);
     },
   };

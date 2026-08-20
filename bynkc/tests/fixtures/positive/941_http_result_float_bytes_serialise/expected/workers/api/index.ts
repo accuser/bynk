@@ -24,14 +24,14 @@ export default {
       {
         if ((method === "GET" || method === "HEAD") && path === "/blob") {
           const result = await surface.http_GET_blob();
-          const __response = applySecurityHeaders(notModifiedIfMatch(httpResultToResponse(result, (__v: any) => __bynkBytesToBase64(__v) as JsonValue, { weakEtag: true }), request), __security_api);
+          const __response = applySecurityHeaders(notModifiedIfMatch(httpResultToResponse(result, (__v: Uint8Array) => __bynkBytesToBase64(__v) as JsonValue, { weakEtag: true }), request), __security_api);
           return method === "HEAD" ? headResponse(__response) : __response;
         }
       }
       {
         if ((method === "GET" || method === "HEAD") && path === "/ratio") {
           const result = await surface.http_GET_ratio();
-          const __response = applySecurityHeaders(notModifiedIfMatch(httpResultToResponse(result, (__v: any) => ((v: number) => { if (!Number.isFinite(v)) throw new Error("non-finite Float at boundary"); return v as JsonValue; })(__v), { weakEtag: true }), request), __security_api);
+          const __response = applySecurityHeaders(notModifiedIfMatch(httpResultToResponse(result, (__v: number) => ((v: number) => { if (!Number.isFinite(v)) throw new Error("non-finite Float at boundary"); return v as JsonValue; })(__v), { weakEtag: true }), request), __security_api);
           return method === "HEAD" ? headResponse(__response) : __response;
         }
       }

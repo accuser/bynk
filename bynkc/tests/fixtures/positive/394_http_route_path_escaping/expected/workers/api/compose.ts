@@ -13,7 +13,7 @@ export function compose(env: Env) {
     async http_GET_a_b_() {
       return handlers.api.http_GET_a_b_(deps);
     },
-    async http_GET_c_d_Param_id(id: any) {
+    async http_GET_c_d_Param_id(id: string) {
       return handlers.api.http_GET_c_d_Param_id(id, deps);
     },
   };

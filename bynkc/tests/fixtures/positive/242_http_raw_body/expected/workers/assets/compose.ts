@@ -16,7 +16,7 @@ export function compose(env: Env) {
     async http_GET_pixel_png() {
       return handlers.Assets.http_GET_pixel_png(deps);
     },
-    async http_GET_robots_Param_mode(mode: any) {
+    async http_GET_robots_Param_mode(mode: string) {
       return handlers.Assets.http_GET_robots_Param_mode(mode, deps);
     },
   };

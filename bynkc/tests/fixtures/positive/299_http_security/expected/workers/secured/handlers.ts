@@ -46,9 +46,9 @@ export function deserialise_ShortCode(json: JsonValue, path: string = "$"): Resu
   if (typeof json !== "string") {
     return Err({ kind: "StructuralMismatch", path, expected: "string", actual: typeof json });
   }
-  const validated = (typeof (ShortCode as any).of === "function")
-    ? (ShortCode as any).of(json)
-    : Ok(json as unknown as ShortCode);
+  const validated = (typeof (ShortCode as unknown as { of?: (json: unknown) => Result<unknown, ValidationError> }).of === "function")
+    ? (ShortCode as unknown as { of: (json: unknown) => Result<unknown, ValidationError> }).of(json)
+    : (Ok(json as unknown as ShortCode) as Result<unknown, ValidationError>);
   if (validated.tag === "Err") {
     return Err({ kind: "RefinementViolation", path, violation: validated.error });
   }

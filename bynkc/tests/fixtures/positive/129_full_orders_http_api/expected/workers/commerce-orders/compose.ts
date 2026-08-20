@@ -11,7 +11,7 @@ export interface Env {
 export function compose(env: Env) {
   const deps = { env };
   return {
-    async http_POST_orders(body: any) {
+    async http_POST_orders(body: handlers.CreateOrderRequest) {
       return handlers.orders.http_POST_orders(body, deps);
     },
     async placement(total: handlers.Money) {

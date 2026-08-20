@@ -13,7 +13,7 @@ export function compose(env: Env) {
     async http_GET_ticks() {
       return handlers.Feed.http_GET_ticks(deps);
     },
-    async http_GET_feed_Param_mode(mode: any) {
+    async http_GET_feed_Param_mode(mode: string) {
       return handlers.Feed.http_GET_feed_Param_mode(mode, deps);
     },
   };

@@ -13,10 +13,10 @@ export function compose(env: Env) {
     async http_GET_notes() {
       return handlers.routes.http_GET_notes(deps);
     },
-    async http_POST_notes(body: any) {
+    async http_POST_notes(body: string) {
       return handlers.routes.http_POST_notes(body, deps);
     },
-    async http_GET_notes_Param_id(id: any) {
+    async http_GET_notes_Param_id(id: string) {
       return handlers.routes.http_GET_notes_Param_id(id, deps);
     },
     async http_GET_ticks() {

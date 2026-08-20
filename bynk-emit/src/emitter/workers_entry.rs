@@ -609,7 +609,14 @@ pub(crate) fn emit_worker_entry(
             .iter()
             .find(|ss| ss.service == route.service)
             .map(|ss| ss.const_name.as_str());
-        emit_http_route_dispatch(&mut out, route, cors_const, security_const, &runtime_use);
+        emit_http_route_dispatch(
+            &mut out,
+            route,
+            cors_const,
+            security_const,
+            &table.types,
+            &runtime_use,
+        );
     }
 
     // v0.139 (ADR 0162): the method-aware router fall-through. A request that
@@ -681,6 +688,7 @@ pub(crate) fn emit_worker_entry(
             &queue_routes,
             exec_param,
             other_compose_call,
+            &table.types,
             &runtime_use,
         );
     }
@@ -755,6 +763,7 @@ fn emit_queue_handler(
     queue_routes: &[QueueRoute],
     exec_param: &str,
     compose_call: &str,
+    local_types: &std::collections::HashMap<String, Arc<TypeDecl>>,
     ru: &RuntimeUse,
 ) {
     let _ = writeln!(
@@ -766,9 +775,18 @@ fn emit_queue_handler(
     for route in queue_routes {
         let method_key = crate::emitter::queue_handler_method_name(&route.service, route.index);
         let name_lit = crate::emitter::escape_ts_string(&route.name);
-        let dser = match &route.msg_type {
-            Some(t) => deserialise_call(t, "(msg.body as JsonValue)", "$", ru),
-            None => "Ok(msg.body as any) as Result<any, BoundaryError>".to_string(),
+        let (dser, brand) = match &route.msg_type {
+            Some(t) => (
+                deserialise_call(t, "(msg.body as JsonValue)", "$", ru),
+                brand_assertion(t, local_types),
+            ),
+            // P7.2: `msg.body` is already declared `unknown` at `queue()`'s own
+            // signature above — no cast needed at all when there's no declared type
+            // to (dis)trust it against.
+            None => (
+                "Ok(msg.body) as Result<unknown, BoundaryError>".to_string(),
+                String::new(),
+            ),
         };
         let _ = writeln!(out, "      case \"{name_lit}\": {{");
         let _ = writeln!(out, "        for (const msg of batch.messages) {{");
@@ -780,7 +798,7 @@ fn emit_queue_handler(
         );
         let _ = writeln!(
             out,
-            "            const result = await surface.{method_key}(__r.value);"
+            "            const result = await surface.{method_key}(__r.value{brand});"
         );
         let _ = writeln!(out, "            if (result.tag === \"Ack\") msg.ack();");
         let _ = writeln!(
@@ -1157,6 +1175,7 @@ fn emit_http_route_dispatch(
     route: &HttpRoute,
     cors_const: Option<&str>,
     security_const: Option<&str>,
+    local_types: &std::collections::HashMap<String, Arc<TypeDecl>>,
     ru: &RuntimeUse,
 ) {
     let h = &route.handler;
@@ -1324,7 +1343,11 @@ fn emit_http_route_dispatch(
             out,
             "          if (__r_body.tag === \"Err\") return {body_reject};"
         );
-        let _ = writeln!(out, "          const body = __r_body.value;");
+        let _ = writeln!(
+            out,
+            "          const body = __r_body.value{};",
+            brand_assertion(&body_param.type_ref, local_types)
+        );
         call_args.push("body".to_string());
     }
     // Invoke the handler and serialise the HttpResult. The handler is
@@ -1539,7 +1562,11 @@ fn emit_path_param_construction(
         }
         _ => {
             // Other shapes are rejected by the static check; emit a fallback.
-            let _ = writeln!(out, "          const {jname} = __raw_{pname} as any;");
+            // P7.2: `__raw_{pname}` is already `string` (`__m.params[...]`'s own
+            // binding, above in this function) — the same value the
+            // `BaseType::String` arm above uses with no cast at all; this
+            // defensive arm needs none either.
+            let _ = writeln!(out, "          const {jname} = __raw_{pname};");
         }
     }
 }
@@ -1605,7 +1632,7 @@ fn serialise_call(t: &TypeRef, value: &str, ru: &RuntimeUse) -> String {
 ///
 /// Only a *named root* is asserted, mirroring the bundle path: for a generic
 /// (`List[Money]`) TypeScript resolves the brand through the intersection.
-fn brand_assertion(
+pub(crate) fn brand_assertion(
     t: &TypeRef,
     local_types: &std::collections::HashMap<String, Arc<TypeDecl>>,
 ) -> String {

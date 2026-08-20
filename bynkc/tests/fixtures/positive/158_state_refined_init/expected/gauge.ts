@@ -69,9 +69,9 @@ export function deserialise_Level(json: JsonValue, path: string = "$"): Result<L
   if (typeof json !== "number") {
     return Err({ kind: "StructuralMismatch", path, expected: "number", actual: typeof json });
   }
-  const validated = (typeof (Level as any).of === "function")
-    ? (Level as any).of(json)
-    : Ok(json as unknown as Level);
+  const validated = (typeof (Level as unknown as { of?: (json: unknown) => Result<unknown, ValidationError> }).of === "function")
+    ? (Level as unknown as { of: (json: unknown) => Result<unknown, ValidationError> }).of(json)
+    : (Ok(json as unknown as Level) as Result<unknown, ValidationError>);
   if (validated.tag === "Err") {
     return Err({ kind: "RefinementViolation", path, violation: validated.error });
   }

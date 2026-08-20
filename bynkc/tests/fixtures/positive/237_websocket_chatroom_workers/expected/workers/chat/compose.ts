@@ -13,7 +13,7 @@ type DurableObjectNamespace = { idFromName(name: string): { toString(): string }
 export function compose(env: Env) {
   const deps = { env };
   return {
-    async ws_ChatGateway_open(request: Request, roomId: any) {
+    async ws_ChatGateway_open(request: Request, roomId: string) {
       if (request.headers.get("Upgrade") !== "websocket") return new Response("Expected a WebSocket upgrade", { status: 426 });
       const __proto = request.headers.get("Sec-WebSocket-Protocol");
       if (__proto === null) return new Response("Unauthorized", { status: 401 });

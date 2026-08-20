@@ -45,18 +45,18 @@ async function __bynkSignHs256(payload: Record<string, unknown>, secret: string)
   const sig = await crypto.subtle.sign("HMAC", key, enc.encode(`${h}.${p}`) as BufferSource);
   return `${h}.${p}.${__bytesB64url(new Uint8Array(sig))}`;
 }
-(globalThis as any).process = (globalThis as any).process ?? { env: {} };
-(globalThis as any).process.env["AUTH_SECRET"] = "__bynk_test_secret";
+(globalThis as unknown as { process: { env: Record<string, string> } }).process = (globalThis as unknown as { process?: { env: Record<string, string> } }).process ?? { env: {} };
+(globalThis as unknown as { process: { env: Record<string, string> } }).process.env["AUTH_SECRET"] = "__bynk_test_secret";
 async function __sysdrive_api_http_POST_cart(body: any, __sub: string) {
   const __body = JSON.stringify(shop_api.serialise_Item(body));
   const __h = makeHarness();
-  const __req = new Request(`https://test/cart`, { method: "POST", headers: { "content-type": "application/json", "authorization": `Bearer ${await __bynkSignHs256({ sub: __sub, exp: __bynkNow() + 3600 }, ((globalThis as any).process?.env?.["AUTH_SECRET"] ?? ""))}`, }, body: __body, });
+  const __req = new Request(`https://test/cart`, { method: "POST", headers: { "content-type": "application/json", "authorization": `Bearer ${await __bynkSignHs256({ sub: __sub, exp: __bynkNow() + 3600 }, ((globalThis as { process?: { env?: Record<string, string> } }).process?.env?.["AUTH_SECRET"] ?? ""))}`, }, body: __body, });
   const __res = await __h.env.SHOP_API.fetch(__req);
   return responseToHttpResult(__res, shop_api.deserialise_Item);
 }
 async function __sysdrive_raw_api_http_POST_cart(body: string, __sub: string) {
   const __h = makeHarness();
-  const __req = new Request(`https://test/cart`, { method: "POST", headers: { "content-type": "application/json", "authorization": `Bearer ${await __bynkSignHs256({ sub: __sub, exp: __bynkNow() + 3600 }, ((globalThis as any).process?.env?.["AUTH_SECRET"] ?? ""))}`, }, body: body, });
+  const __req = new Request(`https://test/cart`, { method: "POST", headers: { "content-type": "application/json", "authorization": `Bearer ${await __bynkSignHs256({ sub: __sub, exp: __bynkNow() + 3600 }, ((globalThis as { process?: { env?: Record<string, string> } }).process?.env?.["AUTH_SECRET"] ?? ""))}`, }, body: body, });
   const __res = await __h.env.SHOP_API.fetch(__req);
   return responseToHttpOutcome(__res, shop_api.deserialise_Item);
 }
@@ -76,13 +76,13 @@ async function __sysdrive_rawnoauth_api_http_POST_cart(body: string, __sub: stri
 async function __sysdrive_api_http_POST_reject(body: any, __sub: string) {
   const __body = JSON.stringify(shop_api.serialise_Item(body));
   const __h = makeHarness();
-  const __req = new Request(`https://test/reject`, { method: "POST", headers: { "content-type": "application/json", "authorization": `Bearer ${await __bynkSignHs256({ sub: __sub, exp: __bynkNow() + 3600 }, ((globalThis as any).process?.env?.["AUTH_SECRET"] ?? ""))}`, }, body: __body, });
+  const __req = new Request(`https://test/reject`, { method: "POST", headers: { "content-type": "application/json", "authorization": `Bearer ${await __bynkSignHs256({ sub: __sub, exp: __bynkNow() + 3600 }, ((globalThis as { process?: { env?: Record<string, string> } }).process?.env?.["AUTH_SECRET"] ?? ""))}`, }, body: __body, });
   const __res = await __h.env.SHOP_API.fetch(__req);
   return responseToHttpResult(__res, shop_api.deserialise_Item);
 }
 async function __sysdrive_raw_api_http_POST_reject(body: string, __sub: string) {
   const __h = makeHarness();
-  const __req = new Request(`https://test/reject`, { method: "POST", headers: { "content-type": "application/json", "authorization": `Bearer ${await __bynkSignHs256({ sub: __sub, exp: __bynkNow() + 3600 }, ((globalThis as any).process?.env?.["AUTH_SECRET"] ?? ""))}`, }, body: body, });
+  const __req = new Request(`https://test/reject`, { method: "POST", headers: { "content-type": "application/json", "authorization": `Bearer ${await __bynkSignHs256({ sub: __sub, exp: __bynkNow() + 3600 }, ((globalThis as { process?: { env?: Record<string, string> } }).process?.env?.["AUTH_SECRET"] ?? ""))}`, }, body: body, });
   const __res = await __h.env.SHOP_API.fetch(__req);
   return responseToHttpOutcome(__res, shop_api.deserialise_Item);
 }
@@ -102,13 +102,13 @@ async function __sysdrive_rawnoauth_api_http_POST_reject(body: string, __sub: st
 async function __sysdrive_api_http_PUT_cart_Param_sku(sku: any, body: any, __sub: string) {
   const __body = JSON.stringify(shop_api.serialise_Item(body));
   const __h = makeHarness();
-  const __req = new Request(`https://test/cart/${sku}`, { method: "PUT", headers: { "content-type": "application/json", "authorization": `Bearer ${await __bynkSignHs256({ sub: __sub, exp: __bynkNow() + 3600 }, ((globalThis as any).process?.env?.["AUTH_SECRET"] ?? ""))}`, }, body: __body, });
+  const __req = new Request(`https://test/cart/${sku}`, { method: "PUT", headers: { "content-type": "application/json", "authorization": `Bearer ${await __bynkSignHs256({ sub: __sub, exp: __bynkNow() + 3600 }, ((globalThis as { process?: { env?: Record<string, string> } }).process?.env?.["AUTH_SECRET"] ?? ""))}`, }, body: __body, });
   const __res = await __h.env.SHOP_API.fetch(__req);
   return responseToHttpResult(__res, shop_api.deserialise_Item);
 }
 async function __sysdrive_raw_api_http_PUT_cart_Param_sku(sku: string, body: string, __sub: string) {
   const __h = makeHarness();
-  const __req = new Request(`https://test/cart/${sku}`, { method: "PUT", headers: { "content-type": "application/json", "authorization": `Bearer ${await __bynkSignHs256({ sub: __sub, exp: __bynkNow() + 3600 }, ((globalThis as any).process?.env?.["AUTH_SECRET"] ?? ""))}`, }, body: body, });
+  const __req = new Request(`https://test/cart/${sku}`, { method: "PUT", headers: { "content-type": "application/json", "authorization": `Bearer ${await __bynkSignHs256({ sub: __sub, exp: __bynkNow() + 3600 }, ((globalThis as { process?: { env?: Record<string, string> } }).process?.env?.["AUTH_SECRET"] ?? ""))}`, }, body: body, });
   const __res = await __h.env.SHOP_API.fetch(__req);
   return responseToHttpOutcome(__res, shop_api.deserialise_Item);
 }

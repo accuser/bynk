@@ -244,6 +244,28 @@ the draft's 48-site framing suggested:
   overturned by this decision: those wrappers gain a real structural type instead of `any`, not a
   removal of the wrapper's own design.
 
+**P7.2 (#1300, landed) re-settles this estimate a second time — the real number is neither ~20 nor
+50.** #1300's own filing already corrected the settling-time "~20 narrowable" to a fresh,
+exhaustive 55-site count (50 narrowable, 2 residual, 3 deferred) before implementation began.
+Implementation itself found roughly half of the 50 "narrowable now" sites were not: a real
+`tsc --strict` pass over all 270 positive fixtures (Decision B, exactly as the proposal specified)
+caught several classes the file-level read missed — a bare/unqualified type colliding with a
+`handlers`-namespace name or a DOM-ambient global of the same name; `unknown`/`unknown[]` breaking
+downstream type inference for callers that need the real element or field type (the query-algebra
+methods, a discriminated-union field access); a local fallback type colliding with a differently
+shaped real imported type of the same name; and, in three places, a commons-imported (rebranded)
+type reaching a compose-layer boundary without the brand-assertion cast `workers_entry.rs`'s own
+`on call` dispatch already carried for exactly this gap (`brand_assertion`, threaded to the `on
+http` and queue dispatch paths that lacked it — a real, previously-latent `tsc --strict` gap this
+narrowing surfaced, not introduced, since it was invisible while those parameters were still
+`any`). Each such site was re-classified DEFERRED on the spot, per the proposal's own named risk,
+with a comment at the site recording what was tried and why. **Landed: `ts_any` 55 → 31** (24
+sites narrowed for real; 2 residual plus 29 deferred, up from the proposed 2 + 3 — the
+implementing PR carries the full site-by-site accounting, not repeated here). The completion
+criterion (§5) is unaffected: `ts_any`'s eventual floor is still argued at retirement, not fixed
+at filing time, and every deferred site already carries its own named reason rather than a silent
+drop.
+
 ### 3.4 Q4 — How much of R8.1–R8.22 is this track's to close? **Settled.**
 
 **Decision: three-way split, not the draft's assumed two-way one.** A rule-by-rule audit against
@@ -365,7 +387,7 @@ named rule-closing slices, R8.2/R8.14, replacing an unscoped placeholder).
 |---|---|---|---|
 | **P7.0** (#1296, landed) | `ts_writes` (1641) and `ts_any` (55, widened for generic-position `any` per review of #1297) gated probes in `xtask/src/greenfield_status.rs`, following `hoist_sinks`'s line-scan pattern, excluding `xtask` from its own count | instrumentation | — |
 | **P7.1** (#1298, landed) | Verification pass — R7.7 confirmed closed, §1's own hedge firmed up with the evidence; no Appendix B/D change needed (checked, not stale for R7.7) | R7.7 | — |
-| **P7.2** | Narrow the ~20 classified-narrowable `as any`/bare-`: any` sites (§3.3) to `unknown`, structural or marker types, and generated index-signature types where the IR already carries the data — plain `writeln!`-level text changes, no tree required | R7.1 (partial, ahead of the tree) | §3.3 |
+| **P7.2** (#1300, landed) | Narrowed 24 of the 50 classified-narrowable `as any`/bare-`: any` sites (§3.3) to `unknown`, real declared/qualified types, or generated structural types; the other 31 (2 residual + 29 deferred, up from the proposal's 3) named and left as `any`, each with a site comment recording why — `ts_any` 55 → 31 | R7.1 (partial, ahead of the tree) | §3.3 |
 | **P7.3** | `TomlDocument` + minimal TOML printer; `emit_wrangler_toml` (`wrangler.rs:49`) returns a document, not a `String` | R7.8 (part) | — |
 | **P7.4** | **Closes R7.6 and R8.20** — `bynk/src/deploy/config.rs:195,260,263`, `deploy/ledger.rs:365`, `bynk-strip/src/lib.rs:136-139` read typed documents instead of text-matching `KV_NAMESPACE_ID_PLACEHOLDER` and `main = "index.ts"` | R7.6, R8.20 | P7.3 |
 

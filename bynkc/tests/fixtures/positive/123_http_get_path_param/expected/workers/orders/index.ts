@@ -29,7 +29,7 @@ export default {
           if (__r_id.tag === "Err") return applySecurityHeaders(new Response(JSON.stringify({ kind: "RefinementViolation", path: "path.id", violation: __r_id.error }), { status: 400, headers: { "content-type": "application/json" } }), __security_api);
           const id = __r_id.value;
           const result = await surface.http_GET_orders_Param_id(id);
-          const __response = applySecurityHeaders(notModifiedIfMatch(httpResultToResponse(result, (__v: any) => __v as JsonValue, { weakEtag: true }), request), __security_api);
+          const __response = applySecurityHeaders(notModifiedIfMatch(httpResultToResponse(result, (__v: string) => __v as JsonValue, { weakEtag: true }), request), __security_api);
           return method === "HEAD" ? headResponse(__response) : __response;
         }
       }

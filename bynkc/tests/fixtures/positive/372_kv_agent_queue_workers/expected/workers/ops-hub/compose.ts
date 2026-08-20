@@ -16,7 +16,7 @@ export function compose(env: Env) {
   const Kv = new bynk_cloudflare__binding.WorkersKv(env);
   const deps = { Kv, env };
   return {
-    async queue_intake_0(message: any) {
+    async queue_intake_0(message: handlers.Job) {
       return handlers.intake.queue_intake_0(message, deps);
     },
   };

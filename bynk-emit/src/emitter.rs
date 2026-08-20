@@ -4068,6 +4068,11 @@ pub(crate) fn unchecked_construct_test(name: &str, value: &str, is_opaque: bool)
     if is_opaque {
         format!("{name}.unsafe({value})")
     } else {
+        // P7.2: deferred, not narrowed — checked, not skipped. This doc comment's
+        // own explanation still holds: `name` genuinely isn't resolvable as a
+        // type at this call site (only as an `any`-typed value binding), so
+        // there is no real type to cast to here. Fixing this needs restructuring
+        // what the test scaffold imports, not a same-line text change.
         format!("({value} as any)")
     }
 }

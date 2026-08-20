@@ -13,7 +13,7 @@ type DurableObjectNamespace = { idFromName(name: string): { toString(): string }
 export function compose(env: Env) {
   const deps = { env };
   return {
-    async ws_ChatGateway_open(request: Request, __id_export: any) {
+    async ws_ChatGateway_open(request: Request, __id_export: string) {
       if (request.headers.get("Upgrade") !== "websocket") return new Response("Expected a WebSocket upgrade", { status: 426 });
       const __proto = request.headers.get("Sec-WebSocket-Protocol");
       if (__proto === null) return new Response("Unauthorized", { status: 401 });
@@ -32,13 +32,13 @@ export function compose(env: Env) {
       __fwd.set("X-Bynk-Ws-Open", JSON.stringify({ args: [__r_export.value], identity: __id.value }));
       return __stub.fetch(new Request("https://_bynk/_bynk/ws/open/ChatGateway", { method: request.method, headers: __fwd }));
     },
-    async http_GET_lookup_Param_class(__id_class: any) {
+    async http_GET_lookup_Param_class(__id_class: string) {
       return handlers.api.http_GET_lookup_Param_class(__id_class, deps);
     },
-    async http_GET_tag_Param_public(__id_public: any) {
+    async http_GET_tag_Param_public(__id_public: handlers.Tag) {
       return handlers.api.http_GET_tag_Param_public(__id_public, deps);
     },
-    async http_GET_bearer_Param_delete(request: Request, __id_delete: any) {
+    async http_GET_bearer_Param_delete(request: Request, __id_delete: string) {
       const __authz = request.headers.get("Authorization");
       if (__authz === null || !__authz.startsWith("Bearer ")) return HttpResult.Unauthorized;
       const __secret = (env as unknown as Record<string, unknown>)["AUTH_SECRET"] ?? (globalThis as { process?: { env?: Record<string, unknown> } }).process?.env?.["AUTH_SECRET"];
@@ -49,7 +49,7 @@ export function compose(env: Env) {
       if (__id.tag === "Err") return HttpResult.Unauthorized;
       return handlers.api.http_GET_bearer_Param_delete(__id_delete, { ...deps, identity: __id.value });
     },
-    async http_GET_oidc_Param_function(request: Request, __id_function: any) {
+    async http_GET_oidc_Param_function(request: Request, __id_function: string) {
       const __authz = request.headers.get("Authorization");
       if (__authz === null || !__authz.startsWith("Bearer ")) return HttpResult.Unauthorized;
       const __claims = await verifyOidcJwt(__authz.slice(7), "https://issuer.example.com", "api", "https://issuer.example.com/.well-known/jwks.json");
@@ -58,7 +58,7 @@ export function compose(env: Env) {
       if (__id.tag === "Err") return HttpResult.Unauthorized;
       return handlers.api.http_GET_oidc_Param_function(__id_function, { ...deps, identity: __id.value });
     },
-    async http_GET_sum_Param_import(request: Request, __id_import: any) {
+    async http_GET_sum_Param_import(request: Request, __id_import: string) {
       let __who: any = undefined;
       if (__who === undefined) {
         const __authz = request.headers.get("Authorization");
@@ -82,13 +82,13 @@ export function compose(env: Env) {
     async echo(__id_void: string) {
       return handlers.echo.call(__id_void, deps);
     },
-    async queue_outbox_0(__id_class: any) {
+    async queue_outbox_0(__id_class: string) {
       return handlers.outbox.queue_outbox_0(__id_class, deps);
     },
     async registry(__id_class: string, __id_static: string) {
       return handlers.registry.call(__id_class, __id_static, deps);
     },
-    async cron_sweeper_0(__id_delete: any) {
+    async cron_sweeper_0(__id_delete: number) {
       return handlers.sweeper.cron_sweeper_0(__id_delete, deps);
     },
   };

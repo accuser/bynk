@@ -163,7 +163,7 @@ export class Room {
     if (url.pathname.startsWith("/_bynk/agent/")) {
       const methodName = url.pathname.slice("/_bynk/agent/".length);
       const { args, deps } = (await request.json()) as { args: unknown[]; deps: unknown };
-      const result = await (this as any)[methodName](...args, deps);
+      const result = await (this as unknown as Record<string, (...bynkArgs: unknown[]) => unknown>)[methodName](...args, deps);
       return new Response(JSON.stringify(result ?? null), { headers: { "content-type": "application/json" } });
     }
     return new Response("Not Found", { status: 404 });
@@ -187,9 +187,9 @@ export function deserialise_RoomId(json: JsonValue, path: string = "$"): Result<
   if (typeof json !== "string") {
     return Err({ kind: "StructuralMismatch", path, expected: "string", actual: typeof json });
   }
-  const validated = (typeof (RoomId as any).of === "function")
-    ? (RoomId as any).of(json)
-    : Ok(json as unknown as RoomId);
+  const validated = (typeof (RoomId as unknown as { of?: (json: unknown) => Result<unknown, ValidationError> }).of === "function")
+    ? (RoomId as unknown as { of: (json: unknown) => Result<unknown, ValidationError> }).of(json)
+    : (Ok(json as unknown as RoomId) as Result<unknown, ValidationError>);
   if (validated.tag === "Err") {
     return Err({ kind: "RefinementViolation", path, violation: validated.error });
   }
@@ -204,9 +204,9 @@ export function deserialise_Tag(json: JsonValue, path: string = "$"): Result<Tag
   if (typeof json !== "string") {
     return Err({ kind: "StructuralMismatch", path, expected: "string", actual: typeof json });
   }
-  const validated = (typeof (Tag as any).of === "function")
-    ? (Tag as any).of(json)
-    : Ok(json as unknown as Tag);
+  const validated = (typeof (Tag as unknown as { of?: (json: unknown) => Result<unknown, ValidationError> }).of === "function")
+    ? (Tag as unknown as { of: (json: unknown) => Result<unknown, ValidationError> }).of(json)
+    : (Ok(json as unknown as Tag) as Result<unknown, ValidationError>);
   if (validated.tag === "Err") {
     return Err({ kind: "RefinementViolation", path, violation: validated.error });
   }
@@ -221,9 +221,9 @@ export function deserialise_UserId(json: JsonValue, path: string = "$"): Result<
   if (typeof json !== "string") {
     return Err({ kind: "StructuralMismatch", path, expected: "string", actual: typeof json });
   }
-  const validated = (typeof (UserId as any).of === "function")
-    ? (UserId as any).of(json)
-    : Ok(json as unknown as UserId);
+  const validated = (typeof (UserId as unknown as { of?: (json: unknown) => Result<unknown, ValidationError> }).of === "function")
+    ? (UserId as unknown as { of: (json: unknown) => Result<unknown, ValidationError> }).of(json)
+    : (Ok(json as unknown as UserId) as Result<unknown, ValidationError>);
   if (validated.tag === "Err") {
     return Err({ kind: "RefinementViolation", path, violation: validated.error });
   }

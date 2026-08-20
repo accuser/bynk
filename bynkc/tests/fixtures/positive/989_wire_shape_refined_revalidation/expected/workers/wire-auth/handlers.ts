@@ -85,9 +85,9 @@ export function deserialise_AuthId(json: JsonValue, path: string = "$"): Result<
   if (typeof json !== "string") {
     return Err({ kind: "StructuralMismatch", path, expected: "string", actual: typeof json });
   }
-  const validated = (typeof (AuthId as any).of === "function")
-    ? (AuthId as any).of(json)
-    : Ok(json as unknown as AuthId);
+  const validated = (typeof (AuthId as unknown as { of?: (json: unknown) => Result<unknown, ValidationError> }).of === "function")
+    ? (AuthId as unknown as { of: (json: unknown) => Result<unknown, ValidationError> }).of(json)
+    : (Ok(json as unknown as AuthId) as Result<unknown, ValidationError>);
   if (validated.tag === "Err") {
     return Err({ kind: "RefinementViolation", path, violation: validated.error });
   }
@@ -102,9 +102,9 @@ export function deserialise_ClientId(json: JsonValue, path: string = "$"): Resul
   if (typeof json !== "string") {
     return Err({ kind: "StructuralMismatch", path, expected: "string", actual: typeof json });
   }
-  const validated = (typeof (ClientId as any).of === "function")
-    ? (ClientId as any).of(json)
-    : Ok(json as unknown as ClientId);
+  const validated = (typeof (ClientId as unknown as { of?: (json: unknown) => Result<unknown, ValidationError> }).of === "function")
+    ? (ClientId as unknown as { of: (json: unknown) => Result<unknown, ValidationError> }).of(json)
+    : (Ok(json as unknown as ClientId) as Result<unknown, ValidationError>);
   if (validated.tag === "Err") {
     return Err({ kind: "RefinementViolation", path, violation: validated.error });
   }

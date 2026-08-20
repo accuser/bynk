@@ -13,7 +13,7 @@ type DurableObjectNamespace = { idFromName(name: string): { toString(): string }
 export function compose(env: Env) {
   const deps = { env };
   return {
-    async http_POST_cart(request: Request, body: any) {
+    async http_POST_cart(request: Request, body: handlers.Item) {
       const __authz = request.headers.get("Authorization");
       if (__authz === null || !__authz.startsWith("Bearer ")) return HttpResult.Unauthorized;
       const __secret = (env as unknown as Record<string, unknown>)["AUTH_SECRET"] ?? (globalThis as { process?: { env?: Record<string, unknown> } }).process?.env?.["AUTH_SECRET"];
@@ -24,7 +24,7 @@ export function compose(env: Env) {
       if (__id.tag === "Err") return HttpResult.Unauthorized;
       return handlers.api.http_POST_cart(body, { ...deps, identity: __id.value });
     },
-    async http_POST_reject(request: Request, body: any) {
+    async http_POST_reject(request: Request, body: handlers.Item) {
       const __authz = request.headers.get("Authorization");
       if (__authz === null || !__authz.startsWith("Bearer ")) return HttpResult.Unauthorized;
       const __secret = (env as unknown as Record<string, unknown>)["AUTH_SECRET"] ?? (globalThis as { process?: { env?: Record<string, unknown> } }).process?.env?.["AUTH_SECRET"];
@@ -35,7 +35,7 @@ export function compose(env: Env) {
       if (__id.tag === "Err") return HttpResult.Unauthorized;
       return handlers.api.http_POST_reject(body, { ...deps, identity: __id.value });
     },
-    async http_PUT_cart_Param_sku(request: Request, sku: any, body: any) {
+    async http_PUT_cart_Param_sku(request: Request, sku: handlers.Sku, body: handlers.Item) {
       const __authz = request.headers.get("Authorization");
       if (__authz === null || !__authz.startsWith("Bearer ")) return HttpResult.Unauthorized;
       const __secret = (env as unknown as Record<string, unknown>)["AUTH_SECRET"] ?? (globalThis as { process?: { env?: Record<string, unknown> } }).process?.env?.["AUTH_SECRET"];

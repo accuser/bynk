@@ -1292,7 +1292,17 @@ pub(crate) fn emit_provider(
     let factory = if p.given.is_empty() {
         format!("() => new {}()", p.provider_name.name)
     } else {
-        format!("(deps: any) => new {}(deps)", p.provider_name.name)
+        // P7.2: the same `deps_ty` the constructor above declares for `deps` —
+        // recomputed here since that binding doesn't escape its own block.
+        let deps_ty = crate::ir::lower::lower_provider_given_ir(p)
+            .iter()
+            .map(|c| format!("{}: {}", c.name, cap_ref_ty(c, &ctx.cross_context)))
+            .collect::<Vec<_>>()
+            .join("; ");
+        format!(
+            "(deps: {{ {deps_ty} }}) => new {}(deps)",
+            p.provider_name.name
+        )
     };
     writeln!(
         out,
@@ -3651,7 +3661,16 @@ pub(crate) fn emit_agent(
             // — rebuilt from this Worker's own `env.EVENTS_FANOUT` binding
             // (shared by every DO class this script hosts) rather than
             // trusting whatever the caller's JSON carried.
-            writeln!(out, "      const env = this.__env as any;").unwrap();
+            // P7.2: matches `emitter/workers.rs`'s own established idiom for a
+            // multi-binding env whose exact accessed keys vary by call site
+            // (`given_deps_expr` may reference other bindings besides
+            // `EVENTS_FANOUT`, computed elsewhere and not fully traced here) —
+            // a generic string-keyed record, not a precise structural type.
+            writeln!(
+                out,
+                "      const env = this.__env as unknown as Record<string, unknown>;"
+            )
+            .unwrap();
             let mut rebuilt: Vec<String> = Vec::new();
             if let Some(expr) = &given_deps_expr {
                 writeln!(out, "      const __givenDeps = {expr};").unwrap();
@@ -3661,24 +3680,31 @@ pub(crate) fn emit_agent(
                 let bind = crate::emitter::wrangler::agent_binding_name(
                     crate::emitter::wrangler::EVENTS_FANOUT_CLASS_NAME,
                 );
+                // P7.2: `env` is now `Record<string, unknown>` (above), so this
+                // specific binding needs its own cast to what
+                // `dispatchToEventsFanout` actually declares.
                 writeln!(
                     out,
-                    "      const __eventsDeps = {{ __eventsDispatch: (events: Array<{ev_ty}>) => dispatchToEventsFanout(env.{bind}, events) }};",
+                    "      const __eventsDeps = {{ __eventsDispatch: (events: Array<{ev_ty}>) => dispatchToEventsFanout(env.{bind} as DurableObjectNamespace, events) }};",
                     ev_ty = crate::emitter::EVENTS_WIRE_EVENT_TS_TYPE
                 )
                 .unwrap();
                 rebuilt.push("...__eventsDeps".to_string());
             }
+            // P7.2: `methodName` is read from `url.pathname` at runtime, so no
+            // static type can name which handler this is — a callable
+            // dictionary is what's actually known, and `result` flows only into
+            // a generic `JSON.stringify` below, so `unknown` costs nothing there.
             writeln!(
                 out,
-                "      const result = await (this as any)[methodName](...args, {{ ...((deps ?? {{}}) as Record<string, unknown>), {} }});",
+                "      const result = await (this as unknown as Record<string, (...bynkArgs: unknown[]) => unknown>)[methodName](...args, {{ ...((deps ?? {{}}) as Record<string, unknown>), {} }});",
                 rebuilt.join(", ")
             )
             .unwrap();
         } else {
             writeln!(
                 out,
-                "      const result = await (this as any)[methodName](...args, deps);"
+                "      const result = await (this as unknown as Record<string, (...bynkArgs: unknown[]) => unknown>)[methodName](...args, deps);"
             )
             .unwrap();
         }
@@ -3752,23 +3778,45 @@ pub(crate) fn emit_agent(
         let factory = agent_factory_name(&a.name.name);
         let key_val = bynk_check::checker::zero_value_ts(&a.key_type, None, &commons.types)
             .unwrap_or_else(|| "undefined as never".to_string());
+        // P7.2: `call`'s real shape is a discriminated union across `hs` (one
+        // variant per handler, built further down from `history_variant_tag` +
+        // each handler's own fields) and `deps` varies per handler too (each
+        // handler computes its own `deps_ty` from its own `given` set,
+        // `build_deps_object_ty_with_surface`'s own per-handler call elsewhere
+        // in this file) — a single driver-wide type for either needs the
+        // intersection/union across every handler this agent's history targets,
+        // not a same-line text change. `seq`'s own `args` is safe to narrow:
+        // it's read back only through `history_arg_ts`-shaped call sites below,
+        // never given a fixed shape of its own.
         let step_ty =
             format!("{{ call: any, accepted: boolean, old: {state_ty}, new: {state_ty} }}");
         writeln!(
             out,
-            "export async function {driver}(seq: Array<{{ h: number, args: any[] }}>, deps: any): Promise<Array<{step_ty}>> {{"
+            "export async function {driver}(seq: Array<{{ h: number, args: unknown[] }}>, deps: any): Promise<Array<{step_ty}>> {{"
         )
         .unwrap();
         writeln!(out, "  {registry}.reset();").unwrap();
+        // P7.2: deferred, not narrowed. A first attempt dropped this cast,
+        // reasoning `{factory}` already declares `): {agent}` and `.state`/
+        // `.{{method}}` are real declared members — true, but it broke real
+        // `tsc --strict` fixtures (248/249): `history_arg_ts` below produces
+        // unbranded plain values (`Number(__st.args[0])`), which don't
+        // structurally match a branded handler param type (`Amount`) once
+        // `__inst` is genuinely `{agent}`-typed instead of `any`. Narrowing
+        // `history_arg_ts`'s own output to brand its values correctly is the
+        // real fix, not a same-line change here.
         writeln!(out, "  const __inst = {factory}({key_val}) as any;").unwrap();
         writeln!(
             out,
             "  const __load = async (): Promise<{state_ty}> => {{ const __s = await __inst.state.storage.get(\"state\"); return __s === undefined ? {zero_fn}() : {{ ...{zero_fn}(), ...__s }}; }};"
         )
         .unwrap();
+        // P7.2: `e` is a caught throw of unknown shape by construction — a
+        // marker type stating exactly the one field this checks, not a blanket
+        // escape.
         writeln!(
             out,
-            "  const __rej = (e: any) => !!e && (e as any).invariantViolation !== undefined;"
+            "  const __rej = (e: unknown) => !!e && (e as {{ invariantViolation?: unknown }}).invariantViolation !== undefined;"
         )
         .unwrap();
         writeln!(out, "  const __steps: Array<{step_ty}> = [];").unwrap();
@@ -3778,10 +3826,13 @@ pub(crate) fn emit_agent(
         // those lines for the duration of the drive so the run isn't drowned in
         // expected noise; every other `console.error` still passes through, and the
         // original is restored in `finally`.
+        // P7.2: `console.error`'s own real type, `(...data: unknown[]) => void`
+        // — `__ce` is already that type by inference, and the replacement
+        // matches it exactly, so neither cast was ever load-bearing.
         writeln!(out, "  const __ce = console.error;").unwrap();
         writeln!(
             out,
-            "  console.error = ((...__a: any[]) => {{ if (typeof __a[0] === \"string\" && __a[0].startsWith(\"InvariantViolation\")) return; (__ce as any)(...__a); }}) as any;"
+            "  console.error = (...__a: unknown[]) => {{ if (typeof __a[0] === \"string\" && __a[0].startsWith(\"InvariantViolation\")) return; __ce(...__a); }};"
         )
         .unwrap();
         writeln!(out, "  try {{").unwrap();
@@ -3817,6 +3868,8 @@ pub(crate) fn emit_agent(
             "    const __new = __accepted ? await __load() : __old;"
         )
         .unwrap();
+        // P7.2: deferred, same reason as `step_ty`'s own `call` field above —
+        // a real type here is the same per-handler discriminated union.
         writeln!(out, "    let __call: any;").unwrap();
         writeln!(out, "    switch (__st.h) {{").unwrap();
         for (i, h) in hs.iter().enumerate() {

@@ -24,7 +24,7 @@ export default {
       {
         if (method === "POST" && path === "/ingest") {
           const result = await surface.http_POST_ingest(request);
-          return applySecurityHeaders(httpResultToResponse(result, (__v: any) => __v as JsonValue), __security_api);
+          return applySecurityHeaders(httpResultToResponse(result, (__v: string) => __v as JsonValue), __security_api);
         }
       }
       if (path === "/ingest") {
