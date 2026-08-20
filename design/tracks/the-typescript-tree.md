@@ -88,11 +88,24 @@ rationale — wrong, not missing, source-map offsets — is finding #4 (Medium, 
 `record_span(out.len(), …)` in `emitter/source_map.rs` "has no idea which buffer `out` is," so
 IIFE-local offsets corrupt the map.
 
-**One finding appears to have aged out already.** Finding #17 reported ~300 lines of harness
-TypeScript as Rust string literals beside an `include_str!` of `runtime.ts`. In the current tree,
-`emitter.rs:94` and five sites in `project/tests_emit.rs` already load real `.ts` files, and
-`bynk-emit/runtime/tsconfig.json` type-checks them under `strict`. R7.7 is substantially closed
-already — P7.1 (§6) is a verification pass, not construction.
+**R7.7 is closed — confirmed by P7.1 (#1298), not just aged out.** Finding #17 reported ~300 lines
+of harness TypeScript as Rust string literals beside an `include_str!` of `runtime.ts`. Verified
+against the current tree: every runtime-shaped `.ts` file is `include_str!`'d from a real file —
+`emitter.rs:94` (`runtime.ts`), five sites in `project/tests_emit.rs` (`test_runtime/*.ts`), and
+four in `bynk-check/src/firstparty.rs` (the vendored first-party bindings) — and no hand-written
+runtime TypeScript survives as a Rust string literal anywhere in `bynk-emit/src` (a search of every
+`r#"..."#` raw string found each one is a *Bynk* source fixture for compiler tests, not
+TypeScript). Coverage is real CI enforcement, not just a config file claiming strict mode:
+`bynk-emit/runtime/tsconfig.json` sets `strict`/`noImplicitAny: true`; `.github/workflows/ci.yml`'s
+`runtime` job runs `tsc -p tsconfig.json` plus a bundle-drift guard; `bynkc/tests/tsc_verify.rs`
+additionally stages every positive fixture project — exercising the runtime, the `test_runtime`
+helpers and the first-party bindings together — into one tree and runs `tsc --strict --noEmit`
+over it, with `BYNK_REQUIRE_TSC=1` set in CI so a missing `tsc` hard-fails rather than silently
+skipping. Neither Appendix B (historical rationale, not a live-status tracker — R7.7's row stays
+accurate regardless of current closure) nor Appendix D (which carries no R7.7 row at all — it does
+carry R7.1/R7.3/R7.8 rows, correcting this track's own earlier assumption that it had none; R7.1's
+own row is now stale against this track's own Q3 finding, 55 sites not "two", flagged for a later
+slice, out of P7.1's own scope) needs a change for R7.7.
 
 ---
 
@@ -350,8 +363,8 @@ named rule-closing slices, R8.2/R8.14, replacing an unscoped placeholder).
 
 | Slice | What lands | Rules | Gated on |
 |---|---|---|---|
-| **P7.0** | `ts_writes` and `ts_any` (scanning `as any` **and** bare `: any`, per Q3) gated probes in `xtask/src/greenfield_status.rs`, following `hoist_sinks`'s line-scan pattern, excluding `xtask` from its own count | instrumentation | — |
-| **P7.1** | Verification pass confirming R7.7 is closed (§1's finding) — every runtime `.ts` file is `include_str!`'d and CI-type-checked; correct the doc if so | R7.7 | — |
+| **P7.0** (#1296, landed) | `ts_writes` (1641) and `ts_any` (55, widened for generic-position `any` per review of #1297) gated probes in `xtask/src/greenfield_status.rs`, following `hoist_sinks`'s line-scan pattern, excluding `xtask` from its own count | instrumentation | — |
+| **P7.1** (#1298, landed) | Verification pass — R7.7 confirmed closed, §1's own hedge firmed up with the evidence; no Appendix B/D change needed (checked, not stale for R7.7) | R7.7 | — |
 | **P7.2** | Narrow the ~20 classified-narrowable `as any`/bare-`: any` sites (§3.3) to `unknown`, structural or marker types, and generated index-signature types where the IR already carries the data — plain `writeln!`-level text changes, no tree required | R7.1 (partial, ahead of the tree) | §3.3 |
 | **P7.3** | `TomlDocument` + minimal TOML printer; `emit_wrangler_toml` (`wrangler.rs:49`) returns a document, not a `String` | R7.8 (part) | — |
 | **P7.4** | **Closes R7.6 and R8.20** — `bynk/src/deploy/config.rs:195,260,263`, `deploy/ledger.rs:365`, `bynk-strip/src/lib.rs:136-139` read typed documents instead of text-matching `KV_NAMESPACE_ID_PLACEHOLDER` and `main = "index.ts"` | R7.6, R8.20 | P7.3 |
