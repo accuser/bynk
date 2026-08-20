@@ -1802,7 +1802,14 @@ fn ts_any(root: &Path) -> Probe {
 /// C's own first slice is what gives this probe something to count.
 ///
 /// Line-scans for `VerbatimOrigin::<Variant>` and counts distinct variant
-/// names referenced, the same needle-scan shape [`hoist_sinks`] uses.
+/// names referenced, the same needle-scan shape [`hoist_sinks`] uses. A
+/// known, accepted gap (review of #1308, finding 6): a bare `use
+/// bynk_ts::VerbatimOrigin::Contracts;` followed by unqualified `Contracts`
+/// elsewhere would undercount, since the needle is the qualified path. Not
+/// worth a real-parser fix for an *argued-floor* probe (unlike
+/// `verbatim_sites`'s own floor of exactly 0) — `bynk-emit`'s own existing
+/// call-site style always qualifies (`TsStmt::verbatim(VerbatimOrigin::X,
+/// …)`), so this is a theoretical undercount, not an observed one.
 fn verbatim_origins(root: &Path) -> Probe {
     let dir = root.join("bynk-emit/src");
     Probe {
@@ -1814,18 +1821,24 @@ fn verbatim_origins(root: &Path) -> Probe {
 
 /// [`verbatim_origins`]'s counting logic, over an explicit `(relative path,
 /// contents)` list — see [`rust_files_relative`] for why this isn't `root:
-/// &Path`.
+/// &Path`. Excludes `#[cfg(test)]` ranges the same way [`ts_any_violations`]
+/// does (review of #1308, finding 6): without this, one `bynk-emit` unit
+/// test constructing a `VerbatimOrigin` for its own fixture pins this probe
+/// above its argued floor permanently, for a reason that has nothing to do
+/// with residual production emission.
 fn verbatim_origins_violations(files: &[(PathBuf, String)]) -> usize {
     let needle = "VerbatimOrigin::";
     let mut variants: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for (_, contents) in files {
-        for line in contents.lines() {
-            if is_line_comment(line) {
+        let lines: Vec<&str> = contents.lines().collect();
+        let ranges = test_mod_ranges(&lines);
+        for (i, line) in lines.iter().enumerate() {
+            if in_test_range(i, &ranges) || is_line_comment(line) {
                 continue;
             }
-            let mut rest = line;
-            while let Some(i) = rest.find(needle) {
-                let after = &rest[i + needle.len()..];
+            let mut rest = *line;
+            while let Some(idx) = rest.find(needle) {
+                let after = &rest[idx + needle.len()..];
                 let name: String = after
                     .chars()
                     .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
@@ -1862,12 +1875,21 @@ fn verbatim_sites(root: &Path) -> Probe {
 
 /// [`verbatim_sites`]'s counting logic, over an explicit `(relative path,
 /// contents)` list — see [`rust_files_relative`] for why this isn't `root:
-/// &Path`.
+/// &Path`. Excludes `#[cfg(test)]` ranges the same way [`ts_any_violations`]
+/// does (review of #1308, finding 6): `verbatim_sites` is documented as
+/// retiring at 0, so a residual construction site inside a test fixture
+/// would pin it above zero permanently for a reason that has nothing to do
+/// with production emission conversion.
 fn verbatim_sites_violations(files: &[(PathBuf, String)]) -> usize {
     let needle = "TsStmt::verbatim(";
     let mut count = 0usize;
     for (_, contents) in files {
-        for line in contents.lines() {
+        let lines: Vec<&str> = contents.lines().collect();
+        let ranges = test_mod_ranges(&lines);
+        for (i, line) in lines.iter().enumerate() {
+            if in_test_range(i, &ranges) {
+                continue;
+            }
             if !is_line_comment(line) && line.contains(needle) {
                 count += 1;
             }
@@ -3296,5 +3318,27 @@ commons app.demo {
         let files: [(&str, &str); 0] = [];
         assert_eq!(verbatim_origins_over(&files), 0);
         assert_eq!(verbatim_sites_over(&files), 0);
+    }
+
+    /// Review of #1308, finding 6: without stripping `#[cfg(test)]` ranges,
+    /// a single `bynk-emit` unit test fixture constructing a `TsStmt::
+    /// verbatim(...)` for its own coverage would pin `verbatim_sites` above
+    /// its documented 0 floor permanently, for a reason unrelated to
+    /// residual production emission.
+    #[test]
+    fn verbatim_origins_and_sites_exclude_cfg_test_ranges() {
+        let src = "fn production() {\n    TsStmt::verbatim(VerbatimOrigin::Contracts, \"x\", None);\n}\n\n\
+                    #[cfg(test)]\nmod tests {\n    #[test]\n    fn t() {\n        \
+                    TsStmt::verbatim(VerbatimOrigin::Secrets, \"y\", None);\n    }\n}\n";
+        assert_eq!(
+            verbatim_origins_over(&[("emitter/contracts.rs", src)]),
+            1,
+            "only the production-code origin counts"
+        );
+        assert_eq!(
+            verbatim_sites_over(&[("emitter/contracts.rs", src)]),
+            1,
+            "the test-only construction site must be excluded"
+        );
     }
 }

@@ -13,8 +13,9 @@ use crate::program::TsProgram;
 use crate::source_map::SourceMapBuilder;
 
 /// The result of printing a [`TsProgram`]: the emitted text, and its source
-/// map (`None` when no statement carried a span to record, or `source_text`
-/// was empty — [`SourceMapBuilder::to_v3`]'s own "nothing resolves" case).
+/// map — `None` when no checkpoint resolved, either because no statement
+/// carried a span or every span fell outside `source_text`
+/// ([`SourceMapBuilder::to_v3`]'s own "nothing resolves" case).
 #[derive(Debug)]
 pub struct Printed {
     pub text: String,
@@ -40,6 +41,17 @@ pub fn print(
             map.record(out.len(), span);
         }
         out.push_str(stmt.text());
+        // The printer owns line structure (R7.3), so a statement's own text
+        // not ending in its own newline can't leave two statements sharing
+        // a generated line — review of #1308, finding 2: nothing required
+        // `Verbatim` text to be newline-terminated, and two that weren't
+        // would jam onto one line *and* silently lose the earlier
+        // statement's own checkpoint (`SourceMapBuilder::record`'s
+        // same-offset dedup, and `to_v3`'s one-checkpoint-per-line forward
+        // pass, both keep only the later one).
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
     }
     let source_map = map.to_v3(&out, output_file);
     Printed {
@@ -55,7 +67,7 @@ mod tests {
     use bynk_syntax::span::Span;
 
     #[test]
-    fn prints_every_statement_in_order_with_no_added_separators() {
+    fn prints_every_statement_in_order() {
         let mut program = TsProgram::new();
         program.push(TsStmt::verbatim(
             VerbatimOrigin::Contracts,
@@ -65,6 +77,27 @@ mod tests {
         program.push(TsStmt::verbatim(
             VerbatimOrigin::Secrets,
             "const b = 2;\n",
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "const a = 1;\nconst b = 2;\n");
+    }
+
+    /// Review of #1308, finding 2: nothing requires `Verbatim` text to be
+    /// newline-terminated — the printer owns line structure (R7.3), so it's
+    /// the one that guarantees two statements never share a generated line,
+    /// not a `TsStmt::verbatim` caller obligation nobody enforces.
+    #[test]
+    fn a_statement_missing_its_own_trailing_newline_still_gets_its_own_line() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::verbatim(
+            VerbatimOrigin::Contracts,
+            "const a = 1;",
+            None,
+        ));
+        program.push(TsStmt::verbatim(
+            VerbatimOrigin::Secrets,
+            "const b = 2;",
             None,
         ));
         let printed = print(&program, "x.bynk", "", "x.ts");
@@ -84,30 +117,43 @@ mod tests {
     /// later statement's span still resolves to the *generated* line that
     /// statement's own text landed on, not (as the old splice-based
     /// mechanism could get wrong, #4) some other buffer's offset.
+    ///
+    /// Review of #1308, finding 3: the original version of this test
+    /// asserted only that the source map's `sources` array was present —
+    /// true even with the second statement's checkpoint silently dropped,
+    /// exactly the failure this doc comment claims is ruled out. Asserting
+    /// full equality against a map built independently (replicating the
+    /// printer's own record-then-write order by hand, not calling `print`)
+    /// actually pins both statements' own offsets.
     #[test]
     fn each_statements_span_resolves_to_its_own_generated_line() {
         let source = "let a = 1\nlet b = 2\n";
         let off_a = source.find("let a").unwrap();
         let off_b = source.find("let b").unwrap();
+        let span_a = Span::new(off_a, off_a + 5);
+        let span_b = Span::new(off_b, off_b + 5);
+        let text_a = "const a = 1;\n";
+        let text_b = "const b = 2;\n";
         let mut program = TsProgram::new();
         program.push(TsStmt::verbatim(
             VerbatimOrigin::Contracts,
-            "const a = 1;\n",
-            Some(Span::new(off_a, off_a + 5)),
+            text_a,
+            Some(span_a),
         ));
         program.push(TsStmt::verbatim(
             VerbatimOrigin::Secrets,
-            "const b = 2;\n",
-            Some(Span::new(off_b, off_b + 5)),
+            text_b,
+            Some(span_b),
         ));
 
         let printed = print(&program, "x.bynk", source, "x.ts");
-        let json = printed.source_map.expect("two spanned statements resolve");
-        // Two generated lines, each mapping to a distinct source line — the
-        // real assertion is in `bynk-ts::source_map`'s own tests (the VLQ
-        // decode machinery lives there); this just confirms the printer
-        // produced *a* map with both sources' worth of content, not that it
-        // silently dropped the second statement's checkpoint.
-        assert!(json.contains("\"sources\":[\"x.bynk\"]"));
+
+        let mut expected_map = SourceMapBuilder::new();
+        expected_map.add_source("x.bynk", source);
+        expected_map.record(0, span_a);
+        expected_map.record(text_a.len(), span_b);
+        let expected = expected_map.to_v3(&printed.text, "x.ts");
+
+        assert_eq!(printed.source_map, expected);
     }
 }

@@ -62,16 +62,50 @@ fn detect(line: &str) -> Option<&'static str> {
     None
 }
 
-/// The exact patterns `xtask`'s own `ts_any` probe (`line_violates_ts_any`)
-/// uses against Rust source — reused here against TypeScript text, since
-/// `any`'s own textual shape (`as any`, bare `: any`, generic-position
-/// `<any`/`any>`/`any[]`) doesn't depend on which language it's embedded in.
+/// The same five shapes `xtask`'s own `ts_any` probe (`line_violates_ts_any`)
+/// checks against Rust source — `as any`, bare `: any`, generic-position
+/// `<any`/`any>`/`any[]` — but *not* that probe's own plain-substring
+/// matching (review of #1308, finding 4): that probe scans Bynk's own Rust
+/// source, a corpus the team can rename around a false positive; this scans
+/// generated TypeScript carrying arbitrary Bynk-author identifiers nobody
+/// here controls (`Company[]`, `Record<string, Company>`, `Map<anything,
+/// …>` all contain one of the five substrings and none is `Any`), so a
+/// false positive here is a user-facing build failure with no user-side
+/// fix. `any` is matched as its own word first (reusing [`contains_keyword`]'s
+/// boundary rule), then classified by what's immediately around it.
 fn is_any(line: &str) -> bool {
-    line.contains("as any")
-        || line.contains(": any")
-        || line.contains("<any")
-        || line.contains("any>")
-        || line.contains("any[]")
+    let bytes = line.as_bytes();
+    let mut start = 0;
+    while let Some(rel) = line[start..].find("any") {
+        let i = start + rel;
+        let before_ok = i == 0 || !is_ident_byte(bytes[i - 1]);
+        let after_ok = i + 3 >= bytes.len() || !is_ident_byte(bytes[i + 3]);
+        if before_ok && after_ok && is_any_type_position(&line[..i], &line[i + 3..]) {
+            return true;
+        }
+        start = i + 3;
+    }
+    false
+}
+
+/// Whether a word-bounded `any` sits in a type position: `as any`, `: any`
+/// (with or without the space — `const x:any` is real, emitted-output-
+/// unlikely but still a live pattern to catch), a generic open (`<any`), a
+/// generic close (`any>`), or an array (`any[]`). `before`/`after` are the
+/// line's text on each side of the matched word.
+fn is_any_type_position(before: &str, after: &str) -> bool {
+    let trimmed = before.trim_end();
+    if trimmed.ends_with("as") {
+        let as_start_ok =
+            trimmed.len() == 2 || !is_ident_byte(trimmed.as_bytes()[trimmed.len() - 3]);
+        if as_start_ok {
+            return true;
+        }
+    }
+    if trimmed.ends_with(':') || trimmed.ends_with('<') {
+        return true;
+    }
+    after.starts_with('>') || after.starts_with("[]")
 }
 
 /// Whether `keyword` appears in `line` as a real word — not as a substring
@@ -116,10 +150,14 @@ fn is_decorator(line: &str) -> bool {
 /// type-directed construct pure strip-only stripping cannot erase (ADR
 /// 0136's own strip-only rationale, already the reason `emitter/emit.rs`'s
 /// own provider constructor de-sugars away from this shape by hand). Scoped
-/// to a line containing `constructor(`, checking only what follows it, so a
-/// legitimate `private` field declared *elsewhere* on the same line (not
-/// possible in emitted output, but not this scan's business either) can't
-/// false-positive.
+/// to *only* the text between `constructor(` and its matching close paren
+/// (review of #1308, finding 5: the first version scanned to end of line,
+/// so `constructor(deps: Deps) { this.mode = "readonly access"; }` — a
+/// `readonly`-shaped *string literal* in the constructor's own body —
+/// false-positived, contradicting this doc comment's own claim).
+/// Paren-depth tracked, not `{}`-depth: a parameter's own object type
+/// (`constructor(deps: { Log: unknown })`) carries braces the scan must
+/// walk straight through, so only `(`/`)` count.
 fn is_constructor_parameter_property(line: &str) -> bool {
     let Some(after) = line
         .find("constructor(")
@@ -127,9 +165,25 @@ fn is_constructor_parameter_property(line: &str) -> bool {
     else {
         return false;
     };
+    let mut depth = 1i32;
+    let mut end = after.len();
+    for (idx, c) in after.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    end = idx;
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let params = &after[..end];
     ["private ", "public ", "protected ", "readonly "]
         .iter()
-        .any(|kw| after.contains(kw))
+        .any(|kw| params.contains(kw))
 }
 
 #[cfg(test)]
@@ -152,6 +206,23 @@ mod tests {
     fn catches_generic_position_any() {
         assert!(!verbatim_violations("const h: Record<string, any[]> = {};").is_empty());
         assert!(!verbatim_violations("type T = Array<any>;").is_empty());
+    }
+
+    #[test]
+    fn catches_colon_any_with_no_space() {
+        assert!(!verbatim_violations("function f(x:any) {}").is_empty());
+    }
+
+    /// Review of #1308, finding 4: `is_any`'s original plain-substring match
+    /// flagged `any[]`/`any>`/`<any` wherever they appeared, including
+    /// inside an unrelated identifier — a real hazard here specifically,
+    /// since this scans generated TypeScript carrying Bynk-author schema
+    /// names nobody on this team can rename to dodge a false positive.
+    #[test]
+    fn does_not_false_positive_on_any_as_a_substring_of_a_real_identifier() {
+        assert!(verbatim_violations("type Fleet = Company[];").is_empty());
+        assert!(verbatim_violations("const x: Record<string, Company> = {};").is_empty());
+        assert!(verbatim_violations("type T = Map<anything, string>;").is_empty());
     }
 
     #[test]
@@ -202,6 +273,19 @@ mod tests {
         // assigned in the body — is not a parameter property.
         assert!(
             verbatim_violations("constructor(deps: { Log: unknown }) { this.deps = deps; }")
+                .is_empty()
+        );
+    }
+
+    /// Review of #1308, finding 5: the original scan ran to end of line, so
+    /// a `readonly`-shaped string *inside the constructor's own body* (not
+    /// its parameter list) false-positived — contradicting the function's
+    /// own doc comment, which already claimed the scan was parameter-list-
+    /// scoped.
+    #[test]
+    fn does_not_false_positive_on_the_constructor_body() {
+        assert!(
+            verbatim_violations("constructor(deps: Deps) { this.mode = \"readonly access\"; }")
                 .is_empty()
         );
     }

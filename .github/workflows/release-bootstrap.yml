@@ -118,7 +118,7 @@ jobs:
           fi
           dry=""; [ "${{ inputs.dry_run }}" = "true" ] && dry="--dry-run"
           ver="$(grep -m1 '^version' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')"
-          for crate in bynk-grammar bynk-syntax bynk-render bynk-fmt bynk-check bynk-emit bynk-strip bynk-ide bynk-driver bynkc bynk bynk-lsp; do
+          for crate in bynk-grammar bynk-syntax bynk-ts bynk-render bynk-fmt bynk-check bynk-emit bynk-strip bynk-ide bynk-driver bynkc bynk bynk-lsp; do
             if [ -z "$dry" ] && curl -sfL -A "bynk-release (github actions; accuser/bynk)" \
                  "https://crates.io/api/v1/crates/$crate/$ver" -o /dev/null; then
               echo "::notice::$crate@$ver already on crates.io — skipping"
