@@ -72,7 +72,7 @@ fn hello_world_builds_on_both_targets() {
                     .collect::<Vec<_>>()
             )
         });
-        assert!(!out.files.is_empty());
+        assert!(!out.artefacts.docs.is_empty());
     }
     // The workers build must produce the deployable Worker directory.
     let workers = bynkc::compile_project(
@@ -85,10 +85,7 @@ fn hello_world_builds_on_both_targets() {
         "runtime.ts",
     ] {
         assert!(
-            workers
-                .files
-                .iter()
-                .any(|f| f.output_path == Path::new(needed)),
+            workers.artefacts.docs.contains_key(Path::new(needed)),
             "workers output must include {needed}"
         );
     }

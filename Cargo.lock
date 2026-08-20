@@ -194,6 +194,7 @@ dependencies = [
  "bynk-emit",
  "bynk-fmt",
  "bynk-render",
+ "bynk-ts",
  "clap",
  "serde",
  "serde_json",
@@ -282,6 +283,7 @@ name = "bynk-strip"
 version = "0.249.42"
 dependencies = [
  "bynk-emit",
+ "bynk-ts",
  "oxc",
 ]
 

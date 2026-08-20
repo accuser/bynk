@@ -97,21 +97,21 @@ fn compile_file(dir: &Path, workers: bool, suffix: &str) -> (String, String) {
     let out = bynkc::compile_project(&opts)
         .map_err(bynkc::ProjectFailure::flatten)
         .unwrap_or_else(|e| panic!("compile failed: {e:?}"));
-    let f = out
-        .files
-        .iter()
-        .find(|f| {
-            f.output_path
-                .to_string_lossy()
-                .replace('\\', "/")
-                .ends_with(suffix)
-        })
-        .unwrap_or_else(|| panic!("no output file ending {suffix:?}"));
-    let map = f
-        .source_map
-        .clone()
-        .unwrap_or_else(|| panic!("{suffix} carries no source map"));
-    (f.typescript.clone(), map)
+    let main_path = out
+        .artefacts
+        .docs
+        .keys()
+        .find(|p| p.to_string_lossy().replace('\\', "/").ends_with(suffix))
+        .unwrap_or_else(|| panic!("no output file ending {suffix:?}"))
+        .clone();
+    let ts = out.artefacts.docs[&main_path].text();
+    let map = out
+        .artefacts
+        .docs
+        .get(&bynkc::sibling_path(&main_path, "map"))
+        .unwrap_or_else(|| panic!("{suffix} carries no source map"))
+        .text();
+    (ts, map)
 }
 
 #[test]

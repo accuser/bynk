@@ -342,10 +342,10 @@ fn cross_context_caller_reads_live_id_and_fails_closed() {
     };
 
     let run_dir = tmp.join("run");
-    for file in &out.files {
-        let target = run_dir.join(&file.output_path);
+    for (path, doc) in &out.artefacts.docs {
+        let target = run_dir.join(path);
         fs::create_dir_all(target.parent().unwrap()).unwrap();
-        fs::write(&target, &file.typescript).unwrap();
+        fs::write(&target, doc.text()).unwrap();
     }
     fs::write(
         run_dir.join("runtime.ts"),
@@ -356,14 +356,17 @@ fn cross_context_caller_reads_live_id_and_fails_closed() {
     // entry and give it to the driver, so the guard drives the *real* hash
     // rather than restating one (which would only prove the test agrees with
     // itself).
-    let callee = out
-        .files
+    let callee_text = out
+        .artefacts
+        .docs
         .iter()
-        .find(|f| f.output_path.ends_with("workers/app-b/index.ts"))
-        .expect("app-b entry emitted");
+        .find(|(p, _)| p.ends_with("workers/app-b/index.ts"))
+        .expect("app-b entry emitted")
+        .1
+        .text();
     let hash = regex::Regex::new(r#"expected: "([0-9a-f]{16})""#)
         .unwrap()
-        .captures(&callee.typescript)
+        .captures(&callee_text)
         .map(|c| c[1].to_string())
         .expect("app-b's entry stamps a contract hash");
     fs::write(
@@ -436,10 +439,10 @@ fn bundle_cross_context_caller_reads_the_consuming_context_name() {
     };
 
     let run_dir = tmp.join("run");
-    for file in &out.files {
-        let target = run_dir.join(&file.output_path);
+    for (path, doc) in &out.artefacts.docs {
+        let target = run_dir.join(path);
         fs::create_dir_all(target.parent().unwrap()).unwrap();
-        fs::write(&target, &file.typescript).unwrap();
+        fs::write(&target, doc.text()).unwrap();
     }
     fs::write(
         run_dir.join("runtime.ts"),
@@ -508,10 +511,10 @@ fn cross_context_caller_side_codec_round_trips_a_user_payload() {
     };
 
     let run_dir = tmp.join("run");
-    for file in &out.files {
-        let target = run_dir.join(&file.output_path);
+    for (path, doc) in &out.artefacts.docs {
+        let target = run_dir.join(path);
         fs::create_dir_all(target.parent().unwrap()).unwrap();
-        fs::write(&target, &file.typescript).unwrap();
+        fs::write(&target, doc.text()).unwrap();
     }
     fs::write(
         run_dir.join("runtime.ts"),
@@ -521,14 +524,17 @@ fn cross_context_caller_side_codec_round_trips_a_user_payload() {
     // `forward`'s contract hash lives in app-a's own entry (the constant it
     // compares an incoming `X-Bynk-Contract` against). Extract it so the driver
     // stamps the real value.
-    let caller = out
-        .files
+    let caller_text = out
+        .artefacts
+        .docs
         .iter()
-        .find(|f| f.output_path.ends_with("workers/app-a/index.ts"))
-        .expect("app-a entry emitted");
+        .find(|(p, _)| p.ends_with("workers/app-a/index.ts"))
+        .expect("app-a entry emitted")
+        .1
+        .text();
     let hash = regex::Regex::new(r#"expected: "([0-9a-f]{16})""#)
         .unwrap()
-        .captures(&caller.typescript)
+        .captures(&caller_text)
         .map(|c| c[1].to_string())
         .expect("app-a's entry stamps a contract hash");
     fs::write(

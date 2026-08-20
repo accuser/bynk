@@ -166,14 +166,14 @@ fn float_boundary_codec_behaviour() {
     fs::create_dir_all(&tmp).unwrap();
     // Only the handlers module (which holds the codec) and the runtime it
     // imports are needed; the workers entrypoint pulls in platform types.
-    for f in &out.files {
-        let p = f.output_path.to_string_lossy();
+    for (path, doc) in &out.artefacts.docs {
+        let p = path.to_string_lossy();
         if p == "runtime.ts" || p.ends_with("handlers.ts") {
-            let target_path = tmp.join(&f.output_path);
+            let target_path = tmp.join(path);
             if let Some(parent) = target_path.parent() {
                 fs::create_dir_all(parent).unwrap();
             }
-            fs::write(&target_path, &f.typescript).unwrap();
+            fs::write(&target_path, doc.text()).unwrap();
         }
     }
     // handlers.ts imports `../../runtime.js`, which the layout above

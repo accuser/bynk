@@ -4684,10 +4684,11 @@ type PaymentError = enum { Declined, InsufficientFunds }
         )
         .unwrap_or_else(|_| panic!("event-in-context fixture should compile"));
         let ts = out
-            .files
+            .artefacts
+            .docs
             .iter()
-            .find(|f| f.output_path.to_string_lossy().contains("demo"))
-            .map(|f| f.typescript.clone())
+            .find(|(path, _)| path.to_string_lossy().contains("demo"))
+            .map(|(_, doc)| doc.text())
             .unwrap_or_else(|| panic!("the demo context's own module should be in the output"));
         assert!(
             ts.contains("export interface Notified {\n  readonly id: string;\n}\n"),
@@ -4728,10 +4729,11 @@ context demo {
             Default::default(),
         )
         .unwrap_or_else(|_| panic!("capability fixture should compile:\n{src}"));
-        out.files
+        out.artefacts
+            .docs
             .iter()
-            .find(|f| f.output_path.to_string_lossy().contains("demo"))
-            .map(|f| f.typescript.clone())
+            .find(|(path, _)| path.to_string_lossy().contains("demo"))
+            .map(|(_, doc)| doc.text())
             .unwrap_or_else(|| panic!("the demo context's own module should be in the output"))
     }
 

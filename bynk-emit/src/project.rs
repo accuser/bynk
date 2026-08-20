@@ -93,33 +93,84 @@ pub use bynk_project::{
 };
 pub use diagnostics::{ContextBoundaryInfo, ContextSequenceInfo, ProjectAnalysis, ProjectFailure};
 
-/// One generated TypeScript file.
-pub struct CompiledFile {
-    /// The originating Bynk source file, relative to the project root.
-    pub source_path: PathBuf,
-    /// Where the TS output should be written, relative to the output root.
-    /// Mirrors the source tree, with `.bynk` rewritten to `.ts`.
-    pub output_path: PathBuf,
-    /// The emitted TypeScript content.
-    pub typescript: String,
-    /// Slice 1 (ADR 0103): the serialised source-map v3 document for this file,
-    /// when one was produced (the emitted `.bynk`-sourced units). `None` for
-    /// generated glue and config (runtime, compose, worker entry, `wrangler.toml`,
-    /// `package.json`, adapter bindings) — those have no `.bynk` to map back to.
-    /// `write_output` writes it as a sibling `.ts.map` and appends the
-    /// `//# sourceMappingURL` trailer; the in-memory `typescript` stays
-    /// trailer-free, so golden comparisons are unaffected.
-    pub source_map: Option<String>,
-    /// Slice 3 (semantic-debugging track, ADR 0105): the debug-metadata sidecar —
-    /// a JSON `{ fn → Bynk-operation-label }` map so the debugger names stack
-    /// frames `GET "/"` rather than `http_GET`. `Some` only for `.bynk` units that
-    /// declare handlers; `write_output` writes it as a sibling `.bynkdbg.json`.
-    pub debug_metadata: Option<String>,
+/// A project's output, as a keyed set of typed documents (R7.8, #1309) —
+/// replaces the old `ProjectOutput.files: Vec<CompiledFile>` outright, not
+/// alongside it ("Done when": `CompiledFile`/`ProjectOutput::files` are
+/// gone, not aliased). Keyed by output path (project-root-relative), so the
+/// sibling-path lookup `bynk-driver::output` needs for `.map`/
+/// `.bynkdbg.json` files is a direct map operation instead of a linear scan,
+/// and so a `wrangler.toml` document carries its real [`crate::emitter::
+/// toml_doc::TomlDocument`] all the way to the write boundary instead of
+/// being stringified at construction (Decision E).
+pub struct Artefacts {
+    pub docs: BTreeMap<PathBuf, Document>,
+}
+
+/// One typed output document. No `String` at construction for TypeScript or
+/// TOML content (R7.8) — `Json`/`Js`/`SourceMap`/`DebugSidecar` stay opaque
+/// payloads because `bynk-emit` never re-parses them itself, not because
+/// they're an escape hatch from the rule.
+pub enum Document {
+    /// A generated TypeScript module. Every `bynk-emit` construction site
+    /// builds this today by wrapping its still-`String`-producing content in
+    /// one `TsStmt::verbatim(VerbatimOrigin::NotYetConverted, ..)` — see that
+    /// variant's own doc comment for why each site does this literally,
+    /// rather than through one shared helper.
+    Ts(bynk_ts::TsProgram),
+    /// `wrangler.toml`, still as the real tree `emit_wrangler_toml` built —
+    /// printed only at the `bynk-driver` write boundary.
+    Toml(crate::emitter::toml_doc::TomlDocument),
+    /// Generated JSON with no tree this compiler tracks yet (`package.json`,
+    /// `tsconfig.json`, the contracts/secrets manifests).
+    Json(String),
+    /// Type-stripped JavaScript (`bynk-strip::strip_project_to_js`'s own
+    /// output) — never produced by `bynk-emit` itself, which only ever
+    /// builds `Ts`; kept distinct from `Ts` so a stripped artefact never
+    /// round-trips back through the TypeScript printer/lint.
+    Js(String),
+    /// A source-map v3 document, split out of its originating file's own
+    /// staged `source_map` at the sibling path `write_output` names it
+    /// (`<file>.map`).
+    SourceMap(String),
+    /// The handler-label debug sidecar, split out the same way at
+    /// `<file>.bynkdbg.json`.
+    DebugSidecar(String),
+}
+
+impl Document {
+    /// This document's own text, whichever kind it is — for read-side
+    /// callers that only need bytes (golden fixtures, `bynk-strip`'s own
+    /// need to feed `Ts` content through `strip_types`, `bynk-wasm`'s
+    /// JS-facing API, in-process test helpers). `Ts`/`Toml` print through
+    /// the same printer `bynk-driver::output::write_document` writes from
+    /// (R7.3/R7.6) — this is a rendering, not a second construction path;
+    /// nothing here builds a `Document` from a `String`.
+    pub fn text(&self) -> String {
+        match self {
+            Document::Ts(program) => bynk_ts::print(program, "", "", "").text,
+            Document::Toml(doc) => crate::emitter::print_toml_document(doc),
+            Document::Json(s)
+            | Document::Js(s)
+            | Document::SourceMap(s)
+            | Document::DebugSidecar(s) => s.clone(),
+        }
+    }
+}
+
+/// One generated document, staged during `build_output`/`emit_unit` before
+/// the final split into [`Artefacts`] — see `build_output`'s own tail.
+struct StagedFile {
+    output_path: PathBuf,
+    source_map: Option<String>,
+    debug_metadata: Option<String>,
+    document: Document,
 }
 
 /// Result of compiling a project.
 pub struct ProjectOutput {
-    pub files: Vec<CompiledFile>,
+    /// P7.6 (#1309): every generated document, typed (R7.8).
+    /// `bynk-driver::output::write_output` writes from this.
+    pub artefacts: Artefacts,
     /// v0.89 (ADR 0117): non-failing warnings emitted on a successful build —
     /// surfaced (the CLI prints them, the LSP shows them) but not gating.
     pub warnings: Vec<AttributedError>,
@@ -1104,7 +1155,7 @@ fn emit_unit(
     import_ext: ImportExt,
     contracts: bool,
     agent_deps_plan: Option<&AgentDepsPlan>,
-    compiled: &mut Vec<CompiledFile>,
+    compiled: &mut Vec<StagedFile>,
     schema_effective_versions: &HashMap<String, i64>,
 ) {
     let typed = program.program();
@@ -1233,10 +1284,15 @@ fn emit_unit(
     } else {
         ts_output_path(&pf.source_path())
     };
-    compiled.push(CompiledFile {
-        source_path: pf.source_path(),
+    compiled.push(StagedFile {
         output_path,
-        typescript: ts,
+        document: Document::Ts(bynk_ts::TsProgram {
+            stmts: vec![bynk_ts::TsStmt::verbatim(
+                bynk_ts::VerbatimOrigin::NotYetConverted,
+                ts,
+                None,
+            )],
+        }),
         source_map,
         debug_metadata,
     });
@@ -1283,7 +1339,7 @@ fn check_unit_files(
     locals: &mut LocalsSink,
     exprs: &mut ExprTypeSink,
     requirements: &mut RequirementSink,
-    compiled: &mut Vec<CompiledFile>,
+    compiled: &mut Vec<StagedFile>,
     // Events track, slice 3c (#980): each locally-declared event's *effective*
     // schema version, keyed `<unit>.<EventName>` — the schema registry's
     // reconciled value when the registry is on, empty (so every lookup falls
@@ -1442,9 +1498,9 @@ enum RunChecks {
         exprs: ExprTypeSink,
         requirements: RequirementSink,
         parsed: Vec<ParsedFile>,
-        compiled: Vec<CompiledFile>,
+        compiled: Vec<StagedFile>,
         runnable_tests: Vec<RunnableTest>,
-        integration_outputs: Vec<CompiledFile>,
+        integration_outputs: Vec<StagedFile>,
         integration_runnables: Vec<RunnableTest>,
         groups: BTreeMap<String, Vec<usize>>,
         kinds: BTreeMap<String, UnitKind>,
@@ -1810,7 +1866,7 @@ fn run_checks(
 
     // -- 8. For each unit, build the combined symbol space and run
     //       resolve+check per source file. --
-    let mut compiled: Vec<CompiledFile> = Vec::new();
+    let mut compiled: Vec<StagedFile> = Vec::new();
     // #1187's slice 6 plumbing (see `RunChecks::Checked::unit_callees`'s own
     // doc comment) — one `Callee` map per unit, merged across that unit's
     // own files inside the loop below.
@@ -2037,6 +2093,16 @@ fn run_checks(
     }
 }
 
+/// `<name>.<suffix>`, matching `bynk-driver::output.rs`'s own sibling-name
+/// derivation for `.map`/`.bynkdbg.json` files exactly (P7.6, #1309).
+pub fn sibling_path(output_path: &Path, suffix: &str) -> PathBuf {
+    let name = output_path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    output_path.with_file_name(format!("{name}.{suffix}"))
+}
+
 /// Build-success tail (region 3): emit the composition/worker/runtime files
 /// and assemble the final `ProjectOutput`. Reached only on build mode with a
 /// clean error sink. Moved verbatim from the old pipeline; only the locals it
@@ -2044,9 +2110,9 @@ fn run_checks(
 #[allow(clippy::too_many_arguments)]
 fn build_output(
     parsed: Vec<ParsedFile>,
-    mut compiled: Vec<CompiledFile>,
+    mut compiled: Vec<StagedFile>,
     mut runnable_tests: Vec<RunnableTest>,
-    integration_outputs: Vec<CompiledFile>,
+    integration_outputs: Vec<StagedFile>,
     integration_runnables: Vec<RunnableTest>,
     groups: BTreeMap<String, Vec<usize>>,
     kinds: BTreeMap<String, UnitKind>,
@@ -2077,10 +2143,15 @@ fn build_output(
     // so `tests/main.ts` aggregates unit and integration suites together.
     if !runnable_tests.is_empty() {
         let main_ts = emit_test_main(&runnable_tests, import_ext);
-        compiled.push(CompiledFile {
-            source_path: PathBuf::from("tests/main.test.bynk"),
+        compiled.push(StagedFile {
             output_path: PathBuf::from("tests/main.ts"),
-            typescript: main_ts,
+            document: Document::Ts(bynk_ts::TsProgram {
+                stmts: vec![bynk_ts::TsStmt::verbatim(
+                    bynk_ts::VerbatimOrigin::NotYetConverted,
+                    main_ts,
+                    None,
+                )],
+            }),
             source_map: None,
             debug_metadata: None,
         });
@@ -2137,10 +2208,15 @@ fn build_output(
                 !context_native.is_empty(),
                 &event_subscribers,
             ) {
-                compiled.push(CompiledFile {
-                    source_path: PathBuf::from("compose.bynk"),
+                compiled.push(StagedFile {
                     output_path: PathBuf::from("compose.ts"),
-                    typescript: compose_ts,
+                    document: Document::Ts(bynk_ts::TsProgram {
+                        stmts: vec![bynk_ts::TsStmt::verbatim(
+                            bynk_ts::VerbatimOrigin::NotYetConverted,
+                            compose_ts,
+                            None,
+                        )],
+                    }),
                     source_map: None,
                     debug_metadata: None,
                 });
@@ -2279,16 +2355,18 @@ fn build_output(
                     ctx_uses_emit,
                 );
                 // P7.3 (#1303): `emit_wrangler_toml` builds a typed
-                // `TomlDocument`; printed to text here, at the point this
-                // still needs a `String` for `CompiledFile` (R7.8's own
-                // `Artefacts` — a keyed set of typed documents, no `String`
-                // at construction — is P7.6's work, gated on the `bynk-ts`
-                // crate existing at all, P7.5).
-                let wrangler = emitter::print_toml_document(&wrangler_doc);
-                compiled.push(CompiledFile {
-                    source_path: PathBuf::from(format!("workers/{dashes}/<index>")),
+                // `TomlDocument`. P7.6 (#1309, Decision E): the tree moves
+                // straight into `Document::Toml`, unstringified — printed
+                // only at the `bynk-driver` write boundary.
+                compiled.push(StagedFile {
                     output_path: PathBuf::from(format!("workers/{dashes}/index.ts")),
-                    typescript: entry_ts,
+                    document: Document::Ts(bynk_ts::TsProgram {
+                        stmts: vec![bynk_ts::TsStmt::verbatim(
+                            bynk_ts::VerbatimOrigin::NotYetConverted,
+                            entry_ts,
+                            None,
+                        )],
+                    }),
                     source_map: None,
                     debug_metadata: None,
                 });
@@ -2299,25 +2377,34 @@ fn build_output(
                 // whether `env.EVENTS_FANOUT` is real).
                 if ctx_uses_emit {
                     let fanout_ts = emitter::emit_events_fanout_do(ctx_name, &own_event_routes);
-                    compiled.push(CompiledFile {
-                        source_path: PathBuf::from(format!("workers/{dashes}/<events-fanout>")),
+                    compiled.push(StagedFile {
                         output_path: PathBuf::from(format!("workers/{dashes}/events_fanout.ts")),
-                        typescript: fanout_ts,
+                        document: Document::Ts(bynk_ts::TsProgram {
+                            stmts: vec![bynk_ts::TsStmt::verbatim(
+                                bynk_ts::VerbatimOrigin::NotYetConverted,
+                                fanout_ts,
+                                None,
+                            )],
+                        }),
                         source_map: None,
                         debug_metadata: None,
                     });
                 }
-                compiled.push(CompiledFile {
-                    source_path: PathBuf::from(format!("workers/{dashes}/<compose>")),
+                compiled.push(StagedFile {
                     output_path: PathBuf::from(format!("workers/{dashes}/compose.ts")),
-                    typescript: compose_ts,
+                    document: Document::Ts(bynk_ts::TsProgram {
+                        stmts: vec![bynk_ts::TsStmt::verbatim(
+                            bynk_ts::VerbatimOrigin::NotYetConverted,
+                            compose_ts,
+                            None,
+                        )],
+                    }),
                     source_map: None,
                     debug_metadata: None,
                 });
-                compiled.push(CompiledFile {
-                    source_path: PathBuf::from(format!("workers/{dashes}/<wrangler>")),
+                compiled.push(StagedFile {
                     output_path: PathBuf::from(format!("workers/{dashes}/wrangler.toml")),
-                    typescript: wrangler,
+                    document: Document::Toml(wrangler_doc),
                     source_map: None,
                     debug_metadata: None,
                 });
@@ -2378,13 +2465,12 @@ fn build_output(
                     &bynk_check::contract::own_contract_hashes(table, &own_types),
                     &expects,
                 ) {
-                    compiled.push(CompiledFile {
-                        source_path: PathBuf::from(format!("workers/{dashes}/<contracts>")),
+                    compiled.push(StagedFile {
                         output_path: PathBuf::from(format!(
                             "workers/{dashes}/{}",
                             emitter::contracts::CONTRACTS_MANIFEST
                         )),
-                        typescript: manifest,
+                        document: Document::Json(manifest),
                         source_map: None,
                         debug_metadata: None,
                     });
@@ -2392,13 +2478,12 @@ fn build_output(
 
                 let (reads, _) = emitter::secrets::secret_reads(table, &flattened);
                 if let Some(manifest) = emitter::emit_secrets_manifest(table, &reads) {
-                    compiled.push(CompiledFile {
-                        source_path: PathBuf::from(format!("workers/{dashes}/<secrets>")),
+                    compiled.push(StagedFile {
                         output_path: PathBuf::from(format!(
                             "workers/{dashes}/{}",
                             emitter::secrets::SECRETS_MANIFEST
                         )),
-                        typescript: manifest,
+                        document: Document::Json(manifest),
                         source_map: None,
                         debug_metadata: None,
                     });
@@ -2414,10 +2499,15 @@ fn build_output(
     binding_names.sort();
     for name in binding_names {
         let b = &adapter_bindings[name];
-        compiled.push(CompiledFile {
-            source_path: b.output_path.clone(),
+        compiled.push(StagedFile {
             output_path: b.output_path.clone(),
-            typescript: b.content.clone(),
+            document: Document::Ts(bynk_ts::TsProgram {
+                stmts: vec![bynk_ts::TsStmt::verbatim(
+                    bynk_ts::VerbatimOrigin::NotYetConverted,
+                    b.content.clone(),
+                    None,
+                )],
+            }),
             source_map: None,
             debug_metadata: None,
         });
@@ -2426,10 +2516,9 @@ fn build_output(
     // v0.17: emit `package.json` only when an adapter declares npm deps, so
     // existing (adapter-free) projects are unchanged.
     if !npm_deps.is_empty() {
-        compiled.push(CompiledFile {
-            source_path: PathBuf::from("<package.json>"),
+        compiled.push(StagedFile {
             output_path: PathBuf::from("package.json"),
-            typescript: render_package_json(&npm_deps),
+            document: Document::Json(render_package_json(&npm_deps)),
             source_map: None,
             debug_metadata: None,
         });
@@ -2439,24 +2528,46 @@ fn build_output(
     // root of `out/` so every emitted file's `runtime.js` import resolves
     // relative to it. `tsconfig.json` is also at the root so `tsc -p out/
     // tsconfig.json` discovers every `.ts` file in the tree.
-    compiled.push(CompiledFile {
-        source_path: PathBuf::from("<runtime>"),
+    compiled.push(StagedFile {
         output_path: PathBuf::from("runtime.ts"),
-        typescript: emitter::emit_runtime_module(),
+        document: Document::Ts(bynk_ts::TsProgram {
+            stmts: vec![bynk_ts::TsStmt::verbatim(
+                bynk_ts::VerbatimOrigin::NotYetConverted,
+                emitter::emit_runtime_module(),
+                None,
+            )],
+        }),
         source_map: None,
         debug_metadata: None,
     });
-    compiled.push(CompiledFile {
-        source_path: PathBuf::from("<tsconfig>"),
+    compiled.push(StagedFile {
         output_path: PathBuf::from("tsconfig.json"),
-        typescript: emitter::emit_tsconfig(),
+        document: Document::Json(emitter::emit_tsconfig()),
         source_map: None,
         debug_metadata: None,
     });
 
-    compiled.sort_by(|a, b| a.source_path.cmp(&b.source_path));
+    // `Artefacts.docs` is a `BTreeMap`, so it iterates in `output_path` order
+    // naturally (Decision D, #1309) — no explicit sort needed here the way
+    // the old `Vec<CompiledFile>` (sorted by `source_path`) required.
+    let mut docs: BTreeMap<PathBuf, Document> = BTreeMap::new();
+    for f in compiled {
+        if let Some(sm) = &f.source_map {
+            docs.insert(
+                sibling_path(&f.output_path, "map"),
+                Document::SourceMap(sm.clone()),
+            );
+        }
+        if let Some(dbg) = &f.debug_metadata {
+            docs.insert(
+                sibling_path(&f.output_path, "bynkdbg.json"),
+                Document::DebugSidecar(dbg.clone()),
+            );
+        }
+        docs.insert(f.output_path, f.document);
+    }
     ProjectOutput {
-        files: compiled,
+        artefacts: Artefacts { docs },
         discovered,
         // Populated by `compile_project` from the run's warning sink (ADR 0117).
         warnings: Vec::new(),
@@ -3503,9 +3614,10 @@ mod tests {
         )
         .unwrap_or_else(|_| panic!("`uses bynk.map` should compile"));
         let paths: Vec<String> = out
-            .files
-            .iter()
-            .map(|f| f.output_path.to_string_lossy().replace('\\', "/"))
+            .artefacts
+            .docs
+            .keys()
+            .map(|p| p.to_string_lossy().replace('\\', "/"))
             .collect();
         assert!(paths.iter().any(|p| p == "bynk/map.ts"), "{paths:?}");
         assert!(
@@ -3513,7 +3625,7 @@ mod tests {
             "bynk.map itself uses bynk.list, so list must be injected too: {paths:?}"
         );
         assert!(
-            !paths.iter().any(|p| p.contains("string")),
+            !paths.iter().any(|p| p.starts_with("bynk/string")),
             "a project that never uses bynk.string must not gain it: {paths:?}"
         );
 
@@ -3524,13 +3636,14 @@ mod tests {
         )
         .unwrap_or_else(|_| panic!("`uses bynk.string` should compile"));
         let paths2: Vec<String> = out2
-            .files
-            .iter()
-            .map(|f| f.output_path.to_string_lossy().replace('\\', "/"))
+            .artefacts
+            .docs
+            .keys()
+            .map(|p| p.to_string_lossy().replace('\\', "/"))
             .collect();
         assert!(paths2.iter().any(|p| p == "bynk/string.ts"), "{paths2:?}");
         assert!(
-            !paths2.iter().any(|p| p.contains("map")),
+            !paths2.iter().any(|p| p.starts_with("bynk/map")),
             "the shared first-party parse cache must not leak the first \
              project's gating into this one: {paths2:?}"
         );
@@ -3705,9 +3818,10 @@ mod tests {
             )
         });
         let names: Vec<String> = out
-            .files
-            .iter()
-            .map(|f| f.output_path.to_string_lossy().replace('\\', "/"))
+            .artefacts
+            .docs
+            .keys()
+            .map(|p| p.to_string_lossy().replace('\\', "/"))
             .collect();
         assert!(
             names.contains(&"payments.binding.ts".to_string()),
@@ -3828,9 +3942,10 @@ mod tests {
             )
         });
         let names: Vec<String> = out
-            .files
-            .iter()
-            .map(|f| f.output_path.to_string_lossy().replace('\\', "/"))
+            .artefacts
+            .docs
+            .keys()
+            .map(|p| p.to_string_lossy().replace('\\', "/"))
             .collect();
         assert!(
             names.contains(&"shapes.ts".to_string()),
@@ -3840,12 +3955,7 @@ mod tests {
             names.contains(&"app.ts".to_string()),
             "expected app.ts among {names:?}"
         );
-        let app_ts = &out
-            .files
-            .iter()
-            .find(|f| f.output_path == Path::new("app.ts"))
-            .unwrap()
-            .typescript;
+        let app_ts = out.artefacts.docs.get(Path::new("app.ts")).unwrap().text();
         assert!(
             app_ts.contains("radius"),
             "app.ts should reference the cross-unit Circle field:\n{app_ts}"

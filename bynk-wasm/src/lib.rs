@@ -189,11 +189,12 @@ fn compile_inner(source: &str, platform: Platform) -> CompileResult {
                 // resolve their line/col against it (the fallback).
                 let diagnostics = to_diagnostics(js.warnings, &HashMap::new(), source);
                 let files = js
-                    .files
+                    .artefacts
+                    .docs
                     .into_iter()
-                    .map(|f| EmittedFile {
-                        path: f.output_path.to_string_lossy().into_owned(),
-                        contents: f.typescript,
+                    .map(|(path, doc)| EmittedFile {
+                        path: path.to_string_lossy().into_owned(),
+                        contents: doc.text(),
                     })
                     .collect();
                 CompileResult {

@@ -141,12 +141,13 @@ fn workers_events_fanout_do_and_wrangler_wiring() {
     };
 
     let find = |suffix: &str| -> String {
-        out.files
+        out.artefacts
+            .docs
             .iter()
-            .find(|f| f.output_path.to_string_lossy().ends_with(suffix))
+            .find(|(p, _)| p.to_string_lossy().ends_with(suffix))
             .unwrap_or_else(|| panic!("no compiled file ends with {suffix:?}"))
-            .typescript
-            .clone()
+            .1
+            .text()
     };
 
     // The publisher's wrangler.toml: the fan-out DO binding + migration, and
@@ -242,10 +243,10 @@ fn workers_events_fanout_do_and_wrangler_wiring() {
     };
 
     let run_dir = tmp.join("run");
-    for file in &out.files {
-        let target = run_dir.join(&file.output_path);
+    for (path, doc) in &out.artefacts.docs {
+        let target = run_dir.join(path);
         fs::create_dir_all(target.parent().unwrap()).unwrap();
-        fs::write(&target, &file.typescript).unwrap();
+        fs::write(&target, doc.text()).unwrap();
     }
     fs::write(
         run_dir.join("runtime.ts"),
@@ -314,12 +315,13 @@ fn workers_events_pattern_leaves_fanout_routing_unchanged() {
     };
 
     let find = |suffix: &str| -> String {
-        out.files
+        out.artefacts
+            .docs
             .iter()
-            .find(|f| f.output_path.to_string_lossy().ends_with(suffix))
+            .find(|(p, _)| p.to_string_lossy().ends_with(suffix))
             .unwrap_or_else(|| panic!("no compiled file ends with {suffix:?}"))
-            .typescript
-            .clone()
+            .1
+            .text()
     };
 
     // Byte-identical to the pattern-less fixture's own assertions: the
@@ -367,10 +369,10 @@ fn workers_events_pattern_leaves_fanout_routing_unchanged() {
     };
 
     let run_dir = tmp.join("run");
-    for file in &out.files {
-        let target = run_dir.join(&file.output_path);
+    for (path, doc) in &out.artefacts.docs {
+        let target = run_dir.join(path);
         fs::create_dir_all(target.parent().unwrap()).unwrap();
-        fs::write(&target, &file.typescript).unwrap();
+        fs::write(&target, doc.text()).unwrap();
     }
     fs::write(
         run_dir.join("runtime.ts"),
@@ -446,12 +448,13 @@ fn workers_events_envelope_param_type_checks_and_leaves_fanout_unchanged() {
     };
 
     let find = |suffix: &str| -> String {
-        out.files
+        out.artefacts
+            .docs
             .iter()
-            .find(|f| f.output_path.to_string_lossy().ends_with(suffix))
+            .find(|(p, _)| p.to_string_lossy().ends_with(suffix))
             .unwrap_or_else(|| panic!("no compiled file ends with {suffix:?}"))
-            .typescript
-            .clone()
+            .1
+            .text()
     };
 
     // Byte-identical to the pattern-less/patterned fixtures' own assertions:
@@ -523,10 +526,10 @@ fn workers_events_envelope_param_type_checks_and_leaves_fanout_unchanged() {
     };
 
     let run_dir = tmp.join("run");
-    for file in &out.files {
-        let target = run_dir.join(&file.output_path);
+    for (path, doc) in &out.artefacts.docs {
+        let target = run_dir.join(path);
         fs::create_dir_all(target.parent().unwrap()).unwrap();
-        fs::write(&target, &file.typescript).unwrap();
+        fs::write(&target, doc.text()).unwrap();
     }
     fs::write(
         run_dir.join("runtime.ts"),
@@ -598,12 +601,13 @@ fn workers_events_nested_payload_field_gets_a_transitive_codec() {
     };
 
     let find = |suffix: &str| -> String {
-        out.files
+        out.artefacts
+            .docs
             .iter()
-            .find(|f| f.output_path.to_string_lossy().ends_with(suffix))
+            .find(|(p, _)| p.to_string_lossy().ends_with(suffix))
             .unwrap_or_else(|| panic!("no compiled file ends with {suffix:?}"))
-            .typescript
-            .clone()
+            .1
+            .text()
     };
 
     // The subscriber's own module must gain codecs for BOTH the root event
@@ -635,10 +639,10 @@ fn workers_events_nested_payload_field_gets_a_transitive_codec() {
     };
 
     let run_dir = tmp.join("run");
-    for file in &out.files {
-        let target = run_dir.join(&file.output_path);
+    for (path, doc) in &out.artefacts.docs {
+        let target = run_dir.join(path);
         fs::create_dir_all(target.parent().unwrap()).unwrap();
-        fs::write(&target, &file.typescript).unwrap();
+        fs::write(&target, doc.text()).unwrap();
     }
     fs::write(
         run_dir.join("runtime.ts"),

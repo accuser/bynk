@@ -131,16 +131,19 @@ fn stamped_hash(b_body: &str, tag: &str) -> String {
             bynkc::render_project_errors(&f.flatten())
         )
     });
-    let caller = out
-        .files
+    let caller_text = out
+        .artefacts
+        .docs
         .iter()
-        .find(|f| f.output_path.ends_with("workers/app-a/handlers.ts"))
-        .expect("caller emitted");
+        .find(|(p, _)| p.ends_with("workers/app-a/handlers.ts"))
+        .expect("caller emitted")
+        .1
+        .text();
     let h = regex::Regex::new(r#"callService\([^)]*?"([0-9a-f]{16})"\)"#)
         .unwrap()
-        .captures(&caller.typescript)
+        .captures(&caller_text)
         .map(|c| c[1].to_string())
-        .unwrap_or_else(|| panic!("no stamped hash in {tag}:\n{}", caller.typescript));
+        .unwrap_or_else(|| panic!("no stamped hash in {tag}:\n{caller_text}"));
     let _ = std::fs::remove_dir_all(&tmp);
     h
 }

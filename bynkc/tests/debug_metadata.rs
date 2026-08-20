@@ -1,7 +1,8 @@
 //! Slice 3 (semantic-debugging track, ADR 0105): the debug-metadata sidecar.
 //! Compile a project and assert each emitted handler is mapped to its Bynk operation
-//! label in `CompiledFile.debug_metadata` (written to disk as `<file>.bynkdbg.json`),
-//! keyed by the *emitted* function name so the debugger can relabel a stack frame.
+//! label in its own `Document::DebugSidecar` entry (P7.6, #1309 — split out of
+//! `Artefacts.docs` at the sibling path `<file>.bynkdbg.json`), keyed by the
+//! *emitted* function name so the debugger can relabel a stack frame.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -25,18 +26,19 @@ fn debug_meta(dir: &Path, suffix: &str) -> String {
     let out = bynkc::compile_project(&opts)
         .map_err(bynkc::ProjectFailure::flatten)
         .unwrap_or_else(|e| panic!("compile failed: {e:?}"));
-    out.files
-        .iter()
-        .find(|f| {
-            f.output_path
-                .to_string_lossy()
-                .replace('\\', "/")
-                .ends_with(suffix)
-        })
+    let main_path = out
+        .artefacts
+        .docs
+        .keys()
+        .find(|p| p.to_string_lossy().replace('\\', "/").ends_with(suffix))
         .unwrap_or_else(|| panic!("no output file ending {suffix:?}"))
-        .debug_metadata
-        .clone()
+        .clone();
+    let sidecar_path = bynkc::sibling_path(&main_path, "bynkdbg.json");
+    out.artefacts
+        .docs
+        .get(&sidecar_path)
         .unwrap_or_else(|| panic!("{suffix} carries no debug metadata"))
+        .text()
 }
 
 #[test]

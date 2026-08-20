@@ -25,16 +25,19 @@ fn compile_reps(source: &str) -> (String, String) {
         .map_err(bynkc::ProjectFailure::flatten)
         .unwrap_or_else(|e| panic!("compile failed: {e:?}"));
 
-    let file = out
-        .files
-        .iter()
-        .find(|f| f.output_path.as_path() == Path::new("reps.ts"))
-        .expect("reps.ts in output");
-    let map = file
-        .source_map
-        .clone()
-        .expect("reps.ts carries a source map");
-    let ts = file.typescript.clone();
+    let main_path = Path::new("reps.ts");
+    let ts = out
+        .artefacts
+        .docs
+        .get(main_path)
+        .expect("reps.ts in output")
+        .text();
+    let map = out
+        .artefacts
+        .docs
+        .get(&bynkc::sibling_path(main_path, "map"))
+        .expect("reps.ts carries a source map")
+        .text();
     let _ = std::fs::remove_dir_all(&dir);
     (ts, map)
 }

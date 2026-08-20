@@ -6,54 +6,102 @@
 //! pure move, not a design change. `bynk-emit` stays a pure, in-memory
 //! library; disk writes are the driver's job, as R2.3 says they should be.
 
-use std::path::Path;
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 
-use bynk_emit::project::{CompiledFile, ProjectOutput};
+use bynk_emit::project::{Document, ProjectOutput, sibling_path};
 
-/// Write a [`ProjectOutput`]'s files under `dir`, creating parent directories as
-/// needed. The shared writer behind both `bynkc`'s `compile`/`test` paths and
-/// `bynk dev`'s in-process build (slice 7) — so the on-disk result is identical
-/// however the build was driven.
+/// Write a [`ProjectOutput`]'s artefacts under `dir`, creating parent
+/// directories as needed. The shared writer behind both `bynkc`'s
+/// `compile`/`test` paths and `bynk dev`'s in-process build (slice 7) — so
+/// the on-disk result is identical however the build was driven.
 ///
-/// Reconciles `dir` against `out.files` first: a `.ts`/`.js`/`.map`/`.json`/
-/// `.toml` file already on disk that no longer corresponds to anything in
-/// `out.files` (or one of its `.map`/`.bynkdbg.json` sidecars) is deleted,
-/// along with any directory that becomes empty as a result — otherwise a
-/// deleted `.bynk` unit's emitted `.ts` lingers on disk, still type-checked by
-/// the emitted `tsconfig.json`'s `include: **/*.ts`, so `tsc` fails against a
-/// module the current project no longer has. `node_modules` and dotfile
-/// directories (`.git`, an npm-installed tree under the output root) are
-/// never descended into — this reconciles the compiler's own output, not
-/// whatever else happens to live alongside it.
+/// Reconciles `dir` against `out.artefacts.docs` first: a `.ts`/`.js`/
+/// `.map`/`.json`/`.toml` file already on disk that no longer corresponds to
+/// anything in `out.artefacts.docs` is deleted, along with any directory
+/// that becomes empty as a result — otherwise a deleted `.bynk` unit's
+/// emitted `.ts` lingers on disk, still type-checked by the emitted
+/// `tsconfig.json`'s `include: **/*.ts`, so `tsc` fails against a module the
+/// current project no longer has. `node_modules` and dotfile directories
+/// (`.git`, an npm-installed tree under the output root) are never
+/// descended into — this reconciles the compiler's own output, not whatever
+/// else happens to live alongside it.
 pub fn write_output(out: &ProjectOutput, dir: &Path) -> std::io::Result<()> {
     prune_stale_output(out, dir)?;
-    for file in &out.files {
-        write_compiled_file(file, dir)?;
+    for (path, doc) in &out.artefacts.docs {
+        write_compiled_file(path, doc, &out.artefacts.docs, dir)?;
+    }
+    Ok(())
+}
+
+/// Write one [`Document`] under `dir` — the real, typed write boundary
+/// (P7.6, #1309, Decision C: one place derives the sibling-path relationship
+/// instead of two independently-maintained ones). Shared by [`write_output`]
+/// and `bynk-driver::test_runner`'s own output loop (`bynkc test`), so every
+/// disk-writing path emits maps uniformly (slice 2 — `bynkc test --inspect`
+/// runs the emitted `.ts` directly and needs the maps on disk).
+///
+/// A `Ts` document is printed through the one printer that owns a character
+/// (R7.3); its own `Printed::source_map` is discarded, not written — the
+/// real map, when one exists, is already present in `docs` as its own
+/// `SourceMap` entry at this path's `.map` sibling ([`sibling_path`]), split
+/// out at construction (`bynk-emit::project::build_output`'s own tail).
+/// That sibling's presence, not `Printed::source_map`, is what decides
+/// whether the `.ts`/`.js` file gets a `//# sourceMappingURL=` trailer — the
+/// trailer lives only on the on-disk artefact, not on `docs`' own in-memory
+/// text, so golden comparisons are unaffected.
+pub fn write_compiled_file(
+    path: &Path,
+    doc: &Document,
+    docs: &BTreeMap<PathBuf, Document>,
+    dir: &Path,
+) -> std::io::Result<()> {
+    let target = dir.join(path);
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mapped_text = match doc {
+        Document::Ts(program) => {
+            Some(bynk_ts::print(program, "", "", &path.to_string_lossy()).text)
+        }
+        Document::Js(s) => Some(s.clone()),
+        _ => None,
+    };
+    if let Some(text) = mapped_text {
+        match docs.get(&sibling_path(path, "map")) {
+            Some(_) => {
+                let map_name = match target.file_name() {
+                    Some(n) => format!("{}.map", n.to_string_lossy()),
+                    None => "module.ts.map".to_string(),
+                };
+                let with_trailer = format!("{text}//# sourceMappingURL={map_name}\n");
+                std::fs::write(&target, with_trailer)?;
+            }
+            None => std::fs::write(&target, &text)?,
+        }
+        return Ok(());
+    }
+    match doc {
+        Document::Toml(t) => {
+            std::fs::write(
+                &target,
+                bynk_emit::emitter::toml_doc::print_toml_document(t),
+            )?;
+        }
+        Document::Json(s) | Document::SourceMap(s) | Document::DebugSidecar(s) => {
+            std::fs::write(&target, s)?;
+        }
+        Document::Ts(_) | Document::Js(_) => unreachable!("handled above"),
     }
     Ok(())
 }
 
 /// The project-relative paths [`write_output`] will have written once this
-/// `ProjectOutput` lands on disk — each `CompiledFile::output_path` plus its
-/// `.map` / `.bynkdbg.json` sidecars, named exactly as [`write_compiled_file`]
-/// names them.
-fn expected_output_paths(out: &ProjectOutput) -> std::collections::HashSet<std::path::PathBuf> {
-    let mut expected = std::collections::HashSet::new();
-    for file in &out.files {
-        expected.insert(file.output_path.clone());
-        let Some(name) = file.output_path.file_name() else {
-            continue;
-        };
-        if file.source_map.is_some() {
-            let map_name = format!("{}.map", name.to_string_lossy());
-            expected.insert(file.output_path.with_file_name(map_name));
-        }
-        if file.debug_metadata.is_some() {
-            let meta_name = format!("{}.bynkdbg.json", name.to_string_lossy());
-            expected.insert(file.output_path.with_file_name(meta_name));
-        }
-    }
-    expected
+/// `ProjectOutput` lands on disk — exactly `out.artefacts.docs`'s own keys,
+/// since `bynk-emit::project::build_output`'s own tail already splits every
+/// `.map`/`.bynkdbg.json` sidecar into its own entry there (Decision C).
+fn expected_output_paths(out: &ProjectOutput) -> std::collections::HashSet<PathBuf> {
+    out.artefacts.docs.keys().cloned().collect()
 }
 
 /// Extensions the compiler ever writes under a build-output directory — the
@@ -109,46 +157,6 @@ fn prune_stale_output_dir(
                 std::fs::remove_file(&path)?;
             }
         }
-    }
-    Ok(())
-}
-
-/// Write a single [`CompiledFile`] under `dir`, map-aware: a `.bynk`-sourced file
-/// gets a sibling `.ts.map` and a `//# sourceMappingURL` trailer (slice 1, ADR
-/// 0103); a file with no map is written verbatim. Shared by [`write_output`] and
-/// `bynkc test`'s output loops, so every disk-writing path emits maps uniformly
-/// (slice 2 — `bynkc test --inspect` runs the emitted `.ts` directly and needs
-/// the maps on disk). The trailer lives only on the on-disk artefact; the
-/// in-memory `file.typescript` stays trailer-free, so golden comparisons are
-/// unaffected. The map name appends `.map` to the output file name.
-pub fn write_compiled_file(file: &CompiledFile, dir: &Path) -> std::io::Result<()> {
-    let target = dir.join(&file.output_path);
-    if let Some(parent) = target.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    match &file.source_map {
-        Some(map) => {
-            let map_name = match target.file_name() {
-                Some(n) => format!("{}.map", n.to_string_lossy()),
-                None => "module.ts.map".to_string(),
-            };
-            let map_path = target.with_file_name(&map_name);
-            std::fs::write(&map_path, map)?;
-            let with_trailer = format!("{}//# sourceMappingURL={map_name}\n", file.typescript);
-            std::fs::write(&target, with_trailer)?;
-        }
-        None => std::fs::write(&target, &file.typescript)?,
-    }
-    // Slice 3 (ADR 0105): the debug-metadata sidecar — a `<file>.bynkdbg.json` next
-    // to the `.ts`, mapping each emitted handler to its Bynk operation label so the
-    // debugger names stack frames in Bynk. A sibling like the `.ts.map`; not bundled
-    // into a deployed Worker.
-    if let Some(meta) = &file.debug_metadata {
-        let meta_name = match target.file_name() {
-            Some(n) => format!("{}.bynkdbg.json", n.to_string_lossy()),
-            None => "module.ts.bynkdbg.json".to_string(),
-        };
-        std::fs::write(target.with_file_name(meta_name), meta)?;
     }
     Ok(())
 }
