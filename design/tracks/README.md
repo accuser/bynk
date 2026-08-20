@@ -78,7 +78,7 @@ each track's spine issue; this table is deliberately just the map.
 |---|---|---|---|
 | [`documentation.md`](documentation.md) | [#557](https://github.com/accuser/bynk/issues/557) | Slicing (slice 0 shipped) | Documentation & web presence: the Astro + Starlight migration, a CI snippet-verification harness, playground integration seams |
 | [`idempotency-capability.md`](idempotency-capability.md) | [#921](https://github.com/accuser/bynk/issues/921) | Slicing (slice 0 shipped, #929; call-site key scoping follow-up shipped, #934) | The `Idempotency` capability: mechanical dedup for at-least-once delivery, per design notes §4, §12 |
-| [`the-typescript-tree.md`](the-typescript-tree.md) | [#1293](https://github.com/accuser/bynk/issues/1293) | Settling | Phase 7 of the compiler trajectory — emission produces nodes, one printer writes every character; `bynk-ts` holds the tree, the printer and the source map |
+| [`the-typescript-tree.md`](the-typescript-tree.md) | [#1293](https://github.com/accuser/bynk/issues/1293) | Settled — Slicing on merge | Phase 7 of the compiler trajectory — emission produces nodes, one printer writes every character; `bynk-ts` holds the tree, the printer and the source map |
 
 (`documentation.md` pre-dates the GitHub-native flow, so its doc was
 committed by an ordinary PR rather than a settling draft PR; the spine issue
@@ -148,19 +148,30 @@ this forced.
 entry-gated on `the-ir.md`'s own retirement note and its P6.58 amendment —
 `ast_importers` reading its re-settled floor of 5, not 0, since the five
 surviving files are this track's own future surface. Spine
-[#1293](https://github.com/accuser/bynk/issues/1293); its settling draft PR
-is open with five design questions, none yet closed under review: whether
-`bynk-ts` is carved as a crate up front or built in-module and carved later
-(the reverse of `the-ir.md`'s own `ir.rs`-first precedent); whether the
-~1,540-site conversion needs a migration escape hatch and what forces it to
-a named floor; whether all 48 `as any` casts are eliminable without
-re-opening phase 6's IR shape; how much of R8.1–R8.22 is this track's to
-close versus already settled by phase 6; and a fresh slice count against the
-trajectory's own stale "15, low confidence" sizing. Its own probe,
-`ts_writes` (TypeScript-producing `write!`/`format!` outside `bynk-ts`), was
-measured for the first time opening this track — 1,709 total sites, ~1,540
-genuinely TypeScript-producing — the trajectory's own §3.0 baseline had
-recorded it as "not measured".
+[#1293](https://github.com/accuser/bynk/issues/1293); its settling PR closed
+all five of its design questions under review. Two of the five changed shape
+during settling, in the direction of more evidence, not more doubt: Q3
+(`TsType::Any` elimination) was framed as a risk of re-opening phase 6's IR,
+but a site-by-site classification of every `as any`/bare-`: any` occurrence
+(42 raw hits, not the 48 first measured; ~24 real emission sites) found full
+elimination achievable with zero IR work and only a small, named residual
+(2–3 sites) deferred to R7.7's runtime-typing work. Q4 (R8's scope) was
+framed as a closed/open binary, but a rule-by-rule audit against the current
+tree found a three-way split — twelve of twenty-one R8 rules already closed,
+five closing as a byproduct of this track's own conversion, two (R8.2,
+R8.14) needing named slices, one shared with phase 8. Q1 settled on carving
+`bynk-ts` as a crate up front (the reverse of `the-ir.md`'s own `ir.rs`-first
+precedent — both real prior-art precedents in this codebase, `bynk-strip`
+and `bynk-render`, were carved up front, not built in-module and split
+later). Q2 settled on a statement-level `Verbatim` escape hatch with a
+closed `VerbatimOrigin` enum and a companion textual lint, since golden
+fixtures alone can't see inside an opaque hatch node. All 37 slices
+(P7.0–P7.9 numbered, Arc C's ~19 provisional, Arc D lettered P7.d1–P7.d8
+pending Arc C's real count) shipped in the design doc, not yet built. Its
+own probe, `ts_writes` (TypeScript-producing `write!`/`format!` outside
+`bynk-ts`), was measured for the first time opening this track — 1,709
+total sites, ~1,540 genuinely TypeScript-producing — the trajectory's own
+§3.0 baseline had recorded it as "not measured".
 `agent-capability-encapsulation.md` is a committed Draft that appears in
 neither this table nor `retired-tracks.md`; it predates this row's addition
 and needs a spine issue or a retirement — tracked separately, not by this
