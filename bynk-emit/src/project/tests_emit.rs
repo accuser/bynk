@@ -23,7 +23,6 @@
 
 use super::*;
 use crate::emitter::RuntimeUse;
-use crate::emitter::source_map::SourceMapBuilder;
 use bynk_check::checker::Types;
 use bynk_check::test_suites::{self, ResolvedStub};
 use bynk_syntax::ast::{
@@ -33,6 +32,7 @@ use bynk_syntax::ast::{
     Visibility,
 };
 use bynk_syntax::span::Span;
+use bynk_ts::SourceMapBuilder;
 use std::sync::Arc;
 
 // -- v0.7 / v0.118: test declaration processing --

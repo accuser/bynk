@@ -1,55 +1,91 @@
-//! Source-map construction for the emitter (debugging track; ADR 0103).
+//! Source-map construction (debugging track; ADR 0103). Relocated from
+//! `bynk-emit/src/emitter/source_map.rs` unchanged (P7.5, #1307, Decision B)
+//! — `bynk-emit`'s current lowering keeps calling this exact API, from its
+//! new crate path, for as long as it still splices handler/test-case bodies
+//! through local buffers. [`crate::printer::print`] uses the same type a
+//! second, simpler way: no [`SourceMapBuilder::merge`] call, since the
+//! printer owns one buffer for the whole [`crate::TsProgram`] and never
+//! splices — `record`ing directly from each statement's own span as it
+//! writes is what closes R7.4 ("the source map is produced by the printer
+//! from `TsNode.span`. No phase before the printer records an offset")
+//! structurally, for that path, from this slice.
 //!
-//! The emitter is a one-way string pipe: lowering appends text and discards the
-//! `Span` every AST node carries. This module is the position-tracking sidecar
-//! that recovers the link. It records **checkpoints** — `(byte offset into the
-//! generated buffer, source id, source span)` triples — at statement, match-arm,
-//! and declaration boundaries, and resolves them into a source-map v3 document
+//! It records **checkpoints** — `(byte offset into the generated buffer,
+//! source id, source span)` triples — at statement, match-arm, and
+//! declaration boundaries, and resolves them into a source-map v3 document
 //! once the buffer is complete.
 //!
-//! The design is line-level and statement-anchored (ADR 0103 D1). A checkpoint
-//! marks "every generated line from here until the next checkpoint maps to this
-//! source span" — the nearest-enclosing-statement rule (D2).
+//! The design is line-level and statement-anchored (ADR 0103 D1). A
+//! checkpoint marks "every generated line from here until the next
+//! checkpoint maps to this source span" — the nearest-enclosing-statement
+//! rule (D2).
 //!
-//! **v0.70 — spliced bodies and multiple sources.** Free-function bodies lower
-//! straight into the main buffer, so their byte offsets are correct. Service /
-//! agent handler bodies and test-case bodies lower into a *local* buffer that is
-//! later spliced into the module, so their offsets must be **rebased at the
-//! splice**. [`SourceMapBuilder::merge`] does that, line-anchored so it is correct
-//! for both verbatim (`push_str`) and line-by-line (indent-prepended) splices —
-//! both preserve line structure. A test module aggregates several `.bynk` files,
-//! so the builder carries a list of `sources` and each checkpoint a source id.
+//! **v0.70 — spliced bodies and multiple sources.** Free-function bodies
+//! lower straight into the main buffer, so their byte offsets are correct.
+//! Service / agent handler bodies and test-case bodies lower into a *local*
+//! buffer that is later spliced into the module, so their offsets must be
+//! **rebased at the splice**. [`SourceMapBuilder::merge`] does that,
+//! line-anchored so it is correct for both verbatim (`push_str`) and
+//! line-by-line (indent-prepended) splices — both preserve line structure. A
+//! test module aggregates several `.bynk` files, so the builder carries a
+//! list of `sources` and each checkpoint a source id.
 
 use bynk_syntax::span::{LineIndex, Span};
 
-use bynk_project::json_string;
+/// Escape a string for interpolation into a JSON string literal. Vendored
+/// from `bynk_project::json_string` (P7.5, #1307, Decision A) rather than
+/// depending on the whole of `bynk-project` for one ~20-line, dependency-free
+/// function — this crate depends on `bynk-syntax` only (`src/lib.rs`'s own
+/// module doc).
+fn json_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            // The rest of C0 has no short escape; `\u00xx` is the only form.
+            c if (c as u32) < 0x20 => {
+                use std::fmt::Write as _;
+                let _ = write!(out, "\\u{:04x}", c as u32);
+            }
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
 
-/// Accumulates source-map checkpoints during emission. Lives behind a `RefCell`
-/// on `LowerCtx` so the deep lowering chain and the declaration loop can both
-/// record without fighting the borrow checker. A *sub*-builder (one per spliced
-/// body) records against its local buffer, then is [`merge`](Self::merge)d into
-/// the module builder at the splice offset.
+/// Accumulates source-map checkpoints during emission. Lives behind a
+/// `RefCell` on `bynk-emit`'s `LowerCtx` so the deep lowering chain and the
+/// declaration loop can both record without fighting the borrow checker. A
+/// *sub*-builder (one per spliced body) records against its local buffer,
+/// then is [`merge`](Self::merge)d into the module builder at the splice
+/// offset.
 #[derive(Debug, Default)]
-pub(crate) struct SourceMapBuilder {
+pub struct SourceMapBuilder {
     /// `(name, text)` per source file referenced by this map. Index 0 is the
     /// primary source (the file being emitted); test modules add more.
     sources: Vec<(String, String)>,
-    /// `(generated byte offset, source id, source span)`, in record order — which
-    /// is *not* guaranteed sorted once `merge` injects a spliced body's
-    /// checkpoints, so `to_v3` sorts by generated line.
+    /// `(generated byte offset, source id, source span)`, in record order —
+    /// which is *not* guaranteed sorted once `merge` injects a spliced
+    /// body's checkpoints, so `to_v3` sorts by generated line.
     checkpoints: Vec<(usize, usize, Span)>,
 }
 
 impl SourceMapBuilder {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self::default()
     }
 
-    /// Register a source file, returning its id (index into `sources`). Idempotent
-    /// by name, so a test module that registers the same `.bynk` file for several
-    /// cases reuses one id. The first registered source is the primary one
-    /// (`record` targets it).
-    pub(crate) fn add_source(&mut self, name: impl Into<String>, text: impl Into<String>) -> usize {
+    /// Register a source file, returning its id (index into `sources`).
+    /// Idempotent by name, so a test module that registers the same `.bynk`
+    /// file for several cases reuses one id. The first registered source is
+    /// the primary one (`record` targets it).
+    pub fn add_source(&mut self, name: impl Into<String>, text: impl Into<String>) -> usize {
         let name = name.into();
         if let Some(i) = self.sources.iter().position(|(n, _)| *n == name) {
             return i;
@@ -58,11 +94,11 @@ impl SourceMapBuilder {
         self.sources.len() - 1
     }
 
-    /// Record that generated text from `byte_offset` onward originates at `span`
-    /// in the **primary** source (id 0), until the next checkpoint. Callers pass
-    /// `out.len()` before appending the statement's text. Sub-builders use this;
-    /// `merge` re-tags the source id.
-    pub(crate) fn record(&mut self, byte_offset: usize, span: Span) {
+    /// Record that generated text from `byte_offset` onward originates at
+    /// `span` in the **primary** source (id 0), until the next checkpoint.
+    /// Callers pass `out.len()` before appending the statement's text.
+    /// Sub-builders use this; `merge` re-tags the source id.
+    pub fn record(&mut self, byte_offset: usize, span: Span) {
         if let Some(last) = self.checkpoints.last_mut()
             && last.0 == byte_offset
             && last.1 == 0
@@ -73,17 +109,19 @@ impl SourceMapBuilder {
         self.checkpoints.push((byte_offset, 0, span));
     }
 
-    /// Merge a sub-builder's body checkpoints into this module builder, rebased to
-    /// the spliced body's position and re-tagged to `source_id` (v0.70).
+    /// Merge a sub-builder's body checkpoints into this module builder,
+    /// rebased to the spliced body's position and re-tagged to `source_id`
+    /// (v0.70).
     ///
-    /// `sub_text` is the body's local buffer; `out` is the module buffer *after*
-    /// the body has been spliced into it; `base_byte` is `out.len()` captured
-    /// *before* the splice (where the body's first line starts in `out`). The
-    /// merge is **line-anchored**: a checkpoint on body line *k* maps to module
-    /// line `base_line + k`, so it is correct whether the splice appended the body
-    /// verbatim (handlers) or rebuilt it line-by-line with indentation (tests) —
-    /// both preserve line structure. Column is irrelevant: maps are line-level.
-    pub(crate) fn merge(
+    /// `sub_text` is the body's local buffer; `out` is the module buffer
+    /// *after* the body has been spliced into it; `base_byte` is
+    /// `out.len()` captured *before* the splice (where the body's first
+    /// line starts in `out`). The merge is **line-anchored**: a checkpoint
+    /// on body line *k* maps to module line `base_line + k`, so it is
+    /// correct whether the splice appended the body verbatim (handlers) or
+    /// rebuilt it line-by-line with indentation (tests) — both preserve
+    /// line structure. Column is irrelevant: maps are line-level.
+    pub fn merge(
         &mut self,
         sub: &SourceMapBuilder,
         sub_text: &str,
@@ -104,10 +142,11 @@ impl SourceMapBuilder {
         }
     }
 
-    /// Serialise to a source-map v3 JSON document over the registered `sources`.
-    /// `generated` is the finished buffer; `generated_file` is the `file` field.
-    /// Returns `None` when nothing resolves (no sources, or no in-range checkpoint).
-    pub(crate) fn to_v3(&self, generated: &str, generated_file: &str) -> Option<String> {
+    /// Serialise to a source-map v3 JSON document over the registered
+    /// `sources`. `generated` is the finished buffer; `generated_file` is
+    /// the `file` field. Returns `None` when nothing resolves (no sources,
+    /// or no in-range checkpoint).
+    pub fn to_v3(&self, generated: &str, generated_file: &str) -> Option<String> {
         if self.sources.is_empty() {
             return None;
         }
@@ -371,5 +410,14 @@ mod tests {
     #[test]
     fn empty_builder_serialises_to_none() {
         assert!(SourceMapBuilder::new().to_v3("x\n", "x.ts").is_none());
+    }
+
+    #[test]
+    fn json_string_escapes_control_characters_and_quotes() {
+        assert_eq!(json_string("a\"b"), "\"a\\\"b\"");
+        assert_eq!(json_string("a\\b"), "\"a\\\\b\"");
+        assert_eq!(json_string("a\nb"), "\"a\\nb\"");
+        assert_eq!(json_string("a\u{1}b"), "\"a\\u0001b\"");
+        assert_eq!(json_string("plain"), "\"plain\"");
     }
 }

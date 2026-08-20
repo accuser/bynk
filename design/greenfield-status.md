@@ -4,7 +4,7 @@
 
 # Greenfield status
 
-Track slice T0.0 (#999); `ts_writes`/`ts_any` added by P7.0 (#1296). Eleven probes are gated — a disagreement between this file and a fresh run fails `greenfield_status_table_is_current` (`xtask/tests/greenfield_status.rs`). Four are trend probes, reported only.
+Track slice T0.0 (#999); `ts_writes`/`ts_any` added by P7.0 (#1296); `verbatim_origins`/`verbatim_sites` added by P7.5 (#1307). Thirteen probes are gated — a disagreement between this file and a fresh run fails `greenfield_status_table_is_current` (`xtask/tests/greenfield_status.rs`). Four are trend probes, reported only.
 
 | Probe | Gated | Reads |
 |---|---|---|
@@ -19,9 +19,11 @@ Track slice T0.0 (#999); `ts_writes`/`ts_any` added by P7.0 (#1296). Eleven prob
 | `emit_abi_shapes` | yes | 1 (bynk-cloudflare.ts:negotiateLocale) |
 | `ts_writes` | yes | 1641 |
 | `ts_any` | yes | 31 |
+| `verbatim_origins` | yes | 0 |
+| `verbatim_sites` | yes | 0 |
 | `wildcard_arms` | no (trend) | 312 |
 | `keep_in_sync` | no (trend) | 214 |
-| `test_density` | no (trend) | bynk=13.6%, bynk-check=9.2%, bynk-driver=22.3%, bynk-emit=24.3%, bynk-fmt=15.6%, bynk-grammar=33.2%, bynk-ide=40.9%, bynk-lsp=35.7%, bynk-project=33.6%, bynk-render=41.8%, bynk-strip=50.7%, bynk-syntax=10.7%, bynk-testkit=0.0%, bynk-wasm=45.2%, bynkc=0.0%, xtask=37.2% |
+| `test_density` | no (trend) | bynk=13.6%, bynk-check=9.2%, bynk-driver=22.3%, bynk-emit=24.1%, bynk-fmt=15.6%, bynk-grammar=33.2%, bynk-ide=40.9%, bynk-lsp=35.7%, bynk-project=33.6%, bynk-render=41.8%, bynk-strip=50.7%, bynk-syntax=10.7%, bynk-testkit=0.0%, bynk-ts=44.1%, bynk-wasm=45.2%, bynkc=0.0%, xtask=36.7% |
 | `fixture_kinds` | no (trend) | contains=3, absent=2, diagnostics=5, error=424 |
 
 ## Rules closed
