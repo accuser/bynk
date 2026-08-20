@@ -18,10 +18,10 @@ Track slice T0.0 (#999); `ts_writes`/`ts_any` added by P7.0 (#1296). Eleven prob
 | `ast_importers` | yes | 5 |
 | `emit_abi_shapes` | yes | 1 (bynk-cloudflare.ts:negotiateLocale) |
 | `ts_writes` | yes | 1641 |
-| `ts_any` | yes | 52 |
+| `ts_any` | yes | 55 |
 | `wildcard_arms` | no (trend) | 312 |
-| `keep_in_sync` | no (trend) | 211 |
-| `test_density` | no (trend) | bynk=13.7%, bynk-check=9.2%, bynk-driver=22.3%, bynk-emit=24.1%, bynk-fmt=15.6%, bynk-grammar=33.2%, bynk-ide=40.9%, bynk-lsp=35.7%, bynk-project=33.6%, bynk-render=41.8%, bynk-strip=41.5%, bynk-syntax=10.7%, bynk-testkit=0.0%, bynk-wasm=45.2%, bynkc=0.0%, xtask=36.0% |
+| `keep_in_sync` | no (trend) | 212 |
+| `test_density` | no (trend) | bynk=13.7%, bynk-check=9.2%, bynk-driver=22.3%, bynk-emit=24.1%, bynk-fmt=15.6%, bynk-grammar=33.2%, bynk-ide=40.9%, bynk-lsp=35.7%, bynk-project=33.6%, bynk-render=41.8%, bynk-strip=41.5%, bynk-syntax=10.7%, bynk-testkit=0.0%, bynk-wasm=45.2%, bynkc=0.0%, xtask=36.6% |
 | `fixture_kinds` | no (trend) | contains=3, absent=2, diagnostics=5, error=424 |
 
 ## Rules closed

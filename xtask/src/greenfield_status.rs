@@ -6,20 +6,28 @@
 //! packaging-track work), and `ts_writes`/`ts_any` (phase 7's own probes, P7.0/#1296 —
 //! `design/tracks/the-typescript-tree.md` §5).
 //!
-//! **Eleven are zero/closure probes**, committed and diffed: `workspace_lints`,
-//! `fs_below_driver`, `options_sources`, `hoist_sinks`, `span_keyed_maps`,
-//! `emit_diagnostics`, `ide_emit_edge`, `ast_importers`, `emit_abi_shapes`,
-//! `ts_writes`, `ts_any`. A disagreement between a fresh run and the committed table
-//! fails `greenfield_status_table_is_current` (`xtask/tests/greenfield_status.rs`),
-//! which rides both the `test` job (`cargo test --workspace`, any Rust-touching PR) and
-//! the `drift` job's existing `cargo test -p xtask` (pending/decisions-only PRs) — no
-//! new CI wiring (#999 Decision D, which also explains why a `drift`-job *step* would
-//! have been silently skipped on the PRs that move these probes most).
+//! **Eleven are gated**, committed and diffed: `workspace_lints`, `fs_below_driver`,
+//! `options_sources`, `hoist_sinks`, `span_keyed_maps`, `emit_diagnostics`,
+//! `ide_emit_edge`, `ast_importers`, `emit_abi_shapes`, `ts_writes`, `ts_any`. Nine of
+//! these are zero/closure-shaped — a boolean, or a count pinned at a small, argued
+//! floor (`ast_importers` = 5, `emit_abi_shapes` = 1). `ts_writes`/`ts_any` are not:
+//! they read 1641/55, converging toward a floor named at `the-typescript-tree.md`'s own
+//! retirement over dozens of slices, the same shape `ast_importers` had throughout
+//! phase 6's 59 — gated despite the churn that implies, a deliberate call argued in
+//! `design/pending/p7-0-ts-writes-ts-any-probes.md`'s own ADR (review of #1297), not an
+//! oversight of #999 Decision D's churn-avoidance principle. A disagreement between a
+//! fresh run and the committed table fails `greenfield_status_table_is_current`
+//! (`xtask/tests/greenfield_status.rs`), which rides both the `test` job (`cargo test
+//! --workspace`, any Rust-touching PR) and the `drift` job's existing `cargo test -p
+//! xtask` (pending/decisions-only PRs) — no new CI wiring (#999 Decision D, which also
+//! explains why a `drift`-job *step* would have been silently skipped on the PRs that
+//! move these probes most).
 //!
 //! **Four are count/ratio trend probes**, recomputed and printed but never diffed:
 //! `wildcard_arms`, `keep_in_sync`, `test_density`, `fixture_kinds`. These move on
-//! nearly any ordinary Rust PR (§8 calls two of them "trends, not gates"); hard-gating
-//! them would make the committed table churn, and conflict, on routine work.
+//! nearly any ordinary Rust PR with no slice actively driving them toward a floor (§8
+//! calls two of them "trends, not gates"); hard-gating them would make the committed
+//! table churn, and conflict, on routine work for no corresponding benefit.
 //!
 //! `Closes-Rule:` rule-id provenance (#999 Decision B) is deferred to a follow-on
 //! slice — the committed table below carries no rule-citation column yet.
@@ -1610,16 +1618,25 @@ fn is_path_construction_line(line: &str) -> bool {
     line.contains("PathBuf::from(format!") || line.contains(".join(format!")
 }
 
-/// The trajectory's own phase-7 probe (`design/bynk-compiler-trajectory.md` §3):
-/// "TypeScript-producing `write!` outside a printer". Never measured before this slice
-/// (P7.0, #1296; track doc `design/tracks/the-typescript-tree.md` §5, §6) — `bynk-ts`
-/// does not exist yet, so "outside a printer" reduces today to "in `bynk-emit`, outside
-/// a `Verbatim` construction"; the `Verbatim` half of that exclusion is vacuous until
-/// phase 7's own P7.5 builds the type (track doc §5's own note).
-///
-/// Counts `bynk-emit/src/**/*.rs` lines — excluding comments, `#[cfg(test)]` test-module
-/// ranges, [`TS_WRITES_EXCLUDED_FILES`], and [`is_path_construction_line`] matches —
-/// containing `write!`, `writeln!` or `format!`.
+/// Relativises every path in [`rust_files`]'s output against `dir`, so [`ts_writes`]
+/// and [`ts_any`]'s counting logic ([`ts_writes_violations`], [`ts_any_violations`])
+/// takes the same `&[(PathBuf, String)]` shape [`production_std_fs_files`] does — an
+/// in-memory file list a test can construct directly, per review of #1297 (a first cut
+/// of these two probes took `root: &Path` and did its own walk, so nothing but the
+/// drift gate actually exercised the exclusion logic; deleting a `continue` left every
+/// test green).
+fn rust_files_relative(dir: &Path) -> Vec<(PathBuf, String)> {
+    rust_files(dir)
+        .into_iter()
+        .map(|(path, contents)| {
+            let rel = path.strip_prefix(dir).unwrap_or(&path).to_path_buf();
+            (rel, contents)
+        })
+        .collect()
+}
+
+/// [`ts_writes`]'s counting logic, over an explicit `(relative path, contents)` list —
+/// see [`rust_files_relative`] for why this isn't `root: &Path`.
 ///
 /// **A real mistake this slice's own grounding found and fixed, not carried forward:**
 /// an earlier survey (during phase 7's own track-opening research) characterised
@@ -1638,11 +1655,9 @@ fn is_path_construction_line(line: &str) -> bool {
 /// alone — accepted as a one-site over-count, the same "known remaining gaps, out of
 /// reach for a text-level scanner" discipline [`production_std_fs_files`] already
 /// documents for a different probe.
-fn ts_writes(root: &Path) -> Probe {
-    let dir = root.join("bynk-emit/src");
+fn ts_writes_violations(files: &[(PathBuf, String)]) -> usize {
     let mut count = 0usize;
-    for (path, contents) in rust_files(&dir) {
-        let rel = path.strip_prefix(&dir).unwrap_or(&path);
+    for (rel, contents) in files {
         if is_ts_writes_excluded_file(rel) {
             continue;
         }
@@ -1658,39 +1673,77 @@ fn ts_writes(root: &Path) -> Probe {
             }
         }
     }
+    count
+}
+
+/// The trajectory's own phase-7 probe (`design/bynk-compiler-trajectory.md` §3):
+/// "TypeScript-producing `write!` outside a printer". Never measured before this slice
+/// (P7.0, #1296; track doc `design/tracks/the-typescript-tree.md` §5, §6) — `bynk-ts`
+/// does not exist yet, so "outside a printer" reduces today to "in `bynk-emit`, outside
+/// a `Verbatim` construction"; the `Verbatim` half of that exclusion is vacuous until
+/// phase 7's own P7.5 builds the type (track doc §5's own note).
+///
+/// **Not "zero/closure"-shaped like this module's other nine gated probes, and gated
+/// anyway — a deliberate choice, not an inherited one.** The reading is 1641, headed
+/// toward a phase-7 floor named at that track's own retirement, not toward 0 or a small
+/// fixed number the way `ast_importers`/`emit_abi_shapes` are. It moves on any
+/// `bynk-emit` PR that adds or removes a single `write!`/`writeln!`/`format!` line
+/// anywhere in the crate — the same volatility #999 Decision D cites for *not* gating
+/// `wildcard_arms` (311, ungated for exactly this reason). Gated here anyway, because
+/// this track's own Arc C is dozens of slices each claiming "I converted a file's
+/// emission to the tree", and only a diffed, committed number makes that claim
+/// CI-checkable rather than self-reported — the same trade `ast_importers` already made
+/// successfully across phase 6's 59 slices, a probe with the identical shape (a large
+/// count, converging over many slices, still gated throughout). The churn cost is real
+/// and accepted, not overlooked: see `design/pending/p7-0-ts-writes-ts-any-probes.md`'s
+/// own ADR for the argument in full (review of #1297).
+///
+/// Counts `bynk-emit/src/**/*.rs` lines — excluding comments, `#[cfg(test)]` test-module
+/// ranges, [`TS_WRITES_EXCLUDED_FILES`], and [`is_path_construction_line`] matches —
+/// containing `write!`, `writeln!` or `format!`. See [`ts_writes_violations`] for the
+/// counting logic itself.
+fn ts_writes(root: &Path) -> Probe {
+    let dir = root.join("bynk-emit/src");
     Probe {
         name: "ts_writes",
         gated: true,
-        reads: count.to_string(),
+        reads: ts_writes_violations(&rust_files_relative(&dir)).to_string(),
     }
 }
 
 // --- Gated probe 11: ts_any -------------------------------------------------
 
-/// True if `line` (not a comment) violates R7.1's `TsType::Any` prohibition — an
-/// `as any` cast, or a bare `: any` type annotation. Both patterns, not `as any` alone:
-/// a Q3 settling-review finding (`design/tracks/the-typescript-tree.md` §3.3) is that a
-/// probe scoped to `as any` alone under-counts R7.1's real surface — bare `: any`
-/// parameter/return annotations (`(e: any) => ...`) violate the same rule without ever
-/// writing the word `as`. Split out from [`ts_any`] so a test can exercise the predicate
-/// directly, without file I/O.
+/// True if `line` (not a comment) violates R7.1's `TsType::Any` prohibition: an
+/// `as any` cast, a bare `: any` type annotation, or `any` in generic type-argument
+/// position (`Array<any>`, `Record<string, any[]>`, `Promise<any>`).
+///
+/// Three patterns, not `as any` alone, following two rounds of the same finding.
+/// Round one (Q3, `design/tracks/the-typescript-tree.md` §3.3) found `as any` alone
+/// under-counts R7.1 and added bare `: any`. Round two (review of #1297) found *that*
+/// still under-counts: `bynk-emit/src/emitter/lower.rs`'s `joinOn`/`leftJoin`/`groupBy`
+/// emit `const __h: Record<string, any[]> = {}` — `, any[]` contains neither `as any`
+/// nor `: any`, so three live, production, TypeScript-emitting sites read as clean
+/// under the round-one predicate. Widened to also match `<any`, `any>` and `any[]` —
+/// each checked against the live tree for false positives (no non-`any`-typed English
+/// word starts with `any` immediately after `<` or ends in `any` immediately before
+/// `>`/`[]` anywhere in `bynk-emit/src` today) rather than assumed safe.
+///
+/// Split out from [`ts_any_violations`] so a test can exercise the predicate directly,
+/// without file I/O.
 fn line_violates_ts_any(line: &str) -> bool {
-    !is_line_comment(line) && (line.contains("as any") || line.contains(": any"))
+    !is_line_comment(line)
+        && (line.contains("as any")
+            || line.contains(": any")
+            || line.contains("<any")
+            || line.contains("any>")
+            || line.contains("any[]"))
 }
 
-/// Reference rule R7.1 (`design/bynk-greenfield-compiler.md` Part 7) — "the tree
-/// contains no ... `TsType::Any`". Counts `bynk-emit/src/**/*.rs` lines — excluding
-/// `#[cfg(test)]` test-module ranges and [`TS_WRITES_EXCLUDED_FILES`] (the same files
-/// [`ts_writes`] excludes for producing no TypeScript at all; an `any`-typed value there
-/// isn't R7.1's business either) — matching [`line_violates_ts_any`]. Hand-written
-/// runtime `.ts` files under `bynk-emit/runtime/` are out of scope by construction:
-/// [`rust_files`] only walks `.rs` files, and R7.1 governs the emitted *tree*, not the
-/// hand-written runtime R7.7 separately covers.
-fn ts_any(root: &Path) -> Probe {
-    let dir = root.join("bynk-emit/src");
+/// [`ts_any`]'s counting logic, over an explicit `(relative path, contents)` list — see
+/// [`rust_files_relative`] for why this isn't `root: &Path`.
+fn ts_any_violations(files: &[(PathBuf, String)]) -> usize {
     let mut count = 0usize;
-    for (path, contents) in rust_files(&dir) {
-        let rel = path.strip_prefix(&dir).unwrap_or(&path);
+    for (rel, contents) in files {
         if is_ts_writes_excluded_file(rel) {
             continue;
         }
@@ -1705,10 +1758,29 @@ fn ts_any(root: &Path) -> Probe {
             }
         }
     }
+    count
+}
+
+/// Reference rule R7.1 (`design/bynk-greenfield-compiler.md` Part 7) — "the tree
+/// contains no ... `TsType::Any`". Gated for the same reason [`ts_writes`] is (see its
+/// own doc comment): this reading, 55 (not the settling review's estimated ~24 — see
+/// `design/pending/p7-0-ts-writes-ts-any-probes.md`), is this track's own second
+/// completion ratchet, and only a diffed, committed number makes "I removed an `Any`"
+/// CI-checkable per slice.
+///
+/// Counts `bynk-emit/src/**/*.rs` lines — excluding `#[cfg(test)]` test-module ranges
+/// and [`TS_WRITES_EXCLUDED_FILES`] (the same files [`ts_writes`] excludes for producing
+/// no TypeScript at all; an `any`-typed value there isn't R7.1's business either) —
+/// matching [`line_violates_ts_any`]. Hand-written runtime `.ts` files under
+/// `bynk-emit/runtime/` are out of scope by construction: [`rust_files`] only walks
+/// `.rs` files, and R7.1 governs the emitted *tree*, not the hand-written runtime R7.7
+/// separately covers.
+fn ts_any(root: &Path) -> Probe {
+    let dir = root.join("bynk-emit/src");
     Probe {
         name: "ts_any",
         gated: true,
-        reads: count.to_string(),
+        reads: ts_any_violations(&rust_files_relative(&dir)).to_string(),
     }
 }
 
@@ -2917,7 +2989,26 @@ commons app.demo {
         );
     }
 
-    // --- ts_writes / ts_any (P7.0, #1296) -------------------------------------
+    // --- ts_writes / ts_any (P7.0, #1296; testability + widening, review of #1297) --
+
+    /// Run [`ts_writes_violations`] over an in-memory file list — mirrors
+    /// [`flagged`]'s own role for `production_std_fs_files`.
+    fn ts_writes_over(files: &[(&str, &str)]) -> usize {
+        let owned: Vec<(PathBuf, String)> = files
+            .iter()
+            .map(|(p, s)| (PathBuf::from(p), (*s).to_string()))
+            .collect();
+        ts_writes_violations(&owned)
+    }
+
+    /// Run [`ts_any_violations`] over an in-memory file list.
+    fn ts_any_over(files: &[(&str, &str)]) -> usize {
+        let owned: Vec<(PathBuf, String)> = files
+            .iter()
+            .map(|(p, s)| (PathBuf::from(p), (*s).to_string()))
+            .collect();
+        ts_any_violations(&owned)
+    }
 
     #[test]
     fn ts_writes_excluded_files_are_recognised() {
@@ -2947,12 +3038,19 @@ commons app.demo {
     /// `project/tests_emit.rs` as excludable "test-assertion" noise. It is real
     /// production code (`process_tests`/`process_integration_tests`) per
     /// `semantics-in-the-checker.md`'s own settling finding for a different probe on
-    /// the same file — `ts_writes` must count it, not exclude it wholesale.
+    /// the same file. Exercises the real probe, not just the predicate (review of
+    /// #1297 — a first cut of this test called `is_ts_writes_excluded_file` directly,
+    /// which can't catch a bug in [`ts_writes_violations`]'s own use of it).
     #[test]
     fn ts_writes_does_not_exclude_tests_emit_rs_wholesale() {
-        assert!(!is_ts_writes_excluded_file(Path::new(
-            "project/tests_emit.rs"
-        )));
+        let count = ts_writes_over(&[(
+            "project/tests_emit.rs",
+            "fn process_tests() {\n    let _ = format!(\"const x = 1;\");\n    let _ = writeln!(out, \"const y = 2;\");\n}\n",
+        )]);
+        assert_eq!(
+            count, 2,
+            "tests_emit.rs's own production emission code must be counted, not excluded wholesale"
+        );
     }
 
     #[test]
@@ -2980,6 +3078,22 @@ commons app.demo {
         assert!(!line_violates_ts_any("let x: unknown = value;"));
     }
 
+    /// Regression for review of #1297, finding 1: `any` in generic type-argument
+    /// position (`Record<string, any[]>`, the live `emitter/lower.rs`
+    /// `joinOn`/`leftJoin`/`groupBy` shape) contains neither `as any` nor `: any` and
+    /// was silently uncounted by the round-one predicate.
+    #[test]
+    fn line_violates_ts_any_catches_generic_position_any() {
+        assert!(line_violates_ts_any(
+            "\"{{ const __h: Record<string, any[]> = {{}}; ...}}\""
+        ));
+        assert!(line_violates_ts_any("\"Array<any>\""));
+        assert!(line_violates_ts_any("\"Promise<any>\""));
+        // Must not regress the round-one patterns while widening.
+        assert!(line_violates_ts_any("(value as any).field"));
+        assert!(line_violates_ts_any("(e: any) => {}"));
+    }
+
     /// A comment mentioning either pattern in prose — the same self-reference-shaped
     /// hazard [`bynk_dotted_literals`]'s own regression tests guard against for a
     /// different probe — must not count.
@@ -2996,30 +3110,52 @@ commons app.demo {
     /// `#[cfg(test)]`-gated write!-family calls (a file's own unit tests constructing a
     /// fixture string) must not count toward either probe — mirrors
     /// [`has_production_std_fs`]'s own test-range exclusion for a different probe.
+    /// Exercises the real probes end to end, not a re-implementation of their loop
+    /// (review of #1297, finding 2): deleting either probe's `in_test_range` guard, its
+    /// `is_ts_writes_excluded_file` `continue`, or (for `ts_writes`) its
+    /// `is_path_construction_line` `continue` now fails one of these tests.
     #[test]
     fn ts_writes_and_ts_any_exclude_cfg_test_ranges() {
         let src = "fn production() {\n    let _ = format!(\"const x = 1;\");\n}\n\n\
                     #[cfg(test)]\nmod tests {\n    #[test]\n    fn t() {\n        \
                     let _ = format!(\"(v as any)\");\n    }\n}\n";
-        let lines: Vec<&str> = src.lines().collect();
-        let ranges = test_mod_ranges(&lines);
-        let mut writes_count = 0usize;
-        let mut any_count = 0usize;
-        for (i, line) in lines.iter().enumerate() {
-            if in_test_range(i, &ranges) {
-                continue;
-            }
-            if !is_line_comment(line)
-                && !is_path_construction_line(line)
-                && line.contains("format!")
-            {
-                writes_count += 1;
-            }
-            if line_violates_ts_any(line) {
-                any_count += 1;
-            }
-        }
-        assert_eq!(writes_count, 1, "only the production format! call counts");
-        assert_eq!(any_count, 0, "the test-only `as any` site must be excluded");
+        assert_eq!(
+            ts_writes_over(&[("emitter.rs", src)]),
+            1,
+            "only the production format! call counts"
+        );
+        assert_eq!(
+            ts_any_over(&[("emitter.rs", src)]),
+            0,
+            "the test-only `as any` site must be excluded"
+        );
+    }
+
+    /// Exercises the real probes' file-exclusion `continue`, not just the predicate:
+    /// a whole file on [`TS_WRITES_EXCLUDED_FILES`] must contribute 0 to either count
+    /// even when its content would otherwise match both.
+    #[test]
+    fn ts_writes_and_ts_any_exclude_named_non_ts_files_end_to_end() {
+        let files = [(
+            "emitter/wrangler.rs",
+            "fn write_toml(out: &mut String) {\n    let _ = writeln!(out, \"name = {v}\");\n    let __x: any = 1;\n}\n",
+        )];
+        assert_eq!(ts_writes_over(&files), 0);
+        assert_eq!(ts_any_over(&files), 0);
+    }
+
+    /// Exercises the real probes' [`is_path_construction_line`] `continue` end to end,
+    /// not just the predicate in isolation.
+    #[test]
+    fn ts_writes_excludes_path_construction_end_to_end() {
+        let files = [(
+            "project.rs",
+            "fn out_path(dashes: &str) -> PathBuf {\n    PathBuf::from(format!(\"workers/{dashes}/index.ts\"))\n}\n\nfn emit(out: &mut String) {\n    let _ = writeln!(out, \"export const x = 1;\");\n}\n",
+        )];
+        assert_eq!(
+            ts_writes_over(&files),
+            1,
+            "the path-construction line must not count; the genuine emission line must"
+        );
     }
 }
