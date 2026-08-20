@@ -74,14 +74,14 @@ export function __makeWallet(key: string, env?: { WALLET?: DurableObjectNamespac
   return makeAgent(__WalletRegistry, env?.WALLET, key, (state) => new Wallet(state));
 }
 
-export async function __bynkDriveHistory_Wallet(seq: Array<{ h: number, args: any[] }>, deps: any): Promise<Array<{ call: any, accepted: boolean, old: WalletState, new: WalletState }>> {
+export async function __bynkDriveHistory_Wallet(seq: Array<{ h: number, args: unknown[] }>, deps: any): Promise<Array<{ call: any, accepted: boolean, old: WalletState, new: WalletState }>> {
   __WalletRegistry.reset();
   const __inst = __makeWallet("") as any;
   const __load = async (): Promise<WalletState> => { const __s = await __inst.state.storage.get("state"); return __s === undefined ? __zeroOfWalletState() : { ...__zeroOfWalletState(), ...__s }; };
-  const __rej = (e: any) => !!e && (e as any).invariantViolation !== undefined;
+  const __rej = (e: unknown) => !!e && (e as { invariantViolation?: unknown }).invariantViolation !== undefined;
   const __steps: Array<{ call: any, accepted: boolean, old: WalletState, new: WalletState }> = [];
   const __ce = console.error;
-  console.error = ((...__a: any[]) => { if (typeof __a[0] === "string" && __a[0].startsWith("InvariantViolation")) return; (__ce as any)(...__a); }) as any;
+  console.error = (...__a: unknown[]) => { if (typeof __a[0] === "string" && __a[0].startsWith("InvariantViolation")) return; __ce(...__a); };
   try {
   for (const __st of seq) {
     const __old = await __load();

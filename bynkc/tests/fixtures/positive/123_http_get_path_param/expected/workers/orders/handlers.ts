@@ -28,9 +28,9 @@ export function deserialise_OrderId(json: JsonValue, path: string = "$"): Result
   if (typeof json !== "string") {
     return Err({ kind: "StructuralMismatch", path, expected: "string", actual: typeof json });
   }
-  const validated = (typeof (OrderId as any).of === "function")
-    ? (OrderId as any).of(json)
-    : Ok(json as unknown as OrderId);
+  const validated = (typeof (OrderId as unknown as { of?: (json: unknown) => Result<unknown, ValidationError> }).of === "function")
+    ? (OrderId as unknown as { of: (json: unknown) => Result<unknown, ValidationError> }).of(json)
+    : (Ok(json as unknown as OrderId) as Result<unknown, ValidationError>);
   if (validated.tag === "Err") {
     return Err({ kind: "RefinementViolation", path, violation: validated.error });
   }

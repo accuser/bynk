@@ -25,9 +25,9 @@ export function deserialise_Cents(json: JsonValue, path: string = "$"): Result<C
   if (typeof json !== "number") {
     return Err({ kind: "StructuralMismatch", path, expected: "number", actual: typeof json });
   }
-  const validated = (typeof (Cents as any).of === "function")
-    ? (Cents as any).of(json)
-    : Ok(json as unknown as Cents);
+  const validated = (typeof (Cents as unknown as { of?: (json: unknown) => Result<unknown, ValidationError> }).of === "function")
+    ? (Cents as unknown as { of: (json: unknown) => Result<unknown, ValidationError> }).of(json)
+    : (Ok(json as unknown as Cents) as Result<unknown, ValidationError>);
   if (validated.tag === "Err") {
     return Err({ kind: "RefinementViolation", path, violation: validated.error });
   }

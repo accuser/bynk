@@ -32,7 +32,7 @@ export class PoliteGreeter implements Greeter {
   }
 }
 
-export const PoliteGreeterProvider = { token: GreeterToken, factory: (deps: any) => new PoliteGreeter(deps) };
+export const PoliteGreeterProvider = { token: GreeterToken, factory: (deps: { Logger: Logger }) => new PoliteGreeter(deps) };
 
 export const hello = {
   async call(deps: { Greeter: Greeter }): Promise<void> {

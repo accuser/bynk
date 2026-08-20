@@ -25,7 +25,7 @@ export function compose(env: Env) {
     async http_GET_ticks() {
       return handlers.api.http_GET_ticks(deps);
     },
-    async http_POST_items(body: any) {
+    async http_POST_items(body: string) {
       return handlers.api.http_POST_items(body, deps);
     },
   };

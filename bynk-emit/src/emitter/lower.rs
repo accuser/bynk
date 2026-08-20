@@ -1127,7 +1127,20 @@ pub(crate) fn lower_expr(e: &Expr, cx: &mut LowerCtx) -> Lowered {
                 .map(|(i, n)| format!("{n}: __c.args[{i}]"))
                 .collect::<Vec<_>>()
                 .join(", ");
-            format!("(({obs}.log[{key:?}] ?? []).map((__c: any) => ({{ {fields} }})))")
+            // P7.2: only `.args` is read below (positionally), so `unknown[]` is
+            // what's actually known about a recorded call's arguments here — but
+            // the mapped-out `{ msg: unknown, … }` shape then flows into whatever
+            // this `trace()` result feeds (a test's own `.filter`/projection,
+            // typed against the checker's own per-op record type), which needs
+            // the real field types, not `unknown`. Asserted into
+            // `observation_call_record_types`' own generated alias (same name
+            // `checker::call_record_type_name` derives, same test module, so no
+            // qualification needed) — legal under `tsc --strict` because every
+            // field of that alias is structurally assignable to `unknown`.
+            let record_ty = bynk_check::checker::call_record_type_name(&cap.name, &op.name);
+            format!(
+                "((({obs}.log[{key:?}] ?? []).map((__c: {{ args: unknown[] }}) => ({{ {fields} }}))) as {record_ty}[])"
+            )
         }
     };
     pre.finish(expr)
@@ -1185,8 +1198,10 @@ fn lower_observation(o: &ObservationExpr, cx: &mut LowerCtx) -> String {
                 let pred_lowered = lower_expr(p, cx);
                 let pre_src = pred_lowered.pre.join(" ");
                 let pred = pred_lowered.expr;
+                // P7.2: same shape as `lower_observation`'s `Trace` sibling above — only
+                // `.args` is destructured, so `unknown[]` is what's actually known.
                 let matching = format!(
-                    "{calls}.filter((__c: any) => {{ {destructure}{pre_src}return ({pred}); }}).length"
+                    "{calls}.filter((__c: {{ args: unknown[] }}) => {{ {destructure}{pre_src}return ({pred}); }}).length"
                 );
                 match count {
                     None => format!("(({matching}) >= 1)"),
@@ -2102,6 +2117,18 @@ fn lower_method_call(
                     // than the branded type. Cast through `any` here too, so
                     // `serialise_<Name>` (which expects the branded shape)
                     // accepts the plain object literal.
+                    //
+                    // P7.2: deferred, not narrowed. A first attempt used
+                    // `as unknown as {ty}` with a bare `ts_type_ref` and broke a
+                    // real `tsc --strict` fixture (385, "Cannot find name") — the
+                    // same bare-vs-qualified problem found (and fixed via
+                    // `emitter/workers.rs`'s `qualified_type_ref`) for several
+                    // other sites this slice touched, but that helper isn't
+                    // reachable from this module, and this call site's own scope
+                    // (`cx.system_http_type_ns()`) suggests the real
+                    // qualification here may differ from `workers.rs`'s own
+                    // `handlers` namespace besides — needs its own investigation,
+                    // not a copy-paste of a fix built for a different file.
                     Some((body_idx, ty)) if *body_idx == i => format!(
                         "JSON.stringify({})",
                         crate::emitter::serialisation::serialise_expr_via(
@@ -2128,6 +2155,12 @@ fn lower_method_call(
     if let ExprKind::Ident(id) = &receiver.kind
         && cx.is_test_service(&id.name)
     {
+        // P7.2: deferred, not narrowed. `identity` is the raw lowered call-site value
+        // (e.g. `"bob"`), with no reachable identity type at this `cx` — resolving
+        // one needs the addressed actor's own identity type threaded through from
+        // `bynk-check`'s actor declarations, not plumbed here today (unlike the
+        // `ty: &TypeRef` available a few lines up for the sibling brand cast). A
+        // guessed type risks a `tsc --strict` mismatch; left as `any`, named here.
         let deps_expr = match cx.call_site_identity.clone() {
             Some(identity) => format!("{{ ...deps, identity: ({identity} as any) }}"),
             None => "deps".to_string(),
@@ -3223,6 +3256,14 @@ fn lower_query_method(
         ("take", [n]) => thunk(format!("{source}.slice(0, Math.max(0, {n}))")),
         ("skip", [n]) => thunk(format!("{source}.slice(Math.max(0, {n}))")),
         ("distinct", []) => thunk(format!("[...new Set({source})]")),
+        // P7.2: deferred, not narrowed — a first attempt used `unknown[]` here
+        // and broke real `tsc --strict` fixtures (228/231): the whole
+        // expression's result flows into a context expecting a specific
+        // element type (e.g. `readonly Reservation[]`), inferred *because*
+        // `__out`/`__h`'s buckets were left untyped for TS to infer through —
+        // pinning them to `unknown[]` blocks that inference rather than
+        // improving on it. Correctly narrowing needs the query's own resolved
+        // row type threaded through, not a same-line text change.
         ("distinctBy", [key]) => thunk(format!(
             "(() => {{ const __seen = new Set(); const __out: any[] = []; for (const __x of {source}) {{ const __k = ({key})(__x); if (!__seen.has(__k)) {{ __seen.add(__k); __out.push(__x); }} }} return __out; }})()"
         )),

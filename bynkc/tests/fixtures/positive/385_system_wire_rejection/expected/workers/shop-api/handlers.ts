@@ -77,7 +77,7 @@ export class Cart {
     if (url.pathname.startsWith("/_bynk/agent/")) {
       const methodName = url.pathname.slice("/_bynk/agent/".length);
       const { args, deps } = (await request.json()) as { args: unknown[]; deps: unknown };
-      const result = await (this as any)[methodName](...args, deps);
+      const result = await (this as unknown as Record<string, (...bynkArgs: unknown[]) => unknown>)[methodName](...args, deps);
       return new Response(JSON.stringify(result ?? null), { headers: { "content-type": "application/json" } });
     }
     return new Response("Not Found", { status: 404 });
@@ -131,9 +131,9 @@ export function deserialise_Sku(json: JsonValue, path: string = "$"): Result<Sku
   if (typeof json !== "string") {
     return Err({ kind: "StructuralMismatch", path, expected: "string", actual: typeof json });
   }
-  const validated = (typeof (Sku as any).of === "function")
-    ? (Sku as any).of(json)
-    : Ok(json as unknown as Sku);
+  const validated = (typeof (Sku as unknown as { of?: (json: unknown) => Result<unknown, ValidationError> }).of === "function")
+    ? (Sku as unknown as { of: (json: unknown) => Result<unknown, ValidationError> }).of(json)
+    : (Ok(json as unknown as Sku) as Result<unknown, ValidationError>);
   if (validated.tag === "Err") {
     return Err({ kind: "RefinementViolation", path, violation: validated.error });
   }

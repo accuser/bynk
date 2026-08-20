@@ -24,14 +24,14 @@ export default {
       {
         if ((method === "GET" || method === "HEAD") && path === "/pixel.png") {
           const result = await surface.http_GET_pixel_png();
-          const __response = applySecurityHeaders(notModifiedIfMatch(httpResultToResponse(result, (__v: any) => null, { weakEtag: true }), request), __security_Assets);
+          const __response = applySecurityHeaders(notModifiedIfMatch(httpResultToResponse(result, (__v: void) => null, { weakEtag: true }), request), __security_Assets);
           return method === "HEAD" ? headResponse(__response) : __response;
         }
       }
       {
         if ((method === "GET" || method === "HEAD") && path === "/sitemap.xml") {
           const result = await surface.http_GET_sitemap_xml();
-          const __response = applySecurityHeaders(notModifiedIfMatch(httpResultToResponse(result, (__v: any) => null, { weakEtag: true }), request), __security_Assets);
+          const __response = applySecurityHeaders(notModifiedIfMatch(httpResultToResponse(result, (__v: void) => null, { weakEtag: true }), request), __security_Assets);
           return method === "HEAD" ? headResponse(__response) : __response;
         }
       }
@@ -41,7 +41,7 @@ export default {
           const __raw_mode = __m.params["mode"];
           const mode = __raw_mode;
           const result = await surface.http_GET_robots_Param_mode(mode);
-          const __response = applySecurityHeaders(notModifiedIfMatch(httpResultToResponse(result, (__v: any) => null, { weakEtag: true }), request), __security_Assets);
+          const __response = applySecurityHeaders(notModifiedIfMatch(httpResultToResponse(result, (__v: void) => null, { weakEtag: true }), request), __security_Assets);
           return method === "HEAD" ? headResponse(__response) : __response;
         }
       }

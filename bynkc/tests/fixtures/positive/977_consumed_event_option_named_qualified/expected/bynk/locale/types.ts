@@ -62,9 +62,9 @@ export function deserialise_LocaleTag(json: JsonValue, path: string = "$"): Resu
   if (typeof json !== "string") {
     return Err({ kind: "StructuralMismatch", path, expected: "string", actual: typeof json });
   }
-  const validated = (typeof (LocaleTag as any).of === "function")
-    ? (LocaleTag as any).of(json)
-    : Ok(json as unknown as LocaleTag);
+  const validated = (typeof (LocaleTag as unknown as { of?: (json: unknown) => Result<unknown, ValidationError> }).of === "function")
+    ? (LocaleTag as unknown as { of: (json: unknown) => Result<unknown, ValidationError> }).of(json)
+    : (Ok(json as unknown as LocaleTag) as Result<unknown, ValidationError>);
   if (validated.tag === "Err") {
     return Err({ kind: "RefinementViolation", path, violation: validated.error });
   }

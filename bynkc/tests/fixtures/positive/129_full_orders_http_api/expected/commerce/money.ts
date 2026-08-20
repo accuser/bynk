@@ -30,9 +30,9 @@ export function deserialise_CurrencyCode(json: JsonValue, path: string = "$"): R
   if (typeof json !== "string") {
     return Err({ kind: "StructuralMismatch", path, expected: "string", actual: typeof json });
   }
-  const validated = (typeof (CurrencyCode as any).of === "function")
-    ? (CurrencyCode as any).of(json)
-    : Ok(json as unknown as CurrencyCode);
+  const validated = (typeof (CurrencyCode as unknown as { of?: (json: unknown) => Result<unknown, ValidationError> }).of === "function")
+    ? (CurrencyCode as unknown as { of: (json: unknown) => Result<unknown, ValidationError> }).of(json)
+    : (Ok(json as unknown as CurrencyCode) as Result<unknown, ValidationError>);
   if (validated.tag === "Err") {
     return Err({ kind: "RefinementViolation", path, violation: validated.error });
   }

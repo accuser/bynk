@@ -309,13 +309,33 @@ fn emit_refined(
             // (`.of`), which applies the refinement. If the type has no
             // refinement, `.of` doesn't exist for refined-base types; fall back
             // to a direct cast.
+            // P7.2: `name`'s declared type doesn't statically know about a
+            // conditional `.of` constructor (that's the whole reason this probes
+            // for it at runtime) — a marker type stating exactly the shape this
+            // code actually depends on, not a blanket escape. `.error`'s real
+            // type is `ValidationError` (a real, exported runtime interface,
+            // `runtime/src/errors.ts`, already referenced by name elsewhere in
+            // this file) — a first attempt typed it `unknown` and broke real
+            // `tsc --strict` fixtures against this function's own declared
+            // `violation: ValidationError` return shape. The `else` branch is
+            // annotated to match the same `Result<{name}, ValidationError>`
+            // union so both ternary arms unify to one type instead of one
+            // arm's `Ok(...)` inferring a narrower `Result<{name}, never>`.
             writeln!(
                 out,
-                "  const validated = (typeof ({name} as any).of === \"function\")"
+                "  const validated = (typeof ({name} as unknown as {{ of?: (json: unknown) => Result<unknown, ValidationError> }}).of === \"function\")"
             )
             .unwrap();
-            writeln!(out, "    ? ({name} as any).of(json)").unwrap();
-            writeln!(out, "    : Ok(json as unknown as {name});").unwrap();
+            writeln!(
+                out,
+                "    ? ({name} as unknown as {{ of: (json: unknown) => Result<unknown, ValidationError> }}).of(json)"
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "    : (Ok(json as unknown as {name}) as Result<unknown, ValidationError>);"
+            )
+            .unwrap();
             writeln!(out, "  if (validated.tag === \"Err\") {{").unwrap();
             writeln!(
                 out,
@@ -595,6 +615,15 @@ fn emit_sum_codec(
             writeln!(out, "    case \"{vname}\": {{").unwrap();
             write!(out, "      return {{ {kind}: \"{vname}\"").unwrap();
             for field in &variant.payload {
+                // P7.2: deferred, not narrowed. A first attempt used
+                // `Record<string, unknown>` here and broke a real `tsc --strict`
+                // fixture (180/188/etc., the `Float` boundary guard): the
+                // extracted field's value flows into `serialise_field_expr_wire`'s
+                // own shape-specific helpers (e.g. a `(v: number) => ...`
+                // finiteness check for `Float`), which need the field's real
+                // per-shape type, not a blanket `unknown` — correctly narrowing
+                // needs deriving that type from `field.shape` itself, not a
+                // generic record cast.
                 let expr = serialise_field_expr_wire(
                     &field.shape,
                     &format!("(value as any).{}", field.name),
@@ -798,6 +827,15 @@ fn emit_field_deserialise_wire(
         // The runtime-owned error family, plus a stray field-position
         // `Effect` (see this function's doc): no generated codec to name, so
         // the value is cast through unchecked.
+        //
+        // P7.2: residual, not narrowed here. Runtime-owned error types
+        // (`ValidationError`/`JsonError`/`HttpResult`/`QueueResult`) have no
+        // exported TypeScript type yet — genuinely R7.7's business (a real
+        // runtime type needs to exist first), named and deferred to Arc C's own
+        // runtime-typing work (`design/pending/the-typescript-tree-settling.md`'s
+        // ADR). `unknown` would compile but silently drops the residual instead
+        // of naming it, which is worse than leaving `any` visible until the real
+        // fix lands.
         WireRef::Unchecked { .. } => {
             writeln!(out, "  const __{name} = {json} as any;").unwrap();
         }
@@ -938,7 +976,8 @@ pub(crate) fn serialise_ref_via(t: &TypeRef, ns: &str, ru: &RuntimeUse) -> Strin
         | TypeRef::Map(..)
         | TypeRef::App { .. }) => format!("{ns}serialise_{}", inner_ts_name(t)),
         other => format!(
-            "(__v: any) => {}",
+            "(__v: {}) => {}",
+            crate::emitter::ts_type_ref(other),
             serialise_field_expr_via(other, "__v", ns, ru)
         ),
     }
@@ -1019,6 +1058,11 @@ pub(crate) fn deserialise_expr_via(
         TypeRef::Unit(_) => "Ok(undefined) as Result<void, BoundaryError>".to_string(),
         // The runtime-owned error types: no generated codec to name (see
         // `serialise_field_expr_via`). The one unchecked arm left at the boundary.
+        //
+        // P7.2: residual, not narrowed — the same runtime-owned-type gap
+        // `serialise_field_expr_via`'s `WireRef::Unchecked` arm names, deferred to
+        // Arc C's runtime-typing work. Left as `any` rather than `unknown` so it
+        // stays visible to `ts_any` as the named residual it is.
         TypeRef::ValidationError(_)
         | TypeRef::JsonError(_)
         | TypeRef::HttpResult(_, _)

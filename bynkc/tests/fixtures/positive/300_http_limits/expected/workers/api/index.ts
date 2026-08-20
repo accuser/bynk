@@ -28,7 +28,7 @@ export default {
       {
         if ((method === "GET" || method === "HEAD") && path === "/status") {
           const result = await surface.http_GET_status();
-          const __response = applySecurityHeaders(applyCors(notModifiedIfMatch(httpResultToResponse(result, (__v: any) => __v as JsonValue, { weakEtag: true }), request), __cors_api, request.headers.get("origin")), __security_api);
+          const __response = applySecurityHeaders(applyCors(notModifiedIfMatch(httpResultToResponse(result, (__v: string) => __v as JsonValue, { weakEtag: true }), request), __cors_api, request.headers.get("origin")), __security_api);
           return method === "HEAD" ? headResponse(__response) : __response;
         }
       }
@@ -48,7 +48,7 @@ export default {
           if (__r_body.tag === "Err") return applySecurityHeaders(applyCors(new Response(JSON.stringify(__r_body.error), { status: 400, headers: { "content-type": "application/json" } }), __cors_api, request.headers.get("origin")), __security_api);
           const body = __r_body.value;
           const result = await surface.http_POST_bulk(body);
-          return applySecurityHeaders(applyCors(httpResultToResponse(result, (__v: any) => __v as JsonValue), __cors_api, request.headers.get("origin")), __security_api);
+          return applySecurityHeaders(applyCors(httpResultToResponse(result, (__v: string) => __v as JsonValue), __cors_api, request.headers.get("origin")), __security_api);
         }
       }
       {
@@ -67,7 +67,7 @@ export default {
           if (__r_body.tag === "Err") return applySecurityHeaders(applyCors(new Response(JSON.stringify(__r_body.error), { status: 400, headers: { "content-type": "application/json" } }), __cors_api, request.headers.get("origin")), __security_api);
           const body = __r_body.value;
           const result = await surface.http_POST_upload(body);
-          return applySecurityHeaders(applyCors(httpResultToResponse(result, (__v: any) => __v as JsonValue), __cors_api, request.headers.get("origin")), __security_api);
+          return applySecurityHeaders(applyCors(httpResultToResponse(result, (__v: string) => __v as JsonValue), __cors_api, request.headers.get("origin")), __security_api);
         }
       }
       if (path === "/bulk") {

@@ -59,9 +59,9 @@ export class Tally {
     if (url.pathname.startsWith("/_bynk/agent/")) {
       const methodName = url.pathname.slice("/_bynk/agent/".length);
       const { args, deps } = (await request.json()) as { args: unknown[]; deps: unknown };
-      const env = this.__env as any;
+      const env = this.__env as unknown as Record<string, unknown>;
       const __givenDeps = { Clock: new bynk__binding.ClockProvider() };
-      const result = await (this as any)[methodName](...args, { ...((deps ?? {}) as Record<string, unknown>), ...__givenDeps });
+      const result = await (this as unknown as Record<string, (...bynkArgs: unknown[]) => unknown>)[methodName](...args, { ...((deps ?? {}) as Record<string, unknown>), ...__givenDeps });
       return new Response(JSON.stringify(result ?? null), { headers: { "content-type": "application/json" } });
     }
     return new Response("Not Found", { status: 404 });

@@ -45,7 +45,7 @@ export default {
           if (__r_body.tag === "Err") return applySecurityHeaders(new Response(JSON.stringify(__r_body.error), { status: 400, headers: { "content-type": "application/json" } }), __security_api);
           const body = __r_body.value;
           const result = await surface.http_POST_hooks_event(body);
-          return applySecurityHeaders(httpResultToResponse(result, (__v: any) => __v as JsonValue), __security_api);
+          return applySecurityHeaders(httpResultToResponse(result, (__v: string) => __v as JsonValue), __security_api);
         }
       }
       if (path === "/hooks/event") {

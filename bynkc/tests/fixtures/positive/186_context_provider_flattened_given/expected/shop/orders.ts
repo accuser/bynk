@@ -20,7 +20,7 @@ export class ClockStamp implements Stamp {
   }
 }
 
-export const ClockStampProvider = { token: StampToken, factory: (deps: any) => new ClockStamp(deps) };
+export const ClockStampProvider = { token: StampToken, factory: (deps: { Clock: bynk.Clock }) => new ClockStamp(deps) };
 
 export const ordering = {
   async call(sku: string, deps: { Stamp: Stamp }): Promise<number> {

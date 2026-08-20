@@ -38,7 +38,7 @@ export class BImpl implements B {
   }
 }
 
-export const BImplProvider = { token: BToken, factory: (deps: any) => new BImpl(deps) };
+export const BImplProvider = { token: BToken, factory: (deps: { C: C }) => new BImpl(deps) };
 
 export class AImpl implements A {
   private deps: { B: B };
@@ -49,7 +49,7 @@ export class AImpl implements A {
   }
 }
 
-export const AImplProvider = { token: AToken, factory: (deps: any) => new AImpl(deps) };
+export const AImplProvider = { token: AToken, factory: (deps: { B: B }) => new AImpl(deps) };
 
 export const run = {
   async call(deps: { A: A }): Promise<void> {

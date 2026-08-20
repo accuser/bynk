@@ -10,10 +10,10 @@ export interface Env {
 export function compose(env: Env) {
   const deps = {  };
   return {
-    async http_POST_upload(body: any) {
+    async http_POST_upload(body: string) {
       return handlers.api.http_POST_upload(body, deps);
     },
-    async http_POST_bulk(body: any) {
+    async http_POST_bulk(body: string) {
       return handlers.api.http_POST_bulk(body, deps);
     },
     async http_GET_status() {

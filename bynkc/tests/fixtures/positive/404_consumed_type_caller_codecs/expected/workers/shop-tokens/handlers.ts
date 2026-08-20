@@ -103,9 +103,9 @@ export function deserialise_Score(json: JsonValue, path: string = "$"): Result<S
   if (typeof json !== "number") {
     return Err({ kind: "StructuralMismatch", path, expected: "number", actual: typeof json });
   }
-  const validated = (typeof (Score as any).of === "function")
-    ? (Score as any).of(json)
-    : Ok(json as unknown as Score);
+  const validated = (typeof (Score as unknown as { of?: (json: unknown) => Result<unknown, ValidationError> }).of === "function")
+    ? (Score as unknown as { of: (json: unknown) => Result<unknown, ValidationError> }).of(json)
+    : (Ok(json as unknown as Score) as Result<unknown, ValidationError>);
   if (validated.tag === "Err") {
     return Err({ kind: "RefinementViolation", path, violation: validated.error });
   }
@@ -120,9 +120,9 @@ export function deserialise_Token(json: JsonValue, path: string = "$"): Result<T
   if (typeof json !== "string") {
     return Err({ kind: "StructuralMismatch", path, expected: "string", actual: typeof json });
   }
-  const validated = (typeof (Token as any).of === "function")
-    ? (Token as any).of(json)
-    : Ok(json as unknown as Token);
+  const validated = (typeof (Token as unknown as { of?: (json: unknown) => Result<unknown, ValidationError> }).of === "function")
+    ? (Token as unknown as { of: (json: unknown) => Result<unknown, ValidationError> }).of(json)
+    : (Ok(json as unknown as Token) as Result<unknown, ValidationError>);
   if (validated.tag === "Err") {
     return Err({ kind: "RefinementViolation", path, violation: validated.error });
   }

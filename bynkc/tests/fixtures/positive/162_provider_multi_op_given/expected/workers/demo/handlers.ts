@@ -37,7 +37,7 @@ export class LoggingStore implements Store {
   }
 }
 
-export const LoggingStoreProvider = { token: StoreToken, factory: (deps: any) => new LoggingStore(deps) };
+export const LoggingStoreProvider = { token: StoreToken, factory: (deps: { Logger: Logger }) => new LoggingStore(deps) };
 
 export const api = {
   async call(key: string, deps: { Store: Store }): Promise<void> {

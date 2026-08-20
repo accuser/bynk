@@ -358,9 +358,9 @@ export function deserialise_Uuid(json: JsonValue, path: string = "$"): Result<Uu
   if (typeof json !== "string") {
     return Err({ kind: "StructuralMismatch", path, expected: "string", actual: typeof json });
   }
-  const validated = (typeof (Uuid as any).of === "function")
-    ? (Uuid as any).of(json)
-    : Ok(json as unknown as Uuid);
+  const validated = (typeof (Uuid as unknown as { of?: (json: unknown) => Result<unknown, ValidationError> }).of === "function")
+    ? (Uuid as unknown as { of: (json: unknown) => Result<unknown, ValidationError> }).of(json)
+    : (Ok(json as unknown as Uuid) as Result<unknown, ValidationError>);
   if (validated.tag === "Err") {
     return Err({ kind: "RefinementViolation", path, violation: validated.error });
   }

@@ -653,8 +653,14 @@ fn emit_system_http_support(
             ) {
                 Some(seam) => {
                     secrets.insert(seam.secret.clone());
+                    // P7.2: `Record<string, string>`, not `emitter/workers.rs`'s own
+                    // `Record<string, unknown>` marker — this expression feeds
+                    // `__bynkSignHs256` directly with no `typeof` narrowing step in
+                    // between (unlike workers.rs's own use), and real `process.env`
+                    // values genuinely are `string | undefined`, so `string` is both
+                    // accurate and what makes `?? ""` actually type as `string`.
                     let secret_read = format!(
-                        "((globalThis as any).process?.env?.[{:?}] ?? \"\")",
+                        "((globalThis as {{ process?: {{ env?: Record<string, string> }} }}).process?.env?.[{:?}] ?? \"\")",
                         seam.secret
                     );
                     (
@@ -846,9 +852,11 @@ fn emit_system_http_support(
          }\n",
     );
     // Set each secret the target's actors read, so the real Bearer seam verifies.
+    // P7.2: `Record<string, string>` — same reasoning as `__bynkSignHs256`'s own
+    // `secret: string` parameter above.
     for s in &secrets {
         out.push_str(&format!(
-            "(globalThis as any).process = (globalThis as any).process ?? {{ env: {{}} }};\n(globalThis as any).process.env[{s:?}] = \"__bynk_test_secret\";\n"
+            "(globalThis as unknown as {{ process: {{ env: Record<string, string> }} }}).process = (globalThis as unknown as {{ process?: {{ env: Record<string, string> }} }}).process ?? {{ env: {{}} }};\n(globalThis as unknown as {{ process: {{ env: Record<string, string> }} }}).process.env[{s:?}] = \"__bynk_test_secret\";\n"
         ));
     }
     out.push_str(&routes);
@@ -904,6 +912,15 @@ fn emit_integration_harness(
     let mut out = String::new();
     out.push_str("function makeHarness() {\n");
     // Declare every participant env first so sibling references resolve.
+    //
+    // P7.2: deferred, not narrowed. `env_{ns}` is later passed positionally into
+    // `worker_{dns}.fetch(req, env_{dns})`, whose own generated `Env` interface
+    // (`emitter/workers.rs`'s `export interface Env { ... }`) types each binding
+    // precisely (`ServiceBinding`, `DurableObjectNamespace`, ...) — `Record<string,
+    // unknown>` would not structurally satisfy that on assignment, and correctly
+    // referencing each participant's own generated `Env` type from this shared
+    // harness scope needs its own naming/qualification scheme this slice hasn't
+    // worked out. Left as `any`, named here rather than guessed at.
     for p in participants {
         let ns = p.replace('.', "_");
         out.push_str(&format!("  const env_{ns}: any = {{}};\n"));
@@ -935,6 +952,7 @@ fn emit_integration_harness(
         }
     }
     // Root env binds to every participant.
+    // P7.2: deferred, same reason as `env_{ns}` above.
     out.push_str("  const rootEnv: any = {};\n");
     for p in participants {
         let ns = p.replace('.', "_");
@@ -2467,7 +2485,9 @@ fn emit_test_scope_setup(
     };
     if target_kind == UnitKind::Context {
         if let Some(spec) = &obs_spec {
-            out.push_str("    const __obs = { log: {} as Record<string, { args: any[]; order: number }[]>, n: 0 };\n");
+            // P7.2: matches `emitter/lower.rs`'s own `{ args: unknown[] }` reads
+            // of this exact shape (`Trace`/`Called`-with-predicate lowering).
+            out.push_str("    const __obs = { log: {} as Record<string, { args: unknown[]; order: number }[]>, n: 0 };\n");
             out.push_str(&format!(
                 "    const deps = __bynkRecordDeps(makeTestDeps(), {spec}, __obs);\n"
             ));
@@ -2580,6 +2600,11 @@ fn emit_test_scope_setup(
                 .get(q)
                 .cloned()
                 .unwrap_or_else(|| q.rsplit('.').next().unwrap_or(q.as_str()).to_string());
+            // P7.2: deferred, not narrowed. `deps.surface`'s own per-capability
+            // mock shapes are constructed elsewhere in this file; typing `{key}`
+            // correctly here needs cross-referencing that mock-construction code
+            // rather than guessing a structural type, which risks a `tsc --strict`
+            // mismatch against whatever it actually builds.
             out.push_str(&format!(
                 "    const {key} = (deps as any).surface?.{key};\n"
             ));
@@ -3205,6 +3230,16 @@ fn emit_test_property_function(
                 gen_ts: "undefined".to_string(),
                 shrink: "[]".to_string(),
             });
+        // P7.2: deferred, not narrowed. `v`'s real type varies per binding, and
+        // for `Int` (and refined-`Int`) bindings the *internal* property-test
+        // representation is `bigint` (see `rng.int(...)`'s own `n`-suffixed
+        // literals and `__bynkShrinkInt(v: bigint, ...)` above) — not `number`,
+        // which is what a general `ts_type_ref`/`ts_ty` rendering of the same
+        // declared type would produce. Narrowing correctly needs threading the
+        // resolved type (or its internal representation) out of `BindingGen`
+        // itself, not a same-line text change, and a wrong guess here risks a
+        // real `tsc --strict` failure specifically on the shrink helpers' own
+        // typed parameters.
         out.push_str(&format!(
             "      {{ name: \"{}\", boundaries: [{}], gen: (rng: any) => {}, shrink: (v: any) => {}, show: (v: any) => __bynkShow(v) }},\n",
             emitter::escape_ts_string(&b.name.name),
@@ -3241,6 +3276,9 @@ fn emit_test_property_function(
             &cross,
             runtime_use,
         );
+        // P7.2: deferred — `__vals`'s elements are heterogeneous, one per binding,
+        // some internally `bigint`-represented; same reason as `__gens`'s own
+        // construction elsewhere in this function.
         out.push_str("    const __where = (__vals: any[]) => {\n");
         out.push_str(&format!("      {destructure}\n"));
         for line in src.lines() {
@@ -3275,6 +3313,7 @@ fn emit_test_property_function(
         rel_path,
         runtime_use,
     );
+    // P7.2: deferred, same reason as `__where`'s own `__vals` above.
     out.push_str("    const __body = async (__vals: any[]) => {\n");
     out.push_str(&format!("      {destructure}\n"));
     for line in body_src.lines() {
@@ -3391,6 +3430,8 @@ fn emit_test_history_property_function(
                                 gen_ts: "undefined".to_string(),
                                 shrink: "[]".to_string(),
                             });
+                        // P7.2: deferred — same reason as `__gens`'s own construction
+                        // above (`Int`'s internal `bigint` representation).
                         format!(
                             "{{ boundaries: [{}], gen: (rng: any) => {}, shrink: (v: any) => {}, show: (v: any) => __bynkShow(v) }}",
                             bg.boundaries.join(", "),
@@ -3461,7 +3502,10 @@ fn emit_test_history_property_function(
         rel_path,
         runtime_use,
     );
-    out.push_str("    const __body = async (__run: any[]) => {\n");
+    // P7.2: matches `__bynkDriveHistory_*`'s own real signature — see
+    // `emit.rs`'s own driver-signature narrowing and the matching `__drive`
+    // call site below (`{target_ns}.__bynkDriveHistory_{agent_name}`).
+    out.push_str("    const __body = async (__run: Array<{ h: number, args: unknown[] }>) => {\n");
     out.push_str(&format!("      const {run_var} = __run;\n"));
     for line in body_src.lines() {
         out.push_str("      ");
@@ -3473,8 +3517,13 @@ fn emit_test_history_property_function(
     // Drive a generated sequence through the real handlers via the agent module's
     // exported test driver, threading the test `deps` (real or `stub`-stubbed).
     let target_ns = target_name.replace('.', "_");
+    // P7.2: `seq` matches `__bynkDriveHistory_*`'s own real param type
+    // (`emit.rs`'s own driver-signature narrowing). `(target_ns as any)` and
+    // `deps` stay deferred — the callee's own `deps: any` param is itself
+    // deferred (per-handler `given` sets can differ; see `emit.rs`), and
+    // `target_ns`'s own generated namespace shape wasn't traced here.
     out.push_str(&format!(
-        "    const __drive = (seq: any[]) => ({target_ns} as any).__bynkDriveHistory_{agent_name}(seq, deps);\n"
+        "    const __drive = (seq: Array<{{ h: number, args: unknown[] }}>) => ({target_ns} as any).__bynkDriveHistory_{agent_name}(seq, deps);\n"
     ));
 
     let rel_path_fwd = rel_path.replace('\\', "/");
@@ -3539,6 +3588,16 @@ fn emit_contract_attack_function(
                 gen_ts: "undefined".to_string(),
                 shrink: "[]".to_string(),
             });
+        // P7.2: deferred, not narrowed. `v`'s real type varies per binding, and
+        // for `Int` (and refined-`Int`) bindings the *internal* property-test
+        // representation is `bigint` (see `rng.int(...)`'s own `n`-suffixed
+        // literals and `__bynkShrinkInt(v: bigint, ...)` above) — not `number`,
+        // which is what a general `ts_type_ref`/`ts_ty` rendering of the same
+        // declared type would produce. Narrowing correctly needs threading the
+        // resolved type (or its internal representation) out of `BindingGen`
+        // itself, not a same-line text change, and a wrong guess here risks a
+        // real `tsc --strict` failure specifically on the shrink helpers' own
+        // typed parameters.
         out.push_str(&format!(
             "      {{ name: \"{}\", boundaries: [{}], gen: (rng: any) => {}, shrink: (v: any) => {}, show: (v: any) => __bynkShow(v) }},\n",
             emitter::escape_ts_string(&p.name.name),
@@ -3582,6 +3641,9 @@ fn emit_contract_attack_function(
             &cross,
             runtime_use,
         );
+        // P7.2: deferred — `__vals`'s elements are heterogeneous, one per binding,
+        // some internally `bigint`-represented; same reason as `__gens`'s own
+        // construction elsewhere in this function.
         out.push_str("    const __where = (__vals: any[]) => {\n");
         out.push_str(&format!("      {destructure}\n"));
         for line in src.lines() {
@@ -3610,6 +3672,7 @@ fn emit_contract_attack_function(
             }
         })
         .collect();
+    // P7.2: deferred, same reason as `__where`'s own `__vals` above.
     out.push_str("    const __body = async (__vals: any[]) => {\n");
     out.push_str(&format!("      {destructure}\n"));
     out.push_str(&format!(

@@ -12,7 +12,7 @@ export function compose(env: Env) {
   const Secrets = new bynk__binding.SecretsProvider(env);
   const deps = { Secrets };
   return {
-    async http_GET_secret_Param_which(which: any) {
+    async http_GET_secret_Param_which(which: string) {
       return handlers.api.http_GET_secret_Param_which(which, deps);
     },
   };

@@ -10,7 +10,7 @@ export interface Env {
 export function compose(env: Env) {
   const deps = {  };
   return {
-    async http_POST_items(body: any) {
+    async http_POST_items(body: handlers.CreateItem) {
       return handlers.api.http_POST_items(body, deps);
     },
   };

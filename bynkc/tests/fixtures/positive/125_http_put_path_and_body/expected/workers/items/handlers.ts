@@ -43,9 +43,9 @@ export function deserialise_ItemId(json: JsonValue, path: string = "$"): Result<
   if (typeof json !== "string") {
     return Err({ kind: "StructuralMismatch", path, expected: "string", actual: typeof json });
   }
-  const validated = (typeof (ItemId as any).of === "function")
-    ? (ItemId as any).of(json)
-    : Ok(json as unknown as ItemId);
+  const validated = (typeof (ItemId as unknown as { of?: (json: unknown) => Result<unknown, ValidationError> }).of === "function")
+    ? (ItemId as unknown as { of: (json: unknown) => Result<unknown, ValidationError> }).of(json)
+    : (Ok(json as unknown as ItemId) as Result<unknown, ValidationError>);
   if (validated.tag === "Err") {
     return Err({ kind: "RefinementViolation", path, violation: validated.error });
   }

@@ -280,6 +280,14 @@ pub(crate) fn emit_worker_compose(
     writeln!(out).unwrap();
 
     if !agent_names.is_empty() || uses_emit {
+        // P7.2: deferred, not narrowed — this settling attempt broke real
+        // `tsc --strict` fixtures. A real, differently-shaped imported
+        // `DurableObjectNamespace` (from `./runtime`, `fetch(input: string,
+        // init?: unknown)`) can be in scope in the same file as this local
+        // fallback (used with `fetch(new Request(...))` at this file's own
+        // `__stub.fetch` call site) — the two share a name but not a shape, and
+        // reconciling them needs more than a same-line fix (a real import/alias,
+        // or renaming the local fallback), not a guessed structural type.
         let _ = writeln!(
             out,
             "type DurableObjectNamespace = {{ idFromName(name: string): {{ toString(): string }}; get(id: any): any }};"
@@ -434,6 +442,7 @@ pub(crate) fn emit_worker_compose(
                                 *method,
                                 path,
                                 &members,
+                                &table.types,
                                 &runtime_use,
                             );
                         }
@@ -663,9 +672,15 @@ fn emit_event_wrapper(out: &mut String, sname: &str, h: &Handler, protocol: &Ser
                 ..
             }
         );
-    // Mirrors Bundle mode's `ev.payload as any` (project.rs's `__eventsDispatch`
-    // closure): the event's real payload type only exists at the *publisher's*
-    // end, not on this wire (`payload` arrives here as parsed JSON).
+    // P7.2: deferred, not narrowed. Two attempts: a bare `ts_type_ref` failed
+    // ("Cannot find name" — the event's synthetic type needs the `handlers.`
+    // prefix here), and qualifying it via `qualified_type_ref` (the same
+    // `emit_call_wrapper` idiom) *also* failed, differently, on cross-context
+    // fixtures ("Namespace has no exported member" — the event type genuinely
+    // isn't exported from `handlers.ts` in that shape for a cross-context
+    // subscriber). The real fix needs tracing exactly where a cross-context
+    // event's synthetic type is actually exported from, not another guess at
+    // the qualification scheme.
     if wants_envelope {
         let _ = writeln!(
             out,
@@ -683,11 +698,20 @@ fn emit_event_wrapper(out: &mut String, sname: &str, h: &Handler, protocol: &Ser
 fn emit_cron_wrapper(out: &mut String, sname: &str, cron_idx: usize, h: &Handler) {
     let method_key = crate::emitter::cron_handler_method_name(sname, cron_idx);
     // A cron handler takes an optional scheduled-time parameter; forward it (if
-    // any) to the bound handler, with deps trailing.
+    // any) to the bound handler, with deps trailing. P7.2: the checker requires
+    // this parameter be `Int`, and `workers_entry.rs`'s scheduled() dispatch hands
+    // it Cloudflare's own `event.scheduledTime: number` directly — codec-matched,
+    // safe to type for real.
     let param_decls: Vec<String> = h
         .params
         .iter()
-        .map(|p| format!("{}: any", ts_ident(&p.name.name)))
+        .map(|p| {
+            format!(
+                "{}: {}",
+                ts_ident(&p.name.name),
+                qualified_type_ref(&p.type_ref)
+            )
+        })
         .collect();
     let param_args: Vec<String> = h.params.iter().map(|p| ts_ident(&p.name.name)).collect();
     let _ = writeln!(out, "    async {method_key}({}) {{", param_decls.join(", "));
@@ -702,11 +726,21 @@ fn emit_cron_wrapper(out: &mut String, sname: &str, cron_idx: usize, h: &Handler
 
 fn emit_queue_wrapper(out: &mut String, sname: &str, queue_idx: usize, h: &Handler) {
     let method_key = crate::emitter::queue_handler_method_name(sname, queue_idx);
-    // The queue handler takes its message parameter; forward it with deps.
+    // The queue handler takes its message parameter; forward it with deps. P7.2:
+    // `workers_entry.rs`'s queue() dispatch always calls `deserialise_call` against
+    // this same declared type before forwarding `__r.value` here — codec-matched,
+    // safe to type for real. (No param at all when the handler declares none, in
+    // which case this list — and the corresponding entry-side msg_type — is empty.)
     let param_decls: Vec<String> = h
         .params
         .iter()
-        .map(|p| format!("{}: any", ts_ident(&p.name.name)))
+        .map(|p| {
+            format!(
+                "{}: {}",
+                ts_ident(&p.name.name),
+                qualified_type_ref(&p.type_ref)
+            )
+        })
         .collect();
     let param_args: Vec<String> = h.params.iter().map(|p| ts_ident(&p.name.name)).collect();
     let _ = writeln!(out, "    async {method_key}({}) {{", param_decls.join(", "));
@@ -740,11 +774,20 @@ fn emit_websocket_upgrade(
     use crate::emitter::websocket::{WsOpenShape, analyse_open_shape};
     // The route params (e.g. `roomId`) ride as wrapper arguments — the entry
     // extracts them from the upgrade URL's query string and passes them through.
+    // P7.2: `string`, not `unknown` — a first attempt used `unknown` (raw, not
+    // the declared type, v0.176's own rationale for `emit_call_wrapper`'s
+    // scoping applying "the entry never coerces them"), but broke real
+    // `tsc --strict` fixtures: the wrapper's own body below validates each
+    // param itself, inline, via `handlers.{Type}.of(roomId)` — genuinely a
+    // `string` argument (`url.searchParams.get(...)`, non-null-checked by the
+    // entry before this wrapper is called), just not yet refined/branded.
+    // `unknown` was one step too vague for `.of`'s own `string`-typed
+    // constructor parameter.
     let mut decls: Vec<String> = vec!["request: Request".to_string()];
     decls.extend(
         h.params
             .iter()
-            .map(|p| format!("{}: any", ts_ident(&p.name.name))),
+            .map(|p| format!("{}: string", ts_ident(&p.name.name))),
     );
     let _ = writeln!(out, "    async ws_{sname}_open({}) {{", decls.join(", "));
     // Require an actual WebSocket upgrade before anything else.
@@ -924,12 +967,21 @@ fn emit_http_wrapper(
     // one cohesive block here; any failure returns `Unauthorized` (401), which
     // the entry's `httpResultToResponse` maps. The body never runs unverified.
     if let Some(seam) = seam {
+        // P7.2: real declared types, not `unknown` — a first attempt assumed
+        // these were raw, uncoerced strings like `emit_websocket_upgrade`'s own
+        // params, but broke real `tsc --strict` fixtures: `workers_entry.rs`'s
+        // own dispatch validates each path param against its declared type
+        // (a `Named` type via `.of(...)`, a bare `String` trivially) before
+        // ever calling into this wrapper, so the real type is what's actually
+        // known here.
         let mut decls: Vec<String> = vec!["request: Request".to_string()];
-        decls.extend(
-            h.params
-                .iter()
-                .map(|p| format!("{}: any", ts_ident(&p.name.name))),
-        );
+        decls.extend(h.params.iter().map(|p| {
+            format!(
+                "{}: {}",
+                ts_ident(&p.name.name),
+                qualified_type_ref(&p.type_ref)
+            )
+        }));
         let secret = crate::emitter::escape_ts_string(&seam.secret);
         let _ = writeln!(out, "    async {method_key}({}) {{", decls.join(", "));
         let _ = writeln!(
@@ -998,10 +1050,17 @@ fn emit_http_wrapper(
         return;
     }
 
+    // P7.2: real declared types — same correction as the Bearer branch above.
     let param_decls: Vec<String> = h
         .params
         .iter()
-        .map(|p| format!("{}: any", ts_ident(&p.name.name)))
+        .map(|p| {
+            format!(
+                "{}: {}",
+                ts_ident(&p.name.name),
+                qualified_type_ref(&p.type_ref)
+            )
+        })
         .collect();
     let _ = writeln!(out, "    async {method_key}({}) {{", param_decls.join(", "));
     let _ = writeln!(
@@ -1034,12 +1093,15 @@ fn emit_http_oidc_wrapper(
     let audience = crate::emitter::escape_ts_string(&seam.audience);
     let jwks = crate::emitter::escape_ts_string(&seam.jwks);
 
+    // P7.2: real declared types — same correction as `emit_http_wrapper`'s own.
     let mut decls: Vec<String> = vec!["request: Request".to_string()];
-    decls.extend(
-        h.params
-            .iter()
-            .map(|p| format!("{}: any", ts_ident(&p.name.name))),
-    );
+    decls.extend(h.params.iter().map(|p| {
+        format!(
+            "{}: {}",
+            ts_ident(&p.name.name),
+            qualified_type_ref(&p.type_ref)
+        )
+    }));
     let _ = writeln!(out, "    async {method_key}({}) {{", decls.join(", "));
     let _ = writeln!(
         out,
@@ -1104,6 +1166,7 @@ fn emit_secret_lookup(out: &mut String, var: &str, secret: &str, indent: &str) {
 /// parses the body and dispatches with `who` threaded through `deps`. The body
 /// `match`es on `who`. The entry passes `request` (+ any path params); no body
 /// read happens in the entry for a sum route.
+#[allow(clippy::too_many_arguments)]
 fn emit_http_sum_wrapper(
     out: &mut String,
     sname: &str,
@@ -1111,6 +1174,7 @@ fn emit_http_sum_wrapper(
     method: HttpMethod,
     path: &str,
     members: &[bynk_check::actors::SumMember],
+    local_types: &std::collections::HashMap<String, std::sync::Arc<bynk_syntax::ast::TypeDecl>>,
     runtime_use: &RuntimeUse,
 ) {
     use bynk_check::actors::SumMemberSeam;
@@ -1120,15 +1184,24 @@ fn emit_http_sum_wrapper(
     // param is parsed here, not passed in.
     // `ts_ident`-renamed so a reserved-word path param forwards as a valid binder
     // (#723); the wrapper's decl and its forwarded arg both read from this list.
-    let path_params: Vec<String> = h
+    // P7.2: carries each param's own `TypeRef` alongside its name — real
+    // declared types, not `unknown`, matching the same correction
+    // `emit_http_wrapper`'s own path params needed (`workers_entry.rs`'s
+    // dispatch validates each one against its declared type before this
+    // wrapper ever sees it).
+    let path_params: Vec<(String, TypeRef)> = h
         .params
         .iter()
         .filter(|p| p.name.name != "body")
-        .map(|p| ts_ident(&p.name.name))
+        .map(|p| (ts_ident(&p.name.name), p.type_ref.clone()))
         .collect();
     let has_body = h.params.iter().any(|p| p.name.name == "body");
     let mut decls = vec!["request: Request".to_string()];
-    decls.extend(path_params.iter().map(|n| format!("{n}: any")));
+    decls.extend(
+        path_params
+            .iter()
+            .map(|(n, ty)| format!("{n}: {}", qualified_type_ref(ty))),
+    );
     let _ = writeln!(out, "    async {method_key}({}) {{", decls.join(", "));
 
     // Read the raw body once if a member verifies over it (Signature) or the
@@ -1148,6 +1221,15 @@ fn emit_http_sum_wrapper(
 
     // First-wins resolution: try each member in order; the first to verify sets
     // `__who`. A `None` (catch-all) member always succeeds.
+    //
+    // P7.2: deferred, not narrowed. `__who` is assigned one of two shapes across
+    // the loop below — `{ tag }` or `{ tag; identity: <member's own identity type> }`
+    // — and is later spread into `deps.who`, which `handlers.ts`'s own generated
+    // interface types precisely per member. A correct narrowing needs a real
+    // per-member discriminated union built from each `member.seam`'s
+    // `identity_type` and checked against what that generated interface actually
+    // expects — more than a same-line text change, and risks a `tsc --strict`
+    // mismatch if guessed. Left as `any`, named here rather than silently kept.
     let _ = writeln!(out, "      let __who: any = undefined;");
     for member in members {
         let tag = crate::emitter::escape_ts_string(&member.actor_name);
@@ -1220,7 +1302,7 @@ fn emit_http_sum_wrapper(
     );
 
     // Parse the body param from the raw bytes already read (fail-closed → 400).
-    let mut call_args: Vec<String> = path_params.iter().map(|n| n.to_string()).collect();
+    let mut call_args: Vec<String> = path_params.iter().map(|(n, _)| n.to_string()).collect();
     if let Some(body_param) = h.params.iter().find(|p| p.name.name == "body") {
         let _ = writeln!(out, "      let __body_json: JsonValue;");
         let _ = writeln!(out, "      try {{");
@@ -1242,7 +1324,11 @@ fn emit_http_sum_wrapper(
             out,
             "      if (__r_body.tag === \"Err\") return HttpResult.BadRequest(\"Invalid request body\");"
         );
-        let _ = writeln!(out, "      const body = __r_body.value;");
+        let _ = writeln!(
+            out,
+            "      const body = __r_body.value{};",
+            super::workers_entry::brand_assertion(&body_param.type_ref, local_types)
+        );
         call_args.push("body".to_string());
     }
     let _ = writeln!(
@@ -1285,4 +1371,18 @@ fn named_types_in(r: &TypeRef) -> Vec<String> {
     }
     walk(r, &mut out);
     out
+}
+
+/// P7.2: `ts_type_ref_qualified` over `r`, scoped to `r`'s own named types —
+/// the minimal correct qualification for a single type-ref rendered in
+/// isolation, the same helper `emit_call_wrapper` uses across a whole param
+/// list. A bare `ts_type_ref` collides with anything of the same name already
+/// in scope where the rendered text lands: a `handlers.ts`-exported Bynk type
+/// (`Cannot find name` — the name resolves to nothing without the `handlers.`
+/// prefix) or, for a common enough name, a browser-ambient DOM global
+/// (`Notification`, `Event`) that silently wins instead. Both broke real
+/// `tsc --strict` fixtures before this existed.
+pub(crate) fn qualified_type_ref(r: &TypeRef) -> String {
+    let scope: HashSet<String> = named_types_in(r).into_iter().collect();
+    crate::emitter::ts_type_ref_qualified(r, &scope, "handlers")
 }
