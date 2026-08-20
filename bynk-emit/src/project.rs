@@ -2269,7 +2269,7 @@ fn build_output(
                 // AST contact here was incidental to where the loop happened
                 // to be written, not structural.
                 let (crons, queues) = bynk_check::symbols::cron_and_queue_triggers(table);
-                let wrangler = emitter::emit_wrangler_toml(
+                let wrangler_doc = emitter::emit_wrangler_toml(
                     ctx_name,
                     table,
                     &service_consumes,
@@ -2278,6 +2278,13 @@ fn build_output(
                     &queues,
                     ctx_uses_emit,
                 );
+                // P7.3 (#1303): `emit_wrangler_toml` builds a typed
+                // `TomlDocument`; printed to text here, at the point this
+                // still needs a `String` for `CompiledFile` (R7.8's own
+                // `Artefacts` — a keyed set of typed documents, no `String`
+                // at construction — is P7.6's work, gated on the `bynk-ts`
+                // crate existing at all, P7.5).
+                let wrangler = emitter::print_toml_document(&wrangler_doc);
                 compiled.push(CompiledFile {
                     source_path: PathBuf::from(format!("workers/{dashes}/<index>")),
                     output_path: PathBuf::from(format!("workers/{dashes}/index.ts")),

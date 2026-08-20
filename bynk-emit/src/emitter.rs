@@ -46,12 +46,14 @@ pub mod contracts;
 pub(crate) mod events_fanout;
 pub mod secrets;
 pub(crate) mod serialisation;
+pub(crate) mod toml_doc;
 pub(crate) mod workers;
 pub(crate) mod workers_entry;
 pub mod wrangler;
 
 pub(crate) use events_fanout::emit_events_fanout_do;
 pub(crate) use secrets::emit_secrets_manifest;
+pub(crate) use toml_doc::print_toml_document;
 pub(crate) use workers::emit_worker_compose;
 pub(crate) use workers_entry::emit_worker_entry;
 pub(crate) use wrangler::emit_wrangler_toml;

@@ -1,0 +1,318 @@
+//! P7.3 (#1303): a minimal typed TOML tree and printer — the one piece of
+//! R7.8 (`Artefacts` is a keyed set of typed documents, never a `String` at
+//! construction) landable ahead of `bynk-ts` (Arc B, P7.5+), since
+//! `wrangler.toml` is the one document `bynk-emit` produces that isn't
+//! TypeScript. Not a general TOML library: [`TomlValue`] represents exactly
+//! what `emitter::wrangler::emit_wrangler_toml` needs to build a
+//! `wrangler.toml` today, no more.
+//!
+//! [`print_toml_document`] is the *only* function in this crate that writes
+//! TOML syntax — `emit_wrangler_toml` builds a [`TomlDocument`], this module
+//! renders it. That split is what makes string-escaping a printer guarantee
+//! (every [`TomlValue::Str`] is escaped unconditionally, §"Decision B" of
+//! #1303) rather than a per-call-site judgement call, which is what left
+//! `wrangler.rs`'s own `name`/`binding`/`class_name` values unescaped before
+//! this — safe today only because those particular values happen to be
+//! compiler-derived identifiers that can't contain a TOML-breaking
+//! character, not because anything enforced it structurally.
+
+use std::fmt::Write as _;
+
+/// A TOML document as an ordered sequence of blocks — a root block (no
+/// header) optionally followed by any number of headed blocks. Every block,
+/// printed, is followed by exactly one blank line (including the last —
+/// confirmed against every current `expected/**/wrangler.toml` golden
+/// fixture, which all end in a trailing blank line).
+pub(crate) struct TomlDocument {
+    header_comment: Option<&'static str>,
+    blocks: Vec<TomlBlock>,
+}
+
+impl TomlDocument {
+    pub(crate) fn new(header_comment: &'static str) -> Self {
+        Self {
+            header_comment: Some(header_comment),
+            blocks: Vec::new(),
+        }
+    }
+
+    pub(crate) fn push_block(&mut self, block: TomlBlock) {
+        self.blocks.push(block);
+    }
+}
+
+/// One `[path]` or `[[path]]` section (or, with `header: None`, the
+/// document's own root block — `wrangler.toml`'s `name`/`main`/
+/// `compatibility_date` trio) plus its `key = value` entries, in order.
+pub(crate) struct TomlBlock {
+    header: Option<TomlHeader>,
+    entries: Vec<TomlEntry>,
+}
+
+enum TomlHeader {
+    Table(&'static str),
+    ArrayTable(&'static str),
+}
+
+impl TomlBlock {
+    pub(crate) fn root(entries: Vec<TomlEntry>) -> Self {
+        Self {
+            header: None,
+            entries,
+        }
+    }
+
+    pub(crate) fn table(path: &'static str, entries: Vec<TomlEntry>) -> Self {
+        Self {
+            header: Some(TomlHeader::Table(path)),
+            entries,
+        }
+    }
+
+    pub(crate) fn array_table(path: &'static str, entries: Vec<TomlEntry>) -> Self {
+        Self {
+            header: Some(TomlHeader::ArrayTable(path)),
+            entries,
+        }
+    }
+}
+
+/// One `key = value` line, with an optional trailing `# comment` — TOML's
+/// own comment syntax, not an escape hatch; `wrangler.toml`'s one instance
+/// today is the KV namespace id's `# set at deploy time`.
+pub(crate) struct TomlEntry {
+    key: &'static str,
+    value: TomlValue,
+    comment: Option<&'static str>,
+}
+
+impl TomlEntry {
+    pub(crate) fn kv(key: &'static str, value: TomlValue) -> Self {
+        Self {
+            key,
+            value,
+            comment: None,
+        }
+    }
+
+    pub(crate) fn with_comment(key: &'static str, value: TomlValue, comment: &'static str) -> Self {
+        Self {
+            key,
+            value,
+            comment: Some(comment),
+        }
+    }
+}
+
+/// Exactly the value shapes `wrangler.toml` generation writes today — a
+/// basic string (always escaped on render, unconditionally), a bare
+/// integer, and an array (rendered as `[a, b, …]`, TOML's inline-array
+/// form). No bool, no float, no inline table, no nesting beyond one section
+/// level: none of those appear in the current output, and widening this
+/// when a real future value needs it (R8.20's deploy-time `Placeholder`,
+/// P7.4) is cheap.
+pub(crate) enum TomlValue {
+    Str(String),
+    Int(i64),
+    Array(Vec<TomlValue>),
+}
+
+impl TomlValue {
+    pub(crate) fn str(s: impl Into<String>) -> Self {
+        Self::Str(s.into())
+    }
+}
+
+/// Render `doc` to TOML text. The one function in this module — and, per
+/// this file's own module doc, in `bynk-emit`'s TOML-producing surface —
+/// that calls `write!`/`writeln!`/`format!` to build TOML syntax.
+pub(crate) fn print_toml_document(doc: &TomlDocument) -> String {
+    let mut out = String::new();
+    if let Some(comment) = doc.header_comment {
+        let _ = writeln!(out, "{comment}");
+    }
+    for block in &doc.blocks {
+        match &block.header {
+            Some(TomlHeader::Table(path)) => {
+                let _ = writeln!(out, "[{path}]");
+            }
+            Some(TomlHeader::ArrayTable(path)) => {
+                let _ = writeln!(out, "[[{path}]]");
+            }
+            None => {}
+        }
+        for entry in &block.entries {
+            let value = render_value(&entry.value);
+            match entry.comment {
+                Some(comment) => {
+                    let _ = writeln!(out, "{} = {value} # {comment}", entry.key);
+                }
+                None => {
+                    let _ = writeln!(out, "{} = {value}", entry.key);
+                }
+            }
+        }
+        let _ = writeln!(out);
+    }
+    out
+}
+
+fn render_value(value: &TomlValue) -> String {
+    match value {
+        TomlValue::Str(s) => format!("\"{}\"", escape_toml_basic_string(s)),
+        TomlValue::Int(n) => n.to_string(),
+        TomlValue::Array(items) => {
+            let rendered: Vec<String> = items.iter().map(render_value).collect();
+            format!("[{}]", rendered.join(", "))
+        }
+    }
+}
+
+/// Escape a source string literal for interpolation into a TOML *basic*
+/// string (the `"…"` form). Queue names and cron expressions come from user
+/// string literals, which can decode to contain `"`, `\`, newline and tab
+/// (`bynk-syntax/src/lexer.rs`) — all of which would otherwise break out of
+/// the TOML string and inject config keys. Every character we escape maps
+/// to a valid TOML compact escape; remaining control characters fall back
+/// to the `\uXXXX` form so the output is always a well-formed basic string.
+///
+/// Applied unconditionally by [`render_value`] to every [`TomlValue::Str`] —
+/// not just the values a caller happens to know are user-supplied. Relocated
+/// here from `emitter/wrangler.rs` (P7.3, #1303): escaping is the printer's
+/// job now, applied structurally to every string this module renders, not a
+/// per-call-site judgement about which particular value might need it.
+fn escape_toml_basic_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            '\r' => out.push_str("\\r"),
+            // Control characters have no compact TOML escape besides the ones
+            // above and must not appear raw in a basic string.
+            c if (c as u32) < 0x20 || c == '\u{7f}' => {
+                let _ = write!(out, "\\u{:04X}", c as u32);
+            }
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn escape_toml_basic_string_neutralises_injection() {
+        // The trigger from the defect report: a queue name whose decoded value
+        // carries a quote + newline would otherwise close the string and inject
+        // a config key.
+        assert_eq!(
+            escape_toml_basic_string("q\nkey = \"injected"),
+            "q\\nkey = \\\"injected"
+        );
+        assert_eq!(escape_toml_basic_string("a\\b"), "a\\\\b");
+        assert_eq!(escape_toml_basic_string("a\tb"), "a\\tb");
+    }
+
+    #[test]
+    fn escape_toml_basic_string_passes_plain_values_through() {
+        // Ordinary cron expressions and queue names are untouched.
+        assert_eq!(escape_toml_basic_string("*/5 * * * *"), "*/5 * * * *");
+        assert_eq!(escape_toml_basic_string("order-events"), "order-events");
+    }
+
+    #[test]
+    fn escape_toml_basic_string_escapes_other_control_chars() {
+        // A NUL has no compact escape and must not appear raw in a basic string.
+        assert_eq!(escape_toml_basic_string("a\u{0}b"), "a\\u0000b");
+        assert_eq!(escape_toml_basic_string("a\u{7f}b"), "a\\u007Fb");
+    }
+
+    #[test]
+    fn escaped_value_is_valid_toml_and_round_trips() {
+        // The security invariant, enforced by a real TOML parser (not a golden
+        // byte-compare): interpolating the escaped value produces a well-formed
+        // single-key table whose decoded value is *exactly* the input — no
+        // injected keys, no broken string. Covers the injection payload from the
+        // defect report plus a control char that takes the `\uXXXX` fallback.
+        for input in ["q\nkey = \"injected", "*/5 * * * *\\\"", "a\u{0}b\ttail"] {
+            let doc = format!("queue = \"{}\"", escape_toml_basic_string(input));
+            let table: toml::Table = doc
+                .parse()
+                .unwrap_or_else(|e| panic!("escaped {input:?} is invalid TOML: {e} ({doc:?})"));
+            assert_eq!(
+                table.len(),
+                1,
+                "escaped {input:?} injected extra keys: {table:?}"
+            );
+            assert_eq!(
+                table["queue"].as_str(),
+                Some(input),
+                "escaped {input:?} did not round-trip"
+            );
+        }
+    }
+
+    #[test]
+    fn print_toml_document_renders_a_representative_document_and_round_trips() {
+        // Not a golden byte-compare (that's `bless_positive_fixtures`'s job) —
+        // this proves the printer's *general* shape (root block, a `[[…]]`
+        // array table, a `[…]` table, an array value, a commented entry) is
+        // well-formed TOML a real parser accepts, with every value surviving
+        // exactly. `TomlBlock`/`TomlEntry` construction mirrors
+        // `emit_wrangler_toml`'s own shape one-for-one.
+        let mut doc = TomlDocument::new("# Generated by bynkc — do not edit by hand.");
+        doc.push_block(TomlBlock::root(vec![
+            TomlEntry::kv("name", TomlValue::str("api")),
+            TomlEntry::kv("main", TomlValue::str("index.ts")),
+        ]));
+        doc.push_block(TomlBlock::array_table(
+            "services",
+            vec![
+                TomlEntry::kv("binding", TomlValue::str("COMMERCE_PAYMENT")),
+                TomlEntry::kv("service", TomlValue::str("commerce-payment")),
+            ],
+        ));
+        doc.push_block(TomlBlock::array_table(
+            "kv_namespaces",
+            vec![
+                TomlEntry::kv("binding", TomlValue::str("BYNK_KV")),
+                TomlEntry::with_comment(
+                    "id",
+                    TomlValue::str("<KV_NAMESPACE_ID>"),
+                    "set at deploy time",
+                ),
+            ],
+        ));
+        doc.push_block(TomlBlock::table(
+            "triggers",
+            vec![TomlEntry::kv(
+                "crons",
+                TomlValue::Array(vec![TomlValue::str("*/5 * * * *")]),
+            )],
+        ));
+
+        let text = print_toml_document(&doc);
+        let parsed: toml::Table = text
+            .parse()
+            .unwrap_or_else(|e| panic!("printer produced invalid TOML: {e}\n{text}"));
+
+        assert_eq!(parsed["name"].as_str(), Some("api"));
+        assert_eq!(parsed["main"].as_str(), Some("index.ts"));
+        let services = parsed["services"].as_array().expect("services array");
+        assert_eq!(services.len(), 1);
+        assert_eq!(services[0]["binding"].as_str(), Some("COMMERCE_PAYMENT"));
+        let kv = parsed["kv_namespaces"].as_array().expect("kv array");
+        assert_eq!(kv[0]["id"].as_str(), Some("<KV_NAMESPACE_ID>"));
+        let crons = parsed["triggers"]["crons"].as_array().expect("crons array");
+        assert_eq!(crons[0].as_str(), Some("*/5 * * * *"));
+
+        // Every block, including the last, is followed by exactly one blank
+        // line — the shape every current golden `wrangler.toml` fixture has.
+        assert!(text.ends_with("\n\n"));
+    }
+}
