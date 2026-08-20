@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.249**.
+written against **v0.250**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.250.0** | "P7.5: carved a new `bynk-ts` crate for the TypeScript tree and printer (depends on `bynk-syntax` only) -- `TsProgram`/`TsStmt::verbatim` (the escape hatch every future Arc C slice converts into real nodes), a printer that owns the buffer end to end, and the companion textual lint over `Verbatim` content (#1307). `bynk-emit`'s source-map machinery relocated unchanged. No `bynk-emit` construction site converts to the tree yet -- Arc C's own first slice starts that. No observable output change." |
 | **v0.249.42** | "P7.4: `bynk deploy`/`bynk dev --remote` and `--emit js` now read/write a generated `wrangler.toml`'s `id`/`main` fields through a real TOML parse (`bynk-emit::emitter::wrangler`'s new `materialise_kv_namespace_id`/`set_wrangler_main`/`wrangler_needs_kv_materialisation`) instead of matching the literal text those fields happen to appear as today (#1305). Immune to reformatting; no observable output change." |
 | **v0.249.41** | "P7.3: added a minimal typed TOML tree and printer (`bynk-emit/src/emitter/toml_doc.rs`) -- `emit_wrangler_toml` now builds a `TomlDocument` instead of writing text directly, and the printer escapes every string value unconditionally rather than only the two call sites that used to remember to (#1303). No observable output change: zero-diff across the whole `wrangler.toml` golden corpus." |
 | **v0.249.40** | "P7.2: narrowed 24 of the 55 `ts_any`-counted sites (`as any`/bare `: any`) in `bynk-emit` to `unknown`, real declared/qualified types, or generated structural types (#1300) -- `ts_any` drops from 55 to 31. The other 31 (2 residual, needing a runtime type R7.7 hasn't exported yet, and 29 deferred -- more than the proposal's 3, several found only by the full `tsc --strict` fixture pass) are named at their own site with a comment recording why, not silently dropped." |
