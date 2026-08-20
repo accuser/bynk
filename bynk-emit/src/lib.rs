@@ -103,7 +103,7 @@ pub fn compile_with_warnings(source: &str, _filename: &str) -> Result<Compiled, 
 /// definition (slice 7; was a `bynkc` const before the driver dropped that dep).
 pub const NODE_MAJOR_FLOOR: u32 = 18;
 
-// `write_output`/`write_compiled_file` moved to `bynk-driver` (#1047, R2.3/
+// `write_output`/`write_document` moved to `bynk-driver` (#1047, R2.3/
 // T0.7 residue): every caller was already at driver level, so this crate
 // never needed direct filesystem access for it — the pure move closes it
 // out of this crate's `fs_below_driver` count. See `bynk-driver::output`.

@@ -15,10 +15,12 @@
 
 pub mod cli;
 
-// `write_output`/`write_compiled_file` moved down into `bynk-driver` (#1047,
+// `write_output`/`write_document` moved down into `bynk-driver` (#1047,
 // R2.3/T0.7 residue) — every caller was already at driver level. Re-exported
-// here so `bynkc::write_output`/`bynkc::write_compiled_file` resolve unchanged.
-pub use bynk_driver::{write_compiled_file, write_output};
+// here so `bynkc::write_output`/`bynkc::write_document` resolve. (`write_document`
+// was `write_compiled_file` until P7.6, #1309/#1310 — renamed once `CompiledFile`
+// itself was gone, so the name it takes now, `Document`, stayed true.)
+pub use bynk_driver::{write_document, write_output};
 
 // R10.4 residue (#1048, ADR 0312's reasoning applied to the three re-exports
 // T-D1 didn't scope): `bynk_driver::{coverage, test_json}`,

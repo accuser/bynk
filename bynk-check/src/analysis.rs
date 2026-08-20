@@ -70,7 +70,7 @@
 //!    `check_project_reports_a_test_body_error_past_an_earlier_structural_error`
 //!    pins a `bynk.types.let_annotation_mismatch` originating inside a
 //!    `suite`/`test integration` body). The two functions were emission-coupled
-//!    (`CompiledFile`, `RunnableTest`, `ImportExt`, `contracts`, a shared
+//!    (`Document`, `RunnableTest`, `ImportExt`, `contracts`, a shared
 //!    `emitted_barrels` set) deeply enough that P5.4 split them at the
 //!    check/emit boundary rather than porting the whole thing: their checking
 //!    half relocated to [`crate::test_suites::phase_test_bodies`]/

@@ -241,7 +241,7 @@ pub fn run_test(program: &str, args: TestArgs) -> ExitCode {
         // Map-aware write (slice 2): carries the `.ts.map` siblings + trailers so
         // a debug run (`--inspect`) can resolve `.bynk` breakpoints. Harmless for a
         // normal run, which transpiles via `tsc` and ignores the trailer.
-        if let Err(e) = crate::write_compiled_file(path, doc, &out.artefacts.docs, &output_root) {
+        if let Err(e) = crate::write_document(path, doc, &out.artefacts.docs, &output_root) {
             eprintln!(
                 "{program} test: could not write `{}`: {e}",
                 output_root.join(path).display()
@@ -290,7 +290,7 @@ pub fn run_test(program: &str, args: TestArgs) -> ExitCode {
                 continue;
             }
             if let Err(e) =
-                crate::write_compiled_file(path, doc, &workers_out.artefacts.docs, &output_root)
+                crate::write_document(path, doc, &workers_out.artefacts.docs, &output_root)
             {
                 eprintln!(
                     "{program} test: could not write `{}`: {e}",

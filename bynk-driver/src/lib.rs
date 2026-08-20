@@ -22,7 +22,7 @@ pub mod schema_lock;
 pub mod test_json;
 pub mod test_runner;
 
-pub use output::{write_compiled_file, write_output};
+pub use output::{write_document, write_output};
 
 /// Root a directory project the way every project command should (#46): a
 /// `bynk.toml` or a `src/` subdir selects **project** mode, whose flat

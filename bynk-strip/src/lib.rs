@@ -137,8 +137,13 @@ pub fn strip_project_to_js(
                 docs.insert(path.with_extension("js"), Document::Js(js));
             }
             Document::Toml(mut toml) => {
-                if path.file_name().and_then(|n| n.to_str()) == Some("wrangler.toml") {
-                    toml.set_main("index.js");
+                if path.file_name().and_then(|n| n.to_str()) == Some("wrangler.toml")
+                    && !toml.set_main("index.js")
+                {
+                    return Err(StripError {
+                        filename: path.to_string_lossy().into_owned(),
+                        message: "wrangler.toml has no root `main` key".to_string(),
+                    });
                 }
                 docs.insert(path, Document::Toml(toml));
             }
@@ -150,7 +155,16 @@ pub fn strip_project_to_js(
             }
             // Source maps/debug sidecars map into the `.ts` the JS replaces.
             Document::SourceMap(_) | Document::DebugSidecar(_) => {}
-            Document::Js(_) => unreachable!("bynk-emit never produces Document::Js itself"),
+            // `bynk-emit` never produces this itself, but `strip_project_to_js`
+            // is `pub` over a `pub` `Artefacts`, so an already-stripped
+            // `Document::Js` reaching this function (e.g. run twice, or a
+            // caller assembling `Artefacts` by hand) is a real, reachable
+            // input — pass it through rather than panicking on it (review,
+            // #1309/#1310: `unreachable!` here aborted the process on input
+            // the public API permits).
+            Document::Js(s) => {
+                docs.insert(path, Document::Js(s));
+            }
         }
     }
     Ok(bynk_emit::project::ProjectOutput {

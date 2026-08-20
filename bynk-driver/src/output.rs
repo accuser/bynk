@@ -29,7 +29,7 @@ use bynk_emit::project::{Document, ProjectOutput, sibling_path};
 pub fn write_output(out: &ProjectOutput, dir: &Path) -> std::io::Result<()> {
     prune_stale_output(out, dir)?;
     for (path, doc) in &out.artefacts.docs {
-        write_compiled_file(path, doc, &out.artefacts.docs, dir)?;
+        write_document(path, doc, &out.artefacts.docs, dir)?;
     }
     Ok(())
 }
@@ -50,7 +50,7 @@ pub fn write_output(out: &ProjectOutput, dir: &Path) -> std::io::Result<()> {
 /// whether the `.ts`/`.js` file gets a `//# sourceMappingURL=` trailer — the
 /// trailer lives only on the on-disk artefact, not on `docs`' own in-memory
 /// text, so golden comparisons are unaffected.
-pub fn write_compiled_file(
+pub fn write_document(
     path: &Path,
     doc: &Document,
     docs: &BTreeMap<PathBuf, Document>,
