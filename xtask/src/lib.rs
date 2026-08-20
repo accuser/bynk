@@ -266,6 +266,14 @@ fn parse_frontmatter(
                     errors.push(format!(
                         "changelog must not start with a version number (the stamp adds it): {value:?}"
                     ));
+                } else if let Some(dest) = relative_markdown_link_in(value) {
+                    errors.push(format!(
+                        "changelog reads as a Markdown link to the relative destination {dest:?} \
+                         — the blurb is inserted verbatim into the Book's changelog table, so a \
+                         bare `x[T](y)` in prose becomes a link the docs site's link-checker \
+                         rejects (and it only sees the row after the stamp writes it on `main`). \
+                         Wrap the code in backticks, or use an absolute URL."
+                    ));
                 } else {
                     changelog = Some(value.to_string());
                 }
@@ -519,6 +527,118 @@ fn looks_like_version_prefix(changelog: &str) -> bool {
     all_numeric && (had_v || groups.len() >= 3)
 }
 
+/// The destination of the first Markdown inline link in `blurb` that resolves
+/// *relatively*, if there is one.
+///
+/// The blurb is inserted verbatim into a table row in the Book's
+/// `reference/changelog.md`, so `[…](…)` in prose is a real link once it lands —
+/// and an unbackticked generic call like `Events.emit[E](event)` is exactly that
+/// shape, a link to a relative `event`. The docs site's own link-checker
+/// (starlight-links-validator, the `Docs site (astro build)` gate) rejects those,
+/// but it only ever sees the row *after* the stamp writes it on `main`, so that
+/// gate fires post-merge with nothing left to review. This is the pre-merge
+/// stand-in, run against the pending file the PR actually carries.
+///
+/// Deliberate links stay allowed — absolute (`https://…`, the `[#548](…)` issue
+/// citations the corpus is full of), site-root (`/book/…`), and anchors. Code
+/// spans are skipped, which is also the fix the error message asks for: write
+/// ``` `Events.emit[E](event)` ```.
+fn relative_markdown_link_in(blurb: &str) -> Option<String> {
+    let bytes = blurb.as_bytes();
+    let mut i = 0;
+    let mut saw_open_bracket = false;
+    while i < bytes.len() {
+        match bytes[i] {
+            // A backslash escape covers the next byte, whatever it is.
+            b'\\' => i += 1,
+            // Skip a code span: a run of N backticks closes on the next run of
+            // exactly N. An *unmatched* run is literal text in CommonMark and
+            // the rest of the blurb still parses as Markdown, so resume just
+            // after it rather than swallowing the remainder — otherwise a
+            // half-applied fix (`` `Events.emit[E](event) ``, opening backtick
+            // only) would sail through this check and break `main` anyway.
+            b'`' => {
+                let fence = bytes[i..].iter().take_while(|&&b| b == b'`').count();
+                let mut j = i + fence;
+                let mut closed = false;
+                while j < bytes.len() {
+                    if bytes[j] == b'`' {
+                        let run = bytes[j..].iter().take_while(|&&b| b == b'`').count();
+                        j += run;
+                        if run == fence {
+                            closed = true;
+                            break;
+                        }
+                    } else {
+                        j += 1;
+                    }
+                }
+                i = if closed { j } else { i + fence };
+                continue;
+            }
+            b'[' => saw_open_bracket = true,
+            // `](` is only a link if some `[` opened it.
+            b']' if saw_open_bracket && bytes.get(i + 1) == Some(&b'(') => {
+                saw_open_bracket = false;
+                let start = i + 2;
+                let Some(len) = bytes[start..].iter().position(|&b| b == b')') else {
+                    break;
+                };
+                if let Some(dest) = link_destination(&blurb[start..start + len])
+                    && !is_absolute_link_destination(dest)
+                {
+                    return Some(dest.to_string());
+                }
+                i = start + len;
+            }
+            b']' => saw_open_bracket = false,
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+/// The destination inside a `](…)` link tail, or `None` when the tail is not one.
+///
+/// CommonMark accepts `(dest)` and `(dest "title")` (also `'…'` and `(…)` titles),
+/// and a bare destination may not contain spaces unless it is `<…>`-wrapped. So a
+/// multi-parameter generic call in prose — `map[K, V](key, value)` — is genuinely
+/// not a link, and reporting one would assert something the site's own checker
+/// would never do. Backticking it is still the house convention; this check just
+/// does not claim it is a broken link.
+fn link_destination(tail: &str) -> Option<&str> {
+    let tail = tail.trim();
+    if let Some(rest) = tail.strip_prefix('<') {
+        return rest.split_once('>').map(|(dest, _)| dest);
+    }
+    let (dest, rest) = match tail.split_once(char::is_whitespace) {
+        Some((dest, rest)) => (dest, rest.trim_start()),
+        None => (tail, ""),
+    };
+    // Whatever follows the destination has to be a title, or this is just prose.
+    if rest.is_empty() || rest.starts_with(['"', '\'', '(']) {
+        Some(dest)
+    } else {
+        None
+    }
+}
+
+/// Whether a Markdown link destination resolves without depending on the page it
+/// is written on — the only kind a changelog blurb may carry.
+///
+/// Note this is about *shape*, not existence: the site's link-checker also
+/// resolves site-root paths and anchors, which nothing here can do without the
+/// built site. A hand-written `/book/typo/` still passes this and fails the docs
+/// build. `design/pending/README.md` says so rather than implying a guarantee.
+fn is_absolute_link_destination(dest: &str) -> bool {
+    dest.starts_with("https://")
+        || dest.starts_with("http://")
+        || dest.starts_with("mailto:")
+        || dest.starts_with('/')
+        || dest.starts_with('#')
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -670,6 +790,110 @@ mod tests {
         ok(
             "x.md",
             "---\nlevel: minor\nchangelog: 3.0 rendering pipeline added\n---\n",
+        );
+    }
+
+    #[test]
+    fn accidental_relative_markdown_link_in_changelog_rejected() {
+        // The real regression (v0.249.1): an unbackticked generic call in prose
+        // parses as `[E](event)`, a link to a relative `event`, and failed the
+        // docs site's link-checker on `main` — post-merge, after the stamp had
+        // already written the row.
+        let content = "---\nlevel: patch\nchangelog: Read Callee to detect an \
+                       Events.emit[E](event) call\n---\n";
+        assert!(
+            err("x.md", content)
+                .iter()
+                .any(|e| e.contains("relative destination \"event\"")),
+            "expected rejection, got {:?}",
+            err("x.md", content)
+        );
+    }
+
+    #[test]
+    fn backticked_generic_call_in_changelog_is_allowed() {
+        // The documented fix, and the corpus's own convention for code in prose.
+        ok(
+            "x.md",
+            "---\nlevel: patch\nchangelog: Detect an `Events.emit[E](event)` call\n---\n",
+        );
+    }
+
+    #[test]
+    fn absolute_links_in_changelog_are_allowed() {
+        // Issue citations are the single most common blurb decoration; site-root
+        // links and anchors resolve independently of the page too.
+        for cl in [
+            "Close [#548](https://github.com/accuser/bynk/issues/548)",
+            "See [the roadmap](/book/about/versioning-and-roadmap/)",
+            "See [below](#notes)",
+        ] {
+            let content = format!("---\nlevel: minor\nchangelog: {cl}\n---\n");
+            ok("x.md", &content);
+        }
+    }
+
+    #[test]
+    fn bracket_without_a_link_in_changelog_is_allowed() {
+        // `]` with no `(` after it, and `(` with no `[` before it, are ordinary
+        // punctuation — neither forms a link.
+        ok(
+            "x.md",
+            "---\nlevel: minor\nchangelog: Widen ts_any [see the probe] (P7.0) for writes\n---\n",
+        );
+    }
+
+    #[test]
+    fn a_half_backticked_changelog_is_still_rejected() {
+        // The likeliest mistake after reading the error message: the author adds
+        // the opening backtick and forgets the closing one. CommonMark treats the
+        // unmatched run as literal text and still links `[E](event)` (confirmed
+        // against the site's own parser), so the guard must not stop scanning.
+        let content = "---\nlevel: patch\nchangelog: Detect an `Events.emit[E](event) call\n---\n";
+        assert!(
+            err("x.md", content)
+                .iter()
+                .any(|e| e.contains("relative destination \"event\"")),
+            "expected rejection, got {:?}",
+            err("x.md", content)
+        );
+    }
+
+    #[test]
+    fn a_stray_backtick_does_not_blind_the_rest_of_the_blurb() {
+        // Same failure mode from an unrelated typo earlier in the sentence.
+        let content = "---\nlevel: patch\nchangelog: A stray `Callee typo, then \
+                       Events.emit[E](event) later\n---\n";
+        assert!(
+            err("x.md", content)
+                .iter()
+                .any(|e| e.contains("relative destination \"event\"")),
+            "expected rejection, got {:?}",
+            err("x.md", content)
+        );
+    }
+
+    #[test]
+    fn a_multi_parameter_generic_call_is_not_reported_as_a_link() {
+        // `(key, value)` holds a space, so CommonMark does not link it — claiming
+        // otherwise would assert a failure the site checker would never produce.
+        ok(
+            "x.md",
+            "---\nlevel: minor\nchangelog: Lift a fn map[K, V](key, value) call\n---\n",
+        );
+    }
+
+    #[test]
+    fn a_titled_link_is_still_read_as_a_link() {
+        // `(dest "title")` is a real link, so the destination is still checked
+        // even though a space follows it.
+        let content = "---\nlevel: minor\nchangelog: See [it](there \"a title\")\n---\n";
+        assert!(
+            err("x.md", content)
+                .iter()
+                .any(|e| e.contains("relative destination \"there\"")),
+            "expected rejection, got {:?}",
+            err("x.md", content)
         );
     }
 
