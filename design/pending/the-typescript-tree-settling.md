@@ -72,8 +72,13 @@ itself (P7.5) and runs in CI alongside the golden fixtures, not as a follow-up.*
 `Artefacts` (P7.6) lands, stopping anywhere is safe by construction; after it, an unconverted site routes
 through `Verbatim`, which the printer already owns per R7.3/R7.4, and the textual lint catches a banned
 construct hiding inside one immediately rather than only at full conversion. `verbatim_origins` becomes
-the second completion probe (§5 of the track doc), retiring at a named, argued floor rather than 0,
-mirroring `ast_importers`'s own re-settled floor from phase 6.
+a completion probe (§5 of the track doc), retiring at a named, argued floor rather than 0, mirroring
+`ast_importers`'s own re-settled floor from phase 6 — but not the *only* new probe: a PR review of this
+settling pass found `verbatim_origins` alone gameable, since distinct enum variants don't bound residual
+volume (a wholesale, undecomposed wrap of `emitter/emit.rs` or `emitter/lower.rs` into one variant each
+would satisfy a small floor while converting nothing). §5 adds `verbatim_sites` — a count of distinct
+`Verbatim` construction call sites, retiring at 0 — as the probe that actually tracks conversion progress,
+alongside `verbatim_origins`'s tracking of how many residue *families* remain.
 
 ## ADR: typescript-tree-any-elimination-scope
 title: `TsType::Any` is eliminated in full within this phase; a 2–3-site residual is named and deferred to R7.7's runtime-typing work
