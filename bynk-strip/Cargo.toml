@@ -18,10 +18,3 @@ bynk-emit.workspace = true
 # A pure-Rust TS parser + type-erasing transform + codegen — no Node/tsc in the
 # loop and wasm-safe (the wasm toolchain slice compiles this path to wasm32).
 oxc = { version = "0.144", features = ["semantic", "transformer", "codegen"] }
-
-[dev-dependencies]
-# P7.4 (#1305): test-only — asserts the wrangler.toml patch produced by
-# `strip_project_to_js` parses as real TOML with the right fields, not just
-# that a substring appears. Production code needs no `toml` dependency at
-# all: the patch itself is `bynk_emit::emitter::wrangler::set_wrangler_main`.
-toml.workspace = true

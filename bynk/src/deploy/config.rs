@@ -279,6 +279,15 @@ pub(crate) fn materialise_kv_id(path: &Path, id: &str) -> bool {
     let Ok(patched) = bynk_emit::emitter::wrangler::materialise_kv_namespace_id(&text, id) else {
         return false;
     };
+    // Review of #1305, finding 3: `materialise_kv_namespace_id` returning
+    // `text` unchanged (no `[[kv_namespaces]]` at all, or already
+    // materialised) is a no-op by design — skip the write rather than
+    // reopening the file to write back what's already there, restoring the
+    // old `materialise_kv_id`'s own contract (a guaranteed `true`, no write
+    // attempted, for a project that needed nothing materialised).
+    if patched == text {
+        return true;
+    }
     std::fs::write(path, patched).is_ok()
 }
 

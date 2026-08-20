@@ -16,6 +16,7 @@ path = "src/lib.rs"
 # #521: bynk.toml parsing (read_project_paths). #980: also the schema
 # registry (`bynk.schema.lock`), same format.
 toml.workspace = true
+toml_edit.workspace = true
 # #980: (de)serialising the schema registry document.
 serde.workspace = true
 # The layers this orchestrates: syntax (AST/spans) and the checked program.
