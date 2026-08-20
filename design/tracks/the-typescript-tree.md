@@ -323,10 +323,17 @@ reached through a green gate.
   wrap would read as 1 new variant and *hundreds* of new `verbatim_sites` — visibly not
   conversion, and rejectable at review on that basis alone.
 
-All three need adding to `xtask/src/greenfield_status.rs` (13 probes exist today) — P7.0 (§6). Per
-Q3, the `ts_any` trend probe must scan for `as any` **and** bare `: any` — a probe scoped to the
-former alone under-counts. Per Q2, `Verbatim` content also needs a textual lint (banned
-constructs, run in CI) as a companion to the golden fixtures, since golden output alone is blind
+`ts_writes` and `ts_any` are buildable now, against a real baseline (§1's own measurement), and
+land in **P7.0**. `verbatim_origins` and `verbatim_sites` scan for patterns
+(`VerbatimOrigin`/`Verbatim::new`) that don't exist in source until **P7.5** builds them — and,
+per this codebase's own probe-fixture discipline (every probe needs a fixture exercising its
+stated hazard, not just its happy path, the precedent T0.0's own "Done when" set), a probe can't
+be meaningfully fixture-tested against a type that doesn't exist yet. So they're built in P7.5,
+alongside `Verbatim`/`VerbatimOrigin` themselves, not stubbed early in P7.0. `xtask/src/
+greenfield_status.rs` has 13 probes today; P7.0 adds two, P7.5 adds two more. Per Q3, the `ts_any`
+trend probe must scan for `as any` **and** bare `: any` — a probe scoped to the former alone
+under-counts. Per Q2, `Verbatim` content also needs a textual lint (banned constructs, run in CI)
+as a companion to the golden fixtures, since golden output alone is blind
 to what a `Verbatim` block hides.
 
 ---
@@ -401,10 +408,11 @@ convention every prior track on this trajectory used.
 
 ## 8. Keeping the reference true
 
-Three probes need building — `ts_writes`, `verbatim_origins` and `verbatim_sites` (§5) — P7.0,
-mirroring `the-ir.md`'s own P6.0 being real infrastructure, not ceremony. `ts_any` also needs
-building, scoped to `as any` **and** bare `: any` per §3.3's own correction.
-`design/bynk-greenfield-compiler.md`'s Appendix D
+Four probes need building, split across two slices (§5): `ts_writes` and `ts_any` in **P7.0**,
+scoped to `as any` **and** bare `: any` per §3.3's own correction — mirroring `the-ir.md`'s own
+P6.0 being real infrastructure, not ceremony. `verbatim_origins` and `verbatim_sites` in **P7.5**,
+alongside the `Verbatim`/`VerbatimOrigin` types they measure, since a probe can't be
+fixture-tested before its target type exists. `design/bynk-greenfield-compiler.md`'s Appendix D
 carries no R7/R8 rows yet (its own note: "most of phases 6–8... have no live probe yet"), so this
 settling pass adds none there — a future pass, once these probes exist and phase 7 is further
 along, is the natural point to add them, not this one.
