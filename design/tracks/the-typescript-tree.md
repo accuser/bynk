@@ -193,9 +193,12 @@ by pattern match on the wrapped text, run in CI alongside the golden fixtures, n
 them.
 
 **Floor:** as already settled (not one of §3's open items — this predates the branch): named at
-settling, not discovered mid-track. `ts_writes` retires at **0** outside `bynk-ts`;
-`verbatim_origins` retires at an **argued floor**, expected small (per §1's five-file residue and
-Q3's finding that `Any`-elimination needs no residual `Verbatim` coverage of its own).
+settling, not discovered mid-track. `ts_writes` retires at **0** outside `bynk-ts` and outside a
+`Verbatim` construction; `verbatim_origins` retires at an **argued floor**, expected small (per
+§1's five-file residue and Q3's finding that `Any`-elimination needs no residual `Verbatim`
+coverage of its own); `verbatim_sites` retires at **0** — see §5 for why `verbatim_origins` alone
+cannot be the floor (a review of the settling PR caught this: distinct variants don't bound
+residual volume, and this third probe closes that gap).
 
 ### 3.3 Q3 — Is `TsType::Any` actually eliminable across all current `as any`/bare-`any` sites, or does eliminating some re-open phase 6? **Settled — and the finding is better than the question assumed.**
 
@@ -286,16 +289,42 @@ slice; no per-increment ADRs beyond what §11 front-loads; every slice citing `C
 
 ## 5. The completion criterion
 
-Two probes, as already settled (not one of §3's open items):
+**Three probes, not two — a gap a PR review caught in the two-probe version and this revision
+closes directly.** The original pairing was gameable: `ts_writes` reading 0 the instant every
+`format!`/`writeln!` call is redirected into a `Verbatim`'s `text:` field is *correct*, not a
+loophole — it's the literal truth of R7.3 ("the printer... is the only code that writes a
+character"; a `format!` call building an in-memory string for a `Verbatim` payload writes no
+output character, the printer does that later). The real gap was `verbatim_origins` alone:
+**variants are not sites.** `VerbatimOrigin` having only 1–3 surviving variants says nothing about
+volume — three variants could each cover a handful of residual sites, or each wrap an entire
+409-line file (`emitter/emit.rs`) or 372-line file (`emitter/lower.rs`) — precisely the two
+largest, least-decomposed files in the whole surface, and the two Arc C schedules last with
+"likely several slices," i.e. the ones most likely to arrive at the finish line undecomposed if
+nothing else forces the count down. `ts_writes = 0` and `verbatim_origins ≤ 3` is therefore
+satisfiable by wrapping those two files wholesale into one variant each and never touching them
+again — trajectory §2's own failure mode ("a phase that half-lands leaves two paths reachable"),
+reached through a green gate.
 
-- **`ts_writes`** — TypeScript-producing `write!`/`writeln!`/`format!` outside `bynk-ts`. Retires
-  at **0**.
-- **`verbatim_origins`** (new, per Q2) — count of distinct `VerbatimOrigin` enum variants still
-  constructed. Retires at an **argued floor**, expected small (1–3), named file-by-file in the
-  retirement summary the way `ast_importers`'s floor of 5 was.
+- **`ts_writes`** — TypeScript-producing `write!`/`writeln!`/`format!` outside `bynk-ts` **and**
+  outside a `Verbatim` construction. Retires at **0**. Once every site routes through at least
+  `Verbatim`, this reads 0 by design — that is the intended, immediate win of landing the hatch
+  (P7.5), not a way to appear finished while unconverted.
+- **`verbatim_origins`** — count of distinct `VerbatimOrigin` enum variants still constructed.
+  Retires at an **argued floor**, expected small (1–3), named file-by-file at retirement the way
+  `ast_importers`'s floor of 5 was. Measures how many *families* of residue remain, not their
+  size.
+- **`verbatim_sites`** (new — closes the gaming gap) — count of distinct `Verbatim::new`-style
+  construction call sites in `bynk-emit` source, line-scanned the same way `hoist_sinks` counts
+  `stmts: &mut Vec<String>` occurrences. Retires at **0**: every call site converting to a real
+  tree node is what Arc C's own per-file slices are actually for, and this is what makes that
+  progress visible and gate-checkable — `verbatim_origins` alone cannot distinguish "3 variants,
+  12 residual call sites" from "3 variants, 900 residual call sites, two files never
+  decomposed." A single slice landing `emitter/emit.rs` or `emitter/lower.rs` as one `Verbatim`
+  wrap would read as 1 new variant and *hundreds* of new `verbatim_sites` — visibly not
+  conversion, and rejectable at review on that basis alone.
 
-Both need adding to `xtask/src/greenfield_status.rs` (13 probes exist today) — P7.0 (§6). Per Q3,
-the `ts_any` trend probe must scan for `as any` **and** bare `: any` — a probe scoped to the
+All three need adding to `xtask/src/greenfield_status.rs` (13 probes exist today) — P7.0 (§6). Per
+Q3, the `ts_any` trend probe must scan for `as any` **and** bare `: any` — a probe scoped to the
 former alone under-counts. Per Q2, `Verbatim` content also needs a textual lint (banned
 constructs, run in CI) as a companion to the golden fixtures, since golden output alone is blind
 to what a `Verbatim` block hides.
@@ -356,7 +385,7 @@ convention every prior track on this trajectory used.
 | **P7.d5** | Severing `bynk-emit`'s dependency on `bynk-check`, if Arc C's conversion leaves one — tentative, no direct evidence gathered this settling pass | — | Arc C landed |
 | **P7.d6** | R10.4 surface enumeration — finding #42's 33-of-38 spurious `pub` in `bynk_emit::emitter` | R10.4 | Arc C landed |
 | **P7.d7** | R10.2 verification — `bynk-lsp` stops linking emission code it never executes (finding #39) | R10.2 | P7.d1 |
-| **P7.d8** | Retirement review: verify-only pass on the twelve R8 rules already closed (§3.4), explicitly confirming R8.12's self-supersession lands as intended, not regression; both probes' final floors named file-by-file | R8.5,7,9,11–13,15,17–19,21,22 (verify) | Arc C landed |
+| **P7.d8** | Retirement review: verify-only pass on the twelve R8 rules already closed (§3.4), explicitly confirming R8.12's self-supersession lands as intended, not regression; all three probes' final floors named file-by-file | R8.5,7,9,11–13,15,17–19,21,22 (verify) | Arc C landed |
 
 ---
 
@@ -364,7 +393,7 @@ convention every prior track on this trajectory used.
 
 | Item | Phase | Entry condition |
 |---|---|---|
-| Incrementality — query granularity, `UnitSignature`, the firewall | 8 | this track's probes (`ts_writes` = 0, `verbatim_origins` at its argued floor) settle |
+| Incrementality — query granularity, `UnitSignature`, the firewall | 8 | this track's probes (`ts_writes` = 0, `verbatim_origins` at its argued floor, `verbatim_sites` = 0) settle |
 | R8.16's data-model half — a typed `ProjectGraph` | 8 | named by phase 4's own retirement note; this track only verifies R8.16's emission behaviour stays correct |
 | A further crate re-graph beyond `bynk-ts`/`bynk-ir`/`bynk-lower` (e.g. R10.5's `bynk-driver` consolidation) | *unopened — no trigger yet* | named in the reference (Part 10) but not this phase's own invariant |
 
@@ -372,9 +401,10 @@ convention every prior track on this trajectory used.
 
 ## 8. Keeping the reference true
 
-Two probes need building — `ts_writes` and `verbatim_origins` — P7.0, mirroring `the-ir.md`'s own
-P6.0 being real infrastructure, not ceremony. `ts_any` also needs building, scoped to `as any`
-**and** bare `: any` per §3.3's own correction. `design/bynk-greenfield-compiler.md`'s Appendix D
+Three probes need building — `ts_writes`, `verbatim_origins` and `verbatim_sites` (§5) — P7.0,
+mirroring `the-ir.md`'s own P6.0 being real infrastructure, not ceremony. `ts_any` also needs
+building, scoped to `as any` **and** bare `: any` per §3.3's own correction.
+`design/bynk-greenfield-compiler.md`'s Appendix D
 carries no R7/R8 rows yet (its own note: "most of phases 6–8... have no live probe yet"), so this
 settling pass adds none there — a future pass, once these probes exist and phase 7 is further
 along, is the natural point to add them, not this one.
@@ -404,8 +434,19 @@ elimination against Appendix B's own "closed" marking for R8.12 could misread th
 regression rather than the rule's own intended completion — P7.d8 exists to make this explicit,
 not assumed.
 
+**A completion criterion stated as counts, not volume, is gameable — found in PR review, fixed in
+§5.** The original two-probe pairing (`ts_writes` = 0, `verbatim_origins` at a small floor) was
+satisfiable by wrapping the two largest, least-decomposed files (`emit.rs`, `lower.rs`) into one
+`VerbatimOrigin` variant each and never touching them again — trajectory §2's own failure mode,
+reached through a green gate. `verbatim_sites` (§5, retiring at 0) closes this: it counts
+construction call sites, not variants, so a wholesale wrap of a large file is visible as hundreds
+of new sites rather than one new variant. Named here as a risk this track's *own* review process
+already caught once — evidence the discipline works, not just an assumption that it does.
+
 **The evidence ages.** Every fact, line number and count in this doc was measured against `main`
-at commit `79053b09`/`ad278a3e` on 19–20 August 2026. Re-check before a slice proposal cites one.
+at commit `79053b09` on 19–20 August 2026; the `verbatim_sites` addition (§5) was measured against
+the same commit, added after a PR review on 20 August 2026 found the two-probe version gameable.
+Re-check before a slice proposal cites one.
 
 ---
 
@@ -430,9 +471,11 @@ this settling pass (numbers assigned at merge by the stamp; referred to by lette
   and carved later. §3.1 (Q1).
 - **ADR-B** — the migration escape hatch is `TsStmt::Verbatim{origin: VerbatimOrigin, text:
   String}`, statement granularity, sealed constructor, with a companion textual lint over its
-  content run in CI alongside golden fixtures. §3.2 (Q2). Likely the most load-bearing of the
-  four — it's what makes every Arc C slice individually safe to ship and individually safe to
-  stop after.
+  content run in CI alongside golden fixtures, and completion tracked by three probes —
+  `ts_writes`, `verbatim_origins`, `verbatim_sites` (§5) — not two, after PR review found the
+  two-probe version gameable by a wholesale, undecomposed wrap of a large file. §3.2 (Q2). Likely
+  the most load-bearing of the four — it's what makes every Arc C slice individually safe to ship
+  and individually safe to stop after.
 - **ADR-C** — `TsType::Any` is eliminated in full within this phase; the 2–3-site residual
   (runtime-owned error types) is named and deferred to R7.7's runtime-typing work, not treated as
   open-ended or as grounds to re-open phase 6's IR. §3.3 (Q3).
@@ -445,8 +488,9 @@ this settling pass (numbers assigned at merge by the stamp; referred to by lette
 
 ## 12. Retirement
 
-Mirrors every prior track on this trajectory: retires when `ts_writes` reads 0 and
-`verbatim_origins` reads its own argued floor, with every surviving site named file-by-file in the
-closing summary. The retirement PR removes this doc, appends its closing summary to
+Mirrors every prior track on this trajectory: retires when `ts_writes` reads 0,
+`verbatim_origins` reads its own argued floor, and `verbatim_sites` reads 0, with every surviving
+site named file-by-file in the closing summary. The retirement PR removes this doc, appends its
+closing summary to
 `../archive/retired-tracks.md`, and closes the spine issue
 ([#1293](https://github.com/accuser/bynk/issues/1293)).
