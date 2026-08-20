@@ -21,7 +21,11 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use self::source_map::SourceMapBuilder;
+// P7.5 (#1307): relocated from `emitter/source_map.rs` to `bynk-ts`,
+// unchanged — `bynk-ts/src/source_map.rs`'s own module doc has the full
+// grounding for why this API stays as-is while `bynk-ts`'s own printer
+// gets a second, simpler way to use the same type.
+use bynk_ts::SourceMapBuilder;
 
 use crate::ir::lower::{
     lower_capability_item_ir, lower_protocol_ir, lower_service_handler_signature_ir,
@@ -60,9 +64,8 @@ pub(crate) use wrangler::emit_wrangler_toml;
 
 mod lower;
 pub(crate) mod runtime_use;
-pub(crate) use runtime_use::RuntimeUse;
-pub(crate) mod source_map;
 pub(crate) use lower::*;
+pub(crate) use runtime_use::RuntimeUse;
 pub(crate) mod emit;
 pub(crate) use bynk_check::icu::{self, *};
 pub(crate) use bynk_check::websocket;

@@ -60,7 +60,7 @@ impl Report {
 }
 
 /// Run every probe against the tree rooted at `root` (the repo root). Used by the CLI's
-/// full report; the gating test uses the nine gated probes alone
+/// full report; the gating test uses the thirteen gated probes alone
 /// ([`gated_disagreements`]) so it never pays for a workspace-wide clippy pass
 /// (`wildcard_arms`) just to check the probes that are actually diffed.
 pub fn run(root: &Path) -> Report {
@@ -69,7 +69,7 @@ pub fn run(root: &Path) -> Report {
     Report { probes }
 }
 
-/// The eleven gated (zero/closure) probes only — what [`gated_disagreements`] diffs.
+/// The thirteen gated (zero/closure) probes only — what [`gated_disagreements`] diffs.
 fn run_gated(root: &Path) -> Vec<Probe> {
     vec![
         workspace_lints(root),
@@ -83,6 +83,8 @@ fn run_gated(root: &Path) -> Vec<Probe> {
         emit_abi_shapes(root),
         ts_writes(root),
         ts_any(root),
+        verbatim_origins(root),
+        verbatim_sites(root),
     ]
 }
 
@@ -1687,7 +1689,7 @@ fn ts_writes_violations(files: &[(PathBuf, String)]) -> usize {
 /// a `Verbatim` construction"; the `Verbatim` half of that exclusion is vacuous until
 /// phase 7's own P7.5 builds the type (track doc §5's own note).
 ///
-/// **Not "zero/closure"-shaped like this module's other nine gated probes, and gated
+/// **Not "zero/closure"-shaped like this module's other twelve gated probes, and gated
 /// anyway — a deliberate choice, not an inherited one.** The reading is 1641, headed
 /// toward a phase-7 floor named at that track's own retirement, not toward 0 or a small
 /// fixed number the way `ast_importers`/`emit_abi_shapes` are. It moves on any
@@ -1786,6 +1788,114 @@ fn ts_any(root: &Path) -> Probe {
         gated: true,
         reads: ts_any_violations(&rust_files_relative(&dir)).to_string(),
     }
+}
+
+// --- Gated probe 12: verbatim_origins ---------------------------------------
+
+/// P7.5 (#1307): distinct `bynk_ts::VerbatimOrigin` variants named in
+/// `bynk-emit/src` — how many *families* of residual, not-yet-converted
+/// emission remain, not their size (`verbatim_sites`, below, is the size).
+/// Retires at an **argued floor**, expected small (1-3), named file-by-file
+/// at retirement the way `ast_importers`'s floor of 5 was (`design/tracks/
+/// the-typescript-tree.md` §5). Reads **0** at this slice's own landing:
+/// `bynk-emit` builds no `Verbatim` content yet (#1307's Decision C) — Arc
+/// C's own first slice is what gives this probe something to count.
+///
+/// Line-scans for `VerbatimOrigin::<Variant>` and counts distinct variant
+/// names referenced, the same needle-scan shape [`hoist_sinks`] uses. A
+/// known, accepted gap (review of #1308, finding 6): a bare `use
+/// bynk_ts::VerbatimOrigin::Contracts;` followed by unqualified `Contracts`
+/// elsewhere would undercount, since the needle is the qualified path. Not
+/// worth a real-parser fix for an *argued-floor* probe (unlike
+/// `verbatim_sites`'s own floor of exactly 0) — `bynk-emit`'s own existing
+/// call-site style always qualifies (`TsStmt::verbatim(VerbatimOrigin::X,
+/// …)`), so this is a theoretical undercount, not an observed one.
+fn verbatim_origins(root: &Path) -> Probe {
+    let dir = root.join("bynk-emit/src");
+    Probe {
+        name: "verbatim_origins",
+        gated: true,
+        reads: verbatim_origins_violations(&rust_files_relative(&dir)).to_string(),
+    }
+}
+
+/// [`verbatim_origins`]'s counting logic, over an explicit `(relative path,
+/// contents)` list — see [`rust_files_relative`] for why this isn't `root:
+/// &Path`. Excludes `#[cfg(test)]` ranges the same way [`ts_any_violations`]
+/// does (review of #1308, finding 6): without this, one `bynk-emit` unit
+/// test constructing a `VerbatimOrigin` for its own fixture pins this probe
+/// above its argued floor permanently, for a reason that has nothing to do
+/// with residual production emission.
+fn verbatim_origins_violations(files: &[(PathBuf, String)]) -> usize {
+    let needle = "VerbatimOrigin::";
+    let mut variants: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for (_, contents) in files {
+        let lines: Vec<&str> = contents.lines().collect();
+        let ranges = test_mod_ranges(&lines);
+        for (i, line) in lines.iter().enumerate() {
+            if in_test_range(i, &ranges) || is_line_comment(line) {
+                continue;
+            }
+            let mut rest = *line;
+            while let Some(idx) = rest.find(needle) {
+                let after = &rest[idx + needle.len()..];
+                let name: String = after
+                    .chars()
+                    .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                    .collect();
+                rest = &after[name.len()..];
+                if !name.is_empty() {
+                    variants.insert(name);
+                }
+            }
+        }
+    }
+    variants.len()
+}
+
+// --- Gated probe 13: verbatim_sites -----------------------------------------
+
+/// P7.5 (#1307): distinct `TsStmt::verbatim(...)` construction call sites in
+/// `bynk-emit/src`, line-scanned the same way [`hoist_sinks`] counts
+/// `stmts: &mut Vec<String>` occurrences. Retires at **0**: every call site
+/// converting to a real tree node is what Arc C's own per-file slices are
+/// actually for (`design/tracks/the-typescript-tree.md` §5) —
+/// `verbatim_origins` alone can't distinguish "3 variants, 12 residual call
+/// sites" from "3 variants, 900 residual call sites, two files never
+/// decomposed"; this is what closes that gap. Reads **0** at this slice's
+/// own landing, same reason `verbatim_origins` does.
+fn verbatim_sites(root: &Path) -> Probe {
+    let dir = root.join("bynk-emit/src");
+    Probe {
+        name: "verbatim_sites",
+        gated: true,
+        reads: verbatim_sites_violations(&rust_files_relative(&dir)).to_string(),
+    }
+}
+
+/// [`verbatim_sites`]'s counting logic, over an explicit `(relative path,
+/// contents)` list — see [`rust_files_relative`] for why this isn't `root:
+/// &Path`. Excludes `#[cfg(test)]` ranges the same way [`ts_any_violations`]
+/// does (review of #1308, finding 6): `verbatim_sites` is documented as
+/// retiring at 0, so a residual construction site inside a test fixture
+/// would pin it above zero permanently for a reason that has nothing to do
+/// with production emission conversion.
+fn verbatim_sites_violations(files: &[(PathBuf, String)]) -> usize {
+    let needle = "TsStmt::verbatim(";
+    let mut count = 0usize;
+    for (_, contents) in files {
+        let lines: Vec<&str> = contents.lines().collect();
+        let ranges = test_mod_ranges(&lines);
+        for (i, line) in lines.iter().enumerate() {
+            if in_test_range(i, &ranges) {
+                continue;
+            }
+            if !is_line_comment(line) && line.contains(needle) {
+                count += 1;
+            }
+        }
+    }
+    count
 }
 
 /// Named identifiers imported from the compiler-generated firstparty/runtime relative
@@ -2012,7 +2122,8 @@ pub fn render_table(report: &Report) -> String {
     out.push_str("     Regenerate with: cargo xtask greenfield-status --apply -->\n\n");
     out.push_str("# Greenfield status\n\n");
     out.push_str(
-        "Track slice T0.0 (#999); `ts_writes`/`ts_any` added by P7.0 (#1296). Eleven \
+        "Track slice T0.0 (#999); `ts_writes`/`ts_any` added by P7.0 (#1296); \
+         `verbatim_origins`/`verbatim_sites` added by P7.5 (#1307). Thirteen \
          probes are gated — a disagreement between this file and a fresh run fails \
          `greenfield_status_table_is_current` (`xtask/tests/greenfield_status.rs`). \
          Four are trend probes, reported only.\n\n",
@@ -2048,10 +2159,10 @@ pub fn render_table(report: &Report) -> String {
 
 /// Every gated probe whose live reading disagrees with the committed table's, as
 /// `(probe name, committed, live)`. Trend probes are never compared, and never
-/// computed here — this only runs the nine gated probes, so checking currency never
+/// computed here — this only runs the thirteen gated probes, so checking currency never
 /// pays for `wildcard_arms`'s workspace-wide clippy pass. For a caller that has already
 /// run the full report (e.g. to print it), use [`gated_disagreements_in`] instead so the
-/// nine gated probes aren't computed a second time.
+/// thirteen gated probes aren't computed a second time.
 pub fn gated_disagreements(root: &Path) -> Vec<(String, String, String)> {
     gated_disagreements_in(&run_gated(root), root)
 }
@@ -3014,6 +3125,24 @@ commons app.demo {
         ts_any_violations(&owned)
     }
 
+    /// Run [`verbatim_origins_violations`] over an in-memory file list.
+    fn verbatim_origins_over(files: &[(&str, &str)]) -> usize {
+        let owned: Vec<(PathBuf, String)> = files
+            .iter()
+            .map(|(p, s)| (PathBuf::from(p), (*s).to_string()))
+            .collect();
+        verbatim_origins_violations(&owned)
+    }
+
+    /// Run [`verbatim_sites_violations`] over an in-memory file list.
+    fn verbatim_sites_over(files: &[(&str, &str)]) -> usize {
+        let owned: Vec<(PathBuf, String)> = files
+            .iter()
+            .map(|(p, s)| (PathBuf::from(p), (*s).to_string()))
+            .collect();
+        verbatim_sites_violations(&owned)
+    }
+
     #[test]
     fn ts_writes_excluded_files_are_recognised() {
         assert!(is_ts_writes_excluded_file(Path::new("emitter/wrangler.rs")));
@@ -3160,6 +3289,56 @@ commons app.demo {
             ts_writes_over(&files),
             1,
             "the path-construction line must not count; the genuine emission line must"
+        );
+    }
+
+    #[test]
+    fn verbatim_origins_counts_distinct_variants_not_construction_sites() {
+        let files = [(
+            "emitter/contracts.rs",
+            "fn a() { TsStmt::verbatim(VerbatimOrigin::Contracts, \"x\", None) }\nfn b() { TsStmt::verbatim(VerbatimOrigin::Contracts, \"y\", None) }\nfn c() { TsStmt::verbatim(VerbatimOrigin::Secrets, \"z\", None) }\n",
+        )];
+        // Three construction sites, but only two distinct origins.
+        assert_eq!(verbatim_origins_over(&files), 2);
+        assert_eq!(verbatim_sites_over(&files), 3);
+    }
+
+    #[test]
+    fn verbatim_origins_and_sites_ignore_comments() {
+        let files = [(
+            "emitter/contracts.rs",
+            "// TsStmt::verbatim(VerbatimOrigin::Contracts, \"x\", None)\n/// Mentions VerbatimOrigin::Secrets in prose.\n",
+        )];
+        assert_eq!(verbatim_origins_over(&files), 0);
+        assert_eq!(verbatim_sites_over(&files), 0);
+    }
+
+    #[test]
+    fn verbatim_origins_and_sites_read_zero_over_an_empty_tree() {
+        let files: [(&str, &str); 0] = [];
+        assert_eq!(verbatim_origins_over(&files), 0);
+        assert_eq!(verbatim_sites_over(&files), 0);
+    }
+
+    /// Review of #1308, finding 6: without stripping `#[cfg(test)]` ranges,
+    /// a single `bynk-emit` unit test fixture constructing a `TsStmt::
+    /// verbatim(...)` for its own coverage would pin `verbatim_sites` above
+    /// its documented 0 floor permanently, for a reason unrelated to
+    /// residual production emission.
+    #[test]
+    fn verbatim_origins_and_sites_exclude_cfg_test_ranges() {
+        let src = "fn production() {\n    TsStmt::verbatim(VerbatimOrigin::Contracts, \"x\", None);\n}\n\n\
+                    #[cfg(test)]\nmod tests {\n    #[test]\n    fn t() {\n        \
+                    TsStmt::verbatim(VerbatimOrigin::Secrets, \"y\", None);\n    }\n}\n";
+        assert_eq!(
+            verbatim_origins_over(&[("emitter/contracts.rs", src)]),
+            1,
+            "only the production-code origin counts"
+        );
+        assert_eq!(
+            verbatim_sites_over(&[("emitter/contracts.rs", src)]),
+            1,
+            "the test-only construction site must be excluded"
         );
     }
 }

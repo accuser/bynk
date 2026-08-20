@@ -1,0 +1,16 @@
+[package]
+name = "bynk-ts"
+description = "The TypeScript tree and printer (phase 7 of the compiler trajectory). Emission produces nodes; this crate's printer is the only code that writes a character."
+keywords = ["compiler", "dsl", "typescript", "language"]
+categories = ["compilers", "development-tools"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+# `Span`/`LineIndex` only — see `src/lib.rs`'s own module doc for the load-bearing
+# invariant this crate depends on nothing else (P7.5, #1307, Decision A).
+bynk-syntax.workspace = true

@@ -207,6 +207,7 @@ dependencies = [
  "bynk-check",
  "bynk-project",
  "bynk-syntax",
+ "bynk-ts",
  "serde",
  "toml",
  "toml_edit",
@@ -299,6 +300,13 @@ version = "0.249.42"
 dependencies = [
  "bynk-emit",
  "bynk-ide",
+]
+
+[[package]]
+name = "bynk-ts"
+version = "0.249.42"
+dependencies = [
+ "bynk-syntax",
 ]
 
 [[package]]
