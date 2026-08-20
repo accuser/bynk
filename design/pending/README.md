@@ -43,7 +43,13 @@ summary: How a case addresses a handler and names its principal
 - **`level`** — `minor` (a language increment) or `patch` (non-language). The
   stamp turns this into the next `X.Y.Z`.
 - **`changelog`** — the changelog row, on one line, **without** a version number
-  (the stamp prepends it).
+  (the stamp prepends it). It lands verbatim in the Book's
+  `reference/changelog.md` table, so it is **Markdown**: wrap code in backticks,
+  or a generic call like `Events.emit[E](event)` parses as a link to a relative
+  `event` and fails the docs site's link-checker. Only absolute (`https://…`),
+  site-root (`/book/…`) and anchor links are accepted; the stamp rejects the rest
+  here, pre-merge, because the site only sees the row after it is written on
+  `main`.
 
 No other keys are permitted — a typo like `levl:` is rejected rather than
 silently ignored.
