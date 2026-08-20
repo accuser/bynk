@@ -19,12 +19,25 @@ struct WranglerConfig {
     queues: QueueBindings,
     #[serde(default)]
     migrations: Vec<Migration>,
+    // P7.4 (#1305): read structurally alongside everything else this struct
+    // already deserialises, replacing `needs_kv`'s own former
+    // `text.contains(KV_NAMESPACE_ID_PLACEHOLDER)` whole-file substring
+    // search (R8.20 — deploy-time placeholders are typed, not textual).
+    #[serde(default)]
+    kv_namespaces: Vec<KvNamespaceBinding>,
 }
 
 #[derive(Debug, Deserialize)]
 struct ServiceBinding {
     /// The *target* worker's name (`worker_dir_name`, dots dasherised).
     service: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct KvNamespaceBinding {
+    // Presence of the stanza, not its `id`, is what `needs_kv` asks — the
+    // `id` itself is only ever read/written structurally by
+    // `bynk_emit::emitter::wrangler::materialise_kv_namespace_id`.
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -192,7 +205,7 @@ fn read_resources(config: &Path) -> Result<Resources, String> {
         // (`tag = "v1"`), which makes this the same answer by a rule that still
         // holds if that ever changes.
         migration: parsed.migrations.into_iter().next_back().map(|m| m.tag),
-        needs_kv: text.contains(KV_NAMESPACE_ID_PLACEHOLDER),
+        needs_kv: !parsed.kv_namespaces.is_empty(),
         declared_secrets: secrets.declared,
         read_secrets: secrets.read,
         reads_complete: secrets.read_complete,
@@ -253,14 +266,20 @@ pub(crate) fn read_contracts_manifest(worker_dir: &Path) -> Result<ContractsMani
     Ok(manifest)
 }
 
+// P7.4 (#1305): a thin wrapper over `bynk_emit::emitter::wrangler::
+// materialise_kv_namespace_id` — the structural read-modify-write closing
+// R7.6/R8.20. `-> bool` and the read-then-write shape are kept unchanged:
+// both callers (`deploy/provisioning.rs`, `deploy/ledger.rs`) already treat
+// `false` uniformly as "could not write" and don't need to distinguish read
+// failure from a malformed file from a write failure.
 pub(crate) fn materialise_kv_id(path: &Path, id: &str) -> bool {
-    let Ok(config) = std::fs::read_to_string(path) else {
+    let Ok(text) = std::fs::read_to_string(path) else {
         return false;
     };
-    if !config.contains(KV_NAMESPACE_ID_PLACEHOLDER) {
-        return true;
-    }
-    std::fs::write(path, config.replace(KV_NAMESPACE_ID_PLACEHOLDER, id)).is_ok()
+    let Ok(patched) = bynk_emit::emitter::wrangler::materialise_kv_namespace_id(&text, id) else {
+        return false;
+    };
+    std::fs::write(path, patched).is_ok()
 }
 
 /// The environment-qualified physical name for a resource whose logical

@@ -361,8 +361,9 @@ pub fn materialise_deploy_state(
     config: &Path,
     environment: &str,
 ) -> Result<bool, String> {
+    // P7.4 (#1305): structural, not a substring search — closes R7.6/R8.20.
     let text = std::fs::read_to_string(config).map_err(|e| e.to_string())?;
-    if !text.contains(KV_NAMESPACE_ID_PLACEHOLDER) {
+    if !bynk_emit::emitter::wrangler::wrangler_needs_kv_materialisation(&text)? {
         return Ok(false);
     }
     let lock = read_lock(&project_root.join(LOCK_FILE))?;
@@ -628,15 +629,31 @@ pub(crate) mod tests {
 
     #[test]
     fn materialises_only_the_placeholder() {
+        // P7.4 (#1305): the real shape `emit_wrangler_toml` produces — a
+        // `[[kv_namespaces]]` stanza, not a bare root `id` key (the old
+        // fixture's shortcut, which only worked because the old
+        // implementation was a whole-file substring replace that didn't
+        // care where the placeholder sat).
         let unique = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
         let path =
             std::env::temp_dir().join(format!("bynk-deploy-{}-{}", std::process::id(), unique));
-        std::fs::write(&path, format!("id = \"{KV_NAMESPACE_ID_PLACEHOLDER}\"")).unwrap();
+        std::fs::write(
+            &path,
+            format!(
+                "[[kv_namespaces]]\nbinding = \"BYNK_KV\"\nid = \"{KV_NAMESPACE_ID_PLACEHOLDER}\"\n"
+            ),
+        )
+        .unwrap();
         assert!(materialise_kv_id(&path, "abc"));
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), "id = \"abc\"");
+        let text = std::fs::read_to_string(&path).unwrap();
+        let parsed: toml::Table = text.parse().unwrap();
+        assert_eq!(
+            parsed["kv_namespaces"].as_array().unwrap()[0]["id"].as_str(),
+            Some("abc")
+        );
         let _ = std::fs::remove_file(path);
     }
 
@@ -690,7 +707,13 @@ pub(crate) mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let project_root = dir.clone();
         let config = dir.join("wrangler.toml");
-        std::fs::write(&config, format!("id = \"{KV_NAMESPACE_ID_PLACEHOLDER}\"")).unwrap();
+        std::fs::write(
+            &config,
+            format!(
+                "[[kv_namespaces]]\nbinding = \"BYNK_KV\"\nid = \"{KV_NAMESPACE_ID_PLACEHOLDER}\"\n"
+            ),
+        )
+        .unwrap();
 
         // Provisioned under "staging" alone — the scenario the review named:
         // a project that has never had a plain `bynk deploy` (no "default").
@@ -726,9 +749,38 @@ pub(crate) mod tests {
         // Reading "staging" — the environment it was actually deployed under
         // — must succeed and materialise that environment's id.
         assert!(materialise_deploy_state(&project_root, "api", &config, "staging").unwrap());
+        let text = std::fs::read_to_string(&config).unwrap();
+        let parsed: toml::Table = text.parse().unwrap();
         assert_eq!(
-            std::fs::read_to_string(&config).unwrap(),
-            "id = \"kv-staging\""
+            parsed["kv_namespaces"].as_array().unwrap()[0]["id"].as_str(),
+            Some("kv-staging")
+        );
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// P7.4 (#1305): a project with no KV binding at all must skip the lock
+    /// lookup entirely and return `Ok(false)` — not error just because
+    /// nothing is recorded for it (there's nothing to materialise). No lock
+    /// file exists in this project root at all, proving the early exit
+    /// really does short-circuit before `read_lock` runs.
+    #[test]
+    fn materialise_deploy_state_is_a_no_op_without_a_kv_binding() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "bynk-materialise-state-no-kv-{}-{unique}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let config = dir.join("wrangler.toml");
+        std::fs::write(&config, "name = \"api\"\nmain = \"index.ts\"\n").unwrap();
+
+        assert_eq!(
+            materialise_deploy_state(&dir, "api", &config, "default"),
+            Ok(false)
         );
 
         let _ = std::fs::remove_dir_all(dir);

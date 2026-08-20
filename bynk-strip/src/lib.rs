@@ -133,10 +133,19 @@ pub fn strip_project_to_js(
             // The Workers manifest names its entry module; in the JS artefact
             // that module is `.js`, and a `main` left pointing at the stripped
             // `.ts` breaks `wrangler dev`/deploy on the emitted output.
+            //
+            // P7.4 (#1305): structural (`bynk_emit::emitter::wrangler::
+            // set_wrangler_main` parses the TOML and sets the field), not a
+            // substring match against the current emitter's own formatting
+            // (R7.6) — closes the exact failure mode named in the defect
+            // report: a reformatted `main` line silently surviving unpatched.
             if file.output_path.file_name().and_then(|n| n.to_str()) == Some("wrangler.toml") {
-                let patched = file
-                    .typescript
-                    .replace("main = \"index.ts\"", "main = \"index.js\"");
+                let patched =
+                    bynk_emit::emitter::wrangler::set_wrangler_main(&file.typescript, "index.js")
+                        .map_err(|e| StripError {
+                        filename: file.output_path.to_string_lossy().into_owned(),
+                        message: e,
+                    })?;
                 files.push(CompiledFile {
                     typescript: patched,
                     ..file
@@ -249,5 +258,44 @@ mod tests {
     fn invalid_source_is_an_error_not_a_panic() {
         let err = strip_types("const = = =;", "bad.ts");
         assert!(err.is_err(), "malformed source is an error");
+    }
+
+    /// P7.4 (#1305): `strip_project_to_js`'s `wrangler.toml` patch, exercised
+    /// through the real function (not just the underlying `bynk_emit::
+    /// emitter::wrangler::set_wrangler_main` helper) — differently formatted
+    /// from what the emitter currently produces, proving the fix is immune
+    /// to reformatting rather than merely happening to match today's exact
+    /// spacing. The old `.replace("main = \"index.ts\"", ..)` would have
+    /// silently left this `main=` line unpatched.
+    #[test]
+    fn strip_project_to_js_patches_wrangler_toml_main_structurally() {
+        use bynk_emit::project::{CompiledFile, ProjectOutput};
+        use std::path::PathBuf;
+
+        let out = ProjectOutput {
+            files: vec![CompiledFile {
+                source_path: PathBuf::from("workers/api/<wrangler>"),
+                output_path: PathBuf::from("workers/api/wrangler.toml"),
+                typescript: "name=\"api\"\nmain=\"index.ts\"\ncompatibility_date=\"2024-11-01\"\n"
+                    .to_string(),
+                source_map: None,
+                debug_metadata: None,
+            }],
+            warnings: Vec::new(),
+            snapshots: Vec::new(),
+            discovered: Vec::new(),
+            schema_lock: None,
+        };
+
+        let stripped = strip_project_to_js(out).expect("wrangler.toml patches cleanly");
+        assert_eq!(stripped.files.len(), 1);
+        let patched = &stripped.files[0];
+        assert_eq!(
+            patched.output_path,
+            PathBuf::from("workers/api/wrangler.toml")
+        );
+        let parsed: toml::Table = patched.typescript.parse().expect("still valid TOML");
+        assert_eq!(parsed["main"].as_str(), Some("index.js"));
+        assert_eq!(parsed["name"].as_str(), Some("api"));
     }
 }
