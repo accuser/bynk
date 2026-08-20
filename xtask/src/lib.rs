@@ -266,6 +266,14 @@ fn parse_frontmatter(
                     errors.push(format!(
                         "changelog must not start with a version number (the stamp adds it): {value:?}"
                     ));
+                } else if let Some(dest) = relative_markdown_link_in(value) {
+                    errors.push(format!(
+                        "changelog reads as a Markdown link to the relative destination {dest:?} \
+                         — the blurb is inserted verbatim into the Book's changelog table, so a \
+                         bare `x[T](y)` in prose becomes a link the docs site's link-checker \
+                         rejects (and it only sees the row after the stamp writes it on `main`). \
+                         Wrap the code in backticks, or use an absolute URL."
+                    ));
                 } else {
                     changelog = Some(value.to_string());
                 }
@@ -519,6 +527,87 @@ fn looks_like_version_prefix(changelog: &str) -> bool {
     all_numeric && (had_v || groups.len() >= 3)
 }
 
+/// The destination of the first Markdown inline link in `blurb` that resolves
+/// *relatively*, if there is one.
+///
+/// The blurb is inserted verbatim into a table row in the Book's
+/// `reference/changelog.md`, so `[…](…)` in prose is a real link once it lands —
+/// and an unbackticked generic call like `Events.emit[E](event)` is exactly that
+/// shape, a link to a relative `event`. The docs site's own link-checker
+/// (starlight-links-validator, the `Docs site (astro build)` gate) rejects those,
+/// but it only ever sees the row *after* the stamp writes it on `main`, so that
+/// gate fires post-merge with nothing left to review. This is the pre-merge
+/// stand-in, run against the pending file the PR actually carries.
+///
+/// Deliberate links stay allowed — absolute (`https://…`, the `[#548](…)` issue
+/// citations the corpus is full of), site-root (`/book/…`), and anchors. Code
+/// spans are skipped, which is also the fix the error message asks for: write
+/// ``` `Events.emit[E](event)` ```.
+fn relative_markdown_link_in(blurb: &str) -> Option<String> {
+    let bytes = blurb.as_bytes();
+    let mut i = 0;
+    let mut saw_open_bracket = false;
+    while i < bytes.len() {
+        match bytes[i] {
+            // A backslash escape covers the next byte, whatever it is.
+            b'\\' => i += 1,
+            // Skip a code span: a run of N backticks closes on the next run of
+            // exactly N. An unterminated run swallows the rest, which only ever
+            // makes this check quieter — a blurb with odd backticks is the
+            // author's to fix either way.
+            b'`' => {
+                let fence = bytes[i..].iter().take_while(|&&b| b == b'`').count();
+                let mut j = i + fence;
+                while j < bytes.len() {
+                    if bytes[j] == b'`' {
+                        let run = bytes[j..].iter().take_while(|&&b| b == b'`').count();
+                        j += run;
+                        if run == fence {
+                            break;
+                        }
+                    } else {
+                        j += 1;
+                    }
+                }
+                i = j;
+                continue;
+            }
+            b'[' => saw_open_bracket = true,
+            // `](` is only a link if some `[` opened it.
+            b']' if saw_open_bracket && bytes.get(i + 1) == Some(&b'(') => {
+                saw_open_bracket = false;
+                let start = i + 2;
+                let Some(len) = bytes[start..].iter().position(|&b| b == b')') else {
+                    break;
+                };
+                // Markdown allows `(dest "title")`; only the destination matters.
+                let dest = blurb[start..start + len]
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("");
+                if !is_absolute_link_destination(dest) {
+                    return Some(dest.to_string());
+                }
+                i = start + len;
+            }
+            b']' => saw_open_bracket = false,
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Whether a Markdown link destination resolves without depending on the page it
+/// is written on — the only kind a changelog blurb may carry.
+fn is_absolute_link_destination(dest: &str) -> bool {
+    dest.starts_with("https://")
+        || dest.starts_with("http://")
+        || dest.starts_with("mailto:")
+        || dest.starts_with('/')
+        || dest.starts_with('#')
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -670,6 +759,56 @@ mod tests {
         ok(
             "x.md",
             "---\nlevel: minor\nchangelog: 3.0 rendering pipeline added\n---\n",
+        );
+    }
+
+    #[test]
+    fn accidental_relative_markdown_link_in_changelog_rejected() {
+        // The real regression (v0.249.1): an unbackticked generic call in prose
+        // parses as `[E](event)`, a link to a relative `event`, and failed the
+        // docs site's link-checker on `main` — post-merge, after the stamp had
+        // already written the row.
+        let content = "---\nlevel: patch\nchangelog: Read Callee to detect an \
+                       Events.emit[E](event) call\n---\n";
+        assert!(
+            err("x.md", content)
+                .iter()
+                .any(|e| e.contains("relative destination \"event\"")),
+            "expected rejection, got {:?}",
+            err("x.md", content)
+        );
+    }
+
+    #[test]
+    fn backticked_generic_call_in_changelog_is_allowed() {
+        // The documented fix, and the corpus's own convention for code in prose.
+        ok(
+            "x.md",
+            "---\nlevel: patch\nchangelog: Detect an `Events.emit[E](event)` call\n---\n",
+        );
+    }
+
+    #[test]
+    fn absolute_links_in_changelog_are_allowed() {
+        // Issue citations are the single most common blurb decoration; site-root
+        // links and anchors resolve independently of the page too.
+        for cl in [
+            "Close [#548](https://github.com/accuser/bynk/issues/548)",
+            "See [the roadmap](/book/about/versioning-and-roadmap/)",
+            "See [below](#notes)",
+        ] {
+            let content = format!("---\nlevel: minor\nchangelog: {cl}\n---\n");
+            ok("x.md", &content);
+        }
+    }
+
+    #[test]
+    fn bracket_without_a_link_in_changelog_is_allowed() {
+        // `]` with no `(` after it, and `(` with no `[` before it, are ordinary
+        // punctuation — neither forms a link.
+        ok(
+            "x.md",
+            "---\nlevel: minor\nchangelog: Widen ts_any [see the probe] (P7.0) for writes\n---\n",
         );
     }
 
