@@ -82,6 +82,16 @@ regress = "0.11"
 proptest = "1"
 serde = { version = "1", features = ["derive"] }
 toml = "1.1"
+# P7.4 (#1305, review): `toml::Table` round-trips through a `BTreeMap` with no
+# comment/order trivia — parsing an *existing* wrangler.toml and re-printing it
+# after a one-field edit silently dropped the banner comment and re-sorted
+# every key alphabetically. `toml_edit::DocumentMut` is format-preserving:
+# parse, mutate one value, re-serialise, and everything untouched (comments,
+# key order, whitespace) survives byte-for-byte. Used only for that
+# read-an-existing-document case (`bynk-emit::emitter::wrangler`'s patch
+# functions) — `TomlDocument`'s own from-scratch construction (P7.3) is
+# unaffected and stays on plain `toml`.
+toml_edit = "0.25"
 # Portable executable lookup (handles PATHEXT/`where` on Windows) — backs the
 # `bynk doctor` detection probe, replacing the Unix-only `which`-shell (v0.46).
 which = "8"
