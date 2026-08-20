@@ -18,20 +18,32 @@
 
 use std::fmt::Write as _;
 
-/// A TOML document as an ordered sequence of blocks — a root block (no
-/// header) optionally followed by any number of headed blocks. Every block,
-/// printed, is followed by exactly one blank line (including the last —
-/// confirmed against every current `expected/**/wrangler.toml` golden
-/// fixture, which all end in a trailing blank line).
+/// A TOML document: the root block's entries (review of #1304, finding 3 —
+/// a field set once at construction, not a [`TomlBlock`] a caller could
+/// accidentally `push_block` out of first position, which `push_block`
+/// itself couldn't have rejected: TOML has no marker distinguishing "the
+/// root block" from "a table block with no header" once both are just
+/// entries in the same list) followed by any number of headed blocks. Every
+/// block, printed — root included — is followed by exactly one blank line
+/// (including the last — confirmed against every current
+/// `expected/**/wrangler.toml` golden fixture, which all end in a trailing
+/// blank line).
 pub(crate) struct TomlDocument {
-    header_comment: Option<&'static str>,
+    header_comment: &'static str,
+    root: Vec<TomlEntry>,
     blocks: Vec<TomlBlock>,
 }
 
 impl TomlDocument {
-    pub(crate) fn new(header_comment: &'static str) -> Self {
+    /// `header_comment` is the leading `# …` line's text *without* the `#`
+    /// marker — [`print_toml_document`] prepends it, the same convention
+    /// [`TomlEntry::with_comment`] already used (review of #1304, finding
+    /// 2: the two used to disagree, one taking a marker-inclusive literal
+    /// and the other marker-exclusive, with nothing enforcing either).
+    pub(crate) fn new(header_comment: &'static str, root: Vec<TomlEntry>) -> Self {
         Self {
-            header_comment: Some(header_comment),
+            header_comment,
+            root,
             blocks: Vec::new(),
         }
     }
@@ -41,11 +53,12 @@ impl TomlDocument {
     }
 }
 
-/// One `[path]` or `[[path]]` section (or, with `header: None`, the
-/// document's own root block — `wrangler.toml`'s `name`/`main`/
-/// `compatibility_date` trio) plus its `key = value` entries, in order.
+/// One `[path]` or `[[path]]` section plus its `key = value` entries, in
+/// order. Always headed — the document's own root block is
+/// [`TomlDocument`]'s own field, not constructible as a `TomlBlock` (review
+/// of #1304, finding 3).
 pub(crate) struct TomlBlock {
-    header: Option<TomlHeader>,
+    header: TomlHeader,
     entries: Vec<TomlEntry>,
 }
 
@@ -55,23 +68,16 @@ enum TomlHeader {
 }
 
 impl TomlBlock {
-    pub(crate) fn root(entries: Vec<TomlEntry>) -> Self {
-        Self {
-            header: None,
-            entries,
-        }
-    }
-
     pub(crate) fn table(path: &'static str, entries: Vec<TomlEntry>) -> Self {
         Self {
-            header: Some(TomlHeader::Table(path)),
+            header: TomlHeader::Table(path),
             entries,
         }
     }
 
     pub(crate) fn array_table(path: &'static str, entries: Vec<TomlEntry>) -> Self {
         Self {
-            header: Some(TomlHeader::ArrayTable(path)),
+            header: TomlHeader::ArrayTable(path),
             entries,
         }
     }
@@ -128,33 +134,36 @@ impl TomlValue {
 /// that calls `write!`/`writeln!`/`format!` to build TOML syntax.
 pub(crate) fn print_toml_document(doc: &TomlDocument) -> String {
     let mut out = String::new();
-    if let Some(comment) = doc.header_comment {
-        let _ = writeln!(out, "{comment}");
-    }
+    let _ = writeln!(out, "# {}", doc.header_comment);
+    print_entries(&mut out, &doc.root);
+    let _ = writeln!(out);
     for block in &doc.blocks {
         match &block.header {
-            Some(TomlHeader::Table(path)) => {
+            TomlHeader::Table(path) => {
                 let _ = writeln!(out, "[{path}]");
             }
-            Some(TomlHeader::ArrayTable(path)) => {
+            TomlHeader::ArrayTable(path) => {
                 let _ = writeln!(out, "[[{path}]]");
             }
-            None => {}
         }
-        for entry in &block.entries {
-            let value = render_value(&entry.value);
-            match entry.comment {
-                Some(comment) => {
-                    let _ = writeln!(out, "{} = {value} # {comment}", entry.key);
-                }
-                None => {
-                    let _ = writeln!(out, "{} = {value}", entry.key);
-                }
-            }
-        }
+        print_entries(&mut out, &block.entries);
         let _ = writeln!(out);
     }
     out
+}
+
+fn print_entries(out: &mut String, entries: &[TomlEntry]) {
+    for entry in entries {
+        let value = render_value(&entry.value);
+        match entry.comment {
+            Some(comment) => {
+                let _ = writeln!(out, "{} = {value} # {comment}", entry.key);
+            }
+            None => {
+                let _ = writeln!(out, "{} = {value}", entry.key);
+            }
+        }
+    }
 }
 
 fn render_value(value: &TomlValue) -> String {
@@ -265,11 +274,27 @@ mod tests {
         // well-formed TOML a real parser accepts, with every value surviving
         // exactly. `TomlBlock`/`TomlEntry` construction mirrors
         // `emit_wrangler_toml`'s own shape one-for-one.
-        let mut doc = TomlDocument::new("# Generated by bynkc — do not edit by hand.");
-        doc.push_block(TomlBlock::root(vec![
-            TomlEntry::kv("name", TomlValue::str("api")),
-            TomlEntry::kv("main", TomlValue::str("index.ts")),
-        ]));
+        //
+        // Review of #1304, finding 1: the `name` and the one `crons` element
+        // below are the injection payload from the defect report, not an
+        // ordinary identifier — every value the *golden* corpus carries today
+        // is compiler-derived and never needs escaping, which means a
+        // zero-diff `bless_positive_fixtures` run cannot tell an escaping
+        // `render_value` from a `render_value` that stopped escaping
+        // entirely. This is the one test standing between "the printer
+        // escapes every string" (this module's whole point) and that claim
+        // quietly going false — it has to drive a hostile value *through*
+        // `print_toml_document`, not just through `escape_toml_basic_string`
+        // directly (the tests above) or a hand-built fragment (the test
+        // below).
+        let hostile = "q\nkey = \"injected";
+        let mut doc = TomlDocument::new(
+            "Generated by bynkc — do not edit by hand.",
+            vec![
+                TomlEntry::kv("name", TomlValue::str(hostile)),
+                TomlEntry::kv("main", TomlValue::str("index.ts")),
+            ],
+        );
         doc.push_block(TomlBlock::array_table(
             "services",
             vec![
@@ -292,7 +317,7 @@ mod tests {
             "triggers",
             vec![TomlEntry::kv(
                 "crons",
-                TomlValue::Array(vec![TomlValue::str("*/5 * * * *")]),
+                TomlValue::Array(vec![TomlValue::str("*/5 * * * *"), TomlValue::str(hostile)]),
             )],
         ));
 
@@ -301,7 +326,12 @@ mod tests {
             .parse()
             .unwrap_or_else(|e| panic!("printer produced invalid TOML: {e}\n{text}"));
 
-        assert_eq!(parsed["name"].as_str(), Some("api"));
+        assert_eq!(
+            parsed.len(),
+            5,
+            "the hostile `name` value injected extra root keys: {parsed:?}"
+        );
+        assert_eq!(parsed["name"].as_str(), Some(hostile));
         assert_eq!(parsed["main"].as_str(), Some("index.ts"));
         let services = parsed["services"].as_array().expect("services array");
         assert_eq!(services.len(), 1);
@@ -309,7 +339,9 @@ mod tests {
         let kv = parsed["kv_namespaces"].as_array().expect("kv array");
         assert_eq!(kv[0]["id"].as_str(), Some("<KV_NAMESPACE_ID>"));
         let crons = parsed["triggers"]["crons"].as_array().expect("crons array");
+        assert_eq!(crons.len(), 2, "the hostile crons element broke the array");
         assert_eq!(crons[0].as_str(), Some("*/5 * * * *"));
+        assert_eq!(crons[1].as_str(), Some(hostile));
 
         // Every block, including the last, is followed by exactly one blank
         // line — the shape every current golden `wrangler.toml` fixture has.
