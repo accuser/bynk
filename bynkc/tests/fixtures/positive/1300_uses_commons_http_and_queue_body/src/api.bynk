@@ -1,0 +1,24 @@
+---
+Golden coverage for P7.2 (#1300)'s `brand_assertion` fix: a `uses`-commons
+named type reaching the entry as an HTTP POST body and as a queue message.
+`deserialise_Cents` is a straight re-export from `money.js` and so returns the
+*unbranded* commons `Cents`, while `intake.call`/`credit.message` (in
+`handlers.ts`) are typed against the *branded* `Cents` this context rebrands —
+without the entry-side brand-assertion cast, `tsc --strict` rejects both
+generated projects.
+---
+context api
+
+uses money
+
+service intake from http {
+  on POST("/cents") (body: Cents) -> Effect[HttpResult[Int]] by v: Visitor {
+    Created(body)
+  }
+}
+
+service credit from queue("cents-credited") {
+  on message(amount: Cents) -> Effect[QueueResult] {
+    Ack
+  }
+}

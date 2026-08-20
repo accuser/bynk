@@ -1197,8 +1197,15 @@ pub(crate) fn emit_provider(
     // v0.12: a provider with `given` receives its dependencies through a
     // constructor; its bodies call them as `this.deps.<cap>`. The deps object
     // type lists exactly the provider's `given` capabilities.
+    //
+    // P7.2 (review of #1300): computed once here and reused below (the
+    // capability-scope collection a few lines down, and the factory's own
+    // `deps_ty` further below) — previously recomputed independently at each
+    // site from the same `p.given`, three calls into the same pure function
+    // for the same answer.
+    let given_ir = crate::ir::lower::lower_provider_given_ir(p);
     if !p.given.is_empty() {
-        let deps_ty = crate::ir::lower::lower_provider_given_ir(p)
+        let deps_ty = given_ir
             .iter()
             .map(|c| format!("{}: {}", c.name, cap_ref_ty(c, &ctx.cross_context)))
             .collect::<Vec<_>>()
@@ -1254,10 +1261,7 @@ pub(crate) fn emit_provider(
                 handler: HandlerShared {
                     // The provider's `given` capabilities are in scope in its
                     // bodies, and resolve against the injected `this.deps`.
-                    capabilities: crate::ir::lower::lower_provider_given_ir(p)
-                        .into_iter()
-                        .map(|c| c.name)
-                        .collect(),
+                    capabilities: given_ir.iter().map(|c| c.name.clone()).collect(),
                     cap_deps_expr: if p.given.is_empty() {
                         "deps".to_string()
                     } else {
@@ -1292,9 +1296,10 @@ pub(crate) fn emit_provider(
     let factory = if p.given.is_empty() {
         format!("() => new {}()", p.provider_name.name)
     } else {
-        // P7.2: the same `deps_ty` the constructor above declares for `deps` —
-        // recomputed here since that binding doesn't escape its own block.
-        let deps_ty = crate::ir::lower::lower_provider_given_ir(p)
+        // The same `deps_ty` the constructor above declares for `deps`,
+        // recomputed from the `given_ir` hoisted at the top of this function
+        // (that `deps_ty` binding itself doesn't escape its own block).
+        let deps_ty = given_ir
             .iter()
             .map(|c| format!("{}: {}", c.name, cap_ref_ty(c, &ctx.cross_context)))
             .collect::<Vec<_>>()

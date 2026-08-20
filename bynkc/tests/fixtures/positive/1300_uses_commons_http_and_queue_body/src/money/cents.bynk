@@ -1,0 +1,3 @@
+commons money {
+  type Cents = Int where NonNegative
+}

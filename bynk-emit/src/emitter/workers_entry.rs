@@ -1561,12 +1561,27 @@ fn emit_path_param_construction(
             let _ = writeln!(out, "          const {jname} = __r_{pname}.value;");
         }
         _ => {
-            // Other shapes are rejected by the static check; emit a fallback.
-            // P7.2: `__raw_{pname}` is already `string` (`__m.params[...]`'s own
-            // binding, above in this function) — the same value the
-            // `BaseType::String` arm above uses with no cast at all; this
-            // defensive arm needs none either.
-            let _ = writeln!(out, "          const {jname} = __raw_{pname};");
+            // P7.2 (review of #1300): this used to emit `__raw_{pname}` as a
+            // silent fallback ("other shapes are rejected by the static
+            // check"), which was survivable only while the receiving wrapper
+            // param was itself `any`/`unknown` — a raw `string` satisfies
+            // anything. Now that `emit_http_wrapper`/`emit_http_oidc_wrapper`/
+            // `emit_http_sum_wrapper` type that same param at its real
+            // declared type (`qualified_type_ref`, `workers.rs`), the fallback
+            // would hand a `string` to a `number`/whatever-typed parameter and
+            // ship a project `tsc --strict` rejects — silently, since this
+            // function has no way to surface that. `bynk.http.path_param_not_stringy`
+            // (`bynk-check/src/context_checks.rs`) is a total guarantee: a path
+            // parameter's `TypeRef` is checked to be exactly `String` or a
+            // `String`-based `Named` before emission ever runs, so this arm is
+            // unreachable for any program that passed the checker. Fail loudly
+            // if that guarantee is ever wrong, rather than emit TypeScript that
+            // cannot compile.
+            panic!(
+                "bynk internal error: path parameter `{pname}` reached emission with a \
+                 non-string-constructible type ({t:?}) — `bynk.http.path_param_not_stringy` \
+                 should have rejected this at check time"
+            );
         }
     }
 }
