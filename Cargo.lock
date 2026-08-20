@@ -281,6 +281,7 @@ version = "0.249.40"
 dependencies = [
  "bynk-emit",
  "oxc",
+ "toml",
 ]
 
 [[package]]

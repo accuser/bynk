@@ -193,3 +193,164 @@ pub(crate) fn agent_binding_name(class_name: &str) -> String {
     }
     out
 }
+
+// ---------------------------------------------------------------------------
+// P7.4 (#1305): structural post-emission patches — closes R7.6 ("downstream
+// consumers couple to nodes, never to emitted text") and R8.20 ("deploy-time
+// placeholders are typed, not textual"). `bynk deploy`/`bynk dev --remote`
+// and `--emit js` both need to rewrite one field of an *already-emitted*
+// `wrangler.toml` after compilation — not build one from scratch (that's
+// `emit_wrangler_toml`/`TomlDocument`, P7.3's own construction-side tree).
+// This is the read-an-existing-document side, parsed via `toml::Table`
+// directly (the same established pattern `bynk/src/deploy/ledger.rs` already
+// uses for its own `DeployLock`), so a real structural parse replaces what
+// used to be a substring match against the current emitter's own formatting
+// — immune to a reformat, and scoped to the actual field instead of "this
+// literal string happens to appear somewhere in the file."
+// ---------------------------------------------------------------------------
+
+/// Set `main = "<value>"` in a generated `wrangler.toml`'s text, structurally.
+/// Used by `bynk-strip`'s `--emit js` path: the Workers manifest names its
+/// entry module, and in a JS artefact that module is `.js`, not the `.ts` the
+/// emitter wrote — a `main` left pointing at the stripped `.ts` breaks
+/// `wrangler dev`/deploy on the emitted output.
+pub fn set_wrangler_main(text: &str, value: &str) -> Result<String, String> {
+    let mut doc: toml::Table = text
+        .parse()
+        .map_err(|e| format!("invalid wrangler.toml: {e}"))?;
+    doc.insert("main".to_string(), toml::Value::String(value.to_string()));
+    toml::to_string(&doc).map_err(|e| format!("could not render wrangler.toml: {e}"))
+}
+
+/// Whether a generated `wrangler.toml`'s KV namespace id is still the
+/// deploy-time placeholder — the same condition [`materialise_kv_namespace_id`]
+/// itself checks internally before writing, exposed separately so a caller
+/// can decide whether materialising is needed at all *before* doing the
+/// (possibly fallible) work of finding the real id to substitute — e.g.
+/// `bynk dev --remote` skipping a lock-file lookup entirely for a project
+/// that either has no KV binding or is already materialised.
+pub fn wrangler_needs_kv_materialisation(text: &str) -> Result<bool, String> {
+    let doc: toml::Table = text
+        .parse()
+        .map_err(|e| format!("invalid wrangler.toml: {e}"))?;
+    Ok(current_kv_namespace_id(&doc) == Some(KV_NAMESPACE_ID_PLACEHOLDER))
+}
+
+/// Materialise the deploy-time KV namespace id placeholder in a generated
+/// `wrangler.toml`'s text, structurally. Parses `text` and, if (and only
+/// if) the first `[[kv_namespaces]]` entry's `id` is currently *exactly*
+/// [`KV_NAMESPACE_ID_PLACEHOLDER`], replaces it with `id`.
+///
+/// Any other state — no `[[kv_namespaces]]` section at all, or an `id`
+/// that's already been materialised to a real value — is a **no-op**,
+/// returning `text` unchanged. This mirrors the exact gate the old
+/// `text.contains(KV_NAMESPACE_ID_PLACEHOLDER)` check enforced; it is not a
+/// general "always overwrite with the given id" operation. Widening it into
+/// a re-provisioning operation is a different feature, out of scope here
+/// (#1305's own Decision B).
+pub fn materialise_kv_namespace_id(text: &str, id: &str) -> Result<String, String> {
+    let mut doc: toml::Table = text
+        .parse()
+        .map_err(|e| format!("invalid wrangler.toml: {e}"))?;
+    if current_kv_namespace_id(&doc) != Some(KV_NAMESPACE_ID_PLACEHOLDER) {
+        return Ok(text.to_string());
+    }
+    let entry = doc
+        .get_mut("kv_namespaces")
+        .and_then(|v| v.as_array_mut())
+        .and_then(|arr| arr.first_mut())
+        .and_then(|v| v.as_table_mut())
+        .expect("current_kv_namespace_id returned Some, so this navigation cannot fail");
+    entry.insert("id".to_string(), toml::Value::String(id.to_string()));
+    toml::to_string(&doc).map_err(|e| format!("could not render wrangler.toml: {e}"))
+}
+
+/// The first `[[kv_namespaces]]` entry's `id`, if the stanza exists at all.
+fn current_kv_namespace_id(doc: &toml::Table) -> Option<&str> {
+    doc.get("kv_namespaces")?
+        .as_array()?
+        .first()?
+        .as_table()?
+        .get("id")?
+        .as_str()
+}
+
+#[cfg(test)]
+mod patch_tests {
+    use super::*;
+
+    /// The exact failure mode the defect report named: a differently-spaced
+    /// `main` line (no space around `=`, e.g.) must still patch correctly —
+    /// the old `.replace("main = \"index.ts\"", ..)` would silently miss
+    /// this and leave `main` pointing at the stripped `.ts`.
+    #[test]
+    fn set_wrangler_main_is_immune_to_reformatting() {
+        let text = "name=\"api\"\nmain=\"index.ts\"\ncompatibility_date=\"2024-11-01\"\n";
+        let patched = set_wrangler_main(text, "index.js").unwrap();
+        let parsed: toml::Table = patched.parse().unwrap();
+        assert_eq!(parsed["main"].as_str(), Some("index.js"));
+        assert_eq!(parsed["name"].as_str(), Some("api"));
+    }
+
+    #[test]
+    fn set_wrangler_main_rejects_invalid_toml() {
+        assert!(set_wrangler_main("not = valid = toml = at = all", "index.js").is_err());
+    }
+
+    #[test]
+    fn materialise_kv_namespace_id_replaces_only_the_placeholder() {
+        let text = "[[kv_namespaces]]\nbinding=\"BYNK_KV\"\nid=\"<KV_NAMESPACE_ID>\"\n";
+        let patched = materialise_kv_namespace_id(text, "abc123").unwrap();
+        let parsed: toml::Table = patched.parse().unwrap();
+        let kv = parsed["kv_namespaces"].as_array().unwrap();
+        assert_eq!(kv[0]["id"].as_str(), Some("abc123"));
+        assert_eq!(kv[0]["binding"].as_str(), Some("BYNK_KV"));
+    }
+
+    #[test]
+    fn materialise_kv_namespace_id_is_immune_to_reformatting() {
+        let text = "[[kv_namespaces]]\nbinding = \"BYNK_KV\"\nid = \"<KV_NAMESPACE_ID>\" # set at deploy time\n";
+        let patched = materialise_kv_namespace_id(text, "abc123").unwrap();
+        let parsed: toml::Table = patched.parse().unwrap();
+        assert_eq!(
+            parsed["kv_namespaces"].as_array().unwrap()[0]["id"].as_str(),
+            Some("abc123")
+        );
+    }
+
+    #[test]
+    fn materialise_kv_namespace_id_is_a_no_op_without_a_kv_namespaces_section() {
+        let text = "name = \"api\"\nmain = \"index.ts\"\n";
+        let patched = materialise_kv_namespace_id(text, "abc123").unwrap();
+        assert_eq!(patched, text);
+    }
+
+    #[test]
+    fn materialise_kv_namespace_id_is_a_no_op_once_already_materialised() {
+        let text = "[[kv_namespaces]]\nbinding = \"BYNK_KV\"\nid = \"already-real\"\n";
+        let patched = materialise_kv_namespace_id(text, "abc123").unwrap();
+        assert_eq!(patched, text);
+    }
+
+    #[test]
+    fn wrangler_needs_kv_materialisation_matches_materialise_kv_namespace_ids_own_gate() {
+        let placeholder = "[[kv_namespaces]]\nid = \"<KV_NAMESPACE_ID>\"\n";
+        assert!(wrangler_needs_kv_materialisation(placeholder).unwrap());
+
+        let no_kv = "name = \"api\"\n";
+        assert!(!wrangler_needs_kv_materialisation(no_kv).unwrap());
+
+        let already_real = "[[kv_namespaces]]\nid = \"already-real\"\n";
+        assert!(!wrangler_needs_kv_materialisation(already_real).unwrap());
+    }
+
+    #[test]
+    fn wrangler_needs_kv_materialisation_rejects_invalid_toml() {
+        assert!(wrangler_needs_kv_materialisation("not = valid = toml = at = all").is_err());
+    }
+
+    #[test]
+    fn materialise_kv_namespace_id_rejects_invalid_toml() {
+        assert!(materialise_kv_namespace_id("not = valid = toml = at = all", "abc123").is_err());
+    }
+}

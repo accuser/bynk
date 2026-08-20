@@ -35,6 +35,12 @@ use crate::shell::exit_status_byte;
 use crate::workers;
 
 const LOCK_FILE: &str = "bynk.deploy.lock";
+// P7.4 (#1305): every non-test use of the placeholder now goes through
+// `bynk_emit::emitter::wrangler`'s own structural functions
+// (`materialise_kv_namespace_id`/`wrangler_needs_kv_materialisation`) —
+// this name survives only for `deploy/ledger.rs`'s own test fixtures, which
+// build a minimal `wrangler.toml` containing it.
+#[cfg(test)]
 use bynk_emit::emitter::wrangler::KV_NAMESPACE_ID_PLACEHOLDER;
 
 mod config;
