@@ -323,18 +323,19 @@ reached through a green gate.
   wrap would read as 1 new variant and *hundreds* of new `verbatim_sites` — visibly not
   conversion, and rejectable at review on that basis alone.
 
-`ts_writes` and `ts_any` are buildable now, against a real baseline (§1's own measurement), and
-land in **P7.0**. `verbatim_origins` and `verbatim_sites` scan for patterns
-(`VerbatimOrigin`/`Verbatim::new`) that don't exist in source until **P7.5** builds them — and,
-per this codebase's own probe-fixture discipline (every probe needs a fixture exercising its
-stated hazard, not just its happy path, the precedent T0.0's own "Done when" set), a probe can't
-be meaningfully fixture-tested against a type that doesn't exist yet. So they're built in P7.5,
-alongside `Verbatim`/`VerbatimOrigin` themselves, not stubbed early in P7.0. `xtask/src/
-greenfield_status.rs` has 13 probes today; P7.0 adds two, P7.5 adds two more. Per Q3, the `ts_any`
-trend probe must scan for `as any` **and** bare `: any` — a probe scoped to the former alone
-under-counts. Per Q2, `Verbatim` content also needs a textual lint (banned constructs, run in CI)
-as a companion to the golden fixtures, since golden output alone is blind
-to what a `Verbatim` block hides.
+`ts_writes` and `ts_any` were buildable against a real baseline (§1's own measurement) without
+`Verbatim` existing, and landed in **P7.0** (#1296, shipped — `xtask/src/greenfield_status.rs`
+carries 15 probes today, gated on `ts_writes` = 1641, `ts_any` = 55). `verbatim_origins` and
+`verbatim_sites` scan for patterns (`VerbatimOrigin`/`Verbatim::new`) that don't exist in source
+until **P7.5** builds them — and, per this codebase's own probe-fixture discipline (every probe
+needs a fixture exercising its stated hazard, not just its happy path, the precedent T0.0's own
+"Done when" set), a probe can't be meaningfully fixture-tested against a type that doesn't exist
+yet. So they're built in P7.5, alongside `Verbatim`/`VerbatimOrigin` themselves, not stubbed early
+in P7.0. Per Q3, the `ts_any` probe scans for `as any` **and** bare `: any` (and, per review of
+#1297, `any` in generic type-argument position — widened after landing found the narrower
+definition under-counted a live case) — a probe scoped to `as any` alone under-counts. Per Q2,
+`Verbatim` content also needs a textual lint (banned constructs, run in CI) as a companion to the
+golden fixtures, since golden output alone is blind to what a `Verbatim` block hides.
 
 ---
 
@@ -359,7 +360,7 @@ named rule-closing slices, R8.2/R8.14, replacing an unscoped placeholder).
 
 | Slice | What lands | Rules | Gated on |
 |---|---|---|---|
-| **P7.5** | `bynk-ts` crate carved up front (§3.1) — `TsProgram`/`TsNode`/`Span`, `Verbatim`/`VerbatimOrigin` plus its companion textual lint (§3.2), printer owning buffer/indentation/offsets, `SourceMap` relocated from `emitter/source_map.rs` | R7.2, R7.3, R7.4, R10.1, R10.3 | §3.1, §3.2 |
+| **P7.5** | `bynk-ts` crate carved up front (§3.1) — `TsProgram`/`TsNode`/`Span`, `Verbatim`/`VerbatimOrigin` plus its companion textual lint (§3.2), printer owning buffer/indentation/offsets, `SourceMap` relocated from `emitter/source_map.rs`; `verbatim_origins`/`verbatim_sites` gated probes added to `xtask/src/greenfield_status.rs` alongside the types they measure (§5, §8 — `ts_writes`/`ts_any` already landed in P7.0, #1296) | R7.2, R7.3, R7.4, R10.1, R10.3 | §3.1, §3.2 |
 | **P7.6** | `Artefacts { docs: BTreeMap<PathBuf, Document> }` replaces `CompiledFile` (`project.rs:97`) | R7.8 | P7.5 |
 | **P7.7** | Named, tested printer policy | R7.5 | P7.5 |
 | **P7.8** | `TsStmt`/`TsExpr`/`TsType`/`TsDecl` per §7.1's sketch — no `Any`/`enum`/`namespace`/decorator/param-property representable; lower-risk than the draft assumed, since P7.2 already narrowed most `any` sites ahead of this slice | R7.1 | P7.5 |
@@ -408,11 +409,13 @@ convention every prior track on this trajectory used.
 
 ## 8. Keeping the reference true
 
-Four probes need building, split across two slices (§5): `ts_writes` and `ts_any` in **P7.0**,
-scoped to `as any` **and** bare `: any` per §3.3's own correction — mirroring `the-ir.md`'s own
-P6.0 being real infrastructure, not ceremony. `verbatim_origins` and `verbatim_sites` in **P7.5**,
-alongside the `Verbatim`/`VerbatimOrigin` types they measure, since a probe can't be
-fixture-tested before its target type exists. `design/bynk-greenfield-compiler.md`'s Appendix D
+Four probes, split across two slices (§5). `ts_writes` and `ts_any` **landed in P7.0** (#1296),
+scoped to `as any` **and** bare `: any` (widened further after landing — review of #1297 — to also
+catch generic type-argument position) per §3.3's own correction — mirroring `the-ir.md`'s own P6.0
+being real infrastructure, not ceremony. `verbatim_origins` and `verbatim_sites` still need
+building, in **P7.5**, alongside the `Verbatim`/`VerbatimOrigin` types they measure, since a probe
+can't be fixture-tested before its target type exists. `design/bynk-greenfield-compiler.md`'s
+Appendix D
 carries no R7/R8 rows yet (its own note: "most of phases 6–8... have no live probe yet"), so this
 settling pass adds none there — a future pass, once these probes exist and phase 7 is further
 along, is the natural point to add them, not this one.
@@ -477,8 +480,8 @@ this settling pass (numbers assigned at merge by the stamp; referred to by lette
 
 - **ADR-A** — `bynk-ts` is carved as a crate in the first Arc B slice (P7.5), not built in-module
   and carved later. §3.1 (Q1).
-- **ADR-B** — the migration escape hatch is `TsStmt::Verbatim{origin: VerbatimOrigin, text:
-  String}`, statement granularity, sealed constructor, with a companion textual lint over its
+- **ADR-B** — the migration escape hatch is `TsStmt::Verbatim{origin: VerbatimOrigin, text: String}`,
+  statement granularity, sealed constructor, with a companion textual lint over its
   content run in CI alongside golden fixtures, and completion tracked by three probes —
   `ts_writes`, `verbatim_origins`, `verbatim_sites` (§5) — not two, after PR review found the
   two-probe version gameable by a wholesale, undecomposed wrap of a large file. §3.2 (Q2). Likely
