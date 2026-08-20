@@ -46,10 +46,15 @@ summary: How a case addresses a handler and names its principal
   (the stamp prepends it). It lands verbatim in the Book's
   `reference/changelog.md` table, so it is **Markdown**: wrap code in backticks,
   or a generic call like `Events.emit[E](event)` parses as a link to a relative
-  `event` and fails the docs site's link-checker. Only absolute (`https://…`),
-  site-root (`/book/…`) and anchor links are accepted; the stamp rejects the rest
-  here, pre-merge, because the site only sees the row after it is written on
-  `main`.
+  `event` and fails the docs site's link-checker. The stamp rejects a relative
+  link here, pre-merge, because the site only ever sees the row *after* it is
+  written on `main`.
+
+  That check is about link *shape*, not link *targets*. Absolute (`https://…`),
+  `mailto:`, site-root (`/book/…`) and anchor (`#…`) destinations pass it
+  unexamined — but the site's link-checker does resolve the last two, so a
+  mistyped `/book/no-such-page/` or `#no-such-anchor` still passes the stamp and
+  then fails the docs build on `main`. Check those by hand.
 
 No other keys are permitted — a typo like `levl:` is rejected rather than
 silently ignored.

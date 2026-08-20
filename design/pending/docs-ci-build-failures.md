@@ -1,0 +1,4 @@
+---
+level: patch
+changelog: A changelog blurb is validated as Markdown before it is stamped — `cargo xtask stamp` now rejects a pending increment whose blurb reads as a link to a relative destination, the shape an unbackticked generic call such as `Events.emit[E](event)` silently produces. The blurb is inserted verbatim into the Book's changelog table by the merge-time stamp on `main`, so the docs site's link-checker only ever saw the row post-merge, after a bad one had already broken `main`; the same rule now runs pre-merge, where the author can still act on it, and again inside the stamp's own plan, where a failure leaves the pending file intact rather than pushing a broken table. Shape only — site-root and anchor destinations are resolved by the site gate alone, which the pending-file format doc now says explicitly. Also repairs the v0.249.1 row that had been failing `Docs site (astro build)` on every `main` push since it landed.
+---

@@ -552,24 +552,28 @@ fn relative_markdown_link_in(blurb: &str) -> Option<String> {
             // A backslash escape covers the next byte, whatever it is.
             b'\\' => i += 1,
             // Skip a code span: a run of N backticks closes on the next run of
-            // exactly N. An unterminated run swallows the rest, which only ever
-            // makes this check quieter — a blurb with odd backticks is the
-            // author's to fix either way.
+            // exactly N. An *unmatched* run is literal text in CommonMark and
+            // the rest of the blurb still parses as Markdown, so resume just
+            // after it rather than swallowing the remainder — otherwise a
+            // half-applied fix (`` `Events.emit[E](event) ``, opening backtick
+            // only) would sail through this check and break `main` anyway.
             b'`' => {
                 let fence = bytes[i..].iter().take_while(|&&b| b == b'`').count();
                 let mut j = i + fence;
+                let mut closed = false;
                 while j < bytes.len() {
                     if bytes[j] == b'`' {
                         let run = bytes[j..].iter().take_while(|&&b| b == b'`').count();
                         j += run;
                         if run == fence {
+                            closed = true;
                             break;
                         }
                     } else {
                         j += 1;
                     }
                 }
-                i = j;
+                i = if closed { j } else { i + fence };
                 continue;
             }
             b'[' => saw_open_bracket = true,
@@ -580,12 +584,9 @@ fn relative_markdown_link_in(blurb: &str) -> Option<String> {
                 let Some(len) = bytes[start..].iter().position(|&b| b == b')') else {
                     break;
                 };
-                // Markdown allows `(dest "title")`; only the destination matters.
-                let dest = blurb[start..start + len]
-                    .split_whitespace()
-                    .next()
-                    .unwrap_or("");
-                if !is_absolute_link_destination(dest) {
+                if let Some(dest) = link_destination(&blurb[start..start + len])
+                    && !is_absolute_link_destination(dest)
+                {
                     return Some(dest.to_string());
                 }
                 i = start + len;
@@ -598,8 +599,38 @@ fn relative_markdown_link_in(blurb: &str) -> Option<String> {
     None
 }
 
+/// The destination inside a `](…)` link tail, or `None` when the tail is not one.
+///
+/// CommonMark accepts `(dest)` and `(dest "title")` (also `'…'` and `(…)` titles),
+/// and a bare destination may not contain spaces unless it is `<…>`-wrapped. So a
+/// multi-parameter generic call in prose — `map[K, V](key, value)` — is genuinely
+/// not a link, and reporting one would assert something the site's own checker
+/// would never do. Backticking it is still the house convention; this check just
+/// does not claim it is a broken link.
+fn link_destination(tail: &str) -> Option<&str> {
+    let tail = tail.trim();
+    if let Some(rest) = tail.strip_prefix('<') {
+        return rest.split_once('>').map(|(dest, _)| dest);
+    }
+    let (dest, rest) = match tail.split_once(char::is_whitespace) {
+        Some((dest, rest)) => (dest, rest.trim_start()),
+        None => (tail, ""),
+    };
+    // Whatever follows the destination has to be a title, or this is just prose.
+    if rest.is_empty() || rest.starts_with(['"', '\'', '(']) {
+        Some(dest)
+    } else {
+        None
+    }
+}
+
 /// Whether a Markdown link destination resolves without depending on the page it
 /// is written on — the only kind a changelog blurb may carry.
+///
+/// Note this is about *shape*, not existence: the site's link-checker also
+/// resolves site-root paths and anchors, which nothing here can do without the
+/// built site. A hand-written `/book/typo/` still passes this and fails the docs
+/// build. `design/pending/README.md` says so rather than implying a guarantee.
 fn is_absolute_link_destination(dest: &str) -> bool {
     dest.starts_with("https://")
         || dest.starts_with("http://")
@@ -809,6 +840,60 @@ mod tests {
         ok(
             "x.md",
             "---\nlevel: minor\nchangelog: Widen ts_any [see the probe] (P7.0) for writes\n---\n",
+        );
+    }
+
+    #[test]
+    fn a_half_backticked_changelog_is_still_rejected() {
+        // The likeliest mistake after reading the error message: the author adds
+        // the opening backtick and forgets the closing one. CommonMark treats the
+        // unmatched run as literal text and still links `[E](event)` (confirmed
+        // against the site's own parser), so the guard must not stop scanning.
+        let content = "---\nlevel: patch\nchangelog: Detect an `Events.emit[E](event) call\n---\n";
+        assert!(
+            err("x.md", content)
+                .iter()
+                .any(|e| e.contains("relative destination \"event\"")),
+            "expected rejection, got {:?}",
+            err("x.md", content)
+        );
+    }
+
+    #[test]
+    fn a_stray_backtick_does_not_blind_the_rest_of_the_blurb() {
+        // Same failure mode from an unrelated typo earlier in the sentence.
+        let content = "---\nlevel: patch\nchangelog: A stray `Callee typo, then \
+                       Events.emit[E](event) later\n---\n";
+        assert!(
+            err("x.md", content)
+                .iter()
+                .any(|e| e.contains("relative destination \"event\"")),
+            "expected rejection, got {:?}",
+            err("x.md", content)
+        );
+    }
+
+    #[test]
+    fn a_multi_parameter_generic_call_is_not_reported_as_a_link() {
+        // `(key, value)` holds a space, so CommonMark does not link it — claiming
+        // otherwise would assert a failure the site checker would never produce.
+        ok(
+            "x.md",
+            "---\nlevel: minor\nchangelog: Lift a fn map[K, V](key, value) call\n---\n",
+        );
+    }
+
+    #[test]
+    fn a_titled_link_is_still_read_as_a_link() {
+        // `(dest "title")` is a real link, so the destination is still checked
+        // even though a space follows it.
+        let content = "---\nlevel: minor\nchangelog: See [it](there \"a title\")\n---\n";
+        assert!(
+            err("x.md", content)
+                .iter()
+                .any(|e| e.contains("relative destination \"there\"")),
+            "expected rejection, got {:?}",
+            err("x.md", content)
         );
     }
 
