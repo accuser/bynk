@@ -1,9 +1,10 @@
 # The TypeScript tree and printer — migrating to the greenfield reference (phase 7)
 
-- **Status:** **Draft — Settling.** Spine open. This file is drafted for a settling draft PR
-  (tracks/README.md step 2). Nothing here is decided — every question in §3 is open, each with
-  the investigation it needs, not yet argued under review. Marking that PR ready for review
-  asserts §3's questions are closed.
+- **Status:** **Settled — Slicing on merge.** §3's five questions were argued under a settling review
+  on this branch. Q3 and Q4 changed shape during this settling pass, in the direction of more evidence,
+  not more doubt — see the provenance note at the head of §3. Merging settles **direction**; it is not a
+  build authorisation. Each slice is still an ordinary increment proposal, and `accepted` on that
+  sub-issue is the approval to build.
 - **Spine:** [#1293](https://github.com/accuser/bynk/issues/1293).
 - **Theme:** **Phase 7** of [`../bynk-compiler-trajectory.md`](../bynk-compiler-trajectory.md) —
   emission produces nodes; one printer writes every character. `bynk-ts` holds the TypeScript
@@ -15,42 +16,35 @@
 - **Phase boundaries are safe stopping points** (trajectory §2). Phase 6 is retired
   ([#1137](https://github.com/accuser/bynk/issues/1137), retired 19 August 2026) and leaves a
   coherent compiler regardless of whether this phase lands.
-- **Relates:** reference rules R7.1–R7.8 in full (`bynk-greenfield-compiler.md` Part 7, lines
-  1207–1289), plus R8.1 (totality over `IrItem`, no wildcard arm) and the R8 rules governing how
-  output is *constructed* — R8.19 (typed string escaping), R8.20 (typed deploy placeholders),
-  R8.21 (uniform `async`), R8.22 (no `undefined` in generated JSON). The remaining R8 rules
-  (R8.2–R8.18: brand strings, `unsafe` as a `TypeShape` field, numeric refinement ordering,
-  commons re-branding, commit shapes, `loadState` merge, invariant/transition ordering, factory
-  helpers, handler key mangling, `deps` derivation, the internal-door wrapper, boundary
-  verification, codec collection and dispatch, the compose root, the sorted route table, contract
-  hash validation) are chiefly emission-*semantics*, much of it plausibly already settled by phase
-  6's `IrItem`/`Callee` work — **see Q4: re-verified still true, not rebuilt, unless found open.**
+- **Relates:** reference rules R7.1–R7.8 in full — **Q3 settles that all eight, including R7.1's
+  `Any` elimination, are achievable within this track**, not partially deferred. Plus R8.1
+  (totality over `IrItem`), R8.20 (folded into Arc A's wrangler work, same defect as R7.6), and —
+  **per Q4** — the five R8 rules closed as a natural byproduct of the tree/printer conversion
+  (R8.3, R8.6, R8.8, R8.10, R8.16's emission half) and two rules needing their own named slices
+  (R8.2, R8.14). The remaining twelve R8 rules (R8.5, R8.7, R8.9, R8.11–R8.13, R8.15, R8.17–R8.19,
+  R8.21, R8.22) already read closed and carry only a verify-only pass; R8.4 needs a cheap
+  confirming slice; R8.16's data-model half (a typed `ProjectGraph`) stays phase 8's, per phase
+  4's own deferral.
 - **Precedent:** `the-ir.md` (retired) is this track's direct predecessor on the same trajectory.
   Its own §7 ("Forward references") named this phase's entry condition explicitly, and amended it
   mid-flight (P6.58): not `ast_importers` reading 0, but reading its own re-settled floor, 5 —
   `bynk-emit/src/emitter.rs`, `emitter/emit.rs`, `emitter/lower.rs`, `emitter/workers.rs`,
   `emitter/workers_entry.rs` — because the renderer family living in those five files (`ts_base`,
   `ts_type_ref*`, `ty_to_type_ref`, `pred_condition_and_message`) is *this* track's own future
-  surface, not phase 6's unfinished work. `the-typescript-tree.md` would be the thirteenth track
-  to run the ADR 0167 flow from the start, after `compiler-architecture.md` (sixth),
+  surface, not phase 6's unfinished work. `the-typescript-tree.md` is the twelfth track to run
+  the ADR 0167 flow from the start, after `compiler-architecture.md` (sixth),
   `identity-and-totality.md` (seventh), `content-ownership.md` (eighth), `project-model.md`
-  (ninth), `semantics-in-the-checker.md` (tenth)... `the-ir.md` (retired) was the eleventh, so
-  this is the twelfth.
+  (ninth), `semantics-in-the-checker.md` (tenth), `the-ir.md` (eleventh).
 
 ### ADR 0076 trigger check
 
 | Trigger | Met? |
 |---|---|
-| Spans several increments | **Yes, decisively.** Trajectory §5 rates this phase relative size 15, confidence *low* — against phase 6, sized 20 and delivered in 59 slices, against a smaller emitter surface than this phase inherits. §1 below measures phase 7's own probe for the first time (it was "not measured" at §3.0's baseline) at ~1,540 TypeScript-producing sites across 21,742 lines, 52% of `bynk-emit`. The size question is one of §3's open items (Q5), but "several increments" is not in doubt at any plausible answer |
-| Surface not yet settled | **No** — the destination (R7.1–R7.8: tree shape, printer ownership, source-map production, `Artefacts` as typed documents) is fully specified in the reference. What's open is the migration *method* — whether an escape hatch exists, where it lives, what forces it to a floor (Q2), and whether the crate is carved before or after conversion begins (Q1) |
-| Security/safety boundary | **No** — this phase's motivating defects (source-map corruption via unaccounted offsets, finding #4; `wrangler.toml` coupling by substring match, R7.6's own rationale) are correctness and maintainability failures, not security gates. `TsType::Any` elimination narrows a real gap (`tsc --strict` disarmed by 48 `as any` casts, R7.1's own rationale, finding #18) but this is a type-safety improvement, not a new authorization or capability boundary |
+| Spans several increments | **Yes, decisively.** §6's settled slice count is 37, tightened from the provisional 35–45 range — against phase 6, sized 20 and delivered in 59 slices, against a smaller emitter surface than this phase inherits |
+| Surface not yet settled | **No** — the destination (R7.1–R7.8) is fully specified in the reference. §3 closes the migration *method*: the escape hatch's shape and forcing function (Q2), the crate-carve sequencing (Q1), R7.1's real scope (Q3) and R8's real boundary (Q4) |
+| Security/safety boundary | **No** — this phase's motivating defects (source-map corruption, `wrangler.toml` substring coupling) are correctness and maintainability failures, not security gates. `TsType::Any` elimination narrows a real type-safety gap (finding #18) but is not a new authorization boundary |
 
-**One of three**, same count as every internal-architecture track on this trajectory before it
-(`compiler-architecture.md`, `identity-and-totality.md`, `content-ownership.md`,
-`project-model.md`, `semantics-in-the-checker.md`, `the-ir.md`). The warrant is the tracks
-README's own: §3's questions govern the migration method — the crate-carve sequencing, the escape
-hatch's shape and its forcing function, and R8's real boundary — none of which the trajectory
-document or the reference spec settles on their own.
+**One of three**, same count as every internal-architecture track on this trajectory before it.
 
 ---
 
@@ -60,255 +54,309 @@ document or the reference spec settles on their own.
 so.** `the-ir.md`'s §7 recorded `bynk-ts` as a forward reference gated on `ast_importers` reading
 0; P6.58 (`b22752a1`) re-settled that to "reads its own named floor" once the track's research
 found the renderer family in `emitter.rs`/`emit.rs`/`lower.rs`/`workers.rs`/`workers_entry.rs`
-cannot leave `bynk-emit` until `bynk-ts` exists to receive it — a circularity the 0-target could
-not resolve. The floor, 5, is where phase 6 retired (`79053b09`); it is where this phase begins.
+cannot leave `bynk-emit` until `bynk-ts` exists to receive it. The floor, 5, is where phase 6
+retired (`79053b09`); it is where this phase begins.
 
-**Phase 7's own probe was never measured.** §3.0's baseline table (30 July 2026) records "TypeScript-producing `write!`/`format!` outside `bynk-ts` = not measured". Measured now, against the
-working tree (19 August 2026):
+**Phase 7's own probe was never measured; measured for the first time on this branch, and one
+figure needed correcting during settling.** §3.0's baseline table (30 July 2026) records "not
+measured". Measured against the working tree (19–20 August 2026):
 
 | Reading | Value |
 |---|---|
 | `write!`/`writeln!`/`format!` in `bynk-emit` | **1,709** total — `format!` 853, `writeln!` 845, `write!` 11 |
-| …of which genuinely TypeScript-producing | **~1,540** (excludes 130 test-assertion sites in `project/tests_emit.rs`, 32 TOML sites in `emitter/wrangler.rs`, 5 diagnostic sites in `ir/lower.rs`) |
-| By file (top): `emitter/emit.rs` 409 · `emitter/lower.rs` 372 · `emitter/serialisation.rs` 237 · `emitter/workers_entry.rs` 192 · `emitter/workers.rs` 137 · `emitter.rs` 99 · `project.rs` 44 · `emitter/events_fanout.rs` 41 | |
+| …of which genuinely TypeScript-producing | **~1,540** |
 | Emitter subtree (`emitter.rs` + `emitter/**`) | **21,742 LOC**, 52% of `bynk-emit`'s 41,953-line total |
-| `as any` casts in `bynk-emit/src` | **48**, clustered in `emitter/workers.rs` (params/payload wrappers, e.g. `:690,709,747,931,1004,1041,1131,1151`) and `emitter/serialisation.rs` (codec casts, `:314,317,802,941,1026`) |
-| `TsType`/`TsProgram`/`Artefacts` Rust types | **none exist** — today's carrier is `pub struct CompiledFile { .. output_path: PathBuf .. }`, `bynk-emit/src/project.rs:97` |
-| Other crates producing TypeScript text | **0** (one false positive on inspection: `bynk-fmt/src/fmt.rs:2953` formats *Bynk* lambdas, not TypeScript) |
+| `TsType`/`TsProgram`/`Artefacts` Rust types | **none exist** — today's carrier is `pub struct CompiledFile`, `bynk-emit/src/project.rs:97` |
 | `bynk-ts` crate | **does not exist** — 17 workspace members today |
+| `as any` casts (raw grep) | **42**, corrected during settling from an earlier count of 48 (Q3) |
+| …of which real emission sites | **~24** — the rest are Rust comments/doc-comments (11), one unrelated English phrase (`ir/lower.rs:3290`, "same as any other subexpression" — not TypeScript), hand-written runtime `.ts` files (5, R7.7's territory not R7.1's), and one test-fixture input string |
+| Bare `: any` annotations missed by an `as any` grep | **19**, found independently during settling (Q3) — a probe scoped to `as any` alone under-covers R7.1 |
 
 `design/bynk-greenfield-compiler.md` §15.2 prices the printer itself at "2,000–3,000 lines written
-before the first emitted character" — a cost phase 6 never had to pay, since `Ir` is a value type,
-not a writer. Phase 6 was sized 20 (relative) and took 59 slices against a smaller, better-scoped
-surface (the IR's *shape*, not its rendering). **The trajectory's own sizing of phase 7 at 15 is
-not credible against these numbers** (Q5).
+before the first emitted character" — a cost phase 6 never paid, since `Ir` is a value type, not
+a writer. Phase 6 was sized 20 (relative) and took 59 slices against a smaller, better-scoped
+surface (the IR's *shape*, not its rendering).
 
 **Two defects this phase closes are live in shipped code, not hypothetical.** R7.6's own
-rationale — "downstream consumers couple to nodes, never to emitted text" — is not abstract:
-`emitter/wrangler.rs:34` defines `KV_NAMESPACE_ID_PLACEHOLDER = "<KV_NAMESPACE_ID>"`, and
-`bynk/src/deploy/config.rs:195,260,263` and `bynk/src/deploy/ledger.rs:365` text-match and
-`.replace()` against it; `bynk-strip/src/lib.rs:136-139` does the same for
-`main = "index.ts"` → `main = "index.js"` — "reformat that line's spacing and `--emit js`
-silently produces a `wrangler.toml` pointing at a file that no longer exists" is not a
-hypothetical failure mode, it is the shape of the code today. R7.4's rationale — wrong, not
-missing, source-map offsets — is finding #4 (Medium, confirmed): `record_span(out.len(), …)`
-in `emitter/source_map.rs` "has no idea which buffer `out` is," so IIFE-local offsets corrupt the
-map.
+rationale is not abstract: `emitter/wrangler.rs:34` defines
+`KV_NAMESPACE_ID_PLACEHOLDER = "<KV_NAMESPACE_ID>"`, and `bynk/src/deploy/config.rs:195,260,263`
+and `bynk/src/deploy/ledger.rs:365` text-match and `.replace()` against it;
+`bynk-strip/src/lib.rs:136-139` does the same for `main = "index.ts"` → `main = "index.js"`. This
+is also literally R8.20's own defect (Appendix B: "a deploy placeholder broken by a reformat, the
+KV id literal") — the two rules share one fix, folded into a single Arc A slice (§6). R7.4's
+rationale — wrong, not missing, source-map offsets — is finding #4 (Medium, confirmed):
+`record_span(out.len(), …)` in `emitter/source_map.rs` "has no idea which buffer `out` is," so
+IIFE-local offsets corrupt the map.
 
-**One finding appears to have aged out already.** Finding #17 (review, `#17`) reported ~300 lines
-of harness TypeScript as Rust string literals beside an `include_str!` of `runtime.ts`. In the
-current tree, `emitter.rs:94` (`include_str!("emitter/runtime.ts")`) and five sites in
-`project/tests_emit.rs` (`:1894,1902,2748,2752,2764`, each `include_str!`-ing a file under
-`emitter/test_runtime/`) already load real `.ts` files, and `bynk-emit/runtime/tsconfig.json`
-type-checks `src/**` and `test/**` under `strict`. R7.7 may be substantially closed already —
-**verify before scheduling a slice for it** (§6 candidate P7.1 is a verification pass, not
-construction, pending this).
-
-**The "`tsc --strict` disarmed at two places" is the `as any` casts, not config.** Emitted
-`tsconfig.json` sets `strict: true`/`noImplicitAny: true` (`emitter.rs:141`,
-`bynk-emit/runtime/tsconfig.json:10`); there are zero `@ts-ignore`/`@ts-nocheck` anywhere in the
-repo. `emitter/workers.rs:577` documents keeping `: any` as *deliberate* policy on several of the
-48 sites — this is the tension Q3 exists to resolve, not an oversight to sweep away casually.
+**One finding appears to have aged out already.** Finding #17 reported ~300 lines of harness
+TypeScript as Rust string literals beside an `include_str!` of `runtime.ts`. In the current tree,
+`emitter.rs:94` and five sites in `project/tests_emit.rs` already load real `.ts` files, and
+`bynk-emit/runtime/tsconfig.json` type-checks them under `strict`. R7.7 is substantially closed
+already — P7.1 (§6) is a verification pass, not construction.
 
 ---
 
 ## 2. What this track is not
 
 - **Not phase 8 (incrementality).** Query granularity, `UnitSignature`, the firewall are
-  untouched here — carried forward in §7, not built.
-- **Not re-opening phase 6's IR shape.** `IrExpr`/`IrItem`/`Callee`/`CommitShape` are settled;
-  this phase's business with the IR is reading it, not changing its shape — except where Q3 finds
-  `TsType::Any` elimination genuinely needs a type the IR does not carry, in which case that
-  specific gap is named and scoped narrowly, not treated as license to redesign the IR.
-- **Not rebuilding R8's emission semantics wholesale.** R8.2–R8.18 are assumed closed by phase 6
-  or by ordinary paydown until Q4's re-verification finds otherwise. This track's job is
-  converting *how* R8's mappings are written (`Ir -> TsProgram -> Artefacts`, not
-  `Ir -> String`), not re-deriving *what* they map to.
-- **Not a full crate re-graph.** Only `bynk-ts` (and, if Q1 settles that way, `bynk-ir`/
-  `bynk-lower`, whose absent second consumer was ADR 0332's stated reason for deferring them) are
-  this phase's crate moves. R10.5 (command bodies to `bynk-driver`) and R10.6/R10.7 are untouched.
-- **Not phases 6's own residue by name.** The five files at `ast_importers`'s floor are this
+  untouched here.
+- **Not re-opening phase 6's IR shape.** Q3 settles that no `as any`/bare-`any` site needs an IR
+  extension — `IrExpr`/`IrItem`/`Callee`/`CommitShape` stay as phase 6 left them. The one residual
+  (§3.3) needs a new *runtime-exported* type, not a new IR field.
+- **Not rebuilding R8's emission semantics wholesale.** Q4 settles that twelve of twenty-one R8
+  rules already read closed and need only a verify-only pass; five more close as a byproduct of
+  Arc B/C's own conversion work, with no separate construction. Only R8.2 and R8.14 are genuinely
+  separate scope.
+- **Not a full crate re-graph.** Only `bynk-ts` (Q1: carved up front) and, once its own trigger is
+  met, `bynk-ir`/`bynk-lower` are this phase's crate moves.
+- **Not phase 6's own residue by name.** The five files at `ast_importers`'s floor are this
   phase's surface *because* phase 6 argued them there — this track inherits that argument, it
   does not re-litigate it.
 
 ---
 
-## 3. Design questions — open
+## 3. Design questions — settled
 
-None of the five below has been argued under a settling review yet. Each states the investigation
-already done and the tension it leaves.
+> **Provenance: Q3 and Q4 changed shape during this settling pass, in the direction of more
+> evidence, not more doubt.**
+>
+> The draft treated Q3 (`TsType::Any` elimination) as a live risk that could re-open phase 6 —
+> `emitter/workers.rs:577`'s documented `: any` policy read as a warning sign. A full,
+> site-by-site classification of every `as any` occurrence (not a sample) found the opposite: the
+> real count was smaller than measured (42, not 48; ~24 real emission sites once comments and
+> runtime `.ts` files are excluded), and every real site resolves without touching the IR — most
+> to `unknown` or a locally-derivable structural type, a few to a generated index-signature type
+> using data the IR already carries, and a small named residual (2–3 sites) needing a new
+> *runtime*-exported type rather than a checker/IR change. `workers.rs:577`'s comment is a
+> parameter-provenance argument, unaffected by phase 6, and survives as the reason those specific
+> wrappers keep a (now-typed) escape rather than as evidence against full elimination.
+>
+> The draft treated Q4 (R8's scope) as answerable with a coarse "closed vs. open" split. A
+> rule-by-rule audit against the current tree — the same discipline `semantics-in-the-checker.md`
+> applied to `emit_diagnostics` — found the true shape is three-way, not two-way: twelve rules
+> closed outright, five closed *behaviourally* but sourced from the AST or ad-hoc collection
+> rather than the IR (naturally finished by this track's own conversion, not separate work), and
+> only two (R8.2, R8.14) genuinely open and separately scoped. One rule (R8.16) splits down the
+> middle with phase 8, which already owns its data-model half by name.
+>
+> Q1 and Q2 resolved close to the draft's own framing, each sharpened by real precedent this pass
+> found rather than reasoned abstractly.
 
-### 3.1 Q1 — Is `bynk-ts` carved as a crate up front, or built as a module inside `bynk-emit` and carved later, the way `ir.rs` was in phase 6 (ADR 0332)?
+### 3.1 Q1 — Is `bynk-ts` carved as a crate up front, or built as a module inside `bynk-emit` and carved later? **Settled.**
 
-Phase 6 built the IR as `bynk-emit/src/ir.rs`/`ir/lower.rs`, inside the existing crate, and
-deferred the `bynk-ir`/`bynk-lower` split explicitly for want of a second consumer (R10.3's own
-"carve prospectively when a dependency arrives that only one consumer needs" — there wasn't one).
-The same argument does not obviously transfer to `bynk-ts`: R7.3's invariant ("the printer... is
-the only code in the compiler that writes a character") is a boundary a `pub(crate)` module cannot
-enforce on itself — finding #42 (33 of 38 world-reachable `bynk_emit::emitter` items are `pub`
-only to reach a *sibling* module) is exactly the failure mode of "boundary enforced by convention,
-not by the crate graph." Carving `bynk-ts` immediately also manufactures the second IR consumer
-ADR 0332 was waiting for, which would let phase 6's own deferred crate split happen inside this
-phase rather than needing a further trigger later.
+**Decision: carved up front, in the first Arc B slice (P7.5).** This codebase has exactly two
+prior R10.3-shaped precedents, and both were carved up front, never built in-module first:
+`bynk-strip` (commit `868fda94`, #385 — created new, in the same PR as its only consumer) and
+`bynk-render` (commit `b56f22de`, #251, `crate-decomposition` track slice 6 — created new, in the
+same PR that moved seven existing renderer functions out of `bynkc` into it; its own module doc
+states the load-bearing invariant directly, `cargo tree -p bynk-render` is `bynk-syntax` +
+`ariadne` only, enforced structurally). `bynk-render`'s shape is the closer analogy to `bynk-ts`:
+both exist to enforce a boundary invariant ("only this code writes/renders") that a `pub(crate)`
+module cannot self-enforce — exactly finding #42's failure mode (33 of 38 world-reachable
+`bynk_emit::emitter` items `pub` only to reach a sibling), live evidence that "carve later"
+doesn't reliably happen in this codebase once code is already crate-internal-convenient. Phase
+6's `ir.rs`-in-module choice is not a counter-precedent: ADR 0332 deferred that split because *no
+second consumer existed at all*, a materially different condition from a boundary invariant
+needing structural enforcement from day one. Mechanical cost is trivial — `bynk-ts` depends on
+nothing but `bynk-syntax` (for `Span`), no circular-dependency risk, one new workspace member.
 
-**Needs settling:** carve `bynk-ts` in the first slice (Arc B, before any conversion begins), or
-follow phase 6's own precedent of building in-crate and carving once the boundary has proven
-itself under real use?
+### 3.2 Q2 — Does the migration need an escape hatch, and what forces it to a named floor? **Settled.**
 
-### 3.2 Q2 — Does the migration need an escape hatch, and what forces it to a named floor rather than open-ended use?
+**Decision: yes — `TsStmt::Verbatim { origin: VerbatimOrigin, text: String }`, sealed
+constructor, statement granularity, plus a companion textual lint.** None of this trajectory's
+own prior migration techniques transfer directly, and understanding why sharpens the design.
+Phase 3's "parallel-data" technique (`identity-and-totality.md`, recovered pre-retirement) kept
+old and new *representations* live simultaneously because every consumer action was the same
+kind (read a map) regardless of which table backed it — no behaviour ever depended on which
+representation was live. Phase 6's IR migration (`the-ir.md`) used no bridge type at all — AST-
+and IR-reading call sites simply coexisted, tracked by a per-file import count, because the
+*output-producing mechanism* (raw `writeln!`) never varied regardless of which input model fed
+it. Phase 7 is the first phase where the writer itself, not an input representation, must become
+singular — R7.2–R7.4 exist to make exactly that singular. Letting unconverted sites keep calling
+raw `writeln!` during migration would be a literal violation, not a benign representation choice,
+so neither prior technique applies as-is. `Verbatim` is the minimal construct that keeps the
+*writer* singular (the printer still owns buffer/indentation/offset arithmetic for a `Verbatim`
+block, so R7.3/R7.4 hold from the slice that introduces it) while letting *content* stay
+unconverted — closer in spirit to the shelved CodeWriter proposal's module-by-module,
+golden-gated sequencing (worth citing directly as sequencing precedent) than to either prior
+technique.
 
-~1,540 sites cannot convert in a single slice without violating trajectory §2: "a phase that
-half-lands leaves two paths reachable... the failure mode every regret in this corpus shares."
-Converting all of them atomically is not credible either, given phase 6's own 59-slice experience
-on a smaller surface. A statement-granularity, sealed-constructor node —
-`TsStmt::Verbatim { origin: VerbatimOrigin, text: String }`, tagged by a closed `VerbatimOrigin`
-enum with one variant per named residue family — is one candidate: the printer still owns the
-buffer and the offset arithmetic for a `Verbatim` block, so R7.3/R7.4 hold from the slice that
-introduces it, and the closed enum makes "how much residue is left" a compile-time, not a
-grep-time, question. The risk this question exists to catch: an *expression*-level hatch would
-compose invisibly inside nodes the tree claims cannot express `as any`/`enum`, defeating R7.1
-while still reading as "done." A *document*-level hatch (`Document::TsText(String, SourceMap)`)
-would be a second writer with no path back, which R7.8 explicitly rejects for exactly this reason
-(`wrangler.toml` under the old `(String, SourceMap)` shape was "unsatisfiable" for R7.6, the
-review that produced R7.8).
+**A real gap this settling pass found and closes:** a byte-golden fixture is blind to what's
+*inside* an opaque `Verbatim` block — the same shape of weak evidence ADR 0198 named directly
+("the gate is green" was "the weakest possible evidence" after a defect survived 331 negative
+fixtures for 60 increments because the fixture format asserted category strings, never the
+attributed value). A `Verbatim` block could silently contain `enum`/`: any`/`namespace` and every
+golden fixture would stay green, defeating R7.1's "cannot be typed" claim while reading as done.
+**P7.5 (§6) therefore also builds a textual lint over `Verbatim` content** — forbidding the banned
+constructs (`enum`, `namespace`, decorators, constructor parameter properties, `: any`/`as any`)
+by pattern match on the wrapped text, run in CI alongside the golden fixtures, not instead of
+them.
 
-**Needs settling:** does a hatch exist at all, and if so at what granularity; what is its forcing
-function (a floor named now, e.g. "`ts_writes` retires at 0 outside `bynk-ts`, `verbatim_origins`
-retires at an argued floor, expected small" — the completion-criterion approach settled for this
-track already, per §5); and is one closed enum variant per residue family the right shape, or too
-coarse to prevent the ratchet stalling on one large, un-decomposed family?
+**Floor:** as already settled (not one of §3's open items — this predates the branch): named at
+settling, not discovered mid-track. `ts_writes` retires at **0** outside `bynk-ts`;
+`verbatim_origins` retires at an **argued floor**, expected small (per §1's five-file residue and
+Q3's finding that `Any`-elimination needs no residual `Verbatim` coverage of its own).
 
-### 3.3 Q3 — Is `TsType::Any` actually eliminable across all 48 current sites, or does it re-open phase 6?
+### 3.3 Q3 — Is `TsType::Any` actually eliminable across all current `as any`/bare-`any` sites, or does eliminating some re-open phase 6? **Settled — and the finding is better than the question assumed.**
 
-`emitter/workers.rs:577` documents keeping `: any` as *deliberate* policy on several wrapper
-sites. R7.1 forbids the variant outright — "the tree contains no... `TsType::Any`." Some of the 48
-casts are plausibly narrowable with types the checked program already carries (parameter/payload
-wrappers where the real shape is known but was cast away for convenience); others may need a type
-the IR does not yet construct (e.g. a genuinely dynamic dispatch site where the real type is
-decided at runtime by a discriminant the IR doesn't preserve as a static alternative). If the
-latter exist, closing R7.1 fully would mean extending the IR — reaching back into phase 6's
-settled scope, which trajectory §6's own review frame (question 5, "does it foreclose a later
-phase") and this track's own §2 both flag as needing to be argued explicitly, not discovered
-mid-slice.
+**Decision: full elimination is achievable within this phase, with one small, named residual
+deferred to R7.7's runtime-typing work, not treated as a phase-6-reopening risk.** A full,
+site-by-site classification (not a sample) found the real surface smaller and more tractable than
+the draft's 48-site framing suggested:
 
-**Needs settling:** a classification of all 48 sites (a spike, not a design argument) into
-"narrowable with existing IR types" versus "needs an IR extension," before any slice touching
-`emitter/workers.rs` or `emitter/serialisation.rs` is scheduled. **This is the one finding in this
-track's own research that could justify not opening large conversion work yet** — it does not
-block opening the track itself, since Arc A's independent slices (§6) do not depend on its
-answer.
+- Raw `as any` grep hits: 42, not 48 (measurement correction) — only ~24 are real TypeScript
+  emission sites; the rest are Rust comments, one unrelated English phrase, hand-written runtime
+  `.ts` files (R7.7's territory), and a test-fixture string.
+- A grep scoped to `as any` alone **under-covers R7.1**: 19 bare `: any` annotations exist
+  independently (e.g. `workers_entry.rs:771`, `serialisation.rs:1026`, several sites in
+  `emit.rs`'s history driver) — spot-checked and confirmed independently during this settling
+  pass. P7.0's `ts_any` probe (§6) must scan for both patterns, not `as any` alone.
+- Of the real sites: **~20 are narrowable with zero IR work** — most resolve to `unknown` (event
+  payloads, queue message bodies with no declared type — R7.1 forbids `Any`, not `unknown`),
+  several to a locally-derivable structural or marker type (duck-typed codec checks, thrown-value
+  inspection), and a handful (`(this as any)[methodName]`-style dynamic handler dispatch, 3 sites)
+  to a *generated index-signature type* built from data the IR already carries (the resolved
+  handler set) — new emission code, not new IR data.
+- **A small residual, 2–3 sites** (`serialisation.rs:802,1026` — runtime-owned error families
+  `ValidationError`/`JsonError`/`HttpResult`/`QueueResult`) genuinely need a real exported
+  TypeScript type for those runtime types before `any` can go. This is R7.7's business (the
+  hand-written runtime as real, type-checked TS source), not R7.1's tree work, and is named here
+  explicitly so it is deferred on purpose rather than discovered as a surprise inside an Arc C
+  slice.
+- `emitter/workers.rs:577`'s documented `: any` policy is a parameter-provenance argument (params
+  mix codec-produced and route/query-string values) — unaffected by phase 6's IR, and not
+  overturned by this decision: those wrappers gain a real structural type instead of `any`, not a
+  removal of the wrapper's own design.
 
-### 3.4 Q4 — How much of R8.1–R8.22 is this track's to close, versus already closed by phase 6 or genuinely belonging elsewhere?
+### 3.4 Q4 — How much of R8.1–R8.22 is this track's to close? **Settled.**
 
-The trajectory names both R7.1–R7.8 and R8.1–R8.22 as phase 7's reference rules
-(`bynk-compiler-trajectory.md` §3, "Reference rules: R6.1, R6.5, R6.7–R6.16, R5.1–R5.11" for phase
-6 by contrast shows the pattern of a phase claiming rules a prior phase partly pre-settles). R8 is
-chiefly emission-*semantics* (commit shapes R8.6, codec dispatch R8.14/R8.15, the compose root
-R8.16, the sorted route table R8.17, contract-hash validation R8.18) — work that plausibly moved
-substantially once `IrItem`/`Callee`/`CommitShape` existed as real types in phase 6, rather than
-waiting for phase 7's tree/printer split. Treating all 22 R8 rules as open by inheritance, the way
-the trajectory's own phase-7 row reads literally, risks the track claiming — and being measured
-against — work it does not actually need to do.
+**Decision: three-way split, not the draft's assumed two-way one.** A rule-by-rule audit against
+the current tree, not the review's stale findings, found:
 
-**Needs settling, rule by rule against the current tree** (the same discipline phase 5's own §1
-applied to `emit_diagnostics`, and phase 6's own spine issue applied before proposing a
-decomposition): which of R8.2–R8.18 already read closed; which are this track's business because
-they concern *how* output is constructed (already carried in this doc's front matter as R8.19–
-R8.22, tentatively); and whether any found genuinely open but out of this track's natural scope
-should be named as a forward reference (§7) instead of absorbed.
-
-### 3.5 Q5 — A fresh slice count, not the trajectory's stale "15, low confidence" sizing.
-
-§1 measures ~1,540 TypeScript-producing sites across 21,742 lines — a larger, less-decomposed
-surface than phase 6 attacked at a relative size of 20 (59 slices). The trajectory's phase-7 row
-predates any real measurement of this phase's own probe. Following the same "recount before
-proposing a decomposition" discipline the-ir.md's own spine issue (#1137, Q5) used for itself:
-
-**Needs settling:** a slice budget stated with its own argument (§6 sketches 35–45 as a working
-estimate — Arc A ~4, Arc B ~5, Arc C ~20, Arc D ~8 — but this is provisional pending Q1–Q4, since
-each answer changes Arc B's and Arc C's real shape), replacing the trajectory's own "15, low"
-figure once this settles.
+- **Twelve rules already read CLOSED**, needing only a verify-only pass: R8.5 (commons
+  re-branding, `emitter.rs:1633`), R8.7 (`loadState` merge, `emit.rs:3212-3229`, matches ADR 0124
+  D4 precisely), R8.9 (single factory helper, low confidence — one `makeAgent` found, no
+  exhaustive search for a duplicate path), R8.11 (`deps` type derivation already reads the IR's
+  `CapRefIr`, `emit.rs:1847`), R8.13 (boundary-only verification, all four named properties
+  confirmed in `workers.rs`), R8.15 (`http_value_serialiser` no longer exists — single dispatch
+  confirmed), R8.17 (sorted route table, `workers_entry.rs:117-122`), R8.18 (contract-hash
+  ordering, `workers_entry.rs:404`), R8.19 (typed TOML escaping, `wrangler.rs:162`, with a
+  dedicated injection test), R8.21 (`is_effectful_return` as the one shared predicate), R8.22
+  (`result ?? null`, `emit.rs:3690`). **R8.12 is closed under its own current text but
+  self-superseding — flagged, not silently assumed:** it's closed today because only `Call`
+  wrappers get real param types by design (R8.12's own rationale already documents the carve-out);
+  R7.1 landing is what changes this rule's meaning, and its "closure" needs to be re-confirmed as
+  intentional completion, not regression, in the same slice that lands full `Any` elimination.
+- **Five rules read PARTIAL — behaviourally correct, structurally sourced from the AST or ad-hoc
+  collection rather than the IR — and close as a natural byproduct of this track's own Arc B/C
+  work, needing no separate slice:** R8.3 (`is_opaque` is real `TypeShape` data, but emission
+  still branches on it at five call sites rather than reading a pre-decided shape — the tree/
+  printer conversion is exactly what removes the branch), R8.6 (`CommitShape` exists precisely as
+  specified in `ir.rs:1444` but has zero consumers — `emit.rs` still re-derives the same
+  distinction independently, a gap the IR's own IR's doc comment already names), R8.8 (invariant/
+  transition ordering is behaviourally exact but iterates the raw `AgentDecl` rather than an
+  IR-carried set), R8.10 (handler key mangling is a single pure function, but the rule's own
+  "with a stated inverse" requirement is unmet — no inverse function exists), R8.16 (emission
+  half — per-consumer surface generation is already correct, `project.rs:3100-3175` — but the
+  underlying `unit_consumes`/`unit_tables: HashMap` isn't a typed `ProjectGraph`; **that data-model
+  half is phase 8's, named as deferred there since phase 4's own retirement note** — this track
+  owns only confirming the emission behaviour stays correct once its own conversion lands).
+- **Two rules read genuinely OPEN and are this track's own separately-scoped work:** R8.2 (the
+  brand prefix is computed at emission from `ctx.owning_context`, `emit.rs:57-58`, not read from a
+  recorded brand — a real Arc D slice) and R8.14 (the JSON codec collector still walks raw
+  `ExprKind::MethodCall` over AST-shaped commons items, `emitter.rs:1046`, with its own doc
+  comment recording that an IR conversion was investigated and declined at P6.56 — worth
+  revisiting once `bynk-ts` exists, since a tree-node-based collector may succeed where an
+  IR-based one was declined; a real Arc D slice, not assumed to close automatically).
+- **R8.20 is not separate scope** — it's literally the same defect as R7.6 (the KV-namespace
+  placeholder), already folded into Arc A's P7.4.
+- **R8.4 is unresolved with full confidence** (numeric-refinement guard ordering looks correct at
+  every site checked, but no exhaustive call-graph proof) — a cheap, one-slice verification, Arc
+  D.
 
 ---
 
 ## 4. Posture
 
 Extends ADR 0059 as amended by ADR 0309, the same standing properties every track on this
-trajectory has run under: behaviour-preserving by default (a slice that changes observable
-behaviour states so, ships a fixture, gets a CHANGELOG entry — Arc C's whole premise depends on
-this holding, since byte-identical output is its only safety net); short-lived branches, one PR
-per slice; no per-increment ADRs beyond what §11 front-loads; every slice citing `Closes-Rule:`.
+trajectory has run under: behaviour-preserving by default; short-lived branches, one PR per
+slice; no per-increment ADRs beyond what §11 front-loads; every slice citing `Closes-Rule:`.
 
 ---
 
 ## 5. The completion criterion
 
-As settled already (not one of §3's open items): **the floor is named at settling, not discovered
-mid-track the way phase 6's P6.58 had to.** Two probes, not one, following Q2's `Verbatim`
-proposal:
+Two probes, as already settled (not one of §3's open items):
 
 - **`ts_writes`** — TypeScript-producing `write!`/`writeln!`/`format!` outside `bynk-ts`. Retires
-  at **0**. This is the trajectory's own literally-stated probe and is not negotiable by this
-  track.
-- **`verbatim_origins`** (new, contingent on Q2) — count of distinct `VerbatimOrigin` enum
-  variants still constructed. Retires at an **argued floor**, named file-by-file in the retirement
-  summary the way `ast_importers`'s floor of 5 was — expected small (1–3) based on §1's file
-  list, but not asserted here before the conversion work that would justify a number.
+  at **0**.
+- **`verbatim_origins`** (new, per Q2) — count of distinct `VerbatimOrigin` enum variants still
+  constructed. Retires at an **argued floor**, expected small (1–3), named file-by-file in the
+  retirement summary the way `ast_importers`'s floor of 5 was.
 
-Both probes need adding to `xtask/src/greenfield_status.rs` (13 probes exist today,
-`ast_importers` at `:1485` and `hoist_sinks` at `:1203` are the closest precedents for the
-line-scan implementation) — candidate slice P7.0 (§6).
+Both need adding to `xtask/src/greenfield_status.rs` (13 probes exist today) — P7.0 (§6). Per Q3,
+the `ts_any` trend probe must scan for `as any` **and** bare `: any` — a probe scoped to the
+former alone under-counts. Per Q2, `Verbatim` content also needs a textual lint (banned
+constructs, run in CI) as a companion to the golden fixtures, since golden output alone is blind
+to what a `Verbatim` block hides.
 
 ---
 
-## 6. Slice decomposition — candidate, pending §3
+## 6. Slice decomposition
 
-None of the below is accepted yet; §3 governs both which of these actually ship and their order.
-Arc A does not depend on Q1–Q3's answers and could begin immediately once this track settles; Arc
-B and Arc C's real shape depends on Q1 (crate timing) and Q2 (hatch shape).
+§3 is settled; all slices below are accepted, buildable, not forward references. **37 slices**,
+tightened from the provisional 35–45 range: Arc A gained one slice (Q3's finding that most `any`
+narrowing is a plain text change, doable before the tree exists), Arc D gained precision (two
+named rule-closing slices, R8.2/R8.14, replacing an unscoped placeholder).
 
-**Arc A — independent of the tree, land immediately**
+**Arc A — independent of the tree, land immediately (5 slices)**
 
-| Slice (candidate) | What it does | Rules | Gated on |
+| Slice | What lands | Rules | Gated on |
 |---|---|---|---|
-| **P7.0** | `ts_writes` and `verbatim_origins`-precursor (`ts_any` trend) gated probes added to `xtask/src/greenfield_status.rs`, following `hoist_sinks`'s line-scan pattern and excluding `xtask` itself from its own count | instrumentation | — |
-| **P7.1** | Verification pass on R7.7 (§1's finding that it may already be closed) — confirm every runtime `.ts` file is `include_str!`'d and CI-type-checked, correct the doc if so, or name the residue if not | R7.7 | — |
-| **P7.2** | Classify all 48 `as any` sites (Q3's spike) — narrowable vs. needs-IR-extension | investigates Q3 | — |
-| **P7.3** | `TomlDocument` + minimal TOML printer; `emit_wrangler_toml` (`emitter/wrangler.rs:49`) returns a document, not a `String` | R7.8 (part) | — |
-| **P7.4** | **Closes R7.6** — `bynk/src/deploy/config.rs:195,260,263`, `deploy/ledger.rs:365`, `bynk-strip/src/lib.rs:136-139` read typed documents/nodes instead of text-matching `KV_NAMESPACE_ID_PLACEHOLDER` and `main = "index.ts"` | R7.6 | P7.3 |
+| **P7.0** | `ts_writes` and `ts_any` (scanning `as any` **and** bare `: any`, per Q3) gated probes in `xtask/src/greenfield_status.rs`, following `hoist_sinks`'s line-scan pattern, excluding `xtask` from its own count | instrumentation | — |
+| **P7.1** | Verification pass confirming R7.7 is closed (§1's finding) — every runtime `.ts` file is `include_str!`'d and CI-type-checked; correct the doc if so | R7.7 | — |
+| **P7.2** | Narrow the ~20 classified-narrowable `as any`/bare-`: any` sites (§3.3) to `unknown`, structural or marker types, and generated index-signature types where the IR already carries the data — plain `writeln!`-level text changes, no tree required | R7.1 (partial, ahead of the tree) | §3.3 |
+| **P7.3** | `TomlDocument` + minimal TOML printer; `emit_wrangler_toml` (`wrangler.rs:49`) returns a document, not a `String` | R7.8 (part) | — |
+| **P7.4** | **Closes R7.6 and R8.20** — `bynk/src/deploy/config.rs:195,260,263`, `deploy/ledger.rs:365`, `bynk-strip/src/lib.rs:136-139` read typed documents instead of text-matching `KV_NAMESPACE_ID_PLACEHOLDER` and `main = "index.ts"` | R7.6, R8.20 | P7.3 |
 
-**Arc B — the crate and the spine**
+**Arc B — the crate and the spine (5 slices)**
 
-| Slice (candidate) | What it does | Rules | Gated on |
+| Slice | What lands | Rules | Gated on |
 |---|---|---|---|
-| **P7.5** | `bynk-ts` crate exists (Q1) — `TsProgram`/`TsNode`/`Span`, `Verbatim` (Q2), printer owning buffer/indentation/offsets, `SourceMap` relocated from `emitter/source_map.rs` | R7.2, R7.3, R7.4, R10.1, R10.3 | Q1, Q2 |
-| **P7.6** | `Artefacts { docs: BTreeMap<PathBuf, Document> }` replaces `CompiledFile` (`project.rs:97`) — every TS document is a `TsProgram`, initially wrapping one `Verbatim` node | R7.8 | P7.5 |
-| **P7.7** | Named, tested printer policy (readability as a property with a name and a test) | R7.5 | P7.5 |
-| **P7.8** | `TsStmt`/`TsExpr`/`TsType`/`TsDecl` per §7.1's sketch; builders; no `Any`/`enum`/`namespace`/decorator/param-property representable | R7.1 | P7.5 |
-| **P7.9** | `ts_type_ref`/`ts_type_ref_qualified`/`ts_type_ref_qualified_multi`/`ts_type_ref_with`/`ts_base`/`ty_to_type_ref`/`pred_condition_and_message` (`emitter.rs:978,4075,4088,4098,4115,4130,4408`, ~124 call sites, plus the sibling at `emitter/serialisation.rs:1440`) become `bynk_ts::TsType` constructors — first real `ts_writes` and `ast_importers` drop | R7.1, R7.2 | P7.8 |
+| **P7.5** | `bynk-ts` crate carved up front (§3.1) — `TsProgram`/`TsNode`/`Span`, `Verbatim`/`VerbatimOrigin` plus its companion textual lint (§3.2), printer owning buffer/indentation/offsets, `SourceMap` relocated from `emitter/source_map.rs` | R7.2, R7.3, R7.4, R10.1, R10.3 | §3.1, §3.2 |
+| **P7.6** | `Artefacts { docs: BTreeMap<PathBuf, Document> }` replaces `CompiledFile` (`project.rs:97`) | R7.8 | P7.5 |
+| **P7.7** | Named, tested printer policy | R7.5 | P7.5 |
+| **P7.8** | `TsStmt`/`TsExpr`/`TsType`/`TsDecl` per §7.1's sketch — no `Any`/`enum`/`namespace`/decorator/param-property representable; lower-risk than the draft assumed, since P7.2 already narrowed most `any` sites ahead of this slice | R7.1 | P7.5 |
+| **P7.9** | `ts_type_ref*`/`ts_base`/`ty_to_type_ref`/`pred_condition_and_message` (`emitter.rs:978,4075,4088,4098,4115,4130,4408`, ~124 call sites) become `bynk_ts::TsType` constructors — first real `ts_writes`/`ast_importers` drop | R7.1, R7.2 | P7.8 |
 
-**Arc C — conversion, smallest blast radius first**
+**Arc C — conversion, smallest blast radius first (~19 slices)**
 
-`contracts.rs` + `secrets.rs` + `runtime_use.rs` (~10 sites) → `events_fanout.rs` (41) →
-`serialisation.rs` (237, pending Q3's classification for its `as any` sites) → `workers.rs` (137,
-same) → `workers_entry.rs` (192) → `emitter/lower.rs` (372, likely several slices) →
-`emitter/emit.rs` (409, likely several slices) → `emitter.rs` (99) + `project.rs` (44) →
-`project/tests_emit.rs` converts its 130 byte-golden assertions to node assertions **last** — they
-are the migration's only real safety net and must stay byte-golden until everything upstream has
-converted. Each slice deletes its `VerbatimOrigin` variant, if Q2 settles that shape. R8.1's
-no-wildcard totality folds into whichever slice owns each `IrItem` arm rather than standing alone.
+`contracts.rs` + `secrets.rs` + `runtime_use.rs` → `events_fanout.rs` → `serialisation.rs`
+(includes closing §3.3's 2–3-site residual by exporting real runtime types for
+`ValidationError`/`JsonError`/`HttpResult`/`QueueResult`, per R7.7) → `workers.rs` →
+`workers_entry.rs` → `emitter/lower.rs` (several slices) → `emitter/emit.rs` (several slices,
+also finishing R8.3/R8.6/R8.8's structural half per §3.4) → `emitter.rs` + `project.rs` →
+`project/tests_emit.rs` converts its 130 byte-golden assertions to node assertions **last**. Each
+slice deletes its `VerbatimOrigin` variant and is checked against the P7.5 textual lint, not
+golden fixtures alone (§3.2).
 
-**Arc D — settling**
+**Arc D — settling (~8 slices)**
 
-`bynk-ir`/`bynk-lower` carved as crates, if Q1 didn't already fold this into P7.5 (ADR 0332's
-named trigger — `bynk-ts` as a genuine second consumer — is met once Arc B lands); severing
-`bynk-emit`'s dependency on `bynk-check`, if Q4 finds it genuinely this phase's; R10.4 surface
-enumeration (finding #42's 33-of-38 spurious `pub`); R10.2 verification that `bynk-lsp` stops
-linking emission code it never executes (finding #39, ~25k lines); residual R8.x items Q4 finds
-open; the retirement review naming both probes' final floors.
+Provisionally lettered, not numbered — Arc C's own slice count is an estimate (~19), so fixed
+`P7.N` numbers here would silently claim a range Arc C's real slices will actually occupy. Real
+`P7.N` numbers are assigned sequentially as each slice is actually cut, in landing order, the same
+convention every prior track on this trajectory used.
 
-**Working slice-count estimate (Q5): 35–45** — Arc A ~4, Arc B ~5, Arc C ~20 (provisional,
-depends on how finely the two largest files split), Arc D ~8. Provisional pending §3.
+| Slice | What lands | Rules | Gated on |
+|---|---|---|---|
+| **P7.d1** | `bynk-ir`/`bynk-lower` carved as crates — ADR 0332's named trigger (`bynk-ts` as a genuine second consumer) met once Arc B lands | R10.3 | P7.5 |
+| **P7.d2** | R8.2 — brand string recorded once (R4.10), read at emission rather than computed from `ctx.owning_context` | R8.2 | Arc C substantially landed |
+| **P7.d3** | R8.14 — the JSON/boundary codec collector unified into one collector over `bynk-ts` tree nodes, revisiting P6.56's declined IR-based attempt now that a tree exists to collect over | R8.14 | P7.8 |
+| **P7.d4** | R8.4 verification — confirm numeric-refinement guard ordering across every emission site, not just the ones spot-checked during settling | R8.4 (verify) | — |
+| **P7.d5** | Severing `bynk-emit`'s dependency on `bynk-check`, if Arc C's conversion leaves one — tentative, no direct evidence gathered this settling pass | — | Arc C landed |
+| **P7.d6** | R10.4 surface enumeration — finding #42's 33-of-38 spurious `pub` in `bynk_emit::emitter` | R10.4 | Arc C landed |
+| **P7.d7** | R10.2 verification — `bynk-lsp` stops linking emission code it never executes (finding #39) | R10.2 | P7.d1 |
+| **P7.d8** | Retirement review: verify-only pass on the twelve R8 rules already closed (§3.4), explicitly confirming R8.12's self-supersession lands as intended, not regression; both probes' final floors named file-by-file | R8.5,7,9,11–13,15,17–19,21,22 (verify) | Arc C landed |
 
 ---
 
@@ -316,87 +364,89 @@ depends on how finely the two largest files split), Arc D ~8. Provisional pendin
 
 | Item | Phase | Entry condition |
 |---|---|---|
-| Incrementality — query granularity, `UnitSignature`, the firewall | 8 | this track's probes (`ts_writes` = 0, `verbatim_origins` at its argued floor) settle; trajectory §4 also names phases 3 and 4 as preconditions, already true |
-| Any R8 rule Q4 finds genuinely open but out of this track's natural scope | *unopened — named only if Q4 finds one* | Q4 |
+| Incrementality — query granularity, `UnitSignature`, the firewall | 8 | this track's probes (`ts_writes` = 0, `verbatim_origins` at its argued floor) settle |
+| R8.16's data-model half — a typed `ProjectGraph` | 8 | named by phase 4's own retirement note; this track only verifies R8.16's emission behaviour stays correct |
 | A further crate re-graph beyond `bynk-ts`/`bynk-ir`/`bynk-lower` (e.g. R10.5's `bynk-driver` consolidation) | *unopened — no trigger yet* | named in the reference (Part 10) but not this phase's own invariant |
 
 ---
 
 ## 8. Keeping the reference true
 
-Two probes need building for this phase's gate — `ts_writes` and, if Q2 settles the `Verbatim`
-shape, `verbatim_origins` — neither exists today (`xtask/src/greenfield_status.rs` has 13 probes,
-none TypeScript-write-shaped). P7.0 is this track's own first slice for exactly that reason,
-mirroring `the-ir.md`'s own P6.0 being real infrastructure/classification work, not ceremony.
-
-One correction this track's settling pass should carry: the trajectory doc's own §3.0 baseline
-row for phase 7 ("not measured") and §5's sizing ("15, low confidence") are both stale against
-§1's own first measurement — a routine update, the same way `project-model.md` §3.5 corrected a
-stale Appendix D row ahead of the generator, and `the-ir.md`'s own spine issue did for phase 6's
-sizing before it opened.
+Two probes need building — `ts_writes` and `verbatim_origins` — P7.0, mirroring `the-ir.md`'s own
+P6.0 being real infrastructure, not ceremony. `ts_any` also needs building, scoped to `as any`
+**and** bare `: any` per §3.3's own correction. `design/bynk-greenfield-compiler.md`'s Appendix D
+carries no R7/R8 rows yet (its own note: "most of phases 6–8... have no live probe yet"), so this
+settling pass adds none there — a future pass, once these probes exist and phase 7 is further
+along, is the natural point to add them, not this one.
 
 ---
 
 ## 9. Risks
 
-**Q3's answer may re-open phase 6.** If any of the 48 `as any` sites need a type the IR does not
-construct, closing R7.1 fully means extending `IrItem`/`TyId` — work this track's own §2
-explicitly says is not its job to do casually. P7.2 (the classification spike) exists to surface
-this before large slices are scheduled, not after.
+**The `Verbatim` hatch is blind to its own content without the textual lint (§3.2).** A byte-
+golden fixture proves nothing about what's inside an opaque `Verbatim` block — P7.5 must ship the
+lint alongside the hatch, not as a follow-up, or Arc C's own conversion work has no way to detect
+a banned construct smuggled through unconverted.
 
-**Golden-test churn is the whole safety net, and it is finite.** Every Arc C slice must produce
-byte-identical output against `project/tests_emit.rs`'s existing goldens; if a conversion changes
-a byte, the phase has lost its only cheap correctness check for ~1,540 sites simultaneously. This
-is why tests_emit.rs converts to node assertions *last*, not first (§6).
+**§3.3's residual (2–3 sites) is a named dependency on R7.7's runtime-typing work, not a Arc-C-
+internal task.** If the runtime types for `ValidationError`/`JsonError`/`HttpResult`/
+`QueueResult` aren't exported in time, the `serialisation.rs` conversion slice either blocks or
+ships with a residual `any` — named here so it's tracked, not discovered late the way phase 5's
+`secrets.rs` open item was.
 
-**§2's half-landing risk is real, and `Artefacts` is the hinge.** Before P7.6 lands, stopping
-anywhere in Arc A or early Arc B is safe by construction — nothing has changed downstream
-consumers' contract yet. After P7.6, stopping mid-Arc-C leaves a partially-treed emitter; this is
-survivable *only* because every unconverted site routes through `Verbatim`, which the printer
-still owns per R7.3/R7.4 from the moment it exists. If Q2 settles on *no* hatch, this risk becomes
-much sharper — the phase would have no safe stopping point between P7.6 and full Arc C
-completion, which trajectory §2 treats as the failure mode this whole discipline exists to avoid.
+**Golden-test churn is the whole safety net for Arc C, and it is finite.** Every conversion slice
+must produce byte-identical output; if a conversion changes a byte, the phase loses its only cheap
+correctness check for ~1,540 sites simultaneously. `project/tests_emit.rs` converts to node
+assertions last, not first.
+
+**R8.12 self-supersedes at the exact moment R7.1 lands (§3.4).** A reviewer checking Arc B's `Any`
+elimination against Appendix B's own "closed" marking for R8.12 could misread the change as a
+regression rather than the rule's own intended completion — P7.d8 exists to make this explicit,
+not assumed.
 
 **The evidence ages.** Every fact, line number and count in this doc was measured against `main`
-at commit `79053b09` on 19–20 August 2026. Re-check before a slice proposal cites one, per every
-prior track's own §9.
+at commit `79053b09`/`ad278a3e` on 19–20 August 2026. Re-check before a slice proposal cites one.
 
 ---
 
 ## 10. What this phase causes
 
-Phase 8 (incrementality) is named, by the trajectory's own dependency graph (§4), as needing
-phases 3, 4 **and** 7: "3 and 4 before 8. The firewall needs stable identity and a project model
-that is not ambient" — but §4's ordering diagram also shows 7 feeding 8 directly, since a query
-firewall over an emitter that still writes strings ad hoc has no stable unit to memoize against.
-This phase's `Artefacts` (R7.8) is plausibly phase 8's `UnitSignature` target for the emit side,
-though the trajectory does not say so explicitly — worth naming as a question for phase 8's own
-settling review, not decided here.
+Phase 8 needs phases 3, 4 **and** 7 (trajectory §4): "3 and 4 before 8. The firewall needs stable
+identity and a project model that is not ambient" — and §4's ordering diagram shows 7 feeding 8
+directly, since a query firewall over an emitter that still writes strings ad hoc has no stable
+unit to memoize against. This phase's `Artefacts` (R7.8) is plausibly phase 8's `UnitSignature`
+target for the emit side, and R8.16's deferred data-model half (a typed `ProjectGraph`) is
+literally phase 8's own scope per phase 4's retirement note — worth phase 8's own settling review
+treating these as linked, not independently rediscovering the connection.
 
 ---
 
 ## 11. ADRs
 
-Per ADR 0167 step 2, load-bearing, hard-to-reverse decisions land before slicing. Candidates,
-pending §3 actually closing under review (numbers assigned at merge by the stamp, per every prior
-track's own convention of referring to them by letter until then):
+Per ADR 0167 step 2, load-bearing, hard-to-reverse decisions land before slicing. Four do, with
+this settling pass (numbers assigned at merge by the stamp; referred to by letter until then):
 
-- **ADR-A** — whether `bynk-ts` is carved as a crate in the first Arc B slice or built in-module
-  and carved later (§3.1, Q1). Likely the most load-bearing of the set — it decides whether R10.2
-  and the `bynk-ir`/`bynk-lower` carve can ride this phase or need their own later trigger.
-- **ADR-B** — the migration escape hatch's existence, shape and forcing function (§3.2, Q2).
-  Directly determines whether this phase has a safe stopping point anywhere between "the crate
-  exists" and "conversion is complete" (§9).
-- **ADR-C** — the two completion probes' final floors, once Arc C's real shape is known (§5)
-  — likely written late, near retirement, the same way `the-ir.md`'s own floor-of-5 argument was
-  P6.58, not a day-one ADR.
+- **ADR-A** — `bynk-ts` is carved as a crate in the first Arc B slice (P7.5), not built in-module
+  and carved later. §3.1 (Q1).
+- **ADR-B** — the migration escape hatch is `TsStmt::Verbatim{origin: VerbatimOrigin, text:
+  String}`, statement granularity, sealed constructor, with a companion textual lint over its
+  content run in CI alongside golden fixtures. §3.2 (Q2). Likely the most load-bearing of the
+  four — it's what makes every Arc C slice individually safe to ship and individually safe to
+  stop after.
+- **ADR-C** — `TsType::Any` is eliminated in full within this phase; the 2–3-site residual
+  (runtime-owned error types) is named and deferred to R7.7's runtime-typing work, not treated as
+  open-ended or as grounds to re-open phase 6's IR. §3.3 (Q3).
+- **ADR-D** — R8's scope splits three ways: five rules close as a byproduct of Arc B/C (no
+  separate slice), two rules (R8.2, R8.14) get named Arc D slices, R8.20 folds into Arc A's P7.4,
+  R8.16's data-model half stays phase 8's, and the twelve already-closed rules get a verify-only
+  pass with R8.12's self-supersession flagged explicitly. §3.4 (Q4).
 
 ---
 
 ## 12. Retirement
 
 Mirrors every prior track on this trajectory: retires when `ts_writes` reads 0 and
-`verbatim_origins` (if it exists, per Q2) reads its own argued floor, with every surviving site
-named file-by-file in the closing summary. The retirement PR removes this doc, appends its closing
-summary to `../archive/retired-tracks.md`, and closes the spine issue
+`verbatim_origins` reads its own argued floor, with every surviving site named file-by-file in the
+closing summary. The retirement PR removes this doc, appends its closing summary to
+`../archive/retired-tracks.md`, and closes the spine issue
 ([#1293](https://github.com/accuser/bynk/issues/1293)).
