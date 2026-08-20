@@ -1594,9 +1594,13 @@ fn emit_abi_shapes(root: &Path) -> Probe {
 /// Rust-internal `String` values stored on `Ir*` struct fields (e.g.
 /// `format!("{}State", agent.name.name)`) during the checker→IR lowering pass, never
 /// emitted syntax — it is not part of the emitter's rendering code at all, despite the
-/// name proximity to `emitter/lower.rs`, which is.
+/// name proximity to `emitter/lower.rs`, which is. P7.3 (#1303): `emitter/toml_doc.rs`
+/// writes `wrangler.toml` text too — `emitter/wrangler.rs`'s own writes moved here when
+/// it stopped building the TOML text directly and started building a typed
+/// `TomlDocument` for this module to print — same rationale, same exclusion.
 const TS_WRITES_EXCLUDED_FILES: &[&str] = &[
     "emitter/wrangler.rs",
+    "emitter/toml_doc.rs",
     "emitter/secrets.rs",
     "emitter/contracts.rs",
     "emitter/source_map.rs",
