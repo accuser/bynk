@@ -78,6 +78,7 @@ each track's spine issue; this table is deliberately just the map.
 |---|---|---|---|
 | [`documentation.md`](documentation.md) | [#557](https://github.com/accuser/bynk/issues/557) | Slicing (slice 0 shipped) | Documentation & web presence: the Astro + Starlight migration, a CI snippet-verification harness, playground integration seams |
 | [`idempotency-capability.md`](idempotency-capability.md) | [#921](https://github.com/accuser/bynk/issues/921) | Slicing (slice 0 shipped, #929; call-site key scoping follow-up shipped, #934) | The `Idempotency` capability: mechanical dedup for at-least-once delivery, per design notes §4, §12 |
+| [`the-typescript-tree.md`](the-typescript-tree.md) | [#1293](https://github.com/accuser/bynk/issues/1293) | Settling | Phase 7 of the compiler trajectory — emission produces nodes, one printer writes every character; `bynk-ts` holds the tree, the printer and the source map |
 
 (`documentation.md` pre-dates the GitHub-native flow, so its doc was
 committed by an ordinary PR rather than a settling draft PR; the spine issue
@@ -143,6 +144,23 @@ discipline). Its own gated probe, `ast_importers`, retired at a re-settled
 floor of 5, not the 0 first named — see `retired-tracks.md`'s closing
 summary for the per-file argument and the phase-7 entry-condition amendment
 this forced.
+`the-typescript-tree.md` is the twelfth, phase 7 of the same trajectory,
+entry-gated on `the-ir.md`'s own retirement note and its P6.58 amendment —
+`ast_importers` reading its re-settled floor of 5, not 0, since the five
+surviving files are this track's own future surface. Spine
+[#1293](https://github.com/accuser/bynk/issues/1293); its settling draft PR
+is open with five design questions, none yet closed under review: whether
+`bynk-ts` is carved as a crate up front or built in-module and carved later
+(the reverse of `the-ir.md`'s own `ir.rs`-first precedent); whether the
+~1,540-site conversion needs a migration escape hatch and what forces it to
+a named floor; whether all 48 `as any` casts are eliminable without
+re-opening phase 6's IR shape; how much of R8.1–R8.22 is this track's to
+close versus already settled by phase 6; and a fresh slice count against the
+trajectory's own stale "15, low confidence" sizing. Its own probe,
+`ts_writes` (TypeScript-producing `write!`/`format!` outside `bynk-ts`), was
+measured for the first time opening this track — 1,709 total sites, ~1,540
+genuinely TypeScript-producing — the trajectory's own §3.0 baseline had
+recorded it as "not measured".
 `agent-capability-encapsulation.md` is a committed Draft that appears in
 neither this table nor `retired-tracks.md`; it predates this row's addition
 and needs a spine issue or a retirement — tracked separately, not by this
