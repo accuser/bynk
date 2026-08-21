@@ -358,12 +358,18 @@ pub enum TsLit {
     Null,
 }
 
-/// A type-position node. Only `Named` (extended with type arguments — a
-/// real gap the reference sketch left unaddressed: `Record<string,
+/// A type-position node. `Named` (extended with type arguments — a real gap
+/// the reference sketch left unaddressed: `Record<string,
 /// Array<{...}>>`/`Promise<Response>` both need one, and a bare `Named`
-/// with no type-argument slot cannot represent either), `Array`, and
-/// `Object` — not the sketch's `Union`/`Intersection`/`Fn`/`Literal`/
-/// `TypeParam`/`Readonly` (unused in the grounding file).
+/// with no type-argument slot cannot represent either), `Array` (extended
+/// with a `readonly` modifier — P7.9's own real gap: every `List`/`Query`
+/// element type `bynk-emit`'s `ts_type_ref*`/`ts_ty` families build is
+/// `readonly T[]`, not plain `T[]`), `Object`, and `Fn` (P7.9's own second
+/// real gap — the query-thunk wrapper `(() => readonly T[])` and a real
+/// parametered function type `(a0: T0, …) => Ret` both need one) — not the
+/// sketch's `Union`/`Intersection`/`Literal`/`TypeParam`/`Readonly` (still
+/// unused; `readonly` here is a modifier on `Array`, not the sketch's own
+/// separate `Readonly` wrapper variant).
 #[derive(Debug)]
 pub enum TsType {
     /// A named type, optionally generic — `string`/`unknown` (no type
@@ -372,10 +378,13 @@ pub enum TsType {
         name: String,
         type_args: Vec<TsType>,
     },
-    /// `T[]` — TypeScript's own postfix array-type syntax, the shape
-    /// `events_fanout.rs`'s own `FanoutEvent[]` uses (not the equivalent
-    /// `Array<T>` generic spelling).
-    Array(Box<TsType>),
+    /// `T[]` (`readonly: false`) or `readonly T[]` (`readonly: true`) —
+    /// TypeScript's own postfix array-type syntax (not the equivalent
+    /// `Array<T>`/`ReadonlyArray<T>` generic spelling either family uses).
+    Array {
+        element: Box<TsType>,
+        readonly: bool,
+    },
     /// A type-position object shape, e.g. `{ type: string; payload: unknown }`
     /// — semicolon-separated, always printed on one line (see
     /// [`TsExpr::Object`]'s own doc for the value-position contrast). An
@@ -385,6 +394,28 @@ pub enum TsType {
     /// `TsDecl::Interface` is the thing choosing to put each member on its
     /// own line, not because `Object` has two rendering modes.
     Object(Vec<(String, TsType)>),
+    /// `(a0: T0, a1: T1, …) => Ret` — a function type. Parameters carry no
+    /// name of their own (just their type); the printer numbers them
+    /// positionally (`a0`, `a1`, …), matching the exact convention
+    /// `bynk-emit`'s own pre-P7.9 `ts_type_ref_with`/`ts_ty` already used
+    /// (TypeScript requires *some* name in function-type syntax, and
+    /// nothing about a `TypeRef::Fn`/`Ty::Fn` parameter carries a real one
+    /// to use instead). A zero-`params` `Fn` is the query-thunk wrapper
+    /// shape, `() => Ret`.
+    Fn {
+        params: Vec<TsType>,
+        ret: Box<TsType>,
+    },
+    /// `A | B | C` — a type-position union. Added in review of #1315:
+    /// `bynk-emit`'s `ts_ty` builds a real union type for a resolved
+    /// multi-actor sum (`Ty::ActorSum`, discriminated-union members tagged
+    /// by actor name), a shape none of `Named`/`Array`/`Object`/`Fn` can
+    /// represent — a real, grounded gap the same way `readonly`/`Fn`
+    /// themselves were (P7.9's own accepted proposal), not a speculative
+    /// addition. Each member prints through the ordinary `render_type`
+    /// recursion; a member that is itself a `Union` is legal to construct
+    /// but nothing in `bynk-emit` builds one today.
+    Union(Vec<TsType>),
 }
 
 impl TsType {
@@ -402,6 +433,22 @@ impl TsType {
         TsType::Named {
             name: name.into(),
             type_args,
+        }
+    }
+
+    /// `T[]` — the non-`readonly` array shape.
+    pub fn array(element: TsType) -> Self {
+        TsType::Array {
+            element: Box::new(element),
+            readonly: false,
+        }
+    }
+
+    /// `readonly T[]`.
+    pub fn readonly_array(element: TsType) -> Self {
+        TsType::Array {
+            element: Box::new(element),
+            readonly: true,
         }
     }
 }
