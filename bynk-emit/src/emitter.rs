@@ -4249,6 +4249,23 @@ fn ts_type_ref_to_ts_type(r: &TypeRef, qualify: Option<QualifyFn<'_>>) -> TsType
         // `Name<Arg, …>` — the generic record's interface is emitted with the
         // same type parameters (like a generic function's erased `<A, B>`).
         TypeRef::App { name, args, .. } => {
+            // Review of #1315/#1316: pre-slice this arm interpolated `head`
+            // unconditionally, so a hypothetical empty-args `App` rendered
+            // `Head<>` — `TsType::named_with_args(head, vec![])` instead
+            // renders bare `Head` (`TsType::Named`'s own printer only opens
+            // `<...>` when `type_args` is non-empty), a real behaviour
+            // change *if* this arm is ever reached with empty `args`. It
+            // isn't today: `ty_to_type_ref` only ever builds `App` with a
+            // non-empty argument list (this file, `ty_to_type_ref`'s own
+            // `Ty::Named` arm), and the resolver arity-checks a
+            // `Name[Arg, …]` application before either side ever sees one.
+            // Asserted, not silently relied on, so a future caller that
+            // *can* reach here with no args fails loudly instead of
+            // silently changing bytes.
+            debug_assert!(
+                !args.is_empty(),
+                "TypeRef::App is only ever built with a non-empty argument list"
+            );
             let head = if let Some(f) = qualify
                 && let Some(ns) = f(&name.name)
             {
@@ -4444,6 +4461,52 @@ mod ts_type_ref_tests {
         assert_eq!(ts_type_ref(&base(BaseType::Bool)), "boolean");
         assert_eq!(ts_type_ref(&base(BaseType::Bytes)), "Uint8Array");
     }
+
+    /// Coverage gap named in review of #1315/#1316: every test above goes
+    /// through `ts_type_ref` (`qualify = None`) — the qualifying branches
+    /// this slice's own refactor most directly restructured (`App`'s `head`
+    /// now flows through `TsType::named_with_args` instead of being
+    /// interpolated) were unpinned. Asserts both that the head qualifies
+    /// *and* that qualification recurses into the type arguments.
+    #[test]
+    fn qualified_generic_instantiation_qualifies_head_and_recurses_into_args() {
+        let r = TypeRef::App {
+            name: Ident {
+                name: "MyGeneric".to_string(),
+                span: sp(),
+            },
+            args: vec![base(BaseType::Int), named("Order")],
+            span: sp(),
+        };
+        let mut scope = HashSet::new();
+        scope.insert("MyGeneric".to_string());
+        scope.insert("Order".to_string());
+        assert_eq!(
+            ts_type_ref_qualified(&r, &scope, "Ns"),
+            "Ns.MyGeneric<number, Ns.Order>"
+        );
+    }
+
+    /// Same shape as above, through `ts_type_ref_qualified_multi` — no
+    /// direct test existed for this function at all before this fix.
+    #[test]
+    fn qualified_multi_generic_instantiation_qualifies_head_and_recurses_into_args() {
+        let r = TypeRef::App {
+            name: Ident {
+                name: "MyGeneric".to_string(),
+                span: sp(),
+            },
+            args: vec![base(BaseType::Int), named("Order")],
+            span: sp(),
+        };
+        let mut type_ns = HashMap::new();
+        type_ns.insert("MyGeneric".to_string(), "A".to_string());
+        type_ns.insert("Order".to_string(), "B".to_string());
+        assert_eq!(
+            ts_type_ref_qualified_multi(&r, &type_ns),
+            "A.MyGeneric<number, B.Order>"
+        );
+    }
 }
 
 /// v0.20b: render a checker `Ty` as a TypeScript type. Used by the inline
@@ -4524,7 +4587,7 @@ fn ts_ty_to_ts_type(t: TyId, tys: &Arc<Types>) -> TsType {
         // The identity type the actor binding yields (`name.identity`).
         Ty::Actor(id) => ts_ty_to_ts_type(*id, tys),
         // v0.52: a resolved multi-actor sum lowers to a discriminated union
-        // tagged by actor name; non-unit members carry their identity. The
+        // tagged by actor name; non-unit members carry their identity.
         // Each member's own real text is `, `-separated (`{ tag: "x",
         // identity: T }`) — `TsType::Object`'s own renderer is `; `-
         // separated (the ordinary TS object-*type* convention, correct for
@@ -4698,6 +4761,23 @@ mod ts_ty_tests {
             ts_ty(sum, &tys),
             "{ tag: \"Guest\" } | { tag: \"Admin\", identity: AdminIdentity }"
         );
+    }
+
+    /// Coverage gap named in review of #1315/#1316: `Ty::Var` (a type
+    /// variable's own bare name) and `Ty::Actor` (delegates to its
+    /// identity type) were unpinned.
+    #[test]
+    fn var_and_actor() {
+        let tys = Arc::new(Types::new());
+        assert_eq!(ts_ty(tys.intern(Ty::Var("T".to_string())), &tys), "T");
+
+        let identity = tys.intern(Ty::Named {
+            name: "AdminIdentity".to_string(),
+            kind: NamedKind::Record,
+            args: vec![],
+        });
+        let actor = tys.intern(Ty::Actor(identity));
+        assert_eq!(ts_ty(actor, &tys), "AdminIdentity");
     }
 }
 
