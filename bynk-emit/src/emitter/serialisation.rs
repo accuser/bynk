@@ -59,8 +59,8 @@ pub(crate) use bynk_check::wire::sum_inst_variants;
 // *classification*; this file keeps the TS-token spelling (`json_kind_ts`,
 // below) per the seam in `wire.rs`'s module doc.
 use bynk_check::wire::{
-    BaseGuard, JsonKind, Provenance, Revalidation, WireBody, WireField, WireRef, WireSum, WireType,
-    WireVariant, wire_ref, wire_type,
+    BaseGuard, JsonKind, Provenance, Revalidation, UncheckedReason, WireBody, WireField, WireRef,
+    WireSum, WireType, WireVariant, wire_ref, wire_type,
 };
 
 /// #855 (Phase 2 step 6): resolve one `TypeRef` occurrence to its [`WireRef`]
@@ -828,16 +828,28 @@ fn emit_field_deserialise_wire(
         // `Effect` (see this function's doc): no generated codec to name, so
         // the value is cast through unchecked.
         //
-        // P7.2: residual, not narrowed here. Runtime-owned error types
-        // (`ValidationError`/`JsonError`/`HttpResult`/`QueueResult`) have no
-        // exported TypeScript type yet — genuinely R7.7's business (a real
-        // runtime type needs to exist first), named and deferred to Arc C's own
-        // runtime-typing work (`design/pending/the-typescript-tree-settling.md`'s
-        // ADR). `unknown` would compile but silently drops the residual instead
-        // of naming it, which is worse than leaving `any` visible until the real
-        // fix lands.
-        WireRef::Unchecked { .. } => {
-            writeln!(out, "  const __{name} = {json} as any;").unwrap();
+        // #1319: closes the `ts_any` residual for the four runtime-owned
+        // error types — each now casts through its own real, exported
+        // runtime type (`bynk-emit/runtime/src/errors.ts`/`queue.ts`/
+        // `http.ts`), gated into the module's own import list the same way
+        // `JsonError`/`HttpResult` already were (`write_header`'s
+        // `file_mentions_json_error`/`file_mentions_http_result`, now joined
+        // by `file_mentions_queue_result`; `ValidationError` is imported
+        // unconditionally). `Effect` stays `any`: a stray field-position
+        // `Effect[T]` genuinely has no shape to derive one from (this
+        // function's own doc explains why it reaches here at all), and
+        // narrowing it is not part of this residual — `unknown` would
+        // compile but silently drop the fact that it's still open, which is
+        // worse than leaving `any` visible.
+        WireRef::Unchecked { reason } => {
+            let ty = match reason {
+                UncheckedReason::Effect => "any",
+                UncheckedReason::ValidationError => "ValidationError",
+                UncheckedReason::JsonError => "JsonError",
+                UncheckedReason::HttpResult => "HttpResult",
+                UncheckedReason::QueueResult => "QueueResult",
+            };
+            writeln!(out, "  const __{name} = {json} as {ty};").unwrap();
         }
     }
 }
@@ -1056,18 +1068,27 @@ pub(crate) fn deserialise_expr_via(
         // so it never lands here. No fixture currently exercises this arm; it is
         // defensive, and saying so is more useful than implying coverage.
         TypeRef::Unit(_) => "Ok(undefined) as Result<void, BoundaryError>".to_string(),
-        // The runtime-owned error types: no generated codec to name (see
-        // `serialise_field_expr_via`). The one unchecked arm left at the boundary.
+        // The runtime-owned error types: no generated codec to name, so the
+        // deserialised value casts through unchecked — same shape as
+        // `emit_field_deserialise_wire`'s `WireRef::Unchecked` arm.
         //
-        // P7.2: residual, not narrowed — the same runtime-owned-type gap
-        // `serialise_field_expr_via`'s `WireRef::Unchecked` arm names, deferred to
-        // Arc C's runtime-typing work. Left as `any` rather than `unknown` so it
-        // stays visible to `ts_any` as the named residual it is.
-        TypeRef::ValidationError(_)
-        | TypeRef::JsonError(_)
-        | TypeRef::HttpResult(_, _)
-        | TypeRef::QueueResult(_) => {
-            format!("Ok({json} as any) as Result<any, BoundaryError>")
+        // #1319: closes the `ts_any` residual — each arm now casts through
+        // its own real, exported runtime type instead of sharing one `any`
+        // arm, since `t` (the matched `TypeRef` itself) already tells this
+        // function precisely which of the four it is; no information is
+        // missing here the way it briefly was one layer down at the
+        // `WireRef::Unchecked`-with-a-`reason`-field call site.
+        TypeRef::ValidationError(_) => {
+            format!("Ok({json} as ValidationError) as Result<ValidationError, BoundaryError>")
+        }
+        TypeRef::JsonError(_) => {
+            format!("Ok({json} as JsonError) as Result<JsonError, BoundaryError>")
+        }
+        TypeRef::HttpResult(_, _) => {
+            format!("Ok({json} as HttpResult) as Result<HttpResult, BoundaryError>")
+        }
+        TypeRef::QueueResult(_) => {
+            format!("Ok({json} as QueueResult) as Result<QueueResult, BoundaryError>")
         }
         // v0.110 (ADR 0142 D5): a `Bytes` wires as a base64 string; decode it
         // (rejecting a non-string or invalid base64) to a `Uint8Array`.

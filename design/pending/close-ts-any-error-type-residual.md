@@ -1,0 +1,4 @@
+---
+level: patch
+changelog: "Closes the ts_any residual for the four runtime-owned error types (ValidationError/JsonError/HttpResult/QueueResult): the two remaining `as any` sites in bynk-emit's (de)serialisation codec now cast through each type's own real, already-exported runtime type instead. Adds a QueueResult field/type-declaration structural scan (the one of the four that had no non-handler-based import gate). Also corrects design/tracks/the-typescript-tree.md's own Arc C ordering: serialisation.rs is a shared 10-entry-point codec library, not a single clean conversion target like events_fanout.rs was, so it's removed from the ordering pending its own dedicated design pass; workers.rs is named as the real next slice. No other output change, verified against the full fixture corpus plus a new fixture exercising all four types through the real Json codec boundary under tsc --strict (#1319)."
+---

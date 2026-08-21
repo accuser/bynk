@@ -403,9 +403,7 @@ named rule-closing slices, R8.2/R8.14, replacing an unscoped placeholder).
 
 **Arc C — conversion, smallest blast radius first (~19 slices)**
 
-`events_fanout.rs` (**landed**, Arc C's own slice 1, #1317 — see below) → `serialisation.rs`
-(includes closing §3.3's 2–3-site residual by exporting real runtime types for
-`ValidationError`/`JsonError`/`HttpResult`/`QueueResult`, per R7.7) → `workers.rs` →
+`events_fanout.rs` (**landed**, Arc C's own slice 1, #1317 — see below) → `workers.rs` →
 `workers_entry.rs` → `emitter/lower.rs` (several slices) → `emitter/emit.rs` (several slices,
 also finishing R8.3/R8.6/R8.8's structural half per §3.4) → `emitter.rs` + `project.rs` →
 `project/tests_emit.rs` converts its 130 byte-golden assertions to node assertions **last**. Each
@@ -416,6 +414,27 @@ slice is checked against the P7.5 textual lint, not golden fixtures alone (§3.2
 `VerbatimOrigin::NotYetConverted` every current construction site uses; there is no file-specific
 variant for a slice to delete. `verbatim_sites` (the call-site count) is what tracks each slice's
 own progress instead.
+**Second correction (#1319): `serialisation.rs` is removed from this ordering entirely.**
+Grounded directly: `serialisation.rs` is 1821 lines / 237 `write!`-family sites, but structurally a
+shared codec-generation *library* — 10 separate `pub(crate)` entry points, each a `&mut String`-
+accumulator called from multiple sites inside `emitter.rs`'s own still-unconverted code — not
+`events_fanout.rs`'s "one function, one file, one clean call site" shape. Converting it needs its
+own dedicated design pass (does it ripple into `emitter.rs`'s own still-`writeln!`-based callers, or
+need an as-yet-undesigned "sub-program merged into a splice point" mechanism?), not a slice sized
+against the precedent — it will get its own increment proposal when that design work is ready, not
+occupy this ordering's "slice 2" slot by default. `workers.rs` moves up to fill it: `emit_worker_
+compose` has exactly one external caller (`bynk-emit/src/project.rs:2291`), the same clean shape
+`events_fanout.rs` had. §3.3's own 2–3-site `ts_any` residual (`ValidationError`/`JsonError`/
+`HttpResult`/`QueueResult` casting through `any`) landed independently of any tree-conversion slice
+(#1319, `ts_any` 31 → 29) — its own blocking dependency (a real, exported runtime type for each of
+the four) turned out to already be satisfied (`bynk-emit/runtime/src/errors.ts`/`queue.ts`/
+`http.ts`), just never wired into either header-assembly function's own conditional-import scan;
+closed by naming the real type per `WireRef::UncheckedReason`/`TypeRef` arm instead of sharing one
+`any` arm, and by adding a `QueueResult` field/type-declaration structural scan
+(`file_mentions_queue_result`) to both `write_header` and `write_header_single` — the one gap among
+the four that a purely handler-based check (`has_queue`) never covered, mirroring the scan
+`JsonError`/`HttpResult` already had. Whichever future slice actually converts `serialisation.rs`
+inherits real types at these two sites instead of a residual `any` to solve itself.
 
 | Slice | What lands | Rules | Gated on |
 |---|---|---|---|
