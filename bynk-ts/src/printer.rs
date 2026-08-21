@@ -8,6 +8,32 @@
 //! makes R7.4 ("the source map is produced by the printer from
 //! `TsNode.span`. No phase before the printer records an offset") true by
 //! construction for this path, from this slice.
+//!
+//! # Readability policy (R7.5)
+//!
+//! R7.5: "Readable output is a printer policy with a name and a test, not a
+//! property of how carefully strings were typed." This is that policy,
+//! named — today's whole surface of it, not a forward guess at what P7.8's
+//! real `TsStmt`/`TsExpr`/`TsType`/`TsDecl` nodes will need:
+//!
+//! - **One generated line per statement, always.** [`print`] appends a
+//!   trailing `\n` after any statement whose own text doesn't already end
+//!   in one, so two statements can never land on the same generated line
+//!   regardless of how the statement's own text was built. Pinned by
+//!   [`tests::prints_every_statement_in_order`] and
+//!   [`tests::a_statement_missing_its_own_trailing_newline_still_gets_its_own_line`].
+//! - **A statement's own interior is not the printer's concern — yet.**
+//!   Every [`TsStmt`](crate::program::TsStmt) today is a
+//!   [`Verbatim`](crate::program::VerbatimOrigin)-wrapped opaque string;
+//!   its indentation, spacing, and brace placement are whatever the
+//!   still-untreed `bynk-emit` call site that built it produced, not a
+//!   choice this printer makes. Indentation, blank-line placement between
+//!   declarations, and brace style become real printer decisions — and
+//!   this policy grows to name them — only once P7.8 gives the printer
+//!   actual structured nodes to have an opinion about; inventing rules for
+//!   shapes that don't exist yet would be guessing, not designing, the same
+//!   trap this crate's own module doc (`lib.rs`) already named for the
+//!   tree's *structure* — applied here to its *formatting*.
 
 use crate::program::TsProgram;
 use crate::source_map::SourceMapBuilder;
@@ -66,6 +92,8 @@ mod tests {
     use crate::program::{TsStmt, VerbatimOrigin};
     use bynk_syntax::span::Span;
 
+    /// Pins the readability policy's statement-separation guarantee (R7.5,
+    /// this module's own doc): one generated line per statement.
     #[test]
     fn prints_every_statement_in_order() {
         let mut program = TsProgram::new();
@@ -83,10 +111,12 @@ mod tests {
         assert_eq!(printed.text, "const a = 1;\nconst b = 2;\n");
     }
 
-    /// Review of #1308, finding 2: nothing requires `Verbatim` text to be
-    /// newline-terminated — the printer owns line structure (R7.3), so it's
-    /// the one that guarantees two statements never share a generated line,
-    /// not a `TsStmt::verbatim` caller obligation nobody enforces.
+    /// Pins the readability policy's statement-separation guarantee (R7.5,
+    /// this module's own doc) in its sharpest form: nothing requires
+    /// `Verbatim` text to be newline-terminated — the printer owns line
+    /// structure (R7.3), so it's the one that guarantees two statements
+    /// never share a generated line, not a `TsStmt::verbatim` caller
+    /// obligation nobody enforces (review of #1308, finding 2).
     #[test]
     fn a_statement_missing_its_own_trailing_newline_still_gets_its_own_line() {
         let mut program = TsProgram::new();
