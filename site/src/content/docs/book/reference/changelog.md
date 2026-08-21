@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.252**.
+written against **v0.253**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.253.0** | "P7.9: bynk-emit's ts_type_ref/ts_type_ref_qualified/ts_type_ref_qualified_multi/ts_type_ref_with/ts_ty construct a real bynk_ts::TsType internally and print it through a new bynk_ts::print_type, instead of hand-format!-ing text -- every function keeps its exact -> String signature, every real caller (~110-115 sites) unchanged. (ts_base itself stays an unchanged string-table lookup, now consumed by the two converted functions instead of interpolated directly.) TsType::Array gains a readonly modifier; TsType::Fn and TsType::Union added (Union closes a real gap found during implementation: ts_ty's own Ty::ActorSum arm builds a genuine union-of-tagged-object-literals type no existing shape could represent). Zero output change, verified against the full fixture corpus and 23 new direct tests pinning every real type shape from both families (#1315)." |
 | **v0.252.0** | "P7.8: bynk-ts gains a real TsExpr/TsType/TsDecl node algebra, plus real TsStmt kinds (Const/Let/ExprStmt/Return/If/ForOf/TryCatch/Block/Continue/Assign) alongside the existing Verbatim escape hatch -- the subset bynk-emit/src/emitter/events_fanout.rs concretely needs, grounded against that file's own real shape rather than the full reference sketch. The printer learns to render every new kind, verified byte-identical against the real emitter's own output for events_fanout.rs's EventsFanoutDO class, including its constructor body. Also corrects the track doc's stale Arc C schedule: contracts.rs/secrets.rs/runtime_use.rs turn out to emit JSON (or not be emission code at all), not TypeScript -- events_fanout.rs is the real first conversion file. No bynk-emit behaviour change (#1313)." |
 | **v0.251.1** | "P7.7: named the bynk-ts printer's readability guarantee (R7.5) explicitly -- a `# Readability policy` doc block in printer.rs states the printer's one real formatting decision today (exactly one generated line per statement) and its boundary (a statement's own interior formatting isn't the printer's concern until Arc C gives it real nodes). No behaviour change (#1311)." |
 | **v0.251.0** | "P7.6: `Artefacts { docs: BTreeMap<PathBuf, Document> }` (Document::Ts/Toml/Json/Js/SourceMap/DebugSidecar) replaces `ProjectOutput.files: Vec<CompiledFile>` outright across bynk-emit, bynk-driver, bynk-strip, and bynk-wasm -- every real producer and consumer now reads/writes typed documents, not pre-rendered strings. `wrangler.toml`'s real `TomlDocument` reaches the write boundary unstringified, and `bynk-strip`'s own `main =` patch for a stripped Worker's manifest is now a structural in-tree mutation instead of a print-then-reparse. Source maps and debug sidecars become their own typed sibling documents, derived once instead of independently by two functions. No observable output change (#1309)." |
