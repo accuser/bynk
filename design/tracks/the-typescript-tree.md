@@ -419,38 +419,7 @@ own progress instead.
 
 | Slice | What lands | Rules | Gated on |
 |---|---|---|---|
-| **Arc C, slice 1 — `events_fanout.rs`** (#1317, landed) | `emit_events_fanout_do`
-(`bynk-emit/src/emitter/events_fanout.rs`) stops building TypeScript text with `writeln!`/
-`format!`/`write!` and instead constructs and returns a real `bynk_ts::TsProgram` — a deliberate
-signature change (`-> TsProgram`, not `-> String`), departing from P7.9's own "keep `-> String`,
-print immediately" posture, since this slice's whole point is the opposite: stop wrapping this
-file's output in `Verbatim` at all. `bynk-emit/src/project.rs`'s own construction site (`:2379`)
-now uses the real returned `TsProgram` directly as `Document::Ts`, no `Verbatim`. Most of the class
-portion's own node-construction code was already proven correct by P7.8's own grounding test
-(`bynk-ts/src/printer.rs`'s `prints_events_fanout_dos_own_class_byte_identical_to_the_real_emitter`)
-and moved over largely as-is, using the real `EVENTS_FANOUT_CLASS_NAME` constant, not that test's
-own placeholder `"EventsFanoutDO"` name. Two real gaps found and closed during implementation,
-beyond the accepted proposal's own authorised one (`TsStmt::Comment`, for the file's two-line
-header banner — every later Arc C slice will hit the identical need on its own first line): the
-dynamic `__eventRoutes` table renders as a **multi-line** object literal (one entry per line, each
-with its own trailing comma, closing brace at the statement's own indent) — TypeScript's ordinary
-multi-line convention, which nothing in `TsExpr` could represent (`TsExpr::Object`'s only existing
-shape is always single-line, matching real TypeScript's inline-literal convention, which is a
-*different*, real syntax position from this one). Closed by adding a `multiline: bool` field to
-`TsExpr::Object` (mirroring `TsType::Array`'s own `readonly` field) and a depth-aware
-`render_stmt_level_expr` wrapper — only statement/declaration-level renderers (which already carry
-`depth`) can render a multi-line object correctly; a `multiline` object reached through the
-ordinary depth-unaware `render_expr` recursion falls back to single-line rendering, a named,
-tested boundary, not silently wrong. Verified by a fresh, direct test
-(`bynk-emit/src/emitter/events_fanout.rs`'s own `matches_the_real_fixtures_own_events_fanout_ts_
-byte_for_byte`) asserting the real, converted function's own output against a real fixture's
-`events_fanout.ts` byte-for-byte — not a hand-rebuilt tree standing in for it, closing the gap the
-P7.8-era tests left (most of them cover isolated *shapes* with synthetic data, e.g. only 2 of the
-real interface's 4 `envelope` fields, never this file's real assembled content).
-`bless_positive_fixtures`/`positive_fixtures`/`tsc_verify`'s full strict-`tsc` corpus all pass
-unchanged. `verbatim_sites` 11 → **10** (this slice's own one call site); `ts_writes` 1620 →
-**1581** (`events_fanout.rs`'s own ~39 `writeln!`/`write!`/`format!` calls gone); `ast_importers`
-unaffected (this file was never one of the five counted) | R7.1, R7.2 | P7.8, P7.9 |
+| **Arc C, slice 1 — `events_fanout.rs`** (#1317, landed) | `emit_events_fanout_do` (`bynk-emit/src/emitter/events_fanout.rs`) stops building TypeScript text with `writeln!`/`format!`/`write!` and instead constructs and returns a real `bynk_ts::TsProgram` — a deliberate signature change (`-> TsProgram`, not `-> String`), departing from P7.9's own "keep `-> String`, print immediately" posture, since this slice's whole point is the opposite: stop wrapping this file's output in `Verbatim` at all. `bynk-emit/src/project.rs`'s own construction site (`:2379`) now uses the real returned `TsProgram` directly as `Document::Ts`, no `Verbatim`. Most of the class portion's own node-construction code was already proven correct by P7.8's own grounding test (`bynk-ts/src/printer.rs`'s `prints_events_fanout_dos_own_class_byte_identical_to_the_real_emitter`) and moved over largely as-is, using the real `EVENTS_FANOUT_CLASS_NAME` constant, not that test's own placeholder `"EventsFanoutDO"` name. Two real gaps found and closed during implementation, beyond the accepted proposal's own authorised one (`TsStmt::Comment`, for the file's two-line header banner — every later Arc C slice will hit the identical need on its own first line): the dynamic `__eventRoutes` table renders as a **multi-line** object literal (one entry per line, each with its own trailing comma, closing brace at the statement's own indent) — TypeScript's ordinary multi-line convention, which nothing in `TsExpr` could represent (`TsExpr::Object`'s only existing shape is always single-line, matching real TypeScript's inline-literal convention, which is a *different*, real syntax position from this one). Closed by adding a `multiline: bool` field to `TsExpr::Object` (mirroring `TsType::Array`'s own `readonly` field) and a depth-aware `render_stmt_level_expr` wrapper — only statement/declaration-level renderers (which already carry `depth`) can render a multi-line object correctly; a `multiline` object reached through the ordinary depth-unaware `render_expr` recursion falls back to single-line rendering, a named, tested boundary, not silently wrong. Review caught two more real issues before merge: the empty-table case (a context can `ctx_uses_emit` while publishing only events nobody subscribes to) printed the tight `{}` shortcut instead of the pre-conversion code's own unconditional open/close-brace-on-separate-lines shape — fixed by dropping the shortcut entirely, `render_multiline_object` never takes it, matching the original `writeln!` code's own unconditional behaviour; and a bare `Comment` reaching `render_inline_stmt`'s fallback (e.g. as an `if`'s brace-free body) would have rendered as a `//` line comment that swallows everything after it on the same physical line, a real parse-error risk for a future slice — fixed with its own inline shape, a `/* text */` block comment, which cannot swallow anything. Verified by a fresh, direct test (`bynk-emit/src/emitter/events_fanout.rs`'s own `matches_the_real_fixtures_own_events_fanout_ts_byte_for_byte`) asserting the real, converted function's own output against a real fixture's `events_fanout.ts` byte-for-byte — not a hand-rebuilt tree standing in for it, closing the gap the P7.8-era tests left (most of them cover isolated *shapes* with synthetic data, e.g. only 2 of the real interface's 4 `envelope` fields, never this file's real assembled content) — plus a direct regression test for the empty-table case. `bless_positive_fixtures`/`positive_fixtures`/`tsc_verify`'s full strict-`tsc` corpus all pass unchanged. `verbatim_sites` 11 → **10** (this slice's own one call site); `ts_writes` 1620 → **1581** (`events_fanout.rs`'s own ~39 `writeln!`/`write!`/`format!` calls gone); `ast_importers` unaffected (this file was never one of the five counted) | R7.1, R7.2 | P7.8, P7.9 |
 
 **Arc D — settling (~8 slices)**
 

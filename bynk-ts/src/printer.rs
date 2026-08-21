@@ -285,6 +285,25 @@ fn render_inline_stmt(out: &mut String, stmt: &TsStmt) {
             render_expr(out, expr);
             out.push_str(";\n");
         }
+        // Review of #1317/#1318, finding 2: every other variant in the
+        // fallback group below is safe to render via `render_stmt`'s own
+        // top-level `//`-line-comment form — `Comment` is not. A `//`
+        // comment run through the generic fallback (`if (cond) // text`)
+        // comments out the rest of the physical line, leaving the `if`
+        // with no body at all — a TypeScript parse error, not merely an
+        // unlikely shape. Not reachable today (`events_fanout.rs` never
+        // puts a bare `Comment` in a brace-free `if`/`for...of` body), but
+        // the fallback group exists precisely so a future slice trips over
+        // a missing case at compile time, not at parse time in emitted
+        // output — so `Comment` needs its own real inline shape now, a
+        // block comment (`/* text */`), which cannot swallow anything
+        // after it. Embedded newlines flatten to spaces, keeping this
+        // strictly one generated line like every other inline shape here.
+        TsStmtKind::Comment(text) => {
+            out.push_str("/* ");
+            out.push_str(&text.replace('\n', " "));
+            out.push_str(" */\n");
+        }
         // No inline shape of its own — `events_fanout.rs` never puts one of
         // these in a brace-free `if`/`for...of` body — but listed by name,
         // not a wildcard (review of #1314, finding 3): a future Arc C
@@ -299,8 +318,7 @@ fn render_inline_stmt(out: &mut String, stmt: &TsStmt) {
         | TsStmtKind::ForOf { .. }
         | TsStmtKind::TryCatch { .. }
         | TsStmtKind::Block(_)
-        | TsStmtKind::Assign { .. }
-        | TsStmtKind::Comment(_) => render_stmt(out, stmt, 0),
+        | TsStmtKind::Assign { .. } => render_stmt(out, stmt, 0),
     }
 }
 
@@ -389,10 +407,18 @@ fn render_stmt_level_expr(out: &mut String, expr: &TsExpr, depth: usize) {
 /// own `__eventRoutes` table is the real, grounded shape this exists for
 /// (#1317) — TypeScript's ordinary multi-line object-literal convention.
 fn render_multiline_object(out: &mut String, entries: &[(String, TsExpr)], depth: usize) {
-    if entries.is_empty() {
-        out.push_str("{}");
-        return;
-    }
+    // Deliberately no empty-entries shortcut (review of #1317/#1318, finding
+    // 1): `events_fanout.rs`'s own `__eventRoutes` table is reachable with
+    // zero entries (a context can `ctx_uses_emit` while publishing only
+    // events nobody subscribes to — `own_event_routes` filters down to
+    // exactly that empty case, `bynk-emit/src/project.rs`'s own
+    // `own_event_routes` computation), and the pre-conversion `writeln!`
+    // code always wrote the open-brace line and the closing `};` line
+    // unconditionally, regardless of how many times its own `for` loop
+    // iterated — an empty table printed `{\n};`, not the tight `{}` a
+    // single-line object's own empty case uses. Matching that byte-for-byte
+    // means never taking the single-line shortcut here, not even for zero
+    // entries.
     out.push_str("{\n");
     for (k, v) in entries {
         out.push_str(&indent(depth + 1));
@@ -986,6 +1012,23 @@ mod tests {
         ));
         let printed = print(&program, "x.bynk", "", "x.ts");
         assert_eq!(printed.text, "if (!Array.isArray(subs)) continue;\n");
+    }
+
+    /// Review of #1317/#1318, finding 2: a bare `Comment` as an `if`'s
+    /// brace-free body must not fall through to the top-level `//`-line
+    /// form — `if (cond) // text` comments out the rest of the physical
+    /// line, leaving `if` with no body at all (a parse error). Renders as
+    /// a block comment instead, which cannot swallow anything after it.
+    #[test]
+    fn a_comment_as_an_ifs_brace_free_body_renders_as_a_block_comment() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::if_stmt(
+            TsExpr::Ident("cond".to_string()),
+            TsStmt::comment("annotation", None),
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "if (cond) /* annotation */\n");
     }
 
     #[test]
@@ -1587,6 +1630,29 @@ mod tests {
         ));
         let printed = print(&program, "x.bynk", "", "x.ts");
         assert_eq!(printed.text, "const table = {\n  a: 1,\n  b: 2,\n};\n");
+    }
+
+    /// Review of #1317/#1318, finding 1: an empty `multiline_object` still
+    /// prints the open/close-brace-on-separate-lines shape, not the tight
+    /// `{}` a single-line empty object uses — matching the pre-conversion
+    /// `writeln!` code's own real behaviour (its `for` loop simply not
+    /// iterating, while the open-brace and closing `};` lines were written
+    /// unconditionally either way). This is a real, reachable shape:
+    /// `events_fanout.rs`'s own `__eventRoutes` table can be empty for a
+    /// context that publishes only events nobody subscribes to.
+    #[test]
+    fn an_empty_multiline_object_still_prints_the_open_and_close_brace_on_separate_lines() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::decl(
+            TsDecl::ConstDecl {
+                name: "table".to_string(),
+                ty: None,
+                init: TsExpr::multiline_object(vec![]),
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "const table = {\n};\n");
     }
 
     /// A `multiline_object` reached through the ordinary, depth-unaware

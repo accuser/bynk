@@ -457,4 +457,26 @@ mod tests {
         let printed = bynk_ts::print(&program, "", "", "");
         assert_eq!(printed.text, expected);
     }
+
+    /// Review of #1317/#1318, finding 1: a context can `ctx_uses_emit`
+    /// while publishing only events nobody subscribes to
+    /// (`bynk-emit/src/project.rs`'s own `own_event_routes` filters down to
+    /// exactly this shape) — `routes` empty is real, reachable input, not
+    /// hypothetical. Pins the exact pre-conversion `writeln!` behaviour:
+    /// the `for` loop over `routes` just doesn't iterate, but the
+    /// open-brace and closing `};` lines were written unconditionally
+    /// either way.
+    #[test]
+    fn an_empty_routes_map_still_prints_the_open_and_close_brace_on_separate_lines() {
+        let routes = BTreeMap::new();
+        let program = emit_events_fanout_do("commerce.order", &routes);
+        let printed = bynk_ts::print(&program, "", "", "");
+        assert!(
+            printed.text.contains(
+                "const __eventRoutes: Record<string, Array<{ binding: string; service: string }>> = {\n};\n"
+            ),
+            "expected the empty-table shape, got:\n{}",
+            printed.text
+        );
+    }
 }
