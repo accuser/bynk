@@ -12,19 +12,23 @@
 //! load-bearing shape `bynk-render`'s own module doc states for itself
 //! (`bynk-render/src/lib.rs`).
 //!
-//! **What exists here today (P7.5, #1307) — and what doesn't yet.** The
-//! reference's own §7.1 sketch names four tree enums (`TsStmt`/`TsExpr`/
-//! `TsType`/`TsDecl`) with real variants (`Const`, `Let`, `Binary`, `Named`,
-//! `Class`, …). Only [`TsStmt`] exists here, and it has exactly one variant:
-//! [`VerbatimOrigin`]-tagged escape-hatch text (Q2, `design/tracks/
-//! the-typescript-tree.md` §3.2). `bynk-emit` builds no [`TsProgram`] yet —
-//! Arc C's own first slice is what starts converting real emission into real
-//! nodes, file by file; this crate exists so that conversion has somewhere
-//! to land, following R10.3's own "carve prospectively, at the moment the
-//! dependency appears" precedent (`bynk-strip`'s own carve is the control
-//! case cited for this). The full `TsStmt`/`TsExpr`/`TsType`/`TsDecl` sketch
-//! — no `Any`/`enum`/`namespace`/decorator/param-property representable —
-//! is P7.8's own job, gated on this crate existing at all.
+//! **What exists here today (P7.5, #1307 → P7.8, #1313).** The reference's
+//! own §7.1 sketch names four tree enums (`TsStmt`/`TsExpr`/`TsType`/
+//! `TsDecl`) with real variants (`Const`, `Let`, `Binary`, `Named`, `Class`,
+//! …), but only as a variant-name list, not a field-level design. P7.5
+//! built only [`TsStmt`]'s `Verbatim` escape hatch ([`VerbatimOrigin`]-
+//! tagged text, Q2, `design/tracks/the-typescript-tree.md` §3.2). P7.8
+//! (#1313) adds the rest — [`TsExpr`]/[`TsType`]/[`TsDecl`], plus real
+//! `TsStmt` kinds — but not the sketch's full variant list: only what
+//! `bynk-emit/src/emitter/events_fanout.rs` (Arc C's real next file —
+//! P7.8's own accepted proposal corrected the track doc's stale schedule,
+//! `design/tracks/the-typescript-tree.md` §6/§9) concretely needs, grounded
+//! against that file's own real shape. `bynk-emit` still builds no
+//! [`TsProgram`] beyond `Verbatim` — Arc C's own first slice is what starts
+//! converting real emission into real nodes, file by file; this crate
+//! exists so that conversion has somewhere to land, following R10.3's own
+//! "carve prospectively, at the moment the dependency appears" precedent
+//! (`bynk-strip`'s own carve is the control case cited for this).
 
 mod lint;
 mod printer;
@@ -33,5 +37,8 @@ mod source_map;
 
 pub use lint::{Violation, verbatim_violations};
 pub use printer::{Printed, print};
-pub use program::{TsProgram, TsStmt, VerbatimOrigin};
+pub use program::{
+    TsBinaryOp, TsBindingName, TsClassCtor, TsClassField, TsClassMethod, TsDecl, TsExpr, TsLit,
+    TsParam, TsProgram, TsStmt, TsType, TsUnaryOp, VerbatimOrigin,
+};
 pub use source_map::SourceMapBuilder;

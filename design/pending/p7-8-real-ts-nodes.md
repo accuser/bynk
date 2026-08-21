@@ -1,0 +1,4 @@
+---
+level: minor
+changelog: "P7.8: bynk-ts gains a real TsExpr/TsType/TsDecl node algebra, plus real TsStmt kinds (Const/Let/ExprStmt/Return/If/ForOf/TryCatch/Block/Continue/Assign) alongside the existing Verbatim escape hatch -- the subset bynk-emit/src/emitter/events_fanout.rs concretely needs, grounded against that file's own real shape rather than the full reference sketch. The printer learns to render every new kind, verified byte-identical against the real emitter's own output for events_fanout.rs's EventsFanoutDO class, including its constructor body. Also corrects the track doc's stale Arc C schedule: contracts.rs/secrets.rs/runtime_use.rs turn out to emit JSON (or not be emission code at all), not TypeScript -- events_fanout.rs is the real first conversion file. No bynk-emit behaviour change (#1313)."
+---
