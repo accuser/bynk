@@ -2376,16 +2376,15 @@ fn build_output(
                 // `deps.__eventsDispatch`, so the two never disagree about
                 // whether `env.EVENTS_FANOUT` is real).
                 if ctx_uses_emit {
-                    let fanout_ts = emitter::emit_events_fanout_do(ctx_name, &own_event_routes);
+                    // Arc C's own first real conversion slice (#1317):
+                    // `emit_events_fanout_do` returns a real `TsProgram`
+                    // directly — the first `bynk-emit` construction site
+                    // that reaches `Document::Ts` with no `Verbatim` wrap.
+                    let fanout_program =
+                        emitter::emit_events_fanout_do(ctx_name, &own_event_routes);
                     compiled.push(StagedFile {
                         output_path: PathBuf::from(format!("workers/{dashes}/events_fanout.ts")),
-                        document: Document::Ts(bynk_ts::TsProgram {
-                            stmts: vec![bynk_ts::TsStmt::verbatim(
-                                bynk_ts::VerbatimOrigin::NotYetConverted,
-                                fanout_ts,
-                                None,
-                            )],
-                        }),
+                        document: Document::Ts(fanout_program),
                         source_map: None,
                         debug_metadata: None,
                     });

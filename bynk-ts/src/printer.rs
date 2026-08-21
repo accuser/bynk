@@ -27,10 +27,14 @@
 //!   because of any earlier general readability decision; matches the
 //!   depth threaded through [`render_stmt`]/[`render_block_body`] exactly.
 //! - **One blank line separates top-level declarations, except two
-//!   consecutive `import`s.** [`print()`]'s own loop implements this by
-//!   peeking at the next statement — matching `events_fanout.rs`'s own real
-//!   spacing (its two `import` lines sit adjacent; every other pair of
-//!   top-level declarations has a blank line between).
+//!   consecutive `import`s or two consecutive `Comment`s.** [`print()`]'s
+//!   own loop implements this by peeking at the next statement — matching
+//!   `events_fanout.rs`'s own real spacing (its two `import` lines sit
+//!   adjacent, and so do its own two header-comment lines; every other pair
+//!   of top-level declarations has a blank line between). Added for Arc C's
+//!   own first real conversion slice (#1317): every `bynk-emit`-generated
+//!   file opens with a multi-line header banner, one [`TsStmtKind::Comment`]
+//!   per real line.
 //! - **Inside a `class`, no blank line between fields and the constructor;
 //!   one blank line before each method.** [`render_decl_body`]'s own
 //!   `TsDecl::Class` arm — again, this is what `events_fanout.rs` itself
@@ -106,12 +110,16 @@ pub fn print(
         }
         // Readability policy (this module's own doc): one blank line
         // between top-level declarations, except two consecutive
-        // `import`s, and never after `Verbatim` (P7.7's own boundary —
-        // `Verbatim` content's own spacing is not this printer's decision).
+        // `import`s or two consecutive `Comment`s, and never after
+        // `Verbatim` (P7.7's own boundary — `Verbatim` content's own
+        // spacing is not this printer's decision).
         if let Some(next) = program.stmts.get(i + 1) {
             let both_imports = matches!(&stmt.kind, TsStmtKind::Decl(TsDecl::Import { .. }))
                 && matches!(&next.kind, TsStmtKind::Decl(TsDecl::Import { .. }));
-            if !both_imports && !matches!(stmt.kind, TsStmtKind::Verbatim { .. }) {
+            let both_comments = matches!(&stmt.kind, TsStmtKind::Comment(_))
+                && matches!(&next.kind, TsStmtKind::Comment(_));
+            if !both_imports && !both_comments && !matches!(stmt.kind, TsStmtKind::Verbatim { .. })
+            {
                 out.push('\n');
             }
         }
@@ -143,7 +151,7 @@ fn render_stmt(out: &mut String, stmt: &TsStmt, depth: usize) {
                 render_type(out, ty);
             }
             out.push_str(" = ");
-            render_expr(out, init);
+            render_stmt_level_expr(out, init, depth);
             out.push_str(";\n");
         }
         TsStmtKind::Let { name, ty, init } => {
@@ -156,7 +164,7 @@ fn render_stmt(out: &mut String, stmt: &TsStmt, depth: usize) {
             }
             if let Some(init) = init {
                 out.push_str(" = ");
-                render_expr(out, init);
+                render_stmt_level_expr(out, init, depth);
             }
             out.push_str(";\n");
         }
@@ -225,8 +233,16 @@ fn render_stmt(out: &mut String, stmt: &TsStmt, depth: usize) {
             out.push_str(&indent(depth));
             render_expr(out, target);
             out.push_str(" = ");
-            render_expr(out, value);
+            render_stmt_level_expr(out, value, depth);
             out.push_str(";\n");
+        }
+        TsStmtKind::Comment(text) => {
+            for line in text.split('\n') {
+                out.push_str(&indent(depth));
+                out.push_str("// ");
+                out.push_str(line);
+                out.push('\n');
+            }
         }
     }
 }
@@ -283,7 +299,8 @@ fn render_inline_stmt(out: &mut String, stmt: &TsStmt) {
         | TsStmtKind::ForOf { .. }
         | TsStmtKind::TryCatch { .. }
         | TsStmtKind::Block(_)
-        | TsStmtKind::Assign { .. } => render_stmt(out, stmt, 0),
+        | TsStmtKind::Assign { .. }
+        | TsStmtKind::Comment(_) => render_stmt(out, stmt, 0),
     }
 }
 
@@ -348,6 +365,46 @@ fn render_operand(out: &mut String, expr: &TsExpr) {
     }
 }
 
+/// Render `expr` as a statement or declaration's own top-level expression
+/// (a `const`/`let` initialiser, an assignment's own value, …) — the only
+/// place `depth` is available to render a `multiline: true`
+/// [`TsExpr::Object`] correctly (see its own doc). Every other shape defers
+/// to the ordinary, depth-unaware [`render_expr`] unchanged; this exists
+/// only to intercept the one shape that needs `depth` before it gets there.
+fn render_stmt_level_expr(out: &mut String, expr: &TsExpr, depth: usize) {
+    if let TsExpr::Object {
+        entries,
+        multiline: true,
+    } = expr
+    {
+        render_multiline_object(out, entries, depth);
+    } else {
+        render_expr(out, expr);
+    }
+}
+
+/// `{ <newline> ("  "*depth+1)<key>: <value>,<newline> ... ("  "*depth)}` —
+/// one entry per line, each with its own trailing comma (including the
+/// last), closing brace back at `depth`'s own indent. `events_fanout.rs`'s
+/// own `__eventRoutes` table is the real, grounded shape this exists for
+/// (#1317) — TypeScript's ordinary multi-line object-literal convention.
+fn render_multiline_object(out: &mut String, entries: &[(String, TsExpr)], depth: usize) {
+    if entries.is_empty() {
+        out.push_str("{}");
+        return;
+    }
+    out.push_str("{\n");
+    for (k, v) in entries {
+        out.push_str(&indent(depth + 1));
+        out.push_str(k);
+        out.push_str(": ");
+        render_expr(out, v);
+        out.push_str(",\n");
+    }
+    out.push_str(&indent(depth));
+    out.push('}');
+}
+
 fn render_expr(out: &mut String, expr: &TsExpr) {
     match expr {
         TsExpr::Ident(name) => out.push_str(name),
@@ -375,7 +432,13 @@ fn render_expr(out: &mut String, expr: &TsExpr) {
             render_expr_list(out, args);
             out.push(')');
         }
-        TsExpr::Object(entries) => {
+        // `multiline` is ignored here deliberately: this recursion has no
+        // `depth` to render a multi-line object correctly against (see
+        // `TsExpr::Object`'s own doc). Every real `bynk-emit` call site
+        // that needs `multiline: true` reaches it through
+        // `render_stmt_level_expr` instead, which intercepts the shape
+        // before it gets here.
+        TsExpr::Object { entries, .. } => {
             if entries.is_empty() {
                 out.push_str("{}");
             } else {
@@ -624,7 +687,7 @@ fn render_decl_body(out: &mut String, decl: &TsDecl, depth: usize) {
                 render_type(out, ty);
             }
             out.push_str(" = ");
-            render_expr(out, init);
+            render_stmt_level_expr(out, init, depth);
             out.push_str(";\n");
         }
         TsDecl::Class {
@@ -1089,7 +1152,7 @@ mod tests {
                     expr: Box::new(TsExpr::Binary {
                         op: TsBinaryOp::NullishCoalescing,
                         left: Box::new(TsExpr::Ident("env".to_string())),
-                        right: Box::new(TsExpr::Object(vec![])),
+                        right: Box::new(TsExpr::object(vec![])),
                     }),
                     ty: TsType::named_with_args(
                         "Record",
@@ -1244,7 +1307,7 @@ mod tests {
                                                                 "EventsFanout delivery failed"
                                                                     .to_string(),
                                                             )),
-                                                            TsExpr::Object(vec![
+                                                            TsExpr::object(vec![
                                                                 (
                                                                     "event".to_string(),
                                                                     TsExpr::Member {
@@ -1307,7 +1370,7 @@ mod tests {
                         callee: Box::new(TsExpr::Ident("Response".to_string())),
                         args: vec![
                             TsExpr::Lit(TsLit::Null),
-                            TsExpr::Object(vec![(
+                            TsExpr::object(vec![(
                                 "status".to_string(),
                                 TsExpr::Lit(TsLit::Num("204".to_string())),
                             )]),
@@ -1452,6 +1515,98 @@ mod tests {
             TsType::Object(vec![("tag".to_string(), TsType::named("\"literal\""))]),
         ]);
         assert_eq!(print_type(&ty), "string | number | { tag: \"literal\" }");
+    }
+
+    /// `TsStmtKind::Comment`, added for Arc C's own first real conversion
+    /// slice (#1317). A multi-line comment (embedded `\n`) prints one
+    /// `// `-prefixed line per real line.
+    #[test]
+    fn prints_a_comment_one_prefixed_line_per_embedded_newline() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::comment(
+            "Generated by bynkc — do not edit by hand.\nSecond line.",
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(
+            printed.text,
+            "// Generated by bynkc — do not edit by hand.\n// Second line.\n"
+        );
+    }
+
+    /// Two adjacent top-level `Comment` statements get no blank line
+    /// between them — the same exception already established for two
+    /// adjacent `import`s, matching `events_fanout.rs`'s own real two-line
+    /// header banner (built as two separate `Comment` statements, not one
+    /// with an embedded newline).
+    #[test]
+    fn no_blank_line_between_two_adjacent_comment_statements() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::comment(
+            "Generated by bynkc — do not edit by hand.",
+            None,
+        ));
+        program.push(TsStmt::comment("Second line.", None));
+        program.push(TsStmt::decl(
+            TsDecl::Interface {
+                name: "A".to_string(),
+                members: vec![],
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(
+            printed.text,
+            "// Generated by bynkc — do not edit by hand.\n// Second line.\n\ninterface A {\n}\n"
+        );
+    }
+
+    /// `TsExpr::multiline_object`, added for Arc C's own first real
+    /// conversion slice (#1317): `events_fanout.rs`'s own `__eventRoutes`
+    /// table is a top-level `const` initialiser with one entry per line,
+    /// each with its own trailing comma (including the last), closing
+    /// brace back at the statement's own indent — TypeScript's ordinary
+    /// multi-line object-literal convention, which `TsExpr::object`'s
+    /// single-line form cannot represent. Only reachable through a
+    /// statement/declaration-level renderer that carries `depth`
+    /// (`render_stmt_level_expr`) — this exercises it via a top-level
+    /// `ConstDecl`, the real shape `events_fanout.rs` itself uses.
+    #[test]
+    fn prints_a_multiline_object_as_a_top_level_const_initialiser() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::decl(
+            TsDecl::ConstDecl {
+                name: "table".to_string(),
+                ty: None,
+                init: TsExpr::multiline_object(vec![
+                    ("a".to_string(), TsExpr::Lit(TsLit::Num("1".to_string()))),
+                    ("b".to_string(), TsExpr::Lit(TsLit::Num("2".to_string()))),
+                ]),
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "const table = {\n  a: 1,\n  b: 2,\n};\n");
+    }
+
+    /// A `multiline_object` reached through the ordinary, depth-unaware
+    /// `render_expr` recursion (nested inside another expression, not a
+    /// statement's own top-level initialiser) falls back to single-line
+    /// rendering — documented on `TsExpr::Object` itself as a real,
+    /// deliberate boundary, not silently wrong. Pinned here so a future
+    /// change to that boundary is a visible, intentional decision.
+    #[test]
+    fn a_nested_multiline_object_falls_back_to_single_line() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::expr_stmt(
+            TsExpr::Array(vec![TsExpr::multiline_object(vec![(
+                "a".to_string(),
+                TsExpr::Lit(TsLit::Num("1".to_string())),
+            )])]),
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "[{ a: 1 }];\n");
     }
 
     /// Coverage gap named in review of #1314, finding 4: the blank-line-
