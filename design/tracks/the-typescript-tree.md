@@ -403,14 +403,54 @@ named rule-closing slices, R8.2/R8.14, replacing an unscoped placeholder).
 
 **Arc C — conversion, smallest blast radius first (~19 slices)**
 
-`events_fanout.rs` → `serialisation.rs`
+`events_fanout.rs` (**landed**, Arc C's own slice 1, #1317 — see below) → `serialisation.rs`
 (includes closing §3.3's 2–3-site residual by exporting real runtime types for
 `ValidationError`/`JsonError`/`HttpResult`/`QueueResult`, per R7.7) → `workers.rs` →
 `workers_entry.rs` → `emitter/lower.rs` (several slices) → `emitter/emit.rs` (several slices,
 also finishing R8.3/R8.6/R8.8's structural half per §3.4) → `emitter.rs` + `project.rs` →
 `project/tests_emit.rs` converts its 130 byte-golden assertions to node assertions **last**. Each
-slice deletes its `VerbatimOrigin` variant and is checked against the P7.5 textual lint, not
-golden fixtures alone (§3.2).
+slice is checked against the P7.5 textual lint, not golden fixtures alone (§3.2).
+**Correction (found by slice 1's own grounding, #1317): "each slice deletes its own
+`VerbatimOrigin` variant" is stale** — it describes P7.5's original per-file seeding
+(`Contracts`/`Secrets`/`RuntimeUse`), but P7.6 (#1309) replaced that with one shared
+`VerbatimOrigin::NotYetConverted` every current construction site uses; there is no file-specific
+variant for a slice to delete. `verbatim_sites` (the call-site count) is what tracks each slice's
+own progress instead.
+
+| Slice | What lands | Rules | Gated on |
+|---|---|---|---|
+| **Arc C, slice 1 — `events_fanout.rs`** (#1317, landed) | `emit_events_fanout_do`
+(`bynk-emit/src/emitter/events_fanout.rs`) stops building TypeScript text with `writeln!`/
+`format!`/`write!` and instead constructs and returns a real `bynk_ts::TsProgram` — a deliberate
+signature change (`-> TsProgram`, not `-> String`), departing from P7.9's own "keep `-> String`,
+print immediately" posture, since this slice's whole point is the opposite: stop wrapping this
+file's output in `Verbatim` at all. `bynk-emit/src/project.rs`'s own construction site (`:2379`)
+now uses the real returned `TsProgram` directly as `Document::Ts`, no `Verbatim`. Most of the class
+portion's own node-construction code was already proven correct by P7.8's own grounding test
+(`bynk-ts/src/printer.rs`'s `prints_events_fanout_dos_own_class_byte_identical_to_the_real_emitter`)
+and moved over largely as-is, using the real `EVENTS_FANOUT_CLASS_NAME` constant, not that test's
+own placeholder `"EventsFanoutDO"` name. Two real gaps found and closed during implementation,
+beyond the accepted proposal's own authorised one (`TsStmt::Comment`, for the file's two-line
+header banner — every later Arc C slice will hit the identical need on its own first line): the
+dynamic `__eventRoutes` table renders as a **multi-line** object literal (one entry per line, each
+with its own trailing comma, closing brace at the statement's own indent) — TypeScript's ordinary
+multi-line convention, which nothing in `TsExpr` could represent (`TsExpr::Object`'s only existing
+shape is always single-line, matching real TypeScript's inline-literal convention, which is a
+*different*, real syntax position from this one). Closed by adding a `multiline: bool` field to
+`TsExpr::Object` (mirroring `TsType::Array`'s own `readonly` field) and a depth-aware
+`render_stmt_level_expr` wrapper — only statement/declaration-level renderers (which already carry
+`depth`) can render a multi-line object correctly; a `multiline` object reached through the
+ordinary depth-unaware `render_expr` recursion falls back to single-line rendering, a named,
+tested boundary, not silently wrong. Verified by a fresh, direct test
+(`bynk-emit/src/emitter/events_fanout.rs`'s own `matches_the_real_fixtures_own_events_fanout_ts_
+byte_for_byte`) asserting the real, converted function's own output against a real fixture's
+`events_fanout.ts` byte-for-byte — not a hand-rebuilt tree standing in for it, closing the gap the
+P7.8-era tests left (most of them cover isolated *shapes* with synthetic data, e.g. only 2 of the
+real interface's 4 `envelope` fields, never this file's real assembled content).
+`bless_positive_fixtures`/`positive_fixtures`/`tsc_verify`'s full strict-`tsc` corpus all pass
+unchanged. `verbatim_sites` 11 → **10** (this slice's own one call site); `ts_writes` 1620 →
+**1581** (`events_fanout.rs`'s own ~39 `writeln!`/`write!`/`format!` calls gone); `ast_importers`
+unaffected (this file was never one of the five counted) | R7.1, R7.2 | P7.8, P7.9 |
 
 **Arc D — settling (~8 slices)**
 
