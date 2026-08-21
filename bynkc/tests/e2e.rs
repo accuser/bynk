@@ -123,6 +123,19 @@ fn check_expected_contains_absent(dir: &Path, haystack: &str, failures: &mut Vec
     }
 }
 
+/// Whether `doc` is one of the compiler's own generated outputs, as opposed
+/// to a `.map`/`.bynkdbg.json` sidecar `bynk-emit::project::build_output`
+/// splits into its own `Artefacts.docs` entry (P7.6, #1309) — the old
+/// `ProjectOutput.files` never carried those as separate entries (they were
+/// `CompiledFile::source_map`/`debug_metadata` fields), so every fixture
+/// comparison here filters them out to keep comparing the same set.
+fn is_main_document(doc: &bynkc::Document) -> bool {
+    !matches!(
+        doc,
+        bynkc::Document::SourceMap(_) | bynkc::Document::DebugSidecar(_)
+    )
+}
+
 /// Read the build target marker from a fixture root, if present.
 /// Defaults to bundle when no `target.txt` is present.
 fn fixture_target(dir: &Path) -> bynkc::BuildTarget {
@@ -228,12 +241,15 @@ fn positive_fixtures() {
                     // emitted identically for every project, separately unit
                     // tested. Excluding them keeps per-fixture snapshots focused
                     // on the per-context emission.
-                    for f in &out.files {
-                        let p = f.output_path.to_string_lossy();
+                    for (path, doc) in &out.artefacts.docs {
+                        if !is_main_document(doc) {
+                            continue;
+                        }
+                        let p = path.to_string_lossy();
                         if p == "runtime.ts" || p == "tsconfig.json" {
                             continue;
                         }
-                        actual_by_path.insert(f.output_path.clone(), f.typescript.clone());
+                        actual_by_path.insert(path.clone(), doc.text());
                     }
                     // For each expected .ts file, compare.
                     let mut all_ok = true;
@@ -268,17 +284,20 @@ fn positive_fixtures() {
                         .iter()
                         .map(|p| p.strip_prefix(&expected_dir).unwrap().to_path_buf())
                         .collect();
-                    for f in &out.files {
-                        let p = f.output_path.to_string_lossy();
+                    for (path, doc) in &out.artefacts.docs {
+                        if !is_main_document(doc) {
+                            continue;
+                        }
+                        let p = path.to_string_lossy();
                         if p == "runtime.ts" || p == "tsconfig.json" {
                             continue;
                         }
-                        if !expected_rels.remove(&f.output_path) {
+                        if !expected_rels.remove(path) {
                             all_ok = false;
                             report.push_str(&format!(
                                 "\n--- unexpected output: {} ---\n--- actual ---\n{}\n",
-                                f.output_path.display(),
-                                f.typescript,
+                                path.display(),
+                                doc.text(),
                             ));
                         }
                     }
@@ -319,9 +338,11 @@ fn positive_fixtures() {
                     // per-file, since a substring assertion doesn't need to name
                     // which file it expects the fragment in.
                     let haystack: String = out
-                        .files
-                        .iter()
-                        .map(|f| f.typescript.as_str())
+                        .artefacts
+                        .docs
+                        .values()
+                        .filter(|doc| is_main_document(doc))
+                        .map(|doc| doc.text())
                         .collect::<Vec<_>>()
                         .join("\n");
                     check_expected_contains_absent(&dir, &haystack, &mut failures);
@@ -385,18 +406,21 @@ fn bless_positive_fixtures() {
         };
         let expected_dir = dir.join("expected");
         let _ = fs::remove_dir_all(&expected_dir);
-        for f in &out.files {
-            let p = f.output_path.to_string_lossy();
+        for (path, doc) in &out.artefacts.docs {
+            if !is_main_document(doc) {
+                continue;
+            }
+            let p = path.to_string_lossy();
             // Mirror the comparison's skip list: project-wide boilerplate is
             // unit-tested separately and excluded from per-fixture snapshots.
             if p == "runtime.ts" || p == "tsconfig.json" {
                 continue;
             }
-            let target_path = expected_dir.join(&f.output_path);
+            let target_path = expected_dir.join(path);
             if let Some(parent) = target_path.parent() {
                 fs::create_dir_all(parent).unwrap();
             }
-            fs::write(&target_path, &f.typescript).unwrap();
+            fs::write(&target_path, doc.text()).unwrap();
         }
     }
 }
@@ -430,9 +454,9 @@ fn no_unknown_placeholder_in_emitted_output() {
         } else if src_dir.is_dir() {
             let target = fixture_target(&dir);
             if let Ok(out) = compile_fixture(&dir, target) {
-                for f in &out.files {
-                    if hit(&f.typescript) {
-                        offenders.push(format!("{} :: {}", dir.display(), f.output_path.display()));
+                for (path, doc) in &out.artefacts.docs {
+                    if is_main_document(doc) && hit(&doc.text()) {
+                        offenders.push(format!("{} :: {}", dir.display(), path.display()));
                     }
                 }
             }

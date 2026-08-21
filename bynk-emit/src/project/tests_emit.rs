@@ -74,8 +74,8 @@ pub(crate) fn process_tests(
     errors: &mut Vec<CompileError>,
     refs: &mut RefSink,
     tys: &Arc<Types>,
-) -> (Vec<CompiledFile>, Vec<RunnableTest>) {
-    let mut outputs: Vec<CompiledFile> = Vec::new();
+) -> (Vec<StagedFile>, Vec<RunnableTest>) {
+    let mut outputs: Vec<StagedFile> = Vec::new();
     let mut runnable_tests: Vec<RunnableTest> = Vec::new();
 
     let ready = test_suites::phase_test_bodies(
@@ -122,10 +122,15 @@ pub(crate) fn process_tests(
             tys,
         );
         if let Some((path, source, source_map, runnable)) = emit_out {
-            outputs.push(CompiledFile {
-                source_path: path.clone(),
+            outputs.push(StagedFile {
                 output_path: path,
-                typescript: source,
+                document: Document::Ts(bynk_ts::TsProgram {
+                    stmts: vec![bynk_ts::TsStmt::verbatim(
+                        bynk_ts::VerbatimOrigin::NotYetConverted,
+                        source,
+                        None,
+                    )],
+                }),
                 source_map,
                 debug_metadata: None,
             });
@@ -188,8 +193,8 @@ pub(crate) fn process_integration_tests(
     errors: &mut Vec<CompileError>,
     refs: &mut RefSink,
     tys: &Arc<Types>,
-) -> (Vec<CompiledFile>, Vec<RunnableTest>) {
-    let mut outputs: Vec<CompiledFile> = Vec::new();
+) -> (Vec<StagedFile>, Vec<RunnableTest>) {
+    let mut outputs: Vec<StagedFile> = Vec::new();
     let mut runnables: Vec<RunnableTest> = Vec::new();
 
     let _ = kinds;
@@ -268,10 +273,15 @@ pub(crate) fn process_integration_tests(
             &case_inputs,
             tys,
         ) {
-            outputs.push(CompiledFile {
-                source_path: path.clone(),
+            outputs.push(StagedFile {
                 output_path: path,
-                typescript: source,
+                document: Document::Ts(bynk_ts::TsProgram {
+                    stmts: vec![bynk_ts::TsStmt::verbatim(
+                        bynk_ts::VerbatimOrigin::NotYetConverted,
+                        source,
+                        None,
+                    )],
+                }),
                 source_map,
                 debug_metadata: None,
             });
@@ -1843,7 +1853,7 @@ fn emit_commons_barrel(
     parsed: &[ParsedFile],
     import_ext: ImportExt,
     emitted: &mut HashSet<PathBuf>,
-) -> Option<CompiledFile> {
+) -> Option<StagedFile> {
     let indices = groups.get(name)?;
     // Multi-file only: *every* file must sit under a `<name>/` directory, the
     // layout where no `out/<name>.ts` is otherwise produced. A unit with any file
@@ -1874,10 +1884,15 @@ fn emit_commons_barrel(
         let spec = emitter::cross_commons_import_specifier_for_path(&barrel_loc, file, import_ext);
         body.push_str(&format!("export * from \"{spec}\";\n"));
     }
-    Some(CompiledFile {
-        source_path: barrel_loc.with_extension("bynk"),
+    Some(StagedFile {
         output_path,
-        typescript: body,
+        document: Document::Ts(bynk_ts::TsProgram {
+            stmts: vec![bynk_ts::TsStmt::verbatim(
+                bynk_ts::VerbatimOrigin::NotYetConverted,
+                body,
+                None,
+            )],
+        }),
         source_map: None,
         debug_metadata: None,
     })

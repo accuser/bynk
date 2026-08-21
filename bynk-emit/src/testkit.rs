@@ -33,9 +33,10 @@ pub(crate) fn emit_bundle(body: &str) -> String {
         Ok(out) => out,
         Err(_) => panic!("bundle fixture should compile:\n{src}"),
     };
-    out.files
+    out.artefacts
+        .docs
         .iter()
-        .find(|f| f.output_path.ends_with("bundle.ts"))
-        .map(|f| f.typescript.clone())
+        .find(|(path, _)| path.ends_with("bundle.ts"))
+        .map(|(_, doc)| doc.text())
         .expect("the bundle's own module should be in the output")
 }

@@ -37,10 +37,12 @@ fn compile(fixture: &str) -> bynkc::ProjectOutput {
 /// Every emitted file whose output path is exactly `money.ts` — for the
 /// multi-file commons `money`, that path can only be the aggregating barrel
 /// (the real per-file outputs are `money/cents.ts` and `money/make.ts`).
-fn money_barrels(out: &bynkc::ProjectOutput) -> Vec<&bynkc::CompiledFile> {
-    out.files
+fn money_barrels(out: &bynkc::ProjectOutput) -> Vec<&bynkc::Document> {
+    out.artefacts
+        .docs
         .iter()
-        .filter(|f| f.output_path == Path::new("money.ts"))
+        .filter(|(p, _)| p.as_path() == Path::new("money.ts"))
+        .map(|(_, doc)| doc)
         .collect()
 }
 
@@ -56,7 +58,7 @@ fn barrel_emitted_once_for_a_commons_imported_by_two_test_modules() {
         barrels.len()
     );
     // It is the barrel, not a stray real output: it re-exports both files.
-    let body = &barrels[0].typescript;
+    let body = barrels[0].text();
     assert!(
         body.contains("export * from \"./money/cents.js\";")
             && body.contains("export * from \"./money/make.js\";"),
@@ -69,9 +71,7 @@ fn no_barrel_in_a_non_test_build_of_the_same_multi_file_commons() {
     let out = compile("production");
     // The commons still emits per file...
     assert!(
-        out.files
-            .iter()
-            .any(|f| f.output_path == Path::new("money/cents.ts")),
+        out.artefacts.docs.contains_key(Path::new("money/cents.ts")),
         "the multi-file commons should still emit its per-file outputs"
     );
     // ...but no aggregating barrel ships when nothing under test imports it.

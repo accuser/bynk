@@ -234,21 +234,21 @@ pub fn run_test(program: &str, args: TestArgs) -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
-    // Write every compiled file to disk under the output root.
+    // Write every artefact to disk under the output root.
     let mut wrote_any_test = false;
     let mut has_integration = false;
-    for file in &out.files {
+    for (path, doc) in &out.artefacts.docs {
         // Map-aware write (slice 2): carries the `.ts.map` siblings + trailers so
         // a debug run (`--inspect`) can resolve `.bynk` breakpoints. Harmless for a
         // normal run, which transpiles via `tsc` and ignores the trailer.
-        if let Err(e) = crate::write_compiled_file(file, &output_root) {
+        if let Err(e) = crate::write_document(path, doc, &out.artefacts.docs, &output_root) {
             eprintln!(
                 "{program} test: could not write `{}`: {e}",
-                output_root.join(&file.output_path).display()
+                output_root.join(path).display()
             );
             return ExitCode::FAILURE;
         }
-        let rel = file.output_path.to_string_lossy();
+        let rel = path.to_string_lossy();
         if rel.starts_with("tests/") {
             wrote_any_test = true;
         }
@@ -285,14 +285,16 @@ pub fn run_test(program: &str, args: TestArgs) -> ExitCode {
                 return ExitCode::FAILURE;
             }
         };
-        for file in &workers_out.files {
-            if file.output_path.to_string_lossy().starts_with("tests/") {
+        for (path, doc) in &workers_out.artefacts.docs {
+            if path.to_string_lossy().starts_with("tests/") {
                 continue;
             }
-            if let Err(e) = crate::write_compiled_file(file, &output_root) {
+            if let Err(e) =
+                crate::write_document(path, doc, &workers_out.artefacts.docs, &output_root)
+            {
                 eprintln!(
                     "{program} test: could not write `{}`: {e}",
-                    output_root.join(&file.output_path).display()
+                    output_root.join(path).display()
                 );
                 return ExitCode::FAILURE;
             }

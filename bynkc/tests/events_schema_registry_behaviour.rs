@@ -178,9 +178,10 @@ fn compile(tmp: &std::path::Path) -> bynkc::ProjectOutput {
 }
 
 fn emitted_ts(out: &bynkc::ProjectOutput) -> String {
-    out.files
-        .iter()
-        .map(|f| f.typescript.as_str())
+    out.artefacts
+        .docs
+        .values()
+        .map(|doc| doc.text())
         .collect::<Vec<_>>()
         .join("\n")
 }

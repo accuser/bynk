@@ -155,15 +155,15 @@ fn compile_fixture(
 }
 
 fn write_outputs(out: &bynkc::ProjectOutput, root: &Path) -> std::io::Result<()> {
-    for file in &out.files {
-        let target = root.join(&file.output_path);
+    for (path, doc) in &out.artefacts.docs {
+        let target = root.join(path);
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent)?;
         }
         // Only write TypeScript / JSON / TOML artefacts; `tsc` will
         // process the .ts and read tsconfig.json. wrangler.toml is left
         // in place but ignored by tsc.
-        fs::write(&target, &file.typescript)?;
+        fs::write(&target, doc.text())?;
     }
     Ok(())
 }
@@ -605,12 +605,12 @@ fn js_artefact_strips_every_fixture_to_js_shape() {
             Ok(js_out) => {
                 checked += 1;
                 let mut js_count = 0;
-                for f in &js_out.files {
-                    let p = f.output_path.to_string_lossy();
+                for path in js_out.artefacts.docs.keys() {
+                    let p = path.to_string_lossy();
                     if p.ends_with(".ts") {
                         failures.push(format!("{name}: a .ts file survived JS emission: {p}"));
                     }
-                    if f.output_path.file_name().and_then(|n| n.to_str()) == Some("tsconfig.json") {
+                    if path.file_name().and_then(|n| n.to_str()) == Some("tsconfig.json") {
                         failures.push(format!("{name}: tsconfig.json was not dropped"));
                     }
                     if p.ends_with(".js") {

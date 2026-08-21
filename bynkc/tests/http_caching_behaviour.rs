@@ -235,16 +235,15 @@ fn http_caching_contract_runs_on_workers_entry() {
     ));
     let _ = fs::remove_dir_all(&tmp);
     fs::create_dir_all(&tmp).unwrap();
-    for f in &out.files {
-        let p = f.output_path.to_string_lossy();
-        if p == "tsconfig.json" {
+    for (path, doc) in &out.artefacts.docs {
+        if path.to_string_lossy() == "tsconfig.json" {
             continue;
         }
-        let target_path = tmp.join(&f.output_path);
+        let target_path = tmp.join(path);
         if let Some(parent) = target_path.parent() {
             fs::create_dir_all(parent).unwrap();
         }
-        fs::write(&target_path, &f.typescript).unwrap();
+        fs::write(&target_path, doc.text()).unwrap();
     }
     fs::write(tmp.join("driver.ts"), DRIVER_TS).unwrap();
     fs::write(tmp.join("tsconfig.json"), TSCONFIG_JSON).unwrap();

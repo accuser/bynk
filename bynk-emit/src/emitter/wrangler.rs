@@ -230,22 +230,6 @@ fn set_string_preserving_decor(item: &mut toml_edit::Item, s: &str) {
     *item = toml_edit::Item::Value(new_value);
 }
 
-/// Set `main = "<value>"` in a generated `wrangler.toml`'s text, structurally.
-/// Used by `bynk-strip`'s `--emit js` path: the Workers manifest names its
-/// entry module, and in a JS artefact that module is `.js`, not the `.ts` the
-/// emitter wrote — a `main` left pointing at the stripped `.ts` breaks
-/// `wrangler dev`/deploy on the emitted output.
-pub fn set_wrangler_main(text: &str, value: &str) -> Result<String, String> {
-    let mut doc: toml_edit::DocumentMut = text
-        .parse()
-        .map_err(|e| format!("invalid wrangler.toml: {e}"))?;
-    let item = doc
-        .get_mut("main")
-        .ok_or_else(|| "wrangler.toml has no `main` key".to_string())?;
-    set_string_preserving_decor(item, value);
-    Ok(doc.to_string())
-}
-
 /// Whether a generated `wrangler.toml`'s KV namespace id is still the
 /// deploy-time placeholder — the same condition [`materialise_kv_namespace_id`]
 /// itself checks internally before writing, exposed separately so a caller
@@ -340,34 +324,6 @@ new_classes = [\"JobLedger\"]
 queue = \"job-intake\"
 max_batch_size = 10
 ";
-
-    #[test]
-    fn set_wrangler_main_changes_only_main() {
-        let expected = REPRESENTATIVE.replacen("main = \"index.ts\"", "main = \"index.js\"", 1);
-        assert_eq!(
-            set_wrangler_main(REPRESENTATIVE, "index.js").unwrap(),
-            expected
-        );
-    }
-
-    /// The exact failure mode the defect report named: a differently-spaced
-    /// `main` line (no space around `=`, e.g.) must still patch correctly —
-    /// the old `.replace("main = \"index.ts\"", ..)` would silently miss
-    /// this and leave `main` pointing at the stripped `.ts`.
-    #[test]
-    fn set_wrangler_main_is_immune_to_reformatting() {
-        let text = "name=\"api\"\nmain=\"index.ts\"\ncompatibility_date=\"2024-11-01\"\n";
-        let patched = set_wrangler_main(text, "index.js").unwrap();
-        assert_eq!(
-            patched,
-            "name=\"api\"\nmain=\"index.js\"\ncompatibility_date=\"2024-11-01\"\n"
-        );
-    }
-
-    #[test]
-    fn set_wrangler_main_rejects_invalid_toml() {
-        assert!(set_wrangler_main("not = valid = toml = at = all", "index.js").is_err());
-    }
 
     #[test]
     fn materialise_kv_namespace_id_changes_only_the_id() {

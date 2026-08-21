@@ -102,6 +102,24 @@ pub enum VerbatimOrigin {
     Secrets,
     /// `bynk-emit/src/emitter/runtime_use.rs`.
     RuntimeUse,
+    /// P7.6's own transitional wrap (#1309): the whole of a still-`String`-
+    /// producing `bynk-emit` document (an entry point, `compose.ts`, the
+    /// runtime module, an adapter binding, a test module, …), carried into
+    /// `Document::Ts` so `Artefacts` never stores a bare `String` for TS
+    /// output (R7.8) even before Arc C converts the function that built it.
+    /// Deliberately **not** file-specific like the three variants above —
+    /// this is Arc B's own infrastructure slice, not an Arc C conversion, so
+    /// it covers everything Arc C hasn't reached yet, one call site per
+    /// document `bynk-emit/src/project.rs`/`project/tests_emit.rs`
+    /// constructs (not funnelled through a shared helper: a shared wrap
+    /// point would collapse every one of those call sites to a single
+    /// textual `TsStmt::verbatim(` occurrence, defeating `verbatim_sites`'
+    /// own purpose of counting how much is genuinely still unconverted).
+    /// Retires site by site as Arc C converts each underlying emitter
+    /// function to return a real `TsProgram` directly — at which point that
+    /// document's own construction site stops calling `TsStmt::verbatim` at
+    /// all, not by this variant being deleted first.
+    NotYetConverted,
 }
 
 #[cfg(test)]

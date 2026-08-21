@@ -201,10 +201,10 @@ fn refinement_actor_enforces_401_403_allow_trichotomy() {
     };
 
     let run_dir = tmp.join("run");
-    for file in &out.files {
-        let target = run_dir.join(&file.output_path);
+    for (path, doc) in &out.artefacts.docs {
+        let target = run_dir.join(path);
         fs::create_dir_all(target.parent().unwrap()).unwrap();
-        fs::write(&target, &file.typescript).unwrap();
+        fs::write(&target, doc.text()).unwrap();
     }
     fs::write(
         run_dir.join("runtime.ts"),

@@ -109,62 +109,68 @@ pub fn strip_types(source: &str, filename: &str) -> Result<String, StripError> {
 /// that same output with types stripped, which is total because the emitter is
 /// strip-only (ADR 0136).
 ///
-/// Every `.ts` module is type-stripped and renamed to `.js`; the `tsconfig.json`
-/// is dropped (a TypeScript-compiler config with no role for a JS artefact); any
-/// other file (e.g. `wrangler.toml`) passes through unchanged. Source maps and the
-/// debug sidecar are dropped — they map into the `.ts` the JS replaces. Import
-/// specifiers are already `.js` (the default `ImportExt`), so the renamed tree
-/// resolves as-is.
+/// Dispatches on [`Document`](bynk_emit::project::Document) directly (P7.6,
+/// #1309) — no `CompiledFile` text intermediate. Every `Ts` document is
+/// printed through the one printer that owns a character (R7.3), then
+/// type-stripped and renamed to `.js` as its own `Document::Js`; `tsconfig.json`
+/// is dropped (a TypeScript-compiler config with no role for a JS artefact);
+/// `wrangler.toml`'s real tree gets its `main` entry patched *structurally*,
+/// in place — no print-then-reparse (Decision E) — since the Workers
+/// manifest names its entry module and a `main` left pointing at the
+/// stripped `.ts` breaks `wrangler dev`/deploy on the emitted output. Source
+/// maps and the debug sidecar are dropped — they map into the `.ts` the JS
+/// replaces. Import specifiers are already `.js` (the default `ImportExt`),
+/// so the renamed tree resolves as-is.
 pub fn strip_project_to_js(
     out: bynk_emit::project::ProjectOutput,
 ) -> Result<bynk_emit::project::ProjectOutput, StripError> {
-    use bynk_emit::project::CompiledFile;
-    let mut files = Vec::with_capacity(out.files.len());
-    for file in out.files {
-        let is_ts = file
-            .output_path
-            .extension()
-            .and_then(|e| e.to_str())
-            .is_some_and(|e| e == "ts");
-        if !is_ts {
-            if file.output_path.file_name().and_then(|n| n.to_str()) == Some("tsconfig.json") {
-                continue;
+    use bynk_emit::project::{Artefacts, Document};
+    use std::collections::BTreeMap;
+    use std::path::PathBuf;
+
+    let mut docs: BTreeMap<PathBuf, Document> = BTreeMap::new();
+    for (path, doc) in out.artefacts.docs {
+        match doc {
+            Document::Ts(program) => {
+                let printed = bynk_ts::print(&program, "", "", &path.to_string_lossy());
+                let js = strip_types(&printed.text, &path.to_string_lossy())?;
+                docs.insert(path.with_extension("js"), Document::Js(js));
             }
-            // The Workers manifest names its entry module; in the JS artefact
-            // that module is `.js`, and a `main` left pointing at the stripped
-            // `.ts` breaks `wrangler dev`/deploy on the emitted output.
-            //
-            // P7.4 (#1305): structural (`bynk_emit::emitter::wrangler::
-            // set_wrangler_main` parses the TOML and sets the field), not a
-            // substring match against the current emitter's own formatting
-            // (R7.6) — closes the exact failure mode named in the defect
-            // report: a reformatted `main` line silently surviving unpatched.
-            if file.output_path.file_name().and_then(|n| n.to_str()) == Some("wrangler.toml") {
-                let patched =
-                    bynk_emit::emitter::wrangler::set_wrangler_main(&file.typescript, "index.js")
-                        .map_err(|e| StripError {
-                        filename: file.output_path.to_string_lossy().into_owned(),
-                        message: e,
-                    })?;
-                files.push(CompiledFile {
-                    typescript: patched,
-                    ..file
-                });
-                continue;
+            Document::Toml(mut toml) => {
+                if path.file_name().and_then(|n| n.to_str()) == Some("wrangler.toml")
+                    && !toml.set_main("index.js")
+                {
+                    return Err(StripError {
+                        filename: path.to_string_lossy().into_owned(),
+                        message: "wrangler.toml has no root `main` key".to_string(),
+                    });
+                }
+                docs.insert(path, Document::Toml(toml));
             }
-            files.push(file);
-            continue;
+            Document::Json(s) => {
+                if path.file_name().and_then(|n| n.to_str()) == Some("tsconfig.json") {
+                    continue;
+                }
+                docs.insert(path, Document::Json(s));
+            }
+            // Source maps/debug sidecars map into the `.ts` the JS replaces.
+            Document::SourceMap(_) | Document::DebugSidecar(_) => {}
+            // `bynk-emit` never produces this itself, but `strip_project_to_js`
+            // is `pub` over a `pub` `Artefacts`, so an already-stripped
+            // `Document::Js` reaching this function (e.g. run twice, or a
+            // caller assembling `Artefacts` by hand) is a real, reachable
+            // input — pass it through rather than panicking on it (review,
+            // #1309/#1310: `unreachable!` here aborted the process on input
+            // the public API permits).
+            Document::Js(s) => {
+                docs.insert(path, Document::Js(s));
+            }
         }
-        let js = strip_types(&file.typescript, &file.output_path.to_string_lossy())?;
-        files.push(CompiledFile {
-            output_path: file.output_path.with_extension("js"),
-            typescript: js,
-            source_map: None,
-            debug_metadata: None,
-            ..file
-        });
     }
-    Ok(bynk_emit::project::ProjectOutput { files, ..out })
+    Ok(bynk_emit::project::ProjectOutput {
+        artefacts: Artefacts { docs },
+        ..out
+    })
 }
 
 fn join_diagnostics(diags: &[oxc::diagnostics::OxcDiagnostic]) -> String {
@@ -260,58 +266,67 @@ mod tests {
         assert!(err.is_err(), "malformed source is an error");
     }
 
-    /// P7.4 (#1305): `strip_project_to_js`'s `wrangler.toml` patch, exercised
-    /// through the real function (not just the underlying `bynk_emit::
-    /// emitter::wrangler::set_wrangler_main` helper) — differently formatted
-    /// from what the emitter currently produces, proving the fix is immune
-    /// to reformatting rather than merely happening to match today's exact
-    /// spacing. The old `.replace("main = \"index.ts\"", ..)` would have
-    /// silently left this `main=` line unpatched.
+    /// P7.4 (#1305)/P7.6 (#1309): `strip_project_to_js`'s `wrangler.toml`
+    /// patch, exercised through the real function against a *real* compiled
+    /// `Document::Toml` tree (`compile_in_memory`, `BuildTarget::Workers`) —
+    /// not a hand-typed text fixture standing in for one, which is exactly
+    /// the shortcut P7.4's own defect report warns against (a hand-built
+    ///2-key snippet can't prove a whole-document reformat didn't happen).
+    /// P7.6's own Decision E moved this from a text re-parse
+    /// (`toml_edit`) to a structural, in-tree mutation
+    /// (`TomlDocument::set_main`) — asserting the *printed* text still
+    /// pins "nothing but `main` changed", the same discipline as before.
     #[test]
     fn strip_project_to_js_patches_wrangler_toml_main_structurally() {
-        use bynk_emit::project::{CompiledFile, ProjectOutput};
-        use std::path::PathBuf;
+        use bynk_emit::project::{BuildTarget, Document, compile_in_memory};
 
-        // The real shape `emit_wrangler_toml` produces — banner, an inline
-        // comment on the KV id — not just the two keys under test. Review of
-        // #1305, finding 2: asserting exact text (not a re-parse checking
-        // two fields) is what actually pins "only `main` changed" — a
-        // re-parse can't see whatever the renderer silently dropped, which
-        // is exactly how the original whole-document-reformat regression
-        // (a `toml::Table` round-trip losing the banner and re-sorting every
-        // key) survived a green suite.
-        let wrangler_toml = "\
-# Generated by bynkc — do not edit by hand.
-name = \"api\"
-main = \"index.ts\"
-compatibility_date = \"2024-11-01\"
-
-[[kv_namespaces]]
-binding = \"BYNK_KV\"
-id = \"<KV_NAMESPACE_ID>\" # set at deploy time
-";
-        let out = ProjectOutput {
-            files: vec![CompiledFile {
-                source_path: PathBuf::from("workers/api/<wrangler>"),
-                output_path: PathBuf::from("workers/api/wrangler.toml"),
-                typescript: wrangler_toml.to_string(),
-                source_map: None,
-                debug_metadata: None,
-            }],
-            warnings: Vec::new(),
-            snapshots: Vec::new(),
-            discovered: Vec::new(),
-            schema_lock: None,
-        };
+        let out = compile_in_memory(
+            "context api {\n  service routes from http {\n    on GET(\"/\") () -> Effect[HttpResult[String]] by v: Visitor {\n      Ok(\"ok\")\n    }\n  }\n}\n",
+            BuildTarget::Workers,
+            Default::default(),
+        )
+        .unwrap_or_else(|f| {
+            panic!(
+                "workers-target fixture should compile: {:?}",
+                f.flatten()
+            )
+        });
+        let wrangler_path = out
+            .artefacts
+            .docs
+            .keys()
+            .find(|p| p.file_name().and_then(|n| n.to_str()) == Some("wrangler.toml"))
+            .cloned()
+            .expect("a Workers-target compile emits a wrangler.toml");
+        let original_text = out.artefacts.docs[&wrangler_path].text();
+        assert!(
+            original_text.contains("main = \"index.ts\""),
+            "expected the pre-strip manifest to point at the .ts entry:\n{original_text}"
+        );
 
         let stripped = strip_project_to_js(out).expect("wrangler.toml patches cleanly");
-        assert_eq!(stripped.files.len(), 1);
-        let patched = &stripped.files[0];
-        assert_eq!(
-            patched.output_path,
-            PathBuf::from("workers/api/wrangler.toml")
+        let patched = stripped
+            .artefacts
+            .docs
+            .get(&wrangler_path)
+            .unwrap_or_else(|| panic!("{} should survive stripping", wrangler_path.display()));
+        assert!(
+            matches!(patched, Document::Toml(_)),
+            "wrangler.toml should stay a real tree through stripping, not become opaque text"
         );
-        let expected = wrangler_toml.replacen("main = \"index.ts\"", "main = \"index.js\"", 1);
-        assert_eq!(patched.typescript, expected);
+        let expected = original_text.replacen("main = \"index.ts\"", "main = \"index.js\"", 1);
+        assert_eq!(
+            patched.text(),
+            expected,
+            "only `main` should differ from the pre-strip manifest"
+        );
+        // No leftover `.ts` index — `Document::Ts` entries are all renamed
+        // to their own `.js` sibling.
+        let index_ts = wrangler_path.with_file_name("index.ts");
+        assert!(
+            !stripped.artefacts.docs.contains_key(&index_ts),
+            "the stripped output must not keep the pre-strip .ts path: {:?}",
+            stripped.artefacts.docs.keys().collect::<Vec<_>>()
+        );
     }
 }
