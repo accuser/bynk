@@ -1,10 +1,17 @@
-//! [`TsProgram`]/[`TsStmt`] — the tree, so far only wide enough for the
-//! `Verbatim` escape hatch (Q2, `design/tracks/the-typescript-tree.md` §3.2).
-//! P7.8 (gated on this crate existing) adds the real `TsStmt` variants the
-//! reference's own §7.1 sketch names; deliberately not pre-built here
-//! (`bynk-ts`'s own module doc, and #1307's Decision E) — a generic `TsNode`
-//! wrapper speculating about `TsExpr`/`TsType`/`TsDecl`'s own shape before
-//! any of the three exist would be guessing, not designing.
+//! [`TsProgram`]/[`TsStmt`] — the tree. P7.5 built it wide enough only for
+//! the `Verbatim` escape hatch (Q2, `design/tracks/the-typescript-tree.md`
+//! §3.2). P7.8 (#1313) adds the real node algebra ([`TsExpr`]/[`TsType`]/
+//! [`TsDecl`], plus real [`TsStmt`] variants) — not the full §7.1 reference
+//! sketch as literally written (a variant-name list with almost no
+//! field-level design), but the subset `bynk-emit/src/emitter/
+//! events_fanout.rs` (Arc C's real next file — P7.8's own proposal
+//! corrected the track doc's stale schedule, see `design/tracks/
+//! the-typescript-tree.md` §6/§9) concretely needs, grounded against that
+//! file's own real shape rather than guessed. Building the rest of the
+//! sketch's unvalidated variants now would repeat the exact "guessing, not
+//! designing" risk `bynk-ts`'s own module doc (`lib.rs`) already named for
+//! this layer — Arc C's later slices add more variants file by file, the
+//! same precedent [`VerbatimOrigin`] already set.
 
 use bynk_syntax::span::Span;
 
@@ -27,22 +34,25 @@ impl TsProgram {
     }
 }
 
-/// One top-level statement. Right now, always a [`VerbatimOrigin`]-tagged
-/// escape hatch — constructible only via [`TsStmt::verbatim`], not as a bare
-/// struct literal (`#1307`'s Decision D): one named constructor gives the
-/// `verbatim_sites` probe (`xtask/src/greenfield_status.rs`) exactly one
-/// string to line-scan for, the same discipline `bynk-emit::emitter::
-/// toml_doc`'s `TomlEntry::kv`/`TomlBlock::table` already established (P7.3)
-/// — not a new pattern here, an extension of one already in this codebase.
+/// One statement — a `Verbatim`-tagged escape hatch (still constructible
+/// only via [`TsStmt::verbatim`], per #1307's Decision D — the
+/// `verbatim_sites` probe needs exactly one string to line-scan for), or,
+/// from this slice, a real structured kind. The real kinds have no such
+/// sealing: they're normal typed constructors, not a "wrap opaque text"
+/// escape hatch, so the `verbatim_sites` concern that motivates `verbatim`'s
+/// own single-constructor discipline doesn't apply to them.
 #[derive(Debug)]
 pub struct TsStmt {
     pub(crate) kind: TsStmtKind,
     /// Where this statement's content originated in the `.bynk` source, if
-    /// known — the printer records a source-map checkpoint from this field
-    /// directly (R7.4: the source map comes from the printer reading
-    /// `TsNode.span`, not a phase before it). `None` for content with no
-    /// real originating span (rare; most `Verbatim` construction sites have
-    /// one).
+    /// known. Only a *top-level* statement's own span is currently recorded
+    /// as a source-map checkpoint ([`crate::printer::print`], unchanged
+    /// from P7.5/R7.4's own scope) — a nested statement (inside a `Block`,
+    /// `If`, `ForOf`, `TryCatch`) still carries this field structurally, for
+    /// whichever future slice gives sub-statement source maps real value,
+    /// but the printer does not yet record a checkpoint from it. Named here
+    /// explicitly (P7.8's own accepted proposal: "an implementation-time
+    /// call within this same shape") rather than left ambiguous.
     pub span: Option<Span>,
 }
 
@@ -53,6 +63,89 @@ pub(crate) enum TsStmtKind {
         // read by the lint's own violation attribution once Arc C gives it real content to report on; not yet, per Decision F
         origin: VerbatimOrigin,
         text: String,
+    },
+    /// A top-level declaration ([`TsDecl`]) printed as a statement — the
+    /// bridge between `TsProgram`'s flat `Vec<TsStmt>` and the reference
+    /// sketch's separate `TsDecl` enum (an `import`/`interface`/top-level
+    /// `const`/`class` *is* one kind of top-level statement in this tree,
+    /// not a different container).
+    Decl(TsDecl),
+    /// A local `const` binding, e.g. `const { events } = ...;` or
+    /// `const subs = ...;` — distinct from [`TsDecl::ConstDecl`], which is
+    /// the top-level form. Carries a real destructuring [`TsBindingName`]
+    /// because `events_fanout.rs`'s own `const { events } = ...` needs one
+    /// (a gap beyond the accepted proposal's own variant list — a bare
+    /// `String` name cannot represent it; named explicitly as a deviation,
+    /// not invented silently).
+    Const {
+        name: TsBindingName,
+        ty: Option<TsType>,
+        init: TsExpr,
+    },
+    /// `let`'s sibling to `Const` — unused by `events_fanout.rs` itself, but
+    /// the `const`/`let` distinction is real TypeScript semantics the
+    /// printer must preserve once one of the pair exists (the accepted
+    /// proposal's own reasoning for keeping it).
+    Let {
+        name: TsBindingName,
+        ty: Option<TsType>,
+        init: Option<TsExpr>,
+    },
+    /// An expression used as a whole statement (a bare call, e.g.).
+    ExprStmt(TsExpr),
+    Return(Option<TsExpr>),
+    /// `if (cond) <then_branch>` — no `else`: `events_fanout.rs` never uses
+    /// one, and the accepted proposal's own variant list doesn't ask for
+    /// it; adding one speculatively would repeat the guessing risk Decision
+    /// B exists to avoid. `then_branch` may be a [`TsStmtKind::Block`]
+    /// (printed with braces) or any other single statement (printed inline
+    /// on the same line, matching `if (!Array.isArray(subs)) continue;`'s
+    /// own real, brace-free shape).
+    If {
+        cond: TsExpr,
+        then_branch: Box<TsStmt>,
+    },
+    /// `for (const <binding> of <iter>) <body>`.
+    ForOf {
+        binding: String,
+        iter: TsExpr,
+        body: Box<TsStmt>,
+    },
+    /// `try <try_block> catch (<catch_param>) <catch_block>` — a real gap
+    /// beyond the reference sketch (`design/bynk-greenfield-compiler.md`'s
+    /// §7.1 has no `TryCatch` at all), found and named by P7.8's own
+    /// accepted proposal: `events_fanout.rs`'s subscriber-failure-isolation
+    /// `try`/`catch` (ADR 0284) is load-bearing control flow, not
+    /// decorative.
+    TryCatch {
+        try_block: Box<TsStmt>,
+        catch_param: String,
+        catch_block: Box<TsStmt>,
+    },
+    /// `{ <stmts> }` — the body container for `If`/`ForOf`/`TryCatch`/
+    /// constructor and method bodies.
+    Block(Vec<TsStmt>),
+    /// A bare `continue;` — a second real gap beyond the accepted
+    /// proposal's own variant list: `events_fanout.rs` uses it twice
+    /// (`if (!Array.isArray(subs)) continue;` / `if (!binding) continue;`),
+    /// load-bearing loop control the accepted proposal's `TsStmt` list
+    /// doesn't name. No label — nothing in the grounding file needs one.
+    Continue,
+    /// `target = value;` — a third real gap, found in review of the
+    /// implementing PR (#1313): `events_fanout.rs`'s own constructor body is
+    /// exactly one statement, `this.env = (env ?? {}) as
+    /// Record<string, ServiceBinding>;` (a field assignment, not a `const`/
+    /// `let` binding), which the accepted proposal's own grounding
+    /// catalogue missed — it catalogued the `fetch` method's body in detail
+    /// but not the constructor's. `target` is deliberately a full `TsExpr`
+    /// (not a narrower "assignable" type) so it can hold `this.env` (a
+    /// `Member` expression) without a second binding-target type; nothing
+    /// about `Assign` validates that `target` is actually assignable
+    /// (`bynk-check` already does that on the `.bynk` side before emission
+    /// ever runs).
+    Assign {
+        target: TsExpr,
+        value: TsExpr,
     },
 }
 
@@ -68,15 +161,329 @@ impl TsStmt {
         }
     }
 
-    /// This statement's own wrapped text, whatever its kind — today always
-    /// `Verbatim`'s. `pub(crate)`: only the printer and the lint need this;
-    /// nothing outside the crate reads a statement's content directly
-    /// (R7.6 — downstream consumers couple to nodes, never to emitted text).
-    pub(crate) fn text(&self) -> &str {
-        match &self.kind {
-            TsStmtKind::Verbatim { text, .. } => text,
+    pub fn decl(decl: TsDecl, span: Option<Span>) -> Self {
+        Self {
+            kind: TsStmtKind::Decl(decl),
+            span,
         }
     }
+
+    pub fn const_stmt(
+        name: TsBindingName,
+        ty: Option<TsType>,
+        init: TsExpr,
+        span: Option<Span>,
+    ) -> Self {
+        Self {
+            kind: TsStmtKind::Const { name, ty, init },
+            span,
+        }
+    }
+
+    pub fn let_stmt(
+        name: TsBindingName,
+        ty: Option<TsType>,
+        init: Option<TsExpr>,
+        span: Option<Span>,
+    ) -> Self {
+        Self {
+            kind: TsStmtKind::Let { name, ty, init },
+            span,
+        }
+    }
+
+    pub fn expr_stmt(expr: TsExpr, span: Option<Span>) -> Self {
+        Self {
+            kind: TsStmtKind::ExprStmt(expr),
+            span,
+        }
+    }
+
+    pub fn return_stmt(expr: Option<TsExpr>, span: Option<Span>) -> Self {
+        Self {
+            kind: TsStmtKind::Return(expr),
+            span,
+        }
+    }
+
+    pub fn if_stmt(cond: TsExpr, then_branch: TsStmt, span: Option<Span>) -> Self {
+        Self {
+            kind: TsStmtKind::If {
+                cond,
+                then_branch: Box::new(then_branch),
+            },
+            span,
+        }
+    }
+
+    pub fn for_of(
+        binding: impl Into<String>,
+        iter: TsExpr,
+        body: TsStmt,
+        span: Option<Span>,
+    ) -> Self {
+        Self {
+            kind: TsStmtKind::ForOf {
+                binding: binding.into(),
+                iter,
+                body: Box::new(body),
+            },
+            span,
+        }
+    }
+
+    pub fn try_catch(
+        try_block: TsStmt,
+        catch_param: impl Into<String>,
+        catch_block: TsStmt,
+        span: Option<Span>,
+    ) -> Self {
+        Self {
+            kind: TsStmtKind::TryCatch {
+                try_block: Box::new(try_block),
+                catch_param: catch_param.into(),
+                catch_block: Box::new(catch_block),
+            },
+            span,
+        }
+    }
+
+    pub fn block(stmts: Vec<TsStmt>, span: Option<Span>) -> Self {
+        Self {
+            kind: TsStmtKind::Block(stmts),
+            span,
+        }
+    }
+
+    pub fn continue_stmt(span: Option<Span>) -> Self {
+        Self {
+            kind: TsStmtKind::Continue,
+            span,
+        }
+    }
+
+    pub fn assign(target: TsExpr, value: TsExpr, span: Option<Span>) -> Self {
+        Self {
+            kind: TsStmtKind::Assign { target, value },
+            span,
+        }
+    }
+}
+
+/// A binding's own name, in either of the two shapes `events_fanout.rs`
+/// itself uses: a plain identifier (`const subs = ...`), or an
+/// object-destructuring pattern (`const { events } = ...`) — naming only
+/// the destructured properties themselves (`{ a, b }`), not the renamed
+/// (`{ a: renamed }`) or nested (`{ a: { b } }`) forms, since nothing in
+/// the grounding file needs either.
+#[derive(Debug)]
+pub enum TsBindingName {
+    Ident(String),
+    ObjectPattern(Vec<String>),
+}
+
+/// An expression. Only the shapes `events_fanout.rs` concretely uses
+/// (Decision B) — not the reference sketch's full `TsExpr` list (`Arrow`,
+/// `Cond`, `TemplateLit`, `Spread` are all unused in the grounding file and
+/// deliberately not built here).
+#[derive(Debug)]
+pub enum TsExpr {
+    Ident(String),
+    /// `object.property`.
+    Member {
+        object: Box<TsExpr>,
+        property: String,
+    },
+    /// `object[index]`.
+    Index {
+        object: Box<TsExpr>,
+        index: Box<TsExpr>,
+    },
+    Call {
+        callee: Box<TsExpr>,
+        args: Vec<TsExpr>,
+    },
+    New {
+        callee: Box<TsExpr>,
+        args: Vec<TsExpr>,
+    },
+    /// A value object literal, e.g. `{ status: 204 }` — comma-separated,
+    /// always printed on one line (distinct from [`TsType::Object`], a
+    /// *type*-position object shape, which the printer semicolon-separates
+    /// — matching real TypeScript syntax for each position).
+    Object(Vec<(String, TsExpr)>),
+    /// An array literal, e.g. `[{ binding: "x", service: "y" }]`.
+    Array(Vec<TsExpr>),
+    Await(Box<TsExpr>),
+    /// `expr as ty`.
+    As {
+        expr: Box<TsExpr>,
+        ty: TsType,
+    },
+    Unary {
+        op: TsUnaryOp,
+        expr: Box<TsExpr>,
+    },
+    Binary {
+        op: TsBinaryOp,
+        left: Box<TsExpr>,
+        right: Box<TsExpr>,
+    },
+    Lit(TsLit),
+}
+
+/// Only `!x` — the one unary operator `events_fanout.rs` uses
+/// (`!Array.isArray(subs)`, `!binding`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TsUnaryOp {
+    Not,
+}
+
+/// Only `??` — the one binary operator `events_fanout.rs` uses
+/// (`env ?? {}`). Not the full JS/TS operator table (Decision B).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TsBinaryOp {
+    NullishCoalescing,
+}
+
+/// A literal — only the three kinds `events_fanout.rs` uses: a string
+/// (`"EventsFanout delivery failed"`), a number (`204`), and `null`.
+#[derive(Debug)]
+pub enum TsLit {
+    Str(String),
+    /// Rendered verbatim, as text — TypeScript's own numeric-literal
+    /// grammar is not this crate's problem to re-derive; the caller passes
+    /// the exact digits it wants printed.
+    Num(String),
+    Null,
+}
+
+/// A type-position node. Only `Named` (extended with type arguments — a
+/// real gap the reference sketch left unaddressed: `Record<string,
+/// Array<{...}>>`/`Promise<Response>` both need one, and a bare `Named`
+/// with no type-argument slot cannot represent either), `Array`, and
+/// `Object` — not the sketch's `Union`/`Intersection`/`Fn`/`Literal`/
+/// `TypeParam`/`Readonly` (unused in the grounding file).
+#[derive(Debug)]
+pub enum TsType {
+    /// A named type, optionally generic — `string`/`unknown` (no type
+    /// arguments) or `Record<string, T>`/`Promise<Response>` (some).
+    Named {
+        name: String,
+        type_args: Vec<TsType>,
+    },
+    /// `T[]` — TypeScript's own postfix array-type syntax, the shape
+    /// `events_fanout.rs`'s own `FanoutEvent[]` uses (not the equivalent
+    /// `Array<T>` generic spelling).
+    Array(Box<TsType>),
+    /// A type-position object shape, e.g. `{ type: string; payload: unknown }`
+    /// — semicolon-separated, always printed on one line (see
+    /// [`TsExpr::Object`]'s own doc for the value-position contrast). An
+    /// `interface`'s own *members* are each printed on their own line by
+    /// [`TsDecl::Interface`]'s printer, independent of this variant's own
+    /// (always-inline) rendering — the two only look different because
+    /// `TsDecl::Interface` is the thing choosing to put each member on its
+    /// own line, not because `Object` has two rendering modes.
+    Object(Vec<(String, TsType)>),
+}
+
+impl TsType {
+    /// A plain named type with no type arguments — `string`, `unknown`,
+    /// `Request`, …
+    pub fn named(name: impl Into<String>) -> Self {
+        TsType::Named {
+            name: name.into(),
+            type_args: Vec::new(),
+        }
+    }
+
+    /// A generic named type — `Record<K, V>`, `Promise<T>`, …
+    pub fn named_with_args(name: impl Into<String>, type_args: Vec<TsType>) -> Self {
+        TsType::Named {
+            name: name.into(),
+            type_args,
+        }
+    }
+}
+
+/// One function/method/constructor parameter.
+#[derive(Debug)]
+pub struct TsParam {
+    pub name: String,
+    pub ty: Option<TsType>,
+    /// `name?: ty` — `events_fanout.rs`'s own `env?: unknown` constructor
+    /// parameter needs this; nothing in the grounding file needs a default
+    /// value, so only optionality is represented, not defaults.
+    pub optional: bool,
+}
+
+/// One `class` field.
+#[derive(Debug)]
+pub struct TsClassField {
+    pub name: String,
+    pub ty: TsType,
+    /// `private` — the one visibility modifier `events_fanout.rs` uses
+    /// (`private env: ...`). Not a decorator or a constructor parameter
+    /// property (R7.1 forbids both categorically — there is no variant
+    /// shape here that could construct either).
+    pub private: bool,
+}
+
+/// A class's own constructor.
+#[derive(Debug)]
+pub struct TsClassCtor {
+    pub params: Vec<TsParam>,
+    pub body: Vec<TsStmt>,
+}
+
+/// One class method.
+#[derive(Debug)]
+pub struct TsClassMethod {
+    pub name: String,
+    pub is_async: bool,
+    pub params: Vec<TsParam>,
+    pub return_type: Option<TsType>,
+    pub body: Vec<TsStmt>,
+}
+
+/// A top-level declaration. Only `Import`, `Export`, `Interface`,
+/// `ConstDecl`, and `Class` — not the sketch's `Function`/`TypeAlias`
+/// (unused in the grounding file).
+#[derive(Debug)]
+pub enum TsDecl {
+    /// `import { a, b } from "spec";` (`type_only: false`) or
+    /// `import type { a, b } from "spec";` (`type_only: true`). Only the
+    /// named-imports form — `events_fanout.rs` never uses a default
+    /// import, so none is represented.
+    Import {
+        type_only: bool,
+        names: Vec<String>,
+        from: String,
+    },
+    /// Marks the wrapped declaration `export`ed — `export class Foo { .. }`
+    /// is `Export(Box::new(Class { .. }))`. A wrapper, not a per-variant
+    /// `exported: bool` field, matching the reference sketch's own naming
+    /// (`TsDecl::Export` is a peer variant, not a modifier on each other
+    /// one).
+    Export(Box<TsDecl>),
+    Interface {
+        name: String,
+        members: Vec<(String, TsType)>,
+    },
+    /// A top-level `const` — distinct from `TsStmtKind::Const` (private —
+    /// reachable through [`TsStmt::const_stmt`]), the local
+    /// form.
+    ConstDecl {
+        name: String,
+        ty: Option<TsType>,
+        init: TsExpr,
+    },
+    Class {
+        name: String,
+        fields: Vec<TsClassField>,
+        constructor: Option<TsClassCtor>,
+        methods: Vec<TsClassMethod>,
+    },
 }
 
 /// Which family of residual, not-yet-converted emission a [`TsStmt::verbatim`]
@@ -84,16 +491,18 @@ impl TsStmt {
 /// compile-time construct, not a grep" (Q2's own settling text). Named
 /// file-by-file as Arc C actually needs them (`ast_importers`'s own five-file
 /// floor is the precedent for how this track names residue), not
-/// pre-populated for the whole ~19-slice Arc C schedule up front — only the
-/// three files Arc C's own first slice (`design/tracks/the-typescript-tree.md`
-/// §6) already commits to converting next.
+/// pre-populated for the whole ~19-slice Arc C schedule up front.
 ///
 /// Deliberately **not** `#[non_exhaustive]`: a `match` over every variant —
 /// in this crate, or in `bynk-emit` once Arc C reads it — must fail to
 /// compile the moment a new variant is added, forcing every consumer to
 /// account for it explicitly. A non-exhaustive enum would let a wildcard arm
 /// silently absorb a new residue family instead, exactly the "grep, not a
-/// compile-time construct" Q2's own settling text rejected.
+/// compile-time construct" Q2's own settling text rejected. P7.8's own
+/// grounding work found that `Contracts`/`Secrets`/`RuntimeUse` were seeded
+/// against files that turn out not to need `bynk-ts` conversion at all
+/// (`design/tracks/the-typescript-tree.md` §9) — recorded there, not fixed
+/// by removing the variants here, since that's separate follow-on work.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VerbatimOrigin {
     /// `bynk-emit/src/emitter/contracts.rs`.
@@ -127,26 +536,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_program_prints_its_statements_in_push_order() {
-        let mut program = TsProgram::new();
-        program.push(TsStmt::verbatim(
-            VerbatimOrigin::Contracts,
-            "const a = 1;",
-            None,
-        ));
-        program.push(TsStmt::verbatim(
-            VerbatimOrigin::Secrets,
-            "const b = 2;",
-            None,
-        ));
-        let texts: Vec<&str> = program.stmts.iter().map(TsStmt::text).collect();
-        assert_eq!(texts, vec!["const a = 1;", "const b = 2;"]);
-    }
-
-    #[test]
     fn verbatim_carries_its_own_span() {
         let span = Span::new(3, 8);
         let stmt = TsStmt::verbatim(VerbatimOrigin::RuntimeUse, "x", Some(span));
         assert_eq!(stmt.span, Some(span));
+    }
+
+    #[test]
+    fn a_program_prints_its_statements_in_push_order() {
+        // Kept as a construction-order check (not a print check — printer.rs
+        // owns that) since `TsStmtKind` is `pub(crate)` and no longer
+        // exposes a uniform `text()` accessor once non-`Verbatim` kinds
+        // exist; span order is what's left to check at this layer.
+        let mut program = TsProgram::new();
+        program.push(TsStmt::verbatim(VerbatimOrigin::Contracts, "a", None));
+        program.push(TsStmt::verbatim(
+            VerbatimOrigin::Secrets,
+            "b",
+            Some(Span::new(0, 1)),
+        ));
+        assert_eq!(program.stmts[0].span, None);
+        assert_eq!(program.stmts[1].span, Some(Span::new(0, 1)));
     }
 }

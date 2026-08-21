@@ -12,42 +12,50 @@
 //! # Readability policy (R7.5)
 //!
 //! R7.5: "Readable output is a printer policy with a name and a test, not a
-//! property of how carefully strings were typed." This is that policy,
-//! named — today's whole surface of it, not a forward guess at what P7.8's
-//! real `TsStmt`/`TsExpr`/`TsType`/`TsDecl` nodes will need:
+//! property of how carefully strings were typed." P7.7 named the policy's
+//! then-whole surface (statement separation); P7.8 (#1313) extends it now
+//! that the printer has real structured nodes to have an opinion about
+//! (`TsExpr`/`TsType`/`TsDecl`, plus real `TsStmt` variants):
 //!
 //! - **Every statement starts on its own generated line, so two statements
-//!   can never share one.** After writing each statement's own text,
-//!   [`print()`] appends a trailing `\n` unless the *buffer* — not that
-//!   statement's own text — already ends in one; this is what stops the
-//!   `SourceMapBuilder`'s one-checkpoint-per-line forward pass from
-//!   silently dropping an earlier statement's checkpoint (below). It is
-//!   *not* "one generated line per statement": `VerbatimOrigin::
-//!   NotYetConverted` wraps a whole multi-line document per statement (the
-//!   ordinary shape today — every P7.6 construction site does this), so one
-//!   statement routinely spans dozens of lines; and an empty statement
-//!   contributes no line of its own at all when the buffer already ends in
-//!   `\n` (`prints_every_statement_in_order` /
-//!   `a_statement_missing_its_own_trailing_newline_still_gets_its_own_line`
-//!   / `a_multi_line_statement_still_starts_the_next_statement_on_a_fresh_line`
-//!   pin the ordinary cases; `an_empty_statement_first_in_the_program_yields_
-//!   a_leading_blank_line` /
-//!   `an_empty_statement_after_a_newline_terminated_one_contributes_no_line_
-//!   of_its_own` pin the two edge behaviours the buffer-vs-statement-text
-//!   distinction actually produces).
-//! - **A statement's own interior is not the printer's concern — yet.**
-//!   Every `TsStmt` today is a `VerbatimOrigin`-tagged opaque string; its
-//!   indentation, spacing, and brace placement are whatever the
-//!   still-untreed `bynk-emit` call site that built it produced, not a
-//!   choice this printer makes. Indentation, blank-line placement between
-//!   declarations, and brace style become real printer decisions — and
-//!   this policy grows to name them — only once P7.8 gives the printer
-//!   actual structured nodes to have an opinion about; inventing rules for
-//!   shapes that don't exist yet would be guessing, not designing, the same
-//!   trap this crate's own module doc (`lib.rs`) already named for the
-//!   tree's *structure* — applied here to its *formatting*.
+//!   can never share one.** Unchanged from P7.7 — see [`print()`]'s own
+//!   loop. Still true for the new node kinds: every one of their own
+//!   renderers ends its own output in `\n`.
+//! - **Two-space indentation, one level per nesting depth.** The only
+//!   indentation width this printer produces — chosen because it's the one
+//!   `events_fanout.rs` (this slice's own grounding file) already uses, not
+//!   because of any earlier general readability decision; matches the
+//!   depth threaded through [`render_stmt`]/[`render_block_body`] exactly.
+//! - **One blank line separates top-level declarations, except two
+//!   consecutive `import`s.** [`print()`]'s own loop implements this by
+//!   peeking at the next statement — matching `events_fanout.rs`'s own real
+//!   spacing (its two `import` lines sit adjacent; every other pair of
+//!   top-level declarations has a blank line between).
+//! - **Inside a `class`, no blank line between fields and the constructor;
+//!   one blank line before each method.** [`render_decl_body`]'s own
+//!   `TsDecl::Class` arm — again, this is what `events_fanout.rs` itself
+//!   does, not a general rule derived some other way.
+//! - **`if`/`for...of`'s own body prints with braces when it's a
+//!   `TsStmtKind::Block`, and inline on the same line otherwise** —
+//!   `if (!Array.isArray(subs)) continue;` has no braces in the grounding
+//!   file; a `for...of` always does. See [`render_branch`].
+//! - **A statement's own interior is not the printer's concern for
+//!   `Verbatim` content — still.** `Verbatim` text renders exactly as
+//!   written (P7.7's own boundary, unchanged); everything above applies
+//!   only to the new, real node kinds this slice adds.
+//!
+//! None of the above is claimed as *the* TypeScript style this printer will
+//! use forever — it's what this slice's own grounding file needs, named
+//! rather than left implicit, the same posture the node algebra itself
+//! takes (`program.rs`'s own module doc). A future file with a construct
+//! this policy doesn't cover yet (an `else` branch, a multi-field class with
+//! blank lines between fields, …) extends it the same way `program.rs`'s
+//! own node list grows: file by file, against real content.
 
-use crate::program::TsProgram;
+use crate::program::{
+    TsBinaryOp, TsBindingName, TsDecl, TsExpr, TsLit, TsParam, TsProgram, TsStmt, TsStmtKind,
+    TsType, TsUnaryOp,
+};
 use crate::source_map::SourceMapBuilder;
 
 /// The result of printing a [`TsProgram`]: the emitted text, and its source
@@ -64,7 +72,10 @@ pub struct Printed {
 /// the `.bynk` source every statement's own span is measured against —
 /// today always exactly one, since nothing spans two files yet;
 /// `output_file` names the generated file in the source map's own `file`
-/// field.
+/// field. Only a *top-level* statement's own span is recorded as a
+/// checkpoint (R7.4's existing scope, unchanged by P7.8 — see
+/// [`TsStmt::span`]'s own doc for why a nested statement's span isn't
+/// recorded yet).
 pub fn print(
     program: &TsProgram,
     source_name: &str,
@@ -74,11 +85,11 @@ pub fn print(
     let mut out = String::new();
     let mut map = SourceMapBuilder::new();
     map.add_source(source_name, source_text);
-    for stmt in &program.stmts {
+    for (i, stmt) in program.stmts.iter().enumerate() {
         if let Some(span) = stmt.span {
             map.record(out.len(), span);
         }
-        out.push_str(stmt.text());
+        render_stmt(&mut out, stmt, 0);
         // The printer owns line structure (R7.3), so a statement's own text
         // not ending in its own newline can't leave two statements sharing
         // a generated line — review of #1308, finding 2: nothing required
@@ -86,9 +97,23 @@ pub fn print(
         // would jam onto one line *and* silently lose the earlier
         // statement's own checkpoint (`SourceMapBuilder::record`'s
         // same-offset dedup, and `to_v3`'s one-checkpoint-per-line forward
-        // pass, both keep only the later one).
+        // pass, both keep only the later one). Every real (non-`Verbatim`)
+        // renderer already ends its own output in `\n`, so this is a no-op
+        // for them; kept unconditional so `Verbatim`'s own guarantee stays
+        // exactly as it was.
         if !out.ends_with('\n') {
             out.push('\n');
+        }
+        // Readability policy (this module's own doc): one blank line
+        // between top-level declarations, except two consecutive
+        // `import`s, and never after `Verbatim` (P7.7's own boundary —
+        // `Verbatim` content's own spacing is not this printer's decision).
+        if let Some(next) = program.stmts.get(i + 1) {
+            let both_imports = matches!(&stmt.kind, TsStmtKind::Decl(TsDecl::Import { .. }))
+                && matches!(&next.kind, TsStmtKind::Decl(TsDecl::Import { .. }));
+            if !both_imports && !matches!(stmt.kind, TsStmtKind::Verbatim { .. }) {
+                out.push('\n');
+            }
         }
     }
     let source_map = map.to_v3(&out, output_file);
@@ -98,10 +123,496 @@ pub fn print(
     }
 }
 
+fn indent(depth: usize) -> String {
+    "  ".repeat(depth)
+}
+
+/// Render one statement, including its own leading indent.
+fn render_stmt(out: &mut String, stmt: &TsStmt, depth: usize) {
+    match &stmt.kind {
+        TsStmtKind::Verbatim { text, .. } => {
+            out.push_str(text);
+        }
+        TsStmtKind::Decl(decl) => render_decl(out, decl, depth),
+        TsStmtKind::Const { name, ty, init } => {
+            out.push_str(&indent(depth));
+            out.push_str("const ");
+            render_binding_name(out, name);
+            if let Some(ty) = ty {
+                out.push_str(": ");
+                render_type(out, ty);
+            }
+            out.push_str(" = ");
+            render_expr(out, init);
+            out.push_str(";\n");
+        }
+        TsStmtKind::Let { name, ty, init } => {
+            out.push_str(&indent(depth));
+            out.push_str("let ");
+            render_binding_name(out, name);
+            if let Some(ty) = ty {
+                out.push_str(": ");
+                render_type(out, ty);
+            }
+            if let Some(init) = init {
+                out.push_str(" = ");
+                render_expr(out, init);
+            }
+            out.push_str(";\n");
+        }
+        TsStmtKind::ExprStmt(expr) => {
+            out.push_str(&indent(depth));
+            render_expr(out, expr);
+            out.push_str(";\n");
+        }
+        TsStmtKind::Return(expr) => {
+            out.push_str(&indent(depth));
+            out.push_str("return");
+            if let Some(expr) = expr {
+                out.push(' ');
+                render_expr(out, expr);
+            }
+            out.push_str(";\n");
+        }
+        TsStmtKind::If { cond, then_branch } => {
+            out.push_str(&indent(depth));
+            out.push_str("if (");
+            render_expr(out, cond);
+            out.push(')');
+            render_branch(out, then_branch, depth);
+        }
+        TsStmtKind::ForOf {
+            binding,
+            iter,
+            body,
+        } => {
+            out.push_str(&indent(depth));
+            out.push_str("for (const ");
+            out.push_str(binding);
+            out.push_str(" of ");
+            render_expr(out, iter);
+            out.push(')');
+            render_branch(out, body, depth);
+        }
+        TsStmtKind::TryCatch {
+            try_block,
+            catch_param,
+            catch_block,
+        } => {
+            out.push_str(&indent(depth));
+            out.push_str("try");
+            render_block_body(out, try_block, depth);
+            out.push_str(" catch (");
+            out.push_str(catch_param);
+            out.push(')');
+            render_block_body(out, catch_block, depth);
+            out.push('\n');
+        }
+        TsStmtKind::Block(stmts) => {
+            out.push_str(&indent(depth));
+            out.push_str("{\n");
+            for s in stmts {
+                render_stmt(out, s, depth + 1);
+            }
+            out.push_str(&indent(depth));
+            out.push_str("}\n");
+        }
+        TsStmtKind::Continue => {
+            out.push_str(&indent(depth));
+            out.push_str("continue;\n");
+        }
+        TsStmtKind::Assign { target, value } => {
+            out.push_str(&indent(depth));
+            render_expr(out, target);
+            out.push_str(" = ");
+            render_expr(out, value);
+            out.push_str(";\n");
+        }
+    }
+}
+
+/// `if`/`for...of`'s own body: braces (and a nested block) when `branch` is
+/// itself a `Block`, otherwise printed inline on the same line — matching
+/// `events_fanout.rs`'s own `if (!Array.isArray(subs)) continue;` (no
+/// braces) alongside its always-braced `for...of` bodies.
+fn render_branch(out: &mut String, branch: &TsStmt, depth: usize) {
+    match &branch.kind {
+        TsStmtKind::Block(_) => {
+            render_block_body(out, branch, depth);
+            out.push('\n');
+        }
+        _ => {
+            out.push(' ');
+            render_inline_stmt(out, branch);
+        }
+    }
+}
+
+/// A statement rendered without its own leading indent, for the "no braces"
+/// half of [`render_branch`] — only the shapes `events_fanout.rs` actually
+/// needs inline (`continue`, `return`, a bare expression) get dedicated
+/// handling; anything else falls back to a normal indented render (depth 0)
+/// rather than panicking, so an unanticipated future shape still prints
+/// something plausible instead of crashing.
+fn render_inline_stmt(out: &mut String, stmt: &TsStmt) {
+    match &stmt.kind {
+        TsStmtKind::Continue => out.push_str("continue;\n"),
+        TsStmtKind::Return(expr) => {
+            out.push_str("return");
+            if let Some(expr) = expr {
+                out.push(' ');
+                render_expr(out, expr);
+            }
+            out.push_str(";\n");
+        }
+        TsStmtKind::ExprStmt(expr) => {
+            render_expr(out, expr);
+            out.push_str(";\n");
+        }
+        _ => render_stmt(out, stmt, 0),
+    }
+}
+
+/// `{ <stmts> }`, with the closing brace at `depth`'s own indent and no
+/// trailing newline — the shared shape [`TsStmtKind::TryCatch`] needs to
+/// keep writing on the same generated line (`} catch (e) {`) and
+/// [`render_branch`]'s own `Block` case needs with a `\n` appended after.
+/// `block` is expected to be a [`TsStmtKind::Block`]; anything else is
+/// still rendered sensibly (as a single-statement body) rather than
+/// panicking.
+fn render_block_body(out: &mut String, block: &TsStmt, depth: usize) {
+    out.push_str(" {\n");
+    if let TsStmtKind::Block(stmts) = &block.kind {
+        for s in stmts {
+            render_stmt(out, s, depth + 1);
+        }
+    } else {
+        render_stmt(out, block, depth + 1);
+    }
+    out.push_str(&indent(depth));
+    out.push('}');
+}
+
+fn render_binding_name(out: &mut String, name: &TsBindingName) {
+    match name {
+        TsBindingName::Ident(s) => out.push_str(s),
+        TsBindingName::ObjectPattern(names) => {
+            out.push_str("{ ");
+            for (i, n) in names.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                out.push_str(n);
+            }
+            out.push_str(" }");
+        }
+    }
+}
+
+fn render_expr(out: &mut String, expr: &TsExpr) {
+    match expr {
+        TsExpr::Ident(name) => out.push_str(name),
+        TsExpr::Member { object, property } => {
+            render_expr(out, object);
+            out.push('.');
+            out.push_str(property);
+        }
+        TsExpr::Index { object, index } => {
+            render_expr(out, object);
+            out.push('[');
+            render_expr(out, index);
+            out.push(']');
+        }
+        TsExpr::Call { callee, args } => {
+            render_expr(out, callee);
+            out.push('(');
+            render_expr_list(out, args);
+            out.push(')');
+        }
+        TsExpr::New { callee, args } => {
+            out.push_str("new ");
+            render_expr(out, callee);
+            out.push('(');
+            render_expr_list(out, args);
+            out.push(')');
+        }
+        TsExpr::Object(entries) => {
+            if entries.is_empty() {
+                out.push_str("{}");
+            } else {
+                out.push_str("{ ");
+                for (i, (k, v)) in entries.iter().enumerate() {
+                    if i > 0 {
+                        out.push_str(", ");
+                    }
+                    out.push_str(k);
+                    out.push_str(": ");
+                    render_expr(out, v);
+                }
+                out.push_str(" }");
+            }
+        }
+        TsExpr::Array(items) => {
+            out.push('[');
+            render_expr_list(out, items);
+            out.push(']');
+        }
+        TsExpr::Await(inner) => {
+            out.push_str("await ");
+            render_expr(out, inner);
+        }
+        TsExpr::As { expr, ty } => {
+            // `(await x) as T` / `(a ?? b) as T` — an `await` or a binary
+            // expression needs parens before `as`; nothing else this slice
+            // prints does (a bare `Ident`/`Call`/`Object` reads correctly
+            // without them, matching `events_fanout.rs`'s own two real
+            // `as` casts exactly).
+            let needs_parens = matches!(**expr, TsExpr::Await(_) | TsExpr::Binary { .. });
+            if needs_parens {
+                out.push('(');
+                render_expr(out, expr);
+                out.push(')');
+            } else {
+                render_expr(out, expr);
+            }
+            out.push_str(" as ");
+            render_type(out, ty);
+        }
+        TsExpr::Unary { op, expr } => {
+            out.push_str(match op {
+                TsUnaryOp::Not => "!",
+            });
+            render_expr(out, expr);
+        }
+        TsExpr::Binary { op, left, right } => {
+            render_expr(out, left);
+            out.push_str(match op {
+                TsBinaryOp::NullishCoalescing => " ?? ",
+            });
+            render_expr(out, right);
+        }
+        TsExpr::Lit(lit) => render_lit(out, lit),
+    }
+}
+
+fn render_expr_list(out: &mut String, exprs: &[TsExpr]) {
+    for (i, e) in exprs.iter().enumerate() {
+        if i > 0 {
+            out.push_str(", ");
+        }
+        render_expr(out, e);
+    }
+}
+
+fn render_lit(out: &mut String, lit: &TsLit) {
+    match lit {
+        TsLit::Str(s) => {
+            out.push('"');
+            for c in s.chars() {
+                match c {
+                    '"' => out.push_str("\\\""),
+                    '\\' => out.push_str("\\\\"),
+                    _ => out.push(c),
+                }
+            }
+            out.push('"');
+        }
+        TsLit::Num(n) => out.push_str(n),
+        TsLit::Null => out.push_str("null"),
+    }
+}
+
+fn render_type(out: &mut String, ty: &TsType) {
+    match ty {
+        TsType::Named { name, type_args } => {
+            out.push_str(name);
+            if !type_args.is_empty() {
+                out.push('<');
+                for (i, arg) in type_args.iter().enumerate() {
+                    if i > 0 {
+                        out.push_str(", ");
+                    }
+                    render_type(out, arg);
+                }
+                out.push('>');
+            }
+        }
+        TsType::Array(inner) => {
+            render_type(out, inner);
+            out.push_str("[]");
+        }
+        TsType::Object(members) => {
+            if members.is_empty() {
+                out.push_str("{}");
+            } else {
+                out.push_str("{ ");
+                for (i, (k, t)) in members.iter().enumerate() {
+                    if i > 0 {
+                        out.push_str("; ");
+                    }
+                    out.push_str(k);
+                    out.push_str(": ");
+                    render_type(out, t);
+                }
+                out.push_str(" }");
+            }
+        }
+    }
+}
+
+fn render_params(out: &mut String, params: &[TsParam]) {
+    for (i, p) in params.iter().enumerate() {
+        if i > 0 {
+            out.push_str(", ");
+        }
+        out.push_str(&p.name);
+        if p.optional {
+            out.push('?');
+        }
+        if let Some(ty) = &p.ty {
+            out.push_str(": ");
+            render_type(out, ty);
+        }
+    }
+}
+
+fn render_decl(out: &mut String, decl: &TsDecl, depth: usize) {
+    if let TsDecl::Export(inner) = decl {
+        out.push_str(&indent(depth));
+        out.push_str("export ");
+        render_decl_body(out, inner, depth);
+    } else {
+        out.push_str(&indent(depth));
+        render_decl_body(out, decl, depth);
+    }
+}
+
+/// The declaration's own text, with no leading indent — [`render_decl`]
+/// writes the indent (and, for `Export`, the `export ` keyword) once, then
+/// hands off here so `Export(inner)` doesn't duplicate `inner`'s own
+/// leading whitespace.
+fn render_decl_body(out: &mut String, decl: &TsDecl, depth: usize) {
+    match decl {
+        TsDecl::Import {
+            type_only,
+            names,
+            from,
+        } => {
+            out.push_str(if *type_only {
+                "import type { "
+            } else {
+                "import { "
+            });
+            out.push_str(&names.join(", "));
+            out.push_str(" } from \"");
+            out.push_str(from);
+            out.push_str("\";\n");
+        }
+        TsDecl::Export(inner) => {
+            out.push_str("export ");
+            render_decl_body(out, inner, depth);
+        }
+        TsDecl::Interface { name, members } => {
+            out.push_str("interface ");
+            out.push_str(name);
+            out.push_str(" {\n");
+            for (member_name, member_ty) in members {
+                out.push_str(&indent(depth + 1));
+                out.push_str(member_name);
+                out.push_str(": ");
+                render_type(out, member_ty);
+                out.push_str(";\n");
+            }
+            out.push_str(&indent(depth));
+            out.push_str("}\n");
+        }
+        TsDecl::ConstDecl { name, ty, init } => {
+            out.push_str("const ");
+            out.push_str(name);
+            if let Some(ty) = ty {
+                out.push_str(": ");
+                render_type(out, ty);
+            }
+            out.push_str(" = ");
+            render_expr(out, init);
+            out.push_str(";\n");
+        }
+        TsDecl::Class {
+            name,
+            fields,
+            constructor,
+            methods,
+        } => {
+            out.push_str("class ");
+            out.push_str(name);
+            out.push_str(" {\n");
+            for f in fields {
+                out.push_str(&indent(depth + 1));
+                if f.private {
+                    out.push_str("private ");
+                }
+                out.push_str(&f.name);
+                out.push_str(": ");
+                render_type(out, &f.ty);
+                out.push_str(";\n");
+            }
+            // Readability policy (this module's own doc): no blank line
+            // between fields and the constructor; one blank line before
+            // each method — `events_fanout.rs`'s own real class spacing.
+            let mut wrote_member = !fields.is_empty();
+            if let Some(ctor) = constructor {
+                out.push_str(&indent(depth + 1));
+                out.push_str("constructor(");
+                render_params(out, &ctor.params);
+                out.push(')');
+                render_block_stmts(out, &ctor.body, depth + 1);
+                out.push('\n');
+                wrote_member = true;
+            }
+            for m in methods {
+                if wrote_member {
+                    out.push('\n');
+                }
+                out.push_str(&indent(depth + 1));
+                if m.is_async {
+                    out.push_str("async ");
+                }
+                out.push_str(&m.name);
+                out.push('(');
+                render_params(out, &m.params);
+                out.push(')');
+                if let Some(rt) = &m.return_type {
+                    out.push_str(": ");
+                    render_type(out, rt);
+                }
+                render_block_stmts(out, &m.body, depth + 1);
+                out.push('\n');
+                wrote_member = true;
+            }
+            out.push_str(&indent(depth));
+            out.push_str("}\n");
+        }
+    }
+}
+
+/// `{ <stmts> }` for a constructor/method body — same shape as
+/// [`render_block_body`] but over a plain `&[TsStmt]` (a `TsClassCtor`/
+/// `TsClassMethod`'s own `body` field, not a boxed `TsStmt`), and always
+/// followed by the caller's own `\n` (constructor/method declarations, not
+/// a same-line `try`/`catch` continuation).
+fn render_block_stmts(out: &mut String, stmts: &[TsStmt], depth: usize) {
+    out.push_str(" {\n");
+    for s in stmts {
+        render_stmt(out, s, depth + 1);
+    }
+    out.push_str(&indent(depth));
+    out.push('}');
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::program::{TsStmt, VerbatimOrigin};
+    use crate::program::{TsClassCtor, TsClassField, TsClassMethod, VerbatimOrigin};
     use bynk_syntax::span::Span;
 
     /// Pins the readability policy's statement-separation guarantee (R7.5,
@@ -271,5 +782,499 @@ mod tests {
         let expected = expected_map.to_v3(&printed.text, "x.ts");
 
         assert_eq!(printed.source_map, expected);
+    }
+
+    // -- P7.8 (#1313): real node rendering. --
+
+    #[test]
+    fn prints_a_const_statement_with_a_destructured_binding_and_a_type_cast() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::const_stmt(
+            TsBindingName::ObjectPattern(vec!["events".to_string()]),
+            None,
+            TsExpr::As {
+                expr: Box::new(TsExpr::Await(Box::new(TsExpr::Call {
+                    callee: Box::new(TsExpr::Member {
+                        object: Box::new(TsExpr::Ident("request".to_string())),
+                        property: "json".to_string(),
+                    }),
+                    args: vec![],
+                }))),
+                ty: TsType::Object(vec![(
+                    "events".to_string(),
+                    TsType::Array(Box::new(TsType::named("FanoutEvent"))),
+                )]),
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(
+            printed.text,
+            "const { events } = (await request.json()) as { events: FanoutEvent[] };\n"
+        );
+    }
+
+    #[test]
+    fn prints_if_without_braces_when_the_body_is_not_a_block() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::if_stmt(
+            TsExpr::Unary {
+                op: TsUnaryOp::Not,
+                expr: Box::new(TsExpr::Call {
+                    callee: Box::new(TsExpr::Member {
+                        object: Box::new(TsExpr::Ident("Array".to_string())),
+                        property: "isArray".to_string(),
+                    }),
+                    args: vec![TsExpr::Ident("subs".to_string())],
+                }),
+            },
+            TsStmt::continue_stmt(None),
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "if (!Array.isArray(subs)) continue;\n");
+    }
+
+    #[test]
+    fn prints_a_for_of_loop_with_a_braced_body() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::for_of(
+            "ev",
+            TsExpr::Ident("events".to_string()),
+            TsStmt::block(
+                vec![TsStmt::return_stmt(
+                    Some(TsExpr::Ident("ev".to_string())),
+                    None,
+                )],
+                None,
+            ),
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(
+            printed.text,
+            "for (const ev of events) {\n  return ev;\n}\n"
+        );
+    }
+
+    #[test]
+    fn prints_a_try_catch_on_the_shared_closing_brace_line() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::try_catch(
+            TsStmt::block(
+                vec![TsStmt::expr_stmt(
+                    TsExpr::Await(Box::new(TsExpr::Call {
+                        callee: Box::new(TsExpr::Ident("deliverEvent".to_string())),
+                        args: vec![TsExpr::Ident("binding".to_string())],
+                    })),
+                    None,
+                )],
+                None,
+            ),
+            "e",
+            TsStmt::block(
+                vec![TsStmt::expr_stmt(
+                    TsExpr::Call {
+                        callee: Box::new(TsExpr::Member {
+                            object: Box::new(TsExpr::Ident("console".to_string())),
+                            property: "error".to_string(),
+                        }),
+                        args: vec![TsExpr::Lit(TsLit::Str("failed".to_string()))],
+                    },
+                    None,
+                )],
+                None,
+            ),
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(
+            printed.text,
+            "try {\n  await deliverEvent(binding);\n} catch (e) {\n  console.error(\"failed\");\n}\n"
+        );
+    }
+
+    #[test]
+    fn prints_an_interface_with_an_inline_nested_object_type() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::decl(
+            TsDecl::Interface {
+                name: "FanoutEvent".to_string(),
+                members: vec![
+                    ("type".to_string(), TsType::named("string")),
+                    ("payload".to_string(), TsType::named("unknown")),
+                    (
+                        "envelope".to_string(),
+                        TsType::Object(vec![
+                            ("eventId".to_string(), TsType::named("string")),
+                            ("publisherId".to_string(), TsType::named("string")),
+                        ]),
+                    ),
+                ],
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(
+            printed.text,
+            "interface FanoutEvent {\n  type: string;\n  payload: unknown;\n  envelope: { eventId: string; publisherId: string };\n}\n"
+        );
+    }
+
+    #[test]
+    fn prints_two_adjacent_imports_with_no_blank_line_between_them() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::decl(
+            TsDecl::Import {
+                type_only: true,
+                names: vec!["A".to_string()],
+                from: "../x.js".to_string(),
+            },
+            None,
+        ));
+        program.push(TsStmt::decl(
+            TsDecl::Import {
+                type_only: false,
+                names: vec!["b".to_string()],
+                from: "../x.js".to_string(),
+            },
+            None,
+        ));
+        program.push(TsStmt::decl(
+            TsDecl::ConstDecl {
+                name: "c".to_string(),
+                ty: None,
+                init: TsExpr::Lit(TsLit::Null),
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(
+            printed.text,
+            "import type { A } from \"../x.js\";\nimport { b } from \"../x.js\";\n\nconst c = null;\n"
+        );
+    }
+
+    /// The required "does the algebra hold against real content" test
+    /// (P7.8's own accepted proposal, #1313): builds
+    /// `bynk-emit/src/emitter/events_fanout.rs`'s own `EventsFanoutDO`
+    /// class as real nodes (its field, constructor, and `fetch` method,
+    /// with the exact control flow the real function emits — `for...of`,
+    /// nested `if`-without-braces, `try`/`catch`) and asserts the printed
+    /// text is byte-identical to what `emit_events_fanout_do` produces
+    /// today for that class (transcribed directly from
+    /// `bynk-emit/src/emitter/events_fanout.rs`'s own `write!` calls, not
+    /// re-derived — including the constructor body, `this.env = (env ??
+    /// {}) as Record<string, ServiceBinding>;`, via `TsStmtKind::Assign`,
+    /// added in review of #1313: the accepted proposal's own grounding
+    /// catalogue detailed the `fetch` method's body but missed the
+    /// constructor's one real statement, which turned out to need a
+    /// variant Decision B's list didn't name). The leading header comment
+    /// and the `__eventRoutes` table's own per-project literal entries are
+    /// deliberately not included here — a representative fragment covering
+    /// the class is exactly what the accepted proposal's own "Done when"
+    /// allows, and this is the shape that actually exercises every new
+    /// node kind this slice adds.
+    #[test]
+    fn prints_events_fanout_dos_own_class_byte_identical_to_the_real_emitter() {
+        let real_ctor = TsClassCtor {
+            params: vec![
+                TsParam {
+                    name: "_state".to_string(),
+                    ty: Some(TsType::named("DurableObjectState")),
+                    optional: false,
+                },
+                TsParam {
+                    name: "env".to_string(),
+                    ty: Some(TsType::named("unknown")),
+                    optional: true,
+                },
+            ],
+            body: vec![TsStmt::assign(
+                TsExpr::Member {
+                    object: Box::new(TsExpr::Ident("this".to_string())),
+                    property: "env".to_string(),
+                },
+                TsExpr::As {
+                    expr: Box::new(TsExpr::Binary {
+                        op: TsBinaryOp::NullishCoalescing,
+                        left: Box::new(TsExpr::Ident("env".to_string())),
+                        right: Box::new(TsExpr::Object(vec![])),
+                    }),
+                    ty: TsType::named_with_args(
+                        "Record",
+                        vec![TsType::named("string"), TsType::named("ServiceBinding")],
+                    ),
+                },
+                None,
+            )],
+        };
+
+        let fetch = TsClassMethod {
+            name: "fetch".to_string(),
+            is_async: true,
+            params: vec![TsParam {
+                name: "request".to_string(),
+                ty: Some(TsType::named("Request")),
+                optional: false,
+            }],
+            return_type: Some(TsType::named_with_args(
+                "Promise",
+                vec![TsType::named("Response")],
+            )),
+            body: vec![
+                TsStmt::const_stmt(
+                    TsBindingName::ObjectPattern(vec!["events".to_string()]),
+                    None,
+                    TsExpr::As {
+                        expr: Box::new(TsExpr::Await(Box::new(TsExpr::Call {
+                            callee: Box::new(TsExpr::Member {
+                                object: Box::new(TsExpr::Ident("request".to_string())),
+                                property: "json".to_string(),
+                            }),
+                            args: vec![],
+                        }))),
+                        ty: TsType::Object(vec![(
+                            "events".to_string(),
+                            TsType::Array(Box::new(TsType::named("FanoutEvent"))),
+                        )]),
+                    },
+                    None,
+                ),
+                TsStmt::for_of(
+                    "ev",
+                    TsExpr::Ident("events".to_string()),
+                    TsStmt::block(
+                        vec![
+                            TsStmt::const_stmt(
+                                TsBindingName::Ident("subs".to_string()),
+                                None,
+                                TsExpr::Index {
+                                    object: Box::new(TsExpr::Ident("__eventRoutes".to_string())),
+                                    index: Box::new(TsExpr::Member {
+                                        object: Box::new(TsExpr::Ident("ev".to_string())),
+                                        property: "type".to_string(),
+                                    }),
+                                },
+                                None,
+                            ),
+                            TsStmt::if_stmt(
+                                TsExpr::Unary {
+                                    op: TsUnaryOp::Not,
+                                    expr: Box::new(TsExpr::Call {
+                                        callee: Box::new(TsExpr::Member {
+                                            object: Box::new(TsExpr::Ident("Array".to_string())),
+                                            property: "isArray".to_string(),
+                                        }),
+                                        args: vec![TsExpr::Ident("subs".to_string())],
+                                    }),
+                                },
+                                TsStmt::continue_stmt(None),
+                                None,
+                            ),
+                            TsStmt::for_of(
+                                "sub",
+                                TsExpr::Ident("subs".to_string()),
+                                TsStmt::block(
+                                    vec![
+                                        TsStmt::const_stmt(
+                                            TsBindingName::Ident("binding".to_string()),
+                                            None,
+                                            TsExpr::Index {
+                                                object: Box::new(TsExpr::Member {
+                                                    object: Box::new(TsExpr::Ident(
+                                                        "this".to_string(),
+                                                    )),
+                                                    property: "env".to_string(),
+                                                }),
+                                                index: Box::new(TsExpr::Member {
+                                                    object: Box::new(TsExpr::Ident(
+                                                        "sub".to_string(),
+                                                    )),
+                                                    property: "binding".to_string(),
+                                                }),
+                                            },
+                                            None,
+                                        ),
+                                        TsStmt::if_stmt(
+                                            TsExpr::Unary {
+                                                op: TsUnaryOp::Not,
+                                                expr: Box::new(TsExpr::Ident(
+                                                    "binding".to_string(),
+                                                )),
+                                            },
+                                            TsStmt::continue_stmt(None),
+                                            None,
+                                        ),
+                                        TsStmt::try_catch(
+                                            TsStmt::block(
+                                                vec![TsStmt::expr_stmt(
+                                                    TsExpr::Await(Box::new(TsExpr::Call {
+                                                        callee: Box::new(TsExpr::Ident(
+                                                            "deliverEvent".to_string(),
+                                                        )),
+                                                        args: vec![
+                                                            TsExpr::Ident("binding".to_string()),
+                                                            TsExpr::Member {
+                                                                object: Box::new(TsExpr::Ident(
+                                                                    "sub".to_string(),
+                                                                )),
+                                                                property: "service".to_string(),
+                                                            },
+                                                            TsExpr::Member {
+                                                                object: Box::new(TsExpr::Ident(
+                                                                    "ev".to_string(),
+                                                                )),
+                                                                property: "payload".to_string(),
+                                                            },
+                                                            TsExpr::Member {
+                                                                object: Box::new(TsExpr::Ident(
+                                                                    "ev".to_string(),
+                                                                )),
+                                                                property: "envelope".to_string(),
+                                                            },
+                                                        ],
+                                                    })),
+                                                    None,
+                                                )],
+                                                None,
+                                            ),
+                                            "e",
+                                            TsStmt::block(
+                                                vec![TsStmt::expr_stmt(
+                                                    TsExpr::Call {
+                                                        callee: Box::new(TsExpr::Member {
+                                                            object: Box::new(TsExpr::Ident(
+                                                                "console".to_string(),
+                                                            )),
+                                                            property: "error".to_string(),
+                                                        }),
+                                                        args: vec![
+                                                            TsExpr::Lit(TsLit::Str(
+                                                                "EventsFanout delivery failed"
+                                                                    .to_string(),
+                                                            )),
+                                                            TsExpr::Object(vec![
+                                                                (
+                                                                    "event".to_string(),
+                                                                    TsExpr::Member {
+                                                                        object: Box::new(
+                                                                            TsExpr::Ident(
+                                                                                "ev".to_string(),
+                                                                            ),
+                                                                        ),
+                                                                        property: "type"
+                                                                            .to_string(),
+                                                                    },
+                                                                ),
+                                                                (
+                                                                    "service".to_string(),
+                                                                    TsExpr::Member {
+                                                                        object: Box::new(
+                                                                            TsExpr::Ident(
+                                                                                "sub".to_string(),
+                                                                            ),
+                                                                        ),
+                                                                        property: "service"
+                                                                            .to_string(),
+                                                                    },
+                                                                ),
+                                                                (
+                                                                    "error".to_string(),
+                                                                    TsExpr::Call {
+                                                                        callee: Box::new(
+                                                                            TsExpr::Ident(
+                                                                                "String"
+                                                                                    .to_string(),
+                                                                            ),
+                                                                        ),
+                                                                        args: vec![TsExpr::Ident(
+                                                                            "e".to_string(),
+                                                                        )],
+                                                                    },
+                                                                ),
+                                                            ]),
+                                                        ],
+                                                    },
+                                                    None,
+                                                )],
+                                                None,
+                                            ),
+                                            None,
+                                        ),
+                                    ],
+                                    None,
+                                ),
+                                None,
+                            ),
+                        ],
+                        None,
+                    ),
+                    None,
+                ),
+                TsStmt::return_stmt(
+                    Some(TsExpr::New {
+                        callee: Box::new(TsExpr::Ident("Response".to_string())),
+                        args: vec![
+                            TsExpr::Lit(TsLit::Null),
+                            TsExpr::Object(vec![(
+                                "status".to_string(),
+                                TsExpr::Lit(TsLit::Num("204".to_string())),
+                            )]),
+                        ],
+                    }),
+                    None,
+                ),
+            ],
+        };
+
+        let class = TsDecl::Export(Box::new(TsDecl::Class {
+            name: "EventsFanoutDO".to_string(),
+            fields: vec![TsClassField {
+                name: "env".to_string(),
+                ty: TsType::named_with_args(
+                    "Record",
+                    vec![TsType::named("string"), TsType::named("ServiceBinding")],
+                ),
+                private: true,
+            }],
+            constructor: Some(real_ctor),
+            methods: vec![fetch],
+        }));
+
+        let mut program = TsProgram::new();
+        program.push(TsStmt::decl(class, None));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+
+        // Transcribed directly from `bynk-emit/src/emitter/events_fanout.rs`'s
+        // own `write!` calls, byte-for-byte including the constructor body.
+        let expected_lines = [
+            "export class EventsFanoutDO {",
+            "  private env: Record<string, ServiceBinding>;",
+            "  constructor(_state: DurableObjectState, env?: unknown) {",
+            "    this.env = (env ?? {}) as Record<string, ServiceBinding>;",
+            "  }",
+            "",
+            "  async fetch(request: Request): Promise<Response> {",
+            "    const { events } = (await request.json()) as { events: FanoutEvent[] };",
+            "    for (const ev of events) {",
+            "      const subs = __eventRoutes[ev.type];",
+            "      if (!Array.isArray(subs)) continue;",
+            "      for (const sub of subs) {",
+            "        const binding = this.env[sub.binding];",
+            "        if (!binding) continue;",
+            "        try {",
+            "          await deliverEvent(binding, sub.service, ev.payload, ev.envelope);",
+            "        } catch (e) {",
+            "          console.error(\"EventsFanout delivery failed\", { event: ev.type, service: sub.service, error: String(e) });",
+            "        }",
+            "      }",
+            "    }",
+            "    return new Response(null, { status: 204 });",
+            "  }",
+            "}",
+        ];
+        let expected = format!("{}\n", expected_lines.join("\n"));
+        assert_eq!(printed.text, expected);
     }
 }
