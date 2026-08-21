@@ -489,8 +489,11 @@ fn render_type(out: &mut String, ty: &TsType) {
                 out.push('>');
             }
         }
-        TsType::Array(inner) => {
-            render_type(out, inner);
+        TsType::Array { element, readonly } => {
+            if *readonly {
+                out.push_str("readonly ");
+            }
+            render_type(out, element);
             out.push_str("[]");
         }
         TsType::Object(members) => {
@@ -509,7 +512,42 @@ fn render_type(out: &mut String, ty: &TsType) {
                 out.push_str(" }");
             }
         }
+        TsType::Fn { params, ret } => {
+            out.push('(');
+            for (i, p) in params.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                out.push('a');
+                out.push_str(&i.to_string());
+                out.push_str(": ");
+                render_type(out, p);
+            }
+            out.push_str(") => ");
+            render_type(out, ret);
+        }
+        TsType::Union(members) => {
+            for (i, m) in members.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(" | ");
+                }
+                render_type(out, m);
+            }
+        }
     }
+}
+
+/// Print a single [`TsType`] on its own — the real callers this closes R7.2
+/// for (`bynk-emit`'s `ts_type_ref*`/`ts_ty` families, P7.9, #1315) each
+/// want one type fragment to interpolate into a larger, still-hand-built
+/// line (a field's own type annotation, a parameter list, …), not a whole
+/// [`TsProgram`]. No source-map/buffer machinery — [`print()`] owns that
+/// for a whole document; this is the printer's other, narrower entry
+/// point, sharing the same internal recursion rather than a second copy.
+pub fn print_type(ty: &TsType) -> String {
+    let mut out = String::new();
+    render_type(&mut out, ty);
+    out
 }
 
 fn render_params(out: &mut String, params: &[TsParam]) {
@@ -854,7 +892,7 @@ mod tests {
                 }))),
                 ty: TsType::Object(vec![(
                     "events".to_string(),
-                    TsType::Array(Box::new(TsType::named("FanoutEvent"))),
+                    TsType::array(TsType::named("FanoutEvent")),
                 )]),
             },
             None,
@@ -1088,7 +1126,7 @@ mod tests {
                         }))),
                         ty: TsType::Object(vec![(
                             "events".to_string(),
-                            TsType::Array(Box::new(TsType::named("FanoutEvent"))),
+                            TsType::array(TsType::named("FanoutEvent")),
                         )]),
                     },
                     None,
@@ -1361,6 +1399,59 @@ mod tests {
         ));
         let printed = print(&program, "x.bynk", "", "x.ts");
         assert_eq!(printed.text, "[1, x];\n");
+    }
+
+    /// P7.9 (#1315): `TsType::Array`'s new `readonly` modifier — the shape
+    /// every `List`/`Query` element type `bynk-emit`'s `ts_type_ref*`/
+    /// `ts_ty` families build (`readonly T[]`), which `TsType::array`'s own
+    /// `readonly: false` default cannot represent.
+    #[test]
+    fn print_type_renders_a_readonly_array() {
+        assert_eq!(
+            print_type(&TsType::readonly_array(TsType::named("Order"))),
+            "readonly Order[]"
+        );
+        assert_eq!(
+            print_type(&TsType::array(TsType::named("Order"))),
+            "Order[]"
+        );
+    }
+
+    /// P7.9 (#1315): `TsType::Fn`'s zero-`params` form — the query-thunk
+    /// wrapper shape, `bynk-emit`'s own `(() => readonly T[])`.
+    #[test]
+    fn print_type_renders_a_zero_param_function_type() {
+        let ty = TsType::Fn {
+            params: vec![],
+            ret: Box::new(TsType::readonly_array(TsType::named("Order"))),
+        };
+        assert_eq!(print_type(&ty), "() => readonly Order[]");
+    }
+
+    /// P7.9 (#1315): `TsType::Fn`'s real parametered form — positional
+    /// `a0`/`a1`/… names, matching `bynk-emit`'s own pre-P7.9 convention
+    /// exactly (TypeScript requires *some* name in function-type syntax).
+    #[test]
+    fn print_type_renders_a_parametered_function_type_with_positional_names() {
+        let ty = TsType::Fn {
+            params: vec![TsType::named("string"), TsType::named("number")],
+            ret: Box::new(TsType::named("void")),
+        };
+        assert_eq!(print_type(&ty), "(a0: string, a1: number) => void");
+    }
+
+    /// `TsType::Union`, added during review of #1315's own implementation —
+    /// a real gap `bynk-emit`'s `ts_ty` needed for a resolved multi-actor
+    /// sum (`Ty::ActorSum`), beyond the accepted proposal's own `readonly`/
+    /// `Fn` gap list. Members print `" | "`-joined, in order.
+    #[test]
+    fn print_type_renders_a_union_of_named_types() {
+        let ty = TsType::Union(vec![
+            TsType::named("string"),
+            TsType::named("number"),
+            TsType::Object(vec![("tag".to_string(), TsType::named("\"literal\""))]),
+        ]);
+        assert_eq!(print_type(&ty), "string | number | { tag: \"literal\" }");
     }
 
     /// Coverage gap named in review of #1314, finding 4: the blank-line-
