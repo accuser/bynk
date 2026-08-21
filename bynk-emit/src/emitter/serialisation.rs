@@ -842,14 +842,37 @@ fn emit_field_deserialise_wire(
         // compile but silently drop the fact that it's still open, which is
         // worse than leaving `any` visible.
         WireRef::Unchecked { reason } => {
-            let ty = match reason {
-                UncheckedReason::Effect => "any",
-                UncheckedReason::ValidationError => "ValidationError",
-                UncheckedReason::JsonError => "JsonError",
-                UncheckedReason::HttpResult => "HttpResult",
-                UncheckedReason::QueueResult => "QueueResult",
+            // Review of #1319/#1320, finding 1: `HttpResult<T>` is generic
+            // with no default type argument — a bare `HttpResult` is
+            // `tsc`'s TS2314. `UncheckedReason::HttpResult`
+            // (`bynk-check/src/wire.rs:246`) is payload-free, so the real
+            // element type genuinely isn't available here the way it is at
+            // `deserialise_expr_via`'s own `TypeRef::HttpResult` arm (which
+            // renders it precisely). `HttpResult<unknown>` names the real
+            // type this field's own value is: a real `HttpResult`, whose
+            // payload this residual has never checked and still doesn't —
+            // the immediately-surrounding assignment already carries its
+            // own final `as <Record>` cast to the field's real (possibly
+            // narrower) `HttpResult<T>` type, so this is not a new erosion.
+            //
+            // The same tsc run (finding 1) also found `{json} as <type>`
+            // fails TS2352 for `ValidationError`/`JsonError` — `json`'s own
+            // static type here is the `JsonValue` union, not structurally
+            // close enough to a real interface for a direct cast in either
+            // direction (the serialise-side sibling arm, immediately above
+            // in this file, has the identical fix for the identical reason).
+            // Bridged through `unknown` uniformly, `HttpResult`/`QueueResult`
+            // included even though they pass without it today, for the same
+            // "heuristic, not a guarantee" reason. `any` needs no bridge —
+            // it already casts to and from anything.
+            let cast = match reason {
+                UncheckedReason::Effect => "as any".to_string(),
+                UncheckedReason::ValidationError => "as unknown as ValidationError".to_string(),
+                UncheckedReason::JsonError => "as unknown as JsonError".to_string(),
+                UncheckedReason::HttpResult => "as unknown as HttpResult<unknown>".to_string(),
+                UncheckedReason::QueueResult => "as unknown as QueueResult".to_string(),
             };
-            writeln!(out, "  const __{name} = {json} as {ty};").unwrap();
+            writeln!(out, "  const __{name} = {json} {cast};").unwrap();
         }
     }
 }
@@ -923,8 +946,18 @@ fn serialise_field_expr_wire(wire: &WireRef, value: &str, ns: &str, ru: &Runtime
         // (`Effect` never lands here via `serialise_field_expr_via` — it is
         // peeled above; a record/sum field can never legally be `Effect` in
         // the first place — see this function's doc.)
+        //
+        // Review of #1319/#1320, finding 1's own tsc run (a real fixture with
+        // one of these types finally reached this arm — none had before):
+        // `value as JsonValue` fails `tsc --strict` (TS2352) for
+        // `ValidationError`/`JsonError` specifically — real interfaces, not
+        // structurally close enough to `JsonValue`'s own union for a direct
+        // cast; `HttpResult<T>`/`QueueResult`'s own union shapes happen to
+        // pass today, but that is a heuristic, not a guarantee this residual
+        // should depend on. Bridging through `unknown` (the fix `tsc` itself
+        // names) is safe and uniform for all five reasons, `Effect` included.
         WireRef::Unchecked { .. } => {
-            format!("{value} as JsonValue")
+            format!("{value} as unknown as JsonValue")
         }
         WireRef::Unit => "null".to_string(),
     }
@@ -1077,18 +1110,38 @@ pub(crate) fn deserialise_expr_via(
         // arm, since `t` (the matched `TypeRef` itself) already tells this
         // function precisely which of the four it is; no information is
         // missing here the way it briefly was one layer down at the
-        // `WireRef::Unchecked`-with-a-`reason`-field call site.
+        // `WireRef::Unchecked`-with-a-`reason`-field call site. Bridged
+        // through `unknown` — the same fix, for the same TS2352 reason, as
+        // `emit_field_deserialise_wire`'s own `WireRef::Unchecked` arm (this
+        // function's `json` is not always statically a `JsonValue` the way
+        // that arm's is, but nothing about a real-vs-real interface cast
+        // gets *safer* when the source type is narrower, so the same
+        // defensive bridge applies uniformly). No fixture currently reaches
+        // this function for one of these four types directly (the field
+        // path above is what real code exercises today); named rather than
+        // silently assumed correct, the same "not exercised, defensive"
+        // precedent this file's own `TypeRef::Unit` arm above already sets.
         TypeRef::ValidationError(_) => {
-            format!("Ok({json} as ValidationError) as Result<ValidationError, BoundaryError>")
+            format!("Ok({json} as unknown as ValidationError) as Result<ValidationError, BoundaryError>")
         }
         TypeRef::JsonError(_) => {
-            format!("Ok({json} as JsonError) as Result<JsonError, BoundaryError>")
+            format!("Ok({json} as unknown as JsonError) as Result<JsonError, BoundaryError>")
         }
-        TypeRef::HttpResult(_, _) => {
-            format!("Ok({json} as HttpResult) as Result<HttpResult, BoundaryError>")
+        // Review of #1319/#1320, finding 1: `HttpResult<T>` (`bynk-emit/
+        // runtime/src/http.ts:6`) is generic with no default type argument
+        // — a bare `HttpResult` in type position is `tsc`'s TS2314, not the
+        // `any`-compatible cast the other three residual types get. This
+        // arm already holds the element type (`TypeRef::HttpResult(Box<
+        // TypeRef>, Span)`, `bynk-syntax/src/ast.rs:2196`), so it renders
+        // through `ts_type_ref` — the same real-type-name printer every
+        // other `HttpResult<...>` position in this file already uses —
+        // instead of dropping the payload.
+        TypeRef::HttpResult(inner, _) => {
+            let ty = format!("HttpResult<{}>", crate::emitter::ts_type_ref(inner));
+            format!("Ok({json} as unknown as {ty}) as Result<{ty}, BoundaryError>")
         }
         TypeRef::QueueResult(_) => {
-            format!("Ok({json} as QueueResult) as Result<QueueResult, BoundaryError>")
+            format!("Ok({json} as unknown as QueueResult) as Result<QueueResult, BoundaryError>")
         }
         // v0.110 (ADR 0142 D5): a `Bytes` wires as a base64 string; decode it
         // (rejecting a non-string or invalid base64) to a `Uint8Array`.
@@ -1166,6 +1219,62 @@ pub(crate) fn deserialise_expr_via(
         // `Json` path) or by the boundary rules (the workers path). Shared by
         // three callers, so the message names the type rather than one caller.
         other => unreachable!("non-codable type reached a codec lowering: {other:?}"),
+    }
+}
+
+/// Review of #1319/#1320, finding 2: no unit test covered any of
+/// `deserialise_expr_via`'s own four runtime-owned-error-type arms — this
+/// path is not reached by any current fixture (see those arms' own doc),
+/// so a fixture-corpus regression would not have caught a text-level
+/// mistake here the way it caught the `HttpResult<unknown>` gap one layer
+/// down. Pins the exact generated text directly.
+#[cfg(test)]
+mod deserialise_expr_via_error_type_tests {
+    use super::*;
+    use bynk_syntax::span::Span;
+
+    fn sp() -> Span {
+        Span::new(0, 0)
+    }
+
+    #[test]
+    fn validation_error_casts_through_unknown() {
+        let ru = RuntimeUse::default();
+        let t = TypeRef::ValidationError(sp());
+        assert_eq!(
+            deserialise_expr(&t, "json", "path", &ru),
+            "Ok(json as unknown as ValidationError) as Result<ValidationError, BoundaryError>"
+        );
+    }
+
+    #[test]
+    fn json_error_casts_through_unknown() {
+        let ru = RuntimeUse::default();
+        let t = TypeRef::JsonError(sp());
+        assert_eq!(
+            deserialise_expr(&t, "json", "path", &ru),
+            "Ok(json as unknown as JsonError) as Result<JsonError, BoundaryError>"
+        );
+    }
+
+    #[test]
+    fn http_result_names_its_real_element_type_and_casts_through_unknown() {
+        let ru = RuntimeUse::default();
+        let t = TypeRef::HttpResult(Box::new(TypeRef::Base(BaseType::Int, sp())), sp());
+        assert_eq!(
+            deserialise_expr(&t, "json", "path", &ru),
+            "Ok(json as unknown as HttpResult<number>) as Result<HttpResult<number>, BoundaryError>"
+        );
+    }
+
+    #[test]
+    fn queue_result_casts_through_unknown() {
+        let ru = RuntimeUse::default();
+        let t = TypeRef::QueueResult(sp());
+        assert_eq!(
+            deserialise_expr(&t, "json", "path", &ru),
+            "Ok(json as unknown as QueueResult) as Result<QueueResult, BoundaryError>"
+        );
     }
 }
 

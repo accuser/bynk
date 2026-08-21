@@ -426,7 +426,10 @@ occupy this ordering's "slice 2" slot by default. `workers.rs` moves up to fill 
 compose` has exactly one external caller (`bynk-emit/src/project.rs:2291`), the same clean shape
 `events_fanout.rs` had. §3.3's own 2–3-site `ts_any` residual (`ValidationError`/`JsonError`/
 `HttpResult`/`QueueResult` casting through `any`) landed independently of any tree-conversion slice
-(#1319, `ts_any` 31 → 29) — its own blocking dependency (a real, exported runtime type for each of
+(#1319, `ts_any` 31 → 30 — review of the implementing PR found `HttpResult<T>`'s own bare-generic
+cast failed `tsc --strict`, closed by casting through `unknown` uniformly, which incidentally also
+made the pre-existing `Effect` case's own `any` visible to the probe for the first time; a real
+correction, not a regression) — its own blocking dependency (a real, exported runtime type for each of
 the four) turned out to already be satisfied (`bynk-emit/runtime/src/errors.ts`/`queue.ts`/
 `http.ts`), just never wired into either header-assembly function's own conditional-import scan;
 closed by naming the real type per `WireRef::UncheckedReason`/`TypeRef` arm instead of sharing one
