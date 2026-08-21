@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.251**.
+written against **v0.252**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.252.0** | "P7.8: bynk-ts gains a real TsExpr/TsType/TsDecl node algebra, plus real TsStmt kinds (Const/Let/ExprStmt/Return/If/ForOf/TryCatch/Block/Continue/Assign) alongside the existing Verbatim escape hatch -- the subset bynk-emit/src/emitter/events_fanout.rs concretely needs, grounded against that file's own real shape rather than the full reference sketch. The printer learns to render every new kind, verified byte-identical against the real emitter's own output for events_fanout.rs's EventsFanoutDO class, including its constructor body. Also corrects the track doc's stale Arc C schedule: contracts.rs/secrets.rs/runtime_use.rs turn out to emit JSON (or not be emission code at all), not TypeScript -- events_fanout.rs is the real first conversion file. No bynk-emit behaviour change (#1313)." |
 | **v0.251.1** | "P7.7: named the bynk-ts printer's readability guarantee (R7.5) explicitly -- a `# Readability policy` doc block in printer.rs states the printer's one real formatting decision today (exactly one generated line per statement) and its boundary (a statement's own interior formatting isn't the printer's concern until Arc C gives it real nodes). No behaviour change (#1311)." |
 | **v0.251.0** | "P7.6: `Artefacts { docs: BTreeMap<PathBuf, Document> }` (Document::Ts/Toml/Json/Js/SourceMap/DebugSidecar) replaces `ProjectOutput.files: Vec<CompiledFile>` outright across bynk-emit, bynk-driver, bynk-strip, and bynk-wasm -- every real producer and consumer now reads/writes typed documents, not pre-rendered strings. `wrangler.toml`'s real `TomlDocument` reaches the write boundary unstringified, and `bynk-strip`'s own `main =` patch for a stripped Worker's manifest is now a structural in-tree mutation instead of a print-then-reparse. Source maps and debug sidecars become their own typed sibling documents, derived once instead of independently by two functions. No observable output change (#1309)." |
 | **v0.250.0** | "P7.5: carved a new `bynk-ts` crate for the TypeScript tree and printer (depends on `bynk-syntax` only) -- `TsProgram`/`TsStmt::verbatim` (the escape hatch every future Arc C slice converts into real nodes), a printer that owns the buffer end to end, and the companion textual lint over `Verbatim` content (#1307). `bynk-emit`'s source-map machinery relocated unchanged. No `bynk-emit` construction site converts to the tree yet -- Arc C's own first slice starts that. No observable output change." |
