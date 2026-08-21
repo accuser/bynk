@@ -269,7 +269,21 @@ fn render_inline_stmt(out: &mut String, stmt: &TsStmt) {
             render_expr(out, expr);
             out.push_str(";\n");
         }
-        _ => render_stmt(out, stmt, 0),
+        // No inline shape of its own — `events_fanout.rs` never puts one of
+        // these in a brace-free `if`/`for...of` body — but listed by name,
+        // not a wildcard (review of #1314, finding 3): a future Arc C
+        // slice's new `TsStmtKind` variant must fail to compile here rather
+        // than silently inherit this fallback, the same exhaustiveness
+        // discipline `VerbatimOrigin`'s own doc states for `bynk-emit`.
+        TsStmtKind::Verbatim { .. }
+        | TsStmtKind::Decl(_)
+        | TsStmtKind::Const { .. }
+        | TsStmtKind::Let { .. }
+        | TsStmtKind::If { .. }
+        | TsStmtKind::ForOf { .. }
+        | TsStmtKind::TryCatch { .. }
+        | TsStmtKind::Block(_)
+        | TsStmtKind::Assign { .. } => render_stmt(out, stmt, 0),
     }
 }
 
@@ -309,29 +323,54 @@ fn render_binding_name(out: &mut String, name: &TsBindingName) {
     }
 }
 
+/// Whether `expr`, printed in a position member access, indexing, a call
+/// callee, `await`, or unary `!` binds tighter than, needs its own parens
+/// to preserve the built tree's meaning — `Binary`/`As` both bind looser
+/// than any of those (review of #1314, finding 2: `!a ?? b`/`a ?? b.c`/
+/// `await a ?? b` all silently changed meaning without this). Deliberately
+/// conservative: with only one binary operator (`??`) in this slice's
+/// algebra, a nested `Binary` is always parenthesized here even in a
+/// left-associative chain that would read the same without it (`a ?? b ??
+/// c`) — correct in every case that class of bug can hit, at the cost of
+/// an occasional pair that a real precedence table (once more than one
+/// binary operator exists) could omit.
+fn needs_parens_as_operand(expr: &TsExpr) -> bool {
+    matches!(expr, TsExpr::Binary { .. } | TsExpr::As { .. })
+}
+
+fn render_operand(out: &mut String, expr: &TsExpr) {
+    if needs_parens_as_operand(expr) {
+        out.push('(');
+        render_expr(out, expr);
+        out.push(')');
+    } else {
+        render_expr(out, expr);
+    }
+}
+
 fn render_expr(out: &mut String, expr: &TsExpr) {
     match expr {
         TsExpr::Ident(name) => out.push_str(name),
         TsExpr::Member { object, property } => {
-            render_expr(out, object);
+            render_operand(out, object);
             out.push('.');
             out.push_str(property);
         }
         TsExpr::Index { object, index } => {
-            render_expr(out, object);
+            render_operand(out, object);
             out.push('[');
             render_expr(out, index);
             out.push(']');
         }
         TsExpr::Call { callee, args } => {
-            render_expr(out, callee);
+            render_operand(out, callee);
             out.push('(');
             render_expr_list(out, args);
             out.push(')');
         }
         TsExpr::New { callee, args } => {
             out.push_str("new ");
-            render_expr(out, callee);
+            render_operand(out, callee);
             out.push('(');
             render_expr_list(out, args);
             out.push(')');
@@ -359,7 +398,7 @@ fn render_expr(out: &mut String, expr: &TsExpr) {
         }
         TsExpr::Await(inner) => {
             out.push_str("await ");
-            render_expr(out, inner);
+            render_operand(out, inner);
         }
         TsExpr::As { expr, ty } => {
             // `(await x) as T` / `(a ?? b) as T` — an `await` or a binary
@@ -382,14 +421,14 @@ fn render_expr(out: &mut String, expr: &TsExpr) {
             out.push_str(match op {
                 TsUnaryOp::Not => "!",
             });
-            render_expr(out, expr);
+            render_operand(out, expr);
         }
         TsExpr::Binary { op, left, right } => {
-            render_expr(out, left);
+            render_operand(out, left);
             out.push_str(match op {
                 TsBinaryOp::NullishCoalescing => " ?? ",
             });
-            render_expr(out, right);
+            render_operand(out, right);
         }
         TsExpr::Lit(lit) => render_lit(out, lit),
     }
@@ -408,11 +447,24 @@ fn render_lit(out: &mut String, lit: &TsLit) {
     match lit {
         TsLit::Str(s) => {
             out.push('"');
+            // Matches `bynk_check::wire_default::escape_ts_literal`
+            // byte-for-byte (review of #1314, finding 1) — the previous
+            // version escaped only `"`/`\`, so a `\n`/`\t`/`\r` inside a
+            // literal printed raw into the output, an unterminated string
+            // literal `tsc` can't parse. `bynk-ts` can't depend on
+            // `bynk-check` to share that function directly (this crate's
+            // own module doc: `bynk-syntax` only) — inlined instead, kept
+            // deliberately identical rather than reinvented, since both
+            // this printer and `bynk-emit`'s `escape_ts_string` splice into
+            // generated TypeScript and must never disagree.
             for c in s.chars() {
                 match c {
-                    '"' => out.push_str("\\\""),
                     '\\' => out.push_str("\\\\"),
-                    _ => out.push(c),
+                    '"' => out.push_str("\\\""),
+                    '\n' => out.push_str("\\n"),
+                    '\t' => out.push_str("\\t"),
+                    '\r' => out.push_str("\\r"),
+                    c => out.push(c),
                 }
             }
             out.push('"');
@@ -477,14 +529,14 @@ fn render_params(out: &mut String, params: &[TsParam]) {
 }
 
 fn render_decl(out: &mut String, decl: &TsDecl, depth: usize) {
-    if let TsDecl::Export(inner) = decl {
-        out.push_str(&indent(depth));
-        out.push_str("export ");
-        render_decl_body(out, inner, depth);
-    } else {
-        out.push_str(&indent(depth));
-        render_decl_body(out, decl, depth);
-    }
+    // `render_decl_body`'s own `TsDecl::Export` arm already writes
+    // `"export "` before recursing into the inner declaration — the
+    // `if let Export` special case this replaced produced byte-identical
+    // output by duplicating that same logic one layer up (review of
+    // #1314, smaller note: the two branches were provably the same for
+    // every input, so only one needs to exist).
+    out.push_str(&indent(depth));
+    render_decl_body(out, decl, depth);
 }
 
 /// The declaration's own text, with no leading indent — [`render_decl`]
@@ -1276,5 +1328,217 @@ mod tests {
         ];
         let expected = format!("{}\n", expected_lines.join("\n"));
         assert_eq!(printed.text, expected);
+    }
+
+    /// Coverage gap named in review of #1314, finding 4: `Let` had no test
+    /// anywhere, including its distinct `init: None` branch (`Const` always
+    /// has an initialiser; `Let` is the one new statement kind that can
+    /// omit one).
+    #[test]
+    fn prints_a_let_statement_with_no_initialiser() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::let_stmt(
+            TsBindingName::Ident("subs".to_string()),
+            None,
+            None,
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "let subs;\n");
+    }
+
+    /// Coverage gap named in review of #1314, finding 4: `TsExpr::Array`
+    /// was never constructed in any test.
+    #[test]
+    fn prints_an_array_literal() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::expr_stmt(
+            TsExpr::Array(vec![
+                TsExpr::Lit(TsLit::Num("1".to_string())),
+                TsExpr::Ident("x".to_string()),
+            ]),
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "[1, x];\n");
+    }
+
+    /// Coverage gap named in review of #1314, finding 4: the blank-line-
+    /// between-top-level-declarations policy was never tested for the
+    /// mixed `Verbatim` + real-`Decl` case — the case that actually keeps
+    /// every P7.6 fixture's zero-diff claim true today, since every P7.6
+    /// construction site is all-`Verbatim`. Pins both halves of the rule's
+    /// asymmetry: no blank line is added *after* a `Verbatim` statement
+    /// (P7.7's own boundary — its content's own trailing spacing isn't the
+    /// printer's decision), but a blank line *is* added after a real
+    /// `Decl` even when `Verbatim` follows it.
+    #[test]
+    fn no_blank_line_after_verbatim_but_one_before_it() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::verbatim(
+            VerbatimOrigin::Contracts,
+            "const legacy = 1;\n",
+            None,
+        ));
+        program.push(TsStmt::decl(
+            TsDecl::Interface {
+                name: "A".to_string(),
+                members: vec![],
+            },
+            None,
+        ));
+        program.push(TsStmt::verbatim(
+            VerbatimOrigin::Secrets,
+            "const trailing = 2;\n",
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(
+            printed.text,
+            "const legacy = 1;\ninterface A {\n}\n\nconst trailing = 2;\n"
+        );
+    }
+
+    /// Coverage gap named in review of #1314, finding 4: nothing exercised
+    /// `render_block_body`'s own graceful-degradation path — its doc
+    /// comment promises a single non-`Block` statement still renders
+    /// sensibly as a one-statement body rather than panicking, but no test
+    /// ever passed one. `TryCatch` is the real caller that could hit this
+    /// (its `try_block`/`catch_block` are typed as a bare `TsStmt`, not
+    /// required to be a `Block`).
+    #[test]
+    fn a_try_block_that_is_not_a_block_statement_still_prints_as_a_braced_body() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::try_catch(
+            TsStmt::expr_stmt(
+                TsExpr::Call {
+                    callee: Box::new(TsExpr::Ident("risky".to_string())),
+                    args: vec![],
+                },
+                None,
+            ),
+            "e",
+            TsStmt::expr_stmt(
+                TsExpr::Call {
+                    callee: Box::new(TsExpr::Ident("handle".to_string())),
+                    args: vec![TsExpr::Ident("e".to_string())],
+                },
+                None,
+            ),
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(
+            printed.text,
+            "try {\n  risky();\n} catch (e) {\n  handle(e);\n}\n"
+        );
+    }
+
+    /// Coverage gap named in review of #1314, finding 4: `render_inline_stmt`'s
+    /// shared fallback arm (finding 3's fix — explicit variants, not a
+    /// wildcard) was never actually exercised by a test; every existing
+    /// brace-free `if`/`for...of` body used `Continue`/`Return`/`ExprStmt`,
+    /// which each have their own dedicated inline arm.
+    #[test]
+    fn a_brace_free_if_body_that_is_not_one_of_the_dedicated_inline_kinds_still_prints() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::if_stmt(
+            TsExpr::Ident("cond".to_string()),
+            TsStmt::const_stmt(
+                TsBindingName::Ident("x".to_string()),
+                None,
+                TsExpr::Lit(TsLit::Num("1".to_string())),
+                None,
+            ),
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "if (cond) const x = 1;\n");
+    }
+
+    /// Review of #1314, finding 2: nothing checked operator-precedence
+    /// parenthesisation outside `As` — a `Binary` nested as the operand of
+    /// `Unary`/`Member`/`Await` printed with no parens at all, silently
+    /// changing what the text parses back to. Three of the review's own
+    /// examples, pinned directly.
+    #[test]
+    fn parenthesises_a_binary_operand_of_unary_member_and_await() {
+        let bin = || TsExpr::Binary {
+            op: TsBinaryOp::NullishCoalescing,
+            left: Box::new(TsExpr::Ident("a".to_string())),
+            right: Box::new(TsExpr::Ident("b".to_string())),
+        };
+
+        let mut not_program = TsProgram::new();
+        not_program.push(TsStmt::expr_stmt(
+            TsExpr::Unary {
+                op: TsUnaryOp::Not,
+                expr: Box::new(bin()),
+            },
+            None,
+        ));
+        assert_eq!(
+            print(&not_program, "x.bynk", "", "x.ts").text,
+            "!(a ?? b);\n"
+        );
+
+        let mut member_program = TsProgram::new();
+        member_program.push(TsStmt::expr_stmt(
+            TsExpr::Member {
+                object: Box::new(bin()),
+                property: "c".to_string(),
+            },
+            None,
+        ));
+        assert_eq!(
+            print(&member_program, "x.bynk", "", "x.ts").text,
+            "(a ?? b).c;\n"
+        );
+
+        let mut await_program = TsProgram::new();
+        await_program.push(TsStmt::expr_stmt(TsExpr::Await(Box::new(bin())), None));
+        assert_eq!(
+            print(&await_program, "x.bynk", "", "x.ts").text,
+            "await (a ?? b);\n"
+        );
+    }
+
+    /// Review of #1314, finding 2's fourth example: a right-nested `Binary`
+    /// (`a ?? (b ?? c)`, as built) must not print as the bare `a ?? b ?? c`
+    /// that a naive left-to-right walk would produce — that text parses
+    /// back as `(a ?? b) ?? c`, a different tree than what was built.
+    #[test]
+    fn parenthesises_a_nested_binary_operand_of_another_binary() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::expr_stmt(
+            TsExpr::Binary {
+                op: TsBinaryOp::NullishCoalescing,
+                left: Box::new(TsExpr::Ident("a".to_string())),
+                right: Box::new(TsExpr::Binary {
+                    op: TsBinaryOp::NullishCoalescing,
+                    left: Box::new(TsExpr::Ident("b".to_string())),
+                    right: Box::new(TsExpr::Ident("c".to_string())),
+                }),
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "a ?? (b ?? c);\n");
+    }
+
+    /// Review of #1314, finding 1: `TsLit::Str` escaped only `"`/`\`, so a
+    /// literal containing a newline, tab, or carriage return printed raw —
+    /// unterminated-string-literal TypeScript `tsc` can't parse. Pins the
+    /// fix against every character `bynk_check::wire_default::
+    /// escape_ts_literal` escapes.
+    #[test]
+    fn escapes_newline_tab_and_carriage_return_in_a_string_literal() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::expr_stmt(
+            TsExpr::Lit(TsLit::Str("line one\nline two\ttabbed\r".to_string())),
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "\"line one\\nline two\\ttabbed\\r\";\n");
     }
 }
