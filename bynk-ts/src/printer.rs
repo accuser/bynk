@@ -16,16 +16,28 @@
 //! named — today's whole surface of it, not a forward guess at what P7.8's
 //! real `TsStmt`/`TsExpr`/`TsType`/`TsDecl` nodes will need:
 //!
-//! - **One generated line per statement, always.** [`print`] appends a
-//!   trailing `\n` after any statement whose own text doesn't already end
-//!   in one, so two statements can never land on the same generated line
-//!   regardless of how the statement's own text was built. Pinned by
-//!   [`tests::prints_every_statement_in_order`] and
-//!   [`tests::a_statement_missing_its_own_trailing_newline_still_gets_its_own_line`].
+//! - **Every statement starts on its own generated line, so two statements
+//!   can never share one.** After writing each statement's own text,
+//!   [`print()`] appends a trailing `\n` unless the *buffer* — not that
+//!   statement's own text — already ends in one; this is what stops the
+//!   `SourceMapBuilder`'s one-checkpoint-per-line forward pass from
+//!   silently dropping an earlier statement's checkpoint (below). It is
+//!   *not* "one generated line per statement": `VerbatimOrigin::
+//!   NotYetConverted` wraps a whole multi-line document per statement (the
+//!   ordinary shape today — every P7.6 construction site does this), so one
+//!   statement routinely spans dozens of lines; and an empty statement
+//!   contributes no line of its own at all when the buffer already ends in
+//!   `\n` (`prints_every_statement_in_order` /
+//!   `a_statement_missing_its_own_trailing_newline_still_gets_its_own_line`
+//!   / `a_multi_line_statement_still_starts_the_next_statement_on_a_fresh_line`
+//!   pin the ordinary cases; `an_empty_statement_first_in_the_program_yields_
+//!   a_leading_blank_line` /
+//!   `an_empty_statement_after_a_newline_terminated_one_contributes_no_line_
+//!   of_its_own` pin the two edge behaviours the buffer-vs-statement-text
+//!   distinction actually produces).
 //! - **A statement's own interior is not the printer's concern — yet.**
-//!   Every [`TsStmt`](crate::program::TsStmt) today is a
-//!   [`Verbatim`](crate::program::VerbatimOrigin)-wrapped opaque string;
-//!   its indentation, spacing, and brace placement are whatever the
+//!   Every `TsStmt` today is a `VerbatimOrigin`-tagged opaque string; its
+//!   indentation, spacing, and brace placement are whatever the
 //!   still-untreed `bynk-emit` call site that built it produced, not a
 //!   choice this printer makes. Indentation, blank-line placement between
 //!   declarations, and brace style become real printer decisions — and
@@ -93,7 +105,8 @@ mod tests {
     use bynk_syntax::span::Span;
 
     /// Pins the readability policy's statement-separation guarantee (R7.5,
-    /// this module's own doc): one generated line per statement.
+    /// this module's own doc): every statement starts on its own generated
+    /// line.
     #[test]
     fn prints_every_statement_in_order() {
         let mut program = TsProgram::new();
@@ -132,6 +145,79 @@ mod tests {
         ));
         let printed = print(&program, "x.bynk", "", "x.ts");
         assert_eq!(printed.text, "const a = 1;\nconst b = 2;\n");
+    }
+
+    /// Production `Verbatim` content is rarely one line — `VerbatimOrigin::
+    /// NotYetConverted` (P7.6) wraps a whole generated document per
+    /// statement, so one statement routinely spans dozens of generated
+    /// lines. Neither of the two tests above exercised that shape (review
+    /// of #1312, finding 1) — this one confirms the readability policy's
+    /// real invariant (the *next* statement always starts on a fresh line)
+    /// holds for multi-line content too, not just the single-line text
+    /// those tests happened to use.
+    #[test]
+    fn a_multi_line_statement_still_starts_the_next_statement_on_a_fresh_line() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::verbatim(
+            VerbatimOrigin::Contracts,
+            "function a() {\n  return 1;\n}\n",
+            None,
+        ));
+        program.push(TsStmt::verbatim(
+            VerbatimOrigin::Secrets,
+            "const b = 2;\n",
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(
+            printed.text,
+            "function a() {\n  return 1;\n}\nconst b = 2;\n"
+        );
+    }
+
+    /// `print` decides whether to append a trailing newline by checking the
+    /// whole *buffer*, not the statement's own text (review of #1312,
+    /// finding 2) — an empty statement's text changes nothing, so whether
+    /// it gets a line depends entirely on what's already in the buffer.
+    /// First in a program, the buffer is still empty, so the check fires
+    /// and the output opens with a blank line. Pinned here so this edge
+    /// stays a known, deliberate reading of the code rather than an
+    /// untested accident.
+    #[test]
+    fn an_empty_statement_first_in_the_program_yields_a_leading_blank_line() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::verbatim(VerbatimOrigin::Contracts, "", None));
+        program.push(TsStmt::verbatim(
+            VerbatimOrigin::Secrets,
+            "const b = 2;\n",
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "\nconst b = 2;\n");
+    }
+
+    /// The other half of the buffer-vs-statement-text distinction (review
+    /// of #1312, finding 2): an empty statement following one that already
+    /// ended its own text in `\n` contributes no line at all — the buffer
+    /// already ends in `\n`, so the check doesn't fire, and the empty
+    /// statement's own (non-)content and the next statement's text end up
+    /// on what reads as one generated line for the next statement alone.
+    #[test]
+    fn an_empty_statement_after_a_newline_terminated_one_contributes_no_line_of_its_own() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::verbatim(
+            VerbatimOrigin::Contracts,
+            "const a = 1;\n",
+            None,
+        ));
+        program.push(TsStmt::verbatim(VerbatimOrigin::Secrets, "", None));
+        program.push(TsStmt::verbatim(
+            VerbatimOrigin::RuntimeUse,
+            "const c = 3;\n",
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "const a = 1;\nconst c = 3;\n");
     }
 
     #[test]
