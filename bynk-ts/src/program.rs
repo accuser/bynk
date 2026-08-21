@@ -381,6 +381,19 @@ pub enum TsType {
     /// `T[]` (`readonly: false`) or `readonly T[]` (`readonly: true`) —
     /// TypeScript's own postfix array-type syntax (not the equivalent
     /// `Array<T>`/`ReadonlyArray<T>` generic spelling either family uses).
+    ///
+    /// **Hazard (review of #1315/#1316, not yet closed):** the printer does
+    /// not parenthesise `element` when it is itself a [`TsType::Union`] or
+    /// [`TsType::Fn`] — `Array { element: Union(..), .. }` prints as
+    /// `A | B[]`, which TypeScript reads as `A | (B[])`, not the intended
+    /// `(A | B)[]`; likewise a `Fn` element's own `[]` binds to its return
+    /// type, not the whole function type. Not a P7.9 regression — every
+    /// `bynk-emit` call site building this exact malformed shape
+    /// (`Ty::List` of an `Ty::ActorSum`) produced the identical bytes
+    /// before this slice too, so the zero-diff bar is genuinely met. Fixing
+    /// it is a real output change, out of this slice's own behaviour-
+    /// preserving scope — a caller building `Array` over `Union`/`Fn` today
+    /// must not trust the printer to parenthesise correctly.
     Array {
         element: Box<TsType>,
         readonly: bool,
@@ -401,7 +414,8 @@ pub enum TsType {
     /// (TypeScript requires *some* name in function-type syntax, and
     /// nothing about a `TypeRef::Fn`/`Ty::Fn` parameter carries a real one
     /// to use instead). A zero-`params` `Fn` is the query-thunk wrapper
-    /// shape, `() => Ret`.
+    /// shape, `() => Ret`. See [`TsType::Array`]'s own doc for a real,
+    /// unclosed parenthesisation hazard when a `Fn` sits inside one.
     Fn {
         params: Vec<TsType>,
         ret: Box<TsType>,
@@ -414,7 +428,9 @@ pub enum TsType {
     /// themselves were (P7.9's own accepted proposal), not a speculative
     /// addition. Each member prints through the ordinary `render_type`
     /// recursion; a member that is itself a `Union` is legal to construct
-    /// but nothing in `bynk-emit` builds one today.
+    /// but nothing in `bynk-emit` builds one today. See [`TsType::Array`]'s
+    /// own doc for a real, unclosed parenthesisation hazard when a `Union`
+    /// sits inside one.
     Union(Vec<TsType>),
 }
 
