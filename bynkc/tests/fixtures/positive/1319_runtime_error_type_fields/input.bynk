@@ -1,0 +1,20 @@
+commons errortypes {
+  -- #1319: the ts_any residual for the four runtime-owned error types
+  -- (ValidationError/JsonError/HttpResult/QueueResult) as ordinary record
+  -- fields, crossing the Json boundary so the real (de)serialise codec
+  -- actually reaches the `WireRef::Unchecked` residual sites.
+  type WithErrors = {
+    validation: ValidationError,
+    jsonErr: JsonError,
+    httpResult: HttpResult[Int],
+    queueResult: QueueResult,
+  }
+
+  fn save(w: WithErrors) -> String {
+    Json.encode(w)
+  }
+
+  fn load(s: String) -> Result[WithErrors, JsonError] {
+    Json.decode[WithErrors](s)
+  }
+}
