@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.250**.
+written against **v0.251**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.251.0** | "P7.6: `Artefacts { docs: BTreeMap<PathBuf, Document> }` (Document::Ts/Toml/Json/Js/SourceMap/DebugSidecar) replaces `ProjectOutput.files: Vec<CompiledFile>` outright across bynk-emit, bynk-driver, bynk-strip, and bynk-wasm -- every real producer and consumer now reads/writes typed documents, not pre-rendered strings. `wrangler.toml`'s real `TomlDocument` reaches the write boundary unstringified, and `bynk-strip`'s own `main =` patch for a stripped Worker's manifest is now a structural in-tree mutation instead of a print-then-reparse. Source maps and debug sidecars become their own typed sibling documents, derived once instead of independently by two functions. No observable output change (#1309)." |
 | **v0.250.0** | "P7.5: carved a new `bynk-ts` crate for the TypeScript tree and printer (depends on `bynk-syntax` only) -- `TsProgram`/`TsStmt::verbatim` (the escape hatch every future Arc C slice converts into real nodes), a printer that owns the buffer end to end, and the companion textual lint over `Verbatim` content (#1307). `bynk-emit`'s source-map machinery relocated unchanged. No `bynk-emit` construction site converts to the tree yet -- Arc C's own first slice starts that. No observable output change." |
 | **v0.249.42** | "P7.4: `bynk deploy`/`bynk dev --remote` and `--emit js` now read/write a generated `wrangler.toml`'s `id`/`main` fields through a real TOML parse (`bynk-emit::emitter::wrangler`'s new `materialise_kv_namespace_id`/`set_wrangler_main`/`wrangler_needs_kv_materialisation`) instead of matching the literal text those fields happen to appear as today (#1305). Immune to reformatting; no observable output change." |
 | **v0.249.41** | "P7.3: added a minimal typed TOML tree and printer (`bynk-emit/src/emitter/toml_doc.rs`) -- `emit_wrangler_toml` now builds a `TomlDocument` instead of writing text directly, and the printer escapes every string value unconditionally rather than only the two call sites that used to remember to (#1303). No observable output change: zero-diff across the whole `wrangler.toml` golden corpus." |
