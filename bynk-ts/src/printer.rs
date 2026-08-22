@@ -445,6 +445,19 @@ fn render_compact_stmts(out: &mut String, stmts: &[TsStmt]) {
         }
         let mut piece = String::new();
         render_inline_stmt(&mut piece, s);
+        // Review of #1324, finding 2: only `trim_end_matches('\n')`'s own
+        // trailing newline is stripped — an *embedded* newline (a genuinely
+        // multi-line statement, e.g. `Block`/`Switch`/`TryCatch`, rendered
+        // via `render_inline_stmt`'s own `render_stmt(out, stmt, 0)`
+        // fallback) would break the one-line shape this function promises.
+        // Not reachable today — `workers_entry.rs`'s own three real
+        // `InlineBlock` sites are `ExprStmt`/`Continue` only — but worth a
+        // loud check rather than a silent multi-line break if a future
+        // slice's `InlineBlock` ever holds one.
+        debug_assert!(
+            !piece.trim_end_matches('\n').contains('\n'),
+            "render_compact_stmts: a genuinely multi-line statement can't render on one line"
+        );
         out.push_str(piece.trim_end_matches('\n'));
     }
 }
@@ -484,6 +497,17 @@ fn render_inline_stmt(out: &mut String, stmt: &TsStmt) {
         // block comment (`/* text */`), which cannot swallow anything
         // after it. Embedded newlines flatten to spaces, keeping this
         // strictly one generated line like every other inline shape here.
+        // Review of #1324, finding 2: `Blank`'s own top-level rendering is a
+        // bare `'\n'` (see `render_stmt`), which the generic fallback below
+        // would inherit unchanged — reaching `render_branch`'s brace-free
+        // arm (`if (cond) <inline>`), that prints `if (cond) \n`, and since
+        // JS/TS statement grammar doesn't care about the newline, the very
+        // next statement in the enclosing block silently becomes the `if`'s
+        // own body. Exactly the same swallowing-bug class the #1317/#1318
+        // review already fixed for `Comment` just above — an honest empty
+        // statement (`;`) is what a "no code here" body actually means in an
+        // inline TS position, and cannot swallow anything after it.
+        TsStmtKind::Blank => out.push_str(";\n"),
         TsStmtKind::Comment(text) => {
             out.push_str("/* ");
             out.push_str(&text.replace('\n', " "));
@@ -504,7 +528,6 @@ fn render_inline_stmt(out: &mut String, stmt: &TsStmt) {
         | TsStmtKind::TryCatch { .. }
         | TsStmtKind::Block(_)
         | TsStmtKind::Assign { .. }
-        | TsStmtKind::Blank
         | TsStmtKind::Switch { .. }
         | TsStmtKind::InlineBlock(_) => render_stmt(out, stmt, 0),
     }
@@ -656,20 +679,26 @@ fn render_binary_operand(out: &mut String, outer_op: TsBinaryOp, expr: &TsExpr) 
             if mixes_nullish {
                 true
             } else if *inner_op == outer_op {
-                // Same operator chained with itself: `||`/`&&` are
-                // associative, so `Or(Or(a,b),c)` printing flat as
-                // `a || b || c` (no parens) is both correct and what real
-                // content needs — #1323's own `typeof args !== "object" ||
-                // args === null || Array.isArray(args)` (`emit_call_handler_
-                // dispatch`), a genuine 3-term chain the pre-#1323
-                // "always parenthesize equal precedence" rule would have
-                // wrongly printed as `(typeof args !== "object" || args ===
-                // null) || Array.isArray(args)`. `??` keeps the pre-#1321
-                // conservative choice unchanged — nothing in real content
-                // needs a flattened `??` chain, and
+                // Same operator chained with itself: only `||`/`&&` are
+                // associative, so only they may print flat with no parens —
+                // #1323's own `typeof args !== "object" || args === null ||
+                // Array.isArray(args)` (`emit_call_handler_dispatch`), a
+                // genuine 3-term chain the pre-#1323 "always parenthesize
+                // equal precedence" rule would have wrongly printed as
+                // `(typeof args !== "object" || args === null) ||
+                // Array.isArray(args)`. Every other operator — including
+                // `??` (kept at its pre-#1321 conservative choice; nothing in
+                // real content needs a flattened `??` chain, and
                 // `parenthesises_a_nested_binary_operand_of_another_binary`
-                // pins that `a ?? (b ?? c)` still gets its parens.
-                outer_op == TsBinaryOp::NullishCoalescing
+                // pins that `a ?? (b ?? c)` still gets its parens) and, as of
+                // this fix, the equality/relational operators (`===`/`!==`/
+                // `>`) — is NOT associative: `a === b === c` parses as
+                // `(a === b) === c`, not the tree's real `a === (b === c)`,
+                // so a same-operator nesting of any of those still needs its
+                // parens regardless of which side it's nested on (review of
+                // #1324, finding 1 — the original fix wrongly generalized
+                // the `||`/`&&` exemption to every operator).
+                !matches!(outer_op, TsBinaryOp::Or | TsBinaryOp::And)
             } else {
                 binary_precedence(*inner_op) <= binary_precedence(outer_op)
             }
@@ -3201,5 +3230,107 @@ mod tests {
             printed.text,
             "typeof args !== \"object\" || args === null || Array.isArray(args);\n"
         );
+    }
+
+    /// Review of #1324, finding 1: the same-operator flattening #1323 added
+    /// for `||`/`&&` was wrongly applied to every operator, including
+    /// non-associative ones — a right-nested `StrictEq` inside `StrictEq`
+    /// must keep its parens (`a === b === c` parses as `(a === b) === c`,
+    /// not the tree's real `a === (b === c)`).
+    #[test]
+    fn a_right_nested_strict_eq_chain_keeps_its_parens() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::expr_stmt(
+            TsExpr::Binary {
+                op: TsBinaryOp::StrictEq,
+                left: Box::new(TsExpr::Ident("a".to_string())),
+                right: Box::new(TsExpr::Binary {
+                    op: TsBinaryOp::StrictEq,
+                    left: Box::new(TsExpr::Ident("b".to_string())),
+                    right: Box::new(TsExpr::Ident("c".to_string())),
+                }),
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "a === (b === c);\n");
+    }
+
+    /// Same finding, for the new `GreaterThan` operator: `a > b > c` parses
+    /// as `(a > b) > c` (a boolean compared against `c`), not the tree's
+    /// real `a > (b > c)` — a right-nested chain must keep its parens.
+    #[test]
+    fn a_right_nested_greater_than_chain_keeps_its_parens() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::expr_stmt(
+            TsExpr::Binary {
+                op: TsBinaryOp::GreaterThan,
+                left: Box::new(TsExpr::Ident("a".to_string())),
+                right: Box::new(TsExpr::Binary {
+                    op: TsBinaryOp::GreaterThan,
+                    left: Box::new(TsExpr::Ident("b".to_string())),
+                    right: Box::new(TsExpr::Ident("c".to_string())),
+                }),
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "a > (b > c);\n");
+    }
+
+    /// Review of #1324, finding 2: a `Blank` used as an `if`'s brace-free
+    /// body used to render as a bare newline, silently letting the very
+    /// next statement in the enclosing block become the `if`'s own body —
+    /// now it prints an honest empty statement (`;`) that can't swallow
+    /// anything after it.
+    #[test]
+    fn a_blank_if_body_prints_an_empty_statement_not_a_swallowing_newline() {
+        // Nested inside a `Block`, not two top-level program statements —
+        // `print`'s own blank-line-between-statements policy only applies
+        // between top-level statements (see its own doc comment), so a
+        // top-level pair would mask the swallowing bug this test exists to
+        // catch: the real hazard is two statements sharing one physical
+        // line with nothing separating them, exactly what `render_stmt`'s
+        // `Block` arm produces with no blank-line insertion of its own.
+        let mut program = TsProgram::new();
+        program.push(TsStmt::block(
+            vec![
+                TsStmt::if_stmt(TsExpr::Ident("cond".to_string()), TsStmt::blank(None), None),
+                TsStmt::expr_stmt(
+                    TsExpr::Call {
+                        callee: Box::new(TsExpr::Ident("nextStatement".to_string())),
+                        args: vec![],
+                    },
+                    None,
+                ),
+            ],
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "{\n  if (cond) ;\n  nextStatement();\n}\n");
+    }
+
+    /// A left-nested same-operator chain also keeps its parens for a
+    /// non-associative operator (unlike the `||`/`&&` case above) —
+    /// `(a === b) === c` reads the same as `a === b === c` would parse, so
+    /// this is really about `render_binary_operand` not silently dropping
+    /// parens it should keep, not about a left/right asymmetry.
+    #[test]
+    fn a_left_nested_strict_eq_chain_keeps_its_parens() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::expr_stmt(
+            TsExpr::Binary {
+                op: TsBinaryOp::StrictEq,
+                left: Box::new(TsExpr::Binary {
+                    op: TsBinaryOp::StrictEq,
+                    left: Box::new(TsExpr::Ident("a".to_string())),
+                    right: Box::new(TsExpr::Ident("b".to_string())),
+                }),
+                right: Box::new(TsExpr::Ident("c".to_string())),
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "(a === b) === c;\n");
     }
 }
