@@ -409,12 +409,15 @@ fn render_binding_name(out: &mut String, name: &TsBindingName) {
 
 /// Whether `expr`, printed in a position member access, indexing, a call
 /// callee, `await`, or unary `!`/`typeof` binds tighter than, needs its own
-/// parens to preserve the built tree's meaning — `Binary`/`As` both bind
-/// looser than any of those (review of #1314, finding 2: `!a ?? b`/
-/// `a ?? b.c`/`await a ?? b` all silently changed meaning without this).
-/// Deliberately conservative for *these* contexts specifically: a nested
-/// `Binary` is always parenthesized here regardless of which operator it
-/// is — correct in every case that class of bug can hit (none of these
+/// parens to preserve the built tree's meaning — `Binary`/`As`/`Arrow` all
+/// bind looser than any of those (review of #1314, finding 2: `!a ?? b`/
+/// `a ?? b.c`/`await a ?? b` all silently changed meaning without this;
+/// review of #1322, finding 1: `Arrow` was missing from this same rule —
+/// `(x) => x(1)` is a call whose *body* is `x(1)`, not the IIFE
+/// `((x) => x)(1)` a `Call { callee: Arrow, .. }` node means). Deliberately
+/// conservative for *these* contexts specifically: a nested `Binary` or
+/// `Arrow` is always parenthesized here regardless of which operator/shape
+/// it is — correct in every case that class of bug can hit (none of these
 /// six positions is ever real, grounded content in this file today), at
 /// the cost of an occasional pair a real precedence table could omit.
 ///
@@ -426,7 +429,10 @@ fn render_binding_name(out: &mut String, name: &TsBindingName) {
 /// `__authz === null || !__authz.startsWith(...)`, which the byte-golden
 /// fixtures don't have parens around).
 fn needs_parens_as_operand(expr: &TsExpr) -> bool {
-    matches!(expr, TsExpr::Binary { .. } | TsExpr::As { .. })
+    matches!(
+        expr,
+        TsExpr::Binary { .. } | TsExpr::As { .. } | TsExpr::Arrow { .. }
+    )
 }
 
 fn render_operand(out: &mut String, expr: &TsExpr) {
@@ -475,7 +481,12 @@ fn binary_precedence(op: TsBinaryOp) -> u8 {
 /// operator — the one real, grounded case #1321 needs — newly omits parens.
 fn render_binary_operand(out: &mut String, outer_op: TsBinaryOp, expr: &TsExpr) {
     let needs_parens = match expr {
-        TsExpr::As { .. } => true,
+        // `Arrow` is the lowest-precedence expression form in JS/TS —
+        // `(x) => y || z` as a binary operand must print `(x) => (y || z)`,
+        // never the bare `(x) => y || z` (which reparses as the arrow's own
+        // *body* being `y || z`, not the arrow itself being one operand of
+        // `||`). Review of #1322, finding 1.
+        TsExpr::As { .. } | TsExpr::Arrow { .. } => true,
         TsExpr::Binary { op: inner_op, .. } => {
             let mixes_nullish = (outer_op == TsBinaryOp::NullishCoalescing)
                 != (*inner_op == TsBinaryOp::NullishCoalescing);
@@ -693,12 +704,17 @@ fn render_expr(out: &mut String, expr: &TsExpr) {
             render_operand(out, inner);
         }
         TsExpr::As { expr, ty } => {
-            // `(await x) as T` / `(a ?? b) as T` — an `await` or a binary
-            // expression needs parens before `as`; nothing else this slice
-            // prints does (a bare `Ident`/`Call`/`Object` reads correctly
-            // without them, matching `events_fanout.rs`'s own two real
-            // `as` casts exactly).
-            let needs_parens = matches!(**expr, TsExpr::Await(_) | TsExpr::Binary { .. });
+            // `(await x) as T` / `(a ?? b) as T` / `((x) => y) as T` — an
+            // `await`, a binary expression, or an arrow all need parens
+            // before `as` (`(x) => y as T` binds the cast to the arrow's own
+            // *body*, not the whole arrow — review of #1322, finding 1);
+            // nothing else this slice prints does (a bare `Ident`/`Call`/
+            // `Object` reads correctly without them, matching
+            // `events_fanout.rs`'s own two real `as` casts exactly).
+            let needs_parens = matches!(
+                **expr,
+                TsExpr::Await(_) | TsExpr::Binary { .. } | TsExpr::Arrow { .. }
+            );
             if needs_parens {
                 out.push('(');
                 render_expr(out, expr);
@@ -2177,6 +2193,77 @@ mod tests {
         ));
         let printed = print(&program, "x.bynk", "", "x.ts");
         assert_eq!(printed.text, "(events: Array<Wire>) => dispatch(events);\n");
+    }
+
+    /// Review of #1322, finding 1: `Arrow` was missing from every
+    /// parenthesisation rule. Not reachable through any real `bynk-emit`
+    /// content today (the one grounded `Arrow` site is an object-property
+    /// value, rendered through the depth-unaware `render_expr` with no
+    /// operand context) — these three tests pin the fix directly against
+    /// hand-built trees, the same way #1314's own precedence tests did
+    /// before any real content exercised them.
+    #[test]
+    fn parenthesises_an_arrow_used_as_a_call_callee() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::expr_stmt(
+            TsExpr::Call {
+                callee: Box::new(TsExpr::Arrow {
+                    params: vec![TsParam {
+                        name: "x".to_string(),
+                        ty: None,
+                        optional: false,
+                    }],
+                    body: Box::new(TsExpr::Ident("x".to_string())),
+                }),
+                args: vec![TsExpr::Lit(TsLit::Num("1".to_string()))],
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "((x) => x)(1);\n");
+    }
+
+    #[test]
+    fn parenthesises_an_arrow_used_as_a_binary_operand() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::expr_stmt(
+            TsExpr::Binary {
+                op: TsBinaryOp::NullishCoalescing,
+                left: Box::new(TsExpr::Ident("a".to_string())),
+                right: Box::new(TsExpr::Arrow {
+                    params: vec![TsParam {
+                        name: "x".to_string(),
+                        ty: None,
+                        optional: false,
+                    }],
+                    body: Box::new(TsExpr::Ident("y".to_string())),
+                }),
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "a ?? ((x) => y);\n");
+    }
+
+    #[test]
+    fn parenthesises_an_arrow_used_as_an_as_operand() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::expr_stmt(
+            TsExpr::As {
+                expr: Box::new(TsExpr::Arrow {
+                    params: vec![TsParam {
+                        name: "x".to_string(),
+                        ty: None,
+                        optional: false,
+                    }],
+                    body: Box::new(TsExpr::Ident("y".to_string())),
+                }),
+                ty: TsType::named("Handler"),
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "((x) => y) as Handler;\n");
     }
 
     #[test]

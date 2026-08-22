@@ -1420,7 +1420,11 @@ fn emit_websocket_upgrade(
         .collect();
     stmts.push(const_(
         "__ns",
-        member(ident("deps"), format!("env.{binding}")),
+        // `member_chain`, not a single `Member { property: "env.{binding}" }`
+        // node — the printed text is two chained accesses (`deps.env.<binding>`),
+        // and a `format!`-built dotted-property slot would claim it is one
+        // property literally named "env.<binding>" (review of #1322, finding 3).
+        member_chain(ident("deps"), &["env", &binding]),
     ));
     stmts.push(const_(
         "__stub",
