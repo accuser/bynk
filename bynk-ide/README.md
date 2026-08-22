@@ -35,7 +35,7 @@ it links the analysis libraries — not the whole compiler binary. The `bynkc`,
 
 ```toml
 [dependencies]
-bynk-ide = "0.255"
+bynk-ide = "0.256"
 ```
 
 ```rust
