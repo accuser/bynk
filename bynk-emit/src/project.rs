@@ -3097,6 +3097,25 @@ fn const_(name: impl Into<String>, init: TsExpr) -> TsStmt {
     TsStmt::const_stmt(TsBindingName::Ident(name.into()), None, init, None)
 }
 
+/// Sort key for a `{ns}Deps` entry, mirroring the pre-conversion code's own
+/// `Vec<String>::sort()` over the fully rendered `"{key}: {value}"` text
+/// rather than the bare key alone (review of #1328: `deps_entries.sort_by(|a,
+/// b| a.0.cmp(&b.0))` is NOT equivalent — it silently reorders whenever one
+/// key is a strict prefix of another, e.g. `Db`/`Db2`). The old text sort's
+/// tie-break, for a key that is a strict prefix of another, was whatever byte
+/// immediately follows it in the longer key compared against the shorter
+/// key's own literal `':'` — since capability names are `[A-Za-z][A-Za-z0-9_
+/// ]*`, only a digit-suffixed prefix collision (`'0'`-`'9'` are all below
+/// `':'`, 0x3A) flips the order: `Db2: ...` sorted before `Db: ...` because
+/// `'2'` (0x32) < `':'` (0x3A). Appending `:` to each bare key reproduces
+/// that exact tie-break without rendering each entry's value just to sort
+/// it — every other key relationship (no shared prefix, or a
+/// letter/underscore-suffixed prefix, both above `':'`) is unaffected, since
+/// the comparison never reaches the appended `:`.
+fn deps_entry_sort_key(key: &str) -> String {
+    format!("{key}:")
+}
+
 #[allow(clippy::too_many_arguments)]
 fn emit_composition_root(
     groups: &BTreeMap<String, Vec<usize>>,
@@ -3388,7 +3407,7 @@ fn emit_composition_root(
             };
             deps_entries.push(("__eventsDispatch".to_string(), arrow));
         }
-        deps_entries.sort_by(|a, b| a.0.cmp(&b.0));
+        deps_entries.sort_by_cached_key(|(k, _)| deps_entry_sort_key(k));
 
         let mut surface_entries: Vec<(String, TsExpr)> = Vec::new();
         if let Some(targets) = unit_consumes.get(ctx_name.as_str()) {
@@ -3729,6 +3748,34 @@ fn called_cross_context_services(
 mod tests {
     use super::*;
     use std::fs;
+
+    /// Review of #1328: the pre-conversion code sorted the fully rendered
+    /// `"{key}: {value}"` text, so a key that is a strict prefix of another
+    /// (`Db`/`Db2`) sorted by the shorter key's own `':'` losing to the
+    /// longer key's next byte, a digit — `Db2: ...` sorted before `Db:
+    /// ...`. A bare-key sort (`"Db" < "Db2"`) gets this backwards.
+    /// `deps_entry_sort_key` must reproduce the original order exactly.
+    #[test]
+    fn deps_entry_sort_key_reproduces_the_pre_conversion_full_text_sort_order() {
+        let mut keys = vec!["Db2".to_string(), "Db".to_string()];
+        keys.sort_by_cached_key(|k| deps_entry_sort_key(k));
+        assert_eq!(
+            keys,
+            vec!["Db2".to_string(), "Db".to_string()],
+            "Db2 must sort before Db, matching the old full-text sort"
+        );
+
+        // A letter/underscore-suffixed prefix collision is unaffected —
+        // matches plain key ordering both before and after this fix.
+        let mut keys = vec!["Db_pool".to_string(), "Db".to_string()];
+        keys.sort_by_cached_key(|k| deps_entry_sort_key(k));
+        assert_eq!(keys, vec!["Db".to_string(), "Db_pool".to_string()]);
+
+        // No shared prefix at all: ordinary alphabetical order, unaffected.
+        let mut keys = vec!["Queue".to_string(), "Cache".to_string()];
+        keys.sort_by_cached_key(|k| deps_entry_sort_key(k));
+        assert_eq!(keys, vec!["Cache".to_string(), "Queue".to_string()]);
+    }
 
     /// Regression (code review of #1114): a `sources` key that matches none
     /// of `trees`'s roots (shouldn't happen for a well-formed map — see
