@@ -356,6 +356,7 @@ pub(crate) fn emit_worker_compose(
             unit_consumes,
             unit_consumes_aliases,
             unit_flattened,
+            true,
             Some("env"),
             locale_negotiation_args.as_ref(),
             &mut referenced_units,
@@ -548,6 +549,7 @@ pub(crate) fn emit_worker_compose(
                 )),
                 optional: false,
             }],
+            is_async: false,
             body: Box::new(call(
                 ident("dispatchToEventsFanout"),
                 vec![member(ident("env"), bind), ident("events")],
