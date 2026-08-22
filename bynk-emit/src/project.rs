@@ -2354,19 +2354,14 @@ fn build_output(
                     &queues,
                     ctx_uses_emit,
                 );
-                // P7.3 (#1303): `emit_wrangler_toml` builds a typed
-                // `TomlDocument`. P7.6 (#1309, Decision E): the tree moves
-                // straight into `Document::Toml`, unstringified — printed
-                // only at the `bynk-driver` write boundary.
+                // Arc C slice 4 (#1323): `emit_worker_entry` returns a real
+                // `TsProgram` directly — the construction site's own
+                // `Verbatim`/`NotYetConverted` wrap is gone, matching the
+                // precedent `events_fanout.rs`'s and `workers.rs`'s own
+                // construction sites already set.
                 compiled.push(StagedFile {
                     output_path: PathBuf::from(format!("workers/{dashes}/index.ts")),
-                    document: Document::Ts(bynk_ts::TsProgram {
-                        stmts: vec![bynk_ts::TsStmt::verbatim(
-                            bynk_ts::VerbatimOrigin::NotYetConverted,
-                            entry_ts,
-                            None,
-                        )],
-                    }),
+                    document: Document::Ts(entry_ts),
                     source_map: None,
                     debug_metadata: None,
                 });

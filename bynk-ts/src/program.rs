@@ -94,16 +94,20 @@ pub(crate) enum TsStmtKind {
     /// An expression used as a whole statement (a bare call, e.g.).
     ExprStmt(TsExpr),
     Return(Option<TsExpr>),
-    /// `if (cond) <then_branch>` — no `else`: `events_fanout.rs` never uses
-    /// one, and the accepted proposal's own variant list doesn't ask for
-    /// it; adding one speculatively would repeat the guessing risk Decision
-    /// B exists to avoid. `then_branch` may be a [`TsStmtKind::Block`]
+    /// `if (cond) <then_branch>` (optionally `else <else_branch>`).
+    /// `then_branch`/`else_branch` may each be a [`TsStmtKind::Block`]
     /// (printed with braces) or any other single statement (printed inline
     /// on the same line, matching `if (!Array.isArray(subs)) continue;`'s
-    /// own real, brace-free shape).
+    /// own real, brace-free shape). `else_branch` is #1323's own real gap:
+    /// `workers_entry.rs`'s queue-consumer ack/retry dispatch (`if
+    /// (result.tag === "Ack") msg.ack(); else { ...; msg.retry(); }`) —
+    /// `events_fanout.rs`'s own grounding never used one, so P7.8 named
+    /// omitting it a deliberate choice, not an oversight; this slice's own
+    /// real content needs it for real.
     If {
         cond: TsExpr,
         then_branch: Box<TsStmt>,
+        else_branch: Option<Box<TsStmt>>,
     },
     /// `for (const <binding> of <iter>) <body>`.
     ForOf {
@@ -172,6 +176,60 @@ pub(crate) enum TsStmtKind {
     /// "no blank line between adjacent `Comment`s" rule (the same
     /// exception already established for adjacent `import`s).
     Comment(String),
+    /// A bare blank line — no statement content. #1323's own real, narrow
+    /// need: `workers_entry.rs`'s `fetch` method body has an unconditional
+    /// blank line after its internal Service-Binding dispatch block, and a
+    /// conditional one after the WebSocket-upgrade dispatch (when present)
+    /// and the Events dispatch (when present) — three specific points the
+    /// pre-conversion `writeln!(out).unwrap()` wrote directly, nested
+    /// *inside* the `try` block's own statement list. Distinct from
+    /// [`crate::printer::print`]'s own top-level blank-line policy (this
+    /// module's own printer doc), which only separates `TsProgram`'s own
+    /// top-level statements — nothing before this slice needed a blank line
+    /// anywhere inside a nested block, so that policy was never generalized
+    /// to every nesting depth. A single, narrow statement kind represents
+    /// exactly this, rather than widening the top-level-only policy to a
+    /// depth it has no other real content to justify.
+    Blank,
+    /// `switch (<discriminant>) { <cases> }` — #1323's own largest gap: the
+    /// first genuinely new statement-*grouping* construct in this tree
+    /// (every prior addition was a single expression/type variant or a
+    /// straightforward one-block wrapper). `workers_entry.rs` has four real
+    /// `switch` statements (the internal `/_bynk/call/` and `/_bynk/event/`
+    /// dispatches, the `scheduled` handler's `event.cron` dispatch, the
+    /// `queue` handler's `batch.queue` dispatch); every real `case` here is
+    /// a `{ ... }`-blocked body ending in a terminal statement (`return`/
+    /// `continue`), so no fallthrough/shared-body grouping is represented —
+    /// extend narrowly, the same posture every other addition here takes.
+    Switch {
+        discriminant: TsExpr,
+        cases: Vec<TsSwitchCase>,
+    },
+    /// `{ stmt; stmt; ... }` — a braced, multi-statement block printed on
+    /// ONE generated line, distinct from [`TsStmtKind::Block`] (always
+    /// multi-line). #1323's own real gap: `workers_entry.rs`'s queue
+    /// consumer has two real sites (`if (__r.tag === "Err") { console.
+    /// error(...); msg.retry(); continue; }`; the `else` branch of the
+    /// ack/retry dispatch) where the pre-conversion `writeln!` code
+    /// deliberately packed several short statements onto one physical
+    /// line — a real, distinct formatting choice from every other
+    /// multi-statement body in this tree, which always prints one
+    /// statement per line. Only reachable through [`TsStmt::if_stmt`]/
+    /// [`TsStmt::if_else_stmt`]'s own branches in real content today.
+    InlineBlock(Vec<TsStmt>),
+}
+
+/// One `case`/`default` arm of a `TsStmtKind::Switch`. `test: None` is the
+/// `default:` case — every real `default` in `workers_entry.rs` prints its
+/// body directly under `default:` with no `{ }` block, while every real
+/// non-`default` `case` prints a `{ }`-blocked body; the printer's own
+/// renderer follows that exact split (see its own doc), not a per-case flag,
+/// since nothing in the grounding file needs a braceless non-`default` case
+/// or a braced `default`.
+#[derive(Debug, Clone)]
+pub struct TsSwitchCase {
+    pub test: Option<TsExpr>,
+    pub body: Vec<TsStmt>,
 }
 
 impl TsStmt {
@@ -236,6 +294,23 @@ impl TsStmt {
             kind: TsStmtKind::If {
                 cond,
                 then_branch: Box::new(then_branch),
+                else_branch: None,
+            },
+            span,
+        }
+    }
+
+    pub fn if_else_stmt(
+        cond: TsExpr,
+        then_branch: TsStmt,
+        else_branch: TsStmt,
+        span: Option<Span>,
+    ) -> Self {
+        Self {
+            kind: TsStmtKind::If {
+                cond,
+                then_branch: Box::new(then_branch),
+                else_branch: Some(Box::new(else_branch)),
             },
             span,
         }
@@ -297,6 +372,30 @@ impl TsStmt {
     pub fn comment(text: impl Into<String>, span: Option<Span>) -> Self {
         Self {
             kind: TsStmtKind::Comment(text.into()),
+            span,
+        }
+    }
+
+    pub fn blank(span: Option<Span>) -> Self {
+        Self {
+            kind: TsStmtKind::Blank,
+            span,
+        }
+    }
+
+    pub fn switch_stmt(discriminant: TsExpr, cases: Vec<TsSwitchCase>, span: Option<Span>) -> Self {
+        Self {
+            kind: TsStmtKind::Switch {
+                discriminant,
+                cases,
+            },
+            span,
+        }
+    }
+
+    pub fn inline_block(stmts: Vec<TsStmt>, span: Option<Span>) -> Self {
+        Self {
+            kind: TsStmtKind::InlineBlock(stmts),
             span,
         }
     }
@@ -413,6 +512,34 @@ pub enum TsExpr {
         left: Box<TsExpr>,
         right: Box<TsExpr>,
     },
+    /// `test ? consequent : alternate` — #1323's own real gap: `method ===
+    /// "HEAD" ? headResponse(__response) : __response` (once per `GET`
+    /// route) and `method === "OPTIONS" ? 204 : 405` (the method-fallthrough
+    /// path). The lowest-precedence expression form after `Arrow` — needs
+    /// the same parenthesization-rule coverage `Arrow` got in review of
+    /// #1322 (`needs_parens_as_operand`/`render_binary_operand`/`As`'s own
+    /// local rule), added proactively in this same slice rather than left
+    /// for a review round to re-find.
+    Conditional {
+        test: Box<TsExpr>,
+        consequent: Box<TsExpr>,
+        alternate: Box<TsExpr>,
+    },
+    /// An explicit, printer-preserved parenthesization — distinct from every
+    /// other variant's own precedence-*derived* parens (`render_operand`/
+    /// `render_binary_operand`), which the printer adds or omits based on
+    /// what the wrapped expression *is*. `Paren` instead always prints
+    /// `(<inner>)` regardless of `inner`'s own shape or precedence. #1323's
+    /// own real, narrow need: `workers_entry.rs`'s CORS-preflight guard
+    /// wraps its own path-match condition in unconditional parens
+    /// (`&& ({cond})`) even when `cond` reduces to a single equality check
+    /// with no operator lower-precedence than the outer `&&` — a real case
+    /// the precedence-derived rules correctly do *not* parenthesize (they're
+    /// answering "is this needed for correctness", not "did the source
+    /// always write parens here"). Not a general escape hatch: every other
+    /// real site in this file's own content still goes through the ordinary
+    /// precedence machinery unchanged.
+    Paren(Box<TsExpr>),
     Lit(TsLit),
 }
 
@@ -497,11 +624,18 @@ pub enum TsObjectEntry {
     /// A shorthand async method entry, e.g. `async foo(a: T) { ... },` —
     /// `workers.rs`'s own dominant shape (Decision A, gap 1): every
     /// wrapper helper (`emit_call_wrapper`, `emit_event_wrapper`, …)
-    /// attaches to the returned `compose` surface this way.
+    /// attaches to the returned `compose` surface this way — none of
+    /// `workers.rs`'s own real sites annotates a return type, so
+    /// `return_type` stayed unneeded until #1323's own real gap:
+    /// `workers_entry.rs`'s `export default { fetch, scheduled?, queue? }`
+    /// entries all carry one (`: Promise<Response>`/`: Promise<void>`), the
+    /// same field [`TsClassMethod::return_type`] already has for the
+    /// declaration-position sibling this mirrors.
     Method {
         name: String,
         is_async: bool,
         params: Vec<TsParam>,
+        return_type: Option<TsType>,
         body: Vec<TsStmt>,
     },
     /// `...expr` — an object-spread entry (Decision A, gap 2), e.g. `{
@@ -524,11 +658,14 @@ pub enum TsUnaryOp {
 /// checks, `__authz === null || !__authz.startsWith(...)` /
 /// `__authz !== null && __authz.startsWith(...)`) and `===`/`!==`
 /// (pervasive throughout the file's own tagged-result and header checks).
-/// Not the full JS/TS operator table (Decision B's own "extend narrowly"
-/// posture) — see the printer's own `binary_precedence` (`bynk-ts/src/
-/// printer.rs`, private) for why a
-/// nested `Binary` operand's parenthesisation needed to become
-/// precedence-aware once more than one operator existed.
+/// #1323 (`workers_entry.rs`) grounds one more: `>` (the request-body-
+/// ceiling guard's own `Number(__contentLength) > <cap>` — the one real
+/// site anywhere in `bynk-emit` that needs a relational, not equality,
+/// comparison). Not the
+/// full JS/TS operator table (Decision B's own "extend narrowly" posture) —
+/// see the printer's own `binary_precedence` (`bynk-ts/src/printer.rs`,
+/// private) for why a nested `Binary` operand's parenthesisation needed to
+/// become precedence-aware once more than one operator existed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TsBinaryOp {
     NullishCoalescing,
@@ -536,10 +673,14 @@ pub enum TsBinaryOp {
     And,
     StrictEq,
     StrictNotEq,
+    GreaterThan,
 }
 
-/// A literal — only the three kinds `events_fanout.rs` uses: a string
-/// (`"EventsFanout delivery failed"`), a number (`204`), and `null`.
+/// A literal — the three kinds `events_fanout.rs` uses (a string, a number,
+/// `null`), plus `Bool` (#1323's own real gap: `workers_entry.rs`'s
+/// `CorsPolicy.credentials`/`SecurityPolicy.nosniff` object-literal fields
+/// are real booleans, e.g. `credentials: true`, `nosniff: false` — nothing
+/// before this slice's own grounding ever built one).
 #[derive(Debug, Clone)]
 pub enum TsLit {
     Str(String),
@@ -548,6 +689,7 @@ pub enum TsLit {
     /// the exact digits it wants printed.
     Num(String),
     Null,
+    Bool(bool),
 }
 
 /// A type-position node. `Named` (extended with type arguments — a real gap
@@ -599,13 +741,18 @@ pub enum TsType {
     /// `TsDecl::Interface` is the thing choosing to put each member on its
     /// own line, not because `Object` has two rendering modes.
     ///
-    /// The third tuple element is `optional` (#1321, Decision A gap 5) —
-    /// `key?: ty`, mirroring [`TsParam::optional`]'s existing precedent.
-    /// `workers.rs`'s own secret-probe idiom needs it: `{ process?: { env?:
-    /// Record<string, unknown> } }`. A tuple, not a struct field, matching
-    /// this variant's own existing two-element-tuple convention rather than
-    /// introducing a new named type for one added `bool`.
-    Object(Vec<(String, TsType, bool)>),
+    /// #1323 replaced the plain `Vec<(String, TsType, bool)>` (`optional`
+    /// only, #1321) with [`TsTypeMember`] — `workers_entry.rs`'s own real
+    /// gap needed both a `readonly` modifier (every structural type this
+    /// file builds is `readonly`-qualified, e.g. `{ readonly cron: string;
+    /// readonly scheduledTime: number }`) and a method-signature member
+    /// (`ack(): void`, `retry(): void`, `waitUntil(promise: Promise<
+    /// unknown>): void`), neither representable by one more anonymous
+    /// tuple `bool` — a fourth positional `bool` next to `optional` would
+    /// be genuinely ambiguous at call sites (`readonly` vs. `optional`, ordered
+    /// how?), the same reasoning [`TsObjectEntry`] already used over a raw
+    /// tuple for the value-position sibling.
+    Object(Vec<TsTypeMember>),
     /// `(a0: T0, a1: T1, …) => Ret` — a function type. Parameters carry no
     /// name of their own (just their type); the printer numbers them
     /// positionally (`a0`, `a1`, …), matching the exact convention
@@ -664,6 +811,92 @@ impl TsType {
         TsType::Array {
             element: Box::new(element),
             readonly: true,
+        }
+    }
+}
+
+/// One member of a [`TsType::Object`] structural type — a property (`Prop`)
+/// or a method signature (`Method`, #1323's own real gap: `ack(): void`,
+/// `retry(): void`, `waitUntil(promise: Promise<unknown>): void` — no body,
+/// a type-position sibling to [`TsObjectEntry::Method`], which does carry
+/// one). `Method`'s own parameters reuse [`TsParam`] directly (not a bare
+/// `Vec<TsType>` the way [`TsType::Fn`]'s anonymous, positionally-numbered
+/// parameters do) — `waitUntil`'s own real parameter has a real name
+/// (`promise`) the printed text must show, unlike `Fn`'s callers, none of
+/// which have one to show.
+#[derive(Debug, Clone)]
+pub enum TsTypeMember {
+    Prop {
+        name: String,
+        ty: TsType,
+        optional: bool,
+        readonly: bool,
+    },
+    Method {
+        name: String,
+        params: Vec<TsParam>,
+        ret: TsType,
+    },
+    /// `[key_name: key_ty]: value_ty` — a TypeScript index signature.
+    /// #1323's own real gap: `workers_entry.rs`'s multi-param `on call`
+    /// dispatch casts its raw JSON args object through `{ [k: string]:
+    /// JsonValue }` before indexing it by field name — textually distinct
+    /// from the semantically-equivalent `Record<string, JsonValue>` (a
+    /// `Named` type with type arguments), which `bynk-emit`'s own
+    /// pre-conversion `writeln!` never wrote here. The one real site.
+    Index {
+        key_name: String,
+        key_ty: TsType,
+        value_ty: TsType,
+    },
+}
+
+impl TsTypeMember {
+    /// `name: ty` — the ordinary, non-`optional`, non-`readonly` case.
+    pub fn prop(name: impl Into<String>, ty: TsType) -> Self {
+        TsTypeMember::Prop {
+            name: name.into(),
+            ty,
+            optional: false,
+            readonly: false,
+        }
+    }
+
+    /// `name?: ty`.
+    pub fn optional_prop(name: impl Into<String>, ty: TsType) -> Self {
+        TsTypeMember::Prop {
+            name: name.into(),
+            ty,
+            optional: true,
+            readonly: false,
+        }
+    }
+
+    /// `readonly name: ty`.
+    pub fn readonly_prop(name: impl Into<String>, ty: TsType) -> Self {
+        TsTypeMember::Prop {
+            name: name.into(),
+            ty,
+            optional: false,
+            readonly: true,
+        }
+    }
+
+    /// `name(params): ret` — no body.
+    pub fn method(name: impl Into<String>, params: Vec<TsParam>, ret: TsType) -> Self {
+        TsTypeMember::Method {
+            name: name.into(),
+            params,
+            ret,
+        }
+    }
+
+    /// `[key_name: key_ty]: value_ty`.
+    pub fn index(key_name: impl Into<String>, key_ty: TsType, value_ty: TsType) -> Self {
+        TsTypeMember::Index {
+            key_name: key_name.into(),
+            key_ty,
+            value_ty,
         }
     }
 }
@@ -747,6 +980,16 @@ pub enum TsDecl {
     /// referenced unit's binding module this way; `events_fanout.rs` never
     /// used one.
     ImportNamespace { alias: String, from: String },
+    /// `export { a, b } from "spec";` — a re-export, structurally distinct
+    /// from both [`TsDecl::Import`] (which binds locally, carries no
+    /// `export` keyword) and [`TsDecl::Export`] (which wraps a whole
+    /// declaration, not a braced name list re-pointed at another module).
+    /// #1323's own real gap: `workers_entry.rs` re-exports each agent's
+    /// Durable Object class from `./handlers.js`, and (when the context
+    /// publishes events) the fan-out DO's class from `./events_fanout.js`.
+    /// No `type_only` form — nothing in the grounding file re-exports a
+    /// type-only name.
+    ReExport { names: Vec<String>, from: String },
     /// Marks the wrapped declaration `export`ed — `export class Foo { .. }`
     /// is `Export(Box::new(Class { .. }))`. A wrapper, not a per-variant
     /// `exported: bool` field, matching the reference sketch's own naming
@@ -786,6 +1029,15 @@ pub enum TsDecl {
     /// site: the `DurableObjectNamespace` local fallback type (emitted only
     /// when the Worker has agents or publishes events).
     TypeAlias { name: String, ty: TsType },
+    /// `export default <expr>;` — a default export of an *expression*, not
+    /// a declaration. #1323's own real gap (`workers_entry.rs`'s own
+    /// top-level shape, `export default { fetch, scheduled?, queue? }`):
+    /// [`TsDecl::Export`] wraps a [`TsDecl`] (a `Class`/`ConstDecl`/etc.,
+    /// something with its own name), which cannot represent exporting a
+    /// bare, unnamed object-literal expression — so this is its own
+    /// variant, not `Export(Box::new(ConstDecl { .. }))` with a synthetic
+    /// name that would print wrong.
+    ExportDefault(TsExpr),
 }
 
 /// Which family of residual, not-yet-converted emission a [`TsStmt::verbatim`]

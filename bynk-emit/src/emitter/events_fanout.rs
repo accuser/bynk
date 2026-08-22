@@ -19,7 +19,7 @@ use std::collections::BTreeMap;
 
 use bynk_ts::{
     TsBinaryOp, TsBindingName, TsClassCtor, TsClassField, TsClassMethod, TsDecl, TsExpr, TsLit,
-    TsParam, TsProgram, TsStmt, TsType, TsUnaryOp,
+    TsParam, TsProgram, TsStmt, TsType, TsTypeMember, TsUnaryOp,
 };
 
 use crate::emitter::wrangler::{EVENTS_FANOUT_CLASS_NAME, consumed_binding_name};
@@ -81,10 +81,10 @@ pub(crate) fn emit_events_fanout_do(
                 (
                     "envelope".to_string(),
                     TsType::Object(vec![
-                        ("eventId".to_string(), TsType::named("string"), false),
-                        ("publisherId".to_string(), TsType::named("string"), false),
-                        ("emittedAt".to_string(), TsType::named("number"), false),
-                        ("schemaVersion".to_string(), TsType::named("number"), false),
+                        TsTypeMember::prop("eventId", TsType::named("string")),
+                        TsTypeMember::prop("publisherId", TsType::named("string")),
+                        TsTypeMember::prop("emittedAt", TsType::named("number")),
+                        TsTypeMember::prop("schemaVersion", TsType::named("number")),
                     ]),
                 ),
             ],
@@ -101,8 +101,8 @@ pub(crate) fn emit_events_fanout_do(
                     TsType::named_with_args(
                         "Array",
                         vec![TsType::Object(vec![
-                            ("binding".to_string(), TsType::named("string"), false),
-                            ("service".to_string(), TsType::named("string"), false),
+                            TsTypeMember::prop("binding", TsType::named("string")),
+                            TsTypeMember::prop("service", TsType::named("string")),
                         ])],
                     ),
                 ],
@@ -218,17 +218,26 @@ fn events_fanout_fetch() -> TsClassMethod {
                 TsBindingName::ObjectPattern(vec!["events".to_string()]),
                 None,
                 TsExpr::As {
-                    expr: Box::new(TsExpr::Await(Box::new(TsExpr::Call {
-                        callee: Box::new(TsExpr::Member {
-                            object: Box::new(TsExpr::Ident("request".to_string())),
-                            property: "json".to_string(),
-                        }),
-                        args: vec![],
-                    }))),
-                    ty: TsType::Object(vec![(
-                        "events".to_string(),
+                    // #1323: the `As` arm's own automatic Await-parenthesisation
+                    // rule was removed (`workers_entry.rs`'s own real `await
+                    // request.json() as JsonValue` has no parens — `as` binds
+                    // looser than `await`, so none are grammatically needed,
+                    // unlike the reasoning P7.8 originally gave). This file's
+                    // own real historical text keeps its parens regardless
+                    // (`(await request.json()) as { ... }`), now via an
+                    // explicit `Paren`, not an implicit per-shape rule.
+                    expr: Box::new(TsExpr::Paren(Box::new(TsExpr::Await(Box::new(
+                        TsExpr::Call {
+                            callee: Box::new(TsExpr::Member {
+                                object: Box::new(TsExpr::Ident("request".to_string())),
+                                property: "json".to_string(),
+                            }),
+                            args: vec![],
+                        },
+                    ))))),
+                    ty: TsType::Object(vec![TsTypeMember::prop(
+                        "events",
                         TsType::array(TsType::named("FanoutEvent")),
-                        false,
                     )]),
                 },
                 None,
