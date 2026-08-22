@@ -4029,10 +4029,10 @@ pub(crate) fn emit_test_main(tests: &[RunnableTest], import_ext: ImportExt) -> T
             "m",
             ident("modules"),
             block(vec![
-                console_log(TsExpr::TemplateLit {
-                    parts: vec![String::new(), ":".to_string()],
-                    exprs: vec![member(ident("m"), "name")],
-                }),
+                console_log(TsExpr::template_lit(
+                    vec![String::new(), ":".to_string()],
+                    vec![member(ident("m"), "name")],
+                )),
                 const_(
                     "results",
                     await_expr(method_call(ident("m"), "run", vec![ident("only")])),
@@ -4045,26 +4045,26 @@ pub(crate) fn emit_test_main(tests: &[RunnableTest], import_ext: ImportExt) -> T
                         TsStmt::inline_block(
                             vec![
                                 TsStmt::increment(ident("passed"), None),
-                                console_log(TsExpr::TemplateLit {
-                                    parts: vec!["  \\u2713 ".to_string(), String::new()],
-                                    exprs: vec![member(ident("r"), "name")],
-                                }),
+                                console_log(TsExpr::template_lit(
+                                    vec!["  \\u2713 ".to_string(), String::new()],
+                                    vec![member(ident("r"), "name")],
+                                )),
                             ],
                             None,
                         ),
                         TsStmt::inline_block(
                             vec![
                                 TsStmt::increment(ident("failed"), None),
-                                console_log(TsExpr::TemplateLit {
-                                    parts: vec!["  \\u2717 ".to_string(), String::new()],
-                                    exprs: vec![member(ident("r"), "name")],
-                                }),
+                                console_log(TsExpr::template_lit(
+                                    vec!["  \\u2717 ".to_string(), String::new()],
+                                    vec![member(ident("r"), "name")],
+                                )),
                                 if_(
                                     member(ident("r"), "error"),
-                                    console_log(TsExpr::TemplateLit {
-                                        parts: vec!["    ".to_string(), String::new()],
-                                        exprs: vec![member(member(ident("r"), "error"), "message")],
-                                    }),
+                                    console_log(TsExpr::template_lit(
+                                        vec!["    ".to_string(), String::new()],
+                                        vec![member(member(ident("r"), "error"), "message")],
+                                    )),
                                 ),
                             ],
                             None,
@@ -4077,14 +4077,14 @@ pub(crate) fn emit_test_main(tests: &[RunnableTest], import_ext: ImportExt) -> T
             ]),
             None,
         ),
-        console_log(TsExpr::TemplateLit {
-            parts: vec![
+        console_log(TsExpr::template_lit(
+            vec![
                 String::new(),
                 " passed, ".to_string(),
                 " failed.".to_string(),
             ],
-            exprs: vec![ident("passed"), ident("failed")],
-        }),
+            vec![ident("passed"), ident("failed")],
+        )),
     ]);
 
     main_body.push(TsStmt::if_else_same_line_stmt(
