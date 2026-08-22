@@ -710,6 +710,25 @@ impl TsExpr {
             multiline: true,
         }
     }
+
+    /// A template literal — see [`TsExpr::TemplateLit`]'s own doc for the
+    /// real shape and its no-escaping boundary. The sole caller-facing
+    /// invariant (`parts.len() == exprs.len() + 1`) is asserted here rather
+    /// than left to `render_expr`'s own `parts`-driven loop, which would
+    /// otherwise silently drop trailing `exprs` on a malformed tree instead
+    /// of failing loudly (review of #1326, finding 1).
+    pub fn template_lit(parts: Vec<String>, exprs: Vec<TsExpr>) -> Self {
+        debug_assert_eq!(
+            parts.len(),
+            exprs.len() + 1,
+            "TsExpr::template_lit: parts.len() must be exprs.len() + 1 \
+             (parts[0] before the first substitution, parts[i+1] after \
+             exprs[i], …) — got {} parts and {} exprs",
+            parts.len(),
+            exprs.len()
+        );
+        TsExpr::TemplateLit { parts, exprs }
+    }
 }
 
 /// One entry of a [`TsExpr::Object`] literal. Only `Prop` existed before
@@ -1249,5 +1268,18 @@ mod tests {
         ));
         assert_eq!(program.stmts[0].span, None);
         assert_eq!(program.stmts[1].span, Some(Span::new(0, 1)));
+    }
+
+    /// Review of #1326, finding 1: `TsExpr::template_lit`'s own
+    /// `debug_assert_eq!` must actually fire on a malformed tree, not just
+    /// exist as documentation — proves the guard guards, the same "prove
+    /// it" discipline this crate applies to every other invariant.
+    #[test]
+    #[should_panic(expected = "parts.len() must be exprs.len() + 1")]
+    fn template_lit_rejects_a_parts_exprs_count_mismatch() {
+        let _ = TsExpr::template_lit(
+            vec!["a".to_string()],
+            vec![TsExpr::Ident("too_many".to_string())],
+        );
     }
 }

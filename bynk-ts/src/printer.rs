@@ -323,32 +323,32 @@ fn render_stmt(out: &mut String, stmt: &TsStmt, depth: usize) {
             // `then_branch` has no closing `}` for `else` to sit against,
             // so this falls back to the ordinary fresh-line rendering
             // rather than producing `<inline-stmt> else {`, which nothing
-            // real needs.
-            let same_line_closer = match &then_branch.kind {
-                TsStmtKind::Block(_) => Some(()),
-                TsStmtKind::InlineBlock(_) => Some(()),
-                _ => None,
-            };
+            // real needs. Review of #1326, finding 2: the two-variant
+            // check needs no `Option<()>`/re-match/`unreachable!()` — a
+            // plain `matches!` guard plus one `if let ... else` dispatch
+            // says the same thing with no wildcard arm.
+            let then_is_braced = matches!(
+                &then_branch.kind,
+                TsStmtKind::Block(_) | TsStmtKind::InlineBlock(_)
+            );
             if *same_line_else
-                && let (Some(else_branch), Some(())) = (else_branch, same_line_closer)
+                && then_is_braced
+                && let Some(else_branch) = else_branch
             {
-                match &then_branch.kind {
-                    // `render_block_body` already produces `{ stmts }` with
-                    // the closing brace at `depth`'s own indent and NO
-                    // trailing newline — the exact shape `TryCatch`'s own
-                    // `} catch (e) {` continuation already reuses for the
-                    // identical reason.
-                    TsStmtKind::Block(_) => render_block_body(out, then_branch, depth),
-                    // `render_inline_block`'s own `{ stmts }` shape, minus
-                    // its own trailing `\n` and leading space (added here
-                    // instead, matching `render_branch`'s own InlineBlock
-                    // arm) so `else` continues on the same physical line.
-                    TsStmtKind::InlineBlock(stmts) => {
-                        out.push_str(" { ");
-                        render_compact_stmts(out, stmts);
-                        out.push_str(" }");
-                    }
-                    _ => unreachable!("same_line_closer only matches Block/InlineBlock"),
+                // `render_inline_block`'s own `{ stmts }` shape, minus its
+                // own trailing `\n` and leading space (added here instead,
+                // matching `render_branch`'s own InlineBlock arm) so
+                // `else` continues on the same physical line;
+                // `render_block_body`'s own `{ stmts }` (no trailing
+                // newline, the exact shape `TryCatch`'s own `} catch (e) {`
+                // continuation already reuses) for the `Block` case,
+                // guaranteed by `then_is_braced` above.
+                if let TsStmtKind::InlineBlock(stmts) = &then_branch.kind {
+                    out.push_str(" { ");
+                    render_compact_stmts(out, stmts);
+                    out.push_str(" }");
+                } else {
+                    render_block_body(out, then_branch, depth);
                 }
                 out.push_str(" else");
                 render_branch(out, else_branch, depth);
@@ -3478,17 +3478,17 @@ mod tests {
     fn prints_a_template_literal_with_substitutions() {
         let mut program = TsProgram::new();
         program.push(TsStmt::expr_stmt(
-            TsExpr::TemplateLit {
-                parts: vec![
+            TsExpr::template_lit(
+                vec![
                     String::new(),
                     " passed, ".to_string(),
                     " failed.".to_string(),
                 ],
-                exprs: vec![
+                vec![
                     TsExpr::Ident("passed".to_string()),
                     TsExpr::Ident("failed".to_string()),
                 ],
-            },
+            ),
             None,
         ));
         let printed = print(&program, "x.bynk", "", "x.ts");
@@ -3505,10 +3505,10 @@ mod tests {
     fn a_template_literal_part_carrying_a_preformed_unicode_escape_is_not_reescaped() {
         let mut program = TsProgram::new();
         program.push(TsStmt::expr_stmt(
-            TsExpr::TemplateLit {
-                parts: vec!["  \\u2713 ".to_string(), String::new()],
-                exprs: vec![TsExpr::Ident("r".to_string())],
-            },
+            TsExpr::template_lit(
+                vec!["  \\u2713 ".to_string(), String::new()],
+                vec![TsExpr::Ident("r".to_string())],
+            ),
             None,
         ));
         let printed = print(&program, "x.bynk", "", "x.ts");
