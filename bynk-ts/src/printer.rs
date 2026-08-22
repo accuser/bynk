@@ -123,6 +123,33 @@
 //!   `workers_entry.rs`'s own two real sites (a deserialise-failure guard,
 //!   and the ack/retry dispatch's `else`), both hand-written as compact
 //!   one-liners in the pre-conversion text.
+//! - **An array literal supports the same `multiline` shape an object
+//!   literal does** — one item per line, each with its own trailing comma,
+//!   closing `]` at the statement's own indent, only through
+//!   `render_stmt_level_expr`. Added for #1325: `emit_test_main`'s own
+//!   `modules` array.
+//! - **A template literal's static parts print verbatim, with no escaping of
+//!   their own.** Added for #1325 — see `TsExpr::TemplateLit`'s own doc for
+//!   why (a generic escaper would double an already-pre-formed JS unicode
+//!   escape's own literal backslash).
+//! - **`declare const name: ty;` prints with no initialiser at all** —
+//!   distinct from every other `const` form, which always has one. Added
+//!   for #1325: `emit_test_main`'s own ambient `process` declaration.
+//! - **An `async function` prints `async function name(...)`** — the
+//!   top-level sibling to `TsObjectEntry::Method`'s own `is_async` handling.
+//!   Added for #1325: `emit_test_main`'s own top-level `main`.
+//! - **`<expr>++;` prints a bare postfix increment as a whole statement.**
+//!   Added for #1325: `emit_test_main`'s own `passed++;`/`failed++;`
+//!   counters.
+//! - **An `if`'s own `else` prints `} else {` on the same physical line when
+//!   `same_line_else` is set** (only reachable when `then_branch` is a
+//!   `Block` or `InlineBlock`) — a second, real convention alongside the
+//!   fresh-line default just above, not a replacement for it. Added for
+//!   #1325: all three of `emit_test_main`'s own real `if`/`else` sites use
+//!   this spacing, none use the fresh-line form `workers_entry.rs`'s own
+//!   real content needs — two already-real files disagreeing on the same
+//!   construct, the same tension the `Await`-under-`As` correction
+//!   (#1323/#1324) found for parenthesisation.
 //!
 //! None of the above is claimed as *the* TypeScript style this printer will
 //! use forever — it's what this slice's own grounding file needs, named
@@ -282,16 +309,56 @@ fn render_stmt(out: &mut String, stmt: &TsStmt, depth: usize) {
             cond,
             then_branch,
             else_branch,
+            same_line_else,
         } => {
             out.push_str(&indent(depth));
             out.push_str("if (");
             render_expr(out, cond);
             out.push(')');
-            render_branch(out, then_branch, depth);
-            if let Some(else_branch) = else_branch {
-                out.push_str(&indent(depth));
-                out.push_str("else");
+            // `} else {` on one line — #1325's own real gap, all three of
+            // `emit_test_main`'s own real `if`/`else` sites (one `Block`,
+            // one `InlineBlock`). Only reachable when `then_branch` is
+            // itself braced (`Block` or `InlineBlock` — every real
+            // `same_line_else` site is one or the other); a brace-free
+            // `then_branch` has no closing `}` for `else` to sit against,
+            // so this falls back to the ordinary fresh-line rendering
+            // rather than producing `<inline-stmt> else {`, which nothing
+            // real needs.
+            let same_line_closer = match &then_branch.kind {
+                TsStmtKind::Block(_) => Some(()),
+                TsStmtKind::InlineBlock(_) => Some(()),
+                _ => None,
+            };
+            if *same_line_else
+                && let (Some(else_branch), Some(())) = (else_branch, same_line_closer)
+            {
+                match &then_branch.kind {
+                    // `render_block_body` already produces `{ stmts }` with
+                    // the closing brace at `depth`'s own indent and NO
+                    // trailing newline — the exact shape `TryCatch`'s own
+                    // `} catch (e) {` continuation already reuses for the
+                    // identical reason.
+                    TsStmtKind::Block(_) => render_block_body(out, then_branch, depth),
+                    // `render_inline_block`'s own `{ stmts }` shape, minus
+                    // its own trailing `\n` and leading space (added here
+                    // instead, matching `render_branch`'s own InlineBlock
+                    // arm) so `else` continues on the same physical line.
+                    TsStmtKind::InlineBlock(stmts) => {
+                        out.push_str(" { ");
+                        render_compact_stmts(out, stmts);
+                        out.push_str(" }");
+                    }
+                    _ => unreachable!("same_line_closer only matches Block/InlineBlock"),
+                }
+                out.push_str(" else");
                 render_branch(out, else_branch, depth);
+            } else {
+                render_branch(out, then_branch, depth);
+                if let Some(else_branch) = else_branch {
+                    out.push_str(&indent(depth));
+                    out.push_str("else");
+                    render_branch(out, else_branch, depth);
+                }
             }
         }
         TsStmtKind::ForOf {
@@ -388,6 +455,11 @@ fn render_stmt(out: &mut String, stmt: &TsStmt, depth: usize) {
         TsStmtKind::InlineBlock(stmts) => {
             out.push_str(&indent(depth));
             render_inline_block(out, stmts);
+        }
+        TsStmtKind::Increment(expr) => {
+            out.push_str(&indent(depth));
+            render_expr(out, expr);
+            out.push_str("++;\n");
         }
     }
 }
@@ -529,7 +601,13 @@ fn render_inline_stmt(out: &mut String, stmt: &TsStmt) {
         | TsStmtKind::Block(_)
         | TsStmtKind::Assign { .. }
         | TsStmtKind::Switch { .. }
-        | TsStmtKind::InlineBlock(_) => render_stmt(out, stmt, 0),
+        | TsStmtKind::InlineBlock(_)
+        // #1325: `passed++;`/`failed++;` inside `emit_test_main`'s own
+        // compact `{ passed++; console.log(...); }` shape — always complete,
+        // single-line, semicolon-terminated content (never a bare newline
+        // the way `Blank`'s own top-level form is), so the same fallback
+        // that's safe for `Const`/`If`/etc. above is safe here too.
+        | TsStmtKind::Increment(_) => render_stmt(out, stmt, 0),
     }
 }
 
@@ -727,6 +805,12 @@ fn render_stmt_level_expr(out: &mut String, expr: &TsExpr, depth: usize) {
     } = expr
     {
         render_multiline_object(out, entries, depth);
+    } else if let TsExpr::Array {
+        items,
+        multiline: true,
+    } = expr
+    {
+        render_multiline_array(out, items, depth);
     } else {
         render_expr(out, expr);
     }
@@ -805,6 +889,27 @@ fn render_multiline_object(out: &mut String, entries: &[TsObjectEntry], depth: u
     }
     out.push_str(&indent(depth));
     out.push('}');
+}
+
+/// `[ <newline> ("  "*depth+1)<item>,<newline> ... ("  "*depth)]` — one
+/// item per line, each with its own trailing comma, closing bracket back at
+/// `depth`'s own indent. [`render_multiline_object`]'s own sibling for array
+/// literals — #1325's own real, grounded shape: `emit_test_main`'s own
+/// `modules` array (one `{ name, run }` entry per test). Same "no
+/// empty-items shortcut" discipline as `render_multiline_object` — nothing
+/// in `emit_test_main`'s own real content reaches this with zero tests, but
+/// matching the pre-conversion `writeln!` code's own unconditional
+/// open/close-bracket-on-separate-lines shape (rather than assuming an
+/// untested empty case) is the same precedent review of #1317/#1318 set.
+fn render_multiline_array(out: &mut String, items: &[TsExpr], depth: usize) {
+    out.push_str("[\n");
+    for item in items {
+        out.push_str(&indent(depth + 1));
+        render_expr(out, item);
+        out.push_str(",\n");
+    }
+    out.push_str(&indent(depth));
+    out.push(']');
 }
 
 /// One [`TsObjectEntry`] rendered inline (no leading indent, no trailing
@@ -915,10 +1020,27 @@ fn render_expr(out: &mut String, expr: &TsExpr) {
                 out.push_str(" }");
             }
         }
-        TsExpr::Array(items) => {
+        // `multiline` is ignored here deliberately, for the same reason
+        // `TsExpr::Object`'s own arm just above ignores it: this recursion
+        // has no `depth` to render a multi-line array correctly against.
+        // Every real `bynk-emit` call site that needs `multiline: true`
+        // reaches it through `render_stmt_level_expr` instead.
+        TsExpr::Array { items, .. } => {
             out.push('[');
             render_expr_list(out, items);
             out.push(']');
+        }
+        TsExpr::TemplateLit { parts, exprs } => {
+            out.push('`');
+            for (i, part) in parts.iter().enumerate() {
+                out.push_str(part);
+                if let Some(e) = exprs.get(i) {
+                    out.push_str("${");
+                    render_expr(out, e);
+                    out.push('}');
+                }
+            }
+            out.push('`');
         }
         TsExpr::Await(inner) => {
             out.push_str("await ");
@@ -1047,6 +1169,10 @@ fn render_lit(out: &mut String, lit: &TsLit) {
         TsLit::Num(n) => out.push_str(n),
         TsLit::Null => out.push_str("null"),
         TsLit::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
+        // The whole literal, printed exactly as given — see `TsLit::Raw`'s
+        // own doc for why: this is the one place in this printer that must
+        // NOT apply `Str`'s own escaping.
+        TsLit::Raw(text) => out.push_str(text),
     }
 }
 
@@ -1318,7 +1444,11 @@ fn render_decl_body(out: &mut String, decl: &TsDecl, depth: usize) {
             params,
             return_type,
             body,
+            is_async,
         } => {
+            if *is_async {
+                out.push_str("async ");
+            }
             out.push_str("function ");
             out.push_str(name);
             out.push('(');
@@ -1341,6 +1471,13 @@ fn render_decl_body(out: &mut String, decl: &TsDecl, depth: usize) {
         TsDecl::ExportDefault(expr) => {
             out.push_str("export default ");
             render_stmt_level_expr(out, expr, depth);
+            out.push_str(";\n");
+        }
+        TsDecl::DeclareConst { name, ty } => {
+            out.push_str("declare const ");
+            out.push_str(name);
+            out.push_str(": ");
+            render_type(out, ty);
             out.push_str(";\n");
         }
     }
@@ -2076,7 +2213,7 @@ mod tests {
     fn prints_an_array_literal() {
         let mut program = TsProgram::new();
         program.push(TsStmt::expr_stmt(
-            TsExpr::Array(vec![
+            TsExpr::array(vec![
                 TsExpr::Lit(TsLit::Num("1".to_string())),
                 TsExpr::Ident("x".to_string()),
             ]),
@@ -2247,7 +2384,7 @@ mod tests {
     fn a_nested_multiline_object_falls_back_to_single_line() {
         let mut program = TsProgram::new();
         program.push(TsStmt::expr_stmt(
-            TsExpr::Array(vec![TsExpr::multiline_object(vec![(
+            TsExpr::array(vec![TsExpr::multiline_object(vec![(
                 "a".to_string(),
                 TsExpr::Lit(TsLit::Num("1".to_string())),
             )])]),
@@ -2623,6 +2760,7 @@ mod tests {
                 }],
                 return_type: None,
                 body: vec![TsStmt::return_stmt(Some(TsExpr::Lit(TsLit::Null)), None)],
+                is_async: false,
             })),
             None,
         ));
@@ -3332,5 +3470,225 @@ mod tests {
         ));
         let printed = print(&program, "x.bynk", "", "x.ts");
         assert_eq!(printed.text, "(a === b) === c;\n");
+    }
+
+    // -- #1325: emit_test_main's own new shapes ------------------------------
+
+    #[test]
+    fn prints_a_template_literal_with_substitutions() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::expr_stmt(
+            TsExpr::TemplateLit {
+                parts: vec![
+                    String::new(),
+                    " passed, ".to_string(),
+                    " failed.".to_string(),
+                ],
+                exprs: vec![
+                    TsExpr::Ident("passed".to_string()),
+                    TsExpr::Ident("failed".to_string()),
+                ],
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "`${passed} passed, ${failed} failed.`;\n");
+    }
+
+    /// A template literal's own static parts print with no escaping applied
+    /// by the printer — see `TsExpr::TemplateLit`'s own doc for why: a
+    /// generic escaper would double the literal backslash of an
+    /// already-pre-formed JS unicode escape (`✓`), corrupting it. This
+    /// pins the real, grounded shape directly: the six ASCII characters
+    /// `✓` pass through unchanged, not doubled into `\\u2713`.
+    #[test]
+    fn a_template_literal_part_carrying_a_preformed_unicode_escape_is_not_reescaped() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::expr_stmt(
+            TsExpr::TemplateLit {
+                parts: vec!["  \\u2713 ".to_string(), String::new()],
+                exprs: vec![TsExpr::Ident("r".to_string())],
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "`  \\u2713 ${r}`;\n");
+    }
+
+    #[test]
+    fn a_raw_literal_prints_exactly_as_given_with_no_escaping() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::expr_stmt(
+            TsExpr::Lit(TsLit::Raw("\"integration \\u00b7 \"".to_string())),
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "\"integration \\u00b7 \";\n");
+    }
+
+    #[test]
+    fn prints_a_multiline_array_literal() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::const_stmt(
+            TsBindingName::Ident("modules".to_string()),
+            None,
+            TsExpr::multiline_array(vec![
+                TsExpr::object(vec![(
+                    "name".to_string(),
+                    TsExpr::Lit(TsLit::Str("a".to_string())),
+                )]),
+                TsExpr::object(vec![(
+                    "name".to_string(),
+                    TsExpr::Lit(TsLit::Str("b".to_string())),
+                )]),
+            ]),
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(
+            printed.text,
+            "const modules = [\n  { name: \"a\" },\n  { name: \"b\" },\n];\n"
+        );
+    }
+
+    /// Same reachability boundary as `TsExpr::Object`'s own `multiline`
+    /// field (see its doc) — a `multiline: true` array nested inside another
+    /// expression falls back to single-line via the depth-unaware
+    /// `render_expr` recursion.
+    #[test]
+    fn a_nested_multiline_array_falls_back_to_single_line() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::expr_stmt(
+            TsExpr::array(vec![TsExpr::multiline_array(vec![TsExpr::Lit(
+                TsLit::Num("1".to_string()),
+            )])]),
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "[[1]];\n");
+    }
+
+    #[test]
+    fn prints_a_declare_const_ambient_binding() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::decl(
+            TsDecl::DeclareConst {
+                name: "process".to_string(),
+                ty: TsType::Object(vec![TsTypeMember::prop("env", TsType::named("unknown"))]),
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "declare const process: { env: unknown };\n");
+    }
+
+    #[test]
+    fn prints_an_async_top_level_function() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::decl(
+            TsDecl::Function {
+                name: "main".to_string(),
+                params: vec![],
+                return_type: None,
+                body: vec![TsStmt::return_stmt(None, None)],
+                is_async: true,
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "async function main() {\n  return;\n}\n");
+    }
+
+    #[test]
+    fn prints_a_postfix_increment_statement() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::increment(TsExpr::Ident("passed".to_string()), None));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "passed++;\n");
+    }
+
+    /// An `Increment` inside an `InlineBlock` renders correctly through
+    /// `render_inline_stmt`'s fallback — `emit_test_main`'s own real
+    /// `{ passed++; console.log(...); }` shape.
+    #[test]
+    fn a_postfix_increment_renders_correctly_inside_an_inline_block() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::if_stmt(
+            TsExpr::Ident("cond".to_string()),
+            TsStmt::inline_block(
+                vec![
+                    TsStmt::increment(TsExpr::Ident("passed".to_string()), None),
+                    TsStmt::expr_stmt(TsExpr::Ident("next".to_string()), None),
+                ],
+                None,
+            ),
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "if (cond) { passed++; next; }\n");
+    }
+
+    /// `same_line_else` with a `Block` then-branch — `} else {` on one
+    /// physical line, distinct from the fresh-line default pinned elsewhere
+    /// in this module.
+    #[test]
+    fn same_line_else_puts_the_else_keyword_after_the_closing_brace() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::if_else_same_line_stmt(
+            TsExpr::Ident("cond".to_string()),
+            TsStmt::block(
+                vec![TsStmt::expr_stmt(TsExpr::Ident("a".to_string()), None)],
+                None,
+            ),
+            TsStmt::block(
+                vec![TsStmt::expr_stmt(TsExpr::Ident("b".to_string()), None)],
+                None,
+            ),
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "if (cond) {\n  a;\n} else {\n  b;\n}\n");
+    }
+
+    /// `same_line_else` with `InlineBlock` branches on both sides —
+    /// `emit_test_main`'s own real `if (r.pass) { ... } else { ... }` shape,
+    /// entirely on one generated line.
+    #[test]
+    fn same_line_else_with_inline_block_branches_stays_on_one_line() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::if_else_same_line_stmt(
+            TsExpr::Ident("cond".to_string()),
+            TsStmt::inline_block(
+                vec![TsStmt::expr_stmt(TsExpr::Ident("a".to_string()), None)],
+                None,
+            ),
+            TsStmt::inline_block(
+                vec![TsStmt::expr_stmt(TsExpr::Ident("b".to_string()), None)],
+                None,
+            ),
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "if (cond) { a; } else { b; }\n");
+    }
+
+    /// `same_line_else` with a brace-free `then_branch` falls back to the
+    /// ordinary fresh-line rendering — nothing real needs `<inline-stmt>
+    /// else {`, and the printer doesn't claim to support it (see
+    /// `TsStmtKind::If`'s own doc).
+    #[test]
+    fn same_line_else_with_a_brace_free_then_branch_falls_back_to_fresh_line() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::if_else_same_line_stmt(
+            TsExpr::Ident("cond".to_string()),
+            TsStmt::continue_stmt(None),
+            TsStmt::block(
+                vec![TsStmt::expr_stmt(TsExpr::Ident("b".to_string()), None)],
+                None,
+            ),
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "if (cond) continue;\nelse {\n  b;\n}\n");
     }
 }

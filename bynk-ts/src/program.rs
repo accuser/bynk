@@ -104,10 +104,21 @@ pub(crate) enum TsStmtKind {
     /// `events_fanout.rs`'s own grounding never used one, so P7.8 named
     /// omitting it a deliberate choice, not an oversight; this slice's own
     /// real content needs it for real.
+    ///
+    /// `same_line_else` is #1325's own real gap: `workers_entry.rs`'s own
+    /// real `else` sits on its own fresh line (`}\nelse {`), but
+    /// `emit_test_main`'s own real content wants the conventional `} else
+    /// {` — two already-real files disagreeing on the same construct, the
+    /// same class of tension the `Await`-under-`As` correction (#1323/
+    /// #1324) found for parenthesisation. `false` (fresh line) is the
+    /// existing, already-tested default via [`TsStmt::if_else_stmt`]; `true`
+    /// (same line) is reached only through
+    /// [`TsStmt::if_else_same_line_stmt`].
     If {
         cond: TsExpr,
         then_branch: Box<TsStmt>,
         else_branch: Option<Box<TsStmt>>,
+        same_line_else: bool,
     },
     /// `for (const <binding> of <iter>) <body>`.
     ForOf {
@@ -217,6 +228,15 @@ pub(crate) enum TsStmtKind {
     /// statement per line. Only reachable through [`TsStmt::if_stmt`]/
     /// [`TsStmt::if_else_stmt`]'s own branches in real content today.
     InlineBlock(Vec<TsStmt>),
+    /// `<expr>++;` — a postfix increment used as a whole statement. #1325's
+    /// own real, narrow gap: `emit_test_main`'s own `passed++;`/`failed++;`
+    /// counters. No prefix form, no decrement, no expression-position use
+    /// (every real site increments a bare counter as its own statement) —
+    /// [`TsExpr::Unary`] stays prefix-only (`!`/`typeof`), since a postfix
+    /// operator used as a *statement* is a different grammatical position
+    /// from a prefix operator used as an *operand*, not a shape `Unary`
+    /// could represent by adding a variant.
+    Increment(TsExpr),
 }
 
 /// One `case`/`default` arm of a `TsStmtKind::Switch`. `test: None` is the
@@ -295,6 +315,7 @@ impl TsStmt {
                 cond,
                 then_branch: Box::new(then_branch),
                 else_branch: None,
+                same_line_else: false,
             },
             span,
         }
@@ -311,6 +332,28 @@ impl TsStmt {
                 cond,
                 then_branch: Box::new(then_branch),
                 else_branch: Some(Box::new(else_branch)),
+                same_line_else: false,
+            },
+            span,
+        }
+    }
+
+    /// [`TsStmt::if_else_stmt`]'s own sibling with `} else {` on one line —
+    /// #1325's own real gap, `emit_test_main`'s own real `else` spacing. See
+    /// `TsStmtKind::If`'s own doc for why this needs to be a distinct
+    /// constructor rather than a change to the existing default.
+    pub fn if_else_same_line_stmt(
+        cond: TsExpr,
+        then_branch: TsStmt,
+        else_branch: TsStmt,
+        span: Option<Span>,
+    ) -> Self {
+        Self {
+            kind: TsStmtKind::If {
+                cond,
+                then_branch: Box::new(then_branch),
+                else_branch: Some(Box::new(else_branch)),
+                same_line_else: true,
             },
             span,
         }
@@ -396,6 +439,13 @@ impl TsStmt {
     pub fn inline_block(stmts: Vec<TsStmt>, span: Option<Span>) -> Self {
         Self {
             kind: TsStmtKind::InlineBlock(stmts),
+            span,
+        }
+    }
+
+    pub fn increment(expr: TsExpr, span: Option<Span>) -> Self {
+        Self {
+            kind: TsStmtKind::Increment(expr),
             span,
         }
     }
@@ -496,7 +546,48 @@ pub enum TsExpr {
         multiline: bool,
     },
     /// An array literal, e.g. `[{ binding: "x", service: "y" }]`.
-    Array(Vec<TsExpr>),
+    /// `multiline: false` (the ordinary case, via [`TsExpr::array`]) always
+    /// prints on one line, comma-separated — every real site before this
+    /// slice. `multiline: true` (via [`TsExpr::multiline_array`]) is #1325's
+    /// own real gap: `emit_test_main`'s own `modules` array (one `{ name,
+    /// run }` entry per test, one per line, each with its own trailing
+    /// comma, closing `]` at the statement's own indent) — the exact same
+    /// shape [`TsExpr::Object`]'s own `multiline` field already represents
+    /// for object literals, just for an array. Same reachability boundary as
+    /// `Object`'s own `multiline` field: only `render_stmt_level_expr`
+    /// (which carries `depth`) honours it; a `multiline: true` array nested
+    /// inside another expression falls back to single-line via the ordinary
+    /// depth-unaware `render_expr` recursion.
+    Array {
+        items: Vec<TsExpr>,
+        multiline: bool,
+    },
+    /// `` `text${expr}more text` `` — a template literal. `parts.len()` is
+    /// always `exprs.len() + 1` (`parts[0]` before the first substitution,
+    /// `parts[i+1]` after `exprs[i]`, …). #1325's own real, first grounding
+    /// for this shape (`bynk-ts`'s own module doc named `TemplateLit`
+    /// explicitly "unused in the grounding file" until now):
+    /// `emit_test_main`'s own `` `${m.name}:` ``/`` `${passed} passed,
+    /// ${failed} failed.` `` lines.
+    ///
+    /// **`parts` are printed verbatim — the printer applies no escaping of
+    /// its own.** The same "the field is already a raw-text slot" reasoning
+    /// [`TsDecl::Import`]'s own `names` field doc already uses, not a new
+    /// pattern: `emit_test_main`'s own two real ✓/✗ substitution lines embed
+    /// a literal `✓`/`✗` JS unicode escape as pre-formed ASCII
+    /// text (six literal characters, not the actual glyph) — an escaper
+    /// mirroring [`TsLit::Str`]'s own (which escapes every `\` it sees)
+    /// would double that literal backslash into `\\u2713`, corrupting the
+    /// exact byte-golden output this slice must match. Every real part in
+    /// `emit_test_main` is static, compiler-authored text (never Bynk user
+    /// data), so there is no real content this boundary loses safety on
+    /// today — a future caller passing untrusted/dynamic text into `parts`
+    /// is responsible for pre-escaping backtick/`` ${ ``/`\` itself before
+    /// constructing one.
+    TemplateLit {
+        parts: Vec<String>,
+        exprs: Vec<TsExpr>,
+    },
     Await(Box<TsExpr>),
     /// `expr as ty`.
     As {
@@ -599,6 +690,26 @@ impl TsExpr {
             multiline: true,
         }
     }
+
+    /// The ordinary, single-line array literal — every real site before
+    /// #1325.
+    pub fn array(items: Vec<TsExpr>) -> Self {
+        TsExpr::Array {
+            items,
+            multiline: false,
+        }
+    }
+
+    /// One entry per line, each with its own trailing comma — see
+    /// [`TsExpr::Array`]'s own doc for the real shape and the
+    /// depth-awareness this needs at the print site. #1325's own real
+    /// grounding: `emit_test_main`'s own `modules` array.
+    pub fn multiline_array(items: Vec<TsExpr>) -> Self {
+        TsExpr::Array {
+            items,
+            multiline: true,
+        }
+    }
 }
 
 /// One entry of a [`TsExpr::Object`] literal. Only `Prop` existed before
@@ -690,6 +801,19 @@ pub enum TsLit {
     Num(String),
     Null,
     Bool(bool),
+    /// The complete literal text, printed exactly as given — no quoting, no
+    /// escaping, nothing added or removed. #1325's own real, narrow gap:
+    /// `emit_test_main`'s own `const PREFIX = "integration · ";` embeds
+    /// a literal JS unicode escape (six ASCII characters, `·`) as
+    /// pre-formed text — [`TsLit::Str`]'s own escaper (which turns every `\`
+    /// it sees into `\\`) would double that literal backslash, corrupting
+    /// this specific byte-golden output. The same "already a raw-text slot"
+    /// boundary [`TsExpr::TemplateLit`]'s own `parts` field documents, just
+    /// for a whole literal (quotes included) rather than a template
+    /// literal's own static segments. One real site — not a general
+    /// escaping bypass for ordinary string content, which stays on
+    /// `TsLit::Str`.
+    Raw(String),
 }
 
 /// A type-position node. `Named` (extended with type arguments — a real gap
@@ -1014,16 +1138,20 @@ pub enum TsDecl {
         constructor: Option<TsClassCtor>,
         methods: Vec<TsClassMethod>,
     },
-    /// `function name(params): ret { body }` — a top-level function
-    /// declaration. No `is_async` field: `workers.rs`'s own one real site
-    /// (`compose`) is never async — extend narrowly, add it when a future
-    /// slice's own grounding needs it, the same posture every other
-    /// narrowly-scoped addition here takes.
+    /// `function name(params): ret { body }` (`is_async: false`) or `async
+    /// function name(params): ret { body }` (`is_async: true`) — a top-level
+    /// function declaration. `is_async` added by #1325: `workers.rs`'s own
+    /// one real site (`compose`) is never async, so the field didn't exist
+    /// until `emit_test_main`'s own top-level `async function main() {...}`
+    /// needed it — the exact "extend narrowly, add it when a future slice's
+    /// own grounding needs it" deferral this variant's own history already
+    /// named.
     Function {
         name: String,
         params: Vec<TsParam>,
         return_type: Option<TsType>,
         body: Vec<TsStmt>,
+        is_async: bool,
     },
     /// `type name = ty;` — a top-level type alias. `workers.rs`'s own real
     /// site: the `DurableObjectNamespace` local fallback type (emitted only
@@ -1038,6 +1166,16 @@ pub enum TsDecl {
     /// variant, not `Export(Box::new(ConstDecl { .. }))` with a synthetic
     /// name that would print wrong.
     ExportDefault(TsExpr),
+    /// `declare const name: ty;` — an ambient binding with no initialiser,
+    /// narrowing a global TypeScript otherwise doesn't know about. #1325's
+    /// own real, narrow site: `emit_test_main`'s own `declare const process:
+    /// { exit(code: number): never; env: { [k: string]: string | undefined
+    /// } };`, narrowing Node's `process` global without a `@types/node`
+    /// dependency. Distinct from [`TsDecl::ConstDecl`] (always has a real
+    /// `init` expression) — a `declare const` has none, by definition; a
+    /// `TsDecl::ConstDecl` with a synthetic placeholder `init` would print
+    /// wrong (`= <something>;` where nothing should appear at all).
+    DeclareConst { name: String, ty: TsType },
 }
 
 /// Which family of residual, not-yet-converted emission a [`TsStmt::verbatim`]

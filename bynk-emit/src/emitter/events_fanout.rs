@@ -159,7 +159,7 @@ fn event_routes_table(routes: &BTreeMap<String, Vec<(String, String)>>) -> TsExp
                         ])
                     })
                     .collect();
-                (format!("{name:?}"), TsExpr::Array(entries))
+                (format!("{name:?}"), TsExpr::array(entries))
             })
             .collect(),
     )
