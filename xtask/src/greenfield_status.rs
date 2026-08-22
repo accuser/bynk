@@ -1723,7 +1723,7 @@ fn ts_writes(root: &Path) -> Probe {
 /// `as any` cast, a bare `: any` type annotation, or `any` in generic type-argument
 /// position (`Array<any>`, `Record<string, any[]>`, `Promise<any>`).
 ///
-/// Three patterns, not `as any` alone, following two rounds of the same finding.
+/// Six patterns, not `as any` alone, following three rounds of the same finding.
 /// Round one (Q3, `design/tracks/the-typescript-tree.md` §3.3) found `as any` alone
 /// under-counts R7.1 and added bare `: any`. Round two (review of #1297) found *that*
 /// still under-counts: `bynk-emit/src/emitter/lower.rs`'s `joinOn`/`leftJoin`/`groupBy`
@@ -1732,7 +1732,18 @@ fn ts_writes(root: &Path) -> Probe {
 /// under the round-one predicate. Widened to also match `<any`, `any>` and `any[]` —
 /// each checked against the live tree for false positives (no non-`any`-typed English
 /// word starts with `any` immediately after `<` or ends in `any` immediately before
-/// `>`/`[]` anywhere in `bynk-emit/src` today) rather than assumed safe.
+/// `>`/`[]` anywhere in `bynk-emit/src` today) rather than assumed safe. Round three
+/// (review of #1322) found a fourth spelling: once a site builds a real `bynk_ts::
+/// TsType` node instead of writing TypeScript text directly, an emitted `any` no
+/// longer appears as Rust-source `as any`/`: any` at all — `workers.rs`'s own
+/// `TsType::named("any")` calls (#1321) emit the identical `payload as any`/
+/// `let __who: any` text as before, byte-for-byte, but the *Rust spelling* that
+/// produces it no longer matches any of the five text patterns above, so the probe
+/// silently uncounted three real, still-live R7.1 residuals. Every later Arc C slice
+/// converting an `any`-emitting `writeln!`/`format!` site the same way would keep
+/// deflating this count the same way, so the fix generalises rather than special-
+/// cases these three lines: match the construction spelling itself
+/// (`named("any"`), not just raw emitted text.
 ///
 /// Split out from [`ts_any_violations`] so a test can exercise the predicate directly,
 /// without file I/O.
@@ -1742,7 +1753,8 @@ fn line_violates_ts_any(line: &str) -> bool {
             || line.contains(": any")
             || line.contains("<any")
             || line.contains("any>")
-            || line.contains("any[]"))
+            || line.contains("any[]")
+            || line.contains("named(\"any\""))
 }
 
 /// [`ts_any`]'s counting logic, over an explicit `(relative path, contents)` list — see
@@ -3225,6 +3237,25 @@ commons app.demo {
         // Must not regress the round-one patterns while widening.
         assert!(line_violates_ts_any("(value as any).field"));
         assert!(line_violates_ts_any("(e: any) => {}"));
+    }
+
+    /// Regression for review of #1322, finding 2: once a site builds a real
+    /// `bynk_ts::TsType` node instead of writing TypeScript text directly, the
+    /// emitted `any` no longer appears as Rust-source `as any`/`: any` — the round-
+    /// one/round-two patterns above all match *emitted-text* spellings, none of
+    /// which appear in `TsType::named("any")`. `workers.rs`'s own three real sites
+    /// (#1321) were silently uncounted until this pattern was added.
+    #[test]
+    fn line_violates_ts_any_catches_the_named_any_construction_spelling() {
+        assert!(line_violates_ts_any(
+            "    let mut args = vec![as_expr(ident(\"payload\"), TsType::named(\"any\"))];"
+        ));
+        assert!(line_violates_ts_any(
+            "        Some(TsType::named(\"any\")),"
+        ));
+        // Must not regress the round-one/round-two patterns while widening.
+        assert!(line_violates_ts_any("(value as any).field"));
+        assert!(line_violates_ts_any("\"Array<any>\""));
     }
 
     /// A comment mentioning either pattern in prose — the same self-reference-shaped
