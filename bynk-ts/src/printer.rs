@@ -47,6 +47,32 @@
 //!   `Verbatim` content — still.** `Verbatim` text renders exactly as
 //!   written (P7.7's own boundary, unchanged); everything above applies
 //!   only to the new, real node kinds this slice adds.
+//! - **A shorthand async method entry in an object literal
+//!   (`TsObjectEntry::Method`) prints exactly like a class method** —
+//!   `async name(params) { <body> },` with a trailing comma, body indented
+//!   one level deeper than the entry itself, closing `},` back at the
+//!   entry's own indent. Added for Arc C's own third slice (#1321,
+//!   `workers.rs`): the `compose`-returned surface object's dominant real
+//!   shape, one entry per wrapper.
+//! - **`?.`/`?.[...]` print with no surrounding spaces** — `object?.property`/
+//!   `object?.[index]`, matching plain `Member`/`Index`'s own spacing
+//!   exactly, just with the extra `?`. Added for #1321: `workers.rs`'s own
+//!   secret-probe idiom.
+//! - **An optional field in a type-position object literal prints `key?:
+//!   ty`** — the direct type-side counterpart to `TsParam.optional`'s
+//!   already-established `name?: ty` for parameters. Added for #1321.
+//! - **An arrow function prints `(params) => body` on one line, expression
+//!   body only** — no block-body form exists yet (nothing built here needs
+//!   one). Added for #1321.
+//! - **A nested `Binary` operand of another `Binary` parenthesizes only
+//!   when the inner operator's precedence is not strictly higher than the
+//!   outer's** (`render_binary_operand`) — every other operand position
+//!   (`Member`/`Index`/`Call`/`New`/`Await`/`Unary`, `render_operand`) still
+//!   always parenthesizes a nested `Binary`/`As`, unchanged. Added for
+//!   #1321: `workers.rs`'s own `__authz === null ||
+//!   !__authz.startsWith(...)` has no parens around the comparison in the
+//!   byte-golden fixtures, and `??` mixed with `||`/`&&` still always
+//!   parenthesizes (TS forbids that combination unparenthesized).
 //!
 //! None of the above is claimed as *the* TypeScript style this printer will
 //! use forever — it's what this slice's own grounding file needs, named
@@ -57,8 +83,8 @@
 //! own node list grows: file by file, against real content.
 
 use crate::program::{
-    TsBinaryOp, TsBindingName, TsDecl, TsExpr, TsLit, TsParam, TsProgram, TsStmt, TsStmtKind,
-    TsType, TsUnaryOp,
+    TsBinaryOp, TsBindingName, TsDecl, TsExpr, TsLit, TsObjectEntry, TsParam, TsProgram, TsStmt,
+    TsStmtKind, TsType, TsUnaryOp,
 };
 use crate::source_map::SourceMapBuilder;
 
@@ -114,8 +140,21 @@ pub fn print(
         // `Verbatim` (P7.7's own boundary — `Verbatim` content's own
         // spacing is not this printer's decision).
         if let Some(next) = program.stmts.get(i + 1) {
-            let both_imports = matches!(&stmt.kind, TsStmtKind::Decl(TsDecl::Import { .. }))
-                && matches!(&next.kind, TsStmtKind::Decl(TsDecl::Import { .. }));
+            // #1321: `workers.rs`'s own header has `import { ... } from
+            // "runtime"` (named) adjacent to `import * as handlers from
+            // "./handlers.js"` (namespace) adjacent to one `import * as
+            // {ns} from "..."` per referenced unit — all import-like, all
+            // real-content-adjacent with no blank line, matching the same
+            // "no blank line between two adjacent imports" rule
+            // `events_fanout.rs`'s own two named imports already exercised.
+            fn is_import_decl(kind: &TsStmtKind) -> bool {
+                matches!(
+                    kind,
+                    TsStmtKind::Decl(TsDecl::Import { .. })
+                        | TsStmtKind::Decl(TsDecl::ImportNamespace { .. })
+                )
+            }
+            let both_imports = is_import_decl(&stmt.kind) && is_import_decl(&next.kind);
             let both_comments = matches!(&stmt.kind, TsStmtKind::Comment(_))
                 && matches!(&next.kind, TsStmtKind::Comment(_));
             if !both_imports && !both_comments && !matches!(stmt.kind, TsStmtKind::Verbatim { .. })
@@ -178,7 +217,14 @@ fn render_stmt(out: &mut String, stmt: &TsStmt, depth: usize) {
             out.push_str("return");
             if let Some(expr) = expr {
                 out.push(' ');
-                render_expr(out, expr);
+                // #1321: `return { ... }` needs the same depth-aware
+                // multiline-object handling `Const`/`Let`/`Assign` already
+                // get — `workers.rs`'s own `emit_worker_compose` returns
+                // its whole compose surface this way (one shorthand async
+                // `Method` entry per wrapper, one per line), a shape
+                // `render_expr`'s plain recursion can't render correctly
+                // (see `TsExpr::Object`'s own doc).
+                render_stmt_level_expr(out, expr, depth);
             }
             out.push_str(";\n");
         }
@@ -210,9 +256,12 @@ fn render_stmt(out: &mut String, stmt: &TsStmt, depth: usize) {
             out.push_str(&indent(depth));
             out.push_str("try");
             render_block_body(out, try_block, depth);
-            out.push_str(" catch (");
-            out.push_str(catch_param);
-            out.push(')');
+            out.push_str(" catch");
+            if let Some(p) = catch_param {
+                out.push_str(" (");
+                out.push_str(p);
+                out.push(')');
+            }
             render_block_body(out, catch_block, depth);
             out.push('\n');
         }
@@ -359,22 +408,82 @@ fn render_binding_name(out: &mut String, name: &TsBindingName) {
 }
 
 /// Whether `expr`, printed in a position member access, indexing, a call
-/// callee, `await`, or unary `!` binds tighter than, needs its own parens
-/// to preserve the built tree's meaning — `Binary`/`As` both bind looser
-/// than any of those (review of #1314, finding 2: `!a ?? b`/`a ?? b.c`/
-/// `await a ?? b` all silently changed meaning without this). Deliberately
-/// conservative: with only one binary operator (`??`) in this slice's
-/// algebra, a nested `Binary` is always parenthesized here even in a
-/// left-associative chain that would read the same without it (`a ?? b ??
-/// c`) — correct in every case that class of bug can hit, at the cost of
-/// an occasional pair that a real precedence table (once more than one
-/// binary operator exists) could omit.
+/// callee, `await`, or unary `!`/`typeof` binds tighter than, needs its own
+/// parens to preserve the built tree's meaning — `Binary`/`As` both bind
+/// looser than any of those (review of #1314, finding 2: `!a ?? b`/
+/// `a ?? b.c`/`await a ?? b` all silently changed meaning without this).
+/// Deliberately conservative for *these* contexts specifically: a nested
+/// `Binary` is always parenthesized here regardless of which operator it
+/// is — correct in every case that class of bug can hit (none of these
+/// six positions is ever real, grounded content in this file today), at
+/// the cost of an occasional pair a real precedence table could omit.
+///
+/// **Not** used for `Binary`'s own left/right operands — see
+/// [`render_binary_operand`]/[`binary_precedence`] for why that context
+/// needed to become precedence-aware once #1321 added more than one binary
+/// operator (this function's own always-parenthesize rule would print
+/// `(__authz === null) || …` for `workers.rs`'s own real
+/// `__authz === null || !__authz.startsWith(...)`, which the byte-golden
+/// fixtures don't have parens around).
 fn needs_parens_as_operand(expr: &TsExpr) -> bool {
     matches!(expr, TsExpr::Binary { .. } | TsExpr::As { .. })
 }
 
 fn render_operand(out: &mut String, expr: &TsExpr) {
     if needs_parens_as_operand(expr) {
+        out.push('(');
+        render_expr(out, expr);
+        out.push(')');
+    } else {
+        render_expr(out, expr);
+    }
+}
+
+/// Standard JS/TS relative precedence for the operators [`TsBinaryOp`]
+/// currently has — only used to decide a nested `Binary` operand's own
+/// parenthesisation (see [`render_binary_operand`]); higher binds tighter.
+fn binary_precedence(op: TsBinaryOp) -> u8 {
+    match op {
+        TsBinaryOp::NullishCoalescing => 1,
+        TsBinaryOp::Or => 2,
+        TsBinaryOp::And => 3,
+        TsBinaryOp::StrictEq | TsBinaryOp::StrictNotEq => 4,
+    }
+}
+
+/// Render `expr` as one side of a `Binary { op: outer_op, .. }` — #1321's
+/// own real gap (`workers.rs`'s own `__authz === null ||
+/// !__authz.startsWith(...)` / `__authz !== null &&
+/// __authz.startsWith(...)`): with only `??` in the algebra,
+/// [`render_operand`]'s "always parenthesize a nested `Binary`" rule never
+/// mismatched real content; a comparison (`===`/`!==`) nested inside `||`/
+/// `&&` needs *no* parens to preserve meaning (`===` binds tighter), and
+/// the byte-golden fixtures have none — so this context needed to become
+/// precedence-aware rather than reusing [`render_operand`] unchanged.
+/// `??` mixed with `||`/`&&` is a real TS syntax error without explicit
+/// parens (not just a precedence question), so that combination always
+/// parenthesizes regardless of the numeric table above; nothing in
+/// `bynk-emit` builds that combination today, but a future caller that did
+/// still gets correct, parseable output rather than a silent `tsc` error.
+///
+/// Equal precedence still parenthesizes (`<=`, not `<`) — deliberately
+/// preserving [`render_operand`]'s own pre-#1321 "always parenthesize a
+/// same/lower-precedence nested chain, even where associativity would read
+/// the same without it" conservatism for that case (pinned by
+/// `parenthesises_a_nested_binary_operand_of_another_binary`'s own test,
+/// unchanged by this slice); only a *strictly higher*-precedence nested
+/// operator — the one real, grounded case #1321 needs — newly omits parens.
+fn render_binary_operand(out: &mut String, outer_op: TsBinaryOp, expr: &TsExpr) {
+    let needs_parens = match expr {
+        TsExpr::As { .. } => true,
+        TsExpr::Binary { op: inner_op, .. } => {
+            let mixes_nullish = (outer_op == TsBinaryOp::NullishCoalescing)
+                != (*inner_op == TsBinaryOp::NullishCoalescing);
+            mixes_nullish || binary_precedence(*inner_op) <= binary_precedence(outer_op)
+        }
+        _ => false,
+    };
+    if needs_parens {
         out.push('(');
         render_expr(out, expr);
         out.push(')');
@@ -406,7 +515,10 @@ fn render_stmt_level_expr(out: &mut String, expr: &TsExpr, depth: usize) {
 /// last), closing brace back at `depth`'s own indent. `events_fanout.rs`'s
 /// own `__eventRoutes` table is the real, grounded shape this exists for
 /// (#1317) — TypeScript's ordinary multi-line object-literal convention.
-fn render_multiline_object(out: &mut String, entries: &[(String, TsExpr)], depth: usize) {
+/// #1321 (`workers.rs`): entries may now be [`TsObjectEntry`], not just
+/// `Prop` — the `compose`-returned surface object is one shorthand async
+/// `Method` entry per wrapper, one per line.
+fn render_multiline_object(out: &mut String, entries: &[TsObjectEntry], depth: usize) {
     // Deliberately no empty-entries shortcut (review of #1317/#1318, finding
     // 1): `events_fanout.rs`'s own `__eventRoutes` table is reachable with
     // zero entries (a context can `ctx_uses_emit` while publishing only
@@ -420,15 +532,91 @@ fn render_multiline_object(out: &mut String, entries: &[(String, TsExpr)], depth
     // means never taking the single-line shortcut here, not even for zero
     // entries.
     out.push_str("{\n");
-    for (k, v) in entries {
-        out.push_str(&indent(depth + 1));
-        out.push_str(k);
-        out.push_str(": ");
-        render_expr(out, v);
-        out.push_str(",\n");
+    for entry in entries {
+        match entry {
+            TsObjectEntry::Prop(k, v) => {
+                out.push_str(&indent(depth + 1));
+                out.push_str(k);
+                out.push_str(": ");
+                render_expr(out, v);
+                out.push_str(",\n");
+            }
+            TsObjectEntry::Shorthand(name) => {
+                out.push_str(&indent(depth + 1));
+                out.push_str(name);
+                out.push_str(",\n");
+            }
+            TsObjectEntry::Spread(e) => {
+                out.push_str(&indent(depth + 1));
+                out.push_str("...");
+                render_expr(out, e);
+                out.push_str(",\n");
+            }
+            // `workers.rs`'s own dominant real shape (Decision A, gap 1):
+            // `async {name}({params}) { <body> },`, body indented one
+            // level deeper still — the same shape a class method's own
+            // body gets (`render_decl_body`'s `TsDecl::Class` arm), here
+            // for one object-literal entry instead.
+            TsObjectEntry::Method {
+                name,
+                is_async,
+                params,
+                body,
+            } => {
+                out.push_str(&indent(depth + 1));
+                if *is_async {
+                    out.push_str("async ");
+                }
+                out.push_str(name);
+                out.push('(');
+                render_params(out, params);
+                out.push(')');
+                render_block_stmts(out, body, depth + 1);
+                out.push_str(",\n");
+            }
+        }
     }
     out.push_str(&indent(depth));
     out.push('}');
+}
+
+/// One [`TsObjectEntry`] rendered inline (no leading indent, no trailing
+/// comma/newline) — [`render_expr`]'s own `TsExpr::Object` arm's per-entry
+/// renderer, shared so the single-line and multi-line forms agree on what
+/// each entry kind looks like. A `Method` entry has no real single-line
+/// call site today (`workers.rs`'s own method entries are always the
+/// multi-line `return { ... }` shape), but is still rendered plausibly
+/// (not panicking) rather than left unreachable, matching this crate's own
+/// "no wildcard, but still sensible on an unanticipated shape" posture
+/// elsewhere (e.g. `render_block_body`'s own non-`Block` fallback).
+fn render_object_entry_inline(out: &mut String, entry: &TsObjectEntry) {
+    match entry {
+        TsObjectEntry::Prop(k, v) => {
+            out.push_str(k);
+            out.push_str(": ");
+            render_expr(out, v);
+        }
+        TsObjectEntry::Shorthand(name) => out.push_str(name),
+        TsObjectEntry::Spread(e) => {
+            out.push_str("...");
+            render_expr(out, e);
+        }
+        TsObjectEntry::Method {
+            name,
+            is_async,
+            params,
+            body,
+        } => {
+            if *is_async {
+                out.push_str("async ");
+            }
+            out.push_str(name);
+            out.push('(');
+            render_params(out, params);
+            out.push(')');
+            render_block_stmts(out, body, 0);
+        }
+    }
 }
 
 fn render_expr(out: &mut String, expr: &TsExpr) {
@@ -439,11 +627,28 @@ fn render_expr(out: &mut String, expr: &TsExpr) {
             out.push('.');
             out.push_str(property);
         }
+        TsExpr::OptionalMember { object, property } => {
+            render_operand(out, object);
+            out.push_str("?.");
+            out.push_str(property);
+        }
         TsExpr::Index { object, index } => {
             render_operand(out, object);
             out.push('[');
             render_expr(out, index);
             out.push(']');
+        }
+        TsExpr::OptionalIndex { object, index } => {
+            render_operand(out, object);
+            out.push_str("?.[");
+            render_expr(out, index);
+            out.push(']');
+        }
+        TsExpr::Arrow { params, body } => {
+            out.push('(');
+            render_params(out, params);
+            out.push_str(") => ");
+            render_expr(out, body);
         }
         TsExpr::Call { callee, args } => {
             render_operand(out, callee);
@@ -469,13 +674,11 @@ fn render_expr(out: &mut String, expr: &TsExpr) {
                 out.push_str("{}");
             } else {
                 out.push_str("{ ");
-                for (i, (k, v)) in entries.iter().enumerate() {
+                for (i, entry) in entries.iter().enumerate() {
                     if i > 0 {
                         out.push_str(", ");
                     }
-                    out.push_str(k);
-                    out.push_str(": ");
-                    render_expr(out, v);
+                    render_object_entry_inline(out, entry);
                 }
                 out.push_str(" }");
             }
@@ -509,15 +712,20 @@ fn render_expr(out: &mut String, expr: &TsExpr) {
         TsExpr::Unary { op, expr } => {
             out.push_str(match op {
                 TsUnaryOp::Not => "!",
+                TsUnaryOp::Typeof => "typeof ",
             });
             render_operand(out, expr);
         }
         TsExpr::Binary { op, left, right } => {
-            render_operand(out, left);
+            render_binary_operand(out, *op, left);
             out.push_str(match op {
                 TsBinaryOp::NullishCoalescing => " ?? ",
+                TsBinaryOp::Or => " || ",
+                TsBinaryOp::And => " && ",
+                TsBinaryOp::StrictEq => " === ",
+                TsBinaryOp::StrictNotEq => " !== ",
             });
-            render_operand(out, right);
+            render_binary_operand(out, *op, right);
         }
         TsExpr::Lit(lit) => render_lit(out, lit),
     }
@@ -590,11 +798,14 @@ fn render_type(out: &mut String, ty: &TsType) {
                 out.push_str("{}");
             } else {
                 out.push_str("{ ");
-                for (i, (k, t)) in members.iter().enumerate() {
+                for (i, (k, t, optional)) in members.iter().enumerate() {
                     if i > 0 {
                         out.push_str("; ");
                     }
                     out.push_str(k);
+                    if *optional {
+                        out.push('?');
+                    }
                     out.push_str(": ");
                     render_type(out, t);
                 }
@@ -687,6 +898,13 @@ fn render_decl_body(out: &mut String, decl: &TsDecl, depth: usize) {
             out.push_str(from);
             out.push_str("\";\n");
         }
+        TsDecl::ImportNamespace { alias, from } => {
+            out.push_str("import * as ");
+            out.push_str(alias);
+            out.push_str(" from \"");
+            out.push_str(from);
+            out.push_str("\";\n");
+        }
         TsDecl::Export(inner) => {
             out.push_str("export ");
             render_decl_body(out, inner, depth);
@@ -770,6 +988,31 @@ fn render_decl_body(out: &mut String, decl: &TsDecl, depth: usize) {
             }
             out.push_str(&indent(depth));
             out.push_str("}\n");
+        }
+        TsDecl::Function {
+            name,
+            params,
+            return_type,
+            body,
+        } => {
+            out.push_str("function ");
+            out.push_str(name);
+            out.push('(');
+            render_params(out, params);
+            out.push(')');
+            if let Some(rt) = return_type {
+                out.push_str(": ");
+                render_type(out, rt);
+            }
+            render_block_stmts(out, body, depth);
+            out.push('\n');
+        }
+        TsDecl::TypeAlias { name, ty } => {
+            out.push_str("type ");
+            out.push_str(name);
+            out.push_str(" = ");
+            render_type(out, ty);
+            out.push_str(";\n");
         }
     }
 }
@@ -982,6 +1225,7 @@ mod tests {
                 ty: TsType::Object(vec![(
                     "events".to_string(),
                     TsType::array(TsType::named("FanoutEvent")),
+                    false,
                 )]),
             },
             None,
@@ -1067,7 +1311,7 @@ mod tests {
                 )],
                 None,
             ),
-            "e",
+            Some("e"),
             TsStmt::block(
                 vec![TsStmt::expr_stmt(
                     TsExpr::Call {
@@ -1102,8 +1346,8 @@ mod tests {
                     (
                         "envelope".to_string(),
                         TsType::Object(vec![
-                            ("eventId".to_string(), TsType::named("string")),
-                            ("publisherId".to_string(), TsType::named("string")),
+                            ("eventId".to_string(), TsType::named("string"), false),
+                            ("publisherId".to_string(), TsType::named("string"), false),
                         ]),
                     ),
                 ],
@@ -1233,6 +1477,7 @@ mod tests {
                         ty: TsType::Object(vec![(
                             "events".to_string(),
                             TsType::array(TsType::named("FanoutEvent")),
+                            false,
                         )]),
                     },
                     None,
@@ -1335,7 +1580,7 @@ mod tests {
                                                 )],
                                                 None,
                                             ),
-                                            "e",
+                                            Some("e"),
                                             TsStmt::block(
                                                 vec![TsStmt::expr_stmt(
                                                     TsExpr::Call {
@@ -1555,7 +1800,11 @@ mod tests {
         let ty = TsType::Union(vec![
             TsType::named("string"),
             TsType::named("number"),
-            TsType::Object(vec![("tag".to_string(), TsType::named("\"literal\""))]),
+            TsType::Object(vec![(
+                "tag".to_string(),
+                TsType::named("\"literal\""),
+                false,
+            )]),
         ]);
         assert_eq!(print_type(&ty), "string | number | { tag: \"literal\" }");
     }
@@ -1729,7 +1978,7 @@ mod tests {
                 },
                 None,
             ),
-            "e",
+            Some("e"),
             TsStmt::expr_stmt(
                 TsExpr::Call {
                     callee: Box::new(TsExpr::Ident("handle".to_string())),
@@ -1852,5 +2101,264 @@ mod tests {
         ));
         let printed = print(&program, "x.bynk", "", "x.ts");
         assert_eq!(printed.text, "\"line one\\nline two\\ttabbed\\r\";\n");
+    }
+
+    // -- Arc C slice 3 (#1321, `workers.rs`): the five new shapes Decision A
+    // names, plus the real gaps found beyond it (`TsDecl::Function`/
+    // `TsDecl::TypeAlias`/`TsDecl::ImportNamespace`, the parameterless
+    // `catch {}` form, and the two new `TsUnaryOp`/four new `TsBinaryOp`
+    // operators). --
+
+    #[test]
+    fn prints_a_shorthand_async_method_entry_in_a_multiline_object() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::return_stmt(
+            Some(TsExpr::multiline_object_entries(vec![
+                TsObjectEntry::Method {
+                    name: "foo".to_string(),
+                    is_async: true,
+                    params: vec![TsParam {
+                        name: "a".to_string(),
+                        ty: Some(TsType::named("string")),
+                        optional: false,
+                    }],
+                    body: vec![TsStmt::return_stmt(
+                        Some(TsExpr::Ident("a".to_string())),
+                        None,
+                    )],
+                },
+            ])),
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(
+            printed.text,
+            "return {\n  async foo(a: string) {\n    return a;\n  },\n};\n"
+        );
+    }
+
+    #[test]
+    fn prints_shorthand_and_spread_entries_inline() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::expr_stmt(
+            TsExpr::object_entries(vec![
+                TsObjectEntry::Spread(TsExpr::Ident("deps".to_string())),
+                TsObjectEntry::Shorthand("cap1".to_string()),
+                TsObjectEntry::Prop(
+                    "identity".to_string(),
+                    TsExpr::Ident("__caller".to_string()),
+                ),
+            ]),
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "{ ...deps, cap1, identity: __caller };\n");
+    }
+
+    #[test]
+    fn prints_an_expression_bodied_arrow() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::expr_stmt(
+            TsExpr::Arrow {
+                params: vec![TsParam {
+                    name: "events".to_string(),
+                    ty: Some(TsType::named_with_args(
+                        "Array",
+                        vec![TsType::named("Wire")],
+                    )),
+                    optional: false,
+                }],
+                body: Box::new(TsExpr::Call {
+                    callee: Box::new(TsExpr::Ident("dispatch".to_string())),
+                    args: vec![TsExpr::Ident("events".to_string())],
+                }),
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "(events: Array<Wire>) => dispatch(events);\n");
+    }
+
+    #[test]
+    fn prints_optional_member_and_optional_index_chained() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::expr_stmt(
+            TsExpr::OptionalIndex {
+                object: Box::new(TsExpr::OptionalMember {
+                    object: Box::new(TsExpr::Ident("x".to_string())),
+                    property: "process".to_string(),
+                }),
+                index: Box::new(TsExpr::Lit(TsLit::Str("secret".to_string()))),
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "x?.process?.[\"secret\"];\n");
+    }
+
+    #[test]
+    fn print_type_renders_an_optional_object_field() {
+        let ty = TsType::Object(vec![
+            ("env".to_string(), TsType::named("unknown"), true),
+            ("name".to_string(), TsType::named("string"), false),
+        ]);
+        assert_eq!(print_type(&ty), "{ env?: unknown; name: string }");
+    }
+
+    #[test]
+    fn prints_a_top_level_function_declaration() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::decl(
+            TsDecl::Export(Box::new(TsDecl::Function {
+                name: "compose".to_string(),
+                params: vec![TsParam {
+                    name: "env".to_string(),
+                    ty: Some(TsType::named("Env")),
+                    optional: false,
+                }],
+                return_type: None,
+                body: vec![TsStmt::return_stmt(Some(TsExpr::Lit(TsLit::Null)), None)],
+            })),
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(
+            printed.text,
+            "export function compose(env: Env) {\n  return null;\n}\n"
+        );
+    }
+
+    #[test]
+    fn prints_a_top_level_type_alias() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::decl(
+            TsDecl::TypeAlias {
+                name: "Foo".to_string(),
+                ty: TsType::named("{ get(id: any): any }"),
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "type Foo = { get(id: any): any };\n");
+    }
+
+    #[test]
+    fn prints_a_namespace_import_adjacent_to_a_named_import_with_no_blank_line() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::decl(
+            TsDecl::Import {
+                type_only: false,
+                names: vec!["a".to_string()],
+                from: "./x.js".to_string(),
+            },
+            None,
+        ));
+        program.push(TsStmt::decl(
+            TsDecl::ImportNamespace {
+                alias: "handlers".to_string(),
+                from: "./handlers.js".to_string(),
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(
+            printed.text,
+            "import { a } from \"./x.js\";\nimport * as handlers from \"./handlers.js\";\n"
+        );
+    }
+
+    /// #1321's own real gap beyond the accepted proposal's five: ES2019's
+    /// optional catch binding (`emit_http_sum_wrapper`'s own `} catch {`,
+    /// no `(e)` at all).
+    #[test]
+    fn prints_a_parameterless_catch() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::try_catch(
+            TsStmt::block(vec![], None),
+            None::<String>,
+            TsStmt::block(vec![], None),
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "try {\n} catch {\n}\n");
+    }
+
+    #[test]
+    fn prints_typeof_and_the_new_comparison_and_logical_operators() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::expr_stmt(
+            TsExpr::Unary {
+                op: TsUnaryOp::Typeof,
+                expr: Box::new(TsExpr::Ident("x".to_string())),
+            },
+            None,
+        ));
+        program.push(TsStmt::expr_stmt(
+            TsExpr::Binary {
+                op: TsBinaryOp::StrictEq,
+                left: Box::new(TsExpr::Ident("a".to_string())),
+                right: Box::new(TsExpr::Ident("b".to_string())),
+            },
+            None,
+        ));
+        program.push(TsStmt::expr_stmt(
+            TsExpr::Binary {
+                op: TsBinaryOp::StrictNotEq,
+                left: Box::new(TsExpr::Ident("a".to_string())),
+                right: Box::new(TsExpr::Ident("b".to_string())),
+            },
+            None,
+        ));
+        program.push(TsStmt::expr_stmt(
+            TsExpr::Binary {
+                op: TsBinaryOp::And,
+                left: Box::new(TsExpr::Ident("a".to_string())),
+                right: Box::new(TsExpr::Ident("b".to_string())),
+            },
+            None,
+        ));
+        program.push(TsStmt::expr_stmt(
+            TsExpr::Binary {
+                op: TsBinaryOp::Or,
+                left: Box::new(TsExpr::Ident("a".to_string())),
+                right: Box::new(TsExpr::Ident("b".to_string())),
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(
+            printed.text,
+            "typeof x;\n\na === b;\n\na !== b;\n\na && b;\n\na || b;\n"
+        );
+    }
+
+    /// #1321's own real gap: with only `??` in the algebra, a nested
+    /// `Binary` operand of another `Binary` was always parenthesized,
+    /// regardless of operator (see `parenthesises_a_nested_binary_operand_
+    /// of_another_binary`, unchanged). `workers.rs`'s own real content
+    /// nests a *strictly higher precedence* comparison inside `||`/`&&`
+    /// (`__authz === null || !__authz.startsWith(...)`) and the byte-golden
+    /// fixtures have no parens around it — this pins that the printer
+    /// omits them precisely in that case, not more broadly.
+    #[test]
+    fn a_strictly_higher_precedence_comparison_needs_no_parens_inside_or_or_and() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::expr_stmt(
+            TsExpr::Binary {
+                op: TsBinaryOp::Or,
+                left: Box::new(TsExpr::Binary {
+                    op: TsBinaryOp::StrictEq,
+                    left: Box::new(TsExpr::Ident("a".to_string())),
+                    right: Box::new(TsExpr::Lit(TsLit::Null)),
+                }),
+                right: Box::new(TsExpr::Unary {
+                    op: TsUnaryOp::Not,
+                    expr: Box::new(TsExpr::Ident("b".to_string())),
+                }),
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "a === null || !b;\n");
     }
 }

@@ -4,9 +4,13 @@
 //! assembles the context's deps and returns the surface the entry point
 //! invokes — `on call` services for the internal Service Binding protocol
 //! plus `on http` route wrappers for the external HTTP router.
+//!
+//! Arc C slice 3 (#1321): `emit_worker_compose` and its nine private
+//! helpers build a real `bynk_ts::TsProgram` directly instead of
+//! `writeln!`-ing a `String` — this file's own conversion, closing the
+//! third Arc C slice (`events_fanout.rs` was the first, #1317).
 
 use std::collections::{BTreeSet, HashMap, HashSet};
-use std::fmt::Write as _;
 
 use crate::emitter::http_handler_method_name;
 use crate::emitter::ts_ident;
@@ -15,22 +19,248 @@ use crate::emitter::wrangler::{
 };
 use crate::emitter::{
     BOUNDARY_CODEC_RUNTIME_IMPORTS, BYTES_RUNTIME_IMPORTS, JSON_CODEC_RUNTIME_IMPORTS, RuntimeUse,
-    inject_runtime_imports,
 };
 use crate::project::{ImportExt, LocaleNegotiationArgs, UnitTable};
 use bynk_check::symbols::MessageBundleInfo;
 use bynk_syntax::ast::{
     ActorDecl, ExprKind, Handler, HandlerKind, HttpMethod, ServiceProtocol, TypeRef,
 };
+use bynk_ts::{
+    TsBindingName, TsDecl, TsExpr, TsLit, TsObjectEntry, TsParam, TsProgram, TsStmt, TsType,
+};
 
 /// Where `compose.ts` imports the runtime from — it sits two levels below the
 /// out root (`<out>/workers/<worker>/compose.ts`).
 ///
 /// Named because the emitted import line and the post-pass that injects into it
-/// (#914) must agree exactly: [`inject_runtime_imports`] anchors on the specifier
-/// verbatim, so two drifting literals would silently stop injecting rather than
-/// fail loudly — the anchor-drift failure v0.176 (#642) already hit once.
+/// (#914) must agree exactly: [`crate::emitter::inject_runtime_imports`]
+/// (the still-`String`-based post-pass every other module uses) anchors on
+/// the specifier verbatim — #1321's own [`append_missing_bindings`] below
+/// reimplements the same dedup directly over the built `TsDecl::Import`
+/// node's `names`, since this file's own import line is now a tree node,
+/// not text to splice into. Two drifting literals would silently stop
+/// injecting rather than fail loudly — the anchor-drift failure v0.176
+/// (#642) already hit once.
 const COMPOSE_RUNTIME_SPECIFIER: &str = "../../runtime.js";
+
+// -- Small tree-construction helpers (#1321) -----------------------------
+//
+// `workers.rs` is by far the largest single Arc C conversion so far (13
+// wrapper/helper functions, ~1000 lines of `writeln!` before this slice) —
+// these exist purely to keep the conversion below readable and to avoid
+// repeating the same `Box::new`/field-name boilerplate at dozens of call
+// sites, the same reason `bynk-ts`'s own `TsExpr`/`TsStmt` associated
+// constructors exist. Not part of the public node algebra — `bynk-ts` still
+// owns every real constructor; these just compose them for this file's own
+// repeated shapes.
+
+fn ident(s: impl Into<String>) -> TsExpr {
+    TsExpr::Ident(s.into())
+}
+
+fn str_lit(s: impl Into<String>) -> TsExpr {
+    TsExpr::Lit(TsLit::Str(s.into()))
+}
+
+fn num_lit(n: impl Into<String>) -> TsExpr {
+    TsExpr::Lit(TsLit::Num(n.into()))
+}
+
+fn null_lit() -> TsExpr {
+    TsExpr::Lit(TsLit::Null)
+}
+
+fn member(object: TsExpr, property: impl Into<String>) -> TsExpr {
+    TsExpr::Member {
+        object: Box::new(object),
+        property: property.into(),
+    }
+}
+
+/// `base.a.b. …` — a left-associative chain of plain member accesses, e.g.
+/// `member_chain(ident("handlers"), &[sname, "call"])` for
+/// `handlers.<sname>.call`.
+fn member_chain(base: TsExpr, properties: &[&str]) -> TsExpr {
+    properties.iter().fold(base, |acc, p| member(acc, *p))
+}
+
+fn call(callee: TsExpr, args: Vec<TsExpr>) -> TsExpr {
+    TsExpr::Call {
+        callee: Box::new(callee),
+        args,
+    }
+}
+
+fn method_call(object: TsExpr, method: &str, args: Vec<TsExpr>) -> TsExpr {
+    call(member(object, method), args)
+}
+
+fn new_expr(callee: &str, args: Vec<TsExpr>) -> TsExpr {
+    TsExpr::New {
+        callee: Box::new(ident(callee)),
+        args,
+    }
+}
+
+fn as_expr(expr: TsExpr, ty: TsType) -> TsExpr {
+    TsExpr::As {
+        expr: Box::new(expr),
+        ty,
+    }
+}
+
+fn await_expr(expr: TsExpr) -> TsExpr {
+    TsExpr::Await(Box::new(expr))
+}
+
+fn not_expr(expr: TsExpr) -> TsExpr {
+    TsExpr::Unary {
+        op: bynk_ts::TsUnaryOp::Not,
+        expr: Box::new(expr),
+    }
+}
+
+fn typeof_expr(expr: TsExpr) -> TsExpr {
+    TsExpr::Unary {
+        op: bynk_ts::TsUnaryOp::Typeof,
+        expr: Box::new(expr),
+    }
+}
+
+fn binary(op: bynk_ts::TsBinaryOp, left: TsExpr, right: TsExpr) -> TsExpr {
+    TsExpr::Binary {
+        op,
+        left: Box::new(left),
+        right: Box::new(right),
+    }
+}
+
+fn strict_eq(left: TsExpr, right: TsExpr) -> TsExpr {
+    binary(bynk_ts::TsBinaryOp::StrictEq, left, right)
+}
+
+fn strict_neq(left: TsExpr, right: TsExpr) -> TsExpr {
+    binary(bynk_ts::TsBinaryOp::StrictNotEq, left, right)
+}
+
+fn or_expr(left: TsExpr, right: TsExpr) -> TsExpr {
+    binary(bynk_ts::TsBinaryOp::Or, left, right)
+}
+
+fn and_expr(left: TsExpr, right: TsExpr) -> TsExpr {
+    binary(bynk_ts::TsBinaryOp::And, left, right)
+}
+
+fn nullish(left: TsExpr, right: TsExpr) -> TsExpr {
+    binary(bynk_ts::TsBinaryOp::NullishCoalescing, left, right)
+}
+
+fn return_(expr: Option<TsExpr>) -> TsStmt {
+    TsStmt::return_stmt(expr, None)
+}
+
+fn const_(name: impl Into<String>, init: TsExpr) -> TsStmt {
+    TsStmt::const_stmt(TsBindingName::Ident(name.into()), None, init, None)
+}
+
+fn let_(name: impl Into<String>, ty: TsType) -> TsStmt {
+    TsStmt::let_stmt(TsBindingName::Ident(name.into()), Some(ty), None, None)
+}
+
+fn expr_stmt(expr: TsExpr) -> TsStmt {
+    TsStmt::expr_stmt(expr, None)
+}
+
+fn if_(cond: TsExpr, then_branch: TsStmt) -> TsStmt {
+    TsStmt::if_stmt(cond, then_branch, None)
+}
+
+fn block(stmts: Vec<TsStmt>) -> TsStmt {
+    TsStmt::block(stmts, None)
+}
+
+fn status_object(code: &str) -> TsExpr {
+    TsExpr::object(vec![("status".to_string(), num_lit(code))])
+}
+
+fn new_response(args: Vec<TsExpr>) -> TsExpr {
+    new_expr("Response", args)
+}
+
+/// `{ ...deps, <key>: <value> }` — the three real "spread `deps`, override
+/// one identity-shaped field" sites (Decision A, gap 2): `emit_call_wrapper`'s
+/// `identity`, `emit_http_wrapper`/`emit_http_oidc_wrapper`'s `identity`,
+/// `emit_http_sum_wrapper`'s `who`.
+fn deps_spread_with(key: &str, value: TsExpr) -> TsExpr {
+    TsExpr::object_entries(vec![
+        TsObjectEntry::Spread(ident("deps")),
+        TsObjectEntry::Prop(key.to_string(), value),
+    ])
+}
+
+/// `(env as unknown as Record<string, unknown>)["<secret>"] ?? (globalThis
+/// as { process?: { env?: Record<string, unknown> } }).process?.env?.[
+/// "<secret>"]` — the shared secret-probe idiom (Decision A, gaps 4/5):
+/// three real, identical sites (`emit_websocket_upgrade`,
+/// `emit_http_wrapper`, `emit_secret_lookup`'s own `emit_http_sum_wrapper`
+/// callers). `secret` is already TS-string-escaped by the caller
+/// (`crate::emitter::escape_ts_string`) — this function only builds the
+/// tree, matching every other helper here.
+fn secret_probe_expr(secret: &str) -> TsExpr {
+    let env_record_ty = TsType::named_with_args(
+        "Record",
+        vec![TsType::named("string"), TsType::named("unknown")],
+    );
+    let explicit = TsExpr::Index {
+        object: Box::new(as_expr(
+            as_expr(ident("env"), TsType::named("unknown")),
+            env_record_ty.clone(),
+        )),
+        index: Box::new(str_lit(secret)),
+    };
+    let process_ty = TsType::Object(vec![(
+        "process".to_string(),
+        TsType::Object(vec![("env".to_string(), env_record_ty, true)]),
+        true,
+    )]);
+    let global_probe = TsExpr::OptionalIndex {
+        object: Box::new(TsExpr::OptionalMember {
+            object: Box::new(member(as_expr(ident("globalThis"), process_ty), "process")),
+            property: "env".to_string(),
+        }),
+        index: Box::new(str_lit(secret)),
+    };
+    nullish(explicit, global_probe)
+}
+
+/// `missing_bindings`'s own dedup logic (`crate::emitter`), reimplemented
+/// over a `Vec<String>` of already-real import names instead of over
+/// already-printed text — #1321's own real need: `compose.ts`'s header
+/// import is now a `TsDecl::Import` node built once, so the post-pass that
+/// appends codec-family runtime names (#914) can no longer splice into
+/// printed text (`crate::emitter::inject_runtime_imports`'s own mechanism)
+/// and instead mutates the node's `names` directly, before `emit_worker_compose`
+/// pushes it into the program. Same "strip an optional `type ` prefix,
+/// compare bare names" dedup rule, so a name already present (bare or
+/// `type`-prefixed) is never added twice — `sum_parses_body`'s own `"type
+/// JsonValue"` colliding with `JSON_CODEC_RUNTIME_IMPORTS`'s own `"type
+/// JsonValue"` is the real, reachable case this guards.
+fn append_missing_bindings(names: &mut Vec<String>, extra: &str) {
+    fn bare(binding: &str) -> &str {
+        binding
+            .trim()
+            .strip_prefix("type ")
+            .unwrap_or(binding.trim())
+    }
+    let present: HashSet<&str> = names.iter().map(|n| bare(n)).collect();
+    let wanted: Vec<String> = extra
+        .split(',')
+        .map(str::trim)
+        .filter(|b| !b.is_empty() && !present.contains(bare(b)))
+        .map(str::to_string)
+        .collect();
+    names.extend(wanted);
+}
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn emit_worker_compose(
@@ -67,11 +297,7 @@ pub(crate) fn emit_worker_compose(
     // bare `bool`, not the `Callee` map itself: this function has exactly
     // one use for it.
     uses_emit: bool,
-) -> (String, bool) {
-    let mut out = String::new();
-    let _ = writeln!(out, "// Generated by bynkc — do not edit by hand.");
-    let _ = writeln!(out, "// composition root for `{context}` Worker.");
-    writeln!(out).unwrap();
+) -> (TsProgram, bool) {
     // v0.15: cross-context capabilities this Worker uses (in handlers or in a
     // local provider's `given`) → `deps_key → consumed_context`. Their
     // providers are instantiated locally (model A1).
@@ -81,7 +307,7 @@ pub(crate) fn emit_worker_compose(
     // Worker both consumes `bynk`'s `Locale` and has a uniquely-detected
     // message bundle do we import its declared-locale constants and pass
     // `request` + them into `LocaleProvider`'s construction below.
-    let mut extra_header_lines: Vec<String> = Vec::new();
+    let mut locale_import: Option<TsStmt> = None;
     let mut locale_negotiation_args: Option<LocaleNegotiationArgs> = None;
     if cross_caps
         .get("Locale")
@@ -93,8 +319,18 @@ pub(crate) fn emit_worker_compose(
             &bundle.source_path,
             import_ext,
         );
-        extra_header_lines.push(format!(
-            "import {{ messagesLocales as __locale_declaredLocales, messagesReferenceLocale as __locale_referenceLocale }} from \"{import}\";"
+        // #1321: a renamed named import (`X as Y`) is one opaque `String`
+        // entry in `TsDecl::Import.names` — see that field's own doc.
+        locale_import = Some(TsStmt::decl(
+            TsDecl::Import {
+                type_only: false,
+                names: vec![
+                    "messagesLocales as __locale_declaredLocales".to_string(),
+                    "messagesReferenceLocale as __locale_referenceLocale".to_string(),
+                ],
+                from: import,
+            },
+            None,
         ));
         locale_negotiation_args = Some(LocaleNegotiationArgs {
             request_expr: "request".to_string(),
@@ -108,16 +344,18 @@ pub(crate) fn emit_worker_compose(
     // units it references — an external provider's `given` may pull in another
     // adapter's binding (the transitive given-closure), which must be imported.
     let mut referenced_units: BTreeSet<String> = BTreeSet::new();
-    let mut cross_cap_exprs: Vec<(String, String)> = Vec::new();
+    let mut cross_cap_exprs: Vec<(String, TsExpr)> = Vec::new();
     for (key, cctx) in &cross_caps {
-        let expr = crate::project::instantiate_provider_expr(
+        // #1321: the `TsExpr`-returning twin of `instantiate_provider_expr`
+        // (`project.rs`'s own Decision-B-style addition) — see its own doc
+        // for why the `String` version stays untouched.
+        let expr = crate::project::instantiate_provider_ts_expr(
             cctx,
             key,
             unit_tables,
             unit_consumes,
             unit_consumes_aliases,
             unit_flattened,
-            true,
             Some("env"),
             locale_negotiation_args.as_ref(),
             &mut referenced_units,
@@ -173,25 +411,25 @@ pub(crate) fn emit_worker_compose(
     // recorded as the codec emits and injected into the import line as a post-pass
     // — the same shape `emit_project` and `emit_worker_entry` already use.
     let runtime_use = RuntimeUse::default();
-    let mut runtime_imports: Vec<&str> = Vec::new();
+    let mut runtime_imports: Vec<String> = Vec::new();
     if needs_kv {
-        runtime_imports.push("type KVNamespace");
+        runtime_imports.push("type KVNamespace".to_string());
     }
-    runtime_imports.push("type ServiceBinding");
+    runtime_imports.push("type ServiceBinding".to_string());
     if has_bearer || has_sum || has_oidc {
-        runtime_imports.push("HttpResult");
+        runtime_imports.push("HttpResult".to_string());
     }
     if has_bearer {
-        runtime_imports.push("verifyBearerJwtHs256");
+        runtime_imports.push("verifyBearerJwtHs256".to_string());
     }
     if has_oidc {
-        runtime_imports.push("verifyOidcJwt");
+        runtime_imports.push("verifyOidcJwt".to_string());
     }
     if has_sum_signature {
-        runtime_imports.push("verifySignatureHmacSha256");
+        runtime_imports.push("verifySignatureHmacSha256".to_string());
     }
     if sum_parses_body {
-        runtime_imports.push("type JsonValue");
+        runtime_imports.push("type JsonValue".to_string());
     }
     // v0.104 (real-time track slice 3b): a `from websocket` upgrade route resolves
     // the hosting Durable Object by serialising the transfer key, exactly as agent
@@ -207,7 +445,7 @@ pub(crate) fn emit_worker_compose(
         })
     });
     if has_ws_open {
-        runtime_imports.push("serialiseAgentKey");
+        runtime_imports.push("serialiseAgentKey".to_string());
     }
     // Events track, slice 0 (spine #936, ADR 0284): a context whose handlers
     // emit gets its own fan-out DO binding (`emitter::events_fanout`) and a
@@ -215,33 +453,8 @@ pub(crate) fn emit_worker_compose(
     // emit`'s Bundle-mode gate on `composeApp`'s `__eventsDispatch` closure,
     // so the two targets agree on when the field exists.
     if uses_emit {
-        runtime_imports.push("dispatchToEventsFanout");
+        runtime_imports.push("dispatchToEventsFanout".to_string());
     }
-    let _ = writeln!(
-        out,
-        "import {{ {} }} from \"{COMPOSE_RUNTIME_SPECIFIER}\";",
-        runtime_imports.join(", ")
-    );
-    let _ = writeln!(out, "import * as handlers from \"./handlers.js\";");
-    // Import each referenced unit's provider classes. A *context*'s providers
-    // live in its Worker's `handlers.js`; an *adapter*'s external provider
-    // classes live in its binding module at the out root.
-    for cctx in &referenced_units {
-        let ns = cctx.replace('.', "_");
-        if let Some(module) = binding_modules.get(cctx) {
-            let _ = writeln!(out, "import * as {ns}__binding from \"../../{module}\";");
-        } else {
-            let dir = crate::project::worker_dir_name(cctx);
-            let _ = writeln!(
-                out,
-                "import * as handlers_{ns} from \"../{dir}/handlers.js\";"
-            );
-        }
-    }
-    for line in &extra_header_lines {
-        let _ = writeln!(out, "{line}");
-    }
-    writeln!(out).unwrap();
 
     // Only consumed *contexts* become Service Bindings — a consumed adapter is
     // not a Worker (its capability is provided in-process via the binding).
@@ -251,49 +464,8 @@ pub(crate) fn emit_worker_compose(
         .collect();
     sorted_consumes.sort();
 
-    // Env shape: one Service Binding per consumed context + DO bindings.
-    // v0.19: plus the typed KV namespace when the closure reaches the
-    // cloudflare platform adapter (decision C1 — one fixed `KV` binding).
-    let _ = writeln!(out, "export interface Env {{");
-    for t in &sorted_consumes {
-        let bind = consumed_binding_name(t);
-        let _ = writeln!(out, "  {bind}: ServiceBinding;");
-    }
-    if needs_kv {
-        let _ = writeln!(
-            out,
-            "  {}: KVNamespace;",
-            bynk_check::firstparty::KV_BINDING_NAME
-        );
-    }
     let mut agent_names: Vec<&String> = table.agents.keys().collect();
     agent_names.sort();
-    for a in &agent_names {
-        let bind = agent_binding_name(a);
-        let _ = writeln!(out, "  {bind}: DurableObjectNamespace;");
-    }
-    if uses_emit {
-        let bind = agent_binding_name(EVENTS_FANOUT_CLASS_NAME);
-        let _ = writeln!(out, "  {bind}: DurableObjectNamespace;");
-    }
-    let _ = writeln!(out, "}}");
-    writeln!(out).unwrap();
-
-    if !agent_names.is_empty() || uses_emit {
-        // P7.2: deferred, not narrowed — this settling attempt broke real
-        // `tsc --strict` fixtures. A real, differently-shaped imported
-        // `DurableObjectNamespace` (from `./runtime`, `fetch(input: string,
-        // init?: unknown)`) can be in scope in the same file as this local
-        // fallback (used with `fetch(new Request(...))` at this file's own
-        // `__stub.fetch` call site) — the two share a name but not a shape, and
-        // reconciling them needs more than a same-line fix (a real import/alias,
-        // or renaming the local fallback), not a guessed structural type.
-        let _ = writeln!(
-            out,
-            "type DurableObjectNamespace = {{ idFromName(name: string): {{ toString(): string }}; get(id: any): any }};"
-        );
-        writeln!(out).unwrap();
-    }
 
     // v0.79: if any handler in this context uses `~>`, `compose` also takes the
     // request's execution context and threads its `waitUntil` into `deps.__exec`.
@@ -302,23 +474,13 @@ pub(crate) fn emit_worker_compose(
             .iter()
             .any(|h| crate::emitter::block_uses_send(&h.body))
     });
-    // Locale capability track, slice 2 (#882): `request` is threaded
-    // independently of `exec` — the two-way independence matters because
-    // `scheduled`/`queue` (which never have a `request`) may still use
-    // `~>` (`exec`), and a `fetch`-only Worker with no message bundle needs
-    // neither.
-    let mut compose_params = vec!["env: Env".to_string()];
-    if needs_request {
-        compose_params.push("request?: Request".to_string());
-    }
-    if ctx_uses_send {
-        compose_params.push("exec: { waitUntil(promise: Promise<unknown>): void }".to_string());
-    }
-    let _ = writeln!(
-        out,
-        "export function compose({}) {{",
-        compose_params.join(", ")
-    );
+
+    // -- Build the `compose` function's own body (Decision A/B: real nodes
+    // throughout) before assembling the header — `runtime_imports`' own
+    // post-pass (below) needs `runtime_use`'s final state, which only
+    // exists once every wrapper has been built. --
+
+    let mut body: Vec<TsStmt> = Vec::new();
 
     // v0.15: instantiate consumed-unit capability providers locally first, so
     // local providers (and handlers) can depend on them by their deps key.
@@ -326,8 +488,8 @@ pub(crate) fn emit_worker_compose(
     // deps (built in the pre-pass above; cross_caps is a BTreeMap, so the
     // pairs are already key-sorted).
     let cross_keys: Vec<&String> = cross_caps.keys().collect();
-    for (key, expr) in &cross_cap_exprs {
-        let _ = writeln!(out, "  const {key} = {expr};");
+    for (key, expr) in cross_cap_exprs {
+        body.push(const_(key, expr));
     }
 
     // Capabilities: instantiate each capability's provider. v0.12: providers
@@ -338,36 +500,38 @@ pub(crate) fn emit_worker_compose(
     let order = crate::emitter::topo_order_providers(&table.providers);
     for cap in &order {
         let provider = table.providers.get(cap).unwrap();
-        let provider_ts = &provider.provider_name.name;
-        if provider.given.is_empty() {
-            let _ = writeln!(out, "  const {cap} = new handlers.{provider_ts}();");
+        let provider_ts = provider.provider_name.name.clone();
+        let args = if provider.given.is_empty() {
+            vec![]
         } else {
-            let dep_obj = provider
-                .given
-                .iter()
-                .map(|c| c.key().to_string())
-                .collect::<Vec<_>>()
-                .join(", ");
-            let _ = writeln!(
-                out,
-                "  const {cap} = new handlers.{provider_ts}({{ {dep_obj} }});"
-            );
-        }
+            vec![TsExpr::object_entries(
+                provider
+                    .given
+                    .iter()
+                    .map(|c| TsObjectEntry::Shorthand(c.key().to_string()))
+                    .collect(),
+            )]
+        };
+        let init = TsExpr::New {
+            callee: Box::new(member(ident("handlers"), provider_ts)),
+            args,
+        };
+        body.push(const_(cap.clone(), init));
     }
-    let mut deps_entries: Vec<String> = {
+    let mut deps_entries: Vec<TsObjectEntry> = {
         let mut caps: Vec<String> = order.clone();
         caps.extend(cross_keys.iter().map(|k| (*k).clone()));
         caps.sort();
-        caps
+        caps.into_iter().map(TsObjectEntry::Shorthand).collect()
     };
     // env passes through so handlers' cross-context calls (Service Bindings)
     // and agent instantiations (Durable Object namespaces) can reach it.
     if !sorted_consumes.is_empty() || !table.agents.is_empty() {
-        deps_entries.push("env".to_string());
+        deps_entries.push(TsObjectEntry::Shorthand("env".to_string()));
     }
     // v0.79: the execution context rides in `deps.__exec` for `~>` sends.
     if ctx_uses_send {
-        deps_entries.push("__exec: exec".to_string());
+        deps_entries.push(TsObjectEntry::Prop("__exec".to_string(), ident("exec")));
     }
     // Events track, slice 0 (spine #936, ADR 0284): a publishing handler's
     // release-at-commit event batch is handed to this context's own fan-out
@@ -375,18 +539,49 @@ pub(crate) fn emit_worker_compose(
     // instance per publishing context.
     if uses_emit {
         let bind = agent_binding_name(EVENTS_FANOUT_CLASS_NAME);
-        deps_entries.push(format!(
-            "__eventsDispatch: (events: Array<{}>) => dispatchToEventsFanout(env.{bind}, events)",
-            crate::emitter::EVENTS_WIRE_EVENT_TS_TYPE
-        ));
+        let arrow = TsExpr::Arrow {
+            params: vec![TsParam {
+                name: "events".to_string(),
+                ty: Some(TsType::named_with_args(
+                    "Array",
+                    vec![TsType::named(crate::emitter::EVENTS_WIRE_EVENT_TS_TYPE)],
+                )),
+                optional: false,
+            }],
+            body: Box::new(call(
+                ident("dispatchToEventsFanout"),
+                vec![member(ident("env"), bind), ident("events")],
+            )),
+        };
+        deps_entries.push(TsObjectEntry::Prop("__eventsDispatch".to_string(), arrow));
     }
-    let _ = writeln!(out, "  const deps = {{ {} }};", deps_entries.join(", "));
+    // #1321: the pre-conversion `writeln!(out, "  const deps = {{ {} }};",
+    // deps_entries.join(", "))` template always has a space on each side of
+    // its `{}` slot — with zero entries that literally produces `"{  }"`
+    // (a *double* space, not the tight `"{}"` the ordinary single-line
+    // `TsExpr::Object` empty-entries shortcut renders), a real, reachable
+    // shape (a Worker with no providers/cross-caps/consumed services/agents,
+    // no `~>`, no events — `941_http_result_float_bytes_serialise` and
+    // several other real fixtures hit exactly this). The shortcut itself is
+    // correct and stays unchanged for every *other* real call site (e.g.
+    // `events_fanout.rs`'s own `(env ?? {})`, which genuinely wants the
+    // tight form) — this one site's own historical quirk is carried as
+    // opaque pre-rendered text instead, the same "existing textual variant
+    // for a fixed, non-generalizable literal shape" precedent used
+    // elsewhere in this file (`exec`'s type, `DurableObjectNamespace`'s
+    // type).
+    let deps_init = if deps_entries.is_empty() {
+        ident("{  }")
+    } else {
+        TsExpr::object_entries(deps_entries)
+    };
+    body.push(const_("deps", deps_init));
 
     // Local-surface object: one async wrapper per service operation plus
     // one wrapper per `on http` handler.
     let mut service_names: Vec<&String> = table.services.keys().collect();
     service_names.sort();
-    let _ = writeln!(out, "  return {{");
+    let mut return_entries: Vec<TsObjectEntry> = Vec::new();
     for sname in &service_names {
         let service = table.services.get(*sname).unwrap();
         let mut cron_idx = 0usize;
@@ -406,7 +601,7 @@ pub(crate) fn emit_worker_compose(
             // dispatch-vs-render split, applied here.
             match crate::ir::lower::lower_handler_kind_ir(&h.kind) {
                 crate::ir::IrHandlerKind::Call => {
-                    emit_call_wrapper(&mut out, sname, h, &table.actors);
+                    return_entries.push(emit_call_wrapper(sname, h, &table.actors));
                 }
                 crate::ir::IrHandlerKind::Http { .. } => {
                     let HandlerKind::Http { method, path } = &h.kind else {
@@ -432,11 +627,11 @@ pub(crate) fn emit_worker_compose(
                     // `Caller` is a prelude actor, not a key of `table.actors`).
                     match crate::ir::lower::lower_actor_seam_ir(h, &table.actors) {
                         crate::ir::ActorSeamIr::Oidc(oidc) => {
-                            emit_http_oidc_wrapper(&mut out, sname, h, *method, path, &oidc);
+                            return_entries
+                                .push(emit_http_oidc_wrapper(sname, h, *method, path, &oidc));
                         }
                         crate::ir::ActorSeamIr::Sum(members) => {
-                            emit_http_sum_wrapper(
-                                &mut out,
+                            return_entries.push(emit_http_sum_wrapper(
                                 sname,
                                 h,
                                 *method,
@@ -444,18 +639,24 @@ pub(crate) fn emit_worker_compose(
                                 &members,
                                 &table.types,
                                 &runtime_use,
-                            );
+                            ));
                         }
                         crate::ir::ActorSeamIr::Bearer(seam) => {
-                            emit_http_wrapper(&mut out, sname, h, *method, path, Some(&seam));
+                            return_entries.push(emit_http_wrapper(
+                                sname,
+                                h,
+                                *method,
+                                path,
+                                Some(&seam),
+                            ));
                         }
                         crate::ir::ActorSeamIr::Caller(_) | crate::ir::ActorSeamIr::None => {
-                            emit_http_wrapper(&mut out, sname, h, *method, path, None);
+                            return_entries.push(emit_http_wrapper(sname, h, *method, path, None));
                         }
                     }
                 }
                 crate::ir::IrHandlerKind::Cron { .. } => {
-                    emit_cron_wrapper(&mut out, sname, cron_idx, h);
+                    return_entries.push(emit_cron_wrapper(sname, cron_idx, h));
                     cron_idx += 1;
                 }
                 crate::ir::IrHandlerKind::Message => {
@@ -470,13 +671,18 @@ pub(crate) fn emit_worker_compose(
                     if matches!(service.protocol, ServiceProtocol::WebSocket { .. }) {
                         continue;
                     }
-                    emit_queue_wrapper(&mut out, sname, queue_idx, h);
+                    return_entries.push(emit_queue_wrapper(sname, queue_idx, h));
                     queue_idx += 1;
                 }
                 crate::ir::IrHandlerKind::Open => {
                     let seam = bynk_check::actors::bearer_seam_for(h, &table.actors);
                     let local_agents: HashSet<String> = table.agents.keys().cloned().collect();
-                    emit_websocket_upgrade(&mut out, sname, h, seam.as_ref(), &local_agents);
+                    return_entries.push(emit_websocket_upgrade(
+                        sname,
+                        h,
+                        seam.as_ref(),
+                        &local_agents,
+                    ));
                 }
                 // v0.106 (slice 3b-iii): `on close` runs in the DO (`webSocketClose`),
                 // not at the edge — no compose wrapper.
@@ -490,31 +696,179 @@ pub(crate) fn emit_worker_compose(
                 // no route table entry — just a plain wrapper like `on
                 // call`'s).
                 crate::ir::IrHandlerKind::Event => {
-                    emit_event_wrapper(&mut out, sname, h, &service.protocol);
+                    return_entries.push(emit_event_wrapper(sname, h, &service.protocol));
                 }
             }
         }
     }
-    let _ = writeln!(out, "  }};");
+    body.push(return_(Some(TsExpr::multiline_object_entries(
+        return_entries,
+    ))));
 
-    let _ = writeln!(out, "}}");
-    // #914: fold in whatever the wrappers' codecs actually reached for. Injected
-    // into the existing runtime import line rather than emitted as a second one,
-    // so the module keeps a single import from `runtime.js`.
+    // #914: fold in whatever the wrappers' codecs actually reached for —
+    // the tree-node analogue of the old text post-pass (this file's own
+    // `append_missing_bindings`'s own doc explains why it can't reuse
+    // `crate::emitter::inject_runtime_imports` unchanged).
     if runtime_use.boundary_codec() {
-        out = inject_runtime_imports(
-            out,
-            COMPOSE_RUNTIME_SPECIFIER,
-            BOUNDARY_CODEC_RUNTIME_IMPORTS,
-        );
+        append_missing_bindings(&mut runtime_imports, BOUNDARY_CODEC_RUNTIME_IMPORTS);
     }
     if runtime_use.json_codec() {
-        out = inject_runtime_imports(out, COMPOSE_RUNTIME_SPECIFIER, JSON_CODEC_RUNTIME_IMPORTS);
+        append_missing_bindings(&mut runtime_imports, JSON_CODEC_RUNTIME_IMPORTS);
     }
     if runtime_use.bytes() {
-        out = inject_runtime_imports(out, COMPOSE_RUNTIME_SPECIFIER, BYTES_RUNTIME_IMPORTS);
+        append_missing_bindings(&mut runtime_imports, BYTES_RUNTIME_IMPORTS);
     }
-    (out, needs_request)
+
+    let mut compose_params = vec![TsParam {
+        name: "env".to_string(),
+        ty: Some(TsType::named("Env")),
+        optional: false,
+    }];
+    // Locale capability track, slice 2 (#882): `request` is threaded
+    // independently of `exec` — the two-way independence matters because
+    // `scheduled`/`queue` (which never have a `request`) may still use
+    // `~>` (`exec`), and a `fetch`-only Worker with no message bundle needs
+    // neither.
+    if needs_request {
+        compose_params.push(TsParam {
+            name: "request".to_string(),
+            ty: Some(TsType::named("Request")),
+            optional: true,
+        });
+    }
+    if ctx_uses_send {
+        compose_params.push(TsParam {
+            name: "exec".to_string(),
+            // #1321: a fixed, non-generative type-literal-with-a-method
+            // constant — no per-call variation, so it's carried as opaque
+            // `Named` text rather than a general method-signature-in-a-
+            // type-literal shape, the same "opaque `Named` for one real,
+            // unvarying shape" precedent `ts_type_ref_to_ts_type`'s own
+            // `TypeRef::Query` arm already established (`emitter.rs`).
+            ty: Some(TsType::named(
+                "{ waitUntil(promise: Promise<unknown>): void }",
+            )),
+            optional: false,
+        });
+    }
+
+    // -- Assemble the whole document in its real, final order. --
+    let mut program = TsProgram::new();
+    program.push(TsStmt::comment(
+        "Generated by bynkc — do not edit by hand.",
+        None,
+    ));
+    program.push(TsStmt::comment(
+        format!("composition root for `{context}` Worker."),
+        None,
+    ));
+    program.push(TsStmt::decl(
+        TsDecl::Import {
+            type_only: false,
+            names: runtime_imports,
+            from: COMPOSE_RUNTIME_SPECIFIER.to_string(),
+        },
+        None,
+    ));
+    program.push(TsStmt::decl(
+        TsDecl::ImportNamespace {
+            alias: "handlers".to_string(),
+            from: "./handlers.js".to_string(),
+        },
+        None,
+    ));
+    // Import each referenced unit's provider classes. A *context*'s providers
+    // live in its Worker's `handlers.js`; an *adapter*'s external provider
+    // classes live in its binding module at the out root.
+    for cctx in &referenced_units {
+        let ns = cctx.replace('.', "_");
+        if let Some(module) = binding_modules.get(cctx) {
+            program.push(TsStmt::decl(
+                TsDecl::ImportNamespace {
+                    alias: format!("{ns}__binding"),
+                    from: format!("../../{module}"),
+                },
+                None,
+            ));
+        } else {
+            let dir = crate::project::worker_dir_name(cctx);
+            program.push(TsStmt::decl(
+                TsDecl::ImportNamespace {
+                    alias: format!("handlers_{ns}"),
+                    from: format!("../{dir}/handlers.js"),
+                },
+                None,
+            ));
+        }
+    }
+    if let Some(li) = locale_import {
+        program.push(li);
+    }
+
+    // Env shape: one Service Binding per consumed context + DO bindings.
+    // v0.19: plus the typed KV namespace when the closure reaches the
+    // cloudflare platform adapter (decision C1 — one fixed `KV` binding).
+    let mut env_members: Vec<(String, TsType)> = Vec::new();
+    for t in &sorted_consumes {
+        env_members.push((consumed_binding_name(t), TsType::named("ServiceBinding")));
+    }
+    if needs_kv {
+        env_members.push((
+            bynk_check::firstparty::KV_BINDING_NAME.to_string(),
+            TsType::named("KVNamespace"),
+        ));
+    }
+    for a in &agent_names {
+        env_members.push((
+            agent_binding_name(a),
+            TsType::named("DurableObjectNamespace"),
+        ));
+    }
+    if uses_emit {
+        env_members.push((
+            agent_binding_name(EVENTS_FANOUT_CLASS_NAME),
+            TsType::named("DurableObjectNamespace"),
+        ));
+    }
+    program.push(TsStmt::decl(
+        TsDecl::Export(Box::new(TsDecl::Interface {
+            name: "Env".to_string(),
+            members: env_members,
+        })),
+        None,
+    ));
+
+    if !agent_names.is_empty() || uses_emit {
+        // P7.2: deferred, not narrowed — this settling attempt broke real
+        // `tsc --strict` fixtures. A real, differently-shaped imported
+        // `DurableObjectNamespace` (from `./runtime`, `fetch(input: string,
+        // init?: unknown)`) can be in scope in the same file as this local
+        // fallback (used with `fetch(new Request(...))` at this file's own
+        // `__stub.fetch` call site) — the two share a name but not a shape, and
+        // reconciling them needs more than a same-line fix (a real import/alias,
+        // or renaming the local fallback), not a guessed structural type.
+        program.push(TsStmt::decl(
+            TsDecl::TypeAlias {
+                name: "DurableObjectNamespace".to_string(),
+                ty: TsType::named(
+                    "{ idFromName(name: string): { toString(): string }; get(id: any): any }",
+                ),
+            },
+            None,
+        ));
+    }
+
+    program.push(TsStmt::decl(
+        TsDecl::Export(Box::new(TsDecl::Function {
+            name: "compose".to_string(),
+            params: compose_params,
+            return_type: None,
+            body,
+        })),
+        None,
+    ));
+
+    (program, needs_request)
 }
 
 /// v0.15: cross-context capabilities this Worker references in handlers or in
@@ -590,11 +944,10 @@ fn worker_cross_caps(
 /// coercion that seam does not perform. Those are separate boundaries with their
 /// own extraction rules, and they are not what this increment fixed.
 fn emit_call_wrapper(
-    out: &mut String,
     sname: &str,
     h: &Handler,
     actors: &HashMap<String, ActorDecl>,
-) {
+) -> TsObjectEntry {
     // Qualify *every* named type in the signature, not a subset. The wrapper
     // forwards to `handlers.{sname}.call(...)`, whose parameter `handlers.ts`
     // types with this same name in its own scope — so `handlers.<Name>` resolves
@@ -609,35 +962,51 @@ fn emit_call_wrapper(
     // The wrapper forwards positionally, so the binder and the forwarded argument
     // must agree — route both through `ts_ident` so a reserved-word param name
     // (`class`, `void`, …) doesn't emit an invalid TS binding (#723).
-    let mut param_decls: Vec<String> = h
+    let mut params: Vec<TsParam> = h
         .params
         .iter()
-        .map(|p| {
-            format!(
-                "{}: {}",
-                ts_ident(&p.name.name),
-                crate::emitter::ts_type_ref_qualified(&p.type_ref, &scope, "handlers")
-            )
+        .map(|p| TsParam {
+            name: ts_ident(&p.name.name),
+            ty: Some(crate::emitter::ts_type_ref_qualified_ts_type(
+                &p.type_ref,
+                &scope,
+                "handlers",
+            )),
+            optional: false,
         })
         .collect();
-    let param_args: Vec<String> = h.params.iter().map(|p| ts_ident(&p.name.name)).collect();
+    let param_args: Vec<TsExpr> = h
+        .params
+        .iter()
+        .map(|p| ident(ts_ident(&p.name.name)))
+        .collect();
     // v0.54: a `by c: Caller` handler's wrapper takes the caller's context name
     // (read from the header in the entry dispatch) and threads it into `deps`
     // as the `CallerId` identity — mirroring the Bearer identity threading.
     let deps_expr = if bynk_check::actors::caller_binder_for(h, actors).is_some() {
-        param_decls.insert(0, "__caller: string".to_string());
-        "{ ...deps, identity: __caller }"
+        params.insert(
+            0,
+            TsParam {
+                name: "__caller".to_string(),
+                ty: Some(TsType::named("string")),
+                optional: false,
+            },
+        );
+        deps_spread_with("identity", ident("__caller"))
     } else {
-        "deps"
+        ident("deps")
     };
-    let _ = writeln!(out, "    async {sname}({}) {{", param_decls.join(", "));
-    let _ = writeln!(
-        out,
-        "      return handlers.{sname}.call({}{}{deps_expr});",
-        param_args.join(", "),
-        if param_args.is_empty() { "" } else { ", " },
-    );
-    let _ = writeln!(out, "    }},");
+    let mut call_args = param_args;
+    call_args.push(deps_expr);
+    TsObjectEntry::Method {
+        name: sname.to_string(),
+        is_async: true,
+        params,
+        body: vec![return_(Some(call(
+            member_chain(ident("handlers"), &[sname, "call"]),
+            call_args,
+        )))],
+    }
 }
 
 /// Events track, slice 0 (spine #936): the compose-surface wrapper for a
@@ -659,11 +1028,7 @@ fn emit_call_wrapper(
 /// the handler didn't declare it — `emit_service` inserts a synthetic
 /// `env` parameter in that case, and needs the value forwarded to line up
 /// positionally, so the condition widens to match.
-fn emit_event_wrapper(out: &mut String, sname: &str, h: &Handler, protocol: &ServiceProtocol) {
-    let _ = writeln!(
-        out,
-        "    async {sname}(payload: unknown, envelope: unknown) {{"
-    );
+fn emit_event_wrapper(sname: &str, h: &Handler, protocol: &ServiceProtocol) -> TsObjectEntry {
     let wants_envelope = h.params.len() == 2
         || matches!(
             protocol,
@@ -674,83 +1039,104 @@ fn emit_event_wrapper(out: &mut String, sname: &str, h: &Handler, protocol: &Ser
         );
     // P7.2: deferred, not narrowed. Two attempts: a bare `ts_type_ref` failed
     // ("Cannot find name" — the event's synthetic type needs the `handlers.`
-    // prefix here), and qualifying it via `qualified_type_ref` (the same
+    // prefix here), and qualifying it via `qualified_ts_type_ref` (the same
     // `emit_call_wrapper` idiom) *also* failed, differently, on cross-context
     // fixtures ("Namespace has no exported member" — the event type genuinely
     // isn't exported from `handlers.ts` in that shape for a cross-context
     // subscriber). The real fix needs tracing exactly where a cross-context
     // event's synthetic type is actually exported from, not another guess at
     // the qualification scheme.
+    let mut args = vec![as_expr(ident("payload"), TsType::named("any"))];
     if wants_envelope {
-        let _ = writeln!(
-            out,
-            "      return handlers.{sname}.event(payload as any, envelope as any, deps);"
-        );
-    } else {
-        let _ = writeln!(
-            out,
-            "      return handlers.{sname}.event(payload as any, deps);"
-        );
+        args.push(as_expr(ident("envelope"), TsType::named("any")));
     }
-    let _ = writeln!(out, "    }},");
+    args.push(ident("deps"));
+    TsObjectEntry::Method {
+        name: sname.to_string(),
+        is_async: true,
+        params: vec![
+            TsParam {
+                name: "payload".to_string(),
+                ty: Some(TsType::named("unknown")),
+                optional: false,
+            },
+            TsParam {
+                name: "envelope".to_string(),
+                ty: Some(TsType::named("unknown")),
+                optional: false,
+            },
+        ],
+        body: vec![return_(Some(call(
+            member_chain(ident("handlers"), &[sname, "event"]),
+            args,
+        )))],
+    }
 }
 
-fn emit_cron_wrapper(out: &mut String, sname: &str, cron_idx: usize, h: &Handler) {
+fn emit_cron_wrapper(sname: &str, cron_idx: usize, h: &Handler) -> TsObjectEntry {
     let method_key = crate::emitter::cron_handler_method_name(sname, cron_idx);
     // A cron handler takes an optional scheduled-time parameter; forward it (if
     // any) to the bound handler, with deps trailing. P7.2: the checker requires
     // this parameter be `Int`, and `workers_entry.rs`'s scheduled() dispatch hands
     // it Cloudflare's own `event.scheduledTime: number` directly — codec-matched,
     // safe to type for real.
-    let param_decls: Vec<String> = h
+    let params: Vec<TsParam> = h
         .params
         .iter()
-        .map(|p| {
-            format!(
-                "{}: {}",
-                ts_ident(&p.name.name),
-                qualified_type_ref(&p.type_ref)
-            )
+        .map(|p| TsParam {
+            name: ts_ident(&p.name.name),
+            ty: Some(qualified_ts_type_ref(&p.type_ref)),
+            optional: false,
         })
         .collect();
-    let param_args: Vec<String> = h.params.iter().map(|p| ts_ident(&p.name.name)).collect();
-    let _ = writeln!(out, "    async {method_key}({}) {{", param_decls.join(", "));
-    let _ = writeln!(
-        out,
-        "      return handlers.{sname}.{method_key}({}{}deps);",
-        param_args.join(", "),
-        if param_args.is_empty() { "" } else { ", " },
-    );
-    let _ = writeln!(out, "    }},");
+    let mut call_args: Vec<TsExpr> = h
+        .params
+        .iter()
+        .map(|p| ident(ts_ident(&p.name.name)))
+        .collect();
+    call_args.push(ident("deps"));
+    TsObjectEntry::Method {
+        name: method_key.clone(),
+        is_async: true,
+        params,
+        body: vec![return_(Some(call(
+            member_chain(ident("handlers"), &[sname, &method_key]),
+            call_args,
+        )))],
+    }
 }
 
-fn emit_queue_wrapper(out: &mut String, sname: &str, queue_idx: usize, h: &Handler) {
+fn emit_queue_wrapper(sname: &str, queue_idx: usize, h: &Handler) -> TsObjectEntry {
     let method_key = crate::emitter::queue_handler_method_name(sname, queue_idx);
     // The queue handler takes its message parameter; forward it with deps. P7.2:
     // `workers_entry.rs`'s queue() dispatch always calls `deserialise_call` against
     // this same declared type before forwarding `__r.value` here — codec-matched,
     // safe to type for real. (No param at all when the handler declares none, in
     // which case this list — and the corresponding entry-side msg_type — is empty.)
-    let param_decls: Vec<String> = h
+    let params: Vec<TsParam> = h
         .params
         .iter()
-        .map(|p| {
-            format!(
-                "{}: {}",
-                ts_ident(&p.name.name),
-                qualified_type_ref(&p.type_ref)
-            )
+        .map(|p| TsParam {
+            name: ts_ident(&p.name.name),
+            ty: Some(qualified_ts_type_ref(&p.type_ref)),
+            optional: false,
         })
         .collect();
-    let param_args: Vec<String> = h.params.iter().map(|p| ts_ident(&p.name.name)).collect();
-    let _ = writeln!(out, "    async {method_key}({}) {{", param_decls.join(", "));
-    let _ = writeln!(
-        out,
-        "      return handlers.{sname}.{method_key}({}{}deps);",
-        param_args.join(", "),
-        if param_args.is_empty() { "" } else { ", " },
-    );
-    let _ = writeln!(out, "    }},");
+    let mut call_args: Vec<TsExpr> = h
+        .params
+        .iter()
+        .map(|p| ident(ts_ident(&p.name.name)))
+        .collect();
+    call_args.push(ident("deps"));
+    TsObjectEntry::Method {
+        name: method_key.clone(),
+        is_async: true,
+        params,
+        body: vec![return_(Some(call(
+            member_chain(ident("handlers"), &[sname, &method_key]),
+            call_args,
+        )))],
+    }
 }
 
 /// v0.104 (real-time track slice 3b): emit the WebSocket upgrade route — the
@@ -765,12 +1151,11 @@ fn emit_queue_wrapper(out: &mut String, sname: &str, queue_idx: usize, h: &Handl
 /// the cross-context caller seam relies on). A failure returns `401`/`426` and
 /// **does not forward** — no socket is accepted unauthenticated.
 fn emit_websocket_upgrade(
-    out: &mut String,
     sname: &str,
     h: &Handler,
     seam: Option<&bynk_check::actors::BearerSeam>,
     local_agents: &HashSet<String>,
-) {
+) -> TsObjectEntry {
     use crate::emitter::websocket::{WsOpenShape, analyse_open_shape};
     // The route params (e.g. `roomId`) ride as wrapper arguments — the entry
     // extracts them from the upgrade URL's query string and passes them through.
@@ -783,18 +1168,34 @@ fn emit_websocket_upgrade(
     // entry before this wrapper is called), just not yet refined/branded.
     // `unknown` was one step too vague for `.of`'s own `string`-typed
     // constructor parameter.
-    let mut decls: Vec<String> = vec!["request: Request".to_string()];
-    decls.extend(
-        h.params
-            .iter()
-            .map(|p| format!("{}: string", ts_ident(&p.name.name))),
-    );
-    let _ = writeln!(out, "    async ws_{sname}_open({}) {{", decls.join(", "));
+    let mut params: Vec<TsParam> = vec![TsParam {
+        name: "request".to_string(),
+        ty: Some(TsType::named("Request")),
+        optional: false,
+    }];
+    params.extend(h.params.iter().map(|p| TsParam {
+        name: ts_ident(&p.name.name),
+        ty: Some(TsType::named("string")),
+        optional: false,
+    }));
+    let method_name = format!("ws_{sname}_open");
+
+    let mut stmts: Vec<TsStmt> = Vec::new();
     // Require an actual WebSocket upgrade before anything else.
-    let _ = writeln!(
-        out,
-        "      if (request.headers.get(\"Upgrade\") !== \"websocket\") return new Response(\"Expected a WebSocket upgrade\", {{ status: 426 }});"
-    );
+    stmts.push(if_(
+        strict_neq(
+            method_call(
+                member(ident("request"), "headers"),
+                "get",
+                vec![str_lit("Upgrade")],
+            ),
+            str_lit("websocket"),
+        ),
+        return_(Some(new_response(vec![
+            str_lit("Expected a WebSocket upgrade"),
+            status_object("426"),
+        ]))),
+    ));
 
     // DECISION C: a Bearer token arrives as the first `Sec-WebSocket-Protocol`
     // subprotocol element (a browser sets it via `new WebSocket(url, [token])`),
@@ -805,41 +1206,82 @@ fn emit_websocket_upgrade(
     // browser cannot sign the handshake), so a present seam is always Bearer.
     if let Some(seam) = seam {
         let secret = crate::emitter::escape_ts_string(&seam.secret);
-        let _ = writeln!(
-            out,
-            "      const __proto = request.headers.get(\"Sec-WebSocket-Protocol\");"
-        );
-        let _ = writeln!(
-            out,
-            "      if (__proto === null) return new Response(\"Unauthorized\", {{ status: 401 }});"
-        );
-        let _ = writeln!(out, "      const __token = __proto.split(\",\")[0].trim();");
+        stmts.push(const_(
+            "__proto",
+            method_call(
+                member(ident("request"), "headers"),
+                "get",
+                vec![str_lit("Sec-WebSocket-Protocol")],
+            ),
+        ));
+        stmts.push(if_(
+            strict_eq(ident("__proto"), null_lit()),
+            return_(Some(new_response(vec![
+                str_lit("Unauthorized"),
+                status_object("401"),
+            ]))),
+        ));
+        stmts.push(const_(
+            "__token",
+            method_call(
+                TsExpr::Index {
+                    object: Box::new(method_call(ident("__proto"), "split", vec![str_lit(",")])),
+                    index: Box::new(num_lit("0")),
+                },
+                "trim",
+                vec![],
+            ),
+        ));
         // The hosting context's `Env` carries the DO binding (a non-empty object
         // type), so the secret probe casts through `unknown` to index it.
-        let _ = writeln!(
-            out,
-            "      const __secret = (env as unknown as Record<string, unknown>)[\"{secret}\"] ?? (globalThis as {{ process?: {{ env?: Record<string, unknown> }} }}).process?.env?.[\"{secret}\"];"
-        );
-        let _ = writeln!(
-            out,
-            "      if (typeof __secret !== \"string\") return new Response(\"Unauthorized\", {{ status: 401 }});"
-        );
-        let _ = writeln!(
-            out,
-            "      const __claims = await verifyBearerJwtHs256(__token, __secret);"
-        );
-        let _ = writeln!(
-            out,
-            "      if (__claims.tag === \"Err\") return new Response(\"Unauthorized\", {{ status: 401 }});"
-        );
+        stmts.push(const_("__secret", secret_probe_expr(&secret)));
+        stmts.push(if_(
+            strict_neq(typeof_expr(ident("__secret")), str_lit("string")),
+            return_(Some(new_response(vec![
+                str_lit("Unauthorized"),
+                status_object("401"),
+            ]))),
+        ));
+        stmts.push(const_(
+            "__claims",
+            await_expr(call(
+                ident("verifyBearerJwtHs256"),
+                vec![ident("__token"), ident("__secret")],
+            )),
+        ));
+        stmts.push(if_(
+            strict_eq(member(ident("__claims"), "tag"), str_lit("Err")),
+            return_(Some(new_response(vec![
+                str_lit("Unauthorized"),
+                status_object("401"),
+            ]))),
+        ));
         // A refinement actor's authorisation invariant: scheme verified (401
         // above), a failed claim predicate is 403, checked against verified claims.
         if let Some(pred) = &seam.authorization {
             let js = bynk_check::actors::claim_predicate_to_js(pred, "__claims.value.claims");
-            let _ = writeln!(
-                out,
-                "      if (!({js})) return new Response(\"Forbidden\", {{ status: 403 }});"
-            );
+            // #1321: `claim_predicate_to_js` is a `bynk_check`-crate helper
+            // that returns already-built JS boolean-expression *text* —
+            // out of this slice's own scope (a different crate; `bynk-ts`'s
+            // own crate-boundary invariant, `bynk-syntax` only, forbids
+            // `bynk-check` depending on it to return a real `TsExpr`
+            // instead). Carried as an opaque `TsExpr::Ident` — the same
+            // "existing textual variant carries pre-rendered text this
+            // crate structurally can't build a shape for" precedent
+            // `ts_type_ref_to_ts_type`'s own `TypeRef::Query` arm already
+            // established for `TsType::Named` (`emitter.rs`), applied here
+            // to `TsExpr::Ident` — not a new pattern. The literal parens
+            // are baked into the text (not left to `Unary::Not`'s own
+            // operand rules) since `js`'s own precedence isn't guaranteed
+            // compatible with a bare `!`, matching the original `writeln!`
+            // text's own explicit `!({js})`.
+            stmts.push(if_(
+                ident(format!("!({js})")),
+                return_(Some(new_response(vec![
+                    str_lit("Forbidden"),
+                    status_object("403"),
+                ]))),
+            ));
         }
     }
 
@@ -851,12 +1293,16 @@ fn emit_websocket_upgrade(
         // The checker rejects zero / multiple / non-routable shapes
         // (`bynk.ws.open_transfer_shape`); this arm is defensive.
         _ => {
-            let _ = writeln!(
-                out,
-                "      return new Response(\"Internal Server Error\", {{ status: 500 }});"
-            );
-            let _ = writeln!(out, "    }},");
-            return;
+            stmts.push(return_(Some(new_response(vec![
+                str_lit("Internal Server Error"),
+                status_object("500"),
+            ]))));
+            return TsObjectEntry::Method {
+                name: method_name,
+                is_async: true,
+                params,
+                body: stmts,
+            };
         }
     };
     let binding = agent_binding_name(target.agent);
@@ -873,21 +1319,24 @@ fn emit_websocket_upgrade(
     // The verified identity (when the actor binds one) is forwarded in the trusted
     // internal header alongside the route arguments. A binder-less `by` verifies
     // but mints no identity.
-    let identity_field = if seam.is_some_and(|s| s.binder.is_some()) {
-        ", identity: __id.value"
-    } else {
-        ""
-    };
-    if seam.is_some_and(|s| s.binder.is_some()) {
+    let has_identity = seam.is_some_and(|s| s.binder.is_some());
+    if has_identity {
         let id_ty = &seam.unwrap().identity_type;
-        let _ = writeln!(
-            out,
-            "      const __id = handlers.{id_ty}.of(__claims.value.sub);"
-        );
-        let _ = writeln!(
-            out,
-            "      if (__id.tag === \"Err\") return new Response(\"Unauthorized\", {{ status: 401 }});"
-        );
+        stmts.push(const_(
+            "__id",
+            method_call(
+                member(ident("handlers"), id_ty.clone()),
+                "of",
+                vec![member(member(ident("__claims"), "value"), "sub")],
+            ),
+        ));
+        stmts.push(if_(
+            strict_eq(member(ident("__id"), "tag"), str_lit("Err")),
+            return_(Some(new_response(vec![
+                str_lit("Unauthorized"),
+                status_object("401"),
+            ]))),
+        ));
     }
     // The route params arrive attacker-controlled (the upgrade URL's query string).
     // Validate each refined / opaque param through its `.of` constructor fail-closed
@@ -897,69 +1346,156 @@ fn emit_websocket_upgrade(
     // satisfied its refinement. (Validation runs after auth, so an unauthenticated
     // client still sees only `401`.)
     // `validated` is keyed by the Bynk param name (so the `key` lookup and the
-    // arg walk below match) but its *value* is the JS expression to forward —
-    // which references the `ts_ident`-renamed wrapper binder, not the raw name.
-    let mut validated: HashMap<String, String> = HashMap::new();
+    // arg walk below match) but its *value* is the real JS *expression* to
+    // forward — which references the `ts_ident`-renamed wrapper binder, not
+    // the raw name.
+    let mut validated: HashMap<String, TsExpr> = HashMap::new();
     for p in &h.params {
         let pn = &p.name.name;
         let jn = ts_ident(pn);
         match &p.type_ref {
             TypeRef::Named(id) => {
-                let _ = writeln!(out, "      const __r_{pn} = handlers.{}.of({jn});", id.name);
-                let _ = writeln!(
-                    out,
-                    "      if (__r_{pn}.tag === \"Err\") return new Response(JSON.stringify({{ kind: \"RefinementViolation\", path: \"param.{pn}\", violation: __r_{pn}.error }}), {{ status: 400, headers: {{ \"content-type\": \"application/json\" }} }});"
-                );
-                validated.insert(pn.clone(), format!("__r_{pn}.value"));
+                let r_name = format!("__r_{pn}");
+                stmts.push(const_(
+                    r_name.clone(),
+                    method_call(
+                        member(ident("handlers"), id.name.clone()),
+                        "of",
+                        vec![ident(jn)],
+                    ),
+                ));
+                stmts.push(if_(
+                    strict_eq(member(ident(r_name.clone()), "tag"), str_lit("Err")),
+                    return_(Some(new_response(vec![
+                        method_call(
+                            ident("JSON"),
+                            "stringify",
+                            vec![TsExpr::object(vec![
+                                ("kind".to_string(), str_lit("RefinementViolation")),
+                                ("path".to_string(), str_lit(format!("param.{pn}"))),
+                                (
+                                    "violation".to_string(),
+                                    member(ident(r_name.clone()), "error"),
+                                ),
+                            ])],
+                        ),
+                        TsExpr::object(vec![
+                            ("status".to_string(), num_lit("400")),
+                            (
+                                "headers".to_string(),
+                                TsExpr::object(vec![(
+                                    // Not a bare identifier — needs its own
+                                    // quotes, matching `events_fanout.rs`'s
+                                    // own `event_routes_table` convention
+                                    // for a pre-quoted, string-literal-
+                                    // shaped object key (`TsObjectEntry`'s
+                                    // key field is raw text pushed
+                                    // verbatim, not itself a `TsExpr`).
+                                    "\"content-type\"".to_string(),
+                                    str_lit("application/json"),
+                                )]),
+                            ),
+                        ]),
+                    ]))),
+                ));
+                validated.insert(pn.clone(), member(ident(r_name), "value"));
             }
             // A plain `String` param (or a shape the static check already rejected)
             // passes through unchanged.
             _ => {
-                validated.insert(pn.clone(), jn);
+                validated.insert(pn.clone(), ident(jn));
             }
         }
     }
-    let key_ref = validated.get(&key_js).cloned().unwrap_or(key_js);
-    let args_json = h
+    let key_ref = validated.get(&key_js).cloned().unwrap_or(ident(key_js));
+    let args_json: Vec<TsExpr> = h
         .params
         .iter()
         .map(|p| {
             validated
                 .get(&p.name.name)
                 .cloned()
-                .unwrap_or_else(|| ts_ident(&p.name.name))
+                .unwrap_or_else(|| ident(ts_ident(&p.name.name)))
         })
-        .collect::<Vec<_>>()
-        .join(", ");
-    let _ = writeln!(out, "      const __ns = deps.env.{binding};");
-    let _ = writeln!(
-        out,
-        "      const __stub = __ns.get(__ns.idFromName(serialiseAgentKey({key_ref})));"
-    );
-    let _ = writeln!(out, "      const __fwd = new Headers(request.headers);");
-    let _ = writeln!(
-        out,
-        "      __fwd.set(\"X-Bynk-Ws-Open\", JSON.stringify({{ args: [{args_json}]{identity_field} }}));"
-    );
-    let _ = writeln!(
-        out,
-        "      return __stub.fetch(new Request(\"https://_bynk/_bynk/ws/open/{sname}\", {{ method: request.method, headers: __fwd }}));"
-    );
-    let _ = writeln!(out, "    }},");
+        .collect();
+    stmts.push(const_(
+        "__ns",
+        member(ident("deps"), format!("env.{binding}")),
+    ));
+    stmts.push(const_(
+        "__stub",
+        method_call(
+            ident("__ns"),
+            "get",
+            vec![method_call(
+                ident("__ns"),
+                "idFromName",
+                vec![call(ident("serialiseAgentKey"), vec![key_ref])],
+            )],
+        ),
+    ));
+    stmts.push(const_(
+        "__fwd",
+        new_expr("Headers", vec![member(ident("request"), "headers")]),
+    ));
+    let mut fwd_entries = vec![("args".to_string(), TsExpr::Array(args_json))];
+    if has_identity {
+        fwd_entries.push(("identity".to_string(), member(ident("__id"), "value")));
+    }
+    stmts.push(expr_stmt(method_call(
+        ident("__fwd"),
+        "set",
+        vec![
+            str_lit("X-Bynk-Ws-Open"),
+            method_call(
+                ident("JSON"),
+                "stringify",
+                vec![TsExpr::object(fwd_entries)],
+            ),
+        ],
+    )));
+    stmts.push(return_(Some(method_call(
+        ident("__stub"),
+        "fetch",
+        vec![new_expr(
+            "Request",
+            vec![
+                str_lit(format!("https://_bynk/_bynk/ws/open/{sname}")),
+                TsExpr::object(vec![
+                    ("method".to_string(), member(ident("request"), "method")),
+                    ("headers".to_string(), ident("__fwd")),
+                ]),
+            ],
+        )],
+    ))));
+
+    TsObjectEntry::Method {
+        name: method_name,
+        is_async: true,
+        params,
+        body: stmts,
+    }
 }
 
+// `stmts`/`secret_body` in the functions below are built incrementally —
+// unconditional pushes followed by later conditional ones, not a fixed
+// literal clippy's suggested `vec![]` could replace.
+#[allow(clippy::vec_init_then_push)]
 fn emit_http_wrapper(
-    out: &mut String,
     sname: &str,
     h: &Handler,
     method: HttpMethod,
     path: &str,
     seam: Option<&bynk_check::actors::BearerSeam>,
-) {
+) -> TsObjectEntry {
     let method_key = http_handler_method_name(method, path);
     // Route params (and the `body`) forward positionally; `ts_ident` keeps a
     // reserved-word param name from emitting an invalid binder (#723).
-    let param_args: Vec<String> = h.params.iter().map(|p| ts_ident(&p.name.name)).collect();
+    let param_args: Vec<TsExpr> = h
+        .params
+        .iter()
+        .map(|p| ident(ts_ident(&p.name.name)))
+        .collect();
 
     // v0.47: a Bearer handler's wrapper takes the request, runs the fail-closed
     // verification seam, mints the identity, and threads it into `deps`. The
@@ -974,102 +1510,131 @@ fn emit_http_wrapper(
         // (a `Named` type via `.of(...)`, a bare `String` trivially) before
         // ever calling into this wrapper, so the real type is what's actually
         // known here.
-        let mut decls: Vec<String> = vec!["request: Request".to_string()];
-        decls.extend(h.params.iter().map(|p| {
-            format!(
-                "{}: {}",
-                ts_ident(&p.name.name),
-                qualified_type_ref(&p.type_ref)
-            )
+        let mut params: Vec<TsParam> = vec![TsParam {
+            name: "request".to_string(),
+            ty: Some(TsType::named("Request")),
+            optional: false,
+        }];
+        params.extend(h.params.iter().map(|p| TsParam {
+            name: ts_ident(&p.name.name),
+            ty: Some(qualified_ts_type_ref(&p.type_ref)),
+            optional: false,
         }));
         let secret = crate::emitter::escape_ts_string(&seam.secret);
-        let _ = writeln!(out, "    async {method_key}({}) {{", decls.join(", "));
-        let _ = writeln!(
-            out,
-            "      const __authz = request.headers.get(\"Authorization\");"
-        );
-        let _ = writeln!(
-            out,
-            "      if (__authz === null || !__authz.startsWith(\"Bearer \")) return HttpResult.Unauthorized;"
-        );
+        let mut stmts: Vec<TsStmt> = Vec::new();
+        stmts.push(const_(
+            "__authz",
+            method_call(
+                member(ident("request"), "headers"),
+                "get",
+                vec![str_lit("Authorization")],
+            ),
+        ));
+        stmts.push(if_(
+            or_expr(
+                strict_eq(ident("__authz"), null_lit()),
+                not_expr(method_call(
+                    ident("__authz"),
+                    "startsWith",
+                    vec![str_lit("Bearer ")],
+                )),
+            ),
+            return_(Some(member(ident("HttpResult"), "Unauthorized"))),
+        ));
         // Source the signing secret from the same env the `Secrets` capability
         // reads (explicit env first, then a `process.env` probe).
-        let _ = writeln!(
-            out,
-            "      const __secret = (env as unknown as Record<string, unknown>)[\"{secret}\"] ?? (globalThis as {{ process?: {{ env?: Record<string, unknown> }} }}).process?.env?.[\"{secret}\"];"
-        );
-        let _ = writeln!(
-            out,
-            "      if (typeof __secret !== \"string\") return HttpResult.Unauthorized;"
-        );
-        let _ = writeln!(
-            out,
-            "      const __claims = await verifyBearerJwtHs256(__authz.slice(7), __secret);"
-        );
-        let _ = writeln!(
-            out,
-            "      if (__claims.tag === \"Err\") return HttpResult.Unauthorized;"
-        );
+        stmts.push(const_("__secret", secret_probe_expr(&secret)));
+        stmts.push(if_(
+            strict_neq(typeof_expr(ident("__secret")), str_lit("string")),
+            return_(Some(member(ident("HttpResult"), "Unauthorized"))),
+        ));
+        stmts.push(const_(
+            "__claims",
+            await_expr(call(
+                ident("verifyBearerJwtHs256"),
+                vec![
+                    method_call(ident("__authz"), "slice", vec![num_lit("7")]),
+                    ident("__secret"),
+                ],
+            )),
+        ));
+        stmts.push(if_(
+            strict_eq(member(ident("__claims"), "tag"), str_lit("Err")),
+            return_(Some(member(ident("HttpResult"), "Unauthorized"))),
+        ));
         // v0.53: a refinement actor's authorisation invariant — the scheme
         // verified (else 401 above), so a failed claim predicate is 403, not
         // 401. Checked against the *verified* claims, before the identity mints
         // or the body runs.
         if let Some(pred) = &seam.authorization {
             let js = bynk_check::actors::claim_predicate_to_js(pred, "__claims.value.claims");
-            let _ = writeln!(out, "      if (!({js})) return HttpResult.Forbidden;");
+            // #1321: see `emit_websocket_upgrade`'s own identical construction
+            // for why this is an opaque `Ident` carrying pre-built text.
+            stmts.push(if_(
+                ident(format!("!({js})")),
+                return_(Some(member(ident("HttpResult"), "Forbidden"))),
+            ));
         }
         if seam.binder.is_some() {
             // Capture the identity: construct the declared type from `sub`
             // (fail-closed on a refinement violation) and thread it into deps.
-            let _ = writeln!(
-                out,
-                "      const __id = handlers.{}.of(__claims.value.sub);",
-                seam.identity_type
-            );
-            let _ = writeln!(
-                out,
-                "      if (__id.tag === \"Err\") return HttpResult.Unauthorized;"
-            );
-            let _ = writeln!(
-                out,
-                "      return handlers.{sname}.{method_key}({}{}{{ ...deps, identity: __id.value }});",
-                param_args.join(", "),
-                if param_args.is_empty() { "" } else { ", " },
-            );
+            stmts.push(const_(
+                "__id",
+                method_call(
+                    member(ident("handlers"), seam.identity_type.clone()),
+                    "of",
+                    vec![member(member(ident("__claims"), "value"), "sub")],
+                ),
+            ));
+            stmts.push(if_(
+                strict_eq(member(ident("__id"), "tag"), str_lit("Err")),
+                return_(Some(member(ident("HttpResult"), "Unauthorized"))),
+            ));
+            let mut call_args = param_args.clone();
+            call_args.push(deps_spread_with("identity", member(ident("__id"), "value")));
+            stmts.push(return_(Some(call(
+                member_chain(ident("handlers"), &[sname, &method_key]),
+                call_args,
+            ))));
         } else {
             // Binder-less: the token is verified (fail-closed above); the
             // identity is not captured, so call the handler with plain deps.
-            let _ = writeln!(
-                out,
-                "      return handlers.{sname}.{method_key}({}{}deps);",
-                param_args.join(", "),
-                if param_args.is_empty() { "" } else { ", " },
-            );
+            let mut call_args = param_args.clone();
+            call_args.push(ident("deps"));
+            stmts.push(return_(Some(call(
+                member_chain(ident("handlers"), &[sname, &method_key]),
+                call_args,
+            ))));
         }
-        let _ = writeln!(out, "    }},");
-        return;
+        return TsObjectEntry::Method {
+            name: method_key,
+            is_async: true,
+            params,
+            body: stmts,
+        };
     }
 
     // P7.2: real declared types — same correction as the Bearer branch above.
-    let param_decls: Vec<String> = h
+    let params: Vec<TsParam> = h
         .params
         .iter()
-        .map(|p| {
-            format!(
-                "{}: {}",
-                ts_ident(&p.name.name),
-                qualified_type_ref(&p.type_ref)
-            )
+        .map(|p| TsParam {
+            name: ts_ident(&p.name.name),
+            ty: Some(qualified_ts_type_ref(&p.type_ref)),
+            optional: false,
         })
         .collect();
-    let _ = writeln!(out, "    async {method_key}({}) {{", param_decls.join(", "));
-    let _ = writeln!(
-        out,
-        "      return handlers.{sname}.{method_key}({}{}deps);",
-        param_args.join(", "),
-        if param_args.is_empty() { "" } else { ", " },
-    );
-    let _ = writeln!(out, "    }},");
+    let mut call_args = param_args;
+    call_args.push(ident("deps"));
+    TsObjectEntry::Method {
+        name: method_key.clone(),
+        is_async: true,
+        params,
+        body: vec![return_(Some(call(
+            member_chain(ident("handlers"), &[sname, &method_key]),
+            call_args,
+        )))],
+    }
 }
 
 /// v0.151: the compose wrapper for a single-actor `Oidc` HTTP handler. It reads
@@ -1079,83 +1644,113 @@ fn emit_http_wrapper(
 /// body runs. Any failure returns `Unauthorized` (401), fail-closed. Unlike the
 /// Bearer wrapper it sources **no secret**: the trust parameters are the public
 /// `issuer`/`audience`/`jwks` literals from the actor declaration.
+#[allow(clippy::vec_init_then_push)]
 fn emit_http_oidc_wrapper(
-    out: &mut String,
     sname: &str,
     h: &Handler,
     method: HttpMethod,
     path: &str,
     seam: &bynk_check::actors::OidcSeam,
-) {
+) -> TsObjectEntry {
     let method_key = http_handler_method_name(method, path);
-    let param_args: Vec<String> = h.params.iter().map(|p| ts_ident(&p.name.name)).collect();
+    let param_args: Vec<TsExpr> = h
+        .params
+        .iter()
+        .map(|p| ident(ts_ident(&p.name.name)))
+        .collect();
     let issuer = crate::emitter::escape_ts_string(&seam.issuer);
     let audience = crate::emitter::escape_ts_string(&seam.audience);
     let jwks = crate::emitter::escape_ts_string(&seam.jwks);
 
     // P7.2: real declared types — same correction as `emit_http_wrapper`'s own.
-    let mut decls: Vec<String> = vec!["request: Request".to_string()];
-    decls.extend(h.params.iter().map(|p| {
-        format!(
-            "{}: {}",
-            ts_ident(&p.name.name),
-            qualified_type_ref(&p.type_ref)
-        )
+    let mut params: Vec<TsParam> = vec![TsParam {
+        name: "request".to_string(),
+        ty: Some(TsType::named("Request")),
+        optional: false,
+    }];
+    params.extend(h.params.iter().map(|p| TsParam {
+        name: ts_ident(&p.name.name),
+        ty: Some(qualified_ts_type_ref(&p.type_ref)),
+        optional: false,
     }));
-    let _ = writeln!(out, "    async {method_key}({}) {{", decls.join(", "));
-    let _ = writeln!(
-        out,
-        "      const __authz = request.headers.get(\"Authorization\");"
-    );
-    let _ = writeln!(
-        out,
-        "      if (__authz === null || !__authz.startsWith(\"Bearer \")) return HttpResult.Unauthorized;"
-    );
-    let _ = writeln!(
-        out,
-        "      const __claims = await verifyOidcJwt(__authz.slice(7), \"{issuer}\", \"{audience}\", \"{jwks}\");"
-    );
-    let _ = writeln!(
-        out,
-        "      if (__claims.tag === \"Err\") return HttpResult.Unauthorized;"
-    );
+    let mut stmts: Vec<TsStmt> = Vec::new();
+    stmts.push(const_(
+        "__authz",
+        method_call(
+            member(ident("request"), "headers"),
+            "get",
+            vec![str_lit("Authorization")],
+        ),
+    ));
+    stmts.push(if_(
+        or_expr(
+            strict_eq(ident("__authz"), null_lit()),
+            not_expr(method_call(
+                ident("__authz"),
+                "startsWith",
+                vec![str_lit("Bearer ")],
+            )),
+        ),
+        return_(Some(member(ident("HttpResult"), "Unauthorized"))),
+    ));
+    stmts.push(const_(
+        "__claims",
+        await_expr(call(
+            ident("verifyOidcJwt"),
+            vec![
+                method_call(ident("__authz"), "slice", vec![num_lit("7")]),
+                str_lit(issuer),
+                str_lit(audience),
+                str_lit(jwks),
+            ],
+        )),
+    ));
+    stmts.push(if_(
+        strict_eq(member(ident("__claims"), "tag"), str_lit("Err")),
+        return_(Some(member(ident("HttpResult"), "Unauthorized"))),
+    ));
     if seam.binder.is_some() {
         // Capture the identity: construct the declared type from the verified
         // `sub` (fail-closed on a refinement violation) and thread it into deps.
-        let _ = writeln!(
-            out,
-            "      const __id = handlers.{}.of(__claims.value.sub);",
-            seam.identity_type
-        );
-        let _ = writeln!(
-            out,
-            "      if (__id.tag === \"Err\") return HttpResult.Unauthorized;"
-        );
-        let _ = writeln!(
-            out,
-            "      return handlers.{sname}.{method_key}({}{}{{ ...deps, identity: __id.value }});",
-            param_args.join(", "),
-            if param_args.is_empty() { "" } else { ", " },
-        );
+        stmts.push(const_(
+            "__id",
+            method_call(
+                member(ident("handlers"), seam.identity_type.clone()),
+                "of",
+                vec![member(member(ident("__claims"), "value"), "sub")],
+            ),
+        ));
+        stmts.push(if_(
+            strict_eq(member(ident("__id"), "tag"), str_lit("Err")),
+            return_(Some(member(ident("HttpResult"), "Unauthorized"))),
+        ));
+        let mut call_args = param_args;
+        call_args.push(deps_spread_with("identity", member(ident("__id"), "value")));
+        stmts.push(return_(Some(call(
+            member_chain(ident("handlers"), &[sname, &method_key]),
+            call_args,
+        ))));
     } else {
-        let _ = writeln!(
-            out,
-            "      return handlers.{sname}.{method_key}({}{}deps);",
-            param_args.join(", "),
-            if param_args.is_empty() { "" } else { ", " },
-        );
+        let mut call_args = param_args;
+        call_args.push(ident("deps"));
+        stmts.push(return_(Some(call(
+            member_chain(ident("handlers"), &[sname, &method_key]),
+            call_args,
+        ))));
     }
-    let _ = writeln!(out, "    }},");
+    TsObjectEntry::Method {
+        name: method_key,
+        is_async: true,
+        params,
+        body: stmts,
+    }
 }
 
 /// Source a string secret from the same env the `Secrets` capability reads
 /// (explicit `env` first, then a `process.env` probe), binding it to `var`.
-fn emit_secret_lookup(out: &mut String, var: &str, secret: &str, indent: &str) {
+fn emit_secret_lookup(var: &str, secret: &str) -> TsStmt {
     let secret = crate::emitter::escape_ts_string(secret);
-    let _ = writeln!(
-        out,
-        "{indent}const {var} = (env as unknown as Record<string, unknown>)[\"{secret}\"] ?? (globalThis as {{ process?: {{ env?: Record<string, unknown> }} }}).process?.env?.[\"{secret}\"];"
-    );
+    const_(var, secret_probe_expr(&secret))
 }
 
 /// v0.52: the compose wrapper for a **multi-actor sum** handler (`by who: A |
@@ -1166,9 +1761,8 @@ fn emit_secret_lookup(out: &mut String, var: &str, secret: &str, indent: &str) {
 /// parses the body and dispatches with `who` threaded through `deps`. The body
 /// `match`es on `who`. The entry passes `request` (+ any path params); no body
 /// read happens in the entry for a sum route.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::vec_init_then_push)]
 fn emit_http_sum_wrapper(
-    out: &mut String,
     sname: &str,
     h: &Handler,
     method: HttpMethod,
@@ -1176,7 +1770,7 @@ fn emit_http_sum_wrapper(
     members: &[bynk_check::actors::SumMember],
     local_types: &std::collections::HashMap<String, std::sync::Arc<bynk_syntax::ast::TypeDecl>>,
     runtime_use: &RuntimeUse,
-) {
+) -> TsObjectEntry {
     use bynk_check::actors::SumMemberSeam;
     let method_key = http_handler_method_name(method, path);
     // The wrapper takes the request first (it reads the body / headers), then
@@ -1195,28 +1789,37 @@ fn emit_http_sum_wrapper(
         .filter(|p| p.name.name != "body")
         .map(|p| (ts_ident(&p.name.name), p.type_ref.clone()))
         .collect();
-    let has_body = h.params.iter().any(|p| p.name.name == "body");
-    let mut decls = vec!["request: Request".to_string()];
-    decls.extend(
-        path_params
-            .iter()
-            .map(|(n, ty)| format!("{n}: {}", qualified_type_ref(ty))),
-    );
-    let _ = writeln!(out, "    async {method_key}({}) {{", decls.join(", "));
+    let mut params: Vec<TsParam> = vec![TsParam {
+        name: "request".to_string(),
+        ty: Some(TsType::named("Request")),
+        optional: false,
+    }];
+    params.extend(path_params.iter().map(|(n, ty)| TsParam {
+        name: n.clone(),
+        ty: Some(qualified_ts_type_ref(ty)),
+        optional: false,
+    }));
+    let mut stmts: Vec<TsStmt> = Vec::new();
 
     // Read the raw body once if a member verifies over it (Signature) or the
     // handler takes a `body` param (parsed from the same bytes).
+    let has_body = h.params.iter().any(|p| p.name.name == "body");
     let needs_raw = has_body || members.iter().any(|m| m.needs_body());
     if needs_raw {
-        let _ = writeln!(out, "      let __raw: string;");
-        let _ = writeln!(out, "      try {{");
-        let _ = writeln!(out, "        __raw = await request.text();");
-        let _ = writeln!(out, "      }} catch {{");
-        let _ = writeln!(
-            out,
-            "        return HttpResult.BadRequest(\"Invalid request body\");"
-        );
-        let _ = writeln!(out, "      }}");
+        stmts.push(let_("__raw", TsType::named("string")));
+        stmts.push(TsStmt::try_catch(
+            block(vec![TsStmt::assign(
+                ident("__raw"),
+                await_expr(method_call(ident("request"), "text", vec![])),
+                None,
+            )]),
+            None::<String>,
+            block(vec![return_(Some(call(
+                member(ident("HttpResult"), "BadRequest"),
+                vec![str_lit("Invalid request body")],
+            )))]),
+            None,
+        ));
     }
 
     // First-wins resolution: try each member in order; the first to verify sets
@@ -1230,114 +1833,204 @@ fn emit_http_sum_wrapper(
     // `identity_type` and checked against what that generated interface actually
     // expects — more than a same-line text change, and risks a `tsc --strict`
     // mismatch if guessed. Left as `any`, named here rather than silently kept.
-    let _ = writeln!(out, "      let __who: any = undefined;");
-    for member in members {
-        let tag = crate::emitter::escape_ts_string(&member.actor_name);
-        let _ = writeln!(out, "      if (__who === undefined) {{");
-        match &member.seam {
+    stmts.push(TsStmt::let_stmt(
+        TsBindingName::Ident("__who".to_string()),
+        Some(TsType::named("any")),
+        Some(ident("undefined")),
+        None,
+    ));
+    for member_seam in members {
+        let tag = crate::emitter::escape_ts_string(&member_seam.actor_name);
+        let mut inner: Vec<TsStmt> = Vec::new();
+        match &member_seam.seam {
             SumMemberSeam::None => {
-                let _ = writeln!(out, "        __who = {{ tag: \"{tag}\" }};");
+                inner.push(TsStmt::assign(
+                    ident("__who"),
+                    TsExpr::object(vec![("tag".to_string(), str_lit(tag.clone()))]),
+                    None,
+                ));
             }
             SumMemberSeam::Bearer {
                 secret,
                 identity_type,
             } => {
-                let _ = writeln!(
-                    out,
-                    "        const __authz = request.headers.get(\"Authorization\");"
-                );
-                let _ = writeln!(
-                    out,
-                    "        if (__authz !== null && __authz.startsWith(\"Bearer \")) {{"
-                );
-                emit_secret_lookup(out, "__secret", secret, "          ");
-                let _ = writeln!(out, "          if (typeof __secret === \"string\") {{");
-                let _ = writeln!(
-                    out,
-                    "            const __claims = await verifyBearerJwtHs256(__authz.slice(7), __secret);"
-                );
-                let _ = writeln!(out, "            if (__claims.tag === \"Ok\") {{");
-                let _ = writeln!(
-                    out,
-                    "              const __id = handlers.{identity_type}.of(__claims.value.sub);"
-                );
-                let _ = writeln!(
-                    out,
-                    "              if (__id.tag === \"Ok\") __who = {{ tag: \"{tag}\", identity: __id.value }};"
-                );
-                let _ = writeln!(out, "            }}");
-                let _ = writeln!(out, "          }}");
-                let _ = writeln!(out, "        }}");
+                inner.push(const_(
+                    "__authz",
+                    method_call(
+                        member(ident("request"), "headers"),
+                        "get",
+                        vec![str_lit("Authorization")],
+                    ),
+                ));
+                let mut authz_body: Vec<TsStmt> = Vec::new();
+                authz_body.push(emit_secret_lookup("__secret", secret));
+                let mut secret_body: Vec<TsStmt> = Vec::new();
+                secret_body.push(const_(
+                    "__claims",
+                    await_expr(call(
+                        ident("verifyBearerJwtHs256"),
+                        vec![
+                            method_call(ident("__authz"), "slice", vec![num_lit("7")]),
+                            ident("__secret"),
+                        ],
+                    )),
+                ));
+                secret_body.push(if_(
+                    strict_eq(member(ident("__claims"), "tag"), str_lit("Ok")),
+                    block(vec![
+                        const_(
+                            "__id",
+                            method_call(
+                                member(ident("handlers"), identity_type.clone()),
+                                "of",
+                                vec![member(member(ident("__claims"), "value"), "sub")],
+                            ),
+                        ),
+                        if_(
+                            strict_eq(member(ident("__id"), "tag"), str_lit("Ok")),
+                            TsStmt::assign(
+                                ident("__who"),
+                                TsExpr::object(vec![
+                                    ("tag".to_string(), str_lit(tag.clone())),
+                                    ("identity".to_string(), member(ident("__id"), "value")),
+                                ]),
+                                None,
+                            ),
+                        ),
+                    ]),
+                ));
+                authz_body.push(if_(
+                    strict_eq(typeof_expr(ident("__secret")), str_lit("string")),
+                    block(secret_body),
+                ));
+                inner.push(if_(
+                    and_expr(
+                        strict_neq(ident("__authz"), null_lit()),
+                        method_call(ident("__authz"), "startsWith", vec![str_lit("Bearer ")]),
+                    ),
+                    block(authz_body),
+                ));
             }
             SumMemberSeam::Signature(seam) => {
-                let header = crate::emitter::escape_ts_string(&seam.header);
-                emit_secret_lookup(out, "__secret", &seam.secret, "        ");
-                let _ = writeln!(out, "        if (typeof __secret === \"string\") {{");
+                inner.push(emit_secret_lookup("__secret", &seam.secret));
+                let mut secret_body: Vec<TsStmt> = Vec::new();
                 let ts_expr = match &seam.timestamp_header {
                     Some(th) => {
                         let th = crate::emitter::escape_ts_string(th);
-                        let _ =
-                            writeln!(out, "          const __ts = request.headers.get(\"{th}\");");
-                        "__ts"
+                        secret_body.push(const_(
+                            "__ts",
+                            method_call(
+                                member(ident("request"), "headers"),
+                                "get",
+                                vec![str_lit(th)],
+                            ),
+                        ));
+                        ident("__ts")
                     }
-                    None => "null",
+                    None => null_lit(),
                 };
                 let tol = match seam.tolerance_secs {
-                    Some(n) => n.to_string(),
-                    None => "null".to_string(),
+                    Some(n) => num_lit(n.to_string()),
+                    None => null_lit(),
                 };
-                let _ = writeln!(
-                    out,
-                    "          const __sig_ok = await verifySignatureHmacSha256(__raw, __secret, request.headers.get(\"{header}\"), {ts_expr}, {tol});"
-                );
-                let _ = writeln!(out, "          if (__sig_ok) __who = {{ tag: \"{tag}\" }};");
-                let _ = writeln!(out, "        }}");
+                let header = crate::emitter::escape_ts_string(&seam.header);
+                secret_body.push(const_(
+                    "__sig_ok",
+                    await_expr(call(
+                        ident("verifySignatureHmacSha256"),
+                        vec![
+                            ident("__raw"),
+                            ident("__secret"),
+                            method_call(
+                                member(ident("request"), "headers"),
+                                "get",
+                                vec![str_lit(header)],
+                            ),
+                            ts_expr,
+                            tol,
+                        ],
+                    )),
+                ));
+                secret_body.push(if_(
+                    ident("__sig_ok"),
+                    TsStmt::assign(
+                        ident("__who"),
+                        TsExpr::object(vec![("tag".to_string(), str_lit(tag.clone()))]),
+                        None,
+                    ),
+                ));
+                inner.push(if_(
+                    strict_eq(typeof_expr(ident("__secret")), str_lit("string")),
+                    block(secret_body),
+                ));
             }
         }
-        let _ = writeln!(out, "      }}");
+        stmts.push(if_(
+            strict_eq(ident("__who"), ident("undefined")),
+            block(inner),
+        ));
     }
-    let _ = writeln!(
-        out,
-        "      if (__who === undefined) return HttpResult.Unauthorized;"
-    );
+    stmts.push(if_(
+        strict_eq(ident("__who"), ident("undefined")),
+        return_(Some(member(ident("HttpResult"), "Unauthorized"))),
+    ));
 
     // Parse the body param from the raw bytes already read (fail-closed → 400).
-    let mut call_args: Vec<String> = path_params.iter().map(|(n, _)| n.to_string()).collect();
+    let mut call_args: Vec<TsExpr> = path_params.iter().map(|(n, _)| ident(n.clone())).collect();
     if let Some(body_param) = h.params.iter().find(|p| p.name.name == "body") {
-        let _ = writeln!(out, "      let __body_json: JsonValue;");
-        let _ = writeln!(out, "      try {{");
-        let _ = writeln!(out, "        __body_json = JSON.parse(__raw) as JsonValue;");
-        let _ = writeln!(out, "      }} catch {{");
-        let _ = writeln!(
-            out,
-            "        return HttpResult.BadRequest(\"Invalid request body\");"
-        );
-        let _ = writeln!(out, "      }}");
+        stmts.push(let_("__body_json", TsType::named("JsonValue")));
+        stmts.push(TsStmt::try_catch(
+            block(vec![TsStmt::assign(
+                ident("__body_json"),
+                as_expr(
+                    method_call(ident("JSON"), "parse", vec![ident("__raw")]),
+                    TsType::named("JsonValue"),
+                ),
+                None,
+            )]),
+            None::<String>,
+            block(vec![return_(Some(call(
+                member(ident("HttpResult"), "BadRequest"),
+                vec![str_lit("Invalid request body")],
+            )))]),
+            None,
+        ));
+        // #1321: `super::workers_entry::deserialise_call`/`brand_assertion`
+        // are `workers_entry.rs`'s own still-`String`-returning functions —
+        // that file is Arc C's own NEXT slice (not yet converted), so this
+        // is the same "opaque `Ident` carries pre-built text from an
+        // out-of-scope, not-yet-converted producer" situation as
+        // `claim_predicate_to_js` above, not a new pattern.
         let dser = super::workers_entry::deserialise_call(
             &body_param.type_ref,
             "__body_json",
             "$",
             runtime_use,
         );
-        let _ = writeln!(out, "      const __r_body = {dser};");
-        let _ = writeln!(
-            out,
-            "      if (__r_body.tag === \"Err\") return HttpResult.BadRequest(\"Invalid request body\");"
-        );
-        let _ = writeln!(
-            out,
-            "      const body = __r_body.value{};",
-            super::workers_entry::brand_assertion(&body_param.type_ref, local_types)
-        );
-        call_args.push("body".to_string());
+        stmts.push(const_("__r_body", ident(dser)));
+        stmts.push(if_(
+            strict_eq(member(ident("__r_body"), "tag"), str_lit("Err")),
+            return_(Some(call(
+                member(ident("HttpResult"), "BadRequest"),
+                vec![str_lit("Invalid request body")],
+            ))),
+        ));
+        let brand = super::workers_entry::brand_assertion(&body_param.type_ref, local_types);
+        stmts.push(const_("body", ident(format!("__r_body.value{brand}"))));
+        call_args.push(ident("body"));
     }
-    let _ = writeln!(
-        out,
-        "      return handlers.{sname}.{method_key}({}{}{{ ...deps, who: __who }});",
-        call_args.join(", "),
-        if call_args.is_empty() { "" } else { ", " },
-    );
-    let _ = writeln!(out, "    }},");
+    call_args.push(deps_spread_with("who", ident("__who")));
+    stmts.push(return_(Some(call(
+        member_chain(ident("handlers"), &[sname, &method_key]),
+        call_args,
+    ))));
+
+    TsObjectEntry::Method {
+        name: method_key,
+        is_async: true,
+        params,
+        body: stmts,
+    }
 }
 
 /// v0.176 (#642): the user-named types appearing anywhere in a type-ref, including
@@ -1382,7 +2075,12 @@ fn named_types_in(r: &TypeRef) -> Vec<String> {
 /// prefix) or, for a common enough name, a browser-ambient DOM global
 /// (`Notification`, `Event`) that silently wins instead. Both broke real
 /// `tsc --strict` fixtures before this existed.
-pub(crate) fn qualified_type_ref(r: &TypeRef) -> String {
+///
+/// #1321: renamed from `qualified_type_ref` (returned `String`) — every real
+/// caller now builds a `TsProgram` directly, so this returns the `TsType`
+/// [`crate::emitter::ts_type_ref_qualified_ts_type`] (Decision B) itself
+/// builds, not its printed text.
+fn qualified_ts_type_ref(r: &TypeRef) -> TsType {
     let scope: HashSet<String> = named_types_in(r).into_iter().collect();
-    crate::emitter::ts_type_ref_qualified(r, &scope, "handlers")
+    crate::emitter::ts_type_ref_qualified_ts_type(r, &scope, "handlers")
 }

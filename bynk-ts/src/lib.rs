@@ -39,6 +39,6 @@ pub use lint::{Violation, verbatim_violations};
 pub use printer::{Printed, print, print_type};
 pub use program::{
     TsBinaryOp, TsBindingName, TsClassCtor, TsClassField, TsClassMethod, TsDecl, TsExpr, TsLit,
-    TsParam, TsProgram, TsStmt, TsType, TsUnaryOp, VerbatimOrigin,
+    TsObjectEntry, TsParam, TsProgram, TsStmt, TsType, TsUnaryOp, VerbatimOrigin,
 };
 pub use source_map::SourceMapBuilder;

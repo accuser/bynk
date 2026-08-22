@@ -41,7 +41,7 @@ impl TsProgram {
 /// sealing: they're normal typed constructors, not a "wrap opaque text"
 /// escape hatch, so the `verbatim_sites` concern that motivates `verbatim`'s
 /// own single-constructor discipline doesn't apply to them.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TsStmt {
     pub(crate) kind: TsStmtKind,
     /// Where this statement's content originated in the `.bynk` source, if
@@ -56,7 +56,7 @@ pub struct TsStmt {
     pub span: Option<Span>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) enum TsStmtKind {
     Verbatim {
         #[allow(dead_code)]
@@ -116,10 +116,14 @@ pub(crate) enum TsStmtKind {
     /// §7.1 has no `TryCatch` at all), found and named by P7.8's own
     /// accepted proposal: `events_fanout.rs`'s subscriber-failure-isolation
     /// `try`/`catch` (ADR 0284) is load-bearing control flow, not
-    /// decorative.
+    /// decorative. `catch_param: None` prints the bare `catch { ... }`
+    /// form (ES2019's optional catch binding) — #1321's own real gap:
+    /// `workers.rs`'s `emit_http_sum_wrapper` reads the raw request body in
+    /// a `try`/`catch` that never uses the caught error (`} catch {`, no
+    /// `(e)` at all).
     TryCatch {
         try_block: Box<TsStmt>,
-        catch_param: String,
+        catch_param: Option<String>,
         catch_block: Box<TsStmt>,
     },
     /// `{ <stmts> }` — the body container for `If`/`ForOf`/`TryCatch`/
@@ -255,14 +259,14 @@ impl TsStmt {
 
     pub fn try_catch(
         try_block: TsStmt,
-        catch_param: impl Into<String>,
+        catch_param: Option<impl Into<String>>,
         catch_block: TsStmt,
         span: Option<Span>,
     ) -> Self {
         Self {
             kind: TsStmtKind::TryCatch {
                 try_block: Box::new(try_block),
-                catch_param: catch_param.into(),
+                catch_param: catch_param.map(Into::into),
                 catch_block: Box::new(catch_block),
             },
             span,
@@ -304,7 +308,7 @@ impl TsStmt {
 /// the destructured properties themselves (`{ a, b }`), not the renamed
 /// (`{ a: renamed }`) or nested (`{ a: { b } }`) forms, since nothing in
 /// the grounding file needs either.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum TsBindingName {
     Ident(String),
     ObjectPattern(Vec<String>),
@@ -313,8 +317,10 @@ pub enum TsBindingName {
 /// An expression. Only the shapes `events_fanout.rs` concretely uses
 /// (Decision B) — not the reference sketch's full `TsExpr` list (`Arrow`,
 /// `Cond`, `TemplateLit`, `Spread` are all unused in the grounding file and
-/// deliberately not built here).
-#[derive(Debug)]
+/// deliberately not built here). Arc C slice 3 (#1321, `workers.rs`) adds
+/// `Arrow`, `OptionalMember`/`OptionalIndex` (Decision A, gaps 3/4) — this
+/// slice's own real, grounded needs.
+#[derive(Debug, Clone)]
 pub enum TsExpr {
     Ident(String),
     /// `object.property`.
@@ -322,10 +328,43 @@ pub enum TsExpr {
         object: Box<TsExpr>,
         property: String,
     },
+    /// `object?.property` — the optional-chaining form of [`TsExpr::Member`].
+    /// A distinct variant, not an `optional: bool` flag on `Member` itself
+    /// (#1321's own Decision A, gap 4, left the mechanism to the
+    /// implementation): a flag would touch every one of `Member`'s
+    /// already-many real call sites (`events_fanout.rs`, this crate's own
+    /// printer tests) that never need one, where a separate variant touches
+    /// none of them — narrower, matching this track's own repeated
+    /// "smallest correct scope" judgment. `workers.rs`'s own secret-probe
+    /// idiom (`emit_websocket_upgrade`/`emit_http_wrapper`/
+    /// `emit_secret_lookup`, three identical real sites) is the only
+    /// grounding.
+    OptionalMember {
+        object: Box<TsExpr>,
+        property: String,
+    },
     /// `object[index]`.
     Index {
         object: Box<TsExpr>,
         index: Box<TsExpr>,
+    },
+    /// `object?.[index]` — the optional-chaining form of [`TsExpr::Index`],
+    /// the same real grounding and the same "separate variant, not a flag"
+    /// reasoning as [`TsExpr::OptionalMember`].
+    OptionalIndex {
+        object: Box<TsExpr>,
+        index: Box<TsExpr>,
+    },
+    /// `(params) => body` — an expression-bodied arrow function. No
+    /// block-body variant: `workers.rs`'s own one real site
+    /// (`emit_worker_compose`'s own `__eventsDispatch` entry,
+    /// `dispatchToEventsFanout(env.<bind>, events)`) has an expression body,
+    /// not a block, and nothing else in this slice's grounding needs one —
+    /// extend narrowly, the same way `TsBinaryOp` only has the operators
+    /// real content needs rather than the full JS/TS table.
+    Arrow {
+        params: Vec<TsParam>,
+        body: Box<TsExpr>,
     },
     Call {
         callee: Box<TsExpr>,
@@ -354,7 +393,7 @@ pub enum TsExpr {
     /// which cannot honour `multiline` — not reachable from any real
     /// `bynk-emit` call site today, but worth knowing before nesting one.
     Object {
-        entries: Vec<(String, TsExpr)>,
+        entries: Vec<TsObjectEntry>,
         multiline: bool,
     },
     /// An array literal, e.g. `[{ binding: "x", service: "y" }]`.
@@ -378,18 +417,56 @@ pub enum TsExpr {
 }
 
 impl TsExpr {
-    /// The ordinary, single-line object literal.
+    /// The ordinary, single-line object literal, `Prop`-only — every entry
+    /// is `key: value`. `events_fanout.rs`'s own entries (and this crate's
+    /// own printer tests) are all this shape; kept taking a plain
+    /// `Vec<(String, TsExpr)>` rather than `Vec<TsObjectEntry>` so none of
+    /// those existing call sites needed to change when `TsObjectEntry` was
+    /// added (#1321) — see [`TsExpr::object_entries`] for the mixed-entry
+    /// form `workers.rs` itself needs (shorthand/spread/method entries).
     pub fn object(entries: Vec<(String, TsExpr)>) -> Self {
         TsExpr::Object {
-            entries,
+            entries: entries
+                .into_iter()
+                .map(|(k, v)| TsObjectEntry::Prop(k, v))
+                .collect(),
             multiline: false,
         }
     }
 
     /// One entry per line, each with its own trailing comma — see
     /// [`TsExpr::Object`]'s own doc for the real shape and the
-    /// depth-awareness this needs at the print site.
+    /// depth-awareness this needs at the print site. `Prop`-only, the same
+    /// convenience [`TsExpr::object`]'s own doc explains.
     pub fn multiline_object(entries: Vec<(String, TsExpr)>) -> Self {
+        TsExpr::Object {
+            entries: entries
+                .into_iter()
+                .map(|(k, v)| TsObjectEntry::Prop(k, v))
+                .collect(),
+            multiline: true,
+        }
+    }
+
+    /// The single-line object literal, taking [`TsObjectEntry`] directly —
+    /// for a mixed entry list (shorthand/spread/method alongside `Prop`),
+    /// which [`TsExpr::object`]'s own `Vec<(String, TsExpr)>` convenience
+    /// can't represent. #1321's own real grounding: `workers.rs`'s local
+    /// capability-provider `deps` object mixes shorthand names
+    /// (`{ cap1, cap2 }`) with explicit `key: value` entries
+    /// (`__exec: exec`) in one literal.
+    pub fn object_entries(entries: Vec<TsObjectEntry>) -> Self {
+        TsExpr::Object {
+            entries,
+            multiline: false,
+        }
+    }
+
+    /// [`TsExpr::multiline_object`]'s own `TsObjectEntry` sibling —
+    /// #1321's own real grounding: `workers.rs`'s `compose`-returned
+    /// surface object is one shorthand-async-`Method` entry per wrapper,
+    /// one per line.
+    pub fn multiline_object_entries(entries: Vec<TsObjectEntry>) -> Self {
         TsExpr::Object {
             entries,
             multiline: true,
@@ -397,23 +474,73 @@ impl TsExpr {
     }
 }
 
-/// Only `!x` — the one unary operator `events_fanout.rs` uses
-/// (`!Array.isArray(subs)`, `!binding`).
+/// One entry of a [`TsExpr::Object`] literal. Only `Prop` existed before
+/// #1321 (`events_fanout.rs`'s own grounding never needed the other three) —
+/// `workers.rs`'s own dominant shape (Decision A, gap 1) is a literal
+/// object whose entries are shorthand async methods (every `on call`/`on
+/// http`/… wrapper attaches this way), its local capability-`deps` object
+/// mixes bare shorthand names with explicit `key: value` pairs, and three
+/// real sites spread another object into one (gap 2, folded in here rather
+/// than as its own top-level `TsExpr` variant — a spread only ever appears
+/// as an object- or array-literal entry in this file, never as a
+/// standalone expression, so scoping it to entry position is the narrower
+/// correct change).
+#[derive(Debug, Clone)]
+pub enum TsObjectEntry {
+    /// `key: value`.
+    Prop(String, TsExpr),
+    /// `key` alone — object-literal property shorthand, e.g. `{ cap1,
+    /// cap2 }`. Distinct from `Prop(name, TsExpr::Ident(name))`, which
+    /// prints `name: name`, not the shorthand form real TypeScript
+    /// property-shorthand text actually is.
+    Shorthand(String),
+    /// A shorthand async method entry, e.g. `async foo(a: T) { ... },` —
+    /// `workers.rs`'s own dominant shape (Decision A, gap 1): every
+    /// wrapper helper (`emit_call_wrapper`, `emit_event_wrapper`, …)
+    /// attaches to the returned `compose` surface this way.
+    Method {
+        name: String,
+        is_async: bool,
+        params: Vec<TsParam>,
+        body: Vec<TsStmt>,
+    },
+    /// `...expr` — an object-spread entry (Decision A, gap 2), e.g. `{
+    /// ...deps, identity: __caller }`.
+    Spread(TsExpr),
+}
+
+/// `!x` (`events_fanout.rs`'s `!Array.isArray(subs)`, `!binding`) and
+/// `typeof x` (#1321, `workers.rs`'s own secret-probe idiom: `typeof
+/// __secret !== "string"`) — the two unary operators real content uses, not
+/// the full JS/TS table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TsUnaryOp {
     Not,
+    Typeof,
 }
 
-/// Only `??` — the one binary operator `events_fanout.rs` uses
-/// (`env ?? {}`). Not the full JS/TS operator table (Decision B).
+/// `??` (`events_fanout.rs`'s `env ?? {}`), plus three more real operators
+/// #1321 (`workers.rs`) grounds: `||`/`&&` (the Bearer-header presence
+/// checks, `__authz === null || !__authz.startsWith(...)` /
+/// `__authz !== null && __authz.startsWith(...)`) and `===`/`!==`
+/// (pervasive throughout the file's own tagged-result and header checks).
+/// Not the full JS/TS operator table (Decision B's own "extend narrowly"
+/// posture) — see the printer's own `binary_precedence` (`bynk-ts/src/
+/// printer.rs`, private) for why a
+/// nested `Binary` operand's parenthesisation needed to become
+/// precedence-aware once more than one operator existed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TsBinaryOp {
     NullishCoalescing,
+    Or,
+    And,
+    StrictEq,
+    StrictNotEq,
 }
 
 /// A literal — only the three kinds `events_fanout.rs` uses: a string
 /// (`"EventsFanout delivery failed"`), a number (`204`), and `null`.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum TsLit {
     Str(String),
     /// Rendered verbatim, as text — TypeScript's own numeric-literal
@@ -435,7 +562,7 @@ pub enum TsLit {
 /// sketch's `Union`/`Intersection`/`Literal`/`TypeParam`/`Readonly` (still
 /// unused; `readonly` here is a modifier on `Array`, not the sketch's own
 /// separate `Readonly` wrapper variant).
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum TsType {
     /// A named type, optionally generic — `string`/`unknown` (no type
     /// arguments) or `Record<string, T>`/`Promise<Response>` (some).
@@ -471,7 +598,14 @@ pub enum TsType {
     /// (always-inline) rendering — the two only look different because
     /// `TsDecl::Interface` is the thing choosing to put each member on its
     /// own line, not because `Object` has two rendering modes.
-    Object(Vec<(String, TsType)>),
+    ///
+    /// The third tuple element is `optional` (#1321, Decision A gap 5) —
+    /// `key?: ty`, mirroring [`TsParam::optional`]'s existing precedent.
+    /// `workers.rs`'s own secret-probe idiom needs it: `{ process?: { env?:
+    /// Record<string, unknown> } }`. A tuple, not a struct field, matching
+    /// this variant's own existing two-element-tuple convention rather than
+    /// introducing a new named type for one added `bool`.
+    Object(Vec<(String, TsType, bool)>),
     /// `(a0: T0, a1: T1, …) => Ret` — a function type. Parameters carry no
     /// name of their own (just their type); the printer numbers them
     /// positionally (`a0`, `a1`, …), matching the exact convention
@@ -535,7 +669,7 @@ impl TsType {
 }
 
 /// One function/method/constructor parameter.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TsParam {
     pub name: String,
     pub ty: Option<TsType>,
@@ -546,7 +680,7 @@ pub struct TsParam {
 }
 
 /// One `class` field.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TsClassField {
     pub name: String,
     pub ty: TsType,
@@ -558,14 +692,14 @@ pub struct TsClassField {
 }
 
 /// A class's own constructor.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TsClassCtor {
     pub params: Vec<TsParam>,
     pub body: Vec<TsStmt>,
 }
 
 /// One class method.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TsClassMethod {
     pub name: String,
     pub is_async: bool,
@@ -574,20 +708,45 @@ pub struct TsClassMethod {
     pub body: Vec<TsStmt>,
 }
 
-/// A top-level declaration. Only `Import`, `Export`, `Interface`,
-/// `ConstDecl`, and `Class` — not the sketch's `Function`/`TypeAlias`
-/// (unused in the grounding file).
-#[derive(Debug)]
+/// A top-level declaration. `Import`, `Export`, `Interface`, `ConstDecl`,
+/// and `Class` were `events_fanout.rs`'s own grounding (P7.8's own note:
+/// "not the sketch's `Function`/`TypeAlias` — unused in the grounding
+/// file"). #1321 (`workers.rs`) needed both after all — a real gap the
+/// accepted proposal's own Framing didn't name (its own "no other gap
+/// surfaced" checked `TsStmt`/`TsExpr`/`TsType` shapes, not `TsDecl` ones):
+/// `compose.ts`'s own `export function compose(env: Env, …) { … }` is a
+/// top-level function declaration, and (when the Worker has agents or
+/// publishes events) a `type DurableObjectNamespace = { … };` fallback
+/// alias sits alongside it. Named explicitly as a deviation from the
+/// accepted proposal's own catalogue, not silently added — both are
+/// mechanical, direct `TsDecl` siblings of `ConstDecl`/`Class` already
+/// here, the same "small, grounded, same class of gap" this track's own
+/// history repeatedly found and closed (P7.8's `Assign`/`Continue`/
+/// `TryCatch`, Arc C slice 1's `Comment`).
+#[derive(Debug, Clone)]
 pub enum TsDecl {
     /// `import { a, b } from "spec";` (`type_only: false`) or
     /// `import type { a, b } from "spec";` (`type_only: true`). Only the
     /// named-imports form — `events_fanout.rs` never uses a default
-    /// import, so none is represented.
+    /// import, so none is represented. `names` entries are pushed verbatim
+    /// (`printer.rs`'s own `names.join(", ")`), so a renamed import
+    /// (`messagesLocales as __locale_declaredLocales`, `workers.rs`'s own
+    /// locale-negotiation import) is one opaque `String` entry, not a
+    /// structured rename — the same "the field is already a raw-text slot"
+    /// reasoning that also covers a `type`-prefixed single specifier
+    /// (`"type KVNamespace"`) inside an otherwise non-`type_only` import.
     Import {
         type_only: bool,
         names: Vec<String>,
         from: String,
     },
+    /// `import * as alias from "spec";` — a namespace import, structurally
+    /// different from [`TsDecl::Import`]'s braced named-imports form (no
+    /// `{ }`, one bound name for the whole module). #1321's own real gap:
+    /// `workers.rs`'s `compose.ts` imports `handlers.js` and each
+    /// referenced unit's binding module this way; `events_fanout.rs` never
+    /// used one.
+    ImportNamespace { alias: String, from: String },
     /// Marks the wrapped declaration `export`ed — `export class Foo { .. }`
     /// is `Export(Box::new(Class { .. }))`. A wrapper, not a per-variant
     /// `exported: bool` field, matching the reference sketch's own naming
@@ -612,6 +771,21 @@ pub enum TsDecl {
         constructor: Option<TsClassCtor>,
         methods: Vec<TsClassMethod>,
     },
+    /// `function name(params): ret { body }` — a top-level function
+    /// declaration. No `is_async` field: `workers.rs`'s own one real site
+    /// (`compose`) is never async — extend narrowly, add it when a future
+    /// slice's own grounding needs it, the same posture every other
+    /// narrowly-scoped addition here takes.
+    Function {
+        name: String,
+        params: Vec<TsParam>,
+        return_type: Option<TsType>,
+        body: Vec<TsStmt>,
+    },
+    /// `type name = ty;` — a top-level type alias. `workers.rs`'s own real
+    /// site: the `DurableObjectNamespace` local fallback type (emitted only
+    /// when the Worker has agents or publishes events).
+    TypeAlias { name: String, ty: TsType },
 }
 
 /// Which family of residual, not-yet-converted emission a [`TsStmt::verbatim`]

@@ -4150,6 +4150,32 @@ pub(crate) fn ts_type_ref_qualified(r: &TypeRef, scope: &HashSet<String>, ns: &s
     )
 }
 
+/// [`TsType`]-returning twin of [`ts_type_ref_qualified`] (Decision B,
+/// #1321) — `workers.rs`'s own type-position needs (Arc C slice 3) build a
+/// real `bynk_ts::TsProgram`, so its wrapper (`qualified_ts_type_ref`) needs
+/// the structured `TsType` this function returns, not `ts_type_ref_qualified`'s
+/// own already-printed `String`. Added *alongside*, not replacing:
+/// `ts_type_ref_qualified` stays exactly as it is, still needed by every
+/// other still-`String`-based caller (`emit.rs`, `lower.rs`,
+/// `serialisation.rs` once its own future slice lands).
+///
+/// Not a new structural walk — `ts_type_ref_to_ts_type` (below) already
+/// builds a real `TsType` from every `TypeRef` variant; `ts_type_ref_qualified`
+/// itself already routes through it and only stringifies at its own last
+/// step (P7.9, #1315: "renders `r` by building a real `bynk_ts::TsType`...
+/// only the internal construction moved"). This function is that same
+/// build, minus the final `bynk_ts::print_type` call.
+pub(crate) fn ts_type_ref_qualified_ts_type(
+    r: &TypeRef,
+    scope: &HashSet<String>,
+    ns: &str,
+) -> TsType {
+    ts_type_ref_to_ts_type(
+        r,
+        Some(&|name| scope.contains(name).then(|| ns.to_string())),
+    )
+}
+
 /// Like `ts_type_ref_qualified`, but each in-scope name can carry its *own*
 /// namespace rather than one shared `ns` — needed when a signature mixes
 /// names owned by the target unit with names reached only through a `uses`d
