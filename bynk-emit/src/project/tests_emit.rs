@@ -3915,6 +3915,7 @@ pub(crate) fn emit_test_main(tests: &[RunnableTest], import_ext: ImportExt) -> T
                     ty: Some(TsType::named("unknown")),
                     optional: false,
                 }],
+                is_async: false,
                 body: Box::new(method_call(
                     ident("console"),
                     "log",

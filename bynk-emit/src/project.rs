@@ -49,6 +49,7 @@ use bynk_check::resolver::{self, MethodTable as ResolverMethodTable, ResolvedCom
 use bynk_syntax::error::CompileError;
 use bynk_syntax::lexer;
 use bynk_syntax::parser;
+use bynk_ts::{TsBindingName, TsDecl, TsExpr, TsLit, TsParam, TsProgram, TsStmt, TsType};
 
 // P4.0 (#1113): discovery, the unit graph, path resolution, and cross-unit
 // consistency checks moved to `bynk-project` — this crate is now a
@@ -979,12 +980,6 @@ pub fn analyse_project_with(roots: &Roots, overlay: &HashMap<PathBuf, String>) -
 /// never disagree on which providers take the extra `__caller` argument.
 fn context_binds_caller(table: &UnitTable) -> bool {
     crate::emitter::any_service_binds_caller(table.services.values(), &table.actors)
-}
-
-/// A double-quoted, escaped TypeScript string literal for `s` (a qualified
-/// context name at the compose-root caller sites).
-fn ts_string_literal(s: &str) -> String {
-    format!("\"{}\"", crate::emitter::escape_ts_string(s))
 }
 
 // P4.1 (#1115): `record_analyse_types` relocated to
@@ -2186,7 +2181,7 @@ fn build_output(
             // surface. The compose file imports each context, instantiates
             // its providers, assembles its deps (capabilities + cross-
             // context surfaces), and exports the top-level service surface.
-            if let Some(compose_ts) = emit_composition_root(
+            if let Some(compose_program) = emit_composition_root(
                 &groups,
                 &kinds,
                 &unit_consumes,
@@ -2204,13 +2199,7 @@ fn build_output(
             ) {
                 compiled.push(StagedFile {
                     output_path: PathBuf::from("compose.ts"),
-                    document: Document::Ts(bynk_ts::TsProgram {
-                        stmts: vec![bynk_ts::TsStmt::verbatim(
-                            bynk_ts::VerbatimOrigin::NotYetConverted,
-                            compose_ts,
-                            None,
-                        )],
-                    }),
+                    document: Document::Ts(compose_program),
                     source_map: None,
                     debug_metadata: None,
                 });
@@ -2920,12 +2909,14 @@ fn new_call_ts_expr(ns: &str, class: &str, args: Vec<bynk_ts::TsExpr>) -> bynk_t
 /// emit_worker_compose` now builds a real `TsProgram` directly, and its own
 /// cross-context capability-provider `const {key} = {expr};` lines need a
 /// real `TsExpr`, not a `String` to splice. `instantiate_provider_expr`
-/// itself is untouched — `emit_composition_root`'s own Bundle-mode
-/// `compose.ts` (a different, still-unconverted document, `project.rs`'s
-/// own `emit_composition_root` function) still calls it. Hardcodes
-/// `workers_ns = true`: the only mode `emit_worker_compose`'s own call site
-/// ever uses, so threading the flag through unused branches was dropped
-/// rather than carried for symmetry with a caller that doesn't exist here.
+/// itself is untouched — both `workers.rs`'s own `emit_worker_compose`
+/// (Workers mode, `workers_ns: true`) and `emit_composition_root`'s own
+/// Bundle-mode `compose.ts` (#1327, Arc C slice 6, `workers_ns: false`) call
+/// this twin now. Originally hardcoded `workers_ns = true` (the only mode
+/// `emit_worker_compose`'s own call site used at the time) — #1327 restored
+/// the `workers_ns: bool` parameter its `String`-returning sibling always
+/// had, matching that signature exactly, once a second real caller needed
+/// `false`.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn instantiate_provider_ts_expr(
     provider_ctx: &str,
@@ -2934,12 +2925,17 @@ pub(crate) fn instantiate_provider_ts_expr(
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
     unit_flattened: &HashMap<String, HashMap<String, String>>,
+    workers_ns: bool,
     env_ident: Option<&str>,
     locale_negotiation: Option<&LocaleNegotiationArgs>,
     referenced_units: &mut BTreeSet<String>,
 ) -> bynk_ts::TsExpr {
     let ns = provider_ctx.replace('.', "_");
-    let bodied_ns = format!("handlers_{ns}");
+    let bodied_ns = if workers_ns {
+        format!("handlers_{ns}")
+    } else {
+        ns.clone()
+    };
     referenced_units.insert(provider_ctx.to_string());
     let Some(provider) = unit_tables
         .get(provider_ctx)
@@ -2978,6 +2974,7 @@ pub(crate) fn instantiate_provider_ts_expr(
                     unit_consumes,
                     unit_consumes_aliases,
                     unit_flattened,
+                    workers_ns,
                     env_ident,
                     locale_negotiation,
                     referenced_units,
@@ -3064,6 +3061,42 @@ pub(crate) fn unit_table_uses_emit(
     found
 }
 
+// -- Small tree-construction helpers (#1327) ------------------------------
+//
+// Mirrors `workers.rs`'s/`workers_entry.rs`'s/`tests_emit.rs`'s own local
+// helper sets (#1321/#1323/#1325) — this file's own private set, not
+// shared, matching this track's own established per-file scoping.
+
+fn ident(s: impl Into<String>) -> TsExpr {
+    TsExpr::Ident(s.into())
+}
+
+fn str_lit(s: impl Into<String>) -> TsExpr {
+    TsExpr::Lit(TsLit::Str(s.into()))
+}
+
+fn member(object: TsExpr, property: impl Into<String>) -> TsExpr {
+    TsExpr::Member {
+        object: Box::new(object),
+        property: property.into(),
+    }
+}
+
+fn call(callee: TsExpr, args: Vec<TsExpr>) -> TsExpr {
+    TsExpr::Call {
+        callee: Box::new(callee),
+        args,
+    }
+}
+
+fn method_call(object: TsExpr, method: &str, args: Vec<TsExpr>) -> TsExpr {
+    call(member(object, method), args)
+}
+
+fn const_(name: impl Into<String>, init: TsExpr) -> TsStmt {
+    TsStmt::const_stmt(TsBindingName::Ident(name.into()), None, init, None)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn emit_composition_root(
     groups: &BTreeMap<String, Vec<usize>>,
@@ -3088,7 +3121,7 @@ fn emit_composition_root(
     // computed once by the caller (Workers mode needs the same table for its
     // own per-Worker fan-out wiring, so it is shared rather than rebuilt).
     event_subscribers: &BTreeMap<(String, String), Vec<(String, String)>>,
-) -> Option<String> {
+) -> Option<TsProgram> {
     // Identify contexts that consume something whose surface has services.
     let mut needs_compose = false;
     for (name, targets) in unit_consumes {
@@ -3158,16 +3191,17 @@ fn emit_composition_root(
     // provider's `given` may pull in *another* adapter's binding — the
     // transitive given-closure — which must then be imported).
     let mut referenced_units: BTreeSet<String> = BTreeSet::new();
-    let mut out = String::new();
 
-    let (compose_params, env_ident) = if thread_env {
-        ("env?: unknown", Some("env"))
+    let compose_params: Vec<TsParam> = if thread_env {
+        vec![TsParam {
+            name: "env".to_string(),
+            ty: Some(TsType::named("unknown")),
+            optional: true,
+        }]
     } else {
-        ("", None)
+        Vec::new()
     };
-    out.push_str(&format!(
-        "export function composeApp({compose_params}) {{\n"
-    ));
+    let env_ident = if thread_env { Some("env") } else { None };
 
     // Build each context's deps and surface in dependency-respecting order:
     // a context that consumes another must come after the consumed context,
@@ -3195,6 +3229,8 @@ fn emit_composition_root(
         visit(c, unit_consumes, &mut visited, &mut ordered);
     }
 
+    let mut body: Vec<TsStmt> = Vec::new();
+
     for ctx_name in &ordered {
         if kinds.get(ctx_name.as_str()) != Some(&UnitKind::Context) {
             continue;
@@ -3209,25 +3245,23 @@ fn emit_composition_root(
         }
         let ns = ctx_name.replace('.', "_");
 
-        let mut deps_entries: Vec<String> = table
+        let mut deps_entries: Vec<(String, TsExpr)> = table
             .providers
             .keys()
             .map(|cap| {
-                format!(
-                    "{cap}: {}",
-                    instantiate_provider_expr(
-                        ctx_name,
-                        cap,
-                        unit_tables,
-                        unit_consumes,
-                        unit_consumes_aliases,
-                        unit_flattened,
-                        false,
-                        env_ident,
-                        None, // Bundle mode has no inbound request (Decision A)
-                        &mut referenced_units,
-                    )
-                )
+                let expr = instantiate_provider_ts_expr(
+                    ctx_name,
+                    cap,
+                    unit_tables,
+                    unit_consumes,
+                    unit_consumes_aliases,
+                    unit_flattened,
+                    false,
+                    env_ident,
+                    None, // Bundle mode has no inbound request (Decision A)
+                    &mut referenced_units,
+                );
+                (cap.clone(), expr)
             })
             .collect();
         // v0.15: cross-context capabilities used directly by handlers become
@@ -3246,21 +3280,19 @@ fn emit_composition_root(
                 .cloned()
                 .unwrap_or_default();
             for (key, cctx) in handler_cross_caps(table, &consumed, &aliases, &flattened) {
-                deps_entries.push(format!(
-                    "{key}: {}",
-                    instantiate_provider_expr(
-                        &cctx,
-                        &key,
-                        unit_tables,
-                        unit_consumes,
-                        unit_consumes_aliases,
-                        unit_flattened,
-                        false,
-                        env_ident,
-                        None, // Bundle mode has no inbound request (Decision A)
-                        &mut referenced_units,
-                    )
-                ));
+                let expr = instantiate_provider_ts_expr(
+                    &cctx,
+                    &key,
+                    unit_tables,
+                    unit_consumes,
+                    unit_consumes_aliases,
+                    unit_flattened,
+                    false,
+                    env_ident,
+                    None, // Bundle mode has no inbound request (Decision A)
+                    &mut referenced_units,
+                );
+                deps_entries.push((key, expr));
             }
         }
         // Events track, slice 0 (spine #936): a context whose handlers emit
@@ -3328,14 +3360,37 @@ fn emit_composition_root(
                     .collect();
                 cases.push_str(&format!("case {name:?}: {{ {} break; }} ", calls.join(" ")));
             }
-            deps_entries.push(format!(
-                "__eventsDispatch: async (events: Array<{}>) => {{ for (const ev of events) {{ switch (ev.type) {{ {cases}}} }} }}",
-                crate::emitter::EVENTS_WIRE_EVENT_TS_TYPE
-            ));
+            // Decision B (#1327): the closure's own body is a genuine block
+            // statement (`for`/`switch`/`try`-`catch` nested), not an
+            // expression — `TsExpr::Arrow` is expression-body-only by
+            // design (see its own doc), and a real block-body variant would
+            // need new "flatten every nested statement to one line" printer
+            // machinery to satisfy this closure's own real one-line shape,
+            // disproportionate to what the 3 real fixtures reaching it need.
+            // Kept as the same nested `format!` calls as before conversion,
+            // just fed into a real `Arrow` node's `body` as one opaque
+            // `TsExpr::Ident` — the same "opaque text carrier" precedent
+            // `workers.rs`'s/`workers_entry.rs`'s own `deserialise_call`/
+            // `brand_assertion`/`claim_predicate_to_js` outputs already use.
+            let dispatch_body =
+                format!("{{ for (const ev of events) {{ switch (ev.type) {{ {cases}}} }} }}");
+            let arrow = TsExpr::Arrow {
+                params: vec![TsParam {
+                    name: "events".to_string(),
+                    ty: Some(TsType::named_with_args(
+                        "Array",
+                        vec![TsType::named(crate::emitter::EVENTS_WIRE_EVENT_TS_TYPE)],
+                    )),
+                    optional: false,
+                }],
+                is_async: true,
+                body: Box::new(ident(dispatch_body)),
+            };
+            deps_entries.push(("__eventsDispatch".to_string(), arrow));
         }
-        deps_entries.sort();
+        deps_entries.sort_by(|a, b| a.0.cmp(&b.0));
 
-        let mut surface_entries: Vec<String> = Vec::new();
+        let mut surface_entries: Vec<(String, TsExpr)> = Vec::new();
         if let Some(targets) = unit_consumes.get(ctx_name.as_str()) {
             let aliases = unit_consumes_aliases
                 .get(ctx_name.as_str())
@@ -3367,42 +3422,63 @@ fn emit_composition_root(
                 // per-consumer surface instead. A caller-free provider keeps the
                 // shared instance — byte-unchanged.
                 let entry = if context_binds_caller(other) {
-                    format!(
-                        "{surface_key}: {t_ns}.makeSurface({t_ns}Deps, {})",
-                        ts_string_literal(ctx_name)
+                    method_call(
+                        ident(t_ns.clone()),
+                        "makeSurface",
+                        vec![ident(format!("{t_ns}Deps")), str_lit(ctx_name.as_str())],
                     )
                 } else {
-                    format!("{surface_key}: {t_ns}Surface")
+                    ident(format!("{t_ns}Surface"))
                 };
-                surface_entries.push(entry);
+                surface_entries.push((surface_key, entry));
             }
         }
         if !surface_entries.is_empty() {
-            deps_entries.push(format!("surface: {{ {} }}", surface_entries.join(", ")));
+            deps_entries.push(("surface".to_string(), TsExpr::object(surface_entries)));
         }
-        out.push_str(&format!(
-            "  const {ns}Deps = {{ {} }};\n",
-            deps_entries.join(", ")
-        ));
+        // #1327: the pre-conversion `format!("  const {ns}Deps = {{ {} }};",
+        // deps_entries.join(", "))` template always has a space on each side
+        // of its `{}` slot — with zero entries that literally produces
+        // `"{  }"` (a *double* space), not the tight `"{}"` the ordinary
+        // single-line `TsExpr::Object` empty-entries shortcut renders — the
+        // same real, reachable quirk `workers.rs`'s own conversion (#1321)
+        // found and carried for its own `deps` object, reachable here too (a
+        // services-having context with no providers, no cross-caps, no
+        // emit, and no consumed-service surface — `98_cross_context_call_
+        // with_alias` and 6 other real fixtures hit exactly this).
+        let deps_init = if deps_entries.is_empty() {
+            ident("{  }")
+        } else {
+            TsExpr::object(deps_entries)
+        };
+        body.push(const_(format!("{ns}Deps"), deps_init));
         if !table.services.is_empty() {
             // The top-level entry addresses the context directly; there is no
             // calling context, so a `by c: Caller` handler reached this way reads
             // the context's own qualified name (a stable, non-empty `CallerId`
             // within the single-trust-domain bundle).
-            let caller_arg = if context_binds_caller(table) {
-                format!(", {}", ts_string_literal(ctx_name))
-            } else {
-                String::new()
-            };
-            out.push_str(&format!(
-                "  const {ns}Surface = {ns}.makeSurface({ns}Deps{caller_arg});\n",
+            let mut make_surface_args = vec![ident(format!("{ns}Deps"))];
+            if context_binds_caller(table) {
+                make_surface_args.push(str_lit(ctx_name.as_str()));
+            }
+            body.push(const_(
+                format!("{ns}Surface"),
+                method_call(ident(ns.clone()), "makeSurface", make_surface_args),
             ));
         }
     }
-    out.push('\n');
+
+    // #1327: the pre-conversion code unconditionally wrote one blank line
+    // between the last `const ...Deps`/`const ...Surface` and the `return`
+    // (`out.push('\n')`, run once regardless of how many contexts the loop
+    // above actually pushed) — `TsStmtKind::Blank` (#1323) is the tree's own
+    // equivalent, needed here since the printer's own "blank line between
+    // top-level declarations" policy only separates entries in
+    // `TsProgram.stmts` itself, not statements inside one function body.
+    body.push(TsStmt::blank(None));
 
     // Export per-context surfaces under a top-level object.
-    out.push_str("  return {\n");
+    let mut return_entries: Vec<(String, TsExpr)> = Vec::new();
     for ctx_name in &contexts {
         let Some(table) = unit_tables.get(ctx_name.as_str()) else {
             continue;
@@ -3412,22 +3488,33 @@ fn emit_composition_root(
         }
         let ns = ctx_name.replace('.', "_");
         let key = ctx_name.rsplit('.').next().unwrap_or(ctx_name.as_str());
-        out.push_str(&format!("    {key}: {ns}Surface,\n"));
+        return_entries.push((key.to_string(), ident(format!("{ns}Surface"))));
     }
-    out.push_str("  };\n");
-    out.push_str("}\n");
+    body.push(TsStmt::return_stmt(
+        Some(TsExpr::multiline_object(return_entries)),
+        None,
+    ));
 
     // Assemble the header now that the body has recorded which units its
     // provider expressions reference.
-    let mut header = String::new();
-    header.push_str("// Generated by bynkc — do not edit by hand.\n");
-    header.push_str("// composition root\n\n");
+    let mut program = TsProgram::new();
+    program.push(TsStmt::comment(
+        "Generated by bynkc — do not edit by hand.",
+        None,
+    ));
+    program.push(TsStmt::comment("composition root", None));
 
     // Import every context as a namespace.
     for ctx_name in &contexts {
         let dir = emitter::ts_specifier(&commons_dir_for(ctx_name));
         let ns = ctx_name.replace('.', "_");
-        header.push_str(&format!("import * as {ns} from \"./{dir}.js\";\n"));
+        program.push(TsStmt::decl(
+            TsDecl::ImportNamespace {
+                alias: ns,
+                from: format!("./{dir}.js"),
+            },
+            None,
+        ));
     }
     // v0.17: import each consumed adapter's binding module — the external
     // provider classes live there, not in the adapter's interface module.
@@ -3447,13 +3534,27 @@ fn emit_composition_root(
         let ns = adapter.replace('.', "_");
         let module =
             emitter::ts_specifier(&adapter_bindings[adapter].output_path.with_extension("js"));
-        header.push_str(&format!("import * as {ns}__binding from \"./{module}\";\n"));
+        program.push(TsStmt::decl(
+            TsDecl::ImportNamespace {
+                alias: format!("{ns}__binding"),
+                from: format!("./{module}"),
+            },
+            None,
+        ));
     }
-    header.push('\n');
 
-    let out = format!("{header}{out}");
+    program.push(TsStmt::decl(
+        TsDecl::Export(Box::new(TsDecl::Function {
+            name: "composeApp".to_string(),
+            params: compose_params,
+            return_type: None,
+            body,
+            is_async: false,
+        })),
+        None,
+    ));
 
-    Some(out)
+    Some(program)
 }
 
 // -- internals --

@@ -504,15 +504,22 @@ pub enum TsExpr {
         object: Box<TsExpr>,
         index: Box<TsExpr>,
     },
-    /// `(params) => body` — an expression-bodied arrow function. No
+    /// `(params) => body` (`is_async: false`) or `async (params) => body`
+    /// (`is_async: true`) — an expression-bodied arrow function. No
     /// block-body variant: `workers.rs`'s own one real site
     /// (`emit_worker_compose`'s own `__eventsDispatch` entry,
     /// `dispatchToEventsFanout(env.<bind>, events)`) has an expression body,
-    /// not a block, and nothing else in this slice's grounding needs one —
-    /// extend narrowly, the same way `TsBinaryOp` only has the operators
-    /// real content needs rather than the full JS/TS table.
+    /// not a block, and nothing else in that slice's own grounding needed
+    /// one — extend narrowly, the same way `TsBinaryOp` only has the
+    /// operators real content needs rather than the full JS/TS table.
+    /// `is_async` added by #1327: `emit_composition_root`'s own
+    /// `__eventsDispatch` closure (`async (events: Array<...>) => {...}`) is
+    /// the first real `Arrow` site that's async — mirrors
+    /// `TsDecl::Function`'s own `is_async` field (#1325), added for the same
+    /// reason.
     Arrow {
         params: Vec<TsParam>,
+        is_async: bool,
         body: Box<TsExpr>,
     },
     Call {

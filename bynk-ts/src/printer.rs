@@ -981,7 +981,14 @@ fn render_expr(out: &mut String, expr: &TsExpr) {
             render_expr(out, index);
             out.push(']');
         }
-        TsExpr::Arrow { params, body } => {
+        TsExpr::Arrow {
+            params,
+            is_async,
+            body,
+        } => {
+            if *is_async {
+                out.push_str("async ");
+            }
             out.push('(');
             render_params(out, params);
             out.push_str(") => ");
@@ -2639,6 +2646,7 @@ mod tests {
                     )),
                     optional: false,
                 }],
+                is_async: false,
                 body: Box::new(TsExpr::Call {
                     callee: Box::new(TsExpr::Ident("dispatch".to_string())),
                     args: vec![TsExpr::Ident("events".to_string())],
@@ -2648,6 +2656,33 @@ mod tests {
         ));
         let printed = print(&program, "x.bynk", "", "x.ts");
         assert_eq!(printed.text, "(events: Array<Wire>) => dispatch(events);\n");
+    }
+
+    /// #1327's own real gap: `emit_composition_root`'s `__eventsDispatch`
+    /// closure is the first real `Arrow` site that's async.
+    #[test]
+    fn prints_an_async_arrow() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::expr_stmt(
+            TsExpr::Arrow {
+                params: vec![TsParam {
+                    name: "events".to_string(),
+                    ty: Some(TsType::named_with_args(
+                        "Array",
+                        vec![TsType::named("Wire")],
+                    )),
+                    optional: false,
+                }],
+                is_async: true,
+                body: Box::new(TsExpr::Ident("{ dispatch(events); }".to_string())),
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(
+            printed.text,
+            "async (events: Array<Wire>) => { dispatch(events); };\n"
+        );
     }
 
     /// Review of #1322, finding 1: `Arrow` was missing from every
@@ -2668,6 +2703,7 @@ mod tests {
                         ty: None,
                         optional: false,
                     }],
+                    is_async: false,
                     body: Box::new(TsExpr::Ident("x".to_string())),
                 }),
                 args: vec![TsExpr::Lit(TsLit::Num("1".to_string()))],
@@ -2691,6 +2727,7 @@ mod tests {
                         ty: None,
                         optional: false,
                     }],
+                    is_async: false,
                     body: Box::new(TsExpr::Ident("y".to_string())),
                 }),
             },
@@ -2711,6 +2748,7 @@ mod tests {
                         ty: None,
                         optional: false,
                     }],
+                    is_async: false,
                     body: Box::new(TsExpr::Ident("y".to_string())),
                 }),
                 ty: TsType::named("Handler"),
