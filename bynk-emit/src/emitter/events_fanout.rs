@@ -81,10 +81,10 @@ pub(crate) fn emit_events_fanout_do(
                 (
                     "envelope".to_string(),
                     TsType::Object(vec![
-                        ("eventId".to_string(), TsType::named("string")),
-                        ("publisherId".to_string(), TsType::named("string")),
-                        ("emittedAt".to_string(), TsType::named("number")),
-                        ("schemaVersion".to_string(), TsType::named("number")),
+                        ("eventId".to_string(), TsType::named("string"), false),
+                        ("publisherId".to_string(), TsType::named("string"), false),
+                        ("emittedAt".to_string(), TsType::named("number"), false),
+                        ("schemaVersion".to_string(), TsType::named("number"), false),
                     ]),
                 ),
             ],
@@ -101,8 +101,8 @@ pub(crate) fn emit_events_fanout_do(
                     TsType::named_with_args(
                         "Array",
                         vec![TsType::Object(vec![
-                            ("binding".to_string(), TsType::named("string")),
-                            ("service".to_string(), TsType::named("string")),
+                            ("binding".to_string(), TsType::named("string"), false),
+                            ("service".to_string(), TsType::named("string"), false),
                         ])],
                     ),
                 ],
@@ -228,6 +228,7 @@ fn events_fanout_fetch() -> TsClassMethod {
                     ty: TsType::Object(vec![(
                         "events".to_string(),
                         TsType::array(TsType::named("FanoutEvent")),
+                        false,
                     )]),
                 },
                 None,
@@ -338,7 +339,7 @@ fn events_fanout_fetch() -> TsClassMethod {
                                             )],
                                             None,
                                         ),
-                                        "e",
+                                        Some("e"),
                                         TsStmt::block(
                                             vec![TsStmt::expr_stmt(
                                                 TsExpr::Call {

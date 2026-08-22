@@ -2389,15 +2389,14 @@ fn build_output(
                         debug_metadata: None,
                     });
                 }
+                // Arc C slice 3 (#1321): `emit_worker_compose` returns a
+                // real `TsProgram` directly — the second `bynk-emit`
+                // construction site (after `events_fanout.ts`'s own,
+                // #1317) that reaches `Document::Ts` with no `Verbatim`
+                // wrap.
                 compiled.push(StagedFile {
                     output_path: PathBuf::from(format!("workers/{dashes}/compose.ts")),
-                    document: Document::Ts(bynk_ts::TsProgram {
-                        stmts: vec![bynk_ts::TsStmt::verbatim(
-                            bynk_ts::VerbatimOrigin::NotYetConverted,
-                            compose_ts,
-                            None,
-                        )],
-                    }),
+                    document: Document::Ts(compose_ts),
                     source_map: None,
                     debug_metadata: None,
                 });
@@ -2911,6 +2910,115 @@ pub(crate) fn instantiate_provider_expr(
         format!("new {ns}__binding.{class}({args})")
     } else {
         format!("new {bodied_ns}.{class}({args})")
+    }
+}
+
+/// `new {ns}.{class}({args})` as a real [`bynk_ts::TsExpr::New`] node.
+fn new_call_ts_expr(ns: &str, class: &str, args: Vec<bynk_ts::TsExpr>) -> bynk_ts::TsExpr {
+    bynk_ts::TsExpr::New {
+        callee: Box::new(bynk_ts::TsExpr::Member {
+            object: Box::new(bynk_ts::TsExpr::Ident(ns.to_string())),
+            property: class.to_string(),
+        }),
+        args,
+    }
+}
+
+/// `TsExpr`-returning twin of [`instantiate_provider_expr`] (the same
+/// "structural converter added alongside the `String` one" pattern
+/// Decision B already uses for `TypeRef -> TsType`, applied here to
+/// expressions) — #1321 (Arc C slice 3): `emitter::workers::
+/// emit_worker_compose` now builds a real `TsProgram` directly, and its own
+/// cross-context capability-provider `const {key} = {expr};` lines need a
+/// real `TsExpr`, not a `String` to splice. `instantiate_provider_expr`
+/// itself is untouched — `emit_composition_root`'s own Bundle-mode
+/// `compose.ts` (a different, still-unconverted document, `project.rs`'s
+/// own `emit_composition_root` function) still calls it. Hardcodes
+/// `workers_ns = true`: the only mode `emit_worker_compose`'s own call site
+/// ever uses, so threading the flag through unused branches was dropped
+/// rather than carried for symmetry with a caller that doesn't exist here.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn instantiate_provider_ts_expr(
+    provider_ctx: &str,
+    cap: &str,
+    unit_tables: &HashMap<String, UnitTable>,
+    unit_consumes: &HashMap<String, Vec<String>>,
+    unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
+    unit_flattened: &HashMap<String, HashMap<String, String>>,
+    env_ident: Option<&str>,
+    locale_negotiation: Option<&LocaleNegotiationArgs>,
+    referenced_units: &mut BTreeSet<String>,
+) -> bynk_ts::TsExpr {
+    let ns = provider_ctx.replace('.', "_");
+    let bodied_ns = format!("handlers_{ns}");
+    referenced_units.insert(provider_ctx.to_string());
+    let Some(provider) = unit_tables
+        .get(provider_ctx)
+        .and_then(|t| t.providers.get(cap))
+    else {
+        return new_call_ts_expr(&bodied_ns, cap, vec![]);
+    };
+    let given: Vec<CapRefIr> = lower_provider_given_ir(provider);
+    let deps_obj: Option<bynk_ts::TsExpr> = if given.is_empty() {
+        None
+    } else {
+        let consumed = unit_consumes.get(provider_ctx).cloned().unwrap_or_default();
+        let aliases = unit_consumes_aliases
+            .get(provider_ctx)
+            .cloned()
+            .unwrap_or_default();
+        let flattened = unit_flattened
+            .get(provider_ctx)
+            .cloned()
+            .unwrap_or_default();
+        let deps: Vec<(String, bynk_ts::TsExpr)> = given
+            .iter()
+            .map(|g| {
+                let target_ctx = match &g.context {
+                    Some(p) => resolve_consume_prefix(p, &consumed, &aliases)
+                        .unwrap_or_else(|| provider_ctx.to_string()),
+                    None => flattened
+                        .get(&g.name)
+                        .cloned()
+                        .unwrap_or_else(|| provider_ctx.to_string()),
+                };
+                let expr = instantiate_provider_ts_expr(
+                    &target_ctx,
+                    &g.name,
+                    unit_tables,
+                    unit_consumes,
+                    unit_consumes_aliases,
+                    unit_flattened,
+                    env_ident,
+                    locale_negotiation,
+                    referenced_units,
+                );
+                (g.name.clone(), expr)
+            })
+            .collect();
+        Some(bynk_ts::TsExpr::object(deps))
+    };
+    let mut args: Vec<bynk_ts::TsExpr> = deps_obj.into_iter().collect();
+    if provider.external
+        && bynk_check::firstparty::provider_takes_env(provider_ctx, &provider.provider_name.name)
+        && let Some(env) = env_ident
+    {
+        args.push(bynk_ts::TsExpr::Ident(env.to_string()));
+    }
+    if provider.external
+        && provider_ctx == bynk_check::firstparty::BYNK_UNIT
+        && provider.provider_name.name == "LocaleProvider"
+        && let Some(loc) = locale_negotiation
+    {
+        args.push(bynk_ts::TsExpr::Ident(loc.request_expr.clone()));
+        args.push(bynk_ts::TsExpr::Ident(loc.declared_locales_expr.clone()));
+        args.push(bynk_ts::TsExpr::Ident(loc.reference_locale_expr.clone()));
+    }
+    let class = &provider.provider_name.name;
+    if provider.external {
+        new_call_ts_expr(&format!("{ns}__binding"), class, args)
+    } else {
+        new_call_ts_expr(&bodied_ns, class, args)
     }
 }
 
