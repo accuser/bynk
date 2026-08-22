@@ -864,6 +864,7 @@ pub(crate) fn emit_worker_compose(
             params: compose_params,
             return_type: None,
             body,
+            is_async: false,
         })),
         None,
     ));
@@ -1447,7 +1448,7 @@ fn emit_websocket_upgrade(
         "__fwd",
         new_expr("Headers", vec![member(ident("request"), "headers")]),
     ));
-    let mut fwd_entries = vec![("args".to_string(), TsExpr::Array(args_json))];
+    let mut fwd_entries = vec![("args".to_string(), TsExpr::array(args_json))];
     if has_identity {
         fwd_entries.push(("identity".to_string(), member(ident("__id"), "value")));
     }

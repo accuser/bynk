@@ -2142,16 +2142,10 @@ fn build_output(
     // v0.16: emit the combined top-level test runner once both passes are done,
     // so `tests/main.ts` aggregates unit and integration suites together.
     if !runnable_tests.is_empty() {
-        let main_ts = emit_test_main(&runnable_tests, import_ext);
+        let main_program = emit_test_main(&runnable_tests, import_ext);
         compiled.push(StagedFile {
             output_path: PathBuf::from("tests/main.ts"),
-            document: Document::Ts(bynk_ts::TsProgram {
-                stmts: vec![bynk_ts::TsStmt::verbatim(
-                    bynk_ts::VerbatimOrigin::NotYetConverted,
-                    main_ts,
-                    None,
-                )],
-            }),
+            document: Document::Ts(main_program),
             source_map: None,
             debug_metadata: None,
         });

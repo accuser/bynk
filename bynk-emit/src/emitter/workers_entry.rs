@@ -255,7 +255,7 @@ fn json_error_kind(kind: &str, fields: Vec<(String, TsExpr)>) -> TsExpr {
 
 /// `[<items>]` of string literals.
 fn str_array(items: &[String]) -> TsExpr {
-    TsExpr::Array(items.iter().map(|s| str_lit(s.clone())).collect())
+    TsExpr::array(items.iter().map(|s| str_lit(s.clone())).collect())
 }
 
 /// `missing_bindings`'s own dedup logic (`crate::emitter`), reimplemented
