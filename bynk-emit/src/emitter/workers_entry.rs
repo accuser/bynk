@@ -5,8 +5,12 @@
 //! to the matching `on call` service operation, then matches the request
 //! method + path against any `on http` routes the context declares.
 //! Validation and uncaught errors map to 400 / 500 respectively.
+//!
+//! Arc C slice 4 (#1323): `emit_worker_entry` and its four helpers build a
+//! real `bynk_ts::TsProgram` directly instead of `writeln!`-ing a `String` —
+//! this file's own conversion, closing the fourth Arc C slice (`workers.rs`
+//! was the third, #1321).
 
-use std::fmt::Write as _;
 use std::sync::Arc;
 
 use crate::emitter::http_handler_method_name;
@@ -17,6 +21,270 @@ use bynk_syntax::ast::{
 };
 
 use crate::emitter::RuntimeUse;
+use bynk_ts::{
+    TsBindingName, TsDecl, TsExpr, TsLit, TsObjectEntry, TsParam, TsProgram, TsStmt, TsSwitchCase,
+    TsType, TsTypeMember,
+};
+
+// -- Small tree-construction helpers (#1323) ------------------------------
+//
+// Mirrors `workers.rs`'s own local helper set (#1321) — not part of the
+// public node algebra, `bynk-ts` still owns every real constructor; these
+// just compose them for this file's own repeated shapes. Kept as this
+// file's own private set rather than shared with `workers.rs`'s, matching
+// this track's own established per-file scoping (each Arc C slice's own
+// helpers are added narrowly, not factored into a shared cross-file module).
+
+fn ident(s: impl Into<String>) -> TsExpr {
+    TsExpr::Ident(s.into())
+}
+
+fn str_lit(s: impl Into<String>) -> TsExpr {
+    TsExpr::Lit(TsLit::Str(s.into()))
+}
+
+fn num_lit(n: impl Into<String>) -> TsExpr {
+    TsExpr::Lit(TsLit::Num(n.into()))
+}
+
+fn null_lit() -> TsExpr {
+    TsExpr::Lit(TsLit::Null)
+}
+
+/// #1323's own real gap: `CorsPolicy.credentials`/`SecurityPolicy.nosniff`
+/// are real booleans — nothing in `workers.rs`'s own grounding ever needed
+/// one.
+fn bool_lit(b: bool) -> TsExpr {
+    TsExpr::Lit(TsLit::Bool(b))
+}
+
+fn member(object: TsExpr, property: impl Into<String>) -> TsExpr {
+    TsExpr::Member {
+        object: Box::new(object),
+        property: property.into(),
+    }
+}
+
+fn index_expr(object: TsExpr, idx: TsExpr) -> TsExpr {
+    TsExpr::Index {
+        object: Box::new(object),
+        index: Box::new(idx),
+    }
+}
+
+fn call(callee: TsExpr, args: Vec<TsExpr>) -> TsExpr {
+    TsExpr::Call {
+        callee: Box::new(callee),
+        args,
+    }
+}
+
+fn method_call(object: TsExpr, method: &str, args: Vec<TsExpr>) -> TsExpr {
+    call(member(object, method), args)
+}
+
+fn new_expr(callee: &str, args: Vec<TsExpr>) -> TsExpr {
+    TsExpr::New {
+        callee: Box::new(ident(callee)),
+        args,
+    }
+}
+
+fn as_expr(expr: TsExpr, ty: TsType) -> TsExpr {
+    TsExpr::As {
+        expr: Box::new(expr),
+        ty,
+    }
+}
+
+fn await_expr(expr: TsExpr) -> TsExpr {
+    TsExpr::Await(Box::new(expr))
+}
+
+fn binary(op: bynk_ts::TsBinaryOp, left: TsExpr, right: TsExpr) -> TsExpr {
+    TsExpr::Binary {
+        op,
+        left: Box::new(left),
+        right: Box::new(right),
+    }
+}
+
+fn strict_eq(left: TsExpr, right: TsExpr) -> TsExpr {
+    binary(bynk_ts::TsBinaryOp::StrictEq, left, right)
+}
+
+fn strict_neq(left: TsExpr, right: TsExpr) -> TsExpr {
+    binary(bynk_ts::TsBinaryOp::StrictNotEq, left, right)
+}
+
+fn or_expr(left: TsExpr, right: TsExpr) -> TsExpr {
+    binary(bynk_ts::TsBinaryOp::Or, left, right)
+}
+
+fn and_expr(left: TsExpr, right: TsExpr) -> TsExpr {
+    binary(bynk_ts::TsBinaryOp::And, left, right)
+}
+
+/// `test ? consequent : alternate`.
+fn cond_expr(test: TsExpr, consequent: TsExpr, alternate: TsExpr) -> TsExpr {
+    TsExpr::Conditional {
+        test: Box::new(test),
+        consequent: Box::new(consequent),
+        alternate: Box::new(alternate),
+    }
+}
+
+/// An explicit, printer-preserved `(<inner>)` — #1323's own real gap, the
+/// CORS-preflight guard's own unconditional grouping. See
+/// [`bynk_ts::TsExpr::Paren`]'s own doc for why this needs to be a distinct
+/// variant rather than relying on the printer's precedence-derived rules.
+fn paren(inner: TsExpr) -> TsExpr {
+    TsExpr::Paren(Box::new(inner))
+}
+
+fn return_(expr: Option<TsExpr>) -> TsStmt {
+    TsStmt::return_stmt(expr, None)
+}
+
+fn const_(name: impl Into<String>, init: TsExpr) -> TsStmt {
+    TsStmt::const_stmt(TsBindingName::Ident(name.into()), None, init, None)
+}
+
+fn const_typed(name: impl Into<String>, ty: TsType, init: TsExpr) -> TsStmt {
+    TsStmt::const_stmt(TsBindingName::Ident(name.into()), Some(ty), init, None)
+}
+
+/// `let name: ty;` — an uninitialised, typed `let`. `emit_http_route_dispatch`'s
+/// own `let __body_json: JsonValue;` and `emit_http_sum_wrapper`-adjacent
+/// `let __raw: string;` are the real, grounded sites.
+fn let_typed(name: impl Into<String>, ty: TsType) -> TsStmt {
+    TsStmt::let_stmt(TsBindingName::Ident(name.into()), Some(ty), None, None)
+}
+
+fn expr_stmt(expr: TsExpr) -> TsStmt {
+    TsStmt::expr_stmt(expr, None)
+}
+
+fn if_(cond: TsExpr, then_branch: TsStmt) -> TsStmt {
+    TsStmt::if_stmt(cond, then_branch, None)
+}
+
+fn block(stmts: Vec<TsStmt>) -> TsStmt {
+    TsStmt::block(stmts, None)
+}
+
+fn try_catch_stmt(
+    try_stmts: Vec<TsStmt>,
+    catch_param: Option<&str>,
+    catch_stmts: Vec<TsStmt>,
+) -> TsStmt {
+    TsStmt::try_catch(block(try_stmts), catch_param, block(catch_stmts), None)
+}
+
+/// `switch (<discriminant>) { <cases> }`.
+fn switch_stmt(discriminant: TsExpr, cases: Vec<TsSwitchCase>) -> TsStmt {
+    TsStmt::switch_stmt(discriminant, cases, None)
+}
+
+fn case_(test: TsExpr, body: Vec<TsStmt>) -> TsSwitchCase {
+    TsSwitchCase {
+        test: Some(test),
+        body,
+    }
+}
+
+fn default_case(body: Vec<TsStmt>) -> TsSwitchCase {
+    TsSwitchCase { test: None, body }
+}
+
+fn new_response(args: Vec<TsExpr>) -> TsExpr {
+    new_expr("Response", args)
+}
+
+fn json_stringify(expr: TsExpr) -> TsExpr {
+    method_call(ident("JSON"), "stringify", vec![expr])
+}
+
+fn status_obj(status: i64) -> TsExpr {
+    TsExpr::object(vec![("status".to_string(), num_lit(status.to_string()))])
+}
+
+fn json_content_type_headers() -> (String, TsExpr) {
+    // `TsObjectEntry::Prop`'s own key prints verbatim (no quoting logic in
+    // the printer), so a hyphenated key must be pre-quoted by the caller —
+    // the same precedent `workers.rs`'s own conversion (#1321) already set
+    // for this exact header key.
+    (
+        "headers".to_string(),
+        TsExpr::object(vec![(
+            "\"content-type\"".to_string(),
+            str_lit("application/json"),
+        )]),
+    )
+}
+
+fn status_json_headers_obj(status: i64) -> TsExpr {
+    TsExpr::object(vec![
+        ("status".to_string(), num_lit(status.to_string())),
+        json_content_type_headers(),
+    ])
+}
+
+/// `new Response(JSON.stringify(<body>), { status: <status>, headers: {
+/// "content-type": "application/json" } })` — the dominant JSON-error-
+/// response shape across this file's own real content.
+fn json_response(body: TsExpr, status: i64) -> TsExpr {
+    new_response(vec![json_stringify(body), status_json_headers_obj(status)])
+}
+
+fn text_response(text: &str, status: i64) -> TsExpr {
+    new_response(vec![str_lit(text), status_obj(status)])
+}
+
+fn null_response(status: i64) -> TsExpr {
+    new_response(vec![null_lit(), status_obj(status)])
+}
+
+/// `{ kind: "<kind>", ...fields }` — the shared shape of every synthesised
+/// boundary-error body this file builds.
+fn json_error_kind(kind: &str, fields: Vec<(String, TsExpr)>) -> TsExpr {
+    let mut entries = vec![("kind".to_string(), str_lit(kind))];
+    entries.extend(fields);
+    TsExpr::object(entries)
+}
+
+/// `[<items>]` of string literals.
+fn str_array(items: &[String]) -> TsExpr {
+    TsExpr::Array(items.iter().map(|s| str_lit(s.clone())).collect())
+}
+
+/// `missing_bindings`'s own dedup logic (`crate::emitter`), reimplemented
+/// over a `Vec<String>` of already-real import names — the tree-node analogue
+/// of the old text post-pass, the same precedent `workers.rs`'s own
+/// `append_missing_bindings` (#1321) already set for the identical problem:
+/// the runtime import line is now a `TsDecl::Import` node built once, so the
+/// post-pass that appends codec-family runtime names (#914) can no longer
+/// splice into printed text (`crate::emitter::inject_runtime_imports`'s own
+/// mechanism) and instead mutates the node's `names` directly, before the
+/// import decl is pushed into the program. Strips an optional `type ` prefix,
+/// compares bare names, so a name already present (bare or `type`-prefixed)
+/// is never added twice.
+fn append_missing_bindings(names: &mut Vec<String>, extra: &str) {
+    fn bare(binding: &str) -> &str {
+        binding
+            .trim()
+            .strip_prefix("type ")
+            .unwrap_or(binding.trim())
+    }
+    let present: std::collections::HashSet<&str> = names.iter().map(|n| bare(n)).collect();
+    let wanted: Vec<String> = extra
+        .split(',')
+        .map(str::trim)
+        .filter(|b| !b.is_empty() && !present.contains(bare(b)))
+        .map(str::to_string)
+        .collect();
+    names.extend(wanted);
+}
 
 pub(crate) fn emit_worker_entry(
     context: &str,
@@ -32,14 +300,19 @@ pub(crate) fn emit_worker_entry(
     // #1187's slice 6 plumbing — see `emit_worker_compose`'s own matching
     // parameter (`emitter/workers.rs`) for the full grounding.
     uses_emit: bool,
-) -> String {
-    let mut out = String::new();
+) -> TsProgram {
+    let mut program = TsProgram::new();
     // Which conditional runtime helpers the entry's own inbound/outbound codecs
     // reach for; read back below to decide the import injection.
     let runtime_use = RuntimeUse::default();
-    let _ = writeln!(out, "// Generated by bynkc — do not edit by hand.");
-    let _ = writeln!(out, "// Worker entry point for context `{context}`.");
-    writeln!(out).unwrap();
+    program.push(TsStmt::comment(
+        "Generated by bynkc — do not edit by hand.",
+        None,
+    ));
+    program.push(TsStmt::comment(
+        format!("Worker entry point for context `{context}`."),
+        None,
+    ));
 
     // v0.79: if any handler uses `~>`, each entry point captures the runtime's
     // execution context and threads it into `compose`, so a fire-and-forget send
@@ -49,22 +322,37 @@ pub(crate) fn emit_worker_entry(
             .iter()
             .any(|h| crate::emitter::block_uses_send(&h.body))
     });
-    let exec_param = if ctx_uses_send {
-        ", ctx: { waitUntil(promise: Promise<unknown>): void }"
+    let exec_params: Vec<TsParam> = if ctx_uses_send {
+        vec![TsParam {
+            name: "ctx".to_string(),
+            ty: Some(TsType::Object(vec![TsTypeMember::method(
+                "waitUntil",
+                vec![TsParam {
+                    name: "promise".to_string(),
+                    ty: Some(TsType::named_with_args(
+                        "Promise",
+                        vec![TsType::named("unknown")],
+                    )),
+                    optional: false,
+                }],
+                TsType::named("void"),
+            )])),
+            optional: false,
+        }]
     } else {
-        ""
+        Vec::new()
     };
     // `fetch` alone has a `request` in scope; `scheduled`/`queue` never do.
-    let fetch_compose_call = match (needs_locale_request, ctx_uses_send) {
-        (true, true) => "compose(env, request, ctx)".to_string(),
-        (true, false) => "compose(env, request)".to_string(),
-        (false, true) => "compose(env, ctx)".to_string(),
-        (false, false) => "compose(env)".to_string(),
+    let fetch_compose_args: Vec<TsExpr> = match (needs_locale_request, ctx_uses_send) {
+        (true, true) => vec![ident("env"), ident("request"), ident("ctx")],
+        (true, false) => vec![ident("env"), ident("request")],
+        (false, true) => vec![ident("env"), ident("ctx")],
+        (false, false) => vec![ident("env")],
     };
-    let other_compose_call = if ctx_uses_send {
-        "compose(env, ctx)"
+    let other_compose_args: Vec<TsExpr> = if ctx_uses_send {
+        vec![ident("env"), ident("ctx")]
     } else {
-        "compose(env)"
+        vec![ident("env")]
     };
 
     // Collect HTTP routes across all services, sorted so literal-segment
@@ -241,58 +529,74 @@ pub(crate) fn emit_worker_entry(
         })
     });
 
-    let mut imports: Vec<&str> = vec![
-        "Ok",
-        "Err",
-        "type Result",
-        "type JsonValue",
-        "type BoundaryError",
-        "boundaryError",
+    let mut imports: Vec<String> = vec![
+        "Ok".to_string(),
+        "Err".to_string(),
+        "type Result".to_string(),
+        "type JsonValue".to_string(),
+        "type BoundaryError".to_string(),
+        "boundaryError".to_string(),
     ];
     if has_http {
-        imports.push("matchPath");
-        imports.push("httpResultToResponse");
+        imports.push("matchPath".to_string());
+        imports.push("httpResultToResponse".to_string());
     }
     if has_event_services {
-        imports.push("deserialiseEventEnvelope");
+        imports.push("deserialiseEventEnvelope".to_string());
     }
     // v0.139: a context that answers `HEAD` (any `GET` route) strips the built
     // response body through `headResponse`.
     if has_get_route {
-        imports.push("headResponse");
+        imports.push("headResponse".to_string());
         // v0.140 (ADR 0163): every `GET` carries a weak `ETag` and is answered
         // `304` on a matching `If-None-Match` via `notModifiedIfMatch`.
-        imports.push("notModifiedIfMatch");
+        imports.push("notModifiedIfMatch".to_string());
     }
     // v0.140 (ADR 0163): a `GET` carrying `@cache` stamps `Cache-Control` through
     // `applyCache` — imported only when some route declares one.
     if http_routes.iter().any(|r| r.cache.is_some()) {
-        imports.push("applyCache");
+        imports.push("applyCache".to_string());
     }
     // v0.131: a context with a CORS-enabled service imports the CORS helpers.
     if !cors_services.is_empty() {
-        imports.push("type CorsPolicy");
-        imports.push("applyCors");
-        imports.push("corsPreflightResponse");
+        imports.push("type CorsPolicy".to_string());
+        imports.push("applyCors".to_string());
+        imports.push("corsPreflightResponse".to_string());
     }
     // v0.141: a context with any `from http` service imports the security-header
     // helper — every such service stamps at least the default `nosniff`.
     if !security_services.is_empty() {
-        imports.push("type SecurityPolicy");
-        imports.push("applySecurityHeaders");
+        imports.push("type SecurityPolicy".to_string());
+        imports.push("applySecurityHeaders".to_string());
     }
     // v0.51: a context with a Signature handler imports the HMAC verifier.
     if http_routes.iter().any(|r| r.signature.is_some()) {
-        imports.push("verifySignatureHmacSha256");
+        imports.push("verifySignatureHmacSha256".to_string());
     }
-    let _ = writeln!(
-        out,
-        "import {{ {} }} from \"../../runtime.js\";",
-        imports.join(", ")
-    );
-    let _ = writeln!(out, "import {{ compose, type Env }} from \"./compose.js\";");
-    let _ = writeln!(out, "import * as handlers from \"./handlers.js\";");
-    writeln!(out).unwrap();
+    // The runtime import's own `names` list isn't finalised yet — #914's own
+    // codec-family follow-on (here, only `Bytes`) is only known once the
+    // whole body below has run and populated `runtime_use`, so this decl (and
+    // the rest of the header) is held and pushed after that, in the same
+    // relative order it would have printed in — the tree-node analogue of the
+    // old text post-pass, the same deferral `workers.rs`'s own conversion
+    // (#1321) already established for the identical problem.
+    let mut header_decls: Vec<TsStmt> = vec![
+        TsStmt::decl(
+            TsDecl::Import {
+                type_only: false,
+                names: vec!["compose".to_string(), "type Env".to_string()],
+                from: "./compose.js".to_string(),
+            },
+            None,
+        ),
+        TsStmt::decl(
+            TsDecl::ImportNamespace {
+                alias: "handlers".to_string(),
+                from: "./handlers.js".to_string(),
+            },
+            None,
+        ),
+    ];
 
     // v0.9.2: re-export each agent's Durable Object class from the Worker
     // entry. Cloudflare resolves a `class_name` binding against the named
@@ -301,62 +605,76 @@ pub(crate) fn emit_worker_entry(
     let mut agent_names: Vec<&String> = table.agents.keys().collect();
     agent_names.sort();
     if !agent_names.is_empty() {
-        let joined = agent_names
-            .iter()
-            .map(|n| n.as_str())
-            .collect::<Vec<_>>()
-            .join(", ");
-        let _ = writeln!(out, "export {{ {joined} }} from \"./handlers.js\";");
-        writeln!(out).unwrap();
+        header_decls.push(TsStmt::decl(
+            TsDecl::ReExport {
+                names: agent_names.iter().map(|n| n.to_string()).collect(),
+                from: "./handlers.js".to_string(),
+            },
+            None,
+        ));
     }
     // Events track, slice 0 (spine #936, ADR 0284): same re-export
     // requirement, for the fan-out DO — it lives in its own file
     // (`events_fanout.ts`, not `handlers.ts`; a fan-out DO has no backing
     // `AgentDecl` for `emit_agent` to emit it from).
     if uses_emit {
-        let _ = writeln!(
-            out,
-            "export {{ {} }} from \"./events_fanout.js\";",
-            crate::emitter::wrangler::EVENTS_FANOUT_CLASS_NAME
-        );
-        writeln!(out).unwrap();
+        header_decls.push(TsStmt::decl(
+            TsDecl::ReExport {
+                names: vec![crate::emitter::wrangler::EVENTS_FANOUT_CLASS_NAME.to_string()],
+                from: "./events_fanout.js".to_string(),
+            },
+            None,
+        ));
     }
 
-    let _ = writeln!(out, "export default {{");
-    let _ = writeln!(
-        out,
-        "  async fetch(request: Request, env: Env{exec_param}): Promise<Response> {{"
-    );
-    let _ = writeln!(out, "    const url = new URL(request.url);");
-    let _ = writeln!(out, "    const path = url.pathname;");
-    let _ = writeln!(out, "    const method = request.method;");
-    let _ = writeln!(out, "    const surface = {fetch_compose_call};");
+    let mut fetch_params: Vec<TsParam> = vec![
+        TsParam {
+            name: "request".to_string(),
+            ty: Some(TsType::named("Request")),
+            optional: false,
+        },
+        TsParam {
+            name: "env".to_string(),
+            ty: Some(TsType::named("Env")),
+            optional: false,
+        },
+    ];
+    fetch_params.extend(exec_params.iter().cloned());
+
+    let mut fetch_body: Vec<TsStmt> = vec![
+        const_(
+            "url",
+            new_expr("URL", vec![member(ident("request"), "url")]),
+        ),
+        const_("path", member(ident("url"), "pathname")),
+        const_("method", member(ident("request"), "method")),
+        const_(
+            "surface",
+            call(ident("compose"), fetch_compose_args.clone()),
+        ),
+    ];
     // v0.131: the synthesised CORS policy constants, one per CORS-enabled service.
     for cs in &cors_services {
-        let _ = writeln!(
-            out,
-            "    const {}: CorsPolicy = {};",
-            cs.const_name, cs.literal
-        );
+        fetch_body.push(const_typed(
+            cs.const_name.clone(),
+            TsType::named("CorsPolicy"),
+            cs.literal.clone(),
+        ));
     }
     // v0.141: the synthesised security-headers policy constants, one per
     // `from http` service (with routes) — the default `nosniff` and any opt-in HSTS.
     for ss in &security_services {
-        let _ = writeln!(
-            out,
-            "    const {}: SecurityPolicy = {};",
-            ss.const_name, ss.literal
-        );
+        fetch_body.push(const_typed(
+            ss.const_name.clone(),
+            TsType::named("SecurityPolicy"),
+            ss.literal.clone(),
+        ));
     }
-    let _ = writeln!(out, "    try {{");
+
+    let mut try_body: Vec<TsStmt> = Vec::new();
 
     // 1. Internal Service Binding dispatch.
-    let _ = writeln!(out, "      if (path.startsWith(\"/_bynk/call/\")) {{");
-    let _ = writeln!(
-        out,
-        "        const servicePath = path.slice(\"/_bynk/call/\".length);"
-    );
-    let _ = writeln!(out, "        switch (servicePath) {{");
+    let mut call_cases: Vec<TsSwitchCase> = Vec::new();
     for sname in &service_names {
         let service = table.services.get(*sname).unwrap();
         let Some(h) = service.handlers.iter().find(|h| {
@@ -368,7 +686,7 @@ pub(crate) fn emit_worker_entry(
             continue;
         };
 
-        let _ = writeln!(out, "          case \"{sname}\": {{");
+        let mut case_body: Vec<TsStmt> = Vec::new();
         // v0.177 (#643): the deploy-skew check runs **before the body is read**.
         //
         // The caller stamps a hash of its compiled view of this contract; this
@@ -395,37 +713,64 @@ pub(crate) fn emit_worker_entry(
         // therefore also precedes the caller check — if the contracts disagree,
         // nothing about the request is trustworthy, including the identity.
         if let Some(expected) = own_contracts.get(*sname) {
-            let _ = writeln!(
-                out,
-                "            const __contract = request.headers.get(\"X-Bynk-Contract\");"
-            );
-            let _ = writeln!(
-                out,
-                "            if (__contract !== \"{expected}\") return new Response(JSON.stringify({{ kind: \"ContractMismatch\", service: \"{sname}\", expected: \"{expected}\", actual: __contract }}), {{ status: 409, headers: {{ \"content-type\": \"application/json\" }} }});"
-            );
+            case_body.push(const_(
+                "__contract",
+                method_call(
+                    member(ident("request"), "headers"),
+                    "get",
+                    vec![str_lit("X-Bynk-Contract")],
+                ),
+            ));
+            case_body.push(if_(
+                strict_neq(ident("__contract"), str_lit(expected.clone())),
+                return_(Some(json_response(
+                    json_error_kind(
+                        "ContractMismatch",
+                        vec![
+                            ("service".to_string(), str_lit(sname.to_string())),
+                            ("expected".to_string(), str_lit(expected.clone())),
+                            ("actual".to_string(), ident("__contract")),
+                        ],
+                    ),
+                    409,
+                ))),
+            ));
         }
-        let _ = writeln!(
-            out,
-            "            const args = await request.json() as JsonValue;"
-        );
-        emit_call_handler_dispatch(
-            &mut out,
+        case_body.push(const_(
+            "args",
+            as_expr(
+                await_expr(method_call(ident("request"), "json", vec![])),
+                TsType::named("JsonValue"),
+            ),
+        ));
+        case_body.extend(emit_call_handler_dispatch(
             sname,
             h,
             &table.actors,
             &table.types,
             &runtime_use,
-        );
-        let _ = writeln!(out, "          }}");
+        ));
+        call_cases.push(case_(str_lit(sname.to_string()), case_body));
     }
-    let _ = writeln!(out, "          default:");
-    let _ = writeln!(
-        out,
-        "            return new Response(\"Not found\", {{ status: 404 }});"
-    );
-    let _ = writeln!(out, "        }}");
-    let _ = writeln!(out, "      }}");
-    writeln!(out).unwrap();
+    call_cases.push(default_case(vec![return_(Some(text_response(
+        "Not found",
+        404,
+    )))]));
+    try_body.push(if_(
+        method_call(ident("path"), "startsWith", vec![str_lit("/_bynk/call/")]),
+        block(vec![
+            const_(
+                "servicePath",
+                method_call(
+                    ident("path"),
+                    "slice",
+                    vec![member(str_lit("/_bynk/call/"), "length")],
+                ),
+            ),
+            switch_stmt(ident("servicePath"), call_cases),
+        ]),
+    ));
+    try_body.push(TsStmt::blank(None));
 
     // 1.5. WebSocket upgrade dispatch (v0.104, slice 3b). An `Upgrade: websocket`
     // request routes to the `from websocket` service's edge wrapper, which runs the
@@ -433,32 +778,45 @@ pub(crate) fn emit_worker_entry(
     // are read from the upgrade URL's query string by name (the v1 convention; a
     // missing required param is a `400`).
     if !ws_open_routes.is_empty() {
-        let _ = writeln!(
-            out,
-            "      if (request.headers.get(\"Upgrade\") === \"websocket\") {{"
-        );
+        let mut ws_body: Vec<TsStmt> = Vec::new();
         for (sname, h) in &ws_open_routes {
-            let mut args: Vec<String> = vec!["request".to_string()];
+            let mut args: Vec<TsExpr> = vec![ident("request")];
             for p in &h.params {
                 let pn = &p.name.name;
-                let _ = writeln!(
-                    out,
-                    "        const __ws_{pn} = url.searchParams.get(\"{pn}\");"
-                );
-                let _ = writeln!(
-                    out,
-                    "        if (__ws_{pn} === null) return new Response(\"Missing parameter: {pn}\", {{ status: 400 }});"
-                );
-                args.push(format!("__ws_{pn}"));
+                ws_body.push(const_(
+                    format!("__ws_{pn}"),
+                    method_call(
+                        member(ident("url"), "searchParams"),
+                        "get",
+                        vec![str_lit(pn.clone())],
+                    ),
+                ));
+                ws_body.push(if_(
+                    strict_eq(ident(format!("__ws_{pn}")), null_lit()),
+                    return_(Some(text_response(
+                        &format!("Missing parameter: {pn}"),
+                        400,
+                    ))),
+                ));
+                args.push(ident(format!("__ws_{pn}")));
             }
-            let _ = writeln!(
-                out,
-                "        return surface.ws_{sname}_open({});",
-                args.join(", ")
-            );
+            ws_body.push(return_(Some(call(
+                member(ident("surface"), format!("ws_{sname}_open")),
+                args,
+            ))));
         }
-        let _ = writeln!(out, "      }}");
-        writeln!(out).unwrap();
+        try_body.push(if_(
+            strict_eq(
+                method_call(
+                    member(ident("request"), "headers"),
+                    "get",
+                    vec![str_lit("Upgrade")],
+                ),
+                str_lit("websocket"),
+            ),
+            block(ws_body),
+        ));
+        try_body.push(TsStmt::blank(None));
     }
 
     // 1.6. Events dispatch (spine #936, ADR 0284). Reached only from a
@@ -480,42 +838,68 @@ pub(crate) fn emit_worker_entry(
         .copied()
         .collect();
     if !event_services.is_empty() {
-        let _ = writeln!(out, "      if (path.startsWith(\"/_bynk/event/\")) {{");
-        let _ = writeln!(
-            out,
-            "        const servicePath = path.slice(\"/_bynk/event/\".length);"
-        );
-        // Slice 2 (spine #936): the fan-out DO's `deliverEvent` always sends
-        // `{ payload, envelope }` — the envelope is minted at emission
-        // (`lower.rs`'s `__events.push`) and forwarded unconditionally over
-        // this hop. Whether a *specific* subscriber's handler actually
-        // wants it is decided by that subscriber's own generated wrapper
-        // (`emit_event_wrapper`), not here — this route passes both through
-        // uniformly regardless of which `case` it dispatches to.
-        //
-        // #973: until this fix, `payload`/`envelope` were cast `as unknown`
-        // and forwarded unchecked — nothing on this whole path ever called a
-        // `deserialise_*` function, so a malformed event silently reached the
-        // subscriber's handler body. Both are now validated here, the same
-        // validate-then-400 shape `/_bynk/call/` above already uses: the
-        // envelope once, unconditionally (it's always on the wire regardless
-        // of whether a given subscriber declared `env`), then the payload
-        // per-`case`, against that subscriber's own generated codec (change A
-        // in #973 — the codec didn't previously exist at all for a pure
-        // subscriber, since it calls no method on the publisher).
-        let _ = writeln!(
-            out,
-            "        const {{ payload, envelope }} = (await request.json()) as {{ payload: JsonValue; envelope: JsonValue }};"
-        );
-        let _ = writeln!(
-            out,
-            "        const __r_envelope = deserialiseEventEnvelope(envelope, \"$.envelope\");"
-        );
-        let _ = writeln!(
-            out,
-            "        if (__r_envelope.tag === \"Err\") return new Response(JSON.stringify(__r_envelope.error), {{ status: 400, headers: {{ \"content-type\": \"application/json\" }} }});"
-        );
-        let _ = writeln!(out, "        switch (servicePath) {{");
+        let mut event_body: Vec<TsStmt> = vec![
+            const_(
+                "servicePath",
+                method_call(
+                    ident("path"),
+                    "slice",
+                    vec![member(str_lit("/_bynk/event/"), "length")],
+                ),
+            ),
+            // Slice 2 (spine #936): the fan-out DO's `deliverEvent` always sends
+            // `{ payload, envelope }` — the envelope is minted at emission
+            // (`lower.rs`'s `__events.push`) and forwarded unconditionally over
+            // this hop. Whether a *specific* subscriber's handler actually
+            // wants it is decided by that subscriber's own generated wrapper
+            // (`emit_event_wrapper`), not here — this route passes both through
+            // uniformly regardless of which `case` it dispatches to.
+            //
+            // #973: until this fix, `payload`/`envelope` were cast `as unknown`
+            // and forwarded unchecked — nothing on this whole path ever called a
+            // `deserialise_*` function, so a malformed event silently reached the
+            // subscriber's handler body. Both are now validated here, the same
+            // validate-then-400 shape `/_bynk/call/` above already uses: the
+            // envelope once, unconditionally (it's always on the wire regardless
+            // of whether a given subscriber declared `env`), then the payload
+            // per-`case`, against that subscriber's own generated codec (change A
+            // in #973 — the codec didn't previously exist at all for a pure
+            // subscriber, since it calls no method on the publisher).
+            TsStmt::const_stmt(
+                TsBindingName::ObjectPattern(vec!["payload".to_string(), "envelope".to_string()]),
+                None,
+                as_expr(
+                    // This file's own two real `await ... as T` sites disagree
+                    // on parens (`/_bynk/call/`'s `args` has none; this one
+                    // does) — a real, pre-existing inconsistency in the hand-
+                    // written strings this slice replicates exactly, not a
+                    // rule. `Paren` makes the grouping explicit here without
+                    // affecting the other site.
+                    paren(await_expr(method_call(ident("request"), "json", vec![]))),
+                    TsType::Object(vec![
+                        TsTypeMember::prop("payload", TsType::named("JsonValue")),
+                        TsTypeMember::prop("envelope", TsType::named("JsonValue")),
+                    ]),
+                ),
+                None,
+            ),
+            const_(
+                "__r_envelope",
+                call(
+                    ident("deserialiseEventEnvelope"),
+                    vec![ident("envelope"), str_lit("$.envelope")],
+                ),
+            ),
+        ];
+        event_body.push(if_(
+            strict_eq(member(ident("__r_envelope"), "tag"), str_lit("Err")),
+            return_(Some(json_response(
+                member(ident("__r_envelope"), "error"),
+                400,
+            ))),
+        ));
+
+        let mut event_cases: Vec<TsSwitchCase> = Vec::new();
         for sname in &event_services {
             let h = table.services[*sname]
                 .handlers
@@ -529,30 +913,37 @@ pub(crate) fn emit_worker_entry(
                 .expect("event_services filtered to services with an Event handler");
             let dser_payload =
                 deserialise_call(&h.params[0].type_ref, "payload", "$.payload", &runtime_use);
-            let _ = writeln!(out, "          case \"{sname}\": {{");
-            let _ = writeln!(out, "            const __r_payload = {dser_payload};");
-            let _ = writeln!(
-                out,
-                "            if (__r_payload.tag === \"Err\") return new Response(JSON.stringify(__r_payload.error), {{ status: 400, headers: {{ \"content-type\": \"application/json\" }} }});"
-            );
-            let _ = writeln!(
-                out,
-                "            await surface.{sname}(__r_payload.value, __r_envelope.value);"
-            );
-            let _ = writeln!(
-                out,
-                "            return new Response(null, {{ status: 204 }});"
-            );
-            let _ = writeln!(out, "          }}");
+            let case_body = vec![
+                const_("__r_payload", ident(dser_payload)),
+                if_(
+                    strict_eq(member(ident("__r_payload"), "tag"), str_lit("Err")),
+                    return_(Some(json_response(
+                        member(ident("__r_payload"), "error"),
+                        400,
+                    ))),
+                ),
+                expr_stmt(await_expr(call(
+                    member(ident("surface"), sname.to_string()),
+                    vec![
+                        member(ident("__r_payload"), "value"),
+                        member(ident("__r_envelope"), "value"),
+                    ],
+                ))),
+                return_(Some(null_response(204))),
+            ];
+            event_cases.push(case_(str_lit(sname.to_string()), case_body));
         }
-        let _ = writeln!(out, "          default:");
-        let _ = writeln!(
-            out,
-            "            return new Response(\"Not found\", {{ status: 404 }});"
-        );
-        let _ = writeln!(out, "        }}");
-        let _ = writeln!(out, "      }}");
-        writeln!(out).unwrap();
+        event_cases.push(default_case(vec![return_(Some(text_response(
+            "Not found",
+            404,
+        )))]));
+        event_body.push(switch_stmt(ident("servicePath"), event_cases));
+
+        try_body.push(if_(
+            method_call(ident("path"), "startsWith", vec![str_lit("/_bynk/event/")]),
+            block(event_body),
+        ));
+        try_body.push(TsStmt::blank(None));
     }
 
     // v0.131 (ADR 0159): CORS preflight. An `OPTIONS` against any route path of a
@@ -566,36 +957,59 @@ pub(crate) fn emit_worker_entry(
     // bare `OPTIONS` (lacks it) falls through to the generic `204 + Allow` below,
     // so the two `OPTIONS` answers compose instead of colliding.
     for cs in &cors_services {
-        let cond = cs
-            .paths
-            .iter()
-            .map(|(path, has_params)| {
-                let lit = crate::emitter::escape_ts_string(path);
-                if *has_params {
-                    format!("matchPath(\"{lit}\", path) !== null")
-                } else {
-                    format!("path === \"{lit}\"")
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(" || ");
-        let _ = writeln!(
-            out,
-            "      if (method === \"OPTIONS\" && request.headers.get(\"access-control-request-method\") !== null && ({cond})) {{"
+        let mut cond_terms = cs.paths.iter().map(|(path, has_params)| {
+            if *has_params {
+                strict_neq(
+                    call(
+                        ident("matchPath"),
+                        vec![str_lit(path.clone()), ident("path")],
+                    ),
+                    null_lit(),
+                )
+            } else {
+                strict_eq(ident("path"), str_lit(path.clone()))
+            }
+        });
+        let first = cond_terms
+            .next()
+            .expect("a CORS service always has ≥1 route");
+        let cond = cond_terms.fold(first, or_expr);
+        let full_cond = and_expr(
+            and_expr(
+                strict_eq(ident("method"), str_lit("OPTIONS")),
+                strict_neq(
+                    method_call(
+                        member(ident("request"), "headers"),
+                        "get",
+                        vec![str_lit("access-control-request-method")],
+                    ),
+                    null_lit(),
+                ),
+            ),
+            paren(cond),
         );
         // v0.141 (ADR 0164 DECISION E): the synthesised preflight also carries the
         // service's security headers — a CORS-enabled service is a `from http`
         // service, so it always has a security policy constant.
-        let preflight = format!(
-            "corsPreflightResponse({}, request.headers.get(\"origin\"))",
-            cs.const_name
+        let preflight = call(
+            ident("corsPreflightResponse"),
+            vec![
+                ident(cs.const_name.clone()),
+                method_call(
+                    member(ident("request"), "headers"),
+                    "get",
+                    vec![str_lit("origin")],
+                ),
+            ],
         );
         let stamped = match security_services.iter().find(|s| s.service == cs.service) {
-            Some(ss) => format!("applySecurityHeaders({preflight}, {})", ss.const_name),
+            Some(ss) => call(
+                ident("applySecurityHeaders"),
+                vec![preflight, ident(ss.const_name.clone())],
+            ),
             None => preflight,
         };
-        let _ = writeln!(out, "        return {stamped};");
-        let _ = writeln!(out, "      }}");
+        try_body.push(if_(full_cond, block(vec![return_(Some(stamped))])));
     }
 
     // 2. External HTTP routes.
@@ -609,14 +1023,13 @@ pub(crate) fn emit_worker_entry(
             .iter()
             .find(|ss| ss.service == route.service)
             .map(|ss| ss.const_name.as_str());
-        emit_http_route_dispatch(
-            &mut out,
+        try_body.push(emit_http_route_dispatch(
             route,
             cors_const,
             security_const,
             &table.types,
             &runtime_use,
-        );
+        ));
     }
 
     // v0.139 (ADR 0162): the method-aware router fall-through. A request that
@@ -629,85 +1042,140 @@ pub(crate) fn emit_worker_entry(
     for pm in &path_methods {
         let allow = pm.methods.join(", ");
         let match_cond = if pm.has_params {
-            let lit = crate::emitter::escape_ts_string(&pm.path);
-            format!("matchPath(\"{lit}\", path) !== null")
+            strict_neq(
+                call(
+                    ident("matchPath"),
+                    vec![str_lit(pm.path.clone()), ident("path")],
+                ),
+                null_lit(),
+            )
         } else {
-            let lit = crate::emitter::escape_ts_string(&pm.path);
-            format!("path === \"{lit}\"")
+            strict_eq(ident("path"), str_lit(pm.path.clone()))
         };
-        let _ = writeln!(out, "      if ({match_cond}) {{");
+        let mut fallthrough_body: Vec<TsStmt> = Vec::new();
         // OPTIONS → 204, everything else → 405; both carry the derived Allow.
-        let _ = writeln!(
-            out,
-            "        const __status = method === \"OPTIONS\" ? 204 : 405;"
-        );
-        let _ = writeln!(
-            out,
-            "        const __res = new Response(null, {{ status: __status, headers: {{ allow: \"{allow}\" }} }});"
-        );
+        fallthrough_body.push(const_(
+            "__status",
+            cond_expr(
+                strict_eq(ident("method"), str_lit("OPTIONS")),
+                num_lit("204"),
+                num_lit("405"),
+            ),
+        ));
+        fallthrough_body.push(const_(
+            "__res",
+            new_response(vec![
+                null_lit(),
+                TsExpr::object(vec![
+                    ("status".to_string(), ident("__status")),
+                    (
+                        "headers".to_string(),
+                        TsExpr::object(vec![("allow".to_string(), str_lit(allow))]),
+                    ),
+                ]),
+            ]),
+        ));
         // Stamp CORS (v0.131) then security headers (v0.141) — disjoint sets, so
         // the order is immaterial; every `from http` path carries the security
         // policy (DECISION E), CORS only when the path's service opts in.
-        let cors_expr = match &pm.cors_const {
-            Some(c) => format!("applyCors(__res, {c}, request.headers.get(\"origin\"))"),
-            None => "__res".to_string(),
+        let cors_res = match &pm.cors_const {
+            Some(c) => call(
+                ident("applyCors"),
+                vec![
+                    ident("__res"),
+                    ident(c.clone()),
+                    method_call(
+                        member(ident("request"), "headers"),
+                        "get",
+                        vec![str_lit("origin")],
+                    ),
+                ],
+            ),
+            None => ident("__res"),
         };
         let stamped = match &pm.security_const {
-            Some(s) => format!("applySecurityHeaders({cors_expr}, {s})"),
-            None => cors_expr,
+            Some(s) => call(
+                ident("applySecurityHeaders"),
+                vec![cors_res, ident(s.clone())],
+            ),
+            None => cors_res,
         };
-        let _ = writeln!(out, "        return {stamped};");
-        let _ = writeln!(out, "      }}");
+        fallthrough_body.push(return_(Some(stamped)));
+        try_body.push(if_(match_cond, block(fallthrough_body)));
     }
 
-    let _ = writeln!(
-        out,
-        "      return new Response(\"Not Found\", {{ status: 404 }});"
-    );
-    let _ = writeln!(out, "    }} catch {{");
-    let _ = writeln!(
-        out,
-        "      return new Response(\"Internal Server Error\", {{ status: 500 }});"
-    );
-    let _ = writeln!(out, "    }}");
-    let _ = writeln!(out, "  }},");
+    try_body.push(return_(Some(text_response("Not Found", 404))));
+
+    fetch_body.push(try_catch_stmt(
+        try_body,
+        None,
+        vec![return_(Some(text_response("Internal Server Error", 500)))],
+    ));
+
+    let mut default_entries: Vec<TsObjectEntry> = vec![TsObjectEntry::Method {
+        name: "fetch".to_string(),
+        is_async: true,
+        params: fetch_params,
+        return_type: Some(TsType::named_with_args(
+            "Promise",
+            vec![TsType::named("Response")],
+        )),
+        body: fetch_body,
+    }];
 
     // v0.10a: scheduled (cron) entry point. Dispatches on `event.cron`. A
     // failing run has no retry channel, so an `Err` is logged and the run
     // completes (v0.10 §5.1, [DECISION 3]).
     if !cron_routes.is_empty() {
-        emit_scheduled_handler(&mut out, &cron_routes, exec_param, other_compose_call);
+        default_entries.push(emit_scheduled_handler(
+            &cron_routes,
+            &exec_params,
+            &other_compose_args,
+        ));
     }
 
     // v0.10b: queue (consumer) entry point. Dispatches on `batch.queue`,
     // deserialises each message, invokes the handler, and acks on `Ok` /
     // retries on `Err` (a deserialisation failure also retries).
     if !queue_routes.is_empty() {
-        emit_queue_handler(
-            &mut out,
+        default_entries.push(emit_queue_handler(
             &queue_routes,
-            exec_param,
-            other_compose_call,
+            &exec_params,
+            &other_compose_args,
             &table.types,
             &runtime_use,
-        );
+        ));
     }
 
-    let _ = writeln!(out, "}};");
-
-    // v0.176 (#642): a `Bytes` may now cross a workers boundary, so the entry's
-    // inbound codec can reference the base64 helpers. Same post-pass the module
-    // emitter runs, keyed on what the codecs above actually emitted.
+    // v0.176 (#642): a `Bytes` may now cross a workers boundary, so the
+    // entry's inbound codec can reference the base64 helpers — fold in
+    // whatever the body above actually reached for, the tree-node analogue
+    // of the old text post-pass (`append_missing_bindings`'s own doc
+    // explains why it can't reuse `crate::emitter::inject_runtime_imports`
+    // unchanged). This is why the runtime import decl was held rather than
+    // pushed immediately after being computed: `runtime_use.bytes()` is only
+    // known now, after every `deserialise_call`/`serialise_call` site in
+    // `fetch`/`scheduled`/`queue`'s own bodies above has run.
     if runtime_use.bytes() {
-        // The entry's own runtime import, emitted verbatim above.
-        out = crate::emitter::inject_runtime_imports(
-            out,
-            "../../runtime.js",
-            crate::emitter::BYTES_RUNTIME_IMPORTS,
-        );
+        append_missing_bindings(&mut imports, crate::emitter::BYTES_RUNTIME_IMPORTS);
     }
+    program.push(TsStmt::decl(
+        TsDecl::Import {
+            type_only: false,
+            names: imports,
+            from: "../../runtime.js".to_string(),
+        },
+        None,
+    ));
+    for decl in header_decls {
+        program.push(decl);
+    }
+    program.push(TsStmt::decl(
+        TsDecl::ExportDefault(TsExpr::multiline_object_entries(default_entries)),
+        None,
+    ));
 
-    out
+    program
 }
 
 /// Emit the Worker `scheduled` handler aggregating every `on cron` handler in
@@ -715,42 +1183,71 @@ pub(crate) fn emit_worker_entry(
 /// dependency on `@cloudflare/workers-types`, matching how the rest of the
 /// emitter hand-declares the minimal ambient shapes it needs.
 fn emit_scheduled_handler(
-    out: &mut String,
     cron_routes: &[CronRoute],
-    exec_param: &str,
-    compose_call: &str,
-) {
-    let _ = writeln!(
-        out,
-        "  async scheduled(event: {{ readonly cron: string; readonly scheduledTime: number }}, env: Env{exec_param}): Promise<void> {{"
-    );
-    let _ = writeln!(out, "    const surface = {compose_call};");
-    let _ = writeln!(out, "    switch (event.cron) {{");
+    exec_params: &[TsParam],
+    compose_args: &[TsExpr],
+) -> TsObjectEntry {
+    let mut params = vec![TsParam {
+        name: "event".to_string(),
+        ty: Some(TsType::Object(vec![
+            TsTypeMember::readonly_prop("cron", TsType::named("string")),
+            TsTypeMember::readonly_prop("scheduledTime", TsType::named("number")),
+        ])),
+        optional: false,
+    }];
+    params.push(TsParam {
+        name: "env".to_string(),
+        ty: Some(TsType::named("Env")),
+        optional: false,
+    });
+    params.extend(exec_params.iter().cloned());
+
+    let mut body: Vec<TsStmt> = vec![const_(
+        "surface",
+        call(ident("compose"), compose_args.to_vec()),
+    )];
+    let mut cases: Vec<TsSwitchCase> = Vec::new();
     for route in cron_routes {
         let method_key = crate::emitter::cron_handler_method_name(&route.service, route.index);
-        let expr_lit = crate::emitter::escape_ts_string(&route.expr);
         // Pass the scheduled fire time (epoch ms) when the handler asked for it.
-        let arg = if route.has_param {
-            "event.scheduledTime"
+        let args: Vec<TsExpr> = if route.has_param {
+            vec![member(ident("event"), "scheduledTime")]
         } else {
-            ""
+            vec![]
         };
-        let _ = writeln!(out, "      case \"{expr_lit}\": {{");
-        let _ = writeln!(
-            out,
-            "        const result = await surface.{method_key}({arg});"
-        );
-        let _ = writeln!(
-            out,
-            "        if (result.tag === \"Err\") console.error(\"cron {expr_lit} failed\", result.error);"
-        );
-        let _ = writeln!(out, "        return;");
-        let _ = writeln!(out, "      }}");
+        let case_body = vec![
+            const_(
+                "result",
+                await_expr(call(member(ident("surface"), method_key), args)),
+            ),
+            if_(
+                strict_eq(member(ident("result"), "tag"), str_lit("Err")),
+                expr_stmt(method_call(
+                    ident("console"),
+                    "error",
+                    vec![
+                        str_lit(format!("cron {} failed", route.expr)),
+                        member(ident("result"), "error"),
+                    ],
+                )),
+            ),
+            return_(None),
+        ];
+        cases.push(case_(str_lit(route.expr.clone()), case_body));
     }
-    let _ = writeln!(out, "      default:");
-    let _ = writeln!(out, "        return;");
-    let _ = writeln!(out, "    }}");
-    let _ = writeln!(out, "  }},");
+    cases.push(default_case(vec![return_(None)]));
+    body.push(switch_stmt(member(ident("event"), "cron"), cases));
+
+    TsObjectEntry::Method {
+        name: "scheduled".to_string(),
+        is_async: true,
+        params,
+        return_type: Some(TsType::named_with_args(
+            "Promise",
+            vec![TsType::named("void")],
+        )),
+        body,
+    }
 }
 
 /// Emit the Worker `queue` handler aggregating every `on queue` consumer in the
@@ -759,22 +1256,44 @@ fn emit_scheduled_handler(
 /// `Err`. A deserialisation failure or a thrown error also retries. `batch` is
 /// typed structurally to avoid a `@cloudflare/workers-types` dependency.
 fn emit_queue_handler(
-    out: &mut String,
     queue_routes: &[QueueRoute],
-    exec_param: &str,
-    compose_call: &str,
+    exec_params: &[TsParam],
+    compose_args: &[TsExpr],
     local_types: &std::collections::HashMap<String, Arc<TypeDecl>>,
     ru: &RuntimeUse,
-) {
-    let _ = writeln!(
-        out,
-        "  async queue(batch: {{ readonly queue: string; readonly messages: ReadonlyArray<{{ readonly body: unknown; ack(): void; retry(): void }}> }}, env: Env{exec_param}): Promise<void> {{"
-    );
-    let _ = writeln!(out, "    const surface = {compose_call};");
-    let _ = writeln!(out, "    switch (batch.queue) {{");
+) -> TsObjectEntry {
+    let mut params = vec![TsParam {
+        name: "batch".to_string(),
+        ty: Some(TsType::Object(vec![
+            TsTypeMember::readonly_prop("queue", TsType::named("string")),
+            TsTypeMember::readonly_prop(
+                "messages",
+                TsType::named_with_args(
+                    "ReadonlyArray",
+                    vec![TsType::Object(vec![
+                        TsTypeMember::readonly_prop("body", TsType::named("unknown")),
+                        TsTypeMember::method("ack", vec![], TsType::named("void")),
+                        TsTypeMember::method("retry", vec![], TsType::named("void")),
+                    ])],
+                ),
+            ),
+        ])),
+        optional: false,
+    }];
+    params.push(TsParam {
+        name: "env".to_string(),
+        ty: Some(TsType::named("Env")),
+        optional: false,
+    });
+    params.extend(exec_params.iter().cloned());
+
+    let mut body: Vec<TsStmt> = vec![const_(
+        "surface",
+        call(ident("compose"), compose_args.to_vec()),
+    )];
+    let mut cases: Vec<TsSwitchCase> = Vec::new();
     for route in queue_routes {
         let method_key = crate::emitter::queue_handler_method_name(&route.service, route.index);
-        let name_lit = crate::emitter::escape_ts_string(&route.name);
         let (dser, brand) = match &route.msg_type {
             Some(t) => (
                 deserialise_call(t, "(msg.body as JsonValue)", "$", ru),
@@ -788,37 +1307,110 @@ fn emit_queue_handler(
                 String::new(),
             ),
         };
-        let _ = writeln!(out, "      case \"{name_lit}\": {{");
-        let _ = writeln!(out, "        for (const msg of batch.messages) {{");
-        let _ = writeln!(out, "          try {{");
-        let _ = writeln!(out, "            const __r = {dser};");
-        let _ = writeln!(
-            out,
-            "            if (__r.tag === \"Err\") {{ console.error(\"queue {name_lit} deserialise failed\", __r.error); msg.retry(); continue; }}"
+        let try_stmts = vec![
+            const_("__r", ident(dser)),
+            // `{ ...; ...; continue; }` — a single-line braced block, this
+            // file's own real (hand-written) shape, not the tree's usual
+            // one-statement-per-line `Block`.
+            if_(
+                strict_eq(member(ident("__r"), "tag"), str_lit("Err")),
+                TsStmt::inline_block(
+                    vec![
+                        expr_stmt(method_call(
+                            ident("console"),
+                            "error",
+                            vec![
+                                str_lit(format!("queue {} deserialise failed", route.name)),
+                                member(ident("__r"), "error"),
+                            ],
+                        )),
+                        expr_stmt(method_call(ident("msg"), "retry", vec![])),
+                        TsStmt::continue_stmt(None),
+                    ],
+                    None,
+                ),
+            ),
+            const_(
+                "result",
+                await_expr(call(
+                    member(ident("surface"), method_key),
+                    vec![ident(format!("__r.value{brand}"))],
+                )),
+            ),
+            TsStmt::if_else_stmt(
+                strict_eq(member(ident("result"), "tag"), str_lit("Ack")),
+                expr_stmt(method_call(ident("msg"), "ack", vec![])),
+                TsStmt::inline_block(
+                    vec![
+                        expr_stmt(method_call(
+                            ident("console"),
+                            "error",
+                            vec![
+                                str_lit(format!("queue {} retry", route.name)),
+                                member(ident("result"), "reason"),
+                            ],
+                        )),
+                        expr_stmt(method_call(ident("msg"), "retry", vec![])),
+                    ],
+                    None,
+                ),
+                None,
+            ),
+        ];
+        // The catch clause's own real content packs both statements onto
+        // one compact line (`console.error(...); msg.retry();`) inside the
+        // usual braces-on-their-own-lines shape — `TsStmt::try_catch`
+        // directly, not the `try_catch_stmt` convenience helper, since this
+        // is the one real site in this file needing `InlineBlock` here
+        // rather than the ordinary one-statement-per-line `Block`.
+        let for_of_body = TsStmt::try_catch(
+            block(try_stmts),
+            Some("e"),
+            TsStmt::inline_block(
+                vec![
+                    expr_stmt(method_call(
+                        ident("console"),
+                        "error",
+                        vec![str_lit(format!("queue {} threw", route.name)), ident("e")],
+                    )),
+                    expr_stmt(method_call(ident("msg"), "retry", vec![])),
+                ],
+                None,
+            ),
+            None,
         );
-        let _ = writeln!(
-            out,
-            "            const result = await surface.{method_key}(__r.value{brand});"
-        );
-        let _ = writeln!(out, "            if (result.tag === \"Ack\") msg.ack();");
-        let _ = writeln!(
-            out,
-            "            else {{ console.error(\"queue {name_lit} retry\", result.reason); msg.retry(); }}"
-        );
-        let _ = writeln!(out, "          }} catch (e) {{");
-        let _ = writeln!(
-            out,
-            "            console.error(\"queue {name_lit} threw\", e); msg.retry();"
-        );
-        let _ = writeln!(out, "          }}");
-        let _ = writeln!(out, "        }}");
-        let _ = writeln!(out, "        return;");
-        let _ = writeln!(out, "      }}");
+        let case_body = vec![
+            TsStmt::for_of(
+                "msg",
+                member(ident("batch"), "messages"),
+                // The `for...of`'s own body is a braced block containing the
+                // `try`/`catch` as one statement — passing the `try`/`catch`
+                // directly (not wrapped in `block(...)`) would hit
+                // `render_branch`'s brace-free inline fallback instead,
+                // resetting to depth 0 (real bug, caught by the fixture
+                // diff: `render_inline_stmt`'s own `TryCatch` arm falls back
+                // to `render_stmt(out, stmt, 0)`, matching neither this
+                // loop's real nesting nor the original's own braced shape).
+                block(vec![for_of_body]),
+                None,
+            ),
+            return_(None),
+        ];
+        cases.push(case_(str_lit(route.name.clone()), case_body));
     }
-    let _ = writeln!(out, "      default:");
-    let _ = writeln!(out, "        return;");
-    let _ = writeln!(out, "    }}");
-    let _ = writeln!(out, "  }},");
+    cases.push(default_case(vec![return_(None)]));
+    body.push(switch_stmt(member(ident("batch"), "queue"), cases));
+
+    TsObjectEntry::Method {
+        name: "queue".to_string(),
+        is_async: true,
+        params,
+        return_type: Some(TsType::named_with_args(
+            "Promise",
+            vec![TsType::named("void")],
+        )),
+        body,
+    }
 }
 
 /// Count the number of `:param` segments in a path pattern.
@@ -835,26 +1427,8 @@ fn param_count(path: &str) -> usize {
 struct CorsService {
     service: String,
     const_name: String,
-    literal: String,
+    literal: TsExpr,
     paths: Vec<(String, bool)>,
-}
-
-/// Escape a string for a double-quoted TypeScript literal — the canonical
-/// escaper (backslashes, quotes, and control characters), shared with every
-/// other emission site so a literal containing a newline cannot break the
-/// emitted file.
-fn ts_str(s: &str) -> String {
-    crate::emitter::escape_ts_string(s)
-}
-
-/// A TypeScript array literal of strings.
-fn ts_str_array(items: &[String]) -> String {
-    let inner = items
-        .iter()
-        .map(|s| format!("\"{}\"", ts_str(s)))
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!("[{inner}]")
 }
 
 /// v0.139 (ADR 0162 D2): the one derivation of the methods a path answers,
@@ -994,18 +1568,17 @@ fn build_cors_services(
             hs
         });
 
-        let max_age = match policy.max_age_secs() {
-            Some(n) => n.to_string(),
-            None => "null".to_string(),
+        let max_age_expr = match policy.max_age_secs() {
+            Some(n) => num_lit(n.to_string()),
+            None => null_lit(),
         };
-        let literal = format!(
-            "{{ origins: {}, allowMethods: {}, allowHeaders: {}, credentials: {}, maxAgeSecs: {} }}",
-            ts_str_array(&policy.origins()),
-            ts_str_array(&methods),
-            ts_str_array(&allow_headers),
-            policy.credentials(),
-            max_age,
-        );
+        let literal = TsExpr::object(vec![
+            ("origins".to_string(), str_array(&policy.origins())),
+            ("allowMethods".to_string(), str_array(&methods)),
+            ("allowHeaders".to_string(), str_array(&allow_headers)),
+            ("credentials".to_string(), bool_lit(policy.credentials())),
+            ("maxAgeSecs".to_string(), max_age_expr),
+        ]);
 
         // Distinct route paths for the preflight match.
         let mut paths: Vec<(String, bool)> = Vec::new();
@@ -1034,7 +1607,7 @@ fn build_cors_services(
 struct SecurityService {
     service: String,
     const_name: String,
-    literal: String,
+    literal: TsExpr,
 }
 
 /// Build the per-service security policies. Every `from http` service with at
@@ -1062,11 +1635,14 @@ fn build_security_services(
             Some(p) => (p.nosniff(), p.hsts_max_age_secs()),
             None => (true, None),
         };
-        let hsts_lit = match hsts {
-            Some(n) => n.to_string(),
-            None => "null".to_string(),
+        let hsts_expr = match hsts {
+            Some(n) => num_lit(n.to_string()),
+            None => null_lit(),
         };
-        let literal = format!("{{ nosniff: {nosniff}, hstsMaxAgeSecs: {hsts_lit} }}");
+        let literal = TsExpr::object(vec![
+            ("nosniff".to_string(), bool_lit(nosniff)),
+            ("hstsMaxAgeSecs".to_string(), hsts_expr),
+        ]);
         out.push(SecurityService {
             service: (*sname).clone(),
             const_name: format!("__security_{sname}"),
@@ -1155,13 +1731,31 @@ struct QueueRoute {
 /// *every response a `from http` route emits carries the policy* — before this,
 /// the bare-`new Response` rejection sites skipped the wrapper (#659), leaving
 /// `nosniff` off precisely the responses that reflect attacker input.
-fn stamp_rejection(inner: &str, cors_const: Option<&str>, security_const: Option<&str>) -> String {
+fn stamp_rejection(
+    inner: TsExpr,
+    cors_const: Option<&str>,
+    security_const: Option<&str>,
+) -> TsExpr {
     let corsed = match cors_const {
-        Some(c) => format!("applyCors({inner}, {c}, request.headers.get(\"origin\"))"),
-        None => inner.to_string(),
+        Some(c) => call(
+            ident("applyCors"),
+            vec![
+                inner,
+                ident(c.to_string()),
+                method_call(
+                    member(ident("request"), "headers"),
+                    "get",
+                    vec![str_lit("origin")],
+                ),
+            ],
+        ),
+        None => inner,
     };
     match security_const {
-        Some(s) => format!("applySecurityHeaders({corsed}, {s})"),
+        Some(s) => call(
+            ident("applySecurityHeaders"),
+            vec![corsed, ident(s.to_string())],
+        ),
         None => corsed,
     }
 }
@@ -1169,37 +1763,52 @@ fn stamp_rejection(inner: &str, cors_const: Option<&str>, security_const: Option
 /// Generate the per-route dispatch block for one `on http` handler. The
 /// router has already been entered via `try`; this block extracts path
 /// parameters, deserialises the body (when present), invokes the handler,
-/// and serialises the HttpResult through `httpResultToResponse`.
+/// and serialises the HttpResult through `httpResultToResponse`. Returns
+/// the whole bare `{ ... }` block statement — `emit_worker_entry`'s own
+/// caller pushes it directly into the `try` block's own statement list.
 fn emit_http_route_dispatch(
-    out: &mut String,
     route: &HttpRoute,
     cors_const: Option<&str>,
     security_const: Option<&str>,
     local_types: &std::collections::HashMap<String, Arc<TypeDecl>>,
     ru: &RuntimeUse,
-) {
+) -> TsStmt {
     let h = &route.handler;
     let method_key = http_handler_method_name(route.method, &route.path);
     let has_path_params = param_count(&route.path) > 0;
-    let path_lit = crate::emitter::escape_ts_string(&route.path);
     // v0.139 (ADR 0162 D3): a `GET` route also answers `HEAD` — the guard widens
     // so the `GET` handler runs, then the built response's body is stripped
     // below. Other methods match exactly.
     let method_guard = if route.method == HttpMethod::Get {
-        "(method === \"GET\" || method === \"HEAD\")".to_string()
+        or_expr(
+            strict_eq(ident("method"), str_lit("GET")),
+            strict_eq(ident("method"), str_lit("HEAD")),
+        )
     } else {
-        format!("method === \"{}\"", route.method.as_str())
+        strict_eq(ident("method"), str_lit(route.method.as_str()))
     };
-    let _ = writeln!(out, "      {{");
+
+    let mut inner: Vec<TsStmt> = Vec::new();
     if has_path_params {
-        let _ = writeln!(out, "        const __m = matchPath(\"{path_lit}\", path);");
-        let _ = writeln!(out, "        if ({method_guard} && __m) {{");
-    } else {
-        let _ = writeln!(
-            out,
-            "        if ({method_guard} && path === \"{path_lit}\") {{"
-        );
+        inner.push(const_(
+            "__m",
+            call(
+                ident("matchPath"),
+                vec![str_lit(route.path.clone()), ident("path")],
+            ),
+        ));
     }
+    let route_cond = if has_path_params {
+        and_expr(method_guard, ident("__m"))
+    } else {
+        and_expr(
+            method_guard,
+            strict_eq(ident("path"), str_lit(route.path.clone())),
+        )
+    };
+
+    let mut guarded: Vec<TsStmt> = Vec::new();
+
     // v0.142 (ADR 0165): the request-body ceiling. A route with an effective cap
     // rejects an oversized body with a synthesised `413` derived from the declared
     // `Content-Length`, *before* the body is read — ahead of the `by`/Bearer/sum
@@ -1212,23 +1821,40 @@ fn emit_http_route_dispatch(
     // reads the body itself.
     let has_body = h.params.iter().any(|p| p.name.name == "body");
     if let Some(cap) = route.max_body.filter(|_| has_body) {
-        let inner = format!(
-            "new Response(JSON.stringify({{ kind: \"PayloadTooLarge\", details: \"request body exceeds {cap} bytes\" }}), {{ status: 413, headers: {{ \"content-type\": \"application/json\" }} }})"
+        let inner_resp = json_response(
+            json_error_kind(
+                "PayloadTooLarge",
+                vec![(
+                    "details".to_string(),
+                    str_lit(format!("request body exceeds {cap} bytes")),
+                )],
+            ),
+            413,
         );
-        let stamped = stamp_rejection(&inner, cors_const, security_const);
-        let _ = writeln!(
-            out,
-            "          const __contentLength = request.headers.get(\"content-length\");"
-        );
-        let _ = writeln!(
-            out,
-            "          if (__contentLength !== null && Number(__contentLength) > {cap}) {{"
-        );
-        let _ = writeln!(out, "            return {stamped};");
-        let _ = writeln!(out, "          }}");
+        let stamped = stamp_rejection(inner_resp, cors_const, security_const);
+        guarded.push(const_(
+            "__contentLength",
+            method_call(
+                member(ident("request"), "headers"),
+                "get",
+                vec![str_lit("content-length")],
+            ),
+        ));
+        guarded.push(if_(
+            and_expr(
+                strict_neq(ident("__contentLength"), null_lit()),
+                binary(
+                    bynk_ts::TsBinaryOp::GreaterThan,
+                    call(ident("Number"), vec![ident("__contentLength")]),
+                    num_lit(cap.to_string()),
+                ),
+            ),
+            block(vec![return_(Some(stamped))]),
+        ));
     }
+
     // Extract path parameters from the matched params map.
-    let mut call_args: Vec<String> = Vec::new();
+    let mut call_args: Vec<TsExpr> = Vec::new();
     for p in &h.params {
         let pname = &p.name.name;
         if pname == "body" {
@@ -1239,13 +1865,19 @@ fn emit_http_route_dispatch(
         // `__m.params` key is the wire segment name (verbatim); the constructed
         // binding must dodge JS reserved words for the surface call.
         let jname = ts_ident(pname);
-        let _ = writeln!(
-            out,
-            "          const __raw_{pname} = __m.params[\"{pname}\"];"
-        );
-        emit_path_param_construction(out, pname, &p.type_ref, cors_const, security_const);
-        call_args.push(jname);
+        guarded.push(const_(
+            format!("__raw_{pname}"),
+            index_expr(member(ident("__m"), "params"), str_lit(pname.clone())),
+        ));
+        guarded.extend(emit_path_param_construction(
+            pname,
+            &p.type_ref,
+            cors_const,
+            security_const,
+        ));
+        call_args.push(ident(jname));
     }
+
     // Body parameter (POST/PUT/PATCH). A multi-actor sum route's wrapper reads
     // and parses the body itself (it must verify over the raw bytes first), so
     // the entry skips the body here and passes only `request`.
@@ -1259,117 +1891,199 @@ fn emit_http_route_dispatch(
         // them. `malformed_400` is reached from both the signature and plain body
         // paths; `unauthorized_401` only from the signature seam, so it is built
         // there; the input-reflecting body-deser `400` stamps inline below.
-        let malformed_400 = stamp_rejection(
-            "new Response(JSON.stringify({ kind: \"MalformedJson\", details: \"Invalid request body\" }), { status: 400, headers: { \"content-type\": \"application/json\" } })",
-            cors_const,
-            security_const,
-        );
-        let _ = writeln!(out, "          let __body_json: JsonValue;");
+        let malformed_400 = || {
+            stamp_rejection(
+                json_response(
+                    json_error_kind(
+                        "MalformedJson",
+                        vec![("details".to_string(), str_lit("Invalid request body"))],
+                    ),
+                    400,
+                ),
+                cors_const,
+                security_const,
+            )
+        };
+        guarded.push(let_typed("__body_json", TsType::named("JsonValue")));
         if let Some(seam) = &route.signature {
             // v0.51: read the raw body once, verify the HMAC fail-closed (401),
             // then parse the body param from the *same* bytes (not a re-read /
             // re-serialisation — the signature is over these exact bytes).
-            let unauthorized_401 = stamp_rejection(
-                "new Response(null, { status: 401 })",
-                cors_const,
-                security_const,
-            );
-            let secret = crate::emitter::escape_ts_string(&seam.secret);
-            let header = crate::emitter::escape_ts_string(&seam.header);
-            let _ = writeln!(out, "          let __raw: string;");
-            let _ = writeln!(out, "          try {{");
-            let _ = writeln!(out, "            __raw = await request.text();");
-            let _ = writeln!(out, "          }} catch {{");
-            let _ = writeln!(out, "            return {malformed_400};");
-            let _ = writeln!(out, "          }}");
-            let _ = writeln!(
-                out,
-                "          const __secret = (env as unknown as Record<string, unknown>)[\"{secret}\"] ?? (globalThis as {{ process?: {{ env?: Record<string, unknown> }} }}).process?.env?.[\"{secret}\"];"
-            );
-            let _ = writeln!(
-                out,
-                "          if (typeof __secret !== \"string\") return {unauthorized_401};"
-            );
+            let unauthorized_401 =
+                || stamp_rejection(null_response(401), cors_const, security_const);
+            guarded.push(let_typed("__raw", TsType::named("string")));
+            guarded.push(try_catch_stmt(
+                vec![TsStmt::assign(
+                    ident("__raw"),
+                    await_expr(method_call(ident("request"), "text", vec![])),
+                    None,
+                )],
+                None,
+                vec![return_(Some(malformed_400()))],
+            ));
+            guarded.push(const_("__secret", {
+                let explicit = index_expr(
+                    as_expr(
+                        as_expr(ident("env"), TsType::named("unknown")),
+                        TsType::named_with_args(
+                            "Record",
+                            vec![TsType::named("string"), TsType::named("unknown")],
+                        ),
+                    ),
+                    str_lit(seam.secret.clone()),
+                );
+                let global_probe = TsExpr::OptionalIndex {
+                    object: Box::new(TsExpr::OptionalMember {
+                        object: Box::new(member(
+                            as_expr(
+                                ident("globalThis"),
+                                TsType::Object(vec![TsTypeMember::optional_prop(
+                                    "process",
+                                    TsType::Object(vec![TsTypeMember::optional_prop(
+                                        "env",
+                                        TsType::named_with_args(
+                                            "Record",
+                                            vec![TsType::named("string"), TsType::named("unknown")],
+                                        ),
+                                    )]),
+                                )]),
+                            ),
+                            "process",
+                        )),
+                        property: "env".to_string(),
+                    }),
+                    index: Box::new(str_lit(seam.secret.clone())),
+                };
+                binary(
+                    bynk_ts::TsBinaryOp::NullishCoalescing,
+                    explicit,
+                    global_probe,
+                )
+            }));
+            guarded.push(if_(
+                strict_neq(
+                    TsExpr::Unary {
+                        op: bynk_ts::TsUnaryOp::Typeof,
+                        expr: Box::new(ident("__secret")),
+                    },
+                    str_lit("string"),
+                ),
+                return_(Some(unauthorized_401())),
+            ));
             // Timestamp (when bound): must be present; passed to the verifier.
-            let ts_expr = match &seam.timestamp_header {
+            let ts_expr: TsExpr = match &seam.timestamp_header {
                 Some(th) => {
-                    let th = crate::emitter::escape_ts_string(th);
-                    let _ = writeln!(out, "          const __ts = request.headers.get(\"{th}\");");
-                    let _ = writeln!(
-                        out,
-                        "          if (__ts === null) return {unauthorized_401};"
-                    );
-                    "__ts"
+                    guarded.push(const_(
+                        "__ts",
+                        method_call(
+                            member(ident("request"), "headers"),
+                            "get",
+                            vec![str_lit(th.clone())],
+                        ),
+                    ));
+                    guarded.push(if_(
+                        strict_eq(ident("__ts"), null_lit()),
+                        return_(Some(unauthorized_401())),
+                    ));
+                    ident("__ts")
                 }
-                None => "null",
+                None => null_lit(),
             };
-            let tol = match seam.tolerance_secs {
-                Some(n) => n.to_string(),
-                None => "null".to_string(),
+            let tol_expr = match seam.tolerance_secs {
+                Some(n) => num_lit(n.to_string()),
+                None => null_lit(),
             };
-            let _ = writeln!(
-                out,
-                "          const __ok = await verifySignatureHmacSha256(__raw, __secret, request.headers.get(\"{header}\"), {ts_expr}, {tol});"
-            );
-            let _ = writeln!(out, "          if (!__ok) return {unauthorized_401};");
-            let _ = writeln!(out, "          try {{");
-            let _ = writeln!(
-                out,
-                "            __body_json = JSON.parse(__raw) as JsonValue;"
-            );
-            let _ = writeln!(out, "          }} catch {{");
-            let _ = writeln!(out, "            return {malformed_400};");
-            let _ = writeln!(out, "          }}");
+            guarded.push(const_(
+                "__ok",
+                await_expr(call(
+                    ident("verifySignatureHmacSha256"),
+                    vec![
+                        ident("__raw"),
+                        ident("__secret"),
+                        method_call(
+                            member(ident("request"), "headers"),
+                            "get",
+                            vec![str_lit(seam.header.clone())],
+                        ),
+                        ts_expr,
+                        tol_expr,
+                    ],
+                )),
+            ));
+            guarded.push(if_(
+                TsExpr::Unary {
+                    op: bynk_ts::TsUnaryOp::Not,
+                    expr: Box::new(ident("__ok")),
+                },
+                return_(Some(unauthorized_401())),
+            ));
+            guarded.push(try_catch_stmt(
+                vec![TsStmt::assign(
+                    ident("__body_json"),
+                    as_expr(
+                        method_call(ident("JSON"), "parse", vec![ident("__raw")]),
+                        TsType::named("JsonValue"),
+                    ),
+                    None,
+                )],
+                None,
+                vec![return_(Some(malformed_400()))],
+            ));
         } else {
-            let _ = writeln!(out, "          try {{");
-            let _ = writeln!(
-                out,
-                "            __body_json = (await request.json()) as JsonValue;"
-            );
-            let _ = writeln!(out, "          }} catch {{");
-            let _ = writeln!(out, "            return {malformed_400};");
-            let _ = writeln!(out, "          }}");
+            guarded.push(try_catch_stmt(
+                vec![TsStmt::assign(
+                    ident("__body_json"),
+                    as_expr(
+                        // This site's own real historical text keeps the
+                        // parens (`(await request.json()) as JsonValue`),
+                        // unlike the `/_bynk/call/` dispatch's bare `args`
+                        // above — see that site's own comment.
+                        paren(await_expr(method_call(ident("request"), "json", vec![]))),
+                        TsType::named("JsonValue"),
+                    ),
+                    None,
+                )],
+                None,
+                vec![return_(Some(malformed_400()))],
+            ));
         }
         let dser = deserialise_call(&body_param.type_ref, "__body_json", "$", ru);
-        let _ = writeln!(out, "          const __r_body = {dser};");
+        guarded.push(const_("__r_body", ident(dser)));
         // The body-deser `400` reflects the offending input into its JSON body, so
         // stamping it (#659) matters most here — `nosniff` on a reflected value.
         let body_reject = stamp_rejection(
-            "new Response(JSON.stringify(__r_body.error), { status: 400, headers: { \"content-type\": \"application/json\" } })",
+            json_response(member(ident("__r_body"), "error"), 400),
             cors_const,
             security_const,
         );
-        let _ = writeln!(
-            out,
-            "          if (__r_body.tag === \"Err\") return {body_reject};"
-        );
-        let _ = writeln!(
-            out,
-            "          const body = __r_body.value{};",
-            brand_assertion(&body_param.type_ref, local_types)
-        );
-        call_args.push("body".to_string());
+        guarded.push(if_(
+            strict_eq(member(ident("__r_body"), "tag"), str_lit("Err")),
+            return_(Some(body_reject)),
+        ));
+        let brand = brand_assertion(&body_param.type_ref, local_types);
+        guarded.push(const_("body", ident(format!("__r_body.value{brand}"))));
+        call_args.push(ident("body"));
     }
+
     // Invoke the handler and serialise the HttpResult. The handler is
     // wrapped on the surface so its deps are wired by `compose`. v0.47: a
     // Bearer wrapper takes the request first (it runs the verification seam).
-    let surface_args = if route.bearer || route.sum || route.oidc {
+    let surface_args: Vec<TsExpr> = if route.bearer || route.sum || route.oidc {
         // The Bearer, Oidc, and sum wrappers take the request first (they run the
         // verification seam); a sum wrapper also reads/parses the body itself,
         // so `call_args` here carries only the path params.
-        let mut a = vec!["request".to_string()];
+        let mut a = vec![ident("request")];
         a.extend(call_args.iter().cloned());
-        a.join(", ")
+        a
     } else {
-        call_args.join(", ")
+        call_args
     };
-    let _ = writeln!(
-        out,
-        "          const result = await surface.{method_key}({surface_args});",
-    );
-    let _ = route.service.as_str();
-    let inner = http_result_inner(&h.return_type);
-    let ser_fn = crate::emitter::serialisation::serialise_ref_via(&inner, "handlers.", ru);
+    guarded.push(const_(
+        "result",
+        await_expr(call(member(ident("surface"), method_key), surface_args)),
+    ));
+    let inner_ty = http_result_inner(&h.return_type);
+    let ser_fn = crate::emitter::serialisation::serialise_ref_via(&inner_ty, "handlers.", ru);
     // v0.140 (ADR 0163): a `GET` response carries a weak `ETag` (an `Ok` body gets
     // the validator via `weakEtag`), an optional `@cache` `Cache-Control`
     // (`applyCache`), and is answered `304` when the request revalidates
@@ -1377,20 +2091,44 @@ fn emit_http_route_dispatch(
     // `304`. Non-`GET`/unsafe methods are byte-for-byte unchanged: no validator, no
     // conditional, no freshness (DECISION B).
     let response_expr = if route.method == HttpMethod::Get {
-        let base = format!("httpResultToResponse(result, {ser_fn}, {{ weakEtag: true }})");
+        let base = call(
+            ident("httpResultToResponse"),
+            vec![
+                ident("result"),
+                ident(ser_fn),
+                TsExpr::object(vec![("weakEtag".to_string(), bool_lit(true))]),
+            ],
+        );
         let cached = match &route.cache {
-            Some(p) => format!("applyCache({base}, {}, \"{}\")", p.max_age_secs, p.scope),
+            Some(p) => call(
+                ident("applyCache"),
+                vec![base, num_lit(p.max_age_secs.to_string()), str_lit(p.scope)],
+            ),
             None => base,
         };
-        format!("notModifiedIfMatch({cached}, request)")
+        call(ident("notModifiedIfMatch"), vec![cached, ident("request")])
     } else {
-        format!("httpResultToResponse(result, {ser_fn})")
+        call(
+            ident("httpResultToResponse"),
+            vec![ident("result"), ident(ser_fn)],
+        )
     };
     // v0.131: a CORS-enabled service stamps the `Access-Control-*` headers onto
     // every real response, uniformly across variant families — including the
     // synthesised `304`, so a cross-origin revalidation stays readable.
     let cors_expr = match cors_const {
-        Some(c) => format!("applyCors({response_expr}, {c}, request.headers.get(\"origin\"))"),
+        Some(c) => call(
+            ident("applyCors"),
+            vec![
+                response_expr,
+                ident(c.to_string()),
+                method_call(
+                    member(ident("request"), "headers"),
+                    "get",
+                    vec![str_lit("origin")],
+                ),
+            ],
+        ),
         None => response_expr,
     };
     // v0.141 (ADR 0164): stamp the security headers (`nosniff` by default, HSTS
@@ -1399,7 +2137,10 @@ fn emit_http_route_dispatch(
     // this is `Some` on every route; it also flows onto the `304` (inside
     // `response_expr`) and the `HEAD` answer (`headResponse` copies the headers).
     let build_expr = match security_const {
-        Some(s) => format!("applySecurityHeaders({cors_expr}, {s})"),
+        Some(s) => call(
+            ident("applySecurityHeaders"),
+            vec![cors_expr, ident(s.to_string())],
+        ),
         None => cors_expr,
     };
     // v0.139 (ADR 0162 D3): on a `GET` route, a `HEAD` returns the same status
@@ -1407,46 +2148,62 @@ fn emit_http_route_dispatch(
     // real ones a `GET` would produce; `headResponse` discards the body without
     // reading it (a `Streaming` body is never drained).
     if route.method == HttpMethod::Get {
-        let _ = writeln!(out, "          const __response = {build_expr};");
-        let _ = writeln!(
-            out,
-            "          return method === \"HEAD\" ? headResponse(__response) : __response;"
-        );
+        guarded.push(const_("__response", build_expr));
+        guarded.push(return_(Some(cond_expr(
+            strict_eq(ident("method"), str_lit("HEAD")),
+            call(ident("headResponse"), vec![ident("__response")]),
+            ident("__response"),
+        ))));
     } else {
-        let _ = writeln!(out, "          return {build_expr};");
+        guarded.push(return_(Some(build_expr)));
     }
-    let _ = writeln!(out, "        }}");
-    let _ = writeln!(out, "      }}");
+
+    inner.push(if_(route_cond, block(guarded)));
+    block(inner)
 }
 
 /// Synthesise a deps object literal for invoking a handler from the
 /// fetch entry point. Mirrors `compose`'s deps construction so handlers
 /// see the same shape whether invoked through the surface or directly.
+/// Returns the statements to append to the surrounding `switch` case body —
+/// `emit_worker_entry`'s own caller extends the case with them.
 fn emit_call_handler_dispatch(
-    out: &mut String,
     sname: &str,
     h: &Handler,
     actors: &std::collections::HashMap<String, bynk_syntax::ast::ActorDecl>,
     local_types: &std::collections::HashMap<String, Arc<TypeDecl>>,
     ru: &RuntimeUse,
-) {
+) -> Vec<TsStmt> {
+    let mut stmts: Vec<TsStmt> = Vec::new();
     // v0.54: a `by c: Caller` handler reads the caller's context name from the
     // `X-Bynk-Caller` header (stamped by `callService`) and threads it into the
     // surface call. The internal channel is trusted, but a missing caller means
     // a malformed / non-Bynk call — fail-closed (the `Internal` 401-analogue).
-    let caller_args = if bynk_check::actors::caller_binder_for(h, actors).is_some() {
-        let _ = writeln!(
-            out,
-            "            const __caller = request.headers.get(\"X-Bynk-Caller\");"
-        );
-        let _ = writeln!(
-            out,
-            "            if (__caller === null || __caller === \"\") return new Response(JSON.stringify({{ kind: \"Unauthorized\", details: \"missing caller identity\" }}), {{ status: 401, headers: {{ \"content-type\": \"application/json\" }} }});"
-        );
-        "__caller, "
-    } else {
-        ""
-    };
+    let has_caller = bynk_check::actors::caller_binder_for(h, actors).is_some();
+    if has_caller {
+        stmts.push(const_(
+            "__caller",
+            method_call(
+                member(ident("request"), "headers"),
+                "get",
+                vec![str_lit("X-Bynk-Caller")],
+            ),
+        ));
+        stmts.push(if_(
+            or_expr(
+                strict_eq(ident("__caller"), null_lit()),
+                strict_eq(ident("__caller"), str_lit("")),
+            ),
+            return_(Some(json_response(
+                json_error_kind(
+                    "Unauthorized",
+                    vec![("details".to_string(), str_lit("missing caller identity"))],
+                ),
+                401,
+            ))),
+        ));
+    }
+
     if h.params.len() == 1 {
         let p = &h.params[0];
         let pname = &p.name.name;
@@ -1454,29 +2211,57 @@ fn emit_call_handler_dispatch(
         // that lex as valid Bynk identifiers; the `__r_` temp is already safe.
         let jname = ts_ident(pname);
         let dser_call = deserialise_call(&p.type_ref, "args", "$", ru);
-        let _ = writeln!(out, "            const __r_{pname} = {dser_call};");
-        let _ = writeln!(
-            out,
-            "            if (__r_{pname}.tag === \"Err\") return new Response(JSON.stringify(__r_{pname}.error), {{ status: 400, headers: {{ \"content-type\": \"application/json\" }} }});"
-        );
-        let _ = writeln!(
-            out,
-            "            const {jname} = __r_{pname}.value{};",
-            brand_assertion(&p.type_ref, local_types)
-        );
-        let _ = writeln!(
-            out,
-            "            const result = await surface.{sname}({caller_args}{jname});"
-        );
+        stmts.push(const_(format!("__r_{pname}"), ident(dser_call)));
+        stmts.push(if_(
+            strict_eq(member(ident(format!("__r_{pname}")), "tag"), str_lit("Err")),
+            return_(Some(json_response(
+                member(ident(format!("__r_{pname}")), "error"),
+                400,
+            ))),
+        ));
+        let brand = brand_assertion(&p.type_ref, local_types);
+        stmts.push(const_(
+            jname.clone(),
+            ident(format!("__r_{pname}.value{brand}")),
+        ));
+        let mut call_args = Vec::new();
+        if has_caller {
+            call_args.push(ident("__caller"));
+        }
+        call_args.push(ident(jname));
+        stmts.push(const_(
+            "result",
+            await_expr(call(member(ident("surface"), sname.to_string()), call_args)),
+        ));
     } else {
-        let _ = writeln!(
-            out,
-            "            if (typeof args !== \"object\" || args === null || Array.isArray(args)) return new Response(JSON.stringify({{ kind: \"StructuralMismatch\", path: \"$\", expected: \"object\", actual: typeof args }}), {{ status: 400, headers: {{ \"content-type\": \"application/json\" }} }});"
-        );
-        let _ = writeln!(
-            out,
-            "            const argsObj = args as {{ [k: string]: JsonValue }};"
-        );
+        let typeof_args = TsExpr::Unary {
+            op: bynk_ts::TsUnaryOp::Typeof,
+            expr: Box::new(ident("args")),
+        };
+        stmts.push(if_(
+            or_expr(
+                or_expr(
+                    strict_neq(typeof_args.clone(), str_lit("object")),
+                    strict_eq(ident("args"), null_lit()),
+                ),
+                call(member(ident("Array"), "isArray"), vec![ident("args")]),
+            ),
+            return_(Some(json_response(
+                json_error_kind(
+                    "StructuralMismatch",
+                    vec![
+                        ("path".to_string(), str_lit("$")),
+                        ("expected".to_string(), str_lit("object")),
+                        ("actual".to_string(), typeof_args),
+                    ],
+                ),
+                400,
+            ))),
+        ));
+        stmts.push(const_(
+            "argsObj",
+            as_expr(ident("args"), index_signature_record_ty()),
+        ));
         let mut names = Vec::new();
         for p in &h.params {
             // `pname` is the wire field name (the `argsObj` key + diagnostic path)
@@ -1490,37 +2275,50 @@ fn emit_call_handler_dispatch(
                 &format!("$.{pname}"),
                 ru,
             );
-            let _ = writeln!(out, "            const __r_{pname} = {dser};");
-            let _ = writeln!(
-                out,
-                "            if (__r_{pname}.tag === \"Err\") return new Response(JSON.stringify(__r_{pname}.error), {{ status: 400, headers: {{ \"content-type\": \"application/json\" }} }});"
-            );
-            let _ = writeln!(
-                out,
-                "            const {jname} = __r_{pname}.value{};",
-                brand_assertion(&p.type_ref, local_types)
-            );
+            stmts.push(const_(format!("__r_{pname}"), ident(dser)));
+            stmts.push(if_(
+                strict_eq(member(ident(format!("__r_{pname}")), "tag"), str_lit("Err")),
+                return_(Some(json_response(
+                    member(ident(format!("__r_{pname}")), "error"),
+                    400,
+                ))),
+            ));
+            let brand = brand_assertion(&p.type_ref, local_types);
+            stmts.push(const_(
+                jname.clone(),
+                ident(format!("__r_{pname}.value{brand}")),
+            ));
             names.push(jname);
         }
         // Prepend the caller (when present) without a dangling comma for the
         // zero-param case.
-        let mut call_args: Vec<&str> = Vec::new();
-        if !caller_args.is_empty() {
-            call_args.push("__caller");
+        let mut call_args: Vec<TsExpr> = Vec::new();
+        if has_caller {
+            call_args.push(ident("__caller"));
         }
-        call_args.extend(names.iter().map(String::as_str));
-        let _ = writeln!(
-            out,
-            "            const result = await surface.{sname}({});",
-            call_args.join(", ")
-        );
+        call_args.extend(names.into_iter().map(ident));
+        stmts.push(const_(
+            "result",
+            await_expr(call(member(ident("surface"), sname.to_string()), call_args)),
+        ));
     }
     let ser_expr = serialise_call(&h.return_type, "result", ru);
-    let _ = writeln!(out, "            const body = {ser_expr};");
-    let _ = writeln!(
-        out,
-        "            return new Response(JSON.stringify(body), {{ status: 200, headers: {{ \"content-type\": \"application/json\" }} }});"
-    );
+    stmts.push(const_("body", ident(ser_expr)));
+    stmts.push(return_(Some(new_response(vec![
+        json_stringify(ident("body")),
+        status_json_headers_obj(200),
+    ]))));
+    stmts
+}
+
+/// `{ [k: string]: JsonValue }` — the structural type `emit_call_handler_dispatch`'s
+/// own multi-param branch casts `args` to before indexing it by field name.
+fn index_signature_record_ty() -> TsType {
+    TsType::Object(vec![TsTypeMember::index(
+        "k",
+        TsType::named("string"),
+        TsType::named("JsonValue"),
+    )])
 }
 
 /// Emit code that converts the raw path-parameter string to the parameter's
@@ -1528,37 +2326,53 @@ fn emit_call_handler_dispatch(
 /// refined or opaque `String`-based types we lower through `T.of(...)`
 /// which performs refinement validation and returns 400 on failure.
 fn emit_path_param_construction(
-    out: &mut String,
     pname: &str,
     t: &TypeRef,
     cors_const: Option<&str>,
     security_const: Option<&str>,
-) {
+) -> Vec<TsStmt> {
     // `pname` names the wire segment (the `__raw_`/`__r_` temps and diagnostic
     // path stay verbatim); `jname` is the reserved-word-safe binding the surface
     // call references.
     let jname = ts_ident(pname);
     match t {
         TypeRef::Base(BaseType::String, _) => {
-            let _ = writeln!(out, "          const {jname} = __raw_{pname};");
+            vec![const_(jname, ident(format!("__raw_{pname}")))]
         }
         TypeRef::Named(id) => {
-            let _ = writeln!(
-                out,
-                "          const __r_{pname} = handlers.{}.of(__raw_{pname});",
-                id.name
-            );
+            let mut stmts = vec![const_(
+                format!("__r_{pname}"),
+                method_call(
+                    member(ident("handlers"), id.name.clone()),
+                    "of",
+                    vec![ident(format!("__raw_{pname}"))],
+                ),
+            )];
             // The path-param refinement `400` reflects the offending segment into
             // its JSON body, so it is stamped with the service policy (#659).
-            let inner = format!(
-                "new Response(JSON.stringify({{ kind: \"RefinementViolation\", path: \"path.{pname}\", violation: __r_{pname}.error }}), {{ status: 400, headers: {{ \"content-type\": \"application/json\" }} }})"
+            let inner_resp = json_response(
+                json_error_kind(
+                    "RefinementViolation",
+                    vec![
+                        ("path".to_string(), str_lit(format!("path.{pname}"))),
+                        (
+                            "violation".to_string(),
+                            member(ident(format!("__r_{pname}")), "error"),
+                        ),
+                    ],
+                ),
+                400,
             );
-            let reject = stamp_rejection(&inner, cors_const, security_const);
-            let _ = writeln!(
-                out,
-                "          if (__r_{pname}.tag === \"Err\") return {reject};"
-            );
-            let _ = writeln!(out, "          const {jname} = __r_{pname}.value;");
+            let reject = stamp_rejection(inner_resp, cors_const, security_const);
+            stmts.push(if_(
+                strict_eq(member(ident(format!("__r_{pname}")), "tag"), str_lit("Err")),
+                return_(Some(reject)),
+            ));
+            stmts.push(const_(
+                jname,
+                member(ident(format!("__r_{pname}")), "value"),
+            ));
+            stmts
         }
         _ => {
             // P7.2 (review of #1300): this used to emit `__raw_{pname}` as a

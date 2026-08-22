@@ -27,6 +27,7 @@ use bynk_syntax::ast::{
 };
 use bynk_ts::{
     TsBindingName, TsDecl, TsExpr, TsLit, TsObjectEntry, TsParam, TsProgram, TsStmt, TsType,
+    TsTypeMember,
 };
 
 /// Where `compose.ts` imports the runtime from — it sits two levels below the
@@ -218,10 +219,9 @@ fn secret_probe_expr(secret: &str) -> TsExpr {
         )),
         index: Box::new(str_lit(secret)),
     };
-    let process_ty = TsType::Object(vec![(
-        "process".to_string(),
-        TsType::Object(vec![("env".to_string(), env_record_ty, true)]),
-        true,
+    let process_ty = TsType::Object(vec![TsTypeMember::optional_prop(
+        "process",
+        TsType::Object(vec![TsTypeMember::optional_prop("env", env_record_ty)]),
     )]);
     let global_probe = TsExpr::OptionalIndex {
         object: Box::new(TsExpr::OptionalMember {
@@ -1002,6 +1002,7 @@ fn emit_call_wrapper(
         name: sname.to_string(),
         is_async: true,
         params,
+        return_type: None,
         body: vec![return_(Some(call(
             member_chain(ident("handlers"), &[sname, "call"]),
             call_args,
@@ -1066,6 +1067,7 @@ fn emit_event_wrapper(sname: &str, h: &Handler, protocol: &ServiceProtocol) -> T
                 optional: false,
             },
         ],
+        return_type: None,
         body: vec![return_(Some(call(
             member_chain(ident("handlers"), &[sname, "event"]),
             args,
@@ -1099,6 +1101,7 @@ fn emit_cron_wrapper(sname: &str, cron_idx: usize, h: &Handler) -> TsObjectEntry
         name: method_key.clone(),
         is_async: true,
         params,
+        return_type: None,
         body: vec![return_(Some(call(
             member_chain(ident("handlers"), &[sname, &method_key]),
             call_args,
@@ -1132,6 +1135,7 @@ fn emit_queue_wrapper(sname: &str, queue_idx: usize, h: &Handler) -> TsObjectEnt
         name: method_key.clone(),
         is_async: true,
         params,
+        return_type: None,
         body: vec![return_(Some(call(
             member_chain(ident("handlers"), &[sname, &method_key]),
             call_args,
@@ -1301,6 +1305,7 @@ fn emit_websocket_upgrade(
                 name: method_name,
                 is_async: true,
                 params,
+                return_type: None,
                 body: stmts,
             };
         }
@@ -1477,6 +1482,7 @@ fn emit_websocket_upgrade(
         name: method_name,
         is_async: true,
         params,
+        return_type: None,
         body: stmts,
     }
 }
@@ -1614,6 +1620,7 @@ fn emit_http_wrapper(
             name: method_key,
             is_async: true,
             params,
+            return_type: None,
             body: stmts,
         };
     }
@@ -1634,6 +1641,7 @@ fn emit_http_wrapper(
         name: method_key.clone(),
         is_async: true,
         params,
+        return_type: None,
         body: vec![return_(Some(call(
             member_chain(ident("handlers"), &[sname, &method_key]),
             call_args,
@@ -1746,6 +1754,7 @@ fn emit_http_oidc_wrapper(
         name: method_key,
         is_async: true,
         params,
+        return_type: None,
         body: stmts,
     }
 }
@@ -2033,6 +2042,7 @@ fn emit_http_sum_wrapper(
         name: method_key,
         is_async: true,
         params,
+        return_type: None,
         body: stmts,
     }
 }
