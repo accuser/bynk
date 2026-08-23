@@ -36,7 +36,7 @@ mod program;
 mod source_map;
 
 pub use lint::{Violation, verbatim_violations};
-pub use printer::{Printed, print, print_type};
+pub use printer::{Printed, print, print_stmt, print_type};
 pub use program::{
     TsBinaryOp, TsBindingName, TsClassCtor, TsClassField, TsClassMethod, TsDecl, TsExpr, TsLit,
     TsObjectEntry, TsParam, TsProgram, TsStmt, TsSwitchCase, TsType, TsTypeMember, TsUnaryOp,

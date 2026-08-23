@@ -187,6 +187,23 @@ pub(crate) enum TsStmtKind {
     /// "no blank line between adjacent `Comment`s" rule (the same
     /// exception already established for adjacent `import`s).
     Comment(String),
+    /// `/** ... */` — a JSDoc block comment, distinct from
+    /// [`TsStmtKind::Comment`]'s own `//`-per-line form. #1333's own real
+    /// need: `emit_doc_block` (`bynk-emit/src/emitter/emit.rs`) renders a
+    /// Bynk `///` doc comment as a real JSDoc block — printed via
+    /// [`crate::printer::print_stmt`], not [`crate::printer::print`], since
+    /// every real call site today is a shared helper spliced into a
+    /// still-unconverted caller's own buffer, the same P7.9 pattern
+    /// `ts_type_ref`/`ts_ty` already used (keep the caller's own signature,
+    /// build a real node internally, print just that fragment). Escaping
+    /// (a literal `*/` inside the text becomes `*\/`, so it can't
+    /// prematurely close the comment and let trailing text land as
+    /// executable top-level TypeScript — issue #720) and the blank-line
+    /// convention (a blank source line prints as a bare ` *`, no trailing
+    /// space) live in the printer (`render_stmt`'s own `DocComment` arm,
+    /// `crate::printer`'s own private renderer), matching
+    /// where every other statement kind's rendering rules live.
+    DocComment(String),
     /// A bare blank line — no statement content. #1323's own real, narrow
     /// need: `workers_entry.rs`'s `fetch` method body has an unconditional
     /// blank line after its internal Service-Binding dispatch block, and a
@@ -415,6 +432,13 @@ impl TsStmt {
     pub fn comment(text: impl Into<String>, span: Option<Span>) -> Self {
         Self {
             kind: TsStmtKind::Comment(text.into()),
+            span,
+        }
+    }
+
+    pub fn doc_comment(text: impl Into<String>, span: Option<Span>) -> Self {
+        Self {
+            kind: TsStmtKind::DocComment(text.into()),
             span,
         }
     }

@@ -157,6 +157,13 @@
 //!   module is one header comment followed by one `export *` line per
 //!   constituent source file, every one of those lines adjacent with no
 //!   blank line anywhere. Added for #1329.
+//! - **A `TsStmtKind::DocComment` prints a JSDoc block comment**, one
+//!   ` * <line>` per non-blank source line, a blank source line as a bare
+//!   ` *`. Distinct from `Comment`'s own `//`-per-line form, and printed
+//!   only through [`print_stmt`] (`bynk-emit`'s own `emit_doc_block`, a
+//!   shared helper spliced into still-unconverted callers' buffers), never
+//!   through [`print()`]'s own `TsProgram` loop — so this shape has no
+//!   blank-line grouping rule of its own to name here. Added for #1333.
 //!
 //! None of the above is claimed as *the* TypeScript style this printer will
 //! use forever — it's what this slice's own grounding file needs, named
@@ -280,6 +287,31 @@ pub fn print(
 
 fn indent(depth: usize) -> String {
     "  ".repeat(depth)
+}
+
+/// `emit_doc_block`'s own real rendering, byte-for-byte (#1333): `/**`
+/// opens; one ` * <line>` per non-blank source line, a literal `*/`
+/// escaped to `*\/` (issue #720 — otherwise it would close the comment
+/// early and let trailing text land as executable top-level TypeScript); a
+/// blank source line prints as a bare ` *`, no trailing space; `*/`
+/// closes. All at `depth`'s own 2-space-per-level indent.
+fn render_doc_comment(out: &mut String, text: &str, depth: usize) {
+    let ind = indent(depth);
+    out.push_str(&ind);
+    out.push_str("/**\n");
+    for line in text.lines() {
+        let trimmed = line.trim_end();
+        out.push_str(&ind);
+        if trimmed.is_empty() {
+            out.push_str(" *\n");
+        } else {
+            out.push_str(" * ");
+            out.push_str(&trimmed.replace("*/", "*\\/"));
+            out.push('\n');
+        }
+    }
+    out.push_str(&ind);
+    out.push_str(" */\n");
 }
 
 /// Render one statement, including its own leading indent.
@@ -450,6 +482,7 @@ fn render_stmt(out: &mut String, stmt: &TsStmt, depth: usize) {
                 out.push('\n');
             }
         }
+        TsStmtKind::DocComment(text) => render_doc_comment(out, text, depth),
         TsStmtKind::Blank => out.push('\n'),
         TsStmtKind::Switch {
             discriminant,
@@ -638,7 +671,17 @@ fn render_inline_stmt(out: &mut String, stmt: &TsStmt) {
         // single-line, semicolon-terminated content (never a bare newline
         // the way `Blank`'s own top-level form is), so the same fallback
         // that's safe for `Const`/`If`/etc. above is safe here too.
-        | TsStmtKind::Increment(_) => render_stmt(out, stmt, 0),
+        | TsStmtKind::Increment(_)
+        // #1333: unlike `Comment`'s own `//` form, a `/** ... */` block
+        // always closes itself before any subsequent text — it cannot
+        // swallow the next statement the way an unterminated `//` line
+        // comment could, so this fallback (not a dedicated inline shape)
+        // is safe here, the same reasoning as every other variant in this
+        // group. Not reachable today — every real `DocComment` reaches the
+        // printer only via `print_stmt`, never through a `TsProgram`'s own
+        // tree — but listed by name per this group's own exhaustiveness
+        // discipline, not folded into a wildcard.
+        | TsStmtKind::DocComment(_) => render_stmt(out, stmt, 0),
     }
 }
 
@@ -1328,6 +1371,21 @@ fn render_type_member(out: &mut String, member: &TsTypeMember) {
 pub fn print_type(ty: &TsType) -> String {
     let mut out = String::new();
     render_type(&mut out, ty);
+    out
+}
+
+/// Print a single [`TsStmt`] on its own, at `depth` — the statement-level
+/// sibling of [`print_type`]'s own "one fragment, not a whole document"
+/// entry point. `bynk-emit`'s own #1333 need (`emit_doc_block`, a shared
+/// helper spliced into ~14 still-unconverted callers' own buffers) wants
+/// one statement's own printed text at a caller-supplied depth, not a
+/// whole [`TsProgram`] — no source-map/buffer machinery, matching
+/// [`print_type`]'s own scope exactly, and reusing `render_stmt`'s own
+/// exhaustive per-kind dispatch (this module's own private renderer)
+/// rather than a second copy.
+pub fn print_stmt(stmt: &TsStmt, depth: usize) -> String {
+    let mut out = String::new();
+    render_stmt(&mut out, stmt, depth);
     out
 }
 
@@ -3845,5 +3903,61 @@ mod tests {
              export * from \"./thing/make.js\";\n\n\
              // trailing note\n"
         );
+    }
+
+    /// #1333: `print_stmt` prints a `TsStmtKind::DocComment` as a real JSDoc
+    /// block, matching `emit_doc_block`'s own real multi-line shape
+    /// (`137_agent_instantiation_workers/expected/workers/demo-counter/
+    /// handlers.ts`'s own real header comment).
+    #[test]
+    fn print_stmt_renders_a_multi_line_doc_comment() {
+        let stmt = TsStmt::doc_comment(
+            "A minimal stateful agent in the bundle target: instantiation lowers through the\ngenerated factory, the method call is a direct call, and state persists per key\nacross calls within a session.",
+            None,
+        );
+        assert_eq!(
+            print_stmt(&stmt, 0),
+            "/**\n \
+             * A minimal stateful agent in the bundle target: instantiation lowers through the\n \
+             * generated factory, the method call is a direct call, and state persists per key\n \
+             * across calls within a session.\n \
+             */\n"
+        );
+    }
+
+    /// #1333: a literal `*/` inside doc text escapes to `*\/`, matching
+    /// `emit_doc_block`'s own pre-conversion behaviour exactly (issue
+    /// #720 — an unescaped `*/` would otherwise close the comment early
+    /// and let trailing text land as executable top-level TypeScript).
+    #[test]
+    fn print_stmt_escapes_a_literal_comment_terminator_inside_doc_text() {
+        let stmt = TsStmt::doc_comment("docs */ ; (globalThis as any).PWNED = true; /*", None);
+        let printed = print_stmt(&stmt, 0);
+        assert!(!printed.contains("*/ ;"), "unescaped terminator: {printed}");
+        assert_eq!(
+            printed,
+            "/**\n * docs *\\/ ; (globalThis as any).PWNED = true; /*\n */\n"
+        );
+    }
+
+    /// #1333: a blank line inside doc text prints as a bare ` *`, no
+    /// trailing space — distinct from a non-blank line's own ` * <line>`.
+    #[test]
+    fn print_stmt_renders_a_blank_doc_line_as_a_bare_star() {
+        let stmt = TsStmt::doc_comment("first paragraph\n\nsecond paragraph", None);
+        assert_eq!(
+            print_stmt(&stmt, 0),
+            "/**\n * first paragraph\n *\n * second paragraph\n */\n"
+        );
+    }
+
+    /// #1333: `print_stmt`'s own `depth` parameter indents every line of
+    /// the JSDoc block, matching `render_stmt`'s own 2-space-per-level
+    /// convention — `emit_doc_block`'s real callers pass `INDENT_STEP`
+    /// (2 raw spaces = depth 1) for a nested doc comment.
+    #[test]
+    fn print_stmt_indents_a_doc_comment_at_depth() {
+        let stmt = TsStmt::doc_comment("a method", None);
+        assert_eq!(print_stmt(&stmt, 1), "  /**\n   * a method\n   */\n");
     }
 }
