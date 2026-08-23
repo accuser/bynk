@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.259**.
+written against **v0.260**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.260.0** | Arc C, slice 8 — `emit_doc_block`/`ts_type_params` build real `bynk_ts` nodes internally, closing step (1) of the design pass's own `emit.rs` decomposition order and correcting its 13-function list to the real 2 (9 were never TS-emission code; the ICU cluster is real but deferred to its own future step) |
 | **v0.259.1** | Arc C design pass — settles `emitter/lower.rs`'s conversion status (a deliberate, argued, permanent exclusion from Arc C's own scope, with `ts_writes`'s own non-zero floor named accordingly) and names the corrected decomposition order for `emit.rs`'s remaining work |
 | **v0.259.0** | Arc C, slice 7 — `emit_commons_barrel` (the multi-file `commons` barrel module) constructs a real `bynk_ts::TsProgram` instead of building TypeScript text |
 | **v0.258.0** | Arc C, slice 6 — `emit_composition_root` (Bundle-target `compose.ts`) constructs a real `bynk_ts::TsProgram` instead of building TypeScript text |
