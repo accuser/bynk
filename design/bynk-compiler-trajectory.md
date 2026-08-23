@@ -229,6 +229,19 @@ to a substring of emitted text.
 **Probe:** `write!`/`format!` producing TypeScript outside `bynk-ts` = 0.
 **Reference rules:** R7.1–R7.8, R8.1–R8.22.
 
+**Correction, argued and accepted mid-phase (`the-typescript-tree.md` §6, #1331):** the `write!`/
+`format!` probe will not reach a literal 0. `emitter/lower.rs` is the compiler's own second
+code-generation pass — general expression lowering, match-to-IIFE compilation, per-builtin-type
+"kernels," covering the entire Bynk expression/statement grammar — not a bounded, file-specific
+conversion target the way every other phase 7 slice has been. Converting it to build `bynk-ts`
+nodes natively would be re-architecting the compiler's whole lowering strategy, comprehensive
+language-surface work this phase was never scoped to cover. Its output stays a `String`, carried
+as opaque text at its one splice boundary into the tree, the same pattern already used for the
+handful of one-off closures this phase couldn't structure narrowly. The same shape as phase 6's own
+`ast_importers` floor (5, not 0, argued file by file at retirement): a probe reads a real,
+non-zero, argued floor rather than an unmet 0, named explicitly rather than discovered as a
+surprise at this phase's own retirement.
+
 ### Phase 8 — Incrementality
 
 *Query granularity and the firewall; the editor path is memoised.*

@@ -401,15 +401,23 @@ named rule-closing slices, R8.2/R8.14, replacing an unscoped placeholder).
 | **P7.8** (#1313, landed) | `TsStmt`/`TsExpr`/`TsType`/`TsDecl` — not the full §7.1 sketch as literally written (a variant-name list with almost no field-level design), but the subset `bynk-emit/src/emitter/events_fanout.rs` concretely needs, grounded against that file's own real shape (see the Arc C schedule correction below — this is where the correction was found). Adds `TsExpr`/`TsType`/`TsDecl` to `bynk-ts::program`; `TsStmt` gains `Const`/`Let`/`ExprStmt`/`Return`/`If`/`ForOf`/`TryCatch`/`Block` alongside `Verbatim`, plus `Continue` — a second real gap found beyond the accepted proposal's own variant list (`events_fanout.rs` uses a bare `continue;` twice; `TryCatch` was the first gap, already named in the proposal itself, since §7.1's own sketch has no `try`/`catch` at all). `TsType::Named` carries type arguments (`Record<K, V>`/`Promise<T>`), a second sketch gap the proposal found. The printer (`bynk-ts::printer::print`) learns to render every new kind — real indentation, blank-line, and brace-placement decisions, all named in its own extended readability-policy doc block (R7.5), matching exactly what `events_fanout.rs` itself does (2-space indent; one blank line between top-level declarations except adjacent `import`s; no blank between a class's fields and its constructor, one before each method; `if`/`for...of` bodies brace when the body is a `Block`, print inline otherwise). Verified by constructing `EventsFanoutDO`'s own class (field, constructor, `fetch` method — every control-flow and expression shape the real file uses) as real nodes and asserting the printed text is byte-identical to the real emitter's own `write!`-built text, transcribed directly — proving the algebra is sufficient for its own grounding case, not merely plausible. First implementation pass found one real gap the exercise couldn't close (no `Assign` statement existed, so the constructor's own `this.env = ...;` needed a `const`-binding stand-in in the test rather than the real statement) — caught in review before merge: the constructor's body wasn't actually catalogued by the accepted proposal's own grounding work (it detailed the `fetch` method, not the constructor), a third real gap beyond the proposal's own variant list. Closed by adding `TsStmt::Assign { target: TsExpr, value: TsExpr }` (mechanical, matching the existing `Const`/`Let` pattern exactly) and updating the grounding test to use it — now genuinely byte-identical against the real constructor body, not an approximation. `bynk-emit` unchanged — nothing there builds a new node yet; `ts_writes`/`verbatim_origins`/`verbatim_sites` unaffected | R7.1 | P7.5 |
 | **P7.9** (#1315, landed) | The first slice where `bynk-emit` itself changes, and Arc B's last. Corrected the track doc's own stale P7.9 citation before implementation (three ways: `ty_to_type_ref` builds a different Bynk-internal type, not TS text; `pred_condition_and_message` builds a runtime-check expression + message, not a type; both omitted, the citation also omitted `ts_ty`, the dominant real builder). `ts_type_ref`/`ts_type_ref_qualified`/`ts_type_ref_qualified_multi`/`ts_type_ref_with`/`ts_ty` (`emitter.rs`) construct a real `bynk_ts::TsType` internally and print it through a new `bynk_ts::print_type`, instead of hand-`format!`-ing text — every function keeps its exact `-> String` signature, every one of its ~110-115 real callers unchanged. (`ts_base` itself is untouched — still an unchanged string-table lookup, `Review of #1315/#1316` caught it credited alongside the converted functions when it isn't one; now consumed by them instead of interpolated directly.) `TsType::Array` gains a `readonly` field; `TsType::Fn { params, ret }` added (positional `a0`/`a1`/… parameter naming, matching the pre-P7.9 convention exactly). Two further real gaps found during implementation, beyond the accepted proposal's own two (`readonly`/`Fn`): (1) `Query[T]`'s real shape wraps its whole function type in an *extra* outer paren pair (`(() => readonly T[])`), caught only by the zero-diff fixture check (`302_query_annotated_let`), not by reasoning about the algebra — closed by pre-rendering that one shape's text and carrying it as an inert `TsType::Named`, a deliberate, narrow representational choice rather than a new general paren-wrapper variant; (2) a resolved multi-actor sum (`Ty::ActorSum`) builds a genuine type-position union of tagged object literals (`{ tag: "a" } | { tag: "b", identity: T }`) — closed by adding `TsType::Union(Vec<TsType>)`, and each member printed the same opaque-`Named`-verbatim-text way as the `Query` fix (the members' own real separator is `, `, not the ordinary `TsType::Object` renderer's `; ` — caught by a direct test, not reasoning). First implementation pass stopped short of converting `ts_ty` at all rather than invent the `Union` variant unilaterally (flagged explicitly, `ts_writes` only reaching 1631); reviewed and completed in the same PR before merge, since the gap was real and grounded, not speculative — the same "close it, don't substitute around it" call this track made for P7.8's own `Assign` gap. Zero diff: `bless_positive_fixtures`/`positive_fixtures`/`tsc_verify`'s full strict-`tsc` corpus all pass unchanged; 23 new direct tests (16 for `ts_type_ref`, 7 for `ts_ty`, plus 3 in `bynk-ts` for the new `TsType` shapes) pin every real shape category against each function's exact pre-slice text. `ts_writes` 1642 → **1620** (22 — both families' own `format!`/`write!` calls, minus the few that legitimately remain for the `Query`/tag-literal opaque-text construction). `ast_importers` stays at 5, as the accepted proposal's own Framing predicted (`emitter.rs` imports 23 other AST items well beyond what this family touches) — not a regression, real future Arc C work. `verbatim_origins`/`verbatim_sites` unaffected | R7.1, R7.2 | P7.8 |
 
-**Arc C — conversion, smallest blast radius first (~19 slices)**
+**Arc C — conversion, smallest blast radius first (~20 slices, revised — see the design pass
+below; was ~19 pre-Arc-C, briefly ~12-18-more-from-here mid-arc before the design pass settled
+the `lower.rs` question)**
 
 `events_fanout.rs` (**landed**, Arc C's own slice 1, #1317 — see below) → `workers.rs`
 (**landed**, Arc C's own slice 3, #1321 — see below) → `workers_entry.rs`
-(**landed**, Arc C's own slice 4, #1323 — see below) →
-`emitter/lower.rs` (several slices) → `emitter/emit.rs` (several slices,
-also finishing R8.3/R8.6/R8.8's structural half per §3.4) → `emitter.rs` + `project.rs` →
-`project/tests_emit.rs` converts its 130 byte-golden assertions to node assertions **last**. Each
-slice is checked against the P7.5 textual lint, not golden fixtures alone (§3.2).
+(**landed**, Arc C's own slice 4, #1323 — see below) → `emit_test_main` (**landed**, slice 5,
+#1325) → `emit_composition_root` (**landed**, slice 6, #1327) → `emit_commons_barrel` (**landed**,
+slice 7, #1329) → a design/decomposition pass (**landed**, #1331 — see "Third correction" below;
+converts no code, settles the `lower.rs` question and names the order for everything after) →
+`emit_integration_module` + `emit_test_module` (unblocked by #1331, not yet proposed) →
+`emit.rs`'s own 72-function tree, leaf-to-root per #1331's own named order (not yet proposed) →
+`emit_project` itself, last (not yet proposed). `project/tests_emit.rs` converts its 130
+byte-golden assertions to node assertions **last of all**, after everything above. Each slice is
+checked against the P7.5 textual lint, not golden fixtures alone (§3.2). **`emitter/lower.rs`
+itself does NOT appear in this ordering** — #1331 settled it as a deliberate, permanent exclusion
+from Arc C's own scope, not a file waiting its turn; see "Third correction" below.
 **Correction (found by slice 1's own grounding, #1317): "each slice deletes its own
 `VerbatimOrigin` variant" is stale** — it describes P7.5's original per-file seeding
 (`Contracts`/`Secrets`/`RuntimeUse`), but P7.6 (#1309) replaced that with one shared
@@ -441,6 +449,93 @@ the four that a purely handler-based check (`has_queue`) never covered, mirrorin
 `JsonError`/`HttpResult` already had. Whichever future slice actually converts `serialisation.rs`
 inherits real types at these two sites instead of a residual `any` to solve itself.
 
+**Third correction (#1331, a design/decomposition increment — converts no code, landed as its own
+accepted proposal the same way this track's own opening settled §3's design questions): the
+`emitter/lower.rs` (several slices) → `emitter/emit.rs` (several slices) ordering this section
+originally named is retired, not merely reordered.** Once slice 7 (#1329) landed, the real
+remaining surface was re-grounded directly against the repo rather than trusted from this section's
+own pre-Arc-C prose: `emit_project` (`emitter.rs:319-579`, 261 lines, one caller) is a thin
+orchestrator whose direct calls span `emitter.rs`, `emitter/emit.rs` (4,776 lines, **72** top-level
+functions, 410 write-macro calls), and — pulled in transitively through seven of `emit.rs`'s own
+top-level functions (`emit_method`/`emit_free_fn`/`emit_contract_guarded_body`/`emit_provider`/
+`emit_service`/`emit_agent`/`emit_ws_do_method`, via `emit_block_as_function_body_with_return`,
+`lower.rs:201`) — `emitter/lower.rs` (6,210 lines, 372 write-macro calls). `emit_agent` alone
+(`emit.rs:2638-3949`) is **1,312 lines**, the single largest function in the crate; its own
+websocket-dispatch cluster (`emit.rs:3950-4776`) adds another 826 lines, so agent-plus-cluster is
+2,138 lines — 45% of `emit.rs`.
+
+**`emitter/lower.rs` turned out to be categorically different from every other Arc C target, not
+merely large.** It is the compiler's own **second code-generation pass** — general expression
+lowering (`lower_method_call` alone is 1,044 lines), match-to-IIFE compilation, ten-plus
+per-builtin-type "kernels" (`lower_numeric_kernel`/`lower_duration_kernel`/`lower_bytes_kernel`/
+`lower_string_kernel`/`lower_option_kernel`/`lower_result_kernel`/`lower_effect_result_kernel`/
+`lower_map_kernel`/`lower_list_kernel`/`lower_query_method`), if/binary-op/field-access/lambda/
+record-spread lowering, and indexed-collection index-maintenance codegen — covering the entire
+Bynk expression and statement grammar at once, not a bounded, file-specific set of real constructs
+the way every other Arc C target (including ones that looked intimidating by line count alone,
+like `workers_entry.rs`'s 1,660 lines) turned out to be once actually read. Converting it for real
+would mean re-architecting the compiler's whole lowering strategy to be tree-native, comprehensive
+language-surface work this track's own trajectory doc never scoped Arc C to cover — not "wrap this
+function's existing string-building in real nodes," the scope every landed Arc C slice has actually
+been. **Decision (#1331): `lower.rs`'s real output stays a `String` permanently, carried as opaque
+pre-rendered text at its one well-defined splice boundary
+(`emit_block_as_function_body_with_return`'s return value) wherever `emit.rs`'s own future slices
+need it — the same "existing textual variant carries content this crate structurally can't build a
+shape for" pattern `workers.rs`'s/`workers_entry.rs`'s own `deserialise_call`/`brand_assertion`/
+`claim_predicate_to_js`, and #1327's own `__eventsDispatch` closure body, already established, just
+applied once at this one splice boundary instead of many small ad-hoc ones. This does not block any
+future `emit.rs` slice — each of `emit_method`/`emit_free_fn`/`emit_provider`/`emit_service`/
+`emit_agent`/etc. converts its own *wrapper* (signature, decorators, surrounding declaration shape)
+to real tree nodes while carrying its own spliced *body* as one opaque blob.**
+
+**This is a real, permanent, deliberate narrowing of §1's own original "the tree omits nothing
+real" framing (R7.1) — recorded here explicitly, not glossed over, and a corresponding note added
+to `design/bynk-compiler-trajectory.md` itself (R7.1's own text) at #1331's own landing.**
+Converting `lower.rs` for real remains a legitimate possible FUTURE track if ever justified, scoped
+and argued on its own terms — a fundamentally larger, likely multi-month undertaking, not a handful
+of remaining Arc C slices. **`emitter/lower.rs` is deliberately NOT added to
+`xtask/src/greenfield_status.rs`'s `TS_WRITES_EXCLUDED_FILES`** — that list's own doc comment
+already distinguishes `ir/lower.rs` (excluded: builds Rust-internal strings during checker→IR
+lowering, never emitted syntax, "not part of the emitter's rendering code at all, despite the name
+proximity to `emitter/lower.rs`, which is") from `emitter/lower.rs` itself, which the codebase's
+own prior authors already marked as real, in-scope emission surface. Silently excluding it now
+would reverse that documented distinction. Instead: **`ts_writes` keeps counting `lower.rs`'s own
+real write-macro calls, and Arc C's own eventual retirement review names an argued, non-zero floor
+for `ts_writes`** — the same honest-correction shape `verbatim_sites`'s own floor (at least 2,
+named at slice 5) and `ast_importers`'s own floor (5, named at phase 6's own retirement) already
+took, rather than chasing an unreachable 0.
+
+**The real decomposition order for what remains, leaf-to-root** (given the `lower.rs`-stays-opaque
+decision, `emit.rs`'s own remaining work is converting its 72 functions' own *wrapper*
+construction, not their spliced bodies): (1) small, mostly-independent leaf helpers bundled a few
+per slice (`emit_doc_block`, `sorted_index_fields`, `ts_type_params`, the ICU-formatting cluster
+`emit_message_entry_renderer`/`emit_icu_placeholder`/`emit_sub_message`, `topo_order_providers`,
+`sanitise_path_segment`, and similar — several may turn out to be pure Rust-logic helpers with no
+direct TS-text output, worth checking per-function before scoping); (2) the type-declaration
+cluster `emit_type`/`emit_refined_type`/`emit_refined_checks`/`emit_pred_check`/
+`emit_record_type`/`emit_sum_type` (`emit.rs:46-364`); (3) the method-emission cluster
+`emit_attached_methods`/`emit_forwarded_methods`/`emit_method` (`emit.rs:365-582`); (4)
+`emit_free_fn`/`emit_contract_guarded_body` (`emit.rs:507-653`); (5) `emit_messages_bundle`
+(`emit.rs:1027-1120`) plus any ICU helpers not already bundled in (1); (6) `emit_capability`/
+`emit_provider` (`emit.rs:1121-1328`); (7) `emit_service` (`emit.rs:1340-1708`, 369 lines) plus its
+own direct helpers (`emit.rs:1709-2106`), likely 1-2 slices; (8) `emit_make_surface`
+(`emit.rs:2107-2191`) plus the cross-context lowering cluster (`emit.rs:2192-2637`); (9)
+`emit_agent` and its websocket-dispatch cluster (`emit.rs:2638-4776`, 2,138 lines) — needs its OWN
+dedicated grounding pass before a first slice is proposed against it, likely 3-5 slices given its
+real size, larger than any single prior conversion in this whole track; (10) `emit_project` itself,
+last, once every function it calls directly returns a real node instead of appending to a shared
+`String` — will NOT move `ast_importers` (the same finding #1321/#1323 already made for
+`workers.rs`/`workers_entry.rs` — `emitter.rs`'s own *input*-side AST walk is unchanged regardless
+of *output*-side conversion; state this explicitly when that slice lands, don't assume a probe
+win). `emit_integration_module`/`emit_test_module` (`project/tests_emit.rs`, deferred by slice 7
+specifically because of `lower.rs`'s own then-unresolved decision) are now **unblocked** — proposable
+as ordinary slices, each carrying its own `lower_integration_case_body`-or-similar output as opaque
+text per the pattern above. **Revised estimate at #1331's own landing: roughly 12-13 more slices
+from here** (9-10 for `emit.rs`'s own tree, 2 for the `tests_emit.rs` pair, this design increment
+itself counted as 1) — bringing Arc C's own real total to roughly 20, close to the original
+pre-Arc-C ~19 estimate, though `emit_agent`'s own sub-decomposition remains the single largest
+source of variance in that number.
+
 | Slice | What lands | Rules | Gated on |
 |---|---|---|---|
 | **Arc C, slice 1 — `events_fanout.rs`** (#1317, landed) | `emit_events_fanout_do` (`bynk-emit/src/emitter/events_fanout.rs`) stops building TypeScript text with `writeln!`/`format!`/`write!` and instead constructs and returns a real `bynk_ts::TsProgram` — a deliberate signature change (`-> TsProgram`, not `-> String`), departing from P7.9's own "keep `-> String`, print immediately" posture, since this slice's whole point is the opposite: stop wrapping this file's output in `Verbatim` at all. `bynk-emit/src/project.rs`'s own construction site (`:2379`) now uses the real returned `TsProgram` directly as `Document::Ts`, no `Verbatim`. Most of the class portion's own node-construction code was already proven correct by P7.8's own grounding test (`bynk-ts/src/printer.rs`'s `prints_events_fanout_dos_own_class_byte_identical_to_the_real_emitter`) and moved over largely as-is, using the real `EVENTS_FANOUT_CLASS_NAME` constant, not that test's own placeholder `"EventsFanoutDO"` name. Two real gaps found and closed during implementation, beyond the accepted proposal's own authorised one (`TsStmt::Comment`, for the file's two-line header banner — every later Arc C slice will hit the identical need on its own first line): the dynamic `__eventRoutes` table renders as a **multi-line** object literal (one entry per line, each with its own trailing comma, closing brace at the statement's own indent) — TypeScript's ordinary multi-line convention, which nothing in `TsExpr` could represent (`TsExpr::Object`'s only existing shape is always single-line, matching real TypeScript's inline-literal convention, which is a *different*, real syntax position from this one). Closed by adding a `multiline: bool` field to `TsExpr::Object` (mirroring `TsType::Array`'s own `readonly` field) and a depth-aware `render_stmt_level_expr` wrapper — only statement/declaration-level renderers (which already carry `depth`) can render a multi-line object correctly; a `multiline` object reached through the ordinary depth-unaware `render_expr` recursion falls back to single-line rendering, a named, tested boundary, not silently wrong. Review caught two more real issues before merge: the empty-table case (a context can `ctx_uses_emit` while publishing only events nobody subscribes to) printed the tight `{}` shortcut instead of the pre-conversion code's own unconditional open/close-brace-on-separate-lines shape — fixed by dropping the shortcut entirely, `render_multiline_object` never takes it, matching the original `writeln!` code's own unconditional behaviour; and a bare `Comment` reaching `render_inline_stmt`'s fallback (e.g. as an `if`'s brace-free body) would have rendered as a `//` line comment that swallows everything after it on the same physical line, a real parse-error risk for a future slice — fixed with its own inline shape, a `/* text */` block comment, which cannot swallow anything. Verified by a fresh, direct test (`bynk-emit/src/emitter/events_fanout.rs`'s own `matches_the_real_fixtures_own_events_fanout_ts_byte_for_byte`) asserting the real, converted function's own output against a real fixture's `events_fanout.ts` byte-for-byte — not a hand-rebuilt tree standing in for it, closing the gap the P7.8-era tests left (most of them cover isolated *shapes* with synthetic data, e.g. only 2 of the real interface's 4 `envelope` fields, never this file's real assembled content) — plus a direct regression test for the empty-table case. `bless_positive_fixtures`/`positive_fixtures`/`tsc_verify`'s full strict-`tsc` corpus all pass unchanged. `verbatim_sites` 11 → **10** (this slice's own one call site); `ts_writes` 1620 → **1581** (`events_fanout.rs`'s own ~39 `writeln!`/`write!`/`format!` calls gone); `ast_importers` unaffected (this file was never one of the five counted) | R7.1, R7.2 | P7.8, P7.9 |
@@ -452,8 +547,9 @@ inherits real types at these two sites instead of a residual `any` to solve itse
 
 **Arc D — settling (~8 slices)**
 
-Provisionally lettered, not numbered — Arc C's own slice count is an estimate (~19), so fixed
-`P7.N` numbers here would silently claim a range Arc C's real slices will actually occupy. Real
+Provisionally lettered, not numbered — Arc C's own slice count is an estimate (~20, revised by
+#1331 — see §6's own "Third correction" above), so fixed `P7.N` numbers here would silently claim
+a range Arc C's real slices will actually occupy. Real
 `P7.N` numbers are assigned sequentially as each slice is actually cut, in landing order, the same
 convention every prior track on this trajectory used.
 
