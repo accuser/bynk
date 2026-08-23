@@ -672,14 +672,16 @@ fn render_inline_stmt(out: &mut String, stmt: &TsStmt) {
         // the way `Blank`'s own top-level form is), so the same fallback
         // that's safe for `Const`/`If`/etc. above is safe here too.
         | TsStmtKind::Increment(_)
-        // #1333: unlike `Comment`'s own `//` form, a `/** ... */` block
-        // always closes itself before any subsequent text — it cannot
-        // swallow the next statement the way an unterminated `//` line
-        // comment could, so this fallback (not a dedicated inline shape)
-        // is safe here, the same reasoning as every other variant in this
-        // group. Not reachable today — every real `DocComment` reaches the
+        // #1333: not reachable today — every real `DocComment` reaches the
         // printer only via `print_stmt`, never through a `TsProgram`'s own
-        // tree — but listed by name per this group's own exhaustiveness
+        // tree — which is what actually makes this fallback safe: unlike
+        // `Comment`'s own `//` form, a `/** ... */` block always closes
+        // itself before any subsequent text, so it cannot swallow the next
+        // statement the way an unterminated `//` line comment could — but
+        // the fallback's own `render_stmt(out, stmt, 0)` still emits the
+        // block's embedded newlines, which would break an `InlineBlock`'s
+        // single-line contract if this arm ever became reachable through
+        // one. Listed by name per this group's own exhaustiveness
         // discipline, not folded into a wildcard.
         | TsStmtKind::DocComment(_) => render_stmt(out, stmt, 0),
     }

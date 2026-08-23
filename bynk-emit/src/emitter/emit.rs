@@ -112,6 +112,10 @@ pub(crate) fn emit_type(
 /// lossless conversion to the printer's own 2-space-per-depth unit).
 pub(crate) fn emit_doc_block(out: &mut String, doc: Option<&str>, indent: usize) {
     let Some(doc) = doc else { return };
+    debug_assert!(
+        indent.is_multiple_of(INDENT_STEP),
+        "emit_doc_block: indent {indent} is not a multiple of INDENT_STEP"
+    );
     let stmt = bynk_ts::TsStmt::doc_comment(doc, None);
     out.push_str(&bynk_ts::print_stmt(&stmt, indent / INDENT_STEP));
 }
