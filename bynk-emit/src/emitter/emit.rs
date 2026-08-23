@@ -195,7 +195,9 @@ fn emit_refined_type(
         writeln!(out, "    return value as {name};", name = t.name.name).unwrap();
         writeln!(out, "  }},").unwrap();
     }
-    emit_attached_methods(out, &t.name.name, &t.type_params, commons, runtime_use);
+    for entry in emit_attached_methods(&t.name.name, &t.type_params, commons, runtime_use) {
+        out.push_str(&bynk_ts::print_object_entry(&entry, 0));
+    }
     writeln!(out, "}};").unwrap();
     writeln!(out).unwrap();
 }
@@ -359,7 +361,9 @@ fn emit_record_type(
     writeln!(out, "}}").unwrap();
     writeln!(out).unwrap();
     writeln!(out, "export const {name} = {{", name = t.name.name).unwrap();
-    emit_attached_methods(out, &t.name.name, &t.type_params, commons, runtime_use);
+    for entry in emit_attached_methods(&t.name.name, &t.type_params, commons, runtime_use) {
+        out.push_str(&bynk_ts::print_object_entry(&entry, 0));
+    }
     writeln!(out, "}};").unwrap();
     writeln!(out).unwrap();
 }
@@ -438,18 +442,27 @@ fn emit_sum_type(
             .unwrap();
         }
     }
-    emit_attached_methods(out, &t.name.name, &t.type_params, commons, runtime_use);
+    for entry in emit_attached_methods(&t.name.name, &t.type_params, commons, runtime_use) {
+        out.push_str(&bynk_ts::print_object_entry(&entry, 0));
+    }
     writeln!(out, "}};").unwrap();
     writeln!(out).unwrap();
 }
 
+/// #1337: returns real `bynk_ts::TsObjectEntry`s (was `out: &mut String`) —
+/// so `emit_refined_type`/`emit_record_type`/`emit_sum_type` (still
+/// unconverted) can splice them via `bynk_ts::print_object_entry`, and so a
+/// future slice converting those three can append them directly into a real
+/// `TsExpr::Object`'s own entries, with no opaque-entries carrier needed at
+/// all (the question this slice's own accepted proposal was asked to
+/// resolve).
 fn emit_attached_methods(
-    out: &mut String,
     type_name: &str,
     type_params: &[TypeParam],
     commons: &TypedCommons,
     runtime_use: &RuntimeUse,
-) {
+) -> Vec<bynk_ts::TsObjectEntry> {
+    let mut entries = Vec::new();
     for item in &commons.commons.items {
         let CommonsItem::Fn(f) = item else { continue };
         let FnName::Method {
@@ -462,16 +475,16 @@ fn emit_attached_methods(
         if t.name != type_name {
             continue;
         }
-        emit_method(
-            out,
+        entries.push(emit_method(
             f,
             type_name,
             type_params,
             method_name,
             commons,
             runtime_use,
-        );
+        ));
     }
+    entries
 }
 
 /// v0.132.1 (#481): the consumer-context rebrand of a `uses`-imported refined
@@ -498,6 +511,15 @@ fn emit_attached_methods(
 /// still comes from `type_name` directly, the *consumer* context's own
 /// rebranded name, never resolved through `FnSig` at all (a method's own
 /// generic receiver plays no part in what gets forwarded here).
+///
+/// #1337: fully self-contained, no `emitter/lower.rs` dependency at all
+/// (unlike [`emit_method`]'s own opaque body) — the body here is one real,
+/// statically-known statement shape, so it converts to a real
+/// `bynk_ts::TsStmt::Return`, no opaque carrier needed. `out: &mut String`
+/// kept (the P7.9/step-1 pattern): `emitter.rs`'s own real caller
+/// (`emit_context_rebrands`) is still unconverted, so this stays a "build a
+/// real node internally, print just that fragment" helper rather than
+/// returning entries the caller isn't ready to consume structurally.
 pub(crate) fn emit_forwarded_methods(
     out: &mut String,
     type_name: &str,
@@ -505,38 +527,94 @@ pub(crate) fn emit_forwarded_methods(
     tys: &Arc<Types>,
 ) {
     for f in methods {
-        let mut params: Vec<String> = Vec::new();
-        let mut args: Vec<String> = Vec::new();
+        let mut params: Vec<bynk_ts::TsParam> = Vec::new();
+        let mut args: Vec<bynk_ts::TsExpr> = Vec::new();
         if f.has_self {
-            params.push(format!("self: {type_name}"));
-            args.push("self".to_string());
+            params.push(bynk_ts::TsParam {
+                name: "self".to_string(),
+                ty: Some(bynk_ts::TsType::named(type_name)),
+                optional: false,
+            });
+            args.push(bynk_ts::TsExpr::Ident("self".to_string()));
         }
         for (name, ty) in &f.params {
-            params.push(format!("{}: {}", ts_ident(name), ts_ty(*ty, tys)));
-            args.push(ts_ident(name));
+            let ident = ts_ident(name);
+            params.push(bynk_ts::TsParam {
+                name: ident.clone(),
+                ty: Some(bynk_ts::TsType::named(ts_ty(*ty, tys))),
+                optional: false,
+            });
+            args.push(bynk_ts::TsExpr::Ident(ident));
         }
         let ret = ts_ty(f.return_ty, tys);
-        writeln!(
-            out,
-            "  {method}({params}): {ret} {{ return __Commons{type_name}.{method}({args}) as unknown as {ret}; }},",
-            method = f.name,
-            params = params.join(", "),
-            args = args.join(", "),
-        )
-        .unwrap();
+        let call = bynk_ts::TsExpr::Call {
+            callee: Box::new(bynk_ts::TsExpr::Member {
+                object: Box::new(bynk_ts::TsExpr::Ident(format!("__Commons{type_name}"))),
+                property: f.name.clone(),
+            }),
+            args,
+        };
+        let body = vec![bynk_ts::TsStmt::return_stmt(
+            Some(bynk_ts::TsExpr::As {
+                expr: Box::new(bynk_ts::TsExpr::As {
+                    expr: Box::new(call),
+                    ty: bynk_ts::TsType::named("unknown"),
+                }),
+                ty: bynk_ts::TsType::named(ret.clone()),
+            }),
+            None,
+        )];
+        let entry = bynk_ts::TsObjectEntry::Method {
+            name: f.name.clone(),
+            is_async: false,
+            // `FnSig` (P6.18's own note) never carries generics here — a
+            // forwarded method's own receiver is always the consumer
+            // context's own concrete rebranded name, never resolved
+            // through a generic receiver.
+            generics: Vec::new(),
+            params,
+            return_type: Some(bynk_ts::TsType::named(ret)),
+            // `FnSig` carries no doc text either — nothing forwards it.
+            doc: None,
+            // #1337's own one real `inline: true` site: the pre-conversion
+            // `writeln!` always built the whole entry — signature and
+            // one-statement body alike — on one physical line, unlike
+            // every other real `Method` entry in this tree.
+            inline: true,
+            body,
+        };
+        out.push_str(&bynk_ts::print_object_entry(&entry, 0));
     }
 }
 
+/// #1337: returns one real `bynk_ts::TsObjectEntry::Method` (was
+/// `out: &mut String`) — the per-entry builder [`emit_attached_methods`]
+/// calls once per matching attached method.
+///
+/// The method's own body is NOT built here at all — it's delegated
+/// wholesale to `emit_block_as_function_body_with_return`
+/// (`emitter/lower.rs:201`), the one splice boundary ADR
+/// `arc-c-lower-rs-permanent-exclusion` names as a *permanent*, deliberate
+/// exclusion from this tree (`lower.rs` is the compiler's own second
+/// code-generation pass, comprehensive language-surface work Arc C was
+/// never scoped to cover) — captured into a `String` at the exact same
+/// absolute indent the pre-conversion code always passed
+/// (`INDENT_STEP * 2`), then carried as one opaque `bynk_ts::TsStmt::raw`
+/// statement, printed exactly as given with no reinterpretation.
 fn emit_method(
-    out: &mut String,
     f: &FnDecl,
     type_name: &str,
     type_params: &[TypeParam],
     method_name: &Ident,
     commons: &TypedCommons,
     runtime_use: &RuntimeUse,
-) {
-    emit_doc_block(out, f.documentation.as_deref(), INDENT_STEP);
+) -> bynk_ts::TsObjectEntry {
+    // #1337: a real gap the accepted proposal's own citation missed (it
+    // searched for `///`-style doc markers; this language's own doc block
+    // is `---`-delimited, per the lexer — `Timestamp.diff`/`Timestamp.add`
+    // in `65_money_uses_time` both carry one) — caught by the zero-diff
+    // fixture check, not reasoned about in the abstract.
+    let doc = f.documentation.clone();
     // #594: a method on a generic type erases to a generic namespace-object
     // member. The namespace `const` cannot itself carry `<T>`, so the type's own
     // parameters are threaded onto *each* method alongside the method's own
@@ -545,26 +623,32 @@ fn emit_method(
     let self_ty_args = ts_type_params(type_params);
     let mut method_generics: Vec<TypeParam> = type_params.to_vec();
     method_generics.extend(f.type_params.iter().cloned());
-    let mut params: Vec<String> = Vec::new();
+    // #1337: a real gap the accepted proposal's own citation missed (it
+    // searched the project-form fixture corpus only; the one real site,
+    // `402_generic_instance_method`, is single-file form) — caught by the
+    // zero-diff fixture check, not reasoned about in the abstract. Bare
+    // names only, matching `ts_type_params`'s own rendering exactly (see
+    // `TsObjectEntry::Method::generics`'s own doc for why a full
+    // `Vec<TsParam>` would be the wrong shape here).
+    let generics: Vec<String> = method_generics
+        .iter()
+        .map(|tp| ts_ident(&tp.name.name))
+        .collect();
+    let mut params: Vec<bynk_ts::TsParam> = Vec::new();
     if f.has_self {
-        params.push(format!("self: {type_name}{self_ty_args}"));
+        params.push(bynk_ts::TsParam {
+            name: "self".to_string(),
+            ty: Some(bynk_ts::TsType::named(format!("{type_name}{self_ty_args}"))),
+            optional: false,
+        });
     }
     for p in &f.params {
-        params.push(format!(
-            "{}: {}",
-            ts_ident(&p.name.name),
-            ts_type_ref(&p.type_ref)
-        ));
+        params.push(bynk_ts::TsParam {
+            name: ts_ident(&p.name.name),
+            ty: Some(bynk_ts::TsType::named(ts_type_ref(&p.type_ref))),
+            optional: false,
+        });
     }
-    writeln!(
-        out,
-        "  {method}{generics}({params}): {ret} {{",
-        method = method_name.name,
-        generics = ts_type_params(&method_generics),
-        params = params.join(", "),
-        ret = ts_type_ref(&f.return_type),
-    )
-    .unwrap();
     let empty = bynk_check::resolver::CrossContextInfo::default();
     let mut cx = LowerCtx::new(
         ModuleCtx::new(commons, &empty, runtime_use),
@@ -574,15 +658,25 @@ fn emit_method(
     // any `Effect.pure(...)` in tail position must still wrap as
     // `Promise.resolve(...)` because there's no surrounding `async` to absorb
     // it. (Methods aren't expected to return `Effect[T]` in v0–v0.7.1.)
+    let mut body_text = String::new();
     emit_block_as_function_body_with_return(
-        out,
+        &mut body_text,
         &f.body,
         &mut cx,
         INDENT_STEP * 2,
         false,
         Some(&f.return_type),
     );
-    writeln!(out, "  }},").unwrap();
+    bynk_ts::TsObjectEntry::Method {
+        name: method_name.name.clone(),
+        is_async: false,
+        generics,
+        params,
+        return_type: Some(bynk_ts::TsType::named(ts_type_ref(&f.return_type))),
+        doc,
+        inline: false,
+        body: vec![bynk_ts::TsStmt::raw(body_text, None)],
+    }
 }
 
 pub(crate) fn emit_free_fn(
