@@ -1,11 +1,6 @@
----
-level: patch
-changelog: Arc C design pass — settles `emitter/lower.rs`'s conversion status (a deliberate, argued, permanent exclusion from Arc C's own scope, with `ts_writes`'s own non-zero floor named accordingly) and names the corrected decomposition order for `emit.rs`'s remaining work
----
+# 0391 — `emitter/lower.rs` is a deliberate, permanent exclusion from Arc C's own scope, not a future conversion target
 
-## ADR: arc-c-lower-rs-permanent-exclusion
-
-title: `emitter/lower.rs` is a deliberate, permanent exclusion from Arc C's own scope, not a future conversion target
+- **Status:** Accepted (v0.259.1)
 
 summary: `lower.rs` is the compiler's own second code-generation pass, not a bounded, file-specific conversion target — converting it would re-architect the compiler's whole lowering strategy, comprehensive language-surface work Arc C was never scoped to cover
 
