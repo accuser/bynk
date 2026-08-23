@@ -1140,6 +1140,16 @@ pub enum TsDecl {
     /// No `type_only` form — nothing in the grounding file re-exports a
     /// type-only name.
     ReExport { names: Vec<String>, from: String },
+    /// `export * from "spec";` — a wildcard re-export, structurally distinct
+    /// from [`TsDecl::ReExport`] (which always carries a braced name list —
+    /// an empty `names` there would render the ill-formed `export {  }
+    /// from "spec";`, not this). Mirrors [`TsDecl::ImportNamespace`]'s own
+    /// "no braces, no name list, one bound target" shape, on the export
+    /// side. #1329's own real gap: `emit_commons_barrel`
+    /// (`bynk-emit/src/project/tests_emit.rs`) builds a multi-file
+    /// `commons` unit's barrel module as one `export *` line per
+    /// constituent source file.
+    ReExportAll { from: String },
     /// Marks the wrapped declaration `export`ed — `export class Foo { .. }`
     /// is `Export(Box::new(Class { .. }))`. A wrapper, not a per-variant
     /// `exported: bool` field, matching the reference sketch's own naming

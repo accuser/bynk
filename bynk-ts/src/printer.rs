@@ -150,6 +150,13 @@
 //!   real content needs — two already-real files disagreeing on the same
 //!   construct, the same tension the `Await`-under-`As` correction
 //!   (#1323/#1324) found for parenthesisation.
+//! - **`export * from "spec";` — a wildcard re-export — groups with itself
+//!   AND with an immediately-preceding header `Comment`, no blank line
+//!   either way.** A different spacing shape from `ReExport`'s own (no
+//!   grouping rule, see above): `emit_commons_barrel`'s own real barrel
+//!   module is one header comment followed by one `export *` line per
+//!   constituent source file, every one of those lines adjacent with no
+//!   blank line anywhere. Added for #1329.
 //!
 //! None of the above is claimed as *the* TypeScript style this printer will
 //! use forever — it's what this slice's own grounding file needs, named
@@ -213,9 +220,11 @@ pub fn print(
         }
         // Readability policy (this module's own doc): one blank line
         // between top-level declarations, except two consecutive
-        // `import`s or two consecutive `Comment`s, and never after
-        // `Verbatim` (P7.7's own boundary — `Verbatim` content's own
-        // spacing is not this printer's decision).
+        // `import`s, two consecutive `Comment`s, two consecutive
+        // `ReExportAll`s, or a `Comment` immediately before a
+        // `ReExportAll` — and never after `Verbatim` (P7.7's own boundary
+        // — `Verbatim` content's own spacing is not this printer's
+        // decision).
         if let Some(next) = program.stmts.get(i + 1) {
             // #1321: `workers.rs`'s own header has `import { ... } from
             // "runtime"` (named) adjacent to `import * as handlers from
@@ -231,10 +240,32 @@ pub fn print(
                         | TsStmtKind::Decl(TsDecl::ImportNamespace { .. })
                 )
             }
+            // #1329: `emit_commons_barrel`'s own real barrel module is one
+            // header `Comment` immediately followed by an `export *` line
+            // per constituent source file, every one of those lines
+            // adjacent to the next with no blank line anywhere — a
+            // genuinely different spacing shape from `ReExport`'s own
+            // (#1323's `workers_entry.rs` re-exports, each already
+            // separated from its neighbours by a blank line in the
+            // pre-conversion output, so `ReExport` itself still gets no
+            // grouping rule of its own). Scoped to exactly this new
+            // adjacency — a `Comment` before an ordinary `Import`/other
+            // decl still gets its blank line (see `events_fanout.rs`'s own
+            // header-comment-then-blank-then-import shape), unchanged.
+            fn is_reexport_all(kind: &TsStmtKind) -> bool {
+                matches!(kind, TsStmtKind::Decl(TsDecl::ReExportAll { .. }))
+            }
             let both_imports = is_import_decl(&stmt.kind) && is_import_decl(&next.kind);
             let both_comments = matches!(&stmt.kind, TsStmtKind::Comment(_))
                 && matches!(&next.kind, TsStmtKind::Comment(_));
-            if !both_imports && !both_comments && !matches!(stmt.kind, TsStmtKind::Verbatim { .. })
+            let both_reexport_all = is_reexport_all(&stmt.kind) && is_reexport_all(&next.kind);
+            let comment_then_reexport_all =
+                matches!(&stmt.kind, TsStmtKind::Comment(_)) && is_reexport_all(&next.kind);
+            if !both_imports
+                && !both_comments
+                && !both_reexport_all
+                && !comment_then_reexport_all
+                && !matches!(stmt.kind, TsStmtKind::Verbatim { .. })
             {
                 out.push('\n');
             }
@@ -1359,6 +1390,11 @@ fn render_decl_body(out: &mut String, decl: &TsDecl, depth: usize) {
             out.push_str("export { ");
             out.push_str(&names.join(", "));
             out.push_str(" } from \"");
+            out.push_str(from);
+            out.push_str("\";\n");
+        }
+        TsDecl::ReExportAll { from } => {
+            out.push_str("export * from \"");
             out.push_str(from);
             out.push_str("\";\n");
         }
@@ -3728,5 +3764,54 @@ mod tests {
         ));
         let printed = print(&program, "x.bynk", "", "x.ts");
         assert_eq!(printed.text, "if (cond) continue;\nelse {\n  b;\n}\n");
+    }
+
+    /// `TsDecl::ReExportAll` prints `export * from "spec";` — no braces, no
+    /// name list, matching `emit_commons_barrel`'s own real per-file line.
+    #[test]
+    fn re_export_all_prints_a_wildcard_re_export() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::decl(
+            TsDecl::ReExportAll {
+                from: "./thing/make.js".to_string(),
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "export * from \"./thing/make.js\";\n");
+    }
+
+    /// Review of #1329's own grounding: `emit_commons_barrel`'s real barrel
+    /// module is one header `Comment` immediately followed by one `export
+    /// *` line per constituent source file, every one of those lines
+    /// adjacent with no blank line anywhere — the exact byte shape pinned
+    /// here, matching `251_multi_file_commons_test`'s own real
+    /// `expected/thing.ts`.
+    #[test]
+    fn a_header_comment_and_consecutive_re_export_alls_have_no_blank_lines() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::comment(
+            "Generated by bynkc — do not edit by hand.",
+            None,
+        ));
+        program.push(TsStmt::decl(
+            TsDecl::ReExportAll {
+                from: "./thing/make.js".to_string(),
+            },
+            None,
+        ));
+        program.push(TsStmt::decl(
+            TsDecl::ReExportAll {
+                from: "./thing/widget.js".to_string(),
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(
+            printed.text,
+            "// Generated by bynkc — do not edit by hand.\n\
+             export * from \"./thing/make.js\";\n\
+             export * from \"./thing/widget.js\";\n"
+        );
     }
 }
