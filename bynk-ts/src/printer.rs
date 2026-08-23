@@ -3814,4 +3814,36 @@ mod tests {
              export * from \"./thing/widget.js\";\n"
         );
     }
+
+    /// Review of #1330: the grouping rule added for #1329 is scoped to
+    /// `ReExportAll`-adjacent-to-`ReExportAll` (and a `Comment` immediately
+    /// before one) — a `ReExportAll` next to anything else still gets the
+    /// ordinary blank line. `emit_commons_barrel` is `ReExportAll`'s only
+    /// producer today, so this is the invariant keeping the rule scoped if
+    /// a future slice ever gives it a second one.
+    #[test]
+    fn a_re_export_all_next_to_a_non_re_export_all_gets_the_ordinary_blank_line() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::decl(
+            TsDecl::ImportNamespace {
+                alias: "handlers".to_string(),
+                from: "./handlers.js".to_string(),
+            },
+            None,
+        ));
+        program.push(TsStmt::decl(
+            TsDecl::ReExportAll {
+                from: "./thing/make.js".to_string(),
+            },
+            None,
+        ));
+        program.push(TsStmt::comment("trailing note", None));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(
+            printed.text,
+            "import * as handlers from \"./handlers.js\";\n\n\
+             export * from \"./thing/make.js\";\n\n\
+             // trailing note\n"
+        );
+    }
 }
