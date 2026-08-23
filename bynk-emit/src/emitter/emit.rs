@@ -101,20 +101,19 @@ pub(crate) fn emit_type(
 /// otherwise close the JSDoc comment early and let the trailing text land as
 /// executable top-level TypeScript (issue #720). Escape it to `*\/`, which
 /// renders identically but can no longer terminate the comment.
+///
+/// #1333 (R7.1): builds a real [`bynk_ts::TsStmt`] (`TsStmtKind::DocComment`)
+/// and prints it through [`bynk_ts::print_stmt`], instead of `writeln!`-ing
+/// the JSDoc text by hand — the escaping/blank-line rules above now live on
+/// that variant's own doc and its printer arm; this function's own signature
+/// and every one of its 14 real callers are unchanged, the same P7.9 pattern
+/// `ts_type_ref`/`ts_ty` already used (`indent` is always an exact multiple
+/// of `INDENT_STEP` in every real call, so `indent / INDENT_STEP` is a
+/// lossless conversion to the printer's own 2-space-per-depth unit).
 pub(crate) fn emit_doc_block(out: &mut String, doc: Option<&str>, indent: usize) {
     let Some(doc) = doc else { return };
-    let indent_str: String = " ".repeat(indent);
-    writeln!(out, "{indent_str}/**").unwrap();
-    for line in doc.lines() {
-        let trimmed = line.trim_end();
-        if trimmed.is_empty() {
-            writeln!(out, "{indent_str} *").unwrap();
-        } else {
-            let safe = trimmed.replace("*/", "*\\/");
-            writeln!(out, "{indent_str} * {safe}").unwrap();
-        }
-    }
-    writeln!(out, "{indent_str} */").unwrap();
+    let stmt = bynk_ts::TsStmt::doc_comment(doc, None);
+    out.push_str(&bynk_ts::print_stmt(&stmt, indent / INDENT_STEP));
 }
 
 /// v0.93 (ADR 0118): deterministically order the `@indexed` map → fields entries
@@ -245,11 +244,20 @@ fn emit_pred_check(out: &mut String, type_name: &str, pred: &PredKind) {
 /// v0.157 (ADR 0183): the erased TS type-parameter list for a generic
 /// declaration (`<A, B>`), or `""` when non-generic. The same erasure used by
 /// generic functions.
+///
+/// #1333 (R7.1): each name prints through a real [`bynk_ts::TsType::named`]
+/// via [`bynk_ts::print_type`] — P7.9's own established entry point for one
+/// type fragment — instead of splicing the raw `&str` directly; this
+/// function's own `-> String` signature and every one of its 5 real callers
+/// are unchanged.
 pub(crate) fn ts_type_params(params: &[TypeParam]) -> String {
     if params.is_empty() {
         return String::new();
     }
-    let names: Vec<&str> = params.iter().map(|p| p.name.name.as_str()).collect();
+    let names: Vec<String> = params
+        .iter()
+        .map(|p| bynk_ts::print_type(&bynk_ts::TsType::named(p.name.name.as_str())))
+        .collect();
     format!("<{}>", names.join(", "))
 }
 
@@ -4377,6 +4385,77 @@ mod doc_block_tests {
             );
             assert!(out.trim_end().ends_with("*/"), "input {body:?}: {out}");
         }
+    }
+
+    /// #1333: the real, converted `emit_doc_block` matches
+    /// `137_agent_instantiation_workers`'s own real header comment
+    /// byte-for-byte — not a synthetic string, the real fixture content
+    /// this function's own conversion is verified against.
+    #[test]
+    fn matches_the_real_fixtures_own_header_comment_byte_for_byte() {
+        let mut out = String::new();
+        emit_doc_block(
+            &mut out,
+            Some(
+                "A minimal stateful agent in the bundle target: instantiation lowers through the\ngenerated factory, the method call is a direct call, and state persists per key\nacross calls within a session.",
+            ),
+            0,
+        );
+        assert_eq!(
+            out,
+            "/**\n \
+             * A minimal stateful agent in the bundle target: instantiation lowers through the\n \
+             * generated factory, the method call is a direct call, and state persists per key\n \
+             * across calls within a session.\n \
+             */\n"
+        );
+    }
+
+    /// #1333: `indent` is always an exact multiple of `INDENT_STEP` in
+    /// every real call site (`0` or `INDENT_STEP`) — pins that the
+    /// `indent / INDENT_STEP` conversion to the printer's own depth unit
+    /// produces the real, historic indentation exactly.
+    #[test]
+    fn indents_at_the_nested_indent_step() {
+        let mut out = String::new();
+        emit_doc_block(&mut out, Some("a method"), crate::emitter::INDENT_STEP);
+        assert_eq!(out, "  /**\n   * a method\n   */\n");
+    }
+}
+
+#[cfg(test)]
+mod ts_type_params_tests {
+    use super::ts_type_params;
+    use bynk_syntax::ast::{Ident, TypeParam};
+    use bynk_syntax::span::Span;
+
+    fn type_param(name: &str) -> TypeParam {
+        TypeParam {
+            name: Ident {
+                name: name.to_string(),
+                span: Span::new(0, name.len()),
+            },
+            span: Span::new(0, name.len()),
+        }
+    }
+
+    #[test]
+    fn empty_params_render_as_the_empty_string() {
+        assert_eq!(ts_type_params(&[]), "");
+    }
+
+    /// #1333: the real, converted `ts_type_params` matches
+    /// `816_locale_negotiation_no_bundle_regression`'s own real
+    /// `export function map<A, B>(...)` generic list byte-for-byte.
+    #[test]
+    fn matches_the_real_fixtures_own_two_param_generic_list() {
+        let params = [type_param("A"), type_param("B")];
+        assert_eq!(ts_type_params(&params), "<A, B>");
+    }
+
+    #[test]
+    fn single_param_renders_with_no_separator() {
+        assert_eq!(ts_type_params(&[type_param("T")]), "<T>");
     }
 }
 
