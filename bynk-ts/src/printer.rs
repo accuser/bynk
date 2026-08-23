@@ -164,6 +164,16 @@
 //!   shared helper spliced into still-unconverted callers' buffers), never
 //!   through [`print()`]'s own `TsProgram` loop — so this shape has no
 //!   blank-line grouping rule of its own to name here. Added for #1333.
+//! - **A `TsStmtKind::Raw` prints its own text verbatim** — no leading
+//!   indent, no added punctuation, the same rendering `Verbatim` gets
+//!   (deliberately a distinct kind, not a reuse of it — see
+//!   [`crate::program::TsStmtKind::Raw`]'s own doc for why). Only reached
+//!   through a `TsObjectEntry::Method`'s own `body`, never through
+//!   [`print()`]'s own `TsProgram` loop — no blank-line grouping rule of
+//!   its own to name here either. Added for #1337:
+//!   `emit_method`'s own body, delegated wholesale to `emitter/lower.rs`'s
+//!   `emit_block_as_function_body_with_return` — a permanent Arc C
+//!   exclusion (ADR `arc-c-lower-rs-permanent-exclusion`), not residue.
 //!
 //! None of the above is claimed as *the* TypeScript style this printer will
 //! use forever — it's what this slice's own grounding file needs, named
@@ -525,6 +535,11 @@ fn render_stmt(out: &mut String, stmt: &TsStmt, depth: usize) {
             render_expr(out, expr);
             out.push_str("++;\n");
         }
+        // Same rendering as `Verbatim` above — the text is printed exactly
+        // as given, no `indent(depth)` prefix, no added punctuation (see
+        // `TsStmtKind::Raw`'s own doc for why this is a distinct kind, not
+        // a reuse of `Verbatim`).
+        TsStmtKind::Raw(text) => out.push_str(text),
     }
 }
 
@@ -683,7 +698,18 @@ fn render_inline_stmt(out: &mut String, stmt: &TsStmt) {
         // single-line contract if this arm ever became reachable through
         // one. Listed by name per this group's own exhaustiveness
         // discipline, not folded into a wildcard.
-        | TsStmtKind::DocComment(_) => render_stmt(out, stmt, 0),
+        | TsStmtKind::DocComment(_)
+        // #1337: not reachable today — `Raw` only ever appears inside a
+        // `TsObjectEntry::Method`'s own `body`, rendered through
+        // `render_block_stmts`, never through `render_inline_stmt`'s own
+        // call path (an `if`/`for...of` branch or an `InlineBlock`). Unsafe
+        // if it ever became reachable there for the same reason
+        // `DocComment` is: `Raw`'s own text is `emit_method`'s whole
+        // multi-statement function body, never single-line, so the
+        // fallback's embedded newlines would break an `InlineBlock`'s
+        // single-line contract. Listed by name, not folded into a
+        // wildcard, for the same reason as every other arm in this group.
+        | TsStmtKind::Raw(_) => render_stmt(out, stmt, 0),
     }
 }
 
@@ -915,56 +941,97 @@ fn render_multiline_object(out: &mut String, entries: &[TsObjectEntry], depth: u
     // entries.
     out.push_str("{\n");
     for entry in entries {
-        match entry {
-            TsObjectEntry::Prop(k, v) => {
-                out.push_str(&indent(depth + 1));
-                out.push_str(k);
-                out.push_str(": ");
-                render_expr(out, v);
-                out.push_str(",\n");
-            }
-            TsObjectEntry::Shorthand(name) => {
-                out.push_str(&indent(depth + 1));
-                out.push_str(name);
-                out.push_str(",\n");
-            }
-            TsObjectEntry::Spread(e) => {
-                out.push_str(&indent(depth + 1));
-                out.push_str("...");
-                render_expr(out, e);
-                out.push_str(",\n");
-            }
-            // `workers.rs`'s own dominant real shape (Decision A, gap 1):
-            // `async {name}({params}) { <body> },`, body indented one
-            // level deeper still — the same shape a class method's own
-            // body gets (`render_decl_body`'s `TsDecl::Class` arm), here
-            // for one object-literal entry instead.
-            TsObjectEntry::Method {
-                name,
-                is_async,
-                params,
-                return_type,
-                body,
-            } => {
-                out.push_str(&indent(depth + 1));
-                if *is_async {
-                    out.push_str("async ");
-                }
-                out.push_str(name);
-                out.push('(');
-                render_params(out, params);
-                out.push(')');
-                if let Some(rt) = return_type {
-                    out.push_str(": ");
-                    render_type(out, rt);
-                }
-                render_block_stmts(out, body, depth + 1);
-                out.push_str(",\n");
-            }
-        }
+        render_multiline_object_entry(out, entry, depth);
     }
     out.push_str(&indent(depth));
     out.push('}');
+}
+
+/// One [`TsObjectEntry`], as [`render_multiline_object`]'s own per-entry
+/// loop body — factored out so [`print_object_entry`] can render exactly
+/// one entry without a whole object's own opening/closing braces, sharing
+/// this one real per-kind dispatch rather than a second copy (the same
+/// "one document-fragment entry point, no duplicated rendering" posture
+/// [`print_stmt`]/[`print_type`] already established).
+fn render_multiline_object_entry(out: &mut String, entry: &TsObjectEntry, depth: usize) {
+    match entry {
+        TsObjectEntry::Prop(k, v) => {
+            out.push_str(&indent(depth + 1));
+            out.push_str(k);
+            out.push_str(": ");
+            render_expr(out, v);
+            out.push_str(",\n");
+        }
+        TsObjectEntry::Shorthand(name) => {
+            out.push_str(&indent(depth + 1));
+            out.push_str(name);
+            out.push_str(",\n");
+        }
+        TsObjectEntry::Spread(e) => {
+            out.push_str(&indent(depth + 1));
+            out.push_str("...");
+            render_expr(out, e);
+            out.push_str(",\n");
+        }
+        // `workers.rs`'s own dominant real shape (Decision A, gap 1):
+        // `async {name}({params}) { <body> },`, body indented one
+        // level deeper still — the same shape a class method's own
+        // body gets (`render_decl_body`'s `TsDecl::Class` arm), here
+        // for one object-literal entry instead.
+        TsObjectEntry::Method {
+            name,
+            is_async,
+            generics,
+            params,
+            return_type,
+            doc,
+            inline,
+            body,
+        } => {
+            if let Some(text) = doc {
+                render_doc_comment(out, text, depth + 1);
+            }
+            out.push_str(&indent(depth + 1));
+            if *is_async {
+                out.push_str("async ");
+            }
+            out.push_str(name);
+            render_object_entry_method_generics(out, generics);
+            out.push('(');
+            render_params(out, params);
+            out.push(')');
+            if let Some(rt) = return_type {
+                out.push_str(": ");
+                render_type(out, rt);
+            }
+            if *inline {
+                out.push_str(" { ");
+                render_compact_stmts(out, body);
+                out.push_str(" }");
+            } else {
+                render_block_stmts(out, body, depth + 1);
+            }
+            out.push_str(",\n");
+        }
+    }
+}
+
+/// `<{generics.join(", ")}>`, or nothing at all when `generics` is empty —
+/// `TsObjectEntry::Method`'s own generic parameter list (#1337), bare
+/// names only, matching `ts_type_params`'s own real rendering exactly
+/// (`bynk-emit`'s own pre-conversion text this shape reproduces).
+fn render_object_entry_method_generics(out: &mut String, generics: &[String]) {
+    if generics.is_empty() {
+        return;
+    }
+    out.push('<');
+    for (i, g) in generics.iter().enumerate() {
+        if i > 0 {
+            out.push_str(", ");
+        }
+        out.push_str(g);
+    }
+    out.push('>');
 }
 
 /// `[ <newline> ("  "*depth+1)<item>,<newline> ... ("  "*depth)]` — one
@@ -1012,14 +1079,27 @@ fn render_object_entry_inline(out: &mut String, entry: &TsObjectEntry) {
         TsObjectEntry::Method {
             name,
             is_async,
+            generics,
             params,
             return_type,
+            // A JSDoc block has no single-line form — not reachable
+            // through this function today: every real `Method` entry
+            // (`inline` or not) is placed via `render_multiline_object_
+            // entry`, never here (this function renders one ENTRY inline
+            // for when the whole ENCLOSING OBJECT is single-line, a
+            // different concept from a method's own body being compact),
+            // so `doc` is deliberately dropped rather than rendered,
+            // matching the plausible-but-inert posture this whole match
+            // already takes.
+            doc: _doc,
+            inline,
             body,
         } => {
             if *is_async {
                 out.push_str("async ");
             }
             out.push_str(name);
+            render_object_entry_method_generics(out, generics);
             out.push('(');
             render_params(out, params);
             out.push(')');
@@ -1027,7 +1107,13 @@ fn render_object_entry_inline(out: &mut String, entry: &TsObjectEntry) {
                 out.push_str(": ");
                 render_type(out, rt);
             }
-            render_block_stmts(out, body, 0);
+            if *inline {
+                out.push_str(" { ");
+                render_compact_stmts(out, body);
+                out.push_str(" }");
+            } else {
+                render_block_stmts(out, body, 0);
+            }
         }
     }
 }
@@ -1388,6 +1474,25 @@ pub fn print_type(ty: &TsType) -> String {
 pub fn print_stmt(stmt: &TsStmt, depth: usize) -> String {
     let mut out = String::new();
     render_stmt(&mut out, stmt, depth);
+    out
+}
+
+/// Print a single [`TsObjectEntry`] on its own, at `depth` — the
+/// object-entry sibling of [`print_stmt`]'s own "one fragment, not a whole
+/// document" entry point, `depth` meaning the SAME thing it does for this
+/// crate's own internal multi-line-object renderer: the *object's* own
+/// depth, so the entry itself lands one level deeper, matching an object built by that
+/// renderer exactly. #1337's own real need: `emit_attached_methods` (a
+/// shared helper spliced into `emit_refined_type`/`emit_record_type`/
+/// `emit_sum_type`'s own still-unconverted `&mut String` buffers) now
+/// returns `Vec<TsObjectEntry>` instead of writing text directly — each
+/// caller renders the returned entries one at a time through this, the
+/// same P7.9/#1333 "keep the caller's own signature, print just the
+/// fragment" pattern applied to an object-entry-shaped fragment instead of
+/// a whole statement or type.
+pub fn print_object_entry(entry: &TsObjectEntry, depth: usize) -> String {
+    let mut out = String::new();
+    render_multiline_object_entry(&mut out, entry, depth);
     out
 }
 
@@ -2690,12 +2795,15 @@ mod tests {
                 TsObjectEntry::Method {
                     name: "foo".to_string(),
                     is_async: true,
+                    generics: Vec::new(),
                     params: vec![TsParam {
                         name: "a".to_string(),
                         ty: Some(TsType::named("string")),
                         optional: false,
                     }],
                     return_type: None,
+                    doc: None,
+                    inline: false,
                     body: vec![TsStmt::return_stmt(
                         Some(TsExpr::Ident("a".to_string())),
                         None,
@@ -3191,11 +3299,14 @@ mod tests {
                 TsObjectEntry::Method {
                     name: "fetch".to_string(),
                     is_async: true,
+                    generics: Vec::new(),
                     params: vec![],
                     return_type: Some(TsType::named_with_args(
                         "Promise",
                         vec![TsType::named("Response")],
                     )),
+                    doc: None,
+                    inline: false,
                     body: vec![],
                 },
             ])),
@@ -3961,5 +4072,228 @@ mod tests {
     fn print_stmt_indents_a_doc_comment_at_depth() {
         let stmt = TsStmt::doc_comment("a method", None);
         assert_eq!(print_stmt(&stmt, 1), "  /**\n   * a method\n   */\n");
+    }
+
+    /// #1337: `TsStmtKind::Raw` prints its own text exactly as given — no
+    /// leading indent (unlike every other statement kind, whose own
+    /// `render_stmt` arm prefixes `indent(depth)`), no added semicolon or
+    /// braces. `emit_method`'s own opaque `lower.rs`-sourced body is
+    /// already fully, absolutely indented by the time it's captured into
+    /// one `Raw` node, so the printer must contribute nothing further —
+    /// the same reasoning `Verbatim` already established for pre-rendered
+    /// content, `Raw`'s own doc explains why it's a distinct kind.
+    #[test]
+    fn print_stmt_renders_raw_text_verbatim_with_no_added_indent_or_punctuation() {
+        let stmt = TsStmt::raw("    return x + 1;\n", None);
+        // depth is passed but deliberately has no effect on Raw's own output.
+        assert_eq!(print_stmt(&stmt, 3), "    return x + 1;\n");
+    }
+
+    /// #1337: multi-line `Raw` text (the real shape — a whole function
+    /// body, not one line) passes through with every embedded line intact,
+    /// confirming the printer doesn't split, re-indent, or otherwise
+    /// interpret it.
+    #[test]
+    fn print_stmt_renders_multi_line_raw_text_unchanged() {
+        let stmt = TsStmt::raw(
+            "    const r = Uuid.of(crypto.randomUUID());\n    return r.value;\n",
+            None,
+        );
+        assert_eq!(
+            print_stmt(&stmt, 0),
+            "    const r = Uuid.of(crypto.randomUUID());\n    return r.value;\n"
+        );
+    }
+
+    /// #1337: `TsObjectEntry::Method` with a `Raw` body — `emit_method`'s
+    /// own real shape (`{method}{generics}({params}): {ret} { <raw body>
+    /// },`), pinned at the actual depth its own object literal renders at
+    /// (a top-level `export const {...}`, depth 0 → entries at depth 1,
+    /// two-space indent, matching `emit_method`'s own pre-conversion
+    /// hand-written `"  {method}..."` line).
+    #[test]
+    fn multiline_object_renders_a_method_entry_with_a_raw_body() {
+        let mut out = String::new();
+        render_multiline_object(
+            &mut out,
+            &[TsObjectEntry::Method {
+                name: "of".to_string(),
+                is_async: false,
+                generics: Vec::new(),
+                params: vec![TsParam {
+                    name: "value".to_string(),
+                    ty: Some(TsType::named("string")),
+                    optional: false,
+                }],
+                return_type: Some(TsType::named("Uuid")),
+                doc: None,
+                inline: false,
+                body: vec![TsStmt::raw("    return value as Uuid;\n", None)],
+            }],
+            0,
+        );
+        assert_eq!(
+            out,
+            "{\n  of(value: string): Uuid {\n    return value as Uuid;\n  },\n}"
+        );
+    }
+
+    /// #1337: `TsObjectEntry::Method`'s own `generics` field prints
+    /// `<A, U>` between the method name and its parameter list —
+    /// `Box.map`'s own real shape (`402_generic_instance_method`, a
+    /// single-file-form fixture the accepted proposal's own project-form
+    /// search missed).
+    #[test]
+    fn multiline_object_renders_a_generic_method_entry() {
+        let mut out = String::new();
+        render_multiline_object(
+            &mut out,
+            &[TsObjectEntry::Method {
+                name: "map".to_string(),
+                is_async: false,
+                generics: vec!["A".to_string(), "U".to_string()],
+                params: vec![
+                    TsParam {
+                        name: "self".to_string(),
+                        ty: Some(TsType::named("Box<A>")),
+                        optional: false,
+                    },
+                    TsParam {
+                        name: "f".to_string(),
+                        ty: Some(TsType::named("(a0: A) => U")),
+                        optional: false,
+                    },
+                ],
+                return_type: Some(TsType::named("Box<U>")),
+                doc: None,
+                inline: false,
+                body: vec![TsStmt::return_stmt(
+                    Some(TsExpr::Ident("{ value: f(self.value) }".to_string())),
+                    None,
+                )],
+            }],
+            0,
+        );
+        assert_eq!(
+            out,
+            "{\n  map<A, U>(self: Box<A>, f: (a0: A) => U): Box<U> {\n    return { value: f(self.value) };\n  },\n}"
+        );
+    }
+
+    /// #1337: a method with no generics prints no `<>` at all — the
+    /// ordinary, dominant case (every prior slice's own real method
+    /// entries), confirming `generics: Vec::new()` is a true no-op, not
+    /// an empty `<>`.
+    #[test]
+    fn multiline_object_renders_a_non_generic_method_entry_with_no_angle_brackets() {
+        let mut out = String::new();
+        render_multiline_object(
+            &mut out,
+            &[TsObjectEntry::Method {
+                name: "get".to_string(),
+                is_async: false,
+                generics: Vec::new(),
+                params: vec![],
+                return_type: Some(TsType::named("void")),
+                doc: None,
+                inline: false,
+                body: vec![],
+            }],
+            0,
+        );
+        assert_eq!(out, "{\n  get(): void {\n  },\n}");
+    }
+
+    /// #1337: `TsObjectEntry::Method`'s own `doc` field prints a JSDoc
+    /// block immediately before the method entry, same indent, no blank
+    /// line between — `Timestamp.diff`'s own real shape
+    /// (`65_money_uses_time`), reusing `render_doc_comment` (the same
+    /// renderer `TsStmtKind::DocComment` already uses) rather than a
+    /// second copy.
+    #[test]
+    fn multiline_object_renders_a_method_entry_with_a_preceding_doc_comment() {
+        let mut out = String::new();
+        render_multiline_object(
+            &mut out,
+            &[TsObjectEntry::Method {
+                name: "diff".to_string(),
+                is_async: false,
+                generics: Vec::new(),
+                params: vec![TsParam {
+                    name: "self".to_string(),
+                    ty: Some(TsType::named("Timestamp")),
+                    optional: false,
+                }],
+                return_type: Some(TsType::named("Span")),
+                doc: Some("Compute the duration between two timestamps.".to_string()),
+                inline: false,
+                body: vec![TsStmt::raw("    return 0;\n", None)],
+            }],
+            0,
+        );
+        assert_eq!(
+            out,
+            "{\n  /**\n   * Compute the duration between two timestamps.\n   */\n  diff(self: Timestamp): Span {\n    return 0;\n  },\n}"
+        );
+    }
+
+    /// #1337: `TsObjectEntry::Method`'s own `inline: true` renders the
+    /// whole entry — signature and one-statement body alike — on ONE
+    /// physical line, `emit_forwarded_methods`'s own real shape
+    /// (`255_context_uses_commons_static_method`'s own real `equals`
+    /// entry: `equals(self: Cents, other: Cents): boolean { return
+    /// __CommonsCents.equals(self, other) as unknown as boolean; },`),
+    /// distinct from every other real `Method` entry in this tree
+    /// (always multi-line, `inline: false`).
+    #[test]
+    fn multiline_object_renders_an_inline_method_entry_on_one_line() {
+        let mut out = String::new();
+        render_multiline_object(
+            &mut out,
+            &[TsObjectEntry::Method {
+                name: "equals".to_string(),
+                is_async: false,
+                generics: Vec::new(),
+                params: vec![
+                    TsParam {
+                        name: "self".to_string(),
+                        ty: Some(TsType::named("Cents")),
+                        optional: false,
+                    },
+                    TsParam {
+                        name: "other".to_string(),
+                        ty: Some(TsType::named("Cents")),
+                        optional: false,
+                    },
+                ],
+                return_type: Some(TsType::named("boolean")),
+                doc: None,
+                inline: true,
+                body: vec![TsStmt::return_stmt(
+                    Some(TsExpr::As {
+                        expr: Box::new(TsExpr::As {
+                            expr: Box::new(TsExpr::Call {
+                                callee: Box::new(TsExpr::Member {
+                                    object: Box::new(TsExpr::Ident("__CommonsCents".to_string())),
+                                    property: "equals".to_string(),
+                                }),
+                                args: vec![
+                                    TsExpr::Ident("self".to_string()),
+                                    TsExpr::Ident("other".to_string()),
+                                ],
+                            }),
+                            ty: TsType::named("unknown"),
+                        }),
+                        ty: TsType::named("boolean"),
+                    }),
+                    None,
+                )],
+            }],
+            0,
+        );
+        assert_eq!(
+            out,
+            "{\n  equals(self: Cents, other: Cents): boolean { return __CommonsCents.equals(self, other) as unknown as boolean; },\n}"
+        );
     }
 }

@@ -1004,8 +1004,11 @@ fn emit_call_wrapper(
     TsObjectEntry::Method {
         name: sname.to_string(),
         is_async: true,
+        generics: Vec::new(),
         params,
         return_type: None,
+        doc: None,
+        inline: false,
         body: vec![return_(Some(call(
             member_chain(ident("handlers"), &[sname, "call"]),
             call_args,
@@ -1058,6 +1061,7 @@ fn emit_event_wrapper(sname: &str, h: &Handler, protocol: &ServiceProtocol) -> T
     TsObjectEntry::Method {
         name: sname.to_string(),
         is_async: true,
+        generics: Vec::new(),
         params: vec![
             TsParam {
                 name: "payload".to_string(),
@@ -1071,6 +1075,8 @@ fn emit_event_wrapper(sname: &str, h: &Handler, protocol: &ServiceProtocol) -> T
             },
         ],
         return_type: None,
+        doc: None,
+        inline: false,
         body: vec![return_(Some(call(
             member_chain(ident("handlers"), &[sname, "event"]),
             args,
@@ -1103,8 +1109,11 @@ fn emit_cron_wrapper(sname: &str, cron_idx: usize, h: &Handler) -> TsObjectEntry
     TsObjectEntry::Method {
         name: method_key.clone(),
         is_async: true,
+        generics: Vec::new(),
         params,
         return_type: None,
+        doc: None,
+        inline: false,
         body: vec![return_(Some(call(
             member_chain(ident("handlers"), &[sname, &method_key]),
             call_args,
@@ -1137,8 +1146,11 @@ fn emit_queue_wrapper(sname: &str, queue_idx: usize, h: &Handler) -> TsObjectEnt
     TsObjectEntry::Method {
         name: method_key.clone(),
         is_async: true,
+        generics: Vec::new(),
         params,
         return_type: None,
+        doc: None,
+        inline: false,
         body: vec![return_(Some(call(
             member_chain(ident("handlers"), &[sname, &method_key]),
             call_args,
@@ -1307,8 +1319,11 @@ fn emit_websocket_upgrade(
             return TsObjectEntry::Method {
                 name: method_name,
                 is_async: true,
+                generics: Vec::new(),
                 params,
                 return_type: None,
+                doc: None,
+                inline: false,
                 body: stmts,
             };
         }
@@ -1484,8 +1499,11 @@ fn emit_websocket_upgrade(
     TsObjectEntry::Method {
         name: method_name,
         is_async: true,
+        generics: Vec::new(),
         params,
         return_type: None,
+        doc: None,
+        inline: false,
         body: stmts,
     }
 }
@@ -1622,8 +1640,11 @@ fn emit_http_wrapper(
         return TsObjectEntry::Method {
             name: method_key,
             is_async: true,
+            generics: Vec::new(),
             params,
             return_type: None,
+            doc: None,
+            inline: false,
             body: stmts,
         };
     }
@@ -1643,8 +1664,11 @@ fn emit_http_wrapper(
     TsObjectEntry::Method {
         name: method_key.clone(),
         is_async: true,
+        generics: Vec::new(),
         params,
         return_type: None,
+        doc: None,
+        inline: false,
         body: vec![return_(Some(call(
             member_chain(ident("handlers"), &[sname, &method_key]),
             call_args,
@@ -1756,8 +1780,11 @@ fn emit_http_oidc_wrapper(
     TsObjectEntry::Method {
         name: method_key,
         is_async: true,
+        generics: Vec::new(),
         params,
         return_type: None,
+        doc: None,
+        inline: false,
         body: stmts,
     }
 }
@@ -2044,8 +2071,11 @@ fn emit_http_sum_wrapper(
     TsObjectEntry::Method {
         name: method_key,
         is_async: true,
+        generics: Vec::new(),
         params,
         return_type: None,
+        doc: None,
+        inline: false,
         body: stmts,
     }
 }

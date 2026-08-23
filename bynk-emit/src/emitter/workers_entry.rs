@@ -1115,11 +1115,14 @@ pub(crate) fn emit_worker_entry(
     let mut default_entries: Vec<TsObjectEntry> = vec![TsObjectEntry::Method {
         name: "fetch".to_string(),
         is_async: true,
+        generics: Vec::new(),
         params: fetch_params,
         return_type: Some(TsType::named_with_args(
             "Promise",
             vec![TsType::named("Response")],
         )),
+        doc: None,
+        inline: false,
         body: fetch_body,
     }];
 
@@ -1241,11 +1244,14 @@ fn emit_scheduled_handler(
     TsObjectEntry::Method {
         name: "scheduled".to_string(),
         is_async: true,
+        generics: Vec::new(),
         params,
         return_type: Some(TsType::named_with_args(
             "Promise",
             vec![TsType::named("void")],
         )),
+        doc: None,
+        inline: false,
         body,
     }
 }
@@ -1404,11 +1410,14 @@ fn emit_queue_handler(
     TsObjectEntry::Method {
         name: "queue".to_string(),
         is_async: true,
+        generics: Vec::new(),
         params,
         return_type: Some(TsType::named_with_args(
             "Promise",
             vec![TsType::named("void")],
         )),
+        doc: None,
+        inline: false,
         body,
     }
 }

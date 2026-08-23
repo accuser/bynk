@@ -254,6 +254,29 @@ pub(crate) enum TsStmtKind {
     /// from a prefix operator used as an *operand*, not a shape `Unary`
     /// could represent by adding a variant.
     Increment(TsExpr),
+    /// A pre-rendered, unconditional-passthrough statement blob — printed
+    /// exactly as given, with no leading indent, no added semicolon, no
+    /// added braces (matching [`TsStmtKind::Verbatim`]'s own `out.push_str(
+    /// text)` rendering, not the ordinary per-kind `indent(depth)`-prefixed
+    /// shape every other variant gets). #1337's own real need:
+    /// `emit_method`'s own body is delegated wholesale to
+    /// `emit_block_as_function_body_with_return` (`bynk-emit`'s
+    /// `emitter/lower.rs:201`) — the one splice boundary ADR
+    /// `arc-c-lower-rs-permanent-exclusion` names as a *permanent*,
+    /// deliberate exclusion from this tree (`lower.rs` is the compiler's
+    /// own second code-generation pass, comprehensive language-surface
+    /// work Arc C was never scoped to cover), not a not-yet-converted
+    /// residue [`TsStmtKind::Verbatim`] would misrepresent it as.
+    ///
+    /// Deliberately a SEPARATE variant from `Verbatim`, not a reuse of it,
+    /// even though both render identically (`out.push_str(text)`): the
+    /// `verbatim_sites`/`verbatim_origins` probes exist specifically to
+    /// track Arc C's own *temporary* conversion residue trending toward
+    /// zero — a `Raw` site is never counted there (it has no
+    /// `VerbatimOrigin` at all), because using `Verbatim` here would make
+    /// this permanent exclusion look like unfinished Arc C work a future
+    /// slice is expected to close, which it structurally cannot.
+    Raw(String),
 }
 
 /// One `case`/`default` arm of a `TsStmtKind::Switch`. `test: None` is the
@@ -470,6 +493,16 @@ impl TsStmt {
     pub fn increment(expr: TsExpr, span: Option<Span>) -> Self {
         Self {
             kind: TsStmtKind::Increment(expr),
+            span,
+        }
+    }
+
+    /// The one constructor for a `Raw`-kinded statement — `text` is printed
+    /// verbatim, exactly as given (see `TsStmtKind::Raw`'s own doc for
+    /// why this is a distinct kind from `Verbatim`, not a reuse of it).
+    pub fn raw(text: impl Into<String>, span: Option<Span>) -> Self {
+        Self {
+            kind: TsStmtKind::Raw(text.into()),
             span,
         }
     }
@@ -792,11 +825,50 @@ pub enum TsObjectEntry {
     /// entries all carry one (`: Promise<Response>`/`: Promise<void>`), the
     /// same field [`TsClassMethod::return_type`] already has for the
     /// declaration-position sibling this mirrors.
+    ///
+    /// `generics` and `doc` (#1337's own real gaps, both found only by the
+    /// zero-diff fixture check — not the accepted proposal's own citation,
+    /// which searched the project-form fixture corpus only;
+    /// `402_generic_instance_method` is single-file form, and while
+    /// `65_money_uses_time`/`64_full_time_commons` ARE project form, the
+    /// citation's own doc-comment search used the wrong marker, `///`
+    /// rather than this language's real `---`-delimited doc block —
+    /// both gaps outside what that first pass actually checked):
+    ///
+    /// - `generics`: a method on a generic type erases to
+    ///   `{name}<{generics}>(self: {Type}<{generics}>, …)` — `Box.map<A,
+    ///   U>`, the type's own `A` plus the method's own `U`. Bare names
+    ///   only, no bounds/defaults — every real generic parameter list this
+    ///   tree ever builds is (matching [`crate::printer::print_type`]'s
+    ///   own `TsType::Named`-only-name convention for the identical
+    ///   reason), so a full `Vec<TsParam>` (with its own unneeded
+    ///   `ty`/`optional` fields) would be the wrong shape here.
+    /// - `doc`: a JSDoc block immediately preceding the method entry, at
+    ///   the same indent — `Timestamp.diff`/`Timestamp.add`
+    ///   (`65_money_uses_time`) both carry one. Printed the identical way
+    ///   `TsStmtKind::DocComment` is (same escaping, same blank-line
+    ///   convention), reusing that one renderer rather than a second copy
+    ///   — this field exists because an object-entry method has no
+    ///   `TsStmt` slot of its own to hold a preceding statement in.
     Method {
         name: String,
         is_async: bool,
+        generics: Vec<String>,
         params: Vec<TsParam>,
         return_type: Option<TsType>,
+        doc: Option<String>,
+        /// `false` (every method entry landed before #1337): `body` renders
+        /// as an ordinary braced, multi-line block. `true`: `body` renders
+        /// compactly on the SAME line as the signature — `{ <stmts>; }`,
+        /// reusing this crate's own established compact-statement
+        /// machinery (`TsStmtKind::InlineBlock`'s own sibling shape). A
+        /// real gap #1337's own zero-diff check found:
+        /// `emit_forwarded_methods`'s own pre-conversion `writeln!` always
+        /// built the WHOLE entry — signature and one-statement body alike —
+        /// on one physical line (`"  {method}({params}): {ret} {{ return
+        /// …; }},"`), a genuinely different real shape from every other
+        /// `Method` entry in this tree, all of which are multi-line.
+        inline: bool,
         body: Vec<TsStmt>,
     },
     /// `...expr` — an object-spread entry (Decision A, gap 2), e.g. `{
