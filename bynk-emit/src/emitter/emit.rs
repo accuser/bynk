@@ -200,6 +200,11 @@ fn emit_refined_type(
     writeln!(out).unwrap();
 }
 
+/// #1335 (R7.1): each guard is a real [`bynk_ts::TsStmt::If`] wrapping a
+/// [`bynk_ts::TsStmt::Return`], printed at depth 2 (`out`'s own 4-space
+/// convention here) through [`bynk_ts::print_stmt`], instead of hand-rolled
+/// `writeln!`s — `emit_refined_checks` and `emit_pred_check`'s own exact
+/// signatures are unchanged, the same P7.9/step-1 (#1333) pattern.
 fn emit_refined_checks(
     out: &mut String,
     t: &TypeDecl,
@@ -208,24 +213,20 @@ fn emit_refined_checks(
 ) {
     let name = &t.name.name;
     if base == BaseType::Int {
-        writeln!(out, "    if (!Number.isInteger(value)) {{").unwrap();
-        writeln!(
-            out,
-            "      return Err({{ field: \"{name}\", message: \"must be an integer\", value }});"
-        )
-        .unwrap();
-        writeln!(out, "    }}").unwrap();
+        out.push_str(&print_numeric_guard_stmt(
+            name,
+            "isInteger",
+            "must be an integer",
+        ));
     }
     // v0.21: validated `Float` values are finite — `.of` and the boundary
     // codec agree (ADR 0040); only in-language arithmetic is host-defined.
     if base == BaseType::Float {
-        writeln!(out, "    if (!Number.isFinite(value)) {{").unwrap();
-        writeln!(
-            out,
-            "      return Err({{ field: \"{name}\", message: \"must be a finite number\", value }});"
-        )
-        .unwrap();
-        writeln!(out, "    }}").unwrap();
+        out.push_str(&print_numeric_guard_stmt(
+            name,
+            "isFinite",
+            "must be a finite number",
+        ));
     }
     if let Some(r) = refinement {
         for pred in &r.predicates {
@@ -234,15 +235,83 @@ fn emit_refined_checks(
     }
 }
 
+/// `if (!Number.{method}(value)) { return Err({ field: "{name}", message:
+/// "{message}", value }); }` — the `Int`/`Float` base-type guard shared by
+/// both `emit_refined_checks` call sites, `field`/`message` both real
+/// string literals with nothing to escape (a Bynk type name; a fixed,
+/// hand-written English message).
+fn print_numeric_guard_stmt(name: &str, method: &str, message: &str) -> String {
+    let cond = bynk_ts::TsExpr::Unary {
+        op: bynk_ts::TsUnaryOp::Not,
+        expr: Box::new(bynk_ts::TsExpr::Call {
+            callee: Box::new(bynk_ts::TsExpr::Member {
+                object: Box::new(bynk_ts::TsExpr::Ident("Number".to_string())),
+                property: method.to_string(),
+            }),
+            args: vec![bynk_ts::TsExpr::Ident("value".to_string())],
+        }),
+    };
+    print_guard_if_stmt(
+        cond,
+        bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(name.to_string())),
+        bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(message.to_string())),
+    )
+}
+
+/// `if (<cond>) { return Err({ field: <field>, message: <message>, value
+/// }); }` at depth 2 — the one real shape both `print_numeric_guard_stmt`
+/// and `emit_pred_check` build, differing only in `cond`/`field`/`message`.
+fn print_guard_if_stmt(
+    cond: bynk_ts::TsExpr,
+    field: bynk_ts::TsExpr,
+    message: bynk_ts::TsExpr,
+) -> String {
+    let err_obj = bynk_ts::TsExpr::object_entries(vec![
+        bynk_ts::TsObjectEntry::Prop("field".to_string(), field),
+        bynk_ts::TsObjectEntry::Prop("message".to_string(), message),
+        bynk_ts::TsObjectEntry::Shorthand("value".to_string()),
+    ]);
+    let return_stmt = bynk_ts::TsStmt::return_stmt(
+        Some(bynk_ts::TsExpr::Call {
+            callee: Box::new(bynk_ts::TsExpr::Ident("Err".to_string())),
+            args: vec![err_obj],
+        }),
+        None,
+    );
+    let if_stmt =
+        bynk_ts::TsStmt::if_stmt(cond, bynk_ts::TsStmt::block(vec![return_stmt], None), None);
+    bynk_ts::print_stmt(&if_stmt, 2)
+}
+
 fn emit_pred_check(out: &mut String, type_name: &str, pred: &PredKind) {
     let (cond, msg) = crate::emitter::pred_condition_and_message(pred, "value");
-    writeln!(out, "    if (!({cond})) {{").unwrap();
-    writeln!(
-        out,
-        "      return Err({{ field: \"{type_name}\", message: \"{msg}\", value }});",
-    )
-    .unwrap();
-    writeln!(out, "    }}").unwrap();
+    // `cond` is opaque, already-formed JS condition text (e.g.
+    // `value >= 0`, or, for `PredKind::Matches`, a `RegExp(...)` expression
+    // whose own pattern text is already `escape_ts_string`-escaped) —
+    // carried as a raw `Ident` wrapped in the real `!(...)` this crate's
+    // own `Not`/`Paren` already represent, reproducing `if (!({cond}))`
+    // exactly. `msg` gets the SAME opaque, pre-quoted treatment, not
+    // `TsLit::Str` — deviating from the accepted proposal's own Decision B
+    // ("msg as an ordinary TsLit::Str"), because `PredKind::Matches`'s own
+    // message embeds that same already-`escape_ts_string`-escaped pattern
+    // text directly (`format!("must match /{escaped}/")`); running it a
+    // second time through `TsLit::Str`'s own renderer (which re-applies the
+    // identical escaper) would double-escape every backslash the pattern
+    // contains — a real correctness bug for any `Matches` predicate whose
+    // pattern needs one. Every other `PredKind` arm's own message is plain,
+    // already-safe English text with nothing to escape, so this is a
+    // uniform, always-correct choice, not a narrow special case.
+    let cond_expr = bynk_ts::TsExpr::Unary {
+        op: bynk_ts::TsUnaryOp::Not,
+        expr: Box::new(bynk_ts::TsExpr::Paren(Box::new(bynk_ts::TsExpr::Ident(
+            cond,
+        )))),
+    };
+    out.push_str(&print_guard_if_stmt(
+        cond_expr,
+        bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(type_name.to_string())),
+        bynk_ts::TsExpr::Ident(format!("\"{msg}\"")),
+    ));
 }
 
 /// v0.157 (ADR 0183): the erased TS type-parameter list for a generic
@@ -4460,6 +4529,82 @@ mod ts_type_params_tests {
     #[test]
     fn single_param_renders_with_no_separator() {
         assert_eq!(ts_type_params(&[type_param("T")]), "<T>");
+    }
+}
+
+#[cfg(test)]
+mod refined_checks_tests {
+    use super::{emit_pred_check, print_numeric_guard_stmt};
+    use bynk_syntax::ast::PredKind;
+
+    /// #1335: the real, converted `print_numeric_guard_stmt` matches
+    /// `254_multi_file_commons_workers_codec`'s own real `Cents.of`
+    /// `Int`-base guard byte-for-byte.
+    #[test]
+    fn numeric_guard_matches_the_real_fixtures_own_int_guard_byte_for_byte() {
+        assert_eq!(
+            print_numeric_guard_stmt("Cents", "isInteger", "must be an integer"),
+            "    if (!Number.isInteger(value)) {\n      \
+             return Err({ field: \"Cents\", message: \"must be an integer\", value });\n    \
+             }\n"
+        );
+    }
+
+    /// #1335: the real, converted `emit_pred_check` matches
+    /// `254_multi_file_commons_workers_codec`'s own real `Cents.of`
+    /// `NonNegative` predicate check byte-for-byte.
+    #[test]
+    fn pred_check_matches_the_real_fixtures_own_non_negative_check_byte_for_byte() {
+        let mut out = String::new();
+        emit_pred_check(&mut out, "Cents", &PredKind::NonNegative);
+        assert_eq!(
+            out,
+            "    if (!(value >= 0)) {\n      \
+             return Err({ field: \"Cents\", message: \"must be non-negative\", value });\n    \
+             }\n"
+        );
+    }
+
+    /// #1335's own real deviation from the accepted proposal: `msg` is
+    /// carried as opaque, pre-quoted text (not `TsLit::Str`) specifically
+    /// because `PredKind::Matches`'s own message embeds
+    /// `escape_ts_string`-escaped pattern text directly. A source pattern
+    /// with one real backslash (`\d+`) comes back from `escape_ts_string`
+    /// already doubled to two backslash *characters* (the escaped form —
+    /// what a TS string literal must contain for the runtime string to hold
+    /// one literal backslash), and both the condition's own regex-source
+    /// string and the message embed that same already-escaped text raw,
+    /// matching the pre-conversion `writeln!` code exactly. If `msg` were
+    /// instead run through `TsLit::Str`'s own escaper (as the accepted
+    /// proposal's own Decision B originally called for), those two already-
+    /// doubled backslash characters would each be escaped AGAIN, quadrupling
+    /// the original single backslash — this test pins the correct,
+    /// once-escaped form and would fail under that double-escaping bug. Not
+    /// reachable by any fixture today (no `Matches` predicate in the corpus
+    /// uses a backslash), so this is the only proof this real, latent bug
+    /// class stays closed.
+    #[test]
+    fn pred_check_does_not_double_escape_a_matches_patterns_own_backslash() {
+        let mut out = String::new();
+        emit_pred_check(&mut out, "Code", &PredKind::Matches(r"\d+".to_string()));
+        // `escape_ts_string` doubles the pattern's one real backslash to two
+        // backslash *characters* — the correctly-escaped form, not a bug.
+        // Both the regex-source string and the message embed that same
+        // twice-backslash text raw (one escaping pass, not two).
+        assert!(
+            out.contains("\"^(?:\" + \"\\\\d+\" + \")$\""),
+            "condition should carry the once-escaped two-backslash form: {out}"
+        );
+        assert!(
+            out.contains("must match /\\\\d+/"),
+            "message should carry the same once-escaped two-backslash form: {out}"
+        );
+        // A double-escaping bug would quadruple the original single
+        // backslash to four backslash characters in the message.
+        assert!(
+            !out.contains("must match /\\\\\\\\d+/"),
+            "message must not be double-escaped to four backslashes: {out}"
+        );
     }
 }
 
