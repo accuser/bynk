@@ -4963,6 +4963,17 @@ pub(crate) fn escape_ts_string(s: &str) -> String {
 /// could silently drift from the other. `receiver` is the bound name the
 /// generated condition reads (`value` or `json`); the returned message is the
 /// same either side of the boundary by construction.
+///
+/// Review of #1336: both real callers (`emit::emit_pred_check`,
+/// `serialisation::emit_inline_pred_check`) splice the returned `message`
+/// straight into a TypeScript string literal **unescaped** — safe today only
+/// because every arm's own message is either static English text or already
+/// `escape_ts_string`-escaped (the `Matches` arm's own pattern). A future arm
+/// returning raw, unescaped text (a predicate carrying a user-supplied string
+/// operand, say) would emit a malformed or injectable literal at both call
+/// sites, and nothing in the existing fixture corpus would catch it. This
+/// invariant must match at every arm added here, not just the ones that exist
+/// today — return plain text or already-`escape_ts_string`-escaped text only.
 pub(crate) fn pred_condition_and_message(pred: &PredKind, receiver: &str) -> (String, String) {
     match pred {
         PredKind::NonNegative => (
