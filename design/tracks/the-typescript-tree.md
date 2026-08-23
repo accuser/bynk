@@ -543,10 +543,13 @@ content, the ICU-formatting cluster, is tracked below as its own future step (11
 step (1)'s residue. Steps (2)-(10) are
 unaffected by this correction, their own numbering unchanged: (2) the type-declaration cluster
 `emit_type`/`emit_refined_type`/`emit_refined_checks`/`emit_pred_check`/`emit_record_type`/
-`emit_sum_type` (`emit.rs:46-376`, step 2's own committed range `46-364` was stale by 12 lines —
-`emit_sum_type` genuinely ends at 376 — excluding `emit_doc_block`/`sorted_index_fields`/
-`ts_type_params`, step (1)'s own former leaf helpers, which lived inside this same numeric span but
-were scoped separately and are now landed/excluded per the correction above). **Fourth correction
+`emit_sum_type` (`emit_type` through `emit_sum_type`, immediately preceding `emit_attached_methods`
+in file order — **named by function, not by absolute line range**: this span's own line-number
+citation went stale twice in a row, first by 12 lines then, within #1335's own correcting commit,
+by another 69 as that same slice's own new code shifted every later line — the second time is the
+signal to stop citing absolute lines here at all; excludes `emit_doc_block`/`sorted_index_fields`/
+`ts_type_params`, step (1)'s own former leaf helpers, which lived inside this same span but were
+scoped separately and are now landed/excluded per the correction above). **Fourth correction
 (#1335): step (2)'s own 6-function list does not convert as one unit.** All 6 genuinely build real
 TypeScript (no repeat of step 1's "9 of 13 aren't emission code" surprise), but 3 of the 6
 (`emit_refined_type`/`emit_record_type`/`emit_sum_type`) call `emit_attached_methods` (step (3)'s
@@ -578,8 +581,10 @@ at all — `If`/`Return`/`Object`/`Unary`/`Paren`/`Str` all already existed. `ts
 delta, the same class of probe-arithmetic correction #1329's own `ts_writes` finding required. (3)
 the
 method-emission cluster `emit_attached_methods`/
-`emit_forwarded_methods`/`emit_method` (`emit.rs:365-506` — corrected from an earlier `365-582`
-that silently included all of `emit_free_fn`, step (4)'s own function); (4) `emit_free_fn`/
+`emit_forwarded_methods`/`emit_method` (named by function, not by absolute line range, per the
+same staleness lesson above — an earlier `365-582` citation here silently included all of
+`emit_free_fn`, step (4)'s own function, before being corrected to `365-506`, which has itself
+since drifted); (4) `emit_free_fn`/
 `emit_contract_guarded_body` (`emit.rs:507-653`); (5) `emit_messages_bundle`
 (`emit.rs:1027-1120`) plus any ICU helpers not already bundled in (1); (6) `emit_capability`/
 `emit_provider` (`emit.rs:1121-1328`); (7) `emit_service` (`emit.rs:1340-1708`, 369 lines) plus its
