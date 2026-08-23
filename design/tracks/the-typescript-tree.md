@@ -538,11 +538,9 @@ below) is already flagged as needing its own dedicated grounding pass. **Step 1'
 scope was therefore exactly 2 functions** — `emit_doc_block` and `ts_type_params`, both **landed**
 in #1333 (both kept their exact existing `-> String`/`out: &mut String` signatures, the P7.9
 pattern, since neither owned its own `Verbatim` construction site — `verbatim_sites` unaffected by
-this slice, only `ts_writes` moved). Step 1 is therefore **essentially closed**: nothing remains in
-it except the ICU cluster, now tracked as its own separate future step, not step 1's own residue.
-
-**Step (1) is closed by #1333** — its only remaining real content, the ICU-formatting cluster, is
-tracked below as its own future step (11), not left as step (1)'s residue. Steps (2)-(10) are
+this slice, only `ts_writes` moved). **Step (1) is closed by #1333** — its only remaining real
+content, the ICU-formatting cluster, is tracked below as its own future step (11), not left as
+step (1)'s residue. Steps (2)-(10) are
 unaffected by this correction, their own numbering unchanged: (2) the type-declaration cluster
 `emit_type`/`emit_refined_type`/`emit_refined_checks`/`emit_pred_check`/`emit_record_type`/
 `emit_sum_type` (`emit.rs:46-364`, excluding `emit_doc_block`/`sorted_index_fields`/
