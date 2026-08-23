@@ -630,9 +630,20 @@ fn emit_method(
     // names only, matching `ts_type_params`'s own rendering exactly (see
     // `TsObjectEntry::Method::generics`'s own doc for why a full
     // `Vec<TsParam>` would be the wrong shape here).
+    //
+    // Review of #1338: must be a bare, UNESCAPED clone, not `ts_ident`.
+    // `ts_ident` is for value identifiers and renames reserved words like
+    // `deps`/`static`/`package` — all legal Bynk *type*-parameter names
+    // (`parse_optional_type_params` accepts any identifier). `self_ty_args`
+    // (via `ts_type_params`, a few lines above) and every `ts_type_ref`
+    // param/return type reference these same names unescaped, so escaping
+    // only the declaration site here would desync it from its own uses:
+    // `map<__id_deps>(self: Box<deps>): Box<deps>` — `deps` undeclared,
+    // `__id_deps` unused, a real tsc error the pre-conversion code never
+    // had (it built `map<deps>(self: Box<deps>)`, self-consistent).
     let generics: Vec<String> = method_generics
         .iter()
-        .map(|tp| ts_ident(&tp.name.name))
+        .map(|tp| tp.name.name.clone())
         .collect();
     let mut params: Vec<bynk_ts::TsParam> = Vec::new();
     if f.has_self {
@@ -5015,6 +5026,43 @@ type PaymentError = enum { Declined, InsufficientFunds }
         assert!(
             ts.contains("export interface Notified {\n  readonly id: string;\n}\n"),
             "{ts}"
+        );
+    }
+
+    /// Review of #1338, finding 1: a type parameter literally named `deps`
+    /// (a value-identifier reserved word, but a perfectly legal Bynk type
+    /// parameter — `parse_optional_type_params` accepts any identifier) must
+    /// render UNESCAPED at an attached method's own generic-declaration
+    /// site, matching every other reference to that same parameter
+    /// (`self_ty_args`, the method's own param/return types). Before the
+    /// fix, `generics` ran the name through `ts_ident` (value-identifier
+    /// escaping), producing `get<__id_deps>(self: Box<deps>): deps { ... }`
+    /// — `deps` undeclared, `__id_deps` unused, a real `tsc` error; no
+    /// fixture in the corpus covered a reserved-word type param, so the
+    /// zero-diff check alone could not have caught this.
+    #[test]
+    fn a_reserved_word_type_parameter_renders_unescaped_on_an_attached_method() {
+        let ts = emit_source(
+            r#"
+commons demo {
+  type Box[deps] = { value: deps }
+
+  fn Box.get(self) -> deps {
+    self.value
+  }
+}
+"#,
+        );
+        assert!(
+            ts.contains("get<deps>(self: Box<deps>): deps {"),
+            "expected the bare, unescaped `deps` type parameter at every \
+             reference (declaration, receiver, return type); got:\n{ts}"
+        );
+        assert!(
+            !ts.contains("__id_deps"),
+            "the type parameter's own declaration site must not be escaped \
+             via ts_ident (that renaming is for value identifiers only); \
+             got:\n{ts}"
         );
     }
 }

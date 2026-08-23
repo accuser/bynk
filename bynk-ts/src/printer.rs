@@ -1082,19 +1082,25 @@ fn render_object_entry_inline(out: &mut String, entry: &TsObjectEntry) {
             generics,
             params,
             return_type,
-            // A JSDoc block has no single-line form — not reachable
-            // through this function today: every real `Method` entry
-            // (`inline` or not) is placed via `render_multiline_object_
-            // entry`, never here (this function renders one ENTRY inline
-            // for when the whole ENCLOSING OBJECT is single-line, a
-            // different concept from a method's own body being compact),
-            // so `doc` is deliberately dropped rather than rendered,
-            // matching the plausible-but-inert posture this whole match
-            // already takes.
-            doc: _doc,
+            doc,
             inline,
             body,
         } => {
+            // Review of #1338, finding 2: a JSDoc block has no single-line
+            // form — not reachable through this function today: every real
+            // `Method` entry (`inline` or not) is placed via
+            // `render_multiline_object_entry`, never here (this function
+            // renders one ENTRY inline for when the whole ENCLOSING OBJECT
+            // is single-line, a different concept from a method's own body
+            // being compact). Silently dropping a JSDoc block would be a
+            // strictly worse failure mode than a loud check — the same
+            // "not reachable today, but worth a loud check" posture
+            // `render_compact_stmts`'s own `debug_assert!` (above) already
+            // established for an analogous inline-rendering hazard.
+            debug_assert!(
+                doc.is_none(),
+                "render_object_entry_inline: a Method entry's own doc comment has no single-line form"
+            );
             if *is_async {
                 out.push_str("async ");
             }
@@ -1490,7 +1496,23 @@ pub fn print_stmt(stmt: &TsStmt, depth: usize) -> String {
 /// same P7.9/#1333 "keep the caller's own signature, print just the
 /// fragment" pattern applied to an object-entry-shaped fragment instead of
 /// a whole statement or type.
+///
+/// Review of #1338, finding 3: a `TsStmtKind::Raw` body statement (the
+/// one real case today: `emit_method`'s own opaque `lower.rs`-sourced
+/// body) carries NO indent of its own — its text is captured pre-indented
+/// at a fixed absolute depth by its own caller — so it only renders
+/// correctly when `depth` is `0`, matching all four real call sites. At
+/// any other depth the signature/closing-brace move with `depth` but the
+/// `Raw` body's own baked-in indent does not, silently. Guarded here
+/// rather than left as a doc-only warning, since every real call site
+/// already satisfies it.
 pub fn print_object_entry(entry: &TsObjectEntry, depth: usize) -> String {
+    if let TsObjectEntry::Method { body, .. } = entry {
+        debug_assert!(
+            depth == 0 || !body.iter().any(|s| matches!(s.kind, TsStmtKind::Raw(_))),
+            "print_object_entry: a Raw-bodied Method entry's own baked-in indent only matches depth 0"
+        );
+    }
     let mut out = String::new();
     render_multiline_object_entry(&mut out, entry, depth);
     out
@@ -4294,6 +4316,63 @@ mod tests {
         assert_eq!(
             out,
             "{\n  equals(self: Cents, other: Cents): boolean { return __CommonsCents.equals(self, other) as unknown as boolean; },\n}"
+        );
+    }
+
+    /// Review of #1338, finding 4: `print_object_entry` — the exact public
+    /// API `emit_refined_type`/`emit_record_type`/`emit_sum_type`'s own
+    /// real call sites depend on — had no direct test; every #1337 test
+    /// above drives `render_multiline_object` instead. Pins the contract
+    /// those call sites rely on: `print_object_entry(&entry, 0)` produces
+    /// the same text as the entry-slice portion of what
+    /// `render_multiline_object`'s own depth-0 output produces for the
+    /// same entry (its own depth convention — the entry lands one level
+    /// deeper than the object, i.e. `depth + 1` — matches exactly, not
+    /// coincidentally, since both paths route through the same
+    /// `render_multiline_object_entry`).
+    #[test]
+    fn print_object_entry_matches_the_multiline_objects_own_entry_slice() {
+        // A real `TsStmt::return_stmt` body, not `Raw` — `Raw`'s own baked-in
+        // indent only matches depth 0 (finding 3's own new guard), so an
+        // ordinary real-node body is what this depth-convention contract
+        // needs to prove at a non-zero depth.
+        let entry = TsObjectEntry::Method {
+            name: "of".to_string(),
+            is_async: false,
+            generics: Vec::new(),
+            params: vec![TsParam {
+                name: "value".to_string(),
+                ty: Some(TsType::named("string")),
+                optional: false,
+            }],
+            return_type: Some(TsType::named("Uuid")),
+            doc: None,
+            inline: false,
+            body: vec![TsStmt::return_stmt(
+                Some(TsExpr::As {
+                    expr: Box::new(TsExpr::Ident("value".to_string())),
+                    ty: TsType::named("Uuid"),
+                }),
+                None,
+            )],
+        };
+
+        let mut whole_object = String::new();
+        render_multiline_object(&mut whole_object, std::slice::from_ref(&entry), 0);
+        // `render_multiline_object`'s own entry line is followed by `\n`
+        // then the closing `}` (no blank line between them for a single
+        // entry) — `print_object_entry`'s own output keeps that same
+        // trailing `\n` (it has no closing brace of its own to attach to),
+        // so the real equivalence is entry-slice-plus-newline, not a bare
+        // slice.
+        let entry_slice_with_trailing_newline = whole_object
+            .strip_prefix("{\n")
+            .and_then(|s| s.strip_suffix('}'))
+            .expect("render_multiline_object's own single-entry output has a { }-wrapper");
+
+        assert_eq!(
+            print_object_entry(&entry, 0),
+            entry_slice_with_trailing_newline
         );
     }
 }
