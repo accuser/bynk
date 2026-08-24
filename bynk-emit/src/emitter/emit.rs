@@ -2147,6 +2147,7 @@ pub(crate) fn emit_provider(
             is_async: effectful,
             params,
             return_type: Some(ts_type_ref_to_ts_type(&op.return_type, None)),
+            doc: None,
             body: vec![bynk_ts::TsStmt::raw(body_text.clone(), None)],
         };
         let printed = bynk_ts::print_class_method(&method, class_depth);
@@ -4521,6 +4522,7 @@ pub(crate) fn emit_agent(
             "Promise",
             vec![bynk_ts::TsType::named(state_ty.clone())],
         )),
+        doc: None,
         body: load_state_body,
     };
     let class_depth = 0;
@@ -4748,6 +4750,7 @@ pub(crate) fn emit_agent(
             "Promise",
             vec![bynk_ts::TsType::named("void")],
         )),
+        doc: None,
         body: commit_state_body,
     };
     out.push_str(&bynk_ts::print_class_method(
@@ -4761,11 +4764,25 @@ pub(crate) fn emit_agent(
         .map(|f| f.name.name.clone())
         .collect();
     for h in &a.handlers {
-        emit_doc_block(out, h.documentation.as_deref(), INDENT_STEP);
-        let mut params: Vec<String> = h
+        // Arc C, slice 23 (#1375): closes step (9)'s own fourth sub-slice —
+        // each handler converts to a real `bynk_ts::TsClassMethod` fragment,
+        // the same "params/return-type real, whole body one opaque
+        // `TsStmt::Raw`, two-level offset merge" shape `emit_service`
+        // (#1361) already established for its own near-identical prologue/
+        // body/epilogue wrapping — printed through `print_class_method`
+        // (#1359) instead of `print_object_entry`, since a handler here is
+        // a CLASS method, not an object-literal entry. The old standalone
+        // `emit_doc_block` call is removed — `doc` on the method now
+        // carries it, the same doc-duplication bug #1361's own review
+        // caught fixed proactively here rather than rediscovered.
+        let mut params: Vec<bynk_ts::TsParam> = h
             .params
             .iter()
-            .map(|p| format!("{}: {}", ts_ident(&p.name.name), ts_type_ref(&p.type_ref)))
+            .map(|p| bynk_ts::TsParam {
+                name: ts_ident(&p.name.name),
+                ty: Some(ts_type_ref_to_ts_type(&p.type_ref, None)),
+                optional: false,
+            })
             .collect();
         // Lower body into a buffer so we can detect cross-context usage and
         // shape the deps type accordingly.
@@ -4893,9 +4910,12 @@ pub(crate) fn emit_agent(
                 )
             };
         }
-        params.push(format!("deps: {deps_ty}"));
-        let ret = ts_type_ref(&h.return_type);
-        let async_kw = if effectful { "async " } else { "" };
+        params.push(bynk_ts::TsParam {
+            name: "deps".to_string(),
+            ty: Some(bynk_ts::TsType::named(deps_ty)),
+            optional: false,
+        });
+        let ret = ts_type_ref_to_ts_type(&h.return_type, None);
         let method = h
             .method_name
             .as_ref()
@@ -4912,87 +4932,114 @@ pub(crate) fn emit_agent(
                 | IrHandlerKind::Close
                 | IrHandlerKind::Event => "call".to_string(),
             });
-        writeln!(
-            out,
-            "  {async_kw}{method}({params}): {ret} {{",
-            params = params.join(", "),
-        )
-        .unwrap();
         // Load state at entry. A state-record handler binds `currentState` and
         // commits explicitly via `commit`. A store handler binds a mutable
         // working record `__state`; reads/writes go through it, and (if it writes)
         // the body is wrapped so `commitState` runs once at handler end — the
         // implicit, atomic commit (ADR 0109). A fault before that flush persists
         // nothing; the invariant gate inside `commitState` runs before the write.
-        let splice = |out: &mut String| {
-            let base = out.len();
-            out.push_str(&body_out);
-            if let Some(module) = source_map {
-                module
-                    .borrow_mut()
-                    .merge(&body_smb.borrow(), &body_out, out, base, 0);
-            }
-        };
-        // Events track, slice 0 (spine #936): the same release-at-commit
-        // buffer the service path declares (see `emit_service`'s
-        // `block_uses_emit` gate) — an agent handler needs the same
-        // completion boundary, and a writing store-agent already has one
-        // (`commitState`), so `__events` just rides alongside it there,
-        // flushing to `deps.__eventsDispatch` (threaded above) once the
-        // state commit itself has succeeded. Gated on `body_emits_directly`
-        // specifically (not the broader `needs_events_dispatch` above) —
-        // a handler that only *forwards* `__eventsDispatch` to another
-        // local agent it calls has nothing of its own to buffer or flush;
-        // `deps` (typed with the field) simply passes through unchanged.
+        //
+        // The whole prologue+body+epilogue is captured into one local
+        // `raw_body` buffer instead of `out` directly — the same
+        // restructuring #1361 (`emit_service`) already made for its own
+        // near-identical events-IIFE wrapping, needed here because the
+        // method's own params/return-type/doc now print through
+        // `print_class_method` as one fragment, which can no longer be
+        // interleaved with direct `writeln!`s into `out` the way the
+        // pre-conversion code was.
         let body_emits_directly = crate::emitter::block_uses_emit(&h.body, &commons.callees);
         let events_decl = format!(
             "    const __events: Array<{}> = [];",
             crate::emitter::EVENTS_WIRE_EVENT_TS_TYPE
         );
         let flush = "    if (__events.length > 0) { await deps.__eventsDispatch(__events); }";
+        let mut raw_body = String::new();
+        let body_out_offset_in_raw;
         if is_store_agent {
             if writes_state {
                 writeln!(
-                    out,
+                    raw_body,
                     "    const __state = {{ ...(await this.loadState()) }};"
                 )
                 .unwrap();
                 if body_emits_directly {
-                    writeln!(out, "{events_decl}").unwrap();
+                    writeln!(raw_body, "{events_decl}").unwrap();
                 }
-                writeln!(out, "    const __result = await (async () => {{").unwrap();
-                splice(out);
-                writeln!(out, "    }})();").unwrap();
-                writeln!(out, "    await this.commitState(__state);").unwrap();
+                writeln!(raw_body, "    const __result = await (async () => {{").unwrap();
+                body_out_offset_in_raw = raw_body.len();
+                raw_body.push_str(&body_out);
+                writeln!(raw_body, "    }})();").unwrap();
+                writeln!(raw_body, "    await this.commitState(__state);").unwrap();
                 if body_emits_directly {
-                    writeln!(out, "{flush}").unwrap();
+                    writeln!(raw_body, "{flush}").unwrap();
                 }
-                writeln!(out, "    return __result;").unwrap();
+                writeln!(raw_body, "    return __result;").unwrap();
             } else if body_emits_directly {
-                writeln!(out, "    const __state = await this.loadState();").unwrap();
-                writeln!(out, "{events_decl}").unwrap();
-                writeln!(out, "    const __result = await (async () => {{").unwrap();
-                splice(out);
-                writeln!(out, "    }})();").unwrap();
-                writeln!(out, "{flush}").unwrap();
-                writeln!(out, "    return __result;").unwrap();
+                writeln!(raw_body, "    const __state = await this.loadState();").unwrap();
+                writeln!(raw_body, "{events_decl}").unwrap();
+                writeln!(raw_body, "    const __result = await (async () => {{").unwrap();
+                body_out_offset_in_raw = raw_body.len();
+                raw_body.push_str(&body_out);
+                writeln!(raw_body, "    }})();").unwrap();
+                writeln!(raw_body, "{flush}").unwrap();
+                writeln!(raw_body, "    return __result;").unwrap();
             } else {
-                writeln!(out, "    const __state = await this.loadState();").unwrap();
-                splice(out);
+                writeln!(raw_body, "    const __state = await this.loadState();").unwrap();
+                body_out_offset_in_raw = raw_body.len();
+                raw_body.push_str(&body_out);
             }
         } else if body_emits_directly {
-            writeln!(out, "    const currentState = await this.loadState();").unwrap();
-            writeln!(out, "{events_decl}").unwrap();
-            writeln!(out, "    const __result = await (async () => {{").unwrap();
-            splice(out);
-            writeln!(out, "    }})();").unwrap();
-            writeln!(out, "{flush}").unwrap();
-            writeln!(out, "    return __result;").unwrap();
+            writeln!(raw_body, "    const currentState = await this.loadState();").unwrap();
+            writeln!(raw_body, "{events_decl}").unwrap();
+            writeln!(raw_body, "    const __result = await (async () => {{").unwrap();
+            body_out_offset_in_raw = raw_body.len();
+            raw_body.push_str(&body_out);
+            writeln!(raw_body, "    }})();").unwrap();
+            writeln!(raw_body, "{flush}").unwrap();
+            writeln!(raw_body, "    return __result;").unwrap();
         } else {
-            writeln!(out, "    const currentState = await this.loadState();").unwrap();
-            splice(out);
+            writeln!(raw_body, "    const currentState = await this.loadState();").unwrap();
+            body_out_offset_in_raw = raw_body.len();
+            raw_body.push_str(&body_out);
         }
-        writeln!(out, "  }}").unwrap();
+        let handler_method = bynk_ts::TsClassMethod {
+            name: method,
+            private: false,
+            is_async: effectful,
+            params,
+            return_type: Some(ret),
+            doc: h.documentation.clone(),
+            body: vec![bynk_ts::TsStmt::raw(raw_body.clone(), None)],
+        };
+        let printed = bynk_ts::print_class_method(&handler_method, class_depth);
+        out.push_str(&printed);
+        if let Some(module) = source_map {
+            // Two-level offset: where `raw_body` starts within `printed`
+            // (fragment-level, the same #1352/#1359 arithmetic), plus where
+            // `body_out` starts within `raw_body` (blob-internal, known by
+            // construction above) — the same shape #1361's own identical
+            // computation established, `print_class_method`'s own trailing
+            // `"  }\n"` (no comma, unlike an object entry) in place of
+            // `print_object_entry`'s own `"  },\n"`. Degrades to no merge
+            // (no mapping for this handler) rather than risk a confidently
+            // WRONG one if either assumption is ever violated, the same
+            // "suppress rather than mis-record" discipline #1360 finding 3
+            // established.
+            let trailing = format!("{}}}\n", "  ".repeat(class_depth + 1));
+            if let Some(raw_body_offset_in_printed) =
+                printed.len().checked_sub(raw_body.len() + trailing.len())
+                && printed
+                    .get(raw_body_offset_in_printed..)
+                    .is_some_and(|tail| tail.starts_with(&raw_body))
+                && printed.ends_with(&trailing)
+            {
+                let base =
+                    out.len() - printed.len() + raw_body_offset_in_printed + body_out_offset_in_raw;
+                module
+                    .borrow_mut()
+                    .merge(&body_smb.borrow(), &body_out, out, base, 0);
+            }
+        }
         writeln!(out).unwrap();
     }
     // v0.104 (real-time track slice 3b): the `from websocket` `on open` handlers
