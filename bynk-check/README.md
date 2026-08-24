@@ -40,7 +40,7 @@ directly.
 
 ```toml
 [dependencies]
-bynk-check = "0.269"
+bynk-check = "0.270"
 ```
 
 ```rust
