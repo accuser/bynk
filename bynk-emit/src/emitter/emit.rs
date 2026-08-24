@@ -5536,6 +5536,21 @@ fn ws_open_hosts_for<'a>(
 /// body lowers with `ws_self_agent` set, so an agent transfer becomes a `this`
 /// self-call rather than a cross-instance RPC.
 #[allow(clippy::too_many_arguments)]
+// Arc C, slice 25 (#1380): the first of step (9) sub-slice (5)'s own 3
+// independent slices (the grounding pass post-#1378, `design/tracks/
+// the-typescript-tree.md` §6), and the least risky by that pass's own
+// finding — the identical shape `emit_provider`'s own already-landed ops
+// (#1359) established: params/return-type real, the whole body one opaque
+// `TsStmt::Raw`, a single-level offset (no nesting — this method wraps no
+// events-IIFE, no implicit-commit closure, unlike `emit_service`/
+// `emit_agent`'s own handler loop). `connection: Connection<T>`'s own
+// generic type stays one opaque `TsType::named` string, the same "an
+// odd, one-off shape stays opaque text" precedent `this.state.storage.
+// get<T>` already set twice (#1371/#1373) — `Connection`'s own type
+// argument is exactly this function's own real, single grounded need,
+// not a general case for a new `TsType` type-argument mechanism. No
+// `doc` — confirmed directly (review of #1379): this function has never
+// emitted one, no `doc` parameter, no local, no `emit_doc_block` call.
 fn emit_ws_do_method(
     out: &mut String,
     agent: &AgentDecl,
@@ -5546,16 +5561,20 @@ fn emit_ws_do_method(
     ctx: &EmitProjectCtx,
     source_map: Option<&RefCell<SourceMapBuilder>>,
 ) {
-    let mut params = vec![format!(
-        "connection: Connection<{}>",
-        ts_ty(host.out_ty, commons.tys())
-    )];
+    let mut params = vec![bynk_ts::TsParam {
+        name: "connection".to_string(),
+        ty: Some(bynk_ts::TsType::named(format!(
+            "Connection<{}>",
+            ts_ty(host.out_ty, commons.tys())
+        ))),
+        optional: false,
+    }];
     for p in &h.params {
-        params.push(format!(
-            "{}: {}",
-            ts_ident(&p.name.name),
-            ts_type_ref(&p.type_ref)
-        ));
+        params.push(bynk_ts::TsParam {
+            name: ts_ident(&p.name.name),
+            ty: Some(ts_type_ref_to_ts_type(&p.type_ref, None)),
+            optional: false,
+        });
     }
     let body_smb = RefCell::new(SourceMapBuilder::new());
     let mut module = ModuleCtx::new(commons, &ctx.cross_context, &ctx.runtime_use);
@@ -5614,18 +5633,44 @@ fn emit_ws_do_method(
             )
         };
     }
-    params.push(format!("deps: {deps_ty}"));
-    let ret = ts_type_ref(&h.return_type);
-    let async_kw = if async_tail { "async " } else { "" };
-    writeln!(out, "  {async_kw}{method}({}): {ret} {{", params.join(", ")).unwrap();
-    let base = out.len();
-    out.push_str(&body_out);
+    params.push(bynk_ts::TsParam {
+        name: "deps".to_string(),
+        ty: Some(bynk_ts::TsType::named(deps_ty)),
+        optional: false,
+    });
+    let method_entry = bynk_ts::TsClassMethod {
+        name: method.to_string(),
+        private: false,
+        is_async: async_tail,
+        params,
+        return_type: Some(ts_type_ref_to_ts_type(&h.return_type, None)),
+        doc: None,
+        body: vec![bynk_ts::TsStmt::raw(body_out.clone(), None)],
+    };
+    let class_depth = 0;
+    let printed = bynk_ts::print_class_method(&method_entry, class_depth);
+    out.push_str(&printed);
     if let Some(module) = source_map {
-        module
-            .borrow_mut()
-            .merge(&body_smb.borrow(), &body_out, out, base, 0);
+        // Single-level offset — no nesting, the identical arithmetic
+        // #1359's own per-op methods already established: degrades to no
+        // merge (no mapping for this method) rather than risk a
+        // confidently WRONG one if either assumption is ever violated,
+        // the same "suppress rather than mis-record" discipline #1360
+        // finding 3 established.
+        let trailing = format!("{}}}\n", "  ".repeat(class_depth + 1));
+        if let Some(body_offset_in_printed) =
+            printed.len().checked_sub(body_out.len() + trailing.len())
+            && printed
+                .get(body_offset_in_printed..)
+                .is_some_and(|tail| tail.starts_with(&body_out))
+            && printed.ends_with(&trailing)
+        {
+            let base = out.len() - printed.len() + body_offset_in_printed;
+            module
+                .borrow_mut()
+                .merge(&body_smb.borrow(), &body_out, out, base, 0);
+        }
     }
-    writeln!(out, "  }}").unwrap();
     writeln!(out).unwrap();
 }
 
