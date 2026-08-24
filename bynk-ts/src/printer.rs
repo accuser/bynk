@@ -174,6 +174,14 @@
 //!   `emit_method`'s own body, delegated wholesale to `emitter/lower.rs`'s
 //!   `emit_block_as_function_body_with_return` — a permanent Arc C
 //!   exclusion (ADR `arc-c-lower-rs-permanent-exclusion`), not residue.
+//!   #1339 added a second, differently-reasoned real use:
+//!   `emit_refined_type`'s own `of()` guard body, carrying `emit_refined_
+//!   checks`'s already-printed output — not a permanent exclusion, just
+//!   scope that function's own conversion didn't reach. Both uses carry
+//!   text pre-indented at a fixed absolute depth by their own caller, so
+//!   `render_multiline_object_entry`'s own `debug_assert!` guards that this
+//!   only renders correctly at `depth == 0` — see its doc and
+//!   [`print_object_entry`]'s.
 //!
 //! None of the above is claimed as *the* TypeScript style this printer will
 //! use forever — it's what this slice's own grounding file needs, named
@@ -954,6 +962,21 @@ fn render_multiline_object(out: &mut String, entries: &[TsObjectEntry], depth: u
 /// "one document-fragment entry point, no duplicated rendering" posture
 /// [`print_stmt`]/[`print_type`] already established).
 fn render_multiline_object_entry(out: &mut String, entry: &TsObjectEntry, depth: usize) {
+    // Review of #1340, finding 1: a `Raw`-bodied `Method` entry's own text
+    // is captured pre-indented at a fixed absolute depth by its caller (see
+    // `print_object_entry`'s own doc) — correct only when `depth` is `0`.
+    // Originally guarded only in `print_object_entry`, the one entry point
+    // #1337 had in mind; #1339's `emit_refined_type` reaches this function
+    // directly (via `TsExpr::multiline_object_entries`/`render_expr`, never
+    // through `print_object_entry`), which the original guard's placement
+    // silently missed. Asserted here instead, where both callers converge,
+    // so neither path can bypass it again.
+    if let TsObjectEntry::Method { body, .. } = entry {
+        debug_assert!(
+            depth == 0 || !body.iter().any(|s| matches!(s.kind, TsStmtKind::Raw(_))),
+            "render_multiline_object_entry: a Raw-bodied Method entry's own baked-in indent only matches depth 0"
+        );
+    }
     match entry {
         TsObjectEntry::Prop(k, v) => {
             out.push_str(&indent(depth + 1));
@@ -1540,22 +1563,18 @@ pub fn print_stmt(stmt: &TsStmt, depth: usize) -> String {
 /// fragment" pattern applied to an object-entry-shaped fragment instead of
 /// a whole statement or type.
 ///
-/// Review of #1338, finding 3: a `TsStmtKind::Raw` body statement (the
-/// one real case today: `emit_method`'s own opaque `lower.rs`-sourced
-/// body) carries NO indent of its own — its text is captured pre-indented
-/// at a fixed absolute depth by its own caller — so it only renders
-/// correctly when `depth` is `0`, matching all four real call sites. At
-/// any other depth the signature/closing-brace move with `depth` but the
-/// `Raw` body's own baked-in indent does not, silently. Guarded here
-/// rather than left as a doc-only warning, since every real call site
-/// already satisfies it.
+/// Review of #1338, finding 3: a `TsStmtKind::Raw` body statement (e.g.
+/// `emit_method`'s own opaque `lower.rs`-sourced body, or `emit_refined_
+/// type`'s own opaque `emit_refined_checks`-sourced guard body, #1339's
+/// second real use) carries NO indent of its own — its text is captured
+/// pre-indented at a fixed absolute depth by its own caller — so it only
+/// renders correctly when `depth` is `0`. The guard for this now lives in
+/// [`render_multiline_object_entry`] itself (moved there by review of
+/// #1340, finding 1: this function's own copy missed the `TsExpr::
+/// multiline_object_entries`/`render_expr` call path #1339 added, which
+/// reaches that renderer directly, never through this one), so it fires
+/// for every caller, not just this entry point.
 pub fn print_object_entry(entry: &TsObjectEntry, depth: usize) -> String {
-    if let TsObjectEntry::Method { body, .. } = entry {
-        debug_assert!(
-            depth == 0 || !body.iter().any(|s| matches!(s.kind, TsStmtKind::Raw(_))),
-            "print_object_entry: a Raw-bodied Method entry's own baked-in indent only matches depth 0"
-        );
-    }
     let mut out = String::new();
     render_multiline_object_entry(&mut out, entry, depth);
     out

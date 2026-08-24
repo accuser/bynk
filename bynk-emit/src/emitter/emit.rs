@@ -5044,9 +5044,11 @@ commons demo {
 
     /// #1339: pins `emit_sum_type`'s own real multi-line, leading-pipe
     /// union shape and its generic payload-constructor arrows byte-for-byte
-    /// against `406_generic_sum_envelope`'s own real `expected.ts`
-    /// (`bynkc/tests/fixtures/positive/406_generic_sum_envelope`) — not a
-    /// hand-rebuilt tree standing in for it.
+    /// — the expected strings below are transcribed directly from
+    /// `406_generic_sum_envelope`'s own real `expected.ts`
+    /// (`bynkc/tests/fixtures/positive/406_generic_sum_envelope`), confirmed
+    /// to match it exactly, not independently invented text that merely
+    /// looks plausible.
     #[test]
     fn generic_sum_type_matches_the_real_fixtures_own_multiline_union_byte_for_byte() {
         let ts = emit_source(
