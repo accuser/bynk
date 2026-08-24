@@ -3567,6 +3567,7 @@ fn emit_composition_root(
     program.push(TsStmt::decl(
         TsDecl::Export(Box::new(TsDecl::Function {
             name: "composeApp".to_string(),
+            generics: Vec::new(),
             params: compose_params,
             return_type: None,
             body,

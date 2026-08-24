@@ -1737,6 +1737,7 @@ fn render_decl_body(out: &mut String, decl: &TsDecl, depth: usize) {
         }
         TsDecl::Function {
             name,
+            generics,
             params,
             return_type,
             body,
@@ -1747,6 +1748,7 @@ fn render_decl_body(out: &mut String, decl: &TsDecl, depth: usize) {
             }
             out.push_str("function ");
             out.push_str(name);
+            render_bare_generics(out, generics);
             out.push('(');
             render_params(out, params);
             out.push(')');
@@ -3118,6 +3120,7 @@ mod tests {
         program.push(TsStmt::decl(
             TsDecl::Export(Box::new(TsDecl::Function {
                 name: "compose".to_string(),
+                generics: Vec::new(),
                 params: vec![TsParam {
                     name: "env".to_string(),
                     ty: Some(TsType::named("Env")),
@@ -3957,6 +3960,7 @@ mod tests {
         program.push(TsStmt::decl(
             TsDecl::Function {
                 name: "main".to_string(),
+                generics: Vec::new(),
                 params: vec![],
                 return_type: None,
                 body: vec![TsStmt::return_stmt(None, None)],
