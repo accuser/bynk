@@ -767,14 +767,21 @@ exactly, including the currently dead-by-construction `is_store_agent == false` 
 its own `else` branches faithfully rather than opportunistically removing provably-dead code out of
 scope). See the table row below for the full account, including the bug-injection-proven regression
 test covering both wrapper dimensions at once, not just one in isolation.**; (5) the
-WS-hosted DO methods, the `fetch` dispatcher, and `emit_ws_dispatch_handlers` — single-level merges
-throughout, the same shape as #1359; (6) the factory function plus the history-driver, or fold the
-factory into slice 3 or 5 and decide the history-driver's own priority separately — it is
-test-support-only, stripped from deploy builds, and only 2 fixtures exercise it, so converting it
-may not be worth its own slice at all; a deliberate, named exclusion is a legitimate outcome here,
-to be decided when that slice is actually proposed, not assumed now.
+WS-hosted DO methods, the `fetch` dispatcher, and `emit_ws_dispatch_handlers` — a large,
+workers-mode-specific dispatch method plus three external helper functions with their own
+significant bodies, genuinely harder than a "single-level merges throughout" framing suggested
+before actually reading it in full; needs its own dedicated grounding pass before a first slice is
+proposed against it, the same posture step (9) itself needed before this whole sub-decomposition
+started, not yet done; **(6) the factory function plus the history-driver — split by #1377 (Arc C,
+slice 24), the same "split, don't force one slice to cover more than it needs to" discipline this
+track has used repeatedly (steps (4)/(6)/(8), and step (9)'s own sub-slice (3)): the factory
+function lands fully, no opaque carve-out at all (every shape needed — `TsDecl::Function`,
+`TsExpr::OptionalMember`/`Arrow`/`New` — already existed); the history-driver stays deferred, its
+own priority still undecided — test-support-only, stripped from deploy builds, only 2 fixtures
+exercise it, so converting it may not be worth its own slice at all. A deliberate, named exclusion
+remains a legitimate outcome here, to be decided when/if that slice is actually proposed.**
 
-**Revised estimate, corrected eighteen times now — by review of #1332 (the arithmetic), by #1333's
+**Revised estimate, corrected nineteen times now — by review of #1332 (the arithmetic), by #1333's
 own step (1) closure (the real per-step sizing), by #1335's own step (2) split, by #1337's
 own step (3) closure, by #1339's own step (2) closure, by #1351's own step (4) split, by #1353's
 own step (4) closure, by #1355's own step (5) closure, by #1357's own step (6) split, by
@@ -782,46 +789,53 @@ own step (4) closure, by #1355's own step (5) closure, by #1357's own step (6) s
 step (9)'s own dedicated grounding pass (post-#1365, no issue number of its own — a research pass,
 not a slice), by #1367's own landing of step (9)'s first sub-slice, by #1369's own landing of step
 (9)'s second sub-slice, by #1371's own split-and-partial-landing of step (9)'s third sub-slice, by
-#1373's own landing of that sub-slice's deferred remainder, and now by #1375's own landing of step
-(9)'s fourth sub-slice.** Steps (2)-(7) are all
-**fully landed** and entirely out of the remaining-work sum. Summing the list directly: step (8)'s
-own newly-split remainder (the cross-context lowering cluster, not yet grounded) is "1-2"; step
-(10) is one slice, fixed; step (9)'s own remainder is now **"1-2"** (down from "2-3" — #1375 lands
-the per-handler methods, sub-slice (4) of the grounding pass's own named order, and confirmed itself
-as the hardest of the six even after the real line-count correction the grounding pass already
-applied); step (11) (the ICU cluster) is "1-2".
-Floor:
-1 + 1 + 1 + 1 = **4**; ceiling: 2 + 1 + 2 + 2 = **7** — `emit.rs`'s own remaining tree is now
-**roughly 4-7 slices** (down from 5-8 — a pure, floor-neutral-and-ceiling-neutral relabeling: #1375
-moves one more slice from "remaining" to "landed" within step (9)'s own already-corrected "6-7"
-total, the same #1359/#1367/#1369/#1373 precedent). Total
+#1373's own landing of that sub-slice's deferred remainder, by #1375's own landing of step (9)'s
+fourth sub-slice, and now by #1377's own split-and-partial-landing of step (9)'s sixth sub-slice.**
+Steps (2)-(7) are all
+**fully landed** and entirely out of the remaining-work sum. Step (9)'s own remainder stays
+numerically **"1-2"** ({(5), history-driver} — the WS-cluster fixed at 1, the history-driver's own
+priority still 0-1, undecided) — but the reasoning under it changed, the same "a split can widen
+the total without moving the remainder" shape #1371's own sub-slice-3 split already established:
+sub-slice (6) was originally guessed as "0-1" (possibly zero real slices if the factory folded into
+another sub-slice); #1377 confirms the factory function alone needed its own real slice regardless
+— a genuine floor correction (0 → 1) for that item, not a coincidence. So step (9)'s own TOTAL
+widens from "6-7" to **"7-8"**: summing the list directly, step (8)'s own newly-split remainder
+(the cross-context lowering cluster, not yet grounded) is "1-2"; step (10) is one slice, fixed; step
+(9)'s remainder is "1-2"; step (11) (the ICU cluster) is "1-2". Floor:
+1 + 1 + 1 + 1 = **4**; ceiling: 2 + 1 + 2 + 2 = **7** — `emit.rs`'s own remaining tree stays
+**roughly 4-7 slices**, unchanged in the sum even though step (9)'s own total moved, because the
+widening is fully absorbed by the LANDED count (24, up from 23), not by the remainder (the same
+"where a split's own widening actually shows up" distinction #1371's own row already drew). Total
 remaining from here: `emit.rs` (4-7) + the `tests_emit.rs` pair (2) — #1331/#1332, slice 8 (#1333),
 slice 9 (#1335), slice 10 (#1337), slice 11 (#1339), slice 12 (#1351), slice 13 (#1353), slice 14
 (#1355), slice 15 (#1357), slice 16 (#1359), slice 17 (#1361), slice 18 (#1364), slice 19 (#1367),
-slice 20 (#1369), slice 21 (#1371), slice 22 (#1373), and slice 23 (#1375) are all already landed,
-no longer "remaining" — **roughly 6-9 more slices from here**.
-Arc C's own real total (the **23** slices already landed — slice 1, the schedule-correction, slices
-3/4/5/6/7/8/9/10/11/12/13/14/15/16/17/18/19/20/21/22/23 — plus the 6-9 above): **roughly 29-32** —
-unchanged from the prior update, honestly, the same reason every "landing within an already-set
-range" correction in this section has left the total unchanged: step (9)'s own total (6-7) already
-counted the per-handler methods as sub-slice (4); #1375 landing it simply moves one slice from
-"remaining" to "landed" without touching the sum. Six
+slice 20 (#1369), slice 21 (#1371), slice 22 (#1373), slice 23 (#1375), and slice 24 (#1377) are
+all already landed, no longer "remaining" — **roughly 6-9 more slices from here**, unchanged
+numerically for the same reason.
+Arc C's own real total (the **24** slices already landed — slice 1, the schedule-correction, slices
+3/4/5/6/7/8/9/10/11/12/13/14/15/16/17/18/19/20/21/22/23/24 — plus the 6-9 above): **roughly 30-33**
+— a real widening of one slice on both ends from the prior 29-32, the SAME kind of correction
+#1371's own sub-slice-3 split caused (a hidden mandatory floor surfacing), applied to a different
+sub-slice. Seven
 distinct kinds of correction have
-now occurred across eight consecutive updates — a narrowing (#1361, a range resolved to its own
+now occurred across nine consecutive updates — a narrowing (#1361, a range resolved to its own
 floor), a split-driven widening (#1364, a silently-absorbed remainder surfaced at the STEP level), a
 grounding-driven widening (the pass before #1367, an unread range turning out larger than guessed
-on both ends), a flat relabeling (#1367, then #1369, then #1373, then #1375 again, landing inside an
-already-set range with no total change), and a split-driven widening one level deeper (#1371, a
-sub-slice's own hidden second half surfacing, landed and split in the same motion)
+on both ends), a flat relabeling (#1367, then #1369, then #1373, then #1375, landing inside an
+already-set range with no total change), and a split-driven widening one level deeper — now
+occurring TWICE (#1371's own sub-slice-3 split, and now #1377's own sub-slice-6 split, a genuinely
+uncounted floor surfacing both times, in two different sub-slices)
 — each is a different failure mode or non-failure of estimation, not the same mistake repeating,
 and each got the same "state the real reason plainly" treatment rather than a flat "corrected
 again." `emit_agent`'s own
 sub-decomposition (step 9) remains the single largest source of variance in this range, now with
-only 1-2 of its own 6-7 sub-slices still ahead — the two remaining are the WS-hosted DO
-methods/`fetch` dispatcher/`emit_ws_dispatch_handlers` cluster (sub-slice (5), single-level merges
-throughout, the same shape as #1359) and the factory function plus history-driver (sub-slice (6),
-possibly foldable into (5), possibly a deliberate exclusion for the history-driver specifically —
-still undecided); the cross-context lowering
+only the WS-hosted DO methods/`fetch` dispatcher/`emit_ws_dispatch_handlers` cluster (sub-slice
+(5) — read in full while scoping #1377, and found genuinely harder than "single-level merges
+throughout" suggested before actually reading it: a large, workers-mode-specific dispatch method
+plus three external helper functions with their own significant bodies, needing its own dedicated
+grounding pass before a first slice is proposed against it, the same posture step (9) itself needed
+before this whole sub-decomposition started) and the history-driver (still undecided, "0-1") left
+ahead; the cross-context lowering
 cluster (step (8)'s
 own remainder) and the ICU cluster (step 11) are smaller, still-ungrounded secondary sources.
 
@@ -849,11 +863,12 @@ own remainder) and the ICU cluster (step 11) are smaller, still-ungrounded secon
 | **Arc C, slice 21 — `emit_agent`'s `loadState`** (#1371, landed) | Splits step (9)'s own third sub-slice ("class scaffold + `loadState`/`commitState`," per the grounding pass, #1366) rather than closing it whole, the same "outer wrapper first, harder remainder later" shape steps (4)/(6)/(8) each already took, applied one level deeper: `loadState` converts fully to a real `bynk_ts::TsClassMethod` fragment, printed through `print_class_method` (#1359's own fragment entry point); the class's own wrapper (header/fields/constructor) stays hand-written text, Decision C, the same boundary #1359's own `emit_provider` already used; `commitState` stays deferred as its own separate, later sub-slice, found genuinely harder only once actually read: its own `@invariant`/`transition` predicate lowering writes directly into `out` today, the same "direct write, real position" shape `emit_free_fn`/`emit_contract_guarded_body` had *before* their own conversions needed a sub-builder for `Raw`-embedding (#1352/#1353), not silently folded into "sub-slice (3) done." **One real, grounding-pass-predicted gap closed**: `TsClassMethod.private: bool` — `loadState`/`commitState` are the first `private` method sites this whole track has hit (`emit_provider`'s own ops, #1359, were all public), rendered before `async` matching the one real site's own modifier order; 4 existing `TsClassMethod` construction sites across `bynk-emit`/`bynk-ts` (real code and test helpers) needed a mechanical `private: false` added, found via the compiler's own missing-field errors. **One real gap deliberately NOT closed, named explicitly**: `this.state.storage.get<{state_ty}>("state")`'s own generic method call has no representation in `TsExpr::Call` — adding `type_args` would touch 41 real construction sites across the workspace for one narrow need, so it stays one opaque `TsExpr::Ident` callee text instead, the same "an odd, one-off shape stays opaque text" precedent P7.9's own `Query[T]` and #1357's own `unique symbol` already established. **No source-map work needed or done**: `loadState`'s own body never lowers an expression through `LowerCtx` — every statement is a literal, a field name, or a call to `zero_fn`/`rehydrate_fn` by name. `emit_agent` keeps its exact existing signature; only `loadState` converts here. `verbatim_sites` unchanged (5). `ts_writes` drops by **6** (1207 → 1201), verified via a fresh `cargo xtask greenfield-status --apply`. `ast_importers`/`ts_any` unaffected. Zero diff: every fixture with an `agent` declaration (all agent fixtures reach `loadState`) and `tsc_verify`'s full strict-`tsc` corpus pass unchanged. | R7.1 | #1331, #1359, #1352, #1353, #1315, #1357, #1366 |
 | **Arc C, slice 22 — `emit_agent`'s `commitState`** (#1373, landed) | Closes step (9)'s own third sub-slice fully, landing the deferred remainder #1371 split off: `commitState` converts to a real `bynk_ts::TsClassMethod` fragment, the same `print_class_method` entry point `loadState` (#1371) already used. **A real correction to #1371's own stated expectation, found by reading the code rather than assumed**: #1371 predicted `commitState` would need the same source-map sub-builder/merge care `emit_free_fn`/`emit_contract_guarded_body` established (#1352/#1353) — this slice found that prediction genuinely wrong, not merely cautious: `record_span` (`emitter.rs:3776`) is a documented no-op when a `LowerCtx` has no attached source-map builder, and neither the invariant nor the transition `LowerCtx` `commitState` constructs is ever given one — both are built via plain `LowerCtx::new(...)`, `emit_agent`'s own `source_map` parameter isn't threaded into either. No sub-builder/merge work exists in this diff at all, confirmed directly, not assumed from the general "predicate lowering needs care" shape. Each invariant's/transition's own hoisted pre-statements and predicate expression stay opaque (`lower.rs`'s own permanently-excluded general expression lowering) — the hoisted lines as their own `TsStmt::Raw` with indent baked in manually (`Raw` prints verbatim with none of its own — "    " for an invariant's own top-level check at method-body depth 2, "      " for a transition's own check nested one level deeper inside the `if (__prior !== undefined)` block), the predicate as one opaque `TsExpr::Ident(format!("!({pred})"))` condition. Everything else is real, built via one shared local closure (`build_violation_check`, reused for both invariants and transitions): the `if (!(pred)) { console.error(...); throw invariantViolation(...); }` wrapper, the transition prologue (`const __prior = await this.state.storage.get<T>("state")` — the same opaque-callee-text pattern #1371 already established for the identical generic-call shape; `if (__prior !== undefined) { const __old = { ...zero(), ...__prior }; const __new = s; ... }`), and the final `await this.state.storage.put("state", s)`. No new `bynk_ts` algebra gap — every shape needed (`TsStmt::If`/`Block`/`Throw`/`ExprStmt`, `TsExpr::Call`/`Binary`/`object`) already existed from prior slices. `emit_agent` keeps its exact existing signature; only `commitState` converts here — the class scaffold, `loadState`, and everything after (handlers, WS cluster) stay exactly as they are. `verbatim_sites` unchanged (5). `ts_writes` drops by **14** (1201 → 1187), verified via a fresh `cargo xtask greenfield-status --apply`. `ast_importers`/`ts_any` unaffected. Zero diff: every fixture with an `agent` declaration carrying `@invariant`/`transition` (e.g. `222_agent_invariant`) and `tsc_verify`'s full strict-`tsc` corpus pass unchanged. | R7.1 | #1331, #1359, #1371, #1352, #1353 |
 | **Arc C, slice 23 — `emit_agent`'s per-handler methods** (#1375, landed) | Closes step (9)'s own fourth sub-slice — the sub-slice the grounding pass (#1366) itself named "the largest slice, closest in shape/risk to #1361 (`emit_service`) itself... likely the single hardest slice in this whole step," confirmed accurate. Each handler converts to a real `bynk_ts::TsClassMethod` fragment, printed through `print_class_method` (#1359) — a class method here, not an object-literal entry (`emit_service`'s own shape), since agent handlers are methods on the Durable Object class. Params/return-type build through `ts_type_ref_to_ts_type`; the old standalone `emit_doc_block` call is removed in favour of the method's own real `doc` field, proactively avoiding the exact doc-duplication bug #1361's own review caught rather than rediscovering it. **Closes `TsClassMethod.doc: Option<String>`, the grounding pass's own second predicted gap (#1366)** — the third and last real method-shaped node in this crate to gain `doc`, after `TsObjectEntry::Method` (#1337) and `TsTypeMember::Method` (#1357); 6 existing `TsClassMethod` construction sites needed a mechanical `doc: None` added, found via the compiler's own missing-field errors. **The whole handler body stays one opaque `TsStmt::Raw`, `emit_service`'s own two-level-offset pattern (#1361) applying directly, but with a genuinely new THIRD wrapper dimension `emit_service` never needed**: `writes_state` (the implicit-commit closure, `const __state = { ... }; ... await this.commitState(__state);`), which can combine with `body_emits_directly` (the events-IIFE) at the same time. Both wrappers, and their combination, are preserved exactly as the pre-conversion code built them — **including the currently dead-by-construction `is_store_agent == false` branches**: `is_store_agent` is a hardcoded `true` local constant, never reassigned anywhere in `emit_agent`, so those branches never run today — the conversion preserves them faithfully rather than opportunistically removing provably-dead code, out of this slice's own scope. `deps_ty`'s own dynamic construction stays entirely opaque, wrapped only at its outer edge as `TsType::named(deps_ty)` — the same Decision B `emit_service` already established. `emit_agent` keeps its exact existing signature; only the handler loop converts here — the class scaffold, `loadState`/`commitState`, and everything after (WS cluster) stay exactly as they are. `verbatim_sites` unchanged (5). `ts_writes` drops by **3** (1187 → 1184) — smaller than the structural scope of this conversion might suggest, since the prologue/epilogue's own `writeln!`-based construction into the new local `raw_body` buffer is unchanged, still counted by the probe (the same shape #1361's own modest delta had). `ast_importers`/`ts_any` unaffected. Zero diff: every fixture with an `agent` declaration and at least one handler and `tsc_verify`'s full strict-`tsc` corpus pass unchanged — first-attempt zero diff, no iteration needed. Per-handler source-map correctness verified directly with a new project-form test (`bynkc/tests/source_map.rs`'s `agent_handler_body_keeps_its_own_statement_lines_inside_the_commit_and_events_wrappers`), exercising the deepest real nesting this conversion reaches — `writes_state` AND `body_emits_directly` at once, not just one wrapper in isolation the way `emit_service`'s own test only needed to — proven via bug injection (temporarily zeroing `body_out_offset_in_raw` in that exact branch, confirming the expected/actual line assertions failed with the predicted numbers, then reverting). | R7.1 | #1331, #1361, #1359, #1337, #1357, #1366, #1373 |
+| **Arc C, slice 24 — `emit_agent`'s factory function** (#1377, landed) | Splits step (9)'s own sixth sub-slice ("the factory function plus the history-driver," per the grounding pass, #1366) rather than treating it as one optional unit — the same "split, don't force one slice to cover more than it needs to" discipline this track has used repeatedly (steps (4)/(6)/(8), and step (9)'s own sub-slice (3)): the factory function (`export function {factory}(key: {KeyTy}, env?: { {bind}?: DurableObjectNamespace }): {Agent} { return makeAgent({registry}, env?.{bind}, key, (state) => new {Agent}(state)); }`) converts **fully — no opaque carve-out at all**, the third slice in this whole track to close that cleanly (after #1364/#1369). Every shape needed — `TsDecl::Function`, `TsExpr::OptionalMember` (the `env?.{bind}` access), `TsExpr::Arrow` (the `(state) => new {Agent}(state)` factory closure), `TsExpr::New` — already existed from prior slices; no new `bynk_ts` algebra gap. **No source-map work needed or done**: this function never lowers an expression through `LowerCtx` — every value is a field/param name, a type reference, or a literal, the same posture #1364/#1371 had. The history-driver, sub-slice (6)'s other half, stays deferred, its own priority still genuinely undecided (test-support-only, stripped from deploy builds, only 2 fixtures exercise it — a deliberate exclusion remains a legitimate outcome, not assumed here). **A real correction to the original estimate, honestly recorded**: sub-slice (6) had been guessed as "0-1" (possibly zero real slices, if the factory folded elsewhere) — this slice confirms the factory alone needed its own real slice regardless, a genuine floor correction (0 → 1) for that item, the same "a split reveals a previously-uncounted mandatory floor" shape #1371's own sub-slice-3 split already established, applied to a different sub-slice — see §6's own "Revised estimate" paragraph above for the resulting total widening. **Also names, while scoping this slice, that sub-slice (5) (the WS-hosted DO methods/`fetch` dispatcher/`emit_ws_dispatch_handlers` cluster) is genuinely harder than "single-level merges throughout" suggested** — a large, workers-mode-specific dispatch method plus three external helper functions with their own significant bodies, needing its own dedicated grounding pass before a first slice is proposed against it, not touched by this slice. `emit_agent` keeps its exact existing signature; only the factory function converts here. `verbatim_sites` unchanged (5). `ts_writes` drops by **3** (1184 → 1181), verified via a fresh `cargo xtask greenfield-status --apply`. `ast_importers`/`ts_any` unaffected. Zero diff: every fixture with an `agent` declaration (all agent fixtures reach the factory function) and `tsc_verify`'s full strict-`tsc` corpus pass unchanged — first-attempt zero diff, no iteration needed. | R7.1 | #1331, #1364, #1369, #1371, #1366 |
 
 **Arc D — settling (~8 slices)**
 
 Provisionally lettered, not numbered — Arc C's own slice count is an estimate (~23-27, revised by
-#1331, then #1333, then #1335, then #1337, then #1339, then #1351, then #1353, then #1355, then #1357, then #1359, then #1361, then #1364, then #1367, then #1369, then #1371, then #1373, then #1375 — see §6's own "Revised estimate" paragraph above), so fixed `P7.N` numbers here would silently claim
+#1331, then #1333, then #1335, then #1337, then #1339, then #1351, then #1353, then #1355, then #1357, then #1359, then #1361, then #1364, then #1367, then #1369, then #1371, then #1373, then #1375, then #1377 — see §6's own "Revised estimate" paragraph above), so fixed `P7.N` numbers here would silently claim
 a range Arc C's real slices will actually occupy. Real
 `P7.N` numbers are assigned sequentially as each slice is actually cut, in landing order, the same
 convention every prior track on this trajectory used.
