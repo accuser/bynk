@@ -555,6 +555,12 @@ const AGENT_FIXTURE: &str = "context reps {
       let _ <- Events.emit[Pinged](Pinged { n: doubled })
       next
     }
+
+    on call ping(n: Int) -> Effect[Int] given Events {
+      let tripled = n * 3
+      let _ <- Events.emit[Pinged](Pinged { n: tripled })
+      tripled
+    }
   }
 }
 ";
@@ -571,7 +577,15 @@ fn agent_handler_body_keeps_its_own_statement_lines_inside_the_commit_and_events
     // exercises exactly that combination -- both wrappers present at once,
     // the deepest real nesting `body_out_offset_in_raw` can reach in this
     // conversion -- not just one or the other in isolation the way the
-    // service-side test (#1361/#1362) only needed to.
+    // service-side test (#1361/#1362) only needed to. `ping` (review of
+    // #1376) covers the OTHER reachable prologue shape `is_store_agent ==
+    // true` reaches: `body_emits_directly == true` with `writes_state ==
+    // false` -- `body_out_offset_in_raw` is assigned independently in that
+    // branch too, right after its own (shorter) prologue, so a wrong
+    // capture point there would silently shift every mapping for a
+    // non-writing, emitting handler with nothing in the zero-diff fixture
+    // check (which compares emitted TEXT only) or in `bump`'s own assertions
+    // above (a different branch entirely) to catch it.
     let (ts, map) = compile_reps_context(AGENT_FIXTURE);
     let lines = decode(extract_field(&map, "mappings"));
     let at = |g: usize| lines[g].unwrap_or_else(|| panic!("gen line {g} unmapped\n{ts}"));
@@ -590,5 +604,10 @@ fn agent_handler_body_keeps_its_own_statement_lines_inside_the_commit_and_events
         at(gen_line_of(&ts, "__events.push(")),
         16,
         "the emit call's own lowered push keeps its own line"
+    );
+    assert_eq!(
+        at(gen_line_of(&ts, "const tripled = ")),
+        21,
+        "`ping`'s own non-writing, emitting handler keeps `let tripled` on its own line"
     );
 }
