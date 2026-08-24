@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.268**.
+written against **v0.269**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.269.0** | Arc C, slice 17 — `emit_service`'s own handlers build real `bynk_ts::TsObjectEntry::Method` fragments (every param, including the synthetic `connection`/`__bynkSchemaEnv` ones, converts to a real `bynk_ts::TsParam`; each body source-mapped via a two-level sub-builder/`merge`, since the source-mapped content is nested inside a further opaque events-dispatch IIFE blob), fully closing step (7) of the design pass's own decomposition order in one slice. The object wrapper, `deps`'s own dynamically-built type, and the handler's whole prologue/body/epilogue stay hand-written/opaque — deliberate boundaries, not remaining gaps |
 | **v0.268.0** | Arc C, slice 16 — `emit_provider`'s own per-op methods build real `bynk_ts::TsClassMethod` fragments (printed through a new `bynk_ts::print_class_method` entry point, each body source-mapped via a per-method sub-builder/`merge`), fully closing step (6) of the design pass's own decomposition order. The class's own wrapper and factory `const` stay hand-written text — a deliberate boundary (building the whole class as one tree would need every method's body captured for `Raw`-embedding, and this class's own real spacing differs from `TsDecl::Class`'s established policy), not a remaining gap |
 | **v0.267.0** | Arc C, slice 15 — `emit_capability` builds real `bynk_ts` nodes internally (`TsTypeMember::Method` gains `generics`/`doc` fields), splitting step (6) of the design pass's own decomposition order the same way slice 12 split step (4) — `emit_provider`'s own conversion (a full class with N real method bodies, each needing the established sub-builder/`merge` source-map treatment individually) is a named, deferred remainder, not converted by this slice |
 | **v0.266.0** | Arc C, slice 14 — `emit_messages_bundle`'s own outer construction converts to real `bynk_ts` nodes (closing step (5) of the design pass's own decomposition order), with two named opaque carve-outs (a one-off type annotation `TsType::Fn` can't name its own parameter for; each message renderer's own not-yet-converted ICU-formatting expression). Also closes a real printer gap: nested multiline objects as a `Prop`'s own value now render correctly instead of silently falling back to single-line |
