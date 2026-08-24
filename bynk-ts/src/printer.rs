@@ -1439,6 +1439,26 @@ fn render_type(out: &mut String, ty: &TsType) {
             out.push_str("[]");
         }
         TsType::Object(members) => {
+            // Review of #1358, finding 1: a `Method` member's own `doc` has
+            // no single-line form — this inline shape has nowhere to put a
+            // JSDoc block, unlike `TsDecl::Interface`'s own render arm
+            // (which calls `render_doc_comment` before a documented
+            // member's own line, since it has `depth` and a real newline
+            // budget to work with). The identical case #1338's own review
+            // already ruled on for `TsObjectEntry::Method.doc` in
+            // `render_object_entry_inline` — a loud check, not a silent
+            // drop, since silently dropping a JSDoc block is a strictly
+            // worse failure mode than a loud one. Not reachable today
+            // (`workers_entry.rs`'s own one real `TsType::Object` method
+            // member goes through `TsTypeMember::method`, so `doc` is
+            // always `None`) — the #1337 case was equally unreachable,
+            // which is exactly why it got the assert.
+            debug_assert!(
+                !members
+                    .iter()
+                    .any(|m| matches!(m, TsTypeMember::Method { doc: Some(_), .. })),
+                "render_type: a Method member's own doc comment has no single-line form"
+            );
             if members.is_empty() {
                 out.push_str("{}");
             } else {
@@ -1530,8 +1550,15 @@ fn render_type_member(out: &mut String, member: &TsTypeMember) {
             out.push_str(": ");
             render_type(out, ty);
         }
-        TsTypeMember::Method { name, params, ret } => {
+        TsTypeMember::Method {
+            name,
+            generics,
+            params,
+            ret,
+            doc: _,
+        } => {
             out.push_str(name);
+            render_bare_generics(out, generics);
             out.push('(');
             render_params(out, params);
             out.push_str("): ");
@@ -1693,6 +1720,18 @@ fn render_decl_body(out: &mut String, decl: &TsDecl, depth: usize) {
             render_bare_generics(out, type_params);
             out.push_str(" {\n");
             for member in members {
+                // #1357: a `Method` member's own `doc` renders here, not in
+                // `render_type_member` itself — that function has no
+                // `depth` to give `render_doc_comment`, the same "doc lives
+                // at the call site that carries depth" split
+                // `render_multiline_object_entry`'s own `Method` arm
+                // already uses for the identical field.
+                if let TsTypeMember::Method {
+                    doc: Some(text), ..
+                } = member
+                {
+                    render_doc_comment(out, text, depth + 1);
+                }
                 out.push_str(&indent(depth + 1));
                 render_type_member(out, member);
                 out.push_str(";\n");
@@ -4762,6 +4801,40 @@ mod tests {
         assert_eq!(
             printed.text,
             "export interface Box<T> {\n  readonly value: T;\n}\n"
+        );
+    }
+
+    /// #1357's own real gap: `TsTypeMember::Method` had no `generics`/`doc`
+    /// fields — `emit_capability`'s own interface methods are genuinely
+    /// generic (no monomorphisation) and doc-commented per op. `doc` renders
+    /// at `TsDecl::Interface`'s own render arm (not `render_type_member`
+    /// itself, which has no `depth` to give `render_doc_comment`), mirroring
+    /// `TsObjectEntry::Method.doc`'s own identical split (#1337).
+    #[test]
+    fn prints_a_generic_documented_interface_method() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::decl(
+            TsDecl::Export(Box::new(TsDecl::Interface {
+                name: "Clock".to_string(),
+                type_params: Vec::new(),
+                members: vec![TsTypeMember::Method {
+                    name: "now".to_string(),
+                    generics: vec!["T".to_string()],
+                    params: vec![TsParam {
+                        name: "unit".to_string(),
+                        ty: Some(TsType::named("T")),
+                        optional: false,
+                    }],
+                    ret: TsType::named("number"),
+                    doc: Some("Returns the current time.".to_string()),
+                }],
+            })),
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(
+            printed.text,
+            "export interface Clock {\n  /**\n   * Returns the current time.\n   */\n  now<T>(unit: T): number;\n}\n"
         );
     }
 

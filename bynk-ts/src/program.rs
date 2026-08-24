@@ -1179,10 +1179,33 @@ pub enum TsTypeMember {
         optional: bool,
         readonly: bool,
     },
+    /// `generics`/`doc` added by #1357: `emit_capability`'s own interface
+    /// methods are genuinely generic (`op<T>(...): ret;`, no
+    /// monomorphisation) and doc-commented — bare generic names, matching
+    /// every other real generics-list precedent in this crate; `doc`
+    /// mirrors `TsObjectEntry::Method.doc`'s own identical field (#1337).
+    /// Both default empty/`None` via [`TsTypeMember::method`]'s own
+    /// existing constructor — every one of its 6 real pre-#1357 callers is
+    /// unaffected.
+    ///
+    /// `doc` renders from exactly one of this variant's two reachable
+    /// positions: `TsDecl::Interface`'s own render arm (a real, multi-line
+    /// declaration body with `depth` available, so it calls
+    /// `render_doc_comment` before a documented member's own line — the
+    /// only place `doc` is honoured). A `Method` reached through
+    /// `TsType::Object`'s own inline, single-line shape (a type-position
+    /// object literal, e.g. `{ a: X; b(): Y }`) has no line budget for a
+    /// JSDoc block at all — `doc: Some(_)` there is a real, `debug_assert`-
+    /// guarded misuse (`render_type`'s own `TsType::Object` arm), the same
+    /// "loud, not silently dropped" precedent review of #1338 already
+    /// established for `render_object_entry_inline`'s identical
+    /// `TsObjectEntry::Method.doc` case.
     Method {
         name: String,
+        generics: Vec<String>,
         params: Vec<TsParam>,
         ret: TsType,
+        doc: Option<String>,
     },
     /// `[key_name: key_ty]: value_ty` — a TypeScript index signature.
     /// #1323's own real gap: `workers_entry.rs`'s multi-param `on call`
@@ -1229,12 +1252,14 @@ impl TsTypeMember {
         }
     }
 
-    /// `name(params): ret` — no body.
+    /// `name(params): ret` — no body, no generics, no doc comment.
     pub fn method(name: impl Into<String>, params: Vec<TsParam>, ret: TsType) -> Self {
         TsTypeMember::Method {
             name: name.into(),
+            generics: Vec::new(),
             params,
             ret,
+            doc: None,
         }
     }
 
