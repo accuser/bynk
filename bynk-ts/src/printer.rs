@@ -1702,6 +1702,9 @@ fn render_class_method(out: &mut String, method: &TsClassMethod, depth: usize) {
         "render_class_method: a Raw method body's own baked-in indent only matches depth 0"
     );
     out.push_str(&indent(depth + 1));
+    if method.private {
+        out.push_str("private ");
+    }
     if method.is_async {
         out.push_str("async ");
     }
@@ -2384,6 +2387,7 @@ mod tests {
 
         let fetch = TsClassMethod {
             name: "fetch".to_string(),
+            private: false,
             is_async: true,
             params: vec![TsParam {
                 name: "request".to_string(),
@@ -4954,6 +4958,7 @@ mod tests {
     fn prints_a_single_class_method_fragment() {
         let method = TsClassMethod {
             name: "double".to_string(),
+            private: false,
             is_async: true,
             params: vec![TsParam {
                 name: "n".to_string(),
@@ -4973,6 +4978,34 @@ mod tests {
         assert_eq!(
             print_class_method(&method, 0),
             "  async double(n: number): number {\n    return n ?? 0;\n  }\n"
+        );
+    }
+
+    /// Arc C, slice 21 (#1371): `TsClassMethod.private` — pins both the
+    /// keyword itself and its render-*before*-`async` ordering directly,
+    /// the same precedent `TsClassField.private` already has (its own
+    /// direct test, not left to transitive `bynkc` fixture coverage alone)
+    /// — review of #1372 caught this one still missing for the sibling
+    /// field.
+    #[test]
+    fn prints_a_private_class_method_fragment() {
+        let method = TsClassMethod {
+            name: "loadState".to_string(),
+            private: true,
+            is_async: true,
+            params: Vec::new(),
+            return_type: Some(TsType::named_with_args(
+                "Promise",
+                vec![TsType::named("OrderState")],
+            )),
+            body: vec![TsStmt::return_stmt(
+                Some(TsExpr::Ident("state".to_string())),
+                None,
+            )],
+        };
+        assert_eq!(
+            print_class_method(&method, 0),
+            "  private async loadState(): Promise<OrderState> {\n    return state;\n  }\n"
         );
     }
 
