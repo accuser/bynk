@@ -1318,6 +1318,16 @@ pub struct TsClassMethod {
     pub is_async: bool,
     pub params: Vec<TsParam>,
     pub return_type: Option<TsType>,
+    /// A JSDoc block immediately preceding the method — the grounding
+    /// pass's own second predicted gap (#1366), closed alongside `private`'s
+    /// own sibling site: `emit_agent`'s own per-handler methods each carry
+    /// a doc comment (`emit_doc_block`'s pre-conversion standalone call),
+    /// the same need `TsObjectEntry::Method.doc` (#1337) and
+    /// `TsTypeMember::Method.doc` (#1357) already solved for their own node
+    /// kinds. Rendered the identical way those two already are — a
+    /// `TsStmtKind::DocComment`-shaped block at the method's own indent,
+    /// immediately before its header line.
+    pub doc: Option<String>,
     pub body: Vec<TsStmt>,
 }
 

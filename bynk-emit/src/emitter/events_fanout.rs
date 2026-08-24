@@ -215,6 +215,7 @@ fn events_fanout_fetch() -> TsClassMethod {
             "Promise",
             vec![TsType::named("Response")],
         )),
+        doc: None,
         body: vec![
             TsStmt::const_stmt(
                 TsBindingName::ObjectPattern(vec!["events".to_string()]),

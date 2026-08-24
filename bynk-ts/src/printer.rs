@@ -1746,6 +1746,9 @@ fn render_class_method(out: &mut String, method: &TsClassMethod, depth: usize) {
         depth == 0 || !contains_raw(&method.body),
         "render_class_method: a Raw method body's own baked-in indent only matches depth 0"
     );
+    if let Some(text) = &method.doc {
+        render_doc_comment(out, text, depth + 1);
+    }
     out.push_str(&indent(depth + 1));
     if method.private {
         out.push_str("private ");
@@ -2443,6 +2446,7 @@ mod tests {
                 "Promise",
                 vec![TsType::named("Response")],
             )),
+            doc: None,
             body: vec![
                 TsStmt::const_stmt(
                     TsBindingName::ObjectPattern(vec!["events".to_string()]),
@@ -5011,6 +5015,7 @@ mod tests {
                 optional: false,
             }],
             return_type: Some(TsType::named("number")),
+            doc: None,
             body: vec![TsStmt::return_stmt(
                 Some(TsExpr::Binary {
                     op: TsBinaryOp::NullishCoalescing,
@@ -5043,6 +5048,7 @@ mod tests {
                 "Promise",
                 vec![TsType::named("OrderState")],
             )),
+            doc: None,
             body: vec![TsStmt::return_stmt(
                 Some(TsExpr::Ident("state".to_string())),
                 None,
@@ -5051,6 +5057,28 @@ mod tests {
         assert_eq!(
             print_class_method(&method, 0),
             "  private async loadState(): Promise<OrderState> {\n    return state;\n  }\n"
+        );
+    }
+
+    /// Arc C, slice 23 (#1375): `TsClassMethod.doc` — the grounding pass's
+    /// own second predicted gap (#1366), the same need
+    /// `TsObjectEntry::Method.doc` (#1337) and `TsTypeMember::Method.doc`
+    /// (#1357) already solved for their own node kinds, closed here for the
+    /// third and last real method-shaped node in this crate.
+    #[test]
+    fn prints_a_documented_class_method_fragment() {
+        let method = TsClassMethod {
+            name: "spend".to_string(),
+            private: false,
+            is_async: false,
+            params: Vec::new(),
+            return_type: Some(TsType::named("void")),
+            doc: Some("Debits the account.".to_string()),
+            body: vec![],
+        };
+        assert_eq!(
+            print_class_method(&method, 0),
+            "  /**\n   * Debits the account.\n   */\n  spend(): void {\n  }\n"
         );
     }
 
