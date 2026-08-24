@@ -204,6 +204,7 @@ fn events_fanout_ctor() -> TsClassCtor {
 fn events_fanout_fetch() -> TsClassMethod {
     TsClassMethod {
         name: "fetch".to_string(),
+        private: false,
         is_async: true,
         params: vec![TsParam {
             name: "request".to_string(),

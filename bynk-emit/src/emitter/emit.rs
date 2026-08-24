@@ -2143,6 +2143,7 @@ pub(crate) fn emit_provider(
         let class_depth = 0;
         let method = bynk_ts::TsClassMethod {
             name: op.name.name.clone(),
+            private: false,
             is_async: effectful,
             params,
             return_type: Some(ts_type_ref_to_ts_type(&op.return_type, None)),
@@ -4423,24 +4424,110 @@ pub(crate) fn emit_agent(
         writeln!(out, "  }}").unwrap();
     }
     writeln!(out).unwrap();
-    writeln!(out, "  private async loadState(): Promise<{state_ty}> {{").unwrap();
-    writeln!(
-        out,
-        "    const stored = await this.state.storage.get<{state_ty}>(\"state\");"
-    )
-    .unwrap();
-    // v0.96 (ADR 0124): a fresh key takes its zero (valid by construction). For a
-    // stored record, merge zero-then-stored — D4: a `store` field added in a later
-    // deploy and absent from the persisted record takes its default, rather than
-    // reading `undefined` — then run the rehydration validation gate on the merged
-    // state before any handler reads it (D1/D2).
-    writeln!(out, "    if (stored === undefined) return {zero_fn}();").unwrap();
-    writeln!(out, "    const __merged = {{ ...{zero_fn}(), ...stored }};").unwrap();
-    if has_rehydrate {
-        writeln!(out, "    {rehydrate_fn}(__merged);").unwrap();
-    }
-    writeln!(out, "    return __merged;").unwrap();
-    writeln!(out, "  }}").unwrap();
+    // Arc C, slice 21 (#1371): the third of step (9)'s own proposed 5-6
+    // sub-slices — the class's own wrapper (header/fields/constructor) stays
+    // hand-written text (Decision C, the same boundary #1359's own
+    // `emit_provider` already established), but `loadState` converts fully
+    // to a real `bynk_ts::TsClassMethod` fragment, printed through
+    // `print_class_method` (the same fragment entry point #1359 added).
+    // `commitState`, this class's OTHER private method, stays deferred as
+    // its own separate, later sub-slice — a real, harder remainder found
+    // only once actually read (its own invariant/transition predicate
+    // lowering writes directly into `out` today, the same "direct write,
+    // real position" shape `emit_free_fn`/`emit_contract_guarded_body` had
+    // *before* their own conversions needed a sub-builder for `Raw`-
+    // embedding, #1352/#1353), not silently folded into "step (9), slice 3
+    // done." `this.state.storage.get<{state_ty}>(...)`'s own generic method
+    // call has no representation in `TsExpr::Call` (`type_args` was never
+    // added — 41 real construction sites across the workspace, far more
+    // than a single narrow need like this one justifies touching) — carried
+    // as one opaque `TsExpr::Ident` callee text, the same "an odd, one-off
+    // shape stays opaque text" precedent P7.9's own `Query[T]` and #1357's
+    // own `unique symbol` already established, not a new pattern.
+    // `TsClassMethod.private` is a real, new, small gap the grounding pass
+    // itself predicted (#1366) — `loadState`/`commitState` are the first
+    // `private` method sites this whole track has hit (`emit_provider`'s
+    // own ops, #1359, were all public).
+    let load_state_body = {
+        let mut stmts = vec![
+            bynk_ts::TsStmt::const_stmt(
+                bynk_ts::TsBindingName::Ident("stored".to_string()),
+                None,
+                bynk_ts::TsExpr::Await(Box::new(bynk_ts::TsExpr::Call {
+                    callee: Box::new(bynk_ts::TsExpr::Ident(format!(
+                        "this.state.storage.get<{state_ty}>"
+                    ))),
+                    args: vec![bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(
+                        "state".to_string(),
+                    ))],
+                })),
+                None,
+            ),
+            // v0.96 (ADR 0124): a fresh key takes its zero (valid by
+            // construction). For a stored record, merge zero-then-stored —
+            // D4: a `store` field added in a later deploy and absent from
+            // the persisted record takes its default, rather than reading
+            // `undefined` — then run the rehydration validation gate on the
+            // merged state before any handler reads it (D1/D2).
+            bynk_ts::TsStmt::if_stmt(
+                bynk_ts::TsExpr::Binary {
+                    op: bynk_ts::TsBinaryOp::StrictEq,
+                    left: Box::new(bynk_ts::TsExpr::Ident("stored".to_string())),
+                    right: Box::new(bynk_ts::TsExpr::Ident("undefined".to_string())),
+                },
+                bynk_ts::TsStmt::return_stmt(
+                    Some(bynk_ts::TsExpr::Call {
+                        callee: Box::new(bynk_ts::TsExpr::Ident(zero_fn.clone())),
+                        args: Vec::new(),
+                    }),
+                    None,
+                ),
+                None,
+            ),
+            bynk_ts::TsStmt::const_stmt(
+                bynk_ts::TsBindingName::Ident("__merged".to_string()),
+                None,
+                bynk_ts::TsExpr::object_entries(vec![
+                    bynk_ts::TsObjectEntry::Spread(bynk_ts::TsExpr::Call {
+                        callee: Box::new(bynk_ts::TsExpr::Ident(zero_fn.clone())),
+                        args: Vec::new(),
+                    }),
+                    bynk_ts::TsObjectEntry::Spread(bynk_ts::TsExpr::Ident("stored".to_string())),
+                ]),
+                None,
+            ),
+        ];
+        if has_rehydrate {
+            stmts.push(bynk_ts::TsStmt::expr_stmt(
+                bynk_ts::TsExpr::Call {
+                    callee: Box::new(bynk_ts::TsExpr::Ident(rehydrate_fn.clone())),
+                    args: vec![bynk_ts::TsExpr::Ident("__merged".to_string())],
+                },
+                None,
+            ));
+        }
+        stmts.push(bynk_ts::TsStmt::return_stmt(
+            Some(bynk_ts::TsExpr::Ident("__merged".to_string())),
+            None,
+        ));
+        stmts
+    };
+    let load_state_method = bynk_ts::TsClassMethod {
+        name: "loadState".to_string(),
+        private: true,
+        is_async: true,
+        params: Vec::new(),
+        return_type: Some(bynk_ts::TsType::named_with_args(
+            "Promise",
+            vec![bynk_ts::TsType::named(state_ty.clone())],
+        )),
+        body: load_state_body,
+    };
+    let class_depth = 0;
+    out.push_str(&bynk_ts::print_class_method(
+        &load_state_method,
+        class_depth,
+    ));
     writeln!(out).unwrap();
     writeln!(
         out,

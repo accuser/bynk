@@ -1702,6 +1702,9 @@ fn render_class_method(out: &mut String, method: &TsClassMethod, depth: usize) {
         "render_class_method: a Raw method body's own baked-in indent only matches depth 0"
     );
     out.push_str(&indent(depth + 1));
+    if method.private {
+        out.push_str("private ");
+    }
     if method.is_async {
         out.push_str("async ");
     }
@@ -2384,6 +2387,7 @@ mod tests {
 
         let fetch = TsClassMethod {
             name: "fetch".to_string(),
+            private: false,
             is_async: true,
             params: vec![TsParam {
                 name: "request".to_string(),
@@ -4954,6 +4958,7 @@ mod tests {
     fn prints_a_single_class_method_fragment() {
         let method = TsClassMethod {
             name: "double".to_string(),
+            private: false,
             is_async: true,
             params: vec![TsParam {
                 name: "n".to_string(),

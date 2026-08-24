@@ -1307,6 +1307,14 @@ pub struct TsClassCtor {
 #[derive(Debug, Clone)]
 pub struct TsClassMethod {
     pub name: String,
+    /// `private {name}(...)`, e.g. `loadState`/`commitState` — the
+    /// grounding pass's own predicted gap (#1366), closed by Arc C's own
+    /// `emit_agent` class-scaffold slice: every real `TsClassMethod` site
+    /// before this one (`emit_provider` #1359's own op methods) was
+    /// public-only. Rendered before `async`, matching the one real site's
+    /// own modifier order (`private async loadState()`, not `async private
+    /// loadState()`).
+    pub private: bool,
     pub is_async: bool,
     pub params: Vec<TsParam>,
     pub return_type: Option<TsType>,
