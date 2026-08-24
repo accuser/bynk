@@ -45,7 +45,7 @@ compiler set.
 
 ```toml
 [dependencies]
-bynk-strip = "0.264"
+bynk-strip = "0.265"
 ```
 
 ```rust
