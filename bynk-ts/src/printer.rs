@@ -996,7 +996,7 @@ fn render_multiline_object_entry(out: &mut String, entry: &TsObjectEntry, depth:
                 out.push_str("async ");
             }
             out.push_str(name);
-            render_object_entry_method_generics(out, generics);
+            render_bare_generics(out, generics);
             out.push('(');
             render_params(out, params);
             out.push(')');
@@ -1016,16 +1016,19 @@ fn render_multiline_object_entry(out: &mut String, entry: &TsObjectEntry, depth:
     }
 }
 
-/// `<{generics.join(", ")}>`, or nothing at all when `generics` is empty —
-/// `TsObjectEntry::Method`'s own generic parameter list (#1337), bare
-/// names only, matching `ts_type_params`'s own real rendering exactly
-/// (`bynk-emit`'s own pre-conversion text this shape reproduces).
-fn render_object_entry_method_generics(out: &mut String, generics: &[String]) {
-    if generics.is_empty() {
+/// `<{names.join(", ")}>`, or nothing at all when `names` is empty — bare
+/// names only, matching `bynk-emit`'s own `ts_type_params` rendering
+/// exactly. Originally `TsObjectEntry::Method`'s own generic parameter list
+/// (#1337); generalised by #1339 into the one shared renderer for every
+/// bare-name generics/type-params list this crate builds
+/// (`TsDecl::Interface.type_params`, `TsDecl::TypeAlias.type_params`,
+/// `TsExpr::Arrow.generics`) rather than four near-identical copies.
+fn render_bare_generics(out: &mut String, names: &[String]) {
+    if names.is_empty() {
         return;
     }
     out.push('<');
-    for (i, g) in generics.iter().enumerate() {
+    for (i, g) in names.iter().enumerate() {
         if i > 0 {
             out.push_str(", ");
         }
@@ -1105,7 +1108,7 @@ fn render_object_entry_inline(out: &mut String, entry: &TsObjectEntry) {
                 out.push_str("async ");
             }
             out.push_str(name);
-            render_object_entry_method_generics(out, generics);
+            render_bare_generics(out, generics);
             out.push('(');
             render_params(out, params);
             out.push(')');
@@ -1152,14 +1155,22 @@ fn render_expr(out: &mut String, expr: &TsExpr) {
         TsExpr::Arrow {
             params,
             is_async,
+            generics,
+            return_type,
             body,
         } => {
             if *is_async {
                 out.push_str("async ");
             }
+            render_bare_generics(out, generics);
             out.push('(');
             render_params(out, params);
-            out.push_str(") => ");
+            out.push(')');
+            if let Some(rt) = return_type {
+                out.push_str(": ");
+                render_type(out, rt);
+            }
+            out.push_str(" => ");
             render_expr(out, body);
         }
         TsExpr::Call { callee, args } => {
@@ -1401,10 +1412,42 @@ fn render_type(out: &mut String, ty: &TsType) {
             out.push_str(") => ");
             render_type(out, ret);
         }
-        TsType::Union(members) => {
+        TsType::Union {
+            members,
+            multiline: false,
+        } => {
             for (i, m) in members.iter().enumerate() {
                 if i > 0 {
                     out.push_str(" | ");
+                }
+                render_type(out, m);
+            }
+        }
+        // #1339: `emit_sum_type`'s own real shape — one variant per line, a
+        // leading `|` on every line except the first (which gets equivalent
+        // spacing instead, matching the pre-conversion `writeln!` code's own
+        // `let pipe = if i == 0 { " " } else { "|" };` exactly), the closing
+        // `;` appended by `TsDecl::TypeAlias`'s own caller directly after
+        // the last member's own line — see `TsType::Union`'s own doc for
+        // why this needs no depth parameter despite the multi-line shape.
+        TsType::Union {
+            members,
+            multiline: true,
+        } => {
+            for (i, m) in members.iter().enumerate() {
+                if i > 0 {
+                    out.push('\n');
+                }
+                out.push_str("  ");
+                out.push_str(if i == 0 { " " } else { "|" });
+                out.push(' ');
+                render_type(out, m);
+            }
+        }
+        TsType::Intersection(members) => {
+            for (i, m) in members.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(" & ");
                 }
                 render_type(out, m);
             }
@@ -1589,15 +1632,18 @@ fn render_decl_body(out: &mut String, decl: &TsDecl, depth: usize) {
             out.push_str("export ");
             render_decl_body(out, inner, depth);
         }
-        TsDecl::Interface { name, members } => {
+        TsDecl::Interface {
+            name,
+            type_params,
+            members,
+        } => {
             out.push_str("interface ");
             out.push_str(name);
+            render_bare_generics(out, type_params);
             out.push_str(" {\n");
-            for (member_name, member_ty) in members {
+            for member in members {
                 out.push_str(&indent(depth + 1));
-                out.push_str(member_name);
-                out.push_str(": ");
-                render_type(out, member_ty);
+                render_type_member(out, member);
                 out.push_str(";\n");
             }
             out.push_str(&indent(depth));
@@ -1691,10 +1737,32 @@ fn render_decl_body(out: &mut String, decl: &TsDecl, depth: usize) {
             render_block_stmts(out, body, depth);
             out.push('\n');
         }
-        TsDecl::TypeAlias { name, ty } => {
+        TsDecl::TypeAlias {
+            name,
+            type_params,
+            ty,
+        } => {
             out.push_str("type ");
             out.push_str(name);
-            out.push_str(" = ");
+            render_bare_generics(out, type_params);
+            // #1339: a multiline Union's own first rendered character is
+            // its first member's leading indent, not a newline — the `=`
+            // itself must be followed directly by `\n` here (no space
+            // before it), matching the pre-conversion `writeln!(out,
+            // "export type {name}{params} =")` line's own exact bytes;
+            // every other `ty` keeps the ordinary `" = "` (space both
+            // sides) ordinary single-line form.
+            if matches!(
+                ty,
+                TsType::Union {
+                    multiline: true,
+                    ..
+                }
+            ) {
+                out.push_str(" =\n");
+            } else {
+                out.push_str(" = ");
+            }
             render_type(out, ty);
             out.push_str(";\n");
         }
@@ -2040,11 +2108,12 @@ mod tests {
         program.push(TsStmt::decl(
             TsDecl::Interface {
                 name: "FanoutEvent".to_string(),
+                type_params: Vec::new(),
                 members: vec![
-                    ("type".to_string(), TsType::named("string")),
-                    ("payload".to_string(), TsType::named("unknown")),
-                    (
-                        "envelope".to_string(),
+                    TsTypeMember::prop("type", TsType::named("string")),
+                    TsTypeMember::prop("payload", TsType::named("unknown")),
+                    TsTypeMember::prop(
+                        "envelope",
                         TsType::Object(vec![
                             TsTypeMember::prop("eventId", TsType::named("string")),
                             TsTypeMember::prop("publisherId", TsType::named("string")),
@@ -2498,7 +2567,7 @@ mod tests {
     /// `Fn` gap list. Members print `" | "`-joined, in order.
     #[test]
     fn print_type_renders_a_union_of_named_types() {
-        let ty = TsType::Union(vec![
+        let ty = TsType::union(vec![
             TsType::named("string"),
             TsType::named("number"),
             TsType::Object(vec![TsTypeMember::prop(
@@ -2542,6 +2611,7 @@ mod tests {
         program.push(TsStmt::decl(
             TsDecl::Interface {
                 name: "A".to_string(),
+                type_params: Vec::new(),
                 members: vec![],
             },
             None,
@@ -2644,6 +2714,7 @@ mod tests {
         program.push(TsStmt::decl(
             TsDecl::Interface {
                 name: "A".to_string(),
+                type_params: Vec::new(),
                 members: vec![],
             },
             None,
@@ -2873,6 +2944,8 @@ mod tests {
                     optional: false,
                 }],
                 is_async: false,
+                generics: Vec::new(),
+                return_type: None,
                 body: Box::new(TsExpr::Call {
                     callee: Box::new(TsExpr::Ident("dispatch".to_string())),
                     args: vec![TsExpr::Ident("events".to_string())],
@@ -2900,6 +2973,8 @@ mod tests {
                     optional: false,
                 }],
                 is_async: true,
+                generics: Vec::new(),
+                return_type: None,
                 body: Box::new(TsExpr::Ident("{ dispatch(events); }".to_string())),
             },
             None,
@@ -2930,6 +3005,8 @@ mod tests {
                         optional: false,
                     }],
                     is_async: false,
+                    generics: Vec::new(),
+                    return_type: None,
                     body: Box::new(TsExpr::Ident("x".to_string())),
                 }),
                 args: vec![TsExpr::Lit(TsLit::Num("1".to_string()))],
@@ -2954,6 +3031,8 @@ mod tests {
                         optional: false,
                     }],
                     is_async: false,
+                    generics: Vec::new(),
+                    return_type: None,
                     body: Box::new(TsExpr::Ident("y".to_string())),
                 }),
             },
@@ -2975,6 +3054,8 @@ mod tests {
                         optional: false,
                     }],
                     is_async: false,
+                    generics: Vec::new(),
+                    return_type: None,
                     body: Box::new(TsExpr::Ident("y".to_string())),
                 }),
                 ty: TsType::named("Handler"),
@@ -3041,6 +3122,7 @@ mod tests {
         program.push(TsStmt::decl(
             TsDecl::TypeAlias {
                 name: "Foo".to_string(),
+                type_params: Vec::new(),
                 ty: TsType::named("{ get(id: any): any }"),
             },
             None,
@@ -4373,6 +4455,138 @@ mod tests {
         assert_eq!(
             print_object_entry(&entry, 0),
             entry_slice_with_trailing_newline
+        );
+    }
+
+    /// #1339's own real gap: `emit_refined_type`'s own branded-type alias,
+    /// `{base} & { readonly __brand: "..." }`, has no representation among
+    /// `Named`/`Array`/`Object`/`Fn`/`Union` — mirrors `Union`'s own single-
+    /// line, ` & `-joined shape exactly.
+    #[test]
+    fn print_type_renders_an_intersection() {
+        let ty = TsType::intersection(vec![
+            TsType::named("string"),
+            TsType::Object(vec![TsTypeMember::readonly_prop(
+                "__brand",
+                TsType::named("\"Order\""),
+            )]),
+        ]);
+        assert_eq!(print_type(&ty), "string & { readonly __brand: \"Order\" }");
+    }
+
+    /// #1339's own real gap: `emit_sum_type`'s own multi-line discriminated
+    /// union — a leading `|` on every line except the first (which gets
+    /// equivalent spacing instead, matching the pre-conversion `writeln!`
+    /// code's own `let pipe = if i == 0 { " " } else { "|" };` exactly), no
+    /// trailing newline or `;` of its own (the caller, `TsDecl::TypeAlias`'s
+    /// own render arm, owns both).
+    #[test]
+    fn print_type_renders_a_multiline_union() {
+        let ty = TsType::multiline_union(vec![
+            TsType::Object(vec![TsTypeMember::readonly_prop(
+                "tag",
+                TsType::named("\"a\""),
+            )]),
+            TsType::Object(vec![
+                TsTypeMember::readonly_prop("tag", TsType::named("\"b\"")),
+                TsTypeMember::readonly_prop("value", TsType::named("number")),
+            ]),
+        ]);
+        assert_eq!(
+            print_type(&ty),
+            "    { readonly tag: \"a\" }\n  | { readonly tag: \"b\"; readonly value: number }"
+        );
+    }
+
+    /// #1339: `TsDecl::TypeAlias`'s own multiline-union special case — the
+    /// `=` is followed directly by `\n` (no trailing space, matching the
+    /// pre-conversion `writeln!(out, "export type {name}{params} =")`
+    /// line's own exact bytes), each variant on its own line, the closing
+    /// `;` appended directly to the last variant's own line. Also pins
+    /// `type_params`' own bare-generics rendering on the alias header.
+    #[test]
+    fn prints_a_generic_sum_types_own_multiline_type_alias() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::decl(
+            TsDecl::Export(Box::new(TsDecl::TypeAlias {
+                name: "Opt".to_string(),
+                type_params: vec!["T".to_string()],
+                ty: TsType::multiline_union(vec![
+                    TsType::Object(vec![TsTypeMember::readonly_prop(
+                        "tag",
+                        TsType::named("\"none\""),
+                    )]),
+                    TsType::Object(vec![
+                        TsTypeMember::readonly_prop("tag", TsType::named("\"some\"")),
+                        TsTypeMember::readonly_prop("value", TsType::named("T")),
+                    ]),
+                ]),
+            })),
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(
+            printed.text,
+            "export type Opt<T> =\n    \
+             { readonly tag: \"none\" }\n  \
+             | { readonly tag: \"some\"; readonly value: T };\n"
+        );
+    }
+
+    /// #1339's own real gap: `emit_record_type`'s own `export interface
+    /// {name}{params} { readonly {field}: {ty}; ... }` — bare generic names
+    /// on the interface header, `readonly` on every real member here.
+    #[test]
+    fn prints_a_generic_interface_with_readonly_members() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::decl(
+            TsDecl::Export(Box::new(TsDecl::Interface {
+                name: "Box".to_string(),
+                type_params: vec!["T".to_string()],
+                members: vec![TsTypeMember::readonly_prop("value", TsType::named("T"))],
+            })),
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(
+            printed.text,
+            "export interface Box<T> {\n  readonly value: T;\n}\n"
+        );
+    }
+
+    /// #1339's own real gap: `TsExpr::Arrow` had no `generics`/`return_type`
+    /// field — `emit_sum_type`'s own generic payload-constructor arrows
+    /// (`<T>(name: T): Sum<T> => (...)`) need both. The object-literal body
+    /// is wrapped in an explicit `Paren` — `Arrow`'s own renderer does not
+    /// auto-parenthesise an object body the way real JS/TS syntax requires
+    /// to disambiguate it from a block.
+    #[test]
+    fn prints_a_generic_arrow_with_a_parenthesised_object_body() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::expr_stmt(
+            TsExpr::Arrow {
+                params: vec![TsParam {
+                    name: "value".to_string(),
+                    ty: Some(TsType::named("T")),
+                    optional: false,
+                }],
+                is_async: false,
+                generics: vec!["T".to_string()],
+                return_type: Some(TsType::named_with_args("Sum", vec![TsType::named("T")])),
+                body: Box::new(TsExpr::Paren(Box::new(TsExpr::object_entries(vec![
+                    TsObjectEntry::Prop(
+                        "tag".to_string(),
+                        TsExpr::Lit(TsLit::Str("some".to_string())),
+                    ),
+                    TsObjectEntry::Shorthand("value".to_string()),
+                ])))),
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(
+            printed.text,
+            "<T>(value: T): Sum<T> => ({ tag: \"some\", value });\n"
         );
     }
 }

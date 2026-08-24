@@ -3403,6 +3403,8 @@ fn emit_composition_root(
                     optional: false,
                 }],
                 is_async: true,
+                generics: Vec::new(),
+                return_type: None,
                 body: Box::new(ident(dispatch_body)),
             };
             deps_entries.push(("__eventsDispatch".to_string(), arrow));

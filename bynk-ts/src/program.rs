@@ -276,6 +276,22 @@ pub(crate) enum TsStmtKind {
     /// `VerbatimOrigin` at all), because using `Verbatim` here would make
     /// this permanent exclusion look like unfinished Arc C work a future
     /// slice is expected to close, which it structurally cannot.
+    ///
+    /// #1339's own second real use, broadening (not narrowing) the
+    /// above: `emit_refined_type`'s own `of()` guard block splices
+    /// `emit_refined_checks`'s own output this same way — that function
+    /// keeps its exact `out: &mut String` signature (the P7.9/step-1
+    /// pattern applied one level down, not a `lower.rs`-style permanent
+    /// exclusion), but its real content is ALREADY built and printed from
+    /// real `bynk_ts::TsStmt`/`print_stmt` calls internally — genuinely
+    /// statement-shaped pre-rendered text, the same mechanical fit `Raw`
+    /// already provides, just for a different underlying reason than
+    /// `lower.rs`'s own permanent exclusion. Both real uses share the one
+    /// property that actually matters for this variant's own existence:
+    /// *real, already-correctly-indented statement text this call site
+    /// cannot restructure into a `Vec<TsStmt>` without changing scope it
+    /// isn't the one converting* — not whether the reason is permanent
+    /// or temporary.
     Raw(String),
 }
 
@@ -573,10 +589,22 @@ pub enum TsExpr {
     /// `__eventsDispatch` closure (`async (events: Array<...>) => {...}`) is
     /// the first real `Arrow` site that's async — mirrors
     /// `TsDecl::Function`'s own `is_async` field (#1325), added for the same
-    /// reason.
+    /// reason. `generics`/`return_type` added by #1339: `emit_sum_type`'s
+    /// own generic payload-constructor arrows (`<T>(name: T): Sum<T> =>
+    /// (...)`) need both — bare generic names only (empty for every
+    /// non-generic site, the overwhelming majority), matching
+    /// `TsObjectEntry::Method.generics`'s own (#1337) identical convention;
+    /// `return_type` mirrors `TsDecl::Function.return_type`'s own existing
+    /// `Option<TsType>` shape — a real gap the accepted proposal's own
+    /// grounding named `generics` for but missed: every one of this file's
+    /// own real generic-payload arrows carries an explicit return-type
+    /// annotation the arrow itself owns (`: {name}{params}`), not something
+    /// the body's own type alone determines.
     Arrow {
         params: Vec<TsParam>,
         is_async: bool,
+        generics: Vec<String>,
+        return_type: Option<TsType>,
         body: Box<TsExpr>,
     },
     Call {
@@ -1023,7 +1051,36 @@ pub enum TsType {
     /// but nothing in `bynk-emit` builds one today. See [`TsType::Array`]'s
     /// own doc for a real, unclosed parenthesisation hazard when a `Union`
     /// sits inside one.
-    Union(Vec<TsType>),
+    ///
+    /// `multiline` (#1339): `false` (via [`TsType::union`]) is this variant's
+    /// original single-line `A | B | C` form, unchanged. `true` (via
+    /// [`TsType::multiline_union`]) is `emit_sum_type`'s own real
+    /// discriminated-union shape — one variant per line, a leading `|` on
+    /// every line *except* the first (which gets equivalent spacing
+    /// instead), the closing `;` appended directly to the last variant's own
+    /// line. Mirrors [`TsExpr::Object`]'s own `multiline` field precedent
+    /// (#1317), but — unlike that one — needs no depth-aware wrapper: the
+    /// pre-conversion `writeln!` code this reproduces always used a fixed
+    /// two-space indent regardless of nesting (this shape is only ever a
+    /// top-level `export type` alias body, never nested inside another
+    /// type), so `render_type` stays entirely depth-unaware here too. Only
+    /// rendered correctly from [`TsDecl::TypeAlias`]'s own top-level
+    /// render — not reachable, and not given a defined rendering, from any
+    /// nested position (an array element, a type argument, …), the same
+    /// named boundary [`TsExpr::Object`]'s own `multiline` doc already
+    /// draws for its own nested case.
+    Union {
+        members: Vec<TsType>,
+        multiline: bool,
+    },
+    /// `A & B` — a type-position intersection. #1339's own real gap:
+    /// `emit_refined_type`'s own branded-type alias,
+    /// `{base} & { readonly __brand: "..." }`, has no representation among
+    /// `Named`/`Array`/`Object`/`Fn`/`Union` — mirrors `Union`'s own
+    /// shape/precedent exactly (a flat `Vec`, each member printed through
+    /// the ordinary `render_type` recursion, joined by ` & `), single-line
+    /// only (nothing in `bynk-emit` builds a multi-line intersection).
+    Intersection(Vec<TsType>),
 }
 
 impl TsType {
@@ -1058,6 +1115,29 @@ impl TsType {
             element: Box::new(element),
             readonly: true,
         }
+    }
+
+    /// `A | B | C` — the original single-line union form, unchanged.
+    pub fn union(members: Vec<TsType>) -> Self {
+        TsType::Union {
+            members,
+            multiline: false,
+        }
+    }
+
+    /// `emit_sum_type`'s own real multi-line discriminated-union shape — see
+    /// [`TsType::Union`]'s own doc for the exact rendering rules and why
+    /// this needs no depth parameter.
+    pub fn multiline_union(members: Vec<TsType>) -> Self {
+        TsType::Union {
+            members,
+            multiline: true,
+        }
+    }
+
+    /// `A & B` — an intersection type.
+    pub fn intersection(members: Vec<TsType>) -> Self {
+        TsType::Intersection(members)
     }
 }
 
@@ -1252,9 +1332,21 @@ pub enum TsDecl {
     /// (`TsDecl::Export` is a peer variant, not a modifier on each other
     /// one).
     Export(Box<TsDecl>),
+    /// `type_params`/per-member `readonly` (#1339's own real gap):
+    /// `emit_record_type`'s own `export interface {name}{params} {
+    /// readonly {field}: {ty}; ... }` — bare generic names (matching
+    /// `ts_type_params`'s/`TsObjectEntry::Method.generics`'s own
+    /// convention) and a `readonly` modifier every real field here
+    /// carries. `members` reuses [`TsTypeMember`] (the exact same shape
+    /// [`TsType::Object`]'s own structural members already use) rather
+    /// than a bespoke tuple, since `readonly` is already that type's own
+    /// field — this interface's real content has never needed
+    /// `Method`/`Index`, but nothing about reusing the shared type
+    /// forecloses a future slice that does.
     Interface {
         name: String,
-        members: Vec<(String, TsType)>,
+        type_params: Vec<String>,
+        members: Vec<TsTypeMember>,
     },
     /// A top-level `const` — distinct from `TsStmtKind::Const` (private —
     /// reachable through [`TsStmt::const_stmt`]), the local
@@ -1285,10 +1377,17 @@ pub enum TsDecl {
         body: Vec<TsStmt>,
         is_async: bool,
     },
-    /// `type name = ty;` — a top-level type alias. `workers.rs`'s own real
-    /// site: the `DurableObjectNamespace` local fallback type (emitted only
-    /// when the Worker has agents or publishes events).
-    TypeAlias { name: String, ty: TsType },
+    /// `type name = ty;` (non-generic) or `type name<T, U> = ty;` (via
+    /// `type_params`, #1339's own real gap: `emit_sum_type`'s own generic
+    /// sum types erase to `export type Foo<T> = ...`) — a top-level type
+    /// alias. `workers.rs`'s own real site: the `DurableObjectNamespace`
+    /// local fallback type (emitted only when the Worker has agents or
+    /// publishes events), never generic — `type_params` is empty there.
+    TypeAlias {
+        name: String,
+        type_params: Vec<String>,
+        ty: TsType,
+    },
     /// `export default <expr>;` — a default export of an *expression*, not
     /// a declaration. #1323's own real gap (`workers_entry.rs`'s own
     /// top-level shape, `export default { fetch, scheduled?, queue? }`):

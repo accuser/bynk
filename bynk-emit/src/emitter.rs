@@ -4664,7 +4664,7 @@ fn ts_ty_to_ts_type(t: TyId, tys: &Arc<Types>) -> TsType {
         // `ts_type_ref_to_ts_type`'s own `Query` arm already established for
         // a single real shape `TsType`'s general renderers don't reproduce
         // byte-for-byte — not a new pattern, the second real use of one.
-        Ty::ActorSum(members) => TsType::Union(
+        Ty::ActorSum(members) => TsType::union(
             members
                 .iter()
                 .map(|(name, id)| match &*tys.get(*id) {

@@ -146,6 +146,28 @@ struct RefinedShape<'a> {
     is_opaque: bool,
 }
 
+/// #1339 (R7.1): `export type {name} = {base} & { readonly __brand: "..."
+/// };` is a real [`bynk_ts::TsDecl::TypeAlias`] over a new
+/// [`bynk_ts::TsType::Intersection`] (this file's own first real need for
+/// it — `TsType` had `Named`/`Array`/`Object`/`Fn`/`Union`, nothing for
+/// `A & B`); `export const {name} = { of(...) {...}, unsafe?(...) {...},
+/// ...attachedMethods }` is a real [`bynk_ts::TsDecl::ConstDecl`] whose
+/// `init` is one [`bynk_ts::TsExpr::multiline_object_entries`] — `of`'s own
+/// signature/return-statement are real nodes; `emit_refined_checks`'s own
+/// output (still `out: &mut String`, unaffected by this slice, the P7.9/
+/// step-1 pattern applied one level down) is captured and carried as one
+/// [`bynk_ts::TsStmtKind::Raw`] statement — the same carrier #1337 added for
+/// `lower.rs`'s own permanently-excluded body text, reused here for a
+/// different, narrower reason: this is legitimately real-node-shaped
+/// content (every guard is already built and printed via real
+/// `bynk_ts::TsStmt`/`print_stmt` calls inside `emit_refined_checks`
+/// itself), just still `String`-typed at its own call boundary because that
+/// function's own signature wasn't part of this slice's scope. `emit_
+/// attached_methods`'s own real `Vec<TsObjectEntry>` (#1337) is appended
+/// directly into the SAME entries list — no more per-entry `print_object_
+/// entry` splice loop for this function, now that it owns the whole
+/// object's own construction. This function's own exact signature is
+/// unchanged, the same P7.9/step-1 pattern.
 fn emit_refined_type(
     out: &mut String,
     t: &TypeDecl,
@@ -159,46 +181,97 @@ fn emit_refined_type(
         refinement,
         is_opaque,
     } = shape;
-    let ts_base = ts_base(base);
-    writeln!(
-        out,
-        "export type {name} = {base} & {{ readonly __brand: \"{prefix}{name}\" }};",
-        name = t.name.name,
-        base = ts_base,
-        prefix = brand_prefix,
-    )
-    .unwrap();
+    let name = t.name.name.clone();
+    let base_ty = bynk_ts::TsType::named(ts_base(base));
+
+    let brand_ty = bynk_ts::TsType::Object(vec![bynk_ts::TsTypeMember::readonly_prop(
+        "__brand",
+        bynk_ts::TsType::named(format!("\"{brand_prefix}{name}\"")),
+    )]);
+    let type_alias = bynk_ts::TsStmt::decl(
+        bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::TypeAlias {
+            name: name.clone(),
+            type_params: Vec::new(),
+            ty: bynk_ts::TsType::intersection(vec![base_ty.clone(), brand_ty]),
+        })),
+        None,
+    );
+    out.push_str(&bynk_ts::print_stmt(&type_alias, 0));
     writeln!(out).unwrap();
-    writeln!(out, "export const {name} = {{", name = t.name.name).unwrap();
-    writeln!(
-        out,
-        "  of(value: {base}): Result<{name}, ValidationError> {{",
-        name = t.name.name,
-        base = ts_base,
-    )
-    .unwrap();
-    emit_refined_checks(out, t, base, refinement);
-    writeln!(out, "    return Ok(value as {name});", name = t.name.name).unwrap();
-    writeln!(out, "  }},").unwrap();
+
+    let checks_text = {
+        let mut checks = String::new();
+        emit_refined_checks(&mut checks, t, base, refinement);
+        checks
+    };
+    let cast_to_name = bynk_ts::TsExpr::As {
+        expr: Box::new(bynk_ts::TsExpr::Ident("value".to_string())),
+        ty: bynk_ts::TsType::named(name.clone()),
+    };
+    let mut entries: Vec<bynk_ts::TsObjectEntry> = vec![bynk_ts::TsObjectEntry::Method {
+        name: "of".to_string(),
+        is_async: false,
+        generics: Vec::new(),
+        params: vec![bynk_ts::TsParam {
+            name: "value".to_string(),
+            ty: Some(base_ty.clone()),
+            optional: false,
+        }],
+        return_type: Some(bynk_ts::TsType::named_with_args(
+            "Result",
+            vec![
+                bynk_ts::TsType::named(name.clone()),
+                bynk_ts::TsType::named("ValidationError"),
+            ],
+        )),
+        doc: None,
+        inline: false,
+        body: vec![
+            bynk_ts::TsStmt::raw(checks_text, None),
+            bynk_ts::TsStmt::return_stmt(
+                Some(bynk_ts::TsExpr::Call {
+                    callee: Box::new(bynk_ts::TsExpr::Ident("Ok".to_string())),
+                    args: vec![cast_to_name.clone()],
+                }),
+                None,
+            ),
+        ],
+    }];
     // ADR 0182: only opaque types expose a public `unsafe` constructor. A refined
     // or alias type omits it — host code cannot bypass the predicate — and its
     // admitted/generated values brand via an inline `as` cast instead (see
     // `unchecked_construct`).
     if is_opaque {
-        writeln!(
-            out,
-            "  unsafe(value: {base}): {name} {{",
-            name = t.name.name,
-            base = ts_base,
-        )
-        .unwrap();
-        writeln!(out, "    return value as {name};", name = t.name.name).unwrap();
-        writeln!(out, "  }},").unwrap();
+        entries.push(bynk_ts::TsObjectEntry::Method {
+            name: "unsafe".to_string(),
+            is_async: false,
+            generics: Vec::new(),
+            params: vec![bynk_ts::TsParam {
+                name: "value".to_string(),
+                ty: Some(base_ty),
+                optional: false,
+            }],
+            return_type: Some(bynk_ts::TsType::named(name.clone())),
+            doc: None,
+            inline: false,
+            body: vec![bynk_ts::TsStmt::return_stmt(Some(cast_to_name), None)],
+        });
     }
-    for entry in emit_attached_methods(&t.name.name, &t.type_params, commons, runtime_use) {
-        out.push_str(&bynk_ts::print_object_entry(&entry, 0));
-    }
-    writeln!(out, "}};").unwrap();
+    entries.extend(emit_attached_methods(
+        &t.name.name,
+        &t.type_params,
+        commons,
+        runtime_use,
+    ));
+    let const_decl = bynk_ts::TsStmt::decl(
+        bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::ConstDecl {
+            name,
+            ty: None,
+            init: bynk_ts::TsExpr::multiline_object_entries(entries),
+        })),
+        None,
+    );
+    out.push_str(&bynk_ts::print_stmt(&const_decl, 0));
     writeln!(out).unwrap();
 }
 
@@ -336,6 +409,16 @@ pub(crate) fn ts_type_params(params: &[TypeParam]) -> String {
     format!("<{}>", names.join(", "))
 }
 
+/// #1339 (R7.1): `export interface {name}{params} { readonly {field}: {ty};
+/// ... }` is a real [`bynk_ts::TsDecl::Interface`] (`type_params` bare
+/// names, matching `ts_type_params`'s own convention exactly; each field a
+/// [`bynk_ts::TsTypeMember::readonly_prop`], reusing [`TsTypeMember`]'s own
+/// existing `readonly` field rather than a bespoke one — every real field
+/// here is `readonly`), printed through [`bynk_ts::print_stmt`] at depth 0.
+/// Field types route through `ts_ty_to_ts_type` (the real-node sibling
+/// `ts_ty` itself already wraps, P7.9) instead of the opaque pre-printed
+/// `String` `ts_ty` returns — a real node, not text. This function's own
+/// exact signature is unchanged, the same P7.9/step-1 pattern.
 fn emit_record_type(
     out: &mut String,
     t: &TypeDecl,
@@ -343,22 +426,25 @@ fn emit_record_type(
     commons: &TypedCommons,
     runtime_use: &RuntimeUse,
 ) {
-    writeln!(
-        out,
-        "export interface {name}{params} {{",
-        name = t.name.name,
-        params = ts_type_params(&t.type_params),
-    )
-    .unwrap();
-    for (name, ty) in fields {
-        writeln!(
-            out,
-            "  readonly {name}: {ty};",
-            ty = ts_ty(*ty, &commons.ty_intern),
-        )
-        .unwrap();
-    }
-    writeln!(out, "}}").unwrap();
+    let type_params: Vec<String> = t.type_params.iter().map(|p| p.name.name.clone()).collect();
+    let members: Vec<bynk_ts::TsTypeMember> = fields
+        .iter()
+        .map(|(name, ty)| {
+            bynk_ts::TsTypeMember::readonly_prop(
+                name.clone(),
+                ts_ty_to_ts_type(*ty, &commons.ty_intern),
+            )
+        })
+        .collect();
+    let interface = bynk_ts::TsStmt::decl(
+        bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::Interface {
+            name: t.name.name.clone(),
+            type_params,
+            members,
+        })),
+        None,
+    );
+    out.push_str(&bynk_ts::print_stmt(&interface, 0));
     writeln!(out).unwrap();
     writeln!(out, "export const {name} = {{", name = t.name.name).unwrap();
     for entry in emit_attached_methods(&t.name.name, &t.type_params, commons, runtime_use) {
@@ -368,6 +454,25 @@ fn emit_record_type(
     writeln!(out).unwrap();
 }
 
+/// #1339 (R7.1): `export type {name}{params} =\n  | {...}\n  | {...};` is a
+/// real [`bynk_ts::TsDecl::TypeAlias`] over a new
+/// [`bynk_ts::TsType::multiline_union`] (see its own doc for the exact
+/// leading-pipe/spacing rules this reproduces byte-for-byte); `export const
+/// {name} = { {tag}: ..., ... }` is a real [`bynk_ts::TsDecl::ConstDecl`]
+/// whose `init` is one [`bynk_ts::TsExpr::multiline_object_entries`] — a
+/// nullary variant is a real cast expression, a payload variant a real
+/// [`bynk_ts::TsExpr::Arrow`] (`generics`/`return_type`, #1339's own two
+/// gaps beyond the accepted proposal's own three) whose object-literal body
+/// is wrapped in an explicit [`bynk_ts::TsExpr::Paren`] — `Arrow`'s own
+/// renderer does not auto-parenthesise an object-literal body the way real
+/// JS/TS syntax requires to disambiguate it from a block, so this call site
+/// must ask for the parens itself, the same "explicit `Paren` always prints
+/// its own literal parens" precedent #1323 already established. `emit_
+/// attached_methods`'s own real `Vec<TsObjectEntry>` (#1337) is appended
+/// directly into the SAME entries list, the same "own the whole object's
+/// construction, drop the per-entry splice loop" pattern `emit_refined_
+/// type`'s own conversion just used. This function's own exact signature
+/// is unchanged, the same P7.9/step-1 pattern.
 fn emit_sum_type(
     out: &mut String,
     t: &TypeDecl,
@@ -381,71 +486,120 @@ fn emit_sum_type(
     // (`Some: <T>(v: T): Opt<T> => …`); a payload-less constructor stays a
     // constant, cast to the all-`never` instantiation (`Opt<never>`), which is
     // assignable to every `Opt<X>` since the nullary arm names no parameter.
-    // Both strings are empty for a non-generic sum, keeping its output identical.
-    let params = ts_type_params(&t.type_params);
-    let never_args = if t.type_params.is_empty() {
-        String::new()
+    // Both are empty for a non-generic sum, keeping its output identical.
+    let name = t.name.name.clone();
+    let type_params: Vec<String> = t.type_params.iter().map(|p| p.name.name.clone()).collect();
+    let never_ty = if type_params.is_empty() {
+        bynk_ts::TsType::named(name.clone())
     } else {
-        format!(
-            "<{}>",
-            t.type_params
+        bynk_ts::TsType::named_with_args(
+            name.clone(),
+            type_params
                 .iter()
-                .map(|_| "never")
-                .collect::<Vec<_>>()
-                .join(", ")
+                .map(|_| bynk_ts::TsType::named("never"))
+                .collect(),
         )
     };
-    writeln!(out, "export type {name}{params} =", name = t.name.name).unwrap();
-    for (i, (tag, payload)) in variants.iter().enumerate() {
-        let pipe = if i == 0 { " " } else { "|" };
-        if payload.is_empty() {
-            let term = if i == variants.len() - 1 { ";" } else { "" };
-            writeln!(out, "  {pipe} {{ readonly tag: \"{tag}\" }}{term}").unwrap();
-        } else {
-            let fields: Vec<String> = payload
+    let self_ty = if type_params.is_empty() {
+        bynk_ts::TsType::named(name.clone())
+    } else {
+        bynk_ts::TsType::named_with_args(
+            name.clone(),
+            type_params
                 .iter()
-                .map(|(name, ty)| format!("readonly {name}: {}", ts_ty(*ty, &commons.ty_intern)))
-                .collect();
-            let term = if i == variants.len() - 1 { ";" } else { "" };
-            writeln!(
-                out,
-                "  {pipe} {{ readonly tag: \"{tag}\"; {fields} }}{term}",
-                fields = fields.join("; "),
-            )
-            .unwrap();
-        }
-    }
+                .map(|p| bynk_ts::TsType::named(p.clone()))
+                .collect(),
+        )
+    };
+
+    let variant_types: Vec<bynk_ts::TsType> = variants
+        .iter()
+        .map(|(tag, payload)| {
+            let mut members = vec![bynk_ts::TsTypeMember::readonly_prop(
+                "tag",
+                bynk_ts::TsType::named(format!("\"{tag}\"")),
+            )];
+            members.extend(payload.iter().map(|(field, ty)| {
+                bynk_ts::TsTypeMember::readonly_prop(
+                    field.clone(),
+                    ts_ty_to_ts_type(*ty, &commons.ty_intern),
+                )
+            }));
+            bynk_ts::TsType::Object(members)
+        })
+        .collect();
+    let type_alias = bynk_ts::TsStmt::decl(
+        bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::TypeAlias {
+            name: name.clone(),
+            type_params: type_params.clone(),
+            ty: bynk_ts::TsType::multiline_union(variant_types),
+        })),
+        None,
+    );
+    out.push_str(&bynk_ts::print_stmt(&type_alias, 0));
     writeln!(out).unwrap();
-    writeln!(out, "export const {name} = {{", name = t.name.name).unwrap();
+
+    let mut entries: Vec<bynk_ts::TsObjectEntry> = Vec::new();
     for (tag, payload) in variants {
         if payload.is_empty() {
-            writeln!(
-                out,
-                "  {tag}: {{ tag: \"{tag}\" }} as {name}{never_args},",
-                name = t.name.name,
-            )
-            .unwrap();
+            let tag_obj = bynk_ts::TsExpr::object_entries(vec![bynk_ts::TsObjectEntry::Prop(
+                "tag".to_string(),
+                bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(tag.clone())),
+            )]);
+            entries.push(bynk_ts::TsObjectEntry::Prop(
+                tag.clone(),
+                bynk_ts::TsExpr::As {
+                    expr: Box::new(tag_obj),
+                    ty: never_ty.clone(),
+                },
+            ));
         } else {
-            let ctor_params: Vec<String> = payload
+            let ctor_params: Vec<bynk_ts::TsParam> = payload
                 .iter()
-                .map(|(name, ty)| format!("{name}: {}", ts_ty(*ty, &commons.ty_intern)))
+                .map(|(field, ty)| bynk_ts::TsParam {
+                    name: field.clone(),
+                    ty: Some(ts_ty_to_ts_type(*ty, &commons.ty_intern)),
+                    optional: false,
+                })
                 .collect();
-            let obj_fields: Vec<String> = payload.iter().map(|(name, _)| name.clone()).collect();
-            writeln!(
-                out,
-                "  {tag}: {params}({ctor_params}): {name}{params} => ({{ tag: \"{tag}\", {fields} }}),",
-                params = params,
-                ctor_params = ctor_params.join(", "),
-                name = t.name.name,
-                fields = obj_fields.join(", "),
-            )
-            .unwrap();
+            let mut obj_entries = vec![bynk_ts::TsObjectEntry::Prop(
+                "tag".to_string(),
+                bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(tag.clone())),
+            )];
+            obj_entries.extend(
+                payload
+                    .iter()
+                    .map(|(field, _)| bynk_ts::TsObjectEntry::Shorthand(field.clone())),
+            );
+            let ctor_body =
+                bynk_ts::TsExpr::Paren(Box::new(bynk_ts::TsExpr::object_entries(obj_entries)));
+            entries.push(bynk_ts::TsObjectEntry::Prop(
+                tag.clone(),
+                bynk_ts::TsExpr::Arrow {
+                    params: ctor_params,
+                    is_async: false,
+                    generics: type_params.clone(),
+                    return_type: Some(self_ty.clone()),
+                    body: Box::new(ctor_body),
+                },
+            ));
         }
     }
-    for entry in emit_attached_methods(&t.name.name, &t.type_params, commons, runtime_use) {
-        out.push_str(&bynk_ts::print_object_entry(&entry, 0));
-    }
-    writeln!(out, "}};").unwrap();
+    entries.extend(emit_attached_methods(
+        &t.name.name,
+        &t.type_params,
+        commons,
+        runtime_use,
+    ));
+    let const_decl = bynk_ts::TsStmt::decl(
+        bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::ConstDecl {
+            name,
+            ty: None,
+            init: bynk_ts::TsExpr::multiline_object_entries(entries),
+        })),
+        None,
+    );
+    out.push_str(&bynk_ts::print_stmt(&const_decl, 0));
     writeln!(out).unwrap();
 }
 
@@ -4886,6 +5040,41 @@ commons demo {
             "{ts}"
         );
         assert!(ts.contains("export const Order = {\n};\n"), "{ts}");
+    }
+
+    /// #1339: pins `emit_sum_type`'s own real multi-line, leading-pipe
+    /// union shape and its generic payload-constructor arrows byte-for-byte
+    /// against `406_generic_sum_envelope`'s own real `expected.ts`
+    /// (`bynkc/tests/fixtures/positive/406_generic_sum_envelope`) — not a
+    /// hand-rebuilt tree standing in for it.
+    #[test]
+    fn generic_sum_type_matches_the_real_fixtures_own_multiline_union_byte_for_byte() {
+        let ts = emit_source(
+            r#"
+commons envelope {
+  type ApiResult[T] =
+    | Loaded(value: T)
+    | Failed(message: String)
+}
+"#,
+        );
+        assert!(
+            ts.contains(
+                "export type ApiResult<T> =\n    \
+                 { readonly tag: \"Loaded\"; readonly value: T }\n  \
+                 | { readonly tag: \"Failed\"; readonly message: string };\n"
+            ),
+            "{ts}"
+        );
+        assert!(
+            ts.contains(
+                "export const ApiResult = {\n  \
+                 Loaded: <T>(value: T): ApiResult<T> => ({ tag: \"Loaded\", value }),\n  \
+                 Failed: <T>(message: string): ApiResult<T> => ({ tag: \"Failed\", message }),\n\
+                 };\n"
+            ),
+            "{ts}"
+        );
     }
 
     #[test]
