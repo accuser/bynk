@@ -5204,22 +5204,77 @@ pub(crate) fn emit_agent(
     // this. A present DO binding (workers) routes through `makeWorkersAgent`;
     // otherwise the bundle registry path is taken. The single `makeAgent`
     // helper keeps the call site target-agnostic.
-    let key_ts = ts_type_ref(&a.key_type);
+    //
+    // Arc C, slice 24 (#1377): closes step (9)'s own sixth sub-slice, the
+    // factory function half — the smaller, self-contained half of the
+    // originally-lumped "(6) the factory function plus the history-driver"
+    // item, converted independently of the history-driver (which stays
+    // deferred, its own priority undecided). Converts fully, no opaque
+    // carve-out at all: every shape needed (`TsDecl::Function`,
+    // `TsExpr::OptionalMember`, `TsExpr::Arrow`, `TsExpr::New`) already
+    // existed. The WS-hosted DO methods/`fetch` dispatcher/
+    // `emit_ws_dispatch_handlers` cluster (originally sub-slice (5)) stays
+    // deferred, genuinely harder and not yet grounded in the detail this
+    // track's own "split, don't force one slice to cover too much"
+    // discipline requires — named explicitly, not silently skipped.
+    let key_ts = ts_type_ref_to_ts_type(&a.key_type, None);
     let bind = crate::emitter::wrangler::agent_binding_name(&a.name.name);
-    writeln!(
-        out,
-        "export function {factory}(key: {key_ts}, env?: {{ {bind}?: DurableObjectNamespace }}): {agent} {{",
-        factory = agent_factory_name(&a.name.name),
-        agent = a.name.name,
-    )
-    .unwrap();
-    writeln!(
-        out,
-        "  return makeAgent({registry}, env?.{bind}, key, (state) => new {agent}(state));",
-        agent = a.name.name,
-    )
-    .unwrap();
-    writeln!(out, "}}").unwrap();
+    let factory_decl = bynk_ts::TsStmt::decl(
+        bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::Function {
+            name: agent_factory_name(&a.name.name),
+            generics: Vec::new(),
+            params: vec![
+                bynk_ts::TsParam {
+                    name: "key".to_string(),
+                    ty: Some(key_ts),
+                    optional: false,
+                },
+                bynk_ts::TsParam {
+                    name: "env".to_string(),
+                    ty: Some(bynk_ts::TsType::Object(vec![bynk_ts::TsTypeMember::Prop {
+                        name: bind.clone(),
+                        ty: bynk_ts::TsType::named("DurableObjectNamespace"),
+                        optional: true,
+                        readonly: false,
+                    }])),
+                    optional: true,
+                },
+            ],
+            return_type: Some(bynk_ts::TsType::named(a.name.name.clone())),
+            body: vec![bynk_ts::TsStmt::return_stmt(
+                Some(bynk_ts::TsExpr::Call {
+                    callee: Box::new(bynk_ts::TsExpr::Ident("makeAgent".to_string())),
+                    args: vec![
+                        bynk_ts::TsExpr::Ident(registry.clone()),
+                        bynk_ts::TsExpr::OptionalMember {
+                            object: Box::new(bynk_ts::TsExpr::Ident("env".to_string())),
+                            property: bind,
+                        },
+                        bynk_ts::TsExpr::Ident("key".to_string()),
+                        bynk_ts::TsExpr::Arrow {
+                            params: vec![bynk_ts::TsParam {
+                                name: "state".to_string(),
+                                ty: None,
+                                optional: false,
+                            }],
+                            is_async: false,
+                            generics: Vec::new(),
+                            return_type: None,
+                            body: Box::new(bynk_ts::TsExpr::New {
+                                callee: Box::new(bynk_ts::TsExpr::Ident(a.name.name.clone())),
+                                args: vec![bynk_ts::TsExpr::Ident("state".to_string())],
+                            }),
+                        },
+                    ],
+                }),
+                None,
+            )],
+            is_async: false,
+            inline: false,
+        })),
+        None,
+    );
+    out.push_str(&bynk_ts::print_stmt(&factory_decl, 0));
     writeln!(out).unwrap();
 
     // v0.119 (testing track slice 7, ADR 0155): the history-property driver. Only
