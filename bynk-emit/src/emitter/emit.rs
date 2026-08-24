@@ -946,6 +946,18 @@ pub(crate) fn emit_free_fn(
     // search: everything before it is the header/opening-brace text, and
     // everything after it is the fixed closing `"}\n"` `TsDecl::Function`'s
     // own render arm always appends.
+    //
+    // Review of #1352, finding 1: this arithmetic silently encodes 3
+    // invariants of a renderer in another crate (Raw splices verbatim,
+    // `TsDecl::Function` always ends in exactly `"}\n"`, `print_stmt` is
+    // called at depth 0) — if any of those ever changed, the failure mode
+    // is not a compile error or a text diff, it's a silently wrong source
+    // map, the exact bug class this function exists to fix. Guarded loudly
+    // rather than trusted silently.
+    debug_assert!(
+        printed.ends_with(&format!("{body_text}}}\n")),
+        "emit_free_fn: Raw body is no longer the verbatim tail of the printed decl"
+    );
     let body_offset_in_printed = printed.len() - body_text.len() - "}\n".len();
     let base = out.len() + body_offset_in_printed;
     out.push_str(&printed);
