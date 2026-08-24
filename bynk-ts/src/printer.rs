@@ -386,6 +386,12 @@ fn render_stmt(out: &mut String, stmt: &TsStmt, depth: usize) {
             }
             out.push_str(";\n");
         }
+        TsStmtKind::Throw(expr) => {
+            out.push_str(&indent(depth));
+            out.push_str("throw ");
+            render_stmt_level_expr(out, expr, depth);
+            out.push_str(";\n");
+        }
         TsStmtKind::If {
             cond,
             then_branch,
@@ -695,6 +701,13 @@ fn render_inline_stmt(out: &mut String, stmt: &TsStmt) {
         // the way `Blank`'s own top-level form is), so the same fallback
         // that's safe for `Const`/`If`/etc. above is safe here too.
         | TsStmtKind::Increment(_)
+        // #1353: `emit_contract_guarded_body`'s own precondition/
+        // postcondition guards are exactly this fallback's own target case —
+        // a real, reachable `InlineBlock` site (`if (!(pred)) { const __e =
+        // ...; __e.name = ...; throw __e; }`), not a defensive placeholder.
+        // Safe for the identical reason `Const`/`Assign` above are: a
+        // `throw <expr>;` never embeds its own newline in real content.
+        | TsStmtKind::Throw(_)
         // #1333: not reachable today — every real `DocComment` reaches the
         // printer only via `print_stmt`, never through a `TsProgram`'s own
         // tree — which is what actually makes this fallback safe: unlike

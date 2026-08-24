@@ -94,6 +94,14 @@ pub(crate) enum TsStmtKind {
     /// An expression used as a whole statement (a bare call, e.g.).
     ExprStmt(TsExpr),
     Return(Option<TsExpr>),
+    /// `throw <expr>;` — #1353's own real gap: `emit_contract_guarded_body`'s
+    /// own precondition/postcondition guards (`bynk-emit/src/emitter/
+    /// emit.rs`) each throw a constructed `Error` on violation — no prior
+    /// slice needed a bare `throw` (every other error-signalling site in
+    /// this tree so far has been a `Return`). Mirrors `Return`'s own shape
+    /// exactly, minus the `Option` (a `throw` always carries a value; there
+    /// is no bare `throw;` in JS/TS).
+    Throw(TsExpr),
     /// `if (cond) <then_branch>` (optionally `else <else_branch>`).
     /// `then_branch`/`else_branch` may each be a [`TsStmtKind::Block`]
     /// (printed with braces) or any other single statement (printed inline
@@ -361,6 +369,13 @@ impl TsStmt {
     pub fn return_stmt(expr: Option<TsExpr>, span: Option<Span>) -> Self {
         Self {
             kind: TsStmtKind::Return(expr),
+            span,
+        }
+    }
+
+    pub fn throw_stmt(expr: TsExpr, span: Option<Span>) -> Self {
+        Self {
+            kind: TsStmtKind::Throw(expr),
             span,
         }
     }
