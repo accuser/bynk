@@ -711,15 +711,28 @@ mechanics already proven correct four times over (slices 12/13/16/17); the imple
 care applying it, not new design.
 
 **Fixture coverage confirmed real and substantial, no new fixture expected for any of the slices
-below**: 31 fixtures use `store ... Cell/Map/Set/Cache/Log`; `236_websocket_chatroom`/
-`237_websocket_chatroom_workers`/`238_websocket_inbound_workers` exercise the full WS-dispatch
-cluster (`on message`/`on close` both present); `235_held_connection`/
-`1197_agent_held_map_only_write_still_commits` cover held-connection paths;
-`248_history_property`/`249_history_provides` cover the history-driver.
+below — corrected by review of #1366, which checked each fixture's real content rather than
+trusting the marker-name match**: 31 fixtures use `store ... Cell/Map/Set/Cache/Log`.
+`238_websocket_inbound_workers` (Workers-mode, all three of `on open`/`on message`/`on close`) is
+the **only** fixture covering the full DO-hosted WS-dispatch cluster — `ws_message_do_method_name`,
+`ws_close_do_method_name`, `emit_ws_do_method`'s message/close arms, and
+`WsOpenHost::has_inbound`'s true branch are each pinned by exactly this one fixture, not three.
+`237_websocket_chatroom_workers` (Workers-mode, `on open` only) separately pins the
+`has_inbound == false` branch. `236_websocket_chatroom` is single-file form (no Workers target),
+so it exercises `on message`/`on close` only at the language level, not the DO-dispatch cluster
+this step actually scopes — dropped from this list rather than left implying dispatch-cluster
+coverage it doesn't provide. `235_held_connection`/`1197_agent_held_map_only_write_still_commits`
+cover held-connection paths; `248_history_property`/`249_history_provides` cover the
+history-driver. A zero-diff conversion slice is legitimately verifiable by one fixture per real
+shape, so "no new fixture expected" still holds — resting now on the real count, not an inflated
+one.
 
-**Proposed decomposition, 5-6 slices (the high end of the original "3-5" guess, not a narrowing —
-the class-body method count keeps this step's real risk at the top of its own range even though its
-real line count is smaller than the stale citation claimed), landed in dependency order**: (1) the
+**Proposed decomposition, 5-6 slices — a genuine widening past the original "3-5" guess on both
+ends (floor 3→5, ceiling 5→6, corrected by review of #1366, which caught the first draft's own
+"kept the top of the range" framing as wrong against its own arithmetic), not a narrowing: the
+class-body method count pushes this step's real risk past its own original range entirely, even
+though its real line count is smaller than the stale citation claimed), landed in dependency
+order**: (1) the
 state interface alone — cleanest, smallest, no algebra gap, no source-map exposure, the same
 risk/shape as slice 15 (`emit_capability`); (2) the zero-factory + rehydrate function pair — two
 free `TsDecl::Function`s, needs neither of the two new `TsClassMethod` fields (these aren't
@@ -747,8 +760,10 @@ remaining-work sum. Summing the list directly: step (8)'s own newly-split remain
 cross-context lowering cluster, not yet grounded) is "1-2"; step (10) is one slice, fixed; step (9)
 is **"5-6"**, corrected up from "3-5" by the grounding pass — real line count came in smaller than
 the stale citation claimed, but the class-body method count (one slice per real construction
-phase, see the grounding-pass paragraph above for the 6-item breakdown) keeps the top of the range
-where the original guess put it, not below it; step (11) (the ICU cluster) is "1-2". Floor: 1 + 1 +
+phase, see the grounding-pass paragraph above for the 6-item breakdown) pushes both ends of the
+range up, floor 3→5 and ceiling 5→6, past the original guess entirely rather than settling inside
+it (review of #1366 caught the first draft's own "keeps the top of the range" framing as wrong
+against this exact arithmetic); step (11) (the ICU cluster) is "1-2". Floor: 1 + 1 +
 5 + 1 = **8**; ceiling: 2 + 1 + 6 + 2 = **11** — `emit.rs`'s own remaining tree is now **roughly
 8-11 slices** (up from 6-10 — this widening is a grounding correction, not a split: no slice
 landed against step (9) this round, so nothing moved from "remaining" to "landed"; the range
@@ -762,14 +777,16 @@ Arc C's own real total (the **18** slices already landed — slice 1, the schedu
 3/4/5/6/7/8/9/10/11/12/13/14/15/16/17/18 — plus the 10-13 above): **roughly 28-31** — widened again
 from the prior 26-30, for a reason distinct from #1364's own split-driven widening: that widening
 came from discovering a genuinely separate remainder step (8) had silently absorbed; this one comes
-from firming up step (9)'s own already-counted range once its full content was actually read,
-narrowing what could have gone either way (3-5 could have resolved down to 3, as low as 2 slices
-below the prior ceiling) up to its own prior ceiling instead. Three distinct kinds of correction
-have now occurred in three consecutive updates — a narrowing (#1361, a range resolved to its own
-floor), a split-driven widening (#1364, a silently-absorbed remainder surfaced), and a
-grounding-driven widening (this pass, an unread range firmed up at its own ceiling) — each is a
-different failure mode of estimation, not the same mistake repeating, and each got the same "state
-the real reason plainly" treatment rather than a flat "corrected again." `emit_agent`'s own
+from actually reading step (9)'s own full content and finding it needs MORE than the original
+"3-5" guess on both ends — floor 3→5, ceiling 5→6, a real widening past the prior range, not a
+value settling somewhere inside it (review of #1366 caught an earlier draft of this very paragraph
+wrongly describing this as "firming up at the ceiling," when the true-up landed one slice past it).
+Three distinct kinds of correction have now occurred in three consecutive updates — a narrowing
+(#1361, a range resolved to its own floor), a split-driven widening (#1364, a silently-absorbed
+remainder surfaced), and a grounding-driven widening (this pass, an unread range turning out larger
+than guessed on both ends) — each is a different failure mode of estimation, not the same mistake
+repeating, and each got the same "state the real reason plainly" treatment rather than a flat
+"corrected again." `emit_agent`'s own
 sub-decomposition (step 9) remains the single largest source of variance in this range, now with a
 named 6-item breakdown rather than an unread guess; the cross-context lowering cluster (step (8)'s
 own remainder) and the ICU cluster (step 11) are smaller, still-ungrounded secondary sources.
