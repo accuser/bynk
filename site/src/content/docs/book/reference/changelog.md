@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.266**.
+written against **v0.267**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.267.0** | Arc C, slice 15 — `emit_capability` builds real `bynk_ts` nodes internally (`TsTypeMember::Method` gains `generics`/`doc` fields), splitting step (6) of the design pass's own decomposition order the same way slice 12 split step (4) — `emit_provider`'s own conversion (a full class with N real method bodies, each needing the established sub-builder/`merge` source-map treatment individually) is a named, deferred remainder, not converted by this slice |
 | **v0.266.0** | Arc C, slice 14 — `emit_messages_bundle`'s own outer construction converts to real `bynk_ts` nodes (closing step (5) of the design pass's own decomposition order), with two named opaque carve-outs (a one-off type annotation `TsType::Fn` can't name its own parameter for; each message renderer's own not-yet-converted ICU-formatting expression). Also closes a real printer gap: nested multiline objects as a `Prop`'s own value now render correctly instead of silently falling back to single-line |
 | **v0.265.0** | Arc C, slice 13 — `emit_contract_guarded_body` builds real `bynk_ts` nodes for its precondition/postcondition guards and `return result;` (`bynk_ts` gains `TsStmtKind::Throw`), fully closing step (4) of the design pass's own decomposition order. The result-capturing IIFE stays one deliberately opaque statement (`Pre::lower`'s own predicate lowering is a permanent `emitter/lower.rs` exclusion). Also fixes a second real source-map corruption bug reproducing #1352's own class one level deeper (caught immediately by #1352's own regression test) before it ever landed |
 | **v0.264.0** | Arc C, slice 12 — `emit_free_fn` builds a real `bynk_ts::TsDecl::Function` node internally (`TsDecl::Function` gains a `generics` field), splitting step (4) of the design pass's own decomposition order the same way slice 9 split step (2) — `emit_contract_guarded_body`'s own internal guard construction is a named, deferred remainder, not converted by this slice. Also fixes a real source-map corruption bug this conversion would otherwise have introduced (caught by `coverage_behaviour.rs`'s own integration tests): the function body now lowers into an isolated buffer for `Raw`-statement embedding, so its own checkpoints are captured via a local sub-builder and `merge`d back in at the correct splice offset, the same pattern `emit_service`'s handler-body lowering already established |
