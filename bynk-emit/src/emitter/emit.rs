@@ -3899,7 +3899,7 @@ pub(crate) fn emit_agent(
         .collect();
     // 1) State record type.
     //
-    // Arc C, slice 19 (#TODO): the first of step (9)'s own proposed 5-6
+    // Arc C, slice 19 (#1367): the first of step (9)'s own proposed 5-6
     // sub-slices (design/tracks/the-typescript-tree.md §6's own grounding
     // pass) — converts this block alone to a real `bynk_ts::TsDecl::Interface`
     // (already exists, gained `type_params`/per-member `readonly` by #1339,
@@ -3907,10 +3907,17 @@ pub(crate) fn emit_agent(
     // line is a real `TsTypeMember::Prop`; `ts_ty_to_ts_type` (the real-node
     // sibling of the plain-`String` `ts_ty` this block called before) already
     // exists and is already used by `emit_service`/`emit_make_surface` for
-    // the identical purpose. The two compound member types (`Cache`'s
-    // `Record<string, { v: T; exp: number }>`, `Log`'s
-    // `Array<{ t: number; v: T }>`) are real `TsType::named_with_args` over a
-    // real inline `TsType::Object` — no opaque text anywhere in this block.
+    // the identical purpose. Three compound member types, one load-bearing
+    // trap among them: `Cache`'s `Record<string, { v: T; exp: number }>` and
+    // `Log`'s `Array<{ t: number; v: T }>` are real `TsType::named_with_args`
+    // over a real inline `TsType::Object` — no opaque text anywhere in this
+    // block. The posting-list's own `Record<string, string[]>` is the third,
+    // and it must use `TsType::Array { readonly: false, .. }` (postfix `[]`
+    // syntax), NOT `named_with_args("Array", ..)` like `Cache`/`Log`
+    // themselves use two blocks down — semantically identical, textually
+    // distinct; using the generic form here would silently break zero-diff.
+    // See its own construction below for the actual choice, not just this
+    // note.
     let mut members: Vec<bynk_ts::TsTypeMember> = Vec::new();
     for f in &effective_fields {
         let cell_ty = match store_field_ty.get(f.name.name.as_str()) {
@@ -3990,6 +3997,13 @@ pub(crate) fn emit_agent(
                     "Record",
                     vec![
                         bynk_ts::TsType::named("string"),
+                        // Postfix `string[]`, not `named_with_args("Array",
+                        // ..)` — the original text here is `string[]`, not
+                        // `Array<string>`. Review of #1368: the two are
+                        // byte-different even though `Cache`/`Log` below use
+                        // the generic `Array<T>` form for their own arrays —
+                        // don't "unify" this with those without re-checking
+                        // the fixture text first.
                         bynk_ts::TsType::Array {
                             element: Box::new(bynk_ts::TsType::named("string")),
                             readonly: false,
