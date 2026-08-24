@@ -3941,7 +3941,10 @@ pub(crate) fn emit_agent(
             name: name.name.clone(),
             ty: bynk_ts::TsType::named_with_args(
                 "Record",
-                vec![bynk_ts::TsType::named("string"), ts_ty_to_ts_type(value_ty, tys)],
+                vec![
+                    bynk_ts::TsType::named("string"),
+                    ts_ty_to_ts_type(value_ty, tys),
+                ],
             ),
             optional: false,
             readonly: true,
@@ -3953,7 +3956,10 @@ pub(crate) fn emit_agent(
             name: name.name.clone(),
             ty: bynk_ts::TsType::named_with_args(
                 "Record",
-                vec![bynk_ts::TsType::named("string"), bynk_ts::TsType::named("string")],
+                vec![
+                    bynk_ts::TsType::named("string"),
+                    bynk_ts::TsType::named("string"),
+                ],
             ),
             optional: false,
             readonly: true,
@@ -3964,7 +3970,10 @@ pub(crate) fn emit_agent(
             name: name.to_string(),
             ty: bynk_ts::TsType::named_with_args(
                 "Record",
-                vec![bynk_ts::TsType::named("string"), bynk_ts::TsType::named("boolean")],
+                vec![
+                    bynk_ts::TsType::named("string"),
+                    bynk_ts::TsType::named("boolean"),
+                ],
             ),
             optional: false,
             readonly: true,
