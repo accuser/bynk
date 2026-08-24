@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.274**.
+written against **v0.275**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.275.0** | Arc C, slice 23 — `emit_agent`'s per-handler methods convert to real `bynk_ts::TsClassMethod` fragments, closing the grounding pass's own second predicted algebra gap (`TsClassMethod.doc`) and extending `emit_service`'s own two-level offset pattern to a genuinely new third wrapper dimension (the implicit-commit closure, which can combine with the events-IIFE). The largest sub-slice of step (9)'s own decomposition, per the grounding pass's own prediction, confirmed accurate |
 | **v0.274.0** | Arc C, slice 22 — `emit_agent`'s `commitState` method converts to a real `bynk_ts::TsClassMethod` fragment, closing step (9)'s own third sub-slice fully (the deferred remainder #1371 split off). Corrects that slice's own stated expectation: `commitState`'s predicate lowering needs no source-map sub-builder care at all — `record_span` is a documented no-op with no attached builder, and neither `LowerCtx` it constructs is ever given one |
 | **v0.273.0** | Arc C, slice 21 — `emit_agent`'s `loadState` method converts to a real `bynk_ts::TsClassMethod` fragment. Closes a grounding-pass-predicted gap along the way — `TsClassMethod.private`, the first `private` method sites this track has hit. Splits step (9)'s own third sub-slice: `commitState`, found genuinely harder once actually read (its own predicate lowering needs the same source-map care `emit_free_fn`/`emit_contract_guarded_body` already established), stays deferred as its own separate, later sub-slice |
 | **v0.272.0** | Arc C, slice 20 — `emit_agent`'s own per-agent state registry `const`, zero-value factory function, and (when needed) rehydration-validation function convert to real `bynk_ts` nodes. Closes a new algebra gap along the way — `TsDecl::Function.inline`, mirroring `TsObjectEntry::Method.inline`'s own single-line-vs-multi-line precedent — for the zero-factory's own genuinely single-physical-line shape. The second of step (9)'s own proposed 5-6 sub-slices (`emit_agent` and its websocket-dispatch cluster) per the dedicated grounding pass |
