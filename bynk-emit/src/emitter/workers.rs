@@ -550,6 +550,8 @@ pub(crate) fn emit_worker_compose(
                 optional: false,
             }],
             is_async: false,
+            generics: Vec::new(),
+            return_type: None,
             body: Box::new(call(
                 ident("dispatchToEventsFanout"),
                 vec![member(ident("env"), bind), ident("events")],
@@ -810,24 +812,27 @@ pub(crate) fn emit_worker_compose(
     // Env shape: one Service Binding per consumed context + DO bindings.
     // v0.19: plus the typed KV namespace when the closure reaches the
     // cloudflare platform adapter (decision C1 — one fixed `KV` binding).
-    let mut env_members: Vec<(String, TsType)> = Vec::new();
+    let mut env_members: Vec<TsTypeMember> = Vec::new();
     for t in &sorted_consumes {
-        env_members.push((consumed_binding_name(t), TsType::named("ServiceBinding")));
+        env_members.push(TsTypeMember::prop(
+            consumed_binding_name(t),
+            TsType::named("ServiceBinding"),
+        ));
     }
     if needs_kv {
-        env_members.push((
+        env_members.push(TsTypeMember::prop(
             bynk_check::firstparty::KV_BINDING_NAME.to_string(),
             TsType::named("KVNamespace"),
         ));
     }
     for a in &agent_names {
-        env_members.push((
+        env_members.push(TsTypeMember::prop(
             agent_binding_name(a),
             TsType::named("DurableObjectNamespace"),
         ));
     }
     if uses_emit {
-        env_members.push((
+        env_members.push(TsTypeMember::prop(
             agent_binding_name(EVENTS_FANOUT_CLASS_NAME),
             TsType::named("DurableObjectNamespace"),
         ));
@@ -835,6 +840,7 @@ pub(crate) fn emit_worker_compose(
     program.push(TsStmt::decl(
         TsDecl::Export(Box::new(TsDecl::Interface {
             name: "Env".to_string(),
+            type_params: Vec::new(),
             members: env_members,
         })),
         None,
@@ -852,6 +858,7 @@ pub(crate) fn emit_worker_compose(
         program.push(TsStmt::decl(
             TsDecl::TypeAlias {
                 name: "DurableObjectNamespace".to_string(),
+                type_params: Vec::new(),
                 ty: TsType::named(
                     "{ idFromName(name: string): { toString(): string }; get(id: any): any }",
                 ),

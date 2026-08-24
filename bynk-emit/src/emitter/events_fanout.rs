@@ -69,17 +69,18 @@ pub(crate) fn emit_events_fanout_do(
     program.push(TsStmt::decl(
         TsDecl::Interface {
             name: "FanoutEvent".to_string(),
+            type_params: Vec::new(),
             members: vec![
-                ("type".to_string(), TsType::named("string")),
-                ("payload".to_string(), TsType::named("unknown")),
+                TsTypeMember::prop("type", TsType::named("string")),
+                TsTypeMember::prop("payload", TsType::named("unknown")),
                 // Events track, slice 2 (spine #936): minted once at
                 // emission (`lower.rs`'s `__events.push`), forwarded here
                 // unchanged and always — whether a subscriber's own handler
                 // actually declared the optional second `env:
                 // EventEnvelope` parameter is decided downstream, at the
                 // receiving context's entry route, not here.
-                (
-                    "envelope".to_string(),
+                TsTypeMember::prop(
+                    "envelope",
                     TsType::Object(vec![
                         TsTypeMember::prop("eventId", TsType::named("string")),
                         TsTypeMember::prop("publisherId", TsType::named("string")),

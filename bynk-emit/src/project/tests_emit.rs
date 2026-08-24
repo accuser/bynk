@@ -3832,7 +3832,7 @@ pub(crate) fn emit_test_main(tests: &[RunnableTest], import_ext: ImportExt) -> T
                     TsType::Object(vec![TsTypeMember::index(
                         "k",
                         TsType::named("string"),
-                        TsType::Union(vec![TsType::named("string"), TsType::named("undefined")]),
+                        TsType::union(vec![TsType::named("string"), TsType::named("undefined")]),
                     )]),
                 ),
             ]),
@@ -3913,6 +3913,8 @@ pub(crate) fn emit_test_main(tests: &[RunnableTest], import_ext: ImportExt) -> T
                     optional: false,
                 }],
                 is_async: false,
+                generics: Vec::new(),
+                return_type: None,
                 body: Box::new(method_call(
                     ident("console"),
                     "log",
