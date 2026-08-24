@@ -4127,6 +4127,21 @@ pub(crate) fn emit_agent(
     // lowers its (static) expression; a field without one uses the v0.9.2
     // implicit zero.
     let mut zero_entries: Vec<bynk_ts::TsObjectEntry> = Vec::new();
+    // Review of #1370, finding 1: `lower_if`'s own non-`ternary_shaped`
+    // branch and `build_match_iife` can both return a genuinely multi-line
+    // IIFE as `val` (real embedded `\n` bytes) with `pre` empty, so the
+    // `pre.is_empty()` branch above passes it straight through unwrapped —
+    // no fixture in the 31-fixture `store` sweep reaches this shape (the
+    // only store-init-with-`if` fixture, `1029_agent_static_init_hoist`,
+    // takes the `hoist_if_as_statement` path instead, whose own hoisted
+    // statements are individually newline-free), so it was invisible to the
+    // zero-diff check. Tracked here so the zero-factory's own `inline` flag
+    // can be set correctly below — `inline: true` is only safe when every
+    // entry's own value is genuinely single-line (`render_compact_stmts`'s
+    // own `debug_assert!` panics on an embedded newline, a real
+    // debug-build crash for a `store` field initialised with a `match` or a
+    // statement-shaped/`is`-binding `if`, not merely a formatting nit).
+    let mut zero_record_has_multiline_value = false;
     for f in &effective_fields {
         let val = if let Some(init) = &f.init {
             let mut pre = Pre::new();
@@ -4158,6 +4173,9 @@ pub(crate) fn emit_agent(
             bynk_check::checker::zero_value_ts(&f.type_ref, f.refinement.as_ref(), &commons.types)
                 .unwrap_or_else(|| "undefined as never".to_string())
         };
+        if val.contains('\n') {
+            zero_record_has_multiline_value = true;
+        }
         zero_entries.push(bynk_ts::TsObjectEntry::Prop(
             f.name.name.clone(),
             bynk_ts::TsExpr::Ident(val),
@@ -4216,7 +4234,11 @@ pub(crate) fn emit_agent(
                 None,
             )],
             is_async: false,
-            inline: true,
+            // Single-line only when safe (see the `zero_record_has_multiline_
+            // value` note above) — a genuinely multi-line `Cell` initialiser
+            // falls back to the ordinary multi-line block form instead of
+            // tripping `render_compact_stmts`'s own debug_assert!.
+            inline: !zero_record_has_multiline_value,
         },
         None,
     );
