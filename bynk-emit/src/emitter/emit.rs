@@ -2134,6 +2134,11 @@ pub(crate) fn emit_provider(
             Some(&op.return_type),
         );
 
+        // The class is always printed at depth 0 — `class_depth` names that
+        // once, so `trailing`'s own indent (review of #1360, finding 3's
+        // own secondary note) can never drift out of lockstep with the
+        // depth `print_class_method` is actually called with.
+        let class_depth = 0;
         let method = bynk_ts::TsClassMethod {
             name: op.name.name.clone(),
             is_async: effectful,
@@ -2141,22 +2146,32 @@ pub(crate) fn emit_provider(
             return_type: Some(ts_type_ref_to_ts_type(&op.return_type, None)),
             body: vec![bynk_ts::TsStmt::raw(body_text.clone(), None)],
         };
-        let printed = bynk_ts::print_class_method(&method, 0);
-        // The class is always printed at depth 0, so the method's own
-        // closing brace sits at `indent(1)` — see `print_class_method`'s
-        // own doc for why this arithmetic, not a search, is correct.
-        let trailing = "  }\n";
-        debug_assert!(
-            printed.ends_with(&format!("{body_text}{trailing}")),
-            "emit_provider: Raw body is no longer the verbatim tail of the printed method"
-        );
-        let body_offset_in_printed = printed.len() - body_text.len() - trailing.len();
-        let base = out.len() + body_offset_in_printed;
+        let printed = bynk_ts::print_class_method(&method, class_depth);
         out.push_str(&printed);
         if let Some(module_smb) = source_map {
-            module_smb
-                .borrow_mut()
-                .merge(&body_smb.borrow(), &body_text, out, base, 0);
+            // `Raw` splices verbatim and `print_class_method`'s own closing
+            // brace sits at `indent(class_depth + 1)` — see its own doc for
+            // why the offset below is exact arithmetic, not a text search.
+            // Review of #1360, finding 3: this was a `debug_assert!`
+            // before, so a release build whose assumptions ever drifted
+            // (a printer change, a depth other than 0) would silently
+            // corrupt the map instead of just losing one method's own
+            // stepping — checked for real here, degrading to no merge (no
+            // mapping for this method) rather than risk a confidently
+            // WRONG one, the same "suppress rather than mis-record"
+            // discipline `LowerCtx::without_source_map`'s own doc already
+            // applies for an analogous local-buffer hazard.
+            let trailing = format!("{}}}\n", "  ".repeat(class_depth + 1));
+            if let Some(body_offset_in_printed) =
+                printed.len().checked_sub(body_text.len() + trailing.len())
+                && printed[body_offset_in_printed..].starts_with(&body_text)
+                && printed.ends_with(&trailing)
+            {
+                let base = out.len() - printed.len() + body_offset_in_printed;
+                module_smb
+                    .borrow_mut()
+                    .merge(&body_smb.borrow(), &body_text, out, base, 0);
+            }
         }
     }
     writeln!(out, "}}").unwrap();

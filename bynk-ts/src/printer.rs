@@ -1655,21 +1655,48 @@ pub fn print_object_entry(entry: &TsObjectEntry, depth: usize) -> String {
 /// `print_object_entry` already established.
 pub fn print_class_method(method: &TsClassMethod, depth: usize) -> String {
     let mut out = String::new();
+    render_class_method(&mut out, method, depth);
+    out
+}
+
+/// The one real per-method render, shared by [`print_class_method`] and
+/// [`TsDecl::Class`]'s own methods-loop arm — review of #1360, finding 4:
+/// keeping two independent copies of this shape was exactly the drift risk
+/// this track exists to design against (two printers disagreeing about a
+/// formatting convention). `depth` means the *class's* own depth, matching
+/// both callers' own convention.
+///
+/// Review of #1360, finding 1: a `TsStmtKind::Raw` method body has no
+/// indent of its own — its text is captured pre-indented at a fixed
+/// absolute depth by its own caller — so it only renders correctly when
+/// `depth` is `0`, the same hazard `render_multiline_object_entry`'s own
+/// identical `debug_assert!` guards (review of #1338 finding 3, relocated
+/// by review of #1340 finding 1). `print_class_method`'s own doc frames it
+/// as a general fragment entry point, so a future caller at a non-zero
+/// depth is the expected case this guards against, not a hypothetical.
+fn render_class_method(out: &mut String, method: &TsClassMethod, depth: usize) {
+    debug_assert!(
+        depth == 0
+            || !method
+                .body
+                .iter()
+                .any(|s| matches!(s.kind, TsStmtKind::Raw(_))),
+        "render_class_method: a Raw method body's own baked-in indent only matches depth 0"
+    );
     out.push_str(&indent(depth + 1));
     if method.is_async {
         out.push_str("async ");
     }
     out.push_str(&method.name);
     out.push('(');
-    render_params(&mut out, &method.params);
+    render_params(out, &method.params);
     out.push(')');
     if let Some(rt) = &method.return_type {
         out.push_str(": ");
-        render_type(&mut out, rt);
+        render_type(out, rt);
     }
-    render_block_stmts(&mut out, &method.body, depth + 1);
+    render_block_stmts(out, &method.body, depth + 1);
     out.push('\n');
-    out
 }
 
 fn render_params(out: &mut String, params: &[TsParam]) {
@@ -1819,20 +1846,7 @@ fn render_decl_body(out: &mut String, decl: &TsDecl, depth: usize) {
                 if wrote_member {
                     out.push('\n');
                 }
-                out.push_str(&indent(depth + 1));
-                if m.is_async {
-                    out.push_str("async ");
-                }
-                out.push_str(&m.name);
-                out.push('(');
-                render_params(out, &m.params);
-                out.push(')');
-                if let Some(rt) = &m.return_type {
-                    out.push_str(": ");
-                    render_type(out, rt);
-                }
-                render_block_stmts(out, &m.body, depth + 1);
-                out.push('\n');
+                render_class_method(out, m, depth);
                 wrote_member = true;
             }
             out.push_str(&indent(depth));

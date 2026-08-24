@@ -342,12 +342,18 @@ fn compile_reps_context(source: &str) -> (String, String) {
 const PROVIDER_FIXTURE: &str = "context reps {
   capability Calc {
     fn double(n: Int) -> Int
+    fn triple(n: Int) -> Effect[Int]
   }
 
   provides Calc = SimpleCalc {
     fn double(n: Int) -> Int {
       let doubled = n * 2
       doubled
+    }
+
+    fn triple(n: Int) -> Effect[Int] {
+      let tripled = n * 3
+      tripled
     }
   }
 }
@@ -367,26 +373,56 @@ fn provider_op_body_keeps_its_own_statement_lines() {
     // `value_position_if_iife_does_not_corrupt_earlier_checkpoints`/
     // `contract_guarded_body_keeps_its_own_statement_lines` already pin for
     // the sibling cases.
+    //
+    // Review of #1360, finding 2: a SECOND op (`triple`, effectful, so
+    // `is_async: true` gets a project-form assertion too) is the real edge
+    // -- a single-op fixture can't catch a `base` that was hoisted or went
+    // stale across loop iterations (each method's own `base` must be
+    // recomputed from `out.len()` fresh, not reused from the first one),
+    // since with only one method the class header already precedes the
+    // body in `out` regardless.
     let (ts, map) = compile_reps_context(PROVIDER_FIXTURE);
     let lines = decode(extract_field(&map, "mappings"));
     let at = |g: usize| lines[g].unwrap_or_else(|| panic!("gen line {g} unmapped\n{ts}"));
 
-    // Source (0-based): line 0 = `context reps {`, line 5 = `provides Calc = SimpleCalc {`,
-    // line 7 = `let doubled = n * 2`, line 8 = `doubled`.
+    // Source (0-based): line 0 = `context reps {`, line 6 = `provides Calc = SimpleCalc {`,
+    // line 8 = `let doubled = n * 2`, line 9 = `doubled`,
+    // line 12 = `fn triple(n: Int) -> Effect[Int] {`,
+    // line 13 = `let tripled = n * 3`, line 14 = `tripled`.
     assert_eq!(
         at(gen_line_of(&ts, "class SimpleCalc")),
-        5,
+        6,
         "the class header -> `provides Calc = SimpleCalc` source line"
     );
     assert_eq!(
         at(gen_line_of(&ts, "const doubled = ")),
-        7,
+        8,
         "`let doubled` keeps its own line, not collapsed toward the class header"
     );
     assert_eq!(
         at(gen_line_of(&ts, "return doubled;")),
-        8,
+        9,
         "the tail `doubled` keeps its own line"
+    );
+    // No checkpoint of its own exists for a method's own header line (only
+    // body STATEMENTS get one, via the per-method `body_smb`/`merge`) — the
+    // nearest-enclosing rule (ADR 0103 D2) resolves it to the prior
+    // checkpoint, the first method's own tail. Asserted here to document
+    // the real behaviour, not to imply it's the ideal one.
+    assert_eq!(
+        at(gen_line_of(&ts, "async triple(")),
+        9,
+        "the second method's own header has no checkpoint of its own -> nearest-enclosing falls back to the first method's own tail"
+    );
+    assert_eq!(
+        at(gen_line_of(&ts, "const tripled = ")),
+        13,
+        "the second method's own `let tripled` keeps its own line, not the first method's `base`"
+    );
+    assert_eq!(
+        at(gen_line_of(&ts, "return tripled;")),
+        14,
+        "the second method's own tail keeps its own line"
     );
 }
 
