@@ -3898,7 +3898,20 @@ pub(crate) fn emit_agent(
         .map(|(n, _, r)| (n.name.clone(), *r))
         .collect();
     // 1) State record type.
-    writeln!(out, "export interface {state_ty} {{").unwrap();
+    //
+    // Arc C, slice 19 (#TODO): the first of step (9)'s own proposed 5-6
+    // sub-slices (design/tracks/the-typescript-tree.md §6's own grounding
+    // pass) — converts this block alone to a real `bynk_ts::TsDecl::Interface`
+    // (already exists, gained `type_params`/per-member `readonly` by #1339,
+    // no new algebra gap needed). Each field's own `readonly {name}: {ty};`
+    // line is a real `TsTypeMember::Prop`; `ts_ty_to_ts_type` (the real-node
+    // sibling of the plain-`String` `ts_ty` this block called before) already
+    // exists and is already used by `emit_service`/`emit_make_surface` for
+    // the identical purpose. The two compound member types (`Cache`'s
+    // `Record<string, { v: T; exp: number }>`, `Log`'s
+    // `Array<{ t: number; v: T }>`) are real `TsType::named_with_args` over a
+    // real inline `TsType::Object` — no opaque text anywhere in this block.
+    let mut members: Vec<bynk_ts::TsTypeMember> = Vec::new();
     for f in &effective_fields {
         let cell_ty = match store_field_ty.get(f.name.name.as_str()) {
             Some(StoreKindIr::Cell(t)) => *t,
@@ -3908,13 +3921,12 @@ pub(crate) fn emit_agent(
                 f.name.name
             ),
         };
-        writeln!(
-            out,
-            "  readonly {name}: {ty};",
-            name = f.name.name,
-            ty = ts_ty(cell_ty, tys),
-        )
-        .unwrap();
+        members.push(bynk_ts::TsTypeMember::Prop {
+            name: f.name.name.clone(),
+            ty: ts_ty_to_ts_type(cell_ty, tys),
+            optional: false,
+            readonly: true,
+        });
     }
     for (name, _) in &store_map_fields {
         let value_ty = match store_field_ty.get(name.name.as_str()) {
@@ -3925,32 +3937,59 @@ pub(crate) fn emit_agent(
                 name.name
             ),
         };
-        writeln!(
-            out,
-            "  readonly {name}: Record<string, {v}>;",
-            name = name.name,
-            v = ts_ty(value_ty, tys),
-        )
-        .unwrap();
+        members.push(bynk_ts::TsTypeMember::Prop {
+            name: name.name.clone(),
+            ty: bynk_ts::TsType::named_with_args(
+                "Record",
+                vec![bynk_ts::TsType::named("string"), ts_ty_to_ts_type(value_ty, tys)],
+            ),
+            optional: false,
+            readonly: true,
+        });
     }
     // v0.105 (slice 3b-ii): a held `Map[K, Connection]` persists `K → connId`.
     for (name, _) in &held_maps {
-        writeln!(
-            out,
-            "  readonly {name}: Record<string, string>;",
-            name = name.name,
-        )
-        .unwrap();
+        members.push(bynk_ts::TsTypeMember::Prop {
+            name: name.name.clone(),
+            ty: bynk_ts::TsType::named_with_args(
+                "Record",
+                vec![bynk_ts::TsType::named("string"), bynk_ts::TsType::named("string")],
+            ),
+            optional: false,
+            readonly: true,
+        });
     }
     for name in &set_field_names {
-        writeln!(out, "  readonly {name}: Record<string, boolean>;").unwrap();
+        members.push(bynk_ts::TsTypeMember::Prop {
+            name: name.to_string(),
+            ty: bynk_ts::TsType::named_with_args(
+                "Record",
+                vec![bynk_ts::TsType::named("string"), bynk_ts::TsType::named("boolean")],
+            ),
+            optional: false,
+            readonly: true,
+        });
     }
     // v0.93 (ADR 0118): a sibling posting-list per `@indexed(by: f)` — field
     // value (stringified) → the primary keys whose value has it. Persisted and
     // committed wholesale with the map it indexes.
     for (map, fields) in sorted_index_fields(&store_map_indexes) {
         for f in fields {
-            writeln!(out, "  readonly {map}__idx_{f}: Record<string, string[]>;").unwrap();
+            members.push(bynk_ts::TsTypeMember::Prop {
+                name: format!("{map}__idx_{f}"),
+                ty: bynk_ts::TsType::named_with_args(
+                    "Record",
+                    vec![
+                        bynk_ts::TsType::named("string"),
+                        bynk_ts::TsType::Array {
+                            element: Box::new(bynk_ts::TsType::named("string")),
+                            readonly: false,
+                        },
+                    ],
+                ),
+                optional: false,
+                readonly: true,
+            });
         }
     }
     for (name, _, _) in &store_cache_fields {
@@ -3962,13 +4001,31 @@ pub(crate) fn emit_agent(
                 name.name
             ),
         };
-        writeln!(
-            out,
-            "  readonly {name}: Record<string, {{ v: {v}; exp: number }}>;",
-            name = name.name,
-            v = ts_ty(value_ty, tys),
-        )
-        .unwrap();
+        members.push(bynk_ts::TsTypeMember::Prop {
+            name: name.name.clone(),
+            ty: bynk_ts::TsType::named_with_args(
+                "Record",
+                vec![
+                    bynk_ts::TsType::named("string"),
+                    bynk_ts::TsType::Object(vec![
+                        bynk_ts::TsTypeMember::Prop {
+                            name: "v".to_string(),
+                            ty: ts_ty_to_ts_type(value_ty, tys),
+                            optional: false,
+                            readonly: false,
+                        },
+                        bynk_ts::TsTypeMember::Prop {
+                            name: "exp".to_string(),
+                            ty: bynk_ts::TsType::named("number"),
+                            optional: false,
+                            readonly: false,
+                        },
+                    ]),
+                ],
+            ),
+            optional: false,
+            readonly: true,
+        });
     }
     for (name, _, _) in &store_log_fields {
         let elem_ty = match store_field_ty.get(name.name.as_str()) {
@@ -3979,15 +4036,38 @@ pub(crate) fn emit_agent(
                 name.name
             ),
         };
-        writeln!(
-            out,
-            "  readonly {name}: Array<{{ t: number; v: {v} }}>;",
-            name = name.name,
-            v = ts_ty(elem_ty, tys),
-        )
-        .unwrap();
+        members.push(bynk_ts::TsTypeMember::Prop {
+            name: name.name.clone(),
+            ty: bynk_ts::TsType::named_with_args(
+                "Array",
+                vec![bynk_ts::TsType::Object(vec![
+                    bynk_ts::TsTypeMember::Prop {
+                        name: "t".to_string(),
+                        ty: bynk_ts::TsType::named("number"),
+                        optional: false,
+                        readonly: false,
+                    },
+                    bynk_ts::TsTypeMember::Prop {
+                        name: "v".to_string(),
+                        ty: ts_ty_to_ts_type(elem_ty, tys),
+                        optional: false,
+                        readonly: false,
+                    },
+                ])],
+            ),
+            optional: false,
+            readonly: true,
+        });
     }
-    writeln!(out, "}}").unwrap();
+    let state_interface = bynk_ts::TsStmt::decl(
+        bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::Interface {
+            name: state_ty.clone(),
+            type_params: Vec::new(),
+            members,
+        })),
+        None,
+    );
+    out.push_str(&bynk_ts::print_stmt(&state_interface, 0));
     writeln!(out).unwrap();
     // v0.9.2: per-agent state registry (bundle mode + `bynkc test`) and the
     // zero-value factory used to initialise a fresh key's state.
