@@ -2164,7 +2164,9 @@ pub(crate) fn emit_provider(
             let trailing = format!("{}}}\n", "  ".repeat(class_depth + 1));
             if let Some(body_offset_in_printed) =
                 printed.len().checked_sub(body_text.len() + trailing.len())
-                && printed[body_offset_in_printed..].starts_with(&body_text)
+                && printed
+                    .get(body_offset_in_printed..)
+                    .is_some_and(|tail| tail.starts_with(&body_text))
                 && printed.ends_with(&trailing)
             {
                 let base = out.len() - printed.len() + body_offset_in_printed;
@@ -2263,7 +2265,10 @@ pub(crate) fn emit_service(
         if is_ws_handler && matches!(ctx.target, BuildTarget::Workers) {
             continue;
         }
-        emit_doc_block(out, handler.documentation.as_deref(), INDENT_STEP);
+        // #1361: the doc block is no longer written directly here — it now
+        // lives on the real `TsObjectEntry::Method` built below (`doc:
+        // handler.documentation.clone()`), rendered by `render_multiline_
+        // object_entry`'s own `Method` arm at the right depth/position.
         let kind_name = match &handler_kind_ir {
             IrHandlerKind::Call => "call".to_string(),
             IrHandlerKind::Http { method, path } => http_handler_method_name_ir(*method, path),
@@ -2289,9 +2294,13 @@ pub(crate) fn emit_service(
         // For service handlers the operation name is the handler kind
         // (e.g. `call`). v0.5 has only one handler kind, so the service is a
         // single-operation object literal.
-        let mut params: Vec<String> = ir_params
+        let mut params: Vec<bynk_ts::TsParam> = ir_params
             .iter()
-            .map(|(name, ty)| format!("{}: {}", ts_ident(name), ts_ty(*ty, tys)))
+            .map(|(name, ty)| bynk_ts::TsParam {
+                name: ts_ident(name),
+                ty: Some(ts_ty_to_ts_type(*ty, tys)),
+                optional: false,
+            })
             .collect();
         // v0.103/v0.106: a `from websocket` lifecycle handler receives the
         // `connection` as its first parameter (the synthetic binding the checker
@@ -2300,7 +2309,14 @@ pub(crate) fn emit_service(
         if is_ws_handler && let ProtocolIr::WebSocket { out_ty, .. } = protocol {
             params.insert(
                 0,
-                format!("connection: Connection<{}>", ts_ty(*out_ty, tys)),
+                bynk_ts::TsParam {
+                    name: "connection".to_string(),
+                    ty: Some(bynk_ts::TsType::named_with_args(
+                        "Connection",
+                        vec![ts_ty_to_ts_type(*out_ty, tys)],
+                    )),
+                    optional: false,
+                },
             );
         }
         // Events track, slice 4 (spine #936): a `via schema(N)` guard needs
@@ -2321,7 +2337,14 @@ pub(crate) fn emit_service(
             match ir_params.get(1) {
                 Some((env_param_name, _)) => Some(ts_ident(env_param_name)),
                 None => {
-                    params.insert(1, "__bynkSchemaEnv: EventEnvelope".to_string());
+                    params.insert(
+                        1,
+                        bynk_ts::TsParam {
+                            name: "__bynkSchemaEnv".to_string(),
+                            ty: Some(bynk_ts::TsType::named("EventEnvelope")),
+                            optional: false,
+                        },
+                    );
                     Some("__bynkSchemaEnv".to_string())
                 }
             }
@@ -2534,16 +2557,19 @@ pub(crate) fn emit_service(
                 ),
             );
         }
-        params.push(format!("deps: {deps_ty}"));
-        let ret = ts_ty(*ir_ret, tys);
-        let async_kw = if *ir_effectful { "async " } else { "" };
-        writeln!(
-            out,
-            "  {async_kw}{op}({params}): {ret} {{",
-            op = kind_name,
-            params = params.join(", "),
-        )
-        .unwrap();
+        // #1361: `deps`'s own type stays one opaque `TsType::named` string
+        // — `deps_ty`'s own dynamic, multi-source construction (capability
+        // refs, the 4-way actor-seam widening above, `__exec`,
+        // `__eventsDispatch`) is real, separate, much larger work than this
+        // slice's own scope, the same "an odd, one-off/dynamically-built
+        // type shape stays opaque text" precedent P7.9 (#1315) already used
+        // for `Query[T]`'s own extra-paren-wrapped shape and #1355's own
+        // `messagesByLocale` type annotation.
+        params.push(bynk_ts::TsParam {
+            name: "deps".to_string(),
+            ty: Some(bynk_ts::TsType::named(deps_ty)),
+            optional: false,
+        });
         // Events track, slice 0 (spine #936): release-at-commit (events.md
         // §3.0) needs a completion boundary services never had before — the
         // body runs inside an IIFE so its own `return`s resolve `__result`
@@ -2556,30 +2582,79 @@ pub(crate) fn emit_service(
         // buffer or flush, so it keeps byte-identical output, mirroring
         // `__exec`'s gate on `block_uses_send`.
         let body_emits_directly = crate::emitter::block_uses_emit(&handler.body, &commons.callees);
+        // #1361: the whole method body — the events-IIFE wrapper (if any)
+        // and `body_out` — is captured as ONE opaque `TsStmtKind::Raw` blob,
+        // the `emit_provider` precedent (#1359) exactly; the events-IIFE
+        // stays opaque for the same reason #1327/#1352/#1359 already
+        // declined to build a block-bodied `Arrow`. `raw_body`'s own
+        // internal layout is built by straight concatenation, so
+        // `body_out`'s own starting offset within it is known by
+        // construction, not a text search.
+        let mut raw_body = String::new();
         if body_emits_directly {
             writeln!(
-                out,
+                raw_body,
                 "    const __events: Array<{}> = [];",
                 crate::emitter::EVENTS_WIRE_EVENT_TS_TYPE
             )
             .unwrap();
-            writeln!(out, "    const __result = await (async () => {{").unwrap();
+            writeln!(raw_body, "    const __result = await (async () => {{").unwrap();
         }
-        let base = out.len();
-        out.push_str(&body_out);
-        if let Some(module) = source_map {
-            module
-                .borrow_mut()
-                .merge(&body_smb.borrow(), &body_out, out, base, 0);
-        }
+        let body_out_offset_in_raw = raw_body.len();
+        raw_body.push_str(&body_out);
         if body_emits_directly {
-            writeln!(out, "    }})();").unwrap();
-            writeln!(out, "    if (__events.length > 0) {{").unwrap();
-            writeln!(out, "      await deps.__eventsDispatch(__events);").unwrap();
-            writeln!(out, "    }}").unwrap();
-            writeln!(out, "    return __result;").unwrap();
+            writeln!(raw_body, "    }})();").unwrap();
+            writeln!(raw_body, "    if (__events.length > 0) {{").unwrap();
+            writeln!(raw_body, "      await deps.__eventsDispatch(__events);").unwrap();
+            writeln!(raw_body, "    }}").unwrap();
+            writeln!(raw_body, "    return __result;").unwrap();
         }
-        writeln!(out, "  }},").unwrap();
+
+        let method_entry = bynk_ts::TsObjectEntry::Method {
+            name: kind_name,
+            is_async: *ir_effectful,
+            generics: Vec::new(),
+            params,
+            return_type: Some(ts_ty_to_ts_type(*ir_ret, tys)),
+            doc: handler.documentation.clone(),
+            inline: false,
+            body: vec![bynk_ts::TsStmt::raw(raw_body.clone(), None)],
+        };
+        // The object (`export const {name} = { ... }`) is always printed at
+        // depth 0 — `object_depth` names that once so the two offset
+        // computations below can't drift out of lockstep with the depth
+        // `print_object_entry` is actually called with (review of #1360,
+        // finding 3's own lesson, applied proactively here).
+        let object_depth = 0;
+        let printed = bynk_ts::print_object_entry(&method_entry, object_depth);
+        out.push_str(&printed);
+        if let Some(module) = source_map {
+            // Two-level offset: where `raw_body` starts within `printed`
+            // (fragment-level, the same #1352/#1359 arithmetic), plus where
+            // `body_out` starts within `raw_body` (blob-internal, known by
+            // construction above) — combined, the real offset of
+            // `body_out`'s own first byte within the fully-printed method.
+            // `Raw` splices verbatim and `TsObjectEntry::Method`'s own
+            // closing brace sits at `indent(object_depth + 1)` — degrades
+            // to no merge (no mapping for this handler) rather than risk a
+            // confidently WRONG one if either assumption is ever violated,
+            // the same "suppress rather than mis-record" discipline #1360
+            // finding 3 already established.
+            let trailing = format!("{}}},\n", "  ".repeat(object_depth + 1));
+            if let Some(raw_body_offset_in_printed) =
+                printed.len().checked_sub(raw_body.len() + trailing.len())
+                && printed
+                    .get(raw_body_offset_in_printed..)
+                    .is_some_and(|tail| tail.starts_with(&raw_body))
+                && printed.ends_with(&trailing)
+            {
+                let base =
+                    out.len() - printed.len() + raw_body_offset_in_printed + body_out_offset_in_raw;
+                module
+                    .borrow_mut()
+                    .merge(&body_smb.borrow(), &body_out, out, base, 0);
+            }
+        }
     }
     writeln!(out, "}};").unwrap();
     writeln!(out).unwrap();

@@ -426,6 +426,72 @@ fn provider_op_body_keeps_its_own_statement_lines() {
     );
 }
 
+const SERVICE_FIXTURE: &str = "context reps {
+  consumes bynk { Events }
+
+  event Pinged = {
+    n: Int,
+  }
+
+  service pinger {
+    on call(n: Int) -> Effect[()] given Events {
+      let doubled = n * 2
+      Events.emit[Pinged](Pinged { n: doubled })
+    }
+  }
+
+  service tripler {
+    on call(n: Int) -> Effect[Int] {
+      let tripled = n * 3
+      tripled
+    }
+  }
+}
+";
+
+#[test]
+fn service_handler_body_keeps_its_own_statement_lines_inside_the_events_iife() {
+    // #1361: emit_service's own per-handler bodies were already using the
+    // local-sub-builder-then-merge pattern correctly (unlike #1352/#1353's
+    // own bugs) -- but converting the handler's own header/params to a real
+    // TsObjectEntry::Method meant the body could no longer be spliced
+    // directly; it's now captured as one opaque Raw blob NESTED inside the
+    // events-emit IIFE wrapper (`const __result = await (async () => {
+    // <body> })();`), needing a two-level offset (fragment-level, then
+    // blob-internal) instead of the single-level one #1352/#1359/#1360
+    // established. `pinger` specifically exercises `body_emits_directly`
+    // (a real `Events.emit` call), the one real shape where the body's own
+    // offset within the printed method is NOT simply "right after the
+    // opening brace" -- it sits after the `const __events`/`const __result
+    // = await (async () => {` prologue lines too. `tripler` (review of
+    // #1362, finding 3) exercises the OTHER, more common branch --
+    // `body_emits_directly == false`, `body_out_offset_in_raw == 0` -- which
+    // had no direct source-map coverage: a regression there is silent (the
+    // `if let` chain just stops matching and the mapping is dropped) rather
+    // than loud, so it needs its own assertion, not just the emitting one.
+    let (ts, map) = compile_reps_context(SERVICE_FIXTURE);
+    let lines = decode(extract_field(&map, "mappings"));
+    let at = |g: usize| lines[g].unwrap_or_else(|| panic!("gen line {g} unmapped\n{ts}"));
+
+    // Source (0-based): line 0 = `context reps {`, line 8 = `on call(...)`,
+    // line 9 = `let doubled = n * 2`, line 10 = `Events.emit[...]`.
+    assert_eq!(
+        at(gen_line_of(&ts, "const doubled = ")),
+        9,
+        "`let doubled` keeps its own line, not collapsed toward the events-IIFE prologue"
+    );
+    assert_eq!(
+        at(gen_line_of(&ts, "__events.push(")),
+        10,
+        "the emit call's own lowered push keeps its own line"
+    );
+    assert_eq!(
+        at(gen_line_of(&ts, "const tripled = ")),
+        16,
+        "`tripler`'s own plain (non-emitting) handler body keeps its own line, not collapsed toward the method header"
+    );
+}
+
 const CONTRACT_FIXTURE: &str = "commons reps {
   fn scale(n: Int) -> Int
   requires positive: n > 0
