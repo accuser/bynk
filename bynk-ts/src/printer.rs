@@ -4981,6 +4981,34 @@ mod tests {
         );
     }
 
+    /// Arc C, slice 21 (#1371): `TsClassMethod.private` — pins both the
+    /// keyword itself and its render-*before*-`async` ordering directly,
+    /// the same precedent `TsClassField.private` already has (its own
+    /// direct test, not left to transitive `bynkc` fixture coverage alone)
+    /// — review of #1372 caught this one still missing for the sibling
+    /// field.
+    #[test]
+    fn prints_a_private_class_method_fragment() {
+        let method = TsClassMethod {
+            name: "loadState".to_string(),
+            private: true,
+            is_async: true,
+            params: Vec::new(),
+            return_type: Some(TsType::named_with_args(
+                "Promise",
+                vec![TsType::named("OrderState")],
+            )),
+            body: vec![TsStmt::return_stmt(
+                Some(TsExpr::Ident("state".to_string())),
+                None,
+            )],
+        };
+        assert_eq!(
+            print_class_method(&method, 0),
+            "  private async loadState(): Promise<OrderState> {\n    return state;\n  }\n"
+        );
+    }
+
     /// #1339's own real gap: `TsExpr::Arrow` had no `generics`/`return_type`
     /// field — `emit_sum_type`'s own generic payload-constructor arrows
     /// (`<T>(name: T): Sum<T> => (...)`) need both. The object-literal body
