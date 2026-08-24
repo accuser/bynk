@@ -2048,34 +2048,56 @@ pub(crate) fn emit_provider(
         )
         .unwrap();
     }
+    // #1359 (R7.1): each op converts to a real `bynk_ts::TsClassMethod`
+    // (name/`is_async`/real `TsParam`s via `ts_type_ref_to_ts_type`, P7.9
+    // #1315/real return type), printed through the new fragment entry
+    // point `bynk_ts::print_class_method` (mirroring `print_object_entry`'s
+    // own "one fragment, not a whole document" scope, #1337) — the class's
+    // own wrapper (header/`implements`/deps field+constructor/closing
+    // brace) stays hand-written text, Decision C: building the WHOLE class
+    // as one real `TsDecl::Class` tree would need every method's own body
+    // captured into a local buffer for `Raw`-embedding, and this class's
+    // own real spacing (no blank line between methods) genuinely differs
+    // from `TsDecl::Class`'s own established "one blank line before each
+    // method" policy (`events_fanout.rs`'s real convention, #1317) — the
+    // same "two real files disagree on a formatting convention" tension
+    // this track has hit before.
+    //
+    // Each op's own body still lowers through `emit_block_as_function_
+    // body_with_return` — unconverted, out of scope — but can no longer
+    // write directly into `out` the way the pre-conversion code did (the
+    // fragment must be fully built before `out.len()` at the splice point
+    // is known). Captured into a local `body_text` buffer instead, using
+    // the same local-sub-builder-then-`merge` pattern #1352/#1353 already
+    // established, applied once per method instead of once per function:
+    // `body_smb` collects checkpoints relative to `body_text`, then
+    // `merge`s into the real `source_map`, rebased at `body_text`'s own
+    // exact splice offset within `print_class_method`'s own printed
+    // fragment (computed by arithmetic against the fragment's own known
+    // length, not a text search — two ops could plausibly lower to
+    // identical body text, which a search could match ambiguously).
     for op in &p.ops {
-        let params: Vec<String> = op
+        let params: Vec<bynk_ts::TsParam> = op
             .params
             .iter()
-            .map(|p| format!("{}: {}", ts_ident(&p.name.name), ts_type_ref(&p.type_ref)))
+            .map(|p| bynk_ts::TsParam {
+                name: ts_ident(&p.name.name),
+                ty: Some(ts_type_ref_to_ts_type(&p.type_ref, None)),
+                optional: false,
+            })
             .collect();
         // P6.55 (design/tracks/the-ir.md §6b): computed once, not twice —
         // `async_tail` below used to call `is_effectful_return(&op.return_type)`
         // again for the identical value (the same duplicate-computation
         // pattern P6.54 fixed in `emit_agent`).
         let effectful = is_effectful_return(&op.return_type);
-        let async_kw = if effectful { "async " } else { "" };
-        writeln!(
-            out,
-            "  {async_kw}{name}({params}): {ret} {{",
-            name = op.name.name,
-            params = params.join(", "),
-            ret = ts_type_ref(&op.return_type),
-        )
-        .unwrap();
-        // v0.70: provider operation bodies lower directly into `out`, so attaching
-        // the module builder records correct offsets — no splice merge needed.
         let mut module = ModuleCtx::new(commons, &ctx.cross_context, &ctx.runtime_use);
         module.agent_method_givens = ctx.agent_method_givens.clone();
         module.event_schema_versions = ctx.event_schema_versions.clone();
         module.set_rebrand_info(commons, ctx);
         module.target = ctx.target;
         module.in_bynk_unit = ctx.commons_name == "bynk";
+        let body_smb = RefCell::new(SourceMapBuilder::new());
         let mut cx = LowerCtx::new(
             module,
             BodyMode::ProviderOp {
@@ -2100,17 +2122,42 @@ pub(crate) fn emit_provider(
                 },
             },
         )
-        .with_source_map(source_map);
+        .with_source_map(Some(&body_smb));
         cx.local_agents = ctx.local_agents.clone();
+        let mut body_text = String::new();
         emit_block_as_function_body_with_return(
-            out,
+            &mut body_text,
             &op.body,
             &mut cx,
             INDENT_STEP * 2,
             effectful,
             Some(&op.return_type),
         );
-        writeln!(out, "  }}").unwrap();
+
+        let method = bynk_ts::TsClassMethod {
+            name: op.name.name.clone(),
+            is_async: effectful,
+            params,
+            return_type: Some(ts_type_ref_to_ts_type(&op.return_type, None)),
+            body: vec![bynk_ts::TsStmt::raw(body_text.clone(), None)],
+        };
+        let printed = bynk_ts::print_class_method(&method, 0);
+        // The class is always printed at depth 0, so the method's own
+        // closing brace sits at `indent(1)` — see `print_class_method`'s
+        // own doc for why this arithmetic, not a search, is correct.
+        let trailing = "  }\n";
+        debug_assert!(
+            printed.ends_with(&format!("{body_text}{trailing}")),
+            "emit_provider: Raw body is no longer the verbatim tail of the printed method"
+        );
+        let body_offset_in_printed = printed.len() - body_text.len() - trailing.len();
+        let base = out.len() + body_offset_in_printed;
+        out.push_str(&printed);
+        if let Some(module_smb) = source_map {
+            module_smb
+                .borrow_mut()
+                .merge(&body_smb.borrow(), &body_text, out, base, 0);
+        }
     }
     writeln!(out, "}}").unwrap();
     writeln!(out).unwrap();

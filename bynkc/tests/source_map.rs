@@ -302,6 +302,94 @@ fn value_position_if_iife_does_not_corrupt_earlier_checkpoints() {
     );
 }
 
+/// #1359: like [`compile_reps`], but for a `context`-rooted fixture (a
+/// `capability`/`provides` pair can't live in a bare `commons` at all —
+/// `emit_capability`'s own #1358 test hit the identical constraint) —
+/// `compile_options_single` still discovers it fine, the file just needs to
+/// be named after the CONTEXT, not a `commons`.
+fn compile_reps_context(source: &str) -> (String, String) {
+    static COUNTER: AtomicU32 = AtomicU32::new(0);
+    let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!(
+        "bynk_srcmap_context_{}_{unique}",
+        std::process::id()
+    ));
+    let src = dir.join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(src.join("reps.bynk"), source).unwrap();
+
+    let out = bynkc::compile_project(&bynk_testkit::compile_options_single(src.clone()))
+        .map_err(bynkc::ProjectFailure::flatten)
+        .unwrap_or_else(|e| panic!("compile failed: {e:?}"));
+
+    let main_path = Path::new("reps.ts");
+    let ts = out
+        .artefacts
+        .docs
+        .get(main_path)
+        .expect("reps.ts in output")
+        .text();
+    let map = out
+        .artefacts
+        .docs
+        .get(&bynkc::sibling_path(main_path, "map"))
+        .expect("reps.ts carries a source map")
+        .text();
+    let _ = std::fs::remove_dir_all(&dir);
+    (ts, map)
+}
+
+const PROVIDER_FIXTURE: &str = "context reps {
+  capability Calc {
+    fn double(n: Int) -> Int
+  }
+
+  provides Calc = SimpleCalc {
+    fn double(n: Int) -> Int {
+      let doubled = n * 2
+      doubled
+    }
+  }
+}
+";
+
+#[test]
+fn provider_op_body_keeps_its_own_statement_lines() {
+    // #1359: emit_provider's own per-op method bodies now go through the
+    // same local-sub-builder-then-merge pattern #1352/#1353 established for
+    // emit_free_fn/emit_contract_guarded_body -- applied once per method
+    // instead of once per function, since the whole class's own wrapper
+    // stays hand-written but each method is a real, individually-printed
+    // TsClassMethod fragment. Regressing to a direct-into-out (or a
+    // wrongly-based local buffer) lowering would collapse `double`'s own
+    // body statements toward whatever offset the buffer's own length
+    // happened to land on -- the same failure mode
+    // `value_position_if_iife_does_not_corrupt_earlier_checkpoints`/
+    // `contract_guarded_body_keeps_its_own_statement_lines` already pin for
+    // the sibling cases.
+    let (ts, map) = compile_reps_context(PROVIDER_FIXTURE);
+    let lines = decode(extract_field(&map, "mappings"));
+    let at = |g: usize| lines[g].unwrap_or_else(|| panic!("gen line {g} unmapped\n{ts}"));
+
+    // Source (0-based): line 0 = `context reps {`, line 5 = `provides Calc = SimpleCalc {`,
+    // line 7 = `let doubled = n * 2`, line 8 = `doubled`.
+    assert_eq!(
+        at(gen_line_of(&ts, "class SimpleCalc")),
+        5,
+        "the class header -> `provides Calc = SimpleCalc` source line"
+    );
+    assert_eq!(
+        at(gen_line_of(&ts, "const doubled = ")),
+        7,
+        "`let doubled` keeps its own line, not collapsed toward the class header"
+    );
+    assert_eq!(
+        at(gen_line_of(&ts, "return doubled;")),
+        8,
+        "the tail `doubled` keeps its own line"
+    );
+}
+
 const CONTRACT_FIXTURE: &str = "commons reps {
   fn scale(n: Int) -> Int
   requires positive: n > 0
