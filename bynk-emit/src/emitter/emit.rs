@@ -1638,8 +1638,6 @@ pub(crate) fn emit_messages_bundle(
     reference: &MessagesDecl,
     runtime_use: &RuntimeUse,
 ) {
-    let reference_tag = escape_ts_string(&reference.tag);
-
     // One `code -> renderer` table per locale, inlined into a single
     // `messagesByLocale` object literal keyed by tag. No per-locale `const
     // __messages_<tag>` binding: a locale tag can be `"pt-BR"`, which is not a
@@ -1680,6 +1678,19 @@ pub(crate) fn emit_messages_bundle(
     // renderer does not auto-add parens around a nested `As` operand. The
     // same "explicit `Paren` always prints its own literal parens"
     // precedent #1323 established.
+    //
+    // Review of #1356, finding 1: `tag` is the RAW locale tag, not
+    // `escape_ts_string`-escaped — `TsLit::Str`'s own renderer already
+    // escapes (byte-identical to `escape_ts_string`, deliberately, P7.8),
+    // so pre-escaping here would double-escape any backslash/quote a tag
+    // ever contains, corrupting the literal's own decoded value. Not
+    // reachable today (`LocaleTag`'s own `Matches(...)` refinement rejects
+    // anything but letters/digits/hyphens) but a real, latent bug had the
+    // caller pre-escaped, the same class of hazard #1335's own `msg`
+    // deviation was written to avoid. `messagesByLocale`'s own `Prop` KEY a
+    // few lines up is the opposite, correct case: a key is spliced
+    // verbatim, never run through a printer escaper, so it needs the
+    // explicit `escape_ts_string` call to be safe at all.
     let tag_cast = |tag: &str| bynk_ts::TsExpr::As {
         expr: Box::new(bynk_ts::TsExpr::Paren(Box::new(bynk_ts::TsExpr::As {
             expr: Box::new(bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(tag.to_string()))),
@@ -1691,16 +1702,13 @@ pub(crate) fn emit_messages_bundle(
         bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::ConstDecl {
             name: "messagesReferenceLocale".to_string(),
             ty: Some(bynk_ts::TsType::named("LocaleTag")),
-            init: tag_cast(&reference_tag),
+            init: tag_cast(&reference.tag),
         })),
         None,
     );
     out.push_str(&bynk_ts::print_stmt(&ref_locale_decl, 0));
 
-    let locale_list: Vec<bynk_ts::TsExpr> = blocks
-        .iter()
-        .map(|m| tag_cast(&escape_ts_string(&m.tag)))
-        .collect();
+    let locale_list: Vec<bynk_ts::TsExpr> = blocks.iter().map(|m| tag_cast(&m.tag)).collect();
     let locales_decl = bynk_ts::TsStmt::decl(
         bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::ConstDecl {
             name: "messagesLocales".to_string(),

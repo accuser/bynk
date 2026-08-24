@@ -3432,6 +3432,33 @@ mod tests {
         );
     }
 
+    /// Review of #1356, finding 2: `render_multiline_object_entry`'s own
+    /// `Prop` arm routes through `render_stmt_level_expr` for BOTH
+    /// `TsExpr::Object`/`Array` (see `TsExpr::Array`'s own doc, updated by
+    /// #1355) — the object case is pinned above, this is the array sibling,
+    /// making that doc claim self-verifying rather than merely asserted.
+    #[test]
+    fn prints_a_nested_multiline_array_as_a_props_own_value() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::const_stmt(
+            TsBindingName::Ident("byGroup".to_string()),
+            None,
+            TsExpr::multiline_object_entries(vec![TsObjectEntry::Prop(
+                "\"a\"".to_string(),
+                TsExpr::multiline_array(vec![
+                    TsExpr::Ident("one".to_string()),
+                    TsExpr::Ident("two".to_string()),
+                ]),
+            )]),
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(
+            printed.text,
+            "const byGroup = {\n  \"a\": [\n    one,\n    two,\n  ],\n};\n"
+        );
+    }
+
     /// #1323's own third gap: `test ? consequent : alternate`.
     #[test]
     fn prints_a_conditional_expression() {
