@@ -1569,8 +1569,9 @@ pub fn print_stmt(stmt: &TsStmt, depth: usize) -> String {
 /// second real use) carries NO indent of its own — its text is captured
 /// pre-indented at a fixed absolute depth by its own caller — so it only
 /// renders correctly when `depth` is `0`. The guard for this now lives in
-/// [`render_multiline_object_entry`] itself (moved there by review of
-/// #1340, finding 1: this function's own copy missed the `TsExpr::
+/// `render_multiline_object_entry` itself (a private renderer, so named
+/// here in text rather than linked — moved there by review of #1340,
+/// finding 1: this function's own copy missed the `TsExpr::
 /// multiline_object_entries`/`render_expr` call path #1339 added, which
 /// reaches that renderer directly, never through this one), so it fires
 /// for every caller, not just this entry point.
