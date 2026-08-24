@@ -4109,6 +4109,7 @@ pub(crate) fn emit_test_main(tests: &[RunnableTest], import_ext: ImportExt) -> T
             return_type: None,
             body: main_body,
             is_async: true,
+            inline: false,
         },
         None,
     ));

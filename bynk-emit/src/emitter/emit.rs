@@ -937,6 +937,7 @@ pub(crate) fn emit_free_fn(
             return_type: Some(ts_type_ref_to_ts_type(&f.return_type, None)),
             body: vec![bynk_ts::TsStmt::raw(body_text.clone(), None)],
             is_async,
+            inline: false,
         })),
         None,
     );
@@ -1814,6 +1815,7 @@ pub(crate) fn emit_messages_bundle(
                 fallback_return,
             ],
             is_async: false,
+            inline: false,
         })),
         None,
     );
@@ -3182,6 +3184,7 @@ pub(crate) fn emit_make_surface(out: &mut String, commons: &TypedCommons, ctx: &
                 None,
             )],
             is_async: false,
+            inline: false,
         })),
         None,
     );
@@ -4094,86 +4097,130 @@ pub(crate) fn emit_agent(
     writeln!(out).unwrap();
     // v0.9.2: per-agent state registry (bundle mode + `bynkc test`) and the
     // zero-value factory used to initialise a fresh key's state.
+    //
+    // Arc C, slice 20 (#1369): the second of step (9)'s own proposed 5-6
+    // sub-slices — the registry `const` and the zero-factory `function`
+    // build real nodes; the zero-record's own per-field VALUES stay
+    // opaque where they genuinely must (a `Cell` field with an initialiser
+    // lowers through `LowerCtx`, `lower.rs`'s own permanently-excluded
+    // general expression lowering — the same "carry an unconverted
+    // sibling's already-formed JS text as `TsExpr::Ident`" pattern
+    // #1355's own `emit_message_entry_renderer` call already established),
+    // but every EMPTY-container field (`Map`/`Set`/`Cache`/held-map/
+    // posting-list `{}`, `Log`'s `[]`) is fully real — `TsExpr::object(
+    // vec![])`/`TsExpr::array(vec![])`, no opacity needed there at all.
     let registry = agent_registry_name(&a.name.name);
     let zero_fn = format!("__zeroOf{}State", a.name.name);
-    writeln!(out, "const {registry} = new StateRegistry();").unwrap();
+    let registry_const = bynk_ts::TsStmt::decl(
+        bynk_ts::TsDecl::ConstDecl {
+            name: registry.clone(),
+            ty: None,
+            init: bynk_ts::TsExpr::New {
+                callee: Box::new(bynk_ts::TsExpr::Ident("StateRegistry".to_string())),
+                args: Vec::new(),
+            },
+        },
+        None,
+    );
+    out.push_str(&bynk_ts::print_stmt(&registry_const, 0));
     // v0.11: build the fresh-state record. A field with an explicit initialiser
     // lowers its (static) expression; a field without one uses the v0.9.2
     // implicit zero.
-    let zero_record = {
-        let mut parts: Vec<String> = Vec::new();
-        for f in &effective_fields {
-            let val = if let Some(init) = &f.init {
-                let mut pre = Pre::new();
-                let mut module = ModuleCtx::new(commons, &ctx.cross_context, &ctx.runtime_use);
-                module.target = ctx.target;
-                module.agent_method_givens = ctx.agent_method_givens.clone();
-                module.event_schema_versions = ctx.event_schema_versions.clone();
-                module.set_rebrand_info(commons, ctx);
-                let mut icx = LowerCtx::new(module, BodyMode::StaticInit);
-                icx.local_agents = ctx.local_agents.clone();
-                let expr = pre.lower(init, &mut icx);
-                // A static initialiser lowers to a pure expression (no setup
-                // statements). #1029 review: if any appear, wrap them in an IIFE
-                // rather than splicing them into a comma sequence. The comma
-                // form only ever worked for expression-shaped hoists — a `const`
-                // or an `if` operand does not parse — and T2.1 made a
-                // statement-shaped hoist reachable here for the first time, since
-                // a value-position `if` that hoists now yields `let …; if (…) {…}`
-                // where it used to yield a self-contained arrow. An IIFE is
-                // sound for this position specifically: a static initialiser has
-                // no enclosing function to `return` out of, so the arrow cannot
-                // swallow a control transfer the way it would in a handler body.
-                if pre.is_empty() {
-                    expr
-                } else {
-                    format!("(() => {{ {} return {expr}; }})()", pre.stmts().join(" "))
-                }
+    let mut zero_entries: Vec<bynk_ts::TsObjectEntry> = Vec::new();
+    for f in &effective_fields {
+        let val = if let Some(init) = &f.init {
+            let mut pre = Pre::new();
+            let mut module = ModuleCtx::new(commons, &ctx.cross_context, &ctx.runtime_use);
+            module.target = ctx.target;
+            module.agent_method_givens = ctx.agent_method_givens.clone();
+            module.event_schema_versions = ctx.event_schema_versions.clone();
+            module.set_rebrand_info(commons, ctx);
+            let mut icx = LowerCtx::new(module, BodyMode::StaticInit);
+            icx.local_agents = ctx.local_agents.clone();
+            let expr = pre.lower(init, &mut icx);
+            // A static initialiser lowers to a pure expression (no setup
+            // statements). #1029 review: if any appear, wrap them in an IIFE
+            // rather than splicing them into a comma sequence. The comma
+            // form only ever worked for expression-shaped hoists — a `const`
+            // or an `if` operand does not parse — and T2.1 made a
+            // statement-shaped hoist reachable here for the first time, since
+            // a value-position `if` that hoists now yields `let …; if (…) {…}`
+            // where it used to yield a self-contained arrow. An IIFE is
+            // sound for this position specifically: a static initialiser has
+            // no enclosing function to `return` out of, so the arrow cannot
+            // swallow a control transfer the way it would in a handler body.
+            if pre.is_empty() {
+                expr
             } else {
-                bynk_check::checker::zero_value_ts(
-                    &f.type_ref,
-                    f.refinement.as_ref(),
-                    &commons.types,
-                )
-                .unwrap_or_else(|| "undefined as never".to_string())
-            };
-            parts.push(format!("{}: {val}", f.name.name));
-        }
-        // A fresh `store Map`/`store Set`/`store Cache` is the empty record.
-        for (name, _) in &store_map_fields {
-            parts.push(format!("{}: {{}}", name.name));
-        }
-        // A fresh held `Map[K, Connection]` (a `K → connId` record) is empty too.
-        for (name, _) in &held_maps {
-            parts.push(format!("{}: {{}}", name.name));
-        }
-        // A fresh `@indexed` posting-list is empty too (v0.93, ADR 0118).
-        for (map, fields) in sorted_index_fields(&store_map_indexes) {
-            for f in fields {
-                parts.push(format!("{map}__idx_{f}: {{}}"));
+                format!("(() => {{ {} return {expr}; }})()", pre.stmts().join(" "))
             }
-        }
-        for name in &set_field_names {
-            parts.push(format!("{name}: {{}}"));
-        }
-        for (name, _, _) in &store_cache_fields {
-            parts.push(format!("{}: {{}}", name.name));
-        }
-        // A fresh `store Log` is the empty array.
-        for (name, _, _) in &store_log_fields {
-            parts.push(format!("{}: []", name.name));
-        }
-        if parts.is_empty() {
-            "{}".to_string()
         } else {
-            format!("{{ {} }}", parts.join(", "))
+            bynk_check::checker::zero_value_ts(&f.type_ref, f.refinement.as_ref(), &commons.types)
+                .unwrap_or_else(|| "undefined as never".to_string())
+        };
+        zero_entries.push(bynk_ts::TsObjectEntry::Prop(
+            f.name.name.clone(),
+            bynk_ts::TsExpr::Ident(val),
+        ));
+    }
+    // A fresh `store Map`/`store Set`/`store Cache` is the empty record.
+    for (name, _) in &store_map_fields {
+        zero_entries.push(bynk_ts::TsObjectEntry::Prop(
+            name.name.clone(),
+            bynk_ts::TsExpr::object(vec![]),
+        ));
+    }
+    // A fresh held `Map[K, Connection]` (a `K → connId` record) is empty too.
+    for (name, _) in &held_maps {
+        zero_entries.push(bynk_ts::TsObjectEntry::Prop(
+            name.name.clone(),
+            bynk_ts::TsExpr::object(vec![]),
+        ));
+    }
+    // A fresh `@indexed` posting-list is empty too (v0.93, ADR 0118).
+    for (map, fields) in sorted_index_fields(&store_map_indexes) {
+        for f in fields {
+            zero_entries.push(bynk_ts::TsObjectEntry::Prop(
+                format!("{map}__idx_{f}"),
+                bynk_ts::TsExpr::object(vec![]),
+            ));
         }
-    };
-    writeln!(
-        out,
-        "function {zero_fn}(): {state_ty} {{ return {zero_record}; }}"
-    )
-    .unwrap();
+    }
+    for name in &set_field_names {
+        zero_entries.push(bynk_ts::TsObjectEntry::Prop(
+            name.to_string(),
+            bynk_ts::TsExpr::object(vec![]),
+        ));
+    }
+    for (name, _, _) in &store_cache_fields {
+        zero_entries.push(bynk_ts::TsObjectEntry::Prop(
+            name.name.clone(),
+            bynk_ts::TsExpr::object(vec![]),
+        ));
+    }
+    // A fresh `store Log` is the empty array.
+    for (name, _, _) in &store_log_fields {
+        zero_entries.push(bynk_ts::TsObjectEntry::Prop(
+            name.name.clone(),
+            bynk_ts::TsExpr::array(vec![]),
+        ));
+    }
+    let zero_fn_decl = bynk_ts::TsStmt::decl(
+        bynk_ts::TsDecl::Function {
+            name: zero_fn.clone(),
+            generics: Vec::new(),
+            params: Vec::new(),
+            return_type: Some(bynk_ts::TsType::named(state_ty.clone())),
+            body: vec![bynk_ts::TsStmt::return_stmt(
+                Some(bynk_ts::TsExpr::object_entries(zero_entries)),
+                None,
+            )],
+            is_async: false,
+            inline: true,
+        },
+        None,
+    );
+    out.push_str(&bynk_ts::print_stmt(&zero_fn_decl, 0));
     writeln!(out).unwrap();
     // v0.96 (ADR 0124): the rehydration validation gate. `loadState` validates a
     // *loaded* (merged) state against the current type definition before any
@@ -4286,11 +4333,34 @@ pub(crate) fn emit_agent(
     }
     let has_rehydrate = agent_needs_rehydrate(a, &commons.types);
     if has_rehydrate {
-        writeln!(out, "function {rehydrate_fn}(s: {state_ty}): void {{").unwrap();
-        for c in &rehydrate_checks {
-            writeln!(out, "{c}").unwrap();
-        }
-        writeln!(out, "}}").unwrap();
+        // Each check is already-formed JS text (`serialisation::
+        // deserialise_expr`, a confirmed unaffected, `String`-returning
+        // sibling helper, out of this slice's scope) — carried as its own
+        // opaque `TsStmt::Raw`, not merged into one blob: each is already a
+        // real, independent statement, and `Raw` prints verbatim with no
+        // indent of its own, matching every check's own hardcoded two-space
+        // prefix exactly (correct because this decl is always printed at
+        // depth 0, giving the body depth 1).
+        let rehydrate_fn_decl = bynk_ts::TsStmt::decl(
+            bynk_ts::TsDecl::Function {
+                name: rehydrate_fn.clone(),
+                generics: Vec::new(),
+                params: vec![bynk_ts::TsParam {
+                    name: "s".to_string(),
+                    ty: Some(bynk_ts::TsType::named(state_ty.clone())),
+                    optional: false,
+                }],
+                return_type: Some(bynk_ts::TsType::named("void")),
+                body: rehydrate_checks
+                    .iter()
+                    .map(|c| bynk_ts::TsStmt::raw(format!("{c}\n"), None))
+                    .collect(),
+                is_async: false,
+                inline: false,
+            },
+            None,
+        );
+        out.push_str(&bynk_ts::print_stmt(&rehydrate_fn_decl, 0));
         writeln!(out).unwrap();
     }
     // 2) Durable Object class.

@@ -1859,6 +1859,7 @@ fn render_decl_body(out: &mut String, decl: &TsDecl, depth: usize) {
             return_type,
             body,
             is_async,
+            inline,
         } => {
             if *is_async {
                 out.push_str("async ");
@@ -1873,8 +1874,13 @@ fn render_decl_body(out: &mut String, decl: &TsDecl, depth: usize) {
                 out.push_str(": ");
                 render_type(out, rt);
             }
-            render_block_stmts(out, body, depth);
-            out.push('\n');
+            if *inline {
+                out.push(' ');
+                render_inline_block(out, body);
+            } else {
+                render_block_stmts(out, body, depth);
+                out.push('\n');
+            }
         }
         TsDecl::TypeAlias {
             name,
@@ -3246,6 +3252,7 @@ mod tests {
                 return_type: None,
                 body: vec![TsStmt::return_stmt(Some(TsExpr::Lit(TsLit::Null)), None)],
                 is_async: false,
+                inline: false,
             })),
             None,
         ));
@@ -3280,6 +3287,7 @@ mod tests {
                     None,
                 )],
                 is_async: false,
+                inline: false,
             })),
             None,
         ));
@@ -4238,11 +4246,41 @@ mod tests {
                 return_type: None,
                 body: vec![TsStmt::return_stmt(None, None)],
                 is_async: true,
+                inline: false,
             },
             None,
         ));
         let printed = print(&program, "x.bynk", "", "x.ts");
         assert_eq!(printed.text, "async function main() {\n  return;\n}\n");
+    }
+
+    /// #1369 (Arc C, slice 20): `TsDecl::Function.inline` — the zero-factory
+    /// shape (`function name(): Ret { return <expr>; }` all on one line)
+    /// `emit_agent` needs, mirroring `TsObjectEntry::Method.inline`'s own
+    /// single-line-vs-multi-line precedent (#1337) at a different node kind.
+    #[test]
+    fn prints_an_inline_top_level_function() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::decl(
+            TsDecl::Function {
+                name: "zero".to_string(),
+                generics: Vec::new(),
+                params: vec![],
+                return_type: Some(TsType::named("Foo")),
+                body: vec![TsStmt::return_stmt(
+                    Some(TsExpr::object(vec![(
+                        "n".to_string(),
+                        TsExpr::Lit(TsLit::Num("0".to_string())),
+                    )])),
+                    None,
+                )],
+                is_async: false,
+                inline: true,
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "function zero(): Foo { return { n: 0 }; }\n");
     }
 
     #[test]
