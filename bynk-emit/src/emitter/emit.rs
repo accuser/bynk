@@ -2164,7 +2164,9 @@ pub(crate) fn emit_provider(
             let trailing = format!("{}}}\n", "  ".repeat(class_depth + 1));
             if let Some(body_offset_in_printed) =
                 printed.len().checked_sub(body_text.len() + trailing.len())
-                && printed[body_offset_in_printed..].starts_with(&body_text)
+                && printed
+                    .get(body_offset_in_printed..)
+                    .is_some_and(|tail| tail.starts_with(&body_text))
                 && printed.ends_with(&trailing)
             {
                 let base = out.len() - printed.len() + body_offset_in_printed;
@@ -2641,7 +2643,9 @@ pub(crate) fn emit_service(
             let trailing = format!("{}}},\n", "  ".repeat(object_depth + 1));
             if let Some(raw_body_offset_in_printed) =
                 printed.len().checked_sub(raw_body.len() + trailing.len())
-                && printed[raw_body_offset_in_printed..].starts_with(&raw_body)
+                && printed
+                    .get(raw_body_offset_in_printed..)
+                    .is_some_and(|tail| tail.starts_with(&raw_body))
                 && printed.ends_with(&trailing)
             {
                 let base =
