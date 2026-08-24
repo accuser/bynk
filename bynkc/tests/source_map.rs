@@ -42,6 +42,45 @@ fn compile_reps(source: &str) -> (String, String) {
     (ts, map)
 }
 
+/// #1352: like [`compile_reps`], but with the dev/test contract call-site
+/// guard on (`CompileOptions::contracts(true)`, DECISION J — off by default,
+/// `compile_options_single`'s own `contracts: false`) — the one real branch
+/// `emit_free_fn`'s own source-map fix (#1352) left untested by every other
+/// test in this file: `emit_contract_guarded_body` lowers its own body into
+/// the SAME `body_text`/`merge` machinery, nested one IIFE deeper.
+fn compile_reps_with_contracts(source: &str) -> (String, String) {
+    static COUNTER: AtomicU32 = AtomicU32::new(0);
+    let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!(
+        "bynk_srcmap_contracts_{}_{unique}",
+        std::process::id()
+    ));
+    let src = dir.join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(src.join("reps.bynk"), source).unwrap();
+
+    let out =
+        bynkc::compile_project(&bynk_testkit::compile_options_single(src.clone()).contracts(true))
+            .map_err(bynkc::ProjectFailure::flatten)
+            .unwrap_or_else(|e| panic!("compile failed: {e:?}"));
+
+    let main_path = Path::new("reps.ts");
+    let ts = out
+        .artefacts
+        .docs
+        .get(main_path)
+        .expect("reps.ts in output")
+        .text();
+    let map = out
+        .artefacts
+        .docs
+        .get(&bynkc::sibling_path(main_path, "map"))
+        .expect("reps.ts carries a source map")
+        .text();
+    let _ = std::fs::remove_dir_all(&dir);
+    (ts, map)
+}
+
 /// Decode the `mappings` string into `gen_line0 -> Some(src_line0)`, for the
 /// one-segment-per-line maps the builder emits.
 fn decode(mappings: &str) -> Vec<Option<i64>> {
@@ -260,5 +299,49 @@ fn value_position_if_iife_does_not_corrupt_earlier_checkpoints() {
         at(gen_line_of(&ts, "return a + r")),
         9,
         "the tail `a + r` keeps its own line"
+    );
+}
+
+const CONTRACT_FIXTURE: &str = "commons reps {
+  fn scale(n: Int) -> Int
+  requires positive: n > 0
+  ensures small: result < 1000
+  {
+    let doubled = n * 2
+    doubled
+  }
+}
+";
+
+#[test]
+fn contract_guarded_body_keeps_its_own_statement_lines() {
+    // #1352: emit_contract_guarded_body's own body -- the branch emit_free_fn's
+    // source-map fix must also cover -- lowers through the SAME body_smb/merge
+    // machinery as the ordinary (unguarded) path, one IIFE deeper. Regressing
+    // to the pre-#1352 direct-into-out lowering collapses every statement
+    // inside `scale`'s own body toward whatever offset the isolated buffer's
+    // own (small) length happened to land on in the real file -- exactly the
+    // failure mode `value_position_if_iife_does_not_corrupt_earlier_checkpoints`
+    // above already pins for the unguarded IIFE case, here for the guarded one.
+    let (ts, map) = compile_reps_with_contracts(CONTRACT_FIXTURE);
+    let lines = decode(extract_field(&map, "mappings"));
+    let at = |g: usize| lines[g].unwrap_or_else(|| panic!("gen line {g} unmapped\n{ts}"));
+
+    // Source (0-based): line 0 = `commons reps {`, line 1 = `fn scale(...)`,
+    // line 5 = `let doubled = n * 2`, line 6 = `doubled`.
+    assert_eq!(
+        at(gen_line_of(&ts, "contract violated: precondition")),
+        1,
+        "precondition guard -> `fn scale` header line"
+    );
+    assert_eq!(
+        at(gen_line_of(&ts, "const doubled = ")),
+        5,
+        "`let doubled` keeps its own line, not collapsed toward the module header"
+    );
+    assert_eq!(
+        at(gen_line_of(&ts, "return doubled;")),
+        6,
+        "the tail `doubled` keeps its own line"
     );
 }

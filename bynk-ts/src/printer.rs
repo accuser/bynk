@@ -1737,6 +1737,7 @@ fn render_decl_body(out: &mut String, decl: &TsDecl, depth: usize) {
         }
         TsDecl::Function {
             name,
+            generics,
             params,
             return_type,
             body,
@@ -1747,6 +1748,7 @@ fn render_decl_body(out: &mut String, decl: &TsDecl, depth: usize) {
             }
             out.push_str("function ");
             out.push_str(name);
+            render_bare_generics(out, generics);
             out.push('(');
             render_params(out, params);
             out.push(')');
@@ -3118,6 +3120,7 @@ mod tests {
         program.push(TsStmt::decl(
             TsDecl::Export(Box::new(TsDecl::Function {
                 name: "compose".to_string(),
+                generics: Vec::new(),
                 params: vec![TsParam {
                     name: "env".to_string(),
                     ty: Some(TsType::named("Env")),
@@ -3133,6 +3136,40 @@ mod tests {
         assert_eq!(
             printed.text,
             "export function compose(env: Env) {\n  return null;\n}\n"
+        );
+    }
+
+    /// #1351's own real gap: `TsDecl::Function` had no `generics` field —
+    /// `emit_free_fn`'s own v0.20a erased generics (`export function
+    /// foo<A, B>(...)`) needed one. Review of #1352, finding 3: every other
+    /// existing `TsDecl::Function` test only threads `generics: Vec::new()`
+    /// through; this pins the non-empty case directly, matching #1339's own
+    /// precedent of a dedicated test per new field.
+    #[test]
+    fn prints_a_generic_top_level_function_declaration() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::decl(
+            TsDecl::Export(Box::new(TsDecl::Function {
+                name: "identity".to_string(),
+                generics: vec!["A".to_string(), "B".to_string()],
+                params: vec![TsParam {
+                    name: "x".to_string(),
+                    ty: Some(TsType::named("A")),
+                    optional: false,
+                }],
+                return_type: Some(TsType::named("A")),
+                body: vec![TsStmt::return_stmt(
+                    Some(TsExpr::Ident("x".to_string())),
+                    None,
+                )],
+                is_async: false,
+            })),
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(
+            printed.text,
+            "export function identity<A, B>(x: A): A {\n  return x;\n}\n"
         );
     }
 
@@ -3957,6 +3994,7 @@ mod tests {
         program.push(TsStmt::decl(
             TsDecl::Function {
                 name: "main".to_string(),
+                generics: Vec::new(),
                 params: vec![],
                 return_type: None,
                 body: vec![TsStmt::return_stmt(None, None)],

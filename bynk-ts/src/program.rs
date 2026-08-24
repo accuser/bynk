@@ -1369,9 +1369,15 @@ pub enum TsDecl {
     /// until `emit_test_main`'s own top-level `async function main() {...}`
     /// needed it — the exact "extend narrowly, add it when a future slice's
     /// own grounding needs it" deferral this variant's own history already
-    /// named.
+    /// named. `generics` added by #1351: `emit_free_fn`'s own v0.20a erased
+    /// generics (`export function foo<T>(...)`) — bare names only, empty
+    /// for every non-generic site (`compose`/`main`), matching every other
+    /// real generics-list precedent in this crate
+    /// (`TsObjectEntry::Method.generics` #1337, `TsExpr::Arrow.generics`
+    /// #1339).
     Function {
         name: String,
+        generics: Vec<String>,
         params: Vec<TsParam>,
         return_type: Option<TsType>,
         body: Vec<TsStmt>,

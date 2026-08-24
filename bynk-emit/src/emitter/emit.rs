@@ -844,6 +844,36 @@ fn emit_method(
     }
 }
 
+/// #1351 (R7.1): `export {async}function {name}{generics}({params}): {ret} {
+/// <body> }` is a real [`bynk_ts::TsDecl::Function`] — `params`/`return_type`
+/// route through the already-real [`ts_type_ref_to_ts_type`] (P7.9, #1315;
+/// this file's own directly-callable private-sibling-visibility precedent,
+/// #1339) instead of the opaque pre-printed `String` `ts_type_ref` returns;
+/// `generics` is `TsDecl::Function`'s own real gap this proposal closes
+/// (bare names, matching every other real generics-list precedent in this
+/// crate). The function's own BODY — whichever of the two still-unconverted
+/// sources built it (the ordinary lowered block, or
+/// `emit_contract_guarded_body`'s own guard-wrapped one, NEITHER converted
+/// by this proposal) — is captured into a fresh buffer and carried as ONE
+/// opaque [`bynk_ts::TsStmtKind::Raw`] statement, unchanged text, the exact
+/// precedent #1337 established for `emit_method`'s own wholesale-delegated
+/// body. This function's own exact signature is unchanged, the P7.9/step-1
+/// pattern — it never owned a `Verbatim` construction site.
+///
+/// Review-caught-before-merge, #1351: the body can no longer lower directly
+/// into `out` the way the pre-conversion code did (source-map checkpoints
+/// were correct there only because the body's own text landed at its real,
+/// final position in `out` as it was written). Once the body is captured
+/// into its own local `body_text` buffer for embedding as a `Raw`
+/// statement, any `record_span` call made *during* that lowering would
+/// record an offset relative to `body_text`'s own 0-based length — wrong
+/// once spliced elsewhere. Uses the same local-sub-builder-then-`merge`
+/// pattern `emit_service`'s own handler-body lowering already established
+/// (`LowerCtx::record_span`'s own doc: "a caller building ... into its own
+/// local `String` ... before splicing it elsewhere must not call this with
+/// that buffer's own length") — `body_smb` collects checkpoints relative to
+/// `body_text`, then `merge`s into the real `source_map`, rebased at
+/// `body_text`'s own splice offset within the fully-printed declaration.
 pub(crate) fn emit_free_fn(
     out: &mut String,
     f: &FnDecl,
@@ -858,51 +888,39 @@ pub(crate) fn emit_free_fn(
         return;
     };
     emit_doc_block(out, f.documentation.as_deref(), 0);
-    let params: Vec<String> = f
+    let params: Vec<bynk_ts::TsParam> = f
         .params
         .iter()
-        .map(|p| format!("{}: {}", ts_ident(&p.name.name), ts_type_ref(&p.type_ref)))
+        .map(|p| bynk_ts::TsParam {
+            name: ts_ident(&p.name.name),
+            ty: Some(ts_type_ref_to_ts_type(&p.type_ref, None)),
+            optional: false,
+        })
         .collect();
-    let async_kw = if is_effectful_return(&f.return_type) {
-        "async "
-    } else {
-        ""
-    };
+    let is_async = is_effectful_return(&f.return_type);
     // v0.20a: erased TS generics — the type parameters print verbatim and
     // exist only at TS type-check time (no runtime dispatch).
-    let generics = if f.type_params.is_empty() {
-        String::new()
-    } else {
-        format!(
-            "<{}>",
-            f.type_params
-                .iter()
-                .map(|tp| tp.name.name.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-        )
-    };
-    writeln!(
-        out,
-        "export {async_kw}function {name}{generics}({params}): {ret} {{",
-        name = ts_ident(&name.name),
-        params = params.join(", "),
-        ret = ts_type_ref(&f.return_type),
-    )
-    .unwrap();
+    let generics: Vec<String> = f
+        .type_params
+        .iter()
+        .map(|tp| tp.name.name.clone())
+        .collect();
+
     let empty = bynk_check::resolver::CrossContextInfo::default();
+    let body_smb = RefCell::new(SourceMapBuilder::new());
     let mut cx = LowerCtx::new(
         ModuleCtx::new(commons, &empty, runtime_use),
         BodyMode::FreeFn,
     )
-    .with_source_map(source_map);
+    .with_source_map(Some(&body_smb));
     let async_tail = is_effectful_return(&f.return_type);
     let guarded = contracts && (!f.requires.is_empty() || !f.ensures.is_empty());
+    let mut body_text = String::new();
     if guarded {
-        emit_contract_guarded_body(out, f, &mut cx, async_tail);
+        emit_contract_guarded_body(&mut body_text, f, &mut cx, async_tail);
     } else {
         emit_block_as_function_body_with_return(
-            out,
+            &mut body_text,
             &f.body,
             &mut cx,
             INDENT_STEP,
@@ -910,7 +928,44 @@ pub(crate) fn emit_free_fn(
             Some(&f.return_type),
         );
     }
-    writeln!(out, "}}").unwrap();
+
+    let func_decl = bynk_ts::TsStmt::decl(
+        bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::Function {
+            name: ts_ident(&name.name),
+            generics,
+            params,
+            return_type: Some(ts_type_ref_to_ts_type(&f.return_type, None)),
+            body: vec![bynk_ts::TsStmt::raw(body_text.clone(), None)],
+            is_async,
+        })),
+        None,
+    );
+    let printed = bynk_ts::print_stmt(&func_decl, 0);
+    // `Raw`'s own text is spliced verbatim (`printer.rs`'s own documented
+    // guarantee), so its offset within `printed` is exact arithmetic, not a
+    // search: everything before it is the header/opening-brace text, and
+    // everything after it is the fixed closing `"}\n"` `TsDecl::Function`'s
+    // own render arm always appends.
+    //
+    // Review of #1352, finding 1: this arithmetic silently encodes 3
+    // invariants of a renderer in another crate (Raw splices verbatim,
+    // `TsDecl::Function` always ends in exactly `"}\n"`, `print_stmt` is
+    // called at depth 0) — if any of those ever changed, the failure mode
+    // is not a compile error or a text diff, it's a silently wrong source
+    // map, the exact bug class this function exists to fix. Guarded loudly
+    // rather than trusted silently.
+    debug_assert!(
+        printed.ends_with(&format!("{body_text}}}\n")),
+        "emit_free_fn: Raw body is no longer the verbatim tail of the printed decl"
+    );
+    let body_offset_in_printed = printed.len() - body_text.len() - "}\n".len();
+    let base = out.len() + body_offset_in_printed;
+    out.push_str(&printed);
+    if let Some(module) = source_map {
+        module
+            .borrow_mut()
+            .merge(&body_smb.borrow(), &body_text, out, base, 0);
+    }
     writeln!(out).unwrap();
 }
 
@@ -984,6 +1039,73 @@ fn emit_contract_guarded_body(out: &mut String, f: &FnDecl, cx: &mut LowerCtx, a
         .unwrap();
     }
     writeln!(out, "  return result;").unwrap();
+}
+
+#[cfg(test)]
+mod emit_free_fn_tests {
+    use crate::testkit::emit_source;
+
+    /// #1351: pins `emit_free_fn`'s own real generic/non-generic output
+    /// byte-for-byte against `198_generic_identity_compose`'s own real
+    /// `expected.ts` (`bynkc/tests/fixtures/positive/198_generic_identity_compose`)
+    /// — a generic single-param function, a multi-generic multi-param one
+    /// (function-typed params, exercising `TsParam.ty`'s own `Fn` arm), and
+    /// a plain non-generic one, transcribed directly from that fixture.
+    #[test]
+    fn generic_and_plain_free_functions_match_the_real_fixtures_own_bytes() {
+        let ts = emit_source(
+            r#"
+commons generic
+
+fn identity[A](x: A) -> A {
+  x
+}
+
+fn compose[A, B, C](f: A -> B, g: B -> C, x: A) -> C {
+  g(f(x))
+}
+
+fn demo() -> Int {
+  identity(5)
+}
+"#,
+        );
+        assert!(
+            ts.contains("export function identity<A>(x: A): A {\n  return x;\n}\n"),
+            "{ts}"
+        );
+        assert!(
+            ts.contains(
+                "export function compose<A, B, C>(f: (a0: A) => B, g: (a0: B) => C, x: A): C {\n  \
+                 return g(f(x));\n}\n"
+            ),
+            "{ts}"
+        );
+        assert!(
+            ts.contains("export function demo(): number {\n  return identity(5);\n}\n"),
+            "{ts}"
+        );
+    }
+
+    /// #1351: pins the `async`/effectful-return case — `is_effectful_return`
+    /// gates both the header's own `async` keyword and `async_tail`'s body
+    /// lowering, unchanged by this conversion.
+    #[test]
+    fn an_effectful_free_function_emits_async_and_no_generics() {
+        let ts = emit_source(
+            r#"
+commons effectful
+
+fn compute() -> Effect[Int] {
+  1
+}
+"#,
+        );
+        assert!(
+            ts.contains("export async function compute(): Promise<number> {\n"),
+            "{ts}"
+        );
+    }
 }
 
 /// Synthesise a TypeScript-safe method name for an `on http METHOD path`

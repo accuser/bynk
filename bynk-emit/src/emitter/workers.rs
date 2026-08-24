@@ -870,6 +870,7 @@ pub(crate) fn emit_worker_compose(
     program.push(TsStmt::decl(
         TsDecl::Export(Box::new(TsDecl::Function {
             name: "compose".to_string(),
+            generics: Vec::new(),
             params: compose_params,
             return_type: None,
             body,

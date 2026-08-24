@@ -4104,6 +4104,7 @@ pub(crate) fn emit_test_main(tests: &[RunnableTest], import_ext: ImportExt) -> T
     program.push(TsStmt::decl(
         TsDecl::Function {
             name: "main".to_string(),
+            generics: Vec::new(),
             params: vec![],
             return_type: None,
             body: main_body,
