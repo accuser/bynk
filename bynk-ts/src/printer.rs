@@ -386,6 +386,12 @@ fn render_stmt(out: &mut String, stmt: &TsStmt, depth: usize) {
             }
             out.push_str(";\n");
         }
+        TsStmtKind::Throw(expr) => {
+            out.push_str(&indent(depth));
+            out.push_str("throw ");
+            render_stmt_level_expr(out, expr, depth);
+            out.push_str(";\n");
+        }
         TsStmtKind::If {
             cond,
             then_branch,
@@ -695,6 +701,17 @@ fn render_inline_stmt(out: &mut String, stmt: &TsStmt) {
         // the way `Blank`'s own top-level form is), so the same fallback
         // that's safe for `Const`/`If`/etc. above is safe here too.
         | TsStmtKind::Increment(_)
+        // #1353: `emit_contract_guarded_body`'s own precondition/
+        // postcondition guards are exactly this fallback's own target case —
+        // a real, reachable `InlineBlock` site (`if (!(pred)) { const __e =
+        // ...; __e.name = ...; throw __e; }`), not a defensive placeholder.
+        // Safe for the same reason as `Const`/`Assign` above, with the same
+        // caveat those two already carry: `render_stmt_level_expr` renders a
+        // `multiline: true` operand with embedded newlines, which would
+        // break this fallback's one-line contract — untested today only
+        // because the one real call site (`throw __e;`, a bare `Ident`)
+        // never reaches that case, not because `Throw` structurally cannot.
+        | TsStmtKind::Throw(_)
         // #1333: not reachable today — every real `DocComment` reaches the
         // printer only via `print_stmt`, never through a `TsProgram`'s own
         // tree — which is what actually makes this fallback safe: unlike
@@ -3508,6 +3525,66 @@ mod tests {
         assert_eq!(
             printed.text,
             "const args = await request.json() as JsonValue;\n"
+        );
+    }
+
+    /// #1353's own real gap: `bynk_ts::TsStmtKind::Throw`, added for
+    /// `emit_contract_guarded_body`'s own real `throw __e;` sites. Review of
+    /// #1354, finding 1: every real call site today reaches this only
+    /// through an `InlineBlock` (`render_stmt(out, stmt, 0)`), so the
+    /// top-level, non-inline `render_stmt` arm's own `indent(depth)` at a
+    /// nonzero depth was untested — pinned directly here, mirroring
+    /// `Return`'s own shape exactly.
+    #[test]
+    fn prints_a_throw_statement_at_a_nested_depth() {
+        let stmt = TsStmt::throw_stmt(TsExpr::Ident("__e".to_string()), None);
+        assert_eq!(print_stmt(&stmt, 2), "    throw __e;\n");
+    }
+
+    /// #1353's own real gap, byte-for-byte: the whole contract-guard shape
+    /// `emit_contract_guarded_body` builds (`if (!(pred)) { const __e = ...;
+    /// __e.name = ...; throw __e; }`) — an `If` over an `InlineBlock` of a
+    /// `Const`/`Assign`/`Throw` trio — asserted as one exact string. Review
+    /// of #1354, finding 1: no existing test (fixture, `contract_behaviour.
+    /// rs`, `source_map.rs`) asserts this shape's own bytes; they only
+    /// `contains`-check a runtime message or a generated line number, none
+    /// would catch a missing space, a reordered statement, or a lost
+    /// indent.
+    #[test]
+    fn prints_a_contract_guard_if_stmt() {
+        let cond = TsExpr::Unary {
+            op: TsUnaryOp::Not,
+            expr: Box::new(TsExpr::Paren(Box::new(TsExpr::Ident("n > 0".to_string())))),
+        };
+        let new_error = TsExpr::New {
+            callee: Box::new(TsExpr::Ident("Error".to_string())),
+            args: vec![TsExpr::template_lit(
+                vec![
+                    "contract violated: precondition \\`positive\\` of scale (n=${n})".to_string(),
+                ],
+                Vec::new(),
+            )],
+        };
+        let const_e = TsStmt::const_stmt(
+            TsBindingName::Ident("__e".to_string()),
+            None,
+            new_error,
+            None,
+        );
+        let assign_name = TsStmt::assign(
+            TsExpr::Member {
+                object: Box::new(TsExpr::Ident("__e".to_string())),
+                property: "name".to_string(),
+            },
+            TsExpr::Lit(TsLit::Str("BynkContractError".to_string())),
+            None,
+        );
+        let throw_e = TsStmt::throw_stmt(TsExpr::Ident("__e".to_string()), None);
+        let then_branch = TsStmt::inline_block(vec![const_e, assign_name, throw_e], None);
+        let if_stmt = TsStmt::if_stmt(cond, then_branch, None);
+        assert_eq!(
+            print_stmt(&if_stmt, 1),
+            "  if (!(n > 0)) { const __e = new Error(`contract violated: precondition \\`positive\\` of scale (n=${n})`); __e.name = \"BynkContractError\"; throw __e; }\n"
         );
     }
 

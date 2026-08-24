@@ -969,6 +969,52 @@ pub(crate) fn emit_free_fn(
     writeln!(out).unwrap();
 }
 
+/// #1353 (R7.1): closes step (4) of the design pass's own decomposition
+/// order — `emit_free_fn`'s own outer wrapper landed in #1352; this converts
+/// `emit_contract_guarded_body`'s own real remainder. Each precondition/
+/// postcondition guard (`if (!(pred)) { const __e = new Error(`...`);
+/// __e.name = "BynkContractError"; throw __e; }`) is a real
+/// [`bynk_ts::TsStmt::if_stmt`] over a real [`bynk_ts::TsStmt::inline_block`]
+/// of 3 real statements (`const_stmt`/`assign`/[`bynk_ts::TsStmt::throw_stmt`]
+/// — `Throw` is this proposal's own real gap, `bynk_ts::TsStmtKind` had no
+/// bare `throw` before now), printed through [`bynk_ts::print_stmt`]; the
+/// trailing `return result;` is a real [`bynk_ts::TsStmt::return_stmt`].
+///
+/// `pred` (`Pre::lower`'s own return) and each hoisted `pre.stmts()` line
+/// stay opaque — carried the same way #1335's own `emit_pred_check` carries
+/// `pred_condition_and_message`'s `cond` (an `Ident` wrapped in this crate's
+/// real `Unary::Not`/`Paren`), but for a DIFFERENT, stronger reason: `Pre`
+/// lives in `emitter/lower.rs` (`pre.lower` calls `lower_expr`, the general
+/// expression lowerer) — the one splice boundary ADR
+/// `arc-c-lower-rs-permanent-exclusion` names a *permanent* Arc C exclusion,
+/// not temporarily-unconverted-but-convertible-later machinery like
+/// `pred_condition_and_message` (which lives in `emitter.rs` proper). The
+/// error message (backtick-quoted, with its own already-escaped `\``
+/// clause-name delimiters and `${param}=...`-style interpolations already
+/// baked in as literal text by `param_dump`) is carried the same way as one
+/// opaque [`bynk_ts::TsExpr::template_lit`] part with zero real `exprs` —
+/// `parts` prints verbatim, so this reproduces the exact byte output with no
+/// decomposition needed.
+///
+/// The result-capturing IIFE (`const result = (async () => { <body> }
+/// )();`/`const result = (() => { <body> })();`) stays ONE opaque
+/// [`bynk_ts::TsStmt::raw`] statement — not decomposed into a real
+/// `Const`/`Arrow`/`Call` — matching #1352's own identical treatment of
+/// `emit_free_fn`'s unguarded body one level up: `TsExpr::Arrow`'s own
+/// `body` is expression-only (#1327's own deliberate choice — a real
+/// block-body variant "would have needed new flatten-every-nested-statement
+/// ... printer machinery, disproportionate" for an analogous single site),
+/// and this IIFE's own body is a genuine multi-statement block, not an
+/// expression. `emit_block_as_function_body_with_return`'s own output
+/// (still unconverted, out of scope) is captured into a local buffer inside
+/// that one opaque statement, the same way it always has been.
+///
+/// This function's own exact `out: &mut String` signature is unchanged, the
+/// P7.9/step-1 pattern one level deeper than #1352's own conversion — it
+/// never owned a `Verbatim` construction site (still spliced into
+/// `emit_free_fn`'s own `body_text` buffer, itself carried as `emit_free_
+/// fn`'s own `Raw` statement).
+///
 /// v0.115: emit a contracted free function's body behind the dev/test call-site
 /// guard (DECISION J). Preconditions (`requires`) are checked on entry; the body
 /// runs into a captured `result`; postconditions (`ensures`) are checked over
@@ -998,17 +1044,40 @@ fn emit_contract_guarded_body(out: &mut String, f: &FnDecl, cx: &mut LowerCtx, a
         let mut pre = Pre::new();
         let pred = pre.lower(&c.predicate, cx);
         for s in pre.stmts() {
-            writeln!(out, "  {s}").unwrap();
+            out.push_str(&bynk_ts::print_stmt(
+                &bynk_ts::TsStmt::raw(format!("  {s}\n"), None),
+                0,
+            ));
         }
-        writeln!(
-            out,
-            "  if (!({pred})) {{ const __e = new Error(`contract violated: precondition \\`{clause}\\` of {fn_name} ({dump})`); __e.name = \"BynkContractError\"; throw __e; }}",
+        let msg = format!(
+            "contract violated: precondition \\`{clause}\\` of {fn_name} ({dump})",
             clause = c.name.name,
             dump = param_dump(false),
-        )
-        .unwrap();
+        );
+        out.push_str(&bynk_ts::print_stmt(
+            &contract_guard_if_stmt(&pred, &msg),
+            1,
+        ));
     }
     // Run the original body, capturing its value as `result` for the `ensures`.
+    //
+    // Written directly into `out`, NOT captured into a local buffer and
+    // wrapped as one opaque `TsStmt::raw` the way #1339's own `emit_refined_
+    // type` does for `emit_refined_checks`'s output — that precedent is safe
+    // only because `emit_refined_checks` never touches source-map recording.
+    // `emit_block_as_function_body_with_return` calls `cx.record_span(out.
+    // len(), ...)` internally: a local buffer's own length starts at 0, so
+    // any checkpoint recorded during its lowering would land at the WRONG
+    // offset once its text is later spliced into `out` at a non-zero
+    // position — the exact bug #1352 already found and fixed one level up
+    // (in `emit_free_fn`, for `body_text` itself); introducing a second
+    // local buffer HERE reproduces it one level deeper, silently, since
+    // `out` (this function's own parameter, = `emit_free_fn`'s `body_text`)
+    // is the one buffer whose offsets `emit_free_fn`'s own `body_smb`/
+    // `merge` machinery is already correctly rebased against. Writing here
+    // exactly as the pre-conversion code did — directly into `out`, no
+    // wrapping — keeps every `record_span` call's own `out.len()` correct
+    // by construction, with no merge of its own needed at this level.
     if async_tail {
         writeln!(out, "  const result = await (async () => {{").unwrap();
     } else {
@@ -1028,17 +1097,63 @@ fn emit_contract_guarded_body(out: &mut String, f: &FnDecl, cx: &mut LowerCtx, a
         let mut pre = Pre::new();
         let pred = pre.lower(&c.predicate, cx);
         for s in pre.stmts() {
-            writeln!(out, "  {s}").unwrap();
+            out.push_str(&bynk_ts::print_stmt(
+                &bynk_ts::TsStmt::raw(format!("  {s}\n"), None),
+                0,
+            ));
         }
-        writeln!(
-            out,
-            "  if (!({pred})) {{ const __e = new Error(`contract violated: postcondition \\`{clause}\\` of {fn_name} ({dump})`); __e.name = \"BynkContractError\"; throw __e; }}",
+        let msg = format!(
+            "contract violated: postcondition \\`{clause}\\` of {fn_name} ({dump})",
             clause = c.name.name,
             dump = param_dump(true),
-        )
-        .unwrap();
+        );
+        out.push_str(&bynk_ts::print_stmt(
+            &contract_guard_if_stmt(&pred, &msg),
+            1,
+        ));
     }
-    writeln!(out, "  return result;").unwrap();
+    out.push_str(&bynk_ts::print_stmt(
+        &bynk_ts::TsStmt::return_stmt(Some(bynk_ts::TsExpr::Ident("result".to_string())), None),
+        1,
+    ));
+}
+
+/// Shared builder for the contract call-site guard's own real `if (!(pred))
+/// { const __e = new Error(`msg`); __e.name = "BynkContractError"; throw
+/// __e; }` shape — identical for a `requires`/`ensures` clause, differing
+/// only in `pred`/`msg`, both still-opaque text (see `emit_contract_guarded_
+/// body`'s own doc for why).
+fn contract_guard_if_stmt(pred: &str, msg: &str) -> bynk_ts::TsStmt {
+    let cond = bynk_ts::TsExpr::Unary {
+        op: bynk_ts::TsUnaryOp::Not,
+        expr: Box::new(bynk_ts::TsExpr::Paren(Box::new(bynk_ts::TsExpr::Ident(
+            pred.to_string(),
+        )))),
+    };
+    let new_error = bynk_ts::TsExpr::New {
+        callee: Box::new(bynk_ts::TsExpr::Ident("Error".to_string())),
+        args: vec![bynk_ts::TsExpr::template_lit(
+            vec![msg.to_string()],
+            Vec::new(),
+        )],
+    };
+    let const_e = bynk_ts::TsStmt::const_stmt(
+        bynk_ts::TsBindingName::Ident("__e".to_string()),
+        None,
+        new_error,
+        None,
+    );
+    let assign_name = bynk_ts::TsStmt::assign(
+        bynk_ts::TsExpr::Member {
+            object: Box::new(bynk_ts::TsExpr::Ident("__e".to_string())),
+            property: "name".to_string(),
+        },
+        bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str("BynkContractError".to_string())),
+        None,
+    );
+    let throw_e = bynk_ts::TsStmt::throw_stmt(bynk_ts::TsExpr::Ident("__e".to_string()), None);
+    let then_branch = bynk_ts::TsStmt::inline_block(vec![const_e, assign_name, throw_e], None);
+    bynk_ts::TsStmt::if_stmt(cond, then_branch, None)
 }
 
 #[cfg(test)]
