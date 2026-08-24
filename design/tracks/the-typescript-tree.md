@@ -637,11 +637,16 @@ sub-builder/merge arithmetic to get right or wrong here, unlike almost every pri
 not touched by this slice.** The cross-context lowering cluster (`lower_workers_cross_context_call`
 and its own serialisation/codec-dispatch siblings, named by function, not by stale line range) is a
 real, separate, harder remainder — genuine cross-module codec lowering, not top-level structure
-construction — deferred to its own future slice(s), not yet grounded in detail; (9)
-`emit_agent` and its websocket-dispatch cluster (named by function, not by stale line range — its
-prior `emit.rs:2638-4776` citation has drifted with every slice's own edits since) — needs its OWN
-dedicated grounding pass before a first slice is proposed against it, likely 3-5 slices given its
-real size, larger than any single prior conversion in this whole track; (10) `emit_project` itself, last, once every function
+construction — deferred to its own future slice(s), not yet grounded in detail; **(9) `emit_agent`
+and its websocket-dispatch cluster — grounded in full after slice 18 landed (see the dedicated
+grounding-pass paragraph below); real scope is smaller than the stale citation claimed
+(`emit_agent` itself is `emit.rs:3642-4917`, 1276 lines, not ~2139; the real cluster is
+`ws_open_do_method_name` through `emit_ws_dispatch_handlers`, `emit.rs:4954-5338`, ~385 lines, not
+~1047 — the file's own trailing `#[cfg(test)]` modules for already-converted functions from
+earlier slices are not part of this step at all, a stale-citation correction in the same family as
+#1361's own `emit.rs:2638-4776` fix). Total real scope ~1661 lines. Proposed as 5-6 slices, landed
+in dependency order (each assumes the previous one's real-node scaffolding exists), not the 3-5
+originally guessed** — see the grounding-pass paragraph below for the full breakdown; (10) `emit_project` itself, last, once every function
 it calls directly returns a real node instead of appending to a shared `String` — will NOT move
 `ast_importers` (the same finding #1321/#1323 already made for `workers.rs`/`workers_entry.rs` —
 `emitter.rs`'s own *input*-side AST walk is unchanged regardless of *output*-side conversion; state
@@ -655,43 +660,136 @@ specifically because of `lower.rs`'s own then-unresolved decision) are now **unb
 proposable as ordinary slices, each carrying its own `lower_integration_case_body`-or-similar
 output as opaque text per the pattern above.
 
-**Revised estimate, corrected twelve times now — by review of #1332 (the arithmetic), by #1333's
+**Step (9) grounding pass (post-#1365), before any slice against `emit_agent` is proposed.**
+`emit_agent` (`emit.rs:3642-4917`) decomposes into real, separable phases, each marked by the
+function's own `// N)` comments — not one tightly coupled blob: a data-prep section (3650-3899,
+pure Rust, no TS text — reads `store_fields` into 5 typed collections across `Cell`/`Map`/`Set`/
+`Cache`/`Log` kinds); **1) the state record type** (3900-3991, `export interface {Name}State {
+... }`); a zero-factory pair (3992-4074, `const {registry} = new StateRegistry();` +
+`function __zeroOf{Name}State(): {Name}State { ... }`); a rehydrate function (4075-4192); **2) the
+Durable Object class** (4193-4744, one `export class {Name} { ... }` containing fields+constructor,
+`private async loadState()`/`commitState()`, **3) per-handler methods** (4349-4587, the real bulk —
+structurally near-identical to `emit_service`'s pre-#1361 shape), and conditionally WS-hosted
+lifecycle methods plus a Workers-mode `fetch` dispatcher); a factory function (4746-4766); and a
+conditionally-emitted history-driver (4768-4916, test-support only, gated on
+`ctx.history_target_agents`, no `LowerCtx` involvement, self-contained). The websocket-dispatch
+cluster is `ws_open_do_method_name`/`ws_message_do_method_name`/`ws_close_do_method_name`/
+`ws_open_hosts_for`/`emit_ws_do_method`/`emit_ws_open_fetch_branch`/`ws_attachment_deps_arg`/
+`emit_ws_dispatch_handlers` (`emit.rs:4954-5338`, ~385 lines — everything after 5338 is pre-existing
+`#[cfg(test)]` modules for functions already converted by earlier slices, not this step's own
+scope).
+
+**Real `bynk_ts` algebra gaps, checked fresh against the current `program.rs`**: only two, both
+small, mechanical struct fields — `TsDecl::Interface` and `TsDecl::Class`/`TsClassMethod`/
+`TsClassField`/`TsClassCtor` already exist and need no new variant. (1) `TsClassMethod` has no
+`private: bool` (only `TsClassField` does) — `loadState`/`commitState` are both `private async`,
+the first real `private` class method this track has hit (every method landed so far, `emit_provider`'s
+ops #1359, was public-only). (2) `TsClassMethod` has no `doc: Option<String>` — each `on call`
+handler carries its own doc comment immediately before its method, the same need
+`TsObjectEntry::Method.doc` (#1337) and `TsTypeMember::Method.doc` (#1357) already solved for their
+own node kinds; `TsClassMethod` is the one remaining method-shaped node without it — **worth naming
+explicitly given #1361's own doc-duplication bug was exactly this class of mistake** (a standalone
+`emit_doc_block` call left in place after the real `doc` field started carrying it), so a future
+slice's own implementation should check for that specific regression shape proactively, not
+rediscover it via a fixture diff a second time. No other new expression/statement/type gap found:
+the events-dispatch IIFE prologue/epilogue wrapping a handler body is byte-identical in shape to
+`emit_service`'s own (#1361) — the same "whole prologue+body+epilogue as one opaque `TsStmt::Raw`,
+printed via `print_class_method`, two-level offset" pattern applies directly, not a new design; the
+WS-cluster functions are single-method bodies with a normal single-level splice, the same shape
+`emit_provider`'s own per-op methods (#1359) already established.
+
+**Source-map complexity**: `emit_agent` lowers expressions through `LowerCtx` in three places — the
+zero-factory's per-`Cell`-field static initializer (small, direct; whether it needs a sub-builder
+at all is unconfirmed, not assumed, and should be checked at the implementing slice's own time, not
+guessed here); `commitState`'s invariant/transition predicates (writes directly into `out` today,
+no local buffer — the same "direct write, real position" shape `emit_free_fn`/
+`emit_contract_guarded_body` had *before* their own conversions introduced sub-builders for
+`Raw`-embedding); and per-handler bodies (**already** uses a `body_smb`/splice-into-`out` local
+buffer, the identical mechanism #1352 established, just not yet wrapped in a `TsStmt::Raw`/
+`print_class_method` fragment). None of this is source-map-risky research — it is the same
+mechanics already proven correct four times over (slices 12/13/16/17); the implementing slices need
+care applying it, not new design.
+
+**Fixture coverage confirmed real and substantial, no new fixture expected for any of the slices
+below — corrected by review of #1366, which checked each fixture's real content rather than
+trusting the marker-name match**: 31 fixtures use `store ... Cell/Map/Set/Cache/Log`.
+`238_websocket_inbound_workers` (Workers-mode, all three of `on open`/`on message`/`on close`) is
+the **only** fixture covering the full DO-hosted WS-dispatch cluster — `ws_message_do_method_name`,
+`ws_close_do_method_name`, `emit_ws_do_method`'s message/close arms, and
+`WsOpenHost::has_inbound`'s true branch are each pinned by exactly this one fixture, not three.
+`237_websocket_chatroom_workers` (Workers-mode, `on open` only) separately pins the
+`has_inbound == false` branch. `236_websocket_chatroom` is single-file form (no Workers target),
+so it exercises `on message`/`on close` only at the language level, not the DO-dispatch cluster
+this step actually scopes — dropped from this list rather than left implying dispatch-cluster
+coverage it doesn't provide. `235_held_connection`/`1197_agent_held_map_only_write_still_commits`
+cover held-connection paths; `248_history_property`/`249_history_provides` cover the
+history-driver. A zero-diff conversion slice is legitimately verifiable by one fixture per real
+shape, so "no new fixture expected" still holds — resting now on the real count, not an inflated
+one.
+
+**Proposed decomposition, 5-6 slices — a genuine widening past the original "3-5" guess on both
+ends (floor 3→5, ceiling 5→6, corrected by review of #1366, which caught the first draft's own
+"kept the top of the range" framing as wrong against its own arithmetic), not a narrowing: the
+class-body method count pushes this step's real risk past its own original range entirely, even
+though its real line count is smaller than the stale citation claimed), landed in dependency
+order**: (1) the
+state interface alone — cleanest, smallest, no algebra gap, no source-map exposure, the same
+risk/shape as slice 15 (`emit_capability`); (2) the zero-factory + rehydrate function pair — two
+free `TsDecl::Function`s, needs neither of the two new `TsClassMethod` fields (these aren't
+methods); (3) the class scaffold (header/fields/constructor stays hand-written, the same
+Decision-C-style boundary #1359 already used) plus `loadState`/`commitState` as real
+`TsClassMethod` fragments — where `private` lands, and where `commitState`'s predicate lowering
+moves from direct-to-`out` to a local-buffer-plus-merge; (4) the per-handler methods themselves —
+the largest slice, closest in shape/risk to #1361 (`emit_service`) itself, including the two-level
+offset pattern and where `doc` lands — likely the single hardest slice in this whole step; (5) the
+WS-hosted DO methods, the `fetch` dispatcher, and `emit_ws_dispatch_handlers` — single-level merges
+throughout, the same shape as #1359; (6) the factory function plus the history-driver, or fold the
+factory into slice 3 or 5 and decide the history-driver's own priority separately — it is
+test-support-only, stripped from deploy builds, and only 2 fixtures exercise it, so converting it
+may not be worth its own slice at all; a deliberate, named exclusion is a legitimate outcome here,
+to be decided when that slice is actually proposed, not assumed now.
+
+**Revised estimate, corrected thirteen times now — by review of #1332 (the arithmetic), by #1333's
 own step (1) closure (the real per-step sizing), by #1335's own step (2) split, by #1337's
 own step (3) closure, by #1339's own step (2) closure, by #1351's own step (4) split, by #1353's
 own step (4) closure, by #1355's own step (5) closure, by #1357's own step (6) split, by
-#1359's own step (6) closure, by #1361's own step (7) closure, and now by #1364's own step (8)
-split.** Steps (2)-(7) are all **fully landed** and entirely out of the remaining-work sum.
-Summing the list directly: step (8)'s own newly-split remainder (the cross-context lowering
-cluster, not yet grounded) is "1-2", the same fresh-remainder range every other just-split step
-started at; step (10) is one slice, fixed; step (9) is "3-5"; step (11) (the ICU cluster) is "1-2".
-Floor: 1 + 1 + 3 + 1 = **6**; ceiling: 2 + 1 + 5 + 2 = **10** — `emit.rs`'s own remaining tree is
-now **roughly 6-10 slices** (the floor holds at 6 — step (8) had already been counted as one fixed
-slice, and its own remainder's floor is that same one slice — but the ceiling widens from 9 to 10,
-since the split surfaced one slice of real work that was not visible before #1364 actually read the
-function in full). Total remaining from here: `emit.rs` (6-10) + the `tests_emit.rs` pair (2) —
-#1331/#1332, slice 8 (#1333), slice 9 (#1335), slice 10 (#1337), slice 11 (#1339), slice 12
-(#1351), slice 13 (#1353), slice 14 (#1355), slice 15 (#1357), slice 16 (#1359), slice 17
-(#1361), and slice 18 (#1364) are all already landed, no longer "remaining" — **roughly 8-12 more
-slices from here**.
+#1359's own step (6) closure, by #1361's own step (7) closure, by #1364's own step (8) split, and
+now by step (9)'s own dedicated grounding pass (post-#1365, no issue number of its own — a
+research pass, not a slice).** Steps (2)-(7) are all **fully landed** and entirely out of the
+remaining-work sum. Summing the list directly: step (8)'s own newly-split remainder (the
+cross-context lowering cluster, not yet grounded) is "1-2"; step (10) is one slice, fixed; step (9)
+is **"5-6"**, corrected up from "3-5" by the grounding pass — real line count came in smaller than
+the stale citation claimed, but the class-body method count (one slice per real construction
+phase, see the grounding-pass paragraph above for the 6-item breakdown) pushes both ends of the
+range up, floor 3→5 and ceiling 5→6, past the original guess entirely rather than settling inside
+it (review of #1366 caught the first draft's own "keeps the top of the range" framing as wrong
+against this exact arithmetic); step (11) (the ICU cluster) is "1-2". Floor: 1 + 1 +
+5 + 1 = **8**; ceiling: 2 + 1 + 6 + 2 = **11** — `emit.rs`'s own remaining tree is now **roughly
+8-11 slices** (up from 6-10 — this widening is a grounding correction, not a split: no slice
+landed against step (9) this round, so nothing moved from "remaining" to "landed"; the range
+itself simply firmed up once actually read in full, the same kind of correction #1319's own
+`serialisation.rs` research pass made to a not-yet-attempted file). Total remaining from here:
+`emit.rs` (8-11) + the `tests_emit.rs` pair (2) — #1331/#1332, slice 8 (#1333), slice 9 (#1335),
+slice 10 (#1337), slice 11 (#1339), slice 12 (#1351), slice 13 (#1353), slice 14 (#1355), slice 15
+(#1357), slice 16 (#1359), slice 17 (#1361), and slice 18 (#1364) are all already landed, no longer
+"remaining" — **roughly 10-13 more slices from here**.
 Arc C's own real total (the **18** slices already landed — slice 1, the schedule-correction, slices
-3/4/5/6/7/8/9/10/11/12/13/14/15/16/17/18 — plus the 8-12 above): **roughly 26-30** — a real
-widening from the prior 25-28, honestly, in the opposite direction from #1361's own narrowing:
-landing slice 18 moved one slice from "remaining" to "landed" (a floor-neutral relabeling, the same
-#1359 precedent), but reading `emit_make_surface` in full also surfaced a genuinely separate, not
-previously named remainder (the cross-context lowering cluster) that step (8)'s own prior "1 slice"
-estimate had silently absorbed — the same "a split can only ever widen or hold the ceiling, never
-narrow it" shape steps (4)/(6)'s own splits already established, not a new pattern. (Recapping
-#1361's own prior-slice correction, superseded by the 26-30 headline above, not the current
-figure:) step (7) had been budgeted as a "1-2" range (it might have taken a second slice); it
-landed in exactly one, its own estimated floor. That removes the one
-"extra" slice the range had reserved, so the ceiling at that point dropped by one (29 → 28) while
-the floor held (25 stayed 25, since 1 was already the assumed minimum). Contrast with slice 16, which landed inside
-step (6)'s already-fixed single-slice term and left the total genuinely unchanged — this is a
-different, narrower kind of correction, not the same pattern repeating; #1364's own step (8) split
-is yet a third kind, a real widening, for the reasons given above. `emit_agent`'s own
-sub-decomposition (step 9) remains the single largest source of variance in this range; the
-cross-context lowering cluster (step (8)'s own remainder) and the ICU cluster (step 11) are smaller,
-secondary sources.
+3/4/5/6/7/8/9/10/11/12/13/14/15/16/17/18 — plus the 10-13 above): **roughly 28-31** — widened again
+from the prior 26-30, for a reason distinct from #1364's own split-driven widening: that widening
+came from discovering a genuinely separate remainder step (8) had silently absorbed; this one comes
+from actually reading step (9)'s own full content and finding it needs MORE than the original
+"3-5" guess on both ends — floor 3→5, ceiling 5→6, a real widening past the prior range, not a
+value settling somewhere inside it (review of #1366 caught an earlier draft of this very paragraph
+wrongly describing this as "firming up at the ceiling," when the true-up landed one slice past it).
+Three distinct kinds of correction have now occurred in three consecutive updates — a narrowing
+(#1361, a range resolved to its own floor), a split-driven widening (#1364, a silently-absorbed
+remainder surfaced), and a grounding-driven widening (this pass, an unread range turning out larger
+than guessed on both ends) — each is a different failure mode of estimation, not the same mistake
+repeating, and each got the same "state the real reason plainly" treatment rather than a flat
+"corrected again." `emit_agent`'s own
+sub-decomposition (step 9) remains the single largest source of variance in this range, now with a
+named 6-item breakdown rather than an unread guess; the cross-context lowering cluster (step (8)'s
+own remainder) and the ICU cluster (step 11) are smaller, still-ungrounded secondary sources.
 
 | Slice | What lands | Rules | Gated on |
 |---|---|---|---|
