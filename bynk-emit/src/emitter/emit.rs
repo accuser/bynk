@@ -4553,10 +4553,18 @@ pub(crate) fn emit_agent(
     // the `if`/`console.error`/`throw` wrapper, the transition prologue —
     // is real: nothing here needs the general expression lowerer at all.
     let commit_state_body = {
+        // Review of #1374: the hoisted-statement `Raw` indent is derived
+        // from `class_depth` rather than hardcoded — a hoisting predicate
+        // is untested by the fixture corpus today (every real `@invariant`/
+        // `transition` fixture's own predicate hoists nothing), so an
+        // un-derived literal here would have been silently wrong the day a
+        // future caller printed this method at a non-zero depth, with
+        // nothing but a fixture no one has written yet to catch it.
         let build_violation_check = |name: &str,
                                      pred: String,
                                      pre_stmts: &[String],
-                                     hoist_indent: &str| {
+                                     hoist_depth: usize| {
+            let hoist_indent = "  ".repeat(hoist_depth);
             let mut stmts: Vec<bynk_ts::TsStmt> = pre_stmts
                 .iter()
                 .map(|s| bynk_ts::TsStmt::raw(format!("{hoist_indent}{s}\n"), None))
@@ -4639,7 +4647,7 @@ pub(crate) fn emit_agent(
                     &inv.name.name,
                     pred,
                     pre.stmts(),
-                    "    ",
+                    class_depth + 2,
                 ));
             }
         }
@@ -4689,7 +4697,7 @@ pub(crate) fn emit_agent(
                     &tr.name.name,
                     pred,
                     pre.stmts(),
-                    "      ",
+                    class_depth + 3,
                 ));
             }
             stmts.push(bynk_ts::TsStmt::const_stmt(

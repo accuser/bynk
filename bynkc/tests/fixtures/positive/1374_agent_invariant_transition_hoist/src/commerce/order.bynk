@@ -1,0 +1,31 @@
+---
+Review of #1374: `commitState`'s own invariant/transition predicates
+normally lower to a pure expression with nothing hoisted, invisible in
+every pre-existing fixture. `if true { 5 is PositiveInt } else { false }`
+(the same shape `1029_agent_static_init_hoist` already proved hoists a
+receiver temp) forces a real hoisted pre-statement ahead of both the
+invariant's own top-level check and the transition's own nested one, so
+the two different `TsStmt::Raw` indent depths this conversion computes
+are both exercised by a real fixture, not just a `bynk-ts` unit test.
+---
+context commerce.order
+
+type PositiveInt = Int where Positive
+type OrderStatus = enum { Pending, Placed, Paid }
+
+agent Order {
+  key id: String
+
+  store status: Cell[OrderStatus] = Pending
+
+  invariant hoisting_invariant:
+    if true { 5 is PositiveInt } else { false }
+
+  transition hoisting_transition:
+    if old.status == old.status { 5 is PositiveInt } else { false }
+
+  on call place() -> Effect[()] {
+    status := Placed
+    Effect.pure(())
+  }
+}
