@@ -773,29 +773,40 @@ test covering both wrapper dimensions at once, not just one in isolation.**; **(
 WS-hosted DO methods, the `fetch` dispatcher, and `emit_ws_dispatch_handlers` — its own dedicated
 grounding pass (post-#1378, no issue number of its own) found this cluster genuinely LOWER risk
 than its size suggested, despite #1377's own caution**: ~430 real lines across 5 emission sites
-(`emit_ws_do_method`, `emit_ws_open_fetch_branch`, `ws_attachment_deps_arg`, `emit_ws_dispatch_
-handlers`, and the `fetch` method inside `emit_agent` itself — `ws_open_hosts_for` builds no TS
+(`emit_ws_do_method`, `emit_ws_open_fetch_branch`, `ws_attachment_deps_arg`, `emit_ws_dispatch_handlers`,
+and the `fetch` method inside `emit_agent` itself — `ws_open_hosts_for` builds no TS
 text at all, pure Rust-side `Vec<WsOpenHost>` construction, not an emission unit). Decomposes
 cleanly into 3 independent slices, no ordering constraint between them: `emit_ws_do_method`
 (single-level merge, the identical shape `emit_provider`'s own already-landed ops, #1359,
-established — the least risky of the three); `emit_ws_dispatch_handlers` (**zero `LowerCtx`
-involvement at all** — converts fully, no opaque carve-out, the same shape #1364/#1377 already
-achieved); the `fetch` method plus its own `emit_ws_open_fetch_branch` calls (also zero
+established — the least risky of the three; it emits **no** `doc` comment today — no `doc`
+parameter, no local, no `emit_doc_block` call, header written straight out — so the correct
+constraint is `doc: None`, not mirroring the sibling handler-method conversion's own `doc:
+h.documentation.clone()`, which would start emitting JSDoc absent from current output and break
+zero-diff, review of #1379 caught the original note's premise backwards here); `emit_ws_dispatch_
+handlers`, **which `ws_attachment_deps_arg` rides along with** (its only call site is inside
+`emit_ws_dispatch_handlers`, so it converts as part of that same slice, not a fourth item) (**zero
+`LowerCtx` involvement at all** — converts fully, no opaque carve-out, the same shape #1364/#1377
+already achieved); the `fetch` method plus its own `emit_ws_open_fetch_branch` calls (also zero
 `LowerCtx` involvement — the hardest of the three by branch count, not by source-map risk, and the
 one most likely to need its own further split if it proves larger in practice). **No new `bynk_ts`
 algebra gap strictly required** — two shapes reuse the established opaque-callee-text escape hatch
 rather than adding variants: a spread call argument (`...args`) and a generic constructor call
 (`new WorkersConnection<T>(...)`), the same "an odd, one-off shape stays opaque text" precedent
-`this.state.storage.get<T>` already set twice (#1371/#1373). Fixture coverage confirmed
-still-accurate and sufficient for all 3 proposed slices — `238_websocket_inbound_workers` (the
-only fixture reaching the full cluster) and `237_websocket_chatroom_workers` (open-only, pins
-`has_inbound() == false`) — no new fixture expected, matching slice 20's own prior finding
-exactly. Two open confidence notes flagged for whichever slice implements them: whether
-`emit_ws_do_method`'s own per-method `doc` is ever non-`None` in real fixtures (if so,
-`TsClassMethod.doc`, #1375, applies directly, no new gap), and whether `238`'s own fixture
-specifically exercises the `fetch` method's `given_deps_expr`/`agent_uses_emit` branch
-combination (not just reaches the method at all) before claiming zero-diff coverage with full
-confidence for that slice.**; **(6) the factory function plus the history-driver — split by #1377 (Arc C,
+`this.state.storage.get<T>` already set twice (#1371/#1373). **Fixture coverage confirmed
+sufficient for the first two slices only** — `238_websocket_inbound_workers` (the
+only fixture reaching the full `emit_ws_do_method`/`emit_ws_dispatch_handlers` cluster) and
+`237_websocket_chatroom_workers` (open-only, pins `has_inbound() == false`), no new fixture
+expected for either, matching slice 20's own prior finding exactly. **For the `fetch` method
+specifically, review of #1379 found the coverage claim does NOT hold**: `238` reaches `fetch` but
+takes only its plain `else` arm (`emit.rs:5119`'s own `if given_deps_expr.is_some() ||
+agent_uses_emit` branch is untested by it); the `given_deps_expr` arm has exactly one real
+fixture repo-wide, `328_agent_given_workers`, which is NOT a WS fixture; the `agent_uses_emit`
+arm (the `__eventsDeps`/`dispatchToEventsFanout` rebuild) has **zero fixture coverage anywhere**
+— a conversion of the `fetch` method could silently drop that whole rebuild block and the full
+corpus would still pass. The `fetch` slice needs either a new fixture exercising
+`agent_uses_emit` or a deliberate, named exclusion for that one branch — the same named-exclusion
+posture item (6) already uses for the history-driver — decided when that slice is actually
+proposed, not assumed here.**; **(6) the factory function plus the history-driver — split by #1377 (Arc C,
 slice 24), the same "split, don't force one slice to cover more than it needs to" discipline this
 track has used repeatedly (steps (4)/(6)/(8), and step (9)'s own sub-slice (3)): the factory
 function lands fully, no opaque carve-out at all (every shape needed — `TsDecl::Function`,
@@ -847,9 +858,13 @@ though it is bad news on count — every one of the 3 newly-counted slices is LO
 than #1377's own prior caution assumed (two of the three touch `LowerCtx` not at all, the third
 uses only the single-level merge pattern already proven safe 3+ times), so the count went up while
 the difficulty per slice went down; both facts are recorded, neither is allowed to quietly cancel
-the other out of the estimate. Six
+the other out of the estimate. Five
 distinct kinds of correction have
-now occurred across ten consecutive updates — a narrowing (#1361, a range resolved to its own
+now occurred across ten consecutive updates — this pass folds into the existing grounding-driven
+kind below rather than adding a sixth (review of #1379 caught the tally left at "Six" after
+#1378's own catch of the identical mistake — the note explaining why it stays five was deleted
+without the number being held at five to match; restored here, this time keeping the reasoning
+alongside the number instead of only in a since-superseded parenthetical) — a narrowing (#1361, a range resolved to its own
 floor), a split-driven widening (#1364, a silently-absorbed remainder surfaced at the STEP level), a
 grounding-driven widening (the pass before #1367, an unread range turning out larger than guessed
 on both ends, AND now this pass, the same kind recurring a second time at a deeper sub-level), a

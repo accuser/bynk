@@ -5214,9 +5214,13 @@ pub(crate) fn emit_agent(
     // `TsExpr::OptionalMember`, `TsExpr::Arrow`, `TsExpr::New`) already
     // existed. The WS-hosted DO methods/`fetch` dispatcher/
     // `emit_ws_dispatch_handlers` cluster (originally sub-slice (5)) stays
-    // deferred, genuinely harder and not yet grounded in the detail this
-    // track's own "split, don't force one slice to cover too much"
-    // discipline requires — named explicitly, not silently skipped.
+    // deferred here — as of this slice, not yet grounded; its own dedicated
+    // grounding pass (post-#1378, no issue number) has since found it
+    // genuinely lower source-map risk than this comment's own caution
+    // implied, decomposing into 3 independent slices — see
+    // `design/tracks/the-typescript-tree.md` §6 for the current state,
+    // since a comment landed at one slice's own commit is a snapshot, not
+    // a live pointer.
     let key_ts = ts_type_ref_to_ts_type(&a.key_type, None);
     let bind = crate::emitter::wrangler::agent_binding_name(&a.name.name);
     let factory_decl = bynk_ts::TsStmt::decl(
