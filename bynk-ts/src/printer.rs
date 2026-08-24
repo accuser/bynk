@@ -1530,8 +1530,15 @@ fn render_type_member(out: &mut String, member: &TsTypeMember) {
             out.push_str(": ");
             render_type(out, ty);
         }
-        TsTypeMember::Method { name, params, ret } => {
+        TsTypeMember::Method {
+            name,
+            generics,
+            params,
+            ret,
+            doc: _,
+        } => {
             out.push_str(name);
+            render_bare_generics(out, generics);
             out.push('(');
             render_params(out, params);
             out.push_str("): ");
@@ -1693,6 +1700,18 @@ fn render_decl_body(out: &mut String, decl: &TsDecl, depth: usize) {
             render_bare_generics(out, type_params);
             out.push_str(" {\n");
             for member in members {
+                // #1357: a `Method` member's own `doc` renders here, not in
+                // `render_type_member` itself — that function has no
+                // `depth` to give `render_doc_comment`, the same "doc lives
+                // at the call site that carries depth" split
+                // `render_multiline_object_entry`'s own `Method` arm
+                // already uses for the identical field.
+                if let TsTypeMember::Method {
+                    doc: Some(text), ..
+                } = member
+                {
+                    render_doc_comment(out, text, depth + 1);
+                }
                 out.push_str(&indent(depth + 1));
                 render_type_member(out, member);
                 out.push_str(";\n");
@@ -4762,6 +4781,40 @@ mod tests {
         assert_eq!(
             printed.text,
             "export interface Box<T> {\n  readonly value: T;\n}\n"
+        );
+    }
+
+    /// #1357's own real gap: `TsTypeMember::Method` had no `generics`/`doc`
+    /// fields — `emit_capability`'s own interface methods are genuinely
+    /// generic (no monomorphisation) and doc-commented per op. `doc` renders
+    /// at `TsDecl::Interface`'s own render arm (not `render_type_member`
+    /// itself, which has no `depth` to give `render_doc_comment`), mirroring
+    /// `TsObjectEntry::Method.doc`'s own identical split (#1337).
+    #[test]
+    fn prints_a_generic_documented_interface_method() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::decl(
+            TsDecl::Export(Box::new(TsDecl::Interface {
+                name: "Clock".to_string(),
+                type_params: Vec::new(),
+                members: vec![TsTypeMember::Method {
+                    name: "now".to_string(),
+                    generics: vec!["T".to_string()],
+                    params: vec![TsParam {
+                        name: "unit".to_string(),
+                        ty: Some(TsType::named("T")),
+                        optional: false,
+                    }],
+                    ret: TsType::named("number"),
+                    doc: Some("Returns the current time.".to_string()),
+                }],
+            })),
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(
+            printed.text,
+            "export interface Clock {\n  /**\n   * Returns the current time.\n   */\n  now<T>(unit: T): number;\n}\n"
         );
     }
 

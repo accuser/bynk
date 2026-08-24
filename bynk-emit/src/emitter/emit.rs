@@ -1843,6 +1843,23 @@ pub(crate) fn emit_messages_bundle(
 /// `emitter.rs:4127`). Both are reachable only through a capability op,
 /// since the resolver skips `CommonsItem::Capability` outright — no program
 /// the checker actually validates can reach either.
+/// #1357 (R7.1): both declarations this function builds are now real
+/// `bynk_ts` nodes. `export interface {Name} { op<T>(params): ret; ... }` is
+/// a real [`bynk_ts::TsDecl::Interface`] over real, per-op
+/// [`bynk_ts::TsTypeMember::Method`] entries — `generics`/`doc` are this
+/// slice's own real gap (bare names for `generics`, matching every other
+/// real generics-list precedent in this crate; `doc` mirrors
+/// [`bynk_ts::TsObjectEntry::Method.doc`]'s own identical field, #1337) —
+/// params route through the already-real [`ts_ty_to_ts_type`] (P7.9,
+/// #1315) instead of the opaque pre-printed `String` `ts_ty` returns. The
+/// injection token (`export const {Name}Token: unique symbol =
+/// Symbol("{Name}");`) is a real [`bynk_ts::TsDecl::ConstDecl`] — `unique
+/// symbol` stays one opaque `TsType::named` string, the same "an odd,
+/// one-off type shape stays opaque text" precedent P7.9 already used for
+/// `Query[T]`'s own extra-paren-wrapped shape (nothing else in this crate
+/// builds a `unique symbol` type). This function's own exact signature is
+/// unchanged, the P7.9/step-1 pattern — it never owned a `Verbatim`
+/// construction site.
 pub(crate) fn emit_capability(
     out: &mut String,
     c: &CapabilityDecl,
@@ -1850,7 +1867,6 @@ pub(crate) fn emit_capability(
     commons: &TypedCommons,
 ) {
     emit_doc_block(out, c.documentation.as_deref(), 0);
-    writeln!(out, "export interface {name} {{", name = c.name.name).unwrap();
     // Review of #1194: `zip` silently truncates to the shorter side — this
     // guards the by-index pairing invariant `ops`/`c.ops` are documented
     // (not enforced) to share, so a future second caller that passes a
@@ -1861,40 +1877,65 @@ pub(crate) fn emit_capability(
         ops.len(),
         "`ops` is zipped with `c.ops` by index — the two must be the same lowering"
     );
-    for (op, sig) in c.ops.iter().zip(ops) {
-        emit_doc_block(out, op.documentation.as_deref(), INDENT_STEP);
-        let params: Vec<String> = sig
-            .params
-            .iter()
-            .map(|(name, ty)| format!("{}: {}", ts_ident(name), ts_ty(*ty, &commons.ty_intern)))
-            .collect();
-        writeln!(
-            out,
-            "  {name}{generics}({params}): {ret};",
-            name = op.name.name,
+    let members: Vec<bynk_ts::TsTypeMember> = c
+        .ops
+        .iter()
+        .zip(ops)
+        .map(|(op, sig)| {
+            let params: Vec<bynk_ts::TsParam> = sig
+                .params
+                .iter()
+                .map(|(name, ty)| bynk_ts::TsParam {
+                    name: ts_ident(name),
+                    ty: Some(ts_ty_to_ts_type(*ty, &commons.ty_intern)),
+                    optional: false,
+                })
+                .collect();
             // #926 (Decision C): a genuine generic TS interface method, no
-            // monomorphisation/erasure — `ts_type_params` is the same helper
-            // a generic record's own methods use (`emit_method`). Reads
-            // `op.type_params` (not `sig.type_params`): it only extracts
-            // each `TypeParam`'s own name, no type resolution, and
-            // `OpSig::type_params` exists for `lower_op_sig_ir`'s own rigid-
-            // variable scoping, not for this to render from (Decision A/B,
-            // #1193).
-            generics = ts_type_params(&op.type_params),
-            params = params.join(", "),
-            ret = ts_ty(sig.return_ty, &commons.ty_intern),
-        )
-        .unwrap();
-    }
-    writeln!(out, "}}").unwrap();
+            // monomorphisation/erasure. Reads `op.type_params` (not
+            // `sig.type_params`): it only extracts each `TypeParam`'s own
+            // name, no type resolution, and `OpSig::type_params` exists for
+            // `lower_op_sig_ir`'s own rigid-variable scoping, not for this
+            // to render from (Decision A/B, #1193).
+            bynk_ts::TsTypeMember::Method {
+                name: op.name.name.clone(),
+                generics: op
+                    .type_params
+                    .iter()
+                    .map(|tp| tp.name.name.clone())
+                    .collect(),
+                params,
+                ret: ts_ty_to_ts_type(sig.return_ty, &commons.ty_intern),
+                doc: op.documentation.clone(),
+            }
+        })
+        .collect();
+    let interface = bynk_ts::TsStmt::decl(
+        bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::Interface {
+            name: c.name.name.clone(),
+            type_params: Vec::new(),
+            members,
+        })),
+        None,
+    );
+    out.push_str(&bynk_ts::print_stmt(&interface, 0));
     writeln!(out).unwrap();
+
     // Injection token (symbol carrying the interface type).
-    writeln!(
-        out,
-        "export const {name}Token: unique symbol = Symbol(\"{name}\");",
-        name = c.name.name
-    )
-    .unwrap();
+    let token_decl = bynk_ts::TsStmt::decl(
+        bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::ConstDecl {
+            name: format!("{}Token", c.name.name),
+            ty: Some(bynk_ts::TsType::named("unique symbol")),
+            init: bynk_ts::TsExpr::Call {
+                callee: Box::new(bynk_ts::TsExpr::Ident("Symbol".to_string())),
+                args: vec![bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(
+                    c.name.name.clone(),
+                ))],
+            },
+        })),
+        None,
+    );
+    out.push_str(&bynk_ts::print_stmt(&token_decl, 0));
     writeln!(out).unwrap();
 }
 

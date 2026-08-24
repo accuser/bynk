@@ -1179,10 +1179,22 @@ pub enum TsTypeMember {
         optional: bool,
         readonly: bool,
     },
+    /// `generics`/`doc` added by #1357: `emit_capability`'s own interface
+    /// methods are genuinely generic (`op<T>(...): ret;`, no
+    /// monomorphisation) and doc-commented — bare generic names, matching
+    /// every other real generics-list precedent in this crate; `doc`
+    /// mirrors `TsObjectEntry::Method.doc`'s own identical field (#1337),
+    /// rendered the same way (`TsDecl::Interface`'s own render arm calls
+    /// `render_doc_comment` before a documented member's own line). Both
+    /// default empty/`None` via [`TsTypeMember::method`]'s own existing
+    /// constructor — every one of its 6 real pre-#1357 callers is
+    /// unaffected.
     Method {
         name: String,
+        generics: Vec<String>,
         params: Vec<TsParam>,
         ret: TsType,
+        doc: Option<String>,
     },
     /// `[key_name: key_ty]: value_ty` — a TypeScript index signature.
     /// #1323's own real gap: `workers_entry.rs`'s multi-param `on call`
@@ -1229,12 +1241,14 @@ impl TsTypeMember {
         }
     }
 
-    /// `name(params): ret` — no body.
+    /// `name(params): ret` — no body, no generics, no doc comment.
     pub fn method(name: impl Into<String>, params: Vec<TsParam>, ret: TsType) -> Self {
         TsTypeMember::Method {
             name: name.into(),
+            generics: Vec::new(),
             params,
             ret,
+            doc: None,
         }
     }
 
