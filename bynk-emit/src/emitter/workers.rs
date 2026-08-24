@@ -875,6 +875,7 @@ pub(crate) fn emit_worker_compose(
             return_type: None,
             body,
             is_async: false,
+            inline: false,
         })),
         None,
     ));

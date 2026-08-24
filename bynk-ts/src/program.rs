@@ -1420,7 +1420,17 @@ pub enum TsDecl {
     /// for every non-generic site (`compose`/`main`), matching every other
     /// real generics-list precedent in this crate
     /// (`TsObjectEntry::Method.generics` #1337, `TsExpr::Arrow.generics`
-    /// #1339).
+    /// #1339). `inline` added by #1369 (Arc C, slice 20, step (9)'s own
+    /// second sub-slice): `emit_agent`'s own zero-factory function
+    /// (`function __zeroOf{Name}State(): {Name}State { return {...}; }`) is
+    /// a genuinely single-physical-line declaration — braces and body share
+    /// the header's own line, not `render_block_stmts`'s always-multi-line
+    /// shape. `false` (every site landed before #1369) renders the ordinary
+    /// multi-line body; `true` reuses `render_inline_block`'s own compact
+    /// `{ stmt; stmt; }` shape directly at the declaration's own header
+    /// line, the same "one more bool, mirroring an existing precedent"
+    /// scope `TsObjectEntry::Method.inline` (#1337) already set for the
+    /// identical single-line-vs-multi-line tension at a different node kind.
     Function {
         name: String,
         generics: Vec<String>,
@@ -1428,6 +1438,7 @@ pub enum TsDecl {
         return_type: Option<TsType>,
         body: Vec<TsStmt>,
         is_async: bool,
+        inline: bool,
     },
     /// `type name = ty;` (non-generic) or `type name<T, U> = ty;` (via
     /// `type_params`, #1339's own real gap: `emit_sum_type`'s own generic

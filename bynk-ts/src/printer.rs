@@ -167,10 +167,9 @@
 //! - **A `TsStmtKind::Raw` prints its own text verbatim** — no leading
 //!   indent, no added punctuation, the same rendering `Verbatim` gets
 //!   (deliberately a distinct kind, not a reuse of it — see
-//!   [`crate::program::TsStmtKind::Raw`]'s own doc for why). Only reached
-//!   through a `TsObjectEntry::Method`'s own `body`, never through
-//!   [`print()`]'s own `TsProgram` loop — no blank-line grouping rule of
-//!   its own to name here either. Added for #1337:
+//!   [`crate::program::TsStmtKind::Raw`]'s own doc for why). Never reached
+//!   through [`print()`]'s own `TsProgram` loop — no blank-line grouping
+//!   rule of its own to name here either. Added for #1337:
 //!   `emit_method`'s own body, delegated wholesale to `emitter/lower.rs`'s
 //!   `emit_block_as_function_body_with_return` — a permanent Arc C
 //!   exclusion (ADR `arc-c-lower-rs-permanent-exclusion`), not residue.
@@ -181,7 +180,19 @@
 //!   text pre-indented at a fixed absolute depth by their own caller, so
 //!   `render_multiline_object_entry`'s own `debug_assert!` guards that this
 //!   only renders correctly at `depth == 0` — see its doc and
-//!   [`print_object_entry`]'s.
+//!   [`print_object_entry`]'s. **Reached through more than a
+//!   `TsObjectEntry::Method`'s own `body` now** (review of #1370 caught
+//!   this doc drifting stale): `emit_free_fn` (#1352) and `emit_agent`'s
+//!   own rehydrate function (#1369) both hold `Raw` statements inside an
+//!   ordinary `TsDecl::Function`'s own `body`, rendered through
+//!   `render_block_stmts` at whatever `depth` the enclosing `print_stmt`
+//!   call used (always 0 for a top-level declaration in every real site
+//!   today, satisfying the same depth-0 assumption named above). Since
+//!   #1369 also added `TsDecl::Function.inline`, a `Raw`-bearing function
+//!   body reached with `inline: true` would route through
+//!   `render_inline_block`/`render_compact_stmts` instead — see
+//!   [`render_inline_stmt`]'s own `Raw` arm for why that combination stays
+//!   deliberately unbuilt.
 //!
 //! None of the above is claimed as *the* TypeScript style this printer will
 //! use forever — it's what this slice's own grounding file needs, named
@@ -724,16 +735,23 @@ fn render_inline_stmt(out: &mut String, stmt: &TsStmt) {
         // one. Listed by name per this group's own exhaustiveness
         // discipline, not folded into a wildcard.
         | TsStmtKind::DocComment(_)
-        // #1337: not reachable today — `Raw` only ever appears inside a
-        // `TsObjectEntry::Method`'s own `body`, rendered through
-        // `render_block_stmts`, never through `render_inline_stmt`'s own
-        // call path (an `if`/`for...of` branch or an `InlineBlock`). Unsafe
-        // if it ever became reachable there for the same reason
-        // `DocComment` is: `Raw`'s own text is `emit_method`'s whole
-        // multi-statement function body, never single-line, so the
-        // fallback's embedded newlines would break an `InlineBlock`'s
-        // single-line contract. Listed by name, not folded into a
-        // wildcard, for the same reason as every other arm in this group.
+        // #1337: not reachable today — every real `Raw`-bearing body
+        // (`TsObjectEntry::Method`, and since #1352/#1369 also
+        // `TsDecl::Function`) renders through `render_block_stmts`, never
+        // through `render_inline_stmt`'s own call path (an `if`/`for...of`
+        // branch or an `InlineBlock`). Unsafe if it ever became reachable
+        // there for the same reason `DocComment` is: `Raw`'s own text is
+        // typically a whole multi-statement function body, never
+        // single-line, so the fallback's embedded newlines would break an
+        // `InlineBlock`'s single-line contract. Since #1369 added
+        // `TsDecl::Function.inline`, this is now one field flip away from
+        // live rather than purely hypothetical — `render_compact_stmts`'s
+        // own `debug_assert!` is the actual backstop if a future call site
+        // ever combines `inline: true` with a `Raw` body statement;
+        // `emit_agent`'s own rehydrate function (#1369) deliberately keeps
+        // `inline: false` specifically to avoid exercising this arm.
+        // Listed by name, not folded into a wildcard, for the same reason
+        // as every other arm in this group.
         | TsStmtKind::Raw(_) => render_stmt(out, stmt, 0),
     }
 }
@@ -1859,6 +1877,7 @@ fn render_decl_body(out: &mut String, decl: &TsDecl, depth: usize) {
             return_type,
             body,
             is_async,
+            inline,
         } => {
             if *is_async {
                 out.push_str("async ");
@@ -1873,8 +1892,13 @@ fn render_decl_body(out: &mut String, decl: &TsDecl, depth: usize) {
                 out.push_str(": ");
                 render_type(out, rt);
             }
-            render_block_stmts(out, body, depth);
-            out.push('\n');
+            if *inline {
+                out.push(' ');
+                render_inline_block(out, body);
+            } else {
+                render_block_stmts(out, body, depth);
+                out.push('\n');
+            }
         }
         TsDecl::TypeAlias {
             name,
@@ -3246,6 +3270,7 @@ mod tests {
                 return_type: None,
                 body: vec![TsStmt::return_stmt(Some(TsExpr::Lit(TsLit::Null)), None)],
                 is_async: false,
+                inline: false,
             })),
             None,
         ));
@@ -3280,6 +3305,7 @@ mod tests {
                     None,
                 )],
                 is_async: false,
+                inline: false,
             })),
             None,
         ));
@@ -4238,11 +4264,41 @@ mod tests {
                 return_type: None,
                 body: vec![TsStmt::return_stmt(None, None)],
                 is_async: true,
+                inline: false,
             },
             None,
         ));
         let printed = print(&program, "x.bynk", "", "x.ts");
         assert_eq!(printed.text, "async function main() {\n  return;\n}\n");
+    }
+
+    /// #1369 (Arc C, slice 20): `TsDecl::Function.inline` — the zero-factory
+    /// shape (`function name(): Ret { return <expr>; }` all on one line)
+    /// `emit_agent` needs, mirroring `TsObjectEntry::Method.inline`'s own
+    /// single-line-vs-multi-line precedent (#1337) at a different node kind.
+    #[test]
+    fn prints_an_inline_top_level_function() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::decl(
+            TsDecl::Function {
+                name: "zero".to_string(),
+                generics: Vec::new(),
+                params: vec![],
+                return_type: Some(TsType::named("Foo")),
+                body: vec![TsStmt::return_stmt(
+                    Some(TsExpr::object(vec![(
+                        "n".to_string(),
+                        TsExpr::Lit(TsLit::Num("0".to_string())),
+                    )])),
+                    None,
+                )],
+                is_async: false,
+                inline: true,
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "function zero(): Foo { return { n: 0 }; }\n");
     }
 
     #[test]

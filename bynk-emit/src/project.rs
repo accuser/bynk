@@ -3572,6 +3572,7 @@ fn emit_composition_root(
             return_type: None,
             body,
             is_async: false,
+            inline: false,
         })),
         None,
     ));
