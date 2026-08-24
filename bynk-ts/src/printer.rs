@@ -1012,7 +1012,7 @@ fn render_multiline_object_entry(out: &mut String, entry: &TsObjectEntry, depth:
     // so neither path can bypass it again.
     if let TsObjectEntry::Method { body, .. } = entry {
         debug_assert!(
-            depth == 0 || !body.iter().any(|s| matches!(s.kind, TsStmtKind::Raw(_))),
+            depth == 0 || !contains_raw(body),
             "render_multiline_object_entry: a Raw-bodied Method entry's own baked-in indent only matches depth 0"
         );
     }
@@ -1657,6 +1657,55 @@ pub fn print_object_entry(entry: &TsObjectEntry, depth: usize) -> String {
     out
 }
 
+/// Whether `stmts`, or any block/branch/case nested inside them at any
+/// depth, contains a [`TsStmtKind::Raw`] — the recursive check
+/// [`render_class_method`]'s and [`render_multiline_object_entry`]'s own
+/// `debug_assert!`s need. Review of #1374: a top-level-only scan
+/// (`body.iter().any(...)`) is blind to a `Raw` buried inside an `If`'s own
+/// `Block` — `emit_agent`'s own `commitState` (#1373) is exactly this shape,
+/// a transition's own hoisted-statement `Raw`s sitting inside
+/// `if (__prior !== undefined) { ... }` — so the two guards this exists for
+/// would have silently missed exactly the case they exist to catch. Every
+/// `TsStmtKind` variant is named explicitly, not a wildcard, matching this
+/// crate's own exhaustiveness discipline.
+fn contains_raw(stmts: &[TsStmt]) -> bool {
+    stmts.iter().any(stmt_contains_raw)
+}
+
+fn stmt_contains_raw(stmt: &TsStmt) -> bool {
+    match &stmt.kind {
+        TsStmtKind::Raw(_) => true,
+        TsStmtKind::Verbatim { .. }
+        | TsStmtKind::Decl(_)
+        | TsStmtKind::Const { .. }
+        | TsStmtKind::Let { .. }
+        | TsStmtKind::ExprStmt(_)
+        | TsStmtKind::Return(_)
+        | TsStmtKind::Throw(_)
+        | TsStmtKind::Continue
+        | TsStmtKind::Assign { .. }
+        | TsStmtKind::Comment(_)
+        | TsStmtKind::DocComment(_)
+        | TsStmtKind::Blank
+        | TsStmtKind::Increment(_) => false,
+        TsStmtKind::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            stmt_contains_raw(then_branch) || else_branch.as_deref().is_some_and(stmt_contains_raw)
+        }
+        TsStmtKind::ForOf { body, .. } => stmt_contains_raw(body),
+        TsStmtKind::TryCatch {
+            try_block,
+            catch_block,
+            ..
+        } => stmt_contains_raw(try_block) || stmt_contains_raw(catch_block),
+        TsStmtKind::Block(stmts) | TsStmtKind::InlineBlock(stmts) => contains_raw(stmts),
+        TsStmtKind::Switch { cases, .. } => cases.iter().any(|c| contains_raw(&c.body)),
+    }
+}
+
 /// Print a single [`TsClassMethod`] on its own, at `depth` — the
 /// class-method sibling of [`print_object_entry`]'s own "one fragment, not
 /// a whole document" entry point. `depth` means the *class's* own depth
@@ -1694,11 +1743,7 @@ pub fn print_class_method(method: &TsClassMethod, depth: usize) -> String {
 /// depth is the expected case this guards against, not a hypothetical.
 fn render_class_method(out: &mut String, method: &TsClassMethod, depth: usize) {
     debug_assert!(
-        depth == 0
-            || !method
-                .body
-                .iter()
-                .any(|s| matches!(s.kind, TsStmtKind::Raw(_))),
+        depth == 0 || !contains_raw(&method.body),
         "render_class_method: a Raw method body's own baked-in indent only matches depth 0"
     );
     out.push_str(&indent(depth + 1));

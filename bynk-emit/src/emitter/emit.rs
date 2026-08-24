@@ -4529,103 +4529,231 @@ pub(crate) fn emit_agent(
         class_depth,
     ));
     writeln!(out).unwrap();
-    writeln!(
-        out,
-        "  private async commitState(s: {state_ty}): Promise<void> {{"
-    )
-    .unwrap();
-    // v0.80 (§14): evaluate each invariant against the proposed state `s` before
-    // the write. A violation throws `InvariantViolation` *before* `storage.put`,
-    // so the offending commit never persists (non-persistence of the offending
-    // commit — not whole-handler rollback). The refusal is logged with the agent
-    // type and invariant name (never the key — see ADR 0107) so it is
-    // distinguishable from a crash in the logs.
-    if !a.invariants.is_empty() {
-        let field_names: HashSet<String> = effective_fields
-            .iter()
-            .map(|f| f.name.name.clone())
-            .collect();
-        for inv in &a.invariants {
-            let mut cx = LowerCtx::new(
-                ModuleCtx::new(commons, &ctx.cross_context, &ctx.runtime_use),
-                BodyMode::Invariant {
-                    name: "s".to_string(),
-                    fields: field_names.clone(),
-                },
-            );
-            let mut pre = Pre::new();
-            let pred = pre.lower(&inv.predicate, &mut cx);
-            for s in pre.stmts() {
-                writeln!(out, "    {s}").unwrap();
+    // Arc C, slice 22 (#1373): closes step (9)'s own third sub-slice by
+    // landing the deferred remainder, `commitState` (#1371's own `loadState`
+    // landed the sub-slice's other half). `record_span` is a documented
+    // no-op when a `LowerCtx` has no attached builder (`emitter.rs`'s own
+    // doc), and neither the invariant nor the transition `LowerCtx` below
+    // is ever given one (`LowerCtx::new(...)`, never `.with_source_map(...)`
+    // — `emit_agent`'s own `source_map` parameter isn't threaded into
+    // either) — confirmed directly, not assumed, before writing this
+    // comment. So despite the grounding pass's own earlier caution that
+    // `commitState` would need the same sub-builder/merge care #1352/#1353
+    // established, it genuinely does not: there is no source map being
+    // written to here, today or after this conversion, so there is nothing
+    // to preserve. Each invariant's/transition's own hoisted pre-statements
+    // and predicate expression stay opaque (`lower.rs`'s own permanently-
+    // excluded general expression lowering, ADR
+    // `arc-c-lower-rs-permanent-exclusion`) — the hoisted lines as their own
+    // `TsStmt::Raw` (indent baked in manually, since `Raw` prints verbatim
+    // with none of its own — depth 2 for an invariant's own top-level
+    // check, depth 3 for a transition's own check nested inside the
+    // `if (__prior !== undefined)` block), the predicate as one opaque
+    // `TsExpr::Ident(format!("!({pred})"))` condition. Everything else —
+    // the `if`/`console.error`/`throw` wrapper, the transition prologue —
+    // is real: nothing here needs the general expression lowerer at all.
+    let commit_state_body = {
+        // Review of #1374: the hoisted-statement `Raw` indent is derived
+        // from `class_depth` rather than hardcoded — a hoisting predicate
+        // is untested by the fixture corpus today (every real `@invariant`/
+        // `transition` fixture's own predicate hoists nothing), so an
+        // un-derived literal here would have been silently wrong the day a
+        // future caller printed this method at a non-zero depth, with
+        // nothing but a fixture no one has written yet to catch it.
+        let build_violation_check = |name: &str,
+                                     pred: String,
+                                     pre_stmts: &[String],
+                                     hoist_depth: usize| {
+            let hoist_indent = "  ".repeat(hoist_depth);
+            let mut stmts: Vec<bynk_ts::TsStmt> = pre_stmts
+                .iter()
+                .map(|s| bynk_ts::TsStmt::raw(format!("{hoist_indent}{s}\n"), None))
+                .collect();
+            stmts.push(bynk_ts::TsStmt::if_stmt(
+                bynk_ts::TsExpr::Ident(format!("!({pred})")),
+                bynk_ts::TsStmt::block(
+                    vec![
+                        bynk_ts::TsStmt::expr_stmt(
+                            bynk_ts::TsExpr::Call {
+                                callee: Box::new(bynk_ts::TsExpr::Ident(
+                                    "console.error".to_string(),
+                                )),
+                                args: vec![
+                                    bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(format!(
+                                        "InvariantViolation {}.{name}",
+                                        a.name.name
+                                    ))),
+                                    bynk_ts::TsExpr::object(vec![
+                                        (
+                                            "agent".to_string(),
+                                            bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(
+                                                a.name.name.clone(),
+                                            )),
+                                        ),
+                                        (
+                                            "invariant".to_string(),
+                                            bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(
+                                                name.to_string(),
+                                            )),
+                                        ),
+                                    ]),
+                                ],
+                            },
+                            None,
+                        ),
+                        bynk_ts::TsStmt::throw_stmt(
+                            bynk_ts::TsExpr::Call {
+                                callee: Box::new(bynk_ts::TsExpr::Ident(
+                                    "invariantViolation".to_string(),
+                                )),
+                                args: vec![
+                                    bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(a.name.name.clone())),
+                                    bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(name.to_string())),
+                                ],
+                            },
+                            None,
+                        ),
+                    ],
+                    None,
+                ),
+                None,
+            ));
+            stmts
+        };
+        let mut stmts: Vec<bynk_ts::TsStmt> = Vec::new();
+        // v0.80 (§14): evaluate each invariant against the proposed state `s`
+        // before the write. A violation throws `InvariantViolation` *before*
+        // `storage.put`, so the offending commit never persists
+        // (non-persistence of the offending commit — not whole-handler
+        // rollback). The refusal is logged with the agent type and
+        // invariant name (never the key — see ADR 0107) so it is
+        // distinguishable from a crash in the logs.
+        if !a.invariants.is_empty() {
+            let field_names: HashSet<String> = effective_fields
+                .iter()
+                .map(|f| f.name.name.clone())
+                .collect();
+            for inv in &a.invariants {
+                let mut cx = LowerCtx::new(
+                    ModuleCtx::new(commons, &ctx.cross_context, &ctx.runtime_use),
+                    BodyMode::Invariant {
+                        name: "s".to_string(),
+                        fields: field_names.clone(),
+                    },
+                );
+                let mut pre = Pre::new();
+                let pred = pre.lower(&inv.predicate, &mut cx);
+                stmts.extend(build_violation_check(
+                    &inv.name.name,
+                    pred,
+                    pre.stmts(),
+                    class_depth + 2,
+                ));
             }
-            writeln!(out, "    if (!({pred})) {{").unwrap();
-            writeln!(
-                out,
-                "      console.error(\"InvariantViolation {agent}.{name}\", {{ agent: \"{agent}\", invariant: \"{name}\" }});",
-                agent = a.name.name,
-                name = inv.name.name
-            )
-            .unwrap();
-            writeln!(
-                out,
-                "      throw invariantViolation(\"{agent}\", \"{name}\");",
-                agent = a.name.name,
-                name = inv.name.name
-            )
-            .unwrap();
-            writeln!(out, "    }}").unwrap();
         }
-    }
-    // v0.116 (testing track slice 4): step invariants — evaluate each `transition`
-    // against the pre-/post-commit state pair. The old state is still in storage
-    // (this method performs the `put`), so reading it here yields the pre-commit
-    // snapshot; `undefined` is the genesis commit, which has no prior state to
-    // transition from and is skipped (snapshot invariants above still apply).
-    // `old`/`new` are lowered to `__old`/`__new` (`new` is a JS reserved word). A
-    // violation throws the same `InvariantViolation`-family fault, before the write.
-    if !a.transitions.is_empty() {
-        writeln!(
-            out,
-            "    const __prior = await this.state.storage.get<{state_ty}>(\"state\");"
-        )
-        .unwrap();
-        writeln!(out, "    if (__prior !== undefined) {{").unwrap();
-        writeln!(out, "      const __old = {{ ...{zero_fn}(), ...__prior }};").unwrap();
-        writeln!(out, "      const __new = s;").unwrap();
-        for tr in &a.transitions {
-            let mut cx = LowerCtx::new(
-                ModuleCtx::new(commons, &ctx.cross_context, &ctx.runtime_use),
-                BodyMode::Transition {
-                    old: "__old".to_string(),
-                    new: "__new".to_string(),
-                },
-            );
-            let mut pre = Pre::new();
-            let pred = pre.lower(&tr.predicate, &mut cx);
-            for s in pre.stmts() {
-                writeln!(out, "      {s}").unwrap();
+        // v0.116 (testing track slice 4): step invariants — evaluate each
+        // `transition` against the pre-/post-commit state pair. The old
+        // state is still in storage (this method performs the `put`), so
+        // reading it here yields the pre-commit snapshot; `undefined` is the
+        // genesis commit, which has no prior state to transition from and is
+        // skipped (snapshot invariants above still apply). `old`/`new` are
+        // lowered to `__old`/`__new` (`new` is a JS reserved word). A
+        // violation throws the same `InvariantViolation`-family fault,
+        // before the write.
+        if !a.transitions.is_empty() {
+            let mut transition_body = vec![
+                bynk_ts::TsStmt::const_stmt(
+                    bynk_ts::TsBindingName::Ident("__old".to_string()),
+                    None,
+                    bynk_ts::TsExpr::object_entries(vec![
+                        bynk_ts::TsObjectEntry::Spread(bynk_ts::TsExpr::Call {
+                            callee: Box::new(bynk_ts::TsExpr::Ident(zero_fn.clone())),
+                            args: Vec::new(),
+                        }),
+                        bynk_ts::TsObjectEntry::Spread(bynk_ts::TsExpr::Ident(
+                            "__prior".to_string(),
+                        )),
+                    ]),
+                    None,
+                ),
+                bynk_ts::TsStmt::const_stmt(
+                    bynk_ts::TsBindingName::Ident("__new".to_string()),
+                    None,
+                    bynk_ts::TsExpr::Ident("s".to_string()),
+                    None,
+                ),
+            ];
+            for tr in &a.transitions {
+                let mut cx = LowerCtx::new(
+                    ModuleCtx::new(commons, &ctx.cross_context, &ctx.runtime_use),
+                    BodyMode::Transition {
+                        old: "__old".to_string(),
+                        new: "__new".to_string(),
+                    },
+                );
+                let mut pre = Pre::new();
+                let pred = pre.lower(&tr.predicate, &mut cx);
+                transition_body.extend(build_violation_check(
+                    &tr.name.name,
+                    pred,
+                    pre.stmts(),
+                    class_depth + 3,
+                ));
             }
-            writeln!(out, "      if (!({pred})) {{").unwrap();
-            writeln!(
-                out,
-                "        console.error(\"InvariantViolation {agent}.{name}\", {{ agent: \"{agent}\", invariant: \"{name}\" }});",
-                agent = a.name.name,
-                name = tr.name.name
-            )
-            .unwrap();
-            writeln!(
-                out,
-                "        throw invariantViolation(\"{agent}\", \"{name}\");",
-                agent = a.name.name,
-                name = tr.name.name
-            )
-            .unwrap();
-            writeln!(out, "      }}").unwrap();
+            stmts.push(bynk_ts::TsStmt::const_stmt(
+                bynk_ts::TsBindingName::Ident("__prior".to_string()),
+                None,
+                bynk_ts::TsExpr::Await(Box::new(bynk_ts::TsExpr::Call {
+                    callee: Box::new(bynk_ts::TsExpr::Ident(format!(
+                        "this.state.storage.get<{state_ty}>"
+                    ))),
+                    args: vec![bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(
+                        "state".to_string(),
+                    ))],
+                })),
+                None,
+            ));
+            stmts.push(bynk_ts::TsStmt::if_stmt(
+                bynk_ts::TsExpr::Binary {
+                    op: bynk_ts::TsBinaryOp::StrictNotEq,
+                    left: Box::new(bynk_ts::TsExpr::Ident("__prior".to_string())),
+                    right: Box::new(bynk_ts::TsExpr::Ident("undefined".to_string())),
+                },
+                bynk_ts::TsStmt::block(transition_body, None),
+                None,
+            ));
         }
-        writeln!(out, "    }}").unwrap();
-    }
-    writeln!(out, "    await this.state.storage.put(\"state\", s);").unwrap();
-    writeln!(out, "  }}").unwrap();
+        stmts.push(bynk_ts::TsStmt::expr_stmt(
+            bynk_ts::TsExpr::Await(Box::new(bynk_ts::TsExpr::Call {
+                callee: Box::new(bynk_ts::TsExpr::Ident("this.state.storage.put".to_string())),
+                args: vec![
+                    bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str("state".to_string())),
+                    bynk_ts::TsExpr::Ident("s".to_string()),
+                ],
+            })),
+            None,
+        ));
+        stmts
+    };
+    let commit_state_method = bynk_ts::TsClassMethod {
+        name: "commitState".to_string(),
+        private: true,
+        is_async: true,
+        params: vec![bynk_ts::TsParam {
+            name: "s".to_string(),
+            ty: Some(bynk_ts::TsType::named(state_ty.clone())),
+            optional: false,
+        }],
+        return_type: Some(bynk_ts::TsType::named_with_args(
+            "Promise",
+            vec![bynk_ts::TsType::named("void")],
+        )),
+        body: commit_state_body,
+    };
+    out.push_str(&bynk_ts::print_class_method(
+        &commit_state_method,
+        class_depth,
+    ));
     writeln!(out).unwrap();
     // 3) Handlers.
     let cell_names: HashSet<String> = effective_fields
