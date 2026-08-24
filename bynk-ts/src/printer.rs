@@ -920,11 +920,15 @@ fn render_binary_operand(out: &mut String, outer_op: TsBinaryOp, expr: &TsExpr) 
 }
 
 /// Render `expr` as a statement or declaration's own top-level expression
-/// (a `const`/`let` initialiser, an assignment's own value, …) — the only
-/// place `depth` is available to render a `multiline: true`
-/// [`TsExpr::Object`] correctly (see its own doc). Every other shape defers
-/// to the ordinary, depth-unaware [`render_expr`] unchanged; this exists
-/// only to intercept the one shape that needs `depth` before it gets there.
+/// (a `const`/`let` initialiser, an assignment's own value, …) — one of the
+/// two places `depth` is available to render a `multiline: true`
+/// [`TsExpr::Object`]/[`TsExpr::Array`] correctly (see `Object`'s own doc);
+/// the other is [`render_multiline_object_entry`]'s own `Prop` arm (#1355 —
+/// a `Prop`'s own value can itself be a nested multiline object/array,
+/// `emit_messages_bundle`'s own real doubly-nested table). Every other
+/// shape defers to the ordinary, depth-unaware [`render_expr`] unchanged;
+/// this exists only to intercept the one shape that needs `depth` before it
+/// gets there.
 fn render_stmt_level_expr(out: &mut String, expr: &TsExpr, depth: usize) {
     if let TsExpr::Object {
         entries,
@@ -999,7 +1003,17 @@ fn render_multiline_object_entry(out: &mut String, entry: &TsObjectEntry, depth:
             out.push_str(&indent(depth + 1));
             out.push_str(k);
             out.push_str(": ");
-            render_expr(out, v);
+            // #1355: a `Prop`'s own value sits one level deeper than the
+            // entry itself (matching this function's own `indent(depth +
+            // 1)` above) — the same depth `render_stmt_level_expr`'s own
+            // doc names as "the only place `depth` is available to render a
+            // `multiline: true` `TsExpr::Object`/`Array` correctly."
+            // `emit_messages_bundle`'s own real, doubly-nested `{ locale: {
+            // code: expr, ... }, ... }` table is this gap's real grounding
+            // — a nested multiline object value previously fell back to
+            // single-line silently (the plain, depth-unaware `render_expr`
+            // recursion ignores `multiline` entirely).
+            render_stmt_level_expr(out, v, depth + 1);
             out.push_str(",\n");
         }
         TsObjectEntry::Shorthand(name) => {
@@ -3381,6 +3395,41 @@ mod tests {
         ));
         let printed = print(&program, "x.bynk", "", "x.ts");
         assert_eq!(printed.text, "export default {\n  fetch: handler,\n};\n");
+    }
+
+    /// #1355's own real gap: a `multiline: true` `TsExpr::Object` nested as
+    /// one `Prop`'s own value inside ANOTHER multiline object —
+    /// `emit_messages_bundle`'s own real doubly-nested `{ locale: { code:
+    /// expr, ... }, ... }` table. Before this slice, `render_multiline_
+    /// object_entry`'s own `Prop` arm rendered its value through the plain,
+    /// depth-unaware `render_expr`, which ignores `multiline` entirely —
+    /// this would have silently collapsed the inner object to one line.
+    #[test]
+    fn prints_a_nested_multiline_object_as_a_props_own_value() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::const_stmt(
+            TsBindingName::Ident("byLocale".to_string()),
+            None,
+            TsExpr::multiline_object_entries(vec![TsObjectEntry::Prop(
+                "\"en\"".to_string(),
+                TsExpr::multiline_object_entries(vec![
+                    TsObjectEntry::Prop(
+                        "\"greeting\"".to_string(),
+                        TsExpr::Ident("renderGreeting".to_string()),
+                    ),
+                    TsObjectEntry::Prop(
+                        "\"farewell\"".to_string(),
+                        TsExpr::Ident("renderFarewell".to_string()),
+                    ),
+                ]),
+            )]),
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(
+            printed.text,
+            "const byLocale = {\n  \"en\": {\n    \"greeting\": renderGreeting,\n    \"farewell\": renderFarewell,\n  },\n};\n"
+        );
     }
 
     /// #1323's own third gap: `test ? consequent : alternate`.
