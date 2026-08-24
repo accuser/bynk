@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.263**.
+written against **v0.264**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.264.0** | Arc C, slice 12 — `emit_free_fn` builds a real `bynk_ts::TsDecl::Function` node internally (`TsDecl::Function` gains a `generics` field), splitting step (4) of the design pass's own decomposition order the same way slice 9 split step (2) — `emit_contract_guarded_body`'s own internal guard construction is a named, deferred remainder, not converted by this slice. Also fixes a real source-map corruption bug this conversion would otherwise have introduced (caught by `coverage_behaviour.rs`'s own integration tests): the function body now lowers into an isolated buffer for `Raw`-statement embedding, so its own checkpoints are captured via a local sub-builder and `merge`d back in at the correct splice offset, the same pattern `emit_service`'s handler-body lowering already established |
 | **v0.263.0** | Arc C, slice 11 — `emit_type`/`emit_refined_type`/`emit_record_type`/`emit_sum_type` build real `bynk_ts` nodes internally, fully closing step (2) of the design pass's own decomposition order (the dispatcher and 3 object-builders deferred by slice 9, unblocked by slice 10's `emit_attached_methods` signature change) — adds `TsDecl::Interface.type_params`/readonly `TsTypeMember` members, `TsType::Intersection`, `TsType::Union`'s multi-line rendering mode, and `TsExpr::Arrow.generics`/`.return_type` to `bynk-ts` |
 | **v0.262.0** | Arc C, slice 10 — `emit_attached_methods`/`emit_forwarded_methods`/`emit_method` build real `bynk_ts` nodes, closing decomposition step (3) and unblocking step (2)'s own deferred trio |
 | **v0.261.0** | Arc C, slice 9 — `emit_refined_checks`/`emit_pred_check` build real `bynk_ts` nodes internally, correcting step (2) of the design pass's own decomposition order (3 of 6 named functions are entangled with step (3)'s not-yet-converted `emit_attached_methods`, deferred to a follow-up slice gated on a `TsObjectEntry::Raw` decision) and closing a real, currently-unreachable double-escaping bug in how `PredKind::Matches`'s own pre-escaped message text would have been carried |

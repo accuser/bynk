@@ -1,4 +1,0 @@
----
-level: minor
-changelog: Arc C, slice 12 — `emit_free_fn` builds a real `bynk_ts::TsDecl::Function` node internally (`TsDecl::Function` gains a `generics` field), splitting step (4) of the design pass's own decomposition order the same way slice 9 split step (2) — `emit_contract_guarded_body`'s own internal guard construction is a named, deferred remainder, not converted by this slice. Also fixes a real source-map corruption bug this conversion would otherwise have introduced (caught by `coverage_behaviour.rs`'s own integration tests): the function body now lowers into an isolated buffer for `Raw`-statement embedding, so its own checkpoints are captured via a local sub-builder and `merge`d back in at the correct splice offset, the same pattern `emit_service`'s handler-body lowering already established
----
