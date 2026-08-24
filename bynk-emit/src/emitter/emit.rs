@@ -1939,6 +1939,61 @@ pub(crate) fn emit_capability(
     writeln!(out).unwrap();
 }
 
+#[cfg(test)]
+mod emit_capability_tests {
+    /// Review of #1358, finding 2: the printer-side test
+    /// (`bynk-ts::printer::tests::prints_a_generic_documented_interface_method`)
+    /// proves `TsTypeMember::Method.doc` renders correctly, but not that
+    /// `emit_capability`'s own `doc: op.documentation.clone()` wiring
+    /// actually threads a real op's doc comment there — the one piece of
+    /// this slice's own conversion with no real fixture in the corpus
+    /// exercising it. Closes that gap directly: a real op-level doc
+    /// comment, generic op, through the real emission pipeline.
+    #[test]
+    fn a_generic_capability_ops_own_doc_comment_reaches_the_interface() {
+        // `capability` only parses inside a `context` (`emit_source`'s own
+        // single-file path is `commons`-only) — drives `compile_in_memory`
+        // directly instead, the same fs-free seam `emit_bundle` uses one
+        // layer up.
+        let src = r#"
+context demo
+
+capability Clock {
+  ---
+  Returns the current time.
+  ---
+  fn now[T](unit: T) -> T
+}
+"#;
+        let out = match crate::project::compile_in_memory(
+            src,
+            crate::project::BuildTarget::Bundle,
+            Default::default(),
+        ) {
+            Ok(out) => out,
+            Err(_) => panic!("fixture should compile:\n{src}"),
+        };
+        let ts = out
+            .artefacts
+            .docs
+            .iter()
+            .find(|(path, _)| path.to_string_lossy().contains("demo"))
+            .map(|(_, doc)| doc.text())
+            .expect("the context's own module should be in the output");
+        assert!(
+            ts.contains(
+                "export interface Clock {\n  \
+                 /**\n   \
+                 * Returns the current time.\n   \
+                 */\n  \
+                 now<T>(unit: T): T;\n\
+                 }\n"
+            ),
+            "{ts}"
+        );
+    }
+}
+
 pub(crate) fn emit_provider(
     out: &mut String,
     p: &ProviderDecl,

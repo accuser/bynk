@@ -1439,6 +1439,26 @@ fn render_type(out: &mut String, ty: &TsType) {
             out.push_str("[]");
         }
         TsType::Object(members) => {
+            // Review of #1358, finding 1: a `Method` member's own `doc` has
+            // no single-line form — this inline shape has nowhere to put a
+            // JSDoc block, unlike `TsDecl::Interface`'s own render arm
+            // (which calls `render_doc_comment` before a documented
+            // member's own line, since it has `depth` and a real newline
+            // budget to work with). The identical case #1338's own review
+            // already ruled on for `TsObjectEntry::Method.doc` in
+            // `render_object_entry_inline` — a loud check, not a silent
+            // drop, since silently dropping a JSDoc block is a strictly
+            // worse failure mode than a loud one. Not reachable today
+            // (`workers_entry.rs`'s own one real `TsType::Object` method
+            // member goes through `TsTypeMember::method`, so `doc` is
+            // always `None`) — the #1337 case was equally unreachable,
+            // which is exactly why it got the assert.
+            debug_assert!(
+                !members
+                    .iter()
+                    .any(|m| matches!(m, TsTypeMember::Method { doc: Some(_), .. })),
+                "render_type: a Method member's own doc comment has no single-line form"
+            );
             if members.is_empty() {
                 out.push_str("{}");
             } else {
