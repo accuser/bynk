@@ -680,11 +680,12 @@ landing slice 18 moved one slice from "remaining" to "landed" (a floor-neutral r
 #1359 precedent), but reading `emit_make_surface` in full also surfaced a genuinely separate, not
 previously named remainder (the cross-context lowering cluster) that step (8)'s own prior "1 slice"
 estimate had silently absorbed — the same "a split can only ever widen or hold the ceiling, never
-narrow it" shape steps (4)/(6)'s own splits already established, not a new pattern. Step (7) had
-been budgeted as a "1-2" range (it might have taken a second slice); it landed in exactly one, its
-own estimated floor. That removes the one
-"extra" slice the range had reserved, so the ceiling drops by one (29 → 28) while the floor holds
-(25 stays 25, since 1 was already the assumed minimum). Contrast with slice 16, which landed inside
+narrow it" shape steps (4)/(6)'s own splits already established, not a new pattern. (Recapping
+#1361's own prior-slice correction, superseded by the 26-30 headline above, not the current
+figure:) step (7) had been budgeted as a "1-2" range (it might have taken a second slice); it
+landed in exactly one, its own estimated floor. That removes the one
+"extra" slice the range had reserved, so the ceiling at that point dropped by one (29 → 28) while
+the floor held (25 stayed 25, since 1 was already the assumed minimum). Contrast with slice 16, which landed inside
 step (6)'s already-fixed single-slice term and left the total genuinely unchanged — this is a
 different, narrower kind of correction, not the same pattern repeating; #1364's own step (8) split
 is yet a third kind, a real widening, for the reasons given above. `emit_agent`'s own
