@@ -1601,14 +1601,43 @@ fn emit_sub_message(segs: &[icu::SubSegment], tag_lit: &str, runtime_use: &Runti
 /// the caller (`emit_project`) already found it to decide *whether* to call
 /// this function at all, so it's passed in rather than re-derived here (PR
 /// #875 review — a harmless but needless second scan).
+/// #1355 (R7.1): converts this function's own outer construction to real
+/// `bynk_ts` nodes, with two deliberate, named opaque carve-outs.
+///
+/// **`messagesByLocale`'s own header/type-annotation/closing-brace stay
+/// hand-written text** — `Record<string, Record<string, (params: ReadonlyMap
+/// <string, MessageArg>) => string>>` needs its inner function type's one
+/// parameter named `params`; `bynk_ts::TsType::Fn`'s own `params` are
+/// deliberately anonymous, printer-numbered positionally (`a0`, `a1`, …) —
+/// the same "an odd, one-off type shape stays opaque text" precedent P7.9
+/// (#1315) already used for `Query[T]`'s own extra-paren-wrapped shape, not
+/// a general `TsType::Fn` redesign for this one call site. Each LOCALE's own
+/// entry (and each per-code entry nested inside it) IS a real
+/// [`bynk_ts::TsObjectEntry`], though — printed through the shared
+/// [`bynk_ts::print_object_entry`] fragment entry point directly into the
+/// hand-written wrapper, the same "return/print real entries into a
+/// still-hand-written enclosing literal" shape `emit_attached_methods`'s own
+/// callers already use (#1337) — chosen here specifically because
+/// `emit_doc_block`'s own per-locale doc comment has no real node shape to
+/// intersperse with today (`TsObjectEntry::Prop` carries no `doc` field the
+/// way `Method`'s own does; adding one for this single narrow need would be
+/// disproportionate). Each per-code entry's own VALUE —
+/// `emit_message_entry_renderer`'s output, one of step (11)'s own named,
+/// not-yet-proposed ICU-formatting cluster — stays opaque, carried as a
+/// [`bynk_ts::TsExpr::Ident`] wrapping already-formed JS, the established
+/// "call an unconverted sibling helper, carry its text opaquely" pattern
+/// this whole track uses.
+///
+/// **`messagesReferenceLocale`/`messagesLocales`/`render` convert fully** —
+/// no opaque carve-outs, every shape they need (`TsExpr::As`, `TsExpr::
+/// Index`, `TsExpr::Conditional`, `TsBinaryOp::NullishCoalescing`, `TsStmt::
+/// If`/`Return`) already exists.
 pub(crate) fn emit_messages_bundle(
     out: &mut String,
     blocks: &[&MessagesDecl],
     reference: &MessagesDecl,
     runtime_use: &RuntimeUse,
 ) {
-    let reference_tag = escape_ts_string(&reference.tag);
-
     // One `code -> renderer` table per locale, inlined into a single
     // `messagesByLocale` object literal keyed by tag. No per-locale `const
     // __messages_<tag>` binding: a locale tag can be `"pt-BR"`, which is not a
@@ -1621,55 +1650,174 @@ pub(crate) fn emit_messages_bundle(
     .unwrap();
     for m in blocks {
         emit_doc_block(out, m.documentation.as_deref(), INDENT_STEP);
-        writeln!(out, "  \"{}\": {{", escape_ts_string(&m.tag)).unwrap();
-        for entry in &m.entries {
-            write!(out, "    \"{}\": ", escape_ts_string(&entry.code)).unwrap();
-            emit_message_entry_renderer(out, entry, &m.tag, runtime_use);
-            writeln!(out, ",").unwrap();
-        }
-        writeln!(out, "  }},").unwrap();
+        let code_entries: Vec<bynk_ts::TsObjectEntry> = m
+            .entries
+            .iter()
+            .map(|entry| {
+                let mut renderer_text = String::new();
+                emit_message_entry_renderer(&mut renderer_text, entry, &m.tag, runtime_use);
+                bynk_ts::TsObjectEntry::Prop(
+                    format!("\"{}\"", escape_ts_string(&entry.code)),
+                    bynk_ts::TsExpr::Ident(renderer_text),
+                )
+            })
+            .collect();
+        let locale_entry = bynk_ts::TsObjectEntry::Prop(
+            format!("\"{}\"", escape_ts_string(&m.tag)),
+            bynk_ts::TsExpr::multiline_object_entries(code_entries),
+        );
+        out.push_str(&bynk_ts::print_object_entry(&locale_entry, 0));
     }
     writeln!(out, "}};").unwrap();
     writeln!(out).unwrap();
 
-    writeln!(
-        out,
-        "export const messagesReferenceLocale: LocaleTag = (\"{reference_tag}\" as string) as LocaleTag;"
-    )
-    .unwrap();
-    let locale_list: Vec<String> = blocks
-        .iter()
-        .map(|m| format!("(\"{}\" as string) as LocaleTag", escape_ts_string(&m.tag)))
-        .collect();
-    writeln!(
-        out,
-        "export const messagesLocales: readonly LocaleTag[] = [{}];",
-        locale_list.join(", ")
-    )
-    .unwrap();
+    // `("tag" as string) as LocaleTag` — the inner `as` is wrapped in an
+    // explicit `Paren`: `as` is left-associative, so the un-parenthesised
+    // `"tag" as string as LocaleTag` is the identical cast grammatically,
+    // but the pre-conversion text always parenthesised it, and `As`'s own
+    // renderer does not auto-add parens around a nested `As` operand. The
+    // same "explicit `Paren` always prints its own literal parens"
+    // precedent #1323 established.
+    //
+    // Review of #1356, finding 1: `tag` is the RAW locale tag, not
+    // `escape_ts_string`-escaped — `TsLit::Str`'s own renderer already
+    // escapes (byte-identical to `escape_ts_string`, deliberately, P7.8),
+    // so pre-escaping here would double-escape any backslash/quote a tag
+    // ever contains, corrupting the literal's own decoded value. Not
+    // reachable today (`LocaleTag`'s own `Matches(...)` refinement rejects
+    // anything but letters/digits/hyphens) but a real, latent bug had the
+    // caller pre-escaped, the same class of hazard #1335's own `msg`
+    // deviation was written to avoid. `messagesByLocale`'s own `Prop` KEY a
+    // few lines up is the opposite, correct case: a key is spliced
+    // verbatim, never run through a printer escaper, so it needs the
+    // explicit `escape_ts_string` call to be safe at all.
+    let tag_cast = |tag: &str| bynk_ts::TsExpr::As {
+        expr: Box::new(bynk_ts::TsExpr::Paren(Box::new(bynk_ts::TsExpr::As {
+            expr: Box::new(bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(tag.to_string()))),
+            ty: bynk_ts::TsType::named("string"),
+        }))),
+        ty: bynk_ts::TsType::named("LocaleTag"),
+    };
+    let ref_locale_decl = bynk_ts::TsStmt::decl(
+        bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::ConstDecl {
+            name: "messagesReferenceLocale".to_string(),
+            ty: Some(bynk_ts::TsType::named("LocaleTag")),
+            init: tag_cast(&reference.tag),
+        })),
+        None,
+    );
+    out.push_str(&bynk_ts::print_stmt(&ref_locale_decl, 0));
+
+    let locale_list: Vec<bynk_ts::TsExpr> = blocks.iter().map(|m| tag_cast(&m.tag)).collect();
+    let locales_decl = bynk_ts::TsStmt::decl(
+        bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::ConstDecl {
+            name: "messagesLocales".to_string(),
+            ty: Some(bynk_ts::TsType::readonly_array(bynk_ts::TsType::named(
+                "LocaleTag",
+            ))),
+            init: bynk_ts::TsExpr::array(locale_list),
+        })),
+        None,
+    );
+    out.push_str(&bynk_ts::print_stmt(&locales_decl, 0));
     writeln!(out).unwrap();
 
-    writeln!(
-        out,
-        "export function render(tag: LocaleTag, msg: Message): string {{"
-    )
-    .unwrap();
-    writeln!(out, "  const __localeTable = messagesByLocale[tag];").unwrap();
-    writeln!(
-        out,
-        "  const __referenceTable = messagesByLocale[messagesReferenceLocale];"
-    )
-    .unwrap();
-    writeln!(
-        out,
-        "  const __entry = (__localeTable !== undefined ? __localeTable[msg.code] : undefined) ?? __referenceTable[msg.code];"
-    )
-    .unwrap();
-    writeln!(out, "  if (__entry !== undefined) {{").unwrap();
-    writeln!(out, "    return __entry(msg.params);").unwrap();
-    writeln!(out, "  }}").unwrap();
-    writeln!(out, "  return __bynkLocaleRender(tag, msg);").unwrap();
-    writeln!(out, "}}").unwrap();
+    let ident = |s: &str| bynk_ts::TsExpr::Ident(s.to_string());
+    let member = |object: bynk_ts::TsExpr, property: &str| bynk_ts::TsExpr::Member {
+        object: Box::new(object),
+        property: property.to_string(),
+    };
+    let index = |object: bynk_ts::TsExpr, index: bynk_ts::TsExpr| bynk_ts::TsExpr::Index {
+        object: Box::new(object),
+        index: Box::new(index),
+    };
+    let not_undefined = |e: bynk_ts::TsExpr| bynk_ts::TsExpr::Binary {
+        op: bynk_ts::TsBinaryOp::StrictNotEq,
+        left: Box::new(e),
+        right: Box::new(ident("undefined")),
+    };
+
+    let local_table_decl = bynk_ts::TsStmt::const_stmt(
+        bynk_ts::TsBindingName::Ident("__localeTable".to_string()),
+        None,
+        index(ident("messagesByLocale"), ident("tag")),
+        None,
+    );
+    let reference_table_decl = bynk_ts::TsStmt::const_stmt(
+        bynk_ts::TsBindingName::Ident("__referenceTable".to_string()),
+        None,
+        index(ident("messagesByLocale"), ident("messagesReferenceLocale")),
+        None,
+    );
+    let entry_ternary = bynk_ts::TsExpr::Paren(Box::new(bynk_ts::TsExpr::Conditional {
+        test: Box::new(not_undefined(ident("__localeTable"))),
+        consequent: Box::new(index(ident("__localeTable"), member(ident("msg"), "code"))),
+        alternate: Box::new(ident("undefined")),
+    }));
+    let entry_decl = bynk_ts::TsStmt::const_stmt(
+        bynk_ts::TsBindingName::Ident("__entry".to_string()),
+        None,
+        bynk_ts::TsExpr::Binary {
+            op: bynk_ts::TsBinaryOp::NullishCoalescing,
+            left: Box::new(entry_ternary),
+            right: Box::new(index(
+                ident("__referenceTable"),
+                member(ident("msg"), "code"),
+            )),
+        },
+        None,
+    );
+    let if_entry = bynk_ts::TsStmt::if_stmt(
+        not_undefined(ident("__entry")),
+        bynk_ts::TsStmt::block(
+            vec![bynk_ts::TsStmt::return_stmt(
+                Some(bynk_ts::TsExpr::Call {
+                    callee: Box::new(ident("__entry")),
+                    args: vec![member(ident("msg"), "params")],
+                }),
+                None,
+            )],
+            None,
+        ),
+        None,
+    );
+    let fallback_return = bynk_ts::TsStmt::return_stmt(
+        Some(bynk_ts::TsExpr::Call {
+            callee: Box::new(ident("__bynkLocaleRender")),
+            args: vec![ident("tag"), ident("msg")],
+        }),
+        None,
+    );
+
+    let render_fn = bynk_ts::TsStmt::decl(
+        bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::Function {
+            name: "render".to_string(),
+            generics: Vec::new(),
+            params: vec![
+                bynk_ts::TsParam {
+                    name: "tag".to_string(),
+                    ty: Some(bynk_ts::TsType::named("LocaleTag")),
+                    optional: false,
+                },
+                bynk_ts::TsParam {
+                    name: "msg".to_string(),
+                    ty: Some(bynk_ts::TsType::named("Message")),
+                    optional: false,
+                },
+            ],
+            return_type: Some(bynk_ts::TsType::named("string")),
+            body: vec![
+                local_table_decl,
+                reference_table_decl,
+                entry_decl,
+                if_entry,
+                fallback_return,
+            ],
+            is_async: false,
+        })),
+        None,
+    );
+    out.push_str(&bynk_ts::print_stmt(&render_fn, 0));
     writeln!(out).unwrap();
 }
 

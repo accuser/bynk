@@ -642,12 +642,17 @@ pub enum TsExpr {
     /// TypeScript's ordinary multi-line object-literal convention, which
     /// nothing in this crate could represent before this addition. Only
     /// statement/declaration-level renderers (which already carry `depth`)
-    /// can render this correctly — see `printer.rs`'s own
-    /// `render_stmt_level_expr`; a `multiline: true` object nested inside
-    /// another expression (an array element, a call argument, …) renders
-    /// via the ordinary depth-unaware `render_expr` recursion instead,
-    /// which cannot honour `multiline` — not reachable from any real
-    /// `bynk-emit` call site today, but worth knowing before nesting one.
+    /// can render this correctly — `printer.rs`'s own `render_stmt_level_
+    /// expr`, and (#1355) `render_multiline_object_entry`'s own `Prop` arm,
+    /// for a `multiline: true` object nested one level inside ANOTHER
+    /// multiline object as one of its own entries' values —
+    /// `emit_messages_bundle`'s own real doubly-nested `{ locale: { code:
+    /// expr, ... }, ... }` table. A `multiline: true` object nested any
+    /// OTHER way (an array element, a call argument, a `Prop`'s value
+    /// inside a non-multiline object, …) still renders via the ordinary
+    /// depth-unaware `render_expr` recursion, which cannot honour
+    /// `multiline` — not reachable from any real `bynk-emit` call site
+    /// today, but worth knowing before nesting one that way.
     Object {
         entries: Vec<TsObjectEntry>,
         multiline: bool,
@@ -661,9 +666,10 @@ pub enum TsExpr {
     /// comma, closing `]` at the statement's own indent) — the exact same
     /// shape [`TsExpr::Object`]'s own `multiline` field already represents
     /// for object literals, just for an array. Same reachability boundary as
-    /// `Object`'s own `multiline` field: only `render_stmt_level_expr`
-    /// (which carries `depth`) honours it; a `multiline: true` array nested
-    /// inside another expression falls back to single-line via the ordinary
+    /// `Object`'s own `multiline` field (see its own doc, updated by
+    /// #1355): `render_stmt_level_expr` and `render_multiline_object_
+    /// entry`'s own `Prop` arm both honour it; nested any other way, a
+    /// `multiline: true` array falls back to single-line via the ordinary
     /// depth-unaware `render_expr` recursion.
     Array {
         items: Vec<TsExpr>,
