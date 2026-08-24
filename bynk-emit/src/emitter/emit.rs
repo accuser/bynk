@@ -3062,6 +3062,22 @@ pub(crate) fn any_service_binds_caller<'a>(
 
 /// Emit the `makeSurface(deps)` function for a context that exposes
 /// services to other contexts (v0.6 §6.3 / §6.4).
+///
+/// Arc C, slice 18 (#1364): closes the `emit_make_surface` half of step (8)
+/// of the design pass's own decomposition order (#1331) — the "cross-context
+/// lowering cluster" the same step also names stays a separate, deferred
+/// remainder (a genuinely different, harder shape: real cross-module codec
+/// lowering, not top-level structure construction), the same "split when a
+/// named remainder is harder" precedent steps (4)/(6) already established.
+/// Converts fully — no opaque carve-out: every shape this function needs
+/// (`bynk_ts::TsDecl::Function`, `TsObjectEntry::Method`/`Spread`,
+/// `TsStmt::Return`, `TsExpr::Call`/`multiline_object_entries`) already
+/// exists in `bynk_ts`, and this function never lowers an expression through
+/// `LowerCtx` (no `source_map` parameter reaches it), so there is no
+/// sub-builder/merge machinery to get right here. `emit_context_deps_interface`
+/// stays exactly as it is — a separate, unconverted, confirmed-unaffected
+/// `String`-returning sibling this function calls once, not touched by this
+/// slice.
 pub(crate) fn emit_make_surface(out: &mut String, commons: &TypedCommons, ctx: &EmitProjectCtx) {
     let services: Vec<&ServiceDecl> = commons
         .commons
@@ -3087,13 +3103,19 @@ pub(crate) fn emit_make_surface(out: &mut String, commons: &TypedCommons, ctx: &
     let binds_caller =
         |h: &Handler| bynk_check::actors::caller_binder_for(h, &ctx.actors).is_some();
     let any_caller = any_service_binds_caller(services.iter().copied(), &ctx.actors);
-    let params = if any_caller {
-        format!("deps: {deps_name}, __caller: string")
-    } else {
-        format!("deps: {deps_name}")
-    };
-    writeln!(out, "export function makeSurface({params}) {{").unwrap();
-    writeln!(out, "  return {{").unwrap();
+    let mut params = vec![bynk_ts::TsParam {
+        name: "deps".to_string(),
+        ty: Some(bynk_ts::TsType::named(deps_name)),
+        optional: false,
+    }];
+    if any_caller {
+        params.push(bynk_ts::TsParam {
+            name: "__caller".to_string(),
+            ty: Some(bynk_ts::TsType::named("string")),
+            optional: false,
+        });
+    }
+    let mut entries: Vec<bynk_ts::TsObjectEntry> = Vec::new();
     for s in &services {
         // For each handler kind currently only `call`. We bind it as a
         // method on the surface with the deps captured.
@@ -3102,44 +3124,68 @@ pub(crate) fn emit_make_surface(out: &mut String, commons: &TypedCommons, ctx: &
             .iter()
             .find(|h| matches!(lower_handler_kind_ir(&h.kind), IrHandlerKind::Call));
         let Some(h) = handler else { continue };
-        let async_kw = if is_effectful_return(&h.return_type) {
-            "async "
-        } else {
-            ""
-        };
-        let param_decls: Vec<String> = h
+        let is_async = is_effectful_return(&h.return_type);
+        let method_params: Vec<bynk_ts::TsParam> = h
             .params
             .iter()
-            .map(|p| format!("{}: {}", ts_ident(&p.name.name), ts_type_ref(&p.type_ref)))
+            .map(|p| bynk_ts::TsParam {
+                name: ts_ident(&p.name.name),
+                ty: Some(ts_type_ref_to_ts_type(&p.type_ref, None)),
+                optional: false,
+            })
             .collect();
-        let param_args: Vec<String> = h.params.iter().map(|p| ts_ident(&p.name.name)).collect();
-        let ret = ts_type_ref(&h.return_type);
+        let mut call_args: Vec<bynk_ts::TsExpr> = h
+            .params
+            .iter()
+            .map(|p| bynk_ts::TsExpr::Ident(ts_ident(&p.name.name)))
+            .collect();
         // A Caller-binding handler's `deps.identity` is the caller name the
         // compose root threaded in; every other handler forwards `deps` verbatim.
         let deps_arg = if binds_caller(h) {
-            "{ ...deps, identity: __caller }"
+            bynk_ts::TsExpr::object_entries(vec![
+                bynk_ts::TsObjectEntry::Spread(bynk_ts::TsExpr::Ident("deps".to_string())),
+                bynk_ts::TsObjectEntry::Prop(
+                    "identity".to_string(),
+                    bynk_ts::TsExpr::Ident("__caller".to_string()),
+                ),
+            ])
         } else {
-            "deps"
+            bynk_ts::TsExpr::Ident("deps".to_string())
         };
-        writeln!(
-            out,
-            "    {async_kw}{sname}({params}): {ret} {{",
-            sname = s.name.name,
-            params = param_decls.join(", "),
-        )
-        .unwrap();
-        writeln!(
-            out,
-            "      return {svc}.call({args}{sep}{deps_arg});",
-            svc = s.name.name,
-            args = param_args.join(", "),
-            sep = if param_args.is_empty() { "" } else { ", " },
-        )
-        .unwrap();
-        writeln!(out, "    }},").unwrap();
+        call_args.push(deps_arg);
+        let call = bynk_ts::TsExpr::Call {
+            callee: Box::new(bynk_ts::TsExpr::Member {
+                object: Box::new(bynk_ts::TsExpr::Ident(s.name.name.clone())),
+                property: "call".to_string(),
+            }),
+            args: call_args,
+        };
+        entries.push(bynk_ts::TsObjectEntry::Method {
+            name: s.name.name.clone(),
+            is_async,
+            generics: Vec::new(),
+            params: method_params,
+            return_type: Some(ts_type_ref_to_ts_type(&h.return_type, None)),
+            doc: None,
+            inline: false,
+            body: vec![bynk_ts::TsStmt::return_stmt(Some(call), None)],
+        });
     }
-    writeln!(out, "  }};").unwrap();
-    writeln!(out, "}}").unwrap();
+    let func_decl = bynk_ts::TsStmt::decl(
+        bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::Function {
+            name: "makeSurface".to_string(),
+            generics: Vec::new(),
+            params,
+            return_type: None,
+            body: vec![bynk_ts::TsStmt::return_stmt(
+                Some(bynk_ts::TsExpr::multiline_object_entries(entries)),
+                None,
+            )],
+            is_async: false,
+        })),
+        None,
+    );
+    out.push_str(&bynk_ts::print_stmt(&func_decl, 0));
     writeln!(out).unwrap();
 }
 
