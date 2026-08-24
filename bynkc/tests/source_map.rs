@@ -302,6 +302,130 @@ fn value_position_if_iife_does_not_corrupt_earlier_checkpoints() {
     );
 }
 
+/// #1359: like [`compile_reps`], but for a `context`-rooted fixture (a
+/// `capability`/`provides` pair can't live in a bare `commons` at all —
+/// `emit_capability`'s own #1358 test hit the identical constraint) —
+/// `compile_options_single` still discovers it fine, the file just needs to
+/// be named after the CONTEXT, not a `commons`.
+fn compile_reps_context(source: &str) -> (String, String) {
+    static COUNTER: AtomicU32 = AtomicU32::new(0);
+    let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!(
+        "bynk_srcmap_context_{}_{unique}",
+        std::process::id()
+    ));
+    let src = dir.join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(src.join("reps.bynk"), source).unwrap();
+
+    let out = bynkc::compile_project(&bynk_testkit::compile_options_single(src.clone()))
+        .map_err(bynkc::ProjectFailure::flatten)
+        .unwrap_or_else(|e| panic!("compile failed: {e:?}"));
+
+    let main_path = Path::new("reps.ts");
+    let ts = out
+        .artefacts
+        .docs
+        .get(main_path)
+        .expect("reps.ts in output")
+        .text();
+    let map = out
+        .artefacts
+        .docs
+        .get(&bynkc::sibling_path(main_path, "map"))
+        .expect("reps.ts carries a source map")
+        .text();
+    let _ = std::fs::remove_dir_all(&dir);
+    (ts, map)
+}
+
+const PROVIDER_FIXTURE: &str = "context reps {
+  capability Calc {
+    fn double(n: Int) -> Int
+    fn triple(n: Int) -> Effect[Int]
+  }
+
+  provides Calc = SimpleCalc {
+    fn double(n: Int) -> Int {
+      let doubled = n * 2
+      doubled
+    }
+
+    fn triple(n: Int) -> Effect[Int] {
+      let tripled = n * 3
+      tripled
+    }
+  }
+}
+";
+
+#[test]
+fn provider_op_body_keeps_its_own_statement_lines() {
+    // #1359: emit_provider's own per-op method bodies now go through the
+    // same local-sub-builder-then-merge pattern #1352/#1353 established for
+    // emit_free_fn/emit_contract_guarded_body -- applied once per method
+    // instead of once per function, since the whole class's own wrapper
+    // stays hand-written but each method is a real, individually-printed
+    // TsClassMethod fragment. Regressing to a direct-into-out (or a
+    // wrongly-based local buffer) lowering would collapse `double`'s own
+    // body statements toward whatever offset the buffer's own length
+    // happened to land on -- the same failure mode
+    // `value_position_if_iife_does_not_corrupt_earlier_checkpoints`/
+    // `contract_guarded_body_keeps_its_own_statement_lines` already pin for
+    // the sibling cases.
+    //
+    // Review of #1360, finding 2: a SECOND op (`triple`, effectful, so
+    // `is_async: true` gets a project-form assertion too) is the real edge
+    // -- a single-op fixture can't catch a `base` that was hoisted or went
+    // stale across loop iterations (each method's own `base` must be
+    // recomputed from `out.len()` fresh, not reused from the first one),
+    // since with only one method the class header already precedes the
+    // body in `out` regardless.
+    let (ts, map) = compile_reps_context(PROVIDER_FIXTURE);
+    let lines = decode(extract_field(&map, "mappings"));
+    let at = |g: usize| lines[g].unwrap_or_else(|| panic!("gen line {g} unmapped\n{ts}"));
+
+    // Source (0-based): line 0 = `context reps {`, line 6 = `provides Calc = SimpleCalc {`,
+    // line 8 = `let doubled = n * 2`, line 9 = `doubled`,
+    // line 12 = `fn triple(n: Int) -> Effect[Int] {`,
+    // line 13 = `let tripled = n * 3`, line 14 = `tripled`.
+    assert_eq!(
+        at(gen_line_of(&ts, "class SimpleCalc")),
+        6,
+        "the class header -> `provides Calc = SimpleCalc` source line"
+    );
+    assert_eq!(
+        at(gen_line_of(&ts, "const doubled = ")),
+        8,
+        "`let doubled` keeps its own line, not collapsed toward the class header"
+    );
+    assert_eq!(
+        at(gen_line_of(&ts, "return doubled;")),
+        9,
+        "the tail `doubled` keeps its own line"
+    );
+    // No checkpoint of its own exists for a method's own header line (only
+    // body STATEMENTS get one, via the per-method `body_smb`/`merge`) — the
+    // nearest-enclosing rule (ADR 0103 D2) resolves it to the prior
+    // checkpoint, the first method's own tail. Asserted here to document
+    // the real behaviour, not to imply it's the ideal one.
+    assert_eq!(
+        at(gen_line_of(&ts, "async triple(")),
+        9,
+        "the second method's own header has no checkpoint of its own -> nearest-enclosing falls back to the first method's own tail"
+    );
+    assert_eq!(
+        at(gen_line_of(&ts, "const tripled = ")),
+        13,
+        "the second method's own `let tripled` keeps its own line, not the first method's `base`"
+    );
+    assert_eq!(
+        at(gen_line_of(&ts, "return tripled;")),
+        14,
+        "the second method's own tail keeps its own line"
+    );
+}
+
 const CONTRACT_FIXTURE: &str = "commons reps {
   fn scale(n: Int) -> Int
   requires positive: n > 0
