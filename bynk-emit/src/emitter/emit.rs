@@ -3561,12 +3561,18 @@ pub(crate) fn lower_workers_cross_context_call(
     // that WRAPS them, though, is real: each param name is already a valid
     // JS identifier (a service param name), so `TsObjectEntry::Prop`
     // applies with no escaping concern. The zero-arg case is the SAME
-    // `{  }` (double-space, not the tight `{}` shortcut) quirk #1327 already
-    // found and carried for `{ns}Deps`'s own empty case — `TsExpr::Object`'s
-    // own renderer always collapses an empty object to `{}`, so this one
-    // shape stays opaque text too, caught here only by the zero-diff
-    // fixture check (`172_integration_with_capability`), not reasoned about
-    // in the abstract.
+    // `{  }` (double-space, not the tight `{}` shortcut) quirk #1321
+    // (`workers.rs`'s own `deps` object) and #1327 (`project.rs`'s own
+    // `{ns}Deps`) already found and carried, a third real site now —
+    // `TsExpr::Object`'s own renderer always collapses an empty object to
+    // `{}`, so this one shape stays opaque text too, caught here only by
+    // the zero-diff fixture check (`172_integration_with_capability`), not
+    // reasoned about in the abstract. Review of #1391: kept as three
+    // independent, cross-referenced sites rather than one shared constant
+    // across `emit.rs`/`workers.rs`/`project.rs` — each already carries its
+    // own explanatory comment naming the others, and a shared constant's
+    // only real payoff (staying in sync if this quirk is ever normalised
+    // away) is speculative, not a real need today.
     let args_json_expr = if args_serialised.is_empty() {
         bynk_ts::TsExpr::Ident("{  }".to_string())
     } else if args_serialised.len() == 1 {
