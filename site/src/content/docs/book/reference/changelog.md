@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.279**.
+written against **v0.280**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.280.0** | Arc C, slice 28 — the ICU-formatting cluster (`emit_message_entry_renderer`/`emit_icu_placeholder`/`emit_sub_message`) builds real `bynk_ts::TsExpr` fragments instead of hand-written strings, closing step (11) of the TypeScript-tree conversion track. Adds two small `bynk-ts` primitives along the way: `TsBinaryOp::Add` (string concatenation) and a new `print_expr` fragment entry point. No behaviour change — every message-bundle fixture (literal text, plain placeholders, and all four ICU kinds: plural/select/number/date) emits byte-identical TypeScript. |
 | **v0.279.0** | Arc C, slice 27 — `emit_agent`'s workers-mode `fetch` method and `emit_ws_open_fetch_branch` convert to real `bynk_ts::TsClassMethod`/`TsStmt` fragments, closing step (9) sub-slice (5) entirely (all 3 independent slices landed: the WS-hosted DO methods, the hibernatable-WebSocket dispatch handlers, and now the DO dispatch itself). Adds a new fixture pinning the `agent_uses_emit` branch (an agent handler that emits directly, no service in between), which previously had zero fixture coverage anywhere. |
 | **v0.278.0** | Arc C, slice 26 — `emit_agent`'s hibernatable-WebSocket dispatch handlers (`webSocketMessage`/`webSocketClose`, via `emit_ws_dispatch_handlers`) convert to real `bynk_ts::TsClassMethod` fragments, built from real `TsStmt`/`TsExpr` nodes rather than one opaque body blob. The second of step (9) sub-slice (5)'s own 3 independent slices; unlike every prior Arc C slice this function lowers no `.bynk` body at all, so no source-map merge was needed — three body statements and several leaf expressions (call/route-arg text, a generic constructor callee, structural parameter types) still stay opaque text, the same established escape hatch this track uses elsewhere. Zero diff on the first attempt. |
 | **v0.277.0** | Arc C, slice 25 — `emit_agent`'s WS-hosted `on open`/`on message`/`on close` DO methods (`emit_ws_do_method`) convert to real `bynk_ts::TsClassMethod` fragments, the identical shape `emit_provider`'s own already-landed ops established. The first of step (9) sub-slice (5)'s own 3 independent slices, confirmed as low-risk as its dedicated grounding pass predicted — zero diff on the first attempt, no new algebra gap |
