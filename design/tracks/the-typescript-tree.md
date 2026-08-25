@@ -845,7 +845,10 @@ conversion slice — closing sub-slice (6), and with it step (9), entirely.** Th
 reasons: (1) test-support-only, stripped from deploy builds — `history_target_agents` gates on a
 `for all run: History[Agent]` property (ADR 0155), never part of a deployed Worker/bundle, the
 first (and only remaining) function in `emit_agent` that doesn't ship to production; (2) only 2
-fixtures repo-wide exercise it, the lowest of any remaining item in this track; (3) the
+fixtures repo-wide exercise it (`248_history_property`/`249_history_provides` — one agent name in
+one target configuration; the other real `History`-property fixtures stop at the checker or assert
+only on runtime output, pinning no bytes here), among the thinnest coverage of any item this track
+has converted or excluded; (3) the
 pre-conversion code itself already defers the one real algebra question a conversion would face —
 its own comments say `call`'s real shape needs "a single driver-wide type... the
 intersection/union across every handler this agent's history targets, not a same-line text
@@ -855,7 +858,9 @@ calls into `TsStmt`/`TsExpr` builders without closing that one interesting gap, 
 `any` either way. Not claimed permanent in ADR 0391's own whole-subsystem sense — revisiting is
 legitimate if a real per-handler-union need ever makes the payoff clearly worth it — and not given
 a separate ADR of its own, a narrower single-function scope decision the track doc's own narrative
-+ table row records at the right weight, matching how `emit_agent`'s own `fetch` method's
++ estimate paragraph records at the right weight (no table row — this is a decision, not a landed
+slice, the same shape the grounding passes before #1367/#1380 also got no row for), matching how
+`emit_agent`'s own `fetch` method's
 `agent_uses_emit` branch was ALSO a live deliberate-exclusion candidate right up until #1384 closed
 it with a fixture instead — this is the same decision point, resolved the other way, for a
 genuinely different (test-support, not production) function. No code changes: `bynk-emit/src/
