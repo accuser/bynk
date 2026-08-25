@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.283**.
+written against **v0.284**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.284.0** | Arc C, slice 32 — the small independent leaves (`emit_integration_harness`/`emit_test_deps`/`emit_ns_destructure`/`observation_call_record_types` in `tests_emit.rs`) build real `bynk_ts` fragments, the second of `tests_emit.rs`'s own 7 proposed slices (per its dedicated grounding pass). Also deletes the now-dead `emitter::ts_type_ref_qualified`, rerouting its own direct unit tests through its already-existing `TsType`-returning twin. No behaviour change — every affected fixture emits byte-identical TypeScript. |
 | **v0.283.0** | Arc C, slice 31 — the property-generator expression cluster (`refined_gen_ts`/`gen_ts_for_ty`/`canon_ts_for_ty`/`binding_gen` in `tests_emit.rs`) builds real `bynk_ts::TsExpr` fragments, the first of `tests_emit.rs`'s own 7 proposed slices (per its dedicated grounding pass) and Arc C's own final remaining piece. No behaviour change — every property/history/contract-attack fixture emits byte-identical TypeScript. |
 | **v0.282.0** | Arc C, slice 30 — `emit_project`'s own header/import/rebrand cluster (`write_header`/`write_header_single`/`emit_project_imports`/`emit_cross_context_namespace_imports`/`emit_context_rebrands`/`emit_boundary_helpers`, plus `emit_project` itself) builds real `bynk_ts` fragments, closing step (10) of the TypeScript-tree conversion track — every step in the conversion order is now landed or decided, leaving only the final `tests_emit.rs` pair. Adds `type_only` to `bynk_ts::TsDecl::ImportNamespace` along the way, matching its sibling `TsDecl::Import`. No behaviour change — every project-form fixture (all of them reach `emit_project`) emits byte-identical TypeScript. |
 | **v0.281.0** | Arc C, slice 29 — the cross-context lowering cluster (`lower_workers_cross_context_call`/`param_cast`) builds real `bynk_ts::TsExpr` fragments instead of hand-written strings, closing step (8) of the TypeScript-tree conversion track. No behaviour change — every cross-context service call at the Workers target emits byte-identical TypeScript, including the zero-argument case. |
