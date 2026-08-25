@@ -1,0 +1,7 @@
+commons demo.gen
+
+type Outcome =
+  | Hit(exact: Bool)
+  | Miss
+
+type Label = String where NonEmpty

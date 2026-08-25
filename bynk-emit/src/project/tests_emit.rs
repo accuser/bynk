@@ -2900,24 +2900,48 @@ fn refined_gen_ts(
     base: BaseType,
     refinement: Option<&Refinement>,
     is_opaque: bool,
-) -> String {
+) -> TsExpr {
     let draw = match base {
         BaseType::Int => {
             let (lo, hi, _) = int_bounds(refinement);
-            format!("rng.int({lo}n, {hi}n)")
+            method_call(
+                ident("rng"),
+                "int",
+                vec![num_lit(format!("{lo}n")), num_lit(format!("{hi}n"))],
+            )
         }
         BaseType::Float => {
             let (lo, hi) = float_bounds(refinement);
-            format!("rng.float({lo}, {hi})")
+            method_call(
+                ident("rng"),
+                "float",
+                vec![num_lit(lo.to_string()), num_lit(hi.to_string())],
+            )
         }
         BaseType::String => {
             let min = str_min(refinement);
-            format!("rng.str({min}, {})", min + 8)
+            method_call(
+                ident("rng"),
+                "str",
+                vec![num_lit(min.to_string()), num_lit((min + 8).to_string())],
+            )
         }
-        BaseType::Bool => "rng.bool()".to_string(),
-        _ => base_canon(base),
+        BaseType::Bool => method_call(ident("rng"), "bool", vec![]),
+        _ => ident(base_canon(base)),
     };
-    emitter::unchecked_construct_test(name, &draw, is_opaque)
+    // `unchecked_construct_test` is also called from `lower.rs`'s own
+    // permanently-excluded general expression lowering (Third correction) and
+    // must keep its exact `-> String` signature — its own branching (a real
+    // `.unsafe(...)` call vs a real `(... as any)` cast) is not duplicated here
+    // as a second node-building path; its already-formed text is carried as an
+    // opaque `Ident` instead, the same "an unconverted shared sibling's own
+    // text stays opaque" posture this track already uses (P7.9's `ts_base`,
+    // #1369's `Cell` zero value).
+    ident(emitter::unchecked_construct_test(
+        name,
+        &bynk_ts::print_expr(&draw),
+        is_opaque,
+    ))
 }
 
 /// A TypeScript expression drawing a random inhabitant of a resolved type using
@@ -2928,22 +2952,32 @@ fn gen_ts_for_ty(
     types: &HashMap<String, Arc<TypeDecl>>,
     depth: u32,
     tys: &Arc<Types>,
-) -> String {
+) -> TsExpr {
     if depth == 0 {
         return canon_ts_for_ty(ty, types, 1, tys);
     }
     match &*tys.get(ty) {
         checker::Ty::Base(BaseType::Int) => {
             let (lo, hi, _) = int_bounds(None);
-            format!("rng.int({lo}n, {hi}n)")
+            method_call(
+                ident("rng"),
+                "int",
+                vec![num_lit(format!("{lo}n")), num_lit(format!("{hi}n"))],
+            )
         }
-        checker::Ty::Base(BaseType::String) => "rng.str(0, 8)".to_string(),
-        checker::Ty::Base(BaseType::Bool) => "rng.bool()".to_string(),
-        checker::Ty::Base(BaseType::Float) => "rng.float(-1000, 1000)".to_string(),
-        checker::Ty::Base(b) => base_canon(*b),
+        checker::Ty::Base(BaseType::String) => {
+            method_call(ident("rng"), "str", vec![num_lit("0"), num_lit("8")])
+        }
+        checker::Ty::Base(BaseType::Bool) => method_call(ident("rng"), "bool", vec![]),
+        checker::Ty::Base(BaseType::Float) => method_call(
+            ident("rng"),
+            "float",
+            vec![num_lit("-1000"), num_lit("1000")],
+        ),
+        checker::Ty::Base(b) => ident(base_canon(*b)),
         checker::Ty::Named { name, .. } => {
             let Some(decl) = types.get(name) else {
-                return "undefined".to_string();
+                return ident("undefined");
             };
             match &decl.body {
                 TypeBody::Refined {
@@ -2958,48 +2992,68 @@ fn gen_ts_for_ty(
                     matches!(decl.body, TypeBody::Opaque { .. }),
                 ),
                 TypeBody::Sum(s) => {
-                    let thunks: Vec<String> = s
+                    let thunks: Vec<TsExpr> = s
                         .variants
                         .iter()
                         .map(|v| {
-                            if v.payload.is_empty() {
-                                format!("() => {name}.{}", v.name.name)
+                            let body = if v.payload.is_empty() {
+                                member(ident(name), &v.name.name)
                             } else {
-                                let args: Vec<String> = v
+                                let args: Vec<TsExpr> = v
                                     .payload
                                     .iter()
                                     .map(|f| {
                                         checker::resolve_type_ref(&f.type_ref, types, tys)
                                             .map(|t| gen_ts_for_ty(t, types, depth - 1, tys))
-                                            .unwrap_or_else(|| "undefined".to_string())
+                                            .unwrap_or_else(|| ident("undefined"))
                                     })
                                     .collect();
-                                format!("() => {name}.{}({})", v.name.name, args.join(", "))
+                                call(member(ident(name), &v.name.name), args)
+                            };
+                            TsExpr::Arrow {
+                                params: Vec::new(),
+                                is_async: false,
+                                generics: Vec::new(),
+                                return_type: None,
+                                body: Box::new(body),
                             }
                         })
                         .collect();
                     if thunks.is_empty() {
-                        "undefined".to_string()
+                        ident("undefined")
                     } else {
-                        format!("rng.pick([{}])", thunks.join(", "))
+                        method_call(ident("rng"), "pick", vec![TsExpr::array(thunks)])
                     }
                 }
                 TypeBody::Record(r) => {
-                    let fields: Vec<String> = r
+                    let fields: Vec<(String, TsExpr)> = r
                         .fields
                         .iter()
                         .map(|f| {
                             let g = checker::resolve_type_ref(&f.type_ref, types, tys)
                                 .map(|t| gen_ts_for_ty(t, types, depth - 1, tys))
-                                .unwrap_or_else(|| "undefined".to_string());
-                            format!("{}: {}", f.name.name, g)
+                                .unwrap_or_else(|| ident("undefined"));
+                            (f.name.name.clone(), g)
                         })
                         .collect();
-                    format!("{{ {} }}", fields.join(", "))
+                    // The same `"{  }"` double-space quirk `workers.rs`/
+                    // `project.rs`/`emit.rs` already carry as opaque text
+                    // (#1321/#1327/#1390): the pre-conversion `format!("{{
+                    // {} }}", fields.join(", "))` template always has a space
+                    // on each side of its `{}` slot, so zero fields literally
+                    // produced a double space, not the tight `"{}"`
+                    // `TsExpr::object`'s own empty-entries shortcut renders.
+                    // A zero-field record is exotic but not provably
+                    // unreachable — guarded rather than assumed.
+                    if fields.is_empty() {
+                        ident("{  }")
+                    } else {
+                        TsExpr::object(fields)
+                    }
                 }
             }
         }
-        _ => "undefined".to_string(),
+        _ => ident("undefined"),
     }
 }
 
@@ -3011,19 +3065,19 @@ fn canon_ts_for_ty(
     types: &HashMap<String, Arc<TypeDecl>>,
     depth: u32,
     tys: &Arc<Types>,
-) -> String {
+) -> TsExpr {
     if depth == 0 {
-        return "undefined".to_string();
+        return ident("undefined");
     }
     match &*tys.get(ty) {
-        checker::Ty::Base(BaseType::Int) => "0n".to_string(),
-        checker::Ty::Base(BaseType::String) => "\"\"".to_string(),
-        checker::Ty::Base(BaseType::Bool) => "true".to_string(),
-        checker::Ty::Base(BaseType::Float) => "0".to_string(),
-        checker::Ty::Base(b) => base_canon(*b),
+        checker::Ty::Base(BaseType::Int) => num_lit("0n"),
+        checker::Ty::Base(BaseType::String) => str_lit(""),
+        checker::Ty::Base(BaseType::Bool) => TsExpr::Lit(TsLit::Bool(true)),
+        checker::Ty::Base(BaseType::Float) => num_lit("0"),
+        checker::Ty::Base(b) => ident(base_canon(*b)),
         checker::Ty::Named { name, .. } => {
             let Some(decl) = types.get(name) else {
-                return "undefined".to_string();
+                return ident("undefined");
             };
             match &decl.body {
                 TypeBody::Refined {
@@ -3035,67 +3089,73 @@ fn canon_ts_for_ty(
                     let lit = match base {
                         BaseType::Int => {
                             let (lo, _, _) = int_bounds(refinement.as_ref());
-                            format!("{lo}n")
+                            num_lit(format!("{lo}n"))
                         }
                         BaseType::Float => {
                             let (lo, _) = float_bounds(refinement.as_ref());
-                            lo.to_string()
+                            num_lit(lo.to_string())
                         }
                         BaseType::String => {
                             let min = str_min(refinement.as_ref());
-                            format!("\"{}\"", "x".repeat(min.max(0) as usize))
+                            str_lit("x".repeat(min.max(0) as usize))
                         }
-                        BaseType::Bool => "true".to_string(),
-                        other => base_canon(*other),
+                        BaseType::Bool => TsExpr::Lit(TsLit::Bool(true)),
+                        other => ident(base_canon(*other)),
                     };
-                    emitter::unchecked_construct_test(
+                    ident(emitter::unchecked_construct_test(
                         name,
-                        &lit,
+                        &bynk_ts::print_expr(&lit),
                         matches!(decl.body, TypeBody::Opaque { .. }),
-                    )
+                    ))
                 }
                 TypeBody::Sum(s) => match s.variants.first() {
-                    None => "undefined".to_string(),
-                    Some(v) if v.payload.is_empty() => format!("{name}.{}", v.name.name),
+                    None => ident("undefined"),
+                    Some(v) if v.payload.is_empty() => member(ident(name), &v.name.name),
                     Some(v) => {
-                        let args: Vec<String> = v
+                        let args: Vec<TsExpr> = v
                             .payload
                             .iter()
                             .map(|f| {
                                 checker::resolve_type_ref(&f.type_ref, types, tys)
                                     .map(|t| canon_ts_for_ty(t, types, depth - 1, tys))
-                                    .unwrap_or_else(|| "undefined".to_string())
+                                    .unwrap_or_else(|| ident("undefined"))
                             })
                             .collect();
-                        format!("{name}.{}({})", v.name.name, args.join(", "))
+                        call(member(ident(name), &v.name.name), args)
                     }
                 },
                 TypeBody::Record(r) => {
-                    let fields: Vec<String> = r
+                    let fields: Vec<(String, TsExpr)> = r
                         .fields
                         .iter()
                         .map(|f| {
                             let g = checker::resolve_type_ref(&f.type_ref, types, tys)
                                 .map(|t| canon_ts_for_ty(t, types, depth - 1, tys))
-                                .unwrap_or_else(|| "undefined".to_string());
-                            format!("{}: {}", f.name.name, g)
+                                .unwrap_or_else(|| ident("undefined"));
+                            (f.name.name.clone(), g)
                         })
                         .collect();
-                    format!("{{ {} }}", fields.join(", "))
+                    // Same `"{  }"` double-space quirk as `gen_ts_for_ty`'s
+                    // own Record branch above — see its comment for why.
+                    if fields.is_empty() {
+                        ident("{  }")
+                    } else {
+                        TsExpr::object(fields)
+                    }
                 }
             }
         }
-        _ => "undefined".to_string(),
+        _ => ident("undefined"),
     }
 }
 
 /// The generator descriptor for one `for all` binding: boundary values, a random
-/// generator, and a shrinker (all TypeScript source, evaluated in the runner's
-/// scope where the type constructors are in scope).
+/// generator, and a shrinker (all real TypeScript expressions, evaluated in the
+/// runner's scope where the type constructors are in scope).
 struct BindingGen {
-    boundaries: Vec<String>,
-    gen_ts: String,
-    shrink: String,
+    boundaries: Vec<TsExpr>,
+    gen_ts: TsExpr,
+    shrink: TsExpr,
 }
 
 /// Build the generator descriptor for a binding whose resolved type is `ty`.
@@ -3109,17 +3169,31 @@ fn binding_gen(
         checker::Ty::Base(BaseType::Int) => {
             let (lo, hi, floor) = int_bounds(None);
             (
-                vec![format!("{floor}n"), format!("{hi}n"), format!("{lo}n")],
-                format!("__bynkShrinkInt(v, {floor}n)"),
+                vec![
+                    num_lit(format!("{floor}n")),
+                    num_lit(format!("{hi}n")),
+                    num_lit(format!("{lo}n")),
+                ],
+                call(
+                    ident("__bynkShrinkInt"),
+                    vec![ident("v"), num_lit(format!("{floor}n"))],
+                ),
             )
         }
         checker::Ty::Base(BaseType::String) => (
-            vec!["\"\"".to_string()],
-            "__bynkShrinkString(v, 0)".to_string(),
+            vec![str_lit("")],
+            call(ident("__bynkShrinkString"), vec![ident("v"), num_lit("0")]),
         ),
         checker::Ty::Base(BaseType::Bool) => (
-            vec!["true".to_string(), "false".to_string()],
-            "(v ? [false] : [])".to_string(),
+            vec![
+                TsExpr::Lit(TsLit::Bool(true)),
+                TsExpr::Lit(TsLit::Bool(false)),
+            ],
+            TsExpr::Paren(Box::new(cond_expr(
+                ident("v"),
+                TsExpr::array(vec![TsExpr::Lit(TsLit::Bool(false))]),
+                TsExpr::array(vec![]),
+            ))),
         ),
         checker::Ty::Named { name, .. } => match types.get(name).map(|d| &d.body) {
             Some(TypeBody::Refined {
@@ -3141,18 +3215,35 @@ fn binding_gen(
                         let shrunk = emitter::unchecked_construct_test(name, "__n", is_opaque);
                         (
                             vec![
-                                emitter::unchecked_construct_test(
+                                ident(emitter::unchecked_construct_test(
                                     name,
                                     &format!("{lo}n"),
                                     is_opaque,
-                                ),
-                                emitter::unchecked_construct_test(
+                                )),
+                                ident(emitter::unchecked_construct_test(
                                     name,
                                     &format!("{hi}n"),
                                     is_opaque,
-                                ),
+                                )),
                             ],
-                            format!("__bynkShrinkInt(v, {floor}n).map((__n: bigint) => {shrunk})"),
+                            method_call(
+                                call(
+                                    ident("__bynkShrinkInt"),
+                                    vec![ident("v"), num_lit(format!("{floor}n"))],
+                                ),
+                                "map",
+                                vec![TsExpr::Arrow {
+                                    params: vec![TsParam {
+                                        name: "__n".to_string(),
+                                        ty: Some(TsType::named("bigint")),
+                                        optional: false,
+                                    }],
+                                    is_async: false,
+                                    generics: Vec::new(),
+                                    return_type: None,
+                                    body: Box::new(ident(shrunk)),
+                                }],
+                            ),
                         )
                     }
                     BaseType::String => {
@@ -3160,29 +3251,45 @@ fn binding_gen(
                         let lit = format!("\"{}\"", "x".repeat(min.max(0) as usize));
                         let shrunk = emitter::unchecked_construct_test(name, "__s", is_opaque);
                         (
-                            vec![emitter::unchecked_construct_test(name, &lit, is_opaque)],
-                            format!("__bynkShrinkString(v, {min}).map((__s: string) => {shrunk})"),
+                            vec![ident(emitter::unchecked_construct_test(
+                                name, &lit, is_opaque,
+                            ))],
+                            method_call(
+                                call(
+                                    ident("__bynkShrinkString"),
+                                    vec![ident("v"), num_lit(min.to_string())],
+                                ),
+                                "map",
+                                vec![TsExpr::Arrow {
+                                    params: vec![TsParam {
+                                        name: "__s".to_string(),
+                                        ty: Some(TsType::named("string")),
+                                        optional: false,
+                                    }],
+                                    is_async: false,
+                                    generics: Vec::new(),
+                                    return_type: None,
+                                    body: Box::new(ident(shrunk)),
+                                }],
+                            ),
                         )
                     }
                     _ => (
                         vec![canon_ts_for_ty(ty, types, test_suites::PROP_GEN_DEPTH, tys)],
-                        "[]".to_string(),
+                        TsExpr::array(vec![]),
                     ),
                 }
             }
-            Some(TypeBody::Sum(_)) => (
-                vec![canon_ts_for_ty(ty, types, test_suites::PROP_GEN_DEPTH, tys)],
-                format!(
-                    "[{}]",
-                    canon_ts_for_ty(ty, types, test_suites::PROP_GEN_DEPTH, tys)
-                ),
-            ),
+            Some(TypeBody::Sum(_)) => {
+                let canon = canon_ts_for_ty(ty, types, test_suites::PROP_GEN_DEPTH, tys);
+                (vec![canon.clone()], TsExpr::array(vec![canon]))
+            }
             _ => (
                 vec![canon_ts_for_ty(ty, types, test_suites::PROP_GEN_DEPTH, tys)],
-                "[]".to_string(),
+                TsExpr::array(vec![]),
             ),
         },
-        _ => (Vec::new(), "[]".to_string()),
+        _ => (Vec::new(), TsExpr::array(vec![])),
     };
     BindingGen {
         boundaries,
@@ -3242,8 +3349,8 @@ fn emit_test_property_function(
             .map(|(t, r)| binding_gen(t, &r.types, tys))
             .unwrap_or(BindingGen {
                 boundaries: Vec::new(),
-                gen_ts: "undefined".to_string(),
-                shrink: "[]".to_string(),
+                gen_ts: ident("undefined"),
+                shrink: TsExpr::array(vec![]),
             });
         // P7.2: deferred, not narrowed. `v`'s real type varies per binding, and
         // for `Int` (and refined-`Int`) bindings the *internal* property-test
@@ -3255,12 +3362,24 @@ fn emit_test_property_function(
         // itself, not a same-line text change, and a wrong guess here risks a
         // real `tsc --strict` failure specifically on the shrink helpers' own
         // typed parameters.
+        //
+        // Arc C, slice A: `binding_gen`'s own fields are real `TsExpr` now
+        // (`refined_gen_ts`/`gen_ts_for_ty`/`canon_ts_for_ty`/`binding_gen`
+        // itself), but this function (slice E, not yet converted) still
+        // builds its own output as a `String` via `format!` — each fragment
+        // is printed back to text at the point it's spliced in, the same
+        // "print a real fragment, splice into a still-textual caller" seam
+        // every prior slice's own not-yet-converted callers use.
         out.push_str(&format!(
             "      {{ name: \"{}\", boundaries: [{}], gen: (rng: any) => {}, shrink: (v: any) => {}, show: (v: any) => __bynkShow(v) }},\n",
             emitter::escape_ts_string(&b.name.name),
-            bg.boundaries.join(", "),
-            bg.gen_ts,
-            bg.shrink
+            bg.boundaries
+                .iter()
+                .map(bynk_ts::print_expr)
+                .collect::<Vec<_>>()
+                .join(", "),
+            bynk_ts::print_expr(&bg.gen_ts),
+            bynk_ts::print_expr(&bg.shrink)
         ));
     }
     out.push_str("    ];\n");
@@ -3442,16 +3561,24 @@ fn emit_test_history_property_function(
                             .map(|t| binding_gen(t, &resolved.types, tys))
                             .unwrap_or(BindingGen {
                                 boundaries: Vec::new(),
-                                gen_ts: "undefined".to_string(),
-                                shrink: "[]".to_string(),
+                                gen_ts: ident("undefined"),
+                                shrink: TsExpr::array(vec![]),
                             });
                         // P7.2: deferred — same reason as `__gens`'s own construction
                         // above (`Int`'s internal `bigint` representation).
+                        //
+                        // Arc C, slice A: `binding_gen`'s own fields are real
+                        // `TsExpr` — printed back to text here, the same seam
+                        // as `__gens`'s own construction above.
                         format!(
                             "{{ boundaries: [{}], gen: (rng: any) => {}, shrink: (v: any) => {}, show: (v: any) => __bynkShow(v) }}",
-                            bg.boundaries.join(", "),
-                            bg.gen_ts,
-                            bg.shrink
+                            bg.boundaries
+                                .iter()
+                                .map(bynk_ts::print_expr)
+                                .collect::<Vec<_>>()
+                                .join(", "),
+                            bynk_ts::print_expr(&bg.gen_ts),
+                            bynk_ts::print_expr(&bg.shrink)
                         )
                     })
                     .collect();
@@ -3600,8 +3727,8 @@ fn emit_contract_attack_function(
             .map(|t| binding_gen(t, &resolved.types, tys))
             .unwrap_or(BindingGen {
                 boundaries: Vec::new(),
-                gen_ts: "undefined".to_string(),
-                shrink: "[]".to_string(),
+                gen_ts: ident("undefined"),
+                shrink: TsExpr::array(vec![]),
             });
         // P7.2: deferred, not narrowed. `v`'s real type varies per binding, and
         // for `Int` (and refined-`Int`) bindings the *internal* property-test
@@ -3613,12 +3740,20 @@ fn emit_contract_attack_function(
         // itself, not a same-line text change, and a wrong guess here risks a
         // real `tsc --strict` failure specifically on the shrink helpers' own
         // typed parameters.
+        //
+        // Arc C, slice A: `binding_gen`'s own fields are real `TsExpr` —
+        // printed back to text here, the same seam as `__gens`'s own
+        // construction in the sibling functions above.
         out.push_str(&format!(
             "      {{ name: \"{}\", boundaries: [{}], gen: (rng: any) => {}, shrink: (v: any) => {}, show: (v: any) => __bynkShow(v) }},\n",
             emitter::escape_ts_string(&p.name.name),
-            bg.boundaries.join(", "),
-            bg.gen_ts,
-            bg.shrink
+            bg.boundaries
+                .iter()
+                .map(bynk_ts::print_expr)
+                .collect::<Vec<_>>()
+                .join(", "),
+            bynk_ts::print_expr(&bg.gen_ts),
+            bynk_ts::print_expr(&bg.shrink)
         ));
     }
     out.push_str("    ];\n");
