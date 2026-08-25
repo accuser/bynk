@@ -277,9 +277,11 @@ the current tree, not the review's stale findings, found:
   exhaustive search for a duplicate path), R8.11 (`deps` type derivation already reads the IR's
   `CapRefIr`, `emit.rs:1847`), R8.13 (boundary-only verification, all four named properties
   confirmed in `workers.rs`), R8.15 (`http_value_serialiser` no longer exists — single dispatch
-  confirmed), R8.17 (sorted route table, `workers_entry.rs:117-122`), R8.18 (contract-hash
-  ordering, `workers_entry.rs:404`), R8.19 (typed TOML escaping, `wrangler.rs:162`, with a
-  dedicated injection test), R8.21 (`is_effectful_return` as the one shared predicate), R8.22
+  confirmed), R8.17 (sorted route table, `workers_entry.rs:410/470/503` — three `.sort_by` call
+  sites, http/cron/queue routes each), R8.18 (contract-hash ordering, `workers_entry.rs:298` —
+  `own_contracts: &BTreeMap<String, String>`, deterministic by construction), R8.19 (typed TOML
+  escaping, `escape_toml_basic_string`, `emitter/toml_doc.rs:215`, with a dedicated injection test
+  at `toml_doc.rs:240-249`), R8.21 (`is_effectful_return` as the one shared predicate), R8.22
   (`result ?? null`, `emit.rs:3690`). **R8.12 is closed under its own current text but
   self-superseding — flagged, not silently assumed:** it's closed today because only `Call`
   wrappers get real param types by design (R8.12's own rationale already documents the carve-out);
@@ -1346,7 +1348,7 @@ decomposition.**
 | **Arc C, slice 36 — the system-http driver cluster (`tests_emit.rs` slice F)** (#1407, landed) | The sixth of `tests_emit.rs`'s own 7 proposed slices per its dedicated grounding pass (post-#1392), following slice E/#1405; structurally self-contained, no dependency on any of A-E, confirmed by landing. Converts `emit_system_http_support` in `bynk-emit/src/project/tests_emit.rs`. **The 4 per-route drivers convert fully at the structural level** via a new shared helper, `sysdrive_driver(kind_prefix, sname, key, params, body_stmt, url, options, binding, decode_fn, payload)` — the one real shape all four `__sysdrive_{,raw_,noauth_,rawnoauth_}*` drivers share (async function decl, optional `const __body = JSON.stringify(...)` lead statement, `const __h = makeHarness();`, `const __req = new Request(<url>, <options>);`, `const __res = await __h.env.<binding>.fetch(__req);`, `return <decode>(__res, <payload>);`), replacing four near-identical hand-written `format!` blocks with one parameterised builder. **The wrong-method driver converts fully, no carve-out at all** — its own `new Request(\`https://test${path}\`, { method })` is this file's first real dynamic (non-baked) `TsExpr::TemplateLit` substitution and first real `TsObjectEntry::Shorthand` object literal, both byte-matching the existing text exactly (a single, never-conditionally-empty shorthand entry matches `TsExpr::Object`'s own tight single-line rendering). **Decision A: the per-route options object (`{ method, headers: {...}, body, }`) stays opaque hand-formatted text**, passed as a `TsExpr::Ident`-wrapped fragment argument to a real `TsExpr::New` call — every branch's own hand-written template bakes in an unconditional trailing `, ` before its closing brace and prints `{ }` (one space) rather than `TsExpr::Object`'s own tight `{}` when a sub-object has zero entries, a shape `TsExpr::Object`'s general single-line algebra cannot reproduce byte-for-byte, the same "odd, one-off shape stays text" call this track has made before (Decision B, #1327; Decision C, #1359). The secrets-bootstrap loop's own `format!` call converts fully too, to real `As`/`Member`/`Binary(NullishCoalescing)`/`Index`/`Assign` nodes. **The static signer preamble stays out of scope, honestly recorded**: built via a plain `push_str` literal with zero per-target dynamism, already excluded from the `ts_writes` probe (no `write!`/`writeln!`/`format!` on those lines) — converting it moves no metric and adds no real coverage. **Landed as one slice, not split by driver-kind**: this paragraph's own proposal-time caveat considered splitting by typed/raw/noauth/rawnoauth/wrongmethod, but once drafted the 4 per-route kinds shared one structural shape completely — every real difference became a plain parameter to `sysdrive_driver`, so a split would have meant reviewing the identical helper four times rather than once. **One real transcription bug, caught immediately by `positive_fixtures`, fixed before the CI pass**: the wrong-method driver's decode call was first built as `responseToHttpResult`, not the existing text's own `responseToHttpOutcome` (the router's `405` fall-through decodes to an `HttpOutcome`, not an `HttpResult`) — a one-line fixture diff named the exact mismatch. **A real, non-metric-driven simplification found while implementing**: the first draft's per-call-site `format!` for each driver's own name *increased* `ts_writes` by 1 despite eliminating four hand-formatted functions (each driver-kind's name interpolation became its own newly-countable line, previously merged into one big `format!` call); consolidated into `sysdrive_driver`'s own single internal `format!("__sysdrive_{kind_prefix}{sname}_{key}")`, turning the accidental increase into a genuine larger net decrease. No new `bynk_ts` algebra gap — every shape needed (`TsDecl::Function` `is_async`, `TsExpr::New`, `TsExpr::TemplateLit` both zero- and real-substitution, `TsExpr::Await`, `TsExpr::As`, `TsObjectEntry::Shorthand`, `TsExpr::Arrow` expression-bodied) already existed. `verbatim_sites` unchanged (5). `ts_writes` drops by **3** (1080 → 1077), verified via a fresh `cargo xtask greenfield-status --apply`. `ast_importers`/`ts_any` unaffected. Zero diff, confirmed after the one fix above: `positive_fixtures`/`bless_positive_fixtures`, `source_map`, and `tsc_verify`'s full strict-`tsc` corpus all pass unchanged; all `bynk-ts`/`bynk-emit` unit tests pass. | R7.1 | #1331, #1394, #1327, #1359 |
 | **Arc C, slice 37 — the two top-level module assemblers (`tests_emit.rs` slice G)** (#1409, landed) | The seventh and last of `tests_emit.rs`'s own 7 proposed slices per its dedicated grounding pass (post-#1392), following slice F/#1407 — closes Arc C entirely. Converts `emit_integration_module` and `emit_test_module` in `bynk-emit/src/project/tests_emit.rs`, the two top-level module assemblers; depended on slice B (`emit_ns_destructure`), confirmed by landing, in addition to calling nearly every other already-converted delegate. **Every header comment line, every `import` line, and each module's own `export async function run(only?: string) { ... }` runner convert fully, no carve-out at all.** The two functions' own per-case/per-property/per-attack loop bodies stay exactly as they are — each already delegates to an already-converted or intentionally-opaque (`lower.rs`-family, ADR 0391) builder returning pre-formatted text with its own source-map splice arithmetic (`module_smb.merge(...)`); only the bookend content around those splices is new real structure. **One real, grounded `bynk_ts` algebra gap found and closed**: `TsDecl::ImportDefault { alias, from }` — `emit_integration_module`'s own per-participant `import worker_{ns} from "../workers/{dir}/index.js";` (the participant's Worker entry module's default export) is the first real default import anywhere in `bynk-emit`'s own converted content; every prior import site is either named (`TsDecl::Import`) or namespace (`TsDecl::ImportNamespace`). Added with a direct printer unit test and folded into the existing "no blank line between adjacent imports" grouping rule. **A new shared pair of helpers, `run_dispatch_stmt`/`build_run_function`, factors the identical `run(only)` shape both functions build**: one `if (want("name")) results.push({ name: "...", ...(await runner()) });` dispatch line per case/property/attack (a real `TsObjectEntry::Spread` wrapping a real `TsExpr::Paren(await_expr(...))`, matching the existing text's own explicit parens around the spread), wrapped in one real `TsDecl::Function` — this function carries no opaque lowered content and no source-map splice sensitivity at all, so it converts fully rather than needing `emit_test_case_function`'s own header/tail split. No other new `bynk_ts` algebra gap. `verbatim_sites` unchanged (5). `ts_writes` drops by **5** (1077 → 1072), verified via a fresh `cargo xtask greenfield-status --apply`. `ast_importers`/`ts_any` unaffected. Zero diff, first attempt, no iteration: `positive_fixtures`/`bless_positive_fixtures`, `source_map`/`source_map_bodies`, and `tsc_verify`'s full strict-`tsc` corpus all pass unchanged; 141 `bynk-ts` unit tests (1 new, pinning `ImportDefault`) and all `bynk-emit` unit tests pass. **Closes Arc C entirely: all 37 slices landed.** | R7.1 | #1331, #1394, #1399, #1325 |
 
-**Arc D — settling (~8 slices)**
+**Arc D — settling (~8 slices; 2 landed as P7.10/P7.11, 6 remaining)**
 
 Provisionally lettered, not numbered — Arc C's own slice count is an estimate (originally ~23-27,
 now ~30-33, revised by
@@ -1368,14 +1370,17 @@ convention every prior track on this trajectory used.
 Re-audited against the tree as it stands after Arc C's full 37-slice landing (all citations below
 are current, not the stale pre-Arc-C line numbers §3.4 originally recorded):
 
-- **R8.4** (numeric-refinement guard ordering): checked all four real base-guard/predicate
+- **R8.4** (numeric-refinement guard ordering): checked all five real base-guard/predicate
   emission sites — `refined_check_as_bool` (`emitter/lower.rs`, the `is`/`.of`-check path),
   `emit_refined_checks`/`print_numeric_guard_stmt` (`emitter/emit.rs`, the `.of` constructor path),
   `emit_inline_refinement_checks` (`emitter/serialisation.rs`, the `Named`-with-predicates wire
-  path), and `WireRef::Base`'s handler (`emitter/serialisation.rs`, the guard-only bare-scalar wire
-  path, which carries no separate predicate list by construction — a refined named scalar routes
-  through `WireRef::Named` instead). Every site emits the base guard (`Number.isInteger`/
-  `Number.isFinite`) before any predicate, with no exception. **Confirmed closed, no violation
+  path), `WireRef::Base`'s handler (`emitter/serialisation.rs`, the guard-only bare-scalar wire
+  path), and `deserialise_expr_via`'s `TypeRef::Base` arm (`emitter/serialisation.rs` ~1153-1180,
+  its own `extra` guard). The last two carry no separate predicate list by construction — a
+  refined named scalar routes through `WireRef::Named` instead — so neither can violate the
+  ordering, but both are named here so the closure matches what a `Number.isInteger|isFinite` grep
+  actually finds. Every site emits the base guard (`Number.isInteger`/`Number.isFinite`) before
+  any predicate, with no exception. **Confirmed closed, no violation
   found.**
 - **P7.d5** (severing `bynk-emit`'s `bynk-check` dependency): confirmed NOT severable —
   222 real `bynk_check::` use sites across 17 files in `bynk-emit/src`, and the dependency is
@@ -1397,9 +1402,11 @@ are current, not the stale pre-Arc-C line numbers §3.4 originally recorded):
   the function and its injection test are both present and unchanged. Arc C's own zero-diff
   discipline (every one of its 37 slices verified byte-identical fixture/tsc output) is why none of
   these show real behavioural drift — only citations move when the underlying code does.
-- **Probe floors, file-by-file, as of this pass** (`design/greenfield-status.md`): `ts_writes` =
-  1072, `ts_any` = 30, `ast_importers` = 5 (`bynk-emit/src/emitter{,/**}`, the phase-6 floor,
-  unchanged by Arc C), `verbatim_origins` = 1, `verbatim_sites` = 5.
+- **Probe floors, as recorded in `design/greenfield-status.md` at this commit** (aggregate
+  counts, gated there by `greenfield_status_table_is_current` — this copy will drift if that
+  file changes and this paragraph isn't re-read alongside it): `ts_writes` = 1072, `ts_any` = 30,
+  `ast_importers` = 5 (its one file-scoped floor — `bynk-emit/src/emitter{,/**}`, the phase-6
+  floor, unchanged by Arc C), `verbatim_origins` = 1, `verbatim_sites` = 5.
 
 No code changed; no `design/pending` entry (doc-only, matching the #1366/#1379/#1394 precedent
 for a pure verification pass with nothing to fix).
