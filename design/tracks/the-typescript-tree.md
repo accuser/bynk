@@ -1359,12 +1359,49 @@ convention every prior track on this trajectory used.
 
 | Slice | What lands | Rules | Gated on |
 |---|---|---|---|
-| **P7.d1** | `bynk-ir`/`bynk-lower` carved as crates — ADR 0332's named trigger (`bynk-ts` as a genuine second consumer) met once Arc B lands | R10.3 | P7.5 |
+| **P7.d1** | `bynk-ir`/`bynk-lower` carved as crates — ADR 0332's named trigger (`bynk-ts` as a genuine second consumer) met once Arc B lands. **Re-grounding note (this settling pass): bigger and different in kind than a file move — see below.** | R10.3 | P7.5 |
 | **P7.d2** | R8.2 — brand string recorded once (R4.10), read at emission rather than computed from `ctx.owning_context` | R8.2 | Arc C substantially landed |
 | **P7.d3** | R8.14 — the JSON/boundary codec collector unified into one collector over `bynk-ts` tree nodes, revisiting P6.56's declined IR-based attempt now that a tree exists to collect over | R8.14 | P7.8 |
 | **P7.10** (landed) | R8.4/d5/d8 settling sweep — see below | R8.4, R8.5,7,9,11–13,15,17–19,21,22 (verify) | Arc C landed |
 | **P7.11** (landed) | R10.4 surface enumeration — see below | R10.4 | Arc C landed |
 | **P7.d7** | R10.2 verification — `bynk-lsp` stops linking emission code it never executes (finding #39) | R10.2 | P7.d1 |
+
+**P7.d1 re-grounding (this settling pass, not yet implemented) — `ir/lower.rs` is not one crate's
+worth of live code, it's two.** `bynk-emit/src/ir.rs` (1,756 lines) + `bynk-emit/src/ir/lower.rs`
+(10,095 lines) total ~11,850 lines, both `pub(crate)` at the crate root — no external crate
+reaches `bynk_emit::ir` today, so the carve is a pure internal reorganisation with no external-API
+compatibility surface to preserve. But `ir/lower.rs` itself is not uniformly live: it contains two
+structurally distinct layers under one file. **Layer 1 (live, ~dozens of real call sites):**
+narrow, single-purpose lowering helpers — `lower_handler_kind_ir`, `lower_protocol_ir`(`_from_
+commons`), `lower_handler_given_ir`, `lower_provider_given_ir`, `lower_route_cache_ir`,
+`lower_route_limit_ir`, `lower_event_subscriber_shapes_ir`, `is_effectful_return`,
+`body_writes_state`, `capability_op_sig_from_commons`, `lower_attached_fn_sig_ir_from_types`,
+`lower_type_item_ir`, `lower_capability_item_ir`, `lower_service_handler_signature_ir`,
+`lower_store_field_shape_ir` — called for real from `emitter.rs`, `emitter/emit.rs`,
+`emitter/workers.rs`, `emitter/workers_entry.rs`, `emitter/lower.rs`, and `project.rs`. **Layer 2
+(genuinely unreached, confirmed by grep — zero callers outside this file):** the whole-program
+recursive tree-builder — `lower_expr_ir`, `lower_block_ir`, `lower_fn_body_ir`, `lower_handler_ir`,
+`lower_service_handler_ir`, `lower_fn_item_ir`, `lower_service_item_ir`, `lower_agent_item_ir`,
+`lower_provider_item_ir`, `lower_store_field_ir`, `lower_invariant_ir`, `lower_transition_ir`,
+`lower_commit_shape_ir`, `lower_op_sig_ir_from_commons`, `lower_fn_sig_ir_from_types` — the file's
+own module doc says this outright: "Nothing in this module is called from anywhere in
+`bynk-emit`'s existing emission path... it has no consumer yet, so it cannot change any emitted
+output." This matches the retired `the-ir.md`'s own account of its retirement-plan arc (P6.42–58):
+several originally-planned full item/body lowerings "were traced against their own real consumers
+and declined rather than force-built."
+
+This means P7.d1 is not a mechanical file-move (however large) — landing it well requires a real
+decision this settling pass didn't make: **carry Layer 2 into the new `bynk-lower` crate as-is
+(preserving the original design intent for a future full-tree consumer), or trim it now (real,
+consequential dead-code removal inside the same carve)**, plus the ordinary mechanical work (new
+`bynk-ir`/`bynk-lower` manifests, ~99 call-site import-path fixes across 7 consumer files, a
+circularity check — `ir/lower.rs` itself currently does `use crate::emitter::{ MUTATING_CELL_OPS,
+..., block_uses_emit, match_needs_if_chain };`, a live reverse dependency from what would become
+`bynk-lower` back into `bynk-emit` that has to be resolved, not just relocated, before the crate
+graph is acyclic). **Not implemented this pass** — this is real, grounded scope a dedicated slice
+(or its own short sub-decomposition, the same pattern Arc C used for `emit_project`/
+`emit_system_http_support`) should own, not something to rush inside a settling sweep. P7.d7 stays
+blocked behind it.
 
 **P7.10 (landed) — the R8.4/d5/d8 settling sweep, a single verify-only pass, no code changes.**
 Re-audited against the tree as it stands after Arc C's full 37-slice landing (all citations below
