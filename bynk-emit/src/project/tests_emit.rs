@@ -813,8 +813,8 @@ fn emit_system_http_support(
                     "noauth_",
                     sname,
                     &key,
-                    driver_params.clone(),
-                    body_stmt.clone(),
+                    driver_params,
+                    body_stmt,
                     url.clone(),
                     noauth_options,
                     &binding,
@@ -845,9 +845,9 @@ fn emit_system_http_support(
                     "rawnoauth_",
                     sname,
                     &key,
-                    raw_params.clone(),
+                    raw_params,
                     None,
-                    url.clone(),
+                    url,
                     rawnoauth_options,
                     &binding,
                     "responseToUnauthOutcome",
@@ -894,7 +894,7 @@ fn emit_system_http_support(
                         TsExpr::New {
                             callee: Box::new(ident("Request")),
                             args: vec![
-                                template_with(
+                                TsExpr::template_lit(
                                     vec!["https://test".to_string(), String::new()],
                                     vec![ident("path")],
                                 ),
@@ -4515,21 +4515,12 @@ fn await_expr(expr: TsExpr) -> TsExpr {
 /// real substitution `bynk_ts` tracks). Slice F (#1407): `emit_system_http_
 /// support`'s own `concrete_path` (every `:name` path segment already
 /// resolved to `${paramIdent}` text at Rust-`format!` time, per its own doc)
-/// is the real site.
+/// is the real site. Routes through the validated `TsExpr::template_lit`
+/// constructor rather than the bare `TsExpr::TemplateLit { .. }` variant, the
+/// same guard this file's own not-yet-refactored call sites already use
+/// (review of #1408, finding 1).
 fn template(text: impl Into<String>) -> TsExpr {
-    TsExpr::TemplateLit {
-        parts: vec![text.into()],
-        exprs: vec![],
-    }
-}
-
-/// A template literal with real substitutions — `parts.len() == exprs.len()
-/// + 1`, per [`TsExpr::TemplateLit`]'s own doc. Slice F (#1407):
-/// `__sysdrive_wrongmethod_*`'s own `` `https://test${path}` `` is the real
-/// site — unlike [`template`]'s sibling sites, `path` here is a genuine
-/// runtime driver parameter, not baked-in Rust-`format!` text.
-fn template_with(parts: Vec<String>, exprs: Vec<TsExpr>) -> TsExpr {
-    TsExpr::TemplateLit { parts, exprs }
+    TsExpr::template_lit(vec![text.into()], vec![])
 }
 
 /// One `async function __sysdrive_*` driver: an optional lead statement
