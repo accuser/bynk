@@ -55,6 +55,13 @@ updates:
     directory: "/site"
     schedule:
       interval: weekly
+    # `astro` peers `@astrojs/markdown-remark` at an exact version, so it must
+    # never move ahead of `astro` on its own. /site depends on it directly (the
+    # legacy `markdown.remarkPlugins`/`rehypePlugins` hooks need it since astro
+    # 7.2.4), so without this it is an eligible standalone update. See the note
+    # on the `astro` group below.
+    ignore:
+      - dependency-name: "@astrojs/markdown-remark"
     groups:
       # Astro and Starlight move in lockstep — Starlight's peer range tracks
       # the astro minor, so a split bump means one PR waiting on the other.
@@ -69,10 +76,21 @@ updates:
       # stopped installing `@astrojs/markdown-remark` by default, so a config
       # using `markdown.remarkPlugins`/`rehypePlugins` — as /site does, for the
       # mdBook directives and rehype-mermaid — must depend on it explicitly, or
-      # `astro build` fails config validation. It is a direct dependency again,
-      # and the `@astrojs/*` pattern below is now what keeps it in lockstep with
-      # `astro`: both move in one grouped PR, so neither gets a standalone PR to
-      # deadlock against the other. Do not narrow that glob to named packages.
+      # `astro build` fails config validation.
+      #
+      # Grouping alone does NOT re-close that trap. `astro` peers the package at
+      # an EXACT version, not a range (`peerDependencies: {"@astrojs/markdown-
+      # remark": "7.2.2"}`, optional), while /site declares `^7.2.2`. A group is
+      # not a guarantee of company: if `markdown-remark` publishes a 7.2.x in a
+      # week `astro` does not, the weekly run finds exactly one member with an
+      # update and opens a ONE-package group PR for it — root then wants 7.2.3
+      # against astro's exact 7.2.2 peer, which is an ERESOLVE and the same
+      # manual unpick as #1036/#1038, just at one-PR granularity. That is what
+      # the `ignore` entry above is for: the package is never proposed on its
+      # own, so it only ever moves when a grouped `astro` bump drags the lock
+      # entry along (the caret range admits the new version without a manifest
+      # edit). Keep the caret AND the ignore — either alone reopens the trap.
+      # Do not narrow the glob below to named packages.
       astro:
         patterns:
           - "astro"
