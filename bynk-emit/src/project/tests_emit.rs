@@ -687,7 +687,7 @@ fn emit_system_http_support(
             };
             // Body param → serialise; path params → the URL.
             let body_arg = body_ps.first();
-            let (body_line, body_init) = match body_arg {
+            let (body_stmt, body_init): (Option<TsStmt>, &str) = match body_arg {
                 Some(p) => {
                     let ser = crate::emitter::serialisation::serialise_expr_via(
                         &p.type_ref,
@@ -695,12 +695,15 @@ fn emit_system_http_support(
                         &type_ns,
                         runtime_use,
                     );
-                    (
-                        format!("  const __body = JSON.stringify({ser});\n"),
-                        "body: __body, ",
-                    )
+                    let stmt = TsStmt::const_stmt(
+                        TsBindingName::Ident("__body".to_string()),
+                        None,
+                        call(member(ident("JSON"), "stringify"), vec![ident(ser)]),
+                        None,
+                    );
+                    (Some(stmt), "body: __body, ")
                 }
-                None => (String::new(), ""),
+                None => (None, ""),
             };
             // The response payload deserialiser: the `T` of `Effect[HttpResult[T]]`.
             let payload_deser = match strip_effect_httpresult(&h.return_type) {
@@ -710,15 +713,22 @@ fn emit_system_http_support(
                 None => format!("{type_ns}deserialise_unit"),
             };
             // Driver params mirror the handler's params (path params, then body).
-            let driver_params: Vec<String> = h
+            let driver_params: Vec<TsParam> = h
                 .params
                 .iter()
-                .map(|p| {
-                    format!(
-                        "{}: {}",
-                        crate::emitter::ts_ident(&p.name.name),
-                        driver_param_ty(&p.type_ref, &ns)
-                    )
+                .map(|p| TsParam {
+                    name: crate::emitter::ts_ident(&p.name.name),
+                    ty: Some(TsType::named(driver_param_ty(&p.type_ref, &ns))),
+                    optional: false,
+                })
+                .collect();
+            let raw_params: Vec<TsParam> = h
+                .params
+                .iter()
+                .map(|p| TsParam {
+                    name: crate::emitter::ts_ident(&p.name.name),
+                    ty: Some(TsType::named("string")),
+                    optional: false,
                 })
                 .collect();
             let content_type = if body_arg.is_some() {
@@ -726,17 +736,35 @@ fn emit_system_http_support(
             } else {
                 ""
             };
-            routes.push_str(&format!(
-                "async function __sysdrive_{sname}_{key}({params}{sep}__sub: string) {{\n\
-                 {body_line}\
-                 \x20 const __h = makeHarness();\n\
-                 \x20 const __req = new Request(`https://test{concrete_path}`, {{ method: {method:?}, headers: {{ {content_type}{auth_header}}}, {body_init}}});\n\
-                 \x20 const __res = await __h.env.{binding}.fetch(__req);\n\
-                 \x20 return responseToHttpResult(__res, {payload_deser});\n\
-                 }}\n",
-                params = driver_params.join(", "),
-                sep = if driver_params.is_empty() { "" } else { ", " },
+            let url = template(format!("https://test{concrete_path}"));
+            // Decision A (#1407): the request-init options object (`{ method,
+            // headers: {...}, body, }`) keeps its own hand-formatted text —
+            // every branch below bakes in an unconditional trailing `, ` before
+            // its closing brace, and prints `{ }` (one space, not
+            // `TsExpr::Object`'s own tight `{}`) when a sub-object has zero
+            // entries — a shape `TsExpr::Object`'s general single-line algebra
+            // (comma-separated, no trailing comma, tight `{}` for zero
+            // entries) cannot reproduce byte-for-byte. The same "odd, one-off
+            // shape stays text" call this track has made before (Decision B,
+            // #1327; Decision C, #1359). Everything AROUND it — the function
+            // declaration, its params, the `new Request(...)` call, the
+            // `await ... .fetch(...)` chain, the final `return
+            // responseTo*(...)` — is real `bynk_ts` structure.
+            let typed_options = ident(format!(
+                "{{ method: {method:?}, headers: {{ {content_type}{auth_header}}}, {body_init}}}",
                 method = method.as_str(),
+            ));
+            routes.push_str(&sysdrive_driver(
+                "",
+                sname,
+                &key,
+                driver_params.clone(),
+                body_stmt.clone(),
+                url.clone(),
+                typed_options,
+                &binding,
+                "responseToHttpResult",
+                &payload_deser,
             ));
             // Slice C: the raw driver for a `Wire(…)`-carrying call. Every slot is
             // a raw `string` (the wire form the boundary receives *unvalidated*):
@@ -748,25 +776,25 @@ fn emit_system_http_support(
             // path-param-less route (e.g. `GET /cart/size`) can carry no `Wire`
             // argument, so its raw driver would be dead code.
             if !h.params.is_empty() {
-                let raw_params: Vec<String> = h
-                    .params
-                    .iter()
-                    .map(|p| format!("{}: string", crate::emitter::ts_ident(&p.name.name)))
-                    .collect();
                 let raw_body_init = match body_ps.first() {
                     Some(p) => format!("body: {}, ", crate::emitter::ts_ident(&p.name.name)),
                     None => String::new(),
                 };
-                routes.push_str(&format!(
-                "async function __sysdrive_raw_{sname}_{key}({params}{sep}__sub: string) {{\n\
-                 \x20 const __h = makeHarness();\n\
-                 \x20 const __req = new Request(`https://test{concrete_path}`, {{ method: {method:?}, headers: {{ {content_type}{auth_header}}}, {raw_body_init}}});\n\
-                 \x20 const __res = await __h.env.{binding}.fetch(__req);\n\
-                 \x20 return responseToHttpOutcome(__res, {payload_deser});\n\
-                 }}\n",
-                    params = raw_params.join(", "),
-                    sep = if raw_params.is_empty() { "" } else { ", " },
+                let raw_options = ident(format!(
+                    "{{ method: {method:?}, headers: {{ {content_type}{auth_header}}}, {raw_body_init}}}",
                     method = method.as_str(),
+                ));
+                routes.push_str(&sysdrive_driver(
+                    "raw_",
+                    sname,
+                    &key,
+                    raw_params.clone(),
+                    None,
+                    url.clone(),
+                    raw_options,
+                    &binding,
+                    "responseToHttpOutcome",
+                    &payload_deser,
                 ));
             }
             // #706: the no-auth driver for a `by Nobody` call — the same request
@@ -777,17 +805,21 @@ fn emit_system_http_support(
             // an auth header) — an unsecured route has no seam to reject a missing
             // credential, so a `by Nobody` there is meaningless.
             if !auth_header.is_empty() {
-                routes.push_str(&format!(
-                "async function __sysdrive_noauth_{sname}_{key}({params}{sep}__sub: string) {{\n\
-                 {body_line}\
-                 \x20 const __h = makeHarness();\n\
-                 \x20 const __req = new Request(`https://test{concrete_path}`, {{ method: {method:?}, headers: {{ {content_type}}}, {body_init}}});\n\
-                 \x20 const __res = await __h.env.{binding}.fetch(__req);\n\
-                 \x20 return responseToUnauthOutcome(__res, {payload_deser});\n\
-                 }}\n",
-                    params = driver_params.join(", "),
-                    sep = if driver_params.is_empty() { "" } else { ", " },
+                let noauth_options = ident(format!(
+                    "{{ method: {method:?}, headers: {{ {content_type}}}, {body_init}}}",
                     method = method.as_str(),
+                ));
+                routes.push_str(&sysdrive_driver(
+                    "noauth_",
+                    sname,
+                    &key,
+                    driver_params,
+                    body_stmt,
+                    url.clone(),
+                    noauth_options,
+                    &binding,
+                    "responseToUnauthOutcome",
+                    &payload_deser,
                 ));
             }
             // #821: the raw *and* no-auth driver combined, for a call mixing
@@ -801,25 +833,25 @@ fn emit_system_http_support(
             // correctly here. Emitted under the same conditions as both parent
             // drivers: a `Wire`-eligible slot and a Bearer-secured route.
             if !h.params.is_empty() && !auth_header.is_empty() {
-                let raw_params: Vec<String> = h
-                    .params
-                    .iter()
-                    .map(|p| format!("{}: string", crate::emitter::ts_ident(&p.name.name)))
-                    .collect();
                 let raw_body_init = match body_ps.first() {
                     Some(p) => format!("body: {}, ", crate::emitter::ts_ident(&p.name.name)),
                     None => String::new(),
                 };
-                routes.push_str(&format!(
-                "async function __sysdrive_rawnoauth_{sname}_{key}({params}{sep}__sub: string) {{\n\
-                 \x20 const __h = makeHarness();\n\
-                 \x20 const __req = new Request(`https://test{concrete_path}`, {{ method: {method:?}, headers: {{ {content_type}}}, {raw_body_init}}});\n\
-                 \x20 const __res = await __h.env.{binding}.fetch(__req);\n\
-                 \x20 return responseToUnauthOutcome(__res, {payload_deser});\n\
-                 }}\n",
-                    params = raw_params.join(", "),
-                    sep = if raw_params.is_empty() { "" } else { ", " },
+                let rawnoauth_options = ident(format!(
+                    "{{ method: {method:?}, headers: {{ {content_type}}}, {raw_body_init}}}",
                     method = method.as_str(),
+                ));
+                routes.push_str(&sysdrive_driver(
+                    "rawnoauth_",
+                    sname,
+                    &key,
+                    raw_params,
+                    None,
+                    url,
+                    rawnoauth_options,
+                    &binding,
+                    "responseToUnauthOutcome",
+                    &payload_deser,
                 ));
             }
         }
@@ -827,15 +859,95 @@ fn emit_system_http_support(
         // `(method, path)` (an existing path, an undeclared method) and decodes
         // the router's `405` fall-through to `Rejected(MethodNotAllowed)`. The
         // handler never runs, so there is no body to serialise and the payload
-        // deserialiser is unused (the `405` takes the `Rejected` arm).
-        routes.push_str(&format!(
-            "async function __sysdrive_wrongmethod_{sname}(method: string, path: string) {{\n\
-             \x20 const __h = makeHarness();\n\
-             \x20 const __req = new Request(`https://test${{path}}`, {{ method }});\n\
-             \x20 const __res = await __h.env.{binding}.fetch(__req);\n\
-             \x20 return responseToHttpOutcome(__res, (__j: JsonValue) => Ok(__j as never));\n\
-             }}\n",
-        ));
+        // deserialiser is unused (the `405` takes the `Rejected` arm). Unlike the
+        // per-route drivers' own options object (Decision A above), `{ method }`
+        // is a fixed single shorthand entry — never conditionally empty — so it
+        // matches `TsExpr::Object`'s own real single-line rendering exactly and
+        // is built as a real node, not opaque text.
+        let wrongmethod = TsStmt::decl(
+            TsDecl::Function {
+                name: format!("__sysdrive_wrongmethod_{sname}"),
+                generics: Vec::new(),
+                params: vec![
+                    TsParam {
+                        name: "method".to_string(),
+                        ty: Some(TsType::named("string")),
+                        optional: false,
+                    },
+                    TsParam {
+                        name: "path".to_string(),
+                        ty: Some(TsType::named("string")),
+                        optional: false,
+                    },
+                ],
+                return_type: None,
+                body: vec![
+                    TsStmt::const_stmt(
+                        TsBindingName::Ident("__h".to_string()),
+                        None,
+                        call(ident("makeHarness"), vec![]),
+                        None,
+                    ),
+                    TsStmt::const_stmt(
+                        TsBindingName::Ident("__req".to_string()),
+                        None,
+                        TsExpr::New {
+                            callee: Box::new(ident("Request")),
+                            args: vec![
+                                TsExpr::template_lit(
+                                    vec!["https://test".to_string(), String::new()],
+                                    vec![ident("path")],
+                                ),
+                                TsExpr::object_entries(vec![TsObjectEntry::Shorthand(
+                                    "method".to_string(),
+                                )]),
+                            ],
+                        },
+                        None,
+                    ),
+                    TsStmt::const_stmt(
+                        TsBindingName::Ident("__res".to_string()),
+                        None,
+                        await_expr(method_call(
+                            member(member(ident("__h"), "env"), &binding),
+                            "fetch",
+                            vec![ident("__req")],
+                        )),
+                        None,
+                    ),
+                    TsStmt::return_stmt(
+                        Some(call(
+                            ident("responseToHttpOutcome"),
+                            vec![
+                                ident("__res"),
+                                TsExpr::Arrow {
+                                    params: vec![TsParam {
+                                        name: "__j".to_string(),
+                                        ty: Some(TsType::named("JsonValue")),
+                                        optional: false,
+                                    }],
+                                    is_async: false,
+                                    generics: Vec::new(),
+                                    return_type: None,
+                                    body: Box::new(call(
+                                        ident("Ok"),
+                                        vec![TsExpr::As {
+                                            expr: Box::new(ident("__j")),
+                                            ty: TsType::named("never"),
+                                        }],
+                                    )),
+                                },
+                            ],
+                        )),
+                        None,
+                    ),
+                ],
+                is_async: true,
+                inline: false,
+            },
+            None,
+        );
+        routes.push_str(&bynk_ts::print_stmt(&wrongmethod, 0));
     }
 
     if http_services.is_empty() {
@@ -867,10 +979,54 @@ fn emit_system_http_support(
     // Set each secret the target's actors read, so the real Bearer seam verifies.
     // P7.2: `Record<string, string>` — same reasoning as `__bynkSignHs256`'s own
     // `secret: string` parameter above.
+    let record_string_string = TsType::named_with_args(
+        "Record",
+        vec![TsType::named("string"), TsType::named("string")],
+    );
+    let cast_globalthis_process = |process_optional: bool| -> TsExpr {
+        let env_ty = TsType::Object(vec![TsTypeMember::prop(
+            "env",
+            record_string_string.clone(),
+        )]);
+        let process_member = if process_optional {
+            TsTypeMember::optional_prop("process", env_ty)
+        } else {
+            TsTypeMember::prop("process", env_ty)
+        };
+        TsExpr::As {
+            expr: Box::new(TsExpr::As {
+                expr: Box::new(ident("globalThis")),
+                ty: TsType::named("unknown"),
+            }),
+            ty: TsType::Object(vec![process_member]),
+        }
+    };
     for s in &secrets {
-        out.push_str(&format!(
-            "(globalThis as unknown as {{ process: {{ env: Record<string, string> }} }}).process = (globalThis as unknown as {{ process?: {{ env: Record<string, string> }} }}).process ?? {{ env: {{}} }};\n(globalThis as unknown as {{ process: {{ env: Record<string, string> }} }}).process.env[{s:?}] = \"__bynk_test_secret\";\n"
-        ));
+        let assign_process = TsStmt::assign(
+            member(cast_globalthis_process(false), "process"),
+            TsExpr::Binary {
+                op: TsBinaryOp::NullishCoalescing,
+                left: Box::new(member(cast_globalthis_process(true), "process")),
+                right: Box::new(TsExpr::object(vec![(
+                    "env".to_string(),
+                    TsExpr::object(vec![]),
+                )])),
+            },
+            None,
+        );
+        let assign_secret = TsStmt::assign(
+            TsExpr::Index {
+                object: Box::new(member(
+                    member(cast_globalthis_process(false), "process"),
+                    "env",
+                )),
+                index: Box::new(str_lit(s.clone())),
+            },
+            str_lit("__bynk_test_secret"),
+            None,
+        );
+        out.push_str(&bynk_ts::print_stmt(&assign_process, 0));
+        out.push_str(&bynk_ts::print_stmt(&assign_secret, 0));
     }
     out.push_str(&routes);
     SystemHttpSupport {
@@ -4352,6 +4508,97 @@ fn method_call(object: TsExpr, method: &str, args: Vec<TsExpr>) -> TsExpr {
 
 fn await_expr(expr: TsExpr) -> TsExpr {
     TsExpr::Await(Box::new(expr))
+}
+
+/// A zero-substitution template literal — `` `<text>` `` with `text` already
+/// fully assembled (any `${...}` it contains is baked-in literal text, not a
+/// real substitution `bynk_ts` tracks). Slice F (#1407): `emit_system_http_
+/// support`'s own `concrete_path` (every `:name` path segment already
+/// resolved to `${paramIdent}` text at Rust-`format!` time, per its own doc)
+/// is the real site. Routes through the validated `TsExpr::template_lit`
+/// constructor rather than the bare `TsExpr::TemplateLit { .. }` variant, the
+/// same guard this file's own not-yet-refactored call sites already use
+/// (review of #1408, finding 1).
+fn template(text: impl Into<String>) -> TsExpr {
+    TsExpr::template_lit(vec![text.into()], vec![])
+}
+
+/// One `async function __sysdrive_*` driver: an optional lead statement
+/// (`const __body = JSON.stringify(...)`, typed/no-auth drivers only), `const
+/// __h = makeHarness();`, `const __req = new Request(<url>, <options>);`,
+/// `const __res = await __h.env.<binding>.fetch(__req);`, then `return
+/// <decode_fn>(__res, <payload>);`. Slice F (#1407): the one real shape
+/// shared by all four per-route `__sysdrive_{,raw_,noauth_,rawnoauth_}*`
+/// drivers in `emit_system_http_support`, differing only in name (built here
+/// from `kind_prefix`/`sname`/`key`, one shared spot rather than one
+/// `format!` call per driver kind), params, the optional body statement, the
+/// options object (Decision A, see its own call sites), and the decode
+/// function — every real difference is a parameter here, not a reason to
+/// hand-write four near-identical bodies.
+#[allow(clippy::too_many_arguments)]
+fn sysdrive_driver(
+    kind_prefix: &str,
+    sname: &str,
+    key: &str,
+    mut params: Vec<TsParam>,
+    body_stmt: Option<TsStmt>,
+    url: TsExpr,
+    options: TsExpr,
+    binding: &str,
+    decode_fn: &str,
+    payload: &str,
+) -> String {
+    params.push(TsParam {
+        name: "__sub".to_string(),
+        ty: Some(TsType::named("string")),
+        optional: false,
+    });
+    let mut body = Vec::new();
+    if let Some(stmt) = body_stmt {
+        body.push(stmt);
+    }
+    body.push(TsStmt::const_stmt(
+        TsBindingName::Ident("__h".to_string()),
+        None,
+        call(ident("makeHarness"), vec![]),
+        None,
+    ));
+    body.push(TsStmt::const_stmt(
+        TsBindingName::Ident("__req".to_string()),
+        None,
+        TsExpr::New {
+            callee: Box::new(ident("Request")),
+            args: vec![url, options],
+        },
+        None,
+    ));
+    body.push(TsStmt::const_stmt(
+        TsBindingName::Ident("__res".to_string()),
+        None,
+        await_expr(method_call(
+            member(member(ident("__h"), "env"), binding),
+            "fetch",
+            vec![ident("__req")],
+        )),
+        None,
+    ));
+    body.push(TsStmt::return_stmt(
+        Some(call(ident(decode_fn), vec![ident("__res"), ident(payload)])),
+        None,
+    ));
+    let decl = TsStmt::decl(
+        TsDecl::Function {
+            name: format!("__sysdrive_{kind_prefix}{sname}_{key}"),
+            generics: Vec::new(),
+            params,
+            return_type: None,
+            body,
+            is_async: true,
+            inline: false,
+        },
+        None,
+    );
+    bynk_ts::print_stmt(&decl, 0)
 }
 
 fn and_expr(left: TsExpr, right: TsExpr) -> TsExpr {
