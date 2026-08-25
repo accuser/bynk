@@ -3549,25 +3549,47 @@ pub(crate) fn lower_workers_cross_context_call(
             cx.runtime_use(),
         ));
     }
-    let args_json = if args_serialised.len() == 1 {
-        args_serialised.into_iter().next().unwrap()
+    // Arc C, slice 29 (#1390): `args_json`, `deser_ref`, and the final call
+    // itself now build a real `bynk_ts::TsExpr::Call`, printed through the
+    // new `bynk_ts::print_expr` (#1388) and handed to `pre.finish` exactly
+    // as the old hand-built string was — the P7.9 pattern (`-> Lowered`
+    // stays unchanged; `lower.rs`'s own general dispatch, `pre.absorb`'s own
+    // caller, still just wants a plain string). `args_serialised`'s own
+    // entries and `deser_ref` come from `serialise_expr_via`/
+    // `deserialise_ref_via` (unconverted `emitter::serialisation` siblings)
+    // and stay opaque `TsExpr::Ident` text — the multi-arg object literal
+    // that WRAPS them, though, is real: each param name is already a valid
+    // JS identifier (a service param name), so `TsObjectEntry::Prop`
+    // applies with no escaping concern. The zero-arg case is the SAME
+    // `{  }` (double-space, not the tight `{}` shortcut) quirk #1321
+    // (`workers.rs`'s own `deps` object) and #1327 (`project.rs`'s own
+    // `{ns}Deps`) already found and carried, a third real site now —
+    // `TsExpr::Object`'s own renderer always collapses an empty object to
+    // `{}`, so this one shape stays opaque text too, caught here only by
+    // the zero-diff fixture check (`172_integration_with_capability`), not
+    // reasoned about in the abstract. Review of #1391: kept as three
+    // independent, cross-referenced sites rather than one shared constant
+    // across `emit.rs`/`workers.rs`/`project.rs` — each already carries its
+    // own explanatory comment naming the others, and a shared constant's
+    // only real payoff (staying in sync if this quirk is ever normalised
+    // away) is speculative, not a real need today.
+    let args_json_expr = if args_serialised.is_empty() {
+        bynk_ts::TsExpr::Ident("{  }".to_string())
+    } else if args_serialised.len() == 1 {
+        bynk_ts::TsExpr::Ident(args_serialised.into_iter().next().unwrap())
     } else {
-        // Multi-arg: wrap into an object literal keyed by parameter names.
-        let pairs: Vec<String> = svc
+        let entries: Vec<bynk_ts::TsObjectEntry> = svc
             .params
             .iter()
-            .zip(&args_serialised)
-            .map(|((name, _), serialised)| format!("{name}: {serialised}"))
+            .zip(args_serialised)
+            .map(|((name, _), serialised)| {
+                bynk_ts::TsObjectEntry::Prop(name.clone(), bynk_ts::TsExpr::Ident(serialised))
+            })
             .collect();
-        format!("{{ {} }}", pairs.join(", "))
+        bynk_ts::TsExpr::object_entries(entries)
     };
 
     let deser_ref = deserialise_ref_via(&svc.return_type, &ns, cx.runtime_use());
-
-    // v0.54: stamp the calling context's qualified name so the callee's
-    // `by c: Caller` handler reads a live `CallerId` (Q7). A compile-time
-    // constant; the args body is unchanged.
-    let caller = escape_ts_string(&cx.commons().commons.name.joined());
 
     // v0.177 (#643): stamp this context's compiled view of the callee's
     // contract, so the callee can fail closed when the deployed pair disagree.
@@ -3587,10 +3609,30 @@ pub(crate) fn lower_workers_cross_context_call(
         ),
     };
 
-    pre.finish(format!(
-        "callService(deps.env.{binding}, \"{}\", {args_json}, {deser_ref}, \"{caller}\", \"{contract}\")",
-        method.name
-    ))
+    let call_expr = bynk_ts::TsExpr::Call {
+        callee: Box::new(bynk_ts::TsExpr::Ident("callService".to_string())),
+        args: vec![
+            bynk_ts::TsExpr::Member {
+                object: Box::new(bynk_ts::TsExpr::Member {
+                    object: Box::new(bynk_ts::TsExpr::Ident("deps".to_string())),
+                    property: "env".to_string(),
+                }),
+                property: binding,
+            },
+            bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(method.name.clone())),
+            args_json_expr,
+            bynk_ts::TsExpr::Ident(deser_ref),
+            // v0.54: stamp the calling context's qualified name so the
+            // callee's `by c: Caller` handler reads a live `CallerId` (Q7).
+            // A compile-time constant; the args body is unchanged. Raw
+            // text, not `escape_ts_string`'s own pre-escaped output —
+            // `TsLit::Str`'s own renderer applies the identical escaping
+            // itself (documented byte-for-byte match, #1388).
+            bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(cx.commons().commons.name.joined())),
+            bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(contract)),
+        ],
+    };
+    pre.finish(bynk_ts::print_expr(&call_expr))
 }
 
 /// If `receiver` is a dotted chain or single ident that matches one of the
@@ -3661,7 +3703,18 @@ pub(crate) fn param_cast(
         // brand discriminants are incompatible. Bynk guarantees the value's
         // base type matches at the boundary, so route through `unknown` to
         // tell TypeScript to trust the structural Bynk-side check.
-        return format!("({arg} as unknown as {ns}.{name})");
+        //
+        // Arc C, slice 29 (#1390): `arg as unknown as {ns}.{name}` is a
+        // nested `As`-under-`As` chain — the same shape #1385 (slice 27)
+        // already found the printer's own operand-parenthesisation rule
+        // would wrongly wrap in an extra pair (`(arg as unknown) as T`
+        // instead of the real, parenless `arg as unknown as T`) — so the
+        // whole double cast stays one opaque `TsExpr::Ident`, wrapped in a
+        // real `TsExpr::Paren` for the real outer parens, printed through
+        // `bynk_ts::print_expr` (#1388).
+        return bynk_ts::print_expr(&bynk_ts::TsExpr::Paren(Box::new(bynk_ts::TsExpr::Ident(
+            format!("{arg} as unknown as {ns}.{name}"),
+        ))));
     }
     arg
 }
