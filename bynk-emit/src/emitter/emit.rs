@@ -5784,6 +5784,19 @@ fn ws_attachment_deps_arg(seam: &Option<bynk_check::actors::BearerSeam>) -> Stri
 /// decodes the raw frame against the service's `in:` type first — a malformed frame
 /// closes the socket (`1003`/`1008`) and is never dispatched (the client-bytes trust
 /// boundary).
+///
+/// Arc C, slice 26 (#1382): both methods convert to real
+/// `bynk_ts::TsClassMethod` fragments, printed through `print_class_method`.
+/// Unlike every prior Arc C slice, this function lowers no `.bynk` body at
+/// all (it has no `LowerCtx`, no `body_smb`, no `source_map` parameter) — it
+/// is pure dispatch plumbing, so there is nothing to merge back into a
+/// module source map, and every statement below builds through real
+/// `TsStmt`/`TsExpr` nodes rather than one opaque `Raw` blob, mirroring
+/// `loadState`'s own (#1371) "pure boilerplate converts fully" precedent.
+/// The two `try { ... } catch { ... }` lines and the `void`-suppression
+/// line stay opaque `TsStmt::raw` text — see the proposal issue (#1382) for
+/// why (`TryCatch`'s own renderer has no single-line form, and no
+/// `TsUnaryOp::Void` exists for a single real call site).
 fn emit_ws_dispatch_handlers(
     out: &mut String,
     host: &WsOpenHost<'_>,
@@ -5800,6 +5813,76 @@ fn emit_ws_dispatch_handlers(
     // emitted code stays free of `@cloudflare/workers-types`.
     let ws_ty = "{ deserializeAttachment(): unknown; send(data: string): void; close(code?: number, reason?: string): void }";
     let deps_arg = ws_attachment_deps_arg(&host.seam);
+    let att_or_null = bynk_ts::TsType::union(vec![
+        bynk_ts::TsType::named(att_ty),
+        bynk_ts::TsType::named("null"),
+    ]);
+    // `const __att = ws.deserializeAttachment() as {att_ty} | null;` / the
+    // missing-session guard / `const connection = new WorkersConnection<...>`
+    // — identical in both branches below (the pre-conversion `writeln!` code
+    // duplicated this same text too), factored once so the two call sites
+    // can't independently drift.
+    let att_guard = |stmts: &mut Vec<bynk_ts::TsStmt>| {
+        stmts.push(bynk_ts::TsStmt::const_stmt(
+            bynk_ts::TsBindingName::Ident("__att".to_string()),
+            None,
+            bynk_ts::TsExpr::As {
+                expr: Box::new(bynk_ts::TsExpr::Call {
+                    callee: Box::new(bynk_ts::TsExpr::Member {
+                        object: Box::new(bynk_ts::TsExpr::Ident("ws".to_string())),
+                        property: "deserializeAttachment".to_string(),
+                    }),
+                    args: Vec::new(),
+                }),
+                ty: att_or_null.clone(),
+            },
+            None,
+        ));
+        stmts.push(bynk_ts::TsStmt::if_stmt(
+            bynk_ts::TsExpr::Binary {
+                op: bynk_ts::TsBinaryOp::StrictEq,
+                left: Box::new(bynk_ts::TsExpr::Ident("__att".to_string())),
+                right: Box::new(bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Null)),
+            },
+            bynk_ts::TsStmt::inline_block(
+                vec![
+                    bynk_ts::TsStmt::expr_stmt(
+                        bynk_ts::TsExpr::Call {
+                            callee: Box::new(bynk_ts::TsExpr::Member {
+                                object: Box::new(bynk_ts::TsExpr::Ident("ws".to_string())),
+                                property: "close".to_string(),
+                            }),
+                            args: vec![
+                                bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Num("1011".to_string())),
+                                bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str("no session".to_string())),
+                            ],
+                        },
+                        None,
+                    ),
+                    bynk_ts::TsStmt::return_stmt(None, None),
+                ],
+                None,
+            ),
+            None,
+        ));
+        stmts.push(bynk_ts::TsStmt::const_stmt(
+            bynk_ts::TsBindingName::Ident("connection".to_string()),
+            None,
+            bynk_ts::TsExpr::New {
+                callee: Box::new(bynk_ts::TsExpr::Ident(format!(
+                    "WorkersConnection<{out_ts}>"
+                ))),
+                args: vec![
+                    bynk_ts::TsExpr::Ident("ws".to_string()),
+                    bynk_ts::TsExpr::Member {
+                        object: Box::new(bynk_ts::TsExpr::Ident("__att".to_string())),
+                        property: "connId".to_string(),
+                    },
+                ],
+            },
+            None,
+        ));
+    };
 
     if let Some(m) = host.message {
         let method = ws_message_do_method_name(host.service);
@@ -5819,39 +5902,66 @@ fn emit_ws_dispatch_handlers(
             )
         });
         let decode = serialisation::deserialise_expr(&in_type, "__json", "frame", runtime_use);
-        writeln!(
-            out,
-            "  async webSocketMessage(ws: {ws_ty}, message: string | ArrayBuffer): Promise<void> {{"
-        )
-        .unwrap();
-        writeln!(
-            out,
-            "    const __att = ws.deserializeAttachment() as {att_ty} | null;\n    if (__att === null) {{ ws.close(1011, \"no session\"); return; }}"
-        )
-        .unwrap();
-        writeln!(
-            out,
-            "    const connection = new WorkersConnection<{out_ts}>(ws, __att.connId);"
-        )
-        .unwrap();
-        writeln!(out, "    let __raw: string;").unwrap();
-        writeln!(
-            out,
-            "    try {{ __raw = typeof message === \"string\" ? message : new TextDecoder().decode(message); }} catch {{ ws.close(1003, \"unreadable frame\"); return; }}"
-        )
-        .unwrap();
-        writeln!(out, "    let __json: JsonValue;").unwrap();
-        writeln!(
-            out,
-            "    try {{ __json = JSON.parse(__raw) as JsonValue; }} catch {{ ws.close(1003, \"malformed frame\"); return; }}"
-        )
-        .unwrap();
-        writeln!(out, "    const __dec = {decode};").unwrap();
-        writeln!(
-            out,
-            "    if (__dec.tag === \"Err\") {{ ws.close(1008, \"invalid frame\"); return; }}"
-        )
-        .unwrap();
+        let mut stmts = Vec::new();
+        att_guard(&mut stmts);
+        stmts.push(bynk_ts::TsStmt::let_stmt(
+            bynk_ts::TsBindingName::Ident("__raw".to_string()),
+            Some(bynk_ts::TsType::named("string")),
+            None,
+            None,
+        ));
+        stmts.push(bynk_ts::TsStmt::raw(
+            "    try { __raw = typeof message === \"string\" ? message : new TextDecoder().decode(message); } catch { ws.close(1003, \"unreadable frame\"); return; }\n",
+            None,
+        ));
+        stmts.push(bynk_ts::TsStmt::let_stmt(
+            bynk_ts::TsBindingName::Ident("__json".to_string()),
+            Some(bynk_ts::TsType::named("JsonValue")),
+            None,
+            None,
+        ));
+        stmts.push(bynk_ts::TsStmt::raw(
+            "    try { __json = JSON.parse(__raw) as JsonValue; } catch { ws.close(1003, \"malformed frame\"); return; }\n",
+            None,
+        ));
+        stmts.push(bynk_ts::TsStmt::const_stmt(
+            bynk_ts::TsBindingName::Ident("__dec".to_string()),
+            None,
+            bynk_ts::TsExpr::Ident(decode),
+            None,
+        ));
+        stmts.push(bynk_ts::TsStmt::if_stmt(
+            bynk_ts::TsExpr::Binary {
+                op: bynk_ts::TsBinaryOp::StrictEq,
+                left: Box::new(bynk_ts::TsExpr::Member {
+                    object: Box::new(bynk_ts::TsExpr::Ident("__dec".to_string())),
+                    property: "tag".to_string(),
+                }),
+                right: Box::new(bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str("Err".to_string()))),
+            },
+            bynk_ts::TsStmt::inline_block(
+                vec![
+                    bynk_ts::TsStmt::expr_stmt(
+                        bynk_ts::TsExpr::Call {
+                            callee: Box::new(bynk_ts::TsExpr::Member {
+                                object: Box::new(bynk_ts::TsExpr::Ident("ws".to_string())),
+                                property: "close".to_string(),
+                            }),
+                            args: vec![
+                                bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Num("1008".to_string())),
+                                bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(
+                                    "invalid frame".to_string(),
+                                )),
+                            ],
+                        },
+                        None,
+                    ),
+                    bynk_ts::TsStmt::return_stmt(None, None),
+                ],
+                None,
+            ),
+            None,
+        ));
         // The decoded frame fills the param typed as the service `in`; the rest are
         // route values recovered (positionally) from the attachment args.
         let mut call_args = vec!["connection".to_string()];
@@ -5880,36 +5990,96 @@ fn emit_ws_dispatch_handlers(
             }
         }
         call_args.push(deps_arg.clone());
-        writeln!(out, "    await this.{method}({});", call_args.join(", ")).unwrap();
-        writeln!(out, "  }}").unwrap();
+        stmts.push(bynk_ts::TsStmt::expr_stmt(
+            bynk_ts::TsExpr::Await(Box::new(bynk_ts::TsExpr::Call {
+                callee: Box::new(bynk_ts::TsExpr::Ident(format!("this.{method}"))),
+                args: call_args.into_iter().map(bynk_ts::TsExpr::Ident).collect(),
+            })),
+            None,
+        ));
+        let message_method = bynk_ts::TsClassMethod {
+            name: "webSocketMessage".to_string(),
+            private: false,
+            is_async: true,
+            params: vec![
+                bynk_ts::TsParam {
+                    name: "ws".to_string(),
+                    ty: Some(bynk_ts::TsType::named(ws_ty)),
+                    optional: false,
+                },
+                bynk_ts::TsParam {
+                    name: "message".to_string(),
+                    ty: Some(bynk_ts::TsType::union(vec![
+                        bynk_ts::TsType::named("string"),
+                        bynk_ts::TsType::named("ArrayBuffer"),
+                    ])),
+                    optional: false,
+                },
+            ],
+            return_type: Some(bynk_ts::TsType::named_with_args(
+                "Promise",
+                vec![bynk_ts::TsType::named("void")],
+            )),
+            doc: None,
+            body: stmts,
+        };
+        out.push_str(&bynk_ts::print_class_method(&message_method, 0));
         writeln!(out).unwrap();
     }
 
     if let Some(c) = host.close {
         let method = ws_close_do_method_name(host.service);
-        writeln!(
-            out,
-            "  async webSocketClose(ws: {ws_ty}, code: number, reason: string, wasClean: boolean): Promise<void> {{"
-        )
-        .unwrap();
-        writeln!(out, "    void code; void reason; void wasClean;").unwrap();
-        writeln!(
-            out,
-            "    const __att = ws.deserializeAttachment() as {att_ty} | null;\n    if (__att === null) {{ ws.close(1011, \"no session\"); return; }}"
-        )
-        .unwrap();
-        writeln!(
-            out,
-            "    const connection = new WorkersConnection<{out_ts}>(ws, __att.connId);"
-        )
-        .unwrap();
+        let mut stmts = vec![bynk_ts::TsStmt::raw(
+            "    void code; void reason; void wasClean;\n",
+            None,
+        )];
+        att_guard(&mut stmts);
         let mut call_args = vec!["connection".to_string()];
         for (i, p) in c.params.iter().enumerate() {
             call_args.push(format!("__att.args[{i}] as {}", ts_type_ref(&p.type_ref)));
         }
         call_args.push(deps_arg);
-        writeln!(out, "    await this.{method}({});", call_args.join(", ")).unwrap();
-        writeln!(out, "  }}").unwrap();
+        stmts.push(bynk_ts::TsStmt::expr_stmt(
+            bynk_ts::TsExpr::Await(Box::new(bynk_ts::TsExpr::Call {
+                callee: Box::new(bynk_ts::TsExpr::Ident(format!("this.{method}"))),
+                args: call_args.into_iter().map(bynk_ts::TsExpr::Ident).collect(),
+            })),
+            None,
+        ));
+        let close_method = bynk_ts::TsClassMethod {
+            name: "webSocketClose".to_string(),
+            private: false,
+            is_async: true,
+            params: vec![
+                bynk_ts::TsParam {
+                    name: "ws".to_string(),
+                    ty: Some(bynk_ts::TsType::named(ws_ty)),
+                    optional: false,
+                },
+                bynk_ts::TsParam {
+                    name: "code".to_string(),
+                    ty: Some(bynk_ts::TsType::named("number")),
+                    optional: false,
+                },
+                bynk_ts::TsParam {
+                    name: "reason".to_string(),
+                    ty: Some(bynk_ts::TsType::named("string")),
+                    optional: false,
+                },
+                bynk_ts::TsParam {
+                    name: "wasClean".to_string(),
+                    ty: Some(bynk_ts::TsType::named("boolean")),
+                    optional: false,
+                },
+            ],
+            return_type: Some(bynk_ts::TsType::named_with_args(
+                "Promise",
+                vec![bynk_ts::TsType::named("void")],
+            )),
+            doc: None,
+            body: stmts,
+        };
+        out.push_str(&bynk_ts::print_class_method(&close_method, 0));
         writeln!(out).unwrap();
     }
 }
