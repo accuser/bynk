@@ -528,6 +528,10 @@ fn render_stmt(out: &mut String, stmt: &TsStmt, depth: usize) {
             render_expr(out, discriminant);
             out.push_str(") {\n");
             for case in cases {
+                debug_assert!(
+                    !(case.test.is_some() && case.default_braced),
+                    "TsSwitchCase.default_braced only means something on the default (test: None) case — review of #1402's own nit"
+                );
                 out.push_str(&indent(depth + 1));
                 match &case.test {
                     Some(test) => {
@@ -1662,7 +1666,24 @@ pub fn print_expr(expr: &TsExpr) -> String {
 /// [`print_type`]'s own scope exactly, and reusing `render_stmt`'s own
 /// exhaustive per-kind dispatch (this module's own private renderer)
 /// rather than a second copy.
+/// Review of #1402: a `TsStmtKind::Raw` nested inside a `Switch` case's own
+/// body (`emit_stub_rhs`'s own `ReturnsEach` dispatch, Arc C slice 33,
+/// `tests_emit.rs` slice C) carries the identical "no indent of its own,
+/// pre-indented at a fixed absolute depth" hazard `render_class_method`'s
+/// and `render_multiline_object_entry`'s own `debug_assert!`s already guard
+/// — `stmt_contains_raw` already recurses into `Switch` cases, so the same
+/// check applies here, this fragment entry point's own first `Raw`-bearing
+/// `Switch` caller. A bare `Raw` passed directly as `stmt` itself is exempt
+/// (not a false negative — `render_stmt`'s own `Raw` arm never reads
+/// `depth` at all, so calling `print_stmt` on a bare `Raw` is safe at any
+/// depth, the established `print_stmt_renders_raw_text_verbatim_with_no_
+/// added_indent_or_punctuation` contract below): only a Raw *nested inside*
+/// a depth-using wrapper (like this `Switch` case) is the real hazard.
 pub fn print_stmt(stmt: &TsStmt, depth: usize) -> String {
+    debug_assert!(
+        depth == 0 || matches!(stmt.kind, TsStmtKind::Raw(_)) || !stmt_contains_raw(stmt),
+        "print_stmt: a Raw-bearing statement's own baked-in indent only matches depth 0"
+    );
     let mut out = String::new();
     render_stmt(&mut out, stmt, depth);
     out

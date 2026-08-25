@@ -1,0 +1,23 @@
+context demo.stubs
+
+capability Vault {
+  fn open() -> Effect[Int]
+  fn peek() -> Effect[Int]
+}
+
+provides Vault = RealVault {
+  fn open() -> Effect[Int] {
+    1
+  }
+  fn peek() -> Effect[Int] {
+    2
+  }
+}
+
+service box {
+  on call() -> Effect[Int] given Vault {
+    let a <- Vault.open()
+    let b <- Vault.peek()
+    a + b
+  }
+}
