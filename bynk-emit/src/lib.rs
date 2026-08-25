@@ -1,6 +1,6 @@
 //! Bynk's TypeScript emission, plus the per-unit build sequencing that drives
 //! it — the layer above `bynk-project` (discovery, the dependency graph),
-//! `bynk-check` (all semantic checking, R3.5), and (since the P7.d1 crate
+//! `bynk-check` (all semantic checking, R3.5), and (since the P7.12 crate
 //! carve) `bynk-ir`/`bynk-lower` (the typed IR and its `&CheckedProgram → Ir`
 //! lowering pass).
 //!

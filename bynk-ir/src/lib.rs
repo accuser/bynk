@@ -1268,7 +1268,7 @@ pub struct SecurityIr {
 /// `bynk_lower::lower_service_item_ir` calls — and nothing in the shipped
 /// emitter constructs a real `IrItem::Service` yet (every call site is this
 /// module's own test suite). Nesting `CacheIr` under `PolicyIr` would land
-/// it inert: real in `ir::lower`'s own tests, with zero effect on any
+/// it inert: real in `bynk_lower`'s own tests, with zero effect on any
 /// emitted route. `@cache` is also handler-scoped, not service-scoped
 /// (`PolicyIr`'s whole shape), so it was never a natural fit regardless.
 /// `bynk_lower::lower_route_cache_ir` is a standalone reader instead, wired
@@ -1757,16 +1757,6 @@ pub struct IrHandler {
     pub method_name: Option<String>,
 }
 
-/// v0.83 (Decision C, #1165): the closed sets of mutating storage-op names,
-/// one `pub` constant per kind group — read by `bynk-lower`'s own
-/// `Callee::Store`-keyed write-detection walk, which needs no receiver-name
-/// gate at all: a `Callee::Store` already carries the field's own resolved
-/// identity, not a name that could be shadowed. Live here (not in
-/// `bynk-emit` or `bynk-lower` specifically) since both a future
-/// `bynk-emit`-side reader and `bynk-lower`'s own `body_writes_state` need
-/// them — moved out of `bynk-emit::emitter` at the P7.d1 crate carve, no
-/// behaviour change. `Map`/`Cache` share one list — both support the same
-/// four entry ops — rather than two identical ones.
 /// Events track, slice 0 (spine #936): does this block contain a real
 /// `Events.emit[...]` call anywhere — including nested branches, match arms,
 /// lambdas, and any other expression position (a `Paren`, an `Ok`/`Err`
@@ -1816,19 +1806,21 @@ pub fn block_uses_emit(b: &Block, callees: &HashMap<ExprId, bynk_check::checker:
 }
 
 /// Decision C (#1165): the closed sets of mutating storage-op names, one
-/// `pub(crate)` constant per kind group — read by `ir::lower`'s own
-/// `Callee::Store`-keyed write-detection walk (P6.8, Decision B;
-/// `bynk_lower::body_writes_state`), which needs no receiver-name
-/// gate at all: a `Callee::Store` already carries the field's own resolved
-/// identity, not a name that could be shadowed. Until #1196, this module
-/// also had its own bare-`Ident`-receiver-name-matching reader
-/// (`block_writes_state`'s own `mutating_op`, deleted) — a single shared
-/// source avoided the class of drift #1164's own review caught twice for a
-/// different pair of independently hand-maintained copies
+/// `pub` constant per kind group — read by `bynk_lower::body_writes_state`'s
+/// own `Callee::Store`-keyed write-detection walk (P6.8, Decision B), which
+/// needs no receiver-name gate at all: a `Callee::Store` already carries the
+/// field's own resolved identity, not a name that could be shadowed. Until
+/// #1196, this module also had its own bare-`Ident`-receiver-name-matching
+/// reader (`block_writes_state`'s own `mutating_op`, deleted) — a single
+/// shared source avoided the class of drift #1164's own review caught twice
+/// for a different pair of independently hand-maintained copies
 /// (`cache_ttl_millis`'s `DurationLit` extraction, `store_map_indexes`'s
-/// dedup); now there is only the one reader, but these stay `pub(crate)`
-/// here (not moved into `ir::lower`) since a future emitter-side reader
-/// (a `Service` handler's own write detection, say) may need them again.
+/// dedup); now there is only the one reader. Live in `bynk-ir` (not
+/// `bynk-emit` or `bynk-lower` specifically, moved here from
+/// `bynk-emit::emitter` at the P7.12 crate carve, no behaviour change)
+/// since a future `bynk-emit`-side reader (a `Service` handler's own write
+/// detection, say) may need them again, the same reasoning that kept them
+/// `pub(crate)` rather than `bynk-lower`-private before the carve.
 /// `Map`/`Cache` share one list — both support the same four entry ops —
 /// rather than two identical ones.
 pub const MUTATING_MAP_CACHE_OPS: &[&str] = &["put", "remove", "update", "upsert"];
@@ -1878,7 +1870,7 @@ pub fn walk_exprs(e: &Expr, f: &mut impl FnMut(&Expr)) {
 /// can never silently disagree. Lives in `bynk-ir` (not `bynk-emit` or
 /// `bynk-lower` specifically) since both `bynk-emit`'s own string emitter and
 /// `bynk-lower`'s IR lowering need it — moved out of `bynk-emit::emitter::lower`
-/// at the P7.d1 crate carve, no behaviour change.
+/// at the P7.12 crate carve, no behaviour change.
 pub fn match_needs_if_chain(arms: &[MatchArm]) -> bool {
     arms.iter().any(|a| {
         a.guard.is_some()

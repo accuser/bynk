@@ -1422,7 +1422,7 @@ fn ide_emit_edge(root: &Path) -> Probe {
 /// The probe itself stays gated, unchanged, reading 5: a regression ratchet phase 7
 /// inherits and drives down as it builds the printer this floor's own residue names.
 ///
-/// **Arc D, P7.d1 (crate carve): `ir.rs`/`ir/lower.rs` drop out of this list
+/// **Arc D, P7.12 (crate carve): `ir.rs`/`ir/lower.rs` drop out of this list
 /// entirely — not because they stopped importing the AST (unchanged, still
 /// do), but because they left `bynk-emit/src` altogether, carved into the new
 /// `bynk-ir`/`bynk-lower` crates ADR 0332 deferred and ADR 0385 triggered.**
@@ -1604,7 +1604,7 @@ fn emit_abi_shapes(root: &Path) -> Probe {
 ///
 /// (`ir/lower.rs` — Rust-internal `String` values stored on `Ir*` struct fields during
 /// the checker→IR lowering pass, never emitted syntax — was excluded here for the same
-/// reason until Arc D's P7.d1 crate carve moved it to `bynk-lower` entirely, outside
+/// reason until Arc D's P7.12 crate carve moved it to `bynk-lower` entirely, outside
 /// this probe's own `bynk-emit/src` universe; no exclusion needed for a file this probe
 /// no longer walks.)
 const TS_WRITES_EXCLUDED_FILES: &[&str] = &[
@@ -2276,7 +2276,7 @@ mod tests {
     /// path-prefix rule (e.g. "only `emitter/**` counts") would have excluded
     /// `project.rs` right along with the legitimate ones, silently undercounting
     /// real work. (`ir.rs`/`ir/lower.rs`, the lowering pass's own former `Ast → Ir`
-    /// exclusion, left this list at Arc D's P7.d1 crate carve — they left
+    /// exclusion, left this list at Arc D's P7.12 crate carve — they left
     /// `bynk-emit/src` entirely, not merely this list.)
     #[test]
     fn ast_importer_exclusion_is_named_not_prefixed() {
@@ -2322,7 +2322,7 @@ mod tests {
     /// `emitter/serialisation.rs`'s phase-7 codec renderer), while `emitter.rs`/
     /// `emitter/lower.rs`/`emitter/workers.rs` do not. `ir.rs`/`ir/lower.rs` (the
     /// lowering pass's own former `Ast → Ir` pair, excluded here until Arc D's
-    /// P7.d1 crate carve) are asserted absent below for a different reason now:
+    /// P7.12 crate carve) are asserted absent below for a different reason now:
     /// they left `bynk-emit/src` entirely, so `ast_importer_files` never walks
     /// them at all, named exclusion or not.
     ///
@@ -2349,10 +2349,10 @@ mod tests {
                     .replace('\\', "/")
             })
             .collect();
-        assert!(!counted.contains("ir.rs"), "moved to bynk-ir at P7.d1");
+        assert!(!counted.contains("ir.rs"), "moved to bynk-ir at P7.12");
         assert!(
             !counted.contains("ir/lower.rs"),
-            "moved to bynk-lower at P7.d1"
+            "moved to bynk-lower at P7.12"
         );
         assert!(!counted.contains("project/tests_emit.rs"));
         assert!(!counted.contains("emitter/serialisation.rs"));
@@ -3183,7 +3183,7 @@ commons app.demo {
         // `emitter/lower.rs` (the emitter's own lowering pass) is genuinely
         // TS-producing and must stay counted — unlike `ir/lower.rs` (the checker→IR
         // pass), which isn't a name-proximity risk at all any more: it left
-        // `bynk-emit/src` entirely at Arc D's P7.d1 crate carve.
+        // `bynk-emit/src` entirely at Arc D's P7.12 crate carve.
         assert!(!is_ts_writes_excluded_file(Path::new("emitter/lower.rs")));
         assert!(!is_ts_writes_excluded_file(Path::new("ir/lower.rs")));
         assert!(!is_ts_writes_excluded_file(Path::new("emitter.rs")));

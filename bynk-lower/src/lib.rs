@@ -5,7 +5,7 @@
 //! [`IrStmt`] arm is a `todo!()` naming the slice that completes it
 //! (Decision D).
 //!
-//! **Correction (Arc D, P7.d1): the claim this paragraph made through the
+//! **Correction (Arc D, P7.12): the claim this paragraph made through the
 //! crate carve — "nothing in this module is called from anywhere in
 //! `bynk-emit`'s existing emission path... it has no consumer yet" — was
 //! false and is corrected here rather than left standing.** `lower_service_
@@ -220,7 +220,7 @@ impl<'a> LowerIrCtx<'a> {
             .unwrap_or_else(|| {
                 panic!(
                     "bynk internal error (ADR 0334): no recorded type for {id:?} — \
-                     bynk-emit::ir::lower and bynk-check disagree about which \
+                     bynk_lower and bynk-check disagree about which \
                      expressions this certified unit contains"
                 )
             })
@@ -266,7 +266,7 @@ impl<'a> LowerIrCtx<'a> {
 /// than an unknown declared type. Shared by [`lower_fn_body_ir`] and
 /// [`lower_fn_item_ir`] so the two can never independently drift on which
 /// names are rigid for the same `f`: both functions' own `ADR 0334` panic
-/// text warns specifically against `bynk-emit::ir::lower`'s `type_vars`
+/// text warns specifically against `bynk_lower`'s `type_vars`
 /// disagreeing with `bynk-check`'s `Ctx::type_vars`, and a hand-duplicated
 /// copy of this exact computation would be one more place that guarantee
 /// could quietly stop holding.
@@ -383,7 +383,7 @@ pub fn lower_fn_body_ir(f: &FnDecl, program: &CheckedProgram) -> IrExpr {
             panic!(
                 "bynk internal error (ADR 0334): parameter `{}`'s type does not resolve in this \
                  pass's own rigid-variable scope, but the checker already accepted this fn body — \
-                 bynk-emit::ir::lower's type_vars disagrees with bynk-check's Ctx::type_vars",
+                 bynk_lower's type_vars disagrees with bynk-check's Ctx::type_vars",
                 p.name.name
             )
         });
@@ -585,7 +585,7 @@ fn lower_handler_signature_ir(h: &Handler, cx: &LowerIrCtx) -> HandlerSignatureI
 /// running backwards, an `Ir`-side lowering function reaching into the
 /// `emitter` module it should only ever be called *from*. `emit.rs` and
 /// friends now call `bynk_lower::is_effectful_return` instead (relocated
-/// again at the P7.d1 crate carve — `emitter`/`ir::lower` are now separate
+/// again at the P7.12 crate carve — `emitter`/`ir::lower` are now separate
 /// crates, `bynk-emit`/`bynk-lower` respectively).
 pub fn is_effectful_return(r: &TypeRef) -> bool {
     matches!(r, TypeRef::Effect(_, _))
@@ -986,7 +986,7 @@ pub fn lower_fn_item_ir(f: &Arc<FnDecl>, program: &CheckedProgram) -> IrItem {
                 panic!(
                     "bynk internal error (ADR 0334): parameter `{}`'s type does not resolve in \
                      this pass's own rigid-variable scope, but the checker already accepted \
-                     this fn — bynk-emit::ir::lower's type_vars disagrees with bynk-check's \
+                     this fn — bynk_lower's type_vars disagrees with bynk-check's \
                      Ctx::type_vars",
                     p.name.name
                 )
@@ -2200,7 +2200,7 @@ fn lower_provider_op_ir(op: &ProviderOp, program: &CheckedProgram) -> ProviderOp
                 panic!(
                     "bynk internal error (ADR 0334): parameter `{}`'s type does not resolve in \
                      this pass's own scope, but the checker already accepted this provider op's \
-                     body via check_handler_body — bynk-emit::ir::lower's resolution disagrees \
+                     body via check_handler_body — bynk_lower's resolution disagrees \
                      with bynk-check's",
                     p.name.name
                 )
@@ -3427,7 +3427,7 @@ fn lower_lambda_ir(e: &Expr, lambda: &LambdaExpr, cx: &mut LowerIrCtx) -> IrExpr
         lambda.params.len(),
         param_tys.len(),
         "bynk internal error (ADR 0334): a Lambda's own recorded Ty::Fn has a different arity \
-         than its own AST params — bynk-emit::ir::lower and bynk-check disagree about this \
+         than its own AST params — bynk_lower and bynk-check disagree about this \
          lambda's shape"
     );
     cx.push_scope();

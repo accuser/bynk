@@ -1042,7 +1042,7 @@ fn build_emit_unit_ctx(
     // emission (the resolver stores instance/static methods in `HashMap`s).
     //
     // P6.18: each method's own `params`/`return_type` now resolve to a real
-    // `TyId` (`ir::lower::lower_attached_fn_sig_ir_from_types`) against the
+    // `TyId` (`bynk_lower::lower_attached_fn_sig_ir_from_types`) against the
     // *declaring* unit's own visible types, rather than carrying the raw
     // `FnDecl` (and its unresolved `TypeRef`s) all the way to
     // `emit_forwarded_methods`. `Free`-named entries (never present in
@@ -1442,7 +1442,7 @@ fn check_unit_files(
         // the walk itself (including the `ServiceProtocol::Events`
         // pre-filter guarding `lower_service_item_ir` — see that
         // function's own doc comment for why the guard stays) relocated to
-        // `ir::lower::lower_event_subscriber_shapes_ir`, an excluded file.
+        // `bynk_lower::lower_event_subscriber_shapes_ir`, an excluded file.
         event_subscriber_shapes.extend(bynk_lower::lower_event_subscriber_shapes_ir(&program));
         emit_unit(
             name,
