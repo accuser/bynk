@@ -206,6 +206,8 @@ name = "bynk-emit"
 version = "0.289.0"
 dependencies = [
  "bynk-check",
+ "bynk-ir",
+ "bynk-lower",
  "bynk-project",
  "bynk-syntax",
  "bynk-ts",
@@ -238,6 +240,24 @@ version = "0.289.0"
 dependencies = [
  "bynk-check",
  "bynk-fmt",
+ "bynk-project",
+ "bynk-syntax",
+]
+
+[[package]]
+name = "bynk-ir"
+version = "0.289.0"
+dependencies = [
+ "bynk-check",
+ "bynk-syntax",
+]
+
+[[package]]
+name = "bynk-lower"
+version = "0.289.0"
+dependencies = [
+ "bynk-check",
+ "bynk-ir",
  "bynk-project",
  "bynk-syntax",
 ]

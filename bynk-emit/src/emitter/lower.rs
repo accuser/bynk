@@ -13,8 +13,8 @@ use bynk_syntax::ast::{
     PredKind, Refinement, Statement, TypeBody, TypeDecl, TypeRef, UnaryOp,
 };
 
-use crate::ir::lower::is_effectful_return;
-use crate::ir::{ConstVal, EventPatternIr, EventPatternValueIr, IrHttpMethod};
+use bynk_ir::{ConstVal, EventPatternIr, EventPatternValueIr, IrHttpMethod};
+use bynk_lower::is_effectful_return;
 
 use super::*;
 
@@ -72,7 +72,7 @@ pub fn lower_test_case_body(
     typed: &mut TypedCommons,
     cross_context: &bynk_check::resolver::CrossContextInfo,
     test_services: HashSet<String>,
-    test_service_handlers: HashMap<String, Vec<crate::ir::IrHandlerKind>>,
+    test_service_handlers: HashMap<String, Vec<bynk_ir::IrHandlerKind>>,
     test_agents: HashSet<String>,
     source: &str,
     rel_path: &str,
@@ -1150,13 +1150,13 @@ pub(crate) fn lower_expr(e: &Expr, cx: &mut LowerCtx) -> Lowered {
 /// declarations in scope (v0.117). Used to destructure a recorded call's
 /// arguments for a `with` predicate and to build `trace(Cap.op)` records.
 /// P6.29 (design/tracks/the-ir.md §6a): the declaration lookup itself now reads
-/// `crate::ir::lower::capability_op_sig_from_commons` — still a by-name walk
+/// `bynk_lower::capability_op_sig_from_commons` — still a by-name walk
 /// under the hood (nothing IR-native replaces "find the op named `op` on the
 /// capability named `cap`"), but relocated to `ir/lower.rs` (excluded from
 /// `ast_importers` — the `Ast → Ir` lowering pass's own job), so this file no
 /// longer spells `bynk_syntax::ast::CommonsItem` itself.
 fn cap_op_param_names(cx: &LowerCtx, cap: &str, op: &str) -> Vec<String> {
-    crate::ir::lower::capability_op_sig_from_commons(cx.commons(), cap, op)
+    bynk_lower::capability_op_sig_from_commons(cx.commons(), cap, op)
         .map(|sig| sig.params.into_iter().map(|(name, _)| name).collect())
         .unwrap_or_default()
 }
@@ -2190,7 +2190,7 @@ fn lower_method_call(
             {
                 let mut idx = 0usize;
                 for h in handlers {
-                    if let crate::ir::IrHandlerKind::Cron { expr: e } = h {
+                    if let bynk_ir::IrHandlerKind::Cron { expr: e } = h {
                         if e == expr {
                             break;
                         }
@@ -2206,7 +2206,7 @@ fn lower_method_call(
             if method.name == "message"
                 && handlers
                     .iter()
-                    .any(|h| matches!(h, crate::ir::IrHandlerKind::Message))
+                    .any(|h| matches!(h, bynk_ir::IrHandlerKind::Message))
             {
                 // A `from queue` service binds exactly one queue and declares one
                 // `on message` handler, so the position index is 0.
@@ -5146,7 +5146,7 @@ fn build_match_iife(
     out.push_str("((__d) => {\n");
     // ADR 0169: nested/guarded matches lower to an if-chain (which emits its own
     // per-arm bodies and trailing `throw`); flat/unguarded matches keep the switch.
-    if match_needs_if_chain(arms) {
+    if bynk_ir::match_needs_if_chain(arms) {
         emit_match_if_chain(&mut out, "__d", disc_ty, arms, cx, INDENT_STEP * 2, false);
     } else {
         for _ in 0..(INDENT_STEP * 2) {
@@ -5267,7 +5267,7 @@ fn emit_match_tail(
     }
     // ADR 0169: nested/guarded matches lower to an if-chain; flat/unguarded
     // matches keep the `switch`.
-    if match_needs_if_chain(arms) {
+    if bynk_ir::match_needs_if_chain(arms) {
         emit_match_if_chain(out, &disc, &disc_ty, arms, cx, indent, async_tail);
         return;
     }
@@ -5445,53 +5445,6 @@ fn emit_match_body(
     }
 }
 
-/// A match needs the if/else-if lowering (ADR 0169) when any arm carries a guard
-/// or a refutable nested payload pattern — a JS `switch` on `.tag` can express
-/// neither. Flat, unguarded matches keep the `switch` (zero churn to existing
-/// output).
-///
-/// `pub(crate)` since P6.5 (#1159, Decision B) — `bynk-emit::ir::lower`
-/// reuses this pure predicate verbatim to decide `MatchForm`, rather than
-/// re-deriving an equivalent one over `IrPat`'s own shape, so the string
-/// emitter's own if-chain-vs-switch choice and the IR's own recorded `form`
-/// can never silently disagree.
-pub(crate) fn match_needs_if_chain(arms: &[MatchArm]) -> bool {
-    arms.iter().any(|a| {
-        a.guard.is_some()
-            || pattern_has_nested_test(&a.pattern)
-            || matches!(a.pattern, Pattern::Refined { .. })
-    })
-}
-
-/// True when `pat` carries a payload sub-pattern that is itself refutable (a
-/// nested variant/literal) — i.e. it cannot be tested by a single `.tag` switch.
-fn pattern_has_nested_test(pat: &Pattern) -> bool {
-    match pat {
-        Pattern::Variant { bindings, .. } => bindings.iter().any(|b| {
-            let sp = b.pattern();
-            !sp.is_irrefutable() || pattern_has_nested_test(sp)
-        }),
-        // #472: a refined pattern is never a top-level irrefutable/nested
-        // payload today (the parser admits only `_` as `inner`, and only at a
-        // match arm's top level), but keep this exhaustive and correct for
-        // when nesting is admitted. (An `Or`'s alternatives can never
-        // themselves be `Refined` — #472/#474's merged parser design only
-        // ever wraps a *whole*, already-folded `|`-chain in `Refined`, never
-        // the other way around — so this arm only matters nested under a
-        // payload, e.g. a hypothetical `Some(_ where P)`.)
-        Pattern::Refined { inner, .. } => !inner.is_irrefutable() || pattern_has_nested_test(inner),
-        // #474: a bindingless, non-nested or-pattern (`1 | 2 | 3`,
-        // `Pending | Cancelled(_, _)`) stays on the flat switch — it lowers to
-        // fall-through `case` labels sharing one body. One with bindings or a
-        // nested refutable payload needs the if-chain (a `switch` can't bind
-        // different alternatives' fields to the same name).
-        Pattern::Or(alts, _) => alts
-            .iter()
-            .any(|p| !p.bound_names().is_empty() || pattern_has_nested_test(p)),
-        _ => false,
-    }
-}
-
 /// Emit the boolean tests that must hold for `pattern` to match the value at
 /// runtime `path` (static type `path_ty`). Irrefutable patterns add nothing;
 /// nested variant/literal payloads recurse into `path.<field>`.
@@ -5576,8 +5529,8 @@ fn pattern_match_tests(
 
 /// #1187's slice 5 (the `Service` emitter cutover): the JS boolean guard for
 /// a `from Events(E { field: value, .. })` subscription filter, AND-joining
-/// one test per listed field — reads [`crate::ir::EventPatternIr`] (already
-/// resolved by [`crate::ir::lower::lower_protocol_ir`]) rather than the raw
+/// one test per listed field — reads [`bynk_ir::EventPatternIr`] (already
+/// resolved by [`bynk_lower::lower_protocol_ir`]) rather than the raw
 /// AST `EventPattern`; [`EventPatternValueIr`]'s own doc comment already
 /// named this function as its sole intended consumer, never wired up until
 /// now (the AST-driven original this replaces produced byte-identical guard

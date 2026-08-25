@@ -3,9 +3,26 @@
 //! `Local`, `Global`, `Record`, `Field`, `List`, `Block`, `If`, `And`, `Or`,
 //! `Not`, `Return`, `Await`, `Send`, `Pure`); every other [`IrExprKind`]/
 //! [`IrStmt`] arm is a `todo!()` naming the slice that completes it
-//! (Decision D). Nothing in this module is called from anywhere in
-//! `bynk-emit`'s existing emission path (`emitter.rs`/`emitter/lower.rs`) —
-//! it has no consumer yet, so it cannot change any emitted output.
+//! (Decision D).
+//!
+//! **Correction (Arc D, P7.d1): the claim this paragraph made through the
+//! crate carve — "nothing in this module is called from anywhere in
+//! `bynk-emit`'s existing emission path... it has no consumer yet" — was
+//! false and is corrected here rather than left standing.** `lower_service_
+//! item_ir` unconditionally lowers every handler's own *body*, and is
+//! reached for real from `bynk_check`-typed `Events`-protocol services via
+//! `lower_event_subscriber_shapes_ir` (`bynk-emit/src/project.rs`), reaching
+//! `lower_service_handler_ir` → `lower_service_handler_body_ir` →
+//! `lower_block_ir` → `lower_expr_ir`/`lower_stmt_ir` and the rest of this
+//! module's own recursive expression-lowering machinery — real, live,
+//! production code, verified panic-free across the whole e2e fixture corpus
+//! by a `catch_unwind` safety probe (see `lower_service_item_ir`'s own doc
+//! comment). A handful of top-level item constructors genuinely have no
+//! caller outside this crate's own test suite (`lower_agent_item_ir`,
+//! `lower_provider_item_ir`, `lower_fn_item_ir`, and the handler/store-field/
+//! invariant/transition helpers only those three call) — each of those is
+//! real test-harness infrastructure for the shared lowering machinery above,
+//! not dead code, per this crate carve's own accepted proposal issue.
 //!
 //! **Totality discipline (ADR 0334, Q2):** every entry point here takes a
 //! `&CheckedProgram`, not a bare `&TypedCommons` — a certified program only,
@@ -31,16 +48,14 @@ use bynk_syntax::ast::{
 };
 use bynk_syntax::span::Span;
 
-use crate::emitter::{
-    MUTATING_CELL_OPS, MUTATING_LOG_OPS, MUTATING_MAP_CACHE_OPS, MUTATING_SET_OPS, block_uses_emit,
-    match_needs_if_chain,
-};
-use crate::ir::{
+use bynk_ir::{
     ActorBinder, ActorSeamIr, BindingMode, CacheIr, CapRefIr, CommitShape, ConnectionBinder,
     ConstVal, CorsIr, EventPatternIr, EventPatternValueIr, EventSubscriberShape, Exhaustive, FnSig,
     GlobalRef, IndexIr, IrArm, IrBinOp, IrExpr, IrExprKind, IrHandler, IrHandlerKind, IrHttpMethod,
-    IrInterpPart, IrItem, IrPat, IrPredicate, IrStmt, MatchForm, OpSig, PolicyIr, ProtocolIr,
-    ProviderBody, ProviderOpIr, SecurityIr, StoreFieldIr, StoreKindIr, TypeShape,
+    IrInterpPart, IrItem, IrPat, IrPredicate, IrStmt, MUTATING_CELL_OPS, MUTATING_LOG_OPS,
+    MUTATING_MAP_CACHE_OPS, MUTATING_SET_OPS, MatchForm, OpSig, PolicyIr, ProtocolIr, ProviderBody,
+    ProviderOpIr, SecurityIr, StoreFieldIr, StoreKindIr, TypeShape, block_uses_emit,
+    match_needs_if_chain,
 };
 
 /// The lowering pass's own working state: the certified program's typed
@@ -56,7 +71,7 @@ use crate::ir::{
 /// (`bynk-check/src/checker.rs:2816`); `resolve_type_ref` (no `vars` set)
 /// would otherwise resolve a rigid `T` as an unknown declared type and
 /// silently fail.
-pub(crate) struct LowerIrCtx<'a> {
+pub struct LowerIrCtx<'a> {
     program: &'a TypedCommons,
     scopes: Vec<HashMap<String, TyId>>,
     type_vars: HashSet<String>,
@@ -100,8 +115,8 @@ pub(crate) struct LowerIrCtx<'a> {
     /// field names — the ones [`lower_handler_body_ir`] deliberately does
     /// *not* bind into `scopes` (only `Cell` fields are, v0.81's "implicit
     /// deref" rule) because they are not ordinary locals: a bare reference
-    /// lowers to [`crate::ir::IrExprKind::StoreQuery`], not
-    /// [`crate::ir::IrExprKind::Local`]. Set once via
+    /// lowers to [`bynk_ir::IrExprKind::StoreQuery`], not
+    /// [`bynk_ir::IrExprKind::Local`]. Set once via
     /// [`LowerIrCtx::set_store_queryable`], empty (and never consulted) for
     /// every other construction site — mirrors [`LowerIrCtx::return_ty`]'s
     /// own "`None`/empty everywhere but the one real body-lowering entry
@@ -352,7 +367,7 @@ fn wrap_body_return(block: IrExpr) -> IrExpr {
 /// [`lower_service_handler_body_ir`] (P6.11, #1171) is the third sibling on
 /// the same rule, not a second widening — a service handler's own scope
 /// (`params`/`binder` only) is disjoint from both of the other two.
-pub(crate) fn lower_fn_body_ir(f: &FnDecl, program: &CheckedProgram) -> IrExpr {
+pub fn lower_fn_body_ir(f: &FnDecl, program: &CheckedProgram) -> IrExpr {
     let type_vars = fn_rigid_type_vars(f, program.program());
     let mut cx = LowerIrCtx::new(program, type_vars);
     cx.set_return_ty(cx.resolve_type_ref(&f.return_type));
@@ -393,7 +408,7 @@ pub(crate) fn lower_fn_body_ir(f: &FnDecl, program: &CheckedProgram) -> IrExpr {
 /// [`lower_store_field_ir`]. `binder` is not bound into scope: this entry
 /// point is only ever reached from [`lower_handler_ir`]'s own agent-only
 /// path ([DECISION D]), where `binder` is `None` unconditionally
-/// ([`crate::ir::IrHandler`]'s own doc comment). As of P6.11 (#1171) a real
+/// ([`bynk_ir::IrHandler`]'s own doc comment). As of P6.11 (#1171) a real
 /// service-handler caller does exist — [`lower_service_handler_body_ir`] —
 /// and it is a sibling of this function, not a widening of it; that
 /// function's own doc comment names the scope-seeding differences in full.
@@ -412,7 +427,7 @@ pub(crate) fn lower_fn_body_ir(f: &FnDecl, program: &CheckedProgram) -> IrExpr {
 /// same idea one step further: a bare `store Map`/`store Log` field is not a
 /// `Local` (it is not bound into `scopes` at all — a `Map`/`Log` is not a
 /// value type, [`StoreField`]'s own doc comment), so [`lower_ident_ir`]
-/// needs a second table to classify it as [`crate::ir::IrExprKind::StoreQuery`]
+/// needs a second table to classify it as [`bynk_ir::IrExprKind::StoreQuery`]
 /// instead of falling through to the same `todo!()`.
 fn lower_handler_body_ir(
     h: &Handler,
@@ -453,7 +468,7 @@ fn lower_handler_body_ir(
 /// produced via those same two functions — this function only threads them
 /// into [`lower_commit_shape_ir`], never lowers or re-derives them itself. A
 /// future `IrItem::Agent` builder (not commissioned by this slice — see
-/// [`crate::ir::IrItem`]'s own doc comment) computes all four once per agent
+/// [`bynk_ir::IrItem`]'s own doc comment) computes all four once per agent
 /// and calls this function once per handler, not re-deriving any of them per
 /// call.
 ///
@@ -469,7 +484,7 @@ fn lower_handler_body_ir(
 /// it; see that function's own doc comment for the three reasons the split
 /// is deliberate, and this function's own `by_clause.is_none()` assert
 /// below for the guard widening would have deleted.
-pub(crate) fn lower_handler_ir(
+pub fn lower_handler_ir(
     h: &Handler,
     store_cells: &HashMap<String, TyId>,
     store_queryable: &HashSet<String>,
@@ -522,7 +537,7 @@ pub(crate) fn lower_handler_ir(
 /// 5), reused as a named alias rather than a bare tuple at both call sites
 /// once one of them (`emit_service`, `bynk-emit/src/emitter/emit.rs`) had to
 /// spell it out in a function signature.
-pub(crate) type HandlerSignatureIr = (Vec<(String, TyId)>, Vec<String>, TyId, bool);
+pub type HandlerSignatureIr = (Vec<(String, TyId)>, Vec<String>, TyId, bool);
 
 /// A handler's own `params`/`given`/`effectful` — the one part of
 /// [`IrHandler`] construction genuinely identical between an agent handler
@@ -566,18 +581,20 @@ fn lower_handler_signature_ir(h: &Handler, cx: &LowerIrCtx) -> HandlerSignatureI
 /// original home, `#[allow(dead_code)]`-free and with eight call sites
 /// across `emit.rs`/`workers.rs`/`workers_entry.rs`) because
 /// [`lower_service_handler_signature_ir`] below was already calling *up*
-/// into it (`crate::emitter::is_effectful_return`) — the `Ast → Ir` boundary
+/// into it (`bynk_emit::emitter::is_effectful_return`) — the `Ast → Ir` boundary
 /// running backwards, an `Ir`-side lowering function reaching into the
 /// `emitter` module it should only ever be called *from*. `emit.rs` and
-/// friends now call `crate::ir::lower::is_effectful_return` instead.
-pub(crate) fn is_effectful_return(r: &TypeRef) -> bool {
+/// friends now call `bynk_lower::is_effectful_return` instead (relocated
+/// again at the P7.d1 crate carve — `emitter`/`ir::lower` are now separate
+/// crates, `bynk-emit`/`bynk-lower` respectively).
+pub fn is_effectful_return(r: &TypeRef) -> bool {
     matches!(r, TypeRef::Effect(_, _))
 }
 
 /// #1187's slice 5 (the `Service` emitter cutover): `emit_service`'s own
 /// standalone entry point for a handler's resolved *signature* only —
 /// `params`/`ret`/`effectful`, never the body. Deliberately does not build
-/// a real [`IrHandler`]/[`crate::ir::IrItem::Service`]: both
+/// a real [`IrHandler`]/[`bynk_ir::IrItem::Service`]: both
 /// [`lower_handler_ir`]/[`lower_service_handler_ir`] unconditionally lower
 /// the handler's own body into a real `IrExpr` (`IrHandler::body` is not
 /// `Option`), and an ordinary `from http` handler's body routinely uses `?`
@@ -625,7 +642,7 @@ pub(crate) fn is_effectful_return(r: &TypeRef) -> bool {
 /// silently flip an `Effect[Nope]`-returning handler to non-effectful; the
 /// top-level `Effect[...]` wrapper is always syntactically determinable
 /// regardless of whether its own inner type resolves.
-pub(crate) fn lower_service_handler_signature_ir(
+pub fn lower_service_handler_signature_ir(
     h: &Handler,
     program: &CheckedProgram,
 ) -> HandlerSignatureIr {
@@ -769,7 +786,7 @@ fn lower_service_handler_body_ir(
 /// `cx.lookup` like any other bound name, and carried on [`IrHandler`]
 /// itself for any consumer that needs the owned/borrowed distinction
 /// without re-deriving it from `kind`/`protocol`.
-pub(crate) fn lower_service_handler_ir(
+pub fn lower_service_handler_ir(
     h: &Handler,
     protocol: &ServiceProtocol,
     program: &CheckedProgram,
@@ -859,7 +876,7 @@ pub(crate) fn lower_service_handler_ir(
 /// unit's build-wide gate is decided), so accepting one here would make
 /// `resolve_type_ref_in` returning `None` a reachable, not just a buggy,
 /// outcome.
-pub(crate) fn lower_type_item_ir(decl: &Arc<TypeDecl>, program: &CheckedProgram) -> IrItem {
+pub fn lower_type_item_ir(decl: &Arc<TypeDecl>, program: &CheckedProgram) -> IrItem {
     let program = program.program();
     let type_vars: HashSet<String> = decl
         .type_params
@@ -957,7 +974,7 @@ pub(crate) fn lower_type_item_ir(decl: &Arc<TypeDecl>, program: &CheckedProgram)
 /// below, not because this constructor itself keeps a copy any more — P6.39
 /// dropped `IrItem::Fn::def` (no production reader ever read it back; this
 /// constructor has no production call site at all today either).
-pub(crate) fn lower_fn_item_ir(f: &Arc<FnDecl>, program: &CheckedProgram) -> IrItem {
+pub fn lower_fn_item_ir(f: &Arc<FnDecl>, program: &CheckedProgram) -> IrItem {
     let type_vars = fn_rigid_type_vars(f, program.program());
     let cx = LowerIrCtx::new(program, type_vars);
     let receiver = fn_receiver_ty(f, program.program());
@@ -1092,7 +1109,7 @@ fn duration_millis_annotation(
 /// pass consuming the checker's own discarded scratch state across a value
 /// that no longer exists once `check_agent_decls` returns — a real, named
 /// duplication (#1163's own Risks), not a gap this slice closes.
-pub(crate) fn lower_store_field_ir(f: &StoreField, program: &CheckedProgram) -> StoreFieldIr {
+pub fn lower_store_field_ir(f: &StoreField, program: &CheckedProgram) -> StoreFieldIr {
     let mut cx = LowerIrCtx::new(program, HashSet::new());
     let (kind, indexed) = store_field_kind_and_indexed(f, &cx);
     // [DECISION D]: only a `Cell` field's `init` is ever lowered.
@@ -1191,7 +1208,7 @@ fn store_field_kind_and_indexed(f: &StoreField, cx: &LowerIrCtx) -> (StoreKindIr
 /// (`store_field_cell_option_init_none_lowers_without_panicking`). This
 /// function's callers never need `init` at all regardless, so neither gap
 /// is a risk for them.
-pub(crate) fn lower_store_field_shape_ir(f: &StoreField, program: &CheckedProgram) -> StoreFieldIr {
+pub fn lower_store_field_shape_ir(f: &StoreField, program: &CheckedProgram) -> StoreFieldIr {
     let cx = LowerIrCtx::new(program, HashSet::new());
     let (kind, indexed) = store_field_kind_and_indexed(f, &cx);
     StoreFieldIr {
@@ -1214,7 +1231,7 @@ pub(crate) fn lower_store_field_shape_ir(f: &StoreField, program: &CheckedProgra
 /// persisted to `TypedCommons`. Called once per agent's own invariant list,
 /// by whichever future slice builds `IrItem::Agent` for real — not once per
 /// handler, mirroring `check_invariants`'s own once-per-agent posture.
-pub(crate) fn lower_invariant_ir(
+pub fn lower_invariant_ir(
     inv: &Invariant,
     store_cells: &HashMap<String, TyId>,
     program: &CheckedProgram,
@@ -1238,7 +1255,7 @@ pub(crate) fn lower_invariant_ir(
 /// past `check_agent_decls`'s own transient scope. Called once per agent's
 /// own transition list, by the same future caller [`lower_invariant_ir`]
 /// names.
-pub(crate) fn lower_transition_ir(
+pub fn lower_transition_ir(
     tr: &Transition,
     state_ty: TyId,
     program: &CheckedProgram,
@@ -1278,7 +1295,7 @@ pub(crate) fn lower_transition_ir(
 /// `mutating_op` cannot false-positive here at all, the exact fix Decision
 /// B's own Risk names, and the exact defect `#1196_agent_write_detection_
 /// via_resolved_callee`'s own fixture pins at the emitted-output level.
-pub(crate) fn body_writes_state(body: &Block, program: &TypedCommons) -> bool {
+pub fn body_writes_state(body: &Block, program: &TypedCommons) -> bool {
     fn is_mutating_store_write(e: &Expr, program: &TypedCommons) -> bool {
         match program.callees.get(&e.id) {
             Some(Callee::Store { op, .. }) => {
@@ -1330,13 +1347,13 @@ pub(crate) fn body_writes_state(body: &Block, program: &TypedCommons) -> bool {
 /// P6.8 ([DECISION B]/[DECISION D]/[DECISION F], #1165): decide a handler
 /// body's own one-of-three [`CommitShape`] from resolved data —
 /// [`body_writes_state`]'s own write-detection walk, plus `emits` ([DECISION
-/// D]: the caller's own `crate::emitter::block_uses_emit(body)` call, not
+/// D]: the caller's own `bynk_emit::emitter::block_uses_emit(body)` call, not
 /// re-derived here — no `Callee` classification exists for `Events.emit` to
 /// consume instead, see that decision's own grounding). Does not lower
 /// `body` into an `IrExpr` tree first ([DECISION B]) — deciding the shape
 /// only needs the two booleans, and lowering the whole body just to throw
 /// the result away would be pure waste; a real `IrHandler.body` lowering is
-/// a separate, not-yet-commissioned step (see [`crate::ir::IrItem`]'s own
+/// a separate, not-yet-commissioned step (see [`bynk_ir::IrItem`]'s own
 /// doc comment).
 ///
 /// Shape-agnostic between an agent and a service handler ([DECISION F]) — no
@@ -1347,7 +1364,7 @@ pub(crate) fn body_writes_state(body: &Block, program: &TypedCommons) -> bool {
 /// store fields to write), so `Transactional` is never constructed for one —
 /// matching the shipped emitter's own `emit_service`, which already only
 /// ever produces the other two shapes.
-pub(crate) fn lower_commit_shape_ir(
+pub fn lower_commit_shape_ir(
     body: &Block,
     invariants: &[IrPredicate],
     transitions: &[IrPredicate],
@@ -1415,10 +1432,7 @@ fn lower_event_pattern_ir(pattern: &EventPattern) -> EventPatternIr {
 /// Panicking here would make this the second ADR-0334 site in this module
 /// asserting a guarantee the checker doesn't actually give — the first
 /// being `lower_agent_item_ir`'s own `key_ty`, review of #1169.
-pub(crate) fn lower_protocol_ir(
-    protocol: &ServiceProtocol,
-    program: &CheckedProgram,
-) -> ProtocolIr {
+pub fn lower_protocol_ir(protocol: &ServiceProtocol, program: &CheckedProgram) -> ProtocolIr {
     lower_protocol_ir_from_commons(protocol, program.program())
 }
 
@@ -1430,7 +1444,7 @@ pub(crate) fn lower_protocol_ir(
 /// emission loop any `CheckedProgram` is threaded through). Sound for the
 /// identical reason: this function never calls `LowerIrCtx::expr_ty`, the
 /// one method whose `.expect()`-panic needs a genuinely certified program.
-pub(crate) fn lower_protocol_ir_from_commons(
+pub fn lower_protocol_ir_from_commons(
     protocol: &ServiceProtocol,
     commons: &TypedCommons,
 ) -> ProtocolIr {
@@ -1484,7 +1498,7 @@ pub(crate) fn lower_protocol_ir_from_commons(
 /// Every field here is exactly one already-shipped typed accessor's return
 /// value (`CorsPolicy::origins()`/`credentials()`/`allow_headers()`/
 /// `max_age_secs()`, `SecurityPolicy::nosniff()`/`hsts_max_age_secs()`,
-/// `LimitsPolicy::max_body()`) — see [`crate::ir::PolicyIr`]'s own doc
+/// `LimitsPolicy::max_body()`) — see [`bynk_ir::PolicyIr`]'s own doc
 /// comment for why interpreting through these, not passing the raw AST
 /// struct through, is the point of this constructor. The `security: None`
 /// arm materialises `SecurityIr { nosniff: true, hsts_max_age_secs: None }`
@@ -1516,7 +1530,7 @@ fn lower_policy_ir(service: &ServiceDecl) -> Option<PolicyIr> {
 }
 
 /// #1228: a GET handler's own `@cache(maxAge:, scope:)` freshness policy —
-/// [`crate::ir::CacheIr`]'s own doc comment has the full grounding for why
+/// [`bynk_ir::CacheIr`]'s own doc comment has the full grounding for why
 /// this is a standalone reader rather than a `PolicyIr` field. Field-for-
 /// field the same extraction `emitter/workers_entry.rs`'s own (now
 /// superseded) `cache_policy_for` did: only a `GET` yields a policy;
@@ -1527,7 +1541,7 @@ fn lower_policy_ir(service: &ServiceDecl) -> Option<PolicyIr> {
 /// argues for: `maxAge`/`scope` are already-resolved syntactic literals
 /// (`ExprKind::DurationLit`/`Ident`), not a type this pass would ever need
 /// to resolve.
-pub(crate) fn lower_route_cache_ir(h: &Handler) -> Option<CacheIr> {
+pub fn lower_route_cache_ir(h: &Handler) -> Option<CacheIr> {
     if !matches!(
         h.kind,
         HandlerKind::Http {
@@ -1575,7 +1589,7 @@ pub(crate) fn lower_route_cache_ir(h: &Handler) -> Option<CacheIr> {
 /// applies. No `&CheckedProgram` needed, same reasoning as
 /// [`lower_route_cache_ir`]: `maxBody` is an already-resolved
 /// `ExprKind::IntLit`, not a type.
-pub(crate) fn lower_route_limit_ir(h: &Handler) -> Option<i64> {
+pub fn lower_route_limit_ir(h: &Handler) -> Option<i64> {
     let ann = h.annotations.iter().find(|a| a.name.name == "limit")?;
     for arg in &ann.args {
         if arg.label.as_ref().map(|l| l.name.as_str()) == Some("maxBody")
@@ -1589,7 +1603,7 @@ pub(crate) fn lower_route_limit_ir(h: &Handler) -> Option<i64> {
 }
 
 /// P6.10 (#1169): assemble an agent declaration into a real
-/// [`crate::ir::IrItem::Agent`] — wires every prior slice's own standalone
+/// [`bynk_ir::IrItem::Agent`] — wires every prior slice's own standalone
 /// constructor ([`lower_store_field_ir`] since P6.7, [`lower_invariant_ir`]/
 /// [`lower_transition_ir`]/[`lower_commit_shape_ir`] since P6.8,
 /// [`lower_handler_ir`] since P6.9) rather than re-deriving any of their
@@ -1610,7 +1624,7 @@ pub(crate) fn lower_route_limit_ir(h: &Handler) -> Option<i64> {
 /// carries the slices it was handed without using them, the same "pass
 /// what a callee needs, let it decide whether to use it" posture
 /// [`lower_commit_shape_ir`]'s own `emits` parameter already established.
-pub(crate) fn lower_agent_item_ir(agent: &AgentDecl, program: &CheckedProgram) -> IrItem {
+pub fn lower_agent_item_ir(agent: &AgentDecl, program: &CheckedProgram) -> IrItem {
     let cx = LowerIrCtx::new(program, HashSet::new());
     // Not an ADR 0334 `.expect()`-style panic, deliberately: unlike a
     // handler param/return type, `agent.key_type` is never actually
@@ -1702,7 +1716,7 @@ pub(crate) fn lower_agent_item_ir(agent: &AgentDecl, program: &CheckedProgram) -
 }
 
 /// P6.11 (#1171): assemble a service declaration into a real
-/// [`crate::ir::IrItem::Service`] — structural mirror of
+/// [`bynk_ir::IrItem::Service`] — structural mirror of
 /// [`lower_agent_item_ir`], wiring [`lower_protocol_ir`],
 /// [`lower_service_handler_ir`] and [`lower_policy_ir`] rather than
 /// re-deriving any of their logic. Unlike the agent case, there is no
@@ -1723,7 +1737,7 @@ pub(crate) fn lower_agent_item_ir(agent: &AgentDecl, program: &CheckedProgram) -
 /// them; this is stated so a future reader who sees `ServiceDecl::default_by`/
 /// `default_given` unread by this function knows that is correct, not an
 /// omission.
-pub(crate) fn lower_service_item_ir(service: &ServiceDecl, program: &CheckedProgram) -> IrItem {
+pub fn lower_service_item_ir(service: &ServiceDecl, program: &CheckedProgram) -> IrItem {
     IrItem::Service {
         def: service.name.name.clone(),
         protocol: lower_protocol_ir(&service.protocol, program),
@@ -1737,7 +1751,7 @@ pub(crate) fn lower_service_item_ir(service: &ServiceDecl, program: &CheckedProg
 }
 
 /// P6.47 (design/tracks/the-ir.md §6b): every `from Events(E)` service in
-/// `program`'s own unit, captured as an [`crate::ir::EventSubscriberShape`]
+/// `program`'s own unit, captured as an [`bynk_ir::EventSubscriberShape`]
 /// keyed by service name — see that struct's own doc comment for why this is
 /// captured now rather than re-derived cross-unit at compose time. Absorbs
 /// the `ServiceProtocol::Events` pre-filter this function's own single call
@@ -1749,7 +1763,7 @@ pub(crate) fn lower_service_item_ir(service: &ServiceDecl, program: &CheckedProg
 /// of #1254: a `catch_unwind` probe wrapping [`lower_service_item_ir`] across
 /// the entire e2e fixture corpus found zero panics, down from ~51 when the
 /// P6.23 investigation first ran.
-pub(crate) fn lower_event_subscriber_shapes_ir(
+pub fn lower_event_subscriber_shapes_ir(
     program: &CheckedProgram,
 ) -> HashMap<String, EventSubscriberShape> {
     let mut out = HashMap::new();
@@ -1789,12 +1803,12 @@ pub(crate) fn lower_event_subscriber_shapes_ir(
 }
 
 /// P6.12 (#1173): assemble a capability declaration into a real
-/// [`crate::ir::IrItem::Capability`] — structural mirror of
+/// [`bynk_ir::IrItem::Capability`] — structural mirror of
 /// [`lower_service_item_ir`]/[`lower_agent_item_ir`], but with nothing to
 /// compute once and share: `CapabilityDecl` carries no state/invariants/
 /// transitions/protocol of its own, only `ops`, so each op lowers
 /// independently through [`lower_op_sig_ir`].
-pub(crate) fn lower_capability_item_ir(cap: &CapabilityDecl, program: &CheckedProgram) -> IrItem {
+pub fn lower_capability_item_ir(cap: &CapabilityDecl, program: &CheckedProgram) -> IrItem {
     IrItem::Capability {
         def: cap.name.name.clone(),
         ops: cap
@@ -1819,7 +1833,7 @@ pub(crate) fn lower_capability_item_ir(cap: &CapabilityDecl, program: &CheckedPr
 /// `TypedCommons::commons.items` the same way the code it replaces did.
 /// First match in item order; `None` on no match, mirroring the caller's own
 /// prior fallthrough-to-empty behaviour exactly.
-pub(crate) fn capability_op_sig_from_commons(
+pub fn capability_op_sig_from_commons(
     commons: &TypedCommons,
     cap: &str,
     op: &str,
@@ -1839,7 +1853,7 @@ pub(crate) fn capability_op_sig_from_commons(
 }
 
 /// P6.12 (#1173): lower one capability operation's own signature into a real
-/// [`crate::ir::OpSig`] — the reference's own `IrItem::Capability` sketch
+/// [`bynk_ir::OpSig`] — the reference's own `IrItem::Capability` sketch
 /// names this type (`ops: Vec<OpSig>`) but never defines it. Resolves
 /// `params`/`return_ty` in the scope `op.type_params` names, the same
 /// per-op rigid-variable seeding `context_checks::build_capability_op_info`
@@ -1889,7 +1903,7 @@ fn lower_op_sig_ir(op: &CapabilityOp, program: &CheckedProgram) -> OpSig {
 /// everywhere else. `resolve_type_ref`/`unit_ty()` (below) both degrade via
 /// `.unwrap_or_else` and read nothing `TypedCommons` doesn't already expose
 /// directly.
-pub(crate) fn lower_op_sig_ir_from_commons(op: &CapabilityOp, commons: &TypedCommons) -> OpSig {
+pub fn lower_op_sig_ir_from_commons(op: &CapabilityOp, commons: &TypedCommons) -> OpSig {
     let type_vars: HashSet<String> = op
         .type_params
         .iter()
@@ -1921,7 +1935,7 @@ pub(crate) fn lower_op_sig_ir_from_commons(op: &CapabilityOp, commons: &TypedCom
     }
 }
 
-/// P6.18: [`crate::ir::FnSig`]'s own constructor — a `fn`'s own resolved
+/// P6.18: [`bynk_ir::FnSig`]'s own constructor — a `fn`'s own resolved
 /// signature, for a call site holding only that fn's *declaring* unit's own
 /// combined types (`bynk_check::symbols::combined_types_for`'s return shape),
 /// never a `CheckedProgram`. The one real call site
@@ -1943,7 +1957,7 @@ pub(crate) fn lower_op_sig_ir_from_commons(op: &CapabilityOp, commons: &TypedCom
 /// never renders `self`'s own type through this value at all (it takes the
 /// *consumer* context's own rebranded type name directly), so resolving
 /// `fn_receiver_ty` here would be dead work.
-pub(crate) fn lower_fn_sig_ir_from_types(
+pub fn lower_fn_sig_ir_from_types(
     f: &FnDecl,
     types: &HashMap<String, Arc<TypeDecl>>,
     tys: &Types,
@@ -1987,7 +2001,7 @@ pub(crate) fn lower_fn_sig_ir_from_types(
 /// posture one step earlier — this just moves that posture in front of the
 /// lowering call instead of behind it, so the `FnName` read (and the filter
 /// itself) never has to leave this module.
-pub(crate) fn lower_attached_fn_sig_ir_from_types(
+pub fn lower_attached_fn_sig_ir_from_types(
     mt: &MethodTable,
     types: &HashMap<String, Arc<TypeDecl>>,
     tys: &Types,
@@ -2004,7 +2018,7 @@ pub(crate) fn lower_attached_fn_sig_ir_from_types(
 /// conversion — every field is already fully resolved at parse time, so
 /// unlike almost every other function in this module this one takes no
 /// `&CheckedProgram`/`&TypedCommons` at all and can never miss.
-pub(crate) fn lower_handler_kind_ir(k: &HandlerKind) -> IrHandlerKind {
+pub fn lower_handler_kind_ir(k: &HandlerKind) -> IrHandlerKind {
     match k {
         HandlerKind::Call => IrHandlerKind::Call,
         HandlerKind::Http { method, path } => IrHandlerKind::Http {
@@ -2031,9 +2045,9 @@ fn lower_http_method_ir(m: HttpMethod) -> IrHttpMethod {
 }
 
 /// P6.14 (#1174): assemble a provider declaration into a real
-/// [`crate::ir::IrItem::Provider`] — reads `ProviderDecl::external`
+/// [`bynk_ir::IrItem::Provider`] — reads `ProviderDecl::external`
 /// straight into [`ProviderBody`]'s own `Bynk`/`External` dispatch
-/// ([`crate::ir::IrItem`]'s own doc comment has the full grounding for why
+/// ([`bynk_ir::IrItem`]'s own doc comment has the full grounding for why
 /// this, unlike `Actor`, was buildable this slice). `external: true` means
 /// `ops` is empty by the field's own doc comment
 /// (`bynk-syntax/src/ast.rs:592-595`) — nothing to lower. `given` lowers
@@ -2043,7 +2057,7 @@ fn lower_http_method_ir(m: HttpMethod) -> IrHttpMethod {
 /// regardless of `external`, and [`ProviderBody::Bynk`]'s own doc comment
 /// names why it, unlike `module`, is not deferrable — that reasoning always
 /// applied to `External` too, just wasn't wired through).
-pub(crate) fn lower_provider_item_ir(provider: &ProviderDecl, program: &CheckedProgram) -> IrItem {
+pub fn lower_provider_item_ir(provider: &ProviderDecl, program: &CheckedProgram) -> IrItem {
     let given = lower_provider_given_ir(provider);
     let body = if provider.external {
         ProviderBody::External { given }
@@ -2084,7 +2098,7 @@ pub(crate) fn lower_provider_item_ir(provider: &ProviderDecl, program: &CheckedP
 /// never touches `ops`/bodies, so it carries none of that risk;
 /// [`lower_provider_item_ir`] itself now calls it too, rather than
 /// hand-duplicating the one-line `map`.
-pub(crate) fn lower_provider_given_ir(provider: &ProviderDecl) -> Vec<CapRefIr> {
+pub fn lower_provider_given_ir(provider: &ProviderDecl) -> Vec<CapRefIr> {
     provider.given.iter().map(lower_cap_ref_ir).collect()
 }
 
@@ -2096,7 +2110,7 @@ pub(crate) fn lower_provider_given_ir(provider: &ProviderDecl) -> Vec<CapRefIr> 
 /// Reuses [`lower_cap_ref_ir`] verbatim; a handler's `given` is syntactically
 /// identical to a provider's (`bynk_syntax::ast::CapRef`), so this is the
 /// same one-line adapter, not a new design.
-pub(crate) fn lower_handler_given_ir(h: &Handler) -> Vec<CapRefIr> {
+pub fn lower_handler_given_ir(h: &Handler) -> Vec<CapRefIr> {
     h.given.iter().map(lower_cap_ref_ir).collect()
 }
 
@@ -2121,10 +2135,7 @@ pub(crate) fn lower_handler_given_ir(h: &Handler) -> Vec<CapRefIr> {
 /// resolver with nothing to collapse against — converting them to build a
 /// five-variant enum just to immediately match out one arm would add
 /// indirection without removing any real duplication.
-pub(crate) fn lower_actor_seam_ir(
-    handler: &Handler,
-    actors: &HashMap<String, ActorDecl>,
-) -> ActorSeamIr {
+pub fn lower_actor_seam_ir(handler: &Handler, actors: &HashMap<String, ActorDecl>) -> ActorSeamIr {
     if let Some(members) = bynk_check::actors::sum_members_for(handler, actors) {
         return ActorSeamIr::Sum(members);
     }
@@ -2141,7 +2152,7 @@ pub(crate) fn lower_actor_seam_ir(
 }
 
 /// P6.14 (#1174, review of #1186): adapt one `given` entry into a real
-/// [`crate::ir::CapRefIr`] — [`CapRefIr`]'s own doc comment has the full
+/// [`bynk_ir::CapRefIr`] — [`CapRefIr`]'s own doc comment has the full
 /// grounding for the `QualifiedName -> String` flattening and for why a
 /// `Some` prefix is preserved unresolved.
 fn lower_cap_ref_ir(cap_ref: &CapRef) -> CapRefIr {
@@ -2152,7 +2163,7 @@ fn lower_cap_ref_ir(cap_ref: &CapRef) -> CapRefIr {
 }
 
 /// P6.14 (#1174): lower one provider operation's own signature *and* body
-/// into a real [`crate::ir::ProviderOpIr`] — a new sibling of
+/// into a real [`bynk_ir::ProviderOpIr`] — a new sibling of
 /// [`lower_fn_body_ir`], not a widening of it, seeding a scope with just
 /// this op's own `params` (no `self`, no store cells: `check_provider_decls`
 /// checks every op via `checker::check_handler_body` with
@@ -2161,7 +2172,7 @@ fn lower_cap_ref_ir(cap_ref: &CapRef) -> CapRefIr {
 /// need no scope entry of their own, resolved the same already-generic
 /// `Callee`-wrapping [`lower_handler_body_ir`]'s own doc comment credits for
 /// handler bodies). No rigid type variables: `ProviderOp` carries no
-/// `type_params` of its own ([`crate::ir::ProviderOpIr`]'s own doc comment
+/// `type_params` of its own ([`bynk_ir::ProviderOpIr`]'s own doc comment
 /// has the full contrast with [`OpSig::type_params`]).
 ///
 /// **ADR 0334 panic-on-miss, not [`lower_op_sig_ir`]'s lenient `Ty::Unit`
@@ -2218,7 +2229,7 @@ fn lower_provider_op_ir(op: &ProviderOp, program: &CheckedProgram) -> ProviderOp
 /// Lower a block as a value — no `Return` wrapping (see
 /// [`lower_fn_body_ir`]'s doc comment for the distinction). A block's own
 /// type is always its tail's type.
-pub(crate) fn lower_block_ir(block: &Block, cx: &mut LowerIrCtx) -> IrExpr {
+pub fn lower_block_ir(block: &Block, cx: &mut LowerIrCtx) -> IrExpr {
     cx.push_scope();
     let stmts: Vec<IrStmt> = block
         .statements
@@ -2892,7 +2903,7 @@ fn fold_or_ir(terms: Vec<IrExpr>, bool_ty: TyId, span: Span) -> IrExpr {
     })
 }
 
-pub(crate) fn lower_expr_ir(e: &Expr, cx: &mut LowerIrCtx) -> IrExpr {
+pub fn lower_expr_ir(e: &Expr, cx: &mut LowerIrCtx) -> IrExpr {
     let ty = cx.expr_ty(e.id);
     let span = e.span;
     match &e.kind {
@@ -7634,7 +7645,7 @@ agent Widget {
     #[test]
     fn commit_shape_flush_events_for_an_emit_only_body() {
         // `emits` is a plain parameter ([DECISION D]) — the shipped
-        // `crate::emitter::block_uses_emit(body)` is the real caller's own
+        // `bynk_emit::emitter::block_uses_emit(body)` is the real caller's own
         // computation, reused verbatim rather than re-derived here, so this
         // pins `lower_commit_shape_ir`'s own decision given a non-writing
         // body and `emits: true` directly, independent of exercising

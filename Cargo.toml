@@ -4,6 +4,8 @@ members = [
     "bynk-ts",
     "bynk-render",
     "bynk-check",
+    "bynk-ir",
+    "bynk-lower",
     "bynk-project",
     "bynk-emit",
     "bynk-driver",
@@ -67,6 +69,8 @@ bynk-syntax = { path = "bynk-syntax", version = "0.289.0" }
 bynk-ts = { path = "bynk-ts", version = "0.289.0" }
 bynk-render = { path = "bynk-render", version = "0.289.0" }
 bynk-check = { path = "bynk-check", version = "0.289.0" }
+bynk-ir = { path = "bynk-ir", version = "0.289.0" }
+bynk-lower = { path = "bynk-lower", version = "0.289.0" }
 bynk-project = { path = "bynk-project", version = "0.289.0" }
 bynk-emit = { path = "bynk-emit", version = "0.289.0" }
 bynk-driver = { path = "bynk-driver", version = "0.289.0" }

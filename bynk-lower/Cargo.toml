@@ -1,0 +1,21 @@
+[package]
+name = "bynk-lower"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Bynk's &CheckedProgram -> Ir lowering pass: the fn/handler/item/expression/statement constructors bynk-emit calls to build bynk-ir values. Carved out of bynk-emit alongside bynk-ir (ADR 0332's deferred split, ADR 0385's trigger)."
+keywords = ["compiler", "dsl", "ir", "language"]
+categories = ["compilers"]
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+bynk-syntax.workspace = true
+bynk-check.workspace = true
+bynk-ir.workspace = true
+
+[dev-dependencies]
+bynk-project.workspace = true
