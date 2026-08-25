@@ -23,7 +23,7 @@ Track slice T0.0 (#999); `ts_writes`/`ts_any` added by P7.0 (#1296); `verbatim_o
 | `verbatim_sites` | yes | 5 |
 | `wildcard_arms` | no (trend) | 316 |
 | `keep_in_sync` | no (trend) | 231 |
-| `test_density` | no (trend) | bynk=13.6%, bynk-check=9.2%, bynk-driver=22.3%, bynk-emit=22.4%, bynk-fmt=15.6%, bynk-grammar=33.2%, bynk-ide=40.9%, bynk-lsp=35.7%, bynk-project=33.6%, bynk-render=41.8%, bynk-strip=53.5%, bynk-syntax=10.7%, bynk-testkit=0.0%, bynk-ts=57.4%, bynk-wasm=45.1%, bynkc=0.0%, xtask=37.6% |
+| `test_density` | no (trend) | bynk=13.6%, bynk-check=9.2%, bynk-driver=22.3%, bynk-emit=22.5%, bynk-fmt=15.6%, bynk-grammar=33.2%, bynk-ide=40.9%, bynk-lsp=35.7%, bynk-project=33.6%, bynk-render=41.8%, bynk-strip=53.5%, bynk-syntax=10.7%, bynk-testkit=0.0%, bynk-ts=57.4%, bynk-wasm=45.1%, bynkc=0.0%, xtask=37.6% |
 | `fixture_kinds` | no (trend) | contains=3, absent=2, diagnostics=5, error=424 |
 
 ## Rules closed

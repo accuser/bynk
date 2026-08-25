@@ -554,12 +554,7 @@ fn emit_integration_module(
     let dispatch_stmts: Vec<TsStmt> = cases
         .iter()
         .enumerate()
-        .map(|(idx, input)| {
-            run_dispatch_stmt(
-                &emitter::escape_ts_string(&input.case.name),
-                &case_runners[idx],
-            )
-        })
+        .map(|(idx, input)| run_dispatch_stmt(&input.case.name, &case_runners[idx]))
         .collect();
     out.push_str(&bynk_ts::print_stmt(&build_run_function(dispatch_stmts), 0));
 
@@ -2097,8 +2092,7 @@ fn emit_test_module(
         };
         for case in &test_decl.cases {
             let runner_name = &case_runners[case_index];
-            let escaped = emitter::escape_ts_string(&case.name);
-            dispatch_stmts.push(run_dispatch_stmt(&escaped, runner_name));
+            dispatch_stmts.push(run_dispatch_stmt(&case.name, runner_name));
             case_index += 1;
         }
     }
@@ -2109,8 +2103,7 @@ fn emit_test_module(
         };
         for prop in &test_decl.properties {
             let runner_name = &prop_runners[prop_index];
-            let escaped = emitter::escape_ts_string(&prop.name);
-            dispatch_stmts.push(run_dispatch_stmt(&escaped, runner_name));
+            dispatch_stmts.push(run_dispatch_stmt(&prop.name, runner_name));
             prop_index += 1;
         }
     }
@@ -2121,8 +2114,10 @@ fn emit_test_module(
             continue;
         };
         let runner_name = &prop_runners[prop_index];
-        let escaped = emitter::escape_ts_string(&format!("contract {}", fname.name));
-        dispatch_stmts.push(run_dispatch_stmt(&escaped, runner_name));
+        dispatch_stmts.push(run_dispatch_stmt(
+            &format!("contract {}", fname.name),
+            runner_name,
+        ));
         prop_index += 1;
     }
     out.push_str(&bynk_ts::print_stmt(&build_run_function(dispatch_stmts), 0));
@@ -4741,25 +4736,33 @@ fn or_expr(left: TsExpr, right: TsExpr) -> TsExpr {
     }
 }
 
-/// `if (want("{escaped}")) results.push({ name: "{escaped}", ...(await
+/// `if (want("{name}")) results.push({ name: "{name}", ...(await
 /// {runner_name}()) });` — one dispatch line of a module's own `run(only)`
 /// runner. Slice G (#1409): the identical shape `emit_integration_module`'s
 /// own per-case loop and `emit_test_module`'s own per-case/per-property/
 /// per-attack loops all build, factored into one shared helper rather than
-/// three near-identical call sites. The `...(await …())` spread wraps its
+/// three near-identical call sites. `name` is the raw, decoded case/property
+/// name — `str_lit` routes it through `TsLit::Str`'s own printer escaping,
+/// the same convention this file's own other `str_lit(prop.name.clone())`
+/// sites already use; review of #1410, finding 1: the first draft passed an
+/// already-`emitter::escape_ts_string`-escaped name, which `TsLit::Str`'s
+/// own renderer (deliberately byte-identical to `escape_ts_string`, per its
+/// own doc) then escaped a second time, corrupting any name containing a
+/// quote/backslash/tab/newline — under this algebra, the printer alone owns
+/// escaping. The `...(await …())` spread wraps its
 /// `Await` in an explicit `TsExpr::Paren` — `TsObjectEntry::Spread` renders
 /// its inner expression via the depth-unaware `render_expr` (no
 /// `render_operand` parenthesisation, since `Await` isn't in
 /// `needs_parens_as_operand`'s own set) — to match the existing hand-written
 /// text's own explicit parens byte-for-byte.
-fn run_dispatch_stmt(escaped: &str, runner_name: &str) -> TsStmt {
+fn run_dispatch_stmt(name: &str, runner_name: &str) -> TsStmt {
     TsStmt::if_stmt(
-        call(ident("want"), vec![str_lit(escaped.to_string())]),
+        call(ident("want"), vec![str_lit(name.to_string())]),
         expr_stmt(method_call(
             ident("results"),
             "push",
             vec![TsExpr::object_entries(vec![
-                TsObjectEntry::Prop("name".to_string(), str_lit(escaped.to_string())),
+                TsObjectEntry::Prop("name".to_string(), str_lit(name.to_string())),
                 TsObjectEntry::Spread(TsExpr::Paren(Box::new(await_expr(call(
                     ident(runner_name),
                     vec![],
@@ -5196,6 +5199,22 @@ mod tests {
         assert_eq!(sanitise_suite("a1B2"), "a1b2");
         assert_eq!(sanitise_suite("!!!"), "suite"); // empty after trim -> fallback
         assert_eq!(sanitise_suite(""), "suite");
+    }
+
+    /// Review of #1410, finding 1: `run_dispatch_stmt` must escape a raw
+    /// case/property name exactly once. Pins a name containing both a
+    /// double quote and a backslash — the exact shape a double-escape
+    /// (passing an already-`emitter::escape_ts_string`-escaped name into
+    /// `str_lit`, which escapes again) would corrupt, and which no `.bynk`
+    /// fixture exercises today.
+    #[test]
+    fn run_dispatch_stmt_escapes_a_quoted_backslashed_name_exactly_once() {
+        let stmt = run_dispatch_stmt(r#"say "hi" \ ok"#, "test_a");
+        let printed = bynk_ts::print_stmt(&stmt, 0);
+        assert_eq!(
+            printed,
+            "if (want(\"say \\\"hi\\\" \\\\ ok\")) results.push({ name: \"say \\\"hi\\\" \\\\ ok\", ...(await test_a()) });\n"
+        );
     }
 
     // v0.127 (editor-currency slice 6): the top-level runner reads
