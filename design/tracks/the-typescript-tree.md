@@ -431,11 +431,18 @@ step (8) — see the table row below) — → `emit_project` itself (**landed**,
 (10) — see the table row below; landed before `emit_integration_module`/`emit_test_module` below,
 a real deviation from this ordering's own originally-guessed sequence, not an error — nothing about
 `emit_project`'s own conversion depended on `tests_emit.rs` converting first) →
-`emit_integration_module` + `emit_test_module` (unblocked by
-#1331, not yet proposed). `project/tests_emit.rs`
-converts its 130
-byte-golden assertions to node assertions **last of all**, after everything above. Each slice is
-checked against the P7.5 textual lint, not golden fixtures alone (§3.2). **`emitter/lower.rs`
+`project/tests_emit.rs`'s own remaining scope, unblocked by #1331 and now decomposed into 7
+proposed slices by its own dedicated grounding pass (post-#1392, see below), **last of all, after
+everything above**: the property-generator expression cluster (`refined_gen_ts`/`gen_ts_for_ty`/
+`canon_ts_for_ty`/`binding_gen`), the small independent leaves (`emit_integration_harness`/
+`emit_test_deps`/`emit_ns_destructure`/`observation_call_record_types`), the stub cluster
+(`emit_stub_class`/`emit_stub_rhs`), the case/scope-setup cluster (`emit_test_scope_setup`/
+`emit_test_case_function`), the property/history/attack runner cluster
+(`emit_test_property_function`/`emit_test_history_property_function`/
+`emit_contract_attack_function`), the HTTP driver cluster (`emit_system_http_support`), and finally
+`emit_integration_module` + `emit_test_module` themselves, since both call nearly everything named
+above and only make sense to convert once their own delegates already return real nodes. Each slice
+is checked against the P7.5 textual lint, not golden fixtures alone (§3.2). **`emitter/lower.rs`
 itself does NOT appear in this ordering** — #1331 settled it as a deliberate, permanent exclusion
 from Arc C's own scope, not a file waiting its turn; see "Third correction" below.
 **Correction (found by slice 1's own grounding, #1317): "each slice deletes its own
@@ -669,6 +676,109 @@ specifically because of `lower.rs`'s own then-unresolved decision) are now **unb
 proposable as ordinary slices, each carrying its own `lower_integration_case_body`-or-similar
 output as opaque text per the pattern above.
 
+**`tests_emit.rs` grounding pass (post-#1392), before any slice against
+`emit_integration_module`/`emit_test_module` or their own delegates is proposed.** With every other
+step in `emit.rs`'s own decomposition order landed or decided (#1392), this file
+(`bynk-emit/src/project/tests_emit.rs`, 4,411 lines) is Arc C's own last remaining target — read
+directly rather than trusted from this section's own pre-Arc-C "130 byte-golden assertions" citation
+(see the confidence-caveats item below on what that number actually refers to). **Already converted,
+confirmed by direct read, not remaining work**: `emit_test_main` (slice 5, #1325); `emit_commons_
+barrel` (1853-1899) — missed by an earlier grep for `push_str`/`format!` sites, since it already
+builds `TsStmt::comment`/`TsDecl::ReExportAll`/`TsProgram` directly, not text — a re-grounding
+correction the same shape as #1333's own step-1 re-read, recorded here rather than silently
+re-slicing already-real code; and the builder-helper block (3718-3804: `ident`/`str_lit`/`call`/etc.),
+real reusable `TsExpr`/`TsStmt` shorthands. **Confirmed pure Rust logic, zero TS-emission, never an
+Arc C target** (the same "9 of 13 aren't emission code at all" finding #1333's own step-1 re-grounding
+made, applied to this file): `process_tests`/`process_integration_tests`/`driver_param_ty`/
+`strip_effect_httpresult`/`integration_typed_commons`/`sanitise_suite`/`discovered_location`/
+`discovery_manifest`/`block_uses_observation`/`target_service_handler_kinds`/`prop_history_binding`/
+`prop_is_history`/`is_attackable_contract`/`numeric_or_scalar_base`/`attackable_contracts`/`json_codec_
+qual_for_target`/`relative_import_for_test`/`lower_stub_value_block` (delegates to `emitter::lower_
+block_to_async_body`, already-lowered opaque text, not direct emission)/`synthetic_typed_commons_for_
+target`/`int_bounds`/`float_bounds`/`str_min`/`base_canon`/`sanitise_case_name`. **Five further
+functions are verbatim static-file inclusion** (`include_str!` of `.ts` runtime files, not per-input
+construction) — `expectation_runtime_helpers`/`stub_runtime_helpers`/`observation_runtime_helpers`/
+`property_runtime_helpers`/`history_runtime_helpers` — the same permanent-opacity class
+`emitter/lower.rs` itself occupies (Third correction, above), not a slice target either.
+
+**Real TS-emission needing conversion, ~1,180 real lines across 18 functions** (2 module builders +
+12 sub-emitters + 4 generator-cluster functions: 270 + 640 + 270 — reconciled against the per-
+function estimates below, correcting a first-pass miscount that dropped the module builders and the
+generator cluster from its own headline, leaving only the 640-line sub-emitter subtotal) — comparable
+in kind, if not raw line count, to `emit_agent`'s own step (9) sub-tree (9 slices): the two top-level
+module builders (`emit_integration_module`, 324-545, ~120 real lines; `emit_test_module`, 1329-1831,
+~150 real lines — both the same header/import/per-case-wrapper/`run()`-runner shape `emit_project`'s
+own already-converted `run()` established); a family of sub-emitters (`emit_integration_harness`,
+~50 real lines; `emit_system_http_support`, ~230 real lines, the largest single unit — several
+near-identical `async function __sysdrive_*` templates per route/service; `emit_stub_class`, ~90 real
+lines — `class __Stub_<Cap> { fields; async methods with if-chains }`; `emit_stub_rhs`, ~55 real
+lines — builds `switch`/`case` text; `emit_test_deps`, ~15 real lines; `emit_ns_destructure`, ~10
+real lines, called pervasively by the others; `emit_test_scope_setup`, ~25 real emission lines amid
+much Rust-side name-collection logic; `emit_test_case_function`, ~25 real lines;
+`observation_call_record_types`, ~15 real lines; `emit_test_property_function`, ~40 real lines;
+`emit_test_history_property_function`, ~40 real lines, mirrors the property function;
+`emit_contract_attack_function`, doc-confirmed (not yet fully read) to mirror the property function
+similarly, ~40-50 real lines); and a distinct, mutually-recursive property-generator expression
+cluster (`refined_gen_ts`/`gen_ts_for_ty`/`canon_ts_for_ty`/`binding_gen`, ~270 real lines total) —
+these build TS *expression* source recursively via `format!`/match returning `String`, not
+`writeln!`/`push_str`, but are genuine per-input TS-emission, directly analogous to the already-
+converted ICU cluster's `-> TsExpr` treatment (slice 28, #1388).
+
+**Real `bynk_ts` algebra gaps, checked fresh against the current `program.rs`**: none found —
+`TsStmtKind::TryCatch`, `TsStmtKind::Switch`/`TsSwitchCase`, `TsClassField`/`TsClassCtor`/
+`TsClassMethod`, `TsDecl::Class` already cover every shape this file needs (class-with-fields-and-
+methods, switch/case, if-chains, try/catch, async functions, array/object literals). One thing to
+verify empirically during implementation, not assumed: whether `TsExpr::Object`'s multiline-entries
+rendering matches this file's own dense, no-trailing-comma-on-last-entry inline-object style (e.g.
+`emit_test_deps`'s `return { ... };`, the `__gens`/`__handlers` array-of-objects) — `TsExpr::Object`
+already supports both single-line and multiline modes per existing precedent, likely fine, but not
+directly confirmed against this file's own exact fixture bytes yet.
+
+**Proposed decomposition, 7 slices, dependency order named explicitly**: (A) the property-generator
+expression cluster (`refined_gen_ts`/`gen_ts_for_ty`/`canon_ts_for_ty`/`binding_gen`) — self-
+contained, no dependency on any other slice here, first since slices D/E consume its output as
+strings today and would want it converted before or alongside their own conversion; (B) the small
+independent leaves (`emit_integration_harness`/`emit_test_deps`/`emit_ns_destructure`/
+`observation_call_record_types`) — convert `emit_ns_destructure` here since C (2046), D (2543/2581/
+2606), and G (455) call it; (C)
+the stub cluster (`emit_stub_class`/`emit_stub_rhs`, both with direct `bynk_ts` equivalents already —
+`TsDecl::Class`, `TsStmt::Switch`) — depends on B; (D) the case/scope-setup cluster
+(`emit_test_scope_setup`/`emit_test_case_function`) — depends on B; (E) the property/history/attack
+runner cluster (`emit_test_property_function`/`emit_test_history_property_function`/`emit_contract_
+attack_function`) — depends on A alone (consumes `BindingGen`); none of E's three functions calls
+`emit_ns_destructure` or anything else in D, so E has no real dependency on B and can be proposed in
+parallel with or ahead of it (a scheduling correction, not just wording — the original text named a
+phantom E-via-D-to-B edge); (F) the HTTP driver cluster (`emit_system_http_support` alone) — large
+(~230 real lines) but structurally self-contained, no dependency on any slice above; possibly worth
+splitting further at proposal time (e.g. one sub-slice per driver-kind: typed/raw/noauth/rawnoauth/
+wrongmethod) if its real converted-node line count runs higher than the rough estimate once drafted;
+(G) the two top-level module assemblers (`emit_integration_module` + `emit_test_module`), last,
+depending on B (`emit_integration_module`'s own direct `emit_ns_destructure` call at 455) in addition
+to calling
+nearly everything above and only make sense to convert once their delegates already return real
+nodes rather than raw strings.
+
+**A pattern already established elsewhere in this step's remaining work applies here too, named
+explicitly rather than left implicit**: `emit_test_scope_setup`/`emit_test_case_function`/
+`emit_test_property_function`/`emit_test_history_property_function`/`emit_contract_attack_function`
+all delegate an opaque lowered body from `emitter::lower_test_case_body`/`lower_block_to_async_body`
+(`String`-returning, unchanged) — spliced in exactly like every prior slice's `Raw`-body opaque-splice
+pattern, not built as real nodes themselves; each slice's own proposal should say so explicitly so it
+isn't mistaken for missed scope, the same "two-level offset" naming discipline #1361/#1375 already
+established for `emit_service`/`emit_agent`'s own handler bodies.
+
+**Confidence caveats, honestly recorded**: the "130 byte-golden assertions" citation earlier in this
+section does not refer to a literal `assert_eq!`/`assert!` count inside `tests_emit.rs` itself (only
+36 exist there) — it is almost certainly the count of fixture files across `bless_positive_fixtures`/
+`positive_fixtures` whose `tests/*.test.ts`/`tests/integration_*.test.ts` output this file's two
+target functions produce, the byte-golden corpus this conversion must stay zero-diff against, not an
+in-file literal; worth confirming the exact fixture count during slice G's own zero-diff run rather
+than deriving it now — doesn't block slices A-F, which are covered by the same corpus indirectly
+through G's own callers. `emit_contract_attack_function`'s own body (154 lines) was not fully read
+this pass — relied on its own doc comment's explicit "mirrors `emit_test_property_function`" claim;
+worth a full read at slice E's own proposal time, since that same doc comment names at least one
+extra real transformation (an `Int`-to-`number` coercion) beyond the plain mirror.
+
 **Step (9) grounding pass (post-#1365), before any slice against `emit_agent` is proposed.**
 `emit_agent` (`emit.rs:3642-4917`) decomposes into real, separable phases, each marked by the
 function's own `// N)` comments — not one tightly coupled blob: a data-prep section (3650-3899,
@@ -872,7 +982,7 @@ it with a fixture instead — this is the same decision point, resolved the othe
 genuinely different (test-support, not production) function. No code changes: `bynk-emit/src/
 emitter/emit.rs` is untouched by this decision.**
 
-**Revised estimate, corrected twenty-seven times now — by review of #1332 (the arithmetic), by #1333's
+**Revised estimate, corrected twenty-eight times now — by review of #1332 (the arithmetic), by #1333's
 own step (1) closure (the real per-step sizing), by #1335's own step (2) split, by #1337's
 own step (3) closure, by #1339's own step (2) closure, by #1351's own step (4) split, by #1353's
 own step (4) closure, by #1355's own step (5) closure, by #1357's own step (6) split, by
@@ -889,9 +999,12 @@ landing of the second, by #1384's own landing of the third, closing sub-slice (5
 entirely, by #1386's own decision to exclude the history-driver, closing sub-slice (6)
 and step (9) itself entirely, by #1388's own landing of the ICU-formatting cluster,
 closing step (11), by #1390's own landing of the cross-context lowering cluster,
-closing step (8) entirely, and now by #1392's own landing of `emit_project`'s own
+closing step (8) entirely, by #1392's own landing of `emit_project`'s own
 header/import/rebrand cluster, closing step (10) — every step in `emit.rs`'s own
-decomposition order now landed or decided.**
+decomposition order now landed or decided — and now by `tests_emit.rs`'s own dedicated grounding
+pass (post-#1392, no issue number of its own — a research pass, not a slice, the same shape as
+step (9)'s own original grounding pass and sub-slice (5)'s own), decomposing Arc C's own final
+remaining piece into 7 proposed slices.**
 Steps (2)-(7) are all
 **fully landed** and entirely out of the remaining-work sum. Step (8)'s own remainder narrows
 from "1-2" to **fixed at 0** — landed as ONE slice (its real scope, once actually read, was 2
@@ -907,29 +1020,40 @@ resolved by direct read: real, but genuinely smaller than the raw ~1,100-line ci
 direct helper functions implied — most of that is Rust-side decision logic that never changes, the
 real conversion surface a modest ~29 `writeln!`/`write!` call sites, comparable to several
 already-landed slices, not a multi-slice undertaking. `ast_importers` stayed unchanged at 5,
-confirming the design pass's own original prediction directly rather than assuming it. Total
-remaining from here: `emit.rs` (0) + the `tests_emit.rs` pair (2) — #1331/#1332, slice 8 (#1333),
+confirming the design pass's own original prediction directly rather than assuming it.
+`tests_emit.rs`'s own citation, "the pair" (2), is now **superseded by direct read**: its own
+dedicated grounding pass (post-#1392, see above) found ~1,180 real TS-emission lines across 18
+functions, not 2 — a grounding-driven widening, the same "an unread range turns out larger than
+guessed" shape the pass before #1367 and the pass before #1380 already showed, decomposed into 7
+proposed slices (A-G, dependency order named in the grounding-pass paragraph above), not the 2 this
+citation originally implied (`emit_integration_module`/`emit_test_module` alone, without their own
+delegate sub-emitters and the property-generator expression cluster, none of which this track had
+separately named before now). Total
+remaining from here: `emit.rs` (0) + `tests_emit.rs`'s own 7 proposed slices (7) — #1331/#1332, slice 8 (#1333),
 slice 9 (#1335), slice 10 (#1337), slice 11 (#1339), slice 12 (#1351), slice 13 (#1353), slice 14
 (#1355), slice 15 (#1357), slice 16 (#1359), slice 17 (#1361), slice 18 (#1364), slice 19 (#1367),
 slice 20 (#1369), slice 21 (#1371), slice 22 (#1373), slice 23 (#1375), slice 24 (#1377), slice
 25 (#1380), slice 26 (#1382), slice 27 (#1384), slice 28 (#1388), slice 29 (#1390), and slice 30
 (#1392) are
-all already landed, no longer "remaining" — a fixed **2 more slices from here**, down from
-"roughly 3".
+all already landed, no longer "remaining" — a fixed **7 more slices from here**, up from
+"2", per the grounding pass above.
 Arc C's own real total (the **30** slices already landed — slice 1, the schedule-correction, slices
-3/4/5/6/7/8/9/10/11/12/13/14/15/16/17/18/19/20/21/22/23/24/25/26/27/28/29/30 — plus the 2 above): a
-fixed **32** — unchanged, honestly, the same reason every "landing within an already-fixed value"
-correction in this section has left the total unchanged: the sum already counted `emit_project`
-itself as its own fixed "1"; landing it simply moves that one slice from "remaining" to "landed"
-without touching the total. Five
+3/4/5/6/7/8/9/10/11/12/13/14/15/16/17/18/19/20/21/22/23/24/25/26/27/28/29/30 — plus the 7 above): a
+fixed **37**, widened from 32 — the honest reason: unlike every prior "landing within an
+already-fixed value" correction in this section, `tests_emit.rs`'s own citation was never itself
+grounded before now (its "2" was inherited unread from this track's own pre-Arc-C opening, the same
+kind of stale citation P7.9's own review and #1333's own step-1 re-read already found and corrected
+elsewhere) — grounding it for the first time surfaces 5 previously-uncounted slices, not a range
+resolving to a floor or a slice landing inside an already-set bound. Five
 distinct kinds of correction have
-now occurred across seventeen consecutive updates — a narrowing (#1361, a range resolved to its own
+now occurred across eighteen consecutive updates — a narrowing (#1361, a range resolved to its own
 floor; #1386's own history-driver exclusion decision, a second; #1388's own landing of the ICU
 cluster as one slice, a third; and #1390's own landing of the cross-context lowering cluster,
 a fourth), a split-driven widening (#1364, a silently-absorbed remainder surfaced at the STEP level), a
 grounding-driven widening (the pass before #1367, an unread range turning out larger than guessed
-on both ends, AND the pass before #1380, the same kind recurring a second time at a deeper
-sub-level), a
+on both ends; the pass before #1380, the same kind recurring a second time at a deeper sub-level;
+and now `tests_emit.rs`'s own grounding pass, post-#1392, the same kind a third time, at the whole-
+file level this time — the citation itself, "2," widened to "7"), a
 flat relabeling (#1367, then #1369, then #1373, then #1375, then #1380 again, then #1382 again,
 then #1384 again, then #1392 again,
 landing inside an
@@ -940,9 +1064,10 @@ uncounted floor surfacing both times, in two different sub-slices)
 and each got the same "state the real reason plainly" treatment rather than a flat "corrected
 again." `emit_agent`'s own
 sub-decomposition (step 9), the ICU-formatting cluster (step 11), the cross-context lowering
-cluster (step 8), and now `emit_project` itself (step 10) are **all fully resolved and closed** —
-**every step in `emit.rs`'s own decomposition order is landed or decided.** Only the
-`tests_emit.rs` pair remains, Arc C's own final piece.
+cluster (step 8), and `emit_project` itself (step 10) are **all fully resolved and closed** —
+**every step in `emit.rs`'s own decomposition order is landed or decided.** Only
+`tests_emit.rs`'s own 7 proposed slices remain, Arc C's own final piece, now decomposed rather than
+an unread pair.
 
 | Slice | What lands | Rules | Gated on |
 |---|---|---|---|
