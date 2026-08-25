@@ -674,12 +674,18 @@ fn emit_attached_methods(
 /// (`emit_context_rebrands`) is still unconverted, so this stays a "build a
 /// real node internally, print just that fragment" helper rather than
 /// returning entries the caller isn't ready to consume structurally.
+/// Arc C, slice 30 (#1392): returns real `bynk_ts::TsObjectEntry::Method`
+/// values (was `out: &mut String`) — the one real call site
+/// (`emit_context_rebrands`) now appends them directly into its own
+/// `Vec<TsObjectEntry>` instead of splicing printed text into a shared
+/// buffer, the same `emit_attached_methods` precedent (#1337) already
+/// established for its own sibling per-entry builder.
 pub(crate) fn emit_forwarded_methods(
-    out: &mut String,
     type_name: &str,
     methods: &[FnSig],
     tys: &Arc<Types>,
-) {
+) -> Vec<bynk_ts::TsObjectEntry> {
+    let mut entries = Vec::new();
     for f in methods {
         let mut params: Vec<bynk_ts::TsParam> = Vec::new();
         let mut args: Vec<bynk_ts::TsExpr> = Vec::new();
@@ -737,8 +743,9 @@ pub(crate) fn emit_forwarded_methods(
             inline: true,
             body,
         };
-        out.push_str(&bynk_ts::print_object_entry(&entry, 0));
+        entries.push(entry);
     }
+    entries
 }
 
 /// #1337: returns one real `bynk_ts::TsObjectEntry::Method` (was
