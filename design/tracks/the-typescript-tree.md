@@ -839,12 +839,34 @@ skip.**; **(6) the factory function plus the history-driver — split by #1377 (
 slice 24), the same "split, don't force one slice to cover more than it needs to" discipline this
 track has used repeatedly (steps (4)/(6)/(8), and step (9)'s own sub-slice (3)): the factory
 function lands fully, no opaque carve-out at all (every shape needed — `TsDecl::Function`,
-`TsExpr::OptionalMember`/`Arrow`/`New` — already existed); the history-driver stays deferred, its
-own priority still undecided — test-support-only, stripped from deploy builds, only 2 fixtures
-exercise it, so converting it may not be worth its own slice at all. A deliberate, named exclusion
-remains a legitimate outcome here, to be decided when/if that slice is actually proposed.**
+`TsExpr::OptionalMember`/`Arrow`/`New` — already existed). **The history-driver's own priority,
+left undecided by #1377, is now decided by #1386: a deliberate, standing exclusion, not a
+conversion slice — closing sub-slice (6), and with it step (9), entirely.** Three real, converging
+reasons: (1) test-support-only, stripped from deploy builds — `history_target_agents` gates on a
+`for all run: History[Agent]` property (ADR 0155), never part of a deployed Worker/bundle, the
+first (and only remaining) function in `emit_agent` that doesn't ship to production; (2) only 2
+fixtures repo-wide exercise it (`248_history_property`/`249_history_provides` — one agent name in
+one target configuration; the other real `History`-property fixtures stop at the checker or assert
+only on runtime output, pinning no bytes here), among the thinnest coverage of any item this track
+has converted or excluded; (3) the
+pre-conversion code itself already defers the one real algebra question a conversion would face —
+its own comments say `call`'s real shape needs "a single driver-wide type... the
+intersection/union across every handler this agent's history targets, not a same-line text
+change," deferred to `any` today BY DESIGN — a faithful `bynk_ts` conversion of its two `switch`
+statements plus the composed `step_ty`/`Array<{...}>` return type would mostly relocate `writeln!`
+calls into `TsStmt`/`TsExpr` builders without closing that one interesting gap, since the gap stays
+`any` either way. Not claimed permanent in ADR 0391's own whole-subsystem sense — revisiting is
+legitimate if a real per-handler-union need ever makes the payoff clearly worth it — and not given
+a separate ADR of its own, a narrower single-function scope decision the track doc's own narrative
++ estimate paragraph records at the right weight (no table row — this is a decision, not a landed
+slice, the same shape the grounding passes before #1367/#1380 also got no row for), matching how
+`emit_agent`'s own `fetch` method's
+`agent_uses_emit` branch was ALSO a live deliberate-exclusion candidate right up until #1384 closed
+it with a fixture instead — this is the same decision point, resolved the other way, for a
+genuinely different (test-support, not production) function. No code changes: `bynk-emit/src/
+emitter/emit.rs` is untouched by this decision.**
 
-**Revised estimate, corrected twenty-three times now — by review of #1332 (the arithmetic), by #1333's
+**Revised estimate, corrected twenty-four times now — by review of #1332 (the arithmetic), by #1333's
 own step (1) closure (the real per-step sizing), by #1335's own step (2) split, by #1337's
 own step (3) closure, by #1339's own step (2) closure, by #1351's own step (4) split, by #1353's
 own step (4) closure, by #1355's own step (5) closure, by #1357's own step (6) split, by
@@ -857,43 +879,39 @@ fourth sub-slice, by #1377's own split-and-partial-landing of step (9)'s sixth s
 sub-slice (5)'s own dedicated grounding pass (post-#1378, no issue number of its own — a research
 pass, not a slice, the same shape as step (9)'s own original grounding pass), by #1380's
 own landing of the first of sub-slice (5)'s own 3 independent slices, by #1382's own
-landing of the second, and now by #1384's own landing of the third, closing sub-slice (5)
-entirely.**
+landing of the second, by #1384's own landing of the third, closing sub-slice (5)
+entirely, and now by #1386's own decision to exclude the history-driver, closing sub-slice (6)
+and step (9) itself entirely.**
 Steps (2)-(7) are all
 **fully landed** and entirely out of the remaining-work sum. Step (9)'s own remainder is now
-**"0-1"** (down from "1-2" — #1384 lands `emit_agent`'s `fetch` method plus
-`emit_ws_open_fetch_branch`, the third and final of sub-slice (5)'s own 3 independent slices;
-only the history-driver, still "0-1", undecided, remains open for step (9)); step (9)'s own TOTAL
-stays **"9-10"**, unchanged — a pure, floor-neutral-
-and-ceiling-neutral relabeling, the same #1359/#1367/#1369/#1373/#1375/#1382 precedent, not a further
-re-estimate (the grounding pass already firmed up sub-slice (5)'s own count at "3"; landing the
-last of the three simply moves it from remaining to landed). Summing the list directly: step (8)'s
+**fixed at 0** (down from "0-1" — #1386 decides the history-driver is a deliberate, standing
+exclusion, not a conversion slice, resolving the last open item in step (9)); step (9)'s own TOTAL
+narrows from the range **"9-10"** to the fixed **9** — the history-driver's own "0-1" resolves to
+0, not 1, so the range's own ceiling was never reachable; **step (9) is now closed, completely, all
+6 sub-slices resolved.** Summing the list directly: step (8)'s
 own newly-split remainder (the cross-context lowering cluster, not yet grounded) is "1-2"; step
-(10) is one slice, fixed; step (9)'s remainder is "0-1"; step (11) (the ICU cluster) is "1-2".
+(10) is one slice, fixed; step (9)'s remainder is 0, fixed; step (11) (the ICU cluster) is "1-2".
 Floor:
-1 + 0 + 1 + 1 = **3**; ceiling: 2 + 1 + 1 + 2 = **6** — `emit.rs`'s own remaining tree is now
-**roughly 3-6 slices**, down from 4-7. Total
-remaining from here: `emit.rs` (3-6) + the `tests_emit.rs` pair (2) — #1331/#1332, slice 8 (#1333),
+1 + 0 + 1 + 1 = **3**; ceiling: 2 + 0 + 1 + 2 = **5** — `emit.rs`'s own remaining tree is now
+**roughly 3-5 slices**, down from 3-6. Total
+remaining from here: `emit.rs` (3-5) + the `tests_emit.rs` pair (2) — #1331/#1332, slice 8 (#1333),
 slice 9 (#1335), slice 10 (#1337), slice 11 (#1339), slice 12 (#1351), slice 13 (#1353), slice 14
 (#1355), slice 15 (#1357), slice 16 (#1359), slice 17 (#1361), slice 18 (#1364), slice 19 (#1367),
 slice 20 (#1369), slice 21 (#1371), slice 22 (#1373), slice 23 (#1375), slice 24 (#1377), slice
 25 (#1380), slice 26 (#1382), and slice 27 (#1384) are
-all already landed, no longer "remaining" — **roughly 5-8 more slices from here**, down from 6-9.
+all already landed, no longer "remaining" — **roughly 5-7 more slices from here**, down from 5-8.
 Arc C's own real total (the **27** slices already landed — slice 1, the schedule-correction, slices
-3/4/5/6/7/8/9/10/11/12/13/14/15/16/17/18/19/20/21/22/23/24/25/26/27 — plus the 5-8 above): **roughly
-32-35** — unchanged from the prior update, honestly, the same reason every "landing within an
-already-set range" correction in this section has left the total unchanged: step (9)'s own total
-(9-10) already counted `fetch`/`emit_ws_open_fetch_branch` as the last of sub-slice (5)'s own 3
-items; #1384 landing it simply moves one slice from "remaining" to "landed" without touching the
-sum. As #1384's own implementation confirmed directly (not just the grounding pass's own
-prediction): zero-diff on the first attempt, no new `bynk_ts` variant needed — though the
-grounding pass's own correctly-predicted spread-call-argument gap turned out to be joined by a
-SECOND, previously-unpredicted one (the nested-`As`-under-`As` chain, see the sub-slice (5)
-narrative above for the full account), the same "a real correction, not a wrong prediction"
-pattern #1382 already showed for this cluster. Five
+3/4/5/6/7/8/9/10/11/12/13/14/15/16/17/18/19/20/21/22/23/24/25/26/27 — plus the 5-7 above): **roughly
+32-34** — the FIRST real narrowing of the total range in several updates, not another flat
+relabeling: the history-driver's own uncertainty is now resolved (excluded, not converted), so the
+ceiling this range carried FOR that uncertainty (the "+1" step (9) could still have needed) is
+gone. Not a "landing within an already-set range" correction like #1382/#1384's own — a genuine
+range-narrowing decision, the same kind #1361 already showed once for step (7)'s own closure, now
+shown a second time for step (9)'s own. Five
 distinct kinds of correction have
-now occurred across thirteen consecutive updates — a narrowing (#1361, a range resolved to its own
-floor), a split-driven widening (#1364, a silently-absorbed remainder surfaced at the STEP level), a
+now occurred across fourteen consecutive updates — a narrowing (#1361, a range resolved to its own
+floor, and now #1386's own history-driver exclusion decision, a second range resolved to its own
+floor at a deeper, sub-slice level), a split-driven widening (#1364, a silently-absorbed remainder surfaced at the STEP level), a
 grounding-driven widening (the pass before #1367, an unread range turning out larger than guessed
 on both ends, AND the pass before #1380, the same kind recurring a second time at a deeper
 sub-level), a
@@ -906,13 +924,12 @@ uncounted floor surfacing both times, in two different sub-slices)
 — each is a different failure mode or non-failure of estimation, not the same mistake repeating,
 and each got the same "state the real reason plainly" treatment rather than a flat "corrected
 again." `emit_agent`'s own
-sub-decomposition (step 9) remains the single largest source of variance in this range — sub-slice
-(5) is now fully landed (all 3 independent slices), leaving only the history-driver's own still-
-undecided fate open for step (9) — each individually LOW-risk, confirmed by direct read, not a
-guess; the
+sub-decomposition (step 9) is **now fully resolved and closed** — every one of its 6 sub-slices
+landed or deliberately excluded, no open items remain; the
 cross-context lowering
 cluster (step (8)'s
-own remainder) and the ICU cluster (step 11) are smaller, still-ungrounded secondary sources.
+own remainder) and the ICU cluster (step 11) are now the largest remaining sources of variance,
+both smaller than step (9) ever was and both still-ungrounded.
 
 | Slice | What lands | Rules | Gated on |
 |---|---|---|---|
