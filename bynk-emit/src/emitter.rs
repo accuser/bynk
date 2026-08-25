@@ -993,35 +993,37 @@ pub(crate) fn ty_to_type_ref(t: TyId, tys: &Arc<Types>) -> Option<TypeRef> {
 /// v0.22b: collect the `Json.encode`/`Json.decode[T]` target type-refs in
 /// this file's bodies — the roots of the module-local codec-helper closure.
 ///
-/// P6.56 (design/tracks/the-ir.md §6b): the `receiver`/`method`-name match
-/// below (`is this a Json.encode/decode call`) was investigated for a
-/// `Callee`-based conversion and declined — `resolver.rs` resolves
-/// `Json.encode`/`decode` as a no-declaration-needed built-in static
-/// (alongside `List.empty`/`Map.empty`/`Duration.millis`/…), never through
-/// the `Callee`-classification machinery `Callee::Kernel`/`::Intrinsic`
-/// populate; `commons.callees` carries no entry for this call site at all.
-/// There is no IR-native value to read here.
+/// R8.14 (Arc D, P7.d3), revisiting P6.56's own declined attempt: P6.56 found
+/// no `Callee`-classification for `Json.encode`/`decode` to read at the time
+/// ("`commons.callees` carries no entry for this call site at all"). That is
+/// no longer true — `checker::calls`'s own JSON-static dispatch now inserts
+/// `Callee::Intrinsic { ns: JSON, op }` for exactly this call shape (the same
+/// `ctx.lookup(JSON).is_none() && !ctx.input.types.contains_key(JSON)` guard
+/// against a local shadow that this function's own bare `id.name == JSON`
+/// match had no way to apply). Reading it here closes two things at once:
+/// R8.14's own "AST-shaped, not checker-resolved" framing, and a real
+/// (if narrow) correctness gap the old syntactic match carried — a local
+/// variable or type named `Json` shadowing the builtin would have been
+/// misread as a real `Json.encode`/`decode` call; `Callee::Intrinsic`'s own
+/// presence is exactly the checker's already-verified "no, this really is
+/// the builtin" answer.
 fn collect_json_codec_roots(commons: &TypedCommons) -> Vec<TypeRef> {
     let tys = commons.tys();
     let mut roots: Vec<TypeRef> = Vec::new();
     {
         let mut visit = |e: &Expr| {
-            let ExprKind::MethodCall {
-                receiver,
-                method,
-                args,
-                ..
-            } = &e.kind
+            let ExprKind::MethodCall { args, .. } = &e.kind else {
+                return;
+            };
+            let Some(bynk_check::checker::Callee::Intrinsic { ns, op }) =
+                commons.callees.get(&e.id)
             else {
                 return;
             };
-            let ExprKind::Ident(id) = &receiver.kind else {
-                return;
-            };
-            if id.name != JSON {
+            if *ns != JSON {
                 return;
             }
-            match method.name.as_str() {
+            match op.as_str() {
                 "decode" => {
                     if let Some(Ty::Result(t, _)) = commons.expr_ty(e.id).as_deref()
                         && let Some(tr) = ty_to_type_ref(*t, tys)
