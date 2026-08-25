@@ -973,6 +973,15 @@ pub enum TsBinaryOp {
     StrictEq,
     StrictNotEq,
     GreaterThan,
+    /// `instanceof` — Arc C slice 34 (`tests_emit.rs` slice D, #1403)'s own
+    /// real gap: `emit_test_case_function`'s own catch clause
+    /// (`e instanceof ExpectationError`) is the first real `instanceof`
+    /// anywhere in `bynk-emit`'s own content. Real JS/TS precedence puts it
+    /// at the same tier as the relational comparisons (`<`/`>`) — sharing
+    /// [`TsBinaryOp::LessThan`]'s own tier, not a new one — rendered as the
+    /// keyword `" instanceof "`, textually the same shape as `&&`/`||`
+    /// rather than symbol punctuation.
+    InstanceOf,
     /// `<` — Arc C slice 33 (`tests_emit.rs` slice C, #1401)'s own real gap:
     /// `emit_stub_class`'s `ReturnsEach` sequence-cursor guard
     /// (`this.__seq_N < <bound>`) is the first real `<` comparison anywhere

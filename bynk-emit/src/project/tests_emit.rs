@@ -2660,48 +2660,113 @@ fn emit_test_scope_setup(
         .get(target_name)
         .is_some_and(|t| !t.agents.is_empty());
     if target_has_agents {
-        out.push_str(&format!("    {target_ns}.__resetAgents();\n"));
+        let stmt = TsStmt::expr_stmt(
+            method_call(ident(target_ns.clone()), "__resetAgents", Vec::new()),
+            None,
+        );
+        out.push_str(&bynk_ts::print_stmt(&stmt, 2));
     }
     // v0.117: the per-case recorded-call trace, and — for a context target with
     // capabilities — a `deps` wrapped so each capability operation records its
     // calls into `__obs`. Observations and `trace(Cap.op)` in the body read it.
-    let obs_spec: Option<String> = if record_calls && target_kind == UnitKind::Context {
+    let obs_spec: Option<TsExpr> = if record_calls && target_kind == UnitKind::Context {
         unit_tables.get(target_name).and_then(|table| {
             if table.capabilities.is_empty() {
                 return None;
             }
             let mut caps: Vec<&String> = table.capabilities.keys().collect();
             caps.sort();
-            let entries: Vec<String> = caps
+            let entries: Vec<(String, TsExpr)> = caps
                 .iter()
                 .map(|c| {
-                    let mut ops: Vec<String> = table.capabilities[*c]
+                    let mut ops: Vec<&String> = table.capabilities[*c]
                         .ops
                         .iter()
-                        .map(|o| format!("{:?}", o.name.name))
+                        .map(|o| &o.name.name)
                         .collect();
                     ops.sort();
-                    format!("{c}: [{}]", ops.join(", "))
+                    (
+                        (*c).clone(),
+                        TsExpr::array(ops.into_iter().map(str_lit).collect()),
+                    )
                 })
                 .collect();
-            Some(format!("{{ {} }}", entries.join(", ")))
+            Some(TsExpr::object(entries))
         })
     } else {
         None
     };
     if target_kind == UnitKind::Context {
-        if let Some(spec) = &obs_spec {
+        if let Some(spec) = obs_spec {
             // P7.2: matches `emitter/lower.rs`'s own `{ args: unknown[] }` reads
             // of this exact shape (`Trace`/`Called`-with-predicate lowering).
-            out.push_str("    const __obs = { log: {} as Record<string, { args: unknown[]; order: number }[]>, n: 0 };\n");
-            out.push_str(&format!(
-                "    const deps = __bynkRecordDeps(makeTestDeps(), {spec}, __obs);\n"
-            ));
+            let obs_ty = TsType::named_with_args(
+                "Record",
+                vec![
+                    TsType::named("string"),
+                    TsType::array(TsType::Object(vec![
+                        TsTypeMember::Prop {
+                            name: "args".to_string(),
+                            ty: TsType::array(TsType::named("unknown")),
+                            optional: false,
+                            readonly: false,
+                        },
+                        TsTypeMember::Prop {
+                            name: "order".to_string(),
+                            ty: TsType::named("number"),
+                            optional: false,
+                            readonly: false,
+                        },
+                    ])),
+                ],
+            );
+            let obs_stmt = TsStmt::const_stmt(
+                TsBindingName::Ident("__obs".to_string()),
+                None,
+                TsExpr::object(vec![
+                    (
+                        "log".to_string(),
+                        TsExpr::As {
+                            expr: Box::new(TsExpr::object(vec![])),
+                            ty: obs_ty,
+                        },
+                    ),
+                    ("n".to_string(), num_lit("0")),
+                ]),
+                None,
+            );
+            out.push_str(&bynk_ts::print_stmt(&obs_stmt, 2));
+            let deps_stmt = TsStmt::const_stmt(
+                TsBindingName::Ident("deps".to_string()),
+                None,
+                call(
+                    ident("__bynkRecordDeps"),
+                    vec![
+                        call(ident("makeTestDeps"), Vec::new()),
+                        spec,
+                        ident("__obs"),
+                    ],
+                ),
+                None,
+            );
+            out.push_str(&bynk_ts::print_stmt(&deps_stmt, 2));
         } else {
-            out.push_str("    const deps = makeTestDeps();\n");
+            let deps_stmt = TsStmt::const_stmt(
+                TsBindingName::Ident("deps".to_string()),
+                None,
+                call(ident("makeTestDeps"), Vec::new()),
+                None,
+            );
+            out.push_str(&bynk_ts::print_stmt(&deps_stmt, 2));
         }
     } else {
-        out.push_str("    const deps = {};\n");
+        let deps_stmt = TsStmt::const_stmt(
+            TsBindingName::Ident("deps".to_string()),
+            None,
+            TsExpr::object(vec![]),
+            None,
+        );
+        out.push_str(&bynk_ts::print_stmt(&deps_stmt, 2));
     }
     // Bring the target's top-level names into local scope so the lowered
     // body can reference them unqualified. The target's types and fns are
@@ -2810,10 +2875,26 @@ fn emit_test_scope_setup(
             // mock shapes are constructed elsewhere in this file; typing `{key}`
             // correctly here needs cross-referencing that mock-construction code
             // rather than guessing a structural type, which risks a `tsc --strict`
-            // mismatch against whatever it actually builds.
-            out.push_str(&format!(
-                "    const {key} = (deps as any).surface?.{key};\n"
-            ));
+            // mismatch against whatever it actually builds. The *node
+            // representation* has no such gap, though — `TsExpr::OptionalMember`
+            // already exists — so review of #1404 caught this site's own
+            // `format!` construction as a real miss, not a documented carve-out.
+            let alias_stmt = TsStmt::const_stmt(
+                TsBindingName::Ident(key.clone()),
+                None,
+                TsExpr::OptionalMember {
+                    object: Box::new(member(
+                        TsExpr::As {
+                            expr: Box::new(ident("deps")),
+                            ty: TsType::named("any"),
+                        },
+                        "surface",
+                    )),
+                    property: key.clone(),
+                },
+                None,
+            );
+            out.push_str(&bynk_ts::print_stmt(&alias_stmt, 2));
         }
     }
 }
@@ -2909,16 +2990,53 @@ fn emit_test_case_function(
     }
     let mut case_smb = SourceMapBuilder::new();
     case_smb.merge(&body_smb, &body_src, &out, body_base, 0);
-    out.push_str("    return { pass: true };\n");
+    let return_pass_true = TsStmt::return_stmt(
+        Some(TsExpr::object(vec![(
+            "pass".to_string(),
+            TsExpr::Lit(TsLit::Bool(true)),
+        )])),
+        None,
+    );
+    out.push_str(&bynk_ts::print_stmt(&return_pass_true, 2));
     out.push_str("  } catch (e) {\n");
-    out.push_str("    if (e instanceof ExpectationError) {\n");
-    out.push_str(
-        "      return { pass: false, error: { message: e.message, location: e.location } };\n",
+    let expectation_error_branch = if_(
+        TsExpr::Binary {
+            op: TsBinaryOp::InstanceOf,
+            left: Box::new(ident("e")),
+            right: Box::new(ident("ExpectationError")),
+        },
+        block(vec![TsStmt::return_stmt(
+            Some(TsExpr::object(vec![
+                ("pass".to_string(), TsExpr::Lit(TsLit::Bool(false))),
+                (
+                    "error".to_string(),
+                    TsExpr::object(vec![
+                        ("message".to_string(), member(ident("e"), "message")),
+                        ("location".to_string(), member(ident("e"), "location")),
+                    ]),
+                ),
+            ])),
+            None,
+        )]),
     );
-    out.push_str("    }\n");
-    out.push_str(
-        "    return { pass: false, error: { message: String(e), location: \"unknown\" } };\n",
+    out.push_str(&bynk_ts::print_stmt(&expectation_error_branch, 2));
+    let fallback_return = TsStmt::return_stmt(
+        Some(TsExpr::object(vec![
+            ("pass".to_string(), TsExpr::Lit(TsLit::Bool(false))),
+            (
+                "error".to_string(),
+                TsExpr::object(vec![
+                    (
+                        "message".to_string(),
+                        call(ident("String"), vec![ident("e")]),
+                    ),
+                    ("location".to_string(), str_lit("unknown")),
+                ]),
+            ),
+        ])),
+        None,
     );
+    out.push_str(&bynk_ts::print_stmt(&fallback_return, 2));
     out.push_str("  }\n");
     out.push_str("}\n");
     (out, case_smb)
