@@ -1371,37 +1371,73 @@ worth of live code, it's two.** `bynk-emit/src/ir.rs` (1,756 lines) + `bynk-emit
 (10,095 lines) total ~11,850 lines, both `pub(crate)` at the crate root — no external crate
 reaches `bynk_emit::ir` today, so the carve is a pure internal reorganisation with no external-API
 compatibility surface to preserve. But `ir/lower.rs` itself is not uniformly live: it contains two
-structurally distinct layers under one file. **Layer 1 (live, ~dozens of real call sites):**
-narrow, single-purpose lowering helpers — `lower_handler_kind_ir`, `lower_protocol_ir`(`_from_
-commons`), `lower_handler_given_ir`, `lower_provider_given_ir`, `lower_route_cache_ir`,
-`lower_route_limit_ir`, `lower_event_subscriber_shapes_ir`, `is_effectful_return`,
-`body_writes_state`, `capability_op_sig_from_commons`, `lower_attached_fn_sig_ir_from_types`,
-`lower_type_item_ir`, `lower_capability_item_ir`, `lower_service_handler_signature_ir`,
-`lower_store_field_shape_ir` — called for real from `emitter.rs`, `emitter/emit.rs`,
-`emitter/workers.rs`, `emitter/workers_entry.rs`, `emitter/lower.rs`, and `project.rs`. **Layer 2
-(genuinely unreached, confirmed by grep — zero callers outside this file):** the whole-program
-recursive tree-builder — `lower_expr_ir`, `lower_block_ir`, `lower_fn_body_ir`, `lower_handler_ir`,
-`lower_service_handler_ir`, `lower_fn_item_ir`, `lower_service_item_ir`, `lower_agent_item_ir`,
-`lower_provider_item_ir`, `lower_store_field_ir`, `lower_invariant_ir`, `lower_transition_ir`,
-`lower_commit_shape_ir`, `lower_op_sig_ir_from_commons`, `lower_fn_sig_ir_from_types` — the file's
-own module doc says this outright: "Nothing in this module is called from anywhere in
-`bynk-emit`'s existing emission path... it has no consumer yet, so it cannot change any emitted
-output." This matches the retired `the-ir.md`'s own account of its retirement-plan arc (P6.42–58):
-several originally-planned full item/body lowerings "were traced against their own real consumers
-and declined rather than force-built."
+structurally distinct layers under one file.
 
-This means P7.d1 is not a mechanical file-move (however large) — landing it well requires a real
-decision this settling pass didn't make: **carry Layer 2 into the new `bynk-lower` crate as-is
-(preserving the original design intent for a future full-tree consumer), or trim it now (real,
-consequential dead-code removal inside the same carve)**, plus the ordinary mechanical work (new
-`bynk-ir`/`bynk-lower` manifests, ~99 call-site import-path fixes across 7 consumer files, a
-circularity check — `ir/lower.rs` itself currently does `use crate::emitter::{ MUTATING_CELL_OPS,
-..., block_uses_emit, match_needs_if_chain };`, a live reverse dependency from what would become
-`bynk-lower` back into `bynk-emit` that has to be resolved, not just relocated, before the crate
-graph is acyclic). **Not implemented this pass** — this is real, grounded scope a dedicated slice
-(or its own short sub-decomposition, the same pattern Arc C used for `emit_project`/
-`emit_system_http_support`) should own, not something to rush inside a settling sweep. P7.d7 stays
-blocked behind it.
+**Correction (same pass, before any code changed): the first cut at this classification was
+methodologically wrong and is corrected here rather than left standing.** The original version of
+this note classified "dead" by grepping for callers *outside* `ir/lower.rs` only — which missed
+real same-file call chains entirely. `lower_event_subscriber_shapes_ir` (a genuine root, called
+from `project.rs`) calls `lower_service_item_ir` directly (line ~1767), which — per its own doc
+comment — "unconditionally lowers every handler's own *body* (not just its declared shape)",
+reaching `lower_service_handler_ir` → `lower_service_handler_body_ir` → `lower_block_ir` →
+`lower_expr_ir`/`lower_stmt_ir` and the rest of the recursive expression-lowering machinery. That
+same doc comment records a `catch_unwind` safety probe finding **zero panics across the entire e2e
+fixture corpus** — this is real, live, tested production code, not the dead layer the first cut
+claimed. The corrected classification was built properly: a full call-graph reachability analysis
+from every confirmed production entry point (18 functions with a real caller outside this file),
+over comment-stripped function bodies (the first cut's other mistake — a naive text scan without
+stripping `///`/`//` lines treats a rustdoc cross-link like `` [`lower_service_item_ir`] `` in a
+neighbouring function's doc comment as a real call, which is how `lower_service_item_ir` got
+mis-filed as dead in the first place).
+
+**Layer 1 (live, confirmed by call-graph reachability from 18 real production entry points, 61
+functions total):** every function this file needs to construct `IrItem::Type`/`Capability`/
+`Service` (bodies included) and the shapes `emitter.rs`/`emitter/emit.rs`/`emitter/workers.rs`/
+`emitter/workers_entry.rs`/`emitter/lower.rs`/`project.rs` read directly — `lower_handler_kind_ir`,
+`lower_protocol_ir`(`_from_commons`), `lower_handler_given_ir`, `lower_provider_given_ir`,
+`lower_route_cache_ir`, `lower_route_limit_ir`, `lower_event_subscriber_shapes_ir`,
+`is_effectful_return`, `body_writes_state`, `capability_op_sig_from_commons`,
+`lower_attached_fn_sig_ir_from_types`, `lower_type_item_ir`, `lower_capability_item_ir`,
+`lower_service_handler_signature_ir`, `lower_store_field_shape_ir` (the 15 with a real
+cross-file caller) plus, reached transitively through `lower_event_subscriber_shapes_ir` →
+`lower_service_item_ir`: `lower_service_handler_ir`, `lower_service_handler_body_ir`,
+`lower_block_ir`, `lower_stmt_ir`, `lower_expr_ir`, `lower_pattern_ir`, `lower_arm_ir`,
+`lower_exhaustive_ir`, `lower_call_ir`, `lower_lambda_ir`, `lower_ident_ir`,
+`lower_record_spread_ir`, `lower_question_ir`, `lower_is_ir`, `lower_commit_shape_ir`,
+`lower_op_sig_ir`, `lower_op_sig_ir_from_commons`, `lower_fn_sig_ir_from_types`,
+`lower_http_method_ir`, `lower_policy_ir`, and a dozen more small private helpers (full list in
+the proposal issue, not repeated here).
+
+**Layer 2 (genuinely dead, confirmed by full reachability analysis — unreachable from every one
+of the 18 real production entry points, not merely "no cross-file caller"):** `lower_handler_ir`,
+`lower_handler_body_ir`, `lower_handler_signature_ir`, `lower_fn_item_ir`, `lower_fn_body_ir`,
+`lower_store_field_ir`, `lower_invariant_ir`, `lower_transition_ir`, `lower_event_pattern_ir`,
+`lower_agent_item_ir`, `lower_provider_item_ir`, `lower_cap_ref_ir`, `lower_provider_op_ir` — 13
+functions, roughly the `Fn`/`Agent`/`Provider` top-level item lowering path (services and types
+are the two item kinds a real consumer needs today; standalone functions, agents, and providers
+never got a real caller). One of these (`lower_fn_body_ir`) needed a second correction within the
+same pass: its only apparent "live" reference was inside a `todo!()` panic message's own prose
+(`"...structurally unreachable through lower_fn_body_ir (see its own doc comment)..."`,
+`ir/lower.rs:3524`) — a string literal, not a call — caught only by reading that call site's actual
+context rather than trusting the regex match. Its one real caller is `lower_fn_item_ir`, itself
+dead. This matches the
+retired `the-ir.md`'s own account of its retirement-plan arc (P6.42–58): several originally-planned
+full item lowerings "were traced against their own real consumers and declined rather than
+force-built" — apparently for `Fn`/`Agent`/`Provider` items specifically, not for `Service` (whose
+handler-body lowering *did* get a real caller via the events-subscriber-shape probe) or `Type`/
+`Capability` (shape-only, no body to lower).
+
+This means P7.d1 is not a mechanical file-move (however large), but for a narrower reason than
+first thought: the real work is deleting the confirmed-dead 13-function layer (trim, not carry
+forward — this track's own repeated precedent, e.g. `ts_type_ref_qualified` deleted outright once
+superseded), then carving the much-larger-than-expected remaining ~85% of `ir/lower.rs` (the live
+recursive lowering machinery, genuinely exercised by the events-subscriber-shape path) into
+`bynk-ir`/`bynk-lower`, plus the ordinary mechanical work (new manifests, ~99 call-site
+import-path fixes across 7 consumer files, and resolving `ir/lower.rs`'s own live reverse
+dependency — `use crate::emitter::{ MUTATING_CELL_OPS, ..., block_uses_emit,
+match_needs_if_chain };` — before the new crate graph is acyclic). **Not implemented this pass** —
+recorded here so the next pass starts from a call-graph-verified classification, not a repeat of
+the first cut's mistake. P7.d7 stays blocked behind it.
 
 **P7.10 (landed) — the R8.4/d5/d8 settling sweep, a single verify-only pass, no code changes.**
 Re-audited against the tree as it stands after Arc C's full 37-slice landing (all citations below
