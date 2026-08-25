@@ -1614,14 +1614,21 @@ fn emit_context_rebrands(
         return;
     };
     // Collect names imported via `uses` (kind == Commons in imported_from_kind).
+    // R4.10/R8.2: reads `bynk_check::resolver::compute_is_uses_commons_type`, the same
+    // predicate `prepare_unit_check_ctx` (`check_pipeline.rs`) computes its own
+    // `uses_commons_type_names` from — one definition, not two independently
+    // maintained copies linked only by a doc-comment promise (see that
+    // function's own doc comment for the real defect this closes, ADR 0226).
     let mut names: Vec<String> = Vec::new();
     for set in refs.by_commons.values() {
         for n in set {
             // v0.20b: only *types* get the context rebrand — a
             // `uses`-imported function is a value and imports plainly.
-            if matches!(ctx.imported_from_kind.get(n), Some(UnitKind::Commons))
-                && commons.types.contains_key(n)
-            {
+            if bynk_check::resolver::compute_is_uses_commons_type(
+                &ctx.imported_from_kind,
+                &commons.types,
+                n,
+            ) {
                 names.push(n.clone());
             }
         }
@@ -2479,12 +2486,27 @@ fn emit_project_imports(
             // `traverse`) is a value, imports plainly, and is never branded.
             let mut parts: Vec<String> = Vec::new();
             for n in &name_list {
-                let from_kind = ctx.imported_from_kind.get(n.as_str()).copied();
                 let is_subscribed_event_type = ctx.target == BuildTarget::Workers
                     && subscribed_event_type_names.contains(n.as_str());
+                // R4.10/R8.2: the same shared `is_uses_commons_type` predicate
+                // `emit_context_rebrands` below reads — this import-aliasing
+                // site is that function's own step 1 ("Done in imports", its
+                // own doc comment), and the two must agree exactly: an alias
+                // narrower than the rebrand leaves an undefined name in the
+                // generated import; a rebrand narrower than the alias leaves
+                // an alias imported and never used. `ctx.unit_kind ==
+                // UnitKind::Context` is the same guard as
+                // `emit_context_rebrands`'s own `ctx.owning_context.is_some()`
+                // early return (`owning_context` is `Some` exactly when
+                // `unit_kind == Context`, `project.rs`'s own construction) —
+                // kept explicit here since this loop runs for every unit
+                // kind, not just contexts.
                 if ctx.unit_kind == UnitKind::Context
-                    && from_kind == Some(UnitKind::Commons)
-                    && commons.types.contains_key(n.as_str())
+                    && bynk_check::resolver::compute_is_uses_commons_type(
+                        &ctx.imported_from_kind,
+                        &commons.types,
+                        n,
+                    )
                 {
                     parts.push(format!("{n} as __Commons{n}"));
                 } else if is_subscribed_event_type {

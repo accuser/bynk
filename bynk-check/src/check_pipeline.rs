@@ -118,9 +118,11 @@ pub fn prepare_unit_check_ctx(
         None
     };
     let uses_commons_type_names: HashSet<String> = imported_from_kind
-        .iter()
-        .filter(|(n, k)| **k == UnitKind::Commons && combined_types.contains_key(n.as_str()))
-        .map(|(n, _)| n.clone())
+        .keys()
+        .filter(|n| {
+            crate::resolver::compute_is_uses_commons_type(imported_from_kind, combined_types, n)
+        })
+        .cloned()
         .collect();
     UnitCheckCtx {
         cross_context_views,
