@@ -190,11 +190,16 @@ fn case_(test: TsExpr, body: Vec<TsStmt>) -> TsSwitchCase {
     TsSwitchCase {
         test: Some(test),
         body,
+        default_braced: false,
     }
 }
 
 fn default_case(body: Vec<TsStmt>) -> TsSwitchCase {
-    TsSwitchCase { test: None, body }
+    TsSwitchCase {
+        test: None,
+        body,
+        default_braced: false,
+    }
 }
 
 fn new_response(args: Vec<TsExpr>) -> TsExpr {

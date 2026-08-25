@@ -33,8 +33,8 @@ use bynk_syntax::ast::{
 };
 use bynk_syntax::span::Span;
 use bynk_ts::{
-    SourceMapBuilder, TsBindingName, TsDecl, TsExpr, TsLit, TsObjectEntry, TsParam, TsProgram,
-    TsStmt, TsType, TsTypeMember,
+    SourceMapBuilder, TsBinaryOp, TsBindingName, TsClassMethod, TsDecl, TsExpr, TsLit,
+    TsObjectEntry, TsParam, TsProgram, TsStmt, TsSwitchCase, TsType, TsTypeMember,
 };
 use std::sync::Arc;
 
@@ -2090,6 +2090,19 @@ fn emit_stub_class(
             .push(idx);
     }
 
+    // The class wrapper (header/fields) stays hand-written text — Decision C
+    // (#1359's own `emit_provider` precedent): each method's own body is one
+    // opaque `TsStmt::raw` (it mixes real structure with `lower_stub_value_
+    // block`'s own already-lowered opaque text, an `async () => { ... }`
+    // IIFE whose block body `TsExpr::Arrow` has no shape for — the same
+    // "block-bodied arrow stays opaque" call `emit_composition_root`'s own
+    // `__eventsDispatch` closure already made), so each method is printed as
+    // its own real `TsClassMethod` fragment via `bynk_ts::print_class_method`
+    // at depth 0 — the only depth `render_class_method`'s own debug_assert
+    // allows a `Raw`-bodied method to print correctly at — and spliced
+    // directly into this still-hand-written wrapper, with no blank line
+    // between fields/methods or between methods (matching this function's
+    // own zero-blank-line output exactly).
     out.push_str(&format!("class __Stub_{cap} {{\n"));
     // One per-call sequence cursor field per `returns each` clause.
     for (idx, clause) in rp.clauses.iter().enumerate() {
@@ -2102,21 +2115,22 @@ fn emit_stub_class(
         let Some(op) = rp.cap_decl.ops.iter().find(|o| &o.name.name == method) else {
             continue;
         };
-        let params = op
+        let params: Vec<TsParam> = op
             .params
             .iter()
-            .map(|p| {
-                format!(
-                    "{}: {}",
-                    p.name.name,
-                    emitter::ts_type_ref_qualified_multi(&p.type_ref, &type_ns)
-                )
+            .map(|p| TsParam {
+                name: p.name.name.clone(),
+                ty: Some(emitter::ts_type_ref_qualified_multi_ts_type(
+                    &p.type_ref,
+                    &type_ns,
+                )),
+                optional: false,
             })
-            .collect::<Vec<_>>()
-            .join(", ");
-        let return_ty = emitter::ts_type_ref_qualified_multi(&op.return_type, &type_ns);
-        out.push_str(&format!("  async {method}({params}): {return_ty} {{\n"));
-        emit_ns_destructure(&mut out, &scope_ns, &scope_names, &scope_type_names);
+            .collect();
+        let return_ty = emitter::ts_type_ref_qualified_multi_ts_type(&op.return_type, &type_ns);
+
+        let mut body_text = String::new();
+        emit_ns_destructure(&mut body_text, &scope_ns, &scope_names, &scope_type_names);
         for &idx in clause_idxs {
             let clause = &rp.clauses[idx];
             // Argument-pattern consts: a `Value(e)` pattern lowers to a const the
@@ -2139,13 +2153,13 @@ fn emit_stub_class(
                         tys,
                     );
                     let vname = format!("__pv_{idx}_{i}");
-                    out.push_str(&format!("    const {vname} = await (async () => {{\n"));
+                    body_text.push_str(&format!("    const {vname} = await (async () => {{\n"));
                     for line in body.lines() {
-                        out.push_str("      ");
-                        out.push_str(line);
-                        out.push('\n');
+                        body_text.push_str("      ");
+                        body_text.push_str(line);
+                        body_text.push('\n');
                     }
-                    out.push_str("    })();\n");
+                    body_text.push_str("    })();\n");
                     cond_parts.push(format!("__bynkDeepEqual({}, {vname})", param.name.name));
                 }
             }
@@ -2154,7 +2168,7 @@ fn emit_stub_class(
             } else {
                 cond_parts.join(" && ")
             };
-            out.push_str(&format!("    if ({cond}) {{\n"));
+            body_text.push_str(&format!("    if ({cond}) {{\n"));
             let rhs_body = emit_stub_rhs(
                 clause,
                 idx,
@@ -2168,18 +2182,56 @@ fn emit_stub_class(
                 tys,
             );
             for line in rhs_body.lines() {
-                out.push_str("      ");
-                out.push_str(line);
-                out.push('\n');
+                body_text.push_str("      ");
+                body_text.push_str(line);
+                body_text.push('\n');
             }
-            out.push_str("    }\n");
+            body_text.push_str("    }\n");
         }
-        out.push_str(&format!(
+        body_text.push_str(&format!(
             "    throw new Error(\"bynk: no stub clause matched for {cap}.{method}\");\n"
         ));
-        out.push_str("  }\n");
+
+        let method_node = TsClassMethod {
+            name: method.clone(),
+            private: false,
+            is_async: true,
+            params,
+            return_type: Some(return_ty),
+            doc: None,
+            body: vec![TsStmt::raw(body_text, None)],
+        };
+        out.push_str(&bynk_ts::print_class_method(&method_node, 0));
     }
     out.push_str("}\n");
+    out
+}
+
+/// `throw new Error("bynk: injected capability fault (stubs … fails)");` —
+/// the one real site anywhere in this cluster injecting a synthetic
+/// capability failure, shared by [`emit_stub_rhs`]'s own `Fails`/
+/// `ReturnsEach`-with-a-failing-outcome arms.
+fn stub_fault_stmt() -> TsStmt {
+    TsStmt::throw_stmt(
+        TsExpr::New {
+            callee: Box::new(ident("Error")),
+            args: vec![str_lit("bynk: injected capability fault (stubs … fails)")],
+        },
+        None,
+    )
+}
+
+/// Prefix every line of `text` with `prefix` — [`TsStmtKind::Raw`]'s own
+/// "pre-indented at a fixed absolute depth by the caller" contract (its own
+/// doc), used here to carry [`lower_stub_value_block`]'s already-lowered
+/// opaque body text as one switch-case's own statement.
+fn reindent_by(text: &str, prefix: &str) -> String {
+    let mut out = String::new();
+    for line in text.lines() {
+        out.push_str(prefix);
+        out.push_str(line);
+        out.push('\n');
+    }
     out
 }
 
@@ -2198,7 +2250,6 @@ fn emit_stub_rhs(
     runtime_use: &RuntimeUse,
     tys: &Arc<Types>,
 ) -> String {
-    const FAULT: &str = "throw new Error(\"bynk: injected capability fault (stubs … fails)\");";
     let lower = |e: &Expr| {
         lower_stub_value_block(
             e,
@@ -2215,40 +2266,49 @@ fn emit_stub_rhs(
     };
     match &clause.rhs {
         StubRhs::Returns(e) => lower(e),
-        StubRhs::Fails(_) => format!("{FAULT}\n"),
+        StubRhs::Fails(_) => bynk_ts::print_stmt(&stub_fault_stmt(), 0),
         StubRhs::ReturnsEach(outcomes, _) => {
             let n = outcomes.len();
-            let mut out = String::new();
-            out.push_str(&format!("const __k = this.__seq_{clause_idx};\n"));
+            let mut stmts = vec![TsStmt::const_stmt(
+                TsBindingName::Ident("__k".to_string()),
+                None,
+                member(ident("this"), format!("__seq_{clause_idx}")),
+                None,
+            )];
             if n > 1 {
-                out.push_str(&format!(
-                    "if (this.__seq_{clause_idx} < {}) this.__seq_{clause_idx}++;\n",
-                    n - 1
+                stmts.push(if_(
+                    TsExpr::Binary {
+                        op: TsBinaryOp::LessThan,
+                        left: Box::new(member(ident("this"), format!("__seq_{clause_idx}"))),
+                        right: Box::new(num_lit((n - 1).to_string())),
+                    },
+                    TsStmt::increment(member(ident("this"), format!("__seq_{clause_idx}")), None),
                 ));
             }
             let outcome_body = |o: &SeqOutcome| match o {
                 SeqOutcome::Value(e) => lower(e),
-                SeqOutcome::Fails(_) => format!("{FAULT}\n"),
+                SeqOutcome::Fails(_) => bynk_ts::print_stmt(&stub_fault_stmt(), 0),
             };
-            out.push_str("switch (__k) {\n");
-            for (j, o) in outcomes.iter().enumerate().take(n.saturating_sub(1)) {
-                out.push_str(&format!("  case {j}: {{\n"));
-                for line in outcome_body(o).lines() {
-                    out.push_str("    ");
-                    out.push_str(line);
-                    out.push('\n');
-                }
-                out.push_str("  }\n");
-            }
-            out.push_str("  default: {\n");
-            for line in outcome_body(&outcomes[n - 1]).lines() {
-                out.push_str("    ");
-                out.push_str(line);
-                out.push('\n');
-            }
-            out.push_str("  }\n");
-            out.push_str("}\n");
-            out
+            let mut cases: Vec<TsSwitchCase> = outcomes
+                .iter()
+                .enumerate()
+                .take(n.saturating_sub(1))
+                .map(|(j, o)| TsSwitchCase {
+                    test: Some(num_lit(j.to_string())),
+                    body: vec![TsStmt::raw(reindent_by(&outcome_body(o), "    "), None)],
+                    default_braced: false,
+                })
+                .collect();
+            cases.push(TsSwitchCase {
+                test: None,
+                body: vec![TsStmt::raw(
+                    reindent_by(&outcome_body(&outcomes[n - 1]), "    "),
+                    None,
+                )],
+                default_braced: true,
+            });
+            stmts.push(TsStmt::switch_stmt(ident("__k"), cases, None));
+            stmts.iter().map(|s| bynk_ts::print_stmt(s, 0)).collect()
         }
     }
 }

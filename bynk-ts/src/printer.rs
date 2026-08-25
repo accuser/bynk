@@ -528,6 +528,10 @@ fn render_stmt(out: &mut String, stmt: &TsStmt, depth: usize) {
             render_expr(out, discriminant);
             out.push_str(") {\n");
             for case in cases {
+                debug_assert!(
+                    !(case.test.is_some() && case.default_braced),
+                    "TsSwitchCase.default_braced only means something on the default (test: None) case — review of #1402's own nit"
+                );
                 out.push_str(&indent(depth + 1));
                 match &case.test {
                     Some(test) => {
@@ -541,9 +545,18 @@ fn render_stmt(out: &mut String, stmt: &TsStmt, depth: usize) {
                         out.push_str("}\n");
                     }
                     None => {
-                        out.push_str("default:\n");
-                        for s in &case.body {
-                            render_stmt(out, s, depth + 2);
+                        if case.default_braced {
+                            out.push_str("default: {\n");
+                            for s in &case.body {
+                                render_stmt(out, s, depth + 2);
+                            }
+                            out.push_str(&indent(depth + 1));
+                            out.push_str("}\n");
+                        } else {
+                            out.push_str("default:\n");
+                            for s in &case.body {
+                                render_stmt(out, s, depth + 2);
+                            }
                         }
                     }
                 }
@@ -852,7 +865,7 @@ fn binary_precedence(op: TsBinaryOp) -> u8 {
         TsBinaryOp::Or => 2,
         TsBinaryOp::And => 3,
         TsBinaryOp::StrictEq | TsBinaryOp::StrictNotEq => 4,
-        TsBinaryOp::GreaterThan => 5,
+        TsBinaryOp::GreaterThan | TsBinaryOp::LessThan => 5,
         TsBinaryOp::Add => 6,
     }
 }
@@ -1367,6 +1380,7 @@ fn render_expr(out: &mut String, expr: &TsExpr) {
                 TsBinaryOp::StrictEq => " === ",
                 TsBinaryOp::StrictNotEq => " !== ",
                 TsBinaryOp::GreaterThan => " > ",
+                TsBinaryOp::LessThan => " < ",
                 TsBinaryOp::Add => " + ",
             });
             render_binary_operand(out, *op, right, false);
@@ -1652,7 +1666,24 @@ pub fn print_expr(expr: &TsExpr) -> String {
 /// [`print_type`]'s own scope exactly, and reusing `render_stmt`'s own
 /// exhaustive per-kind dispatch (this module's own private renderer)
 /// rather than a second copy.
+/// Review of #1402: a `TsStmtKind::Raw` nested inside a `Switch` case's own
+/// body (`emit_stub_rhs`'s own `ReturnsEach` dispatch, Arc C slice 33,
+/// `tests_emit.rs` slice C) carries the identical "no indent of its own,
+/// pre-indented at a fixed absolute depth" hazard `render_class_method`'s
+/// and `render_multiline_object_entry`'s own `debug_assert!`s already guard
+/// — `stmt_contains_raw` already recurses into `Switch` cases, so the same
+/// check applies here, this fragment entry point's own first `Raw`-bearing
+/// `Switch` caller. A bare `Raw` passed directly as `stmt` itself is exempt
+/// (not a false negative — `render_stmt`'s own `Raw` arm never reads
+/// `depth` at all, so calling `print_stmt` on a bare `Raw` is safe at any
+/// depth, the established `print_stmt_renders_raw_text_verbatim_with_no_
+/// added_indent_or_punctuation` contract below): only a Raw *nested inside*
+/// a depth-using wrapper (like this `Switch` case) is the real hazard.
 pub fn print_stmt(stmt: &TsStmt, depth: usize) -> String {
+    debug_assert!(
+        depth == 0 || matches!(stmt.kind, TsStmtKind::Raw(_)) || !stmt_contains_raw(stmt),
+        "print_stmt: a Raw-bearing statement's own baked-in indent only matches depth 0"
+    );
     let mut out = String::new();
     render_stmt(&mut out, stmt, depth);
     out
@@ -3587,6 +3618,7 @@ mod tests {
                 TsSwitchCase {
                     test: Some(TsExpr::Lit(TsLit::Str("orders".to_string()))),
                     body: vec![TsStmt::return_stmt(None, None)],
+                    default_braced: false,
                 },
                 TsSwitchCase {
                     test: None,
@@ -3600,6 +3632,7 @@ mod tests {
                         },
                         None,
                     )],
+                    default_braced: false,
                 },
             ],
             None,
@@ -3608,6 +3641,29 @@ mod tests {
         assert_eq!(
             printed.text,
             "switch (servicePath) {\n  case \"orders\": {\n    return;\n  }\n  default:\n    console.log();\n}\n"
+        );
+    }
+
+    /// Arc C, slice 33 (`tests_emit.rs` slice C, #1401): `TsSwitchCase.
+    /// default_braced` — `emit_stub_class`'s own `ReturnsEach` dispatch
+    /// braces its `default` case, unlike `workers_entry.rs`'s own unbraced
+    /// one pinned just above.
+    #[test]
+    fn prints_a_switch_with_a_braced_default() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::switch_stmt(
+            TsExpr::Ident("__k".to_string()),
+            vec![TsSwitchCase {
+                test: None,
+                body: vec![TsStmt::expr_stmt(TsExpr::Ident("x".to_string()), None)],
+                default_braced: true,
+            }],
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(
+            printed.text,
+            "switch (__k) {\n  default: {\n    x;\n  }\n}\n"
         );
     }
 
@@ -5280,5 +5336,45 @@ mod tests {
             printed.text,
             "<T>(value: T): Sum<T> => ({ tag: \"some\", value });\n"
         );
+    }
+
+    /// Arc C, slice 33 (#1401): `TsBinaryOp::LessThan` — pins the operator
+    /// text itself.
+    #[test]
+    fn prints_a_less_than_comparison() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::expr_stmt(
+            TsExpr::Binary {
+                op: TsBinaryOp::LessThan,
+                left: Box::new(TsExpr::Ident("a".to_string())),
+                right: Box::new(TsExpr::Ident("b".to_string())),
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "a < b;\n");
+    }
+
+    /// `LessThan` shares `GreaterThan`'s own precedence tier — a nested
+    /// `Add` under it needs no parens (`+` binds tighter), mirroring
+    /// `add_binds_tighter_than_greater_than_on_both_sides` for the other
+    /// relational operator.
+    #[test]
+    fn add_binds_tighter_than_less_than() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::expr_stmt(
+            TsExpr::Binary {
+                op: TsBinaryOp::LessThan,
+                left: Box::new(TsExpr::Binary {
+                    op: TsBinaryOp::Add,
+                    left: Box::new(TsExpr::Ident("a".to_string())),
+                    right: Box::new(TsExpr::Ident("b".to_string())),
+                }),
+                right: Box::new(TsExpr::Ident("c".to_string())),
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "a + b < c;\n");
     }
 }

@@ -306,14 +306,24 @@ pub(crate) enum TsStmtKind {
 /// One `case`/`default` arm of a `TsStmtKind::Switch`. `test: None` is the
 /// `default:` case — every real `default` in `workers_entry.rs` prints its
 /// body directly under `default:` with no `{ }` block, while every real
-/// non-`default` `case` prints a `{ }`-blocked body; the printer's own
-/// renderer follows that exact split (see its own doc), not a per-case flag,
-/// since nothing in the grounding file needs a braceless non-`default` case
-/// or a braced `default`.
+/// non-`default` `case` (regardless of `test`) always prints a `{ }`-blocked
+/// body.
+///
+/// `default_braced` (Arc C slice 33, `tests_emit.rs` slice C, #1401) —
+/// `emit_stub_class`'s own `ReturnsEach` dispatch is the first real site
+/// with a BRACED `default: { ... }`, a genuinely different convention from
+/// `workers_entry.rs`'s own unbraced one; only meaningful when `test` is
+/// `None` (a non-`default` case is unconditionally braced already, the same
+/// way it always was before this field existed). Kept a per-case flag
+/// rather than changing the existing unbraced-default rendering, since that
+/// would risk `workers_entry.rs`'s own real, already-zero-diff content for
+/// no benefit — the same "don't touch working, unrelated content" judgment
+/// this track makes repeatedly.
 #[derive(Debug, Clone)]
 pub struct TsSwitchCase {
     pub test: Option<TsExpr>,
     pub body: Vec<TsStmt>,
+    pub default_braced: bool,
 }
 
 impl TsStmt {
@@ -963,6 +973,15 @@ pub enum TsBinaryOp {
     StrictEq,
     StrictNotEq,
     GreaterThan,
+    /// `<` — Arc C slice 33 (`tests_emit.rs` slice C, #1401)'s own real gap:
+    /// `emit_stub_class`'s `ReturnsEach` sequence-cursor guard
+    /// (`this.__seq_N < <bound>`) is the first real `<` comparison anywhere
+    /// in `bynk-emit`'s own content. Same precedence tier as
+    /// [`TsBinaryOp::GreaterThan`] (real JS/TS relational operators all
+    /// share one level) — added alongside it rather than folding into a
+    /// single "relational" variant, matching this enum's own existing
+    /// one-variant-per-real-operator convention.
+    LessThan,
     Add,
 }
 

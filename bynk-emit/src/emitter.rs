@@ -4374,21 +4374,32 @@ pub(crate) fn ts_type_ref_qualified_ts_type(
     )
 }
 
-/// Like `ts_type_ref_qualified`, but each in-scope name can carry its *own*
-/// namespace rather than one shared `ns` — needed when a signature mixes
-/// names owned by the target unit with names reached only through a `uses`d
-/// commons (e.g. a stub class implementing an adapter-sourced capability
-/// whose return type lives in a commons the capability's own unit `uses`,
-/// never in the target context itself — Locale capability track, slice 1,
-/// #844). Qualifying such a name under the target's own namespace would
-/// reference an export `emit_context_rebrands` never emits (it only rebrands
-/// names the target's *own* lowered body references), so each name is
-/// qualified under the namespace that actually exports it.
-pub(crate) fn ts_type_ref_qualified_multi(
+/// [`TsType`]-returning sibling of `ts_type_ref`, like `ts_type_ref_qualified`
+/// but with each in-scope name carrying its *own* namespace via `type_ns`
+/// rather than one shared `ns` — needed when a signature mixes names owned
+/// by the target unit with names reached only through a `uses`d commons
+/// (e.g. a stub class implementing an adapter-sourced capability whose
+/// return type lives in a commons the capability's own unit `uses`, never
+/// in the target context itself — Locale capability track, slice 1, #844).
+/// Qualifying such a name under the target's own namespace would reference
+/// an export `emit_context_rebrands` never emits (it only rebrands names
+/// the target's *own* lowered body references), so each name is qualified
+/// under the namespace that actually exports it. Used by `emit_stub_class`
+/// (`project/tests_emit.rs`) for its own method params/return-type.
+///
+/// Originally paired with a `String`-returning `ts_type_ref_qualified_multi`
+/// — Arc C slice 33 (`tests_emit.rs` slice C, #1401) converted `emit_stub_
+/// class`'s own two real call sites (params/return-type) to call this
+/// function directly instead, the same cleanup Arc C slice 32/#1399 already
+/// made for `ts_type_ref_qualified`'s own identical pairing — `ts_type_ref_
+/// qualified_multi` had no other production caller left, so it was deleted
+/// rather than kept as dead code, with its own direct unit test rerouted
+/// through `bynk_ts::print_type` instead.
+pub(crate) fn ts_type_ref_qualified_multi_ts_type(
     r: &TypeRef,
     type_ns: &HashMap<String, String>,
-) -> String {
-    ts_type_ref_with(r, Some(&|name| type_ns.get(name).cloned()))
+) -> TsType {
+    ts_type_ref_to_ts_type(r, Some(&|name| type_ns.get(name).cloned()))
 }
 
 /// A name → owning-namespace lookup for `ts_type_ref_with`'s `qualify` arm.
@@ -4749,8 +4760,8 @@ mod ts_type_ref_tests {
         );
     }
 
-    /// Same shape as above, through `ts_type_ref_qualified_multi` — no
-    /// direct test existed for this function at all before this fix.
+    /// Same shape as above, through `ts_type_ref_qualified_multi_ts_type` —
+    /// no direct test existed for this function at all before this fix.
     #[test]
     fn qualified_multi_generic_instantiation_qualifies_head_and_recurses_into_args() {
         let r = TypeRef::App {
@@ -4765,7 +4776,7 @@ mod ts_type_ref_tests {
         type_ns.insert("MyGeneric".to_string(), "A".to_string());
         type_ns.insert("Order".to_string(), "B".to_string());
         assert_eq!(
-            ts_type_ref_qualified_multi(&r, &type_ns),
+            bynk_ts::print_type(&ts_type_ref_qualified_multi_ts_type(&r, &type_ns)),
             "A.MyGeneric<number, B.Order>"
         );
     }
