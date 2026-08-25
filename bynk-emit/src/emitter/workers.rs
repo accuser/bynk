@@ -2125,20 +2125,25 @@ fn named_types_in(r: &TypeRef) -> Vec<String> {
     out
 }
 
-/// P7.2: `ts_type_ref_qualified` over `r`, scoped to `r`'s own named types —
-/// the minimal correct qualification for a single type-ref rendered in
-/// isolation, the same helper `emit_call_wrapper` uses across a whole param
-/// list. A bare `ts_type_ref` collides with anything of the same name already
-/// in scope where the rendered text lands: a `handlers.ts`-exported Bynk type
-/// (`Cannot find name` — the name resolves to nothing without the `handlers.`
-/// prefix) or, for a common enough name, a browser-ambient DOM global
-/// (`Notification`, `Event`) that silently wins instead. Both broke real
-/// `tsc --strict` fixtures before this existed.
+/// P7.2: [`crate::emitter::ts_type_ref_qualified_ts_type`] over `r`, scoped
+/// to `r`'s own named types — the minimal correct qualification for a single
+/// type-ref rendered in isolation, the same helper `emit_call_wrapper` uses
+/// across a whole param list. A bare `ts_type_ref` collides with anything of
+/// the same name already in scope where the rendered text lands: a
+/// `handlers.ts`-exported Bynk type (`Cannot find name` — the name resolves
+/// to nothing without the `handlers.` prefix) or, for a common enough name,
+/// a browser-ambient DOM global (`Notification`, `Event`) that silently wins
+/// instead. Both broke real `tsc --strict` fixtures before this existed.
 ///
 /// #1321: renamed from `qualified_type_ref` (returned `String`) — every real
 /// caller now builds a `TsProgram` directly, so this returns the `TsType`
 /// [`crate::emitter::ts_type_ref_qualified_ts_type`] (Decision B) itself
-/// builds, not its printed text.
+/// builds, not its printed text. That function originally had a
+/// `String`-returning sibling, `ts_type_ref_qualified`, kept for a
+/// still-`String`-based caller elsewhere in the crate; Arc C slice 32
+/// (#1399) converted that last caller and deleted it — this function's own
+/// call site was never affected, since it always used the `TsType`-returning
+/// form.
 fn qualified_ts_type_ref(r: &TypeRef) -> TsType {
     let scope: HashSet<String> = named_types_in(r).into_iter().collect();
     crate::emitter::ts_type_ref_qualified_ts_type(r, &scope, "handlers")

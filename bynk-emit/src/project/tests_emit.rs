@@ -912,6 +912,34 @@ fn strip_effect_httpresult(t: &bynk_syntax::ast::TypeRef) -> Option<&bynk_syntax
     }
 }
 
+/// A `{ fetch: (req: Request) => worker_X.fetch(req, env_X) } as ServiceBinding`
+/// expression — the identical shape both the per-participant and root-env
+/// binding wiring in [`emit_integration_harness`] build, differing only in
+/// which worker/env pair they close over.
+fn service_binding_forward(worker_ident: &str, env_ident: &str) -> TsExpr {
+    TsExpr::As {
+        expr: Box::new(TsExpr::object(vec![(
+            "fetch".to_string(),
+            TsExpr::Arrow {
+                params: vec![TsParam {
+                    name: "req".to_string(),
+                    ty: Some(TsType::named("Request")),
+                    optional: false,
+                }],
+                is_async: false,
+                generics: Vec::new(),
+                return_type: None,
+                body: Box::new(method_call(
+                    ident(worker_ident),
+                    "fetch",
+                    vec![ident("req"), ident(env_ident)],
+                )),
+            },
+        )])),
+        ty: TsType::named("ServiceBinding"),
+    }
+}
+
 /// Emit the `makeHarness()` factory: an in-process env per participant whose
 /// Service Bindings call the sibling participants' real Worker `fetch` and whose
 /// Durable-Object namespaces back the participant's own agents in memory, plus a
@@ -922,8 +950,7 @@ fn emit_integration_harness(
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_tables: &HashMap<String, UnitTable>,
 ) -> String {
-    let mut out = String::new();
-    out.push_str("function makeHarness() {\n");
+    let mut body = Vec::new();
     // Declare every participant env first so sibling references resolve.
     //
     // P7.2: deferred, not narrowed. `env_{ns}` is later passed positionally into
@@ -936,7 +963,12 @@ fn emit_integration_harness(
     // worked out. Left as `any`, named here rather than guessed at.
     for p in participants {
         let ns = p.replace('.', "_");
-        out.push_str(&format!("  const env_{ns}: any = {{}};\n"));
+        body.push(TsStmt::const_stmt(
+            TsBindingName::Ident(format!("env_{ns}")),
+            Some(TsType::named("any")),
+            TsExpr::object(vec![]),
+            None,
+        ));
     }
     // Wire each participant's consumed Service Bindings to its sibling Workers,
     // and back its own agents with in-memory Durable Object namespaces.
@@ -948,8 +980,10 @@ fn emit_integration_harness(
             for d in &deps_sorted {
                 let dns = d.replace('.', "_");
                 let binding = crate::emitter::wrangler::consumed_binding_name(d);
-                out.push_str(&format!(
-                    "  env_{ns}.{binding} = {{ fetch: (req: Request) => worker_{dns}.fetch(req, env_{dns}) }} as ServiceBinding;\n"
+                body.push(TsStmt::assign(
+                    member(ident(format!("env_{ns}")), binding),
+                    service_binding_forward(&format!("worker_{dns}"), &format!("env_{dns}")),
+                    None,
                 ));
             }
         }
@@ -958,25 +992,64 @@ fn emit_integration_harness(
             agents.sort();
             for agent in agents {
                 let binding = crate::emitter::wrangler::agent_binding_name(agent);
-                out.push_str(&format!(
-                    "  env_{ns}.{binding} = makeIntegrationDoNamespace((state) => new {ns}.{agent}(state));\n"
+                body.push(TsStmt::assign(
+                    member(ident(format!("env_{ns}")), binding),
+                    call(
+                        ident("makeIntegrationDoNamespace"),
+                        vec![TsExpr::Arrow {
+                            params: vec![TsParam {
+                                name: "state".to_string(),
+                                ty: None,
+                                optional: false,
+                            }],
+                            is_async: false,
+                            generics: Vec::new(),
+                            return_type: None,
+                            body: Box::new(TsExpr::New {
+                                callee: Box::new(member(ident(ns.clone()), agent)),
+                                args: vec![ident("state")],
+                            }),
+                        }],
+                    ),
+                    None,
                 ));
             }
         }
     }
     // Root env binds to every participant.
     // P7.2: deferred, same reason as `env_{ns}` above.
-    out.push_str("  const rootEnv: any = {};\n");
+    body.push(TsStmt::const_stmt(
+        TsBindingName::Ident("rootEnv".to_string()),
+        Some(TsType::named("any")),
+        TsExpr::object(vec![]),
+        None,
+    ));
     for p in participants {
         let ns = p.replace('.', "_");
         let binding = crate::emitter::wrangler::consumed_binding_name(p);
-        out.push_str(&format!(
-            "  rootEnv.{binding} = {{ fetch: (req: Request) => worker_{ns}.fetch(req, env_{ns}) }} as ServiceBinding;\n"
+        body.push(TsStmt::assign(
+            member(ident("rootEnv"), binding),
+            service_binding_forward(&format!("worker_{ns}"), &format!("env_{ns}")),
+            None,
         ));
     }
-    out.push_str("  return { env: rootEnv };\n");
-    out.push_str("}\n");
-    out
+    body.push(TsStmt::return_stmt(
+        Some(TsExpr::object(vec![("env".to_string(), ident("rootEnv"))])),
+        None,
+    ));
+    let make_harness = TsStmt::decl(
+        TsDecl::Function {
+            name: "makeHarness".to_string(),
+            generics: Vec::new(),
+            params: Vec::new(),
+            return_type: None,
+            body,
+            is_async: false,
+            inline: false,
+        },
+        None,
+    );
+    bynk_ts::print_stmt(&make_harness, 0)
 }
 
 /// Build the [`checker::TypedCommons`] used to lower integration case bodies —
@@ -2318,6 +2391,18 @@ fn synthetic_typed_commons_for_target(
     }
 }
 
+/// `undefined as unknown as <ty>` — the placeholder value for an un-stubbed
+/// capability/surface entry, shared by every branch below.
+fn undefined_as_unknown_as(ty: impl Into<String>) -> TsExpr {
+    TsExpr::As {
+        expr: Box::new(TsExpr::As {
+            expr: Box::new(ident("undefined")),
+            ty: TsType::named("unknown"),
+        }),
+        ty: TsType::named(ty),
+    }
+}
+
 fn emit_test_deps(
     target_name: &str,
     target_kind: UnitKind,
@@ -2327,9 +2412,7 @@ fn emit_test_deps(
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
     unit_flattened: &HashMap<String, HashMap<String, String>>,
 ) -> String {
-    let mut out = String::new();
-    out.push_str("function makeTestDeps() {\n");
-    let mut entries: Vec<String> = Vec::new();
+    let mut entries: Vec<(String, TsExpr)> = Vec::new();
     if target_kind == UnitKind::Context
         && let Some(table) = unit_tables.get(target_name)
     {
@@ -2342,14 +2425,23 @@ fn emit_test_deps(
             // v0.118: a capability with a `stub` override plugs its
             // `__Stub_<Cap>` stub; otherwise the declared provider (its real
             // implementation) is used, as an un-overridden seam.
-            let entry = if stubs.contains_key(cap) {
-                format!("{cap}: new __Stub_{cap}()")
+            let value = if stubs.contains_key(cap) {
+                TsExpr::New {
+                    callee: Box::new(ident(format!("__Stub_{cap}"))),
+                    args: Vec::new(),
+                }
             } else if let Some(provider) = table.providers.get(cap) {
-                format!("{cap}: new {ns}.{}()", provider.provider_name.name)
+                TsExpr::New {
+                    callee: Box::new(member(
+                        ident(ns.clone()),
+                        provider.provider_name.name.clone(),
+                    )),
+                    args: Vec::new(),
+                }
             } else {
-                format!("{cap}: undefined as unknown as {ns}.{cap}")
+                undefined_as_unknown_as(format!("{ns}.{cap}"))
             };
-            entries.push(entry);
+            entries.push((cap.clone(), value));
         }
         // v0.17 (Locale capability track, slice 1, #844): a capability
         // flattened in via `consumes U { Cap }` (e.g. an adapter's `Locale`)
@@ -2366,12 +2458,15 @@ fn emit_test_deps(
         flattened.sort_by_key(|(cap, _)| cap.as_str());
         for (cap, owner) in flattened {
             let owner_ns = owner.replace('.', "_");
-            let entry = if stubs.contains_key(cap) {
-                format!("{cap}: new __Stub_{cap}()")
+            let value = if stubs.contains_key(cap) {
+                TsExpr::New {
+                    callee: Box::new(ident(format!("__Stub_{cap}"))),
+                    args: Vec::new(),
+                }
             } else {
-                format!("{cap}: undefined as unknown as {owner_ns}.{cap}")
+                undefined_as_unknown_as(format!("{owner_ns}.{cap}"))
             };
-            entries.push(entry);
+            entries.push((cap.clone(), value));
         }
         // Cross-context surface: consumed contexts run with their real surface
         // (v0.118 `stub` is capability-only — a consumed-context capability
@@ -2399,24 +2494,49 @@ fn emit_test_deps(
         for (alias, q) in &aliases {
             alias_for_target.insert(q.clone(), alias.clone());
         }
-        let mut surface_entries: Vec<String> = Vec::new();
+        let mut surface_entries: Vec<(String, TsExpr)> = Vec::new();
         for q in &consumed {
             let key = alias_for_target
                 .get(q)
                 .cloned()
                 .unwrap_or_else(|| q.rsplit('.').next().unwrap_or(q.as_str()).to_string());
             let other_ns = q.replace('.', "_");
-            surface_entries.push(format!(
-                "{key}: undefined as unknown as ReturnType<typeof {other_ns}.makeSurface>"
+            surface_entries.push((
+                key,
+                undefined_as_unknown_as(format!("ReturnType<typeof {other_ns}.makeSurface>")),
             ));
         }
         if !surface_entries.is_empty() {
-            entries.push(format!("surface: {{ {} }}", surface_entries.join(", ")));
+            entries.push(("surface".to_string(), TsExpr::object(surface_entries)));
         }
     }
-    out.push_str(&format!("  return {{ {} }};\n", entries.join(", ")));
-    out.push_str("}\n");
-    out
+    // The same `"{  }"` double-space quirk `workers.rs`/`project.rs`/
+    // `emit.rs`/`gen_ts_for_ty` (this file, Arc C slice 31) already carry as
+    // opaque text: the pre-conversion `format!("  return {{ {} }};\n",
+    // entries.join(", "))` template always has a space on each side of its
+    // `{}` slot, so zero entries (a non-`Context` target, or a `Context`
+    // with no capabilities/flattened caps/consumed surface) literally
+    // produced a double space, not the tight `"{}"` `TsExpr::object`'s own
+    // empty-entries shortcut renders — a real, reachable shape (an
+    // integration target's own non-`Context` participants all hit it).
+    let return_value = if entries.is_empty() {
+        ident("{  }")
+    } else {
+        TsExpr::object(entries)
+    };
+    let make_test_deps = TsStmt::decl(
+        TsDecl::Function {
+            name: "makeTestDeps".to_string(),
+            generics: Vec::new(),
+            params: Vec::new(),
+            return_type: None,
+            body: vec![TsStmt::return_stmt(Some(return_value), None)],
+            is_async: false,
+            inline: false,
+        },
+        None,
+    );
+    bynk_ts::print_stmt(&make_test_deps, 0)
 }
 
 /// #18 (testing-track infra): a real value destructure plus a per-type alias,
@@ -2434,13 +2554,24 @@ fn emit_test_deps(
 /// `value_names` is unconditionally destructured with no cast.
 fn emit_ns_destructure(out: &mut String, ns: &str, value_names: &[String], type_names: &[String]) {
     if !value_names.is_empty() {
-        out.push_str(&format!(
-            "    const {{ {} }} = {ns};\n",
-            value_names.join(", ")
-        ));
+        let stmt = TsStmt::const_stmt(
+            TsBindingName::ObjectPattern(value_names.to_vec()),
+            None,
+            ident(ns),
+            None,
+        );
+        out.push_str(&bynk_ts::print_stmt(&stmt, 2));
     }
     for t in type_names {
-        out.push_str(&format!("    type {t} = {ns}.{t};\n"));
+        let stmt = TsStmt::decl(
+            TsDecl::TypeAlias {
+                name: t.clone(),
+                type_params: Vec::new(),
+                ty: TsType::named(format!("{ns}.{t}")),
+            },
+            None,
+        );
+        out.push_str(&bynk_ts::print_stmt(&stmt, 2));
     }
 }
 
@@ -2763,18 +2894,41 @@ fn observation_call_record_types(
     for cap in caps {
         for op in &table.capabilities[cap].ops {
             let name = checker::call_record_type_name(cap, &op.name.name);
-            let fields: Vec<String> = op
+            let fields: Vec<TsTypeMember> = op
                 .params
                 .iter()
-                .map(|p| {
-                    format!(
-                        "{}: {}",
-                        p.name.name,
-                        emitter::ts_type_ref_qualified(&p.type_ref, &scope_type_names, &scope_ns)
-                    )
+                .map(|p| TsTypeMember::Prop {
+                    name: p.name.name.clone(),
+                    ty: emitter::ts_type_ref_qualified_ts_type(
+                        &p.type_ref,
+                        &scope_type_names,
+                        &scope_ns,
+                    ),
+                    optional: false,
+                    readonly: false,
                 })
                 .collect();
-            out.push_str(&format!("type {name} = {{ {} }};\n", fields.join("; ")));
+            // The same `"{  }"` double-space quirk as elsewhere in this file
+            // (`gen_ts_for_ty`/`canon_ts_for_ty`, Arc C slice 31; `emit_test_deps`
+            // above) — the pre-conversion `format!("type {name} = {{ {} }};\n",
+            // fields.join("; "))` template always has a space on each side of its
+            // `{}` slot, so a zero-param capability op (real and reachable)
+            // literally produced a double space, not the tight `"{}"`
+            // `TsType::Object`'s own empty-members shortcut renders.
+            let ty = if fields.is_empty() {
+                TsType::named("{  }")
+            } else {
+                TsType::Object(fields)
+            };
+            let stmt = TsStmt::decl(
+                TsDecl::TypeAlias {
+                    name,
+                    type_params: Vec::new(),
+                    ty,
+                },
+                None,
+            );
+            out.push_str(&bynk_ts::print_stmt(&stmt, 0));
         }
     }
     out
@@ -4520,26 +4674,38 @@ mod tests {
         scope.insert("Order".to_string());
         // A named type in the privileged scope is qualified with the namespace.
         assert_eq!(
-            emitter::ts_type_ref_qualified(&named("Order"), &scope, "Ns"),
+            bynk_ts::print_type(&emitter::ts_type_ref_qualified_ts_type(
+                &named("Order"),
+                &scope,
+                "Ns"
+            )),
             "Ns.Order"
         );
         // A named type outside the scope is left bare.
         assert_eq!(
-            emitter::ts_type_ref_qualified(&named("Other"), &scope, "Ns"),
+            bynk_ts::print_type(&emitter::ts_type_ref_qualified_ts_type(
+                &named("Other"),
+                &scope,
+                "Ns"
+            )),
             "Other"
         );
         // Qualification recurses through generic arguments.
         assert_eq!(
-            emitter::ts_type_ref_qualified(
+            bynk_ts::print_type(&emitter::ts_type_ref_qualified_ts_type(
                 &TypeRef::List(Box::new(named("Order")), Span::default()),
                 &scope,
                 "Ns"
-            ),
+            )),
             "readonly Ns.Order[]"
         );
         // Base types are unaffected by qualification.
         assert_eq!(
-            emitter::ts_type_ref_qualified(&base(BaseType::Int), &scope, "Ns"),
+            bynk_ts::print_type(&emitter::ts_type_ref_qualified_ts_type(
+                &base(BaseType::Int),
+                &scope,
+                "Ns"
+            )),
             "number"
         );
     }

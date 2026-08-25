@@ -1,0 +1,18 @@
+context demo.obs
+
+capability Clock {
+  fn now() -> Effect[Int]
+}
+
+provides Clock = SystemClock {
+  fn now() -> Effect[Int] {
+    0
+  }
+}
+
+service tick {
+  on call() -> Effect[Int] given Clock {
+    let t <- Clock.now()
+    t
+  }
+}

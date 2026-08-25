@@ -4339,34 +4339,30 @@ pub(crate) fn ts_type_ref(r: &TypeRef) -> String {
     ts_type_ref_with(r, None)
 }
 
-/// Like `ts_type_ref`, but qualifies named types that live in `scope` with the
-/// namespace `ns` (`Order` → `Ns.Order`). Used by the test-emission harness for
-/// mock method signatures that sit outside the destructuring that brings a
-/// namespace's value-side names into local scope, so the types must be
-/// referenced fully qualified. Qualification recurses through generic
-/// arguments; base/unit types are unaffected.
-pub(crate) fn ts_type_ref_qualified(r: &TypeRef, scope: &HashSet<String>, ns: &str) -> String {
-    ts_type_ref_with(
-        r,
-        Some(&|name| scope.contains(name).then(|| ns.to_string())),
-    )
-}
-
-/// [`TsType`]-returning twin of [`ts_type_ref_qualified`] (Decision B,
-/// #1321) — `workers.rs`'s own type-position needs (Arc C slice 3) build a
-/// real `bynk_ts::TsProgram`, so its wrapper (`qualified_ts_type_ref`) needs
-/// the structured `TsType` this function returns, not `ts_type_ref_qualified`'s
-/// own already-printed `String`. Added *alongside*, not replacing:
-/// `ts_type_ref_qualified` stays exactly as it is, still needed by every
-/// other still-`String`-based caller (`emit.rs`, `lower.rs`,
-/// `serialisation.rs` once its own future slice lands).
+/// [`TsType`]-returning sibling of `ts_type_ref`, qualifying named types that
+/// live in `scope` with the namespace `ns` (`Order` → `Ns.Order`). Used by
+/// `observation_call_record_types` (`project/tests_emit.rs`) for mock method
+/// signatures that sit outside the destructuring that brings a namespace's
+/// value-side names into local scope, so the types must be referenced fully
+/// qualified. Qualification recurses through generic arguments; base/unit
+/// types are unaffected.
+///
+/// Originally paired with a `String`-returning `ts_type_ref_qualified` (Decision
+/// B, #1321) — `workers.rs`'s own type-position needs (Arc C slice 3) wanted
+/// the structured `TsType` this function returns, added *alongside* rather
+/// than replacing, since `ts_type_ref_qualified` itself was still needed by a
+/// `String`-based caller. Arc C, slice 32 (`tests_emit.rs` slice B, #1399)
+/// converted that one remaining caller (`observation_call_record_types`) to
+/// call this function directly instead — `ts_type_ref_qualified` had no
+/// other production caller left, so it was deleted rather than kept as dead
+/// code (the same "close it, don't leave a substitute-around orphan" call
+/// slice 6's `ts_string_literal` deletion already made); its own direct unit
+/// tests below now pin this function's output through `bynk_ts::print_type`
+/// instead.
 ///
 /// Not a new structural walk — `ts_type_ref_to_ts_type` (below) already
-/// builds a real `TsType` from every `TypeRef` variant; `ts_type_ref_qualified`
-/// itself already routes through it and only stringifies at its own last
-/// step (P7.9, #1315: "renders `r` by building a real `bynk_ts::TsType`...
-/// only the internal construction moved"). This function is that same
-/// build, minus the final `bynk_ts::print_type` call.
+/// builds a real `TsType` from every `TypeRef` variant; this function is
+/// that same build, just with the qualifying closure threaded through.
 pub(crate) fn ts_type_ref_qualified_ts_type(
     r: &TypeRef,
     scope: &HashSet<String>,
@@ -4748,7 +4744,7 @@ mod ts_type_ref_tests {
         scope.insert("MyGeneric".to_string());
         scope.insert("Order".to_string());
         assert_eq!(
-            ts_type_ref_qualified(&r, &scope, "Ns"),
+            bynk_ts::print_type(&ts_type_ref_qualified_ts_type(&r, &scope, "Ns")),
             "Ns.MyGeneric<number, Ns.Order>"
         );
     }
