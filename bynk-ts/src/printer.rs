@@ -274,6 +274,7 @@ pub fn print(
                     kind,
                     TsStmtKind::Decl(TsDecl::Import { .. })
                         | TsStmtKind::Decl(TsDecl::ImportNamespace { .. })
+                        | TsStmtKind::Decl(TsDecl::ImportDefault { .. })
                 )
             }
             // #1329: `emit_commons_barrel`'s own real barrel module is one
@@ -1896,6 +1897,13 @@ fn render_decl_body(out: &mut String, decl: &TsDecl, depth: usize) {
             out.push_str(from);
             out.push_str("\";\n");
         }
+        TsDecl::ImportDefault { alias, from } => {
+            out.push_str("import ");
+            out.push_str(alias);
+            out.push_str(" from \"");
+            out.push_str(from);
+            out.push_str("\";\n");
+        }
         TsDecl::ReExport { names, from } => {
             out.push_str("export { ");
             out.push_str(&names.join(", "));
@@ -3504,6 +3512,28 @@ mod tests {
         assert_eq!(
             printed.text,
             "import type * as commerce_payment from \"../commerce-payment/handlers.js\";\n"
+        );
+    }
+
+    /// Arc C, slice 37 (#1409, `tests_emit.rs`'s own slice G): `emit_integration_
+    /// module`'s own per-participant `import worker_{ns} from "../workers/{dir}/
+    /// index.js";` (the participant's Worker entry module's default export) —
+    /// the first real default import anywhere in `bynk-emit`'s own converted
+    /// content.
+    #[test]
+    fn prints_a_default_import() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::decl(
+            TsDecl::ImportDefault {
+                alias: "worker_shop_api".to_string(),
+                from: "../workers/shop-api/index.js".to_string(),
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(
+            printed.text,
+            "import worker_shop_api from \"../workers/shop-api/index.js\";\n"
         );
     }
 
