@@ -1,11 +1,6 @@
----
-level: patch
-changelog: `bynk-ir`/`bynk-lower` carved out of `bynk-emit` as new workspace crates (ADR 0332's deferred split, triggered per ADR 0385)
----
+# 0392 — The IR crate split deferred by ADR 0332 lands at Arc D's P7.d1, carrying its content unchanged
 
-## ADR: p7d1-ir-lower-crate-carve
-title: The IR crate split deferred by ADR 0332 lands at Arc D's P7.d1, carrying its content unchanged
-summary: bynk-ir and bynk-lower are carved out of bynk-emit with no code deleted, once test callers were counted alongside production ones
+- **Status:** Accepted (v0.289.1)
 
 **Context.** ADR 0332 held `bynk-ir`/`bynk-lower` inside `bynk-emit` (as `ir.rs`/`ir/lower.rs`)
 for lack of a second consumer, deferring the crate split Part 10 of the reference names. ADR 0385
