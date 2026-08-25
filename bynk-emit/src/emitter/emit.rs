@@ -5122,32 +5122,92 @@ pub(crate) fn emit_agent(
     // under `/_bynk/agent/<method>`; decode `{ args, deps }`, invoke the
     // handler with deps as the trailing argument, and serialise the result.
     if matches!(ctx.target, BuildTarget::Workers) {
-        writeln!(out, "  async fetch(request: Request): Promise<Response> {{").unwrap();
-        writeln!(out, "    const url = new URL(request.url);").unwrap();
+        // Arc C, slice 27 (#1384): the third and final of step (9) sub-slice
+        // (5)'s own 3 independent slices — converts to a real
+        // `bynk_ts::TsClassMethod`, printed through `print_class_method`, the
+        // same zero-`LowerCtx`/no-merge shape #1382 (`emit_ws_dispatch_
+        // handlers`) established for this cluster's other Rust-side-only
+        // emitter. `(this as unknown as Record<string, (...bynkArgs:
+        // unknown[]) => unknown>)` stays one opaque `TsExpr::Ident` (a
+        // nested `As`-under-`As` chain the printer's own `needs_parens_as_
+        // operand` would otherwise wrap in an extra, wrong parenthesis pair
+        // — a real, previously-unpredicted algebra gap, not a style choice);
+        // `...args` stays one opaque `TsExpr::Ident` call argument (the
+        // spread-call-argument shape the grounding pass DID predict for this
+        // slice, #1382's own PR confirming it belongs here, not there).
+        let mut fetch_stmts = vec![bynk_ts::TsStmt::const_stmt(
+            bynk_ts::TsBindingName::Ident("url".to_string()),
+            None,
+            bynk_ts::TsExpr::New {
+                callee: Box::new(bynk_ts::TsExpr::Ident("URL".to_string())),
+                args: vec![bynk_ts::TsExpr::Member {
+                    object: Box::new(bynk_ts::TsExpr::Ident("request".to_string())),
+                    property: "url".to_string(),
+                }],
+            },
+            None,
+        )];
         // v0.104 (slice 3b): a forwarded WebSocket upgrade. The edge has already
         // authenticated the actor (the body never runs unverified); accept the
         // socket here, run the on-open body, and return the `101` carrying the
         // client end. The verified identity and route arguments ride in a trusted
         // internal header (the DO is only reachable through the Worker).
         for host in &ws_open_hosts {
-            emit_ws_open_fetch_branch(out, host, tys);
+            fetch_stmts.push(ws_open_fetch_branch_stmt(host, tys));
         }
-        writeln!(
-            out,
-            "    if (url.pathname.startsWith(\"/_bynk/agent/\")) {{"
-        )
-        .unwrap();
-        writeln!(
-            out,
-            "      const methodName = url.pathname.slice(\"/_bynk/agent/\".length);"
-        )
-        .unwrap();
-        writeln!(
-            out,
-            "      const {{ args, deps }} = (await request.json()) as {{ args: unknown[]; deps: unknown }};"
-        )
-        .unwrap();
-        if given_deps_expr.is_some() || agent_uses_emit {
+        let dispatch_callee = bynk_ts::TsExpr::Index {
+            object: Box::new(bynk_ts::TsExpr::Ident(
+                "(this as unknown as Record<string, (...bynkArgs: unknown[]) => unknown>)"
+                    .to_string(),
+            )),
+            index: Box::new(bynk_ts::TsExpr::Ident("methodName".to_string())),
+        };
+        let mut agent_dispatch_stmts = vec![
+            bynk_ts::TsStmt::const_stmt(
+                bynk_ts::TsBindingName::Ident("methodName".to_string()),
+                None,
+                bynk_ts::TsExpr::Call {
+                    callee: Box::new(bynk_ts::TsExpr::Member {
+                        object: Box::new(bynk_ts::TsExpr::Member {
+                            object: Box::new(bynk_ts::TsExpr::Ident("url".to_string())),
+                            property: "pathname".to_string(),
+                        }),
+                        property: "slice".to_string(),
+                    }),
+                    args: vec![bynk_ts::TsExpr::Member {
+                        object: Box::new(bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(
+                            "/_bynk/agent/".to_string(),
+                        ))),
+                        property: "length".to_string(),
+                    }],
+                },
+                None,
+            ),
+            bynk_ts::TsStmt::const_stmt(
+                bynk_ts::TsBindingName::ObjectPattern(vec!["args".to_string(), "deps".to_string()]),
+                None,
+                bynk_ts::TsExpr::As {
+                    expr: Box::new(bynk_ts::TsExpr::Paren(Box::new(bynk_ts::TsExpr::Await(
+                        Box::new(bynk_ts::TsExpr::Call {
+                            callee: Box::new(bynk_ts::TsExpr::Member {
+                                object: Box::new(bynk_ts::TsExpr::Ident("request".to_string())),
+                                property: "json".to_string(),
+                            }),
+                            args: Vec::new(),
+                        }),
+                    )))),
+                    ty: bynk_ts::TsType::Object(vec![
+                        bynk_ts::TsTypeMember::prop(
+                            "args",
+                            bynk_ts::TsType::array(bynk_ts::TsType::named("unknown")),
+                        ),
+                        bynk_ts::TsTypeMember::prop("deps", bynk_ts::TsType::named("unknown")),
+                    ]),
+                },
+                None,
+            ),
+        ];
+        let result_expr = if given_deps_expr.is_some() || agent_uses_emit {
             // #527: the wire deps are JSON — any capability provider in them
             // is a dead plain object (its methods did not survive
             // serialisation). Rebuild this agent's `given` deps in-process,
@@ -5163,15 +5223,44 @@ pub(crate) fn emit_agent(
             // (`given_deps_expr` may reference other bindings besides
             // `EVENTS_FANOUT`, computed elsewhere and not fully traced here) —
             // a generic string-keyed record, not a precise structural type.
-            writeln!(
-                out,
-                "      const env = this.__env as unknown as Record<string, unknown>;"
-            )
-            .unwrap();
-            let mut rebuilt: Vec<String> = Vec::new();
+            //
+            // `this.__env as unknown as Record<string, unknown>` stays one
+            // opaque `TsExpr::Ident` — the same nested-`As`-chain gap the
+            // dispatch callee above hits.
+            agent_dispatch_stmts.push(bynk_ts::TsStmt::const_stmt(
+                bynk_ts::TsBindingName::Ident("env".to_string()),
+                None,
+                bynk_ts::TsExpr::Ident(
+                    "this.__env as unknown as Record<string, unknown>".to_string(),
+                ),
+                None,
+            ));
+            let mut entries = vec![bynk_ts::TsObjectEntry::Spread(bynk_ts::TsExpr::Paren(
+                Box::new(bynk_ts::TsExpr::As {
+                    expr: Box::new(bynk_ts::TsExpr::Binary {
+                        op: bynk_ts::TsBinaryOp::NullishCoalescing,
+                        left: Box::new(bynk_ts::TsExpr::Ident("deps".to_string())),
+                        right: Box::new(bynk_ts::TsExpr::object(Vec::new())),
+                    }),
+                    ty: bynk_ts::TsType::named_with_args(
+                        "Record",
+                        vec![
+                            bynk_ts::TsType::named("string"),
+                            bynk_ts::TsType::named("unknown"),
+                        ],
+                    ),
+                }),
+            ))];
             if let Some(expr) = &given_deps_expr {
-                writeln!(out, "      const __givenDeps = {expr};").unwrap();
-                rebuilt.push("...__givenDeps".to_string());
+                agent_dispatch_stmts.push(bynk_ts::TsStmt::const_stmt(
+                    bynk_ts::TsBindingName::Ident("__givenDeps".to_string()),
+                    None,
+                    bynk_ts::TsExpr::Ident(expr.clone()),
+                    None,
+                ));
+                entries.push(bynk_ts::TsObjectEntry::Spread(bynk_ts::TsExpr::Ident(
+                    "__givenDeps".to_string(),
+                )));
             }
             if agent_uses_emit {
                 let bind = crate::emitter::wrangler::agent_binding_name(
@@ -5180,46 +5269,150 @@ pub(crate) fn emit_agent(
                 // P7.2: `env` is now `Record<string, unknown>` (above), so this
                 // specific binding needs its own cast to what
                 // `dispatchToEventsFanout` actually declares.
-                writeln!(
-                    out,
-                    "      const __eventsDeps = {{ __eventsDispatch: (events: Array<{ev_ty}>) => dispatchToEventsFanout(env.{bind} as DurableObjectNamespace, events) }};",
-                    ev_ty = crate::emitter::EVENTS_WIRE_EVENT_TS_TYPE
-                )
-                .unwrap();
-                rebuilt.push("...__eventsDeps".to_string());
+                agent_dispatch_stmts.push(bynk_ts::TsStmt::const_stmt(
+                    bynk_ts::TsBindingName::Ident("__eventsDeps".to_string()),
+                    None,
+                    bynk_ts::TsExpr::object(vec![(
+                        "__eventsDispatch".to_string(),
+                        bynk_ts::TsExpr::Arrow {
+                            params: vec![bynk_ts::TsParam {
+                                name: "events".to_string(),
+                                ty: Some(bynk_ts::TsType::array(bynk_ts::TsType::named(
+                                    crate::emitter::EVENTS_WIRE_EVENT_TS_TYPE,
+                                ))),
+                                optional: false,
+                            }],
+                            is_async: false,
+                            generics: Vec::new(),
+                            return_type: None,
+                            body: Box::new(bynk_ts::TsExpr::Call {
+                                callee: Box::new(bynk_ts::TsExpr::Ident(
+                                    "dispatchToEventsFanout".to_string(),
+                                )),
+                                args: vec![
+                                    bynk_ts::TsExpr::As {
+                                        expr: Box::new(bynk_ts::TsExpr::Member {
+                                            object: Box::new(bynk_ts::TsExpr::Ident(
+                                                "env".to_string(),
+                                            )),
+                                            property: bind,
+                                        }),
+                                        ty: bynk_ts::TsType::named("DurableObjectNamespace"),
+                                    },
+                                    bynk_ts::TsExpr::Ident("events".to_string()),
+                                ],
+                            }),
+                        },
+                    )]),
+                    None,
+                ));
+                entries.push(bynk_ts::TsObjectEntry::Spread(bynk_ts::TsExpr::Ident(
+                    "__eventsDeps".to_string(),
+                )));
             }
             // P7.2: `methodName` is read from `url.pathname` at runtime, so no
             // static type can name which handler this is — a callable
             // dictionary is what's actually known, and `result` flows only into
             // a generic `JSON.stringify` below, so `unknown` costs nothing there.
-            writeln!(
-                out,
-                "      const result = await (this as unknown as Record<string, (...bynkArgs: unknown[]) => unknown>)[methodName](...args, {{ ...((deps ?? {{}}) as Record<string, unknown>), {} }});",
-                rebuilt.join(", ")
-            )
-            .unwrap();
+            bynk_ts::TsExpr::Await(Box::new(bynk_ts::TsExpr::Call {
+                callee: Box::new(dispatch_callee),
+                args: vec![
+                    bynk_ts::TsExpr::Ident("...args".to_string()),
+                    bynk_ts::TsExpr::object_entries(entries),
+                ],
+            }))
         } else {
-            writeln!(
-                out,
-                "      const result = await (this as unknown as Record<string, (...bynkArgs: unknown[]) => unknown>)[methodName](...args, deps);"
-            )
-            .unwrap();
-        }
+            bynk_ts::TsExpr::Await(Box::new(bynk_ts::TsExpr::Call {
+                callee: Box::new(dispatch_callee),
+                args: vec![
+                    bynk_ts::TsExpr::Ident("...args".to_string()),
+                    bynk_ts::TsExpr::Ident("deps".to_string()),
+                ],
+            }))
+        };
+        agent_dispatch_stmts.push(bynk_ts::TsStmt::const_stmt(
+            bynk_ts::TsBindingName::Ident("result".to_string()),
+            None,
+            result_expr,
+            None,
+        ));
         // `?? null`: a void method resolves to `undefined`, and
         // `JSON.stringify(undefined)` is the *string* `undefined` — not JSON —
         // which the calling proxy's `response.json()` rejects (#527).
-        writeln!(
-            out,
-            "      return new Response(JSON.stringify(result ?? null), {{ headers: {{ \"content-type\": \"application/json\" }} }});"
-        )
-        .unwrap();
-        writeln!(out, "    }}").unwrap();
-        writeln!(
-            out,
-            "    return new Response(\"Not Found\", {{ status: 404 }});"
-        )
-        .unwrap();
-        writeln!(out, "  }}").unwrap();
+        agent_dispatch_stmts.push(bynk_ts::TsStmt::return_stmt(
+            Some(bynk_ts::TsExpr::New {
+                callee: Box::new(bynk_ts::TsExpr::Ident("Response".to_string())),
+                args: vec![
+                    bynk_ts::TsExpr::Call {
+                        callee: Box::new(bynk_ts::TsExpr::Member {
+                            object: Box::new(bynk_ts::TsExpr::Ident("JSON".to_string())),
+                            property: "stringify".to_string(),
+                        }),
+                        args: vec![bynk_ts::TsExpr::Binary {
+                            op: bynk_ts::TsBinaryOp::NullishCoalescing,
+                            left: Box::new(bynk_ts::TsExpr::Ident("result".to_string())),
+                            right: Box::new(bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Null)),
+                        }],
+                    },
+                    bynk_ts::TsExpr::object(vec![(
+                        "headers".to_string(),
+                        bynk_ts::TsExpr::object(vec![(
+                            "\"content-type\"".to_string(),
+                            bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(
+                                "application/json".to_string(),
+                            )),
+                        )]),
+                    )]),
+                ],
+            }),
+            None,
+        ));
+        fetch_stmts.push(bynk_ts::TsStmt::if_stmt(
+            bynk_ts::TsExpr::Call {
+                callee: Box::new(bynk_ts::TsExpr::Member {
+                    object: Box::new(bynk_ts::TsExpr::Member {
+                        object: Box::new(bynk_ts::TsExpr::Ident("url".to_string())),
+                        property: "pathname".to_string(),
+                    }),
+                    property: "startsWith".to_string(),
+                }),
+                args: vec![bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(
+                    "/_bynk/agent/".to_string(),
+                ))],
+            },
+            bynk_ts::TsStmt::block(agent_dispatch_stmts, None),
+            None,
+        ));
+        fetch_stmts.push(bynk_ts::TsStmt::return_stmt(
+            Some(bynk_ts::TsExpr::New {
+                callee: Box::new(bynk_ts::TsExpr::Ident("Response".to_string())),
+                args: vec![
+                    bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str("Not Found".to_string())),
+                    bynk_ts::TsExpr::object(vec![(
+                        "status".to_string(),
+                        bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Num("404".to_string())),
+                    )]),
+                ],
+            }),
+            None,
+        ));
+        let fetch_method = bynk_ts::TsClassMethod {
+            name: "fetch".to_string(),
+            private: false,
+            is_async: true,
+            params: vec![bynk_ts::TsParam {
+                name: "request".to_string(),
+                ty: Some(bynk_ts::TsType::named("Request")),
+                optional: false,
+            }],
+            return_type: Some(bynk_ts::TsType::named_with_args(
+                "Promise",
+                vec![bynk_ts::TsType::named("Response")],
+            )),
+            doc: None,
+            body: fetch_stmts,
+        };
+        out.push_str(&bynk_ts::print_class_method(&fetch_method, 0));
         writeln!(out).unwrap();
         // v0.106 (slice 3b-iii): the inbound/close dispatch — Cloudflare calls
         // `webSocketMessage`/`webSocketClose` on a hibernatable socket. Decode the
@@ -5690,17 +5883,22 @@ fn emit_ws_do_method(
     writeln!(out).unwrap();
 }
 
-/// Emit the `fetch` branch that completes a forwarded WebSocket upgrade for a
+/// Build the `fetch` branch that completes a forwarded WebSocket upgrade for a
 /// hosted `on open`. The edge has already verified the actor, so the body runs
 /// authenticated; this accepts the socket, reconstructs the route arguments and
 /// identity from the trusted internal header, runs the on-open body, and returns
 /// the `101` handing the client end back.
-fn emit_ws_open_fetch_branch(out: &mut String, host: &WsOpenHost<'_>, tys: &Arc<Types>) {
+///
+/// Arc C, slice 27 (#1384): a real `TsStmt::If` node (a `Block` then-branch),
+/// composed directly into `fetch`'s own body — the last consumer of this
+/// `&mut String`-writing shape converted, matching #1382's own "boilerplate
+/// converts fully" posture. `__payload.identity`/`__payload.args[i] as T`/the
+/// deps-object text stay opaque `TsExpr::Ident` leaves, the same established
+/// escape hatch #1382 used.
+fn ws_open_fetch_branch_stmt(host: &WsOpenHost<'_>, tys: &Arc<Types>) -> bynk_ts::TsStmt {
     let h = host.handler;
     let path = format!("/_bynk/ws/open/{}", host.service);
     let method = ws_open_do_method_name(host.service);
-    writeln!(out, "    if (url.pathname === \"{path}\") {{").unwrap();
-    writeln!(out, "      const __pair = newWebSocketPair();").unwrap();
     // The trusted internal header carries the route args, and the verified
     // identity only when the actor binds one (a binder-less `by` forwards none).
     let binds_identity = host.seam.as_ref().is_some_and(|s| s.binder.is_some());
@@ -5709,39 +5907,103 @@ fn emit_ws_open_fetch_branch(out: &mut String, host: &WsOpenHost<'_>, tys: &Arc<
     } else {
         "{ args: unknown[] }"
     };
-    writeln!(
-        out,
-        "      const __payload = JSON.parse(request.headers.get(\"X-Bynk-Ws-Open\") ?? \"{{}}\") as {payload_ty};"
-    )
-    .unwrap();
+    let mut stmts = vec![
+        bynk_ts::TsStmt::const_stmt(
+            bynk_ts::TsBindingName::Ident("__pair".to_string()),
+            None,
+            bynk_ts::TsExpr::Call {
+                callee: Box::new(bynk_ts::TsExpr::Ident("newWebSocketPair".to_string())),
+                args: Vec::new(),
+            },
+            None,
+        ),
+        bynk_ts::TsStmt::const_stmt(
+            bynk_ts::TsBindingName::Ident("__payload".to_string()),
+            None,
+            bynk_ts::TsExpr::As {
+                expr: Box::new(bynk_ts::TsExpr::Call {
+                    callee: Box::new(bynk_ts::TsExpr::Member {
+                        object: Box::new(bynk_ts::TsExpr::Ident("JSON".to_string())),
+                        property: "parse".to_string(),
+                    }),
+                    args: vec![bynk_ts::TsExpr::Binary {
+                        op: bynk_ts::TsBinaryOp::NullishCoalescing,
+                        left: Box::new(bynk_ts::TsExpr::Call {
+                            callee: Box::new(bynk_ts::TsExpr::Member {
+                                object: Box::new(bynk_ts::TsExpr::Member {
+                                    object: Box::new(bynk_ts::TsExpr::Ident("request".to_string())),
+                                    property: "headers".to_string(),
+                                }),
+                                property: "get".to_string(),
+                            }),
+                            args: vec![bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(
+                                "X-Bynk-Ws-Open".to_string(),
+                            ))],
+                        }),
+                        right: Box::new(bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(
+                            "{}".to_string(),
+                        ))),
+                    }],
+                }),
+                ty: bynk_ts::TsType::named(payload_ty),
+            },
+            None,
+        ),
+    ];
     // v0.105 (slice 3b-ii): accept the server socket into the DO *hibernatably*
     // (tagged with a fresh connId, attached for wake-time recovery) so a stored
     // connection survives eviction — not `server.accept()`, which is in-memory only.
     // v0.106 (slice 3b-iii): when the service has an inbound/close handler, also
     // attach the sender identity + route args so a waking `webSocketMessage`/
     // `webSocketClose` recovers them without re-authenticating.
-    let meta_arg = if host.has_inbound() {
+    let mut accept_args = vec![
+        bynk_ts::TsExpr::Member {
+            object: Box::new(bynk_ts::TsExpr::Ident("this".to_string())),
+            property: "state".to_string(),
+        },
+        bynk_ts::TsExpr::Member {
+            object: Box::new(bynk_ts::TsExpr::Ident("__pair".to_string())),
+            property: "server".to_string(),
+        },
+    ];
+    if host.has_inbound() {
         let identity = if binds_identity {
-            "__payload.identity"
+            bynk_ts::TsExpr::Member {
+                object: Box::new(bynk_ts::TsExpr::Ident("__payload".to_string())),
+                property: "identity".to_string(),
+            }
         } else {
-            "\"\""
+            bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(String::new()))
         };
-        format!(", {{ identity: {identity}, args: __payload.args }}")
-    } else {
-        String::new()
-    };
-    writeln!(
-        out,
-        "      const connection = acceptHibernatableConnection<{}>(this.state, __pair.server{meta_arg});",
-        ts_ty(host.out_ty, tys)
-    )
-    .unwrap();
-    let mut call_args = vec!["connection".to_string()];
+        accept_args.push(bynk_ts::TsExpr::object(vec![
+            ("identity".to_string(), identity),
+            (
+                "args".to_string(),
+                bynk_ts::TsExpr::Member {
+                    object: Box::new(bynk_ts::TsExpr::Ident("__payload".to_string())),
+                    property: "args".to_string(),
+                },
+            ),
+        ]));
+    }
+    stmts.push(bynk_ts::TsStmt::const_stmt(
+        bynk_ts::TsBindingName::Ident("connection".to_string()),
+        None,
+        bynk_ts::TsExpr::Call {
+            callee: Box::new(bynk_ts::TsExpr::Ident(format!(
+                "acceptHibernatableConnection<{}>",
+                ts_ty(host.out_ty, tys)
+            ))),
+            args: accept_args,
+        },
+        None,
+    ));
+    let mut call_args = vec![bynk_ts::TsExpr::Ident("connection".to_string())];
     for (i, p) in h.params.iter().enumerate() {
-        call_args.push(format!(
+        call_args.push(bynk_ts::TsExpr::Ident(format!(
             "__payload.args[{i}] as {}",
             ts_type_ref(&p.type_ref)
-        ));
+        )));
     }
     let deps_arg = match host.seam.as_ref().filter(|s| s.binder.is_some()) {
         Some(seam) => format!(
@@ -5750,20 +6012,43 @@ fn emit_ws_open_fetch_branch(out: &mut String, host: &WsOpenHost<'_>, tys: &Arc<
         ),
         None => "{}".to_string(),
     };
-    call_args.push(deps_arg);
-    let await_kw = if is_effectful_return(&h.return_type) {
-        "await "
-    } else {
-        ""
+    call_args.push(bynk_ts::TsExpr::Ident(deps_arg));
+    let call_expr = bynk_ts::TsExpr::Call {
+        callee: Box::new(bynk_ts::TsExpr::Ident(format!("this.{method}"))),
+        args: call_args,
     };
-    writeln!(
-        out,
-        "      {await_kw}this.{method}({});",
-        call_args.join(", ")
+    stmts.push(bynk_ts::TsStmt::expr_stmt(
+        if is_effectful_return(&h.return_type) {
+            bynk_ts::TsExpr::Await(Box::new(call_expr))
+        } else {
+            call_expr
+        },
+        None,
+    ));
+    stmts.push(bynk_ts::TsStmt::return_stmt(
+        Some(bynk_ts::TsExpr::Call {
+            callee: Box::new(bynk_ts::TsExpr::Ident(
+                "webSocketUpgradeResponse".to_string(),
+            )),
+            args: vec![bynk_ts::TsExpr::Member {
+                object: Box::new(bynk_ts::TsExpr::Ident("__pair".to_string())),
+                property: "client".to_string(),
+            }],
+        }),
+        None,
+    ));
+    bynk_ts::TsStmt::if_stmt(
+        bynk_ts::TsExpr::Binary {
+            op: bynk_ts::TsBinaryOp::StrictEq,
+            left: Box::new(bynk_ts::TsExpr::Member {
+                object: Box::new(bynk_ts::TsExpr::Ident("url".to_string())),
+                property: "pathname".to_string(),
+            }),
+            right: Box::new(bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(path))),
+        },
+        bynk_ts::TsStmt::block(stmts, None),
+        None,
     )
-    .unwrap();
-    writeln!(out, "      return webSocketUpgradeResponse(__pair.client);").unwrap();
-    writeln!(out, "    }}").unwrap();
 }
 
 /// v0.106 (slice 3b-iii): the deps argument a hosted `on message`/`on close` body
