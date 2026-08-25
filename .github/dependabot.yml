@@ -62,10 +62,17 @@ updates:
       #
       # This is defence in depth, not the whole fix: grouping only merges what
       # dependabot updates in the *same* run, so a staggered release can still
-      # split. The exact-peer trap that deadlocked #1036/#1038 is closed at the
-      # source instead — `@astrojs/markdown-remark` is no longer a direct
-      # dependency of /site, so it resolves transitively to whatever version
-      # `astro` pins and never gets a standalone PR to conflict with.
+      # split. The exact-peer trap that deadlocked #1036/#1038 was originally
+      # closed by dropping `@astrojs/markdown-remark` as a direct dependency of
+      # /site so it resolved transitively behind `astro`. That is no longer
+      # possible: astro 7.2.4 made Sätteri the default Markdown processor and
+      # stopped installing `@astrojs/markdown-remark` by default, so a config
+      # using `markdown.remarkPlugins`/`rehypePlugins` — as /site does, for the
+      # mdBook directives and rehype-mermaid — must depend on it explicitly, or
+      # `astro build` fails config validation. It is a direct dependency again,
+      # and the `@astrojs/*` pattern below is now what keeps it in lockstep with
+      # `astro`: both move in one grouped PR, so neither gets a standalone PR to
+      # deadlock against the other. Do not narrow that glob to named packages.
       astro:
         patterns:
           - "astro"
