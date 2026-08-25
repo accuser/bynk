@@ -1,0 +1,17 @@
+---
+State-init probe: a never-seen record field reads its match-derived zero.
+---
+suite demo.meter
+
+case "a fresh Meter key reads its match-shaped zero" {
+	match MeterId.of("fresh") {
+		Err(_) => expect false
+		Ok(id) => {
+			let reading <- hits.call(id)
+			match reading {
+				Ok(n)  => expect n == 1
+				Err(_) => expect false
+			}
+		}
+	}
+}

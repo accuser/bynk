@@ -1,0 +1,39 @@
+---
+Review of #1370, finding 1: a `store` field's static initialiser lowering
+through `build_match_iife` returns a genuinely multi-line IIFE (real embedded
+newline bytes) with `pre` empty, so it flows straight through as the zero
+factory's own return value unwrapped. This must stay valid TypeScript, and the
+zero factory's own `inline` choice must not trip `render_compact_stmts`'s own
+"no embedded newline" debug_assert! (a real debug-build crash risk, not just a
+formatting nit).
+---
+context demo.meter
+
+exports transparent { MeterError }
+
+type MeterId = String where Matches("[a-z0-9]{1,16}")
+
+type MeterError = enum {
+	Missing,
+}
+
+agent Meter {
+	key id: MeterId
+
+	store active: Cell[Int] = match true {
+		true => 1
+		false => 0
+	}
+
+	on call hits() -> Effect[Result[Int, MeterError]] {
+		Ok(active)
+	}
+}
+
+service hits {
+	on call(id: MeterId) -> Effect[Result[Int, MeterError]] {
+		let meter = Meter(id)
+		let total <- meter.hits()
+		total
+	}
+}
