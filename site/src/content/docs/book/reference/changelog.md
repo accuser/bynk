@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.281**.
+written against **v0.282**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.282.0** | Arc C, slice 30 — `emit_project`'s own header/import/rebrand cluster (`write_header`/`write_header_single`/`emit_project_imports`/`emit_cross_context_namespace_imports`/`emit_context_rebrands`/`emit_boundary_helpers`, plus `emit_project` itself) builds real `bynk_ts` fragments, closing step (10) of the TypeScript-tree conversion track — every step in the conversion order is now landed or decided, leaving only the final `tests_emit.rs` pair. Adds `type_only` to `bynk_ts::TsDecl::ImportNamespace` along the way, matching its sibling `TsDecl::Import`. No behaviour change — every project-form fixture (all of them reach `emit_project`) emits byte-identical TypeScript. |
 | **v0.281.0** | Arc C, slice 29 — the cross-context lowering cluster (`lower_workers_cross_context_call`/`param_cast`) builds real `bynk_ts::TsExpr` fragments instead of hand-written strings, closing step (8) of the TypeScript-tree conversion track. No behaviour change — every cross-context service call at the Workers target emits byte-identical TypeScript, including the zero-argument case. |
 | **v0.280.0** | Arc C, slice 28 — the ICU-formatting cluster (`emit_message_entry_renderer`/`emit_icu_placeholder`/`emit_sub_message`) builds real `bynk_ts::TsExpr` fragments instead of hand-written strings, closing step (11) of the TypeScript-tree conversion track. Adds two small `bynk-ts` primitives along the way: `TsBinaryOp::Add` (string concatenation) and a new `print_expr` fragment entry point. No behaviour change — every message-bundle fixture (literal text, plain placeholders, and all four ICU kinds: plural/select/number/date) emits byte-identical TypeScript. |
 | **v0.279.0** | Arc C, slice 27 — `emit_agent`'s workers-mode `fetch` method and `emit_ws_open_fetch_branch` convert to real `bynk_ts::TsClassMethod`/`TsStmt` fragments, closing step (9) sub-slice (5) entirely (all 3 independent slices landed: the WS-hosted DO methods, the hibernatable-WebSocket dispatch handlers, and now the DO dispatch itself). Adds a new fixture pinning the `agent_uses_emit` branch (an agent handler that emits directly, no service in between), which previously had zero fixture coverage anywhere. |
