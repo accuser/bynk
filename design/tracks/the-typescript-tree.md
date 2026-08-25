@@ -686,7 +686,7 @@ confirmed by direct read, not remaining work**: `emit_test_main` (slice 5, #1325
 barrel` (1853-1899) — missed by an earlier grep for `push_str`/`format!` sites, since it already
 builds `TsStmt::comment`/`TsDecl::ReExportAll`/`TsProgram` directly, not text — a re-grounding
 correction the same shape as #1333's own step-1 re-read, recorded here rather than silently
-re-slicing already-real code; and the builder-helper block (3718-3805: `ident`/`str_lit`/`call`/etc.),
+re-slicing already-real code; and the builder-helper block (3718-3804: `ident`/`str_lit`/`call`/etc.),
 real reusable `TsExpr`/`TsStmt` shorthands. **Confirmed pure Rust logic, zero TS-emission, never an
 Arc C target** (the same "9 of 13 aren't emission code at all" finding #1333's own step-1 re-grounding
 made, applied to this file): `process_tests`/`process_integration_tests`/`driver_param_ty`/
@@ -701,8 +701,11 @@ construction) — `expectation_runtime_helpers`/`stub_runtime_helpers`/`observat
 `property_runtime_helpers`/`history_runtime_helpers` — the same permanent-opacity class
 `emitter/lower.rs` itself occupies (Third correction, above), not a slice target either.
 
-**Real TS-emission needing conversion, ~650-700 real lines across 13 functions** — comparable in
-kind, if not raw line count, to `emit_agent`'s own step (9) sub-tree (9 slices): the two top-level
+**Real TS-emission needing conversion, ~1,180 real lines across 18 functions** (2 module builders +
+12 sub-emitters + 4 generator-cluster functions: 270 + 640 + 270 — reconciled against the per-
+function estimates below, correcting a first-pass miscount that dropped the module builders and the
+generator cluster from its own headline, leaving only the 640-line sub-emitter subtotal) — comparable
+in kind, if not raw line count, to `emit_agent`'s own step (9) sub-tree (9 slices): the two top-level
 module builders (`emit_integration_module`, 324-545, ~120 real lines; `emit_test_module`, 1329-1831,
 ~150 real lines — both the same header/import/per-case-wrapper/`run()`-runner shape `emit_project`'s
 own already-converted `run()` established); a family of sub-emitters (`emit_integration_harness`,
@@ -736,17 +739,22 @@ expression cluster (`refined_gen_ts`/`gen_ts_for_ty`/`canon_ts_for_ty`/`binding_
 contained, no dependency on any other slice here, first since slices D/E consume its output as
 strings today and would want it converted before or alongside their own conversion; (B) the small
 independent leaves (`emit_integration_harness`/`emit_test_deps`/`emit_ns_destructure`/
-`observation_call_record_types`) — convert `emit_ns_destructure` here since C/D/E all call it; (C)
+`observation_call_record_types`) — convert `emit_ns_destructure` here since C (2046), D (2543/2581/
+2606), and G (455) call it; (C)
 the stub cluster (`emit_stub_class`/`emit_stub_rhs`, both with direct `bynk_ts` equivalents already —
 `TsDecl::Class`, `TsStmt::Switch`) — depends on B; (D) the case/scope-setup cluster
 (`emit_test_scope_setup`/`emit_test_case_function`) — depends on B; (E) the property/history/attack
 runner cluster (`emit_test_property_function`/`emit_test_history_property_function`/`emit_contract_
-attack_function`) — depends on A (consumes `BindingGen`) and B (via D's own `emit_ns_destructure`
-call); (F) the HTTP driver cluster (`emit_system_http_support` alone) — large (~230 real lines) but
-structurally self-contained, no dependency on any slice above; possibly worth splitting further at
-proposal time (e.g. one sub-slice per driver-kind: typed/raw/noauth/rawnoauth/wrongmethod) if its
-real converted-node line count runs higher than the rough estimate once drafted; (G) the two
-top-level module assemblers (`emit_integration_module` + `emit_test_module`), last, since both call
+attack_function`) — depends on A alone (consumes `BindingGen`); none of E's three functions calls
+`emit_ns_destructure` or anything else in D, so E has no real dependency on B and can be proposed in
+parallel with or ahead of it (a scheduling correction, not just wording — the original text named a
+phantom E-via-D-to-B edge); (F) the HTTP driver cluster (`emit_system_http_support` alone) — large
+(~230 real lines) but structurally self-contained, no dependency on any slice above; possibly worth
+splitting further at proposal time (e.g. one sub-slice per driver-kind: typed/raw/noauth/rawnoauth/
+wrongmethod) if its real converted-node line count runs higher than the rough estimate once drafted;
+(G) the two top-level module assemblers (`emit_integration_module` + `emit_test_module`), last,
+depending on B (`emit_integration_module`'s own direct `emit_ns_destructure` call at 455) in addition
+to calling
 nearly everything above and only make sense to convert once their delegates already return real
 nodes rather than raw strings.
 
@@ -1014,7 +1022,7 @@ real conversion surface a modest ~29 `writeln!`/`write!` call sites, comparable 
 already-landed slices, not a multi-slice undertaking. `ast_importers` stayed unchanged at 5,
 confirming the design pass's own original prediction directly rather than assuming it.
 `tests_emit.rs`'s own citation, "the pair" (2), is now **superseded by direct read**: its own
-dedicated grounding pass (post-#1392, see above) found ~650-700 real TS-emission lines across 13
+dedicated grounding pass (post-#1392, see above) found ~1,180 real TS-emission lines across 18
 functions, not 2 — a grounding-driven widening, the same "an unread range turns out larger than
 guessed" shape the pass before #1367 and the pass before #1380 already showed, decomposed into 7
 proposed slices (A-G, dependency order named in the grounding-pass paragraph above), not the 2 this
