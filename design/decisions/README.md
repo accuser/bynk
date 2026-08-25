@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0393](0393-p7d2-brand-predicate-unification.md) | **bynk-check and bynk-emit read one shared `is_uses_commons_type`, not two independently maintained copies** (v0.289.2) — Closes R4.10/R8.2's predicate mirror, scoped to the evidenced defect rather than the rule's own maximal prose | Accepted (v0.289.2) |
 | [0392](0392-p7d1-ir-lower-crate-carve.md) | **The IR crate split deferred by ADR 0332 lands at Arc D's P7.d1, carrying its content unchanged** (v0.289.1) — bynk-ir and bynk-lower are carved out of bynk-emit with no code deleted, once test callers were counted alongside production ones | Accepted (v0.289.1) |
 | [0391](0391-arc-c-lower-rs-permanent-exclusion.md) | **`emitter/lower.rs` is a deliberate, permanent exclusion from Arc C's own scope, not a future conversion target** (v0.259.1) — `emitter/lower.rs` is a deliberate, permanent exclusion from Arc C's own scope, not a future conversion target | Accepted (v0.259.1) |
 | [0390](0390-p7-0-ts-writes-ts-any-corrections.md) | **Two corrections this slice's own grounding found, not carried forward from the accepted proposal** (v0.249.38) — `project/tests_emit.rs` is not excludable test-assertion noise, and R7.1's real remaining surface (55, not the settling review's ~24) is materially larger than earlier estimated -- neither changes what the track needs to do, only how big the job honestly is | Accepted (v0.249.38) |

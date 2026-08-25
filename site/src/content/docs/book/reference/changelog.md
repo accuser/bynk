@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.289.2** | The context-brand rebranding predicate (R4.10/R8.2) is one shared function, not two independently mirrored copies |
 | **v0.289.1** | `bynk-ir`/`bynk-lower` carved out of `bynk-emit` as new workspace crates (ADR 0332's deferred split, triggered per ADR 0385) |
 | **v0.289.0** | Arc C, slice 37 — the top-level module assemblers (`emit_integration_module`/`emit_test_module` in `tests_emit.rs`) build real `bynk_ts` fragments, the seventh and final of `tests_emit.rs`'s own 7 proposed slices (per its dedicated grounding pass) — closing Arc C entirely. Adds `TsDecl::ImportDefault` (a default import, `bynk-emit`'s first real one) to `bynk-ts`. No behaviour change — every test/integration module emits byte-identical TypeScript. |
 | **v0.288.0** | Arc C, slice 36 — the system-http driver cluster (`emit_system_http_support` in `tests_emit.rs`) builds real `bynk_ts` fragments, the sixth of `tests_emit.rs`'s own 7 proposed slices (per its dedicated grounding pass) — every `__sysdrive_*` request driver (typed, raw, no-auth, raw+no-auth, wrong-method) and the secrets-bootstrap loop now construct real `TsDecl`/`TsStmt`/`TsExpr` nodes instead of `format!`-built text. No behaviour change — every fixture with a `service ... http` route emits byte-identical TypeScript. |

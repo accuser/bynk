@@ -1,11 +1,6 @@
----
-level: patch
-changelog: The context-brand rebranding predicate (R4.10/R8.2) is one shared function, not two independently mirrored copies
----
+# 0393 — bynk-check and bynk-emit read one shared `is_uses_commons_type`, not two independently maintained copies
 
-## ADR: p7d2-brand-predicate-unification
-title: bynk-check and bynk-emit read one shared `is_uses_commons_type`, not two independently maintained copies
-summary: Closes R4.10/R8.2's predicate mirror, scoped to the evidenced defect rather than the rule's own maximal prose
+- **Status:** Accepted (v0.289.2)
 
 **Context.** R4.10's rationale names a concrete problem: `emit_context_rebrands`
 (`bynk-emit/src/emitter.rs`) and `ResolvedCommons::is_uses_commons_type`/`prepare_unit_check_ctx`
