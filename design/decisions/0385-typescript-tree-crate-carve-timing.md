@@ -25,6 +25,6 @@ No circular-dependency risk exists in this shape.
 
 **Consequences.** The crate boundary — not a `pub(crate)` convention — is what enforces R7.3/R7.4 from the
 first slice that constructs a `TsProgram`. Carving `bynk-ts` immediately also manufactures the second IR
-consumer ADR 0332 was waiting for, so phase 6's own deferred `bynk-ir`/`bynk-lower` split (P7.10, this
+consumer ADR 0332 was waiting for, so phase 6's own deferred `bynk-ir`/`bynk-lower` split (P7.d1, this
 track's own §6) can happen inside this phase once Arc B lands, rather than needing a further, unscheduled
 trigger later.
