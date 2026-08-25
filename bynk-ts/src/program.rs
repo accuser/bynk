@@ -947,7 +947,14 @@ pub enum TsUnaryOp {
 /// full JS/TS operator table (Decision B's own "extend narrowly" posture) —
 /// see the printer's own `binary_precedence` (`bynk-ts/src/printer.rs`,
 /// private) for why a nested `Binary` operand's parenthesisation needed to
-/// become precedence-aware once more than one operator existed.
+/// become precedence-aware once more than one operator existed. Arc C, step
+/// (11) (#1388) grounds one more: `+` (string concatenation) — the
+/// ICU-formatting cluster's own dominant structural pattern, every
+/// literal/placeholder segment in a message template joins this way. Real
+/// JS/TS precedence (binds tighter than every comparison/logical operator
+/// this table already has) and real left-associativity (`"a" + "b" + "c"`
+/// needs no parens, the same way a same-operator `||`/`&&` chain already
+/// prints flat) both matter here, not just the operator symbol itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TsBinaryOp {
     NullishCoalescing,
@@ -956,6 +963,7 @@ pub enum TsBinaryOp {
     StrictEq,
     StrictNotEq,
     GreaterThan,
+    Add,
 }
 
 /// A literal — the three kinds `events_fanout.rs` uses (a string, a number,

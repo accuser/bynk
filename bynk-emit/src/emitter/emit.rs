@@ -1425,6 +1425,22 @@ fn sanitise_path_segment(s: &str) -> String {
     out
 }
 
+/// Left-folds `parts` into one `+`-chained `bynk_ts::TsExpr::Binary` tree,
+/// matching `.join(" + ")`'s own left-to-right text join exactly —
+/// `TsBinaryOp::Add`'s own real, dominant site in this whole cluster (#1388).
+/// Panics on an empty `parts`; every real caller below already special-cases
+/// the empty-template case before reaching here.
+fn join_plus(mut parts: Vec<bynk_ts::TsExpr>) -> bynk_ts::TsExpr {
+    let first = parts.remove(0);
+    parts
+        .into_iter()
+        .fold(first, |acc, next| bynk_ts::TsExpr::Binary {
+            op: bynk_ts::TsBinaryOp::Add,
+            left: Box::new(acc),
+            right: Box::new(next),
+        })
+}
+
 /// One message entry's TS renderer: `(params) => <expr>`. A literal-only
 /// template collapses to a plain string; a template with placeholders becomes
 /// a `+`-concatenation, each placeholder substituted from `params` via
@@ -1439,40 +1455,88 @@ fn sanitise_path_segment(s: &str) -> String {
 /// (`bynk.messages.malformed_icu_syntax`) already rejects it before emission
 /// runs on an error-free project — but is handled totally, matching this
 /// function's own "never throws" contract, rather than `unreachable!()`.
+///
+/// Arc C, step (11) (#1388): returns a real `bynk_ts::TsExpr::Arrow` instead
+/// of writing text — the caller (`emit_messages_bundle`, #1355) drops its
+/// own opaque `TsExpr::Ident(renderer_text)` wrap and uses this value
+/// directly as the object entry's own value.
 fn emit_message_entry_renderer(
-    out: &mut String,
     entry: &MessageEntry,
     locale_tag: &str,
     runtime_use: &RuntimeUse,
-) {
-    write!(out, "(params: ReadonlyMap<string, MessageArg>): string => ").unwrap();
+) -> bynk_ts::TsExpr {
     let segments = split_template(&entry.template);
-    let parts: Vec<String> = segments
+    let parts: Vec<bynk_ts::TsExpr> = segments
         .iter()
         .map(|s| match s {
-            TemplateSegment::Literal(lit) => format!("\"{}\"", escape_ts_string(lit)),
+            TemplateSegment::Literal(lit) => {
+                bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str((*lit).to_string()))
+            }
             TemplateSegment::Placeholder { inner, .. } => match inner.find(',') {
                 None => {
-                    let key = format!("\"{}\"", escape_ts_string(inner));
-                    let fallback = format!("\"{{{}}}\"", escape_ts_string(inner));
-                    format!(
-                        "(params.get({key}) !== undefined ? renderArg(params.get({key}) as MessageArg) : {fallback})"
-                    )
+                    // `(params.get(key) !== undefined ? renderArg(params.get(key) as MessageArg) : fallback)`
+                    // — unconditionally parenthesised, matching the
+                    // pre-conversion text exactly even when this is the
+                    // template's own only segment (no `+`-join to borrow
+                    // parens from in that case).
+                    let get_call = bynk_ts::TsExpr::Call {
+                        callee: Box::new(bynk_ts::TsExpr::Member {
+                            object: Box::new(bynk_ts::TsExpr::Ident("params".to_string())),
+                            property: "get".to_string(),
+                        }),
+                        args: vec![bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(
+                            (*inner).to_string(),
+                        ))],
+                    };
+                    bynk_ts::TsExpr::Paren(Box::new(bynk_ts::TsExpr::Conditional {
+                        test: Box::new(bynk_ts::TsExpr::Binary {
+                            op: bynk_ts::TsBinaryOp::StrictNotEq,
+                            left: Box::new(get_call.clone()),
+                            right: Box::new(bynk_ts::TsExpr::Ident("undefined".to_string())),
+                        }),
+                        consequent: Box::new(bynk_ts::TsExpr::Call {
+                            callee: Box::new(bynk_ts::TsExpr::Ident("renderArg".to_string())),
+                            args: vec![bynk_ts::TsExpr::As {
+                                expr: Box::new(get_call),
+                                ty: bynk_ts::TsType::named("MessageArg"),
+                            }],
+                        }),
+                        alternate: Box::new(bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(format!(
+                            "{{{inner}}}"
+                        )))),
+                    }))
                 }
                 Some(_) => match icu::parse_icu_placeholder(inner) {
                     Ok(p) => emit_icu_placeholder(&p, locale_tag, runtime_use),
                     Err(_) => {
                         let name = inner.split(',').next().unwrap_or(inner).trim();
-                        format!("\"{{{}}}\"", escape_ts_string(name))
+                        bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(format!("{{{name}}}")))
                     }
                 },
             },
         })
         .collect();
-    if parts.is_empty() {
-        write!(out, "\"\"").unwrap();
+    let body = if parts.is_empty() {
+        bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(String::new()))
     } else {
-        write!(out, "{}", parts.join(" + ")).unwrap();
+        join_plus(parts)
+    };
+    bynk_ts::TsExpr::Arrow {
+        params: vec![bynk_ts::TsParam {
+            name: "params".to_string(),
+            ty: Some(bynk_ts::TsType::named_with_args(
+                "ReadonlyMap",
+                vec![
+                    bynk_ts::TsType::named("string"),
+                    bynk_ts::TsType::named("MessageArg"),
+                ],
+            )),
+            optional: false,
+        }],
+        is_async: false,
+        generics: Vec::new(),
+        return_type: Some(bynk_ts::TsType::named("string")),
+        body: Box::new(body),
     }
 }
 
@@ -1483,37 +1547,113 @@ fn emit_message_entry_renderer(
 /// after the guard, so no cast is needed. Falls back to the literal
 /// `"{name}"` text when the param is missing or the wrong `MessageArg`
 /// variant, matching the plain-placeholder fallback's own convention.
+///
+/// Arc C, step (11) (#1388): `Plural`/`Number`/`Date` convert fully to real
+/// `bynk_ts::TsExpr` nodes (`Call` over an `Arrow` — `Arrow` is already in
+/// the printer's own `needs_parens_as_operand`, so the IIFE's own
+/// `(...)(...)` wrapping comes free, no explicit `Paren`). `Select` stays
+/// one opaque `TsExpr::Ident` — the only one of the four real shapes with a
+/// BLOCK-bodied IIFE (`TsExpr::Arrow` has no block-body variant, and
+/// extending it for this one real site was rejected as disproportionate,
+/// the same "odd, one-off shape stays opaque text" posture this track uses
+/// repeatedly), though its own arm VALUES are still real
+/// `emit_sub_message` results, stringified back into that opaque host text
+/// via the new `bynk_ts::print_expr` (#1388's own second real gap).
 fn emit_icu_placeholder(
     p: &icu::IcuPlaceholder<'_>,
     locale_tag: &str,
     runtime_use: &RuntimeUse,
-) -> String {
+) -> bynk_ts::TsExpr {
     // Recorded per-arm, not once up front: a `select` placeholder emits
     // `Object.hasOwn` over an arm table and no formatter at all, so noting here
     // would import the three helpers into a select-only bundle that never calls
     // them. The three are imported as a group, so one note per helper-emitting
     // arm is enough.
-    let tag_lit = format!("\"{}\"", escape_ts_string(locale_tag));
-    let key = format!("\"{}\"", escape_ts_string(p.name));
-    let fallback = format!("\"{{{}}}\"", escape_ts_string(p.name));
-    let arg = format!("params.get({key})");
+    let tag_lit_str = || bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(locale_tag.to_string()));
+    let fallback = || bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(format!("{{{}}}", p.name)));
+    let arg_expr = || bynk_ts::TsExpr::Call {
+        callee: Box::new(bynk_ts::TsExpr::Member {
+            object: Box::new(bynk_ts::TsExpr::Ident("params".to_string())),
+            property: "get".to_string(),
+        }),
+        args: vec![bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(
+            p.name.to_string(),
+        ))],
+    };
+    let arg_tag = |property: &str| bynk_ts::TsExpr::Member {
+        object: Box::new(bynk_ts::TsExpr::Ident("__arg".to_string())),
+        property: property.to_string(),
+    };
+    let iife = |arrow_body: bynk_ts::TsExpr| bynk_ts::TsExpr::Call {
+        callee: Box::new(bynk_ts::TsExpr::Arrow {
+            params: vec![bynk_ts::TsParam {
+                name: "__arg".to_string(),
+                ty: None,
+                optional: false,
+            }],
+            is_async: false,
+            generics: Vec::new(),
+            return_type: None,
+            body: Box::new(arrow_body),
+        }),
+        args: vec![arg_expr()],
+    };
     match &p.kind {
         icu::PlaceholderKind::Plural { arms } => {
             runtime_use.note_icu();
-            let arms_obj: Vec<String> = arms
+            let arms_obj: Vec<(String, bynk_ts::TsExpr)> = arms
                 .iter()
                 .map(|(cat, segs)| {
-                    format!(
-                        "\"{}\": {}",
-                        cat.as_str(),
-                        emit_sub_message(segs, &tag_lit, runtime_use)
+                    (
+                        format!("\"{}\"", cat.as_str()),
+                        emit_sub_message(segs, locale_tag, runtime_use),
                     )
                 })
                 .collect();
-            format!(
-                "((__arg) => __arg === undefined || (__arg.tag !== \"Whole\" && __arg.tag !== \"Num\") ? {fallback} : selectPluralArm({tag_lit}, __arg.value, {{ {} }}))({arg})",
-                arms_obj.join(", ")
-            )
+            // `__arg === undefined || (__arg.tag !== "Whole" && __arg.tag !== "Num")`
+            // — the `&&` sub-expression is explicitly parenthesised in the
+            // pre-conversion text even though `&&` already binds tighter
+            // than `||` and needs no parens grammatically; reproduced via
+            // an explicit `Paren`, matching the real bytes rather than the
+            // precedence table's own (grammatically equivalent) choice.
+            let test = bynk_ts::TsExpr::Binary {
+                op: bynk_ts::TsBinaryOp::Or,
+                left: Box::new(bynk_ts::TsExpr::Binary {
+                    op: bynk_ts::TsBinaryOp::StrictEq,
+                    left: Box::new(bynk_ts::TsExpr::Ident("__arg".to_string())),
+                    right: Box::new(bynk_ts::TsExpr::Ident("undefined".to_string())),
+                }),
+                right: Box::new(bynk_ts::TsExpr::Paren(Box::new(bynk_ts::TsExpr::Binary {
+                    op: bynk_ts::TsBinaryOp::And,
+                    left: Box::new(bynk_ts::TsExpr::Binary {
+                        op: bynk_ts::TsBinaryOp::StrictNotEq,
+                        left: Box::new(arg_tag("tag")),
+                        right: Box::new(bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(
+                            "Whole".to_string(),
+                        ))),
+                    }),
+                    right: Box::new(bynk_ts::TsExpr::Binary {
+                        op: bynk_ts::TsBinaryOp::StrictNotEq,
+                        left: Box::new(arg_tag("tag")),
+                        right: Box::new(bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(
+                            "Num".to_string(),
+                        ))),
+                    }),
+                }))),
+            };
+            let call = bynk_ts::TsExpr::Call {
+                callee: Box::new(bynk_ts::TsExpr::Ident("selectPluralArm".to_string())),
+                args: vec![
+                    tag_lit_str(),
+                    arg_tag("value"),
+                    bynk_ts::TsExpr::object(arms_obj),
+                ],
+            };
+            iife(bynk_ts::TsExpr::Conditional {
+                test: Box::new(test),
+                consequent: Box::new(fallback()),
+                alternate: Box::new(call),
+            })
         }
         icu::PlaceholderKind::Select { arms } => {
             let arms_obj: Vec<String> = arms
@@ -1522,10 +1662,13 @@ fn emit_icu_placeholder(
                     format!(
                         "\"{}\": {}",
                         escape_ts_string(k),
-                        emit_sub_message(segs, &tag_lit, runtime_use)
+                        bynk_ts::print_expr(&emit_sub_message(segs, locale_tag, runtime_use))
                     )
                 })
                 .collect();
+            let key = format!("\"{}\"", escape_ts_string(p.name));
+            let fallback_text = format!("\"{{{}}}\"", escape_ts_string(p.name));
+            let arg = format!("params.get({key})");
             // `Object.hasOwn` (not `?? __arms["other"]`): the arm table is an
             // object literal, so a runtime `__arg.value` naming an
             // `Object.prototype` member (`"constructor"`, `"toString"`,
@@ -1534,28 +1677,86 @@ fn emit_icu_placeholder(
             // null/undefined, and an inherited method is neither (#900). The
             // dispatch's real question is own-property presence. `Object.hasOwn`
             // is ES2022, which `emit_tsconfig` already targets.
-            format!(
-                "((__arg) => {{ if (__arg === undefined || __arg.tag !== \"Text\") {{ return {fallback}; }} const __arms: Record<string, string> = {{ {} }}; return Object.hasOwn(__arms, __arg.value) ? __arms[__arg.value] : __arms[\"other\"]; }})({arg})",
-                arms_obj.join(", ")
-            )
+            //
+            // Stays one opaque `TsExpr::Ident` — the only one of this
+            // cluster's 4 real shapes with a BLOCK-bodied IIFE, a real gap
+            // `TsExpr::Arrow` doesn't cover (see this function's own doc).
+            bynk_ts::TsExpr::Ident(format!(
+                "((__arg) => {{ if (__arg === undefined || __arg.tag !== \"Text\") {{ return {fallback_text}; }} const __arms: Record<string, string> = {{ {} }}; return Object.hasOwn(__arms, __arg.value) ? __arms[__arg.value] : __arms[\"other\"]; }})({arg})",
+                arms_obj.join(", "),
+            ))
         }
         icu::PlaceholderKind::Number { style } => {
             runtime_use.note_icu();
-            let style_arg = style
-                .map(|s| format!(", \"{}\"", s.as_str()))
-                .unwrap_or_default();
-            format!(
-                "((__arg) => __arg !== undefined && (__arg.tag === \"Whole\" || __arg.tag === \"Num\") ? formatIcuNumber({tag_lit}, __arg.value{style_arg}) : {fallback})({arg})"
-            )
+            let mut args = vec![tag_lit_str(), arg_tag("value")];
+            if let Some(s) = style {
+                args.push(bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(
+                    s.as_str().to_string(),
+                )));
+            }
+            iife(bynk_ts::TsExpr::Conditional {
+                test: Box::new(bynk_ts::TsExpr::Binary {
+                    op: bynk_ts::TsBinaryOp::And,
+                    left: Box::new(bynk_ts::TsExpr::Binary {
+                        op: bynk_ts::TsBinaryOp::StrictNotEq,
+                        left: Box::new(bynk_ts::TsExpr::Ident("__arg".to_string())),
+                        right: Box::new(bynk_ts::TsExpr::Ident("undefined".to_string())),
+                    }),
+                    right: Box::new(bynk_ts::TsExpr::Paren(Box::new(bynk_ts::TsExpr::Binary {
+                        op: bynk_ts::TsBinaryOp::Or,
+                        left: Box::new(bynk_ts::TsExpr::Binary {
+                            op: bynk_ts::TsBinaryOp::StrictEq,
+                            left: Box::new(arg_tag("tag")),
+                            right: Box::new(bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(
+                                "Whole".to_string(),
+                            ))),
+                        }),
+                        right: Box::new(bynk_ts::TsExpr::Binary {
+                            op: bynk_ts::TsBinaryOp::StrictEq,
+                            left: Box::new(arg_tag("tag")),
+                            right: Box::new(bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(
+                                "Num".to_string(),
+                            ))),
+                        }),
+                    }))),
+                }),
+                consequent: Box::new(bynk_ts::TsExpr::Call {
+                    callee: Box::new(bynk_ts::TsExpr::Ident("formatIcuNumber".to_string())),
+                    args,
+                }),
+                alternate: Box::new(fallback()),
+            })
         }
         icu::PlaceholderKind::Date { style } => {
             runtime_use.note_icu();
-            let style_arg = style
-                .map(|s| format!(", \"{}\"", s.as_str()))
-                .unwrap_or_default();
-            format!(
-                "((__arg) => __arg !== undefined && __arg.tag === \"Moment\" ? formatIcuDate({tag_lit}, __arg.value{style_arg}) : {fallback})({arg})"
-            )
+            let mut args = vec![tag_lit_str(), arg_tag("value")];
+            if let Some(s) = style {
+                args.push(bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(
+                    s.as_str().to_string(),
+                )));
+            }
+            iife(bynk_ts::TsExpr::Conditional {
+                test: Box::new(bynk_ts::TsExpr::Binary {
+                    op: bynk_ts::TsBinaryOp::And,
+                    left: Box::new(bynk_ts::TsExpr::Binary {
+                        op: bynk_ts::TsBinaryOp::StrictNotEq,
+                        left: Box::new(bynk_ts::TsExpr::Ident("__arg".to_string())),
+                        right: Box::new(bynk_ts::TsExpr::Ident("undefined".to_string())),
+                    }),
+                    right: Box::new(bynk_ts::TsExpr::Binary {
+                        op: bynk_ts::TsBinaryOp::StrictEq,
+                        left: Box::new(arg_tag("tag")),
+                        right: Box::new(bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(
+                            "Moment".to_string(),
+                        ))),
+                    }),
+                }),
+                consequent: Box::new(bynk_ts::TsExpr::Call {
+                    callee: Box::new(bynk_ts::TsExpr::Ident("formatIcuDate".to_string())),
+                    args,
+                }),
+                alternate: Box::new(fallback()),
+            })
         }
     }
 }
@@ -1565,24 +1766,45 @@ fn emit_icu_placeholder(
 /// is already in scope and narrowed. `Hash` only ever occurs in a `plural`
 /// arm (the parser's `allow_hash` guarantees a `select` arm never contains
 /// one), where `__arg.value: number` after narrowing.
-fn emit_sub_message(segs: &[icu::SubSegment], tag_lit: &str, runtime_use: &RuntimeUse) -> String {
+///
+/// Arc C, step (11) (#1388): returns a real `bynk_ts::TsExpr` — `locale_tag`
+/// (review of #1389: renamed from the pre-conversion `tag_lit`, which
+/// pointed the wrong way once this stopped taking pre-quoted text) is now
+/// the RAW locale tag, not pre-quoted/pre-escaped text, since `TsLit::Str`'s
+/// own renderer applies the identical escaping itself (documented
+/// byte-for-byte match with `escape_ts_string`).
+fn emit_sub_message(
+    segs: &[icu::SubSegment],
+    locale_tag: &str,
+    runtime_use: &RuntimeUse,
+) -> bynk_ts::TsExpr {
     if segs.is_empty() {
-        return "\"\"".to_string();
+        return bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(String::new()));
     }
-    segs.iter()
+    let parts: Vec<bynk_ts::TsExpr> = segs
+        .iter()
         .map(|seg| match seg {
-            icu::SubSegment::Literal(s) => format!("\"{}\"", escape_ts_string(s)),
+            icu::SubSegment::Literal(s) => bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(s.clone())),
             // A bare `#` renders the argument as a number. Recorded here even
             // though the only arm that can contain one is `plural` (see this
             // function's doc), which records for itself: the note belongs with
             // the emission, so this stays correct if that invariant ever moves.
             icu::SubSegment::Hash => {
                 runtime_use.note_icu();
-                format!("formatIcuNumber({tag_lit}, __arg.value)")
+                bynk_ts::TsExpr::Call {
+                    callee: Box::new(bynk_ts::TsExpr::Ident("formatIcuNumber".to_string())),
+                    args: vec![
+                        bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(locale_tag.to_string())),
+                        bynk_ts::TsExpr::Member {
+                            object: Box::new(bynk_ts::TsExpr::Ident("__arg".to_string())),
+                            property: "value".to_string(),
+                        },
+                    ],
+                }
             }
         })
-        .collect::<Vec<_>>()
-        .join(" + ")
+        .collect();
+    join_plus(parts)
 }
 
 /// Compiles every `messages` block in one commons into one `code ->
@@ -1655,11 +1877,9 @@ pub(crate) fn emit_messages_bundle(
             .entries
             .iter()
             .map(|entry| {
-                let mut renderer_text = String::new();
-                emit_message_entry_renderer(&mut renderer_text, entry, &m.tag, runtime_use);
                 bynk_ts::TsObjectEntry::Prop(
                     format!("\"{}\"", escape_ts_string(&entry.code)),
-                    bynk_ts::TsExpr::Ident(renderer_text),
+                    emit_message_entry_renderer(entry, &m.tag, runtime_use),
                 )
             })
             .collect();
