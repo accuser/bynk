@@ -3363,10 +3363,10 @@ fn emit_composition_root(
                         // name isn't necessarily in scope at this dispatch site
                         // (cross-context: publisher and subscriber are different
                         // units), the same qualification problem
-                        // `ts_type_ref_qualified` exists to solve for handler
-                        // wrappers elsewhere in this crate. Needs the same kind of
-                        // scoped qualification, not a bare name — more than a
-                        // same-line fix.
+                        // `ts_type_ref_qualified_ts_type` exists to solve for
+                        // handler wrappers elsewhere in this crate. Needs the same
+                        // kind of scoped qualification, not a bare name — more
+                        // than a same-line fix.
                         let call_args = if wants_envelope {
                             "ev.payload as any, ev.envelope".to_string()
                         } else {

@@ -912,15 +912,10 @@ fn strip_effect_httpresult(t: &bynk_syntax::ast::TypeRef) -> Option<&bynk_syntax
     }
 }
 
-/// Emit the `makeHarness()` factory: an in-process env per participant whose
-/// Service Bindings call the sibling participants' real Worker `fetch` and whose
-/// Durable-Object namespaces back the participant's own agents in memory, plus a
-/// root env binding every participant (the test cases call in through it). A
-/// fresh harness per case gives each case clean agent state.
 /// A `{ fetch: (req: Request) => worker_X.fetch(req, env_X) } as ServiceBinding`
 /// expression — the identical shape both the per-participant and root-env
-/// binding wiring below build, differing only in which worker/env pair they
-/// close over.
+/// binding wiring in [`emit_integration_harness`] build, differing only in
+/// which worker/env pair they close over.
 fn service_binding_forward(worker_ident: &str, env_ident: &str) -> TsExpr {
     TsExpr::As {
         expr: Box::new(TsExpr::object(vec![(
@@ -945,6 +940,11 @@ fn service_binding_forward(worker_ident: &str, env_ident: &str) -> TsExpr {
     }
 }
 
+/// Emit the `makeHarness()` factory: an in-process env per participant whose
+/// Service Bindings call the sibling participants' real Worker `fetch` and whose
+/// Durable-Object namespaces back the participant's own agents in memory, plus a
+/// root env binding every participant (the test cases call in through it). A
+/// fresh harness per case gives each case clean agent state.
 fn emit_integration_harness(
     participants: &[String],
     unit_consumes: &HashMap<String, Vec<String>>,
