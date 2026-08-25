@@ -63,7 +63,7 @@ export class Ledger {
       const methodName = url.pathname.slice("/_bynk/agent/".length);
       const { args, deps } = (await request.json()) as { args: unknown[]; deps: unknown };
       const env = this.__env as unknown as Record<string, unknown>;
-      const __eventsDeps = { __eventsDispatch: (events: { type: string; payload: unknown; envelope: { eventId: string; publisherId: string; emittedAt: number; schemaVersion: number } }[]) => dispatchToEventsFanout(env.___EVENTS_FANOUT as DurableObjectNamespace, events) };
+      const __eventsDeps = { __eventsDispatch: (events: Array<{ type: string; payload: unknown; envelope: { eventId: string; publisherId: string; emittedAt: number; schemaVersion: number } }>) => dispatchToEventsFanout(env.___EVENTS_FANOUT as DurableObjectNamespace, events) };
       const result = await (this as unknown as Record<string, (...bynkArgs: unknown[]) => unknown>)[methodName](...args, { ...((deps ?? {}) as Record<string, unknown>), ...__eventsDeps });
       return new Response(JSON.stringify(result ?? null), { headers: { "content-type": "application/json" } });
     }

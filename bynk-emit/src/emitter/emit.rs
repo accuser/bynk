@@ -5277,9 +5277,12 @@ pub(crate) fn emit_agent(
                         bynk_ts::TsExpr::Arrow {
                             params: vec![bynk_ts::TsParam {
                                 name: "events".to_string(),
-                                ty: Some(bynk_ts::TsType::array(bynk_ts::TsType::named(
-                                    crate::emitter::EVENTS_WIRE_EVENT_TS_TYPE,
-                                ))),
+                                ty: Some(bynk_ts::TsType::named_with_args(
+                                    "Array",
+                                    vec![bynk_ts::TsType::named(
+                                        crate::emitter::EVENTS_WIRE_EVENT_TS_TYPE,
+                                    )],
+                                )),
                                 optional: false,
                             }],
                             is_async: false,
@@ -5892,9 +5895,11 @@ fn emit_ws_do_method(
 /// Arc C, slice 27 (#1384): a real `TsStmt::If` node (a `Block` then-branch),
 /// composed directly into `fetch`'s own body — the last consumer of this
 /// `&mut String`-writing shape converted, matching #1382's own "boilerplate
-/// converts fully" posture. `__payload.identity`/`__payload.args[i] as T`/the
-/// deps-object text stay opaque `TsExpr::Ident` leaves, the same established
-/// escape hatch #1382 used.
+/// converts fully" posture. `__payload.args[i] as T`/the deps-object text/
+/// the generic `acceptHibernatableConnection<T>` callee stay opaque
+/// `TsExpr::Ident` leaves, the same established escape hatch #1382 used —
+/// `__payload.identity` itself is a real `TsExpr::Member`, not opaque
+/// (review of #1385, finding 2: this doc previously listed it as one).
 fn ws_open_fetch_branch_stmt(host: &WsOpenHost<'_>, tys: &Arc<Types>) -> bynk_ts::TsStmt {
     let h = host.handler;
     let path = format!("/_bynk/ws/open/{}", host.service);
