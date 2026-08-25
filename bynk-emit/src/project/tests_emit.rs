@@ -3630,6 +3630,69 @@ fn binding_gen(
     }
 }
 
+/// `{ [name: "…",] boundaries: […], gen: (rng: any) => …, shrink: (v: any) => …,
+/// show: (v: any) => __bynkShow(v) }` — the one generator-descriptor object
+/// shape [`emit_test_property_function`]/[`emit_test_history_property_function`]/
+/// [`emit_contract_attack_function`] each build once per binding/param, now
+/// directly from `binding_gen`'s own real `TsExpr` fields (Arc C slice A,
+/// #1395) instead of printing them back to text and re-embedding via
+/// `format!` — the seam those three functions' own doc comments named as
+/// "not yet converted" is closed here. `name` is absent for a history
+/// handler's own per-param generator (no `name` key at all in that shape).
+fn gen_descriptor_entry(name: Option<TsExpr>, bg: &BindingGen) -> TsExpr {
+    let mut entries: Vec<(String, TsExpr)> = Vec::new();
+    if let Some(n) = name {
+        entries.push(("name".to_string(), n));
+    }
+    entries.push((
+        "boundaries".to_string(),
+        TsExpr::array(bg.boundaries.clone()),
+    ));
+    entries.push((
+        "gen".to_string(),
+        TsExpr::Arrow {
+            params: vec![TsParam {
+                name: "rng".to_string(),
+                ty: Some(TsType::named("any")),
+                optional: false,
+            }],
+            is_async: false,
+            generics: Vec::new(),
+            return_type: None,
+            body: Box::new(bg.gen_ts.clone()),
+        },
+    ));
+    entries.push((
+        "shrink".to_string(),
+        TsExpr::Arrow {
+            params: vec![TsParam {
+                name: "v".to_string(),
+                ty: Some(TsType::named("any")),
+                optional: false,
+            }],
+            is_async: false,
+            generics: Vec::new(),
+            return_type: None,
+            body: Box::new(bg.shrink.clone()),
+        },
+    ));
+    entries.push((
+        "show".to_string(),
+        TsExpr::Arrow {
+            params: vec![TsParam {
+                name: "v".to_string(),
+                ty: Some(TsType::named("any")),
+                optional: false,
+            }],
+            is_async: false,
+            generics: Vec::new(),
+            return_type: None,
+            body: Box::new(call(ident("__bynkShow"), vec![ident("v")])),
+        },
+    ));
+    TsExpr::object(entries)
+}
+
 /// v0.114: emit one async runner for a generative `property` — the binding
 /// generators, the `where` filter and predicate body as closures over the
 /// generated tuple, and the `__bynkRunProperty` call that draws cases, shrinks a
@@ -3673,48 +3736,40 @@ fn emit_test_property_function(
         unit_consumes_aliases,
     )
     .map(|(r, _)| r);
-    out.push_str("    const __gens = [\n");
-    for b in &prop.forall.bindings {
-        let bg = resolved
-            .as_ref()
-            .and_then(|r| checker::resolve_type_ref(&b.type_ref, &r.types, tys).map(|t| (t, r)))
-            .map(|(t, r)| binding_gen(t, &r.types, tys))
-            .unwrap_or(BindingGen {
-                boundaries: Vec::new(),
-                gen_ts: ident("undefined"),
-                shrink: TsExpr::array(vec![]),
-            });
-        // P7.2: deferred, not narrowed. `v`'s real type varies per binding, and
-        // for `Int` (and refined-`Int`) bindings the *internal* property-test
-        // representation is `bigint` (see `rng.int(...)`'s own `n`-suffixed
-        // literals and `__bynkShrinkInt(v: bigint, ...)` above) — not `number`,
-        // which is what a general `ts_type_ref`/`ts_ty` rendering of the same
-        // declared type would produce. Narrowing correctly needs threading the
-        // resolved type (or its internal representation) out of `BindingGen`
-        // itself, not a same-line text change, and a wrong guess here risks a
-        // real `tsc --strict` failure specifically on the shrink helpers' own
-        // typed parameters.
-        //
-        // Arc C, slice A: `binding_gen`'s own fields are real `TsExpr` now
-        // (`refined_gen_ts`/`gen_ts_for_ty`/`canon_ts_for_ty`/`binding_gen`
-        // itself), but this function (slice E, not yet converted) still
-        // builds its own output as a `String` via `format!` — each fragment
-        // is printed back to text at the point it's spliced in, the same
-        // "print a real fragment, splice into a still-textual caller" seam
-        // every prior slice's own not-yet-converted callers use.
-        out.push_str(&format!(
-            "      {{ name: \"{}\", boundaries: [{}], gen: (rng: any) => {}, shrink: (v: any) => {}, show: (v: any) => __bynkShow(v) }},\n",
-            emitter::escape_ts_string(&b.name.name),
-            bg.boundaries
-                .iter()
-                .map(bynk_ts::print_expr)
-                .collect::<Vec<_>>()
-                .join(", "),
-            bynk_ts::print_expr(&bg.gen_ts),
-            bynk_ts::print_expr(&bg.shrink)
-        ));
-    }
-    out.push_str("    ];\n");
+    // P7.2: deferred, not narrowed. `v`'s real type varies per binding, and
+    // for `Int` (and refined-`Int`) bindings the *internal* property-test
+    // representation is `bigint` (see `rng.int(...)`'s own `n`-suffixed
+    // literals and `__bynkShrinkInt(v: bigint, ...)` above) — not `number`,
+    // which is what a general `ts_type_ref`/`ts_ty` rendering of the same
+    // declared type would produce. Narrowing correctly needs threading the
+    // resolved type (or its internal representation) out of `BindingGen`
+    // itself, not a same-line text change, and a wrong guess here risks a
+    // real `tsc --strict` failure specifically on the shrink helpers' own
+    // typed parameters.
+    let gens: Vec<TsExpr> = prop
+        .forall
+        .bindings
+        .iter()
+        .map(|b| {
+            let bg = resolved
+                .as_ref()
+                .and_then(|r| checker::resolve_type_ref(&b.type_ref, &r.types, tys).map(|t| (t, r)))
+                .map(|(t, r)| binding_gen(t, &r.types, tys))
+                .unwrap_or(BindingGen {
+                    boundaries: Vec::new(),
+                    gen_ts: ident("undefined"),
+                    shrink: TsExpr::array(vec![]),
+                });
+            gen_descriptor_entry(Some(str_lit(b.name.name.clone())), &bg)
+        })
+        .collect();
+    let gens_stmt = TsStmt::const_stmt(
+        TsBindingName::Ident("__gens".to_string()),
+        None,
+        TsExpr::multiline_array(gens),
+        None,
+    );
+    out.push_str(&bynk_ts::print_stmt(&gens_stmt, 2));
 
     // The `where` filter and the predicate body, as closures over the tuple.
     let mut typed = synthetic_typed_commons_for_target(target_name, unit_tables, unit_uses, tys);
@@ -3754,7 +3809,13 @@ fn emit_test_property_function(
         }
         out.push_str("    };\n");
     } else {
-        out.push_str("    const __where = null;\n");
+        let where_null = TsStmt::const_stmt(
+            TsBindingName::Ident("__where".to_string()),
+            None,
+            TsExpr::Lit(TsLit::Null),
+            None,
+        );
+        out.push_str(&bynk_ts::print_stmt(&where_null, 2));
     }
 
     let test_services: HashSet<String> = unit_tables
@@ -3793,12 +3854,29 @@ fn emit_test_property_function(
     // Windows a `PathBuf` join yields `\`, which must not leak into the golden
     // `.ts` (mirrors `discovered_location`'s normalisation).
     let rel_path_fwd = rel_path.replace('\\', "/");
-    out.push_str(&format!(
-        "    return await __bynkRunProperty({{ seed: __bynkMix(__bynkSeed, {prop_ordinal}), cases: 100, gens: __gens, where: __where, body: __body, name: \"{}\", location: \"{}\", file: \"{}\" }});\n",
-        emitter::escape_ts_string(&prop.name),
-        emitter::escape_ts_string(&rel_path_fwd),
-        emitter::escape_ts_string(&rel_path_fwd),
-    ));
+    let return_run = TsStmt::return_stmt(
+        Some(await_expr(call(
+            ident("__bynkRunProperty"),
+            vec![TsExpr::object(vec![
+                (
+                    "seed".to_string(),
+                    call(
+                        ident("__bynkMix"),
+                        vec![ident("__bynkSeed"), num_lit(prop_ordinal.to_string())],
+                    ),
+                ),
+                ("cases".to_string(), num_lit("100")),
+                ("gens".to_string(), ident("__gens")),
+                ("where".to_string(), ident("__where")),
+                ("body".to_string(), ident("__body")),
+                ("name".to_string(), str_lit(prop.name.clone())),
+                ("location".to_string(), str_lit(rel_path_fwd.clone())),
+                ("file".to_string(), str_lit(rel_path_fwd)),
+            ])],
+        ))),
+        None,
+    );
+    out.push_str(&bynk_ts::print_stmt(&return_run, 2));
     out.push_str("}\n");
     out
 }
@@ -3841,7 +3919,15 @@ fn emit_test_history_property_function(
     let Some((run_var, agent_name)) = prop_history_binding(prop) else {
         // Defensive: the checker rejects a malformed history property before emit,
         // so this is unreachable — emit a trivially-passing runner rather than panic.
-        out.push_str("    return { pass: true };\n}\n");
+        let return_pass_true = TsStmt::return_stmt(
+            Some(TsExpr::object(vec![(
+                "pass".to_string(),
+                TsExpr::Lit(TsLit::Bool(true)),
+            )])),
+            None,
+        );
+        out.push_str(&bynk_ts::print_stmt(&return_pass_true, 2));
+        out.push_str("}\n");
         return out;
     };
 
@@ -3856,7 +3942,7 @@ fn emit_test_history_property_function(
     // expr types (with `run: List[Step]` in scope), so the lowering resolves the
     // predicate's `List` and value surface (`.call is …`, `.old`/`.new`, `.upTo`).
     let mut typed = synthetic_typed_commons_for_target(target_name, unit_tables, unit_uses, tys);
-    let mut handler_descs: Vec<String> = Vec::new();
+    let mut handler_descs: Vec<TsExpr> = Vec::new();
     if let Some((mut resolved, _)) = test_suites::build_privileged_resolved(
         target_name,
         unit_tables,
@@ -3885,7 +3971,9 @@ fn emit_test_history_property_function(
         if let Some(agent) = resolved.agents.get(agent_name) {
             for h in test_suites::history_handlers(agent) {
                 let tag = test_suites::history_variant_name(&h.method_name.as_ref().unwrap().name);
-                let gens: Vec<String> = h
+                // P7.2: deferred — same reason as `__gens`'s own construction
+                // above (`Int`'s internal `bigint` representation).
+                let gens: Vec<TsExpr> = h
                     .params
                     .iter()
                     .map(|p| {
@@ -3896,29 +3984,13 @@ fn emit_test_history_property_function(
                                 gen_ts: ident("undefined"),
                                 shrink: TsExpr::array(vec![]),
                             });
-                        // P7.2: deferred — same reason as `__gens`'s own construction
-                        // above (`Int`'s internal `bigint` representation).
-                        //
-                        // Arc C, slice A: `binding_gen`'s own fields are real
-                        // `TsExpr` — printed back to text here, the same seam
-                        // as `__gens`'s own construction above.
-                        format!(
-                            "{{ boundaries: [{}], gen: (rng: any) => {}, shrink: (v: any) => {}, show: (v: any) => __bynkShow(v) }}",
-                            bg.boundaries
-                                .iter()
-                                .map(bynk_ts::print_expr)
-                                .collect::<Vec<_>>()
-                                .join(", "),
-                            bynk_ts::print_expr(&bg.gen_ts),
-                            bynk_ts::print_expr(&bg.shrink)
-                        )
+                        gen_descriptor_entry(None, &bg)
                     })
                     .collect();
-                handler_descs.push(format!(
-                    "      {{ tag: \"{}\", gens: [{}] }},",
-                    emitter::escape_ts_string(&tag),
-                    gens.join(", ")
-                ));
+                handler_descs.push(TsExpr::object(vec![
+                    ("tag".to_string(), str_lit(tag)),
+                    ("gens".to_string(), TsExpr::array(gens)),
+                ]));
             }
         }
 
@@ -3948,12 +4020,13 @@ fn emit_test_history_property_function(
         }
     }
 
-    out.push_str("    const __handlers = [\n");
-    for hd in &handler_descs {
-        out.push_str(hd);
-        out.push('\n');
-    }
-    out.push_str("    ];\n");
+    let handlers_stmt = TsStmt::const_stmt(
+        TsBindingName::Ident("__handlers".to_string()),
+        None,
+        TsExpr::multiline_array(handler_descs),
+        None,
+    );
+    out.push_str(&bynk_ts::print_stmt(&handlers_stmt, 2));
 
     // The predicate body, as a closure over the driven history `run`.
     let cross = bynk_check::resolver::CrossContextInfo::default();
@@ -3995,18 +4068,64 @@ fn emit_test_history_property_function(
     // (`emit.rs`'s own driver-signature narrowing). `(target_ns as any)` and
     // `deps` stay deferred — the callee's own `deps: any` param is itself
     // deferred (per-handler `given` sets can differ; see `emit.rs`), and
-    // `target_ns`'s own generated namespace shape wasn't traced here.
-    out.push_str(&format!(
-        "    const __drive = (seq: Array<{{ h: number, args: unknown[] }}>) => ({target_ns} as any).__bynkDriveHistory_{agent_name}(seq, deps);\n"
-    ));
+    // `target_ns`'s own generated namespace shape wasn't traced here. The
+    // `Array<{ h: number, args: unknown[] }>` param type stays one opaque
+    // `TsType::named` string — its own inline object type's real member
+    // separator is `, ` (a comma), not `TsType::Object`'s own established
+    // `; ` (semicolon) convention, so building it as a real `TsType::Object`
+    // would silently change the emitted bytes; the same "odd, one-off shape
+    // stays opaque text" posture this track already uses for `Query[T]`/
+    // `this.state.storage.get<T>`/`ReturnType<typeof X>`.
+    let drive_stmt = TsStmt::const_stmt(
+        TsBindingName::Ident("__drive".to_string()),
+        None,
+        TsExpr::Arrow {
+            params: vec![TsParam {
+                name: "seq".to_string(),
+                ty: Some(TsType::named("Array<{ h: number, args: unknown[] }>")),
+                optional: false,
+            }],
+            is_async: false,
+            generics: Vec::new(),
+            return_type: None,
+            body: Box::new(method_call(
+                TsExpr::As {
+                    expr: Box::new(ident(target_ns)),
+                    ty: TsType::named("any"),
+                },
+                &format!("__bynkDriveHistory_{agent_name}"),
+                vec![ident("seq"), ident("deps")],
+            )),
+        },
+        None,
+    );
+    out.push_str(&bynk_ts::print_stmt(&drive_stmt, 2));
 
     let rel_path_fwd = rel_path.replace('\\', "/");
-    out.push_str(&format!(
-        "    return await __bynkRunHistory({{ seed: __bynkMix(__bynkSeed, {prop_ordinal}), cases: 60, maxLen: 16, handlers: __handlers, drive: __drive, body: __body, name: \"{}\", location: \"{}\", file: \"{}\" }});\n",
-        emitter::escape_ts_string(&prop.name),
-        emitter::escape_ts_string(&rel_path_fwd),
-        emitter::escape_ts_string(&rel_path_fwd),
-    ));
+    let return_run = TsStmt::return_stmt(
+        Some(await_expr(call(
+            ident("__bynkRunHistory"),
+            vec![TsExpr::object(vec![
+                (
+                    "seed".to_string(),
+                    call(
+                        ident("__bynkMix"),
+                        vec![ident("__bynkSeed"), num_lit(prop_ordinal.to_string())],
+                    ),
+                ),
+                ("cases".to_string(), num_lit("60")),
+                ("maxLen".to_string(), num_lit("16")),
+                ("handlers".to_string(), ident("__handlers")),
+                ("drive".to_string(), ident("__drive")),
+                ("body".to_string(), ident("__body")),
+                ("name".to_string(), str_lit(prop.name.clone())),
+                ("location".to_string(), str_lit(rel_path_fwd.clone())),
+                ("file".to_string(), str_lit(rel_path_fwd)),
+            ])],
+        ))),
+        None,
+    );
+    out.push_str(&bynk_ts::print_stmt(&return_run, 2));
     out.push_str("}\n");
     out
 }
@@ -4053,42 +4172,38 @@ fn emit_contract_attack_function(
     let _ = target_kind;
 
     // Generator descriptors, one per parameter, over the target's privileged view.
-    out.push_str("    const __gens = [\n");
-    for p in &f.params {
-        let bg = checker::resolve_type_ref(&p.type_ref, &resolved.types, tys)
-            .map(|t| binding_gen(t, &resolved.types, tys))
-            .unwrap_or(BindingGen {
-                boundaries: Vec::new(),
-                gen_ts: ident("undefined"),
-                shrink: TsExpr::array(vec![]),
-            });
-        // P7.2: deferred, not narrowed. `v`'s real type varies per binding, and
-        // for `Int` (and refined-`Int`) bindings the *internal* property-test
-        // representation is `bigint` (see `rng.int(...)`'s own `n`-suffixed
-        // literals and `__bynkShrinkInt(v: bigint, ...)` above) — not `number`,
-        // which is what a general `ts_type_ref`/`ts_ty` rendering of the same
-        // declared type would produce. Narrowing correctly needs threading the
-        // resolved type (or its internal representation) out of `BindingGen`
-        // itself, not a same-line text change, and a wrong guess here risks a
-        // real `tsc --strict` failure specifically on the shrink helpers' own
-        // typed parameters.
-        //
-        // Arc C, slice A: `binding_gen`'s own fields are real `TsExpr` —
-        // printed back to text here, the same seam as `__gens`'s own
-        // construction in the sibling functions above.
-        out.push_str(&format!(
-            "      {{ name: \"{}\", boundaries: [{}], gen: (rng: any) => {}, shrink: (v: any) => {}, show: (v: any) => __bynkShow(v) }},\n",
-            emitter::escape_ts_string(&p.name.name),
-            bg.boundaries
-                .iter()
-                .map(bynk_ts::print_expr)
-                .collect::<Vec<_>>()
-                .join(", "),
-            bynk_ts::print_expr(&bg.gen_ts),
-            bynk_ts::print_expr(&bg.shrink)
-        ));
-    }
-    out.push_str("    ];\n");
+    //
+    // P7.2: deferred, not narrowed. `v`'s real type varies per binding, and
+    // for `Int` (and refined-`Int`) bindings the *internal* property-test
+    // representation is `bigint` (see `rng.int(...)`'s own `n`-suffixed
+    // literals and `__bynkShrinkInt(v: bigint, ...)` above) — not `number`,
+    // which is what a general `ts_type_ref`/`ts_ty` rendering of the same
+    // declared type would produce. Narrowing correctly needs threading the
+    // resolved type (or its internal representation) out of `BindingGen`
+    // itself, not a same-line text change, and a wrong guess here risks a
+    // real `tsc --strict` failure specifically on the shrink helpers' own
+    // typed parameters.
+    let gens: Vec<TsExpr> = f
+        .params
+        .iter()
+        .map(|p| {
+            let bg = checker::resolve_type_ref(&p.type_ref, &resolved.types, tys)
+                .map(|t| binding_gen(t, &resolved.types, tys))
+                .unwrap_or(BindingGen {
+                    boundaries: Vec::new(),
+                    gen_ts: ident("undefined"),
+                    shrink: TsExpr::array(vec![]),
+                });
+            gen_descriptor_entry(Some(str_lit(p.name.name.clone())), &bg)
+        })
+        .collect();
+    let gens_stmt = TsStmt::const_stmt(
+        TsBindingName::Ident("__gens".to_string()),
+        None,
+        TsExpr::multiline_array(gens),
+        None,
+    );
+    out.push_str(&bynk_ts::print_stmt(&gens_stmt, 2));
 
     let param_names: Vec<String> = f.params.iter().map(|p| p.name.name.clone()).collect();
     let destructure = format!("const [{}] = __vals;", param_names.join(", "));
@@ -4135,7 +4250,13 @@ fn emit_contract_attack_function(
         }
         out.push_str("    };\n");
     } else {
-        out.push_str("    const __where = null;\n");
+        let where_null = TsStmt::const_stmt(
+            TsBindingName::Ident("__where".to_string()),
+            None,
+            TsExpr::Lit(TsLit::Null),
+            None,
+        );
+        out.push_str(&bynk_ts::print_stmt(&where_null, 2));
     }
 
     // `__body` — call the (guarded) function with coerced arguments. `Int`
@@ -4166,12 +4287,29 @@ fn emit_contract_attack_function(
 
     let rel_path_fwd = rel_path.replace('\\', "/");
     let name = format!("contract {}", fname.name);
-    out.push_str(&format!(
-        "    return await __bynkRunProperty({{ seed: __bynkMix(__bynkSeed, {prop_ordinal}), cases: 100, gens: __gens, where: __where, body: __body, name: \"{}\", location: \"{}\", file: \"{}\" }});\n",
-        emitter::escape_ts_string(&name),
-        emitter::escape_ts_string(&rel_path_fwd),
-        emitter::escape_ts_string(&rel_path_fwd),
-    ));
+    let return_run = TsStmt::return_stmt(
+        Some(await_expr(call(
+            ident("__bynkRunProperty"),
+            vec![TsExpr::object(vec![
+                (
+                    "seed".to_string(),
+                    call(
+                        ident("__bynkMix"),
+                        vec![ident("__bynkSeed"), num_lit(prop_ordinal.to_string())],
+                    ),
+                ),
+                ("cases".to_string(), num_lit("100")),
+                ("gens".to_string(), ident("__gens")),
+                ("where".to_string(), ident("__where")),
+                ("body".to_string(), ident("__body")),
+                ("name".to_string(), str_lit(name)),
+                ("location".to_string(), str_lit(rel_path_fwd.clone())),
+                ("file".to_string(), str_lit(rel_path_fwd)),
+            ])],
+        ))),
+        None,
+    );
+    out.push_str(&bynk_ts::print_stmt(&return_run, 2));
     out.push_str("}\n");
     out
 }
