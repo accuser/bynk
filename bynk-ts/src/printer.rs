@@ -167,13 +167,32 @@
 //! - **A `TsStmtKind::Raw` prints its own text verbatim** — no leading
 //!   indent, no added punctuation, the same rendering `Verbatim` gets
 //!   (deliberately a distinct kind, not a reuse of it — see
-//!   [`crate::program::TsStmtKind::Raw`]'s own doc for why). Only reached
-//!   through a `TsObjectEntry::Method`'s own `body`, never through
-//!   [`print()`]'s own `TsProgram` loop — no blank-line grouping rule of
-//!   its own to name here either. Added for #1337:
+//!   [`crate::program::TsStmtKind::Raw`]'s own doc for why). Never reached
+//!   through [`print()`]'s own `TsProgram` loop — no blank-line grouping
+//!   rule of its own to name here either. Added for #1337:
 //!   `emit_method`'s own body, delegated wholesale to `emitter/lower.rs`'s
 //!   `emit_block_as_function_body_with_return` — a permanent Arc C
 //!   exclusion (ADR `arc-c-lower-rs-permanent-exclusion`), not residue.
+//!   #1339 added a second, differently-reasoned real use:
+//!   `emit_refined_type`'s own `of()` guard body, carrying `emit_refined_
+//!   checks`'s already-printed output — not a permanent exclusion, just
+//!   scope that function's own conversion didn't reach. Both uses carry
+//!   text pre-indented at a fixed absolute depth by their own caller, so
+//!   `render_multiline_object_entry`'s own `debug_assert!` guards that this
+//!   only renders correctly at `depth == 0` — see its doc and
+//!   [`print_object_entry`]'s. **Reached through more than a
+//!   `TsObjectEntry::Method`'s own `body` now** (review of #1370 caught
+//!   this doc drifting stale): `emit_free_fn` (#1352) and `emit_agent`'s
+//!   own rehydrate function (#1369) both hold `Raw` statements inside an
+//!   ordinary `TsDecl::Function`'s own `body`, rendered through
+//!   `render_block_stmts` at whatever `depth` the enclosing `print_stmt`
+//!   call used (always 0 for a top-level declaration in every real site
+//!   today, satisfying the same depth-0 assumption named above). Since
+//!   #1369 also added `TsDecl::Function.inline`, a `Raw`-bearing function
+//!   body reached with `inline: true` would route through
+//!   `render_inline_block`/`render_compact_stmts` instead — see
+//!   [`render_inline_stmt`]'s own `Raw` arm for why that combination stays
+//!   deliberately unbuilt.
 //!
 //! None of the above is claimed as *the* TypeScript style this printer will
 //! use forever — it's what this slice's own grounding file needs, named
@@ -184,8 +203,8 @@
 //! own node list grows: file by file, against real content.
 
 use crate::program::{
-    TsBinaryOp, TsBindingName, TsDecl, TsExpr, TsLit, TsObjectEntry, TsParam, TsProgram, TsStmt,
-    TsStmtKind, TsType, TsTypeMember, TsUnaryOp,
+    TsBinaryOp, TsBindingName, TsClassMethod, TsDecl, TsExpr, TsLit, TsObjectEntry, TsParam,
+    TsProgram, TsStmt, TsStmtKind, TsType, TsTypeMember, TsUnaryOp,
 };
 use crate::source_map::SourceMapBuilder;
 
@@ -255,6 +274,7 @@ pub fn print(
                     kind,
                     TsStmtKind::Decl(TsDecl::Import { .. })
                         | TsStmtKind::Decl(TsDecl::ImportNamespace { .. })
+                        | TsStmtKind::Decl(TsDecl::ImportDefault { .. })
                 )
             }
             // #1329: `emit_commons_barrel`'s own real barrel module is one
@@ -376,6 +396,12 @@ fn render_stmt(out: &mut String, stmt: &TsStmt, depth: usize) {
                 // (see `TsExpr::Object`'s own doc).
                 render_stmt_level_expr(out, expr, depth);
             }
+            out.push_str(";\n");
+        }
+        TsStmtKind::Throw(expr) => {
+            out.push_str(&indent(depth));
+            out.push_str("throw ");
+            render_stmt_level_expr(out, expr, depth);
             out.push_str(";\n");
         }
         TsStmtKind::If {
@@ -503,6 +529,10 @@ fn render_stmt(out: &mut String, stmt: &TsStmt, depth: usize) {
             render_expr(out, discriminant);
             out.push_str(") {\n");
             for case in cases {
+                debug_assert!(
+                    !(case.test.is_some() && case.default_braced),
+                    "TsSwitchCase.default_braced only means something on the default (test: None) case — review of #1402's own nit"
+                );
                 out.push_str(&indent(depth + 1));
                 match &case.test {
                     Some(test) => {
@@ -516,9 +546,18 @@ fn render_stmt(out: &mut String, stmt: &TsStmt, depth: usize) {
                         out.push_str("}\n");
                     }
                     None => {
-                        out.push_str("default:\n");
-                        for s in &case.body {
-                            render_stmt(out, s, depth + 2);
+                        if case.default_braced {
+                            out.push_str("default: {\n");
+                            for s in &case.body {
+                                render_stmt(out, s, depth + 2);
+                            }
+                            out.push_str(&indent(depth + 1));
+                            out.push_str("}\n");
+                        } else {
+                            out.push_str("default:\n");
+                            for s in &case.body {
+                                render_stmt(out, s, depth + 2);
+                            }
                         }
                     }
                 }
@@ -687,6 +726,17 @@ fn render_inline_stmt(out: &mut String, stmt: &TsStmt) {
         // the way `Blank`'s own top-level form is), so the same fallback
         // that's safe for `Const`/`If`/etc. above is safe here too.
         | TsStmtKind::Increment(_)
+        // #1353: `emit_contract_guarded_body`'s own precondition/
+        // postcondition guards are exactly this fallback's own target case —
+        // a real, reachable `InlineBlock` site (`if (!(pred)) { const __e =
+        // ...; __e.name = ...; throw __e; }`), not a defensive placeholder.
+        // Safe for the same reason as `Const`/`Assign` above, with the same
+        // caveat those two already carry: `render_stmt_level_expr` renders a
+        // `multiline: true` operand with embedded newlines, which would
+        // break this fallback's one-line contract — untested today only
+        // because the one real call site (`throw __e;`, a bare `Ident`)
+        // never reaches that case, not because `Throw` structurally cannot.
+        | TsStmtKind::Throw(_)
         // #1333: not reachable today — every real `DocComment` reaches the
         // printer only via `print_stmt`, never through a `TsProgram`'s own
         // tree — which is what actually makes this fallback safe: unlike
@@ -699,16 +749,23 @@ fn render_inline_stmt(out: &mut String, stmt: &TsStmt) {
         // one. Listed by name per this group's own exhaustiveness
         // discipline, not folded into a wildcard.
         | TsStmtKind::DocComment(_)
-        // #1337: not reachable today — `Raw` only ever appears inside a
-        // `TsObjectEntry::Method`'s own `body`, rendered through
-        // `render_block_stmts`, never through `render_inline_stmt`'s own
-        // call path (an `if`/`for...of` branch or an `InlineBlock`). Unsafe
-        // if it ever became reachable there for the same reason
-        // `DocComment` is: `Raw`'s own text is `emit_method`'s whole
-        // multi-statement function body, never single-line, so the
-        // fallback's embedded newlines would break an `InlineBlock`'s
-        // single-line contract. Listed by name, not folded into a
-        // wildcard, for the same reason as every other arm in this group.
+        // #1337: not reachable today — every real `Raw`-bearing body
+        // (`TsObjectEntry::Method`, and since #1352/#1369 also
+        // `TsDecl::Function`) renders through `render_block_stmts`, never
+        // through `render_inline_stmt`'s own call path (an `if`/`for...of`
+        // branch or an `InlineBlock`). Unsafe if it ever became reachable
+        // there for the same reason `DocComment` is: `Raw`'s own text is
+        // typically a whole multi-statement function body, never
+        // single-line, so the fallback's embedded newlines would break an
+        // `InlineBlock`'s single-line contract. Since #1369 added
+        // `TsDecl::Function.inline`, this is now one field flip away from
+        // live rather than purely hypothetical — `render_compact_stmts`'s
+        // own `debug_assert!` is the actual backstop if a future call site
+        // ever combines `inline: true` with a `Raw` body statement;
+        // `emit_agent`'s own rehydrate function (#1369) deliberately keeps
+        // `inline: false` specifically to avoid exercising this arm.
+        // Listed by name, not folded into a wildcard, for the same reason
+        // as every other arm in this group.
         | TsStmtKind::Raw(_) => render_stmt(out, stmt, 0),
     }
 }
@@ -809,7 +866,8 @@ fn binary_precedence(op: TsBinaryOp) -> u8 {
         TsBinaryOp::Or => 2,
         TsBinaryOp::And => 3,
         TsBinaryOp::StrictEq | TsBinaryOp::StrictNotEq => 4,
-        TsBinaryOp::GreaterThan => 5,
+        TsBinaryOp::GreaterThan | TsBinaryOp::LessThan | TsBinaryOp::InstanceOf => 5,
+        TsBinaryOp::Add => 6,
     }
 }
 
@@ -842,7 +900,7 @@ fn binary_precedence(op: TsBinaryOp) -> u8 {
 /// binary`'s own test, still `a ?? (b ?? c)`), since nothing in real
 /// content needs a flattened `??` chain and this slice's own grounding
 /// gives no reason to widen that boundary opportunistically.
-fn render_binary_operand(out: &mut String, outer_op: TsBinaryOp, expr: &TsExpr) {
+fn render_binary_operand(out: &mut String, outer_op: TsBinaryOp, expr: &TsExpr, is_left: bool) {
     let needs_parens = match expr {
         // `Arrow`/`Conditional` are the two lowest-precedence expression
         // forms in JS/TS — `(x) => y || z` as a binary operand must print
@@ -877,8 +935,24 @@ fn render_binary_operand(out: &mut String, outer_op: TsBinaryOp, expr: &TsExpr) 
                 // so a same-operator nesting of any of those still needs its
                 // parens regardless of which side it's nested on (review of
                 // #1324, finding 1 — the original fix wrongly generalized
-                // the `||`/`&&` exemption to every operator).
-                !matches!(outer_op, TsBinaryOp::Or | TsBinaryOp::And)
+                // the `||`/`&&` exemption to every operator). `+` (Arc C,
+                // step (11), #1388) does NOT join that exemption on both
+                // sides — review of #1389, finding 1: `||`/`&&` are
+                // SEMANTICALLY associative (`(a || b) || c` and
+                // `a || (b || c)` always agree), but `+` is only
+                // GRAMMATICALLY left-associative — with a mixed number/string
+                // chain, `1 + (2 + "3")` (`"123"`) and `(1 + 2) + "3"`
+                // (`"33"`) disagree, so flattening a RIGHT-nested `Add` would
+                // silently change the value. `join_plus`
+                // (`bynk-emit/src/emitter/emit.rs`) only ever left-folds, so
+                // this asymmetry never showed up in that caller's own
+                // zero-diff fixture run — but `bynk-ts` is a shared
+                // primitive, not scoped to that one caller's own usage.
+                match outer_op {
+                    TsBinaryOp::Or | TsBinaryOp::And => false,
+                    TsBinaryOp::Add => !is_left,
+                    _ => true,
+                }
             } else {
                 binary_precedence(*inner_op) <= binary_precedence(outer_op)
             }
@@ -895,11 +969,15 @@ fn render_binary_operand(out: &mut String, outer_op: TsBinaryOp, expr: &TsExpr) 
 }
 
 /// Render `expr` as a statement or declaration's own top-level expression
-/// (a `const`/`let` initialiser, an assignment's own value, …) — the only
-/// place `depth` is available to render a `multiline: true`
-/// [`TsExpr::Object`] correctly (see its own doc). Every other shape defers
-/// to the ordinary, depth-unaware [`render_expr`] unchanged; this exists
-/// only to intercept the one shape that needs `depth` before it gets there.
+/// (a `const`/`let` initialiser, an assignment's own value, …) — one of the
+/// two places `depth` is available to render a `multiline: true`
+/// [`TsExpr::Object`]/[`TsExpr::Array`] correctly (see `Object`'s own doc);
+/// the other is [`render_multiline_object_entry`]'s own `Prop` arm (#1355 —
+/// a `Prop`'s own value can itself be a nested multiline object/array,
+/// `emit_messages_bundle`'s own real doubly-nested table). Every other
+/// shape defers to the ordinary, depth-unaware [`render_expr`] unchanged;
+/// this exists only to intercept the one shape that needs `depth` before it
+/// gets there.
 fn render_stmt_level_expr(out: &mut String, expr: &TsExpr, depth: usize) {
     if let TsExpr::Object {
         entries,
@@ -954,12 +1032,37 @@ fn render_multiline_object(out: &mut String, entries: &[TsObjectEntry], depth: u
 /// "one document-fragment entry point, no duplicated rendering" posture
 /// [`print_stmt`]/[`print_type`] already established).
 fn render_multiline_object_entry(out: &mut String, entry: &TsObjectEntry, depth: usize) {
+    // Review of #1340, finding 1: a `Raw`-bodied `Method` entry's own text
+    // is captured pre-indented at a fixed absolute depth by its caller (see
+    // `print_object_entry`'s own doc) — correct only when `depth` is `0`.
+    // Originally guarded only in `print_object_entry`, the one entry point
+    // #1337 had in mind; #1339's `emit_refined_type` reaches this function
+    // directly (via `TsExpr::multiline_object_entries`/`render_expr`, never
+    // through `print_object_entry`), which the original guard's placement
+    // silently missed. Asserted here instead, where both callers converge,
+    // so neither path can bypass it again.
+    if let TsObjectEntry::Method { body, .. } = entry {
+        debug_assert!(
+            depth == 0 || !contains_raw(body),
+            "render_multiline_object_entry: a Raw-bodied Method entry's own baked-in indent only matches depth 0"
+        );
+    }
     match entry {
         TsObjectEntry::Prop(k, v) => {
             out.push_str(&indent(depth + 1));
             out.push_str(k);
             out.push_str(": ");
-            render_expr(out, v);
+            // #1355: a `Prop`'s own value sits one level deeper than the
+            // entry itself (matching this function's own `indent(depth +
+            // 1)` above) — the same depth `render_stmt_level_expr`'s own
+            // doc names as "the only place `depth` is available to render a
+            // `multiline: true` `TsExpr::Object`/`Array` correctly."
+            // `emit_messages_bundle`'s own real, doubly-nested `{ locale: {
+            // code: expr, ... }, ... }` table is this gap's real grounding
+            // — a nested multiline object value previously fell back to
+            // single-line silently (the plain, depth-unaware `render_expr`
+            // recursion ignores `multiline` entirely).
+            render_stmt_level_expr(out, v, depth + 1);
             out.push_str(",\n");
         }
         TsObjectEntry::Shorthand(name) => {
@@ -996,7 +1099,7 @@ fn render_multiline_object_entry(out: &mut String, entry: &TsObjectEntry, depth:
                 out.push_str("async ");
             }
             out.push_str(name);
-            render_object_entry_method_generics(out, generics);
+            render_bare_generics(out, generics);
             out.push('(');
             render_params(out, params);
             out.push(')');
@@ -1016,16 +1119,19 @@ fn render_multiline_object_entry(out: &mut String, entry: &TsObjectEntry, depth:
     }
 }
 
-/// `<{generics.join(", ")}>`, or nothing at all when `generics` is empty —
-/// `TsObjectEntry::Method`'s own generic parameter list (#1337), bare
-/// names only, matching `ts_type_params`'s own real rendering exactly
-/// (`bynk-emit`'s own pre-conversion text this shape reproduces).
-fn render_object_entry_method_generics(out: &mut String, generics: &[String]) {
-    if generics.is_empty() {
+/// `<{names.join(", ")}>`, or nothing at all when `names` is empty — bare
+/// names only, matching `bynk-emit`'s own `ts_type_params` rendering
+/// exactly. Originally `TsObjectEntry::Method`'s own generic parameter list
+/// (#1337); generalised by #1339 into the one shared renderer for every
+/// bare-name generics/type-params list this crate builds
+/// (`TsDecl::Interface.type_params`, `TsDecl::TypeAlias.type_params`,
+/// `TsExpr::Arrow.generics`) rather than four near-identical copies.
+fn render_bare_generics(out: &mut String, names: &[String]) {
+    if names.is_empty() {
         return;
     }
     out.push('<');
-    for (i, g) in generics.iter().enumerate() {
+    for (i, g) in names.iter().enumerate() {
         if i > 0 {
             out.push_str(", ");
         }
@@ -1105,7 +1211,7 @@ fn render_object_entry_inline(out: &mut String, entry: &TsObjectEntry) {
                 out.push_str("async ");
             }
             out.push_str(name);
-            render_object_entry_method_generics(out, generics);
+            render_bare_generics(out, generics);
             out.push('(');
             render_params(out, params);
             out.push(')');
@@ -1152,14 +1258,22 @@ fn render_expr(out: &mut String, expr: &TsExpr) {
         TsExpr::Arrow {
             params,
             is_async,
+            generics,
+            return_type,
             body,
         } => {
             if *is_async {
                 out.push_str("async ");
             }
+            render_bare_generics(out, generics);
             out.push('(');
             render_params(out, params);
-            out.push_str(") => ");
+            out.push(')');
+            if let Some(rt) = return_type {
+                out.push_str(": ");
+                render_type(out, rt);
+            }
+            out.push_str(" => ");
             render_expr(out, body);
         }
         TsExpr::Call { callee, args } => {
@@ -1259,7 +1373,7 @@ fn render_expr(out: &mut String, expr: &TsExpr) {
             render_operand(out, expr);
         }
         TsExpr::Binary { op, left, right } => {
-            render_binary_operand(out, *op, left);
+            render_binary_operand(out, *op, left, true);
             out.push_str(match op {
                 TsBinaryOp::NullishCoalescing => " ?? ",
                 TsBinaryOp::Or => " || ",
@@ -1267,8 +1381,11 @@ fn render_expr(out: &mut String, expr: &TsExpr) {
                 TsBinaryOp::StrictEq => " === ",
                 TsBinaryOp::StrictNotEq => " !== ",
                 TsBinaryOp::GreaterThan => " > ",
+                TsBinaryOp::LessThan => " < ",
+                TsBinaryOp::InstanceOf => " instanceof ",
+                TsBinaryOp::Add => " + ",
             });
-            render_binary_operand(out, *op, right);
+            render_binary_operand(out, *op, right, false);
         }
         TsExpr::Conditional {
             test,
@@ -1374,6 +1491,26 @@ fn render_type(out: &mut String, ty: &TsType) {
             out.push_str("[]");
         }
         TsType::Object(members) => {
+            // Review of #1358, finding 1: a `Method` member's own `doc` has
+            // no single-line form — this inline shape has nowhere to put a
+            // JSDoc block, unlike `TsDecl::Interface`'s own render arm
+            // (which calls `render_doc_comment` before a documented
+            // member's own line, since it has `depth` and a real newline
+            // budget to work with). The identical case #1338's own review
+            // already ruled on for `TsObjectEntry::Method.doc` in
+            // `render_object_entry_inline` — a loud check, not a silent
+            // drop, since silently dropping a JSDoc block is a strictly
+            // worse failure mode than a loud one. Not reachable today
+            // (`workers_entry.rs`'s own one real `TsType::Object` method
+            // member goes through `TsTypeMember::method`, so `doc` is
+            // always `None`) — the #1337 case was equally unreachable,
+            // which is exactly why it got the assert.
+            debug_assert!(
+                !members
+                    .iter()
+                    .any(|m| matches!(m, TsTypeMember::Method { doc: Some(_), .. })),
+                "render_type: a Method member's own doc comment has no single-line form"
+            );
             if members.is_empty() {
                 out.push_str("{}");
             } else {
@@ -1401,10 +1538,42 @@ fn render_type(out: &mut String, ty: &TsType) {
             out.push_str(") => ");
             render_type(out, ret);
         }
-        TsType::Union(members) => {
+        TsType::Union {
+            members,
+            multiline: false,
+        } => {
             for (i, m) in members.iter().enumerate() {
                 if i > 0 {
                     out.push_str(" | ");
+                }
+                render_type(out, m);
+            }
+        }
+        // #1339: `emit_sum_type`'s own real shape — one variant per line, a
+        // leading `|` on every line except the first (which gets equivalent
+        // spacing instead, matching the pre-conversion `writeln!` code's own
+        // `let pipe = if i == 0 { " " } else { "|" };` exactly), the closing
+        // `;` appended by `TsDecl::TypeAlias`'s own caller directly after
+        // the last member's own line — see `TsType::Union`'s own doc for
+        // why this needs no depth parameter despite the multi-line shape.
+        TsType::Union {
+            members,
+            multiline: true,
+        } => {
+            for (i, m) in members.iter().enumerate() {
+                if i > 0 {
+                    out.push('\n');
+                }
+                out.push_str("  ");
+                out.push_str(if i == 0 { " " } else { "|" });
+                out.push(' ');
+                render_type(out, m);
+            }
+        }
+        TsType::Intersection(members) => {
+            for (i, m) in members.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(" & ");
                 }
                 render_type(out, m);
             }
@@ -1433,8 +1602,15 @@ fn render_type_member(out: &mut String, member: &TsTypeMember) {
             out.push_str(": ");
             render_type(out, ty);
         }
-        TsTypeMember::Method { name, params, ret } => {
+        TsTypeMember::Method {
+            name,
+            generics,
+            params,
+            ret,
+            doc: _,
+        } => {
             out.push_str(name);
+            render_bare_generics(out, generics);
             out.push('(');
             render_params(out, params);
             out.push_str("): ");
@@ -1468,6 +1644,21 @@ pub fn print_type(ty: &TsType) -> String {
     out
 }
 
+/// Print a single [`TsExpr`] on its own — the expression-level sibling of
+/// [`print_type`]'s own "one fragment, not a whole document" entry point.
+/// Arc C, step (11) (#1388) need: `emit_icu_placeholder`'s own `Select` arm
+/// stays one opaque, hand-built block-bodied IIFE (`TsExpr::Arrow` has no
+/// block-body variant, and extending it for this one real site was
+/// rejected as disproportionate) — its own arm VALUES, `emit_sub_message`'s
+/// now-real `TsExpr` results, still need stringifying back into that
+/// opaque host text. No source-map/buffer machinery, matching
+/// [`print_type`]/[`print_stmt`]'s own scope exactly.
+pub fn print_expr(expr: &TsExpr) -> String {
+    let mut out = String::new();
+    render_expr(&mut out, expr);
+    out
+}
+
 /// Print a single [`TsStmt`] on its own, at `depth` — the statement-level
 /// sibling of [`print_type`]'s own "one fragment, not a whole document"
 /// entry point. `bynk-emit`'s own #1333 need (`emit_doc_block`, a shared
@@ -1477,7 +1668,24 @@ pub fn print_type(ty: &TsType) -> String {
 /// [`print_type`]'s own scope exactly, and reusing `render_stmt`'s own
 /// exhaustive per-kind dispatch (this module's own private renderer)
 /// rather than a second copy.
+/// Review of #1402: a `TsStmtKind::Raw` nested inside a `Switch` case's own
+/// body (`emit_stub_rhs`'s own `ReturnsEach` dispatch, Arc C slice 33,
+/// `tests_emit.rs` slice C) carries the identical "no indent of its own,
+/// pre-indented at a fixed absolute depth" hazard `render_class_method`'s
+/// and `render_multiline_object_entry`'s own `debug_assert!`s already guard
+/// — `stmt_contains_raw` already recurses into `Switch` cases, so the same
+/// check applies here, this fragment entry point's own first `Raw`-bearing
+/// `Switch` caller. A bare `Raw` passed directly as `stmt` itself is exempt
+/// (not a false negative — `render_stmt`'s own `Raw` arm never reads
+/// `depth` at all, so calling `print_stmt` on a bare `Raw` is safe at any
+/// depth, the established `print_stmt_renders_raw_text_verbatim_with_no_
+/// added_indent_or_punctuation` contract below): only a Raw *nested inside*
+/// a depth-using wrapper (like this `Switch` case) is the real hazard.
 pub fn print_stmt(stmt: &TsStmt, depth: usize) -> String {
+    debug_assert!(
+        depth == 0 || matches!(stmt.kind, TsStmtKind::Raw(_)) || !stmt_contains_raw(stmt),
+        "print_stmt: a Raw-bearing statement's own baked-in indent only matches depth 0"
+    );
     let mut out = String::new();
     render_stmt(&mut out, stmt, depth);
     out
@@ -1497,25 +1705,133 @@ pub fn print_stmt(stmt: &TsStmt, depth: usize) -> String {
 /// fragment" pattern applied to an object-entry-shaped fragment instead of
 /// a whole statement or type.
 ///
-/// Review of #1338, finding 3: a `TsStmtKind::Raw` body statement (the
-/// one real case today: `emit_method`'s own opaque `lower.rs`-sourced
-/// body) carries NO indent of its own — its text is captured pre-indented
-/// at a fixed absolute depth by its own caller — so it only renders
-/// correctly when `depth` is `0`, matching all four real call sites. At
-/// any other depth the signature/closing-brace move with `depth` but the
-/// `Raw` body's own baked-in indent does not, silently. Guarded here
-/// rather than left as a doc-only warning, since every real call site
-/// already satisfies it.
+/// Review of #1338, finding 3: a `TsStmtKind::Raw` body statement (e.g.
+/// `emit_method`'s own opaque `lower.rs`-sourced body, or `emit_refined_
+/// type`'s own opaque `emit_refined_checks`-sourced guard body, #1339's
+/// second real use) carries NO indent of its own — its text is captured
+/// pre-indented at a fixed absolute depth by its own caller — so it only
+/// renders correctly when `depth` is `0`. The guard for this now lives in
+/// `render_multiline_object_entry` itself (a private renderer, so named
+/// here in text rather than linked — moved there by review of #1340,
+/// finding 1: this function's own copy missed the `TsExpr::
+/// multiline_object_entries`/`render_expr` call path #1339 added, which
+/// reaches that renderer directly, never through this one), so it fires
+/// for every caller, not just this entry point.
 pub fn print_object_entry(entry: &TsObjectEntry, depth: usize) -> String {
-    if let TsObjectEntry::Method { body, .. } = entry {
-        debug_assert!(
-            depth == 0 || !body.iter().any(|s| matches!(s.kind, TsStmtKind::Raw(_))),
-            "print_object_entry: a Raw-bodied Method entry's own baked-in indent only matches depth 0"
-        );
-    }
     let mut out = String::new();
     render_multiline_object_entry(&mut out, entry, depth);
     out
+}
+
+/// Whether `stmts`, or any block/branch/case nested inside them at any
+/// depth, contains a [`TsStmtKind::Raw`] — the recursive check
+/// [`render_class_method`]'s and [`render_multiline_object_entry`]'s own
+/// `debug_assert!`s need. Review of #1374: a top-level-only scan
+/// (`body.iter().any(...)`) is blind to a `Raw` buried inside an `If`'s own
+/// `Block` — `emit_agent`'s own `commitState` (#1373) is exactly this shape,
+/// a transition's own hoisted-statement `Raw`s sitting inside
+/// `if (__prior !== undefined) { ... }` — so the two guards this exists for
+/// would have silently missed exactly the case they exist to catch. Every
+/// `TsStmtKind` variant is named explicitly, not a wildcard, matching this
+/// crate's own exhaustiveness discipline.
+fn contains_raw(stmts: &[TsStmt]) -> bool {
+    stmts.iter().any(stmt_contains_raw)
+}
+
+fn stmt_contains_raw(stmt: &TsStmt) -> bool {
+    match &stmt.kind {
+        TsStmtKind::Raw(_) => true,
+        TsStmtKind::Verbatim { .. }
+        | TsStmtKind::Decl(_)
+        | TsStmtKind::Const { .. }
+        | TsStmtKind::Let { .. }
+        | TsStmtKind::ExprStmt(_)
+        | TsStmtKind::Return(_)
+        | TsStmtKind::Throw(_)
+        | TsStmtKind::Continue
+        | TsStmtKind::Assign { .. }
+        | TsStmtKind::Comment(_)
+        | TsStmtKind::DocComment(_)
+        | TsStmtKind::Blank
+        | TsStmtKind::Increment(_) => false,
+        TsStmtKind::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            stmt_contains_raw(then_branch) || else_branch.as_deref().is_some_and(stmt_contains_raw)
+        }
+        TsStmtKind::ForOf { body, .. } => stmt_contains_raw(body),
+        TsStmtKind::TryCatch {
+            try_block,
+            catch_block,
+            ..
+        } => stmt_contains_raw(try_block) || stmt_contains_raw(catch_block),
+        TsStmtKind::Block(stmts) | TsStmtKind::InlineBlock(stmts) => contains_raw(stmts),
+        TsStmtKind::Switch { cases, .. } => cases.iter().any(|c| contains_raw(&c.body)),
+    }
+}
+
+/// Print a single [`TsClassMethod`] on its own, at `depth` — the
+/// class-method sibling of [`print_object_entry`]'s own "one fragment, not
+/// a whole document" entry point. `depth` means the *class's* own depth
+/// (matching `print_object_entry`'s own convention exactly), so the method
+/// itself lands at `depth + 1`, its own body at `depth + 2`. #1359's own
+/// real need: `emit_provider`'s own class wrapper stays hand-written text
+/// (each method's own body needs a per-method source-map sub-builder/
+/// `merge`, and the wrapper's own real spacing — no blank line between
+/// methods — genuinely differs from [`TsDecl::Class`]'s own "one blank
+/// line before each method" policy, `events_fanout.rs`'s real convention,
+/// #1317), so each real method prints through here directly into that
+/// still-hand-written wrapper. Deliberately no automatic blank-line
+/// insertion of its own — the same "caller controls spacing" contract
+/// `print_object_entry` already established.
+pub fn print_class_method(method: &TsClassMethod, depth: usize) -> String {
+    let mut out = String::new();
+    render_class_method(&mut out, method, depth);
+    out
+}
+
+/// The one real per-method render, shared by [`print_class_method`] and
+/// [`TsDecl::Class`]'s own methods-loop arm — review of #1360, finding 4:
+/// keeping two independent copies of this shape was exactly the drift risk
+/// this track exists to design against (two printers disagreeing about a
+/// formatting convention). `depth` means the *class's* own depth, matching
+/// both callers' own convention.
+///
+/// Review of #1360, finding 1: a `TsStmtKind::Raw` method body has no
+/// indent of its own — its text is captured pre-indented at a fixed
+/// absolute depth by its own caller — so it only renders correctly when
+/// `depth` is `0`, the same hazard `render_multiline_object_entry`'s own
+/// identical `debug_assert!` guards (review of #1338 finding 3, relocated
+/// by review of #1340 finding 1). `print_class_method`'s own doc frames it
+/// as a general fragment entry point, so a future caller at a non-zero
+/// depth is the expected case this guards against, not a hypothetical.
+fn render_class_method(out: &mut String, method: &TsClassMethod, depth: usize) {
+    debug_assert!(
+        depth == 0 || !contains_raw(&method.body),
+        "render_class_method: a Raw method body's own baked-in indent only matches depth 0"
+    );
+    if let Some(text) = &method.doc {
+        render_doc_comment(out, text, depth + 1);
+    }
+    out.push_str(&indent(depth + 1));
+    if method.private {
+        out.push_str("private ");
+    }
+    if method.is_async {
+        out.push_str("async ");
+    }
+    out.push_str(&method.name);
+    out.push('(');
+    render_params(out, &method.params);
+    out.push(')');
+    if let Some(rt) = &method.return_type {
+        out.push_str(": ");
+        render_type(out, rt);
+    }
+    render_block_stmts(out, &method.body, depth + 1);
+    out.push('\n');
 }
 
 fn render_params(out: &mut String, params: &[TsParam]) {
@@ -1566,8 +1882,23 @@ fn render_decl_body(out: &mut String, decl: &TsDecl, depth: usize) {
             out.push_str(from);
             out.push_str("\";\n");
         }
-        TsDecl::ImportNamespace { alias, from } => {
-            out.push_str("import * as ");
+        TsDecl::ImportNamespace {
+            type_only,
+            alias,
+            from,
+        } => {
+            out.push_str(if *type_only {
+                "import type * as "
+            } else {
+                "import * as "
+            });
+            out.push_str(alias);
+            out.push_str(" from \"");
+            out.push_str(from);
+            out.push_str("\";\n");
+        }
+        TsDecl::ImportDefault { alias, from } => {
+            out.push_str("import ");
             out.push_str(alias);
             out.push_str(" from \"");
             out.push_str(from);
@@ -1589,15 +1920,30 @@ fn render_decl_body(out: &mut String, decl: &TsDecl, depth: usize) {
             out.push_str("export ");
             render_decl_body(out, inner, depth);
         }
-        TsDecl::Interface { name, members } => {
+        TsDecl::Interface {
+            name,
+            type_params,
+            members,
+        } => {
             out.push_str("interface ");
             out.push_str(name);
+            render_bare_generics(out, type_params);
             out.push_str(" {\n");
-            for (member_name, member_ty) in members {
+            for member in members {
+                // #1357: a `Method` member's own `doc` renders here, not in
+                // `render_type_member` itself — that function has no
+                // `depth` to give `render_doc_comment`, the same "doc lives
+                // at the call site that carries depth" split
+                // `render_multiline_object_entry`'s own `Method` arm
+                // already uses for the identical field.
+                if let TsTypeMember::Method {
+                    doc: Some(text), ..
+                } = member
+                {
+                    render_doc_comment(out, text, depth + 1);
+                }
                 out.push_str(&indent(depth + 1));
-                out.push_str(member_name);
-                out.push_str(": ");
-                render_type(out, member_ty);
+                render_type_member(out, member);
                 out.push_str(";\n");
             }
             out.push_str(&indent(depth));
@@ -1650,20 +1996,7 @@ fn render_decl_body(out: &mut String, decl: &TsDecl, depth: usize) {
                 if wrote_member {
                     out.push('\n');
                 }
-                out.push_str(&indent(depth + 1));
-                if m.is_async {
-                    out.push_str("async ");
-                }
-                out.push_str(&m.name);
-                out.push('(');
-                render_params(out, &m.params);
-                out.push(')');
-                if let Some(rt) = &m.return_type {
-                    out.push_str(": ");
-                    render_type(out, rt);
-                }
-                render_block_stmts(out, &m.body, depth + 1);
-                out.push('\n');
+                render_class_method(out, m, depth);
                 wrote_member = true;
             }
             out.push_str(&indent(depth));
@@ -1671,16 +2004,19 @@ fn render_decl_body(out: &mut String, decl: &TsDecl, depth: usize) {
         }
         TsDecl::Function {
             name,
+            generics,
             params,
             return_type,
             body,
             is_async,
+            inline,
         } => {
             if *is_async {
                 out.push_str("async ");
             }
             out.push_str("function ");
             out.push_str(name);
+            render_bare_generics(out, generics);
             out.push('(');
             render_params(out, params);
             out.push(')');
@@ -1688,13 +2024,40 @@ fn render_decl_body(out: &mut String, decl: &TsDecl, depth: usize) {
                 out.push_str(": ");
                 render_type(out, rt);
             }
-            render_block_stmts(out, body, depth);
-            out.push('\n');
+            if *inline {
+                out.push(' ');
+                render_inline_block(out, body);
+            } else {
+                render_block_stmts(out, body, depth);
+                out.push('\n');
+            }
         }
-        TsDecl::TypeAlias { name, ty } => {
+        TsDecl::TypeAlias {
+            name,
+            type_params,
+            ty,
+        } => {
             out.push_str("type ");
             out.push_str(name);
-            out.push_str(" = ");
+            render_bare_generics(out, type_params);
+            // #1339: a multiline Union's own first rendered character is
+            // its first member's leading indent, not a newline — the `=`
+            // itself must be followed directly by `\n` here (no space
+            // before it), matching the pre-conversion `writeln!(out,
+            // "export type {name}{params} =")` line's own exact bytes;
+            // every other `ty` keeps the ordinary `" = "` (space both
+            // sides) ordinary single-line form.
+            if matches!(
+                ty,
+                TsType::Union {
+                    multiline: true,
+                    ..
+                }
+            ) {
+                out.push_str(" =\n");
+            } else {
+                out.push_str(" = ");
+            }
             render_type(out, ty);
             out.push_str(";\n");
         }
@@ -2040,11 +2403,12 @@ mod tests {
         program.push(TsStmt::decl(
             TsDecl::Interface {
                 name: "FanoutEvent".to_string(),
+                type_params: Vec::new(),
                 members: vec![
-                    ("type".to_string(), TsType::named("string")),
-                    ("payload".to_string(), TsType::named("unknown")),
-                    (
-                        "envelope".to_string(),
+                    TsTypeMember::prop("type", TsType::named("string")),
+                    TsTypeMember::prop("payload", TsType::named("unknown")),
+                    TsTypeMember::prop(
+                        "envelope",
                         TsType::Object(vec![
                             TsTypeMember::prop("eventId", TsType::named("string")),
                             TsTypeMember::prop("publisherId", TsType::named("string")),
@@ -2152,6 +2516,7 @@ mod tests {
 
         let fetch = TsClassMethod {
             name: "fetch".to_string(),
+            private: false,
             is_async: true,
             params: vec![TsParam {
                 name: "request".to_string(),
@@ -2162,6 +2527,7 @@ mod tests {
                 "Promise",
                 vec![TsType::named("Response")],
             )),
+            doc: None,
             body: vec![
                 TsStmt::const_stmt(
                     TsBindingName::ObjectPattern(vec!["events".to_string()]),
@@ -2498,7 +2864,7 @@ mod tests {
     /// `Fn` gap list. Members print `" | "`-joined, in order.
     #[test]
     fn print_type_renders_a_union_of_named_types() {
-        let ty = TsType::Union(vec![
+        let ty = TsType::union(vec![
             TsType::named("string"),
             TsType::named("number"),
             TsType::Object(vec![TsTypeMember::prop(
@@ -2542,6 +2908,7 @@ mod tests {
         program.push(TsStmt::decl(
             TsDecl::Interface {
                 name: "A".to_string(),
+                type_params: Vec::new(),
                 members: vec![],
             },
             None,
@@ -2644,6 +3011,7 @@ mod tests {
         program.push(TsStmt::decl(
             TsDecl::Interface {
                 name: "A".to_string(),
+                type_params: Vec::new(),
                 members: vec![],
             },
             None,
@@ -2873,6 +3241,8 @@ mod tests {
                     optional: false,
                 }],
                 is_async: false,
+                generics: Vec::new(),
+                return_type: None,
                 body: Box::new(TsExpr::Call {
                     callee: Box::new(TsExpr::Ident("dispatch".to_string())),
                     args: vec![TsExpr::Ident("events".to_string())],
@@ -2900,6 +3270,8 @@ mod tests {
                     optional: false,
                 }],
                 is_async: true,
+                generics: Vec::new(),
+                return_type: None,
                 body: Box::new(TsExpr::Ident("{ dispatch(events); }".to_string())),
             },
             None,
@@ -2930,6 +3302,8 @@ mod tests {
                         optional: false,
                     }],
                     is_async: false,
+                    generics: Vec::new(),
+                    return_type: None,
                     body: Box::new(TsExpr::Ident("x".to_string())),
                 }),
                 args: vec![TsExpr::Lit(TsLit::Num("1".to_string()))],
@@ -2954,6 +3328,8 @@ mod tests {
                         optional: false,
                     }],
                     is_async: false,
+                    generics: Vec::new(),
+                    return_type: None,
                     body: Box::new(TsExpr::Ident("y".to_string())),
                 }),
             },
@@ -2975,6 +3351,8 @@ mod tests {
                         optional: false,
                     }],
                     is_async: false,
+                    generics: Vec::new(),
+                    return_type: None,
                     body: Box::new(TsExpr::Ident("y".to_string())),
                 }),
                 ty: TsType::named("Handler"),
@@ -3017,6 +3395,7 @@ mod tests {
         program.push(TsStmt::decl(
             TsDecl::Export(Box::new(TsDecl::Function {
                 name: "compose".to_string(),
+                generics: Vec::new(),
                 params: vec![TsParam {
                     name: "env".to_string(),
                     ty: Some(TsType::named("Env")),
@@ -3025,6 +3404,7 @@ mod tests {
                 return_type: None,
                 body: vec![TsStmt::return_stmt(Some(TsExpr::Lit(TsLit::Null)), None)],
                 is_async: false,
+                inline: false,
             })),
             None,
         ));
@@ -3035,12 +3415,48 @@ mod tests {
         );
     }
 
+    /// #1351's own real gap: `TsDecl::Function` had no `generics` field —
+    /// `emit_free_fn`'s own v0.20a erased generics (`export function
+    /// foo<A, B>(...)`) needed one. Review of #1352, finding 3: every other
+    /// existing `TsDecl::Function` test only threads `generics: Vec::new()`
+    /// through; this pins the non-empty case directly, matching #1339's own
+    /// precedent of a dedicated test per new field.
+    #[test]
+    fn prints_a_generic_top_level_function_declaration() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::decl(
+            TsDecl::Export(Box::new(TsDecl::Function {
+                name: "identity".to_string(),
+                generics: vec!["A".to_string(), "B".to_string()],
+                params: vec![TsParam {
+                    name: "x".to_string(),
+                    ty: Some(TsType::named("A")),
+                    optional: false,
+                }],
+                return_type: Some(TsType::named("A")),
+                body: vec![TsStmt::return_stmt(
+                    Some(TsExpr::Ident("x".to_string())),
+                    None,
+                )],
+                is_async: false,
+                inline: false,
+            })),
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(
+            printed.text,
+            "export function identity<A, B>(x: A): A {\n  return x;\n}\n"
+        );
+    }
+
     #[test]
     fn prints_a_top_level_type_alias() {
         let mut program = TsProgram::new();
         program.push(TsStmt::decl(
             TsDecl::TypeAlias {
                 name: "Foo".to_string(),
+                type_params: Vec::new(),
                 ty: TsType::named("{ get(id: any): any }"),
             },
             None,
@@ -3062,6 +3478,7 @@ mod tests {
         ));
         program.push(TsStmt::decl(
             TsDecl::ImportNamespace {
+                type_only: false,
                 alias: "handlers".to_string(),
                 from: "./handlers.js".to_string(),
             },
@@ -3071,6 +3488,52 @@ mod tests {
         assert_eq!(
             printed.text,
             "import { a } from \"./x.js\";\nimport * as handlers from \"./handlers.js\";\n"
+        );
+    }
+
+    /// Arc C, step (10) (#1392): `ImportNamespace.type_only`, a parallel gap
+    /// by omission — `TsDecl::Import` already had this field, but nothing
+    /// before `emit_cross_context_namespace_imports`'s own conversion built
+    /// a type-only namespace import (`import type * as ns from "...";`, a
+    /// Workers-mode consumed-context import reaching the callee's types
+    /// only, #661).
+    #[test]
+    fn prints_a_type_only_namespace_import() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::decl(
+            TsDecl::ImportNamespace {
+                type_only: true,
+                alias: "commerce_payment".to_string(),
+                from: "../commerce-payment/handlers.js".to_string(),
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(
+            printed.text,
+            "import type * as commerce_payment from \"../commerce-payment/handlers.js\";\n"
+        );
+    }
+
+    /// Arc C, slice 37 (#1409, `tests_emit.rs`'s own slice G): `emit_integration_
+    /// module`'s own per-participant `import worker_{ns} from "../workers/{dir}/
+    /// index.js";` (the participant's Worker entry module's default export) —
+    /// the first real default import anywhere in `bynk-emit`'s own converted
+    /// content.
+    #[test]
+    fn prints_a_default_import() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::decl(
+            TsDecl::ImportDefault {
+                alias: "worker_shop_api".to_string(),
+                from: "../workers/shop-api/index.js".to_string(),
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(
+            printed.text,
+            "import worker_shop_api from \"../workers/shop-api/index.js\";\n"
         );
     }
 
@@ -3186,6 +3649,7 @@ mod tests {
                 TsSwitchCase {
                     test: Some(TsExpr::Lit(TsLit::Str("orders".to_string()))),
                     body: vec![TsStmt::return_stmt(None, None)],
+                    default_braced: false,
                 },
                 TsSwitchCase {
                     test: None,
@@ -3199,6 +3663,7 @@ mod tests {
                         },
                         None,
                     )],
+                    default_braced: false,
                 },
             ],
             None,
@@ -3207,6 +3672,29 @@ mod tests {
         assert_eq!(
             printed.text,
             "switch (servicePath) {\n  case \"orders\": {\n    return;\n  }\n  default:\n    console.log();\n}\n"
+        );
+    }
+
+    /// Arc C, slice 33 (`tests_emit.rs` slice C, #1401): `TsSwitchCase.
+    /// default_braced` — `emit_stub_class`'s own `ReturnsEach` dispatch
+    /// braces its `default` case, unlike `workers_entry.rs`'s own unbraced
+    /// one pinned just above.
+    #[test]
+    fn prints_a_switch_with_a_braced_default() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::switch_stmt(
+            TsExpr::Ident("__k".to_string()),
+            vec![TsSwitchCase {
+                test: None,
+                body: vec![TsStmt::expr_stmt(TsExpr::Ident("x".to_string()), None)],
+                default_braced: true,
+            }],
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(
+            printed.text,
+            "switch (__k) {\n  default: {\n    x;\n  }\n}\n"
         );
     }
 
@@ -3225,6 +3713,68 @@ mod tests {
         ));
         let printed = print(&program, "x.bynk", "", "x.ts");
         assert_eq!(printed.text, "export default {\n  fetch: handler,\n};\n");
+    }
+
+    /// #1355's own real gap: a `multiline: true` `TsExpr::Object` nested as
+    /// one `Prop`'s own value inside ANOTHER multiline object —
+    /// `emit_messages_bundle`'s own real doubly-nested `{ locale: { code:
+    /// expr, ... }, ... }` table. Before this slice, `render_multiline_
+    /// object_entry`'s own `Prop` arm rendered its value through the plain,
+    /// depth-unaware `render_expr`, which ignores `multiline` entirely —
+    /// this would have silently collapsed the inner object to one line.
+    #[test]
+    fn prints_a_nested_multiline_object_as_a_props_own_value() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::const_stmt(
+            TsBindingName::Ident("byLocale".to_string()),
+            None,
+            TsExpr::multiline_object_entries(vec![TsObjectEntry::Prop(
+                "\"en\"".to_string(),
+                TsExpr::multiline_object_entries(vec![
+                    TsObjectEntry::Prop(
+                        "\"greeting\"".to_string(),
+                        TsExpr::Ident("renderGreeting".to_string()),
+                    ),
+                    TsObjectEntry::Prop(
+                        "\"farewell\"".to_string(),
+                        TsExpr::Ident("renderFarewell".to_string()),
+                    ),
+                ]),
+            )]),
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(
+            printed.text,
+            "const byLocale = {\n  \"en\": {\n    \"greeting\": renderGreeting,\n    \"farewell\": renderFarewell,\n  },\n};\n"
+        );
+    }
+
+    /// Review of #1356, finding 2: `render_multiline_object_entry`'s own
+    /// `Prop` arm routes through `render_stmt_level_expr` for BOTH
+    /// `TsExpr::Object`/`Array` (see `TsExpr::Array`'s own doc, updated by
+    /// #1355) — the object case is pinned above, this is the array sibling,
+    /// making that doc claim self-verifying rather than merely asserted.
+    #[test]
+    fn prints_a_nested_multiline_array_as_a_props_own_value() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::const_stmt(
+            TsBindingName::Ident("byGroup".to_string()),
+            None,
+            TsExpr::multiline_object_entries(vec![TsObjectEntry::Prop(
+                "\"a\"".to_string(),
+                TsExpr::multiline_array(vec![
+                    TsExpr::Ident("one".to_string()),
+                    TsExpr::Ident("two".to_string()),
+                ]),
+            )]),
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(
+            printed.text,
+            "const byGroup = {\n  \"a\": [\n    one,\n    two,\n  ],\n};\n"
+        );
     }
 
     /// #1323's own third gap: `test ? consequent : alternate`.
@@ -3372,6 +3922,66 @@ mod tests {
         );
     }
 
+    /// #1353's own real gap: `bynk_ts::TsStmtKind::Throw`, added for
+    /// `emit_contract_guarded_body`'s own real `throw __e;` sites. Review of
+    /// #1354, finding 1: every real call site today reaches this only
+    /// through an `InlineBlock` (`render_stmt(out, stmt, 0)`), so the
+    /// top-level, non-inline `render_stmt` arm's own `indent(depth)` at a
+    /// nonzero depth was untested — pinned directly here, mirroring
+    /// `Return`'s own shape exactly.
+    #[test]
+    fn prints_a_throw_statement_at_a_nested_depth() {
+        let stmt = TsStmt::throw_stmt(TsExpr::Ident("__e".to_string()), None);
+        assert_eq!(print_stmt(&stmt, 2), "    throw __e;\n");
+    }
+
+    /// #1353's own real gap, byte-for-byte: the whole contract-guard shape
+    /// `emit_contract_guarded_body` builds (`if (!(pred)) { const __e = ...;
+    /// __e.name = ...; throw __e; }`) — an `If` over an `InlineBlock` of a
+    /// `Const`/`Assign`/`Throw` trio — asserted as one exact string. Review
+    /// of #1354, finding 1: no existing test (fixture, `contract_behaviour.
+    /// rs`, `source_map.rs`) asserts this shape's own bytes; they only
+    /// `contains`-check a runtime message or a generated line number, none
+    /// would catch a missing space, a reordered statement, or a lost
+    /// indent.
+    #[test]
+    fn prints_a_contract_guard_if_stmt() {
+        let cond = TsExpr::Unary {
+            op: TsUnaryOp::Not,
+            expr: Box::new(TsExpr::Paren(Box::new(TsExpr::Ident("n > 0".to_string())))),
+        };
+        let new_error = TsExpr::New {
+            callee: Box::new(TsExpr::Ident("Error".to_string())),
+            args: vec![TsExpr::template_lit(
+                vec![
+                    "contract violated: precondition \\`positive\\` of scale (n=${n})".to_string(),
+                ],
+                Vec::new(),
+            )],
+        };
+        let const_e = TsStmt::const_stmt(
+            TsBindingName::Ident("__e".to_string()),
+            None,
+            new_error,
+            None,
+        );
+        let assign_name = TsStmt::assign(
+            TsExpr::Member {
+                object: Box::new(TsExpr::Ident("__e".to_string())),
+                property: "name".to_string(),
+            },
+            TsExpr::Lit(TsLit::Str("BynkContractError".to_string())),
+            None,
+        );
+        let throw_e = TsStmt::throw_stmt(TsExpr::Ident("__e".to_string()), None);
+        let then_branch = TsStmt::inline_block(vec![const_e, assign_name, throw_e], None);
+        let if_stmt = TsStmt::if_stmt(cond, then_branch, None);
+        assert_eq!(
+            print_stmt(&if_stmt, 1),
+            "  if (!(n > 0)) { const __e = new Error(`contract violated: precondition \\`positive\\` of scale (n=${n})`); __e.name = \"BynkContractError\"; throw __e; }\n"
+        );
+    }
+
     /// #1323's own real gap: `if`'s own `else` branch, printed on a fresh
     /// line at the `if`'s own indent, then following the same block-vs-
     /// inline rule the `if` itself does — `workers_entry.rs`'s own real
@@ -3510,6 +4120,7 @@ mod tests {
         let mut program = TsProgram::new();
         program.push(TsStmt::decl(
             TsDecl::ImportNamespace {
+                type_only: false,
                 alias: "handlers".to_string(),
                 from: "./handlers.js".to_string(),
             },
@@ -3635,6 +4246,102 @@ mod tests {
             printed.text,
             "typeof args !== \"object\" || args === null || Array.isArray(args);\n"
         );
+    }
+
+    /// Arc C, step (11) (#1388): `TsBinaryOp::Add`'s own real, dominant real
+    /// site — a message template's own literal/placeholder segments,
+    /// left-folded via `.join(" + ")` — needs the identical flat-chain
+    /// treatment `||`/`&&` already established, joining the same
+    /// associativity exemption in `render_binary_operand`, not a
+    /// bespoke third rule.
+    #[test]
+    fn a_three_term_add_chain_of_the_same_operator_prints_flat() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::expr_stmt(
+            TsExpr::Binary {
+                op: TsBinaryOp::Add,
+                left: Box::new(TsExpr::Binary {
+                    op: TsBinaryOp::Add,
+                    left: Box::new(TsExpr::Lit(TsLit::Str("a".to_string()))),
+                    right: Box::new(TsExpr::Lit(TsLit::Str("b".to_string()))),
+                }),
+                right: Box::new(TsExpr::Lit(TsLit::Str("c".to_string()))),
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "\"a\" + \"b\" + \"c\";\n");
+    }
+
+    /// Review of #1389, finding 1: unlike `||`/`&&` (semantically
+    /// associative — flattening either side is safe), `+` is only
+    /// grammatically left-associative — `1 + (2 + "3")` and `(1 + 2) + "3"`
+    /// disagree once a number joins the chain. A right-nested `Add` must
+    /// keep its parens, matching every other non-`Or`/`And` same-operator
+    /// chain's own treatment (`a_right_nested_strict_eq_chain_keeps_its_
+    /// parens`/`a_right_nested_greater_than_chain_keeps_its_parens`).
+    #[test]
+    fn a_right_nested_add_chain_keeps_its_parens() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::expr_stmt(
+            TsExpr::Binary {
+                op: TsBinaryOp::Add,
+                left: Box::new(TsExpr::Lit(TsLit::Num("1".to_string()))),
+                right: Box::new(TsExpr::Binary {
+                    op: TsBinaryOp::Add,
+                    left: Box::new(TsExpr::Lit(TsLit::Num("2".to_string()))),
+                    right: Box::new(TsExpr::Lit(TsLit::Str("3".to_string()))),
+                }),
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "1 + (2 + \"3\");\n");
+    }
+
+    /// `Add`'s own new `binary_precedence` entry (higher than
+    /// `GreaterThan`, matching real JS/TS) — a nested `Add` under a
+    /// `GreaterThan` needs no parens (`+` binds tighter), the reverse
+    /// direction does.
+    #[test]
+    fn add_binds_tighter_than_greater_than_on_both_sides() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::expr_stmt(
+            TsExpr::Binary {
+                op: TsBinaryOp::GreaterThan,
+                left: Box::new(TsExpr::Binary {
+                    op: TsBinaryOp::Add,
+                    left: Box::new(TsExpr::Ident("a".to_string())),
+                    right: Box::new(TsExpr::Ident("b".to_string())),
+                }),
+                right: Box::new(TsExpr::Ident("c".to_string())),
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "a + b > c;\n");
+    }
+
+    /// The reverse nesting: a `GreaterThan` operand under an outer `Add`
+    /// needs its parens (`+` binds tighter, so `Add`'s own precedence check
+    /// against a lower-precedence `GreaterThan` operand must still fire).
+    #[test]
+    fn greater_than_nested_under_add_keeps_its_parens() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::expr_stmt(
+            TsExpr::Binary {
+                op: TsBinaryOp::Add,
+                left: Box::new(TsExpr::Ident("a".to_string())),
+                right: Box::new(TsExpr::Binary {
+                    op: TsBinaryOp::GreaterThan,
+                    left: Box::new(TsExpr::Ident("b".to_string())),
+                    right: Box::new(TsExpr::Ident("c".to_string())),
+                }),
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "a + (b > c);\n");
     }
 
     /// Review of #1324, finding 1: the same-operator flattening #1323 added
@@ -3855,15 +4562,46 @@ mod tests {
         program.push(TsStmt::decl(
             TsDecl::Function {
                 name: "main".to_string(),
+                generics: Vec::new(),
                 params: vec![],
                 return_type: None,
                 body: vec![TsStmt::return_stmt(None, None)],
                 is_async: true,
+                inline: false,
             },
             None,
         ));
         let printed = print(&program, "x.bynk", "", "x.ts");
         assert_eq!(printed.text, "async function main() {\n  return;\n}\n");
+    }
+
+    /// #1369 (Arc C, slice 20): `TsDecl::Function.inline` — the zero-factory
+    /// shape (`function name(): Ret { return <expr>; }` all on one line)
+    /// `emit_agent` needs, mirroring `TsObjectEntry::Method.inline`'s own
+    /// single-line-vs-multi-line precedent (#1337) at a different node kind.
+    #[test]
+    fn prints_an_inline_top_level_function() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::decl(
+            TsDecl::Function {
+                name: "zero".to_string(),
+                generics: Vec::new(),
+                params: vec![],
+                return_type: Some(TsType::named("Foo")),
+                body: vec![TsStmt::return_stmt(
+                    Some(TsExpr::object(vec![(
+                        "n".to_string(),
+                        TsExpr::Lit(TsLit::Num("0".to_string())),
+                    )])),
+                    None,
+                )],
+                is_async: false,
+                inline: true,
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "function zero(): Foo { return { n: 0 }; }\n");
     }
 
     #[test]
@@ -4019,6 +4757,7 @@ mod tests {
         let mut program = TsProgram::new();
         program.push(TsStmt::decl(
             TsDecl::ImportNamespace {
+                type_only: false,
                 alias: "handlers".to_string(),
                 from: "./handlers.js".to_string(),
             },
@@ -4374,5 +5113,370 @@ mod tests {
             print_object_entry(&entry, 0),
             entry_slice_with_trailing_newline
         );
+    }
+
+    /// #1339's own real gap: `emit_refined_type`'s own branded-type alias,
+    /// `{base} & { readonly __brand: "..." }`, has no representation among
+    /// `Named`/`Array`/`Object`/`Fn`/`Union` — mirrors `Union`'s own single-
+    /// line, ` & `-joined shape exactly.
+    #[test]
+    fn print_type_renders_an_intersection() {
+        let ty = TsType::intersection(vec![
+            TsType::named("string"),
+            TsType::Object(vec![TsTypeMember::readonly_prop(
+                "__brand",
+                TsType::named("\"Order\""),
+            )]),
+        ]);
+        assert_eq!(print_type(&ty), "string & { readonly __brand: \"Order\" }");
+    }
+
+    /// #1339's own real gap: `emit_sum_type`'s own multi-line discriminated
+    /// union — a leading `|` on every line except the first (which gets
+    /// equivalent spacing instead, matching the pre-conversion `writeln!`
+    /// code's own `let pipe = if i == 0 { " " } else { "|" };` exactly), no
+    /// trailing newline or `;` of its own (the caller, `TsDecl::TypeAlias`'s
+    /// own render arm, owns both).
+    #[test]
+    fn print_type_renders_a_multiline_union() {
+        let ty = TsType::multiline_union(vec![
+            TsType::Object(vec![TsTypeMember::readonly_prop(
+                "tag",
+                TsType::named("\"a\""),
+            )]),
+            TsType::Object(vec![
+                TsTypeMember::readonly_prop("tag", TsType::named("\"b\"")),
+                TsTypeMember::readonly_prop("value", TsType::named("number")),
+            ]),
+        ]);
+        assert_eq!(
+            print_type(&ty),
+            "    { readonly tag: \"a\" }\n  | { readonly tag: \"b\"; readonly value: number }"
+        );
+    }
+
+    /// #1339: `TsDecl::TypeAlias`'s own multiline-union special case — the
+    /// `=` is followed directly by `\n` (no trailing space, matching the
+    /// pre-conversion `writeln!(out, "export type {name}{params} =")`
+    /// line's own exact bytes), each variant on its own line, the closing
+    /// `;` appended directly to the last variant's own line. Also pins
+    /// `type_params`' own bare-generics rendering on the alias header.
+    #[test]
+    fn prints_a_generic_sum_types_own_multiline_type_alias() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::decl(
+            TsDecl::Export(Box::new(TsDecl::TypeAlias {
+                name: "Opt".to_string(),
+                type_params: vec!["T".to_string()],
+                ty: TsType::multiline_union(vec![
+                    TsType::Object(vec![TsTypeMember::readonly_prop(
+                        "tag",
+                        TsType::named("\"none\""),
+                    )]),
+                    TsType::Object(vec![
+                        TsTypeMember::readonly_prop("tag", TsType::named("\"some\"")),
+                        TsTypeMember::readonly_prop("value", TsType::named("T")),
+                    ]),
+                ]),
+            })),
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(
+            printed.text,
+            "export type Opt<T> =\n    \
+             { readonly tag: \"none\" }\n  \
+             | { readonly tag: \"some\"; readonly value: T };\n"
+        );
+    }
+
+    /// #1339's own real gap: `emit_record_type`'s own `export interface
+    /// {name}{params} { readonly {field}: {ty}; ... }` — bare generic names
+    /// on the interface header, `readonly` on every real member here.
+    #[test]
+    fn prints_a_generic_interface_with_readonly_members() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::decl(
+            TsDecl::Export(Box::new(TsDecl::Interface {
+                name: "Box".to_string(),
+                type_params: vec!["T".to_string()],
+                members: vec![TsTypeMember::readonly_prop("value", TsType::named("T"))],
+            })),
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(
+            printed.text,
+            "export interface Box<T> {\n  readonly value: T;\n}\n"
+        );
+    }
+
+    /// #1357's own real gap: `TsTypeMember::Method` had no `generics`/`doc`
+    /// fields — `emit_capability`'s own interface methods are genuinely
+    /// generic (no monomorphisation) and doc-commented per op. `doc` renders
+    /// at `TsDecl::Interface`'s own render arm (not `render_type_member`
+    /// itself, which has no `depth` to give `render_doc_comment`), mirroring
+    /// `TsObjectEntry::Method.doc`'s own identical split (#1337).
+    #[test]
+    fn prints_a_generic_documented_interface_method() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::decl(
+            TsDecl::Export(Box::new(TsDecl::Interface {
+                name: "Clock".to_string(),
+                type_params: Vec::new(),
+                members: vec![TsTypeMember::Method {
+                    name: "now".to_string(),
+                    generics: vec!["T".to_string()],
+                    params: vec![TsParam {
+                        name: "unit".to_string(),
+                        ty: Some(TsType::named("T")),
+                        optional: false,
+                    }],
+                    ret: TsType::named("number"),
+                    doc: Some("Returns the current time.".to_string()),
+                }],
+            })),
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(
+            printed.text,
+            "export interface Clock {\n  /**\n   * Returns the current time.\n   */\n  now<T>(unit: T): number;\n}\n"
+        );
+    }
+
+    /// #1359's own real need: `print_class_method` — a class-method sibling
+    /// of `print_object_entry`'s own fragment-printing entry point,
+    /// `emit_provider`'s own hand-written class wrapper prints each real
+    /// method through this directly. `depth` means the *class's* own
+    /// depth, so at `depth == 0` the method itself lands at `indent(1)`,
+    /// its body at `indent(2)`, matching `TsDecl::Class`'s own equivalent
+    /// per-method indent exactly — but with no automatic blank-line
+    /// insertion of its own (unlike `TsDecl::Class`'s own render arm),
+    /// since `emit_provider`'s own real spacing has none between methods.
+    #[test]
+    fn prints_a_single_class_method_fragment() {
+        let method = TsClassMethod {
+            name: "double".to_string(),
+            private: false,
+            is_async: true,
+            params: vec![TsParam {
+                name: "n".to_string(),
+                ty: Some(TsType::named("number")),
+                optional: false,
+            }],
+            return_type: Some(TsType::named("number")),
+            doc: None,
+            body: vec![TsStmt::return_stmt(
+                Some(TsExpr::Binary {
+                    op: TsBinaryOp::NullishCoalescing,
+                    left: Box::new(TsExpr::Ident("n".to_string())),
+                    right: Box::new(TsExpr::Lit(TsLit::Num("0".to_string()))),
+                }),
+                None,
+            )],
+        };
+        assert_eq!(
+            print_class_method(&method, 0),
+            "  async double(n: number): number {\n    return n ?? 0;\n  }\n"
+        );
+    }
+
+    /// Arc C, slice 21 (#1371): `TsClassMethod.private` — pins both the
+    /// keyword itself and its render-*before*-`async` ordering directly,
+    /// the same precedent `TsClassField.private` already has (its own
+    /// direct test, not left to transitive `bynkc` fixture coverage alone)
+    /// — review of #1372 caught this one still missing for the sibling
+    /// field.
+    #[test]
+    fn prints_a_private_class_method_fragment() {
+        let method = TsClassMethod {
+            name: "loadState".to_string(),
+            private: true,
+            is_async: true,
+            params: Vec::new(),
+            return_type: Some(TsType::named_with_args(
+                "Promise",
+                vec![TsType::named("OrderState")],
+            )),
+            doc: None,
+            body: vec![TsStmt::return_stmt(
+                Some(TsExpr::Ident("state".to_string())),
+                None,
+            )],
+        };
+        assert_eq!(
+            print_class_method(&method, 0),
+            "  private async loadState(): Promise<OrderState> {\n    return state;\n  }\n"
+        );
+    }
+
+    /// Arc C, slice 23 (#1375): `TsClassMethod.doc` — the grounding pass's
+    /// own second predicted gap (#1366), the same need
+    /// `TsObjectEntry::Method.doc` (#1337) and `TsTypeMember::Method.doc`
+    /// (#1357) already solved for their own node kinds, closed here for the
+    /// third and last real method-shaped node in this crate.
+    #[test]
+    fn prints_a_documented_class_method_fragment() {
+        let method = TsClassMethod {
+            name: "spend".to_string(),
+            private: false,
+            is_async: false,
+            params: Vec::new(),
+            return_type: Some(TsType::named("void")),
+            doc: Some("Debits the account.".to_string()),
+            body: vec![],
+        };
+        assert_eq!(
+            print_class_method(&method, 0),
+            "  /**\n   * Debits the account.\n   */\n  spend(): void {\n  }\n"
+        );
+    }
+
+    /// #1339's own real gap: `TsExpr::Arrow` had no `generics`/`return_type`
+    /// field — `emit_sum_type`'s own generic payload-constructor arrows
+    /// (`<T>(name: T): Sum<T> => (...)`) need both. The object-literal body
+    /// is wrapped in an explicit `Paren` — `Arrow`'s own renderer does not
+    /// auto-parenthesise an object body the way real JS/TS syntax requires
+    /// to disambiguate it from a block.
+    #[test]
+    fn prints_a_generic_arrow_with_a_parenthesised_object_body() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::expr_stmt(
+            TsExpr::Arrow {
+                params: vec![TsParam {
+                    name: "value".to_string(),
+                    ty: Some(TsType::named("T")),
+                    optional: false,
+                }],
+                is_async: false,
+                generics: vec!["T".to_string()],
+                return_type: Some(TsType::named_with_args("Sum", vec![TsType::named("T")])),
+                body: Box::new(TsExpr::Paren(Box::new(TsExpr::object_entries(vec![
+                    TsObjectEntry::Prop(
+                        "tag".to_string(),
+                        TsExpr::Lit(TsLit::Str("some".to_string())),
+                    ),
+                    TsObjectEntry::Shorthand("value".to_string()),
+                ])))),
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(
+            printed.text,
+            "<T>(value: T): Sum<T> => ({ tag: \"some\", value });\n"
+        );
+    }
+
+    /// Arc C, slice 33 (#1401): `TsBinaryOp::LessThan` — pins the operator
+    /// text itself.
+    #[test]
+    fn prints_a_less_than_comparison() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::expr_stmt(
+            TsExpr::Binary {
+                op: TsBinaryOp::LessThan,
+                left: Box::new(TsExpr::Ident("a".to_string())),
+                right: Box::new(TsExpr::Ident("b".to_string())),
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "a < b;\n");
+    }
+
+    /// `LessThan` shares `GreaterThan`'s own precedence tier — a nested
+    /// `Add` under it needs no parens (`+` binds tighter), mirroring
+    /// `add_binds_tighter_than_greater_than_on_both_sides` for the other
+    /// relational operator.
+    #[test]
+    fn add_binds_tighter_than_less_than() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::expr_stmt(
+            TsExpr::Binary {
+                op: TsBinaryOp::LessThan,
+                left: Box::new(TsExpr::Binary {
+                    op: TsBinaryOp::Add,
+                    left: Box::new(TsExpr::Ident("a".to_string())),
+                    right: Box::new(TsExpr::Ident("b".to_string())),
+                }),
+                right: Box::new(TsExpr::Ident("c".to_string())),
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "a + b < c;\n");
+    }
+
+    /// Arc C, slice 34 (`tests_emit.rs` slice D, #1403): `TsBinaryOp::
+    /// InstanceOf` — pins the keyword operator text itself, sharing
+    /// `LessThan`/`GreaterThan`'s own precedence tier.
+    #[test]
+    fn prints_an_instanceof_check() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::expr_stmt(
+            TsExpr::Binary {
+                op: TsBinaryOp::InstanceOf,
+                left: Box::new(TsExpr::Ident("e".to_string())),
+                right: Box::new(TsExpr::Ident("ExpectationError".to_string())),
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "e instanceof ExpectationError;\n");
+    }
+
+    /// Review of #1404, finding 2: `prints_an_instanceof_check` alone pins
+    /// the operator text but not the precedence tier the same diff added to
+    /// `binary_precedence` — it passes identically whether `InstanceOf` sits
+    /// at tier 5, tier 1, or is missing from that arm entirely. `Add` (tier
+    /// 6) binds tighter, mirroring `add_binds_tighter_than_less_than`
+    /// for the other relational operator sharing this tier.
+    #[test]
+    fn add_binds_tighter_than_instanceof() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::expr_stmt(
+            TsExpr::Binary {
+                op: TsBinaryOp::InstanceOf,
+                left: Box::new(TsExpr::Binary {
+                    op: TsBinaryOp::Add,
+                    left: Box::new(TsExpr::Ident("a".to_string())),
+                    right: Box::new(TsExpr::Ident("b".to_string())),
+                }),
+                right: Box::new(TsExpr::Ident("C".to_string())),
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "a + b instanceof C;\n");
+    }
+
+    /// Review of #1404, finding 2 (the more valuable half): a catch clause
+    /// naturally grows into `e instanceof A || e instanceof B` as a second
+    /// error type is added. `InstanceOf` (tier 5) binds tighter than `Or`
+    /// (tier 2), so this must print flat — a wrong tier would silently
+    /// over-parenthesize it into `(e instanceof A) || (e instanceof B)`.
+    #[test]
+    fn instanceof_binds_tighter_than_or_on_both_sides() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::expr_stmt(
+            TsExpr::Binary {
+                op: TsBinaryOp::Or,
+                left: Box::new(TsExpr::Binary {
+                    op: TsBinaryOp::InstanceOf,
+                    left: Box::new(TsExpr::Ident("e".to_string())),
+                    right: Box::new(TsExpr::Ident("A".to_string())),
+                }),
+                right: Box::new(TsExpr::Binary {
+                    op: TsBinaryOp::InstanceOf,
+                    left: Box::new(TsExpr::Ident("e".to_string())),
+                    right: Box::new(TsExpr::Ident("B".to_string())),
+                }),
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "e instanceof A || e instanceof B;\n");
     }
 }

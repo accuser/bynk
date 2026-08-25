@@ -3363,10 +3363,10 @@ fn emit_composition_root(
                         // name isn't necessarily in scope at this dispatch site
                         // (cross-context: publisher and subscriber are different
                         // units), the same qualification problem
-                        // `ts_type_ref_qualified` exists to solve for handler
-                        // wrappers elsewhere in this crate. Needs the same kind of
-                        // scoped qualification, not a bare name — more than a
-                        // same-line fix.
+                        // `ts_type_ref_qualified_ts_type` exists to solve for
+                        // handler wrappers elsewhere in this crate. Needs the same
+                        // kind of scoped qualification, not a bare name — more
+                        // than a same-line fix.
                         let call_args = if wants_envelope {
                             "ev.payload as any, ev.envelope".to_string()
                         } else {
@@ -3403,6 +3403,8 @@ fn emit_composition_root(
                     optional: false,
                 }],
                 is_async: true,
+                generics: Vec::new(),
+                return_type: None,
                 body: Box::new(ident(dispatch_body)),
             };
             deps_entries.push(("__eventsDispatch".to_string(), arrow));
@@ -3529,6 +3531,7 @@ fn emit_composition_root(
         let ns = ctx_name.replace('.', "_");
         program.push(TsStmt::decl(
             TsDecl::ImportNamespace {
+                type_only: false,
                 alias: ns,
                 from: format!("./{dir}.js"),
             },
@@ -3555,6 +3558,7 @@ fn emit_composition_root(
             emitter::ts_specifier(&adapter_bindings[adapter].output_path.with_extension("js"));
         program.push(TsStmt::decl(
             TsDecl::ImportNamespace {
+                type_only: false,
                 alias: format!("{ns}__binding"),
                 from: format!("./{module}"),
             },
@@ -3565,10 +3569,12 @@ fn emit_composition_root(
     program.push(TsStmt::decl(
         TsDecl::Export(Box::new(TsDecl::Function {
             name: "composeApp".to_string(),
+            generics: Vec::new(),
             params: compose_params,
             return_type: None,
             body,
             is_async: false,
+            inline: false,
         })),
         None,
     ));

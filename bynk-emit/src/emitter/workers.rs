@@ -550,6 +550,8 @@ pub(crate) fn emit_worker_compose(
                 optional: false,
             }],
             is_async: false,
+            generics: Vec::new(),
+            return_type: None,
             body: Box::new(call(
                 ident("dispatchToEventsFanout"),
                 vec![member(ident("env"), bind), ident("events")],
@@ -774,6 +776,7 @@ pub(crate) fn emit_worker_compose(
     ));
     program.push(TsStmt::decl(
         TsDecl::ImportNamespace {
+            type_only: false,
             alias: "handlers".to_string(),
             from: "./handlers.js".to_string(),
         },
@@ -787,6 +790,7 @@ pub(crate) fn emit_worker_compose(
         if let Some(module) = binding_modules.get(cctx) {
             program.push(TsStmt::decl(
                 TsDecl::ImportNamespace {
+                    type_only: false,
                     alias: format!("{ns}__binding"),
                     from: format!("../../{module}"),
                 },
@@ -796,6 +800,7 @@ pub(crate) fn emit_worker_compose(
             let dir = crate::project::worker_dir_name(cctx);
             program.push(TsStmt::decl(
                 TsDecl::ImportNamespace {
+                    type_only: false,
                     alias: format!("handlers_{ns}"),
                     from: format!("../{dir}/handlers.js"),
                 },
@@ -810,24 +815,27 @@ pub(crate) fn emit_worker_compose(
     // Env shape: one Service Binding per consumed context + DO bindings.
     // v0.19: plus the typed KV namespace when the closure reaches the
     // cloudflare platform adapter (decision C1 — one fixed `KV` binding).
-    let mut env_members: Vec<(String, TsType)> = Vec::new();
+    let mut env_members: Vec<TsTypeMember> = Vec::new();
     for t in &sorted_consumes {
-        env_members.push((consumed_binding_name(t), TsType::named("ServiceBinding")));
+        env_members.push(TsTypeMember::prop(
+            consumed_binding_name(t),
+            TsType::named("ServiceBinding"),
+        ));
     }
     if needs_kv {
-        env_members.push((
+        env_members.push(TsTypeMember::prop(
             bynk_check::firstparty::KV_BINDING_NAME.to_string(),
             TsType::named("KVNamespace"),
         ));
     }
     for a in &agent_names {
-        env_members.push((
+        env_members.push(TsTypeMember::prop(
             agent_binding_name(a),
             TsType::named("DurableObjectNamespace"),
         ));
     }
     if uses_emit {
-        env_members.push((
+        env_members.push(TsTypeMember::prop(
             agent_binding_name(EVENTS_FANOUT_CLASS_NAME),
             TsType::named("DurableObjectNamespace"),
         ));
@@ -835,6 +843,7 @@ pub(crate) fn emit_worker_compose(
     program.push(TsStmt::decl(
         TsDecl::Export(Box::new(TsDecl::Interface {
             name: "Env".to_string(),
+            type_params: Vec::new(),
             members: env_members,
         })),
         None,
@@ -852,6 +861,7 @@ pub(crate) fn emit_worker_compose(
         program.push(TsStmt::decl(
             TsDecl::TypeAlias {
                 name: "DurableObjectNamespace".to_string(),
+                type_params: Vec::new(),
                 ty: TsType::named(
                     "{ idFromName(name: string): { toString(): string }; get(id: any): any }",
                 ),
@@ -863,10 +873,12 @@ pub(crate) fn emit_worker_compose(
     program.push(TsStmt::decl(
         TsDecl::Export(Box::new(TsDecl::Function {
             name: "compose".to_string(),
+            generics: Vec::new(),
             params: compose_params,
             return_type: None,
             body,
             is_async: false,
+            inline: false,
         })),
         None,
     ));
@@ -2113,20 +2125,25 @@ fn named_types_in(r: &TypeRef) -> Vec<String> {
     out
 }
 
-/// P7.2: `ts_type_ref_qualified` over `r`, scoped to `r`'s own named types —
-/// the minimal correct qualification for a single type-ref rendered in
-/// isolation, the same helper `emit_call_wrapper` uses across a whole param
-/// list. A bare `ts_type_ref` collides with anything of the same name already
-/// in scope where the rendered text lands: a `handlers.ts`-exported Bynk type
-/// (`Cannot find name` — the name resolves to nothing without the `handlers.`
-/// prefix) or, for a common enough name, a browser-ambient DOM global
-/// (`Notification`, `Event`) that silently wins instead. Both broke real
-/// `tsc --strict` fixtures before this existed.
+/// P7.2: [`crate::emitter::ts_type_ref_qualified_ts_type`] over `r`, scoped
+/// to `r`'s own named types — the minimal correct qualification for a single
+/// type-ref rendered in isolation, the same helper `emit_call_wrapper` uses
+/// across a whole param list. A bare `ts_type_ref` collides with anything of
+/// the same name already in scope where the rendered text lands: a
+/// `handlers.ts`-exported Bynk type (`Cannot find name` — the name resolves
+/// to nothing without the `handlers.` prefix) or, for a common enough name,
+/// a browser-ambient DOM global (`Notification`, `Event`) that silently wins
+/// instead. Both broke real `tsc --strict` fixtures before this existed.
 ///
 /// #1321: renamed from `qualified_type_ref` (returned `String`) — every real
 /// caller now builds a `TsProgram` directly, so this returns the `TsType`
 /// [`crate::emitter::ts_type_ref_qualified_ts_type`] (Decision B) itself
-/// builds, not its printed text.
+/// builds, not its printed text. That function originally had a
+/// `String`-returning sibling, `ts_type_ref_qualified`, kept for a
+/// still-`String`-based caller elsewhere in the crate; Arc C slice 32
+/// (#1399) converted that last caller and deleted it — this function's own
+/// call site was never affected, since it always used the `TsType`-returning
+/// form.
 fn qualified_ts_type_ref(r: &TypeRef) -> TsType {
     let scope: HashSet<String> = named_types_in(r).into_iter().collect();
     crate::emitter::ts_type_ref_qualified_ts_type(r, &scope, "handlers")

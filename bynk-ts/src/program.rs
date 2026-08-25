@@ -94,6 +94,14 @@ pub(crate) enum TsStmtKind {
     /// An expression used as a whole statement (a bare call, e.g.).
     ExprStmt(TsExpr),
     Return(Option<TsExpr>),
+    /// `throw <expr>;` — #1353's own real gap: `emit_contract_guarded_body`'s
+    /// own precondition/postcondition guards (`bynk-emit/src/emitter/
+    /// emit.rs`) each throw a constructed `Error` on violation — no prior
+    /// slice needed a bare `throw` (every other error-signalling site in
+    /// this tree so far has been a `Return`). Mirrors `Return`'s own shape
+    /// exactly, minus the `Option` (a `throw` always carries a value; there
+    /// is no bare `throw;` in JS/TS).
+    Throw(TsExpr),
     /// `if (cond) <then_branch>` (optionally `else <else_branch>`).
     /// `then_branch`/`else_branch` may each be a [`TsStmtKind::Block`]
     /// (printed with braces) or any other single statement (printed inline
@@ -276,20 +284,46 @@ pub(crate) enum TsStmtKind {
     /// `VerbatimOrigin` at all), because using `Verbatim` here would make
     /// this permanent exclusion look like unfinished Arc C work a future
     /// slice is expected to close, which it structurally cannot.
+    ///
+    /// #1339's own second real use, broadening (not narrowing) the
+    /// above: `emit_refined_type`'s own `of()` guard block splices
+    /// `emit_refined_checks`'s own output this same way — that function
+    /// keeps its exact `out: &mut String` signature (the P7.9/step-1
+    /// pattern applied one level down, not a `lower.rs`-style permanent
+    /// exclusion), but its real content is ALREADY built and printed from
+    /// real `bynk_ts::TsStmt`/`print_stmt` calls internally — genuinely
+    /// statement-shaped pre-rendered text, the same mechanical fit `Raw`
+    /// already provides, just for a different underlying reason than
+    /// `lower.rs`'s own permanent exclusion. Both real uses share the one
+    /// property that actually matters for this variant's own existence:
+    /// *real, already-correctly-indented statement text this call site
+    /// cannot restructure into a `Vec<TsStmt>` without changing scope it
+    /// isn't the one converting* — not whether the reason is permanent
+    /// or temporary.
     Raw(String),
 }
 
 /// One `case`/`default` arm of a `TsStmtKind::Switch`. `test: None` is the
 /// `default:` case — every real `default` in `workers_entry.rs` prints its
 /// body directly under `default:` with no `{ }` block, while every real
-/// non-`default` `case` prints a `{ }`-blocked body; the printer's own
-/// renderer follows that exact split (see its own doc), not a per-case flag,
-/// since nothing in the grounding file needs a braceless non-`default` case
-/// or a braced `default`.
+/// non-`default` `case` (regardless of `test`) always prints a `{ }`-blocked
+/// body.
+///
+/// `default_braced` (Arc C slice 33, `tests_emit.rs` slice C, #1401) —
+/// `emit_stub_class`'s own `ReturnsEach` dispatch is the first real site
+/// with a BRACED `default: { ... }`, a genuinely different convention from
+/// `workers_entry.rs`'s own unbraced one; only meaningful when `test` is
+/// `None` (a non-`default` case is unconditionally braced already, the same
+/// way it always was before this field existed). Kept a per-case flag
+/// rather than changing the existing unbraced-default rendering, since that
+/// would risk `workers_entry.rs`'s own real, already-zero-diff content for
+/// no benefit — the same "don't touch working, unrelated content" judgment
+/// this track makes repeatedly.
 #[derive(Debug, Clone)]
 pub struct TsSwitchCase {
     pub test: Option<TsExpr>,
     pub body: Vec<TsStmt>,
+    pub default_braced: bool,
 }
 
 impl TsStmt {
@@ -345,6 +379,13 @@ impl TsStmt {
     pub fn return_stmt(expr: Option<TsExpr>, span: Option<Span>) -> Self {
         Self {
             kind: TsStmtKind::Return(expr),
+            span,
+        }
+    }
+
+    pub fn throw_stmt(expr: TsExpr, span: Option<Span>) -> Self {
+        Self {
+            kind: TsStmtKind::Throw(expr),
             span,
         }
     }
@@ -573,10 +614,22 @@ pub enum TsExpr {
     /// `__eventsDispatch` closure (`async (events: Array<...>) => {...}`) is
     /// the first real `Arrow` site that's async — mirrors
     /// `TsDecl::Function`'s own `is_async` field (#1325), added for the same
-    /// reason.
+    /// reason. `generics`/`return_type` added by #1339: `emit_sum_type`'s
+    /// own generic payload-constructor arrows (`<T>(name: T): Sum<T> =>
+    /// (...)`) need both — bare generic names only (empty for every
+    /// non-generic site, the overwhelming majority), matching
+    /// `TsObjectEntry::Method.generics`'s own (#1337) identical convention;
+    /// `return_type` mirrors `TsDecl::Function.return_type`'s own existing
+    /// `Option<TsType>` shape — a real gap the accepted proposal's own
+    /// grounding named `generics` for but missed: every one of this file's
+    /// own real generic-payload arrows carries an explicit return-type
+    /// annotation the arrow itself owns (`: {name}{params}`), not something
+    /// the body's own type alone determines.
     Arrow {
         params: Vec<TsParam>,
         is_async: bool,
+        generics: Vec<String>,
+        return_type: Option<TsType>,
         body: Box<TsExpr>,
     },
     Call {
@@ -599,12 +652,17 @@ pub enum TsExpr {
     /// TypeScript's ordinary multi-line object-literal convention, which
     /// nothing in this crate could represent before this addition. Only
     /// statement/declaration-level renderers (which already carry `depth`)
-    /// can render this correctly — see `printer.rs`'s own
-    /// `render_stmt_level_expr`; a `multiline: true` object nested inside
-    /// another expression (an array element, a call argument, …) renders
-    /// via the ordinary depth-unaware `render_expr` recursion instead,
-    /// which cannot honour `multiline` — not reachable from any real
-    /// `bynk-emit` call site today, but worth knowing before nesting one.
+    /// can render this correctly — `printer.rs`'s own `render_stmt_level_
+    /// expr`, and (#1355) `render_multiline_object_entry`'s own `Prop` arm,
+    /// for a `multiline: true` object nested one level inside ANOTHER
+    /// multiline object as one of its own entries' values —
+    /// `emit_messages_bundle`'s own real doubly-nested `{ locale: { code:
+    /// expr, ... }, ... }` table. A `multiline: true` object nested any
+    /// OTHER way (an array element, a call argument, a `Prop`'s value
+    /// inside a non-multiline object, …) still renders via the ordinary
+    /// depth-unaware `render_expr` recursion, which cannot honour
+    /// `multiline` — not reachable from any real `bynk-emit` call site
+    /// today, but worth knowing before nesting one that way.
     Object {
         entries: Vec<TsObjectEntry>,
         multiline: bool,
@@ -618,9 +676,10 @@ pub enum TsExpr {
     /// comma, closing `]` at the statement's own indent) — the exact same
     /// shape [`TsExpr::Object`]'s own `multiline` field already represents
     /// for object literals, just for an array. Same reachability boundary as
-    /// `Object`'s own `multiline` field: only `render_stmt_level_expr`
-    /// (which carries `depth`) honours it; a `multiline: true` array nested
-    /// inside another expression falls back to single-line via the ordinary
+    /// `Object`'s own `multiline` field (see its own doc, updated by
+    /// #1355): `render_stmt_level_expr` and `render_multiline_object_
+    /// entry`'s own `Prop` arm both honour it; nested any other way, a
+    /// `multiline: true` array falls back to single-line via the ordinary
     /// depth-unaware `render_expr` recursion.
     Array {
         items: Vec<TsExpr>,
@@ -898,7 +957,14 @@ pub enum TsUnaryOp {
 /// full JS/TS operator table (Decision B's own "extend narrowly" posture) —
 /// see the printer's own `binary_precedence` (`bynk-ts/src/printer.rs`,
 /// private) for why a nested `Binary` operand's parenthesisation needed to
-/// become precedence-aware once more than one operator existed.
+/// become precedence-aware once more than one operator existed. Arc C, step
+/// (11) (#1388) grounds one more: `+` (string concatenation) — the
+/// ICU-formatting cluster's own dominant structural pattern, every
+/// literal/placeholder segment in a message template joins this way. Real
+/// JS/TS precedence (binds tighter than every comparison/logical operator
+/// this table already has) and real left-associativity (`"a" + "b" + "c"`
+/// needs no parens, the same way a same-operator `||`/`&&` chain already
+/// prints flat) both matter here, not just the operator symbol itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TsBinaryOp {
     NullishCoalescing,
@@ -907,6 +973,25 @@ pub enum TsBinaryOp {
     StrictEq,
     StrictNotEq,
     GreaterThan,
+    /// `instanceof` — Arc C slice 34 (`tests_emit.rs` slice D, #1403)'s own
+    /// real gap: `emit_test_case_function`'s own catch clause
+    /// (`e instanceof ExpectationError`) is the first real `instanceof`
+    /// anywhere in `bynk-emit`'s own content. Real JS/TS precedence puts it
+    /// at the same tier as the relational comparisons (`<`/`>`) — sharing
+    /// [`TsBinaryOp::LessThan`]'s own tier, not a new one — rendered as the
+    /// keyword `" instanceof "`, textually the same shape as `&&`/`||`
+    /// rather than symbol punctuation.
+    InstanceOf,
+    /// `<` — Arc C slice 33 (`tests_emit.rs` slice C, #1401)'s own real gap:
+    /// `emit_stub_class`'s `ReturnsEach` sequence-cursor guard
+    /// (`this.__seq_N < <bound>`) is the first real `<` comparison anywhere
+    /// in `bynk-emit`'s own content. Same precedence tier as
+    /// [`TsBinaryOp::GreaterThan`] (real JS/TS relational operators all
+    /// share one level) — added alongside it rather than folding into a
+    /// single "relational" variant, matching this enum's own existing
+    /// one-variant-per-real-operator convention.
+    LessThan,
+    Add,
 }
 
 /// A literal — the three kinds `events_fanout.rs` uses (a string, a number,
@@ -1023,7 +1108,36 @@ pub enum TsType {
     /// but nothing in `bynk-emit` builds one today. See [`TsType::Array`]'s
     /// own doc for a real, unclosed parenthesisation hazard when a `Union`
     /// sits inside one.
-    Union(Vec<TsType>),
+    ///
+    /// `multiline` (#1339): `false` (via [`TsType::union`]) is this variant's
+    /// original single-line `A | B | C` form, unchanged. `true` (via
+    /// [`TsType::multiline_union`]) is `emit_sum_type`'s own real
+    /// discriminated-union shape — one variant per line, a leading `|` on
+    /// every line *except* the first (which gets equivalent spacing
+    /// instead), the closing `;` appended directly to the last variant's own
+    /// line. Mirrors [`TsExpr::Object`]'s own `multiline` field precedent
+    /// (#1317), but — unlike that one — needs no depth-aware wrapper: the
+    /// pre-conversion `writeln!` code this reproduces always used a fixed
+    /// two-space indent regardless of nesting (this shape is only ever a
+    /// top-level `export type` alias body, never nested inside another
+    /// type), so `render_type` stays entirely depth-unaware here too. Only
+    /// rendered correctly from [`TsDecl::TypeAlias`]'s own top-level
+    /// render — not reachable, and not given a defined rendering, from any
+    /// nested position (an array element, a type argument, …), the same
+    /// named boundary [`TsExpr::Object`]'s own `multiline` doc already
+    /// draws for its own nested case.
+    Union {
+        members: Vec<TsType>,
+        multiline: bool,
+    },
+    /// `A & B` — a type-position intersection. #1339's own real gap:
+    /// `emit_refined_type`'s own branded-type alias,
+    /// `{base} & { readonly __brand: "..." }`, has no representation among
+    /// `Named`/`Array`/`Object`/`Fn`/`Union` — mirrors `Union`'s own
+    /// shape/precedent exactly (a flat `Vec`, each member printed through
+    /// the ordinary `render_type` recursion, joined by ` & `), single-line
+    /// only (nothing in `bynk-emit` builds a multi-line intersection).
+    Intersection(Vec<TsType>),
 }
 
 impl TsType {
@@ -1059,6 +1173,29 @@ impl TsType {
             readonly: true,
         }
     }
+
+    /// `A | B | C` — the original single-line union form, unchanged.
+    pub fn union(members: Vec<TsType>) -> Self {
+        TsType::Union {
+            members,
+            multiline: false,
+        }
+    }
+
+    /// `emit_sum_type`'s own real multi-line discriminated-union shape — see
+    /// [`TsType::Union`]'s own doc for the exact rendering rules and why
+    /// this needs no depth parameter.
+    pub fn multiline_union(members: Vec<TsType>) -> Self {
+        TsType::Union {
+            members,
+            multiline: true,
+        }
+    }
+
+    /// `A & B` — an intersection type.
+    pub fn intersection(members: Vec<TsType>) -> Self {
+        TsType::Intersection(members)
+    }
 }
 
 /// One member of a [`TsType::Object`] structural type — a property (`Prop`)
@@ -1078,10 +1215,33 @@ pub enum TsTypeMember {
         optional: bool,
         readonly: bool,
     },
+    /// `generics`/`doc` added by #1357: `emit_capability`'s own interface
+    /// methods are genuinely generic (`op<T>(...): ret;`, no
+    /// monomorphisation) and doc-commented — bare generic names, matching
+    /// every other real generics-list precedent in this crate; `doc`
+    /// mirrors `TsObjectEntry::Method.doc`'s own identical field (#1337).
+    /// Both default empty/`None` via [`TsTypeMember::method`]'s own
+    /// existing constructor — every one of its 6 real pre-#1357 callers is
+    /// unaffected.
+    ///
+    /// `doc` renders from exactly one of this variant's two reachable
+    /// positions: `TsDecl::Interface`'s own render arm (a real, multi-line
+    /// declaration body with `depth` available, so it calls
+    /// `render_doc_comment` before a documented member's own line — the
+    /// only place `doc` is honoured). A `Method` reached through
+    /// `TsType::Object`'s own inline, single-line shape (a type-position
+    /// object literal, e.g. `{ a: X; b(): Y }`) has no line budget for a
+    /// JSDoc block at all — `doc: Some(_)` there is a real, `debug_assert`-
+    /// guarded misuse (`render_type`'s own `TsType::Object` arm), the same
+    /// "loud, not silently dropped" precedent review of #1338 already
+    /// established for `render_object_entry_inline`'s identical
+    /// `TsObjectEntry::Method.doc` case.
     Method {
         name: String,
+        generics: Vec<String>,
         params: Vec<TsParam>,
         ret: TsType,
+        doc: Option<String>,
     },
     /// `[key_name: key_ty]: value_ty` — a TypeScript index signature.
     /// #1323's own real gap: `workers_entry.rs`'s multi-param `on call`
@@ -1128,12 +1288,14 @@ impl TsTypeMember {
         }
     }
 
-    /// `name(params): ret` — no body.
+    /// `name(params): ret` — no body, no generics, no doc comment.
     pub fn method(name: impl Into<String>, params: Vec<TsParam>, ret: TsType) -> Self {
         TsTypeMember::Method {
             name: name.into(),
+            generics: Vec::new(),
             params,
             ret,
+            doc: None,
         }
     }
 
@@ -1181,9 +1343,27 @@ pub struct TsClassCtor {
 #[derive(Debug, Clone)]
 pub struct TsClassMethod {
     pub name: String,
+    /// `private {name}(...)`, e.g. `loadState`/`commitState` — the
+    /// grounding pass's own predicted gap (#1366), closed by Arc C's own
+    /// `emit_agent` class-scaffold slice: every real `TsClassMethod` site
+    /// before this one (`emit_provider` #1359's own op methods) was
+    /// public-only. Rendered before `async`, matching the one real site's
+    /// own modifier order (`private async loadState()`, not `async private
+    /// loadState()`).
+    pub private: bool,
     pub is_async: bool,
     pub params: Vec<TsParam>,
     pub return_type: Option<TsType>,
+    /// A JSDoc block immediately preceding the method — the grounding
+    /// pass's own second predicted gap (#1366), closed alongside `private`'s
+    /// own sibling site: `emit_agent`'s own per-handler methods each carry
+    /// a doc comment (`emit_doc_block`'s pre-conversion standalone call),
+    /// the same need `TsObjectEntry::Method.doc` (#1337) and
+    /// `TsTypeMember::Method.doc` (#1357) already solved for their own node
+    /// kinds. Rendered the identical way those two already are — a
+    /// `TsStmtKind::DocComment`-shaped block at the method's own indent,
+    /// immediately before its header line.
+    pub doc: Option<String>,
     pub body: Vec<TsStmt>,
 }
 
@@ -1224,8 +1404,29 @@ pub enum TsDecl {
     /// `{ }`, one bound name for the whole module). #1321's own real gap:
     /// `workers.rs`'s `compose.ts` imports `handlers.js` and each
     /// referenced unit's binding module this way; `events_fanout.rs` never
-    /// used one.
-    ImportNamespace { alias: String, from: String },
+    /// used one. `type_only` (Arc C, step (10), #1392) mirrors
+    /// [`TsDecl::Import`]'s own identical field, a parallel gap by
+    /// omission, not deliberate design — `emit_cross_context_namespace_
+    /// imports`'s own real `import type * as ns from "...";` form (a
+    /// Workers-mode consumed-context import reaching the callee's types
+    /// only, #661) had no way to represent the `type` keyword until now.
+    ImportNamespace {
+        type_only: bool,
+        alias: String,
+        from: String,
+    },
+    /// `import name from "spec";` — a default import, structurally
+    /// different from both [`TsDecl::Import`] (braced named-imports form)
+    /// and [`TsDecl::ImportNamespace`] (`* as` form) — no braces, no `* as`,
+    /// one bound local name for the module's own default export. No
+    /// `type_only` form — nothing in the grounding file default-imports a
+    /// type. Arc C, slice 37 (#1409, `tests_emit.rs`'s own slice G): a
+    /// per-participant `import worker_{ns} from "../workers/{dir}/
+    /// index.js";` (the participant's own Worker entry module's default
+    /// export) is the first real default import anywhere in `bynk-emit`'s
+    /// own converted content — every prior import site is either named
+    /// ([`TsDecl::Import`]) or namespace ([`TsDecl::ImportNamespace`]).
+    ImportDefault { alias: String, from: String },
     /// `export { a, b } from "spec";` — a re-export, structurally distinct
     /// from both [`TsDecl::Import`] (which binds locally, carries no
     /// `export` keyword) and [`TsDecl::Export`] (which wraps a whole
@@ -1252,9 +1453,21 @@ pub enum TsDecl {
     /// (`TsDecl::Export` is a peer variant, not a modifier on each other
     /// one).
     Export(Box<TsDecl>),
+    /// `type_params`/per-member `readonly` (#1339's own real gap):
+    /// `emit_record_type`'s own `export interface {name}{params} {
+    /// readonly {field}: {ty}; ... }` — bare generic names (matching
+    /// `ts_type_params`'s/`TsObjectEntry::Method.generics`'s own
+    /// convention) and a `readonly` modifier every real field here
+    /// carries. `members` reuses [`TsTypeMember`] (the exact same shape
+    /// [`TsType::Object`]'s own structural members already use) rather
+    /// than a bespoke tuple, since `readonly` is already that type's own
+    /// field — this interface's real content has never needed
+    /// `Method`/`Index`, but nothing about reusing the shared type
+    /// forecloses a future slice that does.
     Interface {
         name: String,
-        members: Vec<(String, TsType)>,
+        type_params: Vec<String>,
+        members: Vec<TsTypeMember>,
     },
     /// A top-level `const` — distinct from `TsStmtKind::Const` (private —
     /// reachable through [`TsStmt::const_stmt`]), the local
@@ -1277,18 +1490,42 @@ pub enum TsDecl {
     /// until `emit_test_main`'s own top-level `async function main() {...}`
     /// needed it — the exact "extend narrowly, add it when a future slice's
     /// own grounding needs it" deferral this variant's own history already
-    /// named.
+    /// named. `generics` added by #1351: `emit_free_fn`'s own v0.20a erased
+    /// generics (`export function foo<T>(...)`) — bare names only, empty
+    /// for every non-generic site (`compose`/`main`), matching every other
+    /// real generics-list precedent in this crate
+    /// (`TsObjectEntry::Method.generics` #1337, `TsExpr::Arrow.generics`
+    /// #1339). `inline` added by #1369 (Arc C, slice 20, step (9)'s own
+    /// second sub-slice): `emit_agent`'s own zero-factory function
+    /// (`function __zeroOf{Name}State(): {Name}State { return {...}; }`) is
+    /// a genuinely single-physical-line declaration — braces and body share
+    /// the header's own line, not `render_block_stmts`'s always-multi-line
+    /// shape. `false` (every site landed before #1369) renders the ordinary
+    /// multi-line body; `true` reuses `render_inline_block`'s own compact
+    /// `{ stmt; stmt; }` shape directly at the declaration's own header
+    /// line, the same "one more bool, mirroring an existing precedent"
+    /// scope `TsObjectEntry::Method.inline` (#1337) already set for the
+    /// identical single-line-vs-multi-line tension at a different node kind.
     Function {
         name: String,
+        generics: Vec<String>,
         params: Vec<TsParam>,
         return_type: Option<TsType>,
         body: Vec<TsStmt>,
         is_async: bool,
+        inline: bool,
     },
-    /// `type name = ty;` — a top-level type alias. `workers.rs`'s own real
-    /// site: the `DurableObjectNamespace` local fallback type (emitted only
-    /// when the Worker has agents or publishes events).
-    TypeAlias { name: String, ty: TsType },
+    /// `type name = ty;` (non-generic) or `type name<T, U> = ty;` (via
+    /// `type_params`, #1339's own real gap: `emit_sum_type`'s own generic
+    /// sum types erase to `export type Foo<T> = ...`) — a top-level type
+    /// alias. `workers.rs`'s own real site: the `DurableObjectNamespace`
+    /// local fallback type (emitted only when the Worker has agents or
+    /// publishes events), never generic — `type_params` is empty there.
+    TypeAlias {
+        name: String,
+        type_params: Vec<String>,
+        ty: TsType,
+    },
     /// `export default <expr>;` — a default export of an *expression*, not
     /// a declaration. #1323's own real gap (`workers_entry.rs`'s own
     /// top-level shape, `export default { fetch, scheduled?, queue? }`):
