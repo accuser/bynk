@@ -2875,10 +2875,26 @@ fn emit_test_scope_setup(
             // mock shapes are constructed elsewhere in this file; typing `{key}`
             // correctly here needs cross-referencing that mock-construction code
             // rather than guessing a structural type, which risks a `tsc --strict`
-            // mismatch against whatever it actually builds.
-            out.push_str(&format!(
-                "    const {key} = (deps as any).surface?.{key};\n"
-            ));
+            // mismatch against whatever it actually builds. The *node
+            // representation* has no such gap, though — `TsExpr::OptionalMember`
+            // already exists — so review of #1404 caught this site's own
+            // `format!` construction as a real miss, not a documented carve-out.
+            let alias_stmt = TsStmt::const_stmt(
+                TsBindingName::Ident(key.clone()),
+                None,
+                TsExpr::OptionalMember {
+                    object: Box::new(member(
+                        TsExpr::As {
+                            expr: Box::new(ident("deps")),
+                            ty: TsType::named("any"),
+                        },
+                        "surface",
+                    )),
+                    property: key.clone(),
+                },
+                None,
+            );
+            out.push_str(&bynk_ts::print_stmt(&alias_stmt, 2));
         }
     }
 }

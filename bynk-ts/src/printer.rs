@@ -5396,4 +5396,57 @@ mod tests {
         let printed = print(&program, "x.bynk", "", "x.ts");
         assert_eq!(printed.text, "e instanceof ExpectationError;\n");
     }
+
+    /// Review of #1404, finding 2: `prints_an_instanceof_check` alone pins
+    /// the operator text but not the precedence tier the same diff added to
+    /// `binary_precedence` — it passes identically whether `InstanceOf` sits
+    /// at tier 5, tier 1, or is missing from that arm entirely. `Add` (tier
+    /// 6) binds tighter, mirroring `add_binds_tighter_than_less_than`
+    /// for the other relational operator sharing this tier.
+    #[test]
+    fn add_binds_tighter_than_instanceof() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::expr_stmt(
+            TsExpr::Binary {
+                op: TsBinaryOp::InstanceOf,
+                left: Box::new(TsExpr::Binary {
+                    op: TsBinaryOp::Add,
+                    left: Box::new(TsExpr::Ident("a".to_string())),
+                    right: Box::new(TsExpr::Ident("b".to_string())),
+                }),
+                right: Box::new(TsExpr::Ident("C".to_string())),
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "a + b instanceof C;\n");
+    }
+
+    /// Review of #1404, finding 2 (the more valuable half): a catch clause
+    /// naturally grows into `e instanceof A || e instanceof B` as a second
+    /// error type is added. `InstanceOf` (tier 5) binds tighter than `Or`
+    /// (tier 2), so this must print flat — a wrong tier would silently
+    /// over-parenthesize it into `(e instanceof A) || (e instanceof B)`.
+    #[test]
+    fn instanceof_binds_tighter_than_or_on_both_sides() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::expr_stmt(
+            TsExpr::Binary {
+                op: TsBinaryOp::Or,
+                left: Box::new(TsExpr::Binary {
+                    op: TsBinaryOp::InstanceOf,
+                    left: Box::new(TsExpr::Ident("e".to_string())),
+                    right: Box::new(TsExpr::Ident("A".to_string())),
+                }),
+                right: Box::new(TsExpr::Binary {
+                    op: TsBinaryOp::InstanceOf,
+                    left: Box::new(TsExpr::Ident("e".to_string())),
+                    right: Box::new(TsExpr::Ident("B".to_string())),
+                }),
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "e instanceof A || e instanceof B;\n");
+    }
 }
