@@ -1361,7 +1361,7 @@ convention every prior track on this trajectory used.
 | **P7.d2** | R8.2 — brand string recorded once (R4.10), read at emission rather than computed from `ctx.owning_context` | R8.2 | Arc C substantially landed |
 | **P7.d3** | R8.14 — the JSON/boundary codec collector unified into one collector over `bynk-ts` tree nodes, revisiting P6.56's declined IR-based attempt now that a tree exists to collect over | R8.14 | P7.8 |
 | **P7.10** (landed) | R8.4/d5/d8 settling sweep — see below | R8.4, R8.5,7,9,11–13,15,17–19,21,22 (verify) | Arc C landed |
-| **P7.d6** | R10.4 surface enumeration — finding #42's 33-of-38 spurious `pub` in `bynk_emit::emitter` | R10.4 | Arc C landed |
+| **P7.11** (landed) | R10.4 surface enumeration — see below | R10.4 | Arc C landed |
 | **P7.d7** | R10.2 verification — `bynk-lsp` stops linking emission code it never executes (finding #39) | R10.2 | P7.d1 |
 
 **P7.10 (landed) — the R8.4/d5/d8 settling sweep, a single verify-only pass, no code changes.**
@@ -1403,6 +1403,27 @@ are current, not the stale pre-Arc-C line numbers §3.4 originally recorded):
 
 No code changed; no `design/pending` entry (doc-only, matching the #1366/#1379/#1394 precedent
 for a pure verification pass with nothing to fix).
+
+**P7.11 (landed) — R10.4 surface enumeration over `bynk_emit::emitter`, verify-only, no code
+changes.** Finding #42 (the July review) named "33 of 38 world-reachable items have no external
+user" as the evidence for R10.4 against this module. Full census against the current tree:
+`bynk_emit::emitter`'s only reachable surface is 4 `pub mod`s (`contracts`, `secrets`, `toml_doc`,
+`wrangler`) plus 1 root-level re-export (`print_toml_document`) plus 3 root-level `pub fn`s
+(`emit_runtime_module`, `emit_tsconfig`, `emit_tsconfig_with_source_maps`) — no nested `pub mod`s,
+no crate-root re-export beyond `pub mod emitter;` itself. Enumerating every `pub` item inside those
+4 submodules (12 total, `emitter.rs`'s own body is already `pub(crate)` almost everywhere) and
+cross-referencing every real external reach point (`bynkc`, `bynk-driver`, `bynk`, `bynk-strip`)
+by grep across the whole workspace: **all 12 have a confirmed real external user** —
+`CONTRACTS_MANIFEST`/`SECRETS_MANIFEST` (deploy tooling), `emit_runtime_module`/`emit_tsconfig`/
+`emit_tsconfig_with_source_maps` (bynkc), `KV_NAMESPACE_ID_PLACEHOLDER`/
+`wrangler_needs_kv_materialisation`/`materialise_kv_namespace_id` (`bynk/src/deploy*.rs`),
+`print_toml_document` (`bynk-driver`), `TomlDocument` + `set_main` (the type crosses the boundary
+inside `Document::Toml(TomlDocument)`; `set_main` is called directly by `bynk-strip::
+strip_project_to_js`, per that method's own doc comment). **Zero spurious `pub` items remain.**
+Finding #42's own count (33-of-38) does not match current reality — most likely already closed as
+an incidental byproduct of earlier work (`toml_doc.rs`'s own P7.3 module doc already argues from an
+R10.4-conscious posture: "not a general TOML library... no more"), not something this pass had to
+fix. No code changed; no `design/pending` entry, same doc-only precedent as P7.10.
 
 ---
 
