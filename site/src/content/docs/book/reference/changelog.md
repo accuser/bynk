@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.287**.
+written against **v0.288**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.288.0** | Arc C, slice 36 — the system-http driver cluster (`emit_system_http_support` in `tests_emit.rs`) builds real `bynk_ts` fragments, the sixth of `tests_emit.rs`'s own 7 proposed slices (per its dedicated grounding pass) — every `__sysdrive_*` request driver (typed, raw, no-auth, raw+no-auth, wrong-method) and the secrets-bootstrap loop now construct real `TsDecl`/`TsStmt`/`TsExpr` nodes instead of `format!`-built text. No behaviour change — every fixture with a `service ... http` route emits byte-identical TypeScript. |
 | **v0.287.0** | Arc C, slice 35 — the property/history/attack runner cluster (`emit_test_property_function`/`emit_test_history_property_function`/`emit_contract_attack_function` in `tests_emit.rs`) builds real `bynk_ts` fragments, the fifth of `tests_emit.rs`'s own 7 proposed slices (per its dedicated grounding pass) — closing the print-then-splice seam Arc C slice A's own `binding_gen` conversion left temporarily open. No behaviour change — every fixture with a `property`, a history `property`, or a contract-attack case emits byte-identical TypeScript. |
 | **v0.286.0** | Arc C, slice 34 — the case/scope-setup cluster (`emit_test_scope_setup`/`emit_test_case_function` in `tests_emit.rs`) builds real `bynk_ts` fragments, the fourth of `tests_emit.rs`'s own 7 proposed slices (per its dedicated grounding pass). Adds `bynk_ts::TsBinaryOp::InstanceOf`. No behaviour change — every fixture reaching a test case emits byte-identical TypeScript, with source-map splice offsets confirmed unaffected. |
 | **v0.285.0** | Arc C, slice 33 — the stub cluster (`emit_stub_class`/`emit_stub_rhs` in `tests_emit.rs`) builds real `bynk_ts` fragments, the third of `tests_emit.rs`'s own 7 proposed slices (per its dedicated grounding pass). Adds `bynk_ts::TsBinaryOp::LessThan` and `TsSwitchCase.default_braced`, and deletes the now-dead `emitter::ts_type_ref_qualified_multi`. No behaviour change — every fixture with a `stub` clause emits byte-identical TypeScript. |
