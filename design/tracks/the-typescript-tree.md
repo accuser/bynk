@@ -1360,11 +1360,49 @@ convention every prior track on this trajectory used.
 | **P7.d1** | `bynk-ir`/`bynk-lower` carved as crates — ADR 0332's named trigger (`bynk-ts` as a genuine second consumer) met once Arc B lands | R10.3 | P7.5 |
 | **P7.d2** | R8.2 — brand string recorded once (R4.10), read at emission rather than computed from `ctx.owning_context` | R8.2 | Arc C substantially landed |
 | **P7.d3** | R8.14 — the JSON/boundary codec collector unified into one collector over `bynk-ts` tree nodes, revisiting P6.56's declined IR-based attempt now that a tree exists to collect over | R8.14 | P7.8 |
-| **P7.d4** | R8.4 verification — confirm numeric-refinement guard ordering across every emission site, not just the ones spot-checked during settling | R8.4 (verify) | — |
-| **P7.d5** | Severing `bynk-emit`'s dependency on `bynk-check`, if Arc C's conversion leaves one — tentative, no direct evidence gathered this settling pass | — | Arc C landed |
+| **P7.10** (landed) | R8.4/d5/d8 settling sweep — see below | R8.4, R8.5,7,9,11–13,15,17–19,21,22 (verify) | Arc C landed |
 | **P7.d6** | R10.4 surface enumeration — finding #42's 33-of-38 spurious `pub` in `bynk_emit::emitter` | R10.4 | Arc C landed |
 | **P7.d7** | R10.2 verification — `bynk-lsp` stops linking emission code it never executes (finding #39) | R10.2 | P7.d1 |
-| **P7.d8** | Retirement review: verify-only pass on the twelve R8 rules already closed (§3.4), explicitly confirming R8.12's self-supersession lands as intended, not regression; all three probes' final floors named file-by-file | R8.5,7,9,11–13,15,17–19,21,22 (verify) | Arc C landed |
+
+**P7.10 (landed) — the R8.4/d5/d8 settling sweep, a single verify-only pass, no code changes.**
+Re-audited against the tree as it stands after Arc C's full 37-slice landing (all citations below
+are current, not the stale pre-Arc-C line numbers §3.4 originally recorded):
+
+- **R8.4** (numeric-refinement guard ordering): checked all four real base-guard/predicate
+  emission sites — `refined_check_as_bool` (`emitter/lower.rs`, the `is`/`.of`-check path),
+  `emit_refined_checks`/`print_numeric_guard_stmt` (`emitter/emit.rs`, the `.of` constructor path),
+  `emit_inline_refinement_checks` (`emitter/serialisation.rs`, the `Named`-with-predicates wire
+  path), and `WireRef::Base`'s handler (`emitter/serialisation.rs`, the guard-only bare-scalar wire
+  path, which carries no separate predicate list by construction — a refined named scalar routes
+  through `WireRef::Named` instead). Every site emits the base guard (`Number.isInteger`/
+  `Number.isFinite`) before any predicate, with no exception. **Confirmed closed, no violation
+  found.**
+- **P7.d5** (severing `bynk-emit`'s `bynk-check` dependency): confirmed NOT severable —
+  222 real `bynk_check::` use sites across 17 files in `bynk-emit/src`, and the dependency is
+  named directly in `bynk-emit`'s own `Cargo.toml` description ("atop ... bynk-check (all semantic
+  checking)"). This is `bynk-emit`'s primary semantic-model input, not conversion residue.
+  **Resolved: nothing to sever, the tentative slice does not apply.**
+- **R8.12's self-supersession**: confirmed NOT yet triggered. R8.12 self-supersedes "at the exact
+  moment R7.1 lands" (§3.4), and R7.1 has not fully landed — `design/greenfield-status.md`'s own
+  `ts_any` probe currently reads **30** (not 0), so `Any` has not been fully eliminated. R8.12
+  remains correctly closed under its own current carve-out text (only `Call` wrappers get real
+  param types by design); this is not a regression, since the triggering condition hasn't fired.
+- **The other eleven already-closed R8 rules** (R8.5, R8.7, R8.9, R8.11, R8.13, R8.15, R8.17,
+  R8.18, R8.19, R8.21, R8.22): spot-verified still present and behaviourally intact post-Arc-C —
+  `emit_context_rebrands` (R8.5, `emitter.rs:1708`), the `loadState` validation gate (R8.7,
+  `emitter/emit.rs` ~4581+), the three `.sort_by` route-ordering call sites (R8.17,
+  `emitter/workers_entry.rs:410/470/503`). One stale citation caught and worth noting for a future
+  reader: R8.19's `escape_toml_basic_string` now lives in `emitter/toml_doc.rs` (moved out of
+  `wrangler.rs` before this pass, unrelated to Arc C), not at the location §3.4 originally cited —
+  the function and its injection test are both present and unchanged. Arc C's own zero-diff
+  discipline (every one of its 37 slices verified byte-identical fixture/tsc output) is why none of
+  these show real behavioural drift — only citations move when the underlying code does.
+- **Probe floors, file-by-file, as of this pass** (`design/greenfield-status.md`): `ts_writes` =
+  1072, `ts_any` = 30, `ast_importers` = 5 (`bynk-emit/src/emitter{,/**}`, the phase-6 floor,
+  unchanged by Arc C), `verbatim_origins` = 1, `verbatim_sites` = 5.
+
+No code changed; no `design/pending` entry (doc-only, matching the #1366/#1379/#1394 precedent
+for a pure verification pass with nothing to fix).
 
 ---
 
