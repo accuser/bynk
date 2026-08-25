@@ -277,9 +277,11 @@ the current tree, not the review's stale findings, found:
   exhaustive search for a duplicate path), R8.11 (`deps` type derivation already reads the IR's
   `CapRefIr`, `emit.rs:1847`), R8.13 (boundary-only verification, all four named properties
   confirmed in `workers.rs`), R8.15 (`http_value_serialiser` no longer exists — single dispatch
-  confirmed), R8.17 (sorted route table, `workers_entry.rs:117-122`), R8.18 (contract-hash
-  ordering, `workers_entry.rs:404`), R8.19 (typed TOML escaping, `wrangler.rs:162`, with a
-  dedicated injection test), R8.21 (`is_effectful_return` as the one shared predicate), R8.22
+  confirmed), R8.17 (sorted route table, `workers_entry.rs:410/470/503` — three `.sort_by` call
+  sites, http/cron/queue routes each), R8.18 (contract-hash ordering, `workers_entry.rs:298` —
+  `own_contracts: &BTreeMap<String, String>`, deterministic by construction), R8.19 (typed TOML
+  escaping, `escape_toml_basic_string`, `emitter/toml_doc.rs:215`, with a dedicated injection test
+  at `toml_doc.rs:240-249`), R8.21 (`is_effectful_return` as the one shared predicate), R8.22
   (`result ?? null`, `emit.rs:3690`). **R8.12 is closed under its own current text but
   self-superseding — flagged, not silently assumed:** it's closed today because only `Call`
   wrappers get real param types by design (R8.12's own rationale already documents the carve-out);
@@ -1346,7 +1348,7 @@ decomposition.**
 | **Arc C, slice 36 — the system-http driver cluster (`tests_emit.rs` slice F)** (#1407, landed) | The sixth of `tests_emit.rs`'s own 7 proposed slices per its dedicated grounding pass (post-#1392), following slice E/#1405; structurally self-contained, no dependency on any of A-E, confirmed by landing. Converts `emit_system_http_support` in `bynk-emit/src/project/tests_emit.rs`. **The 4 per-route drivers convert fully at the structural level** via a new shared helper, `sysdrive_driver(kind_prefix, sname, key, params, body_stmt, url, options, binding, decode_fn, payload)` — the one real shape all four `__sysdrive_{,raw_,noauth_,rawnoauth_}*` drivers share (async function decl, optional `const __body = JSON.stringify(...)` lead statement, `const __h = makeHarness();`, `const __req = new Request(<url>, <options>);`, `const __res = await __h.env.<binding>.fetch(__req);`, `return <decode>(__res, <payload>);`), replacing four near-identical hand-written `format!` blocks with one parameterised builder. **The wrong-method driver converts fully, no carve-out at all** — its own `new Request(\`https://test${path}\`, { method })` is this file's first real dynamic (non-baked) `TsExpr::TemplateLit` substitution and first real `TsObjectEntry::Shorthand` object literal, both byte-matching the existing text exactly (a single, never-conditionally-empty shorthand entry matches `TsExpr::Object`'s own tight single-line rendering). **Decision A: the per-route options object (`{ method, headers: {...}, body, }`) stays opaque hand-formatted text**, passed as a `TsExpr::Ident`-wrapped fragment argument to a real `TsExpr::New` call — every branch's own hand-written template bakes in an unconditional trailing `, ` before its closing brace and prints `{ }` (one space) rather than `TsExpr::Object`'s own tight `{}` when a sub-object has zero entries, a shape `TsExpr::Object`'s general single-line algebra cannot reproduce byte-for-byte, the same "odd, one-off shape stays text" call this track has made before (Decision B, #1327; Decision C, #1359). The secrets-bootstrap loop's own `format!` call converts fully too, to real `As`/`Member`/`Binary(NullishCoalescing)`/`Index`/`Assign` nodes. **The static signer preamble stays out of scope, honestly recorded**: built via a plain `push_str` literal with zero per-target dynamism, already excluded from the `ts_writes` probe (no `write!`/`writeln!`/`format!` on those lines) — converting it moves no metric and adds no real coverage. **Landed as one slice, not split by driver-kind**: this paragraph's own proposal-time caveat considered splitting by typed/raw/noauth/rawnoauth/wrongmethod, but once drafted the 4 per-route kinds shared one structural shape completely — every real difference became a plain parameter to `sysdrive_driver`, so a split would have meant reviewing the identical helper four times rather than once. **One real transcription bug, caught immediately by `positive_fixtures`, fixed before the CI pass**: the wrong-method driver's decode call was first built as `responseToHttpResult`, not the existing text's own `responseToHttpOutcome` (the router's `405` fall-through decodes to an `HttpOutcome`, not an `HttpResult`) — a one-line fixture diff named the exact mismatch. **A real, non-metric-driven simplification found while implementing**: the first draft's per-call-site `format!` for each driver's own name *increased* `ts_writes` by 1 despite eliminating four hand-formatted functions (each driver-kind's name interpolation became its own newly-countable line, previously merged into one big `format!` call); consolidated into `sysdrive_driver`'s own single internal `format!("__sysdrive_{kind_prefix}{sname}_{key}")`, turning the accidental increase into a genuine larger net decrease. No new `bynk_ts` algebra gap — every shape needed (`TsDecl::Function` `is_async`, `TsExpr::New`, `TsExpr::TemplateLit` both zero- and real-substitution, `TsExpr::Await`, `TsExpr::As`, `TsObjectEntry::Shorthand`, `TsExpr::Arrow` expression-bodied) already existed. `verbatim_sites` unchanged (5). `ts_writes` drops by **3** (1080 → 1077), verified via a fresh `cargo xtask greenfield-status --apply`. `ast_importers`/`ts_any` unaffected. Zero diff, confirmed after the one fix above: `positive_fixtures`/`bless_positive_fixtures`, `source_map`, and `tsc_verify`'s full strict-`tsc` corpus all pass unchanged; all `bynk-ts`/`bynk-emit` unit tests pass. | R7.1 | #1331, #1394, #1327, #1359 |
 | **Arc C, slice 37 — the two top-level module assemblers (`tests_emit.rs` slice G)** (#1409, landed) | The seventh and last of `tests_emit.rs`'s own 7 proposed slices per its dedicated grounding pass (post-#1392), following slice F/#1407 — closes Arc C entirely. Converts `emit_integration_module` and `emit_test_module` in `bynk-emit/src/project/tests_emit.rs`, the two top-level module assemblers; depended on slice B (`emit_ns_destructure`), confirmed by landing, in addition to calling nearly every other already-converted delegate. **Every header comment line, every `import` line, and each module's own `export async function run(only?: string) { ... }` runner convert fully, no carve-out at all.** The two functions' own per-case/per-property/per-attack loop bodies stay exactly as they are — each already delegates to an already-converted or intentionally-opaque (`lower.rs`-family, ADR 0391) builder returning pre-formatted text with its own source-map splice arithmetic (`module_smb.merge(...)`); only the bookend content around those splices is new real structure. **One real, grounded `bynk_ts` algebra gap found and closed**: `TsDecl::ImportDefault { alias, from }` — `emit_integration_module`'s own per-participant `import worker_{ns} from "../workers/{dir}/index.js";` (the participant's Worker entry module's default export) is the first real default import anywhere in `bynk-emit`'s own converted content; every prior import site is either named (`TsDecl::Import`) or namespace (`TsDecl::ImportNamespace`). Added with a direct printer unit test and folded into the existing "no blank line between adjacent imports" grouping rule. **A new shared pair of helpers, `run_dispatch_stmt`/`build_run_function`, factors the identical `run(only)` shape both functions build**: one `if (want("name")) results.push({ name: "...", ...(await runner()) });` dispatch line per case/property/attack (a real `TsObjectEntry::Spread` wrapping a real `TsExpr::Paren(await_expr(...))`, matching the existing text's own explicit parens around the spread), wrapped in one real `TsDecl::Function` — this function carries no opaque lowered content and no source-map splice sensitivity at all, so it converts fully rather than needing `emit_test_case_function`'s own header/tail split. No other new `bynk_ts` algebra gap. `verbatim_sites` unchanged (5). `ts_writes` drops by **5** (1077 → 1072), verified via a fresh `cargo xtask greenfield-status --apply`. `ast_importers`/`ts_any` unaffected. Zero diff, first attempt, no iteration: `positive_fixtures`/`bless_positive_fixtures`, `source_map`/`source_map_bodies`, and `tsc_verify`'s full strict-`tsc` corpus all pass unchanged; 141 `bynk-ts` unit tests (1 new, pinning `ImportDefault`) and all `bynk-emit` unit tests pass. **Closes Arc C entirely: all 37 slices landed.** | R7.1 | #1331, #1394, #1399, #1325 |
 
-**Arc D — settling (~8 slices)**
+**Arc D — settling (~8 slices; 2 landed as P7.10/P7.11, 6 remaining)**
 
 Provisionally lettered, not numbered — Arc C's own slice count is an estimate (originally ~23-27,
 now ~30-33, revised by
@@ -1357,14 +1359,115 @@ convention every prior track on this trajectory used.
 
 | Slice | What lands | Rules | Gated on |
 |---|---|---|---|
-| **P7.d1** | `bynk-ir`/`bynk-lower` carved as crates — ADR 0332's named trigger (`bynk-ts` as a genuine second consumer) met once Arc B lands | R10.3 | P7.5 |
+| **P7.d1** | `bynk-ir`/`bynk-lower` carved as crates — ADR 0332's named trigger (`bynk-ts` as a genuine second consumer) met once Arc B lands. **Re-grounding note (this settling pass): bigger and different in kind than a file move — see below.** | R10.3 | P7.5 |
 | **P7.d2** | R8.2 — brand string recorded once (R4.10), read at emission rather than computed from `ctx.owning_context` | R8.2 | Arc C substantially landed |
 | **P7.d3** | R8.14 — the JSON/boundary codec collector unified into one collector over `bynk-ts` tree nodes, revisiting P6.56's declined IR-based attempt now that a tree exists to collect over | R8.14 | P7.8 |
-| **P7.d4** | R8.4 verification — confirm numeric-refinement guard ordering across every emission site, not just the ones spot-checked during settling | R8.4 (verify) | — |
-| **P7.d5** | Severing `bynk-emit`'s dependency on `bynk-check`, if Arc C's conversion leaves one — tentative, no direct evidence gathered this settling pass | — | Arc C landed |
-| **P7.d6** | R10.4 surface enumeration — finding #42's 33-of-38 spurious `pub` in `bynk_emit::emitter` | R10.4 | Arc C landed |
+| **P7.10** (landed) | R8.4/d5/d8 settling sweep — see below | R8.4, R8.5,7,9,11–13,15,17–19,21,22 (verify) | Arc C landed |
+| **P7.11** (landed) | R10.4 surface enumeration — see below | R10.4 | Arc C landed |
 | **P7.d7** | R10.2 verification — `bynk-lsp` stops linking emission code it never executes (finding #39) | R10.2 | P7.d1 |
-| **P7.d8** | Retirement review: verify-only pass on the twelve R8 rules already closed (§3.4), explicitly confirming R8.12's self-supersession lands as intended, not regression; all three probes' final floors named file-by-file | R8.5,7,9,11–13,15,17–19,21,22 (verify) | Arc C landed |
+
+**P7.d1 re-grounding (this settling pass, not yet implemented) — `ir/lower.rs` is not one crate's
+worth of live code, it's two.** `bynk-emit/src/ir.rs` (1,756 lines) + `bynk-emit/src/ir/lower.rs`
+(10,095 lines) total ~11,850 lines, both `pub(crate)` at the crate root — no external crate
+reaches `bynk_emit::ir` today, so the carve is a pure internal reorganisation with no external-API
+compatibility surface to preserve. But `ir/lower.rs` itself is not uniformly live: it contains two
+structurally distinct layers under one file. **Layer 1 (live, ~dozens of real call sites):**
+narrow, single-purpose lowering helpers — `lower_handler_kind_ir`, `lower_protocol_ir`(`_from_
+commons`), `lower_handler_given_ir`, `lower_provider_given_ir`, `lower_route_cache_ir`,
+`lower_route_limit_ir`, `lower_event_subscriber_shapes_ir`, `is_effectful_return`,
+`body_writes_state`, `capability_op_sig_from_commons`, `lower_attached_fn_sig_ir_from_types`,
+`lower_type_item_ir`, `lower_capability_item_ir`, `lower_service_handler_signature_ir`,
+`lower_store_field_shape_ir` — called for real from `emitter.rs`, `emitter/emit.rs`,
+`emitter/workers.rs`, `emitter/workers_entry.rs`, `emitter/lower.rs`, and `project.rs`. **Layer 2
+(genuinely unreached, confirmed by grep — zero callers outside this file):** the whole-program
+recursive tree-builder — `lower_expr_ir`, `lower_block_ir`, `lower_fn_body_ir`, `lower_handler_ir`,
+`lower_service_handler_ir`, `lower_fn_item_ir`, `lower_service_item_ir`, `lower_agent_item_ir`,
+`lower_provider_item_ir`, `lower_store_field_ir`, `lower_invariant_ir`, `lower_transition_ir`,
+`lower_commit_shape_ir`, `lower_op_sig_ir_from_commons`, `lower_fn_sig_ir_from_types` — the file's
+own module doc says this outright: "Nothing in this module is called from anywhere in
+`bynk-emit`'s existing emission path... it has no consumer yet, so it cannot change any emitted
+output." This matches the retired `the-ir.md`'s own account of its retirement-plan arc (P6.42–58):
+several originally-planned full item/body lowerings "were traced against their own real consumers
+and declined rather than force-built."
+
+This means P7.d1 is not a mechanical file-move (however large) — landing it well requires a real
+decision this settling pass didn't make: **carry Layer 2 into the new `bynk-lower` crate as-is
+(preserving the original design intent for a future full-tree consumer), or trim it now (real,
+consequential dead-code removal inside the same carve)**, plus the ordinary mechanical work (new
+`bynk-ir`/`bynk-lower` manifests, ~99 call-site import-path fixes across 7 consumer files, a
+circularity check — `ir/lower.rs` itself currently does `use crate::emitter::{ MUTATING_CELL_OPS,
+..., block_uses_emit, match_needs_if_chain };`, a live reverse dependency from what would become
+`bynk-lower` back into `bynk-emit` that has to be resolved, not just relocated, before the crate
+graph is acyclic). **Not implemented this pass** — this is real, grounded scope a dedicated slice
+(or its own short sub-decomposition, the same pattern Arc C used for `emit_project`/
+`emit_system_http_support`) should own, not something to rush inside a settling sweep. P7.d7 stays
+blocked behind it.
+
+**P7.10 (landed) — the R8.4/d5/d8 settling sweep, a single verify-only pass, no code changes.**
+Re-audited against the tree as it stands after Arc C's full 37-slice landing (all citations below
+are current, not the stale pre-Arc-C line numbers §3.4 originally recorded):
+
+- **R8.4** (numeric-refinement guard ordering): checked all five real base-guard/predicate
+  emission sites — `refined_check_as_bool` (`emitter/lower.rs`, the `is`/`.of`-check path),
+  `emit_refined_checks`/`print_numeric_guard_stmt` (`emitter/emit.rs`, the `.of` constructor path),
+  `emit_inline_refinement_checks` (`emitter/serialisation.rs`, the `Named`-with-predicates wire
+  path), `WireRef::Base`'s handler (`emitter/serialisation.rs`, the guard-only bare-scalar wire
+  path), and `deserialise_expr_via`'s `TypeRef::Base` arm (`emitter/serialisation.rs` ~1153-1180,
+  its own `extra` guard). The last two carry no separate predicate list by construction — a
+  refined named scalar routes through `WireRef::Named` instead — so neither can violate the
+  ordering, but both are named here so the closure matches what a `Number.isInteger|isFinite` grep
+  actually finds. Every site emits the base guard (`Number.isInteger`/`Number.isFinite`) before
+  any predicate, with no exception. **Confirmed closed, no violation
+  found.**
+- **P7.d5** (severing `bynk-emit`'s `bynk-check` dependency): confirmed NOT severable —
+  222 real `bynk_check::` use sites across 17 files in `bynk-emit/src`, and the dependency is
+  named directly in `bynk-emit`'s own `Cargo.toml` description ("atop ... bynk-check (all semantic
+  checking)"). This is `bynk-emit`'s primary semantic-model input, not conversion residue.
+  **Resolved: nothing to sever, the tentative slice does not apply.**
+- **R8.12's self-supersession**: confirmed NOT yet triggered. R8.12 self-supersedes "at the exact
+  moment R7.1 lands" (§3.4), and R7.1 has not fully landed — `design/greenfield-status.md`'s own
+  `ts_any` probe currently reads **30** (not 0), so `Any` has not been fully eliminated. R8.12
+  remains correctly closed under its own current carve-out text (only `Call` wrappers get real
+  param types by design); this is not a regression, since the triggering condition hasn't fired.
+- **The other eleven already-closed R8 rules** (R8.5, R8.7, R8.9, R8.11, R8.13, R8.15, R8.17,
+  R8.18, R8.19, R8.21, R8.22): spot-verified still present and behaviourally intact post-Arc-C —
+  `emit_context_rebrands` (R8.5, `emitter.rs:1708`), the `loadState` validation gate (R8.7,
+  `emitter/emit.rs` ~4581+), the three `.sort_by` route-ordering call sites (R8.17,
+  `emitter/workers_entry.rs:410/470/503`). One stale citation caught and worth noting for a future
+  reader: R8.19's `escape_toml_basic_string` now lives in `emitter/toml_doc.rs` (moved out of
+  `wrangler.rs` before this pass, unrelated to Arc C), not at the location §3.4 originally cited —
+  the function and its injection test are both present and unchanged. Arc C's own zero-diff
+  discipline (every one of its 37 slices verified byte-identical fixture/tsc output) is why none of
+  these show real behavioural drift — only citations move when the underlying code does.
+- **Probe floors, as recorded in `design/greenfield-status.md` at this commit** (aggregate
+  counts, gated there by `greenfield_status_table_is_current` — this copy will drift if that
+  file changes and this paragraph isn't re-read alongside it): `ts_writes` = 1072, `ts_any` = 30,
+  `ast_importers` = 5 (its one file-scoped floor — `bynk-emit/src/emitter{,/**}`, the phase-6
+  floor, unchanged by Arc C), `verbatim_origins` = 1, `verbatim_sites` = 5.
+
+No code changed; no `design/pending` entry (doc-only, matching the #1366/#1379/#1394 precedent
+for a pure verification pass with nothing to fix).
+
+**P7.11 (landed) — R10.4 surface enumeration over `bynk_emit::emitter`, verify-only, no code
+changes.** Finding #42 (the July review) named "33 of 38 world-reachable items have no external
+user" as the evidence for R10.4 against this module. Full census against the current tree:
+`bynk_emit::emitter`'s only reachable surface is 4 `pub mod`s (`contracts`, `secrets`, `toml_doc`,
+`wrangler`) plus 1 root-level re-export (`print_toml_document`) plus 3 root-level `pub fn`s
+(`emit_runtime_module`, `emit_tsconfig`, `emit_tsconfig_with_source_maps`) — no nested `pub mod`s,
+no crate-root re-export beyond `pub mod emitter;` itself. Enumerating every `pub` item inside those
+4 submodules (12 total, `emitter.rs`'s own body is already `pub(crate)` almost everywhere) and
+cross-referencing every real external reach point (`bynkc`, `bynk-driver`, `bynk`, `bynk-strip`)
+by grep across the whole workspace: **all 12 have a confirmed real external user** —
+`CONTRACTS_MANIFEST`/`SECRETS_MANIFEST` (deploy tooling), `emit_runtime_module`/`emit_tsconfig`/
+`emit_tsconfig_with_source_maps` (bynkc), `KV_NAMESPACE_ID_PLACEHOLDER`/
+`wrangler_needs_kv_materialisation`/`materialise_kv_namespace_id` (`bynk/src/deploy*.rs`),
+`print_toml_document` (`bynk-driver`), `TomlDocument` + `set_main` (the type crosses the boundary
+inside `Document::Toml(TomlDocument)`; `set_main` is called directly by `bynk-strip::
+strip_project_to_js`, per that method's own doc comment). **Zero spurious `pub` items remain.**
+Finding #42's own count (33-of-38) does not match current reality — most likely already closed as
+an incidental byproduct of earlier work (`toml_doc.rs`'s own P7.3 module doc already argues from an
+R10.4-conscious posture: "not a general TOML library... no more"), not something this pass had to
+fix. No code changed; no `design/pending` entry, same doc-only precedent as P7.10.
 
 ---
 
