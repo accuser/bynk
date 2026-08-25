@@ -1415,6 +1415,18 @@ pub enum TsDecl {
         alias: String,
         from: String,
     },
+    /// `import name from "spec";` — a default import, structurally
+    /// different from both [`TsDecl::Import`] (braced named-imports form)
+    /// and [`TsDecl::ImportNamespace`] (`* as` form) — no braces, no `* as`,
+    /// one bound local name for the module's own default export. No
+    /// `type_only` form — nothing in the grounding file default-imports a
+    /// type. Arc C, slice 37 (#1409, `tests_emit.rs`'s own slice G): a
+    /// per-participant `import worker_{ns} from "../workers/{dir}/
+    /// index.js";` (the participant's own Worker entry module's default
+    /// export) is the first real default import anywhere in `bynk-emit`'s
+    /// own converted content — every prior import site is either named
+    /// ([`TsDecl::Import`]) or namespace ([`TsDecl::ImportNamespace`]).
+    ImportDefault { alias: String, from: String },
     /// `export { a, b } from "spec";` — a re-export, structurally distinct
     /// from both [`TsDecl::Import`] (which binds locally, carries no
     /// `export` keyword) and [`TsDecl::Export`] (which wraps a whole
