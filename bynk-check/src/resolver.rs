@@ -21,9 +21,31 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::index::{RefSink, SymbolKind};
+use bynk_project::UnitKind;
 use bynk_syntax::ast::*;
 use bynk_syntax::error::{Applicability, CompileError};
 use bynk_syntax::span::Span;
+
+/// Is `name` a type imported via `uses` of a *commons* specifically — the
+/// exact predicate [`ResolvedCommons::is_uses_commons_type`] caches as
+/// `uses_commons_type_names`, and `bynk-emit`'s own `emit_context_rebrands`
+/// (`bynk-emit/src/emitter.rs`) needs to decide which names it rebrands.
+///
+/// R4.10/R8.2 (`design/bynk-greenfield-compiler.md`): before this function
+/// existed, `prepare_unit_check_ctx` (`check_pipeline.rs`) and
+/// `emit_context_rebrands` each independently inlined this same
+/// two-condition check, linked only by a doc comment promising they
+/// matched exactly — a real risk ADR 0226 names (#655: "a single named
+/// binder took the entire test run down, pointing at generated code the
+/// author never wrote"). One definition, both callers read it — an edit to
+/// either condition can no longer update only one side.
+pub fn is_uses_commons_type(
+    imported_from_kind: &HashMap<String, UnitKind>,
+    types: &HashMap<String, Arc<TypeDecl>>,
+    name: &str,
+) -> bool {
+    matches!(imported_from_kind.get(name), Some(UnitKind::Commons)) && types.contains_key(name)
+}
 
 /// The resolver's two collection points, bundled so the reference walk
 /// threads one parameter (v0.25, ADR 0053). `push` forwards to the error

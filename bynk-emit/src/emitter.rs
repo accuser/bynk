@@ -1614,14 +1614,21 @@ fn emit_context_rebrands(
         return;
     };
     // Collect names imported via `uses` (kind == Commons in imported_from_kind).
+    // R4.10/R8.2: reads `bynk_check::resolver::is_uses_commons_type`, the same
+    // predicate `prepare_unit_check_ctx` (`check_pipeline.rs`) computes its own
+    // `uses_commons_type_names` from — one definition, not two independently
+    // maintained copies linked only by a doc-comment promise (see that
+    // function's own doc comment for the real defect this closes, ADR 0226).
     let mut names: Vec<String> = Vec::new();
     for set in refs.by_commons.values() {
         for n in set {
             // v0.20b: only *types* get the context rebrand — a
             // `uses`-imported function is a value and imports plainly.
-            if matches!(ctx.imported_from_kind.get(n), Some(UnitKind::Commons))
-                && commons.types.contains_key(n)
-            {
+            if bynk_check::resolver::is_uses_commons_type(
+                &ctx.imported_from_kind,
+                &commons.types,
+                n,
+            ) {
                 names.push(n.clone());
             }
         }
