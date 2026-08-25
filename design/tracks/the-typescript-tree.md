@@ -804,25 +804,38 @@ every other real `TryCatch` site in this tree prints multi-line) and the
 `void code; void reason; void wasClean;` suppression line (no `TsUnaryOp::Void` exists — this
 function's own only real site). Neither is a new `bynk_ts` variant — both stay one `TsStmt::raw`
 line each, the same "an odd, one-off shape stays opaque text" posture, just for two shapes the
-grounding pass's own read did not surface; the same shows for the `fetch` method plus its own
-`emit_ws_open_fetch_branch` calls (also zero `LowerCtx` involvement — the hardest of the three by
-branch count, not by source-map risk, and the one most likely to need its own further split if it
-proves larger in practice — still not landed here). **Fixture coverage confirmed
-sufficient for the first two slices** — `238_websocket_inbound_workers` (the
-only fixture reaching the full `emit_ws_do_method`/`emit_ws_dispatch_handlers` cluster) and
-`237_websocket_chatroom_workers` (open-only, pins `has_inbound() == false`), no new fixture
-needed for either, confirmed by #1382's own zero-diff-on-first-attempt landing, matching slice 20's
-own prior finding exactly. **For the `fetch` method
-specifically, review of #1379 found the coverage claim does NOT hold**: `238` reaches `fetch` but
-takes only its plain `else` arm (`emit.rs:5119`'s own `if given_deps_expr.is_some() ||
-agent_uses_emit` branch is untested by it); the `given_deps_expr` arm has exactly one real
-fixture repo-wide, `328_agent_given_workers`, which is NOT a WS fixture; the `agent_uses_emit`
-arm (the `__eventsDeps`/`dispatchToEventsFanout` rebuild) has **zero fixture coverage anywhere**
-— a conversion of the `fetch` method could silently drop that whole rebuild block and the full
-corpus would still pass. The `fetch` slice needs either a new fixture exercising
-`agent_uses_emit` or a deliberate, named exclusion for that one branch — the same named-exclusion
-posture item (6) already uses for the history-driver — decided when that slice is actually
-proposed, not assumed here.**; **(6) the factory function plus the history-driver — split by #1377 (Arc C,
+grounding pass's own read did not surface. `emit_ws_open_fetch_branch` plus `emit_agent`'s own
+`fetch` method — landed by #1384 (Arc C, slice 27), the third and final of sub-slice (5)'s own 3
+independent slices, **closing sub-slice (5) entirely**. Same zero-`LowerCtx` posture: `fetch`
+converts to a real `bynk_ts::TsClassMethod`; `emit_ws_open_fetch_branch` converts from a
+`&mut String`-writing function into one returning a real `TsStmt::If` node, composed directly into
+`fetch`'s own body once per WS-open host. **A real, previously-unpredicted algebra gap, beyond the
+grounding pass's own correctly-predicted spread-call-argument shape** (`...args` stays one opaque
+`TsExpr::Ident` call argument, exactly as predicted — no `TsExpr` variant represents a call-argument
+spread, only `TsObjectEntry::Spread` for an object-literal spread already exists): both
+`(this as unknown as Record<string, (...bynkArgs: unknown[]) => unknown>)` and `this.__env as
+unknown as Record<string, unknown>` are a nested `As`-under-`As` chain (`x as A as B`) —
+`TsExpr::As`'s own operand-parenthesization rule always wraps a nested `As`, which is correct for
+the real cases that motivated it but would turn this real, parenless chain into a byte-diff-wrong
+`(x as A) as B`. Rather than special-case "no parens for a nested `As` under an outer `As`" in the
+printer (unclear how many other real sites, if any, want the opposite), both stay one opaque
+`TsExpr::Ident` string each — the same "odd, one-off shape stays opaque text" posture. **Fixture
+coverage confirmed sufficient for the first two slices, and the gap review of #1379 found for the
+third now closed**: `238_websocket_inbound_workers`/`237_websocket_chatroom_workers` needed no new
+fixture (confirmed by #1382's own zero-diff-on-first-attempt landing, matching slice 20's own prior
+finding); for `fetch` specifically, `238` only reached its plain `else` arm, `328_agent_given_workers`
+covered the `given_deps_expr` arm but isn't a WS fixture, and the `agent_uses_emit` arm (the
+`__eventsDeps`/`dispatchToEventsFanout` rebuild) had **zero fixture coverage anywhere** —
+`events_workers_wiring.rs`'s own `Ledger` agent exercises the Rust-side flag when compiled, but
+that test only asserts on `wrangler.toml`/`events_fanout.ts`/`index.ts` substrings, never on
+`handlers.ts` where `fetch` actually lives, so it gave no byte-level proof. Closed with a new
+positive fixture, `1384_agent_emits_workers` — a workers-target agent whose own handler calls
+`Events.emit` directly (no service in between, no `given` capability of its own either, pinning
+the `agent_uses_emit` branch in isolation from `given_deps_expr`) — rather than the
+deliberate-named-exclusion alternative item (6) below uses for the history-driver: unlike that
+one, this branch is real, reachable production code (any agent handler that emits), not
+test-support-only, so a fixture closing the real gap was the right call, not a documented
+skip.**; **(6) the factory function plus the history-driver — split by #1377 (Arc C,
 slice 24), the same "split, don't force one slice to cover more than it needs to" discipline this
 track has used repeatedly (steps (4)/(6)/(8), and step (9)'s own sub-slice (3)): the factory
 function lands fully, no opaque carve-out at all (every shape needed — `TsDecl::Function`,
@@ -831,7 +844,7 @@ own priority still undecided — test-support-only, stripped from deploy builds,
 exercise it, so converting it may not be worth its own slice at all. A deliberate, named exclusion
 remains a legitimate outcome here, to be decided when/if that slice is actually proposed.**
 
-**Revised estimate, corrected twenty-two times now — by review of #1332 (the arithmetic), by #1333's
+**Revised estimate, corrected twenty-three times now — by review of #1332 (the arithmetic), by #1333's
 own step (1) closure (the real per-step sizing), by #1335's own step (2) split, by #1337's
 own step (3) closure, by #1339's own step (2) closure, by #1351's own step (4) split, by #1353's
 own step (4) closure, by #1355's own step (5) closure, by #1357's own step (6) split, by
@@ -843,45 +856,49 @@ not a slice), by #1367's own landing of step (9)'s first sub-slice, by #1369's o
 fourth sub-slice, by #1377's own split-and-partial-landing of step (9)'s sixth sub-slice, by
 sub-slice (5)'s own dedicated grounding pass (post-#1378, no issue number of its own — a research
 pass, not a slice, the same shape as step (9)'s own original grounding pass), by #1380's
-own landing of the first of sub-slice (5)'s own 3 independent slices, and now by #1382's own
-landing of the second.**
+own landing of the first of sub-slice (5)'s own 3 independent slices, by #1382's own
+landing of the second, and now by #1384's own landing of the third, closing sub-slice (5)
+entirely.**
 Steps (2)-(7) are all
 **fully landed** and entirely out of the remaining-work sum. Step (9)'s own remainder is now
-**"1-2"** (down from "2-3" — #1382 lands `emit_ws_dispatch_handlers`, the second of sub-slice (5)'s
-own 3 independent slices, leaving only the `fetch` method; history-driver
-still "0-1", undecided); step (9)'s own TOTAL stays **"9-10"**, unchanged — a pure, floor-neutral-
-and-ceiling-neutral relabeling, the same #1359/#1367/#1369/#1373/#1375 precedent, not a further
-re-estimate (the grounding pass already firmed up sub-slice (5)'s own count at "3"; landing one of
-the three simply moves it from remaining to landed). Summing the list directly: step (8)'s
+**"0-1"** (down from "1-2" — #1384 lands `emit_agent`'s `fetch` method plus
+`emit_ws_open_fetch_branch`, the third and final of sub-slice (5)'s own 3 independent slices;
+only the history-driver, still "0-1", undecided, remains open for step (9)); step (9)'s own TOTAL
+stays **"9-10"**, unchanged — a pure, floor-neutral-
+and-ceiling-neutral relabeling, the same #1359/#1367/#1369/#1373/#1375/#1382 precedent, not a further
+re-estimate (the grounding pass already firmed up sub-slice (5)'s own count at "3"; landing the
+last of the three simply moves it from remaining to landed). Summing the list directly: step (8)'s
 own newly-split remainder (the cross-context lowering cluster, not yet grounded) is "1-2"; step
-(10) is one slice, fixed; step (9)'s remainder is "1-2"; step (11) (the ICU cluster) is "1-2".
+(10) is one slice, fixed; step (9)'s remainder is "0-1"; step (11) (the ICU cluster) is "1-2".
 Floor:
-1 + 1 + 1 + 1 = **4**; ceiling: 2 + 1 + 2 + 2 = **7** — `emit.rs`'s own remaining tree is now
-**roughly 4-7 slices**, down from 5-8. Total
-remaining from here: `emit.rs` (4-7) + the `tests_emit.rs` pair (2) — #1331/#1332, slice 8 (#1333),
+1 + 0 + 1 + 1 = **3**; ceiling: 2 + 1 + 1 + 2 = **6** — `emit.rs`'s own remaining tree is now
+**roughly 3-6 slices**, down from 4-7. Total
+remaining from here: `emit.rs` (3-6) + the `tests_emit.rs` pair (2) — #1331/#1332, slice 8 (#1333),
 slice 9 (#1335), slice 10 (#1337), slice 11 (#1339), slice 12 (#1351), slice 13 (#1353), slice 14
 (#1355), slice 15 (#1357), slice 16 (#1359), slice 17 (#1361), slice 18 (#1364), slice 19 (#1367),
 slice 20 (#1369), slice 21 (#1371), slice 22 (#1373), slice 23 (#1375), slice 24 (#1377), slice
-25 (#1380), and slice 26 (#1382) are
-all already landed, no longer "remaining" — **roughly 6-9 more slices from here**, down from 7-10.
-Arc C's own real total (the **26** slices already landed — slice 1, the schedule-correction, slices
-3/4/5/6/7/8/9/10/11/12/13/14/15/16/17/18/19/20/21/22/23/24/25/26 — plus the 6-9 above): **roughly
+25 (#1380), slice 26 (#1382), and slice 27 (#1384) are
+all already landed, no longer "remaining" — **roughly 5-8 more slices from here**, down from 6-9.
+Arc C's own real total (the **27** slices already landed — slice 1, the schedule-correction, slices
+3/4/5/6/7/8/9/10/11/12/13/14/15/16/17/18/19/20/21/22/23/24/25/26/27 — plus the 5-8 above): **roughly
 32-35** — unchanged from the prior update, honestly, the same reason every "landing within an
 already-set range" correction in this section has left the total unchanged: step (9)'s own total
-(9-10) already counted `emit_ws_dispatch_handlers` as one of sub-slice (5)'s own 3 items; #1382
-landing it simply moves one slice from "remaining" to "landed" without touching the sum. As #1382's
-own implementation confirmed directly (not just the grounding pass's own prediction): zero-diff on
-the first attempt, no new `bynk_ts` variant needed — though two shapes (the single-line
-`try`/`catch` lines, the `void`-suppression line) needed the existing opaque-`Raw` escape hatch for
-reasons the grounding pass's own account didn't specifically name, a real, if minor, correction to
-that read, not a wrong one (see the sub-slice (5) narrative above for the full account). Five
+(9-10) already counted `fetch`/`emit_ws_open_fetch_branch` as the last of sub-slice (5)'s own 3
+items; #1384 landing it simply moves one slice from "remaining" to "landed" without touching the
+sum. As #1384's own implementation confirmed directly (not just the grounding pass's own
+prediction): zero-diff on the first attempt, no new `bynk_ts` variant needed — though the
+grounding pass's own correctly-predicted spread-call-argument gap turned out to be joined by a
+SECOND, previously-unpredicted one (the nested-`As`-under-`As` chain, see the sub-slice (5)
+narrative above for the full account), the same "a real correction, not a wrong prediction"
+pattern #1382 already showed for this cluster. Five
 distinct kinds of correction have
-now occurred across twelve consecutive updates — a narrowing (#1361, a range resolved to its own
+now occurred across thirteen consecutive updates — a narrowing (#1361, a range resolved to its own
 floor), a split-driven widening (#1364, a silently-absorbed remainder surfaced at the STEP level), a
 grounding-driven widening (the pass before #1367, an unread range turning out larger than guessed
 on both ends, AND the pass before #1380, the same kind recurring a second time at a deeper
 sub-level), a
 flat relabeling (#1367, then #1369, then #1373, then #1375, then #1380 again, then #1382 again,
+then #1384 again,
 landing inside an
 already-set range with no total change), and a split-driven widening one level deeper (#1371's own
 sub-slice-3 split, and #1377's own sub-slice-6 split, a genuinely
@@ -889,10 +906,10 @@ uncounted floor surfacing both times, in two different sub-slices)
 — each is a different failure mode or non-failure of estimation, not the same mistake repeating,
 and each got the same "state the real reason plainly" treatment rather than a flat "corrected
 again." `emit_agent`'s own
-sub-decomposition (step 9) remains the single largest source of variance in this range, now with 1
-independently-landable slice for sub-slice (5) (the `fetch` method)
-plus the history-driver's own still-undecided fate
-left ahead — each individually LOW-risk, confirmed by direct read, not a guess; the
+sub-decomposition (step 9) remains the single largest source of variance in this range — sub-slice
+(5) is now fully landed (all 3 independent slices), leaving only the history-driver's own still-
+undecided fate open for step (9) — each individually LOW-risk, confirmed by direct read, not a
+guess; the
 cross-context lowering
 cluster (step (8)'s
 own remainder) and the ICU cluster (step 11) are smaller, still-ungrounded secondary sources.
@@ -924,6 +941,7 @@ own remainder) and the ICU cluster (step 11) are smaller, still-ungrounded secon
 | **Arc C, slice 24 — `emit_agent`'s factory function** (#1377, landed) | Splits step (9)'s own sixth sub-slice ("the factory function plus the history-driver," per the grounding pass, #1366) rather than treating it as one optional unit — the same "split, don't force one slice to cover more than it needs to" discipline this track has used repeatedly (steps (4)/(6)/(8), and step (9)'s own sub-slice (3)): the factory function (`export function {factory}(key: {KeyTy}, env?: { {bind}?: DurableObjectNamespace }): {Agent} { return makeAgent({registry}, env?.{bind}, key, (state) => new {Agent}(state)); }`) converts **fully — no opaque carve-out at all**, the third slice in this whole track to close that cleanly (after #1364/#1369). Every shape needed — `TsDecl::Function`, `TsExpr::OptionalMember` (the `env?.{bind}` access), `TsExpr::Arrow` (the `(state) => new {Agent}(state)` factory closure), `TsExpr::New` — already existed from prior slices; no new `bynk_ts` algebra gap. **No source-map work needed or done**: this function never lowers an expression through `LowerCtx` — every value is a field/param name, a type reference, or a literal, the same posture #1364/#1371 had. The history-driver, sub-slice (6)'s other half, stays deferred, its own priority still genuinely undecided (test-support-only, stripped from deploy builds, only 2 fixtures exercise it — a deliberate exclusion remains a legitimate outcome, not assumed here). **A real correction to the original estimate, honestly recorded**: sub-slice (6) had been guessed as "0-1" (possibly zero real slices, if the factory folded elsewhere) — this slice confirms the factory alone needed its own real slice regardless, a genuine floor correction (0 → 1) for that item, the same "a split reveals a previously-uncounted mandatory floor" shape #1371's own sub-slice-3 split already established, applied to a different sub-slice — see §6's own "Revised estimate" paragraph above for the resulting total widening. **Also names, while scoping this slice, that sub-slice (5) (the WS-hosted DO methods/`fetch` dispatcher/`emit_ws_dispatch_handlers` cluster) is genuinely harder than "single-level merges throughout" suggested** — a large, workers-mode-specific dispatch method plus three external helper functions with their own significant bodies, needing its own dedicated grounding pass before a first slice is proposed against it, not touched by this slice. `emit_agent` keeps its exact existing signature; only the factory function converts here. `verbatim_sites` unchanged (5). `ts_writes` drops by **3** (1184 → 1181), verified via a fresh `cargo xtask greenfield-status --apply`. `ast_importers`/`ts_any` unaffected. Zero diff: every fixture with an `agent` declaration (all agent fixtures reach the factory function) and `tsc_verify`'s full strict-`tsc` corpus pass unchanged — first-attempt zero diff, no iteration needed. | R7.1 | #1331, #1364, #1369, #1371, #1366 |
 | **Arc C, slice 25 — `emit_ws_do_method`** (#1380, landed) | The first of step (9) sub-slice (5)'s own 3 independent slices per the dedicated grounding pass (post-#1378) — the WS-hosted `on open`/`on message`/`on close` DO methods, up to 3 per host, called from `emit_agent`'s own host loop. Converts to a real `bynk_ts::TsClassMethod` fragment, printed through `print_class_method` — the identical shape `emit_provider`'s own already-landed ops (#1359) established: params/return-type real, the whole body one opaque `TsStmt::Raw`, a single-level offset (no nesting — this method wraps no events-IIFE, no implicit-commit closure, unlike `emit_service`/`emit_agent`'s own handler loop). Confirmed, by implementation, as the least risky of the three exactly as the grounding pass predicted: zero-diff on the first attempt, no new `bynk_ts` algebra gap. `connection: Connection<T>`'s own generic type stays one opaque `TsType::named` string, the same "an odd, one-off shape stays opaque text" precedent `this.state.storage.get<T>` already set twice (#1371/#1373) — `Connection`'s own type argument is this function's own real, single grounded need, not a general case for a new `TsType` type-argument mechanism. `doc: None`, confirmed rather than assumed: this function never emitted a doc comment (no `doc` parameter, no local, no `emit_doc_block` call), so the conversion correctly did NOT mirror the sibling handler-method conversion's own `doc: h.documentation.clone()` idiom — the exact trap review of #1379 flagged in advance, avoided here by design, not luck. `emit_agent` and the class scaffold stay exactly as they are; only `emit_ws_do_method` converts here. `verbatim_sites` unchanged (5). `ts_writes` drops by **3** (1181 → 1178), verified via a fresh `cargo xtask greenfield-status --apply` — review of #1381 later found `emit_provider`'s/`emit_agent`'s own sibling merge sites shared one copy-pasted print-then-guarded-merge block; extracting it into one shared helper (`emit_class_method_and_merge_source_map`) dropped `ts_writes` a further 2 (1178 → 1176), a dedup correction not attributable to this slice's own conversion. `ast_importers`/`ts_any` unaffected. Zero diff: `238_websocket_inbound_workers` (the only fixture reaching the full open/message/close cluster) and `237_websocket_chatroom_workers` (open-only) and `tsc_verify`'s full strict-`tsc` corpus pass unchanged. | R7.1 | #1331, #1359, #1371, #1373, #1378, #1379 |
 | **Arc C, slice 26 — `emit_ws_dispatch_handlers`** (#1382, landed) | The second of step (9) sub-slice (5)'s own 3 independent slices per the dedicated grounding pass (post-#1378) — the hibernatable-WebSocket dispatch handlers Cloudflare invokes on an accepted socket (`webSocketMessage`/`webSocketClose`), called from `emit_agent`'s own host loop; `ws_attachment_deps_arg` rides along (its only call site is inside this function). Unlike every prior Arc C slice, this function lowers no `.bynk` body at all — no `LowerCtx`, no `body_smb`, no `source_map` parameter — so there is no merge arithmetic here, only real `TsStmt`/`TsExpr`/`TsType` construction: both methods' own class-method/statement SHAPE converts **fully**, no opaque carve-out at that level, the same "pure boilerplate converts fully" precedent `loadState` (#1371) established, not the "one opaque `Raw` body, real header only" shape most prior slices needed — **review of #1383, finding 2: this is narrower than "converts fully" reads on its own** — several LEAF expressions still carry opaque text (`deps_arg`/each `call_args` entry, the decode call, the generic `WorkersConnection<T>` constructor callee, the structural `ws`/`att` parameter types), routed through `TsExpr::Ident`/`TsType::named` rather than `writeln!`, the same established escape hatch `emit.rs:388`/`:4627`/`:4761` and slice 25's own `Connection<T>` carve-out already use — not a new carve-out, but real opaque text nonetheless, worth naming precisely rather than implying zero. `Const`/`Let`/`If`+`InlineBlock`/`As`/`New`/`Await`+`Call`, plus the real `TsType::Union` (already-landed #1315 — a genuine fit for `string \| ArrayBuffer` and `{att_ty} \| null`, not an escape hatch) cover every real statement except two shapes: the two `try { ... } catch { ... }` lines (`TsStmtKind::TryCatch`'s own renderer always prints multi-line — no single-line form exists, and every other real `TryCatch` site in this tree IS multi-line, so extending it for one function's own single-line shape was rejected in favour of the established "odd, one-off shape stays opaque text" posture) and the `void code; void reason; void wasClean;` suppression line (no `TsUnaryOp::Void` exists — this function's own only real site) — both stay one `TsStmt::raw` line each. **A real, previously-unpredicted correction to the grounding pass's own account**: it predicted two opaque-escape-hatch shapes for this whole 3-slice cluster (a spread call argument, `new WorkersConnection<T>(...)`) — the spread argument belongs to the still-unlanded `fetch` method, not this slice, while this slice needed the two DIFFERENT shapes above the grounding pass never named; neither is a new `bynk_ts` variant. `emit_agent` and the class scaffold stay exactly as they are; only `emit_ws_dispatch_handlers` converts here. `verbatim_sites` unchanged (5). `ts_writes` drops by **14** (1176 → 1162), verified via a fresh `cargo xtask greenfield-status --apply` — the largest single-slice drop since #1364, matching this function's own unusually complete conversion (both methods entirely `writeln!`-free). `ast_importers`/`ts_any` unaffected. Zero diff, first attempt, no iteration needed: `238_websocket_inbound_workers` (the only fixture reaching both `webSocketMessage`/`webSocketClose`), `237_websocket_chatroom_workers`, and `tsc_verify`'s full strict-`tsc` corpus pass unchanged. **Review of #1383, finding 1**: those two fixtures alone left the no-binder (`deps_arg == "{}"`), single-handler (message-only/close-only), and route-param-count branches unpinned — none a regression (the pre-conversion code had the identical gap), but this slice is where the codegen got rebuilt from scratch. Added `1382_ws_dispatch_no_binder_zero_route` — a bare `by Participant` (no binder) host with `on message` and no `on close`, the message handler taking zero extra route params — pinning `deps_arg == "{}"`, the message-only shape, and the zero-route-param `call_args` path in one cheap fixture; the close-only shape and a multi-route-param count stay unpinned, a smaller residual gap, deliberately not chased further here. | R7.1 | #1331, #1315, #1364, #1371, #1378, #1380 |
+| **Arc C, slice 27 — `emit_agent`'s `fetch` method + `emit_ws_open_fetch_branch`** (#1384, landed) | The third and final of step (9) sub-slice (5)'s own 3 independent slices per the dedicated grounding pass (post-#1378) — **closing sub-slice (5) entirely**. Same zero-`LowerCtx` posture #1382 established for this cluster: no `.bynk` body lowering, no `source_map` parameter, no merge arithmetic. `emit_ws_open_fetch_branch` converts from a `&mut String`-writing function into `ws_open_fetch_branch_stmt`, returning a real `TsStmt::If` node (a `Block` then-branch) composed directly into `fetch`'s own body once per WS-open host; `fetch` itself converts to a real `bynk_ts::TsClassMethod`, printed through `print_class_method`. **A real, previously-unpredicted algebra gap, beyond the grounding pass's own correctly-predicted one**: `...args` stays one opaque `TsExpr::Ident` call argument exactly as the grounding pass predicted (no `TsExpr` variant represents a call-argument spread — only `TsObjectEntry::Spread`, for an object-literal spread, already exists). Beyond that, real implementation found `(this as unknown as Record<string, (...bynkArgs: unknown[]) => unknown>)` and `this.__env as unknown as Record<string, unknown>` are both a nested `As`-under-`As` chain (`x as A as B`) — `TsExpr::As`'s own operand-parenthesization rule (`needs_parens_as_operand`) always wraps a nested `As`, correct for the real cases that motivated it but would turn this real, parenless chain into a byte-diff-wrong `(x as A) as B`; extending the printer to special-case "no parens for a nested `As` under an outer `As`" was rejected as broader than this one real site needs (unclear how many other real sites, if any, want the opposite) — both stay one opaque `TsExpr::Ident` string each, the same "odd, one-off shape stays opaque text" posture #1382 already used twice. `Const`/`Let`/`If`+`Block`/`As`/`New`/`Await`+`Call`/`Index`/`Arrow`, plus the real `TsObjectEntry::Spread` (for the rebuilt-deps object) cover every real statement beyond those two leaves — no `Raw` statement anywhere in either function, a fuller conversion than #1382's own two `TsStmt::raw` lines needed. **Fixture coverage**: `238`/`237` needed no new fixture (unchanged from #1382's own finding); `328_agent_given_workers` already covers the `given_deps_expr` arm; the `agent_uses_emit` arm (review of #1379's own finding) had zero fixture coverage anywhere — closed with a new fixture, `1384_agent_emits_workers` (a workers-target agent whose own handler calls `Events.emit` directly, no service and no `given` capability of its own, pinning `agent_uses_emit` in isolation from `given_deps_expr`) rather than a deliberate exclusion, since this branch is real, reachable production code, not test-support-only. `emit_agent`'s own class scaffold and constructor stay exactly as they are (the `needs_env_ctor`-gated constructor is a separate, still-unconverted remainder, not part of this cluster's own named 5 sites); only `fetch`/`emit_ws_open_fetch_branch` convert here. `verbatim_sites` unchanged (5). `ts_writes` drops by **20** (1162 → 1142), verified via a fresh `cargo xtask greenfield-status --apply`. `ast_importers`/`ts_any` unaffected. Zero diff against the three existing fixtures (`238_websocket_inbound_workers`, `237_websocket_chatroom_workers`, `328_agent_given_workers`) and `tsc_verify`'s full strict-`tsc` corpus, both first attempt. **Review of #1385, finding 1: the new `agent_uses_emit` fixture was NOT actually zero-diff — it just looked that way**, because the fixture itself was blessed from the post-conversion compiler, so it pinned whatever this slice emitted rather than proving the old bytes were preserved. The real bug it hid: `__eventsDeps`'s own `events` parameter used `TsType::array(TsType::named(EVENTS_WIRE_EVENT_TS_TYPE))`, which prints through the POSTFIX `T[]` form — the pre-conversion text used the generic `Array<T>` spelling (matching the two OTHER real call sites building this identical `__eventsDispatch` arrow, `workers.rs:546`/`project.rs:3399`, both `TsType::named_with_args("Array", ...)`), so the same wire type was spelled two different ways in one generated file. `tsc` treats them identically, so nothing miscompiled and no other check caught it — the fixture this slice added to pin the untested branch pinned the WRONG bytes for that one line, exactly the failure mode a reviewer, not a test, was needed to catch. Fixed by switching to `TsType::named_with_args("Array", ...)`, re-blessed (the fixture's own `events` parameter line is the only byte that changed). A real, if narrow, correction — worth recording as a genuine finding, not folded silently into "zero diff, first attempt." | R7.1 | #1331, #1364, #1371, #1378, #1380, #1382, #1379 |
 
 **Arc D — settling (~8 slices)**
 
