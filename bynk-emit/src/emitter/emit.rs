@@ -1996,6 +1996,79 @@ capability Clock {
     }
 }
 
+/// The text held by a `TsClassMethod`'s sole `Raw` body statement, and —
+/// when `body_smb` was built against only a sub-slice of it — where that
+/// sub-slice starts.
+///
+/// `blob` is the exact `Raw` text. For the single-level shape (#1359's
+/// provider ops, #1380's WS DO methods, [`RawBody::flat`]) `inner` IS
+/// `blob` and the offset is 0; for the two-level shape (#1361's
+/// events-IIFE wrapping, reused by #1375's agent handlers,
+/// [`RawBody::nested`]) `inner` is the further-nested `body_out` captured
+/// inside `blob`, and `inner_offset_in_blob` is its start within `blob`,
+/// tracked by construction rather than searched for.
+struct RawBody<'a> {
+    blob: &'a str,
+    inner: &'a str,
+    inner_offset_in_blob: usize,
+}
+
+impl<'a> RawBody<'a> {
+    fn flat(text: &'a str) -> Self {
+        RawBody {
+            blob: text,
+            inner: text,
+            inner_offset_in_blob: 0,
+        }
+    }
+
+    fn nested(blob: &'a str, inner: &'a str, inner_offset_in_blob: usize) -> Self {
+        RawBody {
+            blob,
+            inner,
+            inner_offset_in_blob,
+        }
+    }
+}
+
+/// Prints `method` (always at `class_depth = 0` — every call site here
+/// prints a whole class body) into `out`, then — if `source_map` is
+/// `Some` — merges `body_smb`'s own per-statement mappings back into the
+/// module map.
+///
+/// Degrades to no merge (no mapping for this method) rather than risk a
+/// confidently WRONG one if any assumption is ever violated — the same
+/// "suppress rather than mis-record" discipline #1360 finding 3
+/// established, now shared by every `print_class_method` merge site
+/// instead of copied at each one (review of #1381, finding 2).
+fn emit_class_method_and_merge_source_map(
+    out: &mut String,
+    method: &bynk_ts::TsClassMethod,
+    class_depth: usize,
+    body: RawBody<'_>,
+    body_smb: &RefCell<SourceMapBuilder>,
+    source_map: Option<&RefCell<SourceMapBuilder>>,
+) {
+    let printed = bynk_ts::print_class_method(method, class_depth);
+    out.push_str(&printed);
+    if let Some(module_smb) = source_map {
+        let trailing = format!("{}}}\n", "  ".repeat(class_depth + 1));
+        if let Some(blob_offset_in_printed) =
+            printed.len().checked_sub(body.blob.len() + trailing.len())
+            && printed
+                .get(blob_offset_in_printed..)
+                .is_some_and(|tail| tail.starts_with(body.blob))
+            && printed.ends_with(&trailing)
+        {
+            let base =
+                out.len() - printed.len() + blob_offset_in_printed + body.inner_offset_in_blob;
+            module_smb
+                .borrow_mut()
+                .merge(&body_smb.borrow(), body.inner, out, base, 0);
+        }
+    }
+}
+
 pub(crate) fn emit_provider(
     out: &mut String,
     p: &ProviderDecl,
@@ -2150,35 +2223,14 @@ pub(crate) fn emit_provider(
             doc: None,
             body: vec![bynk_ts::TsStmt::raw(body_text.clone(), None)],
         };
-        let printed = bynk_ts::print_class_method(&method, class_depth);
-        out.push_str(&printed);
-        if let Some(module_smb) = source_map {
-            // `Raw` splices verbatim and `print_class_method`'s own closing
-            // brace sits at `indent(class_depth + 1)` — see its own doc for
-            // why the offset below is exact arithmetic, not a text search.
-            // Review of #1360, finding 3: this was a `debug_assert!`
-            // before, so a release build whose assumptions ever drifted
-            // (a printer change, a depth other than 0) would silently
-            // corrupt the map instead of just losing one method's own
-            // stepping — checked for real here, degrading to no merge (no
-            // mapping for this method) rather than risk a confidently
-            // WRONG one, the same "suppress rather than mis-record"
-            // discipline `LowerCtx::without_source_map`'s own doc already
-            // applies for an analogous local-buffer hazard.
-            let trailing = format!("{}}}\n", "  ".repeat(class_depth + 1));
-            if let Some(body_offset_in_printed) =
-                printed.len().checked_sub(body_text.len() + trailing.len())
-                && printed
-                    .get(body_offset_in_printed..)
-                    .is_some_and(|tail| tail.starts_with(&body_text))
-                && printed.ends_with(&trailing)
-            {
-                let base = out.len() - printed.len() + body_offset_in_printed;
-                module_smb
-                    .borrow_mut()
-                    .merge(&body_smb.borrow(), &body_text, out, base, 0);
-            }
-        }
+        emit_class_method_and_merge_source_map(
+            out,
+            &method,
+            class_depth,
+            RawBody::flat(&body_text),
+            &body_smb,
+            source_map,
+        );
     }
     writeln!(out, "}}").unwrap();
     writeln!(out).unwrap();
@@ -5011,35 +5063,14 @@ pub(crate) fn emit_agent(
             doc: h.documentation.clone(),
             body: vec![bynk_ts::TsStmt::raw(raw_body.clone(), None)],
         };
-        let printed = bynk_ts::print_class_method(&handler_method, class_depth);
-        out.push_str(&printed);
-        if let Some(module) = source_map {
-            // Two-level offset: where `raw_body` starts within `printed`
-            // (fragment-level, the same #1352/#1359 arithmetic), plus where
-            // `body_out` starts within `raw_body` (blob-internal, known by
-            // construction above) — the same shape #1361's own identical
-            // computation established, `print_class_method`'s own trailing
-            // `"  }\n"` (no comma, unlike an object entry) in place of
-            // `print_object_entry`'s own `"  },\n"`. Degrades to no merge
-            // (no mapping for this handler) rather than risk a confidently
-            // WRONG one if either assumption is ever violated, the same
-            // "suppress rather than mis-record" discipline #1360 finding 3
-            // established.
-            let trailing = format!("{}}}\n", "  ".repeat(class_depth + 1));
-            if let Some(raw_body_offset_in_printed) =
-                printed.len().checked_sub(raw_body.len() + trailing.len())
-                && printed
-                    .get(raw_body_offset_in_printed..)
-                    .is_some_and(|tail| tail.starts_with(&raw_body))
-                && printed.ends_with(&trailing)
-            {
-                let base =
-                    out.len() - printed.len() + raw_body_offset_in_printed + body_out_offset_in_raw;
-                module
-                    .borrow_mut()
-                    .merge(&body_smb.borrow(), &body_out, out, base, 0);
-            }
-        }
+        emit_class_method_and_merge_source_map(
+            out,
+            &handler_method,
+            class_depth,
+            RawBody::nested(&raw_body, &body_out, body_out_offset_in_raw),
+            &body_smb,
+            source_map,
+        );
         writeln!(out).unwrap();
     }
     // v0.104 (real-time track slice 3b): the `from websocket` `on open` handlers
@@ -5648,29 +5679,14 @@ fn emit_ws_do_method(
         body: vec![bynk_ts::TsStmt::raw(body_out.clone(), None)],
     };
     let class_depth = 0;
-    let printed = bynk_ts::print_class_method(&method_entry, class_depth);
-    out.push_str(&printed);
-    if let Some(module) = source_map {
-        // Single-level offset — no nesting, the identical arithmetic
-        // #1359's own per-op methods already established: degrades to no
-        // merge (no mapping for this method) rather than risk a
-        // confidently WRONG one if either assumption is ever violated,
-        // the same "suppress rather than mis-record" discipline #1360
-        // finding 3 established.
-        let trailing = format!("{}}}\n", "  ".repeat(class_depth + 1));
-        if let Some(body_offset_in_printed) =
-            printed.len().checked_sub(body_out.len() + trailing.len())
-            && printed
-                .get(body_offset_in_printed..)
-                .is_some_and(|tail| tail.starts_with(&body_out))
-            && printed.ends_with(&trailing)
-        {
-            let base = out.len() - printed.len() + body_offset_in_printed;
-            module
-                .borrow_mut()
-                .merge(&body_smb.borrow(), &body_out, out, base, 0);
-        }
-    }
+    emit_class_method_and_merge_source_map(
+        out,
+        &method_entry,
+        class_depth,
+        RawBody::flat(&body_out),
+        &body_smb,
+        source_map,
+    );
     writeln!(out).unwrap();
 }
 

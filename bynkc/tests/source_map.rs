@@ -536,6 +536,131 @@ fn contract_guarded_body_keeps_its_own_statement_lines() {
     );
 }
 
+/// Like [`compile_reps_context`], but compiled for the Workers target (only
+/// mode `emit_ws_do_method`'s call site is reachable from at all — bundle
+/// mode never hosts a `from websocket` `on open`'s connection in a DO), and
+/// returning the workers-mode `handlers.ts` doc instead of a bundle's own
+/// `<name>.ts`.
+fn compile_chat_workers(source: &str) -> (String, String) {
+    static COUNTER: AtomicU32 = AtomicU32::new(0);
+    let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!(
+        "bynk_srcmap_ws_context_{}_{unique}",
+        std::process::id()
+    ));
+    let src = dir.join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(src.join("chat.bynk"), source).unwrap();
+
+    let out = bynkc::compile_project(
+        &bynk_testkit::compile_options_single(src.clone()).target(bynkc::BuildTarget::Workers),
+    )
+    .map_err(bynkc::ProjectFailure::flatten)
+    .unwrap_or_else(|e| panic!("compile failed: {e:?}"));
+
+    let main_path = out
+        .artefacts
+        .docs
+        .keys()
+        .find(|p| {
+            p.to_string_lossy()
+                .replace('\\', "/")
+                .ends_with("handlers.ts")
+        })
+        .unwrap_or_else(|| panic!("no handlers.ts in output"))
+        .clone();
+    let ts = out.artefacts.docs[&main_path].text();
+    let map = out
+        .artefacts
+        .docs
+        .get(&bynkc::sibling_path(&main_path, "map"))
+        .expect("handlers.ts carries a source map")
+        .text();
+    let _ = std::fs::remove_dir_all(&dir);
+    (ts, map)
+}
+
+const WS_DO_FIXTURE: &str = "context chat
+
+type RoomId = opaque String
+type UserId = opaque String
+type ServerFrame = { text: String }
+type ClientFrame = { text: String }
+
+actor Participant { auth = Bearer(secret = \"AUTH_SECRET\"), identity = UserId }
+
+service ChatGateway from websocket(in: ClientFrame, out: ServerFrame) {
+  on open (roomId: RoomId) -> Effect[()] by user: Participant {
+    let _ <- connection.send(ServerFrame { text: \"welcome\" })
+    let _ <- Room(roomId).join(user.identity, connection)
+    ()
+  }
+
+  on message (roomId: RoomId, frame: ClientFrame) -> Effect[()] by user: Participant {
+    let _ <- Room(roomId).post(user.identity, frame.text)
+    ()
+  }
+}
+
+agent Room {
+  key id: RoomId
+  store members: Set[UserId]
+  store conns: Map[UserId, Connection[ServerFrame]]
+
+  on call join(u: UserId, conn: Connection[ServerFrame]) -> Effect[()] {
+    let _ <- members.add(u)
+    let _ <- conns.put(u, conn)
+    ()
+  }
+
+  on call post(sender: UserId, text: String) -> Effect[()] {
+    let _ <- conns.parTraverse((c: Connection[ServerFrame]) => c.send(ServerFrame { text: text }))
+    ()
+  }
+}
+";
+
+#[test]
+fn ws_do_method_body_keeps_its_own_statement_lines() {
+    // #1380/#1381 review finding 1: `emit_ws_do_method` (Arc C slice 25) is
+    // the first `print_class_method` merge site in `emit.rs` to convert
+    // without a dedicated source-map test — every existing check
+    // (`238_websocket_inbound_workers`'s own zero-diff fixture, `tsc_verify`,
+    // `cargo xtask ci`) only observes the emitted TEXT, which this slice
+    // deliberately left byte-identical, so a regression in the merge
+    // arithmetic itself (the `if let` guard simply not firing) would be
+    // silent: zero diff, tsc green, CI green, every breakpoint inside a
+    // hosted `on message` body mapping nowhere. `open`'s own body (two
+    // statements) exercises the DO's `__wsOpen_*` method; `message` (one
+    // statement, review of #1362/#1376's own "exercise a second real
+    // fixture shape, not the same branch twice" precedent) exercises
+    // `__wsMessage_*` — both go through the identical single-level shape
+    // `emit_provider`'s own #1359 ops already established, now shared via
+    // `emit_class_method_and_merge_source_map` (review finding 2's own
+    // extraction).
+    let (ts, map) = compile_chat_workers(WS_DO_FIXTURE);
+    let lines = decode(extract_field(&map, "mappings"));
+    let at = |g: usize| lines[g].unwrap_or_else(|| panic!("gen line {g} unmapped\n{ts}"));
+
+    // Source (0-based): line 11 = `connection.send(...)`, line 12 =
+    // `Room(roomId).join(...)`, line 17 = `Room(roomId).post(...)`.
+    assert_eq!(
+        at(gen_line_of(&ts, "\"welcome\"")),
+        11,
+        "the hosted `on open`'s own first statement keeps its own line"
+    );
+    assert_eq!(
+        at(gen_line_of(&ts, "this.join(")),
+        12,
+        "the hosted `on open`'s own second statement keeps its own line"
+    );
+    assert_eq!(
+        at(gen_line_of(&ts, "this.post(")),
+        17,
+        "the hosted `on message`'s own statement keeps its own line"
+    );
+}
+
 const AGENT_FIXTURE: &str = "context reps {
   consumes bynk { Events }
 
