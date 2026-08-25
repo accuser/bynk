@@ -28,23 +28,86 @@ use bynk_syntax::span::Span;
 
 /// Is `name` a type imported via `uses` of a *commons* specifically — the
 /// exact predicate [`ResolvedCommons::is_uses_commons_type`] caches as
-/// `uses_commons_type_names`, and `bynk-emit`'s own `emit_context_rebrands`
-/// (`bynk-emit/src/emitter.rs`) needs to decide which names it rebrands.
+/// `uses_commons_type_names`, and `bynk-emit` needs at *two* real call
+/// sites that must never disagree: `emit_context_rebrands`'s own two steps,
+/// "alias the import" and "rebrand the type" (its own doc comment, step 1
+/// "Done in imports", step 2 the rebrand itself, both in
+/// `bynk-emit/src/emitter.rs`) — an import narrower than the rebrand leaves
+/// an undefined name in the generated module; a rebrand narrower than the
+/// import leaves an alias imported and never used.
 ///
 /// R4.10/R8.2 (`design/bynk-greenfield-compiler.md`): before this function
-/// existed, `prepare_unit_check_ctx` (`check_pipeline.rs`) and
-/// `emit_context_rebrands` each independently inlined this same
-/// two-condition check, linked only by a doc comment promising they
+/// existed, `prepare_unit_check_ctx` (`check_pipeline.rs`) and *both*
+/// `bynk-emit` call sites above each independently inlined this same
+/// two-condition check, linked only by a doc comment promising they all
 /// matched exactly — a real risk ADR 0226 names (#655: "a single named
 /// binder took the entire test run down, pointing at generated code the
-/// author never wrote"). One definition, both callers read it — an edit to
-/// either condition can no longer update only one side.
-pub fn is_uses_commons_type(
+/// author never wrote"). One definition, every caller reads it — an edit to
+/// either condition can no longer silently update only one side.
+pub fn compute_is_uses_commons_type(
     imported_from_kind: &HashMap<String, UnitKind>,
     types: &HashMap<String, Arc<TypeDecl>>,
     name: &str,
 ) -> bool {
     matches!(imported_from_kind.get(name), Some(UnitKind::Commons)) && types.contains_key(name)
+}
+
+#[cfg(test)]
+mod compute_is_uses_commons_type_tests {
+    use super::compute_is_uses_commons_type;
+    use bynk_project::UnitKind;
+    use bynk_syntax::ast::{Ident, RecordBody, Trivia, TypeBody, TypeDecl};
+    use bynk_syntax::span::Span;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    fn bare_record_type(name: &str) -> Arc<TypeDecl> {
+        Arc::new(TypeDecl {
+            type_params: Vec::new(),
+            name: Ident {
+                name: name.to_string(),
+                span: Span::default(),
+            },
+            body: TypeBody::Record(RecordBody {
+                fields: Vec::new(),
+                span: Span::default(),
+            }),
+            documentation: None,
+            span: Span::default(),
+            trivia: Trivia::default(),
+        })
+    }
+
+    /// The four combinations the real callers' own doc comments describe:
+    /// a `uses`-imported commons type (the only `true` case), a
+    /// `uses`-imported commons *function* (v0.20b's own carve-out — not
+    /// rebranded, a value not a type), a name imported from a non-commons
+    /// unit kind (a consumed context, say), and a name absent from
+    /// `imported_from_kind` entirely (a local declaration).
+    #[test]
+    fn matches_a_commons_imported_type_only() {
+        let mut kinds = HashMap::new();
+        kinds.insert("Money".to_string(), UnitKind::Commons);
+        kinds.insert("traverse".to_string(), UnitKind::Commons);
+        kinds.insert("Order".to_string(), UnitKind::Context);
+        let mut types = HashMap::new();
+        types.insert("Money".to_string(), bare_record_type("Money"));
+        types.insert("Order".to_string(), bare_record_type("Order"));
+
+        assert!(compute_is_uses_commons_type(&kinds, &types, "Money"));
+        assert!(
+            !compute_is_uses_commons_type(&kinds, &types, "traverse"),
+            "a uses-imported commons function is a value, not a type — v0.20b"
+        );
+        assert!(
+            !compute_is_uses_commons_type(&kinds, &types, "Order"),
+            "imported from a context, not a commons"
+        );
+        assert!(
+            !compute_is_uses_commons_type(&kinds, &types, "Local"),
+            "absent from imported_from_kind entirely — a local declaration"
+        );
+    }
 }
 
 /// The resolver's two collection points, bundled so the reference walk
@@ -112,12 +175,16 @@ pub struct ResolvedCommons {
     pub is_context: bool,
     /// Names of types brought into scope via `uses` of a *commons*
     /// specifically (as opposed to a local declaration, or a type surfaced
-    /// via `consumes`). Mirrors the exact predicate `emit_context_rebrands`
-    /// (`bynk-emit/src/emitter.rs`) uses to decide which names it rebrands:
-    /// `imported_from_kind.get(name) == Some(UnitKind::Commons)`. A type
-    /// surfaced via `consumes` (a capability signature from an adapter or
-    /// another context) is *not* rebranded and must not be gated by #907's
-    /// check — only this narrower set may be. Private for the same reason as
+    /// via `consumes`) — every name [`compute_is_uses_commons_type`] accepts
+    /// against this unit's own `imported_from_kind`/`combined_types`, the
+    /// single shared definition both `bynk-emit`'s `emit_context_rebrands`
+    /// (rebrand + its own import-aliasing step) and this crate's own
+    /// `prepare_unit_check_ctx` (which populates this set) read (R4.10/R8.2,
+    /// closing what used to be two independently hand-maintained copies
+    /// linked only by a doc comment promising they matched). A type surfaced
+    /// via `consumes` (a capability signature from an adapter or another
+    /// context) is *not* rebranded and must not be gated by #907's check —
+    /// only this narrower set may be. Private for the same reason as
     /// `local_type_names`; read via [`ResolvedCommons::is_uses_commons_type`].
     pub(crate) uses_commons_type_names: std::collections::HashSet<String>,
     /// Events track, slice 0 (spine #936): names of `event` declarations in

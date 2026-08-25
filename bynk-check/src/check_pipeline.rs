@@ -119,7 +119,9 @@ pub fn prepare_unit_check_ctx(
     };
     let uses_commons_type_names: HashSet<String> = imported_from_kind
         .keys()
-        .filter(|n| crate::resolver::is_uses_commons_type(imported_from_kind, combined_types, n))
+        .filter(|n| {
+            crate::resolver::compute_is_uses_commons_type(imported_from_kind, combined_types, n)
+        })
         .cloned()
         .collect();
     UnitCheckCtx {

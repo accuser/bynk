@@ -1546,10 +1546,22 @@ rationale names one concrete problem: `emit_context_rebrands` (`bynk-emit/src/em
 inlined the identical two-condition check ("is this name imported via `uses` of a *commons*, and is
 it a type") — linked only by a doc comment promising they matched exactly, the mirror-in-prose
 ADR 0226/#655 already burned on a different pair. Closed with one new shared function,
-`bynk_check::resolver::is_uses_commons_type(imported_from_kind, types, name)`, replacing both
-independent inlinings — an edit to either condition now updates both callers structurally, not by
-promise. Verified: full workspace `cargo check`/`cargo test` clean, zero output diff (the function's
-own logic is unchanged, only its location and callers).
+`bynk_check::resolver::compute_is_uses_commons_type(imported_from_kind, types, name)` (named
+distinctly from the existing `ResolvedCommons::is_uses_commons_type` *method* it's read through, a
+naming collision review caught), replacing the independent inlinings — an edit to either condition
+now updates every caller structurally, not by promise. **Review caught a third, sharper-failure-mode
+inlining this PR's first cut missed entirely**: `emit_context_rebrands`'s own doc comment names
+itself as step 2 of a two-step pair whose step 1 — aliasing the `uses`-imported commons import
+(`{n} as __Commons{n}`, `emitter.rs` ~2492) — must narrow *exactly* the same set as the rebrand
+itself, or the generated module either references an undefined name or imports an alias never used;
+this pair's own divergence risk is sharper than the checker/emitter one this slice originally set
+out to close (a straight `tsc` failure, not a checker-gating difference). Routed through the same
+shared function rather than merely documented as a known gap — three real callers now read one
+definition. Added a direct unit test (`resolver.rs`'s own `compute_is_uses_commons_type_tests`)
+pinning the four real combinations (commons type, commons function — v0.20b's own not-rebranded
+carve-out, non-commons import, absent/local) — nothing had pinned this predicate directly before.
+Verified: full workspace `cargo check`/`cargo test`/`RUSTDOCFLAGS="-D warnings" cargo doc` clean,
+zero output diff (the logic itself is unchanged at all three sites, only its location).
 
 **Scoping decision, recorded rather than silently narrowed:** R8.2's own rationale also mentions
 `brand_prefix` (`emitter/emit.rs:57`, `ctx.owning_context` formatted as `"{context}."` for a
