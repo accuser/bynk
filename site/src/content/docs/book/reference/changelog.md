@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.285**.
+written against **v0.286**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.286.0** | Arc C, slice 34 — the case/scope-setup cluster (`emit_test_scope_setup`/`emit_test_case_function` in `tests_emit.rs`) builds real `bynk_ts` fragments, the fourth of `tests_emit.rs`'s own 7 proposed slices (per its dedicated grounding pass). Adds `bynk_ts::TsBinaryOp::InstanceOf`. No behaviour change — every fixture reaching a test case emits byte-identical TypeScript, with source-map splice offsets confirmed unaffected. |
 | **v0.285.0** | Arc C, slice 33 — the stub cluster (`emit_stub_class`/`emit_stub_rhs` in `tests_emit.rs`) builds real `bynk_ts` fragments, the third of `tests_emit.rs`'s own 7 proposed slices (per its dedicated grounding pass). Adds `bynk_ts::TsBinaryOp::LessThan` and `TsSwitchCase.default_braced`, and deletes the now-dead `emitter::ts_type_ref_qualified_multi`. No behaviour change — every fixture with a `stub` clause emits byte-identical TypeScript. |
 | **v0.284.0** | Arc C, slice 32 — the small independent leaves (`emit_integration_harness`/`emit_test_deps`/`emit_ns_destructure`/`observation_call_record_types` in `tests_emit.rs`) build real `bynk_ts` fragments, the second of `tests_emit.rs`'s own 7 proposed slices (per its dedicated grounding pass). Also deletes the now-dead `emitter::ts_type_ref_qualified`, rerouting its own direct unit tests through its already-existing `TsType`-returning twin. No behaviour change — every affected fixture emits byte-identical TypeScript. |
 | **v0.283.0** | Arc C, slice 31 — the property-generator expression cluster (`refined_gen_ts`/`gen_ts_for_ty`/`canon_ts_for_ty`/`binding_gen` in `tests_emit.rs`) builds real `bynk_ts::TsExpr` fragments, the first of `tests_emit.rs`'s own 7 proposed slices (per its dedicated grounding pass) and Arc C's own final remaining piece. No behaviour change — every property/history/contract-attack fixture emits byte-identical TypeScript. |
