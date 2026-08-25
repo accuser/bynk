@@ -776,6 +776,7 @@ pub(crate) fn emit_worker_compose(
     ));
     program.push(TsStmt::decl(
         TsDecl::ImportNamespace {
+            type_only: false,
             alias: "handlers".to_string(),
             from: "./handlers.js".to_string(),
         },
@@ -789,6 +790,7 @@ pub(crate) fn emit_worker_compose(
         if let Some(module) = binding_modules.get(cctx) {
             program.push(TsStmt::decl(
                 TsDecl::ImportNamespace {
+                    type_only: false,
                     alias: format!("{ns}__binding"),
                     from: format!("../../{module}"),
                 },
@@ -798,6 +800,7 @@ pub(crate) fn emit_worker_compose(
             let dir = crate::project::worker_dir_name(cctx);
             program.push(TsStmt::decl(
                 TsDecl::ImportNamespace {
+                    type_only: false,
                     alias: format!("handlers_{ns}"),
                     from: format!("../{dir}/handlers.js"),
                 },

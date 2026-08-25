@@ -591,6 +591,7 @@ pub(crate) fn emit_worker_entry(
         ),
         TsStmt::decl(
             TsDecl::ImportNamespace {
+                type_only: false,
                 alias: "handlers".to_string(),
                 from: "./handlers.js".to_string(),
             },

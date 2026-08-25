@@ -484,11 +484,36 @@ pub(crate) fn emit_project(
         })
         .collect();
     if !agent_names.is_empty() {
-        writeln!(out, "export function __resetAgents(): void {{").unwrap();
-        for name in &agent_names {
-            writeln!(out, "  {}.reset();", agent_registry_name(name)).unwrap();
-        }
-        writeln!(out, "}}").unwrap();
+        // Arc C, slice 30 (#1392): a real `TsDecl::Function`.
+        let reset_fn = bynk_ts::TsStmt::decl(
+            bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::Function {
+                name: "__resetAgents".to_string(),
+                generics: Vec::new(),
+                params: Vec::new(),
+                return_type: Some(bynk_ts::TsType::named("void")),
+                body: agent_names
+                    .iter()
+                    .map(|name| {
+                        bynk_ts::TsStmt::expr_stmt(
+                            bynk_ts::TsExpr::Call {
+                                callee: Box::new(bynk_ts::TsExpr::Member {
+                                    object: Box::new(bynk_ts::TsExpr::Ident(agent_registry_name(
+                                        name,
+                                    ))),
+                                    property: "reset".to_string(),
+                                }),
+                                args: Vec::new(),
+                            },
+                            None,
+                        )
+                    })
+                    .collect(),
+                is_async: false,
+                inline: false,
+            })),
+            None,
+        );
+        out.push_str(&bynk_ts::print_stmt(&reset_fn, 0));
         writeln!(out).unwrap();
     }
     // v0.6: cross-context surface assembly. Emit `makeSurface` for any
@@ -1307,13 +1332,29 @@ fn emit_boundary_helpers(
             // through this module). A bare `export { ... } from "..."`
             // re-export does not create a local binding, which `tsc --strict`
             // catches when the body calls one of the helpers directly.
-            writeln!(
-                out,
-                "import {{ {} }} from \"{import_spec}\";",
-                parts.join(", ")
-            )
-            .unwrap();
-            writeln!(out, "export {{ {} }};", parts.join(", ")).unwrap();
+            //
+            // Arc C, slice 30 (#1392): the import is a real `TsDecl::Import`.
+            // The re-export is a BARE `export { ... };` — already-bound
+            // local names, no `from` clause — which `TsDecl::ReExport`
+            // cannot represent (it always carries one); this one real site
+            // stays opaque `TsStmt::raw` rather than a new variant for a
+            // single call site, the established "odd, one-off shape stays
+            // opaque text" posture.
+            out.push_str(&bynk_ts::print_stmt(
+                &bynk_ts::TsStmt::decl(
+                    bynk_ts::TsDecl::Import {
+                        type_only: false,
+                        names: parts.clone(),
+                        from: import_spec,
+                    },
+                    None,
+                ),
+                0,
+            ));
+            out.push_str(&bynk_ts::print_stmt(
+                &bynk_ts::TsStmt::raw(format!("export {{ {} }};\n", parts.join(", ")), None),
+                0,
+            ));
         }
         if !by_commons.is_empty() {
             writeln!(out).unwrap();
@@ -1702,16 +1743,27 @@ fn emit_context_rebrands(
             .get(name)
             .map(|d| d.type_params.iter().map(|p| p.name.name.as_str()).collect())
             .unwrap_or_default();
-        let generics = if params.is_empty() {
-            String::new()
-        } else {
-            format!("<{}>", params.join(", "))
-        };
-        writeln!(
-            out,
-            "export type {name}{generics} = __Commons{name}{generics} & {{ readonly __ctxBrand: \"{owning}\" }};",
-        )
-        .unwrap();
+        let generic_args: Vec<bynk_ts::TsType> =
+            params.iter().map(|p| bynk_ts::TsType::named(*p)).collect();
+        // Arc C, slice 30 (#1392): the SAME `TsDecl::TypeAlias` over
+        // `TsType::Intersection` shape #1339's own `emit_refined_type`
+        // already established for its sibling `__brand` alias (a real,
+        // proven precedent, not this slice's own new gap).
+        let type_alias = bynk_ts::TsStmt::decl(
+            bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::TypeAlias {
+                name: name.clone(),
+                type_params: params.iter().map(|p| p.to_string()).collect(),
+                ty: bynk_ts::TsType::intersection(vec![
+                    bynk_ts::TsType::named_with_args(format!("__Commons{name}"), generic_args),
+                    bynk_ts::TsType::Object(vec![bynk_ts::TsTypeMember::readonly_prop(
+                        "__ctxBrand",
+                        bynk_ts::TsType::named(format!("\"{owning}\"")),
+                    )]),
+                ]),
+            })),
+            None,
+        );
+        out.push_str(&bynk_ts::print_stmt(&type_alias, 0));
         // v0.9.2: a commons refined/opaque type carries a value-side
         // constructor (`.of`, and `.unsafe` for opaque). Re-export it under the
         // rebranded name so a context calling `ShortCode.of(...)` resolves to a
@@ -1723,26 +1775,95 @@ fn emit_context_rebrands(
             .get(name)
             .and_then(|d| refined_or_opaque_base(d))
         {
-            let ts_base = ts_base(base);
+            let ts_base_name = ts_base(base);
             let is_opaque = matches!(
                 commons.types.get(name).map(|d| &d.body),
                 Some(TypeBody::Opaque { .. })
             );
-            writeln!(out, "export const {name} = {{").unwrap();
-            writeln!(
-                out,
-                "  of(value: {ts_base}): Result<{name}, ValidationError> {{ return __Commons{name}.of(value) as unknown as Result<{name}, ValidationError>; }},",
-            )
-            .unwrap();
+            // `X.of(value) as unknown as Result<Name, ValidationError>` — a
+            // real nested `TsExpr::As`, the same shape `emit_forwarded_
+            // methods` (immediately below) already proves renders correctly
+            // with no extra parens: the `As` arm's own inner-expr check
+            // only guards `Binary`/`Arrow`/`Conditional`, not a nested `As`.
+            let of_entry = bynk_ts::TsObjectEntry::Method {
+                name: "of".to_string(),
+                is_async: false,
+                generics: Vec::new(),
+                params: vec![bynk_ts::TsParam {
+                    name: "value".to_string(),
+                    ty: Some(bynk_ts::TsType::named(ts_base_name)),
+                    optional: false,
+                }],
+                return_type: Some(bynk_ts::TsType::named_with_args(
+                    "Result",
+                    vec![
+                        bynk_ts::TsType::named(name.clone()),
+                        bynk_ts::TsType::named("ValidationError"),
+                    ],
+                )),
+                doc: None,
+                inline: true,
+                body: vec![bynk_ts::TsStmt::return_stmt(
+                    Some(bynk_ts::TsExpr::As {
+                        expr: Box::new(bynk_ts::TsExpr::As {
+                            expr: Box::new(bynk_ts::TsExpr::Call {
+                                callee: Box::new(bynk_ts::TsExpr::Member {
+                                    object: Box::new(bynk_ts::TsExpr::Ident(format!(
+                                        "__Commons{name}"
+                                    ))),
+                                    property: "of".to_string(),
+                                }),
+                                args: vec![bynk_ts::TsExpr::Ident("value".to_string())],
+                            }),
+                            ty: bynk_ts::TsType::named("unknown"),
+                        }),
+                        ty: bynk_ts::TsType::named_with_args(
+                            "Result",
+                            vec![
+                                bynk_ts::TsType::named(name.clone()),
+                                bynk_ts::TsType::named("ValidationError"),
+                            ],
+                        ),
+                    }),
+                    None,
+                )],
+            };
+            let mut entries = vec![of_entry];
             // ADR 0182: only opaque types have a public `.unsafe` to forward.
             // A refined/alias type has none — a consuming context brands an
             // admitted literal with an inline `as` cast, not a forwarder call.
             if is_opaque {
-                writeln!(
-                    out,
-                    "  unsafe(value: {ts_base}): {name} {{ return __Commons{name}.unsafe(value) as unknown as {name}; }},",
-                )
-                .unwrap();
+                entries.push(bynk_ts::TsObjectEntry::Method {
+                    name: "unsafe".to_string(),
+                    is_async: false,
+                    generics: Vec::new(),
+                    params: vec![bynk_ts::TsParam {
+                        name: "value".to_string(),
+                        ty: Some(bynk_ts::TsType::named(ts_base_name)),
+                        optional: false,
+                    }],
+                    return_type: Some(bynk_ts::TsType::named(name.clone())),
+                    doc: None,
+                    inline: true,
+                    body: vec![bynk_ts::TsStmt::return_stmt(
+                        Some(bynk_ts::TsExpr::As {
+                            expr: Box::new(bynk_ts::TsExpr::As {
+                                expr: Box::new(bynk_ts::TsExpr::Call {
+                                    callee: Box::new(bynk_ts::TsExpr::Member {
+                                        object: Box::new(bynk_ts::TsExpr::Ident(format!(
+                                            "__Commons{name}"
+                                        ))),
+                                        property: "unsafe".to_string(),
+                                    }),
+                                    args: vec![bynk_ts::TsExpr::Ident("value".to_string())],
+                                }),
+                                ty: bynk_ts::TsType::named("unknown"),
+                            }),
+                            ty: bynk_ts::TsType::named(name.clone()),
+                        }),
+                        None,
+                    )],
+                });
             }
             // v0.132.1 (#481): forward the commons' user-defined attached methods
             // (`Cents.fromInt`, …) so the rebranded const carries more than the
@@ -1751,9 +1872,17 @@ fn emit_context_rebrands(
             // this context's own `commons` (only imported *types* are merged);
             // they arrive via `ctx.imported_methods`, keyed by type name.
             if let Some(methods) = ctx.imported_methods.get(name) {
-                emit_forwarded_methods(out, name, methods, &commons.ty_intern);
+                entries.extend(emit_forwarded_methods(name, methods, &commons.ty_intern));
             }
-            writeln!(out, "}};").unwrap();
+            let const_decl = bynk_ts::TsStmt::decl(
+                bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::ConstDecl {
+                    name: name.clone(),
+                    ty: None,
+                    init: bynk_ts::TsExpr::multiline_object_entries(entries),
+                })),
+                None,
+            );
+            out.push_str(&bynk_ts::print_stmt(&const_decl, 0));
         }
     }
     writeln!(out).unwrap();
@@ -2353,8 +2482,20 @@ fn emit_cross_context_namespace_imports(
         // together, and the value uses in `compose.ts` are legitimate).
         let type_only = matches!(ctx.target, BuildTarget::Workers)
             && !ctx.consumed_adapters.contains(q.as_str());
-        let kw = if type_only { "import type" } else { "import" };
-        writeln!(out, "{kw} * as {ns} from \"{import}\";").unwrap();
+        // Arc C, slice 30 (#1392): a real `TsDecl::ImportNamespace` —
+        // `type_only` (#1392's own new field) covers the `import type * as`
+        // form.
+        out.push_str(&bynk_ts::print_stmt(
+            &bynk_ts::TsStmt::decl(
+                bynk_ts::TsDecl::ImportNamespace {
+                    type_only,
+                    alias: ns,
+                    from: import,
+                },
+                None,
+            ),
+            0,
+        ));
     }
     writeln!(out).unwrap();
 }
@@ -2401,12 +2542,18 @@ fn emit_project_imports(
         let import = sibling_import_specifier(&ctx.source_path, path, ctx.import_ext);
         let mut sorted: Vec<&String> = names.iter().collect();
         sorted.sort();
-        let joined = sorted
-            .iter()
-            .map(|s| ts_ident(s))
-            .collect::<Vec<_>>()
-            .join(", ");
-        writeln!(out, "import {{ {joined} }} from \"{import}\";").unwrap();
+        // Arc C, slice 30 (#1392): a real `TsDecl::Import`.
+        out.push_str(&bynk_ts::print_stmt(
+            &bynk_ts::TsStmt::decl(
+                bynk_ts::TsDecl::Import {
+                    type_only: false,
+                    names: sorted.iter().map(|s| ts_ident(s)).collect(),
+                    from: import,
+                },
+                None,
+            ),
+            0,
+        ));
     }
     // Cross-unit imports: group by *target file path*.
     let mut unit_names: Vec<(&String, &HashSet<String>)> = refs.by_commons.iter().collect();
@@ -2463,14 +2610,32 @@ fn emit_project_imports(
                     parts.push(ts_ident(n));
                 }
             }
-            let joined = parts.join(", ");
-            writeln!(out, "import {{ {joined} }} from \"{import}\";").unwrap();
+            // Arc C, slice 30 (#1392): a real `TsDecl::Import` — `parts`'
+            // own per-name `as __CommonsX`/`type X` prefixes already match
+            // `names`'s own documented "raw text slot" convention, no new
+            // gap.
+            out.push_str(&bynk_ts::print_stmt(
+                &bynk_ts::TsStmt::decl(
+                    bynk_ts::TsDecl::Import {
+                        type_only: false,
+                        names: parts,
+                        from: import,
+                    },
+                    None,
+                ),
+                0,
+            ));
         }
     }
     // #527: imports the DO-side agent-deps expressions need (binding modules,
-    // other Workers' handlers). Precomputed by the project driver.
+    // other Workers' handlers). Precomputed by the project driver — already
+    // formed statement text, stays opaque `TsStmt::raw`, the established
+    // "pre-formatted pass-through" pattern.
     for line in &ctx.extra_import_lines {
-        writeln!(out, "{line}").unwrap();
+        out.push_str(&bynk_ts::print_stmt(
+            &bynk_ts::TsStmt::raw(format!("{line}\n"), None),
+            0,
+        ));
     }
 }
 
@@ -2536,7 +2701,10 @@ fn relative_to(from: &Path, target: &Path) -> PathBuf {
 }
 
 fn write_header(out: &mut String, commons: &TypedCommons, ctx: &EmitProjectCtx) {
-    writeln!(out, "// Generated by bynkc — do not edit by hand.").unwrap();
+    // Arc C, slice 30 (#1392): the 2-line banner converts to two real
+    // `TsStmt::Comment` statements, the same `events_fanout.rs`-established
+    // precedent (#1317) every other Arc C header already uses, printed
+    // through `print_stmt` at depth 0.
     let kind = match ctx.unit_kind {
         UnitKind::Commons => "commons",
         UnitKind::Context => "context",
@@ -2544,7 +2712,14 @@ fn write_header(out: &mut String, commons: &TypedCommons, ctx: &EmitProjectCtx) 
         UnitKind::Integration => "integration test",
         UnitKind::Adapter => "adapter",
     };
-    writeln!(out, "// {kind} {}", commons.commons.name.joined()).unwrap();
+    out.push_str(&bynk_ts::print_stmt(
+        &bynk_ts::TsStmt::comment("Generated by bynkc — do not edit by hand.", None),
+        0,
+    ));
+    out.push_str(&bynk_ts::print_stmt(
+        &bynk_ts::TsStmt::comment(format!("{kind} {}", commons.commons.name.joined()), None),
+        0,
+    ));
     writeln!(out).unwrap();
     if !commons.commons.items.is_empty() {
         let runtime_import = runtime_import_for(&ctx.source_path, ctx.import_ext);
@@ -2737,12 +2912,17 @@ fn write_header(out: &mut String, commons: &TypedCommons, ctx: &EmitProjectCtx) 
             parts.push("type JsonValue");
             parts.push("type BoundaryError");
         }
-        writeln!(
-            out,
-            "import {{ {} }} from \"{runtime_import}\";",
-            parts.join(", ")
-        )
-        .unwrap();
+        out.push_str(&bynk_ts::print_stmt(
+            &bynk_ts::TsStmt::decl(
+                bynk_ts::TsDecl::Import {
+                    type_only: false,
+                    names: parts.into_iter().map(str::to_string).collect(),
+                    from: runtime_import,
+                },
+                None,
+            ),
+            0,
+        ));
         writeln!(out).unwrap();
     }
 }
@@ -2755,8 +2935,16 @@ fn write_header_single(
     uses_http: bool,
     uses_queue: bool,
 ) {
-    writeln!(out, "// Generated by bynkc — do not edit by hand.").unwrap();
-    writeln!(out, "// commons {}", commons.commons.name.joined()).unwrap();
+    // Arc C, slice 30 (#1392): the same 2-comment-statement conversion
+    // `write_header` above already established.
+    out.push_str(&bynk_ts::print_stmt(
+        &bynk_ts::TsStmt::comment("Generated by bynkc — do not edit by hand.", None),
+        0,
+    ));
+    out.push_str(&bynk_ts::print_stmt(
+        &bynk_ts::TsStmt::comment(format!("commons {}", commons.commons.name.joined()), None),
+        0,
+    ));
     writeln!(out).unwrap();
     if !commons.commons.items.is_empty() {
         // v0.22b: codec imports only when the file uses the `Json` codec.
@@ -2783,11 +2971,25 @@ fn write_header_single(
         // a type; a bare named import brings both in, matching `HttpResult`'s
         // own shape immediately above.
         let queue_imports = if uses_queue { ", QueueResult" } else { "" };
-        writeln!(
-            out,
-            "import {{ Ok, Err, Some, None, type Result, type Option, type ValidationError{codec_imports}{bytes_imports}{http_imports}{queue_imports} }} from \"./runtime.js\";",
-        )
-        .unwrap();
+        // The fixed prefix plus each optional group joins as one comma-space
+        // separated run either way — split back into individual names for
+        // `TsDecl::Import.names` rather than re-deriving each optional
+        // group's own name list a second time (the string-building above,
+        // unchanged, already gets this exactly right).
+        let inside = format!(
+            "Ok, Err, Some, None, type Result, type Option, type ValidationError{codec_imports}{bytes_imports}{http_imports}{queue_imports}"
+        );
+        out.push_str(&bynk_ts::print_stmt(
+            &bynk_ts::TsStmt::decl(
+                bynk_ts::TsDecl::Import {
+                    type_only: false,
+                    names: inside.split(", ").map(str::to_string).collect(),
+                    from: "./runtime.js".to_string(),
+                },
+                None,
+            ),
+            0,
+        ));
         writeln!(out).unwrap();
     }
 }

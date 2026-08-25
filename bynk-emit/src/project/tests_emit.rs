@@ -3849,6 +3849,7 @@ pub(crate) fn emit_test_main(tests: &[RunnableTest], import_ext: ImportExt) -> T
             .unwrap_or("test");
         program.push(TsStmt::decl(
             TsDecl::ImportNamespace {
+                type_only: false,
                 alias: format!("test_{i}"),
                 from: format!("./{module_stem}.{ext}"),
             },

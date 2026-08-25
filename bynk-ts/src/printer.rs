@@ -1849,8 +1849,16 @@ fn render_decl_body(out: &mut String, decl: &TsDecl, depth: usize) {
             out.push_str(from);
             out.push_str("\";\n");
         }
-        TsDecl::ImportNamespace { alias, from } => {
-            out.push_str("import * as ");
+        TsDecl::ImportNamespace {
+            type_only,
+            alias,
+            from,
+        } => {
+            out.push_str(if *type_only {
+                "import type * as "
+            } else {
+                "import * as "
+            });
             out.push_str(alias);
             out.push_str(" from \"");
             out.push_str(from);
@@ -3430,6 +3438,7 @@ mod tests {
         ));
         program.push(TsStmt::decl(
             TsDecl::ImportNamespace {
+                type_only: false,
                 alias: "handlers".to_string(),
                 from: "./handlers.js".to_string(),
             },
@@ -3439,6 +3448,30 @@ mod tests {
         assert_eq!(
             printed.text,
             "import { a } from \"./x.js\";\nimport * as handlers from \"./handlers.js\";\n"
+        );
+    }
+
+    /// Arc C, step (10) (#1392): `ImportNamespace.type_only`, a parallel gap
+    /// by omission — `TsDecl::Import` already had this field, but nothing
+    /// before `emit_cross_context_namespace_imports`'s own conversion built
+    /// a type-only namespace import (`import type * as ns from "...";`, a
+    /// Workers-mode consumed-context import reaching the callee's types
+    /// only, #661).
+    #[test]
+    fn prints_a_type_only_namespace_import() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::decl(
+            TsDecl::ImportNamespace {
+                type_only: true,
+                alias: "commerce_payment".to_string(),
+                from: "../commerce-payment/handlers.js".to_string(),
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(
+            printed.text,
+            "import type * as commerce_payment from \"../commerce-payment/handlers.js\";\n"
         );
     }
 
@@ -4000,6 +4033,7 @@ mod tests {
         let mut program = TsProgram::new();
         program.push(TsStmt::decl(
             TsDecl::ImportNamespace {
+                type_only: false,
                 alias: "handlers".to_string(),
                 from: "./handlers.js".to_string(),
             },
@@ -4636,6 +4670,7 @@ mod tests {
         let mut program = TsProgram::new();
         program.push(TsStmt::decl(
             TsDecl::ImportNamespace {
+                type_only: false,
                 alias: "handlers".to_string(),
                 from: "./handlers.js".to_string(),
             },

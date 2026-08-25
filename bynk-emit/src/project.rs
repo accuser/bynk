@@ -3531,6 +3531,7 @@ fn emit_composition_root(
         let ns = ctx_name.replace('.', "_");
         program.push(TsStmt::decl(
             TsDecl::ImportNamespace {
+                type_only: false,
                 alias: ns,
                 from: format!("./{dir}.js"),
             },
@@ -3557,6 +3558,7 @@ fn emit_composition_root(
             emitter::ts_specifier(&adapter_bindings[adapter].output_path.with_extension("js"));
         program.push(TsStmt::decl(
             TsDecl::ImportNamespace {
+                type_only: false,
                 alias: format!("{ns}__binding"),
                 from: format!("./{module}"),
             },

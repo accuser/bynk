@@ -1376,8 +1376,17 @@ pub enum TsDecl {
     /// `{ }`, one bound name for the whole module). #1321's own real gap:
     /// `workers.rs`'s `compose.ts` imports `handlers.js` and each
     /// referenced unit's binding module this way; `events_fanout.rs` never
-    /// used one.
-    ImportNamespace { alias: String, from: String },
+    /// used one. `type_only` (Arc C, step (10), #1392) mirrors
+    /// [`TsDecl::Import`]'s own identical field, a parallel gap by
+    /// omission, not deliberate design — `emit_cross_context_namespace_
+    /// imports`'s own real `import type * as ns from "...";` form (a
+    /// Workers-mode consumed-context import reaching the callee's types
+    /// only, #661) had no way to represent the `type` keyword until now.
+    ImportNamespace {
+        type_only: bool,
+        alias: String,
+        from: String,
+    },
     /// `export { a, b } from "spec";` — a re-export, structurally distinct
     /// from both [`TsDecl::Import`] (which binds locally, carries no
     /// `export` keyword) and [`TsDecl::Export`] (which wraps a whole
