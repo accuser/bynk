@@ -1767,13 +1767,15 @@ fn emit_icu_placeholder(
 /// arm (the parser's `allow_hash` guarantees a `select` arm never contains
 /// one), where `__arg.value: number` after narrowing.
 ///
-/// Arc C, step (11) (#1388): returns a real `bynk_ts::TsExpr` — `tag_lit` is
-/// now the RAW locale tag (not pre-quoted/pre-escaped text), since
-/// `TsLit::Str`'s own renderer applies the identical escaping itself
-/// (documented byte-for-byte match with `escape_ts_string`).
+/// Arc C, step (11) (#1388): returns a real `bynk_ts::TsExpr` — `locale_tag`
+/// (review of #1389: renamed from the pre-conversion `tag_lit`, which
+/// pointed the wrong way once this stopped taking pre-quoted text) is now
+/// the RAW locale tag, not pre-quoted/pre-escaped text, since `TsLit::Str`'s
+/// own renderer applies the identical escaping itself (documented
+/// byte-for-byte match with `escape_ts_string`).
 fn emit_sub_message(
     segs: &[icu::SubSegment],
-    tag_lit: &str,
+    locale_tag: &str,
     runtime_use: &RuntimeUse,
 ) -> bynk_ts::TsExpr {
     if segs.is_empty() {
@@ -1792,7 +1794,7 @@ fn emit_sub_message(
                 bynk_ts::TsExpr::Call {
                     callee: Box::new(bynk_ts::TsExpr::Ident("formatIcuNumber".to_string())),
                     args: vec![
-                        bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(tag_lit.to_string())),
+                        bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(locale_tag.to_string())),
                         bynk_ts::TsExpr::Member {
                             object: Box::new(bynk_ts::TsExpr::Ident("__arg".to_string())),
                             property: "value".to_string(),

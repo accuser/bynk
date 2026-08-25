@@ -886,7 +886,7 @@ fn binary_precedence(op: TsBinaryOp) -> u8 {
 /// binary`'s own test, still `a ?? (b ?? c)`), since nothing in real
 /// content needs a flattened `??` chain and this slice's own grounding
 /// gives no reason to widen that boundary opportunistically.
-fn render_binary_operand(out: &mut String, outer_op: TsBinaryOp, expr: &TsExpr) {
+fn render_binary_operand(out: &mut String, outer_op: TsBinaryOp, expr: &TsExpr, is_left: bool) {
     let needs_parens = match expr {
         // `Arrow`/`Conditional` are the two lowest-precedence expression
         // forms in JS/TS — `(x) => y || z` as a binary operand must print
@@ -922,11 +922,23 @@ fn render_binary_operand(out: &mut String, outer_op: TsBinaryOp, expr: &TsExpr) 
                 // parens regardless of which side it's nested on (review of
                 // #1324, finding 1 — the original fix wrongly generalized
                 // the `||`/`&&` exemption to every operator). `+` (Arc C,
-                // step (11), #1388) joins the same exemption — string
-                // concatenation is genuinely left-associative, the same
-                // "prints flat with no parens" reasoning `||`/`&&` already
-                // established, not a third special case.
-                !matches!(outer_op, TsBinaryOp::Or | TsBinaryOp::And | TsBinaryOp::Add)
+                // step (11), #1388) does NOT join that exemption on both
+                // sides — review of #1389, finding 1: `||`/`&&` are
+                // SEMANTICALLY associative (`(a || b) || c` and
+                // `a || (b || c)` always agree), but `+` is only
+                // GRAMMATICALLY left-associative — with a mixed number/string
+                // chain, `1 + (2 + "3")` (`"123"`) and `(1 + 2) + "3"`
+                // (`"33"`) disagree, so flattening a RIGHT-nested `Add` would
+                // silently change the value. `join_plus`
+                // (`bynk-emit/src/emitter/emit.rs`) only ever left-folds, so
+                // this asymmetry never showed up in that caller's own
+                // zero-diff fixture run — but `bynk-ts` is a shared
+                // primitive, not scoped to that one caller's own usage.
+                match outer_op {
+                    TsBinaryOp::Or | TsBinaryOp::And => false,
+                    TsBinaryOp::Add => !is_left,
+                    _ => true,
+                }
             } else {
                 binary_precedence(*inner_op) <= binary_precedence(outer_op)
             }
@@ -1347,7 +1359,7 @@ fn render_expr(out: &mut String, expr: &TsExpr) {
             render_operand(out, expr);
         }
         TsExpr::Binary { op, left, right } => {
-            render_binary_operand(out, *op, left);
+            render_binary_operand(out, *op, left, true);
             out.push_str(match op {
                 TsBinaryOp::NullishCoalescing => " ?? ",
                 TsBinaryOp::Or => " || ",
@@ -1357,7 +1369,7 @@ fn render_expr(out: &mut String, expr: &TsExpr) {
                 TsBinaryOp::GreaterThan => " > ",
                 TsBinaryOp::Add => " + ",
             });
-            render_binary_operand(out, *op, right);
+            render_binary_operand(out, *op, right, false);
         }
         TsExpr::Conditional {
             test,
@@ -4138,6 +4150,77 @@ mod tests {
         ));
         let printed = print(&program, "x.bynk", "", "x.ts");
         assert_eq!(printed.text, "\"a\" + \"b\" + \"c\";\n");
+    }
+
+    /// Review of #1389, finding 1: unlike `||`/`&&` (semantically
+    /// associative — flattening either side is safe), `+` is only
+    /// grammatically left-associative — `1 + (2 + "3")` and `(1 + 2) + "3"`
+    /// disagree once a number joins the chain. A right-nested `Add` must
+    /// keep its parens, matching every other non-`Or`/`And` same-operator
+    /// chain's own treatment (`a_right_nested_strict_eq_chain_keeps_its_
+    /// parens`/`a_right_nested_greater_than_chain_keeps_its_parens`).
+    #[test]
+    fn a_right_nested_add_chain_keeps_its_parens() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::expr_stmt(
+            TsExpr::Binary {
+                op: TsBinaryOp::Add,
+                left: Box::new(TsExpr::Lit(TsLit::Num("1".to_string()))),
+                right: Box::new(TsExpr::Binary {
+                    op: TsBinaryOp::Add,
+                    left: Box::new(TsExpr::Lit(TsLit::Num("2".to_string()))),
+                    right: Box::new(TsExpr::Lit(TsLit::Str("3".to_string()))),
+                }),
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "1 + (2 + \"3\");\n");
+    }
+
+    /// `Add`'s own new `binary_precedence` entry (higher than
+    /// `GreaterThan`, matching real JS/TS) — a nested `Add` under a
+    /// `GreaterThan` needs no parens (`+` binds tighter), the reverse
+    /// direction does.
+    #[test]
+    fn add_binds_tighter_than_greater_than_on_both_sides() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::expr_stmt(
+            TsExpr::Binary {
+                op: TsBinaryOp::GreaterThan,
+                left: Box::new(TsExpr::Binary {
+                    op: TsBinaryOp::Add,
+                    left: Box::new(TsExpr::Ident("a".to_string())),
+                    right: Box::new(TsExpr::Ident("b".to_string())),
+                }),
+                right: Box::new(TsExpr::Ident("c".to_string())),
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "a + b > c;\n");
+    }
+
+    /// The reverse nesting: a `GreaterThan` operand under an outer `Add`
+    /// needs its parens (`+` binds tighter, so `Add`'s own precedence check
+    /// against a lower-precedence `GreaterThan` operand must still fire).
+    #[test]
+    fn greater_than_nested_under_add_keeps_its_parens() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::expr_stmt(
+            TsExpr::Binary {
+                op: TsBinaryOp::Add,
+                left: Box::new(TsExpr::Ident("a".to_string())),
+                right: Box::new(TsExpr::Binary {
+                    op: TsBinaryOp::GreaterThan,
+                    left: Box::new(TsExpr::Ident("b".to_string())),
+                    right: Box::new(TsExpr::Ident("c".to_string())),
+                }),
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "a + (b > c);\n");
     }
 
     /// Review of #1324, finding 1: the same-operator flattening #1323 added
