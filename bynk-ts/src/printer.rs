@@ -865,7 +865,7 @@ fn binary_precedence(op: TsBinaryOp) -> u8 {
         TsBinaryOp::Or => 2,
         TsBinaryOp::And => 3,
         TsBinaryOp::StrictEq | TsBinaryOp::StrictNotEq => 4,
-        TsBinaryOp::GreaterThan | TsBinaryOp::LessThan => 5,
+        TsBinaryOp::GreaterThan | TsBinaryOp::LessThan | TsBinaryOp::InstanceOf => 5,
         TsBinaryOp::Add => 6,
     }
 }
@@ -1381,6 +1381,7 @@ fn render_expr(out: &mut String, expr: &TsExpr) {
                 TsBinaryOp::StrictNotEq => " !== ",
                 TsBinaryOp::GreaterThan => " > ",
                 TsBinaryOp::LessThan => " < ",
+                TsBinaryOp::InstanceOf => " instanceof ",
                 TsBinaryOp::Add => " + ",
             });
             render_binary_operand(out, *op, right, false);
@@ -5376,5 +5377,23 @@ mod tests {
         ));
         let printed = print(&program, "x.bynk", "", "x.ts");
         assert_eq!(printed.text, "a + b < c;\n");
+    }
+
+    /// Arc C, slice 34 (`tests_emit.rs` slice D, #1403): `TsBinaryOp::
+    /// InstanceOf` — pins the keyword operator text itself, sharing
+    /// `LessThan`/`GreaterThan`'s own precedence tier.
+    #[test]
+    fn prints_an_instanceof_check() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::expr_stmt(
+            TsExpr::Binary {
+                op: TsBinaryOp::InstanceOf,
+                left: Box::new(TsExpr::Ident("e".to_string())),
+                right: Box::new(TsExpr::Ident("ExpectationError".to_string())),
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "e instanceof ExpectationError;\n");
     }
 }
