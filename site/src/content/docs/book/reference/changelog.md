@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.276**.
+written against **v0.277**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.277.0** | Arc C, slice 25 — `emit_agent`'s WS-hosted `on open`/`on message`/`on close` DO methods (`emit_ws_do_method`) convert to real `bynk_ts::TsClassMethod` fragments, the identical shape `emit_provider`'s own already-landed ops established. The first of step (9) sub-slice (5)'s own 3 independent slices, confirmed as low-risk as its dedicated grounding pass predicted — zero diff on the first attempt, no new algebra gap |
 | **v0.276.0** | Arc C, slice 24 — `emit_agent`'s factory function converts fully to real `bynk_ts` nodes, with no opaque carve-out at all. Splits step (9)'s own sixth sub-slice: the history-driver, its other half, stays deferred with its own priority still undecided. Confirms the factory function alone needed its own real slice, a real floor correction to the original estimate |
 | **v0.275.0** | Arc C, slice 23 — `emit_agent`'s per-handler methods convert to real `bynk_ts::TsClassMethod` fragments, closing the grounding pass's own second predicted algebra gap (`TsClassMethod.doc`) and extending `emit_service`'s own two-level offset pattern to a genuinely new third wrapper dimension (the implicit-commit closure, which can combine with the events-IIFE). The largest sub-slice of step (9)'s own decomposition, per the grounding pass's own prediction, confirmed accurate |
 | **v0.274.0** | Arc C, slice 22 — `emit_agent`'s `commitState` method converts to a real `bynk_ts::TsClassMethod` fragment, closing step (9)'s own third sub-slice fully (the deferred remainder #1371 split off). Corrects that slice's own stated expectation: `commitState`'s predicate lowering needs no source-map sub-builder care at all — `record_span` is a documented no-op with no attached builder, and neither `LowerCtx` it constructs is ever given one |
