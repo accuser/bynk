@@ -1421,12 +1421,17 @@ fn ide_emit_edge(root: &Path) -> Probe {
 /// four entries staying exactly these four, not a fifth argument for adding to them.
 /// The probe itself stays gated, unchanged, reading 5: a regression ratchet phase 7
 /// inherits and drives down as it builds the printer this floor's own residue names.
-const AST_IMPORTER_EXCEPTIONS: &[&str] = &[
-    "ir.rs",
-    "ir/lower.rs",
-    "project/tests_emit.rs",
-    "emitter/serialisation.rs",
-];
+///
+/// **Arc D, P7.12 (crate carve): `ir.rs`/`ir/lower.rs` drop out of this list
+/// entirely — not because they stopped importing the AST (unchanged, still
+/// do), but because they left `bynk-emit/src` altogether, carved into the new
+/// `bynk-ir`/`bynk-lower` crates ADR 0332 deferred and ADR 0385 triggered.**
+/// This probe was never scoped to those crates (`ast_importer_files` walks
+/// `bynk-emit/src` only), so the pair is simply outside its universe now,
+/// the same way a file moving to `bynk-check`/`bynk-project` already leaves
+/// silently rather than needing its own exclusion-list removal step. Two
+/// named exclusions remain.
+const AST_IMPORTER_EXCEPTIONS: &[&str] = &["project/tests_emit.rs", "emitter/serialisation.rs"];
 
 /// Is `rel_path` (relative to `bynk-emit/src`) one of [`AST_IMPORTER_EXCEPTIONS`]?
 fn is_named_ast_importer(rel_path: &Path) -> bool {
@@ -1592,14 +1597,16 @@ fn emit_abi_shapes(root: &Path) -> Probe {
 /// path prefix: `emitter/wrangler.rs` writes `wrangler.toml`; `emitter/secrets.rs`
 /// writes `bynk-secrets.json`; `emitter/contracts.rs` writes `bynk-contracts.json`;
 /// `emitter/source_map.rs` writes source-map JSON; `testkit.rs` builds a `.bynk` source
-/// fixture — a compiler *input* for tests, not output; `ir/lower.rs` builds
-/// Rust-internal `String` values stored on `Ir*` struct fields (e.g.
-/// `format!("{}State", agent.name.name)`) during the checker→IR lowering pass, never
-/// emitted syntax — it is not part of the emitter's rendering code at all, despite the
-/// name proximity to `emitter/lower.rs`, which is. P7.3 (#1303): `emitter/toml_doc.rs`
+/// fixture — a compiler *input* for tests, not output. P7.3 (#1303): `emitter/toml_doc.rs`
 /// writes `wrangler.toml` text too — `emitter/wrangler.rs`'s own writes moved here when
 /// it stopped building the TOML text directly and started building a typed
 /// `TomlDocument` for this module to print — same rationale, same exclusion.
+///
+/// (`ir/lower.rs` — Rust-internal `String` values stored on `Ir*` struct fields during
+/// the checker→IR lowering pass, never emitted syntax — was excluded here for the same
+/// reason until Arc D's P7.12 crate carve moved it to `bynk-lower` entirely, outside
+/// this probe's own `bynk-emit/src` universe; no exclusion needed for a file this probe
+/// no longer walks.)
 const TS_WRITES_EXCLUDED_FILES: &[&str] = &[
     "emitter/wrangler.rs",
     "emitter/toml_doc.rs",
@@ -1607,7 +1614,6 @@ const TS_WRITES_EXCLUDED_FILES: &[&str] = &[
     "emitter/contracts.rs",
     "emitter/source_map.rs",
     "testkit.rs",
-    "ir/lower.rs",
 ];
 
 /// Is `rel_path` (relative to `bynk-emit/src`) one of [`TS_WRITES_EXCLUDED_FILES`]?
@@ -2256,8 +2262,7 @@ mod tests {
 
     // --- ast_importers (#1176) ------------------------------------------------
 
-    /// The exclusion is named, not prefixed: `ir.rs`/`ir/lower.rs` are the lowering
-    /// pass's own legitimate `Ast → Ir` import; `project/tests_emit.rs` is the
+    /// The exclusion is named, not prefixed: `project/tests_emit.rs` is the
     /// Q7-settled `Ir → String` half that keeps hand-writing TypeScript by calling
     /// straight into `emitter.rs`'s own body-rendering, and
     /// keeps reading a handler's declared param/return `TypeRef` with no `TyId`
@@ -2269,19 +2274,20 @@ mod tests {
     /// still-open R6.13 defect this probe tracks, not the Q7 kind — excluding either
     /// file would hide that real work the same way a path-prefix rule would. A
     /// path-prefix rule (e.g. "only `emitter/**` counts") would have excluded
-    /// `project.rs` right along with the legitimate three, silently undercounting
-    /// real work.
+    /// `project.rs` right along with the legitimate ones, silently undercounting
+    /// real work. (`ir.rs`/`ir/lower.rs`, the lowering pass's own former `Ast → Ir`
+    /// exclusion, left this list at Arc D's P7.12 crate carve — they left
+    /// `bynk-emit/src` entirely, not merely this list.)
     #[test]
     fn ast_importer_exclusion_is_named_not_prefixed() {
-        assert!(is_named_ast_importer(Path::new("ir.rs")));
-        assert!(is_named_ast_importer(Path::new("ir/lower.rs")));
         assert!(is_named_ast_importer(Path::new("project/tests_emit.rs")));
         assert!(is_named_ast_importer(Path::new("emitter/serialisation.rs")));
         assert!(!is_named_ast_importer(Path::new("project.rs")));
         assert!(!is_named_ast_importer(Path::new("emitter.rs")));
         assert!(!is_named_ast_importer(Path::new("emitter/lower.rs")));
         assert!(!is_named_ast_importer(Path::new("emitter/workers.rs")));
-        assert!(!is_named_ast_importer(Path::new("ir/other.rs")));
+        assert!(!is_named_ast_importer(Path::new("ir.rs")));
+        assert!(!is_named_ast_importer(Path::new("ir/lower.rs")));
     }
 
     /// #1184 review: an `AST_IMPORTER_EXCEPTIONS` entry going stale (renamed or split,
@@ -2311,10 +2317,14 @@ mod tests {
     /// re-settling (`emitter/serialisation.rs`, a phase boundary rather than a
     /// declaration-read exemption): exercises the real filter over the live tree, not
     /// just the pure predicate — the survivor set the PR's own named-vs-prefix
-    /// argument depends on: the four named exclusions drop out (`ir/`'s legitimate
-    /// `Ast → Ir` pair, `project/tests_emit.rs`'s Q7-settled `Ir → String` case, and
+    /// argument depends on: the named exclusions drop out
+    /// (`project/tests_emit.rs`'s Q7-settled `Ir → String` case and
     /// `emitter/serialisation.rs`'s phase-7 codec renderer), while `emitter.rs`/
-    /// `emitter/lower.rs`/`emitter/workers.rs` do not.
+    /// `emitter/lower.rs`/`emitter/workers.rs` do not. `ir.rs`/`ir/lower.rs` (the
+    /// lowering pass's own former `Ast → Ir` pair, excluded here until Arc D's
+    /// P7.12 crate carve) are asserted absent below for a different reason now:
+    /// they left `bynk-emit/src` entirely, so `ast_importer_files` never walks
+    /// them at all, named exclusion or not.
     ///
     /// P6.49 (phase 6's own §6b): `project.rs` and `project/diagnostics.rs`
     /// join the *excluded* side of this assertion — the opposite of what this test
@@ -2339,8 +2349,11 @@ mod tests {
                     .replace('\\', "/")
             })
             .collect();
-        assert!(!counted.contains("ir.rs"));
-        assert!(!counted.contains("ir/lower.rs"));
+        assert!(!counted.contains("ir.rs"), "moved to bynk-ir at P7.12");
+        assert!(
+            !counted.contains("ir/lower.rs"),
+            "moved to bynk-lower at P7.12"
+        );
         assert!(!counted.contains("project/tests_emit.rs"));
         assert!(!counted.contains("emitter/serialisation.rs"));
         assert!(!counted.contains("project.rs"));
@@ -3166,11 +3179,13 @@ commons app.demo {
             "emitter/source_map.rs"
         )));
         assert!(is_ts_writes_excluded_file(Path::new("testkit.rs")));
-        assert!(is_ts_writes_excluded_file(Path::new("ir/lower.rs")));
-        // Name proximity to an excluded file must not false-positive: `emitter/lower.rs`
-        // (the emitter's own lowering pass) is genuinely TS-producing and must stay
-        // counted, unlike `ir/lower.rs` (the checker→IR pass, excluded above).
+        // Name proximity to a file that used to be excluded must not false-positive:
+        // `emitter/lower.rs` (the emitter's own lowering pass) is genuinely
+        // TS-producing and must stay counted — unlike `ir/lower.rs` (the checker→IR
+        // pass), which isn't a name-proximity risk at all any more: it left
+        // `bynk-emit/src` entirely at Arc D's P7.12 crate carve.
         assert!(!is_ts_writes_excluded_file(Path::new("emitter/lower.rs")));
+        assert!(!is_ts_writes_excluded_file(Path::new("ir/lower.rs")));
         assert!(!is_ts_writes_excluded_file(Path::new("emitter.rs")));
         assert!(!is_ts_writes_excluded_file(Path::new("project.rs")));
         assert!(!is_ts_writes_excluded_file(Path::new(

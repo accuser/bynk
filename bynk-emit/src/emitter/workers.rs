@@ -440,8 +440,8 @@ pub(crate) fn emit_worker_compose(
     let has_ws_open = table.services.values().any(|s| {
         s.handlers.iter().any(|h| {
             matches!(
-                crate::ir::lower::lower_handler_kind_ir(&h.kind),
-                crate::ir::IrHandlerKind::Open
+                bynk_lower::lower_handler_kind_ir(&h.kind),
+                bynk_ir::IrHandlerKind::Open
             )
         })
     });
@@ -603,11 +603,11 @@ pub(crate) fn emit_worker_compose(
             // rather than threading `IrHttpMethod`/`String` through every
             // wrapper's own still-AST-typed signature — the same
             // dispatch-vs-render split, applied here.
-            match crate::ir::lower::lower_handler_kind_ir(&h.kind) {
-                crate::ir::IrHandlerKind::Call => {
+            match bynk_lower::lower_handler_kind_ir(&h.kind) {
+                bynk_ir::IrHandlerKind::Call => {
                     return_entries.push(emit_call_wrapper(sname, h, &table.actors));
                 }
-                crate::ir::IrHandlerKind::Http { .. } => {
+                bynk_ir::IrHandlerKind::Http { .. } => {
                     let HandlerKind::Http { method, path } = &h.kind else {
                         unreachable!("lower_handler_kind_ir is a pure structural mirror")
                     };
@@ -629,12 +629,12 @@ pub(crate) fn emit_worker_compose(
                     // path with `None`, exactly like the old fallthrough
                     // (`bearer_seam_for` also misses on a `Caller` handler, since
                     // `Caller` is a prelude actor, not a key of `table.actors`).
-                    match crate::ir::lower::lower_actor_seam_ir(h, &table.actors) {
-                        crate::ir::ActorSeamIr::Oidc(oidc) => {
+                    match bynk_lower::lower_actor_seam_ir(h, &table.actors) {
+                        bynk_ir::ActorSeamIr::Oidc(oidc) => {
                             return_entries
                                 .push(emit_http_oidc_wrapper(sname, h, *method, path, &oidc));
                         }
-                        crate::ir::ActorSeamIr::Sum(members) => {
+                        bynk_ir::ActorSeamIr::Sum(members) => {
                             return_entries.push(emit_http_sum_wrapper(
                                 sname,
                                 h,
@@ -645,7 +645,7 @@ pub(crate) fn emit_worker_compose(
                                 &runtime_use,
                             ));
                         }
-                        crate::ir::ActorSeamIr::Bearer(seam) => {
+                        bynk_ir::ActorSeamIr::Bearer(seam) => {
                             return_entries.push(emit_http_wrapper(
                                 sname,
                                 h,
@@ -654,16 +654,16 @@ pub(crate) fn emit_worker_compose(
                                 Some(&seam),
                             ));
                         }
-                        crate::ir::ActorSeamIr::Caller(_) | crate::ir::ActorSeamIr::None => {
+                        bynk_ir::ActorSeamIr::Caller(_) | bynk_ir::ActorSeamIr::None => {
                             return_entries.push(emit_http_wrapper(sname, h, *method, path, None));
                         }
                     }
                 }
-                crate::ir::IrHandlerKind::Cron { .. } => {
+                bynk_ir::IrHandlerKind::Cron { .. } => {
                     return_entries.push(emit_cron_wrapper(sname, cron_idx, h));
                     cron_idx += 1;
                 }
-                crate::ir::IrHandlerKind::Message => {
+                bynk_ir::IrHandlerKind::Message => {
                     // v0.106 (slice 3b-iii): a `from websocket` `on message` is an
                     // *inbound* handler that runs in the connection-hosting Durable
                     // Object (`webSocketMessage`), not at the edge — no compose
@@ -678,7 +678,7 @@ pub(crate) fn emit_worker_compose(
                     return_entries.push(emit_queue_wrapper(sname, queue_idx, h));
                     queue_idx += 1;
                 }
-                crate::ir::IrHandlerKind::Open => {
+                bynk_ir::IrHandlerKind::Open => {
                     let seam = bynk_check::actors::bearer_seam_for(h, &table.actors);
                     let local_agents: HashSet<String> = table.agents.keys().cloned().collect();
                     return_entries.push(emit_websocket_upgrade(
@@ -690,7 +690,7 @@ pub(crate) fn emit_worker_compose(
                 }
                 // v0.106 (slice 3b-iii): `on close` runs in the DO (`webSocketClose`),
                 // not at the edge — no compose wrapper.
-                crate::ir::IrHandlerKind::Close => {}
+                bynk_ir::IrHandlerKind::Close => {}
                 // Events track, slice 0 (spine #936): unlike the WS
                 // lifecycle handlers above, an `on event` handler's body
                 // *does* need a compose-surface wrapper — it is reached from
@@ -699,7 +699,7 @@ pub(crate) fn emit_worker_compose(
                 // this context's edge traffic, and not HTTP-routable, hence
                 // no route table entry — just a plain wrapper like `on
                 // call`'s).
-                crate::ir::IrHandlerKind::Event => {
+                bynk_ir::IrHandlerKind::Event => {
                     return_entries.push(emit_event_wrapper(sname, h, &service.protocol));
                 }
             }
@@ -908,19 +908,19 @@ fn worker_cross_caps(
         None
     }
     let mut out = std::collections::BTreeMap::new();
-    let mut givens: Vec<crate::ir::CapRefIr> = Vec::new();
+    let mut givens: Vec<bynk_ir::CapRefIr> = Vec::new();
     for s in table.services.values() {
         for h in &s.handlers {
-            givens.extend(crate::ir::lower::lower_handler_given_ir(h));
+            givens.extend(bynk_lower::lower_handler_given_ir(h));
         }
     }
     for a in table.agents.values() {
         for h in &a.handlers {
-            givens.extend(crate::ir::lower::lower_handler_given_ir(h));
+            givens.extend(bynk_lower::lower_handler_given_ir(h));
         }
     }
     for p in table.providers.values() {
-        givens.extend(crate::ir::lower::lower_provider_given_ir(p));
+        givens.extend(bynk_lower::lower_provider_given_ir(p));
     }
     for c in &givens {
         // Events track, slice 0 (spine #936): `Events.emit` is

@@ -373,8 +373,7 @@ pub(crate) fn emit_worker_entry(
             // `path` from the original `h.kind` for `HttpRoute`'s own still-
             // AST-typed fields (Q7-settled — `HttpRoute::method`/`handler`
             // stay AST until phase 7's printer).
-            if let crate::ir::IrHandlerKind::Http { .. } =
-                crate::ir::lower::lower_handler_kind_ir(&h.kind)
+            if let bynk_ir::IrHandlerKind::Http { .. } = bynk_lower::lower_handler_kind_ir(&h.kind)
             {
                 let HandlerKind::Http { method, path } = &h.kind else {
                     unreachable!("lower_handler_kind_ir is a pure structural mirror")
@@ -397,7 +396,7 @@ pub(crate) fn emit_worker_entry(
                     sum: bynk_check::actors::sum_members_for(h, &table.actors).is_some(),
                     // v0.140 (ADR 0163): the handler's `@cache` freshness policy, if
                     // any — lowered to a `Cache-Control` on this GET's responses.
-                    cache: crate::ir::lower::lower_route_cache_ir(h),
+                    cache: bynk_lower::lower_route_cache_ir(h),
                     // v0.142 (ADR 0165): the route's effective request-body ceiling
                     // in bytes — the handler's `@limit` if any, else the service's
                     // `limits { }`, else none. `Some` drives the synthesised `413`
@@ -454,8 +453,8 @@ pub(crate) fn emit_worker_entry(
             // P6.31: dispatches on `IrHandlerKind`; `expr` is a plain `String`
             // in both, so no AST re-derivation is needed here (unlike the
             // `Http` arm above).
-            if let crate::ir::IrHandlerKind::Cron { expr } =
-                crate::ir::lower::lower_handler_kind_ir(&h.kind)
+            if let bynk_ir::IrHandlerKind::Cron { expr } =
+                bynk_lower::lower_handler_kind_ir(&h.kind)
             {
                 cron_routes.push(CronRoute {
                     service: (*sname).clone(),
@@ -481,8 +480,8 @@ pub(crate) fn emit_worker_entry(
             // function has no `TypedCommons` in scope, the same constraint
             // P6.30 found in `emit_worker_compose`.
             if matches!(
-                crate::ir::lower::lower_handler_kind_ir(&h.kind),
-                crate::ir::IrHandlerKind::Message
+                bynk_lower::lower_handler_kind_ir(&h.kind),
+                bynk_ir::IrHandlerKind::Message
             ) {
                 // v0.44: the bound queue name lives on the service header
                 // (`from queue("name")`), not on the handler.
@@ -511,8 +510,8 @@ pub(crate) fn emit_worker_entry(
         let service = table.services.get(*sname).unwrap();
         for h in &service.handlers {
             if matches!(
-                crate::ir::lower::lower_handler_kind_ir(&h.kind),
-                crate::ir::IrHandlerKind::Open
+                bynk_lower::lower_handler_kind_ir(&h.kind),
+                bynk_ir::IrHandlerKind::Open
             ) {
                 ws_open_routes.push((*sname, h));
             }
@@ -527,8 +526,8 @@ pub(crate) fn emit_worker_entry(
         table.services.get(*sname).is_some_and(|s| {
             s.handlers.iter().any(|h| {
                 matches!(
-                    crate::ir::lower::lower_handler_kind_ir(&h.kind),
-                    crate::ir::IrHandlerKind::Event
+                    bynk_lower::lower_handler_kind_ir(&h.kind),
+                    bynk_ir::IrHandlerKind::Event
                 )
             })
         })
@@ -685,8 +684,8 @@ pub(crate) fn emit_worker_entry(
         let service = table.services.get(*sname).unwrap();
         let Some(h) = service.handlers.iter().find(|h| {
             matches!(
-                crate::ir::lower::lower_handler_kind_ir(&h.kind),
-                crate::ir::IrHandlerKind::Call
+                bynk_lower::lower_handler_kind_ir(&h.kind),
+                bynk_ir::IrHandlerKind::Call
             )
         }) else {
             continue;
@@ -835,8 +834,8 @@ pub(crate) fn emit_worker_entry(
             table.services.get(**sname).is_some_and(|s| {
                 s.handlers.iter().any(|h| {
                     matches!(
-                        crate::ir::lower::lower_handler_kind_ir(&h.kind),
-                        crate::ir::IrHandlerKind::Event
+                        bynk_lower::lower_handler_kind_ir(&h.kind),
+                        bynk_ir::IrHandlerKind::Event
                     )
                 })
             })
@@ -912,8 +911,8 @@ pub(crate) fn emit_worker_entry(
                 .iter()
                 .find(|h| {
                     matches!(
-                        crate::ir::lower::lower_handler_kind_ir(&h.kind),
-                        crate::ir::IrHandlerKind::Event
+                        bynk_lower::lower_handler_kind_ir(&h.kind),
+                        bynk_ir::IrHandlerKind::Event
                     )
                 })
                 .expect("event_services filtered to services with an Event handler");
@@ -1693,7 +1692,7 @@ struct HttpRoute {
     /// `Some` only for a `GET` carrying a well-formed `@cache`; drives the
     /// `applyCache` `Cache-Control` stamp. The conditional `ETag`/`304` half is
     /// automatic for every eligible GET and needs no policy.
-    cache: Option<crate::ir::CacheIr>,
+    cache: Option<bynk_ir::CacheIr>,
     /// v0.142 (ADR 0165): the route's effective request-body ceiling in bytes —
     /// the handler's `@limit(maxBody:)` if present, else the service's
     /// `limits { maxBody }`, else `None` (no cap). `Some` emits a `Content-Length`
@@ -1709,10 +1708,10 @@ struct HttpRoute {
 /// or misplaced `@limit`/`limits`, so a bad/absent value here simply yields no
 /// cap. Only a body-taking method can carry a cap — a `@limit` on a GET/DELETE is
 /// a checker error, so it never reaches a live route here. The route-annotation
-/// half is `bynk-emit::ir`'s own [`crate::ir::lower::lower_route_limit_ir`]
+/// half is `bynk-emit::ir`'s own [`bynk_lower::lower_route_limit_ir`]
 /// (#1228); only the service-wide fallback composition stays here.
 fn effective_max_body(service_limits: Option<&LimitsPolicy>, h: &Handler) -> Option<i64> {
-    crate::ir::lower::lower_route_limit_ir(h).or_else(|| service_limits.and_then(|p| p.max_body()))
+    bynk_lower::lower_route_limit_ir(h).or_else(|| service_limits.and_then(|p| p.max_body()))
 }
 
 /// One `on cron` handler, identified by its service and per-service declaration

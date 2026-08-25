@@ -27,11 +27,6 @@ use std::sync::Arc;
 // gets a second, simpler way to use the same type.
 use bynk_ts::{SourceMapBuilder, TsType};
 
-use crate::ir::lower::{
-    lower_capability_item_ir, lower_protocol_ir, lower_service_handler_signature_ir,
-    lower_store_field_shape_ir, lower_type_item_ir,
-};
-use crate::ir::{IrItem, TypeShape};
 use crate::project::{BuildTarget, EmitProjectCtx, ImportExt, UnitKind, UnitTable};
 use bynk_check::builtin_names::map_query;
 use bynk_check::builtin_names::methods::{
@@ -40,10 +35,16 @@ use bynk_check::builtin_names::methods::{
 };
 use bynk_check::builtin_names::types::*;
 use bynk_check::checker::{CheckedProgram, ExprId, NamedKind, Ty, TyId, TypedCommons, Types};
+use bynk_ir::{IrItem, TypeShape};
+use bynk_ir::{block_uses_emit, walk_block_exprs};
+use bynk_lower::{
+    lower_capability_item_ir, lower_protocol_ir, lower_service_handler_signature_ir,
+    lower_store_field_shape_ir, lower_type_item_ir,
+};
 use bynk_syntax::ast::{
     AgentDecl, BaseType, BinOp, Block, CommonsItem, Expr, ExprKind, FnDecl, FnName, Ident,
     InterpPart, MatchBody, MessagesDecl, ObservationMatcher, Param, Pattern, PredKind, ServiceDecl,
-    Statement, TypeBody, TypeDecl, TypeRef, expr_children, statement_exprs,
+    Statement, TypeBody, TypeDecl, TypeRef, expr_children,
 };
 
 pub mod contracts;
@@ -663,19 +664,6 @@ fn missing_bindings(existing: &str, extra: &str) -> String {
     }
 }
 
-/// v0.22b: pre-order expression visitor — visits `e`, then every
-/// sub-expression, including statements and tails of nested blocks. Driven by
-/// `ast::expr_children`, the exhaustive total child iterator, rather than a
-/// hand-matched recursion duplicating it — a new `ExprKind` variant fails to
-/// compile in `expr_children` until it is taught to visit it, instead of
-/// silently under-visiting here.
-pub(crate) fn walk_exprs(e: &Expr, f: &mut impl FnMut(&Expr)) {
-    f(e);
-    for child in expr_children(e) {
-        walk_exprs(child, f);
-    }
-}
-
 /// v0.79: does this block contain a `~>` send anywhere — including nested
 /// branches, match arms, and lambdas? Gates execution-context threading
 /// (`deps.__exec`) so a context that never sends keeps byte-identical output.
@@ -761,95 +749,6 @@ pub(crate) fn block_uses_send(b: &Block) -> bool {
         }
     }
     b.statements.iter().any(stmt) || expr(&b.tail)
-}
-
-/// Events track, slice 0 (spine #936): does this block contain a real
-/// `Events.emit[...]` call anywhere — including nested branches, match arms,
-/// lambdas, and any other expression position (a `Paren`, an `Ok`/`Err`
-/// wrapper, a `Call`/`RecordConstruction` argument, a `BinOp` operand, …)?
-/// Gates release-at-commit buffer threading (`deps.__events`) so a handler
-/// that never emits keeps byte-identical output, mirroring `block_uses_send`'s
-/// gate on `deps.__exec`.
-///
-/// Driven off the exhaustive `walk_block_exprs`/`walk_exprs` visitor rather
-/// than a hand-rolled `ExprKind` match — a bespoke match here previously
-/// covered only `MethodCall`/`Block`/`If`/`Match`/`Lambda` and silently
-/// disagreed with `lower_expr_into` (which recurses into every expression
-/// position), so `do (Events.emit[E](event))` — one added paren — compiled
-/// clean but emitted a body that referenced an undeclared `__events` local
-/// (`tsc`-only failure, no bynk diagnostic). Riding the walker means this
-/// can't drift from the lowering again: a new `ExprKind` variant fails to
-/// compile here until `walk_exprs` itself is taught to visit it.
-///
-/// #1187's slice 6 plumbing (review of #1202): reads the checker's own
-/// already-resolved `Callee::Capability{cap:"Events",op:"emit"}` for each
-/// visited call site instead of a bare-`Ident("Events")`-receiver name
-/// match. Was deliberately syntactic before this — this function's own
-/// prior doc comment named the locally-shadowed-`Events` false positive an
-/// "accepted approximation," matching `block_uses_send`'s own precedent —
-/// but that approximation stopped being harmless once `crate::project::
-/// unit_table_uses_emit` (the project-wide compose-gating twin this
-/// function's own callers must agree with) became precise first: the two
-/// disagreeing on exactly the shadowed case produces a real `tsc` type
-/// error (a `deps.__eventsDispatch` call site with nothing supplying it),
-/// not just an unused interface field. `block_uses_send` needs no matching
-/// fix — a `~>` send is a real `Statement::Send` AST variant, not a method
-/// call that could be shadowed, so it was never approximate to begin with.
-pub(crate) fn block_uses_emit(
-    b: &Block,
-    callees: &HashMap<ExprId, bynk_check::checker::Callee>,
-) -> bool {
-    let mut found = false;
-    walk_block_exprs(b, &mut |e| {
-        if !found
-            && matches!(
-                callees.get(&e.id),
-                Some(bynk_check::checker::Callee::Capability { cap, op })
-                    if cap == "Events" && op == "emit"
-            )
-        {
-            found = true;
-        }
-    });
-    found
-}
-
-/// Decision C (#1165): the closed sets of mutating storage-op names, one
-/// `pub(crate)` constant per kind group — read by `ir::lower`'s own
-/// `Callee::Store`-keyed write-detection walk (P6.8, Decision B;
-/// [`crate::ir::lower::body_writes_state`]), which needs no receiver-name
-/// gate at all: a `Callee::Store` already carries the field's own resolved
-/// identity, not a name that could be shadowed. Until #1196, this module
-/// also had its own bare-`Ident`-receiver-name-matching reader
-/// (`block_writes_state`'s own `mutating_op`, deleted) — a single shared
-/// source avoided the class of drift #1164's own review caught twice for a
-/// different pair of independently hand-maintained copies
-/// (`cache_ttl_millis`'s `DurationLit` extraction, `store_map_indexes`'s
-/// dedup); now there is only the one reader, but these stay `pub(crate)`
-/// here (not moved into `ir::lower`) since a future emitter-side reader
-/// (a `Service` handler's own write detection, say) may need them again.
-/// `Map`/`Cache` share one list — both support the same four entry ops —
-/// rather than two identical ones.
-pub(crate) const MUTATING_MAP_CACHE_OPS: &[&str] = &["put", "remove", "update", "upsert"];
-/// v0.83: `<set>.add`/`<set>.remove` mutate a `store Set[T]` field.
-pub(crate) const MUTATING_SET_OPS: &[&str] = &["add", "remove"];
-/// v0.95: `<log>.append` mutates the durable array (ADR 0121) — every other
-/// `Log` method is a query-lifting read.
-pub(crate) const MUTATING_LOG_OPS: &[&str] = &["append"];
-/// v0.98 (ADR 0125): `<cell>.update(f)` is a read-modify-write of the
-/// working state — the bare `:=` write form is `Statement::Assign`, checked
-/// separately and unconditionally, no method name involved.
-pub(crate) const MUTATING_CELL_OPS: &[&str] = &["update"];
-
-pub(crate) fn walk_block_exprs(b: &Block, f: &mut impl FnMut(&Expr)) {
-    let mut exprs = Vec::new();
-    for s in &b.statements {
-        statement_exprs(s, &mut exprs);
-    }
-    exprs.push(&b.tail);
-    for e in exprs {
-        walk_exprs(e, f);
-    }
 }
 
 /// P6.48 (design/tracks/the-ir.md §6b): every handler/op body in `table` —
@@ -1521,8 +1420,8 @@ fn emit_consumed_context_helpers(
         let CommonsItem::Service(svc) = item else {
             continue;
         };
-        let crate::ir::ProtocolIr::Events { event, .. } =
-            crate::ir::lower::lower_protocol_ir(&svc.protocol, program)
+        let bynk_ir::ProtocolIr::Events { event, .. } =
+            bynk_lower::lower_protocol_ir(&svc.protocol, program)
         else {
             continue;
         };
@@ -2522,8 +2421,8 @@ fn emit_project_imports(
         .iter()
         .filter_map(|item| match item {
             CommonsItem::Service(s) => {
-                let crate::ir::ProtocolIr::Events { event, .. } =
-                    crate::ir::lower::lower_protocol_ir_from_commons(&s.protocol, commons)
+                let bynk_ir::ProtocolIr::Events { event, .. } =
+                    bynk_lower::lower_protocol_ir_from_commons(&s.protocol, commons)
                 else {
                     return None;
                 };
@@ -2748,8 +2647,8 @@ fn write_header(out: &mut String, commons: &TypedCommons, ctx: &EmitProjectCtx) 
         let has_http = commons.commons.items.iter().any(|i| match i {
             CommonsItem::Service(s) => s.handlers.iter().any(|h| {
                 matches!(
-                    crate::ir::lower::lower_handler_kind_ir(&h.kind),
-                    crate::ir::IrHandlerKind::Http { .. }
+                    bynk_lower::lower_handler_kind_ir(&h.kind),
+                    bynk_ir::IrHandlerKind::Http { .. }
                 )
             }),
             _ => false,
@@ -2764,12 +2663,12 @@ fn write_header(out: &mut String, commons: &TypedCommons, ctx: &EmitProjectCtx) 
         let has_queue = commons.commons.items.iter().any(|i| match i {
             CommonsItem::Service(s) => {
                 !matches!(
-                    crate::ir::lower::lower_protocol_ir_from_commons(&s.protocol, commons),
-                    crate::ir::ProtocolIr::WebSocket { .. }
+                    bynk_lower::lower_protocol_ir_from_commons(&s.protocol, commons),
+                    bynk_ir::ProtocolIr::WebSocket { .. }
                 ) && s.handlers.iter().any(|h| {
                     matches!(
-                        crate::ir::lower::lower_handler_kind_ir(&h.kind),
-                        crate::ir::IrHandlerKind::Message
+                        bynk_lower::lower_handler_kind_ir(&h.kind),
+                        bynk_ir::IrHandlerKind::Message
                     )
                 })
             }
@@ -2856,8 +2755,8 @@ fn write_header(out: &mut String, commons: &TypedCommons, ctx: &EmitProjectCtx) 
         let hosts_ws_open = commons.commons.items.iter().any(|i| match i {
             CommonsItem::Service(s) => s.handlers.iter().any(|h| {
                 matches!(
-                    crate::ir::lower::lower_handler_kind_ir(&h.kind),
-                    crate::ir::IrHandlerKind::Open
+                    bynk_lower::lower_handler_kind_ir(&h.kind),
+                    bynk_ir::IrHandlerKind::Open
                 )
             }),
             _ => false,
@@ -2873,12 +2772,12 @@ fn write_header(out: &mut String, commons: &TypedCommons, ctx: &EmitProjectCtx) 
         let hosts_ws_inbound = commons.commons.items.iter().any(|i| match i {
             CommonsItem::Service(s) => {
                 matches!(
-                    crate::ir::lower::lower_protocol_ir_from_commons(&s.protocol, commons),
-                    crate::ir::ProtocolIr::WebSocket { .. }
+                    bynk_lower::lower_protocol_ir_from_commons(&s.protocol, commons),
+                    bynk_ir::ProtocolIr::WebSocket { .. }
                 ) && s.handlers.iter().any(|h| {
                     matches!(
-                        crate::ir::lower::lower_handler_kind_ir(&h.kind),
-                        crate::ir::IrHandlerKind::Message | crate::ir::IrHandlerKind::Close
+                        bynk_lower::lower_handler_kind_ir(&h.kind),
+                        bynk_ir::IrHandlerKind::Message | bynk_ir::IrHandlerKind::Close
                     )
                 })
             }
@@ -3100,7 +2999,7 @@ pub(crate) struct ModuleCtx<'a> {
     /// #527: agent → method → the method's `given` caps (mirrors
     /// [`crate::project::EmitProjectCtx::agent_method_givens`]). Consulted by
     /// the agent-call lowering to record capability requirements.
-    agent_method_givens: HashMap<String, HashMap<String, Vec<crate::ir::CapRefIr>>>,
+    agent_method_givens: HashMap<String, HashMap<String, Vec<bynk_ir::CapRefIr>>>,
     /// Events slice 3b (#978): each locally-declared event's resolved
     /// `@schema(N)` version (mirrors
     /// [`crate::project::EmitProjectCtx::event_schema_versions`]). Default-
@@ -3213,7 +3112,7 @@ pub(crate) struct HandlerShared {
     /// #527: capabilities required by agent methods this body calls, keyed by
     /// deps key. After body lowering these widen the handler's deps *type* to
     /// match the runtime value compose builds (which always carried them).
-    agent_given_caps_used: std::collections::BTreeMap<String, crate::ir::CapRefIr>,
+    agent_given_caps_used: std::collections::BTreeMap<String, bynk_ir::CapRefIr>,
 }
 
 impl Default for HandlerShared {
@@ -3384,7 +3283,7 @@ pub(crate) enum BodyMode {
         /// lookup here. P6.37 (design/tracks/the-ir.md §6a): `IrHandlerKind`
         /// (P6.24a's own pure, unconditional mirror), not the raw AST
         /// `HandlerKind` this field used to store.
-        test_service_handlers: HashMap<String, Vec<crate::ir::IrHandlerKind>>,
+        test_service_handlers: HashMap<String, Vec<bynk_ir::IrHandlerKind>>,
     },
     /// An integration test `case` body (`lower_integration_case_body`).
     IntegrationCase {
@@ -3668,7 +3567,7 @@ impl<'a> LowerCtx<'a> {
     /// #527: capabilities required by agent methods this body calls.
     pub(crate) fn agent_given_caps_used(
         &self,
-    ) -> Option<&std::collections::BTreeMap<String, crate::ir::CapRefIr>> {
+    ) -> Option<&std::collections::BTreeMap<String, bynk_ir::CapRefIr>> {
         self.handler().map(|h| &h.agent_given_caps_used)
     }
 
@@ -3858,7 +3757,7 @@ impl<'a> LowerCtx<'a> {
     }
 
     /// v0.182 (#664): the ordered handler kinds of the test service `name`.
-    pub(crate) fn test_service_handlers(&self, name: &str) -> Option<&[crate::ir::IrHandlerKind]> {
+    pub(crate) fn test_service_handlers(&self, name: &str) -> Option<&[bynk_ir::IrHandlerKind]> {
         match &self.mode {
             BodyMode::TestCase {
                 test_service_handlers,

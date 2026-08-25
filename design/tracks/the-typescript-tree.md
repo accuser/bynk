@@ -1348,7 +1348,7 @@ decomposition.**
 | **Arc C, slice 36 — the system-http driver cluster (`tests_emit.rs` slice F)** (#1407, landed) | The sixth of `tests_emit.rs`'s own 7 proposed slices per its dedicated grounding pass (post-#1392), following slice E/#1405; structurally self-contained, no dependency on any of A-E, confirmed by landing. Converts `emit_system_http_support` in `bynk-emit/src/project/tests_emit.rs`. **The 4 per-route drivers convert fully at the structural level** via a new shared helper, `sysdrive_driver(kind_prefix, sname, key, params, body_stmt, url, options, binding, decode_fn, payload)` — the one real shape all four `__sysdrive_{,raw_,noauth_,rawnoauth_}*` drivers share (async function decl, optional `const __body = JSON.stringify(...)` lead statement, `const __h = makeHarness();`, `const __req = new Request(<url>, <options>);`, `const __res = await __h.env.<binding>.fetch(__req);`, `return <decode>(__res, <payload>);`), replacing four near-identical hand-written `format!` blocks with one parameterised builder. **The wrong-method driver converts fully, no carve-out at all** — its own `new Request(\`https://test${path}\`, { method })` is this file's first real dynamic (non-baked) `TsExpr::TemplateLit` substitution and first real `TsObjectEntry::Shorthand` object literal, both byte-matching the existing text exactly (a single, never-conditionally-empty shorthand entry matches `TsExpr::Object`'s own tight single-line rendering). **Decision A: the per-route options object (`{ method, headers: {...}, body, }`) stays opaque hand-formatted text**, passed as a `TsExpr::Ident`-wrapped fragment argument to a real `TsExpr::New` call — every branch's own hand-written template bakes in an unconditional trailing `, ` before its closing brace and prints `{ }` (one space) rather than `TsExpr::Object`'s own tight `{}` when a sub-object has zero entries, a shape `TsExpr::Object`'s general single-line algebra cannot reproduce byte-for-byte, the same "odd, one-off shape stays text" call this track has made before (Decision B, #1327; Decision C, #1359). The secrets-bootstrap loop's own `format!` call converts fully too, to real `As`/`Member`/`Binary(NullishCoalescing)`/`Index`/`Assign` nodes. **The static signer preamble stays out of scope, honestly recorded**: built via a plain `push_str` literal with zero per-target dynamism, already excluded from the `ts_writes` probe (no `write!`/`writeln!`/`format!` on those lines) — converting it moves no metric and adds no real coverage. **Landed as one slice, not split by driver-kind**: this paragraph's own proposal-time caveat considered splitting by typed/raw/noauth/rawnoauth/wrongmethod, but once drafted the 4 per-route kinds shared one structural shape completely — every real difference became a plain parameter to `sysdrive_driver`, so a split would have meant reviewing the identical helper four times rather than once. **One real transcription bug, caught immediately by `positive_fixtures`, fixed before the CI pass**: the wrong-method driver's decode call was first built as `responseToHttpResult`, not the existing text's own `responseToHttpOutcome` (the router's `405` fall-through decodes to an `HttpOutcome`, not an `HttpResult`) — a one-line fixture diff named the exact mismatch. **A real, non-metric-driven simplification found while implementing**: the first draft's per-call-site `format!` for each driver's own name *increased* `ts_writes` by 1 despite eliminating four hand-formatted functions (each driver-kind's name interpolation became its own newly-countable line, previously merged into one big `format!` call); consolidated into `sysdrive_driver`'s own single internal `format!("__sysdrive_{kind_prefix}{sname}_{key}")`, turning the accidental increase into a genuine larger net decrease. No new `bynk_ts` algebra gap — every shape needed (`TsDecl::Function` `is_async`, `TsExpr::New`, `TsExpr::TemplateLit` both zero- and real-substitution, `TsExpr::Await`, `TsExpr::As`, `TsObjectEntry::Shorthand`, `TsExpr::Arrow` expression-bodied) already existed. `verbatim_sites` unchanged (5). `ts_writes` drops by **3** (1080 → 1077), verified via a fresh `cargo xtask greenfield-status --apply`. `ast_importers`/`ts_any` unaffected. Zero diff, confirmed after the one fix above: `positive_fixtures`/`bless_positive_fixtures`, `source_map`, and `tsc_verify`'s full strict-`tsc` corpus all pass unchanged; all `bynk-ts`/`bynk-emit` unit tests pass. | R7.1 | #1331, #1394, #1327, #1359 |
 | **Arc C, slice 37 — the two top-level module assemblers (`tests_emit.rs` slice G)** (#1409, landed) | The seventh and last of `tests_emit.rs`'s own 7 proposed slices per its dedicated grounding pass (post-#1392), following slice F/#1407 — closes Arc C entirely. Converts `emit_integration_module` and `emit_test_module` in `bynk-emit/src/project/tests_emit.rs`, the two top-level module assemblers; depended on slice B (`emit_ns_destructure`), confirmed by landing, in addition to calling nearly every other already-converted delegate. **Every header comment line, every `import` line, and each module's own `export async function run(only?: string) { ... }` runner convert fully, no carve-out at all.** The two functions' own per-case/per-property/per-attack loop bodies stay exactly as they are — each already delegates to an already-converted or intentionally-opaque (`lower.rs`-family, ADR 0391) builder returning pre-formatted text with its own source-map splice arithmetic (`module_smb.merge(...)`); only the bookend content around those splices is new real structure. **One real, grounded `bynk_ts` algebra gap found and closed**: `TsDecl::ImportDefault { alias, from }` — `emit_integration_module`'s own per-participant `import worker_{ns} from "../workers/{dir}/index.js";` (the participant's Worker entry module's default export) is the first real default import anywhere in `bynk-emit`'s own converted content; every prior import site is either named (`TsDecl::Import`) or namespace (`TsDecl::ImportNamespace`). Added with a direct printer unit test and folded into the existing "no blank line between adjacent imports" grouping rule. **A new shared pair of helpers, `run_dispatch_stmt`/`build_run_function`, factors the identical `run(only)` shape both functions build**: one `if (want("name")) results.push({ name: "...", ...(await runner()) });` dispatch line per case/property/attack (a real `TsObjectEntry::Spread` wrapping a real `TsExpr::Paren(await_expr(...))`, matching the existing text's own explicit parens around the spread), wrapped in one real `TsDecl::Function` — this function carries no opaque lowered content and no source-map splice sensitivity at all, so it converts fully rather than needing `emit_test_case_function`'s own header/tail split. No other new `bynk_ts` algebra gap. `verbatim_sites` unchanged (5). `ts_writes` drops by **5** (1077 → 1072), verified via a fresh `cargo xtask greenfield-status --apply`. `ast_importers`/`ts_any` unaffected. Zero diff, first attempt, no iteration: `positive_fixtures`/`bless_positive_fixtures`, `source_map`/`source_map_bodies`, and `tsc_verify`'s full strict-`tsc` corpus all pass unchanged; 141 `bynk-ts` unit tests (1 new, pinning `ImportDefault`) and all `bynk-emit` unit tests pass. **Closes Arc C entirely: all 37 slices landed.** | R7.1 | #1331, #1394, #1399, #1325 |
 
-**Arc D — settling (~8 slices; 2 landed as P7.10/P7.11, 6 remaining)**
+**Arc D — settling (~8 slices; 3 landed as P7.10/P7.11/P7.12, 5 remaining)**
 
 Provisionally lettered, not numbered — Arc C's own slice count is an estimate (originally ~23-27,
 now ~30-33, revised by
@@ -1359,12 +1359,12 @@ convention every prior track on this trajectory used.
 
 | Slice | What lands | Rules | Gated on |
 |---|---|---|---|
-| **P7.d1** | `bynk-ir`/`bynk-lower` carved as crates — ADR 0332's named trigger (`bynk-ts` as a genuine second consumer) met once Arc B lands. **Re-grounding note (this settling pass): bigger and different in kind than a file move — see below.** | R10.3 | P7.5 |
+| **P7.12** (landed) | `bynk-ir`/`bynk-lower` carved as crates — see below | R10.3 | P7.5 |
 | **P7.d2** | R8.2 — brand string recorded once (R4.10), read at emission rather than computed from `ctx.owning_context` | R8.2 | Arc C substantially landed |
 | **P7.d3** | R8.14 — the JSON/boundary codec collector unified into one collector over `bynk-ts` tree nodes, revisiting P6.56's declined IR-based attempt now that a tree exists to collect over | R8.14 | P7.8 |
 | **P7.10** (landed) | R8.4/d5/d8 settling sweep — see below | R8.4, R8.5,7,9,11–13,15,17–19,21,22 (verify) | Arc C landed |
 | **P7.11** (landed) | R10.4 surface enumeration — see below | R10.4 | Arc C landed |
-| **P7.d7** | R10.2 verification — `bynk-lsp` stops linking emission code it never executes (finding #39) | R10.2 | P7.d1 |
+| **P7.d7** | R10.2 verification — `bynk-lsp` stops linking emission code it never executes (finding #39) | R10.2 | P7.12 (landed, unblocked) |
 
 **P7.d1 re-grounding (this settling pass, not yet implemented) — `ir/lower.rs` is not one crate's
 worth of live code, it's two.** `bynk-emit/src/ir.rs` (1,756 lines) + `bynk-emit/src/ir/lower.rs`
@@ -1422,40 +1422,88 @@ reference cases above): `lower_service_handler_ir`, `lower_service_handler_body_
 `lower_http_method_ir`, `lower_policy_ir`, `lower_event_pattern_ir`, `lower_cap_ref_ir`, and a
 dozen more small private helpers (full list in the proposal issue, not repeated here).
 
-**Layer 2 (genuinely dead, confirmed by full reachability analysis from all 17 roots, each hit
-manually read in context — not merely "no cross-file caller", and not merely "no bare-word
-match"):** `lower_handler_ir`, `lower_handler_body_ir`, `lower_handler_signature_ir`,
-`lower_fn_item_ir`, `lower_fn_body_ir`, `lower_store_field_ir`, `lower_invariant_ir`,
-`lower_transition_ir`, `lower_agent_item_ir`, `lower_provider_item_ir`, `lower_provider_op_ir` —
-**11 functions**, roughly the `Fn`/`Agent`/`Provider` top-level item lowering path (services and
-types are the two item kinds a real consumer needs today; standalone functions, agents, and
-providers never got a real caller). Every real (non-string, non-comment) call among these 11 stays
-inside the same dead component — `lower_agent_item_ir` and `lower_provider_item_ir` are the two
-never-called-at-all outer entry points, pulling in the rest. This matches the retired `the-ir.md`'s
-own account of its retirement-plan arc (P6.42–58): several originally-planned full item lowerings
-"were traced against their own real consumers and declined rather than force-built" — apparently
-for `Fn`/`Agent`/`Provider` items specifically, not for `Service` (whose handler-body lowering
-*did* get a real caller via the events-subscriber-shape probe) or `Type`/`Capability` (shape-only,
-no body to lower).
+**Third correction — the "Layer 2 = delete" premise itself was wrong, caught before implementation
+by widening the reachability question to include test callers, not just production ones.** The
+above found 11 functions with zero *production* callers. Attempting the actual deletion on this
+branch hit real compile errors from test helpers (`lower_fn`, `agent_store_cells`,
+`handler_ir_of_with_predicates`, and others) that wrap exactly these 11 — `lower_fn` alone wraps
+`lower_fn_body_ir` and is called from **51 real test sites**. Reading what those tests actually
+assert settles the question: they are not redundant coverage of already-tested behaviour, and not
+assertions about output nothing consumes. Per function, checked by reading real test bodies, not
+inferred from caller counts:
 
-This means P7.d1 is not a mechanical file-move (however large), but for a narrower reason than
-first thought: the real work is deleting the confirmed-dead 11-function layer (trim, not carry
-forward — this track's own repeated precedent, e.g. `ts_type_ref_qualified` deleted outright once
-superseded), then carving the much-larger-than-expected remaining ~85% of `ir/lower.rs` (the live
-recursive lowering machinery, genuinely exercised by the events-subscriber-shape path) into
-`bynk-ir`/`bynk-lower`, plus the ordinary mechanical work (new manifests, ~99 call-site
-import-path fixes across 7 consumer files, resolving `ir/lower.rs`'s own live reverse dependency —
-`use crate::emitter::{ MUTATING_CELL_OPS, MUTATING_LOG_OPS, MUTATING_MAP_CACHE_OPS,
-MUTATING_SET_OPS, block_uses_emit, match_needs_if_chain };` — before the new crate graph is
-acyclic (the four `MUTATING_*_OPS` consts have no other `bynk-emit`-side use and can simply move;
-`block_uses_emit`/`match_needs_if_chain` are each genuinely shared with real `bynk-emit`-side
-callers of their own and need a real new home both sides can reach, not a relocation), and fixing
-`ir/lower.rs`'s own module doc comment (`ir/lower.rs:6-8`), which still asserts "nothing in this
-module is called from anywhere in `bynk-emit`'s existing emission path... it has no consumer
-yet" — false since the first correction above, left standing only because this pass changes no
-code; the next pass fixes it as part of the same edit that proves it false. **Not implemented this
-pass** — recorded here so the next pass starts from a twice-verified classification. P7.d7 stays
-blocked behind it.
+- **`lower_fn_body_ir`/`lower_handler_body_ir`** — pure scope-seeding wrappers around
+  `lower_block_ir` (live). `lower_fn`'s 51 call sites are this file's own primary harness for
+  testing the *shared* expression/pattern/lambda-lowering machinery (`lower_expr_ir` and
+  everything under it) via the cheapest available fixture (a bare free function) rather than
+  constructing a full service+handler AST every time.
+- **`lower_handler_ir`/`lower_provider_op_ir`** — named explicitly, together with
+  `lower_fn_body_ir`/`lower_service_handler_body_ir`, as "the four real body-lowering entry
+  points" in a regression test for a real historical bug (review of #1238: a `set_return_ty`
+  panic on a resolve-miss path) — each of the four needs independent coverage precisely because
+  the bug was entry-point-specific. Deleting either removes that regression guard for its own
+  entry point.
+- **`lower_fn_item_ir`** — its tests assert receiver detection (self vs. none), generic
+  type-variable resolution, and effectful-flag detection: `IrItem::Fn`'s own assembly logic, not
+  covered by `lower_fn_body_ir`'s tests (which test the body/expression side only).
+- **`lower_agent_item_ir`** — its tests assert the "compute once per agent, thread through every
+  handler" behaviour is real (a real, non-empty `invariants`/`transitions` pair reaching each
+  handler's `commit`, "not the empty pair `lower_handler_ir` would produce on its own if this
+  function forgot to pass them" — the test's own words), plus a named regression
+  (`agent_invariant_with_a_real_comparison_lowers_without_panicking`, #1189's own breakage point).
+  Both are unique to this function's own assembly step.
+- **`lower_provider_item_ir`** — reached directly by the same #1238 regression test above
+  (`question_reached_from_a_provider_op_body_sets_return_ty_without_panicking`) as the entry point
+  needed to exercise `lower_provider_op_ir`'s own body-lowering call.
+- **`lower_store_field_ir`** — tests assert `init`-expression lowering for a `Cell` field
+  ([DECISION D]), which `lower_store_field_shape_ir` (the live shape-only sibling) deliberately
+  does *not* do — genuinely non-overlapping coverage, not a duplicate of the live variant's tests.
+- **`lower_invariant_ir`/`lower_transition_ir`/`lower_handler_signature_ir`** — each has its own
+  direct test asserting real, non-redundant behaviour (named-predicate construction with real
+  `old`/`new` state-typed binding; params/given/effectful extraction respectively).
+
+**Conclusion: none of the 11 is dead in the sense that matters for a carve.** Zero *production*
+callers, but every one has a real test caller exercising either genuinely-live shared logic (the
+`_body_ir` family) or its own non-redundant assembly/regression-guarding logic. The corrected rule,
+same for a function with 1 test caller as one with 51: does the test exercise real logic, or is it
+itself dead weight? Here, every test earns its keep. **All 11 move into `bynk-lower` as-is** — no
+deletion — each with a short doc-comment note added at the carve ("no production caller; exercises
+`bynk-lower`'s shared lowering machinery / guards against issue #1238's/#1189's own regression /
+&lt;its own real reason&gt;, per its own real test coverage — see that test for detail").
+
+This means P7.d1 is, after all, close to a mechanical file-move (`ir.rs` + all of `ir/lower.rs`,
+unchanged in content) into `bynk-ir`/`bynk-lower` — new manifests, ~99 call-site import-path fixes
+across 7 consumer files, resolving `ir/lower.rs`'s own live reverse dependency — `use
+crate::emitter::{ MUTATING_CELL_OPS, MUTATING_LOG_OPS, MUTATING_MAP_CACHE_OPS, MUTATING_SET_OPS,
+block_uses_emit, match_needs_if_chain };` — before the new crate graph is acyclic (the four
+`MUTATING_*_OPS` consts have no other `bynk-emit`-side use and can simply move; `block_uses_emit`/
+`match_needs_if_chain` are each genuinely shared with real `bynk-emit`-side callers of their own
+and need a real new home both sides can reach, not a relocation), and fixing `ir/lower.rs`'s own
+module doc comment (`ir/lower.rs:6-8`), which still asserts "nothing in this module is called from
+anywhere in `bynk-emit`'s existing emission path... it has no consumer yet" — false since the first
+correction above.
+
+**P7.12 (landed, #1414) — the `bynk-ir`/`bynk-lower` crate carve, exactly as scoped above: all
+~11,850 lines move, nothing deleted.** New crates: `bynk-ir` (`ir.rs`'s types, depends on
+`bynk-syntax`/`bynk-check` only) and `bynk-lower` (`ir/lower.rs`'s lowering pass, unchanged content,
+depends on those two plus `bynk-ir`; `bynk-project` as a dev-dependency for its own test fixtures).
+`bynk-emit` depends on both. The reverse dependency resolved by relocating `block_uses_emit`,
+`walk_exprs`/`walk_block_exprs`, `match_needs_if_chain` + its private `pattern_has_nested_test`
+helper, and the four `MUTATING_*_OPS` consts into `bynk-ir` itself — every `pub(crate)` item in
+`ir.rs`/`ir/lower.rs` that needed reaching from outside its own file became `pub` (the crate
+boundary is what encapsulates now, not the old intra-crate visibility). Every `crate::ir::`/
+`crate::ir::lower::` call site across `bynk-emit`'s 7 consumer files repointed to `bynk_ir::`/
+`bynk_lower::`; the stale module-doc-comment claims in both `ir/lower.rs` and `bynk-emit/src/lib.rs`
+fixed in place, not left standing. `xtask/src/greenfield_status.rs`'s `AST_IMPORTER_EXCEPTIONS`/
+`TS_WRITES_EXCLUDED_FILES` both dropped their `ir.rs`/`ir/lower.rs` entries — those files didn't
+stop importing the AST or writing internal strings, they left `bynk-emit/src` entirely, outside
+either probe's own scanned universe; three of that fix's own tests updated to match. Zero-diff:
+full workspace `cargo check --all-targets` and `cargo test --workspace` both clean before touching
+anything test-related, and clean again after; `bynk-lower`'s own 134 tests (including the #1238/
+#1189 regressions this note's own "keep all 11" finding hinged on) moved verbatim and all pass.
+`design/greenfield-status.md` regenerated: every gated probe reads identically to pre-carve — only
+the trend-only `test_density` breakdown changed (two new crate rows, `bynk-emit`'s own percentage
+shifting as expected once ~11,850 lines and their tests left it). P7.d7 is now unblocked.
 
 **P7.10 (landed) — the R8.4/d5/d8 settling sweep, a single verify-only pass, no code changes.**
 Re-audited against the tree as it stands after Arc C's full 37-slice landing (all citations below

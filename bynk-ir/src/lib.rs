@@ -3,7 +3,7 @@
 //!
 //! R6.1 — "Every `IrExpr` carries its type. The constructor requires it;
 //! there is no side table and no fallible lookup from the emitter to the
-//! checker." This module is the type only; [`lower`] is the
+//! checker." This module is the type only; `bynk_lower` is the
 //! `&CheckedProgram → Ir` pass that constructs values of it.
 //!
 //! **Identity fields are adapted, not literal** (Decision B, extending P6.0's
@@ -19,17 +19,17 @@
 //!
 //! **The whole Part 6.2 shape lands in one piece** (Decision D): every
 //! variant below exists, including `Match`/`Variant`/`Call`/`Lambda`, so a
-//! later slice (P6.2, P6.4, P6.5) widens only [`lower`]'s match, never this
+//! later slice (P6.2, P6.4, P6.5) widens only `bynk_lower`'s match, never this
 //! type. `Match`'s own payload is four types: [`IrPat`]/[`IrArm`]/
 //! [`Exhaustive`] are P6.4's own commission (#1157, Part 5.1/5.2 of the
 //! reference); [`MatchForm`] is P6.5's own (#1159, R5.2/R5.3, scoped to
 //! shape only — Decision A). All four are real, constructible types as of
-//! P6.5, wired into a real [`IrExprKind::Match`] by [`lower`]'s
+//! P6.5, wired into a real [`IrExprKind::Match`] by `bynk_lower`'s
 //! `ExprKind::Match` arm, which calls P6.4's own standalone constructors
-//! ([`lower::lower_pattern_ir`]/[`lower::lower_arm_ir`]/
-//! [`lower::lower_exhaustive_ir`]) verbatim. `Question`/`Is` stay
+//! (`bynk_lower::lower_pattern_ir`/`bynk_lower::lower_arm_ir`/
+//! `bynk_lower::lower_exhaustive_ir`) verbatim. `Question`/`Is` stay
 //! desugars-to-`Match` in name only — neither gets real construction this
-//! slice, each for a reason specific to it (see [`lower`]'s own `todo!()`
+//! slice, each for a reason specific to it (see `bynk_lower`'s own `todo!()`
 //! text for each).
 //!
 //! **Decision D's own "never widens beyond the reference's Part 6.2 shape"
@@ -86,10 +86,10 @@
 //! (Part 6.7's own trailing construct, R6.16) — a real, standalone,
 //! constructible agent `on call` handler, plus the `Statement::Assign`
 //! prerequisite gap (`todo!()` since P6.1, twice deferred by P6.7/P6.8's own
-//! Risks) it needed closed first: [`lower::lower_handler_ir`] cannot lower a
+//! Risks) it needed closed first: `bynk_lower::lower_handler_ir` cannot lower a
 //! store-writing handler body without a real `IrStmt` target for `:=`.
 //! `binder: Option<ActorBinder>` is always `None` from
-//! [`lower::lower_handler_ir`] this slice — an agent handler structurally
+//! `bynk_lower::lower_handler_ir` this slice — an agent handler structurally
 //! cannot carry one (`bynk.actor.by_on_agent`); a real service handler's own
 //! non-`None` `binder` needs a `bynk-check` change this slice does not make
 //! (see [`IrHandler`]'s own doc comment). Same posture again: no `IrItem`
@@ -102,7 +102,7 @@
 //! P6.9) was already real, but nothing combined them into one `IrItem`
 //! value, and `IrItem` had no variant to carry the result. This is the
 //! first `IrItem` variant with a real consumer shape below the top level —
-//! [`lower::lower_agent_item_ir`] calls every prior slice's own standalone
+//! `bynk_lower::lower_agent_item_ir` calls every prior slice's own standalone
 //! constructor rather than re-deriving any of their logic, the same
 //! "wire, don't re-derive" posture this whole module has held since P6.0.
 //! `IrItem::Service`/`Actor`/`Capability`/`Provider` remain deferred, each
@@ -113,15 +113,15 @@
 //! #1170 made a service handler's `binder` readable post-`certify` for the
 //! first time, and this slice specifies the two types the reference names
 //! but never defines for a service ([`ProtocolIr`], [`PolicyIr`]).
-//! [`lower::lower_service_handler_ir`] is a new sibling of
-//! [`lower::lower_handler_ir`], not a widening of it — the two seed
+//! `bynk_lower::lower_service_handler_ir` is a new sibling of
+//! `bynk_lower::lower_handler_ir`, not a widening of it — the two seed
 //! disjoint scopes, and widening would have deleted the agent-only `by`
 //! assertion that today catches a service handler reaching the wrong entry
 //! point. A `from websocket` lifecycle handler's own body
 //! (`on open`/`on message`/`on close`) is the one named exception: the
 //! checker-injected synthetic `connection` param has no IR target yet, so
 //! lowering one hits an explicit `todo!()` rather than a silently wrong
-//! tree — see [`lower::lower_service_handler_ir`]'s own doc comment.
+//! tree — see `bynk_lower::lower_service_handler_ir`'s own doc comment.
 //! `IrItem::Actor`/`Capability`/`Provider` remain deferred, each with its
 //! own already-tracked, genuinely unsettled blocker (see [`IrItem`]'s own
 //! doc comment).
@@ -132,7 +132,7 @@
 //! missing shape, adapted from `bynk_syntax::ast::CapabilityOp` under this
 //! module's own "no arena" substitution (`Vec<(String, TyId)>` for
 //! `params`, mirroring [`IrItem::Fn::params`] exactly).
-//! [`lower::lower_capability_item_ir`] resolves each op's own `params`/
+//! `bynk_lower::lower_capability_item_ir` resolves each op's own `params`/
 //! `return_type` in that op's own rigid-variable scope (`op.type_params`)
 //! — a capability op's type parameters are scoped to the op itself, not
 //! the capability, unlike a method's generic receiver — the same per-op
@@ -146,28 +146,30 @@
 //! `body: ProviderBody // Bynk ops | External(module)` comment names a type
 //! it never defines, the same gap [`OpSig`] closed for `Capability`, and
 //! `ProviderDecl::external` already carries the exact dispatch it needs.
-//! [`lower::lower_provider_op_ir`] is a new sibling of
-//! [`lower::lower_fn_body_ir`], not a widening of it, for the same "each
+//! `bynk_lower::lower_provider_op_ir` is a new sibling of
+//! `bynk_lower::lower_fn_body_ir`, not a widening of it, for the same "each
 //! body-lowering entry point seeds its own scope" reason
-//! [`lower::lower_handler_body_ir`]'s own doc comment already gives: no
+//! `bynk_lower::lower_handler_body_ir`'s own doc comment already gives: no
 //! `self`, no store cells, just a provider op's own params — `given`
 //! capability calls need no scope entry of their own, the same
-//! already-generic `Callee`-wrapping [`lower::lower_handler_body_ir`]'s own
+//! already-generic `Callee`-wrapping `bynk_lower::lower_handler_body_ir`'s own
 //! doc comment credits for handler bodies. `IrItem::Actor` remains
 //! deferred, its own already-tracked blocker unchanged by this slice (see
 //! [`IrItem`]'s own doc comment).
 
-use bynk_check::checker::{Callee, TyId};
-use bynk_syntax::ast::{BaseType, Refinement};
-use bynk_syntax::span::Span;
+use std::collections::HashMap;
 
-pub(crate) mod lower;
+use bynk_check::checker::{Callee, TyId};
+use bynk_syntax::ast::{
+    BaseType, Block, Expr, ExprId, MatchArm, Pattern, Refinement, expr_children, statement_exprs,
+};
+use bynk_syntax::span::Span;
 
 /// A lowered expression: its shape, its checked type, and the source span it
 /// came from. `ty` is required at construction (R6.1) — never `Option`,
 /// never looked up lazily by a reader.
 #[derive(Debug, Clone)]
-pub(crate) struct IrExpr {
+pub struct IrExpr {
     pub kind: IrExprKind,
     pub ty: TyId,
     pub span: Span,
@@ -182,7 +184,7 @@ pub(crate) struct IrExpr {
 /// (`Bytes.fromUtf8`/`fromBase64`/`empty()`, `Callee::Intrinsic` territory,
 /// not a literal).
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum ConstVal {
+pub enum ConstVal {
     Int(i64),
     Float(f64),
     DurationMillis(i64),
@@ -215,21 +217,21 @@ pub(crate) enum ConstVal {
 /// production sites, only a test assertion). `tag` alone is this variant's
 /// whole payload now.
 #[derive(Debug, Clone)]
-pub(crate) struct GlobalRef {
+pub struct GlobalRef {
     pub tag: String,
 }
 
 /// P6.4's real Pattern IR (`design/bynk-greenfield-compiler.md` §5.1, #1157):
 /// a pattern's own recursive shape, six variants mapping one-to-one onto
 /// `bynk_syntax::ast::Pattern`'s own six (`Wildcard`, `Binding`, `Literal`,
-/// `Variant`, `Refined`, `Or`). [`lower::lower_pattern_ir`] is the
+/// `Variant`, `Refined`, `Or`). `bynk_lower::lower_pattern_ir` is the
 /// `&Pattern -> IrPat` constructor, tested standalone — not yet wired into
 /// [`IrExprKind::Match`]/`Question`/`Is` construction (P6.5's own
 /// commission). No `PatId` arena — a pattern owns its children directly
 /// (`Box<IrPat>`), the same "no arena exists in this codebase" substitution
 /// this module's own doc comment already applies throughout.
 #[derive(Debug, Clone)]
-pub(crate) enum IrPat {
+pub enum IrPat {
     /// `_` — matches anything, binds nothing.
     Wild,
     /// A name binding — matches anything, binds `local` to the whole value
@@ -287,7 +289,7 @@ pub(crate) enum IrPat {
 /// doc comment for exactly what this one arm-level flag does and doesn't
 /// tell a future reader.
 #[derive(Debug, Clone)]
-pub(crate) struct IrArm {
+pub struct IrArm {
     pub pat: IrPat,
     pub guard: Option<IrExpr>,
     pub body: IrExpr,
@@ -300,7 +302,7 @@ pub(crate) struct IrArm {
 }
 
 /// R5.5, Decision C — `OrDispatch` iff `IrPat::Or` occurs anywhere in the
-/// arm's own pattern tree, computed once by [`lower::lower_arm_ir`].
+/// arm's own pattern tree, computed once by `bynk_lower::lower_arm_ir`.
 ///
 /// **Arm-level granularity, not node-level** — worth being precise about,
 /// since `emit_pattern_bindings` (`emitter/lower.rs:5401-5503`) is not the
@@ -314,7 +316,7 @@ pub(crate) struct IrArm {
 /// job, whichever future consumer needs it). What this flag removes is
 /// having to do that walk at all just to answer the yes/no question.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum BindingMode {
+pub enum BindingMode {
     /// No `Or` anywhere in the pattern's tree — every bound name can emit
     /// as a plain `const`.
     Direct,
@@ -331,11 +333,11 @@ pub(crate) enum BindingMode {
 /// shape (`Vec<String>`, human-readable witness descriptions) rather than
 /// inventing the reference's own unspecified `PatternWitness` struct
 /// (Decision B). Both variants are real and matchable, but this slice's own
-/// [`lower::lower_exhaustive_ir`] only ever constructs `Total` — see that
+/// `bynk_lower::lower_exhaustive_ir` only ever constructs `Total` — see that
 /// function's own doc comment for why `Partial` is real, inhabited code,
 /// yet unreached here.
 #[derive(Debug, Clone)]
-pub(crate) enum Exhaustive {
+pub enum Exhaustive {
     Total,
     Partial(Vec<String>),
 }
@@ -352,7 +354,7 @@ pub(crate) enum Exhaustive {
 /// derives the tail-vs-value physical shape itself, the same way it would
 /// for `If`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum MatchForm {
+pub enum MatchForm {
     /// A flat `switch` on the scrutinee's own tag/value — no arm carries a
     /// guard or a refutable nested payload pattern.
     Flat,
@@ -363,12 +365,12 @@ pub(crate) enum MatchForm {
 }
 
 /// A lowered expression's shape. Every node kind from Part 6.2 exists here
-/// (Decision D); [`lower`] implements real construction only for the
+/// (Decision D); `bynk_lower` implements real construction only for the
 /// subset named in `design/tracks/the-ir.md`'s own P6.1 row — every other
 /// arm is a named `todo!()` in the lowering pass, not a missing variant
 /// here.
 #[derive(Debug, Clone)]
-pub(crate) enum IrExprKind {
+pub enum IrExprKind {
     /// A literal value.
     Const(ConstVal),
     /// Reading a function-scoped local or parameter, by name (Decision B —
@@ -381,7 +383,7 @@ pub(crate) enum IrExprKind {
     /// method-call receiver (`Callee::Store`/`Callee::Query` already lower
     /// those separately) and not a `Cell` (those are bound into scope as an
     /// ordinary [`IrExprKind::Local`], v0.81's "implicit deref" rule — see
-    /// [`crate::ir::lower::lower_handler_body_ir`]'s own doc comment). The
+    /// `bynk_lower::lower_handler_body_ir`'s own doc comment). The
     /// checker types this expression `Ty::Query(V)` (ADR 0120) *without*
     /// ever binding the name into its own value scope
     /// (`bynk-check/src/checker.rs`'s `ExprKind::Ident` dispatch,
@@ -526,7 +528,7 @@ pub(crate) enum IrExprKind {
     /// producer of this same node).
     Return { value: Box<IrExpr> },
     /// The `HttpResult.NotFound` sentinel `Option[T]?`'s own desugar
-    /// early-returns on `None` (ADR 0177) — [`lower::lower_question_ir`]'s
+    /// early-returns on `None` (ADR 0177) — `bynk_lower::lower_question_ir`'s
     /// own construction, never sourced from user syntax (no bynk source
     /// text spells `HttpResult.NotFound`; the shipped string emitter
     /// hand-writes this exact text as boilerplate, `emitter/lower.rs`'s own
@@ -600,7 +602,7 @@ pub(crate) enum IrExprKind {
 /// named by any rule this track commissions — and stays `todo!()` in the
 /// lowering pass, not silently dropped.
 #[derive(Debug, Clone)]
-pub(crate) enum IrStmt {
+pub enum IrStmt {
     Let {
         local: String,
         value: IrExpr,
@@ -626,7 +628,7 @@ pub(crate) enum IrStmt {
 /// unlike, say, [`StoreKindIr`], no variant here needs anything beyond its
 /// own identity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum IrBinOp {
+pub enum IrBinOp {
     Eq,
     NotEq,
     Lt,
@@ -645,7 +647,7 @@ pub(crate) enum IrBinOp {
 /// usual "carry the lowered form, not the source form" discipline (the same
 /// substitution every other `IrExprKind` payload already makes).
 #[derive(Debug, Clone)]
-pub(crate) enum IrInterpPart {
+pub enum IrInterpPart {
     /// Literal text between holes, escapes already resolved (as in
     /// [`bynk_syntax::ast::InterpPart::Chunk`]) — an emitter must escape it
     /// for its own target string syntax, as `escape_ts_template` does today.
@@ -656,7 +658,7 @@ pub(crate) enum IrInterpPart {
 
 /// P6.6's real declaration IR (`design/bynk-greenfield-compiler.md` §6.6,
 /// #1161) — a top-level declaration's own shape, the payload
-/// [`lower::lower_type_item_ir`]/[`lower::lower_fn_item_ir`] construct.
+/// `bynk_lower::lower_type_item_ir`/`bynk_lower::lower_fn_item_ir` construct.
 /// Identity is adapted per this module's own "no arena" substitution
 /// (`DefId -> Arc<TypeDecl>`/`Arc<FnDecl>`, the same substitution
 /// `Record`/`GlobalRef` already made).
@@ -733,14 +735,14 @@ pub(crate) enum IrInterpPart {
 ///   `given` as its capability scope and no `self`/state/store binding at
 ///   all (`HandlerBodyCheck::new`'s own "everything optional empty"
 ///   default, `bynk-check/src/checker.rs:1055`) — so
-///   [`lower::lower_provider_op_ir`] mirrors [`lower::lower_fn_body_ir`]
-///   (ADR 0334 panic-on-miss, not [`lower::lower_op_sig_ir`]'s lenient
+///   `bynk_lower::lower_provider_op_ir` mirrors `bynk_lower::lower_fn_body_ir`
+///   (ADR 0334 panic-on-miss, not `bynk_lower::lower_op_sig_ir`'s lenient
 ///   `Ty::Unit` fallback: this body's types are checker-guaranteed to
 ///   resolve, same as a fn's) with no receiver/self and no rigid type
 ///   variables (`ProviderOp` carries none of its own,
 ///   `bynk-syntax/src/ast.rs:604-611`). [`ProviderBody::Bynk`]'s own `ops:
 ///   Vec<ProviderOpIr>` is real per-op signature-plus-body, one
-///   `ProviderOpIr` per [`lower::lower_provider_op_ir`] call, in
+///   `ProviderOpIr` per `bynk_lower::lower_provider_op_ir` call, in
 ///   declaration order.
 ///
 ///   **`given` is carried, `module` is not — the two omissions are not
@@ -758,8 +760,8 @@ pub(crate) enum IrInterpPart {
 ///   module's usual "no arena, bare name" substitution (`context`'s own
 ///   `QualifiedName` flattened via `.joined()`), leaving *resolving* a
 ///   prefix against `consumes`/aliases to whichever future project-level
-///   pass also resolves `module` — [`lower::lower_provider_item_ir`] does
-///   no more than [`lower::lower_capability_item_ir`] already declines to
+///   pass also resolves `module` — `bynk_lower::lower_provider_item_ir` does
+///   no more than `bynk_lower::lower_capability_item_ir` already declines to
 ///   do for a capability op's own type refs. [`ProviderBody::External`]
 ///   deliberately carries **no** `module` field, despite the reference's
 ///   own parenthetical —
@@ -778,7 +780,7 @@ pub(crate) enum IrInterpPart {
 ///   Revisit only once a real project-level IR/linking phase gives this
 ///   module something to thread the module name through.
 #[derive(Debug, Clone)]
-pub(crate) enum IrItem {
+pub enum IrItem {
     /// A `type` declaration. `shape` covers all three real [`TypeShape`]
     /// forms. P6.39: `def: Arc<TypeDecl>` dropped — its one production
     /// consumer (`emitter.rs`'s `type_shape_for` call site) already ignored
@@ -797,7 +799,7 @@ pub(crate) enum IrItem {
         /// "Box", args: [Ty::Var("A")], .. }`) — `None` for a free function.
         /// **Not** in `params`: `self` is never in `f.params` either
         /// (`FnDecl::has_self` gates it, mirrored by
-        /// [`lower::lower_fn_body_ir`]'s own binding), but `body` still
+        /// `bynk_lower::lower_fn_body_ir`'s own binding), but `body` still
         /// references it as `Local { name: "self" }` when `has_self` is
         /// true — a consumer that walks `body` needs this field to know
         /// what that bare name resolves to, rather than re-deriving the
@@ -812,7 +814,7 @@ pub(crate) enum IrItem {
         /// (e.g. `IrExpr::ty`).
         params: Vec<(String, TyId)>,
         ret: TyId,
-        /// [`lower::lower_fn_body_ir`]'s own return value, unchanged
+        /// `bynk_lower::lower_fn_body_ir`'s own return value, unchanged
         /// (#1141) — this constructor adds no further transformation.
         body: IrExpr,
         /// Derived once from `ret`'s structural shape (`Ty::Fn`'s own doc
@@ -823,7 +825,7 @@ pub(crate) enum IrItem {
         effectful: bool,
     },
     /// P6.10's real `IrItem::Agent` (Part 6.6, R6.13, #1169) —
-    /// [`lower::lower_agent_item_ir`]'s own return value, assembling every
+    /// `bynk_lower::lower_agent_item_ir`'s own return value, assembling every
     /// P6.7–P6.9 ingredient (`StoreFieldIr`, `CommitShape`/`IrPredicate`,
     /// `IrHandler`) that had no `IrItem` variant to land in until now.
     /// Matches the reference's own sketch
@@ -848,24 +850,24 @@ pub(crate) enum IrItem {
         /// type, the same `Vec<(String, TyId)>`-per-entry substitution
         /// [`IrItem::Fn::params`] already made for a `Vec<LocalId>`.
         key: (String, TyId),
-        /// Every `store` field, [`lower::lower_store_field_ir`]'s own
+        /// Every `store` field, `bynk_lower::lower_store_field_ir`'s own
         /// return value, in declaration order.
         state: Vec<StoreFieldIr>,
-        /// Every `on call` handler, [`lower::lower_handler_ir`]'s own
+        /// Every `on call` handler, `bynk_lower::lower_handler_ir`'s own
         /// return value, in declaration order.
         handlers: Vec<IrHandler>,
-        /// Every invariant, [`lower::lower_invariant_ir`]'s own return
+        /// Every invariant, `bynk_lower::lower_invariant_ir`'s own return
         /// value, in declaration order — the same already-lowered list each
         /// `handlers` entry's own `commit: CommitShape::Transactional`
         /// (when it is one) carries a copy of, not a fresh lowering.
         invariants: Vec<IrPredicate>,
-        /// Every transition, [`lower::lower_transition_ir`]'s own return
+        /// Every transition, `bynk_lower::lower_transition_ir`'s own return
         /// value, in declaration order — same relationship to `handlers` as
         /// `invariants`.
         transitions: Vec<IrPredicate>,
     },
     /// P6.11's real `IrItem::Service` (Part 6.6, R6.13, #1171) —
-    /// [`lower::lower_service_item_ir`]'s own return value, the sibling
+    /// `bynk_lower::lower_service_item_ir`'s own return value, the sibling
     /// assembly to [`IrItem::Agent`]. Matches the reference's own sketch
     /// (`bynk-greenfield-compiler.md:1132`) field-for-field. Closes the two
     /// blockers this variant carried while deferred: a real service
@@ -880,12 +882,12 @@ pub(crate) enum IrItem {
         /// cheaply, and bare-name identity is already sufficient for this
         /// checked output.
         def: String,
-        /// [`lower::lower_protocol_ir`]'s own return value.
+        /// `bynk_lower::lower_protocol_ir`'s own return value.
         protocol: ProtocolIr,
-        /// Every handler, [`lower::lower_service_handler_ir`]'s own return
+        /// Every handler, `bynk_lower::lower_service_handler_ir`'s own return
         /// value, in declaration order.
         handlers: Vec<IrHandler>,
-        /// [`lower::lower_policy_ir`]'s own return value — `None` whenever
+        /// `bynk_lower::lower_policy_ir`'s own return value — `None` whenever
         /// `protocol` is not [`ProtocolIr::Http`], not just when the source
         /// declares none of `cors`/`security`/`limits`. See [`PolicyIr`]'s
         /// own doc comment for why this is `Option`, not the reference's
@@ -893,7 +895,7 @@ pub(crate) enum IrItem {
         policy: Option<PolicyIr>,
     },
     /// P6.12's real `IrItem::Capability` (Part 6.6, R6.13, #1173) —
-    /// [`lower::lower_capability_item_ir`]'s own return value. Matches the
+    /// `bynk_lower::lower_capability_item_ir`'s own return value. Matches the
     /// reference's own sketch (`bynk-greenfield-compiler.md:1134`)
     /// field-for-field, once [`OpSig`] fills in the type the sketch names
     /// but never defines.
@@ -906,12 +908,12 @@ pub(crate) enum IrItem {
         /// String, op: String }` (`bynk-check/src/checker.rs`) already
         /// resolves a same-context capability call by name alone.
         def: String,
-        /// Every operation, [`lower::lower_op_sig_ir`]'s own return value,
+        /// Every operation, `bynk_lower::lower_op_sig_ir`'s own return value,
         /// in declaration order.
         ops: Vec<OpSig>,
     },
     /// P6.14's real `IrItem::Provider` (Part 6.6, R6.13, #1174) —
-    /// [`lower::lower_provider_item_ir`]'s own return value. Matches the
+    /// `bynk_lower::lower_provider_item_ir`'s own return value. Matches the
     /// reference's own sketch (`bynk-greenfield-compiler.md:1135`)
     /// field-for-field, once [`ProviderBody`] fills in the type the
     /// sketch's own comment names but never defines as a real Rust enum.
@@ -932,7 +934,7 @@ pub(crate) enum IrItem {
         /// `def`; resolves against `Callee::Capability`'s own `cap: String`
         /// the identical way `IrItem::Capability::def` does.
         cap: String,
-        /// [`lower::lower_provider_item_ir`]'s own `Bynk`/`External`
+        /// `bynk_lower::lower_provider_item_ir`'s own `Bynk`/`External`
         /// dispatch, read straight off `ProviderDecl::external`.
         body: ProviderBody,
     },
@@ -951,7 +953,7 @@ pub(crate) enum IrItem {
 /// reference's own parenthetical, and why it carries `given` instead of
 /// omitting that too.
 #[derive(Debug, Clone)]
-pub(crate) enum ProviderBody {
+pub enum ProviderBody {
     /// A real Bynk-authored implementation.
     Bynk {
         /// `ProviderDecl::given`, adapted to [`CapRefIr`] — needed to build
@@ -959,7 +961,7 @@ pub(crate) enum ProviderBody {
         /// reconstructible from `ops` alone ([`IrItem`]'s own doc comment
         /// has the full grounding, review of #1186). In declaration order.
         given: Vec<CapRefIr>,
-        /// Every operation, [`lower::lower_provider_op_ir`]'s own return
+        /// Every operation, `bynk_lower::lower_provider_op_ir`'s own return
         /// value, in declaration order. **Not** guaranteed non-empty
         /// (review of #1186): `external` is set purely by brace-block
         /// *absence*, not emptiness (`bynk-syntax/src/parser/declarations.rs:1795-1811`),
@@ -999,7 +1001,7 @@ pub(crate) enum ProviderBody {
 /// `ProviderBody::External`'s missing `module` field — this type only
 /// preserves what `CapRef` itself carries, unresolved.
 #[derive(Debug, Clone)]
-pub(crate) struct CapRefIr {
+pub struct CapRefIr {
     pub context: Option<String>,
     pub name: String,
 }
@@ -1014,11 +1016,11 @@ pub(crate) struct CapRefIr {
 /// provider-op equivalent — nothing in the grammar or the checker's own
 /// `check_provider_decls` gives a provider op a `[T, …]` list to parse).
 #[derive(Debug, Clone)]
-pub(crate) struct ProviderOpIr {
+pub struct ProviderOpIr {
     pub name: String,
     pub params: Vec<(String, TyId)>,
     pub return_ty: TyId,
-    /// [`lower::lower_provider_op_ir`]'s own return value — a real,
+    /// `bynk_lower::lower_provider_op_ir`'s own return value — a real,
     /// checker-guaranteed-to-resolve body (see [`IrItem`]'s own doc
     /// comment for why this differs from [`OpSig`]'s lenient treatment).
     pub body: IrExpr,
@@ -1039,16 +1041,16 @@ pub(crate) struct ProviderOpIr {
 /// (`bynk-check/src/checker.rs`) — a bare rigid-variable name, not a
 /// `TypeParam` AST node, since nothing here re-derives bounds a capability
 /// op's own `[T, …]` list never carries in the first place (#926).
-/// [`lower::lower_op_sig_ir`] resolves `params`/`return_ty` in the scope
+/// `bynk_lower::lower_op_sig_ir` resolves `params`/`return_ty` in the scope
 /// `type_params` names, mirroring `context_checks::build_capability_op_info`'s
 /// own `vars` treatment (`bynk-check/src/context_checks.rs`) so a generic
 /// op's own `T` survives as `Ty::Var("T")` rather than collapsing to
 /// `Ty::Unit`. On a genuinely unresolvable name a `params`/`return_ty` entry
-/// *is* `Ty::Unit`, deliberately — see [`lower::lower_op_sig_ir`]'s own doc
+/// *is* `Ty::Unit`, deliberately — see `bynk_lower::lower_op_sig_ir`'s own doc
 /// comment for why that mirrors the checker's own fallback rather than
 /// panicking.
 #[derive(Debug, Clone)]
-pub(crate) struct OpSig {
+pub struct OpSig {
     pub name: String,
     /// The op's own type parameters (#926) — empty for a non-generic op.
     /// Scoped to the op itself, not the capability: `CapabilityDecl` carries
@@ -1063,16 +1065,16 @@ pub(crate) struct OpSig {
 /// P6.18: a `fn`'s own resolved signature, with no `body` and no `receiver` —
 /// the narrow, [`OpSig`]-shaped sibling a *foreign* unit's attached method
 /// needs when only its signature will ever be rendered (`emit_attached_
-/// methods`' delegating forward at [`crate::emitter::emit::emit_forwarded_
-/// methods`]), never its body. Deliberately not [`IrItem::Fn`]: that variant
-/// mandates lowering `body: IrExpr` through [`lower::lower_fn_body_ir`],
+/// methods`' delegating forward at `bynk_emit::emitter::emit::emit_forwarded_methods`),
+/// never its body. Deliberately not [`IrItem::Fn`]: that variant
+/// mandates lowering `body: IrExpr` through `bynk_lower::lower_fn_body_ir`,
 /// which still `todo!()`s on `ExprKind::Question`/`Is` (design/tracks/
 /// the-ir.md §6's own P6.3 correction) — forcing every `uses`-imported
 /// method through that gate for a signature nothing here ever reads would
 /// make this reader strictly less total than the raw-`TypeRef` code it
-/// replaces, for zero benefit. [`lower::lower_fn_sig_ir_from_types`] resolves
+/// replaces, for zero benefit. `bynk_lower::lower_fn_sig_ir_from_types` resolves
 /// `params`/`return_ty` in the scope the method's own `[T, …]` list names
-/// (mirroring [`lower_op_sig_ir_from_commons`]'s identical `type_params`
+/// (mirroring `bynk_lower::lower_op_sig_ir_from_commons`'s identical `type_params`
 /// treatment) — a genuinely unresolvable name degrades to `Ty::Unit`,
 /// deliberately, the same non-panicking posture `OpSig` already established:
 /// nothing checker-side actually validates an attached method's own
@@ -1080,7 +1082,7 @@ pub(crate) struct OpSig {
 /// types (only the declaring commons' own checking does), so a resolve miss
 /// here is an expected, not exceptional, state.
 #[derive(Debug, Clone)]
-pub(crate) struct FnSig {
+pub struct FnSig {
     pub name: String,
     pub has_self: bool,
     pub params: Vec<(String, TyId)>,
@@ -1088,7 +1090,7 @@ pub(crate) struct FnSig {
 }
 
 /// P6.11's real `ProtocolIr` ([DECISION A], #1171) — one variant per
-/// `bynk_syntax::ast::ServiceProtocol` variant, [`lower::lower_protocol_ir`]'s
+/// `bynk_syntax::ast::ServiceProtocol` variant, `bynk_lower::lower_protocol_ir`'s
 /// own return value. The reference's own sketch specifies only two of the
 /// six: `Events { event, pattern, schema_dispatch }`
 /// (`bynk-greenfield-compiler.md:1881`) and `WebSocket { in_ty, out_ty }`
@@ -1105,7 +1107,7 @@ pub(crate) struct FnSig {
 /// over what a certified program's own service can declare, the same claim
 /// [`StoreKindIr`]'s own doc makes about `Queue` being gated pre-`certify`.
 #[derive(Debug, Clone)]
-pub(crate) enum ProtocolIr {
+pub enum ProtocolIr {
     Call,
     Http,
     Cron,
@@ -1114,7 +1116,7 @@ pub(crate) enum ProtocolIr {
         name: String,
     },
     /// `from websocket(in: …, out: …)` — the two frame types, resolved.
-    /// As of P6.13 (#1179), [`lower::lower_service_handler_ir`] lowers an
+    /// As of P6.13 (#1179), `bynk_lower::lower_service_handler_ir` lowers an
     /// `on open`/`on message`/`on close` handler's own *body* for a
     /// service carrying this protocol too — see [`ConnectionBinder`]'s own
     /// doc comment for how the synthetic `connection` binding reaches that
@@ -1148,10 +1150,10 @@ pub(crate) enum ProtocolIr {
 /// so a *different* unit's own composition root can later decide whether its
 /// subscriber to this service wants the event envelope forwarded, without
 /// re-walking this unit's raw `UnitTable`. Pure syntax, zero `TyId`
-/// dependency. Produced by [`lower::lower_event_subscriber_shapes_ir`], sized
+/// dependency. Produced by `bynk_lower::lower_event_subscriber_shapes_ir`, sized
 /// like #1187's own `unit_callees` (#1202) accumulator.
 #[derive(Debug, Clone, Copy, Default)]
-pub(crate) struct EventSubscriberShape {
+pub struct EventSubscriberShape {
     pub two_param_handler: bool,
     pub schema_dispatch: bool,
 }
@@ -1165,7 +1167,7 @@ pub(crate) struct EventSubscriberShape {
 /// optionally-qualified* name pair — exactly the shape this module's whole
 /// posture rejects everywhere else.
 #[derive(Debug, Clone)]
-pub(crate) struct EventPatternIr {
+pub struct EventPatternIr {
     /// `(field name, matched value)`, in source order — no dedicated
     /// `EventPatternFieldIr` struct, mirroring `IrPat::Variant`'s own
     /// `fields: Vec<(String, Box<IrPat>)>` precedent for a two-part fact
@@ -1175,7 +1177,7 @@ pub(crate) struct EventPatternIr {
 
 /// One [`EventPatternIr`] field's own matched value.
 #[derive(Debug, Clone)]
-pub(crate) enum EventPatternValueIr {
+pub enum EventPatternValueIr {
     /// Reuses [`ConstVal`] for the closed `Int`/`Str`/`Bool` literal set —
     /// verbatim the same reuse `IrPat::Const` already made for
     /// `Pattern::Literal`'s identical closed set.
@@ -1184,7 +1186,7 @@ pub(crate) enum EventPatternValueIr {
     /// `tag: String` mirrors `IrPat::Variant`'s own `tag`/[`GlobalRef`]'s
     /// own `tag`. The AST's own optional qualifying `type_name` is
     /// dropped, not lost: the sole consumer
-    /// ([`crate::emitter::lower::event_pattern_guard_ir`], #1187's slice 5)
+    /// (`bynk_emit::emitter::lower::event_pattern_guard_ir`, #1187's slice 5)
     /// already destructures down to the bare tag alone — the qualification
     /// is disambiguation for the *checker*, resolved against the field's
     /// declared sum type before this point.
@@ -1193,7 +1195,7 @@ pub(crate) enum EventPatternValueIr {
 
 /// P6.11's real `PolicyIr`/`CorsIr`/`SecurityIr` ([DECISION D], #1171) —
 /// the interpreted (not passed-through) form of a `from http` service's
-/// `cors`/`security`/`limits` blocks, [`lower::lower_policy_ir`]'s own
+/// `cors`/`security`/`limits` blocks, `bynk_lower::lower_policy_ir`'s own
 /// return value. The reference names `PolicyIr` once, in the
 /// `IrItem::Service` sketch itself (`:1132`), and never elsewhere — the
 /// same "referenced, not specified" gap every trailing struct in this
@@ -1213,13 +1215,13 @@ pub(crate) enum EventPatternValueIr {
 /// so this is that emitter's own already-established reading of the AST,
 /// moved upstream, not a new interpretation invented here.
 #[derive(Debug, Clone)]
-pub(crate) struct PolicyIr {
+pub struct PolicyIr {
     pub cors: Option<CorsIr>,
     /// **Not `Option`** — unlike `cors`/`limits`, `security: None` on the
     /// AST means *defaults* (`nosniff` on), not *no headers* (ADR 0164
     /// Decision A) — keeping this `Option` here would re-export exactly
     /// the ambiguity this struct exists to remove. The `None`-source arm
-    /// of [`lower::lower_policy_ir`] materialises `SecurityIr { nosniff:
+    /// of `bynk_lower::lower_policy_ir` materialises `SecurityIr { nosniff:
     /// true, hsts_max_age_secs: None }` — the emitter's own already-shipped
     /// default, verbatim, not invented here.
     pub security: SecurityIr,
@@ -1236,7 +1238,7 @@ pub(crate) struct PolicyIr {
 /// asymmetry with `PolicyIr::security` is this struct's load-bearing
 /// content, not an inconsistency.
 #[derive(Debug, Clone)]
-pub(crate) struct CorsIr {
+pub struct CorsIr {
     pub origins: Vec<String>,
     pub credentials: bool,
     /// The author's own explicit `headers:` override, kept `Option` rather
@@ -1253,7 +1255,7 @@ pub(crate) struct CorsIr {
 /// The payload of `PolicyIr::security` — always present for an HTTP
 /// service (see `PolicyIr::security`'s own doc comment).
 #[derive(Debug, Clone)]
-pub(crate) struct SecurityIr {
+pub struct SecurityIr {
     pub nosniff: bool,
     pub hsts_max_age_secs: Option<i64>,
 }
@@ -1262,19 +1264,19 @@ pub(crate) struct SecurityIr {
 /// freshness policy, interpreted the same "raw `{name, value: Expr}` pairs
 /// mean nothing on their own" discipline [`PolicyIr`]'s own doc comment
 /// argues for, but **deliberately not a `PolicyIr` field**. `PolicyIr`
-/// itself is built only by [`lower::lower_policy_ir`], which only
-/// [`lower::lower_service_item_ir`] calls — and nothing in the shipped
+/// itself is built only by `bynk_lower::lower_policy_ir`, which only
+/// `bynk_lower::lower_service_item_ir` calls — and nothing in the shipped
 /// emitter constructs a real `IrItem::Service` yet (every call site is this
 /// module's own test suite). Nesting `CacheIr` under `PolicyIr` would land
-/// it inert: real in `ir::lower`'s own tests, with zero effect on any
+/// it inert: real in `bynk_lower`'s own tests, with zero effect on any
 /// emitted route. `@cache` is also handler-scoped, not service-scoped
 /// (`PolicyIr`'s whole shape), so it was never a natural fit regardless.
-/// [`lower::lower_route_cache_ir`] is a standalone reader instead, wired
+/// `bynk_lower::lower_route_cache_ir` is a standalone reader instead, wired
 /// directly into `emitter/workers_entry.rs`'s own route construction — the
 /// same live, standalone-consumer shape `lower_protocol_ir`/
 /// `lower_handler_given_ir`/`lower_actor_seam_ir` already established.
 #[derive(Debug, Clone)]
-pub(crate) struct CacheIr {
+pub struct CacheIr {
     /// `maxAge` in whole seconds (the `Cache-Control: max-age`).
     pub max_age_secs: i64,
     /// `"public"` or `"private"` — defaults to `"private"` so a *shared*
@@ -1296,7 +1298,7 @@ pub(crate) struct CacheIr {
 /// own precedent for exactly this unification (`emit_type`,
 /// `emitter/emit.rs:19`).
 #[derive(Debug, Clone)]
-pub(crate) enum TypeShape {
+pub enum TypeShape {
     /// Every field the record declares, in declaration order ([DECISION B]
     /// extended: a field's own inline `refinement` is dropped — a
     /// construction-time constraint the checker already enforces, not part
@@ -1330,20 +1332,20 @@ pub(crate) enum TypeShape {
 /// variant's own tag name. A plain tuple, not a dedicated struct, mirroring
 /// [`IrPat::Variant`]'s own `fields: Vec<(String, Box<IrPat>)>` precedent
 /// for a two-part fact with no further structure.
-pub(crate) type EmbedIr = (TyId, String);
+pub type EmbedIr = (TyId, String);
 
 /// P6.7's real store-field state shape (`design/bynk-greenfield-compiler.md`
 /// §6.6, R6.14, #1163) — the payload of an agent `store` field declaration,
-/// [`lower::lower_store_field_ir`]'s own return value. Mirrors
+/// `bynk_lower::lower_store_field_ir`'s own return value. Mirrors
 /// `checker::StoreField`'s own five-kind dispatch
 /// (`bynk-check/src/checker.rs`) in shape, but is persistent IR data with no
 /// consumer yet, not that checking pass's own ephemeral, per-agent scratch
 /// value — the two are deliberately not unified (see
-/// [`lower::lower_store_field_ir`]'s own doc comment). No `IrItem` variant
+/// `bynk_lower::lower_store_field_ir`'s own doc comment). No `IrItem` variant
 /// references this yet — `IrItem::Agent`/`Service` remain unconstructed
 /// (`IrItem`'s own doc comment names exactly what still blocks them).
 #[derive(Debug, Clone)]
-pub(crate) struct StoreFieldIr {
+pub struct StoreFieldIr {
     /// The field's own declared name ([DECISION A]: `String`, sourced
     /// directly from `StoreField.name.name` — this module's own "no arena
     /// exists in this codebase" substitution, applied to the reference's
@@ -1354,7 +1356,7 @@ pub(crate) struct StoreFieldIr {
     /// ([DECISION D]) — `None` for every other kind, regardless of whether
     /// the AST grammatically parsed one there. A non-`Cell` field's `init`
     /// expression is parsed but never type-checked (a real, pre-existing
-    /// checker gap; see [`lower::lower_store_field_ir`]'s own doc comment),
+    /// checker gap; see `bynk_lower::lower_store_field_ir`'s own doc comment),
     /// so on a certified program it has no `expr_types` entry to lower.
     pub init: Option<IrExpr>,
     /// `@indexed(by: …)` sibling-table keys, in the annotation's own
@@ -1362,7 +1364,7 @@ pub(crate) struct StoreFieldIr {
     /// ([DECISION C]), no sort ([DECISION E]). Deduplicated: the checker
     /// validates each `by:` argument independently with no duplicate check
     /// (`validate_indexed_keys`), so `@indexed(by: k, by: k)` certifies —
-    /// [`lower::lower_store_field_ir`] guards against it, mirroring the
+    /// `bynk_lower::lower_store_field_ir` guards against it, mirroring the
     /// shipped emitter's own `store_map_indexes` dedup. Empty for every kind
     /// but `Map`, the only kind `@indexed` attaches to (`ANNOTATIONS`'s own
     /// registry, `bynk-check/src/context_checks.rs`).
@@ -1378,7 +1380,7 @@ pub(crate) struct StoreFieldIr {
 /// milliseconds throughout — the same substitution [`ConstVal::DurationMillis`]
 /// and `checker::StoreField::Cache`'s own already-resolved TTL already made.
 #[derive(Debug, Clone)]
-pub(crate) enum StoreKindIr {
+pub enum StoreKindIr {
     /// `Cell[T]` — element type.
     Cell(TyId),
     /// `Map[K, V]` — key, value.
@@ -1400,7 +1402,7 @@ pub(crate) enum StoreKindIr {
 /// (`Record<string, string[]>`) is fixed by the *map's own key type*, not
 /// the indexed field's, so the indexed field's resolved type is not needed
 /// downstream — mirrors `EmbedIr`'s own "no further structure" precedent.
-pub(crate) type IndexIr = String;
+pub type IndexIr = String;
 
 /// P6.8's real `IrPredicate` ([DECISION A], #1165) — referenced by the
 /// reference's own `CommitShape::Transactional { invariants: Vec<IrPredicate>,
@@ -1412,7 +1414,7 @@ pub(crate) type IndexIr = String;
 /// and `transitions` fields, rather than two near-identical structs:
 /// `Invariant`/`Transition` (`bynk_syntax::ast`) already share this exact
 /// shape — a name plus a `Bool`-typed predicate expression — and
-/// [`lower::lower_invariant_ir`]/[`lower::lower_transition_ir`] differ only
+/// `bynk_lower::lower_invariant_ir`/`bynk_lower::lower_transition_ir` differ only
 /// in how they seed the predicate's own scope (an invariant over the
 /// agent's `store` `Cell` fields, a transition over `old`/`new`), not in
 /// what they produce. `name: String` is this module's own "no arena"
@@ -1420,28 +1422,28 @@ pub(crate) type IndexIr = String;
 /// own in the reference either, referenced only by position within its
 /// owning `Vec`.
 #[derive(Debug, Clone)]
-pub(crate) struct IrPredicate {
+pub struct IrPredicate {
     pub name: String,
     pub predicate: IrExpr,
 }
 
 /// P6.8's real `CommitShape` (Part 6.7, R6.15, #1165) — a handler body's own
-/// resolved one-of-three commit shape, [`lower::lower_commit_shape_ir`]'s own
+/// resolved one-of-three commit shape, `bynk_lower::lower_commit_shape_ir`'s own
 /// return value. Matches the reference's own three-variant shape verbatim
 /// (`bynk-greenfield-compiler.md:1179-1183`) — no substitution needed,
 /// `Transactional`'s own payload already reuses [`IrPredicate`] rather than
 /// carrying `Invariant`/`Transition` AST nodes directly. Shape-agnostic
 /// between an agent and a service handler ([DECISION F]): as of P6.11
-/// (#1171), [`lower::lower_service_handler_ir`] is the real service call
+/// (#1171), `bynk_lower::lower_service_handler_ir` is the real service call
 /// site this decision predicted, passing empty `invariants`/`transitions`
 /// slices, and the identical write-detection walk
-/// ([`lower::lower_commit_shape_ir`]'s own doc comment) naturally finds
+/// (`bynk_lower::lower_commit_shape_ir`'s own doc comment) naturally finds
 /// neither a mutating `Callee::Store` nor a bare `:=` in a service body (a
 /// service declares no `store` fields to write), so `Transactional` is
 /// never constructed for one — the shipped emitter's own `emit_service`
 /// already only ever produces the other two shapes, for the same reason.
 #[derive(Debug, Clone)]
-pub(crate) enum CommitShape {
+pub enum CommitShape {
     /// No store write and no `Events.emit` — the body splices flat, no
     /// commit or flush of any kind.
     ReadOnly,
@@ -1452,7 +1454,7 @@ pub(crate) enum CommitShape {
     /// state is snapshotted, the body runs in an IIFE, then the snapshot is
     /// committed (and `__events`, if any, flushed alongside it). Carries
     /// the agent's own already-lowered invariants/transitions
-    /// ([`lower::lower_invariant_ir`]/[`lower::lower_transition_ir`]), not
+    /// (`bynk_lower::lower_invariant_ir`/`bynk_lower::lower_transition_ir`), not
     /// the raw AST lists — a future consumer checking them at commit time
     /// reads real `IrPredicate`s, not `Invariant`/`Transition` nodes it
     /// would have to lower itself.
@@ -1466,7 +1468,7 @@ pub(crate) enum CommitShape {
     /// `IrHandler` consumer that needs both facts at once — to decide
     /// whether *this* `Transactional` handler also flushes `__events` —
     /// re-derives it the same way `lower_commit_shape_ir`'s own caller
-    /// already must ([DECISION D]: `crate::emitter::block_uses_emit(body)`),
+    /// already must ([DECISION D]: `bynk_ir::block_uses_emit(body)`),
     /// not from this variant. Named here rather than silently assumed lost:
     /// the fact is recoverable from `body`, which every real consumer holds
     /// alongside a `CommitShape` in the first place — `IrHandler` itself
@@ -1493,12 +1495,12 @@ pub(crate) enum CommitShape {
 /// No dedicated `lower_actor_binder_ir` constructor: the pair has no
 /// further structure to derive, mirroring [`EmbedIr`]'s/[`IndexIr`]'s own
 /// "no further structure, plain tuple/alias" precedent — as of P6.11
-/// (#1171), [`lower::lower_service_handler_ir`] is the real caller that
+/// (#1171), `bynk_lower::lower_service_handler_ir` is the real caller that
 /// reads `TypedCommons::actor_bindings` (#1170) and writes
-/// `ActorBinder { binder, ty }` directly; [`lower::lower_handler_ir`]
+/// `ActorBinder { binder, ty }` directly; `bynk_lower::lower_handler_ir`
 /// (agent-only) still never does — see [`IrHandler`]'s own doc comment.
 #[derive(Debug, Clone)]
-pub(crate) struct ActorBinder {
+pub struct ActorBinder {
     pub binder: String,
     pub ty: TyId,
 }
@@ -1509,7 +1511,7 @@ pub(crate) struct ActorBinder {
 /// `bynk_syntax::ast`/`TypeRef`/`Expr`: every field is `String`/`bool`/
 /// `i64`/`Option`/`Vec` (or, for `BearerSeam::authorization`,
 /// `ClaimPredicate`, itself a plain recursive `String`/`Box` enum). Built by
-/// [`lower::lower_actor_seam_ir`], which tries the five resolvers in the one
+/// `bynk_lower::lower_actor_seam_ir`, which tries the five resolvers in the one
 /// priority order that actually matters — `sum_members_for` first, since
 /// it's the only resolver whose result can otherwise collide with
 /// `bearer_seam_for`'s (a sum's own first peer can itself be Bearer-schemed;
@@ -1530,7 +1532,7 @@ pub(crate) struct ActorBinder {
 /// premature surface `bynk-design-notes.md`'s own conventions ask this
 /// codebase to avoid.
 #[derive(Debug, Clone)]
-pub(crate) enum ActorSeamIr {
+pub enum ActorSeamIr {
     /// No `by` clause resolves to any of the four seams below (`Visitor`/
     /// `None`-schemed, or no `by` clause at all).
     None,
@@ -1546,7 +1548,7 @@ pub(crate) enum ActorSeamIr {
 
 /// P6.13's real `ConnectionBinder` ([DECISION G], #1179) — the synthetic
 /// leading `connection: Connection[out]` binding a `from websocket`
-/// lifecycle handler's body receives, [`lower::lower_service_handler_ir`]'s
+/// lifecycle handler's body receives, `bynk_lower::lower_service_handler_ir`'s
 /// own return value for exactly the `on open`/`on message`/`on close`
 /// handlers of a `ServiceProtocol::WebSocket` service. Mirrors the
 /// checker's own `open_connection_param`
@@ -1580,13 +1582,13 @@ pub(crate) enum ActorSeamIr {
 /// following `ActorBinder`'s own precedent: the pair has no further
 /// structure to derive.
 #[derive(Debug, Clone)]
-pub(crate) struct ConnectionBinder {
+pub struct ConnectionBinder {
     pub ty: TyId,
     pub borrowed: bool,
 }
 
 /// P6.9's real `IrHandler` ([DECISION C], #1167) — an agent `on call`
-/// handler's own resolved shape, [`lower::lower_handler_ir`]'s own return
+/// handler's own resolved shape, `bynk_lower::lower_handler_ir`'s own return
 /// value. Six of the reference's own eight sketched fields are its
 /// verbatim shape (`bynk-greenfield-compiler.md:1169-1177`) under this module's
 /// already-established substitutions: `kind: IrHandlerKind` — originally
@@ -1601,10 +1603,10 @@ pub(crate) struct ConnectionBinder {
 /// Vec<String>` reads each `CapRef::key()`, the same identity
 /// `Callee::Capability` already uses); `binder: Option<ActorBinder>` per
 /// [`ActorBinder`]'s own doc comment; `body: IrExpr` is
-/// [`lower::lower_handler_ir`]'s own new handler-body lowering entry point
-/// (parallel to, but distinct from, [`lower::lower_fn_body_ir`] — that
+/// `bynk_lower::lower_handler_ir`'s own new handler-body lowering entry point
+/// (parallel to, but distinct from, `bynk_lower::lower_fn_body_ir` — that
 /// entry point's own doc comment names exactly why a handler body cannot
-/// reuse it); `commit: CommitShape` calls [`lower::lower_commit_shape_ir`]
+/// reuse it); `commit: CommitShape` calls `bynk_lower::lower_commit_shape_ir`
 /// (P6.8, unchanged); `effectful: bool` reuses [`IrItem::Fn::effectful`]'s
 /// own derivation (`Ty::Fn`'s doc: effectful iff `ret` is `Effect[_]`)
 /// unchanged.
@@ -1640,27 +1642,27 @@ pub(crate) struct ConnectionBinder {
 /// `bynk.actor.by_on_agent` guarantee [DECISION D] already grounds for
 /// `binder`.
 ///
-/// [`lower::lower_handler_ir`] is agent-only **by design, still** ([DECISION
+/// `bynk_lower::lower_handler_ir` is agent-only **by design, still** ([DECISION
 /// D]) — a real service handler's `IrHandler` (specifically, a non-`None`
 /// `binder`) is never constructed by *this* function, and that stays true
 /// even now that #1170 persisted `handler_actor_binding`'s own resolved
 /// `(String, TyId)` into `TypedCommons::actor_bindings`/`CheckedProgram`.
 /// P6.11 (#1171) built the real service-handler path as a **sibling**,
-/// [`lower::lower_service_handler_ir`], not a widening of this one —
-/// [`lower::lower_handler_ir`]'s own doc comment names exactly why
+/// `bynk_lower::lower_service_handler_ir`, not a widening of this one —
+/// `bynk_lower::lower_handler_ir`'s own doc comment names exactly why
 /// (disjoint scopes, and widening would delete the `by_clause.is_none()`
 /// assertion that today catches a service handler reaching the wrong
 /// entry point). Not a functional gap for R6.16's own claim (invocation
 /// origin-independence is specifically about an *agent* handler): an agent
 /// handler's own `binder` is `None` unconditionally and by construction —
 /// `bynk.actor.by_on_agent` (`context_checks.rs:2986-2996`) rejects any
-/// `by` clause on an agent handler outright, so [`lower::lower_handler_ir`]
+/// `by` clause on an agent handler outright, so `bynk_lower::lower_handler_ir`
 /// never has one to lower in the first place.
 /// P6.24a: an IR-native mirror of [`bynk_syntax::ast::HandlerKind`] — a
 /// field-for-field copy, not a re-export. Every field (`HttpMethod`, a
 /// route `path: String`, a cron `expr: String`) is already fully resolved
 /// at parse time; nothing here ever needed `TyId`/`CheckedProgram`, so
-/// [`lower::lower_handler_kind_ir`] is a pure, unconditional conversion —
+/// `bynk_lower::lower_handler_kind_ir` is a pure, unconditional conversion —
 /// unlike almost everything else in this module, it carries no ADR 0334
 /// totality story because it can never fail to resolve.
 ///
@@ -1674,7 +1676,7 @@ pub(crate) struct ConnectionBinder {
 /// Service` required) somewhere IR-native to route through first is what
 /// this slice actually lands.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum IrHandlerKind {
+pub enum IrHandlerKind {
     Call,
     Http { method: IrHttpMethod, path: String },
     Cron { expr: String },
@@ -1688,7 +1690,7 @@ pub(crate) enum IrHandlerKind {
 /// [`bynk_syntax::ast::HttpMethod`], same reasoning as [`IrHandlerKind`]
 /// itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum IrHttpMethod {
+pub enum IrHttpMethod {
     Get,
     Post,
     Put,
@@ -1699,7 +1701,7 @@ pub(crate) enum IrHttpMethod {
 impl IrHttpMethod {
     /// P6.51 (design/tracks/the-ir.md §6b): field-for-field mirror of
     /// [`bynk_syntax::ast::HttpMethod::as_str`].
-    pub(crate) fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             IrHttpMethod::Get => "GET",
             IrHttpMethod::Post => "POST",
@@ -1711,7 +1713,7 @@ impl IrHttpMethod {
 
     /// P6.57 (design/tracks/the-ir.md §6b): field-for-field mirror of
     /// [`bynk_syntax::ast::HttpMethod::from_ident`].
-    pub(crate) fn from_ident(s: &str) -> Option<IrHttpMethod> {
+    pub fn from_ident(s: &str) -> Option<IrHttpMethod> {
         match s {
             "GET" => Some(IrHttpMethod::Get),
             "POST" => Some(IrHttpMethod::Post),
@@ -1724,7 +1726,7 @@ impl IrHttpMethod {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct IrHandler {
+pub struct IrHandler {
     pub kind: IrHandlerKind,
     pub params: Vec<(String, TyId)>,
     pub given: Vec<String>,
@@ -1737,7 +1739,7 @@ pub(crate) struct IrHandler {
     /// websocket` service's `on open`/`on message`/`on close` — see
     /// [`ConnectionBinder`]'s own doc comment. `None` unconditionally for
     /// every other handler kind/protocol, including an agent handler
-    /// (`binder`'s own sibling gate: [`lower::lower_handler_ir`] never
+    /// (`binder`'s own sibling gate: `bynk_lower::lower_handler_ir` never
     /// sets this either).
     pub connection: Option<ConnectionBinder>,
     pub body: IrExpr,
@@ -1745,7 +1747,7 @@ pub(crate) struct IrHandler {
     /// The handler's own declared return type, resolved (#1187's slice 5,
     /// the `Service` emitter cutover) — mirrors [`IrItem::Fn::ret`]'s
     /// identical field, added here
-    /// for the identical reason: [`lower::lower_handler_signature_ir`]
+    /// for the identical reason: `bynk_lower::lower_handler_signature_ir`
     /// already resolved this value to compute `effectful` below and
     /// discarded it, leaving a service emitter with no IR-native way to
     /// render a handler's own return-type annotation without re-walking
@@ -1753,4 +1755,155 @@ pub(crate) struct IrHandler {
     pub ret: TyId,
     pub effectful: bool,
     pub method_name: Option<String>,
+}
+
+/// Events track, slice 0 (spine #936): does this block contain a real
+/// `Events.emit[...]` call anywhere — including nested branches, match arms,
+/// lambdas, and any other expression position (a `Paren`, an `Ok`/`Err`
+/// wrapper, a `Call`/`RecordConstruction` argument, a `BinOp` operand, …)?
+/// Gates release-at-commit buffer threading (`deps.__events`) so a handler
+/// that never emits keeps byte-identical output, mirroring `block_uses_send`'s
+/// gate on `deps.__exec`.
+///
+/// Driven off the exhaustive `walk_block_exprs`/`walk_exprs` visitor rather
+/// than a hand-rolled `ExprKind` match — a bespoke match here previously
+/// covered only `MethodCall`/`Block`/`If`/`Match`/`Lambda` and silently
+/// disagreed with `lower_expr_into` (which recurses into every expression
+/// position), so `do (Events.emit[E](event))` — one added paren — compiled
+/// clean but emitted a body that referenced an undeclared `__events` local
+/// (`tsc`-only failure, no bynk diagnostic). Riding the walker means this
+/// can't drift from the lowering again: a new `ExprKind` variant fails to
+/// compile here until `walk_exprs` itself is taught to visit it.
+///
+/// #1187's slice 6 plumbing (review of #1202): reads the checker's own
+/// already-resolved `Callee::Capability{cap:"Events",op:"emit"}` for each
+/// visited call site instead of a bare-`Ident("Events")`-receiver name
+/// match. Was deliberately syntactic before this — this function's own
+/// prior doc comment named the locally-shadowed-`Events` false positive an
+/// "accepted approximation," matching `block_uses_send`'s own precedent —
+/// but that approximation stopped being harmless once `crate::project::
+/// unit_table_uses_emit` (the project-wide compose-gating twin this
+/// function's own callers must agree with) became precise first: the two
+/// disagreeing on exactly the shadowed case produces a real `tsc` type
+/// error (a `deps.__eventsDispatch` call site with nothing supplying it),
+/// not just an unused interface field. `block_uses_send` needs no matching
+/// fix — a `~>` send is a real `Statement::Send` AST variant, not a method
+/// call that could be shadowed, so it was never approximate to begin with.
+pub fn block_uses_emit(b: &Block, callees: &HashMap<ExprId, bynk_check::checker::Callee>) -> bool {
+    let mut found = false;
+    walk_block_exprs(b, &mut |e| {
+        if !found
+            && matches!(
+                callees.get(&e.id),
+                Some(bynk_check::checker::Callee::Capability { cap, op })
+                    if cap == "Events" && op == "emit"
+            )
+        {
+            found = true;
+        }
+    });
+    found
+}
+
+/// Decision C (#1165): the closed sets of mutating storage-op names, one
+/// `pub` constant per kind group — read by `bynk_lower::body_writes_state`'s
+/// own `Callee::Store`-keyed write-detection walk (P6.8, Decision B), which
+/// needs no receiver-name gate at all: a `Callee::Store` already carries the
+/// field's own resolved identity, not a name that could be shadowed. Until
+/// #1196, this module also had its own bare-`Ident`-receiver-name-matching
+/// reader (`block_writes_state`'s own `mutating_op`, deleted) — a single
+/// shared source avoided the class of drift #1164's own review caught twice
+/// for a different pair of independently hand-maintained copies
+/// (`cache_ttl_millis`'s `DurationLit` extraction, `store_map_indexes`'s
+/// dedup); now there is only the one reader. Live in `bynk-ir` (not
+/// `bynk-emit` or `bynk-lower` specifically, moved here from
+/// `bynk-emit::emitter` at the P7.12 crate carve, no behaviour change)
+/// since a future `bynk-emit`-side reader (a `Service` handler's own write
+/// detection, say) may need them again, the same reasoning that kept them
+/// `pub(crate)` rather than `bynk-lower`-private before the carve.
+/// `Map`/`Cache` share one list — both support the same four entry ops —
+/// rather than two identical ones.
+pub const MUTATING_MAP_CACHE_OPS: &[&str] = &["put", "remove", "update", "upsert"];
+/// v0.83: `<set>.add`/`<set>.remove` mutate a `store Set[T]` field.
+pub const MUTATING_SET_OPS: &[&str] = &["add", "remove"];
+/// v0.95: `<log>.append` mutates the durable array (ADR 0121) — every other
+/// `Log` method is a query-lifting read.
+pub const MUTATING_LOG_OPS: &[&str] = &["append"];
+/// v0.98 (ADR 0125): `<cell>.update(f)` is a read-modify-write of the
+/// working state — the bare `:=` write form is `Statement::Assign`, checked
+/// separately and unconditionally, no method name involved.
+pub const MUTATING_CELL_OPS: &[&str] = &["update"];
+
+pub fn walk_block_exprs(b: &Block, f: &mut impl FnMut(&Expr)) {
+    let mut exprs = Vec::new();
+    for s in &b.statements {
+        statement_exprs(s, &mut exprs);
+    }
+    exprs.push(&b.tail);
+    for e in exprs {
+        walk_exprs(e, f);
+    }
+}
+
+/// v0.22b: pre-order expression visitor — visits `e`, then every
+/// sub-expression, including statements and tails of nested blocks. Driven by
+/// `ast::expr_children`, the exhaustive total child iterator, rather than a
+/// hand-matched recursion duplicating it — a new `ExprKind` variant fails to
+/// compile in `expr_children` until it is taught to visit it, instead of
+/// silently under-visiting here.
+pub fn walk_exprs(e: &Expr, f: &mut impl FnMut(&Expr)) {
+    f(e);
+    for child in expr_children(e) {
+        walk_exprs(child, f);
+    }
+}
+
+/// A match needs the if/else-if lowering (ADR 0169) when any arm carries a guard
+/// or a refutable nested payload pattern — a JS `switch` on `.tag` can express
+/// neither. Flat, unguarded matches keep the `switch` (zero churn to existing
+/// output).
+///
+/// `pub` since P6.5 (#1159, Decision B) — `bynk-lower`'s own lowering pass
+/// reuses this pure predicate verbatim to decide `MatchForm`, rather than
+/// re-deriving an equivalent one over `IrPat`'s own shape, so the string
+/// emitter's own if-chain-vs-switch choice and the IR's own recorded `form`
+/// can never silently disagree. Lives in `bynk-ir` (not `bynk-emit` or
+/// `bynk-lower` specifically) since both `bynk-emit`'s own string emitter and
+/// `bynk-lower`'s IR lowering need it — moved out of `bynk-emit::emitter::lower`
+/// at the P7.12 crate carve, no behaviour change.
+pub fn match_needs_if_chain(arms: &[MatchArm]) -> bool {
+    arms.iter().any(|a| {
+        a.guard.is_some()
+            || pattern_has_nested_test(&a.pattern)
+            || matches!(a.pattern, Pattern::Refined { .. })
+    })
+}
+
+/// True when `pat` carries a payload sub-pattern that is itself refutable (a
+/// nested variant/literal) — i.e. it cannot be tested by a single `.tag` switch.
+fn pattern_has_nested_test(pat: &Pattern) -> bool {
+    match pat {
+        Pattern::Variant { bindings, .. } => bindings.iter().any(|b| {
+            let sp = b.pattern();
+            !sp.is_irrefutable() || pattern_has_nested_test(sp)
+        }),
+        // #472: a refined pattern is never a top-level irrefutable/nested
+        // payload today (the parser admits only `_` as `inner`, and only at a
+        // match arm's top level), but keep this exhaustive and correct for
+        // when nesting is admitted. (An `Or`'s alternatives can never
+        // themselves be `Refined` — #472/#474's merged parser design only
+        // ever wraps a *whole*, already-folded `|`-chain in `Refined`, never
+        // the other way around — so this arm only matters nested under a
+        // payload, e.g. a hypothetical `Some(_ where P)`.)
+        Pattern::Refined { inner, .. } => !inner.is_irrefutable() || pattern_has_nested_test(inner),
+        // #474: a bindingless, non-nested or-pattern (`1 | 2 | 3`,
+        // `Pending | Cancelled(_, _)`) stays on the flat switch — it lowers to
+        // fall-through `case` labels sharing one body. One with bindings or a
+        // nested refutable payload needs the if-chain (a `switch` can't bind
+        // different alternatives' fields to the same name).
+        Pattern::Or(alts, _) => alts
+            .iter()
+            .any(|p| !p.bound_names().is_empty() || pattern_has_nested_test(p)),
+        _ => false,
+    }
 }

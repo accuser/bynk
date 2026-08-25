@@ -25,12 +25,6 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use crate::emitter;
-use crate::ir::CapRefIr;
-use crate::ir::EventSubscriberShape;
-use crate::ir::FnSig;
-use crate::ir::lower::{
-    lower_attached_fn_sig_ir_from_types, lower_handler_given_ir, lower_provider_given_ir,
-};
 use bynk_check::actors::ActorDecl;
 use bynk_check::check_pipeline::{self, prepare_unit_check_ctx};
 use bynk_check::checker;
@@ -46,6 +40,12 @@ use bynk_check::project_model::{
 };
 use bynk_check::requirements::RequirementSink;
 use bynk_check::resolver::{self, MethodTable as ResolverMethodTable, ResolvedCommons};
+use bynk_ir::CapRefIr;
+use bynk_ir::EventSubscriberShape;
+use bynk_ir::FnSig;
+use bynk_lower::{
+    lower_attached_fn_sig_ir_from_types, lower_handler_given_ir, lower_provider_given_ir,
+};
 use bynk_syntax::error::CompileError;
 use bynk_syntax::lexer;
 use bynk_syntax::parser;
@@ -1042,7 +1042,7 @@ fn build_emit_unit_ctx(
     // emission (the resolver stores instance/static methods in `HashMap`s).
     //
     // P6.18: each method's own `params`/`return_type` now resolve to a real
-    // `TyId` (`ir::lower::lower_attached_fn_sig_ir_from_types`) against the
+    // `TyId` (`bynk_lower::lower_attached_fn_sig_ir_from_types`) against the
     // *declaring* unit's own visible types, rather than carrying the raw
     // `FnDecl` (and its unresolved `TypeRef`s) all the way to
     // `emit_forwarded_methods`. `Free`-named entries (never present in
@@ -1442,9 +1442,8 @@ fn check_unit_files(
         // the walk itself (including the `ServiceProtocol::Events`
         // pre-filter guarding `lower_service_item_ir` — see that
         // function's own doc comment for why the guard stays) relocated to
-        // `ir::lower::lower_event_subscriber_shapes_ir`, an excluded file.
-        event_subscriber_shapes
-            .extend(crate::ir::lower::lower_event_subscriber_shapes_ir(&program));
+        // `bynk_lower::lower_event_subscriber_shapes_ir`, an excluded file.
+        event_subscriber_shapes.extend(bynk_lower::lower_event_subscriber_shapes_ir(&program));
         emit_unit(
             name,
             kind,

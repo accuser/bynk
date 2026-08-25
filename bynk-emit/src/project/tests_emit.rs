@@ -1427,9 +1427,9 @@ fn block_uses_observation(block: &Block) -> bool {
             Statement::Do(d) => &d.value,
             Statement::Assign(a) => &a.value,
         };
-        crate::emitter::walk_exprs(e, &mut check);
+        bynk_ir::walk_exprs(e, &mut check);
     }
-    crate::emitter::walk_exprs(&block.tail, &mut check);
+    bynk_ir::walk_exprs(&block.tail, &mut check);
     found
 }
 
@@ -1440,7 +1440,7 @@ fn block_uses_observation(block: &Block) -> bool {
 /// into `bynk.test.service_no_call_handler` instead of a silent runtime crash.
 fn target_service_handler_kinds(
     table: Option<&UnitTable>,
-) -> HashMap<String, Vec<crate::ir::IrHandlerKind>> {
+) -> HashMap<String, Vec<bynk_ir::IrHandlerKind>> {
     let Some(t) = table else {
         return HashMap::new();
     };
@@ -1451,7 +1451,7 @@ fn target_service_handler_kinds(
                 name.clone(),
                 decl.handlers
                     .iter()
-                    .map(|h| crate::ir::lower::lower_handler_kind_ir(&h.kind))
+                    .map(|h| bynk_lower::lower_handler_kind_ir(&h.kind))
                     .collect(),
             )
         })
