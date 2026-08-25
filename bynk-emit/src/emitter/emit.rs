@@ -146,6 +146,28 @@ struct RefinedShape<'a> {
     is_opaque: bool,
 }
 
+/// #1339 (R7.1): `export type {name} = {base} & { readonly __brand: "..."
+/// };` is a real [`bynk_ts::TsDecl::TypeAlias`] over a new
+/// [`bynk_ts::TsType::Intersection`] (this file's own first real need for
+/// it — `TsType` had `Named`/`Array`/`Object`/`Fn`/`Union`, nothing for
+/// `A & B`); `export const {name} = { of(...) {...}, unsafe?(...) {...},
+/// ...attachedMethods }` is a real [`bynk_ts::TsDecl::ConstDecl`] whose
+/// `init` is one [`bynk_ts::TsExpr::multiline_object_entries`] — `of`'s own
+/// signature/return-statement are real nodes; `emit_refined_checks`'s own
+/// output (still `out: &mut String`, unaffected by this slice, the P7.9/
+/// step-1 pattern applied one level down) is captured and carried as one
+/// [`bynk_ts::TsStmtKind::Raw`] statement — the same carrier #1337 added for
+/// `lower.rs`'s own permanently-excluded body text, reused here for a
+/// different, narrower reason: this is legitimately real-node-shaped
+/// content (every guard is already built and printed via real
+/// `bynk_ts::TsStmt`/`print_stmt` calls inside `emit_refined_checks`
+/// itself), just still `String`-typed at its own call boundary because that
+/// function's own signature wasn't part of this slice's scope. `emit_
+/// attached_methods`'s own real `Vec<TsObjectEntry>` (#1337) is appended
+/// directly into the SAME entries list — no more per-entry `print_object_
+/// entry` splice loop for this function, now that it owns the whole
+/// object's own construction. This function's own exact signature is
+/// unchanged, the same P7.9/step-1 pattern.
 fn emit_refined_type(
     out: &mut String,
     t: &TypeDecl,
@@ -159,46 +181,97 @@ fn emit_refined_type(
         refinement,
         is_opaque,
     } = shape;
-    let ts_base = ts_base(base);
-    writeln!(
-        out,
-        "export type {name} = {base} & {{ readonly __brand: \"{prefix}{name}\" }};",
-        name = t.name.name,
-        base = ts_base,
-        prefix = brand_prefix,
-    )
-    .unwrap();
+    let name = t.name.name.clone();
+    let base_ty = bynk_ts::TsType::named(ts_base(base));
+
+    let brand_ty = bynk_ts::TsType::Object(vec![bynk_ts::TsTypeMember::readonly_prop(
+        "__brand",
+        bynk_ts::TsType::named(format!("\"{brand_prefix}{name}\"")),
+    )]);
+    let type_alias = bynk_ts::TsStmt::decl(
+        bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::TypeAlias {
+            name: name.clone(),
+            type_params: Vec::new(),
+            ty: bynk_ts::TsType::intersection(vec![base_ty.clone(), brand_ty]),
+        })),
+        None,
+    );
+    out.push_str(&bynk_ts::print_stmt(&type_alias, 0));
     writeln!(out).unwrap();
-    writeln!(out, "export const {name} = {{", name = t.name.name).unwrap();
-    writeln!(
-        out,
-        "  of(value: {base}): Result<{name}, ValidationError> {{",
-        name = t.name.name,
-        base = ts_base,
-    )
-    .unwrap();
-    emit_refined_checks(out, t, base, refinement);
-    writeln!(out, "    return Ok(value as {name});", name = t.name.name).unwrap();
-    writeln!(out, "  }},").unwrap();
+
+    let checks_text = {
+        let mut checks = String::new();
+        emit_refined_checks(&mut checks, t, base, refinement);
+        checks
+    };
+    let cast_to_name = bynk_ts::TsExpr::As {
+        expr: Box::new(bynk_ts::TsExpr::Ident("value".to_string())),
+        ty: bynk_ts::TsType::named(name.clone()),
+    };
+    let mut entries: Vec<bynk_ts::TsObjectEntry> = vec![bynk_ts::TsObjectEntry::Method {
+        name: "of".to_string(),
+        is_async: false,
+        generics: Vec::new(),
+        params: vec![bynk_ts::TsParam {
+            name: "value".to_string(),
+            ty: Some(base_ty.clone()),
+            optional: false,
+        }],
+        return_type: Some(bynk_ts::TsType::named_with_args(
+            "Result",
+            vec![
+                bynk_ts::TsType::named(name.clone()),
+                bynk_ts::TsType::named("ValidationError"),
+            ],
+        )),
+        doc: None,
+        inline: false,
+        body: vec![
+            bynk_ts::TsStmt::raw(checks_text, None),
+            bynk_ts::TsStmt::return_stmt(
+                Some(bynk_ts::TsExpr::Call {
+                    callee: Box::new(bynk_ts::TsExpr::Ident("Ok".to_string())),
+                    args: vec![cast_to_name.clone()],
+                }),
+                None,
+            ),
+        ],
+    }];
     // ADR 0182: only opaque types expose a public `unsafe` constructor. A refined
     // or alias type omits it — host code cannot bypass the predicate — and its
     // admitted/generated values brand via an inline `as` cast instead (see
     // `unchecked_construct`).
     if is_opaque {
-        writeln!(
-            out,
-            "  unsafe(value: {base}): {name} {{",
-            name = t.name.name,
-            base = ts_base,
-        )
-        .unwrap();
-        writeln!(out, "    return value as {name};", name = t.name.name).unwrap();
-        writeln!(out, "  }},").unwrap();
+        entries.push(bynk_ts::TsObjectEntry::Method {
+            name: "unsafe".to_string(),
+            is_async: false,
+            generics: Vec::new(),
+            params: vec![bynk_ts::TsParam {
+                name: "value".to_string(),
+                ty: Some(base_ty),
+                optional: false,
+            }],
+            return_type: Some(bynk_ts::TsType::named(name.clone())),
+            doc: None,
+            inline: false,
+            body: vec![bynk_ts::TsStmt::return_stmt(Some(cast_to_name), None)],
+        });
     }
-    for entry in emit_attached_methods(&t.name.name, &t.type_params, commons, runtime_use) {
-        out.push_str(&bynk_ts::print_object_entry(&entry, 0));
-    }
-    writeln!(out, "}};").unwrap();
+    entries.extend(emit_attached_methods(
+        &t.name.name,
+        &t.type_params,
+        commons,
+        runtime_use,
+    ));
+    let const_decl = bynk_ts::TsStmt::decl(
+        bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::ConstDecl {
+            name,
+            ty: None,
+            init: bynk_ts::TsExpr::multiline_object_entries(entries),
+        })),
+        None,
+    );
+    out.push_str(&bynk_ts::print_stmt(&const_decl, 0));
     writeln!(out).unwrap();
 }
 
@@ -336,6 +409,16 @@ pub(crate) fn ts_type_params(params: &[TypeParam]) -> String {
     format!("<{}>", names.join(", "))
 }
 
+/// #1339 (R7.1): `export interface {name}{params} { readonly {field}: {ty};
+/// ... }` is a real [`bynk_ts::TsDecl::Interface`] (`type_params` bare
+/// names, matching `ts_type_params`'s own convention exactly; each field a
+/// [`bynk_ts::TsTypeMember::readonly_prop`], reusing [`TsTypeMember`]'s own
+/// existing `readonly` field rather than a bespoke one — every real field
+/// here is `readonly`), printed through [`bynk_ts::print_stmt`] at depth 0.
+/// Field types route through `ts_ty_to_ts_type` (the real-node sibling
+/// `ts_ty` itself already wraps, P7.9) instead of the opaque pre-printed
+/// `String` `ts_ty` returns — a real node, not text. This function's own
+/// exact signature is unchanged, the same P7.9/step-1 pattern.
 fn emit_record_type(
     out: &mut String,
     t: &TypeDecl,
@@ -343,22 +426,25 @@ fn emit_record_type(
     commons: &TypedCommons,
     runtime_use: &RuntimeUse,
 ) {
-    writeln!(
-        out,
-        "export interface {name}{params} {{",
-        name = t.name.name,
-        params = ts_type_params(&t.type_params),
-    )
-    .unwrap();
-    for (name, ty) in fields {
-        writeln!(
-            out,
-            "  readonly {name}: {ty};",
-            ty = ts_ty(*ty, &commons.ty_intern),
-        )
-        .unwrap();
-    }
-    writeln!(out, "}}").unwrap();
+    let type_params: Vec<String> = t.type_params.iter().map(|p| p.name.name.clone()).collect();
+    let members: Vec<bynk_ts::TsTypeMember> = fields
+        .iter()
+        .map(|(name, ty)| {
+            bynk_ts::TsTypeMember::readonly_prop(
+                name.clone(),
+                ts_ty_to_ts_type(*ty, &commons.ty_intern),
+            )
+        })
+        .collect();
+    let interface = bynk_ts::TsStmt::decl(
+        bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::Interface {
+            name: t.name.name.clone(),
+            type_params,
+            members,
+        })),
+        None,
+    );
+    out.push_str(&bynk_ts::print_stmt(&interface, 0));
     writeln!(out).unwrap();
     writeln!(out, "export const {name} = {{", name = t.name.name).unwrap();
     for entry in emit_attached_methods(&t.name.name, &t.type_params, commons, runtime_use) {
@@ -368,6 +454,25 @@ fn emit_record_type(
     writeln!(out).unwrap();
 }
 
+/// #1339 (R7.1): `export type {name}{params} =\n  | {...}\n  | {...};` is a
+/// real [`bynk_ts::TsDecl::TypeAlias`] over a new
+/// [`bynk_ts::TsType::multiline_union`] (see its own doc for the exact
+/// leading-pipe/spacing rules this reproduces byte-for-byte); `export const
+/// {name} = { {tag}: ..., ... }` is a real [`bynk_ts::TsDecl::ConstDecl`]
+/// whose `init` is one [`bynk_ts::TsExpr::multiline_object_entries`] — a
+/// nullary variant is a real cast expression, a payload variant a real
+/// [`bynk_ts::TsExpr::Arrow`] (`generics`/`return_type`, #1339's own two
+/// gaps beyond the accepted proposal's own three) whose object-literal body
+/// is wrapped in an explicit [`bynk_ts::TsExpr::Paren`] — `Arrow`'s own
+/// renderer does not auto-parenthesise an object-literal body the way real
+/// JS/TS syntax requires to disambiguate it from a block, so this call site
+/// must ask for the parens itself, the same "explicit `Paren` always prints
+/// its own literal parens" precedent #1323 already established. `emit_
+/// attached_methods`'s own real `Vec<TsObjectEntry>` (#1337) is appended
+/// directly into the SAME entries list, the same "own the whole object's
+/// construction, drop the per-entry splice loop" pattern `emit_refined_
+/// type`'s own conversion just used. This function's own exact signature
+/// is unchanged, the same P7.9/step-1 pattern.
 fn emit_sum_type(
     out: &mut String,
     t: &TypeDecl,
@@ -381,71 +486,120 @@ fn emit_sum_type(
     // (`Some: <T>(v: T): Opt<T> => …`); a payload-less constructor stays a
     // constant, cast to the all-`never` instantiation (`Opt<never>`), which is
     // assignable to every `Opt<X>` since the nullary arm names no parameter.
-    // Both strings are empty for a non-generic sum, keeping its output identical.
-    let params = ts_type_params(&t.type_params);
-    let never_args = if t.type_params.is_empty() {
-        String::new()
+    // Both are empty for a non-generic sum, keeping its output identical.
+    let name = t.name.name.clone();
+    let type_params: Vec<String> = t.type_params.iter().map(|p| p.name.name.clone()).collect();
+    let never_ty = if type_params.is_empty() {
+        bynk_ts::TsType::named(name.clone())
     } else {
-        format!(
-            "<{}>",
-            t.type_params
+        bynk_ts::TsType::named_with_args(
+            name.clone(),
+            type_params
                 .iter()
-                .map(|_| "never")
-                .collect::<Vec<_>>()
-                .join(", ")
+                .map(|_| bynk_ts::TsType::named("never"))
+                .collect(),
         )
     };
-    writeln!(out, "export type {name}{params} =", name = t.name.name).unwrap();
-    for (i, (tag, payload)) in variants.iter().enumerate() {
-        let pipe = if i == 0 { " " } else { "|" };
-        if payload.is_empty() {
-            let term = if i == variants.len() - 1 { ";" } else { "" };
-            writeln!(out, "  {pipe} {{ readonly tag: \"{tag}\" }}{term}").unwrap();
-        } else {
-            let fields: Vec<String> = payload
+    let self_ty = if type_params.is_empty() {
+        bynk_ts::TsType::named(name.clone())
+    } else {
+        bynk_ts::TsType::named_with_args(
+            name.clone(),
+            type_params
                 .iter()
-                .map(|(name, ty)| format!("readonly {name}: {}", ts_ty(*ty, &commons.ty_intern)))
-                .collect();
-            let term = if i == variants.len() - 1 { ";" } else { "" };
-            writeln!(
-                out,
-                "  {pipe} {{ readonly tag: \"{tag}\"; {fields} }}{term}",
-                fields = fields.join("; "),
-            )
-            .unwrap();
-        }
-    }
+                .map(|p| bynk_ts::TsType::named(p.clone()))
+                .collect(),
+        )
+    };
+
+    let variant_types: Vec<bynk_ts::TsType> = variants
+        .iter()
+        .map(|(tag, payload)| {
+            let mut members = vec![bynk_ts::TsTypeMember::readonly_prop(
+                "tag",
+                bynk_ts::TsType::named(format!("\"{tag}\"")),
+            )];
+            members.extend(payload.iter().map(|(field, ty)| {
+                bynk_ts::TsTypeMember::readonly_prop(
+                    field.clone(),
+                    ts_ty_to_ts_type(*ty, &commons.ty_intern),
+                )
+            }));
+            bynk_ts::TsType::Object(members)
+        })
+        .collect();
+    let type_alias = bynk_ts::TsStmt::decl(
+        bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::TypeAlias {
+            name: name.clone(),
+            type_params: type_params.clone(),
+            ty: bynk_ts::TsType::multiline_union(variant_types),
+        })),
+        None,
+    );
+    out.push_str(&bynk_ts::print_stmt(&type_alias, 0));
     writeln!(out).unwrap();
-    writeln!(out, "export const {name} = {{", name = t.name.name).unwrap();
+
+    let mut entries: Vec<bynk_ts::TsObjectEntry> = Vec::new();
     for (tag, payload) in variants {
         if payload.is_empty() {
-            writeln!(
-                out,
-                "  {tag}: {{ tag: \"{tag}\" }} as {name}{never_args},",
-                name = t.name.name,
-            )
-            .unwrap();
+            let tag_obj = bynk_ts::TsExpr::object_entries(vec![bynk_ts::TsObjectEntry::Prop(
+                "tag".to_string(),
+                bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(tag.clone())),
+            )]);
+            entries.push(bynk_ts::TsObjectEntry::Prop(
+                tag.clone(),
+                bynk_ts::TsExpr::As {
+                    expr: Box::new(tag_obj),
+                    ty: never_ty.clone(),
+                },
+            ));
         } else {
-            let ctor_params: Vec<String> = payload
+            let ctor_params: Vec<bynk_ts::TsParam> = payload
                 .iter()
-                .map(|(name, ty)| format!("{name}: {}", ts_ty(*ty, &commons.ty_intern)))
+                .map(|(field, ty)| bynk_ts::TsParam {
+                    name: field.clone(),
+                    ty: Some(ts_ty_to_ts_type(*ty, &commons.ty_intern)),
+                    optional: false,
+                })
                 .collect();
-            let obj_fields: Vec<String> = payload.iter().map(|(name, _)| name.clone()).collect();
-            writeln!(
-                out,
-                "  {tag}: {params}({ctor_params}): {name}{params} => ({{ tag: \"{tag}\", {fields} }}),",
-                params = params,
-                ctor_params = ctor_params.join(", "),
-                name = t.name.name,
-                fields = obj_fields.join(", "),
-            )
-            .unwrap();
+            let mut obj_entries = vec![bynk_ts::TsObjectEntry::Prop(
+                "tag".to_string(),
+                bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(tag.clone())),
+            )];
+            obj_entries.extend(
+                payload
+                    .iter()
+                    .map(|(field, _)| bynk_ts::TsObjectEntry::Shorthand(field.clone())),
+            );
+            let ctor_body =
+                bynk_ts::TsExpr::Paren(Box::new(bynk_ts::TsExpr::object_entries(obj_entries)));
+            entries.push(bynk_ts::TsObjectEntry::Prop(
+                tag.clone(),
+                bynk_ts::TsExpr::Arrow {
+                    params: ctor_params,
+                    is_async: false,
+                    generics: type_params.clone(),
+                    return_type: Some(self_ty.clone()),
+                    body: Box::new(ctor_body),
+                },
+            ));
         }
     }
-    for entry in emit_attached_methods(&t.name.name, &t.type_params, commons, runtime_use) {
-        out.push_str(&bynk_ts::print_object_entry(&entry, 0));
-    }
-    writeln!(out, "}};").unwrap();
+    entries.extend(emit_attached_methods(
+        &t.name.name,
+        &t.type_params,
+        commons,
+        runtime_use,
+    ));
+    let const_decl = bynk_ts::TsStmt::decl(
+        bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::ConstDecl {
+            name,
+            ty: None,
+            init: bynk_ts::TsExpr::multiline_object_entries(entries),
+        })),
+        None,
+    );
+    out.push_str(&bynk_ts::print_stmt(&const_decl, 0));
     writeln!(out).unwrap();
 }
 
@@ -520,12 +674,18 @@ fn emit_attached_methods(
 /// (`emit_context_rebrands`) is still unconverted, so this stays a "build a
 /// real node internally, print just that fragment" helper rather than
 /// returning entries the caller isn't ready to consume structurally.
+/// Arc C, slice 30 (#1392): returns real `bynk_ts::TsObjectEntry::Method`
+/// values (was `out: &mut String`) — the one real call site
+/// (`emit_context_rebrands`) now appends them directly into its own
+/// `Vec<TsObjectEntry>` instead of splicing printed text into a shared
+/// buffer, the same `emit_attached_methods` precedent (#1337) already
+/// established for its own sibling per-entry builder.
 pub(crate) fn emit_forwarded_methods(
-    out: &mut String,
     type_name: &str,
     methods: &[FnSig],
     tys: &Arc<Types>,
-) {
+) -> Vec<bynk_ts::TsObjectEntry> {
+    let mut entries = Vec::new();
     for f in methods {
         let mut params: Vec<bynk_ts::TsParam> = Vec::new();
         let mut args: Vec<bynk_ts::TsExpr> = Vec::new();
@@ -583,8 +743,9 @@ pub(crate) fn emit_forwarded_methods(
             inline: true,
             body,
         };
-        out.push_str(&bynk_ts::print_object_entry(&entry, 0));
+        entries.push(entry);
     }
+    entries
 }
 
 /// #1337: returns one real `bynk_ts::TsObjectEntry::Method` (was
@@ -690,6 +851,36 @@ fn emit_method(
     }
 }
 
+/// #1351 (R7.1): `export {async}function {name}{generics}({params}): {ret} {
+/// <body> }` is a real [`bynk_ts::TsDecl::Function`] — `params`/`return_type`
+/// route through the already-real [`ts_type_ref_to_ts_type`] (P7.9, #1315;
+/// this file's own directly-callable private-sibling-visibility precedent,
+/// #1339) instead of the opaque pre-printed `String` `ts_type_ref` returns;
+/// `generics` is `TsDecl::Function`'s own real gap this proposal closes
+/// (bare names, matching every other real generics-list precedent in this
+/// crate). The function's own BODY — whichever of the two still-unconverted
+/// sources built it (the ordinary lowered block, or
+/// `emit_contract_guarded_body`'s own guard-wrapped one, NEITHER converted
+/// by this proposal) — is captured into a fresh buffer and carried as ONE
+/// opaque [`bynk_ts::TsStmtKind::Raw`] statement, unchanged text, the exact
+/// precedent #1337 established for `emit_method`'s own wholesale-delegated
+/// body. This function's own exact signature is unchanged, the P7.9/step-1
+/// pattern — it never owned a `Verbatim` construction site.
+///
+/// Review-caught-before-merge, #1351: the body can no longer lower directly
+/// into `out` the way the pre-conversion code did (source-map checkpoints
+/// were correct there only because the body's own text landed at its real,
+/// final position in `out` as it was written). Once the body is captured
+/// into its own local `body_text` buffer for embedding as a `Raw`
+/// statement, any `record_span` call made *during* that lowering would
+/// record an offset relative to `body_text`'s own 0-based length — wrong
+/// once spliced elsewhere. Uses the same local-sub-builder-then-`merge`
+/// pattern `emit_service`'s own handler-body lowering already established
+/// (`LowerCtx::record_span`'s own doc: "a caller building ... into its own
+/// local `String` ... before splicing it elsewhere must not call this with
+/// that buffer's own length") — `body_smb` collects checkpoints relative to
+/// `body_text`, then `merge`s into the real `source_map`, rebased at
+/// `body_text`'s own splice offset within the fully-printed declaration.
 pub(crate) fn emit_free_fn(
     out: &mut String,
     f: &FnDecl,
@@ -704,51 +895,39 @@ pub(crate) fn emit_free_fn(
         return;
     };
     emit_doc_block(out, f.documentation.as_deref(), 0);
-    let params: Vec<String> = f
+    let params: Vec<bynk_ts::TsParam> = f
         .params
         .iter()
-        .map(|p| format!("{}: {}", ts_ident(&p.name.name), ts_type_ref(&p.type_ref)))
+        .map(|p| bynk_ts::TsParam {
+            name: ts_ident(&p.name.name),
+            ty: Some(ts_type_ref_to_ts_type(&p.type_ref, None)),
+            optional: false,
+        })
         .collect();
-    let async_kw = if is_effectful_return(&f.return_type) {
-        "async "
-    } else {
-        ""
-    };
+    let is_async = is_effectful_return(&f.return_type);
     // v0.20a: erased TS generics — the type parameters print verbatim and
     // exist only at TS type-check time (no runtime dispatch).
-    let generics = if f.type_params.is_empty() {
-        String::new()
-    } else {
-        format!(
-            "<{}>",
-            f.type_params
-                .iter()
-                .map(|tp| tp.name.name.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-        )
-    };
-    writeln!(
-        out,
-        "export {async_kw}function {name}{generics}({params}): {ret} {{",
-        name = ts_ident(&name.name),
-        params = params.join(", "),
-        ret = ts_type_ref(&f.return_type),
-    )
-    .unwrap();
+    let generics: Vec<String> = f
+        .type_params
+        .iter()
+        .map(|tp| tp.name.name.clone())
+        .collect();
+
     let empty = bynk_check::resolver::CrossContextInfo::default();
+    let body_smb = RefCell::new(SourceMapBuilder::new());
     let mut cx = LowerCtx::new(
         ModuleCtx::new(commons, &empty, runtime_use),
         BodyMode::FreeFn,
     )
-    .with_source_map(source_map);
+    .with_source_map(Some(&body_smb));
     let async_tail = is_effectful_return(&f.return_type);
     let guarded = contracts && (!f.requires.is_empty() || !f.ensures.is_empty());
+    let mut body_text = String::new();
     if guarded {
-        emit_contract_guarded_body(out, f, &mut cx, async_tail);
+        emit_contract_guarded_body(&mut body_text, f, &mut cx, async_tail);
     } else {
         emit_block_as_function_body_with_return(
-            out,
+            &mut body_text,
             &f.body,
             &mut cx,
             INDENT_STEP,
@@ -756,10 +935,94 @@ pub(crate) fn emit_free_fn(
             Some(&f.return_type),
         );
     }
-    writeln!(out, "}}").unwrap();
+
+    let func_decl = bynk_ts::TsStmt::decl(
+        bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::Function {
+            name: ts_ident(&name.name),
+            generics,
+            params,
+            return_type: Some(ts_type_ref_to_ts_type(&f.return_type, None)),
+            body: vec![bynk_ts::TsStmt::raw(body_text.clone(), None)],
+            is_async,
+            inline: false,
+        })),
+        None,
+    );
+    let printed = bynk_ts::print_stmt(&func_decl, 0);
+    // `Raw`'s own text is spliced verbatim (`printer.rs`'s own documented
+    // guarantee), so its offset within `printed` is exact arithmetic, not a
+    // search: everything before it is the header/opening-brace text, and
+    // everything after it is the fixed closing `"}\n"` `TsDecl::Function`'s
+    // own render arm always appends.
+    //
+    // Review of #1352, finding 1: this arithmetic silently encodes 3
+    // invariants of a renderer in another crate (Raw splices verbatim,
+    // `TsDecl::Function` always ends in exactly `"}\n"`, `print_stmt` is
+    // called at depth 0) — if any of those ever changed, the failure mode
+    // is not a compile error or a text diff, it's a silently wrong source
+    // map, the exact bug class this function exists to fix. Guarded loudly
+    // rather than trusted silently.
+    debug_assert!(
+        printed.ends_with(&format!("{body_text}}}\n")),
+        "emit_free_fn: Raw body is no longer the verbatim tail of the printed decl"
+    );
+    let body_offset_in_printed = printed.len() - body_text.len() - "}\n".len();
+    let base = out.len() + body_offset_in_printed;
+    out.push_str(&printed);
+    if let Some(module) = source_map {
+        module
+            .borrow_mut()
+            .merge(&body_smb.borrow(), &body_text, out, base, 0);
+    }
     writeln!(out).unwrap();
 }
 
+/// #1353 (R7.1): closes step (4) of the design pass's own decomposition
+/// order — `emit_free_fn`'s own outer wrapper landed in #1352; this converts
+/// `emit_contract_guarded_body`'s own real remainder. Each precondition/
+/// postcondition guard (`if (!(pred)) { const __e = new Error(`...`);
+/// __e.name = "BynkContractError"; throw __e; }`) is a real
+/// [`bynk_ts::TsStmt::if_stmt`] over a real [`bynk_ts::TsStmt::inline_block`]
+/// of 3 real statements (`const_stmt`/`assign`/[`bynk_ts::TsStmt::throw_stmt`]
+/// — `Throw` is this proposal's own real gap, `bynk_ts::TsStmtKind` had no
+/// bare `throw` before now), printed through [`bynk_ts::print_stmt`]; the
+/// trailing `return result;` is a real [`bynk_ts::TsStmt::return_stmt`].
+///
+/// `pred` (`Pre::lower`'s own return) and each hoisted `pre.stmts()` line
+/// stay opaque — carried the same way #1335's own `emit_pred_check` carries
+/// `pred_condition_and_message`'s `cond` (an `Ident` wrapped in this crate's
+/// real `Unary::Not`/`Paren`), but for a DIFFERENT, stronger reason: `Pre`
+/// lives in `emitter/lower.rs` (`pre.lower` calls `lower_expr`, the general
+/// expression lowerer) — the one splice boundary ADR
+/// `arc-c-lower-rs-permanent-exclusion` names a *permanent* Arc C exclusion,
+/// not temporarily-unconverted-but-convertible-later machinery like
+/// `pred_condition_and_message` (which lives in `emitter.rs` proper). The
+/// error message (backtick-quoted, with its own already-escaped `\``
+/// clause-name delimiters and `${param}=...`-style interpolations already
+/// baked in as literal text by `param_dump`) is carried the same way as one
+/// opaque [`bynk_ts::TsExpr::template_lit`] part with zero real `exprs` —
+/// `parts` prints verbatim, so this reproduces the exact byte output with no
+/// decomposition needed.
+///
+/// The result-capturing IIFE (`const result = (async () => { <body> }
+/// )();`/`const result = (() => { <body> })();`) stays ONE opaque
+/// [`bynk_ts::TsStmt::raw`] statement — not decomposed into a real
+/// `Const`/`Arrow`/`Call` — matching #1352's own identical treatment of
+/// `emit_free_fn`'s unguarded body one level up: `TsExpr::Arrow`'s own
+/// `body` is expression-only (#1327's own deliberate choice — a real
+/// block-body variant "would have needed new flatten-every-nested-statement
+/// ... printer machinery, disproportionate" for an analogous single site),
+/// and this IIFE's own body is a genuine multi-statement block, not an
+/// expression. `emit_block_as_function_body_with_return`'s own output
+/// (still unconverted, out of scope) is captured into a local buffer inside
+/// that one opaque statement, the same way it always has been.
+///
+/// This function's own exact `out: &mut String` signature is unchanged, the
+/// P7.9/step-1 pattern one level deeper than #1352's own conversion — it
+/// never owned a `Verbatim` construction site (still spliced into
+/// `emit_free_fn`'s own `body_text` buffer, itself carried as `emit_free_
+/// fn`'s own `Raw` statement).
+///
 /// v0.115: emit a contracted free function's body behind the dev/test call-site
 /// guard (DECISION J). Preconditions (`requires`) are checked on entry; the body
 /// runs into a captured `result`; postconditions (`ensures`) are checked over
@@ -789,17 +1052,40 @@ fn emit_contract_guarded_body(out: &mut String, f: &FnDecl, cx: &mut LowerCtx, a
         let mut pre = Pre::new();
         let pred = pre.lower(&c.predicate, cx);
         for s in pre.stmts() {
-            writeln!(out, "  {s}").unwrap();
+            out.push_str(&bynk_ts::print_stmt(
+                &bynk_ts::TsStmt::raw(format!("  {s}\n"), None),
+                0,
+            ));
         }
-        writeln!(
-            out,
-            "  if (!({pred})) {{ const __e = new Error(`contract violated: precondition \\`{clause}\\` of {fn_name} ({dump})`); __e.name = \"BynkContractError\"; throw __e; }}",
+        let msg = format!(
+            "contract violated: precondition \\`{clause}\\` of {fn_name} ({dump})",
             clause = c.name.name,
             dump = param_dump(false),
-        )
-        .unwrap();
+        );
+        out.push_str(&bynk_ts::print_stmt(
+            &contract_guard_if_stmt(&pred, &msg),
+            1,
+        ));
     }
     // Run the original body, capturing its value as `result` for the `ensures`.
+    //
+    // Written directly into `out`, NOT captured into a local buffer and
+    // wrapped as one opaque `TsStmt::raw` the way #1339's own `emit_refined_
+    // type` does for `emit_refined_checks`'s output — that precedent is safe
+    // only because `emit_refined_checks` never touches source-map recording.
+    // `emit_block_as_function_body_with_return` calls `cx.record_span(out.
+    // len(), ...)` internally: a local buffer's own length starts at 0, so
+    // any checkpoint recorded during its lowering would land at the WRONG
+    // offset once its text is later spliced into `out` at a non-zero
+    // position — the exact bug #1352 already found and fixed one level up
+    // (in `emit_free_fn`, for `body_text` itself); introducing a second
+    // local buffer HERE reproduces it one level deeper, silently, since
+    // `out` (this function's own parameter, = `emit_free_fn`'s `body_text`)
+    // is the one buffer whose offsets `emit_free_fn`'s own `body_smb`/
+    // `merge` machinery is already correctly rebased against. Writing here
+    // exactly as the pre-conversion code did — directly into `out`, no
+    // wrapping — keeps every `record_span` call's own `out.len()` correct
+    // by construction, with no merge of its own needed at this level.
     if async_tail {
         writeln!(out, "  const result = await (async () => {{").unwrap();
     } else {
@@ -819,17 +1105,130 @@ fn emit_contract_guarded_body(out: &mut String, f: &FnDecl, cx: &mut LowerCtx, a
         let mut pre = Pre::new();
         let pred = pre.lower(&c.predicate, cx);
         for s in pre.stmts() {
-            writeln!(out, "  {s}").unwrap();
+            out.push_str(&bynk_ts::print_stmt(
+                &bynk_ts::TsStmt::raw(format!("  {s}\n"), None),
+                0,
+            ));
         }
-        writeln!(
-            out,
-            "  if (!({pred})) {{ const __e = new Error(`contract violated: postcondition \\`{clause}\\` of {fn_name} ({dump})`); __e.name = \"BynkContractError\"; throw __e; }}",
+        let msg = format!(
+            "contract violated: postcondition \\`{clause}\\` of {fn_name} ({dump})",
             clause = c.name.name,
             dump = param_dump(true),
-        )
-        .unwrap();
+        );
+        out.push_str(&bynk_ts::print_stmt(
+            &contract_guard_if_stmt(&pred, &msg),
+            1,
+        ));
     }
-    writeln!(out, "  return result;").unwrap();
+    out.push_str(&bynk_ts::print_stmt(
+        &bynk_ts::TsStmt::return_stmt(Some(bynk_ts::TsExpr::Ident("result".to_string())), None),
+        1,
+    ));
+}
+
+/// Shared builder for the contract call-site guard's own real `if (!(pred))
+/// { const __e = new Error(`msg`); __e.name = "BynkContractError"; throw
+/// __e; }` shape — identical for a `requires`/`ensures` clause, differing
+/// only in `pred`/`msg`, both still-opaque text (see `emit_contract_guarded_
+/// body`'s own doc for why).
+fn contract_guard_if_stmt(pred: &str, msg: &str) -> bynk_ts::TsStmt {
+    let cond = bynk_ts::TsExpr::Unary {
+        op: bynk_ts::TsUnaryOp::Not,
+        expr: Box::new(bynk_ts::TsExpr::Paren(Box::new(bynk_ts::TsExpr::Ident(
+            pred.to_string(),
+        )))),
+    };
+    let new_error = bynk_ts::TsExpr::New {
+        callee: Box::new(bynk_ts::TsExpr::Ident("Error".to_string())),
+        args: vec![bynk_ts::TsExpr::template_lit(
+            vec![msg.to_string()],
+            Vec::new(),
+        )],
+    };
+    let const_e = bynk_ts::TsStmt::const_stmt(
+        bynk_ts::TsBindingName::Ident("__e".to_string()),
+        None,
+        new_error,
+        None,
+    );
+    let assign_name = bynk_ts::TsStmt::assign(
+        bynk_ts::TsExpr::Member {
+            object: Box::new(bynk_ts::TsExpr::Ident("__e".to_string())),
+            property: "name".to_string(),
+        },
+        bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str("BynkContractError".to_string())),
+        None,
+    );
+    let throw_e = bynk_ts::TsStmt::throw_stmt(bynk_ts::TsExpr::Ident("__e".to_string()), None);
+    let then_branch = bynk_ts::TsStmt::inline_block(vec![const_e, assign_name, throw_e], None);
+    bynk_ts::TsStmt::if_stmt(cond, then_branch, None)
+}
+
+#[cfg(test)]
+mod emit_free_fn_tests {
+    use crate::testkit::emit_source;
+
+    /// #1351: pins `emit_free_fn`'s own real generic/non-generic output
+    /// byte-for-byte against `198_generic_identity_compose`'s own real
+    /// `expected.ts` (`bynkc/tests/fixtures/positive/198_generic_identity_compose`)
+    /// — a generic single-param function, a multi-generic multi-param one
+    /// (function-typed params, exercising `TsParam.ty`'s own `Fn` arm), and
+    /// a plain non-generic one, transcribed directly from that fixture.
+    #[test]
+    fn generic_and_plain_free_functions_match_the_real_fixtures_own_bytes() {
+        let ts = emit_source(
+            r#"
+commons generic
+
+fn identity[A](x: A) -> A {
+  x
+}
+
+fn compose[A, B, C](f: A -> B, g: B -> C, x: A) -> C {
+  g(f(x))
+}
+
+fn demo() -> Int {
+  identity(5)
+}
+"#,
+        );
+        assert!(
+            ts.contains("export function identity<A>(x: A): A {\n  return x;\n}\n"),
+            "{ts}"
+        );
+        assert!(
+            ts.contains(
+                "export function compose<A, B, C>(f: (a0: A) => B, g: (a0: B) => C, x: A): C {\n  \
+                 return g(f(x));\n}\n"
+            ),
+            "{ts}"
+        );
+        assert!(
+            ts.contains("export function demo(): number {\n  return identity(5);\n}\n"),
+            "{ts}"
+        );
+    }
+
+    /// #1351: pins the `async`/effectful-return case — `is_effectful_return`
+    /// gates both the header's own `async` keyword and `async_tail`'s body
+    /// lowering, unchanged by this conversion.
+    #[test]
+    fn an_effectful_free_function_emits_async_and_no_generics() {
+        let ts = emit_source(
+            r#"
+commons effectful
+
+fn compute() -> Effect[Int] {
+  1
+}
+"#,
+        );
+        assert!(
+            ts.contains("export async function compute(): Promise<number> {\n"),
+            "{ts}"
+        );
+    }
 }
 
 /// Synthesise a TypeScript-safe method name for an `on http METHOD path`
@@ -1033,6 +1432,22 @@ fn sanitise_path_segment(s: &str) -> String {
     out
 }
 
+/// Left-folds `parts` into one `+`-chained `bynk_ts::TsExpr::Binary` tree,
+/// matching `.join(" + ")`'s own left-to-right text join exactly —
+/// `TsBinaryOp::Add`'s own real, dominant site in this whole cluster (#1388).
+/// Panics on an empty `parts`; every real caller below already special-cases
+/// the empty-template case before reaching here.
+fn join_plus(mut parts: Vec<bynk_ts::TsExpr>) -> bynk_ts::TsExpr {
+    let first = parts.remove(0);
+    parts
+        .into_iter()
+        .fold(first, |acc, next| bynk_ts::TsExpr::Binary {
+            op: bynk_ts::TsBinaryOp::Add,
+            left: Box::new(acc),
+            right: Box::new(next),
+        })
+}
+
 /// One message entry's TS renderer: `(params) => <expr>`. A literal-only
 /// template collapses to a plain string; a template with placeholders becomes
 /// a `+`-concatenation, each placeholder substituted from `params` via
@@ -1047,40 +1462,88 @@ fn sanitise_path_segment(s: &str) -> String {
 /// (`bynk.messages.malformed_icu_syntax`) already rejects it before emission
 /// runs on an error-free project — but is handled totally, matching this
 /// function's own "never throws" contract, rather than `unreachable!()`.
+///
+/// Arc C, step (11) (#1388): returns a real `bynk_ts::TsExpr::Arrow` instead
+/// of writing text — the caller (`emit_messages_bundle`, #1355) drops its
+/// own opaque `TsExpr::Ident(renderer_text)` wrap and uses this value
+/// directly as the object entry's own value.
 fn emit_message_entry_renderer(
-    out: &mut String,
     entry: &MessageEntry,
     locale_tag: &str,
     runtime_use: &RuntimeUse,
-) {
-    write!(out, "(params: ReadonlyMap<string, MessageArg>): string => ").unwrap();
+) -> bynk_ts::TsExpr {
     let segments = split_template(&entry.template);
-    let parts: Vec<String> = segments
+    let parts: Vec<bynk_ts::TsExpr> = segments
         .iter()
         .map(|s| match s {
-            TemplateSegment::Literal(lit) => format!("\"{}\"", escape_ts_string(lit)),
+            TemplateSegment::Literal(lit) => {
+                bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str((*lit).to_string()))
+            }
             TemplateSegment::Placeholder { inner, .. } => match inner.find(',') {
                 None => {
-                    let key = format!("\"{}\"", escape_ts_string(inner));
-                    let fallback = format!("\"{{{}}}\"", escape_ts_string(inner));
-                    format!(
-                        "(params.get({key}) !== undefined ? renderArg(params.get({key}) as MessageArg) : {fallback})"
-                    )
+                    // `(params.get(key) !== undefined ? renderArg(params.get(key) as MessageArg) : fallback)`
+                    // — unconditionally parenthesised, matching the
+                    // pre-conversion text exactly even when this is the
+                    // template's own only segment (no `+`-join to borrow
+                    // parens from in that case).
+                    let get_call = bynk_ts::TsExpr::Call {
+                        callee: Box::new(bynk_ts::TsExpr::Member {
+                            object: Box::new(bynk_ts::TsExpr::Ident("params".to_string())),
+                            property: "get".to_string(),
+                        }),
+                        args: vec![bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(
+                            (*inner).to_string(),
+                        ))],
+                    };
+                    bynk_ts::TsExpr::Paren(Box::new(bynk_ts::TsExpr::Conditional {
+                        test: Box::new(bynk_ts::TsExpr::Binary {
+                            op: bynk_ts::TsBinaryOp::StrictNotEq,
+                            left: Box::new(get_call.clone()),
+                            right: Box::new(bynk_ts::TsExpr::Ident("undefined".to_string())),
+                        }),
+                        consequent: Box::new(bynk_ts::TsExpr::Call {
+                            callee: Box::new(bynk_ts::TsExpr::Ident("renderArg".to_string())),
+                            args: vec![bynk_ts::TsExpr::As {
+                                expr: Box::new(get_call),
+                                ty: bynk_ts::TsType::named("MessageArg"),
+                            }],
+                        }),
+                        alternate: Box::new(bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(format!(
+                            "{{{inner}}}"
+                        )))),
+                    }))
                 }
                 Some(_) => match icu::parse_icu_placeholder(inner) {
                     Ok(p) => emit_icu_placeholder(&p, locale_tag, runtime_use),
                     Err(_) => {
                         let name = inner.split(',').next().unwrap_or(inner).trim();
-                        format!("\"{{{}}}\"", escape_ts_string(name))
+                        bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(format!("{{{name}}}")))
                     }
                 },
             },
         })
         .collect();
-    if parts.is_empty() {
-        write!(out, "\"\"").unwrap();
+    let body = if parts.is_empty() {
+        bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(String::new()))
     } else {
-        write!(out, "{}", parts.join(" + ")).unwrap();
+        join_plus(parts)
+    };
+    bynk_ts::TsExpr::Arrow {
+        params: vec![bynk_ts::TsParam {
+            name: "params".to_string(),
+            ty: Some(bynk_ts::TsType::named_with_args(
+                "ReadonlyMap",
+                vec![
+                    bynk_ts::TsType::named("string"),
+                    bynk_ts::TsType::named("MessageArg"),
+                ],
+            )),
+            optional: false,
+        }],
+        is_async: false,
+        generics: Vec::new(),
+        return_type: Some(bynk_ts::TsType::named("string")),
+        body: Box::new(body),
     }
 }
 
@@ -1091,37 +1554,113 @@ fn emit_message_entry_renderer(
 /// after the guard, so no cast is needed. Falls back to the literal
 /// `"{name}"` text when the param is missing or the wrong `MessageArg`
 /// variant, matching the plain-placeholder fallback's own convention.
+///
+/// Arc C, step (11) (#1388): `Plural`/`Number`/`Date` convert fully to real
+/// `bynk_ts::TsExpr` nodes (`Call` over an `Arrow` — `Arrow` is already in
+/// the printer's own `needs_parens_as_operand`, so the IIFE's own
+/// `(...)(...)` wrapping comes free, no explicit `Paren`). `Select` stays
+/// one opaque `TsExpr::Ident` — the only one of the four real shapes with a
+/// BLOCK-bodied IIFE (`TsExpr::Arrow` has no block-body variant, and
+/// extending it for this one real site was rejected as disproportionate,
+/// the same "odd, one-off shape stays opaque text" posture this track uses
+/// repeatedly), though its own arm VALUES are still real
+/// `emit_sub_message` results, stringified back into that opaque host text
+/// via the new `bynk_ts::print_expr` (#1388's own second real gap).
 fn emit_icu_placeholder(
     p: &icu::IcuPlaceholder<'_>,
     locale_tag: &str,
     runtime_use: &RuntimeUse,
-) -> String {
+) -> bynk_ts::TsExpr {
     // Recorded per-arm, not once up front: a `select` placeholder emits
     // `Object.hasOwn` over an arm table and no formatter at all, so noting here
     // would import the three helpers into a select-only bundle that never calls
     // them. The three are imported as a group, so one note per helper-emitting
     // arm is enough.
-    let tag_lit = format!("\"{}\"", escape_ts_string(locale_tag));
-    let key = format!("\"{}\"", escape_ts_string(p.name));
-    let fallback = format!("\"{{{}}}\"", escape_ts_string(p.name));
-    let arg = format!("params.get({key})");
+    let tag_lit_str = || bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(locale_tag.to_string()));
+    let fallback = || bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(format!("{{{}}}", p.name)));
+    let arg_expr = || bynk_ts::TsExpr::Call {
+        callee: Box::new(bynk_ts::TsExpr::Member {
+            object: Box::new(bynk_ts::TsExpr::Ident("params".to_string())),
+            property: "get".to_string(),
+        }),
+        args: vec![bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(
+            p.name.to_string(),
+        ))],
+    };
+    let arg_tag = |property: &str| bynk_ts::TsExpr::Member {
+        object: Box::new(bynk_ts::TsExpr::Ident("__arg".to_string())),
+        property: property.to_string(),
+    };
+    let iife = |arrow_body: bynk_ts::TsExpr| bynk_ts::TsExpr::Call {
+        callee: Box::new(bynk_ts::TsExpr::Arrow {
+            params: vec![bynk_ts::TsParam {
+                name: "__arg".to_string(),
+                ty: None,
+                optional: false,
+            }],
+            is_async: false,
+            generics: Vec::new(),
+            return_type: None,
+            body: Box::new(arrow_body),
+        }),
+        args: vec![arg_expr()],
+    };
     match &p.kind {
         icu::PlaceholderKind::Plural { arms } => {
             runtime_use.note_icu();
-            let arms_obj: Vec<String> = arms
+            let arms_obj: Vec<(String, bynk_ts::TsExpr)> = arms
                 .iter()
                 .map(|(cat, segs)| {
-                    format!(
-                        "\"{}\": {}",
-                        cat.as_str(),
-                        emit_sub_message(segs, &tag_lit, runtime_use)
+                    (
+                        format!("\"{}\"", cat.as_str()),
+                        emit_sub_message(segs, locale_tag, runtime_use),
                     )
                 })
                 .collect();
-            format!(
-                "((__arg) => __arg === undefined || (__arg.tag !== \"Whole\" && __arg.tag !== \"Num\") ? {fallback} : selectPluralArm({tag_lit}, __arg.value, {{ {} }}))({arg})",
-                arms_obj.join(", ")
-            )
+            // `__arg === undefined || (__arg.tag !== "Whole" && __arg.tag !== "Num")`
+            // — the `&&` sub-expression is explicitly parenthesised in the
+            // pre-conversion text even though `&&` already binds tighter
+            // than `||` and needs no parens grammatically; reproduced via
+            // an explicit `Paren`, matching the real bytes rather than the
+            // precedence table's own (grammatically equivalent) choice.
+            let test = bynk_ts::TsExpr::Binary {
+                op: bynk_ts::TsBinaryOp::Or,
+                left: Box::new(bynk_ts::TsExpr::Binary {
+                    op: bynk_ts::TsBinaryOp::StrictEq,
+                    left: Box::new(bynk_ts::TsExpr::Ident("__arg".to_string())),
+                    right: Box::new(bynk_ts::TsExpr::Ident("undefined".to_string())),
+                }),
+                right: Box::new(bynk_ts::TsExpr::Paren(Box::new(bynk_ts::TsExpr::Binary {
+                    op: bynk_ts::TsBinaryOp::And,
+                    left: Box::new(bynk_ts::TsExpr::Binary {
+                        op: bynk_ts::TsBinaryOp::StrictNotEq,
+                        left: Box::new(arg_tag("tag")),
+                        right: Box::new(bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(
+                            "Whole".to_string(),
+                        ))),
+                    }),
+                    right: Box::new(bynk_ts::TsExpr::Binary {
+                        op: bynk_ts::TsBinaryOp::StrictNotEq,
+                        left: Box::new(arg_tag("tag")),
+                        right: Box::new(bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(
+                            "Num".to_string(),
+                        ))),
+                    }),
+                }))),
+            };
+            let call = bynk_ts::TsExpr::Call {
+                callee: Box::new(bynk_ts::TsExpr::Ident("selectPluralArm".to_string())),
+                args: vec![
+                    tag_lit_str(),
+                    arg_tag("value"),
+                    bynk_ts::TsExpr::object(arms_obj),
+                ],
+            };
+            iife(bynk_ts::TsExpr::Conditional {
+                test: Box::new(test),
+                consequent: Box::new(fallback()),
+                alternate: Box::new(call),
+            })
         }
         icu::PlaceholderKind::Select { arms } => {
             let arms_obj: Vec<String> = arms
@@ -1130,10 +1669,13 @@ fn emit_icu_placeholder(
                     format!(
                         "\"{}\": {}",
                         escape_ts_string(k),
-                        emit_sub_message(segs, &tag_lit, runtime_use)
+                        bynk_ts::print_expr(&emit_sub_message(segs, locale_tag, runtime_use))
                     )
                 })
                 .collect();
+            let key = format!("\"{}\"", escape_ts_string(p.name));
+            let fallback_text = format!("\"{{{}}}\"", escape_ts_string(p.name));
+            let arg = format!("params.get({key})");
             // `Object.hasOwn` (not `?? __arms["other"]`): the arm table is an
             // object literal, so a runtime `__arg.value` naming an
             // `Object.prototype` member (`"constructor"`, `"toString"`,
@@ -1142,28 +1684,86 @@ fn emit_icu_placeholder(
             // null/undefined, and an inherited method is neither (#900). The
             // dispatch's real question is own-property presence. `Object.hasOwn`
             // is ES2022, which `emit_tsconfig` already targets.
-            format!(
-                "((__arg) => {{ if (__arg === undefined || __arg.tag !== \"Text\") {{ return {fallback}; }} const __arms: Record<string, string> = {{ {} }}; return Object.hasOwn(__arms, __arg.value) ? __arms[__arg.value] : __arms[\"other\"]; }})({arg})",
-                arms_obj.join(", ")
-            )
+            //
+            // Stays one opaque `TsExpr::Ident` — the only one of this
+            // cluster's 4 real shapes with a BLOCK-bodied IIFE, a real gap
+            // `TsExpr::Arrow` doesn't cover (see this function's own doc).
+            bynk_ts::TsExpr::Ident(format!(
+                "((__arg) => {{ if (__arg === undefined || __arg.tag !== \"Text\") {{ return {fallback_text}; }} const __arms: Record<string, string> = {{ {} }}; return Object.hasOwn(__arms, __arg.value) ? __arms[__arg.value] : __arms[\"other\"]; }})({arg})",
+                arms_obj.join(", "),
+            ))
         }
         icu::PlaceholderKind::Number { style } => {
             runtime_use.note_icu();
-            let style_arg = style
-                .map(|s| format!(", \"{}\"", s.as_str()))
-                .unwrap_or_default();
-            format!(
-                "((__arg) => __arg !== undefined && (__arg.tag === \"Whole\" || __arg.tag === \"Num\") ? formatIcuNumber({tag_lit}, __arg.value{style_arg}) : {fallback})({arg})"
-            )
+            let mut args = vec![tag_lit_str(), arg_tag("value")];
+            if let Some(s) = style {
+                args.push(bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(
+                    s.as_str().to_string(),
+                )));
+            }
+            iife(bynk_ts::TsExpr::Conditional {
+                test: Box::new(bynk_ts::TsExpr::Binary {
+                    op: bynk_ts::TsBinaryOp::And,
+                    left: Box::new(bynk_ts::TsExpr::Binary {
+                        op: bynk_ts::TsBinaryOp::StrictNotEq,
+                        left: Box::new(bynk_ts::TsExpr::Ident("__arg".to_string())),
+                        right: Box::new(bynk_ts::TsExpr::Ident("undefined".to_string())),
+                    }),
+                    right: Box::new(bynk_ts::TsExpr::Paren(Box::new(bynk_ts::TsExpr::Binary {
+                        op: bynk_ts::TsBinaryOp::Or,
+                        left: Box::new(bynk_ts::TsExpr::Binary {
+                            op: bynk_ts::TsBinaryOp::StrictEq,
+                            left: Box::new(arg_tag("tag")),
+                            right: Box::new(bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(
+                                "Whole".to_string(),
+                            ))),
+                        }),
+                        right: Box::new(bynk_ts::TsExpr::Binary {
+                            op: bynk_ts::TsBinaryOp::StrictEq,
+                            left: Box::new(arg_tag("tag")),
+                            right: Box::new(bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(
+                                "Num".to_string(),
+                            ))),
+                        }),
+                    }))),
+                }),
+                consequent: Box::new(bynk_ts::TsExpr::Call {
+                    callee: Box::new(bynk_ts::TsExpr::Ident("formatIcuNumber".to_string())),
+                    args,
+                }),
+                alternate: Box::new(fallback()),
+            })
         }
         icu::PlaceholderKind::Date { style } => {
             runtime_use.note_icu();
-            let style_arg = style
-                .map(|s| format!(", \"{}\"", s.as_str()))
-                .unwrap_or_default();
-            format!(
-                "((__arg) => __arg !== undefined && __arg.tag === \"Moment\" ? formatIcuDate({tag_lit}, __arg.value{style_arg}) : {fallback})({arg})"
-            )
+            let mut args = vec![tag_lit_str(), arg_tag("value")];
+            if let Some(s) = style {
+                args.push(bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(
+                    s.as_str().to_string(),
+                )));
+            }
+            iife(bynk_ts::TsExpr::Conditional {
+                test: Box::new(bynk_ts::TsExpr::Binary {
+                    op: bynk_ts::TsBinaryOp::And,
+                    left: Box::new(bynk_ts::TsExpr::Binary {
+                        op: bynk_ts::TsBinaryOp::StrictNotEq,
+                        left: Box::new(bynk_ts::TsExpr::Ident("__arg".to_string())),
+                        right: Box::new(bynk_ts::TsExpr::Ident("undefined".to_string())),
+                    }),
+                    right: Box::new(bynk_ts::TsExpr::Binary {
+                        op: bynk_ts::TsBinaryOp::StrictEq,
+                        left: Box::new(arg_tag("tag")),
+                        right: Box::new(bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(
+                            "Moment".to_string(),
+                        ))),
+                    }),
+                }),
+                consequent: Box::new(bynk_ts::TsExpr::Call {
+                    callee: Box::new(bynk_ts::TsExpr::Ident("formatIcuDate".to_string())),
+                    args,
+                }),
+                alternate: Box::new(fallback()),
+            })
         }
     }
 }
@@ -1173,24 +1773,45 @@ fn emit_icu_placeholder(
 /// is already in scope and narrowed. `Hash` only ever occurs in a `plural`
 /// arm (the parser's `allow_hash` guarantees a `select` arm never contains
 /// one), where `__arg.value: number` after narrowing.
-fn emit_sub_message(segs: &[icu::SubSegment], tag_lit: &str, runtime_use: &RuntimeUse) -> String {
+///
+/// Arc C, step (11) (#1388): returns a real `bynk_ts::TsExpr` — `locale_tag`
+/// (review of #1389: renamed from the pre-conversion `tag_lit`, which
+/// pointed the wrong way once this stopped taking pre-quoted text) is now
+/// the RAW locale tag, not pre-quoted/pre-escaped text, since `TsLit::Str`'s
+/// own renderer applies the identical escaping itself (documented
+/// byte-for-byte match with `escape_ts_string`).
+fn emit_sub_message(
+    segs: &[icu::SubSegment],
+    locale_tag: &str,
+    runtime_use: &RuntimeUse,
+) -> bynk_ts::TsExpr {
     if segs.is_empty() {
-        return "\"\"".to_string();
+        return bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(String::new()));
     }
-    segs.iter()
+    let parts: Vec<bynk_ts::TsExpr> = segs
+        .iter()
         .map(|seg| match seg {
-            icu::SubSegment::Literal(s) => format!("\"{}\"", escape_ts_string(s)),
+            icu::SubSegment::Literal(s) => bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(s.clone())),
             // A bare `#` renders the argument as a number. Recorded here even
             // though the only arm that can contain one is `plural` (see this
             // function's doc), which records for itself: the note belongs with
             // the emission, so this stays correct if that invariant ever moves.
             icu::SubSegment::Hash => {
                 runtime_use.note_icu();
-                format!("formatIcuNumber({tag_lit}, __arg.value)")
+                bynk_ts::TsExpr::Call {
+                    callee: Box::new(bynk_ts::TsExpr::Ident("formatIcuNumber".to_string())),
+                    args: vec![
+                        bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(locale_tag.to_string())),
+                        bynk_ts::TsExpr::Member {
+                            object: Box::new(bynk_ts::TsExpr::Ident("__arg".to_string())),
+                            property: "value".to_string(),
+                        },
+                    ],
+                }
             }
         })
-        .collect::<Vec<_>>()
-        .join(" + ")
+        .collect();
+    join_plus(parts)
 }
 
 /// Compiles every `messages` block in one commons into one `code ->
@@ -1210,14 +1831,43 @@ fn emit_sub_message(segs: &[icu::SubSegment], tag_lit: &str, runtime_use: &Runti
 /// the caller (`emit_project`) already found it to decide *whether* to call
 /// this function at all, so it's passed in rather than re-derived here (PR
 /// #875 review — a harmless but needless second scan).
+/// #1355 (R7.1): converts this function's own outer construction to real
+/// `bynk_ts` nodes, with two deliberate, named opaque carve-outs.
+///
+/// **`messagesByLocale`'s own header/type-annotation/closing-brace stay
+/// hand-written text** — `Record<string, Record<string, (params: ReadonlyMap
+/// <string, MessageArg>) => string>>` needs its inner function type's one
+/// parameter named `params`; `bynk_ts::TsType::Fn`'s own `params` are
+/// deliberately anonymous, printer-numbered positionally (`a0`, `a1`, …) —
+/// the same "an odd, one-off type shape stays opaque text" precedent P7.9
+/// (#1315) already used for `Query[T]`'s own extra-paren-wrapped shape, not
+/// a general `TsType::Fn` redesign for this one call site. Each LOCALE's own
+/// entry (and each per-code entry nested inside it) IS a real
+/// [`bynk_ts::TsObjectEntry`], though — printed through the shared
+/// [`bynk_ts::print_object_entry`] fragment entry point directly into the
+/// hand-written wrapper, the same "return/print real entries into a
+/// still-hand-written enclosing literal" shape `emit_attached_methods`'s own
+/// callers already use (#1337) — chosen here specifically because
+/// `emit_doc_block`'s own per-locale doc comment has no real node shape to
+/// intersperse with today (`TsObjectEntry::Prop` carries no `doc` field the
+/// way `Method`'s own does; adding one for this single narrow need would be
+/// disproportionate). Each per-code entry's own VALUE —
+/// `emit_message_entry_renderer`'s output, one of step (11)'s own named,
+/// not-yet-proposed ICU-formatting cluster — stays opaque, carried as a
+/// [`bynk_ts::TsExpr::Ident`] wrapping already-formed JS, the established
+/// "call an unconverted sibling helper, carry its text opaquely" pattern
+/// this whole track uses.
+///
+/// **`messagesReferenceLocale`/`messagesLocales`/`render` convert fully** —
+/// no opaque carve-outs, every shape they need (`TsExpr::As`, `TsExpr::
+/// Index`, `TsExpr::Conditional`, `TsBinaryOp::NullishCoalescing`, `TsStmt::
+/// If`/`Return`) already exists.
 pub(crate) fn emit_messages_bundle(
     out: &mut String,
     blocks: &[&MessagesDecl],
     reference: &MessagesDecl,
     runtime_use: &RuntimeUse,
 ) {
-    let reference_tag = escape_ts_string(&reference.tag);
-
     // One `code -> renderer` table per locale, inlined into a single
     // `messagesByLocale` object literal keyed by tag. No per-locale `const
     // __messages_<tag>` binding: a locale tag can be `"pt-BR"`, which is not a
@@ -1230,55 +1880,173 @@ pub(crate) fn emit_messages_bundle(
     .unwrap();
     for m in blocks {
         emit_doc_block(out, m.documentation.as_deref(), INDENT_STEP);
-        writeln!(out, "  \"{}\": {{", escape_ts_string(&m.tag)).unwrap();
-        for entry in &m.entries {
-            write!(out, "    \"{}\": ", escape_ts_string(&entry.code)).unwrap();
-            emit_message_entry_renderer(out, entry, &m.tag, runtime_use);
-            writeln!(out, ",").unwrap();
-        }
-        writeln!(out, "  }},").unwrap();
+        let code_entries: Vec<bynk_ts::TsObjectEntry> = m
+            .entries
+            .iter()
+            .map(|entry| {
+                bynk_ts::TsObjectEntry::Prop(
+                    format!("\"{}\"", escape_ts_string(&entry.code)),
+                    emit_message_entry_renderer(entry, &m.tag, runtime_use),
+                )
+            })
+            .collect();
+        let locale_entry = bynk_ts::TsObjectEntry::Prop(
+            format!("\"{}\"", escape_ts_string(&m.tag)),
+            bynk_ts::TsExpr::multiline_object_entries(code_entries),
+        );
+        out.push_str(&bynk_ts::print_object_entry(&locale_entry, 0));
     }
     writeln!(out, "}};").unwrap();
     writeln!(out).unwrap();
 
-    writeln!(
-        out,
-        "export const messagesReferenceLocale: LocaleTag = (\"{reference_tag}\" as string) as LocaleTag;"
-    )
-    .unwrap();
-    let locale_list: Vec<String> = blocks
-        .iter()
-        .map(|m| format!("(\"{}\" as string) as LocaleTag", escape_ts_string(&m.tag)))
-        .collect();
-    writeln!(
-        out,
-        "export const messagesLocales: readonly LocaleTag[] = [{}];",
-        locale_list.join(", ")
-    )
-    .unwrap();
+    // `("tag" as string) as LocaleTag` — the inner `as` is wrapped in an
+    // explicit `Paren`: `as` is left-associative, so the un-parenthesised
+    // `"tag" as string as LocaleTag` is the identical cast grammatically,
+    // but the pre-conversion text always parenthesised it, and `As`'s own
+    // renderer does not auto-add parens around a nested `As` operand. The
+    // same "explicit `Paren` always prints its own literal parens"
+    // precedent #1323 established.
+    //
+    // Review of #1356, finding 1: `tag` is the RAW locale tag, not
+    // `escape_ts_string`-escaped — `TsLit::Str`'s own renderer already
+    // escapes (byte-identical to `escape_ts_string`, deliberately, P7.8),
+    // so pre-escaping here would double-escape any backslash/quote a tag
+    // ever contains, corrupting the literal's own decoded value. Not
+    // reachable today (`LocaleTag`'s own `Matches(...)` refinement rejects
+    // anything but letters/digits/hyphens) but a real, latent bug had the
+    // caller pre-escaped, the same class of hazard #1335's own `msg`
+    // deviation was written to avoid. `messagesByLocale`'s own `Prop` KEY a
+    // few lines up is the opposite, correct case: a key is spliced
+    // verbatim, never run through a printer escaper, so it needs the
+    // explicit `escape_ts_string` call to be safe at all.
+    let tag_cast = |tag: &str| bynk_ts::TsExpr::As {
+        expr: Box::new(bynk_ts::TsExpr::Paren(Box::new(bynk_ts::TsExpr::As {
+            expr: Box::new(bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(tag.to_string()))),
+            ty: bynk_ts::TsType::named("string"),
+        }))),
+        ty: bynk_ts::TsType::named("LocaleTag"),
+    };
+    let ref_locale_decl = bynk_ts::TsStmt::decl(
+        bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::ConstDecl {
+            name: "messagesReferenceLocale".to_string(),
+            ty: Some(bynk_ts::TsType::named("LocaleTag")),
+            init: tag_cast(&reference.tag),
+        })),
+        None,
+    );
+    out.push_str(&bynk_ts::print_stmt(&ref_locale_decl, 0));
+
+    let locale_list: Vec<bynk_ts::TsExpr> = blocks.iter().map(|m| tag_cast(&m.tag)).collect();
+    let locales_decl = bynk_ts::TsStmt::decl(
+        bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::ConstDecl {
+            name: "messagesLocales".to_string(),
+            ty: Some(bynk_ts::TsType::readonly_array(bynk_ts::TsType::named(
+                "LocaleTag",
+            ))),
+            init: bynk_ts::TsExpr::array(locale_list),
+        })),
+        None,
+    );
+    out.push_str(&bynk_ts::print_stmt(&locales_decl, 0));
     writeln!(out).unwrap();
 
-    writeln!(
-        out,
-        "export function render(tag: LocaleTag, msg: Message): string {{"
-    )
-    .unwrap();
-    writeln!(out, "  const __localeTable = messagesByLocale[tag];").unwrap();
-    writeln!(
-        out,
-        "  const __referenceTable = messagesByLocale[messagesReferenceLocale];"
-    )
-    .unwrap();
-    writeln!(
-        out,
-        "  const __entry = (__localeTable !== undefined ? __localeTable[msg.code] : undefined) ?? __referenceTable[msg.code];"
-    )
-    .unwrap();
-    writeln!(out, "  if (__entry !== undefined) {{").unwrap();
-    writeln!(out, "    return __entry(msg.params);").unwrap();
-    writeln!(out, "  }}").unwrap();
-    writeln!(out, "  return __bynkLocaleRender(tag, msg);").unwrap();
-    writeln!(out, "}}").unwrap();
+    let ident = |s: &str| bynk_ts::TsExpr::Ident(s.to_string());
+    let member = |object: bynk_ts::TsExpr, property: &str| bynk_ts::TsExpr::Member {
+        object: Box::new(object),
+        property: property.to_string(),
+    };
+    let index = |object: bynk_ts::TsExpr, index: bynk_ts::TsExpr| bynk_ts::TsExpr::Index {
+        object: Box::new(object),
+        index: Box::new(index),
+    };
+    let not_undefined = |e: bynk_ts::TsExpr| bynk_ts::TsExpr::Binary {
+        op: bynk_ts::TsBinaryOp::StrictNotEq,
+        left: Box::new(e),
+        right: Box::new(ident("undefined")),
+    };
+
+    let local_table_decl = bynk_ts::TsStmt::const_stmt(
+        bynk_ts::TsBindingName::Ident("__localeTable".to_string()),
+        None,
+        index(ident("messagesByLocale"), ident("tag")),
+        None,
+    );
+    let reference_table_decl = bynk_ts::TsStmt::const_stmt(
+        bynk_ts::TsBindingName::Ident("__referenceTable".to_string()),
+        None,
+        index(ident("messagesByLocale"), ident("messagesReferenceLocale")),
+        None,
+    );
+    let entry_ternary = bynk_ts::TsExpr::Paren(Box::new(bynk_ts::TsExpr::Conditional {
+        test: Box::new(not_undefined(ident("__localeTable"))),
+        consequent: Box::new(index(ident("__localeTable"), member(ident("msg"), "code"))),
+        alternate: Box::new(ident("undefined")),
+    }));
+    let entry_decl = bynk_ts::TsStmt::const_stmt(
+        bynk_ts::TsBindingName::Ident("__entry".to_string()),
+        None,
+        bynk_ts::TsExpr::Binary {
+            op: bynk_ts::TsBinaryOp::NullishCoalescing,
+            left: Box::new(entry_ternary),
+            right: Box::new(index(
+                ident("__referenceTable"),
+                member(ident("msg"), "code"),
+            )),
+        },
+        None,
+    );
+    let if_entry = bynk_ts::TsStmt::if_stmt(
+        not_undefined(ident("__entry")),
+        bynk_ts::TsStmt::block(
+            vec![bynk_ts::TsStmt::return_stmt(
+                Some(bynk_ts::TsExpr::Call {
+                    callee: Box::new(ident("__entry")),
+                    args: vec![member(ident("msg"), "params")],
+                }),
+                None,
+            )],
+            None,
+        ),
+        None,
+    );
+    let fallback_return = bynk_ts::TsStmt::return_stmt(
+        Some(bynk_ts::TsExpr::Call {
+            callee: Box::new(ident("__bynkLocaleRender")),
+            args: vec![ident("tag"), ident("msg")],
+        }),
+        None,
+    );
+
+    let render_fn = bynk_ts::TsStmt::decl(
+        bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::Function {
+            name: "render".to_string(),
+            generics: Vec::new(),
+            params: vec![
+                bynk_ts::TsParam {
+                    name: "tag".to_string(),
+                    ty: Some(bynk_ts::TsType::named("LocaleTag")),
+                    optional: false,
+                },
+                bynk_ts::TsParam {
+                    name: "msg".to_string(),
+                    ty: Some(bynk_ts::TsType::named("Message")),
+                    optional: false,
+                },
+            ],
+            return_type: Some(bynk_ts::TsType::named("string")),
+            body: vec![
+                local_table_decl,
+                reference_table_decl,
+                entry_decl,
+                if_entry,
+                fallback_return,
+            ],
+            is_async: false,
+            inline: false,
+        })),
+        None,
+    );
+    out.push_str(&bynk_ts::print_stmt(&render_fn, 0));
     writeln!(out).unwrap();
 }
 
@@ -1304,6 +2072,23 @@ pub(crate) fn emit_messages_bundle(
 /// `emitter.rs:4127`). Both are reachable only through a capability op,
 /// since the resolver skips `CommonsItem::Capability` outright — no program
 /// the checker actually validates can reach either.
+/// #1357 (R7.1): both declarations this function builds are now real
+/// `bynk_ts` nodes. `export interface {Name} { op<T>(params): ret; ... }` is
+/// a real [`bynk_ts::TsDecl::Interface`] over real, per-op
+/// [`bynk_ts::TsTypeMember::Method`] entries — `generics`/`doc` are this
+/// slice's own real gap (bare names for `generics`, matching every other
+/// real generics-list precedent in this crate; `doc` mirrors
+/// [`bynk_ts::TsObjectEntry::Method.doc`]'s own identical field, #1337) —
+/// params route through the already-real [`ts_ty_to_ts_type`] (P7.9,
+/// #1315) instead of the opaque pre-printed `String` `ts_ty` returns. The
+/// injection token (`export const {Name}Token: unique symbol =
+/// Symbol("{Name}");`) is a real [`bynk_ts::TsDecl::ConstDecl`] — `unique
+/// symbol` stays one opaque `TsType::named` string, the same "an odd,
+/// one-off type shape stays opaque text" precedent P7.9 already used for
+/// `Query[T]`'s own extra-paren-wrapped shape (nothing else in this crate
+/// builds a `unique symbol` type). This function's own exact signature is
+/// unchanged, the P7.9/step-1 pattern — it never owned a `Verbatim`
+/// construction site.
 pub(crate) fn emit_capability(
     out: &mut String,
     c: &CapabilityDecl,
@@ -1311,7 +2096,6 @@ pub(crate) fn emit_capability(
     commons: &TypedCommons,
 ) {
     emit_doc_block(out, c.documentation.as_deref(), 0);
-    writeln!(out, "export interface {name} {{", name = c.name.name).unwrap();
     // Review of #1194: `zip` silently truncates to the shorter side — this
     // guards the by-index pairing invariant `ops`/`c.ops` are documented
     // (not enforced) to share, so a future second caller that passes a
@@ -1322,41 +2106,194 @@ pub(crate) fn emit_capability(
         ops.len(),
         "`ops` is zipped with `c.ops` by index — the two must be the same lowering"
     );
-    for (op, sig) in c.ops.iter().zip(ops) {
-        emit_doc_block(out, op.documentation.as_deref(), INDENT_STEP);
-        let params: Vec<String> = sig
-            .params
-            .iter()
-            .map(|(name, ty)| format!("{}: {}", ts_ident(name), ts_ty(*ty, &commons.ty_intern)))
-            .collect();
-        writeln!(
-            out,
-            "  {name}{generics}({params}): {ret};",
-            name = op.name.name,
+    let members: Vec<bynk_ts::TsTypeMember> = c
+        .ops
+        .iter()
+        .zip(ops)
+        .map(|(op, sig)| {
+            let params: Vec<bynk_ts::TsParam> = sig
+                .params
+                .iter()
+                .map(|(name, ty)| bynk_ts::TsParam {
+                    name: ts_ident(name),
+                    ty: Some(ts_ty_to_ts_type(*ty, &commons.ty_intern)),
+                    optional: false,
+                })
+                .collect();
             // #926 (Decision C): a genuine generic TS interface method, no
-            // monomorphisation/erasure — `ts_type_params` is the same helper
-            // a generic record's own methods use (`emit_method`). Reads
-            // `op.type_params` (not `sig.type_params`): it only extracts
-            // each `TypeParam`'s own name, no type resolution, and
-            // `OpSig::type_params` exists for `lower_op_sig_ir`'s own rigid-
-            // variable scoping, not for this to render from (Decision A/B,
-            // #1193).
-            generics = ts_type_params(&op.type_params),
-            params = params.join(", "),
-            ret = ts_ty(sig.return_ty, &commons.ty_intern),
-        )
-        .unwrap();
-    }
-    writeln!(out, "}}").unwrap();
+            // monomorphisation/erasure. Reads `op.type_params` (not
+            // `sig.type_params`): it only extracts each `TypeParam`'s own
+            // name, no type resolution, and `OpSig::type_params` exists for
+            // `lower_op_sig_ir`'s own rigid-variable scoping, not for this
+            // to render from (Decision A/B, #1193).
+            bynk_ts::TsTypeMember::Method {
+                name: op.name.name.clone(),
+                generics: op
+                    .type_params
+                    .iter()
+                    .map(|tp| tp.name.name.clone())
+                    .collect(),
+                params,
+                ret: ts_ty_to_ts_type(sig.return_ty, &commons.ty_intern),
+                doc: op.documentation.clone(),
+            }
+        })
+        .collect();
+    let interface = bynk_ts::TsStmt::decl(
+        bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::Interface {
+            name: c.name.name.clone(),
+            type_params: Vec::new(),
+            members,
+        })),
+        None,
+    );
+    out.push_str(&bynk_ts::print_stmt(&interface, 0));
     writeln!(out).unwrap();
+
     // Injection token (symbol carrying the interface type).
-    writeln!(
-        out,
-        "export const {name}Token: unique symbol = Symbol(\"{name}\");",
-        name = c.name.name
-    )
-    .unwrap();
+    let token_decl = bynk_ts::TsStmt::decl(
+        bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::ConstDecl {
+            name: format!("{}Token", c.name.name),
+            ty: Some(bynk_ts::TsType::named("unique symbol")),
+            init: bynk_ts::TsExpr::Call {
+                callee: Box::new(bynk_ts::TsExpr::Ident("Symbol".to_string())),
+                args: vec![bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(
+                    c.name.name.clone(),
+                ))],
+            },
+        })),
+        None,
+    );
+    out.push_str(&bynk_ts::print_stmt(&token_decl, 0));
     writeln!(out).unwrap();
+}
+
+#[cfg(test)]
+mod emit_capability_tests {
+    /// Review of #1358, finding 2: the printer-side test
+    /// (`bynk-ts::printer::tests::prints_a_generic_documented_interface_method`)
+    /// proves `TsTypeMember::Method.doc` renders correctly, but not that
+    /// `emit_capability`'s own `doc: op.documentation.clone()` wiring
+    /// actually threads a real op's doc comment there — the one piece of
+    /// this slice's own conversion with no real fixture in the corpus
+    /// exercising it. Closes that gap directly: a real op-level doc
+    /// comment, generic op, through the real emission pipeline.
+    #[test]
+    fn a_generic_capability_ops_own_doc_comment_reaches_the_interface() {
+        // `capability` only parses inside a `context` (`emit_source`'s own
+        // single-file path is `commons`-only) — drives `compile_in_memory`
+        // directly instead, the same fs-free seam `emit_bundle` uses one
+        // layer up.
+        let src = r#"
+context demo
+
+capability Clock {
+  ---
+  Returns the current time.
+  ---
+  fn now[T](unit: T) -> T
+}
+"#;
+        let out = match crate::project::compile_in_memory(
+            src,
+            crate::project::BuildTarget::Bundle,
+            Default::default(),
+        ) {
+            Ok(out) => out,
+            Err(_) => panic!("fixture should compile:\n{src}"),
+        };
+        let ts = out
+            .artefacts
+            .docs
+            .iter()
+            .find(|(path, _)| path.to_string_lossy().contains("demo"))
+            .map(|(_, doc)| doc.text())
+            .expect("the context's own module should be in the output");
+        assert!(
+            ts.contains(
+                "export interface Clock {\n  \
+                 /**\n   \
+                 * Returns the current time.\n   \
+                 */\n  \
+                 now<T>(unit: T): T;\n\
+                 }\n"
+            ),
+            "{ts}"
+        );
+    }
+}
+
+/// The text held by a `TsClassMethod`'s sole `Raw` body statement, and —
+/// when `body_smb` was built against only a sub-slice of it — where that
+/// sub-slice starts.
+///
+/// `blob` is the exact `Raw` text. For the single-level shape (#1359's
+/// provider ops, #1380's WS DO methods, [`RawBody::flat`]) `inner` IS
+/// `blob` and the offset is 0; for the two-level shape (#1361's
+/// events-IIFE wrapping, reused by #1375's agent handlers,
+/// [`RawBody::nested`]) `inner` is the further-nested `body_out` captured
+/// inside `blob`, and `inner_offset_in_blob` is its start within `blob`,
+/// tracked by construction rather than searched for.
+struct RawBody<'a> {
+    blob: &'a str,
+    inner: &'a str,
+    inner_offset_in_blob: usize,
+}
+
+impl<'a> RawBody<'a> {
+    fn flat(text: &'a str) -> Self {
+        RawBody {
+            blob: text,
+            inner: text,
+            inner_offset_in_blob: 0,
+        }
+    }
+
+    fn nested(blob: &'a str, inner: &'a str, inner_offset_in_blob: usize) -> Self {
+        RawBody {
+            blob,
+            inner,
+            inner_offset_in_blob,
+        }
+    }
+}
+
+/// Prints `method` (always at `class_depth = 0` — every call site here
+/// prints a whole class body) into `out`, then — if `source_map` is
+/// `Some` — merges `body_smb`'s own per-statement mappings back into the
+/// module map.
+///
+/// Degrades to no merge (no mapping for this method) rather than risk a
+/// confidently WRONG one if any assumption is ever violated — the same
+/// "suppress rather than mis-record" discipline #1360 finding 3
+/// established, now shared by every `print_class_method` merge site
+/// instead of copied at each one (review of #1381, finding 2).
+fn emit_class_method_and_merge_source_map(
+    out: &mut String,
+    method: &bynk_ts::TsClassMethod,
+    class_depth: usize,
+    body: RawBody<'_>,
+    body_smb: &RefCell<SourceMapBuilder>,
+    source_map: Option<&RefCell<SourceMapBuilder>>,
+) {
+    let printed = bynk_ts::print_class_method(method, class_depth);
+    out.push_str(&printed);
+    if let Some(module_smb) = source_map {
+        let trailing = format!("{}}}\n", "  ".repeat(class_depth + 1));
+        if let Some(blob_offset_in_printed) =
+            printed.len().checked_sub(body.blob.len() + trailing.len())
+            && printed
+                .get(blob_offset_in_printed..)
+                .is_some_and(|tail| tail.starts_with(body.blob))
+            && printed.ends_with(&trailing)
+        {
+            let base =
+                out.len() - printed.len() + blob_offset_in_printed + body.inner_offset_in_blob;
+            module_smb
+                .borrow_mut()
+                .merge(&body_smb.borrow(), body.inner, out, base, 0);
+        }
+    }
 }
 
 pub(crate) fn emit_provider(
@@ -1413,34 +2350,56 @@ pub(crate) fn emit_provider(
         )
         .unwrap();
     }
+    // #1359 (R7.1): each op converts to a real `bynk_ts::TsClassMethod`
+    // (name/`is_async`/real `TsParam`s via `ts_type_ref_to_ts_type`, P7.9
+    // #1315/real return type), printed through the new fragment entry
+    // point `bynk_ts::print_class_method` (mirroring `print_object_entry`'s
+    // own "one fragment, not a whole document" scope, #1337) — the class's
+    // own wrapper (header/`implements`/deps field+constructor/closing
+    // brace) stays hand-written text, Decision C: building the WHOLE class
+    // as one real `TsDecl::Class` tree would need every method's own body
+    // captured into a local buffer for `Raw`-embedding, and this class's
+    // own real spacing (no blank line between methods) genuinely differs
+    // from `TsDecl::Class`'s own established "one blank line before each
+    // method" policy (`events_fanout.rs`'s real convention, #1317) — the
+    // same "two real files disagree on a formatting convention" tension
+    // this track has hit before.
+    //
+    // Each op's own body still lowers through `emit_block_as_function_
+    // body_with_return` — unconverted, out of scope — but can no longer
+    // write directly into `out` the way the pre-conversion code did (the
+    // fragment must be fully built before `out.len()` at the splice point
+    // is known). Captured into a local `body_text` buffer instead, using
+    // the same local-sub-builder-then-`merge` pattern #1352/#1353 already
+    // established, applied once per method instead of once per function:
+    // `body_smb` collects checkpoints relative to `body_text`, then
+    // `merge`s into the real `source_map`, rebased at `body_text`'s own
+    // exact splice offset within `print_class_method`'s own printed
+    // fragment (computed by arithmetic against the fragment's own known
+    // length, not a text search — two ops could plausibly lower to
+    // identical body text, which a search could match ambiguously).
     for op in &p.ops {
-        let params: Vec<String> = op
+        let params: Vec<bynk_ts::TsParam> = op
             .params
             .iter()
-            .map(|p| format!("{}: {}", ts_ident(&p.name.name), ts_type_ref(&p.type_ref)))
+            .map(|p| bynk_ts::TsParam {
+                name: ts_ident(&p.name.name),
+                ty: Some(ts_type_ref_to_ts_type(&p.type_ref, None)),
+                optional: false,
+            })
             .collect();
         // P6.55 (design/tracks/the-ir.md §6b): computed once, not twice —
         // `async_tail` below used to call `is_effectful_return(&op.return_type)`
         // again for the identical value (the same duplicate-computation
         // pattern P6.54 fixed in `emit_agent`).
         let effectful = is_effectful_return(&op.return_type);
-        let async_kw = if effectful { "async " } else { "" };
-        writeln!(
-            out,
-            "  {async_kw}{name}({params}): {ret} {{",
-            name = op.name.name,
-            params = params.join(", "),
-            ret = ts_type_ref(&op.return_type),
-        )
-        .unwrap();
-        // v0.70: provider operation bodies lower directly into `out`, so attaching
-        // the module builder records correct offsets — no splice merge needed.
         let mut module = ModuleCtx::new(commons, &ctx.cross_context, &ctx.runtime_use);
         module.agent_method_givens = ctx.agent_method_givens.clone();
         module.event_schema_versions = ctx.event_schema_versions.clone();
         module.set_rebrand_info(commons, ctx);
         module.target = ctx.target;
         module.in_bynk_unit = ctx.commons_name == "bynk";
+        let body_smb = RefCell::new(SourceMapBuilder::new());
         let mut cx = LowerCtx::new(
             module,
             BodyMode::ProviderOp {
@@ -1465,17 +2424,40 @@ pub(crate) fn emit_provider(
                 },
             },
         )
-        .with_source_map(source_map);
+        .with_source_map(Some(&body_smb));
         cx.local_agents = ctx.local_agents.clone();
+        let mut body_text = String::new();
         emit_block_as_function_body_with_return(
-            out,
+            &mut body_text,
             &op.body,
             &mut cx,
             INDENT_STEP * 2,
             effectful,
             Some(&op.return_type),
         );
-        writeln!(out, "  }}").unwrap();
+
+        // The class is always printed at depth 0 — `class_depth` names that
+        // once, so `trailing`'s own indent (review of #1360, finding 3's
+        // own secondary note) can never drift out of lockstep with the
+        // depth `print_class_method` is actually called with.
+        let class_depth = 0;
+        let method = bynk_ts::TsClassMethod {
+            name: op.name.name.clone(),
+            private: false,
+            is_async: effectful,
+            params,
+            return_type: Some(ts_type_ref_to_ts_type(&op.return_type, None)),
+            doc: None,
+            body: vec![bynk_ts::TsStmt::raw(body_text.clone(), None)],
+        };
+        emit_class_method_and_merge_source_map(
+            out,
+            &method,
+            class_depth,
+            RawBody::flat(&body_text),
+            &body_smb,
+            source_map,
+        );
     }
     writeln!(out, "}}").unwrap();
     writeln!(out).unwrap();
@@ -1566,7 +2548,10 @@ pub(crate) fn emit_service(
         if is_ws_handler && matches!(ctx.target, BuildTarget::Workers) {
             continue;
         }
-        emit_doc_block(out, handler.documentation.as_deref(), INDENT_STEP);
+        // #1361: the doc block is no longer written directly here — it now
+        // lives on the real `TsObjectEntry::Method` built below (`doc:
+        // handler.documentation.clone()`), rendered by `render_multiline_
+        // object_entry`'s own `Method` arm at the right depth/position.
         let kind_name = match &handler_kind_ir {
             IrHandlerKind::Call => "call".to_string(),
             IrHandlerKind::Http { method, path } => http_handler_method_name_ir(*method, path),
@@ -1592,9 +2577,13 @@ pub(crate) fn emit_service(
         // For service handlers the operation name is the handler kind
         // (e.g. `call`). v0.5 has only one handler kind, so the service is a
         // single-operation object literal.
-        let mut params: Vec<String> = ir_params
+        let mut params: Vec<bynk_ts::TsParam> = ir_params
             .iter()
-            .map(|(name, ty)| format!("{}: {}", ts_ident(name), ts_ty(*ty, tys)))
+            .map(|(name, ty)| bynk_ts::TsParam {
+                name: ts_ident(name),
+                ty: Some(ts_ty_to_ts_type(*ty, tys)),
+                optional: false,
+            })
             .collect();
         // v0.103/v0.106: a `from websocket` lifecycle handler receives the
         // `connection` as its first parameter (the synthetic binding the checker
@@ -1603,7 +2592,14 @@ pub(crate) fn emit_service(
         if is_ws_handler && let ProtocolIr::WebSocket { out_ty, .. } = protocol {
             params.insert(
                 0,
-                format!("connection: Connection<{}>", ts_ty(*out_ty, tys)),
+                bynk_ts::TsParam {
+                    name: "connection".to_string(),
+                    ty: Some(bynk_ts::TsType::named_with_args(
+                        "Connection",
+                        vec![ts_ty_to_ts_type(*out_ty, tys)],
+                    )),
+                    optional: false,
+                },
             );
         }
         // Events track, slice 4 (spine #936): a `via schema(N)` guard needs
@@ -1624,7 +2620,14 @@ pub(crate) fn emit_service(
             match ir_params.get(1) {
                 Some((env_param_name, _)) => Some(ts_ident(env_param_name)),
                 None => {
-                    params.insert(1, "__bynkSchemaEnv: EventEnvelope".to_string());
+                    params.insert(
+                        1,
+                        bynk_ts::TsParam {
+                            name: "__bynkSchemaEnv".to_string(),
+                            ty: Some(bynk_ts::TsType::named("EventEnvelope")),
+                            optional: false,
+                        },
+                    );
                     Some("__bynkSchemaEnv".to_string())
                 }
             }
@@ -1837,16 +2840,19 @@ pub(crate) fn emit_service(
                 ),
             );
         }
-        params.push(format!("deps: {deps_ty}"));
-        let ret = ts_ty(*ir_ret, tys);
-        let async_kw = if *ir_effectful { "async " } else { "" };
-        writeln!(
-            out,
-            "  {async_kw}{op}({params}): {ret} {{",
-            op = kind_name,
-            params = params.join(", "),
-        )
-        .unwrap();
+        // #1361: `deps`'s own type stays one opaque `TsType::named` string
+        // — `deps_ty`'s own dynamic, multi-source construction (capability
+        // refs, the 4-way actor-seam widening above, `__exec`,
+        // `__eventsDispatch`) is real, separate, much larger work than this
+        // slice's own scope, the same "an odd, one-off/dynamically-built
+        // type shape stays opaque text" precedent P7.9 (#1315) already used
+        // for `Query[T]`'s own extra-paren-wrapped shape and #1355's own
+        // `messagesByLocale` type annotation.
+        params.push(bynk_ts::TsParam {
+            name: "deps".to_string(),
+            ty: Some(bynk_ts::TsType::named(deps_ty)),
+            optional: false,
+        });
         // Events track, slice 0 (spine #936): release-at-commit (events.md
         // §3.0) needs a completion boundary services never had before — the
         // body runs inside an IIFE so its own `return`s resolve `__result`
@@ -1859,30 +2865,79 @@ pub(crate) fn emit_service(
         // buffer or flush, so it keeps byte-identical output, mirroring
         // `__exec`'s gate on `block_uses_send`.
         let body_emits_directly = crate::emitter::block_uses_emit(&handler.body, &commons.callees);
+        // #1361: the whole method body — the events-IIFE wrapper (if any)
+        // and `body_out` — is captured as ONE opaque `TsStmtKind::Raw` blob,
+        // the `emit_provider` precedent (#1359) exactly; the events-IIFE
+        // stays opaque for the same reason #1327/#1352/#1359 already
+        // declined to build a block-bodied `Arrow`. `raw_body`'s own
+        // internal layout is built by straight concatenation, so
+        // `body_out`'s own starting offset within it is known by
+        // construction, not a text search.
+        let mut raw_body = String::new();
         if body_emits_directly {
             writeln!(
-                out,
+                raw_body,
                 "    const __events: Array<{}> = [];",
                 crate::emitter::EVENTS_WIRE_EVENT_TS_TYPE
             )
             .unwrap();
-            writeln!(out, "    const __result = await (async () => {{").unwrap();
+            writeln!(raw_body, "    const __result = await (async () => {{").unwrap();
         }
-        let base = out.len();
-        out.push_str(&body_out);
-        if let Some(module) = source_map {
-            module
-                .borrow_mut()
-                .merge(&body_smb.borrow(), &body_out, out, base, 0);
-        }
+        let body_out_offset_in_raw = raw_body.len();
+        raw_body.push_str(&body_out);
         if body_emits_directly {
-            writeln!(out, "    }})();").unwrap();
-            writeln!(out, "    if (__events.length > 0) {{").unwrap();
-            writeln!(out, "      await deps.__eventsDispatch(__events);").unwrap();
-            writeln!(out, "    }}").unwrap();
-            writeln!(out, "    return __result;").unwrap();
+            writeln!(raw_body, "    }})();").unwrap();
+            writeln!(raw_body, "    if (__events.length > 0) {{").unwrap();
+            writeln!(raw_body, "      await deps.__eventsDispatch(__events);").unwrap();
+            writeln!(raw_body, "    }}").unwrap();
+            writeln!(raw_body, "    return __result;").unwrap();
         }
-        writeln!(out, "  }},").unwrap();
+
+        let method_entry = bynk_ts::TsObjectEntry::Method {
+            name: kind_name,
+            is_async: *ir_effectful,
+            generics: Vec::new(),
+            params,
+            return_type: Some(ts_ty_to_ts_type(*ir_ret, tys)),
+            doc: handler.documentation.clone(),
+            inline: false,
+            body: vec![bynk_ts::TsStmt::raw(raw_body.clone(), None)],
+        };
+        // The object (`export const {name} = { ... }`) is always printed at
+        // depth 0 — `object_depth` names that once so the two offset
+        // computations below can't drift out of lockstep with the depth
+        // `print_object_entry` is actually called with (review of #1360,
+        // finding 3's own lesson, applied proactively here).
+        let object_depth = 0;
+        let printed = bynk_ts::print_object_entry(&method_entry, object_depth);
+        out.push_str(&printed);
+        if let Some(module) = source_map {
+            // Two-level offset: where `raw_body` starts within `printed`
+            // (fragment-level, the same #1352/#1359 arithmetic), plus where
+            // `body_out` starts within `raw_body` (blob-internal, known by
+            // construction above) — combined, the real offset of
+            // `body_out`'s own first byte within the fully-printed method.
+            // `Raw` splices verbatim and `TsObjectEntry::Method`'s own
+            // closing brace sits at `indent(object_depth + 1)` — degrades
+            // to no merge (no mapping for this handler) rather than risk a
+            // confidently WRONG one if either assumption is ever violated,
+            // the same "suppress rather than mis-record" discipline #1360
+            // finding 3 already established.
+            let trailing = format!("{}}},\n", "  ".repeat(object_depth + 1));
+            if let Some(raw_body_offset_in_printed) =
+                printed.len().checked_sub(raw_body.len() + trailing.len())
+                && printed
+                    .get(raw_body_offset_in_printed..)
+                    .is_some_and(|tail| tail.starts_with(&raw_body))
+                && printed.ends_with(&trailing)
+            {
+                let base =
+                    out.len() - printed.len() + raw_body_offset_in_printed + body_out_offset_in_raw;
+                module
+                    .borrow_mut()
+                    .merge(&body_smb.borrow(), &body_out, out, base, 0);
+            }
+        }
     }
     writeln!(out, "}};").unwrap();
     writeln!(out).unwrap();
@@ -2290,6 +3345,22 @@ pub(crate) fn any_service_binds_caller<'a>(
 
 /// Emit the `makeSurface(deps)` function for a context that exposes
 /// services to other contexts (v0.6 §6.3 / §6.4).
+///
+/// Arc C, slice 18 (#1364): closes the `emit_make_surface` half of step (8)
+/// of the design pass's own decomposition order (#1331) — the "cross-context
+/// lowering cluster" the same step also names stays a separate, deferred
+/// remainder (a genuinely different, harder shape: real cross-module codec
+/// lowering, not top-level structure construction), the same "split when a
+/// named remainder is harder" precedent steps (4)/(6) already established.
+/// Converts fully — no opaque carve-out: every shape this function needs
+/// (`bynk_ts::TsDecl::Function`, `TsObjectEntry::Method`/`Spread`,
+/// `TsStmt::Return`, `TsExpr::Call`/`multiline_object_entries`) already
+/// exists in `bynk_ts`, and this function never lowers an expression through
+/// `LowerCtx` (no `source_map` parameter reaches it), so there is no
+/// sub-builder/merge machinery to get right here. `emit_context_deps_interface`
+/// stays exactly as it is — a separate, unconverted, confirmed-unaffected
+/// `String`-returning sibling this function calls once, not touched by this
+/// slice.
 pub(crate) fn emit_make_surface(out: &mut String, commons: &TypedCommons, ctx: &EmitProjectCtx) {
     let services: Vec<&ServiceDecl> = commons
         .commons
@@ -2315,13 +3386,19 @@ pub(crate) fn emit_make_surface(out: &mut String, commons: &TypedCommons, ctx: &
     let binds_caller =
         |h: &Handler| bynk_check::actors::caller_binder_for(h, &ctx.actors).is_some();
     let any_caller = any_service_binds_caller(services.iter().copied(), &ctx.actors);
-    let params = if any_caller {
-        format!("deps: {deps_name}, __caller: string")
-    } else {
-        format!("deps: {deps_name}")
-    };
-    writeln!(out, "export function makeSurface({params}) {{").unwrap();
-    writeln!(out, "  return {{").unwrap();
+    let mut params = vec![bynk_ts::TsParam {
+        name: "deps".to_string(),
+        ty: Some(bynk_ts::TsType::named(deps_name)),
+        optional: false,
+    }];
+    if any_caller {
+        params.push(bynk_ts::TsParam {
+            name: "__caller".to_string(),
+            ty: Some(bynk_ts::TsType::named("string")),
+            optional: false,
+        });
+    }
+    let mut entries: Vec<bynk_ts::TsObjectEntry> = Vec::new();
     for s in &services {
         // For each handler kind currently only `call`. We bind it as a
         // method on the surface with the deps captured.
@@ -2330,44 +3407,69 @@ pub(crate) fn emit_make_surface(out: &mut String, commons: &TypedCommons, ctx: &
             .iter()
             .find(|h| matches!(lower_handler_kind_ir(&h.kind), IrHandlerKind::Call));
         let Some(h) = handler else { continue };
-        let async_kw = if is_effectful_return(&h.return_type) {
-            "async "
-        } else {
-            ""
-        };
-        let param_decls: Vec<String> = h
+        let is_async = is_effectful_return(&h.return_type);
+        let method_params: Vec<bynk_ts::TsParam> = h
             .params
             .iter()
-            .map(|p| format!("{}: {}", ts_ident(&p.name.name), ts_type_ref(&p.type_ref)))
+            .map(|p| bynk_ts::TsParam {
+                name: ts_ident(&p.name.name),
+                ty: Some(ts_type_ref_to_ts_type(&p.type_ref, None)),
+                optional: false,
+            })
             .collect();
-        let param_args: Vec<String> = h.params.iter().map(|p| ts_ident(&p.name.name)).collect();
-        let ret = ts_type_ref(&h.return_type);
+        let mut call_args: Vec<bynk_ts::TsExpr> = h
+            .params
+            .iter()
+            .map(|p| bynk_ts::TsExpr::Ident(ts_ident(&p.name.name)))
+            .collect();
         // A Caller-binding handler's `deps.identity` is the caller name the
         // compose root threaded in; every other handler forwards `deps` verbatim.
         let deps_arg = if binds_caller(h) {
-            "{ ...deps, identity: __caller }"
+            bynk_ts::TsExpr::object_entries(vec![
+                bynk_ts::TsObjectEntry::Spread(bynk_ts::TsExpr::Ident("deps".to_string())),
+                bynk_ts::TsObjectEntry::Prop(
+                    "identity".to_string(),
+                    bynk_ts::TsExpr::Ident("__caller".to_string()),
+                ),
+            ])
         } else {
-            "deps"
+            bynk_ts::TsExpr::Ident("deps".to_string())
         };
-        writeln!(
-            out,
-            "    {async_kw}{sname}({params}): {ret} {{",
-            sname = s.name.name,
-            params = param_decls.join(", "),
-        )
-        .unwrap();
-        writeln!(
-            out,
-            "      return {svc}.call({args}{sep}{deps_arg});",
-            svc = s.name.name,
-            args = param_args.join(", "),
-            sep = if param_args.is_empty() { "" } else { ", " },
-        )
-        .unwrap();
-        writeln!(out, "    }},").unwrap();
+        call_args.push(deps_arg);
+        let call = bynk_ts::TsExpr::Call {
+            callee: Box::new(bynk_ts::TsExpr::Member {
+                object: Box::new(bynk_ts::TsExpr::Ident(s.name.name.clone())),
+                property: "call".to_string(),
+            }),
+            args: call_args,
+        };
+        entries.push(bynk_ts::TsObjectEntry::Method {
+            name: s.name.name.clone(),
+            is_async,
+            generics: Vec::new(),
+            params: method_params,
+            return_type: Some(ts_type_ref_to_ts_type(&h.return_type, None)),
+            doc: None,
+            inline: false,
+            body: vec![bynk_ts::TsStmt::return_stmt(Some(call), None)],
+        });
     }
-    writeln!(out, "  }};").unwrap();
-    writeln!(out, "}}").unwrap();
+    let func_decl = bynk_ts::TsStmt::decl(
+        bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::Function {
+            name: "makeSurface".to_string(),
+            generics: Vec::new(),
+            params,
+            return_type: None,
+            body: vec![bynk_ts::TsStmt::return_stmt(
+                Some(bynk_ts::TsExpr::multiline_object_entries(entries)),
+                None,
+            )],
+            is_async: false,
+            inline: false,
+        })),
+        None,
+    );
+    out.push_str(&bynk_ts::print_stmt(&func_decl, 0));
     writeln!(out).unwrap();
 }
 
@@ -2454,25 +3556,47 @@ pub(crate) fn lower_workers_cross_context_call(
             cx.runtime_use(),
         ));
     }
-    let args_json = if args_serialised.len() == 1 {
-        args_serialised.into_iter().next().unwrap()
+    // Arc C, slice 29 (#1390): `args_json`, `deser_ref`, and the final call
+    // itself now build a real `bynk_ts::TsExpr::Call`, printed through the
+    // new `bynk_ts::print_expr` (#1388) and handed to `pre.finish` exactly
+    // as the old hand-built string was — the P7.9 pattern (`-> Lowered`
+    // stays unchanged; `lower.rs`'s own general dispatch, `pre.absorb`'s own
+    // caller, still just wants a plain string). `args_serialised`'s own
+    // entries and `deser_ref` come from `serialise_expr_via`/
+    // `deserialise_ref_via` (unconverted `emitter::serialisation` siblings)
+    // and stay opaque `TsExpr::Ident` text — the multi-arg object literal
+    // that WRAPS them, though, is real: each param name is already a valid
+    // JS identifier (a service param name), so `TsObjectEntry::Prop`
+    // applies with no escaping concern. The zero-arg case is the SAME
+    // `{  }` (double-space, not the tight `{}` shortcut) quirk #1321
+    // (`workers.rs`'s own `deps` object) and #1327 (`project.rs`'s own
+    // `{ns}Deps`) already found and carried, a third real site now —
+    // `TsExpr::Object`'s own renderer always collapses an empty object to
+    // `{}`, so this one shape stays opaque text too, caught here only by
+    // the zero-diff fixture check (`172_integration_with_capability`), not
+    // reasoned about in the abstract. Review of #1391: kept as three
+    // independent, cross-referenced sites rather than one shared constant
+    // across `emit.rs`/`workers.rs`/`project.rs` — each already carries its
+    // own explanatory comment naming the others, and a shared constant's
+    // only real payoff (staying in sync if this quirk is ever normalised
+    // away) is speculative, not a real need today.
+    let args_json_expr = if args_serialised.is_empty() {
+        bynk_ts::TsExpr::Ident("{  }".to_string())
+    } else if args_serialised.len() == 1 {
+        bynk_ts::TsExpr::Ident(args_serialised.into_iter().next().unwrap())
     } else {
-        // Multi-arg: wrap into an object literal keyed by parameter names.
-        let pairs: Vec<String> = svc
+        let entries: Vec<bynk_ts::TsObjectEntry> = svc
             .params
             .iter()
-            .zip(&args_serialised)
-            .map(|((name, _), serialised)| format!("{name}: {serialised}"))
+            .zip(args_serialised)
+            .map(|((name, _), serialised)| {
+                bynk_ts::TsObjectEntry::Prop(name.clone(), bynk_ts::TsExpr::Ident(serialised))
+            })
             .collect();
-        format!("{{ {} }}", pairs.join(", "))
+        bynk_ts::TsExpr::object_entries(entries)
     };
 
     let deser_ref = deserialise_ref_via(&svc.return_type, &ns, cx.runtime_use());
-
-    // v0.54: stamp the calling context's qualified name so the callee's
-    // `by c: Caller` handler reads a live `CallerId` (Q7). A compile-time
-    // constant; the args body is unchanged.
-    let caller = escape_ts_string(&cx.commons().commons.name.joined());
 
     // v0.177 (#643): stamp this context's compiled view of the callee's
     // contract, so the callee can fail closed when the deployed pair disagree.
@@ -2492,10 +3616,30 @@ pub(crate) fn lower_workers_cross_context_call(
         ),
     };
 
-    pre.finish(format!(
-        "callService(deps.env.{binding}, \"{}\", {args_json}, {deser_ref}, \"{caller}\", \"{contract}\")",
-        method.name
-    ))
+    let call_expr = bynk_ts::TsExpr::Call {
+        callee: Box::new(bynk_ts::TsExpr::Ident("callService".to_string())),
+        args: vec![
+            bynk_ts::TsExpr::Member {
+                object: Box::new(bynk_ts::TsExpr::Member {
+                    object: Box::new(bynk_ts::TsExpr::Ident("deps".to_string())),
+                    property: "env".to_string(),
+                }),
+                property: binding,
+            },
+            bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(method.name.clone())),
+            args_json_expr,
+            bynk_ts::TsExpr::Ident(deser_ref),
+            // v0.54: stamp the calling context's qualified name so the
+            // callee's `by c: Caller` handler reads a live `CallerId` (Q7).
+            // A compile-time constant; the args body is unchanged. Raw
+            // text, not `escape_ts_string`'s own pre-escaped output —
+            // `TsLit::Str`'s own renderer applies the identical escaping
+            // itself (documented byte-for-byte match, #1388).
+            bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(cx.commons().commons.name.joined())),
+            bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(contract)),
+        ],
+    };
+    pre.finish(bynk_ts::print_expr(&call_expr))
 }
 
 /// If `receiver` is a dotted chain or single ident that matches one of the
@@ -2566,7 +3710,18 @@ pub(crate) fn param_cast(
         // brand discriminants are incompatible. Bynk guarantees the value's
         // base type matches at the boundary, so route through `unknown` to
         // tell TypeScript to trust the structural Bynk-side check.
-        return format!("({arg} as unknown as {ns}.{name})");
+        //
+        // Arc C, slice 29 (#1390): `arg as unknown as {ns}.{name}` is a
+        // nested `As`-under-`As` chain — the same shape #1385 (slice 27)
+        // already found the printer's own operand-parenthesisation rule
+        // would wrongly wrap in an extra pair (`(arg as unknown) as T`
+        // instead of the real, parenless `arg as unknown as T`) — so the
+        // whole double cast stays one opaque `TsExpr::Ident`, wrapped in a
+        // real `TsExpr::Paren` for the real outer parens, printed through
+        // `bynk_ts::print_expr` (#1388).
+        return bynk_ts::print_expr(&bynk_ts::TsExpr::Paren(Box::new(bynk_ts::TsExpr::Ident(
+            format!("{arg} as unknown as {ns}.{name}"),
+        ))));
     }
     arg
 }
@@ -3080,7 +4235,27 @@ pub(crate) fn emit_agent(
         .map(|(n, _, r)| (n.name.clone(), *r))
         .collect();
     // 1) State record type.
-    writeln!(out, "export interface {state_ty} {{").unwrap();
+    //
+    // Arc C, slice 19 (#1367): the first of step (9)'s own proposed 5-6
+    // sub-slices (design/tracks/the-typescript-tree.md §6's own grounding
+    // pass) — converts this block alone to a real `bynk_ts::TsDecl::Interface`
+    // (already exists, gained `type_params`/per-member `readonly` by #1339,
+    // no new algebra gap needed). Each field's own `readonly {name}: {ty};`
+    // line is a real `TsTypeMember::Prop`; `ts_ty_to_ts_type` (the real-node
+    // sibling of the plain-`String` `ts_ty` this block called before) already
+    // exists and is already used by `emit_service`/`emit_make_surface` for
+    // the identical purpose. Three compound member types, one load-bearing
+    // trap among them: `Cache`'s `Record<string, { v: T; exp: number }>` and
+    // `Log`'s `Array<{ t: number; v: T }>` are real `TsType::named_with_args`
+    // over a real inline `TsType::Object` — no opaque text anywhere in this
+    // block. The posting-list's own `Record<string, string[]>` is the third,
+    // and it must use `TsType::Array { readonly: false, .. }` (postfix `[]`
+    // syntax), NOT `named_with_args("Array", ..)` like `Cache`/`Log`
+    // themselves use two blocks down — semantically identical, textually
+    // distinct; using the generic form here would silently break zero-diff.
+    // See its own construction below for the actual choice, not just this
+    // note.
+    let mut members: Vec<bynk_ts::TsTypeMember> = Vec::new();
     for f in &effective_fields {
         let cell_ty = match store_field_ty.get(f.name.name.as_str()) {
             Some(StoreKindIr::Cell(t)) => *t,
@@ -3090,13 +4265,12 @@ pub(crate) fn emit_agent(
                 f.name.name
             ),
         };
-        writeln!(
-            out,
-            "  readonly {name}: {ty};",
-            name = f.name.name,
-            ty = ts_ty(cell_ty, tys),
-        )
-        .unwrap();
+        members.push(bynk_ts::TsTypeMember::Prop {
+            name: f.name.name.clone(),
+            ty: ts_ty_to_ts_type(cell_ty, tys),
+            optional: false,
+            readonly: true,
+        });
     }
     for (name, _) in &store_map_fields {
         let value_ty = match store_field_ty.get(name.name.as_str()) {
@@ -3107,32 +4281,75 @@ pub(crate) fn emit_agent(
                 name.name
             ),
         };
-        writeln!(
-            out,
-            "  readonly {name}: Record<string, {v}>;",
-            name = name.name,
-            v = ts_ty(value_ty, tys),
-        )
-        .unwrap();
+        members.push(bynk_ts::TsTypeMember::Prop {
+            name: name.name.clone(),
+            ty: bynk_ts::TsType::named_with_args(
+                "Record",
+                vec![
+                    bynk_ts::TsType::named("string"),
+                    ts_ty_to_ts_type(value_ty, tys),
+                ],
+            ),
+            optional: false,
+            readonly: true,
+        });
     }
     // v0.105 (slice 3b-ii): a held `Map[K, Connection]` persists `K → connId`.
     for (name, _) in &held_maps {
-        writeln!(
-            out,
-            "  readonly {name}: Record<string, string>;",
-            name = name.name,
-        )
-        .unwrap();
+        members.push(bynk_ts::TsTypeMember::Prop {
+            name: name.name.clone(),
+            ty: bynk_ts::TsType::named_with_args(
+                "Record",
+                vec![
+                    bynk_ts::TsType::named("string"),
+                    bynk_ts::TsType::named("string"),
+                ],
+            ),
+            optional: false,
+            readonly: true,
+        });
     }
     for name in &set_field_names {
-        writeln!(out, "  readonly {name}: Record<string, boolean>;").unwrap();
+        members.push(bynk_ts::TsTypeMember::Prop {
+            name: name.to_string(),
+            ty: bynk_ts::TsType::named_with_args(
+                "Record",
+                vec![
+                    bynk_ts::TsType::named("string"),
+                    bynk_ts::TsType::named("boolean"),
+                ],
+            ),
+            optional: false,
+            readonly: true,
+        });
     }
     // v0.93 (ADR 0118): a sibling posting-list per `@indexed(by: f)` — field
     // value (stringified) → the primary keys whose value has it. Persisted and
     // committed wholesale with the map it indexes.
     for (map, fields) in sorted_index_fields(&store_map_indexes) {
         for f in fields {
-            writeln!(out, "  readonly {map}__idx_{f}: Record<string, string[]>;").unwrap();
+            members.push(bynk_ts::TsTypeMember::Prop {
+                name: format!("{map}__idx_{f}"),
+                ty: bynk_ts::TsType::named_with_args(
+                    "Record",
+                    vec![
+                        bynk_ts::TsType::named("string"),
+                        // Postfix `string[]`, not `named_with_args("Array",
+                        // ..)` — the original text here is `string[]`, not
+                        // `Array<string>`. Review of #1368: the two are
+                        // byte-different even though `Cache`/`Log` below use
+                        // the generic `Array<T>` form for their own arrays —
+                        // don't "unify" this with those without re-checking
+                        // the fixture text first.
+                        bynk_ts::TsType::Array {
+                            element: Box::new(bynk_ts::TsType::named("string")),
+                            readonly: false,
+                        },
+                    ],
+                ),
+                optional: false,
+                readonly: true,
+            });
         }
     }
     for (name, _, _) in &store_cache_fields {
@@ -3144,13 +4361,31 @@ pub(crate) fn emit_agent(
                 name.name
             ),
         };
-        writeln!(
-            out,
-            "  readonly {name}: Record<string, {{ v: {v}; exp: number }}>;",
-            name = name.name,
-            v = ts_ty(value_ty, tys),
-        )
-        .unwrap();
+        members.push(bynk_ts::TsTypeMember::Prop {
+            name: name.name.clone(),
+            ty: bynk_ts::TsType::named_with_args(
+                "Record",
+                vec![
+                    bynk_ts::TsType::named("string"),
+                    bynk_ts::TsType::Object(vec![
+                        bynk_ts::TsTypeMember::Prop {
+                            name: "v".to_string(),
+                            ty: ts_ty_to_ts_type(value_ty, tys),
+                            optional: false,
+                            readonly: false,
+                        },
+                        bynk_ts::TsTypeMember::Prop {
+                            name: "exp".to_string(),
+                            ty: bynk_ts::TsType::named("number"),
+                            optional: false,
+                            readonly: false,
+                        },
+                    ]),
+                ],
+            ),
+            optional: false,
+            readonly: true,
+        });
     }
     for (name, _, _) in &store_log_fields {
         let elem_ty = match store_field_ty.get(name.name.as_str()) {
@@ -3161,98 +4396,187 @@ pub(crate) fn emit_agent(
                 name.name
             ),
         };
-        writeln!(
-            out,
-            "  readonly {name}: Array<{{ t: number; v: {v} }}>;",
-            name = name.name,
-            v = ts_ty(elem_ty, tys),
-        )
-        .unwrap();
+        members.push(bynk_ts::TsTypeMember::Prop {
+            name: name.name.clone(),
+            ty: bynk_ts::TsType::named_with_args(
+                "Array",
+                vec![bynk_ts::TsType::Object(vec![
+                    bynk_ts::TsTypeMember::Prop {
+                        name: "t".to_string(),
+                        ty: bynk_ts::TsType::named("number"),
+                        optional: false,
+                        readonly: false,
+                    },
+                    bynk_ts::TsTypeMember::Prop {
+                        name: "v".to_string(),
+                        ty: ts_ty_to_ts_type(elem_ty, tys),
+                        optional: false,
+                        readonly: false,
+                    },
+                ])],
+            ),
+            optional: false,
+            readonly: true,
+        });
     }
-    writeln!(out, "}}").unwrap();
+    let state_interface = bynk_ts::TsStmt::decl(
+        bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::Interface {
+            name: state_ty.clone(),
+            type_params: Vec::new(),
+            members,
+        })),
+        None,
+    );
+    out.push_str(&bynk_ts::print_stmt(&state_interface, 0));
     writeln!(out).unwrap();
     // v0.9.2: per-agent state registry (bundle mode + `bynkc test`) and the
     // zero-value factory used to initialise a fresh key's state.
+    //
+    // Arc C, slice 20 (#1369): the second of step (9)'s own proposed 5-6
+    // sub-slices — the registry `const` and the zero-factory `function`
+    // build real nodes; the zero-record's own per-field VALUES stay
+    // opaque where they genuinely must (a `Cell` field with an initialiser
+    // lowers through `LowerCtx`, `lower.rs`'s own permanently-excluded
+    // general expression lowering — the same "carry an unconverted
+    // sibling's already-formed JS text as `TsExpr::Ident`" pattern
+    // #1355's own `emit_message_entry_renderer` call already established),
+    // but every EMPTY-container field (`Map`/`Set`/`Cache`/held-map/
+    // posting-list `{}`, `Log`'s `[]`) is fully real — `TsExpr::object(
+    // vec![])`/`TsExpr::array(vec![])`, no opacity needed there at all.
     let registry = agent_registry_name(&a.name.name);
     let zero_fn = format!("__zeroOf{}State", a.name.name);
-    writeln!(out, "const {registry} = new StateRegistry();").unwrap();
+    let registry_const = bynk_ts::TsStmt::decl(
+        bynk_ts::TsDecl::ConstDecl {
+            name: registry.clone(),
+            ty: None,
+            init: bynk_ts::TsExpr::New {
+                callee: Box::new(bynk_ts::TsExpr::Ident("StateRegistry".to_string())),
+                args: Vec::new(),
+            },
+        },
+        None,
+    );
+    out.push_str(&bynk_ts::print_stmt(&registry_const, 0));
     // v0.11: build the fresh-state record. A field with an explicit initialiser
     // lowers its (static) expression; a field without one uses the v0.9.2
     // implicit zero.
-    let zero_record = {
-        let mut parts: Vec<String> = Vec::new();
-        for f in &effective_fields {
-            let val = if let Some(init) = &f.init {
-                let mut pre = Pre::new();
-                let mut module = ModuleCtx::new(commons, &ctx.cross_context, &ctx.runtime_use);
-                module.target = ctx.target;
-                module.agent_method_givens = ctx.agent_method_givens.clone();
-                module.event_schema_versions = ctx.event_schema_versions.clone();
-                module.set_rebrand_info(commons, ctx);
-                let mut icx = LowerCtx::new(module, BodyMode::StaticInit);
-                icx.local_agents = ctx.local_agents.clone();
-                let expr = pre.lower(init, &mut icx);
-                // A static initialiser lowers to a pure expression (no setup
-                // statements). #1029 review: if any appear, wrap them in an IIFE
-                // rather than splicing them into a comma sequence. The comma
-                // form only ever worked for expression-shaped hoists — a `const`
-                // or an `if` operand does not parse — and T2.1 made a
-                // statement-shaped hoist reachable here for the first time, since
-                // a value-position `if` that hoists now yields `let …; if (…) {…}`
-                // where it used to yield a self-contained arrow. An IIFE is
-                // sound for this position specifically: a static initialiser has
-                // no enclosing function to `return` out of, so the arrow cannot
-                // swallow a control transfer the way it would in a handler body.
-                if pre.is_empty() {
-                    expr
-                } else {
-                    format!("(() => {{ {} return {expr}; }})()", pre.stmts().join(" "))
-                }
+    let mut zero_entries: Vec<bynk_ts::TsObjectEntry> = Vec::new();
+    // Review of #1370, finding 1: `lower_if`'s own non-`ternary_shaped`
+    // branch and `build_match_iife` can both return a genuinely multi-line
+    // IIFE as `val` (real embedded `\n` bytes) with `pre` empty, so the
+    // `pre.is_empty()` branch above passes it straight through unwrapped —
+    // no fixture in the 31-fixture `store` sweep reaches this shape (the
+    // only store-init-with-`if` fixture, `1029_agent_static_init_hoist`,
+    // takes the `hoist_if_as_statement` path instead, whose own hoisted
+    // statements are individually newline-free), so it was invisible to the
+    // zero-diff check. Tracked here so the zero-factory's own `inline` flag
+    // can be set correctly below — `inline: true` is only safe when every
+    // entry's own value is genuinely single-line (`render_compact_stmts`'s
+    // own `debug_assert!` panics on an embedded newline, a real
+    // debug-build crash for a `store` field initialised with a `match` or a
+    // statement-shaped/`is`-binding `if`, not merely a formatting nit).
+    let mut zero_record_has_multiline_value = false;
+    for f in &effective_fields {
+        let val = if let Some(init) = &f.init {
+            let mut pre = Pre::new();
+            let mut module = ModuleCtx::new(commons, &ctx.cross_context, &ctx.runtime_use);
+            module.target = ctx.target;
+            module.agent_method_givens = ctx.agent_method_givens.clone();
+            module.event_schema_versions = ctx.event_schema_versions.clone();
+            module.set_rebrand_info(commons, ctx);
+            let mut icx = LowerCtx::new(module, BodyMode::StaticInit);
+            icx.local_agents = ctx.local_agents.clone();
+            let expr = pre.lower(init, &mut icx);
+            // A static initialiser lowers to a pure expression (no setup
+            // statements). #1029 review: if any appear, wrap them in an IIFE
+            // rather than splicing them into a comma sequence. The comma
+            // form only ever worked for expression-shaped hoists — a `const`
+            // or an `if` operand does not parse — and T2.1 made a
+            // statement-shaped hoist reachable here for the first time, since
+            // a value-position `if` that hoists now yields `let …; if (…) {…}`
+            // where it used to yield a self-contained arrow. An IIFE is
+            // sound for this position specifically: a static initialiser has
+            // no enclosing function to `return` out of, so the arrow cannot
+            // swallow a control transfer the way it would in a handler body.
+            if pre.is_empty() {
+                expr
             } else {
-                bynk_check::checker::zero_value_ts(
-                    &f.type_ref,
-                    f.refinement.as_ref(),
-                    &commons.types,
-                )
-                .unwrap_or_else(|| "undefined as never".to_string())
-            };
-            parts.push(format!("{}: {val}", f.name.name));
-        }
-        // A fresh `store Map`/`store Set`/`store Cache` is the empty record.
-        for (name, _) in &store_map_fields {
-            parts.push(format!("{}: {{}}", name.name));
-        }
-        // A fresh held `Map[K, Connection]` (a `K → connId` record) is empty too.
-        for (name, _) in &held_maps {
-            parts.push(format!("{}: {{}}", name.name));
-        }
-        // A fresh `@indexed` posting-list is empty too (v0.93, ADR 0118).
-        for (map, fields) in sorted_index_fields(&store_map_indexes) {
-            for f in fields {
-                parts.push(format!("{map}__idx_{f}: {{}}"));
+                format!("(() => {{ {} return {expr}; }})()", pre.stmts().join(" "))
             }
-        }
-        for name in &set_field_names {
-            parts.push(format!("{name}: {{}}"));
-        }
-        for (name, _, _) in &store_cache_fields {
-            parts.push(format!("{}: {{}}", name.name));
-        }
-        // A fresh `store Log` is the empty array.
-        for (name, _, _) in &store_log_fields {
-            parts.push(format!("{}: []", name.name));
-        }
-        if parts.is_empty() {
-            "{}".to_string()
         } else {
-            format!("{{ {} }}", parts.join(", "))
+            bynk_check::checker::zero_value_ts(&f.type_ref, f.refinement.as_ref(), &commons.types)
+                .unwrap_or_else(|| "undefined as never".to_string())
+        };
+        if val.contains('\n') {
+            zero_record_has_multiline_value = true;
         }
-    };
-    writeln!(
-        out,
-        "function {zero_fn}(): {state_ty} {{ return {zero_record}; }}"
-    )
-    .unwrap();
+        zero_entries.push(bynk_ts::TsObjectEntry::Prop(
+            f.name.name.clone(),
+            bynk_ts::TsExpr::Ident(val),
+        ));
+    }
+    // A fresh `store Map`/`store Set`/`store Cache` is the empty record.
+    for (name, _) in &store_map_fields {
+        zero_entries.push(bynk_ts::TsObjectEntry::Prop(
+            name.name.clone(),
+            bynk_ts::TsExpr::object(vec![]),
+        ));
+    }
+    // A fresh held `Map[K, Connection]` (a `K → connId` record) is empty too.
+    for (name, _) in &held_maps {
+        zero_entries.push(bynk_ts::TsObjectEntry::Prop(
+            name.name.clone(),
+            bynk_ts::TsExpr::object(vec![]),
+        ));
+    }
+    // A fresh `@indexed` posting-list is empty too (v0.93, ADR 0118).
+    for (map, fields) in sorted_index_fields(&store_map_indexes) {
+        for f in fields {
+            zero_entries.push(bynk_ts::TsObjectEntry::Prop(
+                format!("{map}__idx_{f}"),
+                bynk_ts::TsExpr::object(vec![]),
+            ));
+        }
+    }
+    for name in &set_field_names {
+        zero_entries.push(bynk_ts::TsObjectEntry::Prop(
+            name.to_string(),
+            bynk_ts::TsExpr::object(vec![]),
+        ));
+    }
+    for (name, _, _) in &store_cache_fields {
+        zero_entries.push(bynk_ts::TsObjectEntry::Prop(
+            name.name.clone(),
+            bynk_ts::TsExpr::object(vec![]),
+        ));
+    }
+    // A fresh `store Log` is the empty array.
+    for (name, _, _) in &store_log_fields {
+        zero_entries.push(bynk_ts::TsObjectEntry::Prop(
+            name.name.clone(),
+            bynk_ts::TsExpr::array(vec![]),
+        ));
+    }
+    let zero_fn_decl = bynk_ts::TsStmt::decl(
+        bynk_ts::TsDecl::Function {
+            name: zero_fn.clone(),
+            generics: Vec::new(),
+            params: Vec::new(),
+            return_type: Some(bynk_ts::TsType::named(state_ty.clone())),
+            body: vec![bynk_ts::TsStmt::return_stmt(
+                Some(bynk_ts::TsExpr::object_entries(zero_entries)),
+                None,
+            )],
+            is_async: false,
+            // Single-line only when safe (see the `zero_record_has_multiline_
+            // value` note above) — a genuinely multi-line `Cell` initialiser
+            // falls back to the ordinary multi-line block form instead of
+            // tripping `render_compact_stmts`'s own debug_assert!.
+            inline: !zero_record_has_multiline_value,
+        },
+        None,
+    );
+    out.push_str(&bynk_ts::print_stmt(&zero_fn_decl, 0));
     writeln!(out).unwrap();
     // v0.96 (ADR 0124): the rehydration validation gate. `loadState` validates a
     // *loaded* (merged) state against the current type definition before any
@@ -3365,11 +4689,34 @@ pub(crate) fn emit_agent(
     }
     let has_rehydrate = agent_needs_rehydrate(a, &commons.types);
     if has_rehydrate {
-        writeln!(out, "function {rehydrate_fn}(s: {state_ty}): void {{").unwrap();
-        for c in &rehydrate_checks {
-            writeln!(out, "{c}").unwrap();
-        }
-        writeln!(out, "}}").unwrap();
+        // Each check is already-formed JS text (`serialisation::
+        // deserialise_expr`, a confirmed unaffected, `String`-returning
+        // sibling helper, out of this slice's scope) — carried as its own
+        // opaque `TsStmt::Raw`, not merged into one blob: each is already a
+        // real, independent statement, and `Raw` prints verbatim with no
+        // indent of its own, matching every check's own hardcoded two-space
+        // prefix exactly (correct because this decl is always printed at
+        // depth 0, giving the body depth 1).
+        let rehydrate_fn_decl = bynk_ts::TsStmt::decl(
+            bynk_ts::TsDecl::Function {
+                name: rehydrate_fn.clone(),
+                generics: Vec::new(),
+                params: vec![bynk_ts::TsParam {
+                    name: "s".to_string(),
+                    ty: Some(bynk_ts::TsType::named(state_ty.clone())),
+                    optional: false,
+                }],
+                return_type: Some(bynk_ts::TsType::named("void")),
+                body: rehydrate_checks
+                    .iter()
+                    .map(|c| bynk_ts::TsStmt::raw(format!("{c}\n"), None))
+                    .collect(),
+                is_async: false,
+                inline: false,
+            },
+            None,
+        );
+        out.push_str(&bynk_ts::print_stmt(&rehydrate_fn_decl, 0));
         writeln!(out).unwrap();
     }
     // 2) Durable Object class.
@@ -3410,122 +4757,338 @@ pub(crate) fn emit_agent(
         writeln!(out, "  }}").unwrap();
     }
     writeln!(out).unwrap();
-    writeln!(out, "  private async loadState(): Promise<{state_ty}> {{").unwrap();
-    writeln!(
-        out,
-        "    const stored = await this.state.storage.get<{state_ty}>(\"state\");"
-    )
-    .unwrap();
-    // v0.96 (ADR 0124): a fresh key takes its zero (valid by construction). For a
-    // stored record, merge zero-then-stored — D4: a `store` field added in a later
-    // deploy and absent from the persisted record takes its default, rather than
-    // reading `undefined` — then run the rehydration validation gate on the merged
-    // state before any handler reads it (D1/D2).
-    writeln!(out, "    if (stored === undefined) return {zero_fn}();").unwrap();
-    writeln!(out, "    const __merged = {{ ...{zero_fn}(), ...stored }};").unwrap();
-    if has_rehydrate {
-        writeln!(out, "    {rehydrate_fn}(__merged);").unwrap();
-    }
-    writeln!(out, "    return __merged;").unwrap();
-    writeln!(out, "  }}").unwrap();
+    // Arc C, slice 21 (#1371): the third of step (9)'s own proposed 5-6
+    // sub-slices — the class's own wrapper (header/fields/constructor) stays
+    // hand-written text (Decision C, the same boundary #1359's own
+    // `emit_provider` already established), but `loadState` converts fully
+    // to a real `bynk_ts::TsClassMethod` fragment, printed through
+    // `print_class_method` (the same fragment entry point #1359 added).
+    // `commitState`, this class's OTHER private method, stays deferred as
+    // its own separate, later sub-slice — a real, harder remainder found
+    // only once actually read (its own invariant/transition predicate
+    // lowering writes directly into `out` today, the same "direct write,
+    // real position" shape `emit_free_fn`/`emit_contract_guarded_body` had
+    // *before* their own conversions needed a sub-builder for `Raw`-
+    // embedding, #1352/#1353), not silently folded into "step (9), slice 3
+    // done." `this.state.storage.get<{state_ty}>(...)`'s own generic method
+    // call has no representation in `TsExpr::Call` (`type_args` was never
+    // added — 41 real construction sites across the workspace, far more
+    // than a single narrow need like this one justifies touching) — carried
+    // as one opaque `TsExpr::Ident` callee text, the same "an odd, one-off
+    // shape stays opaque text" precedent P7.9's own `Query[T]` and #1357's
+    // own `unique symbol` already established, not a new pattern.
+    // `TsClassMethod.private` is a real, new, small gap the grounding pass
+    // itself predicted (#1366) — `loadState`/`commitState` are the first
+    // `private` method sites this whole track has hit (`emit_provider`'s
+    // own ops, #1359, were all public).
+    let load_state_body = {
+        let mut stmts = vec![
+            bynk_ts::TsStmt::const_stmt(
+                bynk_ts::TsBindingName::Ident("stored".to_string()),
+                None,
+                bynk_ts::TsExpr::Await(Box::new(bynk_ts::TsExpr::Call {
+                    callee: Box::new(bynk_ts::TsExpr::Ident(format!(
+                        "this.state.storage.get<{state_ty}>"
+                    ))),
+                    args: vec![bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(
+                        "state".to_string(),
+                    ))],
+                })),
+                None,
+            ),
+            // v0.96 (ADR 0124): a fresh key takes its zero (valid by
+            // construction). For a stored record, merge zero-then-stored —
+            // D4: a `store` field added in a later deploy and absent from
+            // the persisted record takes its default, rather than reading
+            // `undefined` — then run the rehydration validation gate on the
+            // merged state before any handler reads it (D1/D2).
+            bynk_ts::TsStmt::if_stmt(
+                bynk_ts::TsExpr::Binary {
+                    op: bynk_ts::TsBinaryOp::StrictEq,
+                    left: Box::new(bynk_ts::TsExpr::Ident("stored".to_string())),
+                    right: Box::new(bynk_ts::TsExpr::Ident("undefined".to_string())),
+                },
+                bynk_ts::TsStmt::return_stmt(
+                    Some(bynk_ts::TsExpr::Call {
+                        callee: Box::new(bynk_ts::TsExpr::Ident(zero_fn.clone())),
+                        args: Vec::new(),
+                    }),
+                    None,
+                ),
+                None,
+            ),
+            bynk_ts::TsStmt::const_stmt(
+                bynk_ts::TsBindingName::Ident("__merged".to_string()),
+                None,
+                bynk_ts::TsExpr::object_entries(vec![
+                    bynk_ts::TsObjectEntry::Spread(bynk_ts::TsExpr::Call {
+                        callee: Box::new(bynk_ts::TsExpr::Ident(zero_fn.clone())),
+                        args: Vec::new(),
+                    }),
+                    bynk_ts::TsObjectEntry::Spread(bynk_ts::TsExpr::Ident("stored".to_string())),
+                ]),
+                None,
+            ),
+        ];
+        if has_rehydrate {
+            stmts.push(bynk_ts::TsStmt::expr_stmt(
+                bynk_ts::TsExpr::Call {
+                    callee: Box::new(bynk_ts::TsExpr::Ident(rehydrate_fn.clone())),
+                    args: vec![bynk_ts::TsExpr::Ident("__merged".to_string())],
+                },
+                None,
+            ));
+        }
+        stmts.push(bynk_ts::TsStmt::return_stmt(
+            Some(bynk_ts::TsExpr::Ident("__merged".to_string())),
+            None,
+        ));
+        stmts
+    };
+    let load_state_method = bynk_ts::TsClassMethod {
+        name: "loadState".to_string(),
+        private: true,
+        is_async: true,
+        params: Vec::new(),
+        return_type: Some(bynk_ts::TsType::named_with_args(
+            "Promise",
+            vec![bynk_ts::TsType::named(state_ty.clone())],
+        )),
+        doc: None,
+        body: load_state_body,
+    };
+    let class_depth = 0;
+    out.push_str(&bynk_ts::print_class_method(
+        &load_state_method,
+        class_depth,
+    ));
     writeln!(out).unwrap();
-    writeln!(
-        out,
-        "  private async commitState(s: {state_ty}): Promise<void> {{"
-    )
-    .unwrap();
-    // v0.80 (§14): evaluate each invariant against the proposed state `s` before
-    // the write. A violation throws `InvariantViolation` *before* `storage.put`,
-    // so the offending commit never persists (non-persistence of the offending
-    // commit — not whole-handler rollback). The refusal is logged with the agent
-    // type and invariant name (never the key — see ADR 0107) so it is
-    // distinguishable from a crash in the logs.
-    if !a.invariants.is_empty() {
-        let field_names: HashSet<String> = effective_fields
-            .iter()
-            .map(|f| f.name.name.clone())
-            .collect();
-        for inv in &a.invariants {
-            let mut cx = LowerCtx::new(
-                ModuleCtx::new(commons, &ctx.cross_context, &ctx.runtime_use),
-                BodyMode::Invariant {
-                    name: "s".to_string(),
-                    fields: field_names.clone(),
-                },
-            );
-            let mut pre = Pre::new();
-            let pred = pre.lower(&inv.predicate, &mut cx);
-            for s in pre.stmts() {
-                writeln!(out, "    {s}").unwrap();
+    // Arc C, slice 22 (#1373): closes step (9)'s own third sub-slice by
+    // landing the deferred remainder, `commitState` (#1371's own `loadState`
+    // landed the sub-slice's other half). `record_span` is a documented
+    // no-op when a `LowerCtx` has no attached builder (`emitter.rs`'s own
+    // doc), and neither the invariant nor the transition `LowerCtx` below
+    // is ever given one (`LowerCtx::new(...)`, never `.with_source_map(...)`
+    // — `emit_agent`'s own `source_map` parameter isn't threaded into
+    // either) — confirmed directly, not assumed, before writing this
+    // comment. So despite the grounding pass's own earlier caution that
+    // `commitState` would need the same sub-builder/merge care #1352/#1353
+    // established, it genuinely does not: there is no source map being
+    // written to here, today or after this conversion, so there is nothing
+    // to preserve. Each invariant's/transition's own hoisted pre-statements
+    // and predicate expression stay opaque (`lower.rs`'s own permanently-
+    // excluded general expression lowering, ADR
+    // `arc-c-lower-rs-permanent-exclusion`) — the hoisted lines as their own
+    // `TsStmt::Raw` (indent baked in manually, since `Raw` prints verbatim
+    // with none of its own — depth 2 for an invariant's own top-level
+    // check, depth 3 for a transition's own check nested inside the
+    // `if (__prior !== undefined)` block), the predicate as one opaque
+    // `TsExpr::Ident(format!("!({pred})"))` condition. Everything else —
+    // the `if`/`console.error`/`throw` wrapper, the transition prologue —
+    // is real: nothing here needs the general expression lowerer at all.
+    let commit_state_body = {
+        // Review of #1374: the hoisted-statement `Raw` indent is derived
+        // from `class_depth` rather than hardcoded — a hoisting predicate
+        // is untested by the fixture corpus today (every real `@invariant`/
+        // `transition` fixture's own predicate hoists nothing), so an
+        // un-derived literal here would have been silently wrong the day a
+        // future caller printed this method at a non-zero depth, with
+        // nothing but a fixture no one has written yet to catch it.
+        let build_violation_check = |name: &str,
+                                     pred: String,
+                                     pre_stmts: &[String],
+                                     hoist_depth: usize| {
+            let hoist_indent = "  ".repeat(hoist_depth);
+            let mut stmts: Vec<bynk_ts::TsStmt> = pre_stmts
+                .iter()
+                .map(|s| bynk_ts::TsStmt::raw(format!("{hoist_indent}{s}\n"), None))
+                .collect();
+            stmts.push(bynk_ts::TsStmt::if_stmt(
+                bynk_ts::TsExpr::Ident(format!("!({pred})")),
+                bynk_ts::TsStmt::block(
+                    vec![
+                        bynk_ts::TsStmt::expr_stmt(
+                            bynk_ts::TsExpr::Call {
+                                callee: Box::new(bynk_ts::TsExpr::Ident(
+                                    "console.error".to_string(),
+                                )),
+                                args: vec![
+                                    bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(format!(
+                                        "InvariantViolation {}.{name}",
+                                        a.name.name
+                                    ))),
+                                    bynk_ts::TsExpr::object(vec![
+                                        (
+                                            "agent".to_string(),
+                                            bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(
+                                                a.name.name.clone(),
+                                            )),
+                                        ),
+                                        (
+                                            "invariant".to_string(),
+                                            bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(
+                                                name.to_string(),
+                                            )),
+                                        ),
+                                    ]),
+                                ],
+                            },
+                            None,
+                        ),
+                        bynk_ts::TsStmt::throw_stmt(
+                            bynk_ts::TsExpr::Call {
+                                callee: Box::new(bynk_ts::TsExpr::Ident(
+                                    "invariantViolation".to_string(),
+                                )),
+                                args: vec![
+                                    bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(a.name.name.clone())),
+                                    bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(name.to_string())),
+                                ],
+                            },
+                            None,
+                        ),
+                    ],
+                    None,
+                ),
+                None,
+            ));
+            stmts
+        };
+        let mut stmts: Vec<bynk_ts::TsStmt> = Vec::new();
+        // v0.80 (§14): evaluate each invariant against the proposed state `s`
+        // before the write. A violation throws `InvariantViolation` *before*
+        // `storage.put`, so the offending commit never persists
+        // (non-persistence of the offending commit — not whole-handler
+        // rollback). The refusal is logged with the agent type and
+        // invariant name (never the key — see ADR 0107) so it is
+        // distinguishable from a crash in the logs.
+        if !a.invariants.is_empty() {
+            let field_names: HashSet<String> = effective_fields
+                .iter()
+                .map(|f| f.name.name.clone())
+                .collect();
+            for inv in &a.invariants {
+                let mut cx = LowerCtx::new(
+                    ModuleCtx::new(commons, &ctx.cross_context, &ctx.runtime_use),
+                    BodyMode::Invariant {
+                        name: "s".to_string(),
+                        fields: field_names.clone(),
+                    },
+                );
+                let mut pre = Pre::new();
+                let pred = pre.lower(&inv.predicate, &mut cx);
+                stmts.extend(build_violation_check(
+                    &inv.name.name,
+                    pred,
+                    pre.stmts(),
+                    class_depth + 2,
+                ));
             }
-            writeln!(out, "    if (!({pred})) {{").unwrap();
-            writeln!(
-                out,
-                "      console.error(\"InvariantViolation {agent}.{name}\", {{ agent: \"{agent}\", invariant: \"{name}\" }});",
-                agent = a.name.name,
-                name = inv.name.name
-            )
-            .unwrap();
-            writeln!(
-                out,
-                "      throw invariantViolation(\"{agent}\", \"{name}\");",
-                agent = a.name.name,
-                name = inv.name.name
-            )
-            .unwrap();
-            writeln!(out, "    }}").unwrap();
         }
-    }
-    // v0.116 (testing track slice 4): step invariants — evaluate each `transition`
-    // against the pre-/post-commit state pair. The old state is still in storage
-    // (this method performs the `put`), so reading it here yields the pre-commit
-    // snapshot; `undefined` is the genesis commit, which has no prior state to
-    // transition from and is skipped (snapshot invariants above still apply).
-    // `old`/`new` are lowered to `__old`/`__new` (`new` is a JS reserved word). A
-    // violation throws the same `InvariantViolation`-family fault, before the write.
-    if !a.transitions.is_empty() {
-        writeln!(
-            out,
-            "    const __prior = await this.state.storage.get<{state_ty}>(\"state\");"
-        )
-        .unwrap();
-        writeln!(out, "    if (__prior !== undefined) {{").unwrap();
-        writeln!(out, "      const __old = {{ ...{zero_fn}(), ...__prior }};").unwrap();
-        writeln!(out, "      const __new = s;").unwrap();
-        for tr in &a.transitions {
-            let mut cx = LowerCtx::new(
-                ModuleCtx::new(commons, &ctx.cross_context, &ctx.runtime_use),
-                BodyMode::Transition {
-                    old: "__old".to_string(),
-                    new: "__new".to_string(),
-                },
-            );
-            let mut pre = Pre::new();
-            let pred = pre.lower(&tr.predicate, &mut cx);
-            for s in pre.stmts() {
-                writeln!(out, "      {s}").unwrap();
+        // v0.116 (testing track slice 4): step invariants — evaluate each
+        // `transition` against the pre-/post-commit state pair. The old
+        // state is still in storage (this method performs the `put`), so
+        // reading it here yields the pre-commit snapshot; `undefined` is the
+        // genesis commit, which has no prior state to transition from and is
+        // skipped (snapshot invariants above still apply). `old`/`new` are
+        // lowered to `__old`/`__new` (`new` is a JS reserved word). A
+        // violation throws the same `InvariantViolation`-family fault,
+        // before the write.
+        if !a.transitions.is_empty() {
+            let mut transition_body = vec![
+                bynk_ts::TsStmt::const_stmt(
+                    bynk_ts::TsBindingName::Ident("__old".to_string()),
+                    None,
+                    bynk_ts::TsExpr::object_entries(vec![
+                        bynk_ts::TsObjectEntry::Spread(bynk_ts::TsExpr::Call {
+                            callee: Box::new(bynk_ts::TsExpr::Ident(zero_fn.clone())),
+                            args: Vec::new(),
+                        }),
+                        bynk_ts::TsObjectEntry::Spread(bynk_ts::TsExpr::Ident(
+                            "__prior".to_string(),
+                        )),
+                    ]),
+                    None,
+                ),
+                bynk_ts::TsStmt::const_stmt(
+                    bynk_ts::TsBindingName::Ident("__new".to_string()),
+                    None,
+                    bynk_ts::TsExpr::Ident("s".to_string()),
+                    None,
+                ),
+            ];
+            for tr in &a.transitions {
+                let mut cx = LowerCtx::new(
+                    ModuleCtx::new(commons, &ctx.cross_context, &ctx.runtime_use),
+                    BodyMode::Transition {
+                        old: "__old".to_string(),
+                        new: "__new".to_string(),
+                    },
+                );
+                let mut pre = Pre::new();
+                let pred = pre.lower(&tr.predicate, &mut cx);
+                transition_body.extend(build_violation_check(
+                    &tr.name.name,
+                    pred,
+                    pre.stmts(),
+                    class_depth + 3,
+                ));
             }
-            writeln!(out, "      if (!({pred})) {{").unwrap();
-            writeln!(
-                out,
-                "        console.error(\"InvariantViolation {agent}.{name}\", {{ agent: \"{agent}\", invariant: \"{name}\" }});",
-                agent = a.name.name,
-                name = tr.name.name
-            )
-            .unwrap();
-            writeln!(
-                out,
-                "        throw invariantViolation(\"{agent}\", \"{name}\");",
-                agent = a.name.name,
-                name = tr.name.name
-            )
-            .unwrap();
-            writeln!(out, "      }}").unwrap();
+            stmts.push(bynk_ts::TsStmt::const_stmt(
+                bynk_ts::TsBindingName::Ident("__prior".to_string()),
+                None,
+                bynk_ts::TsExpr::Await(Box::new(bynk_ts::TsExpr::Call {
+                    callee: Box::new(bynk_ts::TsExpr::Ident(format!(
+                        "this.state.storage.get<{state_ty}>"
+                    ))),
+                    args: vec![bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(
+                        "state".to_string(),
+                    ))],
+                })),
+                None,
+            ));
+            stmts.push(bynk_ts::TsStmt::if_stmt(
+                bynk_ts::TsExpr::Binary {
+                    op: bynk_ts::TsBinaryOp::StrictNotEq,
+                    left: Box::new(bynk_ts::TsExpr::Ident("__prior".to_string())),
+                    right: Box::new(bynk_ts::TsExpr::Ident("undefined".to_string())),
+                },
+                bynk_ts::TsStmt::block(transition_body, None),
+                None,
+            ));
         }
-        writeln!(out, "    }}").unwrap();
-    }
-    writeln!(out, "    await this.state.storage.put(\"state\", s);").unwrap();
-    writeln!(out, "  }}").unwrap();
+        stmts.push(bynk_ts::TsStmt::expr_stmt(
+            bynk_ts::TsExpr::Await(Box::new(bynk_ts::TsExpr::Call {
+                callee: Box::new(bynk_ts::TsExpr::Ident("this.state.storage.put".to_string())),
+                args: vec![
+                    bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str("state".to_string())),
+                    bynk_ts::TsExpr::Ident("s".to_string()),
+                ],
+            })),
+            None,
+        ));
+        stmts
+    };
+    let commit_state_method = bynk_ts::TsClassMethod {
+        name: "commitState".to_string(),
+        private: true,
+        is_async: true,
+        params: vec![bynk_ts::TsParam {
+            name: "s".to_string(),
+            ty: Some(bynk_ts::TsType::named(state_ty.clone())),
+            optional: false,
+        }],
+        return_type: Some(bynk_ts::TsType::named_with_args(
+            "Promise",
+            vec![bynk_ts::TsType::named("void")],
+        )),
+        doc: None,
+        body: commit_state_body,
+    };
+    out.push_str(&bynk_ts::print_class_method(
+        &commit_state_method,
+        class_depth,
+    ));
     writeln!(out).unwrap();
     // 3) Handlers.
     let cell_names: HashSet<String> = effective_fields
@@ -3533,11 +5096,25 @@ pub(crate) fn emit_agent(
         .map(|f| f.name.name.clone())
         .collect();
     for h in &a.handlers {
-        emit_doc_block(out, h.documentation.as_deref(), INDENT_STEP);
-        let mut params: Vec<String> = h
+        // Arc C, slice 23 (#1375): closes step (9)'s own fourth sub-slice —
+        // each handler converts to a real `bynk_ts::TsClassMethod` fragment,
+        // the same "params/return-type real, whole body one opaque
+        // `TsStmt::Raw`, two-level offset merge" shape `emit_service`
+        // (#1361) already established for its own near-identical prologue/
+        // body/epilogue wrapping — printed through `print_class_method`
+        // (#1359) instead of `print_object_entry`, since a handler here is
+        // a CLASS method, not an object-literal entry. The old standalone
+        // `emit_doc_block` call is removed — `doc` on the method now
+        // carries it, the same doc-duplication bug #1361's own review
+        // caught fixed proactively here rather than rediscovered.
+        let mut params: Vec<bynk_ts::TsParam> = h
             .params
             .iter()
-            .map(|p| format!("{}: {}", ts_ident(&p.name.name), ts_type_ref(&p.type_ref)))
+            .map(|p| bynk_ts::TsParam {
+                name: ts_ident(&p.name.name),
+                ty: Some(ts_type_ref_to_ts_type(&p.type_ref, None)),
+                optional: false,
+            })
             .collect();
         // Lower body into a buffer so we can detect cross-context usage and
         // shape the deps type accordingly.
@@ -3665,9 +5242,12 @@ pub(crate) fn emit_agent(
                 )
             };
         }
-        params.push(format!("deps: {deps_ty}"));
-        let ret = ts_type_ref(&h.return_type);
-        let async_kw = if effectful { "async " } else { "" };
+        params.push(bynk_ts::TsParam {
+            name: "deps".to_string(),
+            ty: Some(bynk_ts::TsType::named(deps_ty)),
+            optional: false,
+        });
+        let ret = ts_type_ref_to_ts_type(&h.return_type, None);
         let method = h
             .method_name
             .as_ref()
@@ -3684,87 +5264,93 @@ pub(crate) fn emit_agent(
                 | IrHandlerKind::Close
                 | IrHandlerKind::Event => "call".to_string(),
             });
-        writeln!(
-            out,
-            "  {async_kw}{method}({params}): {ret} {{",
-            params = params.join(", "),
-        )
-        .unwrap();
         // Load state at entry. A state-record handler binds `currentState` and
         // commits explicitly via `commit`. A store handler binds a mutable
         // working record `__state`; reads/writes go through it, and (if it writes)
         // the body is wrapped so `commitState` runs once at handler end — the
         // implicit, atomic commit (ADR 0109). A fault before that flush persists
         // nothing; the invariant gate inside `commitState` runs before the write.
-        let splice = |out: &mut String| {
-            let base = out.len();
-            out.push_str(&body_out);
-            if let Some(module) = source_map {
-                module
-                    .borrow_mut()
-                    .merge(&body_smb.borrow(), &body_out, out, base, 0);
-            }
-        };
-        // Events track, slice 0 (spine #936): the same release-at-commit
-        // buffer the service path declares (see `emit_service`'s
-        // `block_uses_emit` gate) — an agent handler needs the same
-        // completion boundary, and a writing store-agent already has one
-        // (`commitState`), so `__events` just rides alongside it there,
-        // flushing to `deps.__eventsDispatch` (threaded above) once the
-        // state commit itself has succeeded. Gated on `body_emits_directly`
-        // specifically (not the broader `needs_events_dispatch` above) —
-        // a handler that only *forwards* `__eventsDispatch` to another
-        // local agent it calls has nothing of its own to buffer or flush;
-        // `deps` (typed with the field) simply passes through unchanged.
+        //
+        // The whole prologue+body+epilogue is captured into one local
+        // `raw_body` buffer instead of `out` directly — the same
+        // restructuring #1361 (`emit_service`) already made for its own
+        // near-identical events-IIFE wrapping, needed here because the
+        // method's own params/return-type/doc now print through
+        // `print_class_method` as one fragment, which can no longer be
+        // interleaved with direct `writeln!`s into `out` the way the
+        // pre-conversion code was.
         let body_emits_directly = crate::emitter::block_uses_emit(&h.body, &commons.callees);
         let events_decl = format!(
             "    const __events: Array<{}> = [];",
             crate::emitter::EVENTS_WIRE_EVENT_TS_TYPE
         );
         let flush = "    if (__events.length > 0) { await deps.__eventsDispatch(__events); }";
+        let mut raw_body = String::new();
+        let body_out_offset_in_raw;
         if is_store_agent {
             if writes_state {
                 writeln!(
-                    out,
+                    raw_body,
                     "    const __state = {{ ...(await this.loadState()) }};"
                 )
                 .unwrap();
                 if body_emits_directly {
-                    writeln!(out, "{events_decl}").unwrap();
+                    writeln!(raw_body, "{events_decl}").unwrap();
                 }
-                writeln!(out, "    const __result = await (async () => {{").unwrap();
-                splice(out);
-                writeln!(out, "    }})();").unwrap();
-                writeln!(out, "    await this.commitState(__state);").unwrap();
+                writeln!(raw_body, "    const __result = await (async () => {{").unwrap();
+                body_out_offset_in_raw = raw_body.len();
+                raw_body.push_str(&body_out);
+                writeln!(raw_body, "    }})();").unwrap();
+                writeln!(raw_body, "    await this.commitState(__state);").unwrap();
                 if body_emits_directly {
-                    writeln!(out, "{flush}").unwrap();
+                    writeln!(raw_body, "{flush}").unwrap();
                 }
-                writeln!(out, "    return __result;").unwrap();
+                writeln!(raw_body, "    return __result;").unwrap();
             } else if body_emits_directly {
-                writeln!(out, "    const __state = await this.loadState();").unwrap();
-                writeln!(out, "{events_decl}").unwrap();
-                writeln!(out, "    const __result = await (async () => {{").unwrap();
-                splice(out);
-                writeln!(out, "    }})();").unwrap();
-                writeln!(out, "{flush}").unwrap();
-                writeln!(out, "    return __result;").unwrap();
+                writeln!(raw_body, "    const __state = await this.loadState();").unwrap();
+                writeln!(raw_body, "{events_decl}").unwrap();
+                writeln!(raw_body, "    const __result = await (async () => {{").unwrap();
+                body_out_offset_in_raw = raw_body.len();
+                raw_body.push_str(&body_out);
+                writeln!(raw_body, "    }})();").unwrap();
+                writeln!(raw_body, "{flush}").unwrap();
+                writeln!(raw_body, "    return __result;").unwrap();
             } else {
-                writeln!(out, "    const __state = await this.loadState();").unwrap();
-                splice(out);
+                writeln!(raw_body, "    const __state = await this.loadState();").unwrap();
+                body_out_offset_in_raw = raw_body.len();
+                raw_body.push_str(&body_out);
             }
         } else if body_emits_directly {
-            writeln!(out, "    const currentState = await this.loadState();").unwrap();
-            writeln!(out, "{events_decl}").unwrap();
-            writeln!(out, "    const __result = await (async () => {{").unwrap();
-            splice(out);
-            writeln!(out, "    }})();").unwrap();
-            writeln!(out, "{flush}").unwrap();
-            writeln!(out, "    return __result;").unwrap();
+            writeln!(raw_body, "    const currentState = await this.loadState();").unwrap();
+            writeln!(raw_body, "{events_decl}").unwrap();
+            writeln!(raw_body, "    const __result = await (async () => {{").unwrap();
+            body_out_offset_in_raw = raw_body.len();
+            raw_body.push_str(&body_out);
+            writeln!(raw_body, "    }})();").unwrap();
+            writeln!(raw_body, "{flush}").unwrap();
+            writeln!(raw_body, "    return __result;").unwrap();
         } else {
-            writeln!(out, "    const currentState = await this.loadState();").unwrap();
-            splice(out);
+            writeln!(raw_body, "    const currentState = await this.loadState();").unwrap();
+            body_out_offset_in_raw = raw_body.len();
+            raw_body.push_str(&body_out);
         }
-        writeln!(out, "  }}").unwrap();
+        let handler_method = bynk_ts::TsClassMethod {
+            name: method,
+            private: false,
+            is_async: effectful,
+            params,
+            return_type: Some(ret),
+            doc: h.documentation.clone(),
+            body: vec![bynk_ts::TsStmt::raw(raw_body.clone(), None)],
+        };
+        emit_class_method_and_merge_source_map(
+            out,
+            &handler_method,
+            class_depth,
+            RawBody::nested(&raw_body, &body_out, body_out_offset_in_raw),
+            &body_smb,
+            source_map,
+        );
         writeln!(out).unwrap();
     }
     // v0.104 (real-time track slice 3b): the `from websocket` `on open` handlers
@@ -3816,32 +5402,92 @@ pub(crate) fn emit_agent(
     // under `/_bynk/agent/<method>`; decode `{ args, deps }`, invoke the
     // handler with deps as the trailing argument, and serialise the result.
     if matches!(ctx.target, BuildTarget::Workers) {
-        writeln!(out, "  async fetch(request: Request): Promise<Response> {{").unwrap();
-        writeln!(out, "    const url = new URL(request.url);").unwrap();
+        // Arc C, slice 27 (#1384): the third and final of step (9) sub-slice
+        // (5)'s own 3 independent slices — converts to a real
+        // `bynk_ts::TsClassMethod`, printed through `print_class_method`, the
+        // same zero-`LowerCtx`/no-merge shape #1382 (`emit_ws_dispatch_
+        // handlers`) established for this cluster's other Rust-side-only
+        // emitter. `(this as unknown as Record<string, (...bynkArgs:
+        // unknown[]) => unknown>)` stays one opaque `TsExpr::Ident` (a
+        // nested `As`-under-`As` chain the printer's own `needs_parens_as_
+        // operand` would otherwise wrap in an extra, wrong parenthesis pair
+        // — a real, previously-unpredicted algebra gap, not a style choice);
+        // `...args` stays one opaque `TsExpr::Ident` call argument (the
+        // spread-call-argument shape the grounding pass DID predict for this
+        // slice, #1382's own PR confirming it belongs here, not there).
+        let mut fetch_stmts = vec![bynk_ts::TsStmt::const_stmt(
+            bynk_ts::TsBindingName::Ident("url".to_string()),
+            None,
+            bynk_ts::TsExpr::New {
+                callee: Box::new(bynk_ts::TsExpr::Ident("URL".to_string())),
+                args: vec![bynk_ts::TsExpr::Member {
+                    object: Box::new(bynk_ts::TsExpr::Ident("request".to_string())),
+                    property: "url".to_string(),
+                }],
+            },
+            None,
+        )];
         // v0.104 (slice 3b): a forwarded WebSocket upgrade. The edge has already
         // authenticated the actor (the body never runs unverified); accept the
         // socket here, run the on-open body, and return the `101` carrying the
         // client end. The verified identity and route arguments ride in a trusted
         // internal header (the DO is only reachable through the Worker).
         for host in &ws_open_hosts {
-            emit_ws_open_fetch_branch(out, host, tys);
+            fetch_stmts.push(ws_open_fetch_branch_stmt(host, tys));
         }
-        writeln!(
-            out,
-            "    if (url.pathname.startsWith(\"/_bynk/agent/\")) {{"
-        )
-        .unwrap();
-        writeln!(
-            out,
-            "      const methodName = url.pathname.slice(\"/_bynk/agent/\".length);"
-        )
-        .unwrap();
-        writeln!(
-            out,
-            "      const {{ args, deps }} = (await request.json()) as {{ args: unknown[]; deps: unknown }};"
-        )
-        .unwrap();
-        if given_deps_expr.is_some() || agent_uses_emit {
+        let dispatch_callee = bynk_ts::TsExpr::Index {
+            object: Box::new(bynk_ts::TsExpr::Ident(
+                "(this as unknown as Record<string, (...bynkArgs: unknown[]) => unknown>)"
+                    .to_string(),
+            )),
+            index: Box::new(bynk_ts::TsExpr::Ident("methodName".to_string())),
+        };
+        let mut agent_dispatch_stmts = vec![
+            bynk_ts::TsStmt::const_stmt(
+                bynk_ts::TsBindingName::Ident("methodName".to_string()),
+                None,
+                bynk_ts::TsExpr::Call {
+                    callee: Box::new(bynk_ts::TsExpr::Member {
+                        object: Box::new(bynk_ts::TsExpr::Member {
+                            object: Box::new(bynk_ts::TsExpr::Ident("url".to_string())),
+                            property: "pathname".to_string(),
+                        }),
+                        property: "slice".to_string(),
+                    }),
+                    args: vec![bynk_ts::TsExpr::Member {
+                        object: Box::new(bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(
+                            "/_bynk/agent/".to_string(),
+                        ))),
+                        property: "length".to_string(),
+                    }],
+                },
+                None,
+            ),
+            bynk_ts::TsStmt::const_stmt(
+                bynk_ts::TsBindingName::ObjectPattern(vec!["args".to_string(), "deps".to_string()]),
+                None,
+                bynk_ts::TsExpr::As {
+                    expr: Box::new(bynk_ts::TsExpr::Paren(Box::new(bynk_ts::TsExpr::Await(
+                        Box::new(bynk_ts::TsExpr::Call {
+                            callee: Box::new(bynk_ts::TsExpr::Member {
+                                object: Box::new(bynk_ts::TsExpr::Ident("request".to_string())),
+                                property: "json".to_string(),
+                            }),
+                            args: Vec::new(),
+                        }),
+                    )))),
+                    ty: bynk_ts::TsType::Object(vec![
+                        bynk_ts::TsTypeMember::prop(
+                            "args",
+                            bynk_ts::TsType::array(bynk_ts::TsType::named("unknown")),
+                        ),
+                        bynk_ts::TsTypeMember::prop("deps", bynk_ts::TsType::named("unknown")),
+                    ]),
+                },
+                None,
+            ),
+        ];
+        let result_expr = if given_deps_expr.is_some() || agent_uses_emit {
             // #527: the wire deps are JSON — any capability provider in them
             // is a dead plain object (its methods did not survive
             // serialisation). Rebuild this agent's `given` deps in-process,
@@ -3857,15 +5503,44 @@ pub(crate) fn emit_agent(
             // (`given_deps_expr` may reference other bindings besides
             // `EVENTS_FANOUT`, computed elsewhere and not fully traced here) —
             // a generic string-keyed record, not a precise structural type.
-            writeln!(
-                out,
-                "      const env = this.__env as unknown as Record<string, unknown>;"
-            )
-            .unwrap();
-            let mut rebuilt: Vec<String> = Vec::new();
+            //
+            // `this.__env as unknown as Record<string, unknown>` stays one
+            // opaque `TsExpr::Ident` — the same nested-`As`-chain gap the
+            // dispatch callee above hits.
+            agent_dispatch_stmts.push(bynk_ts::TsStmt::const_stmt(
+                bynk_ts::TsBindingName::Ident("env".to_string()),
+                None,
+                bynk_ts::TsExpr::Ident(
+                    "this.__env as unknown as Record<string, unknown>".to_string(),
+                ),
+                None,
+            ));
+            let mut entries = vec![bynk_ts::TsObjectEntry::Spread(bynk_ts::TsExpr::Paren(
+                Box::new(bynk_ts::TsExpr::As {
+                    expr: Box::new(bynk_ts::TsExpr::Binary {
+                        op: bynk_ts::TsBinaryOp::NullishCoalescing,
+                        left: Box::new(bynk_ts::TsExpr::Ident("deps".to_string())),
+                        right: Box::new(bynk_ts::TsExpr::object(Vec::new())),
+                    }),
+                    ty: bynk_ts::TsType::named_with_args(
+                        "Record",
+                        vec![
+                            bynk_ts::TsType::named("string"),
+                            bynk_ts::TsType::named("unknown"),
+                        ],
+                    ),
+                }),
+            ))];
             if let Some(expr) = &given_deps_expr {
-                writeln!(out, "      const __givenDeps = {expr};").unwrap();
-                rebuilt.push("...__givenDeps".to_string());
+                agent_dispatch_stmts.push(bynk_ts::TsStmt::const_stmt(
+                    bynk_ts::TsBindingName::Ident("__givenDeps".to_string()),
+                    None,
+                    bynk_ts::TsExpr::Ident(expr.clone()),
+                    None,
+                ));
+                entries.push(bynk_ts::TsObjectEntry::Spread(bynk_ts::TsExpr::Ident(
+                    "__givenDeps".to_string(),
+                )));
             }
             if agent_uses_emit {
                 let bind = crate::emitter::wrangler::agent_binding_name(
@@ -3874,46 +5549,153 @@ pub(crate) fn emit_agent(
                 // P7.2: `env` is now `Record<string, unknown>` (above), so this
                 // specific binding needs its own cast to what
                 // `dispatchToEventsFanout` actually declares.
-                writeln!(
-                    out,
-                    "      const __eventsDeps = {{ __eventsDispatch: (events: Array<{ev_ty}>) => dispatchToEventsFanout(env.{bind} as DurableObjectNamespace, events) }};",
-                    ev_ty = crate::emitter::EVENTS_WIRE_EVENT_TS_TYPE
-                )
-                .unwrap();
-                rebuilt.push("...__eventsDeps".to_string());
+                agent_dispatch_stmts.push(bynk_ts::TsStmt::const_stmt(
+                    bynk_ts::TsBindingName::Ident("__eventsDeps".to_string()),
+                    None,
+                    bynk_ts::TsExpr::object(vec![(
+                        "__eventsDispatch".to_string(),
+                        bynk_ts::TsExpr::Arrow {
+                            params: vec![bynk_ts::TsParam {
+                                name: "events".to_string(),
+                                ty: Some(bynk_ts::TsType::named_with_args(
+                                    "Array",
+                                    vec![bynk_ts::TsType::named(
+                                        crate::emitter::EVENTS_WIRE_EVENT_TS_TYPE,
+                                    )],
+                                )),
+                                optional: false,
+                            }],
+                            is_async: false,
+                            generics: Vec::new(),
+                            return_type: None,
+                            body: Box::new(bynk_ts::TsExpr::Call {
+                                callee: Box::new(bynk_ts::TsExpr::Ident(
+                                    "dispatchToEventsFanout".to_string(),
+                                )),
+                                args: vec![
+                                    bynk_ts::TsExpr::As {
+                                        expr: Box::new(bynk_ts::TsExpr::Member {
+                                            object: Box::new(bynk_ts::TsExpr::Ident(
+                                                "env".to_string(),
+                                            )),
+                                            property: bind,
+                                        }),
+                                        ty: bynk_ts::TsType::named("DurableObjectNamespace"),
+                                    },
+                                    bynk_ts::TsExpr::Ident("events".to_string()),
+                                ],
+                            }),
+                        },
+                    )]),
+                    None,
+                ));
+                entries.push(bynk_ts::TsObjectEntry::Spread(bynk_ts::TsExpr::Ident(
+                    "__eventsDeps".to_string(),
+                )));
             }
             // P7.2: `methodName` is read from `url.pathname` at runtime, so no
             // static type can name which handler this is — a callable
             // dictionary is what's actually known, and `result` flows only into
             // a generic `JSON.stringify` below, so `unknown` costs nothing there.
-            writeln!(
-                out,
-                "      const result = await (this as unknown as Record<string, (...bynkArgs: unknown[]) => unknown>)[methodName](...args, {{ ...((deps ?? {{}}) as Record<string, unknown>), {} }});",
-                rebuilt.join(", ")
-            )
-            .unwrap();
+            bynk_ts::TsExpr::Await(Box::new(bynk_ts::TsExpr::Call {
+                callee: Box::new(dispatch_callee),
+                args: vec![
+                    bynk_ts::TsExpr::Ident("...args".to_string()),
+                    bynk_ts::TsExpr::object_entries(entries),
+                ],
+            }))
         } else {
-            writeln!(
-                out,
-                "      const result = await (this as unknown as Record<string, (...bynkArgs: unknown[]) => unknown>)[methodName](...args, deps);"
-            )
-            .unwrap();
-        }
+            bynk_ts::TsExpr::Await(Box::new(bynk_ts::TsExpr::Call {
+                callee: Box::new(dispatch_callee),
+                args: vec![
+                    bynk_ts::TsExpr::Ident("...args".to_string()),
+                    bynk_ts::TsExpr::Ident("deps".to_string()),
+                ],
+            }))
+        };
+        agent_dispatch_stmts.push(bynk_ts::TsStmt::const_stmt(
+            bynk_ts::TsBindingName::Ident("result".to_string()),
+            None,
+            result_expr,
+            None,
+        ));
         // `?? null`: a void method resolves to `undefined`, and
         // `JSON.stringify(undefined)` is the *string* `undefined` — not JSON —
         // which the calling proxy's `response.json()` rejects (#527).
-        writeln!(
-            out,
-            "      return new Response(JSON.stringify(result ?? null), {{ headers: {{ \"content-type\": \"application/json\" }} }});"
-        )
-        .unwrap();
-        writeln!(out, "    }}").unwrap();
-        writeln!(
-            out,
-            "    return new Response(\"Not Found\", {{ status: 404 }});"
-        )
-        .unwrap();
-        writeln!(out, "  }}").unwrap();
+        agent_dispatch_stmts.push(bynk_ts::TsStmt::return_stmt(
+            Some(bynk_ts::TsExpr::New {
+                callee: Box::new(bynk_ts::TsExpr::Ident("Response".to_string())),
+                args: vec![
+                    bynk_ts::TsExpr::Call {
+                        callee: Box::new(bynk_ts::TsExpr::Member {
+                            object: Box::new(bynk_ts::TsExpr::Ident("JSON".to_string())),
+                            property: "stringify".to_string(),
+                        }),
+                        args: vec![bynk_ts::TsExpr::Binary {
+                            op: bynk_ts::TsBinaryOp::NullishCoalescing,
+                            left: Box::new(bynk_ts::TsExpr::Ident("result".to_string())),
+                            right: Box::new(bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Null)),
+                        }],
+                    },
+                    bynk_ts::TsExpr::object(vec![(
+                        "headers".to_string(),
+                        bynk_ts::TsExpr::object(vec![(
+                            "\"content-type\"".to_string(),
+                            bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(
+                                "application/json".to_string(),
+                            )),
+                        )]),
+                    )]),
+                ],
+            }),
+            None,
+        ));
+        fetch_stmts.push(bynk_ts::TsStmt::if_stmt(
+            bynk_ts::TsExpr::Call {
+                callee: Box::new(bynk_ts::TsExpr::Member {
+                    object: Box::new(bynk_ts::TsExpr::Member {
+                        object: Box::new(bynk_ts::TsExpr::Ident("url".to_string())),
+                        property: "pathname".to_string(),
+                    }),
+                    property: "startsWith".to_string(),
+                }),
+                args: vec![bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(
+                    "/_bynk/agent/".to_string(),
+                ))],
+            },
+            bynk_ts::TsStmt::block(agent_dispatch_stmts, None),
+            None,
+        ));
+        fetch_stmts.push(bynk_ts::TsStmt::return_stmt(
+            Some(bynk_ts::TsExpr::New {
+                callee: Box::new(bynk_ts::TsExpr::Ident("Response".to_string())),
+                args: vec![
+                    bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str("Not Found".to_string())),
+                    bynk_ts::TsExpr::object(vec![(
+                        "status".to_string(),
+                        bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Num("404".to_string())),
+                    )]),
+                ],
+            }),
+            None,
+        ));
+        let fetch_method = bynk_ts::TsClassMethod {
+            name: "fetch".to_string(),
+            private: false,
+            is_async: true,
+            params: vec![bynk_ts::TsParam {
+                name: "request".to_string(),
+                ty: Some(bynk_ts::TsType::named("Request")),
+                optional: false,
+            }],
+            return_type: Some(bynk_ts::TsType::named_with_args(
+                "Promise",
+                vec![bynk_ts::TsType::named("Response")],
+            )),
+            doc: None,
+            body: fetch_stmts,
+        };
+        out.push_str(&bynk_ts::print_class_method(&fetch_method, 0));
         writeln!(out).unwrap();
         // v0.106 (slice 3b-iii): the inbound/close dispatch — Cloudflare calls
         // `webSocketMessage`/`webSocketClose` on a hibernatable socket. Decode the
@@ -3929,22 +5711,81 @@ pub(crate) fn emit_agent(
     // this. A present DO binding (workers) routes through `makeWorkersAgent`;
     // otherwise the bundle registry path is taken. The single `makeAgent`
     // helper keeps the call site target-agnostic.
-    let key_ts = ts_type_ref(&a.key_type);
+    //
+    // Arc C, slice 24 (#1377): closes step (9)'s own sixth sub-slice, the
+    // factory function half — the smaller, self-contained half of the
+    // originally-lumped "(6) the factory function plus the history-driver"
+    // item, converted independently of the history-driver (which stays
+    // deferred, its own priority undecided). Converts fully, no opaque
+    // carve-out at all: every shape needed (`TsDecl::Function`,
+    // `TsExpr::OptionalMember`, `TsExpr::Arrow`, `TsExpr::New`) already
+    // existed. The WS-hosted DO methods/`fetch` dispatcher/
+    // `emit_ws_dispatch_handlers` cluster (originally sub-slice (5)) stays
+    // deferred here — as of this slice, not yet grounded; its own dedicated
+    // grounding pass (post-#1378, no issue number) has since found it
+    // genuinely lower source-map risk than this comment's own caution
+    // implied, decomposing into 3 independent slices — see
+    // `design/tracks/the-typescript-tree.md` §6 for the current state,
+    // since a comment landed at one slice's own commit is a snapshot, not
+    // a live pointer.
+    let key_ts = ts_type_ref_to_ts_type(&a.key_type, None);
     let bind = crate::emitter::wrangler::agent_binding_name(&a.name.name);
-    writeln!(
-        out,
-        "export function {factory}(key: {key_ts}, env?: {{ {bind}?: DurableObjectNamespace }}): {agent} {{",
-        factory = agent_factory_name(&a.name.name),
-        agent = a.name.name,
-    )
-    .unwrap();
-    writeln!(
-        out,
-        "  return makeAgent({registry}, env?.{bind}, key, (state) => new {agent}(state));",
-        agent = a.name.name,
-    )
-    .unwrap();
-    writeln!(out, "}}").unwrap();
+    let factory_decl = bynk_ts::TsStmt::decl(
+        bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::Function {
+            name: agent_factory_name(&a.name.name),
+            generics: Vec::new(),
+            params: vec![
+                bynk_ts::TsParam {
+                    name: "key".to_string(),
+                    ty: Some(key_ts),
+                    optional: false,
+                },
+                bynk_ts::TsParam {
+                    name: "env".to_string(),
+                    ty: Some(bynk_ts::TsType::Object(vec![bynk_ts::TsTypeMember::Prop {
+                        name: bind.clone(),
+                        ty: bynk_ts::TsType::named("DurableObjectNamespace"),
+                        optional: true,
+                        readonly: false,
+                    }])),
+                    optional: true,
+                },
+            ],
+            return_type: Some(bynk_ts::TsType::named(a.name.name.clone())),
+            body: vec![bynk_ts::TsStmt::return_stmt(
+                Some(bynk_ts::TsExpr::Call {
+                    callee: Box::new(bynk_ts::TsExpr::Ident("makeAgent".to_string())),
+                    args: vec![
+                        bynk_ts::TsExpr::Ident(registry.clone()),
+                        bynk_ts::TsExpr::OptionalMember {
+                            object: Box::new(bynk_ts::TsExpr::Ident("env".to_string())),
+                            property: bind,
+                        },
+                        bynk_ts::TsExpr::Ident("key".to_string()),
+                        bynk_ts::TsExpr::Arrow {
+                            params: vec![bynk_ts::TsParam {
+                                name: "state".to_string(),
+                                ty: None,
+                                optional: false,
+                            }],
+                            is_async: false,
+                            generics: Vec::new(),
+                            return_type: None,
+                            body: Box::new(bynk_ts::TsExpr::New {
+                                callee: Box::new(bynk_ts::TsExpr::Ident(a.name.name.clone())),
+                                args: vec![bynk_ts::TsExpr::Ident("state".to_string())],
+                            }),
+                        },
+                    ],
+                }),
+                None,
+            )],
+            is_async: false,
+            inline: false,
+        })),
+        None,
+    );
+    out.push_str(&bynk_ts::print_stmt(&factory_decl, 0));
     writeln!(out).unwrap();
 
     // v0.119 (testing track slice 7, ADR 0155): the history-property driver. Only
@@ -4202,6 +6043,21 @@ fn ws_open_hosts_for<'a>(
 /// body lowers with `ws_self_agent` set, so an agent transfer becomes a `this`
 /// self-call rather than a cross-instance RPC.
 #[allow(clippy::too_many_arguments)]
+// Arc C, slice 25 (#1380): the first of step (9) sub-slice (5)'s own 3
+// independent slices (the grounding pass post-#1378, `design/tracks/
+// the-typescript-tree.md` §6), and the least risky by that pass's own
+// finding — the identical shape `emit_provider`'s own already-landed ops
+// (#1359) established: params/return-type real, the whole body one opaque
+// `TsStmt::Raw`, a single-level offset (no nesting — this method wraps no
+// events-IIFE, no implicit-commit closure, unlike `emit_service`/
+// `emit_agent`'s own handler loop). `connection: Connection<T>`'s own
+// generic type stays one opaque `TsType::named` string, the same "an
+// odd, one-off shape stays opaque text" precedent `this.state.storage.
+// get<T>` already set twice (#1371/#1373) — `Connection`'s own type
+// argument is exactly this function's own real, single grounded need,
+// not a general case for a new `TsType` type-argument mechanism. No
+// `doc` — confirmed directly (review of #1379): this function has never
+// emitted one, no `doc` parameter, no local, no `emit_doc_block` call.
 fn emit_ws_do_method(
     out: &mut String,
     agent: &AgentDecl,
@@ -4212,16 +6068,20 @@ fn emit_ws_do_method(
     ctx: &EmitProjectCtx,
     source_map: Option<&RefCell<SourceMapBuilder>>,
 ) {
-    let mut params = vec![format!(
-        "connection: Connection<{}>",
-        ts_ty(host.out_ty, commons.tys())
-    )];
+    let mut params = vec![bynk_ts::TsParam {
+        name: "connection".to_string(),
+        ty: Some(bynk_ts::TsType::named(format!(
+            "Connection<{}>",
+            ts_ty(host.out_ty, commons.tys())
+        ))),
+        optional: false,
+    }];
     for p in &h.params {
-        params.push(format!(
-            "{}: {}",
-            ts_ident(&p.name.name),
-            ts_type_ref(&p.type_ref)
-        ));
+        params.push(bynk_ts::TsParam {
+            name: ts_ident(&p.name.name),
+            ty: Some(ts_type_ref_to_ts_type(&p.type_ref, None)),
+            optional: false,
+        });
     }
     let body_smb = RefCell::new(SourceMapBuilder::new());
     let mut module = ModuleCtx::new(commons, &ctx.cross_context, &ctx.runtime_use);
@@ -4280,32 +6140,50 @@ fn emit_ws_do_method(
             )
         };
     }
-    params.push(format!("deps: {deps_ty}"));
-    let ret = ts_type_ref(&h.return_type);
-    let async_kw = if async_tail { "async " } else { "" };
-    writeln!(out, "  {async_kw}{method}({}): {ret} {{", params.join(", ")).unwrap();
-    let base = out.len();
-    out.push_str(&body_out);
-    if let Some(module) = source_map {
-        module
-            .borrow_mut()
-            .merge(&body_smb.borrow(), &body_out, out, base, 0);
-    }
-    writeln!(out, "  }}").unwrap();
+    params.push(bynk_ts::TsParam {
+        name: "deps".to_string(),
+        ty: Some(bynk_ts::TsType::named(deps_ty)),
+        optional: false,
+    });
+    let method_entry = bynk_ts::TsClassMethod {
+        name: method.to_string(),
+        private: false,
+        is_async: async_tail,
+        params,
+        return_type: Some(ts_type_ref_to_ts_type(&h.return_type, None)),
+        doc: None,
+        body: vec![bynk_ts::TsStmt::raw(body_out.clone(), None)],
+    };
+    let class_depth = 0;
+    emit_class_method_and_merge_source_map(
+        out,
+        &method_entry,
+        class_depth,
+        RawBody::flat(&body_out),
+        &body_smb,
+        source_map,
+    );
     writeln!(out).unwrap();
 }
 
-/// Emit the `fetch` branch that completes a forwarded WebSocket upgrade for a
+/// Build the `fetch` branch that completes a forwarded WebSocket upgrade for a
 /// hosted `on open`. The edge has already verified the actor, so the body runs
 /// authenticated; this accepts the socket, reconstructs the route arguments and
 /// identity from the trusted internal header, runs the on-open body, and returns
 /// the `101` handing the client end back.
-fn emit_ws_open_fetch_branch(out: &mut String, host: &WsOpenHost<'_>, tys: &Arc<Types>) {
+///
+/// Arc C, slice 27 (#1384): a real `TsStmt::If` node (a `Block` then-branch),
+/// composed directly into `fetch`'s own body — the last consumer of this
+/// `&mut String`-writing shape converted, matching #1382's own "boilerplate
+/// converts fully" posture. `__payload.args[i] as T`/the deps-object text/
+/// the generic `acceptHibernatableConnection<T>` callee stay opaque
+/// `TsExpr::Ident` leaves, the same established escape hatch #1382 used —
+/// `__payload.identity` itself is a real `TsExpr::Member`, not opaque
+/// (review of #1385, finding 2: this doc previously listed it as one).
+fn ws_open_fetch_branch_stmt(host: &WsOpenHost<'_>, tys: &Arc<Types>) -> bynk_ts::TsStmt {
     let h = host.handler;
     let path = format!("/_bynk/ws/open/{}", host.service);
     let method = ws_open_do_method_name(host.service);
-    writeln!(out, "    if (url.pathname === \"{path}\") {{").unwrap();
-    writeln!(out, "      const __pair = newWebSocketPair();").unwrap();
     // The trusted internal header carries the route args, and the verified
     // identity only when the actor binds one (a binder-less `by` forwards none).
     let binds_identity = host.seam.as_ref().is_some_and(|s| s.binder.is_some());
@@ -4314,39 +6192,103 @@ fn emit_ws_open_fetch_branch(out: &mut String, host: &WsOpenHost<'_>, tys: &Arc<
     } else {
         "{ args: unknown[] }"
     };
-    writeln!(
-        out,
-        "      const __payload = JSON.parse(request.headers.get(\"X-Bynk-Ws-Open\") ?? \"{{}}\") as {payload_ty};"
-    )
-    .unwrap();
+    let mut stmts = vec![
+        bynk_ts::TsStmt::const_stmt(
+            bynk_ts::TsBindingName::Ident("__pair".to_string()),
+            None,
+            bynk_ts::TsExpr::Call {
+                callee: Box::new(bynk_ts::TsExpr::Ident("newWebSocketPair".to_string())),
+                args: Vec::new(),
+            },
+            None,
+        ),
+        bynk_ts::TsStmt::const_stmt(
+            bynk_ts::TsBindingName::Ident("__payload".to_string()),
+            None,
+            bynk_ts::TsExpr::As {
+                expr: Box::new(bynk_ts::TsExpr::Call {
+                    callee: Box::new(bynk_ts::TsExpr::Member {
+                        object: Box::new(bynk_ts::TsExpr::Ident("JSON".to_string())),
+                        property: "parse".to_string(),
+                    }),
+                    args: vec![bynk_ts::TsExpr::Binary {
+                        op: bynk_ts::TsBinaryOp::NullishCoalescing,
+                        left: Box::new(bynk_ts::TsExpr::Call {
+                            callee: Box::new(bynk_ts::TsExpr::Member {
+                                object: Box::new(bynk_ts::TsExpr::Member {
+                                    object: Box::new(bynk_ts::TsExpr::Ident("request".to_string())),
+                                    property: "headers".to_string(),
+                                }),
+                                property: "get".to_string(),
+                            }),
+                            args: vec![bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(
+                                "X-Bynk-Ws-Open".to_string(),
+                            ))],
+                        }),
+                        right: Box::new(bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(
+                            "{}".to_string(),
+                        ))),
+                    }],
+                }),
+                ty: bynk_ts::TsType::named(payload_ty),
+            },
+            None,
+        ),
+    ];
     // v0.105 (slice 3b-ii): accept the server socket into the DO *hibernatably*
     // (tagged with a fresh connId, attached for wake-time recovery) so a stored
     // connection survives eviction — not `server.accept()`, which is in-memory only.
     // v0.106 (slice 3b-iii): when the service has an inbound/close handler, also
     // attach the sender identity + route args so a waking `webSocketMessage`/
     // `webSocketClose` recovers them without re-authenticating.
-    let meta_arg = if host.has_inbound() {
+    let mut accept_args = vec![
+        bynk_ts::TsExpr::Member {
+            object: Box::new(bynk_ts::TsExpr::Ident("this".to_string())),
+            property: "state".to_string(),
+        },
+        bynk_ts::TsExpr::Member {
+            object: Box::new(bynk_ts::TsExpr::Ident("__pair".to_string())),
+            property: "server".to_string(),
+        },
+    ];
+    if host.has_inbound() {
         let identity = if binds_identity {
-            "__payload.identity"
+            bynk_ts::TsExpr::Member {
+                object: Box::new(bynk_ts::TsExpr::Ident("__payload".to_string())),
+                property: "identity".to_string(),
+            }
         } else {
-            "\"\""
+            bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(String::new()))
         };
-        format!(", {{ identity: {identity}, args: __payload.args }}")
-    } else {
-        String::new()
-    };
-    writeln!(
-        out,
-        "      const connection = acceptHibernatableConnection<{}>(this.state, __pair.server{meta_arg});",
-        ts_ty(host.out_ty, tys)
-    )
-    .unwrap();
-    let mut call_args = vec!["connection".to_string()];
+        accept_args.push(bynk_ts::TsExpr::object(vec![
+            ("identity".to_string(), identity),
+            (
+                "args".to_string(),
+                bynk_ts::TsExpr::Member {
+                    object: Box::new(bynk_ts::TsExpr::Ident("__payload".to_string())),
+                    property: "args".to_string(),
+                },
+            ),
+        ]));
+    }
+    stmts.push(bynk_ts::TsStmt::const_stmt(
+        bynk_ts::TsBindingName::Ident("connection".to_string()),
+        None,
+        bynk_ts::TsExpr::Call {
+            callee: Box::new(bynk_ts::TsExpr::Ident(format!(
+                "acceptHibernatableConnection<{}>",
+                ts_ty(host.out_ty, tys)
+            ))),
+            args: accept_args,
+        },
+        None,
+    ));
+    let mut call_args = vec![bynk_ts::TsExpr::Ident("connection".to_string())];
     for (i, p) in h.params.iter().enumerate() {
-        call_args.push(format!(
+        call_args.push(bynk_ts::TsExpr::Ident(format!(
             "__payload.args[{i}] as {}",
             ts_type_ref(&p.type_ref)
-        ));
+        )));
     }
     let deps_arg = match host.seam.as_ref().filter(|s| s.binder.is_some()) {
         Some(seam) => format!(
@@ -4355,20 +6297,43 @@ fn emit_ws_open_fetch_branch(out: &mut String, host: &WsOpenHost<'_>, tys: &Arc<
         ),
         None => "{}".to_string(),
     };
-    call_args.push(deps_arg);
-    let await_kw = if is_effectful_return(&h.return_type) {
-        "await "
-    } else {
-        ""
+    call_args.push(bynk_ts::TsExpr::Ident(deps_arg));
+    let call_expr = bynk_ts::TsExpr::Call {
+        callee: Box::new(bynk_ts::TsExpr::Ident(format!("this.{method}"))),
+        args: call_args,
     };
-    writeln!(
-        out,
-        "      {await_kw}this.{method}({});",
-        call_args.join(", ")
+    stmts.push(bynk_ts::TsStmt::expr_stmt(
+        if is_effectful_return(&h.return_type) {
+            bynk_ts::TsExpr::Await(Box::new(call_expr))
+        } else {
+            call_expr
+        },
+        None,
+    ));
+    stmts.push(bynk_ts::TsStmt::return_stmt(
+        Some(bynk_ts::TsExpr::Call {
+            callee: Box::new(bynk_ts::TsExpr::Ident(
+                "webSocketUpgradeResponse".to_string(),
+            )),
+            args: vec![bynk_ts::TsExpr::Member {
+                object: Box::new(bynk_ts::TsExpr::Ident("__pair".to_string())),
+                property: "client".to_string(),
+            }],
+        }),
+        None,
+    ));
+    bynk_ts::TsStmt::if_stmt(
+        bynk_ts::TsExpr::Binary {
+            op: bynk_ts::TsBinaryOp::StrictEq,
+            left: Box::new(bynk_ts::TsExpr::Member {
+                object: Box::new(bynk_ts::TsExpr::Ident("url".to_string())),
+                property: "pathname".to_string(),
+            }),
+            right: Box::new(bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(path))),
+        },
+        bynk_ts::TsStmt::block(stmts, None),
+        None,
     )
-    .unwrap();
-    writeln!(out, "      return webSocketUpgradeResponse(__pair.client);").unwrap();
-    writeln!(out, "    }}").unwrap();
 }
 
 /// v0.106 (slice 3b-iii): the deps argument a hosted `on message`/`on close` body
@@ -4389,6 +6354,19 @@ fn ws_attachment_deps_arg(seam: &Option<bynk_check::actors::BearerSeam>) -> Stri
 /// decodes the raw frame against the service's `in:` type first — a malformed frame
 /// closes the socket (`1003`/`1008`) and is never dispatched (the client-bytes trust
 /// boundary).
+///
+/// Arc C, slice 26 (#1382): both methods convert to real
+/// `bynk_ts::TsClassMethod` fragments, printed through `print_class_method`.
+/// Unlike every prior Arc C slice, this function lowers no `.bynk` body at
+/// all (it has no `LowerCtx`, no `body_smb`, no `source_map` parameter) — it
+/// is pure dispatch plumbing, so there is nothing to merge back into a
+/// module source map, and every statement below builds through real
+/// `TsStmt`/`TsExpr` nodes rather than one opaque `Raw` blob, mirroring
+/// `loadState`'s own (#1371) "pure boilerplate converts fully" precedent.
+/// The two `try { ... } catch { ... }` lines and the `void`-suppression
+/// line stay opaque `TsStmt::raw` text — see the proposal issue (#1382) for
+/// why (`TryCatch`'s own renderer has no single-line form, and no
+/// `TsUnaryOp::Void` exists for a single real call site).
 fn emit_ws_dispatch_handlers(
     out: &mut String,
     host: &WsOpenHost<'_>,
@@ -4405,6 +6383,76 @@ fn emit_ws_dispatch_handlers(
     // emitted code stays free of `@cloudflare/workers-types`.
     let ws_ty = "{ deserializeAttachment(): unknown; send(data: string): void; close(code?: number, reason?: string): void }";
     let deps_arg = ws_attachment_deps_arg(&host.seam);
+    let att_or_null = bynk_ts::TsType::union(vec![
+        bynk_ts::TsType::named(att_ty),
+        bynk_ts::TsType::named("null"),
+    ]);
+    // `const __att = ws.deserializeAttachment() as {att_ty} | null;` / the
+    // missing-session guard / `const connection = new WorkersConnection<...>`
+    // — identical in both branches below (the pre-conversion `writeln!` code
+    // duplicated this same text too), factored once so the two call sites
+    // can't independently drift.
+    let att_guard = |stmts: &mut Vec<bynk_ts::TsStmt>| {
+        stmts.push(bynk_ts::TsStmt::const_stmt(
+            bynk_ts::TsBindingName::Ident("__att".to_string()),
+            None,
+            bynk_ts::TsExpr::As {
+                expr: Box::new(bynk_ts::TsExpr::Call {
+                    callee: Box::new(bynk_ts::TsExpr::Member {
+                        object: Box::new(bynk_ts::TsExpr::Ident("ws".to_string())),
+                        property: "deserializeAttachment".to_string(),
+                    }),
+                    args: Vec::new(),
+                }),
+                ty: att_or_null.clone(),
+            },
+            None,
+        ));
+        stmts.push(bynk_ts::TsStmt::if_stmt(
+            bynk_ts::TsExpr::Binary {
+                op: bynk_ts::TsBinaryOp::StrictEq,
+                left: Box::new(bynk_ts::TsExpr::Ident("__att".to_string())),
+                right: Box::new(bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Null)),
+            },
+            bynk_ts::TsStmt::inline_block(
+                vec![
+                    bynk_ts::TsStmt::expr_stmt(
+                        bynk_ts::TsExpr::Call {
+                            callee: Box::new(bynk_ts::TsExpr::Member {
+                                object: Box::new(bynk_ts::TsExpr::Ident("ws".to_string())),
+                                property: "close".to_string(),
+                            }),
+                            args: vec![
+                                bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Num("1011".to_string())),
+                                bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str("no session".to_string())),
+                            ],
+                        },
+                        None,
+                    ),
+                    bynk_ts::TsStmt::return_stmt(None, None),
+                ],
+                None,
+            ),
+            None,
+        ));
+        stmts.push(bynk_ts::TsStmt::const_stmt(
+            bynk_ts::TsBindingName::Ident("connection".to_string()),
+            None,
+            bynk_ts::TsExpr::New {
+                callee: Box::new(bynk_ts::TsExpr::Ident(format!(
+                    "WorkersConnection<{out_ts}>"
+                ))),
+                args: vec![
+                    bynk_ts::TsExpr::Ident("ws".to_string()),
+                    bynk_ts::TsExpr::Member {
+                        object: Box::new(bynk_ts::TsExpr::Ident("__att".to_string())),
+                        property: "connId".to_string(),
+                    },
+                ],
+            },
+            None,
+        ));
+    };
 
     if let Some(m) = host.message {
         let method = ws_message_do_method_name(host.service);
@@ -4424,39 +6472,66 @@ fn emit_ws_dispatch_handlers(
             )
         });
         let decode = serialisation::deserialise_expr(&in_type, "__json", "frame", runtime_use);
-        writeln!(
-            out,
-            "  async webSocketMessage(ws: {ws_ty}, message: string | ArrayBuffer): Promise<void> {{"
-        )
-        .unwrap();
-        writeln!(
-            out,
-            "    const __att = ws.deserializeAttachment() as {att_ty} | null;\n    if (__att === null) {{ ws.close(1011, \"no session\"); return; }}"
-        )
-        .unwrap();
-        writeln!(
-            out,
-            "    const connection = new WorkersConnection<{out_ts}>(ws, __att.connId);"
-        )
-        .unwrap();
-        writeln!(out, "    let __raw: string;").unwrap();
-        writeln!(
-            out,
-            "    try {{ __raw = typeof message === \"string\" ? message : new TextDecoder().decode(message); }} catch {{ ws.close(1003, \"unreadable frame\"); return; }}"
-        )
-        .unwrap();
-        writeln!(out, "    let __json: JsonValue;").unwrap();
-        writeln!(
-            out,
-            "    try {{ __json = JSON.parse(__raw) as JsonValue; }} catch {{ ws.close(1003, \"malformed frame\"); return; }}"
-        )
-        .unwrap();
-        writeln!(out, "    const __dec = {decode};").unwrap();
-        writeln!(
-            out,
-            "    if (__dec.tag === \"Err\") {{ ws.close(1008, \"invalid frame\"); return; }}"
-        )
-        .unwrap();
+        let mut stmts = Vec::new();
+        att_guard(&mut stmts);
+        stmts.push(bynk_ts::TsStmt::let_stmt(
+            bynk_ts::TsBindingName::Ident("__raw".to_string()),
+            Some(bynk_ts::TsType::named("string")),
+            None,
+            None,
+        ));
+        stmts.push(bynk_ts::TsStmt::raw(
+            "    try { __raw = typeof message === \"string\" ? message : new TextDecoder().decode(message); } catch { ws.close(1003, \"unreadable frame\"); return; }\n",
+            None,
+        ));
+        stmts.push(bynk_ts::TsStmt::let_stmt(
+            bynk_ts::TsBindingName::Ident("__json".to_string()),
+            Some(bynk_ts::TsType::named("JsonValue")),
+            None,
+            None,
+        ));
+        stmts.push(bynk_ts::TsStmt::raw(
+            "    try { __json = JSON.parse(__raw) as JsonValue; } catch { ws.close(1003, \"malformed frame\"); return; }\n",
+            None,
+        ));
+        stmts.push(bynk_ts::TsStmt::const_stmt(
+            bynk_ts::TsBindingName::Ident("__dec".to_string()),
+            None,
+            bynk_ts::TsExpr::Ident(decode),
+            None,
+        ));
+        stmts.push(bynk_ts::TsStmt::if_stmt(
+            bynk_ts::TsExpr::Binary {
+                op: bynk_ts::TsBinaryOp::StrictEq,
+                left: Box::new(bynk_ts::TsExpr::Member {
+                    object: Box::new(bynk_ts::TsExpr::Ident("__dec".to_string())),
+                    property: "tag".to_string(),
+                }),
+                right: Box::new(bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str("Err".to_string()))),
+            },
+            bynk_ts::TsStmt::inline_block(
+                vec![
+                    bynk_ts::TsStmt::expr_stmt(
+                        bynk_ts::TsExpr::Call {
+                            callee: Box::new(bynk_ts::TsExpr::Member {
+                                object: Box::new(bynk_ts::TsExpr::Ident("ws".to_string())),
+                                property: "close".to_string(),
+                            }),
+                            args: vec![
+                                bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Num("1008".to_string())),
+                                bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(
+                                    "invalid frame".to_string(),
+                                )),
+                            ],
+                        },
+                        None,
+                    ),
+                    bynk_ts::TsStmt::return_stmt(None, None),
+                ],
+                None,
+            ),
+            None,
+        ));
         // The decoded frame fills the param typed as the service `in`; the rest are
         // route values recovered (positionally) from the attachment args.
         let mut call_args = vec!["connection".to_string()];
@@ -4485,36 +6560,96 @@ fn emit_ws_dispatch_handlers(
             }
         }
         call_args.push(deps_arg.clone());
-        writeln!(out, "    await this.{method}({});", call_args.join(", ")).unwrap();
-        writeln!(out, "  }}").unwrap();
+        stmts.push(bynk_ts::TsStmt::expr_stmt(
+            bynk_ts::TsExpr::Await(Box::new(bynk_ts::TsExpr::Call {
+                callee: Box::new(bynk_ts::TsExpr::Ident(format!("this.{method}"))),
+                args: call_args.into_iter().map(bynk_ts::TsExpr::Ident).collect(),
+            })),
+            None,
+        ));
+        let message_method = bynk_ts::TsClassMethod {
+            name: "webSocketMessage".to_string(),
+            private: false,
+            is_async: true,
+            params: vec![
+                bynk_ts::TsParam {
+                    name: "ws".to_string(),
+                    ty: Some(bynk_ts::TsType::named(ws_ty)),
+                    optional: false,
+                },
+                bynk_ts::TsParam {
+                    name: "message".to_string(),
+                    ty: Some(bynk_ts::TsType::union(vec![
+                        bynk_ts::TsType::named("string"),
+                        bynk_ts::TsType::named("ArrayBuffer"),
+                    ])),
+                    optional: false,
+                },
+            ],
+            return_type: Some(bynk_ts::TsType::named_with_args(
+                "Promise",
+                vec![bynk_ts::TsType::named("void")],
+            )),
+            doc: None,
+            body: stmts,
+        };
+        out.push_str(&bynk_ts::print_class_method(&message_method, 0));
         writeln!(out).unwrap();
     }
 
     if let Some(c) = host.close {
         let method = ws_close_do_method_name(host.service);
-        writeln!(
-            out,
-            "  async webSocketClose(ws: {ws_ty}, code: number, reason: string, wasClean: boolean): Promise<void> {{"
-        )
-        .unwrap();
-        writeln!(out, "    void code; void reason; void wasClean;").unwrap();
-        writeln!(
-            out,
-            "    const __att = ws.deserializeAttachment() as {att_ty} | null;\n    if (__att === null) {{ ws.close(1011, \"no session\"); return; }}"
-        )
-        .unwrap();
-        writeln!(
-            out,
-            "    const connection = new WorkersConnection<{out_ts}>(ws, __att.connId);"
-        )
-        .unwrap();
+        let mut stmts = vec![bynk_ts::TsStmt::raw(
+            "    void code; void reason; void wasClean;\n",
+            None,
+        )];
+        att_guard(&mut stmts);
         let mut call_args = vec!["connection".to_string()];
         for (i, p) in c.params.iter().enumerate() {
             call_args.push(format!("__att.args[{i}] as {}", ts_type_ref(&p.type_ref)));
         }
         call_args.push(deps_arg);
-        writeln!(out, "    await this.{method}({});", call_args.join(", ")).unwrap();
-        writeln!(out, "  }}").unwrap();
+        stmts.push(bynk_ts::TsStmt::expr_stmt(
+            bynk_ts::TsExpr::Await(Box::new(bynk_ts::TsExpr::Call {
+                callee: Box::new(bynk_ts::TsExpr::Ident(format!("this.{method}"))),
+                args: call_args.into_iter().map(bynk_ts::TsExpr::Ident).collect(),
+            })),
+            None,
+        ));
+        let close_method = bynk_ts::TsClassMethod {
+            name: "webSocketClose".to_string(),
+            private: false,
+            is_async: true,
+            params: vec![
+                bynk_ts::TsParam {
+                    name: "ws".to_string(),
+                    ty: Some(bynk_ts::TsType::named(ws_ty)),
+                    optional: false,
+                },
+                bynk_ts::TsParam {
+                    name: "code".to_string(),
+                    ty: Some(bynk_ts::TsType::named("number")),
+                    optional: false,
+                },
+                bynk_ts::TsParam {
+                    name: "reason".to_string(),
+                    ty: Some(bynk_ts::TsType::named("string")),
+                    optional: false,
+                },
+                bynk_ts::TsParam {
+                    name: "wasClean".to_string(),
+                    ty: Some(bynk_ts::TsType::named("boolean")),
+                    optional: false,
+                },
+            ],
+            return_type: Some(bynk_ts::TsType::named_with_args(
+                "Promise",
+                vec![bynk_ts::TsType::named("void")],
+            )),
+            doc: None,
+            body: stmts,
+        };
+        out.push_str(&bynk_ts::print_class_method(&close_method, 0));
         writeln!(out).unwrap();
     }
 }
@@ -4886,6 +7021,43 @@ commons demo {
             "{ts}"
         );
         assert!(ts.contains("export const Order = {\n};\n"), "{ts}");
+    }
+
+    /// #1339: pins `emit_sum_type`'s own real multi-line, leading-pipe
+    /// union shape and its generic payload-constructor arrows byte-for-byte
+    /// — the expected strings below are transcribed directly from
+    /// `406_generic_sum_envelope`'s own real `expected.ts`
+    /// (`bynkc/tests/fixtures/positive/406_generic_sum_envelope`), confirmed
+    /// to match it exactly, not independently invented text that merely
+    /// looks plausible.
+    #[test]
+    fn generic_sum_type_matches_the_real_fixtures_own_multiline_union_byte_for_byte() {
+        let ts = emit_source(
+            r#"
+commons envelope {
+  type ApiResult[T] =
+    | Loaded(value: T)
+    | Failed(message: String)
+}
+"#,
+        );
+        assert!(
+            ts.contains(
+                "export type ApiResult<T> =\n    \
+                 { readonly tag: \"Loaded\"; readonly value: T }\n  \
+                 | { readonly tag: \"Failed\"; readonly message: string };\n"
+            ),
+            "{ts}"
+        );
+        assert!(
+            ts.contains(
+                "export const ApiResult = {\n  \
+                 Loaded: <T>(value: T): ApiResult<T> => ({ tag: \"Loaded\", value }),\n  \
+                 Failed: <T>(message: string): ApiResult<T> => ({ tag: \"Failed\", message }),\n\
+                 };\n"
+            ),
+            "{ts}"
+        );
     }
 
     #[test]
