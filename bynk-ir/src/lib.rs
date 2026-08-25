@@ -3,7 +3,7 @@
 //!
 //! R6.1 — "Every `IrExpr` carries its type. The constructor requires it;
 //! there is no side table and no fallible lookup from the emitter to the
-//! checker." This module is the type only; [`lower`] is the
+//! checker." This module is the type only; `bynk_lower` is the
 //! `&CheckedProgram → Ir` pass that constructs values of it.
 //!
 //! **Identity fields are adapted, not literal** (Decision B, extending P6.0's
@@ -19,17 +19,17 @@
 //!
 //! **The whole Part 6.2 shape lands in one piece** (Decision D): every
 //! variant below exists, including `Match`/`Variant`/`Call`/`Lambda`, so a
-//! later slice (P6.2, P6.4, P6.5) widens only [`lower`]'s match, never this
+//! later slice (P6.2, P6.4, P6.5) widens only `bynk_lower`'s match, never this
 //! type. `Match`'s own payload is four types: [`IrPat`]/[`IrArm`]/
 //! [`Exhaustive`] are P6.4's own commission (#1157, Part 5.1/5.2 of the
 //! reference); [`MatchForm`] is P6.5's own (#1159, R5.2/R5.3, scoped to
 //! shape only — Decision A). All four are real, constructible types as of
-//! P6.5, wired into a real [`IrExprKind::Match`] by [`lower`]'s
+//! P6.5, wired into a real [`IrExprKind::Match`] by `bynk_lower`'s
 //! `ExprKind::Match` arm, which calls P6.4's own standalone constructors
 //! (`bynk_lower::lower_pattern_ir`/`bynk_lower::lower_arm_ir`/
 //! `bynk_lower::lower_exhaustive_ir`) verbatim. `Question`/`Is` stay
 //! desugars-to-`Match` in name only — neither gets real construction this
-//! slice, each for a reason specific to it (see [`lower`]'s own `todo!()`
+//! slice, each for a reason specific to it (see `bynk_lower`'s own `todo!()`
 //! text for each).
 //!
 //! **Decision D's own "never widens beyond the reference's Part 6.2 shape"
@@ -365,7 +365,7 @@ pub enum MatchForm {
 }
 
 /// A lowered expression's shape. Every node kind from Part 6.2 exists here
-/// (Decision D); [`lower`] implements real construction only for the
+/// (Decision D); `bynk_lower` implements real construction only for the
 /// subset named in `design/tracks/the-ir.md`'s own P6.1 row — every other
 /// arm is a named `todo!()` in the lowering pass, not a missing variant
 /// here.
@@ -1074,7 +1074,7 @@ pub struct OpSig {
 /// make this reader strictly less total than the raw-`TypeRef` code it
 /// replaces, for zero benefit. `bynk_lower::lower_fn_sig_ir_from_types` resolves
 /// `params`/`return_ty` in the scope the method's own `[T, …]` list names
-/// (mirroring [`lower_op_sig_ir_from_commons`]'s identical `type_params`
+/// (mirroring `bynk_lower::lower_op_sig_ir_from_commons`'s identical `type_params`
 /// treatment) — a genuinely unresolvable name degrades to `Ty::Unit`,
 /// deliberately, the same non-panicking posture `OpSig` already established:
 /// nothing checker-side actually validates an attached method's own
@@ -1818,7 +1818,7 @@ pub fn block_uses_emit(b: &Block, callees: &HashMap<ExprId, bynk_check::checker:
 /// Decision C (#1165): the closed sets of mutating storage-op names, one
 /// `pub(crate)` constant per kind group — read by `ir::lower`'s own
 /// `Callee::Store`-keyed write-detection walk (P6.8, Decision B;
-/// [`crate::ir::lower::body_writes_state`]), which needs no receiver-name
+/// `bynk_lower::body_writes_state`), which needs no receiver-name
 /// gate at all: a `Callee::Store` already carries the field's own resolved
 /// identity, not a name that could be shadowed. Until #1196, this module
 /// also had its own bare-`Ident`-receiver-name-matching reader

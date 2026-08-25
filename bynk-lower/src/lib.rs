@@ -26,7 +26,7 @@
 //!
 //! **Totality discipline (ADR 0334, Q2):** every entry point here takes a
 //! `&CheckedProgram`, not a bare `&TypedCommons` — a certified program only,
-//! so [`LowerIrCtx::expr_ty`]'s `.expect()` on a miss is the checker and this
+//! so `LowerIrCtx::expr_ty`'s `.expect()` on a miss is the checker and this
 //! pass disagreeing about which expressions a unit contains, a compiler bug,
 //! not a recoverable state. This scoping is the same discipline
 //! `bynk-emit/src/emitter/emit.rs`'s `lower_workers_cross_context_call`
@@ -112,7 +112,7 @@ pub struct LowerIrCtx<'a> {
     /// declared `embeds` conversion first.
     return_ty: Option<TyId>,
     /// P6.20-pre: the enclosing agent handler's own `store Map`/`store Log`
-    /// field names — the ones [`lower_handler_body_ir`] deliberately does
+    /// field names — the ones `lower_handler_body_ir` deliberately does
     /// *not* bind into `scopes` (only `Cell` fields are, v0.81's "implicit
     /// deref" rule) because they are not ordinary locals: a bare reference
     /// lowers to [`bynk_ir::IrExprKind::StoreQuery`], not
@@ -154,7 +154,7 @@ impl<'a> LowerIrCtx<'a> {
         self.return_ty = ty;
     }
 
-    /// P6.20-pre: called once, by [`lower_handler_body_ir`] only, right
+    /// P6.20-pre: called once, by `lower_handler_body_ir` only, right
     /// after seeding `self`/`store_cells` — see
     /// [`LowerIrCtx::store_queryable`]'s own doc comment for why this is a
     /// separate table from `scopes` rather than an ordinary [`Self::bind`].
@@ -314,7 +314,7 @@ fn fn_receiver_ty(f: &FnDecl, program: &TypedCommons) -> Option<TyId> {
 /// Wrap a lowered body block's own tail in [`IrExprKind::Return`] — the one
 /// place this pass builds a `Return` node (Bynk has no `return` keyword; see
 /// that variant's own doc comment). Shared by [`lower_fn_body_ir`] and
-/// [`lower_handler_body_ir`] (P6.9, #1167) — both are body-lowering entry
+/// `lower_handler_body_ir` (P6.9, #1167) — both are body-lowering entry
 /// points that produce a `Block` and need the exact same tail-wrapping, and
 /// hand-duplicating it a second time is exactly the kind of re-derivation
 /// this module's own header doc (`Callee`, P6.0) already avoids elsewhere.
@@ -346,7 +346,7 @@ fn wrap_body_return(block: IrExpr) -> IrExpr {
 /// Lower a function/method body: seeds scope from `f`'s params (and its own
 /// rigid type variables — its own `[T, ...]` type parameters, plus a
 /// generic receiver's, for a method), lowers the body as an ordinary value
-/// block, then wraps the tail via [`wrap_body_return`]. Distinct from
+/// block, then wraps the tail via `wrap_body_return`. Distinct from
 /// [`lower_block_ir`], which lowers a *nested* block as a bare value with no
 /// such wrapping.
 ///
@@ -358,13 +358,13 @@ fn wrap_body_return(block: IrExpr) -> IrExpr {
 /// parameter for and does not commission (P6.1's own Decision C) — calling
 /// this on a handler body would silently misclassify any bare ident
 /// matching one of those forms as a `Local`/`Global` miss (`todo!()`)
-/// rather than the specific kind it actually is. [`lower_handler_body_ir`]
+/// rather than the specific kind it actually is. `lower_handler_body_ir`
 /// (P6.9, #1167) is that dedicated entry point, finally closing this gap —
 /// it is *not* built by widening this function, since a free fn/method and
 /// an agent handler seed genuinely different scopes (rigid type variables
 /// here, agent `self`/store cells there) that would otherwise have to
 /// coexist behind one signature for no shared benefit.
-/// [`lower_service_handler_body_ir`] (P6.11, #1171) is the third sibling on
+/// `lower_service_handler_body_ir` (P6.11, #1171) is the third sibling on
 /// the same rule, not a second widening — a service handler's own scope
 /// (`params`/`binder` only) is disjoint from both of the other two.
 pub fn lower_fn_body_ir(f: &FnDecl, program: &CheckedProgram) -> IrExpr {
@@ -401,7 +401,7 @@ pub fn lower_fn_body_ir(f: &FnDecl, program: &CheckedProgram) -> IrExpr {
 /// by bare name (the v0.81 "implicit deref in read position" rule the
 /// checker's own `self_scope` loop applies, `context_checks.rs:2910-2915`),
 /// and `h`'s own `params` — then lowers the body as an ordinary value block
-/// and wraps the tail via [`wrap_body_return`], same as
+/// and wraps the tail via `wrap_body_return`, same as
 /// [`lower_fn_body_ir`]. No rigid type variables: `AgentDecl` carries no
 /// `type_params` of its own, the same fact
 /// [`resolve_store_field_ty`]'s own doc comment already grounds for
@@ -409,7 +409,7 @@ pub fn lower_fn_body_ir(f: &FnDecl, program: &CheckedProgram) -> IrExpr {
 /// point is only ever reached from [`lower_handler_ir`]'s own agent-only
 /// path ([DECISION D]), where `binder` is `None` unconditionally
 /// ([`bynk_ir::IrHandler`]'s own doc comment). As of P6.11 (#1171) a real
-/// service-handler caller does exist — [`lower_service_handler_body_ir`] —
+/// service-handler caller does exist — `lower_service_handler_body_ir` —
 /// and it is a sibling of this function, not a widening of it; that
 /// function's own doc comment names the scope-seeding differences in full.
 ///
@@ -532,7 +532,7 @@ pub fn lower_handler_ir(
     }
 }
 
-/// `(params, given, ret, effectful)` — [`lower_handler_signature_ir`]'s own
+/// `(params, given, ret, effectful)` — `lower_handler_signature_ir`'s own
 /// return shape, and [`lower_service_handler_signature_ir`]'s (#1187's slice
 /// 5), reused as a named alias rather than a bare tuple at both call sites
 /// once one of them (`emit_service`, `bynk-emit/src/emitter/emit.rs`) had to
@@ -576,7 +576,7 @@ fn lower_handler_signature_ir(h: &Handler, cx: &LowerIrCtx) -> HandlerSignatureI
 
 /// P6.50 (design/tracks/the-ir.md §6b): a return type's own syntactic
 /// `Effect[...]` wrapper — `TypeRef::Effect(_, _)`, not the *resolved*
-/// `Ty::Effect(_)` shape [`lower_handler_signature_ir`] reads above via
+/// `Ty::Effect(_)` shape `lower_handler_signature_ir` reads above via
 /// `cx.program.ty_intern`. Relocated here from `emitter/emit.rs` (its
 /// original home, `#[allow(dead_code)]`-free and with eight call sites
 /// across `emit.rs`/`workers.rs`/`workers_entry.rs`) because
@@ -600,9 +600,9 @@ pub fn is_effectful_return(r: &TypeRef) -> bool {
 /// `Option`), and an ordinary `from http` handler's body routinely uses `?`
 /// propagation (`ExprKind::Question`) or an `is`-expression (`ExprKind::Is`).
 /// **Correction (P6.25, 2026-08-19): both landed** — `Question` as P6.15
-/// (ADR 0337, [`lower_question_ir`], decomposing to `IrExprKind::Match` per
+/// (ADR 0337, `lower_question_ir`, decomposing to `IrExprKind::Match` per
 /// #1225's own `Ok`/`Err`/`Some`/`None` identity precedent) and `Is` as P6.16
-/// (ADR 0338, [`lower_is_ir`], a forced-temp `Let` discharging R5.10). Neither
+/// (ADR 0338, `lower_is_ir`, a forced-temp `Let` discharging R5.10). Neither
 /// is reached from this call site or any other shipped emitter path yet —
 /// `emitter/lower.rs`'s own P6.2 `Call`/`Lambda` cutover hasn't landed — so
 /// the reasoning below (a real `IrHandler` here would still panic on other,
@@ -666,7 +666,7 @@ pub fn lower_service_handler_signature_ir(
 }
 
 /// P6.11 ([DECISION E], #1171): lower a service handler's own body — the
-/// sibling of [`lower_handler_body_ir`] the reasoning in
+/// sibling of `lower_handler_body_ir` the reasoning in
 /// [`lower_service_handler_ir`]'s own doc comment argues for, not a
 /// widening of it. Seeds scope from `connection` (P6.13, #1179) if this
 /// handler carries one, then `h.params`, then `binder` if one was resolved
@@ -782,7 +782,7 @@ fn lower_service_handler_body_ir(
 /// fresh owned socket, disposed via transfer to an agent), `true` for `on
 /// message`/`on close` (the borrowed firing socket). The resulting
 /// [`ConnectionBinder`] is threaded into
-/// [`lower_service_handler_body_ir`] so `connection.…` reads resolve via
+/// `lower_service_handler_body_ir` so `connection.…` reads resolve via
 /// `cx.lookup` like any other bound name, and carried on [`IrHandler`]
 /// itself for any consumer that needs the owned/borrowed distinction
 /// without re-deriving it from `kind`/`protocol`.
@@ -970,7 +970,7 @@ pub fn lower_type_item_ir(decl: &Arc<TypeDecl>, program: &CheckedProgram) -> IrI
 /// decided here.
 ///
 /// Takes `f: &Arc<FnDecl>` for a cheap clone into
-/// [`lower_fn_body_ir`]/[`fn_receiver_ty`]/[`fn_rigid_type_vars`]'s own calls
+/// [`lower_fn_body_ir`]/`fn_receiver_ty`/`fn_rigid_type_vars`'s own calls
 /// below, not because this constructor itself keeps a copy any more — P6.39
 /// dropped `IrItem::Fn::def` (no production reader ever read it back; this
 /// constructor has no production call site at all today either).
@@ -1019,7 +1019,7 @@ pub fn lower_fn_item_ir(f: &Arc<FnDecl>, program: &CheckedProgram) -> IrItem {
 /// arm of that function's own kind dispatch, and by [`lower_store_field_shape_ir`].
 ///
 /// **Not an ADR 0334 `.expect()`-style panic on a resolve miss, deliberately**
-/// — the same posture [`lower_op_sig_ir`]'s own doc comment already argues
+/// — the same posture `lower_op_sig_ir`'s own doc comment already argues
 /// for a capability op's `params`/`return_type`, confirmed empirically for
 /// store fields specifically (#1187's Agent state-field slice, step 0):
 /// `store x: Cell[Bogus] = "hello"` certifies today (exit 0, no diagnostic),
@@ -1080,7 +1080,7 @@ fn duration_millis_annotation(
 /// `emitter/emit.rs`, and here), not one this slice is positioned to close,
 /// since none of the three is `pub`/shaped for a shared caller today. Within
 /// this function the `@ttl`/`@retain` cases at least share one call each to
-/// [`duration_millis_annotation`], rather than repeating the extraction
+/// `duration_millis_annotation`, rather than repeating the extraction
 /// inline a second time. `indexed` keeps the annotation's own declaration
 /// order, deduplicated — no sort, unlike the shipped emitter's own
 /// doubly-sorted `HashMap` intermediate ([DECISION E]'s own structural fix,
@@ -1192,7 +1192,7 @@ fn store_field_kind_and_indexed(f: &StoreField, cx: &LowerIrCtx) -> (StoreKindIr
 }
 
 /// #1187's Agent state-field slice: [`lower_store_field_ir`]'s shape-only
-/// sibling — same `kind`/`indexed` (via [`store_field_kind_and_indexed`]),
+/// sibling — same `kind`/`indexed` (via `store_field_kind_and_indexed`),
 /// `init` always `None`. This is the entry point `emit_agent`'s own state
 /// section actually needs: a field's storage *shape* (its `Cell`/`Map`/
 /// `Set`/`Cache`/`Log` kind and `@indexed` keys), never its `Cell` zero/
@@ -1437,7 +1437,7 @@ pub fn lower_protocol_ir(protocol: &ServiceProtocol, program: &CheckedProgram) -
 }
 
 /// P6.24a: a `TypedCommons`-only sibling of [`lower_protocol_ir`], the same
-/// split [`lower_op_sig_ir`]/[`lower_op_sig_ir_from_commons`] already
+/// split `lower_op_sig_ir`/[`lower_op_sig_ir_from_commons`] already
 /// established — for a call site holding only a unit's own `TypedCommons`,
 /// never a `&CheckedProgram` (`emitter.rs`'s `emit_project_imports`, a
 /// header-import-collection pass that runs well outside the per-declaration
@@ -1486,7 +1486,7 @@ pub fn lower_protocol_ir_from_commons(
 /// *which failures may panic*, not about which fields are read (the same
 /// distinction [`lower_type_item_ir`]'s own doc comment already draws).
 /// Precedent for a private, non-`&CheckedProgram` helper in this module:
-/// [`body_writes_state`], [`duration_millis_annotation`].
+/// [`body_writes_state`], `duration_millis_annotation`.
 ///
 /// `None` whenever `service.protocol` is not `ServiceProtocol::Http` — the
 /// checker itself gates all three blocks to HTTP only
@@ -1537,7 +1537,7 @@ fn lower_policy_ir(service: &ServiceDecl) -> Option<PolicyIr> {
 /// project validation (`bynk.http.cache_*`) has already rejected a
 /// `@cache` anywhere else, and a malformed `maxAge` there, so a missing or
 /// ill-formed annotation here simply yields `None` — no `&CheckedProgram`
-/// needed, the same posture [`lower_policy_ir`]'s own doc comment already
+/// needed, the same posture `lower_policy_ir`'s own doc comment already
 /// argues for: `maxAge`/`scope` are already-resolved syntactic literals
 /// (`ExprKind::DurationLit`/`Ident`), not a type this pass would ever need
 /// to resolve.
@@ -1718,7 +1718,7 @@ pub fn lower_agent_item_ir(agent: &AgentDecl, program: &CheckedProgram) -> IrIte
 /// P6.11 (#1171): assemble a service declaration into a real
 /// [`bynk_ir::IrItem::Service`] — structural mirror of
 /// [`lower_agent_item_ir`], wiring [`lower_protocol_ir`],
-/// [`lower_service_handler_ir`] and [`lower_policy_ir`] rather than
+/// [`lower_service_handler_ir`] and `lower_policy_ir` rather than
 /// re-deriving any of their logic. Unlike the agent case, there is no
 /// shared per-declaration context to compute once: a service has no
 /// `store_cells`/`state_ty`/invariants/transitions (none of those concepts
@@ -1807,7 +1807,7 @@ pub fn lower_event_subscriber_shapes_ir(
 /// [`lower_service_item_ir`]/[`lower_agent_item_ir`], but with nothing to
 /// compute once and share: `CapabilityDecl` carries no state/invariants/
 /// transitions/protocol of its own, only `ops`, so each op lowers
-/// independently through [`lower_op_sig_ir`].
+/// independently through `lower_op_sig_ir`.
 pub fn lower_capability_item_ir(cap: &CapabilityDecl, program: &CheckedProgram) -> IrItem {
     IrItem::Capability {
         def: cap.name.name.clone(),
@@ -1825,7 +1825,7 @@ pub fn lower_capability_item_ir(cap: &CapabilityDecl, program: &CheckedProgram) 
 /// `CheckedProgram` — `LowerCtx`/`ModuleCtx` never carry one (see
 /// [`lower_op_sig_ir_from_commons`], this function's own single-op sibling,
 /// for the identical reason it exists as a separate entry point rather than a
-/// thin wrapper over the `CheckedProgram`-driven [`lower_op_sig_ir`]).
+/// thin wrapper over the `CheckedProgram`-driven `lower_op_sig_ir`).
 ///
 /// Resolves one capability operation's signature by name — "find the op
 /// named `op` on the capability named `cap`" has no IR-native replacement
@@ -1861,7 +1861,7 @@ pub fn capability_op_sig_from_commons(
 /// checker-facing `CapabilityOpInfo` — an op's own `[T, …]` list is scoped to
 /// the op itself, not the capability (`CapabilityDecl` carries no
 /// `type_params` of its own), so this seeds a fresh [`LowerIrCtx`] per op
-/// rather than reusing [`fn_rigid_type_vars`]'s fn/method-shaped
+/// rather than reusing `fn_rigid_type_vars`'s fn/method-shaped
 /// receiver-widening, which does not apply here.
 ///
 /// **Not an ADR 0334 `.expect()`-style panic on a resolve miss,
@@ -1886,7 +1886,7 @@ fn lower_op_sig_ir(op: &CapabilityOp, program: &CheckedProgram) -> OpSig {
 }
 
 /// #1187's own closing scoping pass: a `TypedCommons`-only sibling of
-/// [`lower_op_sig_ir`], for the one real call site that never has a
+/// `lower_op_sig_ir`, for the one real call site that never has a
 /// `&CheckedProgram` — `emitter/lower.rs`'s `cap_op_param_names`, feeding
 /// `trace(Cap.op)`/`with`-predicate observation lowering
 /// (`bynk.test`'s DSL). That call path's own `TypedCommons` is a synthetic,
@@ -2107,7 +2107,7 @@ pub fn lower_provider_given_ir(provider: &ProviderDecl) -> Vec<CapRefIr> {
 /// `IrHandler`/`IrItem` assembly — the standalone entry point for
 /// `project.rs`'s `plan_agent_given_deps`, `EmitProjectCtx::
 /// agent_method_givens`, and `emitter/workers.rs`'s own `given` collection.
-/// Reuses [`lower_cap_ref_ir`] verbatim; a handler's `given` is syntactically
+/// Reuses `lower_cap_ref_ir` verbatim; a handler's `given` is syntactically
 /// identical to a provider's (`bynk_syntax::ast::CapRef`), so this is the
 /// same one-line adapter, not a new design.
 pub fn lower_handler_given_ir(h: &Handler) -> Vec<CapRefIr> {
@@ -2170,12 +2170,12 @@ fn lower_cap_ref_ir(cap_ref: &CapRef) -> CapRefIr {
 /// `HandlerBodyCheck::new`'s own "everything optional empty" default,
 /// `bynk-check/src/checker.rs:1055` — a provider op's `given` capabilities
 /// need no scope entry of their own, resolved the same already-generic
-/// `Callee`-wrapping [`lower_handler_body_ir`]'s own doc comment credits for
+/// `Callee`-wrapping `lower_handler_body_ir`'s own doc comment credits for
 /// handler bodies). No rigid type variables: `ProviderOp` carries no
 /// `type_params` of its own ([`bynk_ir::ProviderOpIr`]'s own doc comment
 /// has the full contrast with [`OpSig::type_params`]).
 ///
-/// **ADR 0334 panic-on-miss, not [`lower_op_sig_ir`]'s lenient `Ty::Unit`
+/// **ADR 0334 panic-on-miss, not `lower_op_sig_ir`'s lenient `Ty::Unit`
 /// fallback** — unlike a bare `CapabilityOp` signature, a `ProviderOp`'s
 /// `params`/`return_type` are resolved for real by `check_handler_body`
 /// (the same machinery a fn body or handler body goes through), so a
@@ -2546,11 +2546,11 @@ fn lower_question_ir(inner: &Expr, ty: TyId, span: Span, cx: &mut LowerIrCtx) ->
     }
 }
 
-/// [`lower_question_ir`]'s own `Effect`-peeling half — mirrors
+/// `lower_question_ir`'s own `Effect`-peeling half — mirrors
 /// `emitter/lower.rs`'s `peel_result_err` shape (peel through `Effect` to
 /// reach the real `Result[_, _]`) but stops one layer earlier, returning
 /// the whole peeled type rather than just its `Err` half, since
-/// [`lower_question_ir`] needs both (the full type for the constructed
+/// `lower_question_ir` needs both (the full type for the constructed
 /// `Err(..)`'s own `.ty`, just the `Err` half for [`embed_conversion_ir`]'s
 /// own `target_err`).
 fn peel_effect_ty(ty: TyId, tys: &Types) -> TyId {
@@ -2560,7 +2560,7 @@ fn peel_effect_ty(ty: TyId, tys: &Types) -> TyId {
     }
 }
 
-/// [`lower_question_ir`]'s own IR-native sibling of `emitter/lower.rs`'s
+/// `lower_question_ir`'s own IR-native sibling of `emitter/lower.rs`'s
 /// `embed_conversion` — same two checker primitives
 /// (`checker::compatible`/`checker::embedding_for`), same reasoning, ported
 /// rather than duplicated: `source_err_ty` (the `?` operand's own `Err`
@@ -2659,7 +2659,7 @@ fn lower_is_ir(
     }
 }
 
-/// [`lower_is_ir`]'s own refined-type-name disambiguation — a bare `is Name`
+/// `lower_is_ir`'s own refined-type-name disambiguation — a bare `is Name`
 /// tests a *refined type* rather than a sum variant when the operand's own
 /// checked type is base-ish and `Name` names a declared `TypeBody::Refined`.
 /// Mirrors `emitter.rs`'s `LowerCtx::is_refined_is_check` exactly.
@@ -2679,7 +2679,7 @@ fn is_refined_is_check_ir(operand_ty: TyId, name: &str, cx: &LowerIrCtx) -> bool
     value_baseish && name_refined
 }
 
-/// [`lower_is_ir`]'s own refined-type-name check construction — reads the
+/// `lower_is_ir`'s own refined-type-name check construction — reads the
 /// named refined type's own declared `base`/`refinement` and wraps them in
 /// [`IrExprKind::RefinedCheck`], the same reused-verbatim payload
 /// [`lower_pattern_test_ir`]'s own `IrPat::Refined` arm constructs for an
@@ -2711,7 +2711,7 @@ fn refined_check_ir(
     }
 }
 
-/// [`lower_is_ir`]'s own recursive boolean-test walk over an already-lowered
+/// `lower_is_ir`'s own recursive boolean-test walk over an already-lowered
 /// [`IrPat`] — the IR-native sibling of `emitter/lower.rs`'s own
 /// `pattern_match_tests`, ported rather than duplicated: same recursive
 /// shape (one test per structural constraint, accumulated then AND-joined
@@ -2843,7 +2843,7 @@ fn is_irrefutable_ir(pat: &IrPat) -> bool {
     }
 }
 
-/// [`lower_is_ir`]'s/[`lower_pattern_test_ir`]'s own IR-native mirror of
+/// `lower_is_ir`'s/[`lower_pattern_test_ir`]'s own IR-native mirror of
 /// `emitter/lower.rs`'s `literal_base_of_ty` — the literal-kind base a
 /// refined pattern's own scrutinee must resolve to.
 fn literal_base_of_ty_ir(ty: TyId, tys: &Types) -> Option<BaseType> {
@@ -7777,7 +7777,7 @@ agent Widget {
     /// `Callee::Store` method call on a non-`Cell` field — the one
     /// [DECISION F] claim the other three don't reach, since none of them
     /// calls a store method at all, and `entries` (a `Map`, never bound into
-    /// [`lower_handler_body_ir`]'s own scope — only `Cell` fields are) pins
+    /// `lower_handler_body_ir`'s own scope — only `Cell` fields are) pins
     /// that the never-bound path really is unreachable rather than merely
     /// untested.
     fn handler_ir_fixture() -> CheckedProgram {
