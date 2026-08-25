@@ -853,6 +853,7 @@ fn binary_precedence(op: TsBinaryOp) -> u8 {
         TsBinaryOp::And => 3,
         TsBinaryOp::StrictEq | TsBinaryOp::StrictNotEq => 4,
         TsBinaryOp::GreaterThan => 5,
+        TsBinaryOp::Add => 6,
     }
 }
 
@@ -920,8 +921,12 @@ fn render_binary_operand(out: &mut String, outer_op: TsBinaryOp, expr: &TsExpr) 
                 // so a same-operator nesting of any of those still needs its
                 // parens regardless of which side it's nested on (review of
                 // #1324, finding 1 — the original fix wrongly generalized
-                // the `||`/`&&` exemption to every operator).
-                !matches!(outer_op, TsBinaryOp::Or | TsBinaryOp::And)
+                // the `||`/`&&` exemption to every operator). `+` (Arc C,
+                // step (11), #1388) joins the same exemption — string
+                // concatenation is genuinely left-associative, the same
+                // "prints flat with no parens" reasoning `||`/`&&` already
+                // established, not a third special case.
+                !matches!(outer_op, TsBinaryOp::Or | TsBinaryOp::And | TsBinaryOp::Add)
             } else {
                 binary_precedence(*inner_op) <= binary_precedence(outer_op)
             }
@@ -1350,6 +1355,7 @@ fn render_expr(out: &mut String, expr: &TsExpr) {
                 TsBinaryOp::StrictEq => " === ",
                 TsBinaryOp::StrictNotEq => " !== ",
                 TsBinaryOp::GreaterThan => " > ",
+                TsBinaryOp::Add => " + ",
             });
             render_binary_operand(out, *op, right);
         }
@@ -1607,6 +1613,21 @@ fn render_type_member(out: &mut String, member: &TsTypeMember) {
 pub fn print_type(ty: &TsType) -> String {
     let mut out = String::new();
     render_type(&mut out, ty);
+    out
+}
+
+/// Print a single [`TsExpr`] on its own — the expression-level sibling of
+/// [`print_type`]'s own "one fragment, not a whole document" entry point.
+/// Arc C, step (11) (#1388) need: `emit_icu_placeholder`'s own `Select` arm
+/// stays one opaque, hand-built block-bodied IIFE (`TsExpr::Arrow` has no
+/// block-body variant, and extending it for this one real site was
+/// rejected as disproportionate) — its own arm VALUES, `emit_sub_message`'s
+/// now-real `TsExpr` results, still need stringifying back into that
+/// opaque host text. No source-map/buffer machinery, matching
+/// [`print_type`]/[`print_stmt`]'s own scope exactly.
+pub fn print_expr(expr: &TsExpr) -> String {
+    let mut out = String::new();
+    render_expr(&mut out, expr);
     out
 }
 
@@ -4092,6 +4113,31 @@ mod tests {
             printed.text,
             "typeof args !== \"object\" || args === null || Array.isArray(args);\n"
         );
+    }
+
+    /// Arc C, step (11) (#1388): `TsBinaryOp::Add`'s own real, dominant real
+    /// site — a message template's own literal/placeholder segments,
+    /// left-folded via `.join(" + ")` — needs the identical flat-chain
+    /// treatment `||`/`&&` already established, joining the same
+    /// associativity exemption in `render_binary_operand`, not a
+    /// bespoke third rule.
+    #[test]
+    fn a_three_term_add_chain_of_the_same_operator_prints_flat() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::expr_stmt(
+            TsExpr::Binary {
+                op: TsBinaryOp::Add,
+                left: Box::new(TsExpr::Binary {
+                    op: TsBinaryOp::Add,
+                    left: Box::new(TsExpr::Lit(TsLit::Str("a".to_string()))),
+                    right: Box::new(TsExpr::Lit(TsLit::Str("b".to_string()))),
+                }),
+                right: Box::new(TsExpr::Lit(TsLit::Str("c".to_string()))),
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "\"a\" + \"b\" + \"c\";\n");
     }
 
     /// Review of #1324, finding 1: the same-operator flattening #1323 added
