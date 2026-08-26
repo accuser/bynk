@@ -4279,6 +4279,16 @@ fn emit_test_property_function(
         resolved.as_ref().map(|r| &r.types),
         tys,
     );
+    // #1427: the `for all` bindings' own resolved types, in scope for both
+    // the `where`-clause and body re-type-check passes below — mirrors
+    // `emit_test_history_property_function`'s own `run: List[Step]` scope
+    // entry, generalised to every binding a property declares.
+    let initial_scope: HashMap<String, checker::TyId> = binding_names
+        .iter()
+        .cloned()
+        .zip(binding_types.iter().copied())
+        .filter_map(|(name, t)| t.map(|t| (name, t)))
+        .collect();
 
     if let Some(w) = &prop.forall.where_pred {
         let synth = Block {
@@ -4288,6 +4298,30 @@ fn emit_test_property_function(
             tail_leading_comments: Vec::new(),
             implicit_tail: false,
         };
+        // #1427: re-type-check the `where` clause, the same pass
+        // `emit_test_case_function` already runs for a plain `case` body —
+        // without it, `typed.expr_types` has no entry for anything here, so
+        // a match's own discriminant type is unresolvable and payload-
+        // binding lowering (`positional_field_name`) silently falls back to
+        // the generic single-field `"value"` name instead of a variant's
+        // own real field name.
+        if let Some(r) = resolved.as_ref() {
+            let mut throwaway_errors: Vec<CompileError> = Vec::new();
+            let mut throwaway_refs = RefSink::new();
+            let (where_types, where_callees) = test_suites::typecheck_case_body(
+                target_name,
+                &synth,
+                w.span,
+                unit_tables,
+                r,
+                &mut throwaway_errors,
+                &mut throwaway_refs,
+                initial_scope.clone(),
+                tys,
+            );
+            typed.expr_types.extend(where_types);
+            typed.callees.extend(where_callees);
+        }
         let (src, _) = emitter::lower_block_to_async_body(
             &synth,
             &TypeRef::Base(BaseType::Bool, w.span),
@@ -4324,6 +4358,25 @@ fn emit_test_property_function(
         .get(target_name)
         .map(|t| t.agents.keys().cloned().collect())
         .unwrap_or_default();
+    // #1427: re-type-check the property body itself — same reason and same
+    // pass as the `where` clause above.
+    if let Some(r) = resolved.as_ref() {
+        let mut throwaway_errors: Vec<CompileError> = Vec::new();
+        let mut throwaway_refs = RefSink::new();
+        let (body_types, body_callees) = test_suites::typecheck_case_body(
+            target_name,
+            &prop.forall.body,
+            prop.span,
+            unit_tables,
+            r,
+            &mut throwaway_errors,
+            &mut throwaway_refs,
+            initial_scope,
+            tys,
+        );
+        typed.expr_types.extend(body_types);
+        typed.callees.extend(body_callees);
+    }
     // Property bodies are collaborator-free predicate scaffolding; like mock op
     // bodies, their source map is a deliberate scope cut (the `expect` location
     // still binds through `assert_loc`).

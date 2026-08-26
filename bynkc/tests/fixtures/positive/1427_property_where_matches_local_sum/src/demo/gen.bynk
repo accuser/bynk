@@ -1,0 +1,5 @@
+commons demo.gen
+
+type Outcome =
+	| Hit(score: Int)
+	| Miss
