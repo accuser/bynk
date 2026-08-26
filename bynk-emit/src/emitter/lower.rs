@@ -2558,8 +2558,19 @@ fn lower_json_codec_call(
             // TS type positions reach through the module's namespace qualifier —
             // empty everywhere else, where this renders identically to `ts_ty`.
             let ts = if cx.in_test_scaffold() {
+                // #1437 (Arc E slice 2): `serialisation::ts_type_ref_qualified`
+                // deleted — folded into `serialisation::qualified_ts_type`,
+                // which bridges this file's own dotted-prefix qualifier
+                // convention (`json_codec_qual`'s values carry a trailing
+                // `.`) onto the general `TsType`-returning renderer
+                // (`emitter.rs`'s `ts_type_ref_qualified_multi_ts_type`,
+                // Arc C slice 33/#1401), which expects a bare namespace and
+                // appends its own separator. This call site stays
+                // `String`-based (`ts` feeds a hand-formatted signature
+                // string below), so it prints at the boundary via
+                // `bynk_ts::print_type`.
                 let qual = cx.runtime_use().json_codec_qual();
-                serialisation::ts_type_ref_qualified(&tref, &qual)
+                bynk_ts::print_type(&serialisation::qualified_ts_type(&tref, &qual))
             } else {
                 ts_ty(t, tys)
             };
