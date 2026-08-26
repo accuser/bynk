@@ -1693,6 +1693,157 @@ an incidental byproduct of earlier work (`toml_doc.rs`'s own P7.3 module doc alr
 R10.4-conscious posture: "not a general TOML library... no more"), not something this pass had to
 fix. No code changed; no `design/pending` entry, same doc-only precedent as P7.10.
 
+**Arc E — design pass: `serialisation.rs`'s remaining conversion surface (#1422, a
+design/decomposition increment, converts no code — landed as its own accepted proposal, the same
+gate #1331 and this track's own opening used).** Settles the one open question the second
+correction (#1319) deferred — does `emitter/serialisation.rs` convert to real `bynk-ts` nodes at
+all, and if so how — and names a concrete decomposition order. Gated on Arc C (#1409) and Arc D
+(#1421), both closed by the time this pass ran; it is the one named gap #1319 left standing between
+the `ts_writes` probe and this track's own retirement (§12).
+
+Every number below was re-verified directly against the tree (not carried from #1319's own
+citation, which was close but not exact — and review of this pass caught two further slips of its
+own, corrected here rather than silently): `serialisation.rs` is **1,951 lines** (#1319 cited 1,821;
+real code landed in the file since — though roughly 315 of the 1,951 are its own two `#[cfg(test)]`
+modules, at 1231-1274 and 1681-1951; production code is materially smaller than the headline count),
+**241** `write!`/`writeln!`/`format!` sites (#1319's 237, same drift), **11** `pub(crate)` entry
+points (#1319's "10," stale by one, confirmed by direct enumeration — `emit_helpers_for_owner`/
+`emit_helpers_for_owner_qualified`/`serialise_expr`/`serialise_expr_via`/`deserialise_ref_via`/
+`serialise_ref_via`/`deserialise_expr`/`deserialise_expr_via`/`emit_generic_helpers`/
+`emit_generic_helpers_qualified`/`ts_type_ref_qualified`). This file is confirmed the dominant
+remaining `ts_writes` contributor (241 of 1072 sites) but a minor `ts_any`/`verbatim_sites` one —
+**2** of 30, not 4 (the probe skips comment lines, including `///` doc-comment prose, so only
+`serialisation.rs:629,869` count; the two `as any`/`: any` mentions at 992/1013 are doc-comment
+text) — and 0 of 5 respectively — **this proposal is scoped to `ts_writes` only**; closing it does
+not by itself retire the track.
+
+**A direct read of every function body and every real caller resolves the file into four bounded
+clusters, not one undifferentiated "shared codec library" (#1319's own coarser framing) and not an
+open-ended `lower.rs`-style exception:**
+
+1. **The codec-writer family** (`emit_helpers_for_owner[_qualified]` → `emit_one` → per-`TypeBody`-
+   shape dispatch: `emit_bytes_named_codec`/`emit_refined`/`emit_inline_refinement_checks`/
+   `emit_inline_pred_check`/`emit_record`/`emit_record_codec`/`emit_sum`/`emit_sum_codec`/
+   `emit_field_deserialise[_wire]`) — lines 82-880, **131** sites. Builds whole `serialise_<T>`/
+   `deserialise_<T>` function declarations into an `out: &mut String` accumulator. Callers:
+   `emitter.rs`'s `emit_boundary_helpers`/`emit_json_codec_helpers`/`emit_consumed_context_helpers`
+   (all still `&mut String`-based) and the legacy single-file `emitter::emit`/`Compiled.ts: String`
+   path (`bynk-emit/src/lib.rs:81`, used by `bynk-driver`/`bynk check`).
+2. **Expression serialise/deserialise builders** (`serialise_field_expr[_via/_wire]`/
+   `serialise_expr[_via]`/`deserialise_ref_via`/`serialise_ref_via`/`deserialise_expr[_via]`) —
+   lines 880-1296, **23** sites. Returns one inline expression (`-> String`) for a caller to splice
+   — the same shape `ts_ty`/`ts_type_ref` had before P7.9 converted them. Callers:
+   `emitter/workers_entry.rs` (already tree-native since #1323), `emitter/lower.rs` (the
+   exclusion-listed kind, ADR 0391), `emitter/emit.rs` (already-converted per Arc C),
+   `project/tests_emit.rs`. **Fully independent** — traced completely, it calls none of clusters 1,
+   3, or 4, only its own siblings and the already-converted `crate::emitter::ts_type_ref` (direct
+   evidence the P7.9 infrastructure is already reused successfully here).
+3. **Generic-instantiation helpers** (`emit_generic_helpers[_qualified]`) — lines 1296-1614, **79**
+   sites. Builds `Result<T,E>`/`Option<T>`/`Map<K,V>`-shaped monomorphised codec function
+   declarations over a fixed set of built-in generics, mirroring cluster 1's own dispatch shape.
+   Same three `emitter.rs` wrapper callers as cluster 1, plus `tests_emit.rs`.
+4. **Qualified type-text rendering** (`ts_type_ref_qualified`/`ts_inner_type`) — lines 1614-1680
+   (production; 1681-1951 is the file's second `#[cfg(test)]` module), **8** sites. A second,
+   independent, text-based type renderer duplicating machinery that **already exists**, not a gap
+   P7.9 left unsolved: `emitter.rs`'s `ts_type_ref_qualified_ts_type`/`ts_type_ref_to_ts_type`
+   (`emitter.rs:4289`/`4361`) already build a real `TsType` through a general `QualifyFn<'a> =
+   &'a dyn Fn(&str) -> Option<String>` closure, covering every shape `ts_inner_type` handles, and
+   are already live at three other call sites (`workers.rs`, `project.rs`, `tests_emit.rs`). Called
+   only by cluster 3 internally (**8** sites, not 11 — the file's own 18 `ts_inner_type(` call sites
+   split 8 inside cluster 3's range and 10 inside cluster 4's own range, including the function's 9
+   internal recursive self-calls); its one real external caller is `Json.decode[T]`'s wrapper, in
+   `emitter/lower.rs` (named below).
+
+131 + 23 + 79 + 8 = 241, matching the top-line count exactly — no residual outside these four
+clusters. **A real shared leaf, found only by tracing call sites, not visible from the cluster list
+alone**: `emit_field_deserialise`/`emit_field_deserialise_wire` (the tail of cluster 1, ~167 of its
+798 lines) is called not only from cluster 1's own `emit_record`/`emit_sum` but also from cluster 3
+(`emit_generic_helpers_qualified`, 6 call sites) — a genuine dependency edge between clusters 1 and
+3, not two independent trees; it must convert before either cluster's own shape-dispatch functions
+do.
+
+**Decision: `serialisation.rs` converts, using the established Arc C pattern — it does not join
+`lower.rs` (ADR 0391) as a second permanent opaque exception.** `emitter/lower.rs` stayed opaque
+because it is the compiler's own second code-generation pass, covering the entire Bynk expression
+grammar at once with no natural leaf-to-root decomposition. `serialisation.rs` is a different
+shape: bounded by a closed, small vocabulary — three `TypeBody` variants (`Refined`/`Opaque`,
+`Record`, `Sum`) plus a fixed set of built-in generics — not the open expression grammar. Every
+cluster decomposes cleanly by the same `out: &mut String` → real-node signature change Arc C already
+applied ~15 times, at a comparable or smaller per-function size than several already-converted Arc C
+targets (`emit_agent`'s own cluster alone was 2,138 lines; this file's largest cluster is 798).
+
+**Three real complications, none of which `lower.rs` had, named so a future slice doesn't discover
+them as a build break:**
+
+- **The caller side is not fully converted either.** `emit_project` (#1392) is the tree-native
+  orchestrator Arc C's own retirement note credits with closing Arc C, but the three `emitter.rs`
+  functions it calls to reach this file (`emit_boundary_helpers`/`emit_json_codec_helpers`/
+  `emit_consumed_context_helpers`) are themselves still `&mut String` accumulators — `emit_project`
+  splices their combined output as opaque text today (consistent with `verbatim_sites` staying at 5,
+  and with `project.rs`'s own 3 genuine `Verbatim::new` sites). Converting `serialisation.rs` alone
+  is not sufficient — these three wrapper functions need their own (small, mechanical) conversion
+  too, named as step 6 below.
+- **The legacy single-file path.** `bynk-emit/src/lib.rs`'s `compile`/`compile_with_warnings`
+  (`pub struct Compiled { pub ts: String, ... }`) calls `emitter::emit` (`emitter.rs:188`), a
+  separate, non-`Artefacts`-based entry point used by `bynk-driver`/`bynk check`, confirmed live —
+  it calls `emit_json_codec_helpers` directly, a second real consumer of cluster 1/3 parallel to
+  `emit_project`. Converting cluster 1/3 to build real nodes means this path needs its own boundary
+  print (`Document::Ts(...).text()` or equivalent), not a second parallel string-accumulation path
+  kept alive — named as step 7 below, foldable into step 6 if review prefers.
+- **Cluster 4's own sole external caller lives in `emitter/lower.rs`, ADR 0391's permanent
+  exclusion.** `serialisation::ts_type_ref_qualified(&tref, &qual)` (`lower.rs:2552`, the
+  `Json.decode` arm's `cx.in_test_scaffold()` branch) is the only call site outside this file.
+  `lower.rs` stays string-based by design, so it cannot take the real `TsType` clusters 1/3 will
+  build directly — deleting `ts_type_ref_qualified` forces a boundary print at that one call site
+  (`bynk_ts::print_type(&ts_type_ref_qualified_ts_type(...))`), structurally the same "opaque
+  consumer needs its own print" shape as the legacy-path complication above, just one call site
+  instead of a whole public API. Folded into step 2 below, the step it actually affects — not
+  steps 6/7, since it's cluster 4's own fold-in that triggers it.
+
+**Decomposition order, leaf-to-root, by real dependency edges, not file position:**
+
+1. **Cluster 2 — expression builders** (23 sites, fully independent). Convert to `-> bynk_ts::TsExpr`,
+   matching every already-tree-native caller's own established `Verbatim`-drop pattern — the widest
+   immediate benefit for the smallest cluster, the same "convert the widely-called leaf first" call
+   P7.9 made for `ts_ty`/`ts_type_ref`.
+2. **Cluster 4 fold-in — repoint and delete, not extend; no new infrastructure needed.** The
+   qualified `TsType` renderer already exists (`ts_type_ref_qualified_ts_type`/
+   `ts_type_ref_to_ts_type`, `emitter.rs:4289`/`4361`) and is strictly more general than
+   `ts_inner_type`'s own `Qual = HashMap<String, String>` (`qual.get(name).cloned()` drops straight
+   into its existing `QualifyFn` closure) — so this step is adapt-and-delete, not extend-then-
+   delete: adapt `Qual` to `QualifyFn`, repoint cluster 3's 8 internal call sites at
+   `ts_type_ref_qualified_ts_type`, adapt `lower.rs:2552`'s own one external call site to
+   `bynk_ts::print_type(&ts_type_ref_qualified_ts_type(...))` (the third complication above), then
+   delete `ts_type_ref_qualified`/`ts_inner_type` outright — removes 8 sites for free, unblocks
+   step 4.
+3. **The shared leaf — `emit_field_deserialise`/`emit_field_deserialise_wire`.** Converts to a real
+   `TsStmt`-list builder once, ahead of both clusters that depend on it.
+4. **Cluster 1's own shape dispatch, by `TypeBody` variant — likely 3 slices**: refined/opaque
+   (`emit_refined`/`emit_bytes_named_codec`/`emit_inline_refinement_checks`/`emit_inline_pred_check`),
+   record (`emit_record`/`emit_record_codec`), sum (`emit_sum`/`emit_sum_codec`) — each converts
+   `emit_one`'s own dispatch arm and its downstream calls to build `TsDecl::Function` nodes, gated
+   on step 3.
+5. **Cluster 3 — generic-instantiation helpers** (79 sites, 1 slice), gated on steps 2 and 3.
+6. **The caller-side wrappers** — `emit_boundary_helpers`/`emit_json_codec_helpers`/
+   `emit_consumed_context_helpers` (`emitter.rs`), threading real `Vec<TsDecl>` into `emit_project`'s
+   tree instead of an `&mut String` — likely 1 slice.
+7. **The legacy `emitter::emit`/`Compiled.ts` boundary** — adapts to print the now-real tree at its
+   own API edge. May fold into step 6.
+
+**Revised estimate: roughly 8 slices** (1, 2, 3, 5, 6/7 at one each; step 4 at three), plus this
+design pass itself as a ninth increment converting nothing — smaller than any individual Arc C
+cluster this track has scoped. Landing all 8 should retire `ts_writes` to (at most) whatever residual
+this pass hasn't found; none is currently known, a genuine 0 looks achievable for this probe
+specifically. **This does not retire the track by itself** — `ts_any`/`verbatim_sites` have their
+own remaining sources outside this file (`emitter/lower.rs`'s own residual `any` sites, the 3
+genuine `project.rs` `Verbatim::new` sites, R7.7's runtime-error-type dependency) and need a second,
+separate design pass (or a direct, smaller argued-floor writeup) before §12's retirement PR is
+possible — named here so it isn't rediscovered as a surprise once `ts_writes` reads 0 while the
+track still can't retire. Step 6 is load-bearing, not optional cleanup: skipping it would leave
+steps 4/5's real `TsDecl` nodes with nowhere to go but back into an opaque `Verbatim` wrap at
+`emit_boundary_helpers`'s own boundary, the same gaming failure mode `verbatim_sites` exists as a
+third probe to catch.
+
 ---
 
 ## 7. Out of scope — forward references, not refusals
