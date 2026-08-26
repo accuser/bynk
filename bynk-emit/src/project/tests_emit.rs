@@ -1527,10 +1527,13 @@ fn is_attackable_contract(f: &FnDecl, resolved: &ResolvedCommons, tys: &Arc<Type
 
 /// The primitive base type a parameter erases to — `Some(base)` for a base type
 /// or a refinement/opaque over one, `None` for a composite (record/sum/list/map/
-/// option/result/etc.). Used to (a) gate a contract as attackable and (b) decide
-/// whether a generated argument needs `Number(…)` coercion before the call
-/// (`Int` generates a `bigint`, but functions do `number` arithmetic — v0.114's
-/// generator/erasure split, harmless until a generated value flows into a call).
+/// option/result/etc.). Used to gate a contract as attackable — every param
+/// must erase to a primitive `binding_gen`/`destructure_vals` can actually
+/// generate/coerce. (Previously also used to conditionally `Number(…)`-wrap a
+/// call argument at the attacked function's own call site — v0.114's
+/// generator/erasure split; #1426 made that redundant: `destructure_vals`
+/// coerces every `Int`-drawing local at the bind site now, so every argument
+/// reaching the call is already a real `number`.)
 fn numeric_or_scalar_base(
     ty: checker::TyId,
     types: &HashMap<String, Arc<TypeDecl>>,
@@ -3573,7 +3576,23 @@ fn coerce_int_field(
     if matches!(&value, TsExpr::Ident(s) if s == "undefined") {
         return value;
     }
-    let draws_bigint = match &*tys.get(t) {
+    if ty_draws_bigint(t, types, tys) {
+        call(ident("Number"), vec![value])
+    } else {
+        value
+    }
+}
+
+/// Does `t` draw/emit as a JS `bigint` — a bare `Int`, or a refined/opaque
+/// type over one? The shared predicate behind [`coerce_int_field`]'s own
+/// `Number(…)`-wrap decision and [`destructure_vals`]'s "does this binding
+/// set need coercion at all" check (#1426).
+fn ty_draws_bigint(
+    t: checker::TyId,
+    types: &HashMap<String, Arc<TypeDecl>>,
+    tys: &Arc<Types>,
+) -> bool {
+    match &*tys.get(t) {
         checker::Ty::Base(BaseType::Int) => true,
         checker::Ty::Named { name, .. } => matches!(
             types.get(name).map(|d| &d.body),
@@ -3586,12 +3605,67 @@ fn coerce_int_field(
             })
         ),
         _ => false,
-    };
-    if draws_bigint {
-        call(ident("Number"), vec![value])
-    } else {
-        value
     }
+}
+
+/// Destructure `__vals` into its named locals, coercing each `Int`-drawing
+/// (bare, refined, or opaque) binding's own runtime value to `number` at the
+/// bind site (#1426). `binding_gen`'s own boundaries/shrink machinery for a
+/// top-level `for all`/attack-parameter `Int` binding is deliberately
+/// `bigint`-typed throughout — `coerce_int_field`'s own doc comment names
+/// this as correct, since the shrink loop's `current[i]`/`vals[i]` elements
+/// must keep matching what `gens[i].shrink(v)` expects — but the *local* a
+/// predicate/attacked-function body evaluates ordinary Bynk `Int` arithmetic
+/// against must not stay `bigint`, or `n + 1` throws `TypeError: Cannot mix
+/// BigInt and other types` the instant it meets a `number` literal.  Never
+/// previously hit: every existing fixture's predicate either avoided
+/// arithmetic on a drawn `Int` entirely, or routed through a refined type's
+/// own compile-time-only `as any` cast (`refined_gen_ts`), which suppresses
+/// the *static* `tsc` error, not the *runtime* one. Reuses
+/// `coerce_int_field`'s own "does this type draw bigint" check — the same
+/// representation gap #1398/#1428 already closed for record/sum-field
+/// values, just at the binding site itself rather than a nested field;
+/// `binding_types[i]` is `None` when the binding's own type didn't resolve
+/// (mirrors `gens`' own `unwrap_or`/`undefined`-sentinel fallback above —
+/// `__vals[i]` is `undefined` there regardless of what type it "should"
+/// have been, so it passes through unwrapped either way).
+///
+/// Falls back to the original plain `const [a, b, ...] = __vals;` array
+/// destructure when *no* binding actually needs coercion — a record/sum/
+/// string/bool binding (the common case) draws its own top-level value
+/// already `number`/`string`/`boolean`/object-shaped, only a bare or
+/// refined/opaque `Int` binding draws `bigint` — so the common case emits
+/// byte-identical text to before this fix, and only a fixture with a real
+/// top-level `Int`-drawing binding sees its own destructure change shape.
+fn destructure_vals(
+    names: &[String],
+    binding_types: &[Option<checker::TyId>],
+    types: Option<&HashMap<String, Arc<TypeDecl>>>,
+    tys: &Arc<Types>,
+) -> String {
+    let needs_coercion = binding_types
+        .iter()
+        .any(|ty| matches!((ty, types), (Some(t), Some(types)) if ty_draws_bigint(*t, types, tys)));
+    if !needs_coercion {
+        return format!("const [{}] = __vals;", names.join(", "));
+    }
+    names
+        .iter()
+        .zip(binding_types)
+        .enumerate()
+        .map(|(i, (name, ty))| {
+            let raw = TsExpr::Index {
+                object: Box::new(ident("__vals")),
+                index: Box::new(num_lit(i.to_string())),
+            };
+            let value = match (ty, types) {
+                (Some(t), Some(types)) => coerce_int_field(*t, types, tys, raw),
+                _ => raw,
+            };
+            format!("const {name} = {};", bynk_ts::print_expr(&value))
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// A TypeScript expression drawing a random inhabitant of a resolved type using
@@ -4146,7 +4220,22 @@ fn emit_test_property_function(
         .iter()
         .map(|b| b.name.name.clone())
         .collect();
-    let destructure = format!("const [{}] = __vals;", binding_names.join(", "));
+    let binding_types: Vec<Option<checker::TyId>> = prop
+        .forall
+        .bindings
+        .iter()
+        .map(|b| {
+            resolved
+                .as_ref()
+                .and_then(|r| checker::resolve_type_ref(&b.type_ref, &r.types, tys))
+        })
+        .collect();
+    let destructure = destructure_vals(
+        &binding_names,
+        &binding_types,
+        resolved.as_ref().map(|r| &r.types),
+        tys,
+    );
 
     if let Some(w) = &prop.forall.where_pred {
         let synth = Block {
@@ -4572,10 +4661,23 @@ fn emit_contract_attack_function(
     out.push_str(&bynk_ts::print_stmt(&gens_stmt, 2));
 
     let param_names: Vec<String> = f.params.iter().map(|p| p.name.name.clone()).collect();
-    let destructure = format!("const [{}] = __vals;", param_names.join(", "));
+    let param_types: Vec<Option<checker::TyId>> = f
+        .params
+        .iter()
+        .map(|p| checker::resolve_type_ref(&p.type_ref, &resolved.types, tys))
+        .collect();
+    // #1426: the same top-level Int-binding representation gap `emit_test_
+    // property_function`'s own `for all` bindings have — an attacked
+    // function's own fuzzed `Int` parameter draws `bigint` exactly the same
+    // way, and its `requires`/body can do ordinary arithmetic on it.
+    let destructure = destructure_vals(&param_names, &param_types, Some(&resolved.types), tys);
 
-    // `__where` — the conjunction of `requires`, lowered over the parameter tuple
-    // (comparisons tolerate the `bigint`/`number` split, so no coercion here).
+    // `__where` — the conjunction of `requires`, lowered over the parameter
+    // tuple. #1426: `destructure` above already coerces every `Int`-drawing
+    // param to `number` before this closure's own body runs, so a `requires`
+    // clause doing real arithmetic (not just comparison) on a param is safe
+    // too — comparisons alone tolerated the pre-fix `bigint`/`number` split,
+    // but arithmetic never did.
     let where_pred = f.requires.iter().rev().fold(None, |acc: Option<Expr>, c| {
         Some(match acc {
             None => c.predicate.clone(),
@@ -4625,22 +4727,14 @@ fn emit_contract_attack_function(
         out.push_str(&bynk_ts::print_stmt(&where_null, 2));
     }
 
-    // `__body` — call the (guarded) function with coerced arguments. `Int`
-    // parameters generate a `bigint`; coerce to `number` so the function's
-    // arithmetic doesn't mix types. The guard asserts the `ensures`.
-    let call_args: Vec<String> = f
-        .params
-        .iter()
-        .map(|p| {
-            let base = checker::resolve_type_ref(&p.type_ref, &resolved.types, tys)
-                .and_then(|t| numeric_or_scalar_base(t, &resolved.types, tys));
-            if base == Some(BaseType::Int) {
-                format!("Number({})", p.name.name)
-            } else {
-                p.name.name.clone()
-            }
-        })
-        .collect();
+    // `__body` — call the (guarded) function. #1426: every param is already
+    // coerced to `number` by `destructure_vals` at the bind site above (an
+    // `Int`-drawing local is never left `bigint`), so the call passes each
+    // param straight through — no separate per-argument coercion needed here
+    // any more (this used to `Number(…)`-wrap `Int` args itself; redundant
+    // now that the bind site handles it, and would double-wrap). The guard
+    // asserts the `ensures`.
+    let call_args: Vec<String> = f.params.iter().map(|p| p.name.name.clone()).collect();
     // P7.2: deferred, same reason as `__where`'s own `__vals` above.
     out.push_str("    const __body = async (__vals: any[]) => {\n");
     out.push_str(&format!("      {destructure}\n"));
