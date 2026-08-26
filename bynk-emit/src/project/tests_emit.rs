@@ -3535,6 +3535,65 @@ fn refined_gen_ts(
     ))
 }
 
+/// Coerce a Sum-variant-payload/Record-field value to `number` when its own
+/// resolved type draws/emits as `bigint` — a bare `Int`, or a refined/opaque
+/// `Int` (#1398). `gen_ts_for_ty`'s/`canon_ts_for_ty`'s own top-level
+/// `Base(Int)` arm draws/emits `bigint` — correct there, since a top-level
+/// `for all` binding's own boundaries/shrink machinery is bigint-typed
+/// throughout (the "P7.2: deferred, not narrowed" representation gap, #1426
+/// tracks its own further consequences). But a Sum variant's real compiled
+/// constructor and a Record's real compiled object shape both type an `Int`
+/// field `number` (`ts_type_ref_to_ts_type`'s own mapping) — including a
+/// refined/opaque one, which erases to `number & { __brand }`, not `bigint`
+/// — so a bigint-drawing payload/field value recursed into from *inside* a
+/// Sum/Record arm needs this coercion the top-level arm itself must not
+/// have. A refined/opaque `Int` (`Percent`, etc.) routes through
+/// `refined_gen_ts`'s/its `canon_ts_for_ty` sibling's own
+/// `unchecked_construct_test`-wrapped cast (`(rng.int(...) as any)` /
+/// `Pct.unsafe(rng.int(...))`) — that cast is compile-time only and does
+/// nothing to the runtime value, so it still needs this same coercion
+/// (review of #1428): confirmed the exact `TypeError: Cannot mix BigInt and
+/// other types` this issue names still reproduces for a refined-Int record
+/// field without it. `Number(...)` around either wrapper form is safe:
+/// `.unsafe`/`as any` are both identity at runtime, never anything more than
+/// a re-tag. Every other type's own recursive result is already
+/// number/string/bool/object-shaped, so this stays a no-op there. And the
+/// depth-exhaustion `undefined` sentinel (`canon_ts_for_ty`'s own `depth ==
+/// 0` early return, reachable through a self-recursive Sum whose *first*
+/// variant carries an `Int` payload — `prop_binding_generable` validates only
+/// that variant, `bynk-check/src/test_suites.rs`) is passed through
+/// unwrapped rather than turned into a silent `Number(undefined)` (`NaN`) —
+/// also review of #1428.
+fn coerce_int_field(
+    t: checker::TyId,
+    types: &HashMap<String, Arc<TypeDecl>>,
+    tys: &Arc<Types>,
+    value: TsExpr,
+) -> TsExpr {
+    if matches!(&value, TsExpr::Ident(s) if s == "undefined") {
+        return value;
+    }
+    let draws_bigint = match &*tys.get(t) {
+        checker::Ty::Base(BaseType::Int) => true,
+        checker::Ty::Named { name, .. } => matches!(
+            types.get(name).map(|d| &d.body),
+            Some(TypeBody::Refined {
+                base: BaseType::Int,
+                ..
+            }) | Some(TypeBody::Opaque {
+                base: BaseType::Int,
+                ..
+            })
+        ),
+        _ => false,
+    };
+    if draws_bigint {
+        call(ident("Number"), vec![value])
+    } else {
+        value
+    }
+}
+
 /// A TypeScript expression drawing a random inhabitant of a resolved type using
 /// the in-scope `rng` — the property generator (DECISION P: a type is its own
 /// inhabitant space). Sums pick a random variant; records generate every field.
@@ -3595,7 +3654,14 @@ fn gen_ts_for_ty(
                                     .iter()
                                     .map(|f| {
                                         checker::resolve_type_ref(&f.type_ref, types, tys)
-                                            .map(|t| gen_ts_for_ty(t, types, depth - 1, tys))
+                                            .map(|t| {
+                                                coerce_int_field(
+                                                    t,
+                                                    types,
+                                                    tys,
+                                                    gen_ts_for_ty(t, types, depth - 1, tys),
+                                                )
+                                            })
                                             .unwrap_or_else(|| ident("undefined"))
                                     })
                                     .collect();
@@ -3622,7 +3688,14 @@ fn gen_ts_for_ty(
                         .iter()
                         .map(|f| {
                             let g = checker::resolve_type_ref(&f.type_ref, types, tys)
-                                .map(|t| gen_ts_for_ty(t, types, depth - 1, tys))
+                                .map(|t| {
+                                    coerce_int_field(
+                                        t,
+                                        types,
+                                        tys,
+                                        gen_ts_for_ty(t, types, depth - 1, tys),
+                                    )
+                                })
                                 .unwrap_or_else(|| ident("undefined"));
                             (f.name.name.clone(), g)
                         })
@@ -3708,7 +3781,14 @@ fn canon_ts_for_ty(
                             .iter()
                             .map(|f| {
                                 checker::resolve_type_ref(&f.type_ref, types, tys)
-                                    .map(|t| canon_ts_for_ty(t, types, depth - 1, tys))
+                                    .map(|t| {
+                                        coerce_int_field(
+                                            t,
+                                            types,
+                                            tys,
+                                            canon_ts_for_ty(t, types, depth - 1, tys),
+                                        )
+                                    })
                                     .unwrap_or_else(|| ident("undefined"))
                             })
                             .collect();
@@ -3721,7 +3801,14 @@ fn canon_ts_for_ty(
                         .iter()
                         .map(|f| {
                             let g = checker::resolve_type_ref(&f.type_ref, types, tys)
-                                .map(|t| canon_ts_for_ty(t, types, depth - 1, tys))
+                                .map(|t| {
+                                    coerce_int_field(
+                                        t,
+                                        types,
+                                        tys,
+                                        canon_ts_for_ty(t, types, depth - 1, tys),
+                                    )
+                                })
                                 .unwrap_or_else(|| ident("undefined"));
                             (f.name.name.clone(), g)
                         })
@@ -5387,6 +5474,127 @@ mod tests {
         let mut idx2 = 9;
         assert_eq!(sanitise_case_name(" ", &mut idx2), "test__");
         assert_eq!(idx2, 10);
+    }
+
+    // -- coerce_int_field (#1398, review of #1428) ---------------------------
+
+    fn refined_int_decl(name: &str) -> TypeDecl {
+        TypeDecl {
+            name: Ident {
+                name: name.to_string(),
+                span: Span::default(),
+            },
+            type_params: Vec::new(),
+            body: TypeBody::Refined {
+                base: BaseType::Int,
+                base_span: Span::default(),
+                refinement: None,
+            },
+            documentation: None,
+            span: Span::default(),
+            trivia: Trivia::default(),
+        }
+    }
+
+    fn opaque_int_decl(name: &str) -> TypeDecl {
+        TypeDecl {
+            name: Ident {
+                name: name.to_string(),
+                span: Span::default(),
+            },
+            type_params: Vec::new(),
+            body: TypeBody::Opaque {
+                base: BaseType::Int,
+                base_span: Span::default(),
+                refinement: None,
+            },
+            documentation: None,
+            span: Span::default(),
+            trivia: Trivia::default(),
+        }
+    }
+
+    #[test]
+    fn coerce_int_field_wraps_a_bare_int_draw_in_number() {
+        let tys = Arc::new(Types::new());
+        let int_ty = tys.intern(checker::Ty::Base(BaseType::Int));
+        let types: HashMap<String, Arc<TypeDecl>> = HashMap::new();
+        let draw = ident("rng.int(-1000n, 1000n)");
+
+        let coerced = coerce_int_field(int_ty, &types, &tys, draw);
+        assert_eq!(
+            bynk_ts::print_expr(&coerced),
+            "Number(rng.int(-1000n, 1000n))"
+        );
+    }
+
+    #[test]
+    fn coerce_int_field_wraps_a_refined_int_field_too() {
+        // Review of #1428: `refined_gen_ts`'s own `(value as any)` cast is
+        // compile-time only — the runtime value underneath is still a real
+        // bigint, so a refined-Int payload/field needs the same coercion a
+        // bare Int does, or the exact `TypeError: Cannot mix BigInt and
+        // other types` #1398 names still reproduces one type-alias away.
+        let tys = Arc::new(Types::new());
+        let mut types: HashMap<String, Arc<TypeDecl>> = HashMap::new();
+        types.insert("Pct".to_string(), Arc::new(refined_int_decl("Pct")));
+        let pct_ty = tys.intern(checker::Ty::Named {
+            name: "Pct".to_string(),
+            kind: checker::NamedKind::Refined(BaseType::Int),
+            args: Vec::new(),
+        });
+        let draw = ident("(rng.int(0n, 100n) as any)");
+
+        let coerced = coerce_int_field(pct_ty, &types, &tys, draw);
+        assert_eq!(
+            bynk_ts::print_expr(&coerced),
+            "Number((rng.int(0n, 100n) as any))"
+        );
+    }
+
+    #[test]
+    fn coerce_int_field_wraps_an_opaque_int_field_too() {
+        let tys = Arc::new(Types::new());
+        let mut types: HashMap<String, Arc<TypeDecl>> = HashMap::new();
+        types.insert("Pct".to_string(), Arc::new(opaque_int_decl("Pct")));
+        let pct_ty = tys.intern(checker::Ty::Named {
+            name: "Pct".to_string(),
+            kind: checker::NamedKind::Opaque(BaseType::Int),
+            args: Vec::new(),
+        });
+        let draw = ident("Pct.unsafe(rng.int(0n, 100n))");
+
+        let coerced = coerce_int_field(pct_ty, &types, &tys, draw);
+        assert_eq!(
+            bynk_ts::print_expr(&coerced),
+            "Number(Pct.unsafe(rng.int(0n, 100n)))"
+        );
+    }
+
+    #[test]
+    fn coerce_int_field_passes_the_undefined_sentinel_through_unwrapped() {
+        // Review of #1428: the depth-exhaustion `undefined` sentinel
+        // (`canon_ts_for_ty`'s own `depth == 0` early return) must not
+        // become `Number(undefined)` — a silent `NaN` where the unwrapped
+        // sentinel at least fails loudly (a separate, pre-existing gap
+        // tracked as #1429, not fixed here).
+        let tys = Arc::new(Types::new());
+        let int_ty = tys.intern(checker::Ty::Base(BaseType::Int));
+        let types: HashMap<String, Arc<TypeDecl>> = HashMap::new();
+
+        let coerced = coerce_int_field(int_ty, &types, &tys, ident("undefined"));
+        assert_eq!(bynk_ts::print_expr(&coerced), "undefined");
+    }
+
+    #[test]
+    fn coerce_int_field_leaves_a_non_int_value_untouched() {
+        let tys = Arc::new(Types::new());
+        let string_ty = tys.intern(checker::Ty::Base(BaseType::String));
+        let types: HashMap<String, Arc<TypeDecl>> = HashMap::new();
+        let draw = ident("rng.str(0, 8)");
+
+        let coerced = coerce_int_field(string_ty, &types, &tys, draw);
+        assert_eq!(bynk_ts::print_expr(&coerced), "rng.str(0, 8)");
     }
 
     // -- the unified emitter type-ref renderers -------------------------------

@@ -1,0 +1,8 @@
+commons demo.gen
+
+type Pct = Int where InRange(0, 100)
+
+type Point = {
+	x: Pct,
+	y: Pct,
+}

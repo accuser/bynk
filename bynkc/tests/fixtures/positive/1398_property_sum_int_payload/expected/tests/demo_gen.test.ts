@@ -155,24 +155,24 @@ function makeTestDeps() {
   return {  };
 }
 
-async function __prop_test_record_binding_s_own_fields_resolve_and_compare() {
+async function __prop_test_sum_with_int_payload_generates() {
     const deps = {};
-    const { Point } = demo_gen;
-    type Point = demo_gen.Point;
+    const { Outcome } = demo_gen;
+    type Outcome = demo_gen.Outcome;
     const __gens = [
-      { name: "p", boundaries: [{ x: Number(0n), y: Number(0n) }], gen: (rng: any) => ({ x: Number(rng.int(-1000n, 1000n)), y: Number(rng.int(-1000n, 1000n)) }), shrink: (v: any) => [], show: (v: any) => __bynkShow(v) },
+      { name: "o", boundaries: [Outcome.Hit(Number(0n))], gen: (rng: any) => rng.pick([() => Outcome.Hit(Number(rng.int(-1000n, 1000n))), () => Outcome.Miss]), shrink: (v: any) => [Outcome.Hit(Number(0n))], show: (v: any) => __bynkShow(v) },
     ];
     const __where = null;
     const __body = async (__vals: any[]) => {
-      const [p] = __vals;
-      if (!(p.x <= p.y || p.y <= p.x)) { throw __bynkExpectFailure("tests/gen.test.bynk:18:14", 1066, 1090, "expect p.x <= p.y || p.y <= p.x"); }
+      const [o] = __vals;
+      if (!(true)) { throw __bynkExpectFailure("tests/gen.test.bynk:13:14", 740, 744, "expect true"); }
     };
-    return await __bynkRunProperty({ seed: __bynkMix(__bynkSeed, 0), cases: 100, gens: __gens, where: __where, body: __body, name: "record binding's own fields resolve and compare", location: "tests/gen.test.bynk", file: "tests/gen.test.bynk" });
+    return await __bynkRunProperty({ seed: __bynkMix(__bynkSeed, 0), cases: 100, gens: __gens, where: __where, body: __body, name: "sum with int payload generates", location: "tests/gen.test.bynk", file: "tests/gen.test.bynk" });
 }
 
 export async function run(only?: string) {
   const results = [];
   const want = (n: string): boolean => only === undefined || only === n;
-  if (want("record binding's own fields resolve and compare")) results.push({ name: "record binding's own fields resolve and compare", ...(await __prop_test_record_binding_s_own_fields_resolve_and_compare()) });
+  if (want("sum with int payload generates")) results.push({ name: "sum with int payload generates", ...(await __prop_test_sum_with_int_payload_generates()) });
   return results;
 }

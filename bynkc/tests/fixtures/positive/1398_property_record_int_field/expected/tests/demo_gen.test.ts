@@ -155,7 +155,7 @@ function makeTestDeps() {
   return {  };
 }
 
-async function __prop_test_record_binding_s_own_fields_resolve_and_compare() {
+async function __prop_test_record_int_field_participates_in_arithmetic() {
     const deps = {};
     const { Point } = demo_gen;
     type Point = demo_gen.Point;
@@ -165,14 +165,14 @@ async function __prop_test_record_binding_s_own_fields_resolve_and_compare() {
     const __where = null;
     const __body = async (__vals: any[]) => {
       const [p] = __vals;
-      if (!(p.x <= p.y || p.y <= p.x)) { throw __bynkExpectFailure("tests/gen.test.bynk:18:14", 1066, 1090, "expect p.x <= p.y || p.y <= p.x"); }
+      if (!(p.x + 1 === p.x + 1)) { throw __bynkExpectFailure("tests/gen.test.bynk:13:14", 783, 801, "expect p.x + 1 == p.x + 1\n  expected: p.x + 1 == p.x + 1\n  actual:   " + __bynkShow((p.x + 1)) + " == " + __bynkShow((p.x + 1))); }
     };
-    return await __bynkRunProperty({ seed: __bynkMix(__bynkSeed, 0), cases: 100, gens: __gens, where: __where, body: __body, name: "record binding's own fields resolve and compare", location: "tests/gen.test.bynk", file: "tests/gen.test.bynk" });
+    return await __bynkRunProperty({ seed: __bynkMix(__bynkSeed, 0), cases: 100, gens: __gens, where: __where, body: __body, name: "record int field participates in arithmetic", location: "tests/gen.test.bynk", file: "tests/gen.test.bynk" });
 }
 
 export async function run(only?: string) {
   const results = [];
   const want = (n: string): boolean => only === undefined || only === n;
-  if (want("record binding's own fields resolve and compare")) results.push({ name: "record binding's own fields resolve and compare", ...(await __prop_test_record_binding_s_own_fields_resolve_and_compare()) });
+  if (want("record int field participates in arithmetic")) results.push({ name: "record int field participates in arithmetic", ...(await __prop_test_record_int_field_participates_in_arithmetic()) });
   return results;
 }
