@@ -69,6 +69,36 @@ fn as_expr(expr: TsExpr, ty: TsType) -> TsExpr {
 /// is the whole point of the increment.
 type Qual = std::collections::HashMap<String, String>;
 
+/// #1437 (Arc E slice 2): [`crate::emitter::ts_type_ref_qualified_multi_ts_type`]
+/// as a real `TsType`, over this file's own dotted-prefix [`Qual`] convention
+/// — a real, empirically-found convention mismatch, not assumed compatible
+/// from the two functions' identical `HashMap<String, String>` shapes alone.
+/// `Qual`'s own values already carry the trailing separator (`"shop_payment."`,
+/// this type's own doc), concatenated directly by [`qual_prefix`]; the
+/// existing renderer's own qualify closure (`emitter.rs`'s `ts_type_ref_to_ts_type`,
+/// `TypeRef::Named`'s arm) instead appends its OWN `.` (`format!("{ns}.{}",
+/// id.name)`), so passing `Qual` through unmodified doubles the separator
+/// (`shop_payment..PayError`) — caught by `coverage_behaviour.rs`'s real `tsc
+/// --strict` run (`TS1003: Identifier expected`), not by the byte-golden
+/// fixture corpus, which has no consumed-context boundary type reaching this
+/// exact generic-instantiation path. An absent/empty `Qual` entry (this
+/// type's own "named bare" case) maps to `None` here, not `Some("")` — the
+/// latter would render a stray leading `.` the same way a non-empty value's
+/// doubled separator does. `pub(crate)`, not private: `emitter/lower.rs`'s
+/// own `Json.decode[T]` test-scaffold arm is this file's one external
+/// caller, replacing its own direct call to the now-deleted
+/// `ts_type_ref_qualified`.
+pub(crate) fn qualified_ts_type(t: &TypeRef, qual: &Qual) -> bynk_ts::TsType {
+    let bare: Qual = qual
+        .iter()
+        .filter_map(|(k, v)| {
+            let ns = v.trim_end_matches('.');
+            (!ns.is_empty()).then(|| (k.clone(), ns.to_string()))
+        })
+        .collect();
+    crate::emitter::ts_type_ref_qualified_multi_ts_type(t, &bare)
+}
+
 /// The namespace prefix for a type name under `qual` (`""` when unqualified).
 fn qual_prefix(qual: &Qual, name: &str) -> String {
     qual.get(name).cloned().unwrap_or_default()
@@ -1587,7 +1617,7 @@ pub(crate) fn emit_generic_helpers_qualified(
                     qual_prefix(qual, name),
                     name,
                     args.iter()
-                        .map(|a| ts_inner_type(a, qual))
+                        .map(|a| bynk_ts::print_type(&qualified_ts_type(a, qual)))
                         .collect::<Vec<_>>()
                         .join(", ")
                 );
@@ -1629,7 +1659,7 @@ pub(crate) fn emit_generic_helpers_qualified(
                     "{}<{}>",
                     name,
                     args.iter()
-                        .map(|a| ts_inner_type(a, qual))
+                        .map(|a| bynk_ts::print_type(&qualified_ts_type(a, qual)))
                         .collect::<Vec<_>>()
                         .join(", ")
                 );
@@ -1666,8 +1696,8 @@ pub(crate) fn emit_generic_helpers_qualified(
             GenericInst::ResultInst { ok, err } => {
                 let ok_ts = inner_ts_name(ok);
                 let err_ts = inner_ts_name(err);
-                let ok_inner = ts_inner_type(ok, qual);
-                let err_inner = ts_inner_type(err, qual);
+                let ok_inner = bynk_ts::print_type(&qualified_ts_type(ok, qual));
+                let err_inner = bynk_ts::print_type(&qualified_ts_type(err, qual));
                 // #1435 (Arc E slice 1): boundary-print — `emit_generic_helpers`
                 // stays `write!`-based (out of this slice's scope).
                 let serialise_ok =
@@ -1726,7 +1756,7 @@ pub(crate) fn emit_generic_helpers_qualified(
             }
             GenericInst::OptionInst { inner } => {
                 let inner_ts = inner_ts_name(inner);
-                let inner_ty = ts_inner_type(inner, qual);
+                let inner_ty = bynk_ts::print_type(&qualified_ts_type(inner, qual));
                 // #1435 (Arc E slice 1): boundary-print, same treatment as
                 // `ResultInst` above.
                 let serialise_inner =
@@ -1771,7 +1801,7 @@ pub(crate) fn emit_generic_helpers_qualified(
             // v0.20b: `List[T]` — element-wise wire format (a JSON array).
             GenericInst::ListInst { elem } => {
                 let elem_ts = inner_ts_name(elem);
-                let elem_ty = ts_inner_type(elem, qual);
+                let elem_ty = bynk_ts::print_type(&qualified_ts_type(elem, qual));
                 // #1435 (Arc E slice 1): boundary-print, same treatment as above.
                 let serialise_elem = bynk_ts::print_expr(&serialise_field_expr(elem, "v", ru));
                 writeln!(
@@ -1817,8 +1847,8 @@ pub(crate) fn emit_generic_helpers_qualified(
             GenericInst::MapInst { key, val } => {
                 let key_ts = inner_ts_name(key);
                 let val_ts = inner_ts_name(val);
-                let key_ty = ts_inner_type(key, qual);
-                let val_ty = ts_inner_type(val, qual);
+                let key_ty = bynk_ts::print_type(&qualified_ts_type(key, qual));
+                let val_ty = bynk_ts::print_type(&qualified_ts_type(val, qual));
                 // #1435 (Arc E slice 1): boundary-print, same treatment as above.
                 let serialise_key = bynk_ts::print_expr(&serialise_field_expr(key, "k", ru));
                 let serialise_val = bynk_ts::print_expr(&serialise_field_expr(val, "v", ru));
@@ -1869,79 +1899,6 @@ pub(crate) fn emit_generic_helpers_qualified(
                 writeln!(out).unwrap();
             }
         }
-    }
-}
-
-/// #917: the qualified TS type renderer, exposed for the `Json.decode[T]`
-/// wrapper — a test-scaffold module has no local declaration of the target
-/// type, so its `Result<T, JsonError>` signature and `as T` cast must reach
-/// it through the same type-only namespace (`qual`) the module's own
-/// caller-generated codec helpers use. `qual` is empty on every other emission
-/// path, where this renders identically to a bare type.
-pub(crate) fn ts_type_ref_qualified(
-    t: &TypeRef,
-    qual: &std::collections::HashMap<String, String>,
-) -> String {
-    ts_inner_type(t, qual)
-}
-
-fn ts_inner_type(t: &TypeRef, qual: &Qual) -> String {
-    match t {
-        // v0.20a: function types are confined to non-boundary positions
-        // (`bynk.types.function_at_boundary`), so the serialisation machinery
-        // can never legally see one.
-        TypeRef::Fn(..)
-        | TypeRef::Query(..)
-        | TypeRef::Stream(..)
-        | TypeRef::Connection(..)
-        | TypeRef::History(..) => {
-            unreachable!("function/query/stream types are rejected at boundaries")
-        }
-        // v0.174 (#592): a generic-record instantiation erases to the generic
-        // interface applied to its concrete arguments (`Paginated<User>`).
-        // #661: a consumed generic record and its callee-owned arguments are
-        // namespace-qualified.
-        TypeRef::App { name, args, .. } => format!(
-            "{}{}<{}>",
-            qual_prefix(qual, &name.name),
-            name.name,
-            args.iter()
-                .map(|a| ts_inner_type(a, qual))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-        TypeRef::Base(b, _) => match b {
-            BaseType::Int => "number".to_string(),
-            BaseType::String => "string".to_string(),
-            BaseType::Bool => "boolean".to_string(),
-            BaseType::Float => "number".to_string(),
-            BaseType::Duration | BaseType::Instant => "number".to_string(),
-            // v0.110 (ADR 0142): `Bytes` erases to `Uint8Array`.
-            BaseType::Bytes => "Uint8Array".to_string(),
-        },
-        // #661: a callee-owned named type reaches through the type-only
-        // namespace; everything the caller already declares maps to `""`.
-        TypeRef::Named(id) => format!("{}{}", qual_prefix(qual, &id.name), id.name),
-        TypeRef::Result(a, b, _) => format!(
-            "Result<{}, {}>",
-            ts_inner_type(a, qual),
-            ts_inner_type(b, qual)
-        ),
-        TypeRef::Option(a, _) => format!("Option<{}>", ts_inner_type(a, qual)),
-        TypeRef::Effect(a, _) => format!("Promise<{}>", ts_inner_type(a, qual)),
-        TypeRef::HttpResult(a, _) => format!("HttpResult<{}>", ts_inner_type(a, qual)),
-        TypeRef::List(a, _) => format!("readonly {}[]", ts_inner_type(a, qual)),
-        TypeRef::Map(k, v, _) => {
-            format!(
-                "ReadonlyMap<{}, {}>",
-                ts_inner_type(k, qual),
-                ts_inner_type(v, qual)
-            )
-        }
-        TypeRef::QueueResult(_) => "QueueResult".to_string(),
-        TypeRef::ValidationError(_) => "ValidationError".to_string(),
-        TypeRef::JsonError(_) => "JsonError".to_string(),
-        TypeRef::Unit(_) => "void".to_string(),
     }
 }
 
