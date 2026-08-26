@@ -1,0 +1,8 @@
+commons demo.gen
+
+fn bump(n: Int) -> Int
+  requires small: n + 1 < 1000
+  ensures grew: result == n + 1
+{
+  n + 1
+}
