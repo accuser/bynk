@@ -1,11 +1,6 @@
----
-level: patch
-changelog: A `for all` property body (or `where` clause) that `match`es a sum value now binds a single named payload field to its own real name again, closing a case where it silently fell back to the generic `value` accessor and produced a `tsc TS2339` error (or, before recent adjacent changes, a silent `undefined` binding)
----
+# 0401 — `emit_test_property_function` never re-type-checked its own body/`where` clause, so a `match`'s discriminant type was unresolvable and payload-field binding fell back to a generic name
 
-## ADR: property-body-sum-match-field-name-typecheck-gap
-
-title: `emit_test_property_function` never re-type-checked its own body/`where` clause, so a `match`'s discriminant type was unresolvable and payload-field binding fell back to a generic name
+- **Status:** Accepted (v0.289.10)
 
 summary: `emit_test_case_function` and `emit_test_history_property_function` both re-type-check their own body before lowering it; `emit_test_property_function` didn't — fixed by adding the same pass, with the `for all` bindings' own resolved types threaded into scope
 
