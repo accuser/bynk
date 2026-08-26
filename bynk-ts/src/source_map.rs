@@ -109,6 +109,21 @@ impl SourceMapBuilder {
         self.checkpoints.push((byte_offset, 0, span));
     }
 
+    /// Shift every recorded checkpoint's generated-buffer offset forward by
+    /// `delta` bytes. For a sub-builder whose checkpoints were recorded
+    /// against a local buffer's *pre*-splice contents, call this right after
+    /// text is inserted before byte 0 of that buffer (e.g. `emit_service`'s
+    /// subscriber-filter/schema-gate prologue, #1363) so the checkpoints
+    /// stay correct against the buffer's new contents before `merge` reads
+    /// them — `merge` resolves each checkpoint's line via
+    /// [`line_of_offset`] against `sub_text` as handed to it, which has no
+    /// way to know a prologue was spliced in ahead of the recorded offsets.
+    pub fn shift_checkpoints(&mut self, delta: usize) {
+        for checkpoint in &mut self.checkpoints {
+            checkpoint.0 += delta;
+        }
+    }
+
     /// Merge a sub-builder's body checkpoints into this module builder,
     /// rebased to the spliced body's position and re-tagged to `source_id`
     /// (v0.70).
@@ -405,6 +420,52 @@ mod tests {
         assert_eq!(lines[0], Some((0, 0)));
         assert_eq!(lines[1], Some((1, 0)));
         assert_eq!(lines[2], Some((1, 1)));
+    }
+
+    #[test]
+    fn shift_checkpoints_keeps_a_prepended_prologue_from_shifting_body_lines() {
+        // Mirrors `emit_service`'s own sequence (#1363): a sub-builder records
+        // checkpoints against the body's pre-insert text, a one-line prologue
+        // is then prepended to the *body buffer itself* (not `sub`'s view of
+        // it), and `merge` is finally called with the post-insert buffer.
+        let body_src = "  let a = 1\n  let b = 2\n"; // the .bynk body
+        let off_a = body_src.find("let a").unwrap();
+        let off_b = body_src.find("let b").unwrap();
+
+        let mut sub = SourceMapBuilder::new();
+        let mut body_out = "const a = 1;\nconst b = 2;\n".to_string();
+        sub.record(0, Span::new(off_a, off_a + 5)); // body line 0 -> body src line 0
+        let bl1 = body_out.find("const b").unwrap();
+        sub.record(bl1, Span::new(off_b, off_b + 5)); // body line 1 -> body src line 1
+
+        // The prologue insert `emit_service` does, plus the rebase this fix adds.
+        let prologue = "if (!(guard)) return undefined;\n";
+        body_out.insert_str(0, prologue);
+        sub.shift_checkpoints(prologue.len());
+
+        let mut module = SourceMapBuilder::new();
+        let s0 = module.add_source("body.bynk", body_src);
+        let mut out = String::from("export const api = {\n"); // gen line 0
+        let base = out.len();
+        out.push_str(&body_out); // verbatim splice, as emit_service does
+        out.push_str("};\n");
+        module.merge(&sub, &body_out, &out, base, s0);
+
+        let json = module.to_v3(&out, "mod.ts").unwrap();
+        let lines = decode(&extract_mappings(&json));
+        // gen 1 is the prologue line (still tagged from the nearest-preceding
+        // checkpoint); gen 2 is `const a = 1;` -> src line 0; gen 3 is
+        // `const b = 2;` -> src line 1 — not shifted onto each other's lines.
+        assert_eq!(
+            lines[2],
+            Some((0, 0)),
+            "body's own first statement keeps its real source line"
+        );
+        assert_eq!(
+            lines[3],
+            Some((0, 1)),
+            "body's own second statement keeps its real source line"
+        );
     }
 
     #[test]

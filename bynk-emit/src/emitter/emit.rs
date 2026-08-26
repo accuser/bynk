@@ -2734,6 +2734,13 @@ pub(crate) fn emit_service(
                 " ".repeat(INDENT_STEP * 2)
             );
             body_out.insert_str(0, &prologue);
+            // #1363: `body_smb`'s checkpoints were recorded against
+            // `body_out`'s pre-insert contents — rebase them by the
+            // prologue's own byte length so `merge`'s line lookup (against
+            // the post-insert `body_out` handed to it below) still resolves
+            // each statement to its own real line rather than one line too
+            // early.
+            body_smb.borrow_mut().shift_checkpoints(prologue.len());
         }
         // Events track, slice 4 (spine #936): a `via schema(N)` guard,
         // independent of and in addition to the payload-pattern guard above
@@ -2752,6 +2759,11 @@ pub(crate) fn emit_service(
                 " ".repeat(INDENT_STEP * 2)
             );
             body_out.insert_str(0, &prologue);
+            // #1363: same rebase as the subscriber-filter prologue above —
+            // a handler with both prologues shifts `body_smb`'s checkpoints
+            // twice, once per insert, matching the two lines actually
+            // prepended to `body_out`.
+            body_smb.borrow_mut().shift_checkpoints(prologue.len());
         }
         // Append the deps parameter (may include surface field if the body
         // made cross-context calls). v0.47: a Bearer handler's deps also carries
