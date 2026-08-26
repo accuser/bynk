@@ -777,8 +777,8 @@ pub enum TsExpr {
 /// overwhelming majority after it): the arrow's body is one expression,
 /// printed with no surrounding braces. `Block` is `serialisation.rs`'s own
 /// `Float` non-finite guard, the first real statement-bodied arrow anywhere
-/// in this tree — printed as a real braced block, reusing
-/// [`crate::printer`]'s existing compact-statement-list renderer
+/// in this tree — printed as a real braced block, reusing this crate's
+/// own printer's existing compact-statement-list renderer
 /// (`render_compact_stmts`, the same one `TsStmtKind::InlineBlock` already
 /// shares with `render_branch`'s own same-line `if`/`else`) rather than a
 /// third copy of that "one physical line, semicolon-separated" logic. Every
