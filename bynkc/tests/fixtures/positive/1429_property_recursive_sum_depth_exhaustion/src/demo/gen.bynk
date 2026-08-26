@@ -1,0 +1,5 @@
+commons demo.gen
+
+type T =
+	| Base(n: Int)
+	| Cons(tail: T)
