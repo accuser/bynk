@@ -147,8 +147,13 @@ fn err_structural_mismatch(path_expr: &str, expected: &str, actual: TsExpr) -> T
 /// `emit_generic_helpers_qualified`) sit at exactly this depth: a
 /// generated function's own top-level statement list.
 fn splice_stmts(out: &mut String, stmts: Vec<TsStmt>) {
+    // Review of #1440: every other boundary-print site in `bynk-emit`
+    // spells this `push_str`, not `write!` — matches that convention (an
+    // infallible append needs no `.unwrap()`, and doesn't itself add a
+    // `write!`-family line to the very `ts_writes` probe this slice drives
+    // down).
     for stmt in &stmts {
-        write!(out, "{}", bynk_ts::print_stmt(stmt, 1)).unwrap();
+        out.push_str(&bynk_ts::print_stmt(stmt, 1));
     }
 }
 
@@ -1082,28 +1087,17 @@ fn emit_field_deserialise_wire(
         // `Option` / `List` / `Map` / a generic `App`): defer to its own
         // `deserialise_<key>`. Assumes it exists in scope (imported or
         // declared locally).
-        WireRef::Named { name: type_name } => vec![
+        // Review of #1440: `Named`/`Inst` differ only in which callee they
+        // name (`type_name`/`key`, both a bare `String` — `bynk-check/src/
+        // wire.rs`'s own `WireRef` fields) — collapsed via an or-pattern
+        // rather than kept as two ~identical arms, the same "one shape, one
+        // arm" discipline this tree's own exhaustiveness rules already
+        // enforce for the printer side.
+        WireRef::Named { name: type_name } | WireRef::Inst { key: type_name } => vec![
             const_(
                 format!("__r_{name}"),
                 call(
                     ident(format!("deserialise_{type_name}")),
-                    vec![ident(json), ident(path_expr)],
-                ),
-            ),
-            if_(
-                strict_eq(member(ident(format!("__r_{name}")), "tag"), str_lit("Err")),
-                return_(ident(format!("__r_{name}"))),
-            ),
-            const_(
-                format!("__{name}"),
-                member(ident(format!("__r_{name}")), "value"),
-            ),
-        ],
-        WireRef::Inst { key } => vec![
-            const_(
-                format!("__r_{name}"),
-                call(
-                    ident(format!("deserialise_{key}")),
                     vec![ident(json), ident(path_expr)],
                 ),
             ),
