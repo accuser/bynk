@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.289.7** | Arc E design pass — settles `emitter/serialisation.rs`'s conversion status (it converts, using the established Arc C pattern, unlike `emitter/lower.rs`'s permanent exclusion) and names an 8-slice decomposition order |
 | **v0.289.6** | A Sum-variant payload or Record field of type `Int` now coerces its drawn `bigint` value to `number`, closing a `tsc --strict` type mismatch at the real constructor/object-literal call site |
 | **v0.289.5** | A record-typed `for all` property binding's generator arrow now wraps its object-literal body in parens, closing an unparseable/silently-wrong generated-TypeScript gap |
 | **v0.289.4** | A service handler's subscriber-filter/schema-gate prologue no longer shifts its own body's source-map lines |

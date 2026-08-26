@@ -1,11 +1,6 @@
----
-level: patch
-changelog: Arc E design pass — settles `emitter/serialisation.rs`'s conversion status (it converts, using the established Arc C pattern, unlike `emitter/lower.rs`'s permanent exclusion) and names an 8-slice decomposition order
----
+# 0398 — `emitter/serialisation.rs` converts to real `bynk-ts` nodes using the Arc C pattern, decomposed into four bounded clusters plus two caller-side wrappers
 
-## ADR: arc-e-serialisation-rs-conversion-decomposition
-
-title: `emitter/serialisation.rs` converts to real `bynk-ts` nodes using the Arc C pattern, decomposed into four bounded clusters plus two caller-side wrappers
+- **Status:** Accepted (v0.289.7)
 
 summary: Unlike `emitter/lower.rs` (ADR 0391), `serialisation.rs` is bounded by a closed, small vocabulary — three `TypeBody` variants plus a fixed set of built-in generics — so it converts rather than joining `lower.rs` as a second permanent opaque exception
 
