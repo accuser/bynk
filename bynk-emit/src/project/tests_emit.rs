@@ -3721,7 +3721,23 @@ fn gen_ts_for_ty(
     tys: &Arc<Types>,
 ) -> TsExpr {
     if depth == 0 {
-        return canon_ts_for_ty(ty, types, 1, tys);
+        // #1429: a bare `1` here starved `canon_ts_for_ty`'s own recursion
+        // one level short of what `prop_binding_generable` (`bynk-check`)
+        // already promised was reachable. Both functions share the exact
+        // same recursion shape — `depth == 0` checked unconditionally at
+        // entry, one unit spent per `Sum`/`Record` step down into a
+        // field's own type, `Ty::Base` never itself gating on `depth` —
+        // so re-using `PROP_GEN_DEPTH`, the same budget the checker used
+        // to accept this binding as generable in the first place,
+        // guarantees `canon_ts_for_ty` bottoms out within it too: a
+        // self-recursive type like `T = Base(n: Int) | Cons(tail: T)`
+        // previously exhausted this fallback's own budget one field short
+        // of `Base`'s terminal `n: Int`, landing a bare `undefined` inside
+        // a real, `number`-typed constructor argument (`T.Base(undefined)`,
+        // `tsc TS2345`) once `gen_ts_for_ty`'s own generation depth ran out
+        // partway down a `Cons` chain — reproduced directly against `main`
+        // and confirmed closed by this change.
+        return canon_ts_for_ty(ty, types, test_suites::PROP_GEN_DEPTH, tys);
     }
     match &*tys.get(ty) {
         checker::Ty::Base(BaseType::Int) => {
