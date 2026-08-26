@@ -1,11 +1,6 @@
----
-level: patch
-changelog: Design pass — names the true floor for `ts_any` (a 7-file, 30-site distribution across four buckets, not the stale 2–3-site estimate) and `verbatim_sites` (an argued floor of at least 2, not 0 — three of the five sites are an unscoped signature capstone on `emit_project`/`emit_test_module`/`emit_integration_module`, not residue, with its own unnamed source-map prerequisite)
----
+# 0399 — The floor for `ts_any` and `verbatim_sites` is argued, not zero — a real signature capstone and a 7-file `ts_any` distribution, neither previously named
 
-## ADR: ts-any-verbatim-sites-floor-correction
-
-title: The floor for `ts_any` and `verbatim_sites` is argued, not zero — a real signature capstone and a 7-file `ts_any` distribution, neither previously named
+- **Status:** Accepted (v0.289.8)
 
 summary: `verbatim_sites` is structurally pinned above 0 by three orchestrator functions that still return `String` at their own top level regardless of internal conversion progress; `ts_any`'s 30 sites split across seven files (not six) into four buckets, only two of which close via existing work
 

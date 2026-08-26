@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0399](0399-ts-any-verbatim-sites-floor-correction.md) | **The floor for `ts_any` and `verbatim_sites` is argued, not zero — a real signature capstone and a 7-file `ts_any` distribution, neither previously named** (v0.289.8) — The floor for `ts_any` and `verbatim_sites` is argued, not zero — a real signature capstone and a 7-file `ts_any` distribution, neither previously named | Accepted (v0.289.8) |
 | [0398](0398-arc-e-serialisation-rs-conversion-decomposition.md) | **`emitter/serialisation.rs` converts to real `bynk-ts` nodes using the Arc C pattern, decomposed into four bounded clusters plus two caller-side wrappers** (v0.289.7) — `emitter/serialisation.rs` converts to real `bynk-ts` nodes using the Arc C pattern, decomposed into four bounded clusters plus two caller-side wrappers | Accepted (v0.289.7) |
 | [0397](0397-property-int-field-number-coercion.md) | **gen_ts_for_ty/canon_ts_for_ty coerce a bare-Int payload/field value to number** (v0.289.6) — A Sum/Record's own recursive Int position needs a Number(...) coercion the top-level binding's own Int position must not have | Accepted (v0.289.6) |
 | [0396](0396-property-record-generator-arrow-paren.md) | **gen_descriptor_entry parenthesises a record-typed binding's generator body** (v0.289.5) — An object-literal arrow body needs parens or TypeScript reads it as a block | Accepted (v0.289.5) |
