@@ -1348,8 +1348,8 @@ decomposition.**
 | **Arc C, slice 36 — the system-http driver cluster (`tests_emit.rs` slice F)** (#1407, landed) | The sixth of `tests_emit.rs`'s own 7 proposed slices per its dedicated grounding pass (post-#1392), following slice E/#1405; structurally self-contained, no dependency on any of A-E, confirmed by landing. Converts `emit_system_http_support` in `bynk-emit/src/project/tests_emit.rs`. **The 4 per-route drivers convert fully at the structural level** via a new shared helper, `sysdrive_driver(kind_prefix, sname, key, params, body_stmt, url, options, binding, decode_fn, payload)` — the one real shape all four `__sysdrive_{,raw_,noauth_,rawnoauth_}*` drivers share (async function decl, optional `const __body = JSON.stringify(...)` lead statement, `const __h = makeHarness();`, `const __req = new Request(<url>, <options>);`, `const __res = await __h.env.<binding>.fetch(__req);`, `return <decode>(__res, <payload>);`), replacing four near-identical hand-written `format!` blocks with one parameterised builder. **The wrong-method driver converts fully, no carve-out at all** — its own `new Request(\`https://test${path}\`, { method })` is this file's first real dynamic (non-baked) `TsExpr::TemplateLit` substitution and first real `TsObjectEntry::Shorthand` object literal, both byte-matching the existing text exactly (a single, never-conditionally-empty shorthand entry matches `TsExpr::Object`'s own tight single-line rendering). **Decision A: the per-route options object (`{ method, headers: {...}, body, }`) stays opaque hand-formatted text**, passed as a `TsExpr::Ident`-wrapped fragment argument to a real `TsExpr::New` call — every branch's own hand-written template bakes in an unconditional trailing `, ` before its closing brace and prints `{ }` (one space) rather than `TsExpr::Object`'s own tight `{}` when a sub-object has zero entries, a shape `TsExpr::Object`'s general single-line algebra cannot reproduce byte-for-byte, the same "odd, one-off shape stays text" call this track has made before (Decision B, #1327; Decision C, #1359). The secrets-bootstrap loop's own `format!` call converts fully too, to real `As`/`Member`/`Binary(NullishCoalescing)`/`Index`/`Assign` nodes. **The static signer preamble stays out of scope, honestly recorded**: built via a plain `push_str` literal with zero per-target dynamism, already excluded from the `ts_writes` probe (no `write!`/`writeln!`/`format!` on those lines) — converting it moves no metric and adds no real coverage. **Landed as one slice, not split by driver-kind**: this paragraph's own proposal-time caveat considered splitting by typed/raw/noauth/rawnoauth/wrongmethod, but once drafted the 4 per-route kinds shared one structural shape completely — every real difference became a plain parameter to `sysdrive_driver`, so a split would have meant reviewing the identical helper four times rather than once. **One real transcription bug, caught immediately by `positive_fixtures`, fixed before the CI pass**: the wrong-method driver's decode call was first built as `responseToHttpResult`, not the existing text's own `responseToHttpOutcome` (the router's `405` fall-through decodes to an `HttpOutcome`, not an `HttpResult`) — a one-line fixture diff named the exact mismatch. **A real, non-metric-driven simplification found while implementing**: the first draft's per-call-site `format!` for each driver's own name *increased* `ts_writes` by 1 despite eliminating four hand-formatted functions (each driver-kind's name interpolation became its own newly-countable line, previously merged into one big `format!` call); consolidated into `sysdrive_driver`'s own single internal `format!("__sysdrive_{kind_prefix}{sname}_{key}")`, turning the accidental increase into a genuine larger net decrease. No new `bynk_ts` algebra gap — every shape needed (`TsDecl::Function` `is_async`, `TsExpr::New`, `TsExpr::TemplateLit` both zero- and real-substitution, `TsExpr::Await`, `TsExpr::As`, `TsObjectEntry::Shorthand`, `TsExpr::Arrow` expression-bodied) already existed. `verbatim_sites` unchanged (5). `ts_writes` drops by **3** (1080 → 1077), verified via a fresh `cargo xtask greenfield-status --apply`. `ast_importers`/`ts_any` unaffected. Zero diff, confirmed after the one fix above: `positive_fixtures`/`bless_positive_fixtures`, `source_map`, and `tsc_verify`'s full strict-`tsc` corpus all pass unchanged; all `bynk-ts`/`bynk-emit` unit tests pass. | R7.1 | #1331, #1394, #1327, #1359 |
 | **Arc C, slice 37 — the two top-level module assemblers (`tests_emit.rs` slice G)** (#1409, landed) | The seventh and last of `tests_emit.rs`'s own 7 proposed slices per its dedicated grounding pass (post-#1392), following slice F/#1407 — closes Arc C entirely. Converts `emit_integration_module` and `emit_test_module` in `bynk-emit/src/project/tests_emit.rs`, the two top-level module assemblers; depended on slice B (`emit_ns_destructure`), confirmed by landing, in addition to calling nearly every other already-converted delegate. **Every header comment line, every `import` line, and each module's own `export async function run(only?: string) { ... }` runner convert fully, no carve-out at all.** The two functions' own per-case/per-property/per-attack loop bodies stay exactly as they are — each already delegates to an already-converted or intentionally-opaque (`lower.rs`-family, ADR 0391) builder returning pre-formatted text with its own source-map splice arithmetic (`module_smb.merge(...)`); only the bookend content around those splices is new real structure. **One real, grounded `bynk_ts` algebra gap found and closed**: `TsDecl::ImportDefault { alias, from }` — `emit_integration_module`'s own per-participant `import worker_{ns} from "../workers/{dir}/index.js";` (the participant's Worker entry module's default export) is the first real default import anywhere in `bynk-emit`'s own converted content; every prior import site is either named (`TsDecl::Import`) or namespace (`TsDecl::ImportNamespace`). Added with a direct printer unit test and folded into the existing "no blank line between adjacent imports" grouping rule. **A new shared pair of helpers, `run_dispatch_stmt`/`build_run_function`, factors the identical `run(only)` shape both functions build**: one `if (want("name")) results.push({ name: "...", ...(await runner()) });` dispatch line per case/property/attack (a real `TsObjectEntry::Spread` wrapping a real `TsExpr::Paren(await_expr(...))`, matching the existing text's own explicit parens around the spread), wrapped in one real `TsDecl::Function` — this function carries no opaque lowered content and no source-map splice sensitivity at all, so it converts fully rather than needing `emit_test_case_function`'s own header/tail split. No other new `bynk_ts` algebra gap. `verbatim_sites` unchanged (5). `ts_writes` drops by **5** (1077 → 1072), verified via a fresh `cargo xtask greenfield-status --apply`. `ast_importers`/`ts_any` unaffected. Zero diff, first attempt, no iteration: `positive_fixtures`/`bless_positive_fixtures`, `source_map`/`source_map_bodies`, and `tsc_verify`'s full strict-`tsc` corpus all pass unchanged; 141 `bynk-ts` unit tests (1 new, pinning `ImportDefault`) and all `bynk-emit` unit tests pass. **Closes Arc C entirely: all 37 slices landed.** | R7.1 | #1331, #1394, #1399, #1325 |
 
-**Arc D — settling (~8 slices; 7 of 8 sub-items landed as P7.10 (d4/d5/d8)/P7.11 (d6)/P7.12
-(d1)/P7.13 (d7)/P7.14 (d2), 1 remaining: d3)**
+**Arc D — settling (~8 slices; retired — all 8 sub-items landed as P7.10 (d4/d5/d8)/P7.11
+(d6)/P7.12 (d1)/P7.13 (d7)/P7.14 (d2)/P7.15 (d3))**
 
 Provisionally lettered, not numbered — Arc C's own slice count is an estimate (originally ~23-27,
 now ~30-33, revised by
@@ -1362,7 +1362,7 @@ convention every prior track on this trajectory used.
 |---|---|---|---|
 | **P7.12** (landed) | `bynk-ir`/`bynk-lower` carved as crates — see below | R10.3 | P7.5 |
 | **P7.14** (landed) | R8.2/R4.10 — see below | R8.2, R4.10 | Arc C substantially landed |
-| **P7.d3** | R8.14 — the JSON/boundary codec collector unified into one collector over `bynk-ts` tree nodes, revisiting P6.56's declined IR-based attempt now that a tree exists to collect over | R8.14 | P7.8 |
+| **P7.15** (landed) | R8.14 — see below | R8.14 | P7.8 |
 | **P7.10** (landed) | R8.4/d5/d8 settling sweep — see below | R8.4, R8.5,7,9,11–13,15,17–19,21,22 (verify) | Arc C landed |
 | **P7.11** (landed) | R10.4 surface enumeration — see below | R10.4 | Arc C landed |
 | **P7.13** (landed) | R10.2 verification — see below | R10.2 | P7.12 |
@@ -1577,6 +1577,55 @@ achieves the same real guarantee (no structural drift possible) without a broade
 restructuring the evidence didn't call for. Matches this track's own repeated "scope to what's real,
 not the rule's own maximal restated vision" judgment (`ast_importers` retiring at floor 5, R8.16
 splitting into a closed-now emission half and a deferred phase-8 data-model half).
+
+**P7.15 (landed) — R8.14: the JSON codec seed's own last raw-AST match reads a real, already-
+resolved `Callee` instead, closing P6.56's declined attempt for real this time — because the
+premise it was declined on changed underneath it, not because a tree exists to walk.**
+`collect_json_codec_roots` (`bynk-emit/src/emitter.rs`) matched `Json.encode`/`decode` call sites by
+a bare `id.name == JSON` receiver-name check, no semantic verification at all. Its own doc comment
+recorded why, citing P6.56: "`resolver.rs` resolves `Json.encode`/`decode` as a no-declaration-needed
+built-in static... `commons.callees` carries no entry for this call site at all. There is no
+IR-native value to read here." **That citation is no longer accurate** — `checker::calls`'s own
+JSON-static dispatch (`bynk-check/src/checker/calls.rs:2328-2341`) inserts
+`Callee::Intrinsic { ns: JSON, op }` for exactly this call shape, guarded by the same
+`ctx.lookup(JSON).is_none() && !ctx.input.types.contains_key(JSON)` check that rules out a local
+shadow — most likely added in a later slice than P6.56 itself (the numeric-parse/`Duration`/`Bytes`/
+`Stream` statics immediately alongside it in `calls.rs` show the same `Callee::Intrinsic` pattern
+already extended past P6.56's own scope). Reading it here closes R8.14's own "AST-shaped, not
+checker-resolved" framing *and* a real, if narrow, correctness gap the syntactic match carried: a
+local variable or type named `Json` shadowing the builtin would previously have been misread as a
+genuine codec call; `Callee::Intrinsic`'s presence is exactly the checker's own already-verified
+"this really is the builtin" answer, the same shadow-safety class of fix this track has made
+repeatedly for `Events`/`Int`/`Float`/others.
+
+**Scoping note.** R8.14's own text names two seeds (boundary + json) and asks for "one collector,
+parameterised by target" — already true for the *closure* half (`serialisation::
+collect_codec_closure` is the single shared transitive-closure function every root list feeds
+through, unchanged by this slice). Checked the boundary seed's own current collector (the
+consumed-cross-context-service roots, `emitter.rs` ~1418-1509): already reads typed
+`CrossContextService.params`/`return_type` and a resolved `TyId` (via `ty_to_type_ref`), not a raw
+AST walk in the problematic sense the json seed was — no comparable gap found there, so no change
+made. The Arc D table's own "unified into one collector over `bynk-ts` tree nodes" framing is not
+what actually closed this: no such reorganisation was needed or built; the real, evidenced defect
+was the one stale citation above, closed at its own true scope.
+
+**Review found the first cut's own fix was one-sided, and empirically proved a real bug in the
+scenario it named.** The seed collector was converted, but `lower_json_codec_call`
+(`bynk-emit/src/emitter/lower.rs`, the *emission* half deciding whether a call site references a
+codec helper) still matched `Json.encode`/`decode` by the same bare `id.name == JSON` check.
+Reasoning alone said this was worse than the pre-existing gap (a shadowed `Json` would collect no
+seed → no helper emitted → but the still-syntactic lowering emits a reference to one anyway) — a
+new fixture (`1422_json_codec_shadowed_by_local_binding`: a UFCS `Box.encode(self, note)` method,
+called through a same-named parameter `Json: Box` shadowing the builtin, arity matched to real
+`Json.encode`'s one argument so the old code's own `args.len() == 1` guard couldn't accidentally
+mask it) empirically confirmed the reasoning rather than resting on it: reverting only the
+`lower.rs` half against the fixed fixture produces `JSON.stringify(note as JsonValue)` for a call
+that should read `Box.encode(Json, note)` — a real, silent miscompilation, not a hypothetical one.
+Fixed by routing `lower_json_codec_call` through the identical `Callee::Intrinsic` read the seed
+collector now uses, so the two halves — "does a helper get emitted" and "does a call site reference
+one" — can no longer disagree. The fixture stays in the corpus as a permanent regression pin, the
+first direct test either half of this collector has ever had. **This is the last Arc D slice — the
+track closes at 8 of 8.**
 
 **P7.10 (landed) — the R8.4/d5/d8 settling sweep, a single verify-only pass, no code changes.**
 Re-audited against the tree as it stands after Arc C's full 37-slice landing (all citations below
