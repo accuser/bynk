@@ -1,11 +1,6 @@
----
-level: patch
-changelog: A service handler's subscriber-filter/schema-gate prologue no longer shifts its own body's source-map lines
----
+# 0395 — emit_service rebases body_smb's checkpoints when it prepends a prologue
 
-## ADR: emit-service-prologue-checkpoint-rebase
-title: emit_service rebases body_smb's checkpoints when it prepends a prologue
-summary: insert_str at offset 0 now shifts the sub-builder's own recorded checkpoints by the same byte count
+- **Status:** Accepted (v0.289.4)
 
 **Context.** `emit_service` lowers a service handler's body into a local
 `body_out` buffer, recording each statement's checkpoint into a sub-builder
