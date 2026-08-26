@@ -155,24 +155,24 @@ function makeTestDeps() {
   return {  };
 }
 
-async function __prop_test_record_binding_s_own_fields_resolve_and_compare() {
+async function __prop_test_zero_field_record_binding_generates() {
     const deps = {};
-    const { Point } = demo_gen;
-    type Point = demo_gen.Point;
+    const { Empty } = demo_gen;
+    type Empty = demo_gen.Empty;
     const __gens = [
-      { name: "p", boundaries: [{ x: 0n, y: 0n }], gen: (rng: any) => ({ x: rng.int(-1000n, 1000n), y: rng.int(-1000n, 1000n) }), shrink: (v: any) => [], show: (v: any) => __bynkShow(v) },
+      { name: "e", boundaries: [{  }], gen: (rng: any) => ({  }), shrink: (v: any) => [], show: (v: any) => __bynkShow(v) },
     ];
     const __where = null;
     const __body = async (__vals: any[]) => {
-      const [p] = __vals;
-      if (!(p.x <= p.y || p.y <= p.x)) { throw __bynkExpectFailure("tests/gen.test.bynk:18:14", 1066, 1090, "expect p.x <= p.y || p.y <= p.x"); }
+      const [e] = __vals;
+      if (!(true)) { throw __bynkExpectFailure("tests/gen.test.bynk:10:14", 545, 549, "expect true"); }
     };
-    return await __bynkRunProperty({ seed: __bynkMix(__bynkSeed, 0), cases: 100, gens: __gens, where: __where, body: __body, name: "record binding's own fields resolve and compare", location: "tests/gen.test.bynk", file: "tests/gen.test.bynk" });
+    return await __bynkRunProperty({ seed: __bynkMix(__bynkSeed, 0), cases: 100, gens: __gens, where: __where, body: __body, name: "zero-field record binding generates", location: "tests/gen.test.bynk", file: "tests/gen.test.bynk" });
 }
 
 export async function run(only?: string) {
   const results = [];
   const want = (n: string): boolean => only === undefined || only === n;
-  if (want("record binding's own fields resolve and compare")) results.push({ name: "record binding's own fields resolve and compare", ...(await __prop_test_record_binding_s_own_fields_resolve_and_compare()) });
+  if (want("zero-field record binding generates")) results.push({ name: "zero-field record binding generates", ...(await __prop_test_zero_field_record_binding_generates()) });
   return results;
 }

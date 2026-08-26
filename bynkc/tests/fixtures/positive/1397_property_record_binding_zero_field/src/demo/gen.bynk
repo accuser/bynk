@@ -1,0 +1,4 @@
+commons demo.gen
+
+type Empty = {
+}
