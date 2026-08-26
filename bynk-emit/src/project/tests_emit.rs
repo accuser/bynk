@@ -3608,27 +3608,70 @@ fn ty_draws_bigint(
     }
 }
 
+/// Coerce a top-level `for all`/attack-parameter binding's own drawn value to
+/// `number` (#1426) — like [`coerce_int_field`], but for the bind site rather
+/// than a nested Sum/Record field, which needs a genuinely different result
+/// shape for a *named* refined/opaque `Int`, not just the same `Number(…)`
+/// wrap. Review of #1432, finding 1: a bare `Int` really does compile to
+/// plain `number` everywhere, so `Number(value)` alone is correct and
+/// sufficient there. But a refined/opaque `Int` (`Percent`, etc.) compiles to
+/// a *branded* type (`number & { readonly __brand: "Percent" }`,
+/// `emit_refined_type`) — a plain `Number(value)` local's own inferred type
+/// is bare `number`, not the brand, so passing it to a real function
+/// expecting the named type is a genuine new `tsc --strict` `TS2345` error
+/// this fix would otherwise introduce (confirmed: reverting to a bare
+/// `Number(…)` wrap here reproduces it for a minimal `fn label(p: Percent)`
+/// repro, which compiled and ran fine pre-#1426 since the pre-fix local was
+/// `any`, not a concrete type). Closed the same way `refined_gen_ts` already
+/// keeps a branded draw compiling — wrap the coerced `Number(…)` in `(… as
+/// any)`, restoring the escape hatch a plain array-destructured `any[]`
+/// element always had for this shape, while still fixing the *runtime* value
+/// (`as any` is compile-time only; the `Number(…)` underneath still runs).
+/// Every other type's own value (including a bare `Int`) is unaffected —
+/// only a *named* refined/opaque `Int` binding gets the extra wrap.
+fn coerce_top_level_int_binding(
+    t: checker::TyId,
+    types: &HashMap<String, Arc<TypeDecl>>,
+    tys: &Arc<Types>,
+    value: TsExpr,
+) -> TsExpr {
+    let is_named_int = matches!(
+        &*tys.get(t),
+        checker::Ty::Named { .. } if ty_draws_bigint(t, types, tys)
+    );
+    let coerced = coerce_int_field(t, types, tys, value);
+    if is_named_int {
+        TsExpr::As {
+            expr: Box::new(coerced),
+            ty: TsType::named("any"),
+        }
+    } else {
+        coerced
+    }
+}
+
 /// Destructure `__vals` into its named locals, coercing each `Int`-drawing
 /// (bare, refined, or opaque) binding's own runtime value to `number` at the
-/// bind site (#1426). `binding_gen`'s own boundaries/shrink machinery for a
-/// top-level `for all`/attack-parameter `Int` binding is deliberately
-/// `bigint`-typed throughout — `coerce_int_field`'s own doc comment names
-/// this as correct, since the shrink loop's `current[i]`/`vals[i]` elements
-/// must keep matching what `gens[i].shrink(v)` expects — but the *local* a
-/// predicate/attacked-function body evaluates ordinary Bynk `Int` arithmetic
-/// against must not stay `bigint`, or `n + 1` throws `TypeError: Cannot mix
-/// BigInt and other types` the instant it meets a `number` literal.  Never
-/// previously hit: every existing fixture's predicate either avoided
-/// arithmetic on a drawn `Int` entirely, or routed through a refined type's
-/// own compile-time-only `as any` cast (`refined_gen_ts`), which suppresses
-/// the *static* `tsc` error, not the *runtime* one. Reuses
-/// `coerce_int_field`'s own "does this type draw bigint" check — the same
-/// representation gap #1398/#1428 already closed for record/sum-field
-/// values, just at the binding site itself rather than a nested field;
-/// `binding_types[i]` is `None` when the binding's own type didn't resolve
-/// (mirrors `gens`' own `unwrap_or`/`undefined`-sentinel fallback above —
-/// `__vals[i]` is `undefined` there regardless of what type it "should"
-/// have been, so it passes through unwrapped either way).
+/// bind site (#1426) via [`coerce_top_level_int_binding`]. `binding_gen`'s
+/// own boundaries/shrink machinery for a top-level `for all`/attack-parameter
+/// `Int` binding is deliberately `bigint`-typed throughout —
+/// `coerce_int_field`'s own doc comment names this as correct, since the
+/// shrink loop's `current[i]`/`vals[i]` elements must keep matching what
+/// `gens[i].shrink(v)` expects — but the *local* a predicate/attacked-function
+/// body evaluates ordinary Bynk `Int` arithmetic against must not stay
+/// `bigint`, or `n + 1` throws `TypeError: Cannot mix BigInt and other types`
+/// the instant it meets a `number` literal.  Never previously hit: every
+/// existing fixture's predicate either avoided arithmetic on a drawn `Int`
+/// entirely, or routed through a refined type's own compile-time-only `as
+/// any` cast (`refined_gen_ts`), which suppresses the *static* `tsc` error,
+/// not the *runtime* one. Reuses `coerce_int_field`'s own "does this type
+/// draw bigint" check — the same representation gap #1398/#1428 already
+/// closed for record/sum-field values, just at the binding site itself
+/// rather than a nested field; `binding_types[i]` is `None` when the
+/// binding's own type didn't resolve (mirrors `gens`' own
+/// `unwrap_or`/`undefined`-sentinel fallback above — `__vals[i]` is
+/// `undefined` there regardless of what type it "should" have been, so it
+/// passes through unwrapped either way).
 ///
 /// Falls back to the original plain `const [a, b, ...] = __vals;` array
 /// destructure when *no* binding actually needs coercion — a record/sum/
@@ -3659,7 +3702,7 @@ fn destructure_vals(
                 index: Box::new(num_lit(i.to_string())),
             };
             let value = match (ty, types) {
-                (Some(t), Some(types)) => coerce_int_field(*t, types, tys, raw),
+                (Some(t), Some(types)) => coerce_top_level_int_binding(*t, types, tys, raw),
                 _ => raw,
             };
             format!("const {name} = {};", bynk_ts::print_expr(&value))

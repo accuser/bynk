@@ -48,12 +48,29 @@ fn run(fixture: &str, out_dir: &str) -> String {
     s
 }
 
-fn assert_clean_pass(output: &str, fixture: &str) {
+/// `expect_cases` names every case the fixture's own `run` output must show
+/// as having actually executed. Review of #1432, finding 2: `"0 failed"` is
+/// a substring match that also matches `"0 passed, 0 failed."` — passes
+/// vacuously if nothing ran at all, which is exactly the failure mode for
+/// the contract-attack fixture specifically (attack runners are only
+/// emitted when `contracts` is on, `tests_emit.rs`'s own `emit_test_module`;
+/// `positive_fixtures`/`tsc_verify`'s plain `compile` never sets it, so the
+/// golden fixture pins nothing about `emit_contract_attack_function`'s own
+/// new `destructure` at all — this behavioural test is the *only* thing
+/// that does, and needs to positively confirm the attack case ran, not just
+/// that nothing failed).
+fn assert_clean_pass(output: &str, fixture: &str, expect_cases: &[&str]) {
     assert!(
         !output.contains("Cannot mix BigInt"),
         "fixture `{fixture}` regressed #1426 — bigint/number arithmetic \
          TypeError reappeared:\n{output}"
     );
+    for case in expect_cases {
+        assert!(
+            output.contains(case),
+            "fixture `{fixture}` never ran case `{case}`:\n{output}"
+        );
+    }
     assert!(
         output.contains("0 failed"),
         "fixture `{fixture}` reported a failure:\n{output}"
@@ -75,7 +92,11 @@ fn scalar_int_for_all_binding_participates_in_arithmetic_without_crashing() {
         return;
     }
     let output = run("1426_property_scalar_int_arithmetic", "prop-int-arith");
-    assert_clean_pass(&output, "1426_property_scalar_int_arithmetic");
+    assert_clean_pass(
+        &output,
+        "1426_property_scalar_int_arithmetic",
+        &["scalar int participates in arithmetic"],
+    );
 }
 
 #[test]
@@ -92,5 +113,9 @@ fn contract_attack_int_parameter_participates_in_requires_arithmetic_without_cra
         return;
     }
     let output = run("1426_contract_attack_int_arithmetic", "attack-int-arith");
-    assert_clean_pass(&output, "1426_contract_attack_int_arithmetic");
+    assert_clean_pass(
+        &output,
+        "1426_contract_attack_int_arithmetic",
+        &["bump adds one", "contract bump"],
+    );
 }

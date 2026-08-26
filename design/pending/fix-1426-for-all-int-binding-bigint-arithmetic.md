@@ -55,6 +55,37 @@ the call is already coerced at the bind site — so it's removed rather than
 left to double-wrap; `numeric_or_scalar_base` itself is kept (still used to
 gate contract attackability).
 
+Review of this PR (#1432) raised two findings, both addressed:
+
+1. **A real, genuine `tsc --strict` regression for a refined/opaque `Int`
+   binding.** A bare `Number(…)` local's own inferred type is plain `number`
+   — correct for a bare `Int` (which really does compile to `number`
+   everywhere), but wrong for a refined/opaque `Int` (`Percent`, etc.),
+   which compiles to a *branded* type (`number & { readonly __brand:
+   "Percent" }`, `emit_refined_type`). Passing the now-concretely-`number`
+   local to a real function expecting the named type is a new `TS2345`
+   error this fix would otherwise introduce — confirmed to reproduce for a
+   minimal `fn label(p: Percent) -> String` repro (compiled and ran fine
+   pre-#1426, since the pre-fix local was `any`, not a concrete type) and
+   confirmed closed by the fix below. Added `coerce_top_level_int_binding`:
+   for a *named* refined/opaque `Int` specifically, wraps the coerced
+   `Number(…)` in `(… as any)` — the same escape hatch `refined_gen_ts`
+   already uses for exactly this shape, restoring the compile-time
+   permissiveness a plain `any[]`-destructured element always had while
+   still fixing the *runtime* value (`as any` is compile-time only; the
+   `Number(…)` underneath still executes). `ts_any` rises 30 → 31 as a
+   direct, expected consequence — a new, real `as any` escape-hatch site,
+   the same class #1423's own floor-correction pass already argued is a
+   legitimate, permanent kind of residual, not a regression to chase to 0.
+2. **The behavioural test's own `"0 failed"` assertion was too weak** —
+   satisfied vacuously by `"0 passed, 0 failed."`, so it would still pass
+   if the contract-attack runner stopped being emitted entirely (its own
+   golden fixture pins nothing about this, since `positive_fixtures`/
+   `tsc_verify` compile without `contracts: true` at all). Strengthened to
+   also assert each fixture's own expected case name actually appears in
+   the run output, positively confirming the code path this fix touches
+   ran, not merely that nothing failed.
+
 **Consequences.** Two new fixtures pin the fix, each with a real predicate
 that does arithmetic (not just comparison) on the coerced binding:
 `1426_property_scalar_int_arithmetic` (the issue's own literal repro) and
