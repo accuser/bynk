@@ -1891,6 +1891,18 @@ the one spliced body, not the whole file. `tests_emit.rs`'s own doc comment (`em
 `emit_test_module`/`emit_integration_module` depend on the identical `lower.rs`-splice pattern as
 `emit_project`, not a separate concern.
 
+**A second, unnamed prerequisite: the source map.** All three functions return a source map
+alongside the string (`emit_project -> (String, Option<String>)`; the two test emitters' own
+`Option<String>` in their 4-tuple), built from byte offsets into the accumulating `String` —
+`smb.borrow_mut().record(out.len(), span)` (`emitter.rs:359/375/384/415/422/433/437`) and the
+equivalent `out.len()`-anchored `merge(...)` splice arithmetic (`emit.rs:970`, one of several).
+Every offset is meaningful only because emission *is* the printing. Returning `Vec<TsStmt>`/
+`TsProgram` and printing once at the boundary severs that: at node-construction time there is no
+`out.len()` to record against, so either `bynk-ts`'s printer carries span attribution through to
+the printed output (a `bynk-ts` change, not a `bynk-emit` one) or the map is rebuilt at the boundary
+from spans stored on the nodes — a real dependency on par with the two named above, and plausibly
+the one that decides whether the capstone is one slice or three.
+
 **Argued floor: not 0. Somewhere between 2 (the two permanent sites) and "however many real
 functions still call into `lower.rs`'s splice point once every non-`lower.rs` site converts" —
 genuinely unknown until the capstone slice is attempted**, the same honesty `ast_importers` (floor
@@ -1901,14 +1913,14 @@ a fixed 0.
 named a 2–3-site residual, deferred to R7.7's runtime-typing work, as the only open gap in
 "eliminated in full." That estimate predates every Arc C slice; a fresh, file-by-file read of the
 current 30 (re-verified directly against the gated probe's own predicate, `line_violates_ts_any`,
-not raw `grep` — one raw-grep candidate, `emit.rs:6665`'s `(globalThis as any).PWNED = true`, is a
+not raw `grep` — one raw-grep candidate, `emit.rs:6677`'s `(globalThis as any).PWNED = true`, is a
 `#[cfg(test)]` comment-injection regression fixture, correctly excluded by the probe's own
 `test_mod_ranges`) finds a materially different shape across **seven** files, not six:
 
 | File | Real sites | What they are |
 |---|---|---|
 | `emitter/serialisation.rs` | 2 | `emit_sum_codec`'s field extraction (`(value as any).{field}`, line 629) and `UncheckedReason::Effect => "as any"` (line 869) — **both close as a byproduct of Arc E's own future slices** (step 4, cluster 1's shape dispatch; step 1, cluster 2's expression builders), once landed, not yet today |
-| `emitter/lower.rs` | 6 | `joinOn`/`leftJoin`/`groupBy`/`dedupeBy`'s own generic collection kernels — `const __h: Record<string, any[]> = {}`, `const __out: any[] = []` (lines 2136, 2165, 3286, 3294, 3297, 3303). A text-generation fix, orthogonal to ADR 0391's "`lower.rs` stays opaque" tree-conversion decision — these are Rust `format!` string literals; nothing here needs a real `TsExpr` node, only a real element *type* substituted for the literal word `any`, which needs checking whether the lowering already has that type in scope at each site |
+| `emitter/lower.rs` | 6 | Two distinct sub-groups, not one: `joinOn`/`leftJoin`/`groupBy`/`dedupeBy`'s own generic collection kernels (`const __h: Record<string, any[]> = {}`, `const __out: any[] = []`, lines 3286, 3294, 3297, 3303) are a real "is the element type in scope" question; the other two (lines 2136, 2165) are already-argued P7.2-deferred sites with their own recorded reasons — a brand cast blocked on `workers.rs`'s `qualified_type_ref` not being reachable from this module, and an identity cast blocked on threading the addressed actor's own identity type from `bynk-check` — neither a collection-kernel element-type question, both closer in kind to `emitter.rs:4244` below |
 | `emitter.rs` | 1 | `unchecked_construct_test`'s `(value as any)` fallback (line 4244) for a refined/alias value whose real type isn't resolvable at that call site (only as an `any`-typed value binding) — P7.2-deferred, doc-commented in place; needs restructuring what the test scaffold imports, not a same-line text change |
 | `emitter/workers.rs` | 4 | One ambient third-party interface literal (`{ idFromName(name: string): { toString(): string }; get(id: any): any }`, line 866 — a Cloudflare Workers Durable Object *stub* type, not a Bynk-emitted domain type; arguably outside R7.1's own scope on the same footing as `adapter_bindings`'s foreign content) plus 3 `TsType::named("any")` payload/envelope casts (lines 1068, 1070, 1893) for cross-context dispatch |
 | `project.rs` | 2 | `ev.payload as any` (lines 3370, 3372) — the identical untyped-envelope-dispatch pattern as `workers.rs`'s 3, not a separate concern |
@@ -1921,29 +1933,35 @@ Arc E companion pass corrected in its own file:** `emitter.rs:4244` is a seventh
 file with 1 real site — folding it in and correcting `lower.rs`'s own count from a stale 7 to the
 directly-confirmed 6 leaves the total at 30 either way (the errors cancelled in the sum, not in the
 per-file breakdown), but a future slice proposal against `lower.rs`'s "collection kernels" bucket
-sized against 7 would silently miss `emitter.rs`'s own distinct site.
+sized against 7, or against all 6 of `lower.rs`'s own sites as one undifferentiated group, would
+silently misattribute real, already-argued residual sites as spike candidates (or vice versa) — see
+the bucket split below, which is what actually matters for scoping follow-on work, not the file-level
+count.
 
 **Four buckets, not one undifferentiated "R7.1 residual":**
 
 1. **Closes via Arc E's own future slices, no separate work** (2 — `serialisation.rs`). Not closed
    yet — Arc E (#1422) landed as a design pass only, no conversion code yet — named here so Arc E's
    eventual slice-1/slice-4 landing credits this correctly.
-2. **A real, small, independent text-generation slice** (6 — `lower.rs`'s collection kernels).
-   Needs its own spike first: does `lower_*_kernel`'s call site have the real element `TypeRef` in
-   scope to substitute for the literal `any`? If yes, a mechanical `format!` change, no tree
-   conversion, no dependency on ADR 0391's opacity decision. If no, this becomes phase 6/7-boundary
-   work (does the checker/IR carry enough type information at this lowering point?) and needs
-   naming as its own forward reference, not silently dropped.
-3. **A named, argued residual — the honest majority of the 30** (21 — `emitter.rs`'s 1,
-   `workers.rs`'s remaining 3 (excluding the DO-stub line, bucket 4), `project.rs`'s 2,
-   `tests_emit.rs`'s 11, `emit.rs`'s 4). These are dynamic-by-nature surfaces (cross-context
-   envelope dispatch, generated test-harness callbacks, property-test replay machinery, one
-   deferred test-scaffold narrowing) — plausibly real, permanent residuals the same way R7.7's
-   runtime error types are, but ADR-C never argued any of these individually; it argued a 2–3-site
-   number that turned out to describe a tenth of the real total. This pass does not itself argue
-   each one closed — it names the obligation: each of these 21 needs its own explicit "why this
-   stays `any`" argument, file by file, the same rigor `ast_importers`'s floor of 5 got, before R7.1
-   can honestly read "eliminated in full, [named] residual" instead of the current unexamined 30.
+2. **A real, small, independent text-generation slice** (4 — `lower.rs`'s own collection-kernel
+   sub-group only: lines 3286, 3294, 3297, 3303). Needs its own spike first: does `lower_*_kernel`'s
+   call site have the real element `TypeRef` in scope to substitute for the literal `any`? If yes, a
+   mechanical `format!` change, no tree conversion, no dependency on ADR 0391's opacity decision. If
+   no, this becomes phase 6/7-boundary work (does the checker/IR carry enough type information at
+   this lowering point?) and needs naming as its own forward reference, not silently dropped.
+3. **A named, argued residual — the honest majority of the 30** (23 — `emitter.rs`'s 1, `lower.rs`'s
+   other 2 (lines 2136/2165, already-argued P7.2-deferred sites, not collection-kernel candidates —
+   see the table above), `workers.rs`'s remaining 3 (excluding the DO-stub line, bucket 4),
+   `project.rs`'s 2, `tests_emit.rs`'s 11, `emit.rs`'s 4). These are dynamic-by-nature surfaces
+   (cross-context envelope dispatch, generated test-harness callbacks, property-test replay
+   machinery, several deferred narrowings each already carrying an in-place reason) — plausibly
+   real, permanent residuals the same way R7.7's runtime error types are, but ADR-C never argued any
+   of these individually; it argued a 2–3-site number that turned out to describe a tenth of the
+   real total. This pass does not itself argue each one closed — it names the obligation: each of
+   these 23 needs its own explicit "why this stays `any`" argument, file by file (several already
+   have one, in-place, as a code comment — the writeup's job is to collect and formalise those, not
+   originate all 23 from scratch), the same rigor `ast_importers`'s floor of 5 got, before R7.1 can
+   honestly read "eliminated in full, [named] residual" instead of the current unexamined 30.
 4. **The one ambient-type question** (`workers.rs:866`'s DO stub). Recommend resolving this first,
    cheaply: if review agrees a third-party ambient interface declaration is categorically outside
    R7.1's own "the tree contains no `TsType::Any`" (which governs *Bynk's* emitted types), name it
@@ -1953,21 +1971,24 @@ sized against 7 would silently miss `emitter.rs`'s own distinct site.
 **What this pass recommends, concretely.** Not a slice itself — it authorises the *shape* of two
 follow-on efforts, left open for review rather than pre-decided (the same posture #1331 took toward
 `emit_agent`'s own sub-decomposition): (a) a small `lower.rs`-collection-kernel spike/slice
-(bucket 2), gated on nothing; (b) a residual-argument writeup covering the 21 dynamic-surface sites
-(buckets 3/4), the `verbatim_sites`-floor argument for the three orchestrator signatures (Part 1),
-and — once Arc E lands — the retirement-note update crediting both. **The
+(bucket 2, 4 sites), gated on nothing; (b) a residual-argument writeup covering the 23
+dynamic-surface sites (buckets 3/4), the `verbatim_sites`-floor argument for the three orchestrator
+signatures (Part 1) — including its own source-map prerequisite, named above — and — once Arc E
+lands — the retirement-note update crediting both. **The
 `emit_project`/`emit_test_module`/`emit_integration_module` signature capstone (Part 1) should be
 scheduled after Arc E's steps 1–6 land, not before** — converting their own signatures before their
 callees return real nodes would just move today's flat-`String` accumulation one layer up, with no
 `verbatim_sites` benefit and real risk of the exact gaming failure mode §5 was written to catch.
 
-**Risks.** Bucket 3's 21 sites are asserted dynamic-by-nature here, not individually proven — each
-needs the same file:line-grounded argument this pass gave the `lower.rs`/DO-stub/`emitter.rs`
-findings, not a blanket "test harnesses are dynamic" wave-through; some fraction may turn out
-tractable with real generics once someone reads the call sites closely. The Part 1 capstone's real
-floor is unknown until attempted — a genuine chicken-and-egg the retirement review needs to accept
-rather than resolve here. This pass's own bucket counts will drift the moment Arc E's slices land
-(bucket 1 zeroes, `ts_any`'s total drops by 2) — re-check both tables against a fresh probe run
+**Risks.** Bucket 3's 23 sites are asserted dynamic-by-nature (or already-deferred-for-a-different-
+reason) here, not individually proven — each needs the same file:line-grounded argument this pass
+gave the `lower.rs`/DO-stub/`emitter.rs` findings, not a blanket "test harnesses are dynamic"
+wave-through; some fraction may turn out tractable with real generics once someone reads the call
+sites closely. The Part 1 capstone's real floor is unknown until attempted, and carries a second,
+independent unknown in its own source-map rebuild — a genuine chicken-and-egg the retirement review
+needs to accept rather than resolve here. This pass's own bucket counts will drift the moment Arc
+E's slices land (bucket 1 zeroes, `ts_any`'s total drops by 2) — re-check both tables against a
+fresh probe run
 before citing them in a follow-on proposal.
 
 ---
