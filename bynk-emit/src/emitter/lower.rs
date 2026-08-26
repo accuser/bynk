@@ -2485,18 +2485,36 @@ fn lower_method_call(
 /// JsonError and a BoundaryError to the uniform `kind`/`path`/`message`
 /// record (ADR 0047). Returns `None` when the receiver is not `Json` or the
 /// shape does not match, so the dispatcher falls through.
+///
+/// R8.14 (Arc D, P7.15 review): reads the same `Callee::Intrinsic { ns: JSON,
+/// .. }` this call's own root gets classified under in
+/// `collect_json_codec_roots` (`bynk-emit/src/emitter.rs`) — not the bare
+/// `id.name == JSON` receiver-name match this function used before. The two
+/// must agree on what a codec call *is*: `collect_json_codec_roots` decides
+/// whether a `serialise_T`/`deserialise_T` helper gets emitted at all, this
+/// function decides whether a call site references one. Read using the
+/// syntactic match alone, a `Json` shadowed by a local value/type would have
+/// disagreed with the (already `Callee`-based) seed collector — no helper
+/// emitted, but a reference to one generated anyway, a `tsc` "cannot find
+/// name" strictly worse than the syntactic match's own pre-existing
+/// wrong-but-well-formed output.
 fn lower_json_codec_call(
     e: &Expr,
-    receiver: &Expr,
+    // Unused now that the guard below reads the checker's own resolved
+    // `Callee::Intrinsic` instead of matching the receiver's own shape —
+    // kept in the signature for uniformity with this dispatcher's sibling
+    // `lower_*_call` functions, which all share this exact parameter list.
+    _receiver: &Expr,
     method: &Ident,
     args: &[Expr],
     cx: &mut LowerCtx,
 ) -> Option<Lowered> {
     let tys = cx.commons().tys();
     let mut pre = Pre::new();
-    if let ExprKind::Ident(id) = &receiver.kind
-        && id.name == JSON
-        && args.len() == 1
+    if matches!(
+        cx.commons().callees.get(&e.id),
+        Some(Callee::Intrinsic { ns, .. }) if *ns == JSON
+    ) && args.len() == 1
     {
         if method.name == "encode"
             && let Some(arg_ty) = cx

@@ -1,0 +1,15 @@
+commons demo {
+  type Box = { value: String }
+
+  fn Box.encode(self, note: String) -> String {
+    self.value.concat(note)
+  }
+
+  fn shadowed(Json: Box, note: String) -> String {
+    Json.encode(note)
+  }
+
+  fn genuine(o: Box) -> String {
+    Json.encode(o)
+  }
+}

@@ -1607,8 +1607,25 @@ consumed-cross-context-service roots, `emitter.rs` ~1418-1509): already reads ty
 AST walk in the problematic sense the json seed was — no comparable gap found there, so no change
 made. The Arc D table's own "unified into one collector over `bynk-ts` tree nodes" framing is not
 what actually closed this: no such reorganisation was needed or built; the real, evidenced defect
-was the one stale citation above, closed at its own true scope. **This is the last Arc D slice —
-the track closes at 8 of 8.**
+was the one stale citation above, closed at its own true scope.
+
+**Review found the first cut's own fix was one-sided, and empirically proved a real bug in the
+scenario it named.** The seed collector was converted, but `lower_json_codec_call`
+(`bynk-emit/src/emitter/lower.rs`, the *emission* half deciding whether a call site references a
+codec helper) still matched `Json.encode`/`decode` by the same bare `id.name == JSON` check.
+Reasoning alone said this was worse than the pre-existing gap (a shadowed `Json` would collect no
+seed → no helper emitted → but the still-syntactic lowering emits a reference to one anyway) — a
+new fixture (`1422_json_codec_shadowed_by_local_binding`: a UFCS `Box.encode(self, note)` method,
+called through a same-named parameter `Json: Box` shadowing the builtin, arity matched to real
+`Json.encode`'s one argument so the old code's own `args.len() == 1` guard couldn't accidentally
+mask it) empirically confirmed the reasoning rather than resting on it: reverting only the
+`lower.rs` half against the fixed fixture produces `JSON.stringify(note as JsonValue)` for a call
+that should read `Box.encode(Json, note)` — a real, silent miscompilation, not a hypothetical one.
+Fixed by routing `lower_json_codec_call` through the identical `Callee::Intrinsic` read the seed
+collector now uses, so the two halves — "does a helper get emitted" and "does a call site reference
+one" — can no longer disagree. The fixture stays in the corpus as a permanent regression pin, the
+first direct test either half of this collector has ever had. **This is the last Arc D slice — the
+track closes at 8 of 8.**
 
 **P7.10 (landed) — the R8.4/d5/d8 settling sweep, a single verify-only pass, no code changes.**
 Re-audited against the tree as it stands after Arc C's full 37-slice landing (all citations below
