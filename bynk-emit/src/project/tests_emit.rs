@@ -3535,6 +3535,28 @@ fn refined_gen_ts(
     ))
 }
 
+/// Coerce a Sum-variant-payload/Record-field value to `number` when its own
+/// resolved type is a bare `Int` (#1398). `gen_ts_for_ty`'s/`canon_ts_for_ty`'s
+/// own top-level `Base(Int)` arms draw/emit `bigint` — correct there, since a
+/// top-level `for all` binding's own boundaries/shrink machinery is
+/// bigint-typed throughout (the "P7.2: deferred, not narrowed" representation
+/// gap, #1426 tracks its own further consequences). But a Sum variant's real
+/// compiled constructor and a Record's real compiled object shape both type
+/// an `Int` field `number` (`ts_type_ref_to_ts_type`'s own mapping), so a
+/// bare-Int payload/field value recursed into from *inside* a Sum/Record arm
+/// needs this coercion the top-level arm itself must not have. A refined Int
+/// (`Percent`, etc.) already routes through `refined_gen_ts`'s/its
+/// `canon_ts_for_ty` sibling's own `unchecked_construct_test`-wrapped cast,
+/// so this is a no-op there, and a no-op for every other type's own
+/// already-number/string/bool/object-shaped recursive result.
+fn coerce_int_field(t: checker::TyId, tys: &Arc<Types>, value: TsExpr) -> TsExpr {
+    if matches!(&*tys.get(t), checker::Ty::Base(BaseType::Int)) {
+        call(ident("Number"), vec![value])
+    } else {
+        value
+    }
+}
+
 /// A TypeScript expression drawing a random inhabitant of a resolved type using
 /// the in-scope `rng` — the property generator (DECISION P: a type is its own
 /// inhabitant space). Sums pick a random variant; records generate every field.
@@ -3595,7 +3617,13 @@ fn gen_ts_for_ty(
                                     .iter()
                                     .map(|f| {
                                         checker::resolve_type_ref(&f.type_ref, types, tys)
-                                            .map(|t| gen_ts_for_ty(t, types, depth - 1, tys))
+                                            .map(|t| {
+                                                coerce_int_field(
+                                                    t,
+                                                    tys,
+                                                    gen_ts_for_ty(t, types, depth - 1, tys),
+                                                )
+                                            })
                                             .unwrap_or_else(|| ident("undefined"))
                                     })
                                     .collect();
@@ -3622,7 +3650,13 @@ fn gen_ts_for_ty(
                         .iter()
                         .map(|f| {
                             let g = checker::resolve_type_ref(&f.type_ref, types, tys)
-                                .map(|t| gen_ts_for_ty(t, types, depth - 1, tys))
+                                .map(|t| {
+                                    coerce_int_field(
+                                        t,
+                                        tys,
+                                        gen_ts_for_ty(t, types, depth - 1, tys),
+                                    )
+                                })
                                 .unwrap_or_else(|| ident("undefined"));
                             (f.name.name.clone(), g)
                         })
@@ -3708,7 +3742,13 @@ fn canon_ts_for_ty(
                             .iter()
                             .map(|f| {
                                 checker::resolve_type_ref(&f.type_ref, types, tys)
-                                    .map(|t| canon_ts_for_ty(t, types, depth - 1, tys))
+                                    .map(|t| {
+                                        coerce_int_field(
+                                            t,
+                                            tys,
+                                            canon_ts_for_ty(t, types, depth - 1, tys),
+                                        )
+                                    })
                                     .unwrap_or_else(|| ident("undefined"))
                             })
                             .collect();
@@ -3721,7 +3761,13 @@ fn canon_ts_for_ty(
                         .iter()
                         .map(|f| {
                             let g = checker::resolve_type_ref(&f.type_ref, types, tys)
-                                .map(|t| canon_ts_for_ty(t, types, depth - 1, tys))
+                                .map(|t| {
+                                    coerce_int_field(
+                                        t,
+                                        tys,
+                                        canon_ts_for_ty(t, types, depth - 1, tys),
+                                    )
+                                })
                                 .unwrap_or_else(|| ident("undefined"));
                             (f.name.name.clone(), g)
                         })
