@@ -114,10 +114,10 @@ impl SourceMapBuilder {
     /// against a local buffer's *pre*-splice contents, call this right after
     /// text is inserted before byte 0 of that buffer (e.g. `emit_service`'s
     /// subscriber-filter/schema-gate prologue, #1363) so the checkpoints
-    /// stay correct against the buffer's new contents before `merge` reads
-    /// them — `merge` resolves each checkpoint's line via
-    /// [`line_of_offset`] against `sub_text` as handed to it, which has no
-    /// way to know a prologue was spliced in ahead of the recorded offsets.
+    /// stay correct against the buffer's new contents before [`merge`](Self::merge) reads
+    /// them — `merge` resolves each checkpoint's line against `sub_text` as
+    /// handed to it, which has no way to know a prologue was spliced in
+    /// ahead of the recorded offsets.
     pub fn shift_checkpoints(&mut self, delta: usize) {
         for checkpoint in &mut self.checkpoints {
             checkpoint.0 += delta;
