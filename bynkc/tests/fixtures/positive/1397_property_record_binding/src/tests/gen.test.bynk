@@ -1,0 +1,12 @@
+suite demo.gen {
+  -- #1397: pins a record-typed `for all` binding's own generator arrow body.
+  -- An unparenthesised object literal directly after `=>` parses as a block
+  -- (`x:` reads as a statement label) — a syntax error for this two-field
+  -- record, and silent `undefined` for a hypothetical single-field one. No
+  -- prior fixture exercised a record-typed binding.
+  property "generated record binding satisfies its own trivial shape" {
+    for all p: Point {
+      expect true
+    }
+  }
+}

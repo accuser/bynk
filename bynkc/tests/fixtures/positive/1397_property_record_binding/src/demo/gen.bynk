@@ -1,0 +1,6 @@
+commons demo.gen
+
+type Point = {
+	x: Int,
+	y: Int,
+}
