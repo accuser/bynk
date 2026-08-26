@@ -3723,21 +3723,46 @@ fn gen_ts_for_ty(
     if depth == 0 {
         // #1429: a bare `1` here starved `canon_ts_for_ty`'s own recursion
         // one level short of what `prop_binding_generable` (`bynk-check`)
-        // already promised was reachable. Both functions share the exact
-        // same recursion shape — `depth == 0` checked unconditionally at
-        // entry, one unit spent per `Sum`/`Record` step down into a
-        // field's own type, `Ty::Base` never itself gating on `depth` —
-        // so re-using `PROP_GEN_DEPTH`, the same budget the checker used
-        // to accept this binding as generable in the first place,
-        // guarantees `canon_ts_for_ty` bottoms out within it too: a
-        // self-recursive type like `T = Base(n: Int) | Cons(tail: T)`
-        // previously exhausted this fallback's own budget one field short
-        // of `Base`'s terminal `n: Int`, landing a bare `undefined` inside
-        // a real, `number`-typed constructor argument (`T.Base(undefined)`,
-        // `tsc TS2345`) once `gen_ts_for_ty`'s own generation depth ran out
-        // partway down a `Cons` chain — reproduced directly against `main`
-        // and confirmed closed by this change.
-        return canon_ts_for_ty(ty, types, test_suites::PROP_GEN_DEPTH, tys);
+        // already promised was reachable *for the top-level bound type*.
+        // Both functions share the same recursion shape — `depth == 0`
+        // checked unconditionally at entry, one unit spent per `Sum`/
+        // `Record` step down into a field's own type, `Ty::Base` never
+        // itself gating on `depth` — so a type `prop_binding_generable`
+        // accepts within `PROP_GEN_DEPTH` is guaranteed to bottom out in
+        // `canon_ts_for_ty` within that same budget: a self-recursive type
+        // like `T = Base(n: Int) | Cons(tail: T)` previously exhausted
+        // this fallback's own budget one field short of `Base`'s terminal
+        // `n: Int`, landing a bare `undefined` inside a real, `number`-
+        // typed constructor argument (`T.Base(undefined)`, `tsc TS2345`).
+        //
+        // Review of #1434, finding 1: `prop_binding_generable` only ever
+        // descends a `Sum`'s *first* variant, but this function's own Sum
+        // branch (below) builds a thunk for *every* variant — so `ty` here
+        // can be a type the checker never validated at all (reached only
+        // through a non-first variant, e.g. `Nope(b: Bad)` on
+        // `T = Plain(n: Int) | Nope(b: Bad)`, where `Bad = Node(l: Bad, r:
+        // Bad) | Leaf(n: Int)` is itself first-variant-unterminating). For
+        // such a type hand it the full `PROP_GEN_DEPTH` budget regardless,
+        // and `canon_ts_for_ty`'s own "always expand the first variant"
+        // strategy walks a full branching tree before ever reaching the
+        // `Leaf` escape — confirmed to reproduce a real multi-second,
+        // 170MB+ emit for exactly this shape (a plausible emit-time
+        // hang/OOM, not merely an invalid file) once this fallback started
+        // handing out 12 levels of budget instead of 1.
+        //
+        // So: only spend the full budget when the checker actually
+        // promised `ty` itself bottoms out within it: that's exactly what
+        // `prop_binding_generable` decides, and — same "first variant
+        // only, `.all` short-circuits on the first failing field" shape as
+        // `canon_ts_for_ty` — costs at most `PROP_GEN_DEPTH` recursive
+        // calls to answer, not a tree walk. Any other type falls back to
+        // the original, deliberately conservative `1` — the same "produces
+        // a small invalid file fast" behaviour this fallback always had
+        // for a type the checker never vouched for, not a regression.
+        if test_suites::prop_binding_generable(ty, types, test_suites::PROP_GEN_DEPTH, tys) {
+            return canon_ts_for_ty(ty, types, test_suites::PROP_GEN_DEPTH, tys);
+        }
+        return canon_ts_for_ty(ty, types, 1, tys);
     }
     match &*tys.get(ty) {
         checker::Ty::Base(BaseType::Int) => {
@@ -5801,6 +5826,149 @@ mod tests {
 
         let coerced = coerce_int_field(string_ty, &types, &tys, draw);
         assert_eq!(bynk_ts::print_expr(&coerced), "rng.str(0, 8)");
+    }
+
+    // -- gen_ts_for_ty's depth-exhaustion fallback (#1429, review of #1434) --
+
+    fn sum_decl(name: &str, variants: Vec<(&str, Vec<(&str, TypeRef)>)>) -> TypeDecl {
+        TypeDecl {
+            name: Ident {
+                name: name.to_string(),
+                span: Span::default(),
+            },
+            type_params: Vec::new(),
+            body: TypeBody::Sum(bynk_syntax::ast::SumBody {
+                variants: variants
+                    .into_iter()
+                    .map(|(vname, fields)| bynk_syntax::ast::Variant {
+                        name: Ident {
+                            name: vname.to_string(),
+                            span: Span::default(),
+                        },
+                        payload: fields
+                            .into_iter()
+                            .map(|(fname, type_ref)| bynk_syntax::ast::VariantField {
+                                name: Ident {
+                                    name: fname.to_string(),
+                                    span: Span::default(),
+                                },
+                                type_ref,
+                                span: Span::default(),
+                            })
+                            .collect(),
+                        span: Span::default(),
+                    })
+                    .collect(),
+                embeds: Vec::new(),
+                span: Span::default(),
+            }),
+            documentation: None,
+            span: Span::default(),
+            trivia: Trivia::default(),
+        }
+    }
+
+    #[test]
+    fn gen_ts_for_ty_bottoms_out_a_first_variant_recursive_sum_the_checker_validated() {
+        // #1429's own repro: `T = Base(n: Int) | Cons(tail: T)`. The checker
+        // accepts `T` as a `for all` binding (`prop_binding_generable` only
+        // needs the first variant, `Base`, to be generable) — the fallback
+        // must be able to actually build a `Base(n: Int)` once generation
+        // depth is exhausted deep inside a `Cons` chain, not `undefined`.
+        let tys = Arc::new(Types::new());
+        let mut types: HashMap<String, Arc<TypeDecl>> = HashMap::new();
+        types.insert(
+            "T".to_string(),
+            Arc::new(sum_decl(
+                "T",
+                vec![
+                    ("Base", vec![("n", base(BaseType::Int))]),
+                    ("Cons", vec![("tail", named("T"))]),
+                ],
+            )),
+        );
+        let t_ty = tys.intern(checker::Ty::Named {
+            name: "T".to_string(),
+            kind: checker::NamedKind::Sum,
+            args: Vec::new(),
+        });
+
+        // depth: 0 forces the fallback immediately, the same state
+        // `gen_ts_for_ty`'s own recursion reaches once its budget runs out.
+        let generated = gen_ts_for_ty(t_ty, &types, 0, &tys);
+        let printed = bynk_ts::print_expr(&generated);
+        assert!(
+            !printed.contains("undefined"),
+            "a checker-validated recursive sum must not fall back to `undefined`, got: {printed}"
+        );
+        assert!(
+            printed.contains("T.Base("),
+            "expected the fallback to build T's own first (validated) variant, got: {printed}"
+        );
+    }
+
+    #[test]
+    fn gen_ts_for_ty_stays_bounded_for_a_branching_variant_the_checker_never_validated() {
+        // Review of #1434, finding 1: `prop_binding_generable` only ever
+        // descends a sum's *first* variant, but `gen_ts_for_ty`'s own Sum
+        // branch builds a thunk for *every* variant — so a non-first
+        // variant's field type can reach the depth-0 fallback fully
+        // unvalidated. `Bad`'s own first variant (`Node`) is branching and
+        // never bottoms out on its own; handing the fallback the full
+        // `PROP_GEN_DEPTH` budget for `Bad` (not just `T`, the type the
+        // checker actually validated) would walk a full binary tree before
+        // ever reaching `Leaf`'s escape — confirmed to reproduce a real
+        // ~176MB, 50+ second emit for this exact shape before the guard
+        // below. The fallback must recognise `Bad` itself was never
+        // validated and fall back to the original, small budget for it.
+        let tys = Arc::new(Types::new());
+        let mut types: HashMap<String, Arc<TypeDecl>> = HashMap::new();
+        types.insert(
+            "Bad".to_string(),
+            Arc::new(sum_decl(
+                "Bad",
+                vec![
+                    ("Node", vec![("l", named("Bad")), ("r", named("Bad"))]),
+                    ("Leaf", vec![("n", base(BaseType::Int))]),
+                ],
+            )),
+        );
+        types.insert(
+            "T".to_string(),
+            Arc::new(sum_decl(
+                "T",
+                vec![
+                    ("Plain", vec![("n", base(BaseType::Int))]),
+                    ("Nope", vec![("b", named("Bad"))]),
+                ],
+            )),
+        );
+        let t_ty = tys.intern(checker::Ty::Named {
+            name: "T".to_string(),
+            kind: checker::NamedKind::Sum,
+            args: Vec::new(),
+        });
+
+        // depth: 1 reaches `Nope`'s own `b: Bad` field at depth 0 — `T`
+        // itself is still checker-validated (via `Plain`), so this isn't
+        // testing the depth-0-at-the-top-level case above, only what
+        // happens once the *nested*, unvalidated `Bad` field is reached.
+        let generated = gen_ts_for_ty(t_ty, &types, 1, &tys);
+        let printed = bynk_ts::print_expr(&generated);
+        // A full `PROP_GEN_DEPTH`-deep expansion of `Bad`'s own branching
+        // first variant is tens of thousands of characters at minimum
+        // (confirmed empirically: ~200KB unguarded vs. ~200 bytes guarded,
+        // for the equivalent whole-fixture emit); a generous bound well
+        // below that catches a regression without pinning an exact byte
+        // count against unrelated formatting changes.
+        assert!(
+            printed.len() < 2_000,
+            "expected a bounded fallback for Bad's own unvalidated branching \
+             variant, got {} chars (a regression here likely means the depth-0 \
+             fallback stopped checking prop_binding_generable before spending \
+             the full PROP_GEN_DEPTH budget): {printed}",
+            printed.len()
+        );
     }
 
     // -- the unified emitter type-ref renderers -------------------------------
