@@ -1,11 +1,6 @@
----
-level: patch
-changelog: The JSON codec seed collector (R8.14) reads a resolved `Callee::Intrinsic`, not a bare receiver-name match — closing Arc D, the final settling slice
----
+# 0394 — The JSON codec seed reads Callee::Intrinsic, revisiting P6.56's declined attempt for real
 
-## ADR: p7d3-json-codec-seed-callee
-title: The JSON codec seed reads Callee::Intrinsic, revisiting P6.56's declined attempt for real
-summary: P6.56's own stated blocker no longer holds, closing R8.14's evidenced gap and a narrow shadow-safety correctness gap
+- **Status:** Accepted (v0.289.3)
 
 **Context.** `collect_json_codec_roots` (`bynk-emit/src/emitter.rs`) matched `Json.encode`/`decode`
 call sites by a bare `id.name == JSON` receiver-name check, with no semantic verification. Its own

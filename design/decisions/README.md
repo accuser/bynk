@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0394](0394-p7d3-json-codec-seed-callee.md) | **The JSON codec seed reads Callee::Intrinsic, revisiting P6.56's declined attempt for real** (v0.289.3) — P6.56's own stated blocker no longer holds, closing R8.14's evidenced gap and a narrow shadow-safety correctness gap | Accepted (v0.289.3) |
 | [0393](0393-p7d2-brand-predicate-unification.md) | **bynk-check and bynk-emit read one shared `is_uses_commons_type`, not two independently maintained copies** (v0.289.2) — Closes R4.10/R8.2's predicate mirror, scoped to the evidenced defect rather than the rule's own maximal prose | Accepted (v0.289.2) |
 | [0392](0392-p7d1-ir-lower-crate-carve.md) | **The IR crate split deferred by ADR 0332 lands at Arc D's P7.d1, carrying its content unchanged** (v0.289.1) — bynk-ir and bynk-lower are carved out of bynk-emit with no code deleted, once test callers were counted alongside production ones | Accepted (v0.289.1) |
 | [0391](0391-arc-c-lower-rs-permanent-exclusion.md) | **`emitter/lower.rs` is a deliberate, permanent exclusion from Arc C's own scope, not a future conversion target** (v0.259.1) — `emitter/lower.rs` is a deliberate, permanent exclusion from Arc C's own scope, not a future conversion target | Accepted (v0.259.1) |
