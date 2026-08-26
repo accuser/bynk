@@ -89,6 +89,28 @@ type Qual = std::collections::HashMap<String, String>;
 /// caller, replacing its own direct call to the now-deleted
 /// `ts_type_ref_qualified`.
 pub(crate) fn qualified_ts_type(t: &TypeRef, qual: &Qual) -> bynk_ts::TsType {
+    // Review of #1438: the deleted `ts_inner_type` carried an explicit
+    // `unreachable!()` for these five variants (`bynk.types.
+    // function_at_boundary` rejects them before the serialisation machinery
+    // ever sees one); `ts_type_ref_qualified_multi_ts_type` has no such arm
+    // (it also serves non-boundary positions, where all five are legal), so
+    // folding into it silently turned a loud panic into a plausible-looking
+    // annotation next to a `serialise_*`/`deserialise_*` helper that cannot
+    // codec it. Unreachable today, made loud rather than silently relied on
+    // — the same precedent this crate's own unreachable-invariant
+    // `debug_assert!`s already set (e.g. the empty-args `TypeRef::App` one
+    // in `emitter.rs`).
+    debug_assert!(
+        !matches!(
+            t,
+            TypeRef::Fn(..)
+                | TypeRef::Query(..)
+                | TypeRef::Stream(..)
+                | TypeRef::Connection(..)
+                | TypeRef::History(..)
+        ),
+        "function/query/stream types are rejected at boundaries"
+    );
     let bare: Qual = qual
         .iter()
         .filter_map(|(k, v)| {
@@ -97,6 +119,58 @@ pub(crate) fn qualified_ts_type(t: &TypeRef, qual: &Qual) -> bynk_ts::TsType {
         })
         .collect();
     crate::emitter::ts_type_ref_qualified_multi_ts_type(t, &bare)
+}
+
+#[cfg(test)]
+mod qualified_ts_type_tests {
+    use super::*;
+    use bynk_syntax::ast::Ident;
+    use bynk_syntax::span::Span;
+
+    fn named(name: &str) -> TypeRef {
+        TypeRef::Named(Ident {
+            name: name.to_string(),
+            span: Span::new(0, 0),
+        })
+    }
+
+    /// Review of #1438, finding 2: the exact regression this slice
+    /// introduced and fixed (`shop_payment..PayError`, a doubled
+    /// separator) — pinned directly, not left to depend on a real `tsc`
+    /// run in `bynkc/tests/coverage_behaviour.rs`.
+    #[test]
+    fn dotted_qual_entry_renders_a_single_separator() {
+        let qual: Qual = [("PayError".to_string(), "shop_payment.".to_string())]
+            .into_iter()
+            .collect();
+        assert_eq!(
+            bynk_ts::print_type(&qualified_ts_type(&named("PayError"), &qual)),
+            "shop_payment.PayError"
+        );
+    }
+
+    #[test]
+    fn absent_qual_entry_renders_bare() {
+        let qual: Qual = Qual::new();
+        assert_eq!(
+            bynk_ts::print_type(&qualified_ts_type(&named("PayError"), &qual)),
+            "PayError"
+        );
+    }
+
+    /// An empty-string entry is `Qual`'s own "named bare" convention (this
+    /// type's own doc) — must map to `None`, not `Some("")`, or it renders
+    /// a stray leading `.`.
+    #[test]
+    fn empty_qual_entry_renders_bare_not_a_stray_dot() {
+        let qual: Qual = [("PayError".to_string(), String::new())]
+            .into_iter()
+            .collect();
+        assert_eq!(
+            bynk_ts::print_type(&qualified_ts_type(&named("PayError"), &qual)),
+            "PayError"
+        );
+    }
 }
 
 /// The namespace prefix for a type name under `qual` (`""` when unqualified).
