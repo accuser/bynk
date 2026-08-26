@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.289.5** | A record-typed `for all` property binding's generator arrow now wraps its object-literal body in parens, closing an unparseable/silently-wrong generated-TypeScript gap |
 | **v0.289.4** | A service handler's subscriber-filter/schema-gate prologue no longer shifts its own body's source-map lines |
 | **v0.289.3** | The JSON codec seed collector (R8.14) reads a resolved `Callee::Intrinsic`, not a bare receiver-name match — closing Arc D, the final settling slice |
 | **v0.289.2** | The context-brand rebranding predicate (R4.10/R8.2) is one shared function, not two independently mirrored copies |

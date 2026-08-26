@@ -1,11 +1,6 @@
----
-level: patch
-changelog: A record-typed `for all` property binding's generator arrow now wraps its object-literal body in parens, closing an unparseable/silently-wrong generated-TypeScript gap
----
+# 0396 — gen_descriptor_entry parenthesises a record-typed binding's generator body
 
-## ADR: property-record-generator-arrow-paren
-title: gen_descriptor_entry parenthesises a record-typed binding's generator body
-summary: An object-literal arrow body needs parens or TypeScript reads it as a block
+- **Status:** Accepted (v0.289.5)
 
 **Context.** `gen_descriptor_entry` (`bynk-emit/src/project/tests_emit.rs`)
 builds each `for all` binding's generator-descriptor object, including a

@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0396](0396-property-record-generator-arrow-paren.md) | **gen_descriptor_entry parenthesises a record-typed binding's generator body** (v0.289.5) — An object-literal arrow body needs parens or TypeScript reads it as a block | Accepted (v0.289.5) |
 | [0395](0395-emit-service-prologue-checkpoint-rebase.md) | **emit_service rebases body_smb's checkpoints when it prepends a prologue** (v0.289.4) — insert_str at offset 0 now shifts the sub-builder's own recorded checkpoints by the same byte count | Accepted (v0.289.4) |
 | [0394](0394-p7d3-json-codec-seed-callee.md) | **The JSON codec seed reads Callee::Intrinsic, revisiting P6.56's declined attempt for real** (v0.289.3) — P6.56's own stated blocker no longer holds, closing R8.14's evidenced gap and a narrow shadow-safety correctness gap | Accepted (v0.289.3) |
 | [0393](0393-p7d2-brand-predicate-unification.md) | **bynk-check and bynk-emit read one shared `is_uses_commons_type`, not two independently maintained copies** (v0.289.2) — Closes R4.10/R8.2's predicate mirror, scoped to the evidenced defect rather than the rule's own maximal prose | Accepted (v0.289.2) |
