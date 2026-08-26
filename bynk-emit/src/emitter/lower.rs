@@ -2129,14 +2129,21 @@ fn lower_method_call(
                     // qualification here may differ from `workers.rs`'s own
                     // `handlers` namespace besides — needs its own investigation,
                     // not a copy-paste of a fix built for a different file.
+                    // #1435 (Arc E slice 1): `serialise_expr_via` now returns a
+                    // real `bynk_ts::TsExpr` — this call site is `lower.rs`'s
+                    // own permanent opaque exception (ADR
+                    // `arc-c-lower-rs-permanent-exclusion`), so it prints at
+                    // the boundary (`bynk_ts::print_expr`), the same
+                    // treatment cluster 4's own `lower.rs:2552` call site
+                    // already established.
                     Some((body_idx, ty)) if *body_idx == i => format!(
                         "JSON.stringify({})",
-                        crate::emitter::serialisation::serialise_expr_via(
+                        bynk_ts::print_expr(&crate::emitter::serialisation::serialise_expr_via(
                             ty,
                             &format!("({lowered} as any)"),
                             cx.system_http_type_ns(),
                             cx.runtime_use()
-                        )
+                        ))
                     ),
                     _ => format!("String({lowered})"),
                 }
@@ -2536,7 +2543,10 @@ fn lower_json_codec_call(
                 cx.runtime_use().note_json_codec_root(arg_ty);
             }
             let v = pre.lower(&args[0], cx);
-            let ser = serialisation::serialise_expr(&tref, &v, cx.runtime_use());
+            // #1435 (Arc E slice 1): boundary-print, same treatment as this
+            // file's own `serialise_expr_via` call site above.
+            let ser =
+                bynk_ts::print_expr(&serialisation::serialise_expr(&tref, &v, cx.runtime_use()));
             return Some(pre.finish(format!("JSON.stringify({ser})")));
         }
         if method.name == "decode"
@@ -2565,7 +2575,13 @@ fn lower_json_codec_call(
             // module that curates its import list (the test-scaffold modules)
             // otherwise emits all three unimported.
             cx.runtime_use().note_json_codec();
-            let des = serialisation::deserialise_expr(&tref, "__j", "$", cx.runtime_use());
+            // #1435 (Arc E slice 1): boundary-print, same treatment as above.
+            let des = bynk_ts::print_expr(&serialisation::deserialise_expr(
+                &tref,
+                "__j",
+                "$",
+                cx.runtime_use(),
+            ));
             let arg = pre.lower(&args[0], cx);
             return Some(pre.finish(format!(
                 "((__s: string): Result<{ts}, JsonError> => {{ \

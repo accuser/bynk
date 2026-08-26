@@ -40,8 +40,8 @@ pub use printer::{
     Printed, print, print_class_method, print_expr, print_object_entry, print_stmt, print_type,
 };
 pub use program::{
-    TsBinaryOp, TsBindingName, TsClassCtor, TsClassField, TsClassMethod, TsDecl, TsExpr, TsLit,
-    TsObjectEntry, TsParam, TsProgram, TsStmt, TsSwitchCase, TsType, TsTypeMember, TsUnaryOp,
-    VerbatimOrigin,
+    TsArrowBody, TsBinaryOp, TsBindingName, TsClassCtor, TsClassField, TsClassMethod, TsDecl,
+    TsExpr, TsLit, TsObjectEntry, TsParam, TsProgram, TsStmt, TsSwitchCase, TsType, TsTypeMember,
+    TsUnaryOp, VerbatimOrigin,
 };
 pub use source_map::SourceMapBuilder;

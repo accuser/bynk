@@ -919,7 +919,7 @@ pub(crate) fn emit_worker_entry(
             let dser_payload =
                 deserialise_call(&h.params[0].type_ref, "payload", "$.payload", &runtime_use);
             let case_body = vec![
-                const_("__r_payload", ident(dser_payload)),
+                const_("__r_payload", dser_payload),
                 if_(
                     strict_eq(member(ident("__r_payload"), "tag"), str_lit("Err")),
                     return_(Some(json_response(
@@ -1314,12 +1314,15 @@ fn emit_queue_handler(
             // signature above — no cast needed at all when there's no declared type
             // to (dis)trust it against.
             None => (
-                "Ok(msg.body) as Result<unknown, BoundaryError>".to_string(),
+                as_expr(
+                    call(ident("Ok"), vec![member(ident("msg"), "body")]),
+                    TsType::named("Result<unknown, BoundaryError>"),
+                ),
                 String::new(),
             ),
         };
         let try_stmts = vec![
-            const_("__r", ident(dser)),
+            const_("__r", dser),
             // `{ ...; ...; continue; }` — a single-line braced block, this
             // file's own real (hand-written) shape, not the tree's usual
             // one-statement-per-line `Block`.
@@ -2062,7 +2065,7 @@ fn emit_http_route_dispatch(
             ));
         }
         let dser = deserialise_call(&body_param.type_ref, "__body_json", "$", ru);
-        guarded.push(const_("__r_body", ident(dser)));
+        guarded.push(const_("__r_body", dser));
         // The body-deser `400` reflects the offending input into its JSON body, so
         // stamping it (#659) matters most here — `nosniff` on a reflected value.
         let body_reject = stamp_rejection(
@@ -2109,7 +2112,7 @@ fn emit_http_route_dispatch(
             ident("httpResultToResponse"),
             vec![
                 ident("result"),
-                ident(ser_fn),
+                ser_fn,
                 TsExpr::object(vec![("weakEtag".to_string(), bool_lit(true))]),
             ],
         );
@@ -2122,10 +2125,7 @@ fn emit_http_route_dispatch(
         };
         call(ident("notModifiedIfMatch"), vec![cached, ident("request")])
     } else {
-        call(
-            ident("httpResultToResponse"),
-            vec![ident("result"), ident(ser_fn)],
-        )
+        call(ident("httpResultToResponse"), vec![ident("result"), ser_fn])
     };
     // v0.131: a CORS-enabled service stamps the `Access-Control-*` headers onto
     // every real response, uniformly across variant families — including the
@@ -2225,7 +2225,7 @@ fn emit_call_handler_dispatch(
         // that lex as valid Bynk identifiers; the `__r_` temp is already safe.
         let jname = ts_ident(pname);
         let dser_call = deserialise_call(&p.type_ref, "args", "$", ru);
-        stmts.push(const_(format!("__r_{pname}"), ident(dser_call)));
+        stmts.push(const_(format!("__r_{pname}"), dser_call));
         stmts.push(if_(
             strict_eq(member(ident(format!("__r_{pname}")), "tag"), str_lit("Err")),
             return_(Some(json_response(
@@ -2289,7 +2289,7 @@ fn emit_call_handler_dispatch(
                 &format!("$.{pname}"),
                 ru,
             );
-            stmts.push(const_(format!("__r_{pname}"), ident(dser)));
+            stmts.push(const_(format!("__r_{pname}"), dser));
             stmts.push(if_(
                 strict_eq(member(ident(format!("__r_{pname}")), "tag"), str_lit("Err")),
                 return_(Some(json_response(
@@ -2317,7 +2317,7 @@ fn emit_call_handler_dispatch(
         ));
     }
     let ser_expr = serialise_call(&h.return_type, "result", ru);
-    stmts.push(const_("body", ident(ser_expr)));
+    stmts.push(const_("body", ser_expr));
     stmts.push(return_(Some(new_response(vec![
         json_stringify(ident("body")),
         status_json_headers_obj(200),
@@ -2440,11 +2440,11 @@ pub(crate) fn deserialise_call(
     json_expr: &str,
     path: &str,
     ru: &RuntimeUse,
-) -> String {
+) -> TsExpr {
     crate::emitter::serialisation::deserialise_expr_via(t, json_expr, path, "handlers.", ru)
 }
 
-fn serialise_call(t: &TypeRef, value: &str, ru: &RuntimeUse) -> String {
+fn serialise_call(t: &TypeRef, value: &str, ru: &RuntimeUse) -> TsExpr {
     crate::emitter::serialisation::serialise_expr_via(t, value, "handlers.", ru)
 }
 

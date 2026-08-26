@@ -17,6 +17,43 @@ use bynk_syntax::ast::{BaseType, PredKind, TypeBody, TypeDecl, TypeRef};
 
 use crate::emitter::RuntimeUse;
 use bynk_check::wire_default::lower_field_default_wire;
+use bynk_ts::{TsArrowBody, TsBinaryOp, TsExpr, TsLit, TsParam, TsStmt, TsType, TsUnaryOp};
+
+// #1435 (Arc E slice 1): this file's own local `TsExpr` builder set, the
+// same "compose the real node algebra for this file's own repeated shapes"
+// convention `workers.rs`/`workers_entry.rs` already established (#1321,
+// #1323) — not part of the public node algebra, `bynk-ts` still owns every
+// real constructor. Kept as this file's own private set rather than shared
+// cross-file, matching this track's own established per-file scoping.
+
+fn ident(s: impl Into<String>) -> TsExpr {
+    TsExpr::Ident(s.into())
+}
+
+fn str_lit(s: impl Into<String>) -> TsExpr {
+    TsExpr::Lit(TsLit::Str(s.into()))
+}
+
+fn member(object: TsExpr, property: impl Into<String>) -> TsExpr {
+    TsExpr::Member {
+        object: Box::new(object),
+        property: property.into(),
+    }
+}
+
+fn call(callee: TsExpr, args: Vec<TsExpr>) -> TsExpr {
+    TsExpr::Call {
+        callee: Box::new(callee),
+        args,
+    }
+}
+
+fn as_expr(expr: TsExpr, ty: TsType) -> TsExpr {
+    TsExpr::As {
+        expr: Box::new(expr),
+        ty,
+    }
+}
 
 /// #661: a *type qualifier* — maps a callee-owned type name to the type-only
 /// namespace prefix (`"commerce_payment."`) the caller must use to *name* it,
@@ -477,8 +514,18 @@ fn emit_record_codec(
     .unwrap();
     writeln!(out, "  return {{").unwrap();
     for field in fields {
-        let expr =
-            serialise_field_expr_wire(&field.shape, &format!("value.{}", field.name), "", ru);
+        // #1435 (Arc E slice 1): `serialise_field_expr_wire` now returns a
+        // real `bynk_ts::TsExpr` — this caller stays `write!`-based (a
+        // different cluster of this same file, out of this slice's scope),
+        // so it prints at the boundary, the same "opaque consumer needs its
+        // own print" treatment `lower.rs`/`tests_emit.rs`'s own call sites
+        // use.
+        let expr = bynk_ts::print_expr(&serialise_field_expr_wire(
+            &field.shape,
+            &format!("value.{}", field.name),
+            "",
+            ru,
+        ));
         writeln!(out, "    {}: {expr},", field.name).unwrap();
     }
     writeln!(out, "  }};").unwrap();
@@ -624,12 +671,14 @@ fn emit_sum_codec(
                 // per-shape type, not a blanket `unknown` — correctly narrowing
                 // needs deriving that type from `field.shape` itself, not a
                 // generic record cast.
-                let expr = serialise_field_expr_wire(
+                // #1435 (Arc E slice 1): boundary-print, same treatment as
+                // `emit_record_codec`'s own identical call site above.
+                let expr = bynk_ts::print_expr(&serialise_field_expr_wire(
                     &field.shape,
                     &format!("(value as any).{}", field.name),
                     "",
                     ru,
-                );
+                ));
                 write!(out, ", {}: {expr}", field.name).unwrap();
             }
             writeln!(out, " }};").unwrap();
@@ -877,7 +926,7 @@ fn emit_field_deserialise_wire(
     }
 }
 
-fn serialise_field_expr(t: &TypeRef, value: &str, ru: &RuntimeUse) -> String {
+fn serialise_field_expr(t: &TypeRef, value: &str, ru: &RuntimeUse) -> TsExpr {
     serialise_field_expr_via(t, value, "", ru)
 }
 
@@ -897,7 +946,7 @@ fn serialise_field_expr(t: &TypeRef, value: &str, ru: &RuntimeUse) -> String {
 /// cast. Routing `Effect` through `wire_ref` here would silently change that
 /// to an unchecked cast, so it stays a manual peel rather than becoming a
 /// second `WireRef` arm with no second consumer.
-fn serialise_field_expr_via(t: &TypeRef, value: &str, ns: &str, ru: &RuntimeUse) -> String {
+fn serialise_field_expr_via(t: &TypeRef, value: &str, ns: &str, ru: &RuntimeUse) -> TsExpr {
     if let TypeRef::Effect(inner, _) = t {
         return serialise_field_expr_via(inner, value, ns, ru);
     }
@@ -913,29 +962,72 @@ fn serialise_field_expr_via(t: &TypeRef, value: &str, ns: &str, ru: &RuntimeUse)
 /// declared field), so calling this directly for such a field, skipping the
 /// `Effect` peel above, is not a second disagreement with `wire_ref` — it is
 /// the same dispatch on a shape the peel could never have matched anyway.
-fn serialise_field_expr_wire(wire: &WireRef, value: &str, ns: &str, ru: &RuntimeUse) -> String {
+fn serialise_field_expr_wire(wire: &WireRef, value: &str, ns: &str, ru: &RuntimeUse) -> TsExpr {
     match wire {
         // Named type or generic instantiation (`Result`/`Option`/`List`/`Map`/
         // a generic `App` all key the same way — see `wire_ref`'s doc):
         // serialise through its own `serialise_<key>`.
-        WireRef::Named { name } => format!("{ns}serialise_{name}({value})"),
-        WireRef::Inst { key } => format!("{ns}serialise_{key}({value})"),
+        WireRef::Named { name } => call(ident(format!("{ns}serialise_{name}")), vec![ident(value)]),
+        WireRef::Inst { key } => call(ident(format!("{ns}serialise_{key}")), vec![ident(value)]),
         // v0.21: serialising a non-finite `Float` is a contract violation
         // (`JSON.stringify(NaN)` would silently produce `null`); the guard is
         // a self-contained IIFE so the module needs no extra runtime import.
+        //
+        // #1435 (Arc E slice 1): the first real [`TsArrowBody::Block`] site
+        // in this tree — a statement body (`if`/`throw`, then `return`), not
+        // reducible to one expression the way every other arm here is. See
+        // that type's own doc (`bynk-ts/src/program.rs`) for why this widens
+        // the existing `Arrow.body` field rather than adding a new `TsExpr`
+        // variant.
         WireRef::Base {
             base: BaseType::Float,
             ..
-        } => format!(
-            "((v: number) => {{ if (!Number.isFinite(v)) throw new Error(\"non-finite Float at boundary\"); return v as JsonValue; }})({value})"
+        } => call(
+            TsExpr::Arrow {
+                params: vec![TsParam {
+                    name: "v".to_string(),
+                    ty: Some(TsType::named("number")),
+                    optional: false,
+                }],
+                is_async: false,
+                generics: Vec::new(),
+                return_type: None,
+                body: Box::new(TsArrowBody::Block(vec![
+                    TsStmt::if_stmt(
+                        TsExpr::Unary {
+                            op: TsUnaryOp::Not,
+                            expr: Box::new(call(
+                                member(ident("Number"), "isFinite"),
+                                vec![ident("v")],
+                            )),
+                        },
+                        TsStmt::throw_stmt(
+                            TsExpr::New {
+                                callee: Box::new(ident("Error")),
+                                args: vec![str_lit("non-finite Float at boundary")],
+                            },
+                            None,
+                        ),
+                        None,
+                    ),
+                    TsStmt::return_stmt(
+                        Some(as_expr(ident("v"), TsType::named("JsonValue"))),
+                        None,
+                    ),
+                ])),
+            },
+            vec![ident(value)],
         ),
         // v0.110 (ADR 0142 D5): a `Bytes` is base64-encoded on the wire — the
         // one base type whose serialise is an encode, not a bare cast.
         WireRef::Bytes => {
             ru.note_bytes();
-            format!("__bynkBytesToBase64({value}) as JsonValue")
+            as_expr(
+                call(ident("__bynkBytesToBase64"), vec![ident(value)]),
+                TsType::named("JsonValue"),
+            )
         }
-        WireRef::Base { .. } => format!("{value} as JsonValue"),
+        WireRef::Base { .. } => as_expr(ident(value), TsType::named("JsonValue")),
         // The runtime-owned error types have no *generated* codec — they are
         // declared by the runtime, not by a `TypeDecl` this emitter can walk, so
         // there is no `serialise_ValidationError` to name. They keep the
@@ -956,10 +1048,22 @@ fn serialise_field_expr_wire(wire: &WireRef, value: &str, ns: &str, ru: &Runtime
         // pass today, but that is a heuristic, not a guarantee this residual
         // should depend on. Bridging through `unknown` (the fix `tsc` itself
         // names) is safe and uniform for all five reasons, `Effect` included.
-        WireRef::Unchecked { .. } => {
-            format!("{value} as unknown as JsonValue")
-        }
-        WireRef::Unit => "null".to_string(),
+        //
+        // A nested `As`-under-`As` (not one opaque double-cast string): safe
+        // here because this function's own result is never rendered through
+        // `render_operand` (nothing downstream uses it as a further Member/
+        // Unary/Binary/Index operand) — every real caller either splices it
+        // into a `Call`/`Object`/`Const` position via `render_expr`'s own
+        // plain recursion, or stringifies the whole tree at a print boundary
+        // (`bynk_ts::print_expr`), and `render_expr`'s own `As` arm only
+        // parenthesises a `Binary`/`Arrow`/`Conditional` inner expression —
+        // never a nested `As` — so this renders as the intended, parenless
+        // `value as unknown as JsonValue`.
+        WireRef::Unchecked { .. } => as_expr(
+            as_expr(ident(value), TsType::named("unknown")),
+            TsType::named("JsonValue"),
+        ),
+        WireRef::Unit => TsExpr::Lit(TsLit::Null),
     }
 }
 
@@ -973,7 +1077,7 @@ pub(crate) use bynk_check::wire::collect_codec_closure;
 
 /// v0.22b: an expression-form serialise for a codec target — the same
 /// dispatch as a record field's serialisation.
-pub(crate) fn serialise_expr(t: &TypeRef, value: &str, ru: &RuntimeUse) -> String {
+pub(crate) fn serialise_expr(t: &TypeRef, value: &str, ru: &RuntimeUse) -> TsExpr {
     serialise_field_expr(t, value, ru)
 }
 
@@ -983,7 +1087,7 @@ pub(crate) fn serialise_expr(t: &TypeRef, value: &str, ru: &RuntimeUse) -> Strin
 /// (which dropped `List`/`Map` to a bare `as JsonValue` cast) and
 /// `workers_entry.rs`'s `serialise_call` (which did the same to `Bytes`, the
 /// asymmetry that forced `bynk.types.bytes_at_workers_boundary`).
-pub(crate) fn serialise_expr_via(t: &TypeRef, value: &str, ns: &str, ru: &RuntimeUse) -> String {
+pub(crate) fn serialise_expr_via(t: &TypeRef, value: &str, ns: &str, ru: &RuntimeUse) -> TsExpr {
     serialise_field_expr_via(t, value, ns, ru)
 }
 
@@ -991,18 +1095,27 @@ pub(crate) fn serialise_expr_via(t: &TypeRef, value: &str, ns: &str, ru: &Runtim
 /// `callService`'s `deserialiseResult` parameter. The inline arms become a
 /// lambda rather than the unvalidated `((j: any) => ({ tag: "Ok", value: j }))`
 /// identity the caller path used to fall back to.
-pub(crate) fn deserialise_ref_via(t: &TypeRef, ns: &str, ru: &RuntimeUse) -> String {
+pub(crate) fn deserialise_ref_via(t: &TypeRef, ns: &str, ru: &RuntimeUse) -> TsExpr {
     match strip_effect(t) {
-        TypeRef::Named(id) => format!("{ns}deserialise_{}", id.name),
+        TypeRef::Named(id) => ident(format!("{ns}deserialise_{}", id.name)),
         t @ (TypeRef::Result(..)
         | TypeRef::Option(..)
         | TypeRef::List(..)
         | TypeRef::Map(..)
-        | TypeRef::App { .. }) => format!("{ns}deserialise_{}", inner_ts_name(t)),
-        other => format!(
-            "(__j: JsonValue) => {}",
-            deserialise_expr_via(other, "__j", "$", ns, ru)
-        ),
+        | TypeRef::App { .. }) => ident(format!("{ns}deserialise_{}", inner_ts_name(t))),
+        other => TsExpr::Arrow {
+            params: vec![TsParam {
+                name: "__j".to_string(),
+                ty: Some(TsType::named("JsonValue")),
+                optional: false,
+            }],
+            is_async: false,
+            generics: Vec::new(),
+            return_type: None,
+            body: Box::new(TsArrowBody::Expr(Box::new(deserialise_expr_via(
+                other, "__j", "$", ns, ru,
+            )))),
+        },
     }
 }
 
@@ -1012,19 +1125,27 @@ pub(crate) fn deserialise_ref_via(t: &TypeRef, ns: &str, ru: &RuntimeUse) -> Str
 /// `http_value_serialiser`, a parallel dispatch that collapsed every base type
 /// to `(v: any) => v as JsonValue`, dropping the `Float` non-finite guard and
 /// `Bytes` base64 encoding that `serialise_field_expr_via` already carries.
-pub(crate) fn serialise_ref_via(t: &TypeRef, ns: &str, ru: &RuntimeUse) -> String {
+pub(crate) fn serialise_ref_via(t: &TypeRef, ns: &str, ru: &RuntimeUse) -> TsExpr {
     match strip_effect(t) {
-        TypeRef::Named(id) => format!("{ns}serialise_{}", id.name),
+        TypeRef::Named(id) => ident(format!("{ns}serialise_{}", id.name)),
         t @ (TypeRef::Result(..)
         | TypeRef::Option(..)
         | TypeRef::List(..)
         | TypeRef::Map(..)
-        | TypeRef::App { .. }) => format!("{ns}serialise_{}", inner_ts_name(t)),
-        other => format!(
-            "(__v: {}) => {}",
-            crate::emitter::ts_type_ref(other),
-            serialise_field_expr_via(other, "__v", ns, ru)
-        ),
+        | TypeRef::App { .. }) => ident(format!("{ns}serialise_{}", inner_ts_name(t))),
+        other => TsExpr::Arrow {
+            params: vec![TsParam {
+                name: "__v".to_string(),
+                ty: Some(TsType::named(crate::emitter::ts_type_ref(other))),
+                optional: false,
+            }],
+            is_async: false,
+            generics: Vec::new(),
+            return_type: None,
+            body: Box::new(TsArrowBody::Expr(Box::new(serialise_field_expr_via(
+                other, "__v", ns, ru,
+            )))),
+        },
     }
 }
 
@@ -1040,7 +1161,7 @@ fn strip_effect(t: &TypeRef) -> &TypeRef {
 /// v0.22b: an expression-form deserialise call for a codec target. Named
 /// types and generic instantiations go through their (module-local)
 /// helpers; bases inline the structural check.
-pub(crate) fn deserialise_expr(t: &TypeRef, json: &str, path: &str, ru: &RuntimeUse) -> String {
+pub(crate) fn deserialise_expr(t: &TypeRef, json: &str, path: &str, ru: &RuntimeUse) -> TsExpr {
     deserialise_expr_via(t, json, path, "", ru)
 }
 
@@ -1059,7 +1180,7 @@ pub(crate) fn deserialise_expr_via(
     path: &str,
     ns: &str,
     ru: &RuntimeUse,
-) -> String {
+) -> TsExpr {
     // Every arm except the delegating ones — which call a `deserialise_<T>` in the
     // module's own namespace — builds `Ok(…)` / `Err(… as BoundaryError)` inline.
     // Recorded once here rather than per-arm: the delegating set is short and
@@ -1078,17 +1199,56 @@ pub(crate) fn deserialise_expr_via(
     ) {
         ru.note_boundary_codec();
     }
+    // The runtime-owned-error-type arms below (`ValidationError`/`JsonError`/
+    // `QueueResult`/`HttpResult`) all share this one shape: `Ok(json as
+    // unknown as {ty}) as Result<{ty}, BoundaryError>` — the deserialise-side
+    // mirror of `serialise_field_expr_wire`'s own `WireRef::Unchecked` arm
+    // (see that arm's own doc for why a nested `As`-under-`As` is safe here:
+    // this function's result is never rendered through `render_operand`).
+    let ok_unknown_cast = |ty: &str| -> TsExpr {
+        as_expr(
+            call(
+                ident("Ok"),
+                vec![as_expr(
+                    as_expr(ident(json), TsType::named("unknown")),
+                    TsType::named(ty.to_string()),
+                )],
+            ),
+            TsType::named(format!("Result<{ty}, BoundaryError>")),
+        )
+    };
+    // `Err({ kind: "StructuralMismatch", path, expected, actual } as
+    // BoundaryError)` — shared by the `Bytes` arm (below) and the plain
+    // `Base` arm further down, the one error shape both build.
+    let structural_mismatch = |expected: &str, actual: TsExpr| -> TsExpr {
+        call(
+            ident("Err"),
+            vec![as_expr(
+                TsExpr::object(vec![
+                    ("kind".to_string(), str_lit("StructuralMismatch")),
+                    ("path".to_string(), str_lit(path)),
+                    ("expected".to_string(), str_lit(expected)),
+                    ("actual".to_string(), actual),
+                ]),
+                TsType::named("BoundaryError"),
+            )],
+        )
+    };
     match t {
-        TypeRef::Named(id) => format!("{ns}deserialise_{}({json}, \"{path}\")", id.name),
+        TypeRef::Named(id) => call(
+            ident(format!("{ns}deserialise_{}", id.name)),
+            vec![ident(json), str_lit(path)],
+        ),
         TypeRef::Result(..)
         | TypeRef::Option(..)
         | TypeRef::List(..)
         | TypeRef::Map(..)
         // v0.174 (#592): a generic-record instantiation decodes through its
         // monomorphised codec (`deserialise_Paginated_User`).
-        | TypeRef::App { .. } => {
-            format!("{ns}deserialise_{}({json}, \"{path}\")", inner_ts_name(t))
-        }
+        | TypeRef::App { .. } => call(
+            ident(format!("{ns}deserialise_{}", inner_ts_name(t))),
+            vec![ident(json), str_lit(path)],
+        ),
         TypeRef::Effect(inner, _) => deserialise_expr_via(inner, json, path, ns, ru),
         // A `()` carries no wire content — the wire slot is `null` and the value
         // is `undefined`. Nothing to validate, so `Ok` is the honest answer here
@@ -1100,7 +1260,10 @@ pub(crate) fn deserialise_expr_via(
         // generated body handles the `Unit` payload itself (`emit_generic_helpers`),
         // so it never lands here. No fixture currently exercises this arm; it is
         // defensive, and saying so is more useful than implying coverage.
-        TypeRef::Unit(_) => "Ok(undefined) as Result<void, BoundaryError>".to_string(),
+        TypeRef::Unit(_) => as_expr(
+            call(ident("Ok"), vec![ident("undefined")]),
+            TsType::named("Result<void, BoundaryError>"),
+        ),
         // The runtime-owned error types: no generated codec to name, so the
         // deserialised value casts through unchecked — same shape as
         // `emit_field_deserialise_wire`'s `WireRef::Unchecked` arm.
@@ -1121,12 +1284,8 @@ pub(crate) fn deserialise_expr_via(
         // path above is what real code exercises today); named rather than
         // silently assumed correct, the same "not exercised, defensive"
         // precedent this file's own `TypeRef::Unit` arm above already sets.
-        TypeRef::ValidationError(_) => {
-            format!("Ok({json} as unknown as ValidationError) as Result<ValidationError, BoundaryError>")
-        }
-        TypeRef::JsonError(_) => {
-            format!("Ok({json} as unknown as JsonError) as Result<JsonError, BoundaryError>")
-        }
+        TypeRef::ValidationError(_) => ok_unknown_cast("ValidationError"),
+        TypeRef::JsonError(_) => ok_unknown_cast("JsonError"),
         // Review of #1319/#1320, finding 1: `HttpResult<T>` (`bynk-emit/
         // runtime/src/http.ts:6`) is generic with no default type argument
         // — a bare `HttpResult` in type position is `tsc`'s TS2314, not the
@@ -1138,17 +1297,72 @@ pub(crate) fn deserialise_expr_via(
         // instead of dropping the payload.
         TypeRef::HttpResult(inner, _) => {
             let ty = format!("HttpResult<{}>", crate::emitter::ts_type_ref(inner));
-            format!("Ok({json} as unknown as {ty}) as Result<{ty}, BoundaryError>")
+            ok_unknown_cast(&ty)
         }
-        TypeRef::QueueResult(_) => {
-            format!("Ok({json} as unknown as QueueResult) as Result<QueueResult, BoundaryError>")
-        }
+        TypeRef::QueueResult(_) => ok_unknown_cast("QueueResult"),
         // v0.110 (ADR 0142 D5): a `Bytes` wires as a base64 string; decode it
         // (rejecting a non-string or invalid base64) to a `Uint8Array`.
         TypeRef::Base(BaseType::Bytes, _) => {
             ru.note_bytes();
-            format!(
-                "((__v) => typeof __v === \"string\" ? ((__b) => __b.tag === \"Some\" ? Ok(__b.value) : Err({{ kind: \"StructuralMismatch\", path: \"{path}\", expected: \"base64 string\", actual: \"invalid base64\" }} as BoundaryError))(__bynkBytesFromBase64(__v)) : Err({{ kind: \"StructuralMismatch\", path: \"{path}\", expected: \"base64 string\", actual: typeof __v }} as BoundaryError))({json})"
+            call(
+                TsExpr::Arrow {
+                    params: vec![TsParam {
+                        name: "__v".to_string(),
+                        ty: None,
+                        optional: false,
+                    }],
+                    is_async: false,
+                    generics: Vec::new(),
+                    return_type: None,
+                    body: Box::new(TsArrowBody::Expr(Box::new(TsExpr::Conditional {
+                        test: Box::new(TsExpr::Binary {
+                            op: TsBinaryOp::StrictEq,
+                            left: Box::new(TsExpr::Unary {
+                                op: TsUnaryOp::Typeof,
+                                expr: Box::new(ident("__v")),
+                            }),
+                            right: Box::new(str_lit("string")),
+                        }),
+                        consequent: Box::new(call(
+                            TsExpr::Arrow {
+                                params: vec![TsParam {
+                                    name: "__b".to_string(),
+                                    ty: None,
+                                    optional: false,
+                                }],
+                                is_async: false,
+                                generics: Vec::new(),
+                                return_type: None,
+                                body: Box::new(TsArrowBody::Expr(Box::new(
+                                    TsExpr::Conditional {
+                                        test: Box::new(TsExpr::Binary {
+                                            op: TsBinaryOp::StrictEq,
+                                            left: Box::new(member(ident("__b"), "tag")),
+                                            right: Box::new(str_lit("Some")),
+                                        }),
+                                        consequent: Box::new(call(
+                                            ident("Ok"),
+                                            vec![member(ident("__b"), "value")],
+                                        )),
+                                        alternate: Box::new(structural_mismatch(
+                                            "base64 string",
+                                            str_lit("invalid base64"),
+                                        )),
+                                    },
+                                ))),
+                            },
+                            vec![call(ident("__bynkBytesFromBase64"), vec![ident("__v")])],
+                        )),
+                        alternate: Box::new(structural_mismatch(
+                            "base64 string",
+                            TsExpr::Unary {
+                                op: TsUnaryOp::Typeof,
+                                expr: Box::new(ident("__v")),
+                            },
+                        )),
+                    }))),
+                },
+                vec![ident(json)],
             )
         }
         TypeRef::Base(b, _) => {
@@ -1161,17 +1375,21 @@ pub(crate) fn deserialise_expr_via(
                 // Unreachable: handled by the dedicated `Bytes` arm above.
                 BaseType::Bytes => "string",
             };
-            let extra = match b {
-                BaseType::Float => " && Number.isFinite(__v)",
+            // `Some(predicate)`: the arm needs a second, narrower runtime check
+            // beyond `typeof` — a real `TsExpr`, not text, now that `extra`'s
+            // only past job (interpolating into a hand-built `format!`) is
+            // gone.
+            let predicate: Option<TsExpr> = match b {
+                BaseType::Float => Some(call(member(ident("Number"), "isFinite"), vec![ident("__v")])),
                 // v0.86 (ADR 0112 D6): a `Duration` is whole milliseconds —
                 // reject a non-integer from the wire, as a refined `Int` does.
                 BaseType::Int | BaseType::Duration | BaseType::Instant => {
-                    " && Number.isInteger(__v)"
+                    Some(call(member(ident("Number"), "isInteger"), vec![ident("__v")]))
                 }
-                _ => "",
+                _ => None,
             };
             // v0.176 (#642): report what was *required*, not just the `typeof`
-            // that was tested. For the arms carrying an `extra` predicate the two
+            // that was tested. For the arms carrying a `predicate` the two
             // differ, and reporting the bare `typeof` makes the error useless in
             // exactly the case the predicate exists to catch: a `3.5` for an `Int`
             // would read `expected: "number", actual: "number"`.
@@ -1180,17 +1398,34 @@ pub(crate) fn deserialise_expr_via(
                 BaseType::Float => "finite number",
                 _ => typeof_str,
             };
-            let err = |actual: &str| {
-                format!(
-                    "Err({{ kind: \"StructuralMismatch\", path: \"{path}\", expected: \"{expected}\", actual: {actual} }} as BoundaryError)"
-                )
+            let typeof_v = || TsExpr::Unary {
+                op: TsUnaryOp::Typeof,
+                expr: Box::new(ident("__v")),
             };
-            if extra.is_empty() {
-                return format!(
-                    "((__v) => typeof __v === \"{typeof_str}\" ? Ok(__v) : {})({json})",
-                    err("typeof __v")
+            let Some(predicate) = predicate else {
+                return call(
+                    TsExpr::Arrow {
+                        params: vec![TsParam {
+                            name: "__v".to_string(),
+                            ty: None,
+                            optional: false,
+                        }],
+                        is_async: false,
+                        generics: Vec::new(),
+                        return_type: None,
+                        body: Box::new(TsArrowBody::Expr(Box::new(TsExpr::Conditional {
+                            test: Box::new(TsExpr::Binary {
+                                op: TsBinaryOp::StrictEq,
+                                left: Box::new(typeof_v()),
+                                right: Box::new(str_lit(typeof_str)),
+                            }),
+                            consequent: Box::new(call(ident("Ok"), vec![ident("__v")])),
+                            alternate: Box::new(structural_mismatch(expected, typeof_v())),
+                        }))),
+                    },
+                    vec![ident(json)],
                 );
-            }
+            };
             // The two failure modes are **not** the same error, and collapsing
             // them is what made both predecessors imprecise in opposite
             // directions. The `Json` path reported `typeof` for both, losing the
@@ -1208,11 +1443,34 @@ pub(crate) fn deserialise_expr_via(
             // `"-Infinity"` for a non-finite `Float` — a closed set. That is
             // strictly more precise than either predecessor, with strictly less
             // exposure.
-            let predicate = extra.trim_start_matches(" && ");
-            format!(
-                "((__v) => typeof __v !== \"{typeof_str}\" ? {} : {predicate} ? Ok(__v) : {})({json})",
-                err("typeof __v"),
-                err("String(__v)")
+            call(
+                TsExpr::Arrow {
+                    params: vec![TsParam {
+                        name: "__v".to_string(),
+                        ty: None,
+                        optional: false,
+                    }],
+                    is_async: false,
+                    generics: Vec::new(),
+                    return_type: None,
+                    body: Box::new(TsArrowBody::Expr(Box::new(TsExpr::Conditional {
+                        test: Box::new(TsExpr::Binary {
+                            op: TsBinaryOp::StrictNotEq,
+                            left: Box::new(typeof_v()),
+                            right: Box::new(str_lit(typeof_str)),
+                        }),
+                        consequent: Box::new(structural_mismatch(expected, typeof_v())),
+                        alternate: Box::new(TsExpr::Conditional {
+                            test: Box::new(predicate),
+                            consequent: Box::new(call(ident("Ok"), vec![ident("__v")])),
+                            alternate: Box::new(structural_mismatch(
+                                expected,
+                                call(ident("String"), vec![ident("__v")]),
+                            )),
+                        }),
+                    }))),
+                },
+                vec![ident(json)],
             )
         }
         // Everything else is rejected by the checker's codec-domain rule (the
@@ -1242,7 +1500,7 @@ mod deserialise_expr_via_error_type_tests {
         let ru = RuntimeUse::default();
         let t = TypeRef::ValidationError(sp());
         assert_eq!(
-            deserialise_expr(&t, "json", "path", &ru),
+            bynk_ts::print_expr(&deserialise_expr(&t, "json", "path", &ru)),
             "Ok(json as unknown as ValidationError) as Result<ValidationError, BoundaryError>"
         );
     }
@@ -1252,7 +1510,7 @@ mod deserialise_expr_via_error_type_tests {
         let ru = RuntimeUse::default();
         let t = TypeRef::JsonError(sp());
         assert_eq!(
-            deserialise_expr(&t, "json", "path", &ru),
+            bynk_ts::print_expr(&deserialise_expr(&t, "json", "path", &ru)),
             "Ok(json as unknown as JsonError) as Result<JsonError, BoundaryError>"
         );
     }
@@ -1262,7 +1520,7 @@ mod deserialise_expr_via_error_type_tests {
         let ru = RuntimeUse::default();
         let t = TypeRef::HttpResult(Box::new(TypeRef::Base(BaseType::Int, sp())), sp());
         assert_eq!(
-            deserialise_expr(&t, "json", "path", &ru),
+            bynk_ts::print_expr(&deserialise_expr(&t, "json", "path", &ru)),
             "Ok(json as unknown as HttpResult<number>) as Result<HttpResult<number>, BoundaryError>"
         );
     }
@@ -1272,7 +1530,7 @@ mod deserialise_expr_via_error_type_tests {
         let ru = RuntimeUse::default();
         let t = TypeRef::QueueResult(sp());
         assert_eq!(
-            deserialise_expr(&t, "json", "path", &ru),
+            bynk_ts::print_expr(&deserialise_expr(&t, "json", "path", &ru)),
             "Ok(json as unknown as QueueResult) as Result<QueueResult, BoundaryError>"
         );
     }
@@ -1410,8 +1668,12 @@ pub(crate) fn emit_generic_helpers_qualified(
                 let err_ts = inner_ts_name(err);
                 let ok_inner = ts_inner_type(ok, qual);
                 let err_inner = ts_inner_type(err, qual);
-                let serialise_ok = serialise_field_expr(ok, "value.value", ru);
-                let serialise_err = serialise_field_expr(err, "value.error", ru);
+                // #1435 (Arc E slice 1): boundary-print — `emit_generic_helpers`
+                // stays `write!`-based (out of this slice's scope).
+                let serialise_ok =
+                    bynk_ts::print_expr(&serialise_field_expr(ok, "value.value", ru));
+                let serialise_err =
+                    bynk_ts::print_expr(&serialise_field_expr(err, "value.error", ru));
                 writeln!(
                     out,
                     "export function serialise_Result_{ok_ts}_{err_ts}(value: Result<{ok_inner}, {err_inner}>): JsonValue {{"
@@ -1465,7 +1727,10 @@ pub(crate) fn emit_generic_helpers_qualified(
             GenericInst::OptionInst { inner } => {
                 let inner_ts = inner_ts_name(inner);
                 let inner_ty = ts_inner_type(inner, qual);
-                let serialise_inner = serialise_field_expr(inner, "value.value", ru);
+                // #1435 (Arc E slice 1): boundary-print, same treatment as
+                // `ResultInst` above.
+                let serialise_inner =
+                    bynk_ts::print_expr(&serialise_field_expr(inner, "value.value", ru));
                 writeln!(
                     out,
                     "export function serialise_Option_{inner_ts}(value: Option<{inner_ty}>): JsonValue {{"
@@ -1507,7 +1772,8 @@ pub(crate) fn emit_generic_helpers_qualified(
             GenericInst::ListInst { elem } => {
                 let elem_ts = inner_ts_name(elem);
                 let elem_ty = ts_inner_type(elem, qual);
-                let serialise_elem = serialise_field_expr(elem, "v", ru);
+                // #1435 (Arc E slice 1): boundary-print, same treatment as above.
+                let serialise_elem = bynk_ts::print_expr(&serialise_field_expr(elem, "v", ru));
                 writeln!(
                     out,
                     "export function serialise_List_{elem_ts}(value: readonly {elem_ty}[]): JsonValue {{"
@@ -1553,8 +1819,9 @@ pub(crate) fn emit_generic_helpers_qualified(
                 let val_ts = inner_ts_name(val);
                 let key_ty = ts_inner_type(key, qual);
                 let val_ty = ts_inner_type(val, qual);
-                let serialise_key = serialise_field_expr(key, "k", ru);
-                let serialise_val = serialise_field_expr(val, "v", ru);
+                // #1435 (Arc E slice 1): boundary-print, same treatment as above.
+                let serialise_key = bynk_ts::print_expr(&serialise_field_expr(key, "k", ru));
+                let serialise_val = bynk_ts::print_expr(&serialise_field_expr(val, "v", ru));
                 writeln!(
                     out,
                     "export function serialise_Map_{key_ts}_{val_ts}(value: ReadonlyMap<{key_ty}, {val_ty}>): JsonValue {{"
