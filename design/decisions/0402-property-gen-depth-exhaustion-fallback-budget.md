@@ -1,11 +1,6 @@
----
-level: patch
-changelog: A `for all` property binding over a self-recursive `Sum`/`Record` type no longer generates a bare `undefined` in a real, typed constructor/field position once the runner's random-generation depth is exhausted — `gen_ts_for_ty`'s own fallback now hands `canon_ts_for_ty` the same recursion budget the checker already used to accept the binding as generable, not an under-provisioned `1`, and only for a type the checker actually validated, so an unvalidated branching variant can't turn the fallback into a multi-megabyte emit
----
+# 0402 — `gen_ts_for_ty`'s depth-0 fallback re-uses `PROP_GEN_DEPTH`, not a bare `1`, so `canon_ts_for_ty` gets the same recursion budget `prop_binding_generable` used to accept the binding
 
-## ADR: property-gen-depth-exhaustion-fallback-budget
-
-title: `gen_ts_for_ty`'s depth-0 fallback re-uses `PROP_GEN_DEPTH`, not a bare `1`, so `canon_ts_for_ty` gets the same recursion budget `prop_binding_generable` used to accept the binding
+- **Status:** Accepted (v0.289.11)
 
 summary: `canon_ts_for_ty` and `prop_binding_generable` share the exact same recursion shape (unconditional `depth == 0` check at entry, one unit spent per `Sum`/`Record` step into a field, `Base` never itself gating on depth) — handing the fallback the same constant the checker validated against guarantees it bottoms out within it too
 
