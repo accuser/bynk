@@ -29,7 +29,12 @@ change pattern already applied ~15 times, not left as a second `lower.rs`-style 
 exclusion — it is bounded by a closed vocabulary (three `TypeBody` variants, a fixed generic set),
 not the open Bynk expression grammar `lower.rs` covers. Decomposition order, leaf-to-root: (1) the
 expression-builder cluster (fully independent, convert first); (2) fold cluster 4's duplicate type
-renderer into the already-converted `ts_type_ref` machinery and delete it; (3) the shared leaf
+renderer away — the qualified `TsType` renderer it would otherwise duplicate already exists
+(`ts_type_ref_qualified_ts_type`/`ts_type_ref_to_ts_type`, `emitter.rs`), so this step adapts
+`Qual` to the existing `QualifyFn` closure, repoints cluster 3's 8 internal call sites and
+`emitter/lower.rs`'s own one external call site (`lower.rs:2552`, itself an ADR 0391 opaque
+consumer needing its own boundary print) at it, then deletes `ts_type_ref_qualified`/
+`ts_inner_type` outright — no new infrastructure required; (3) the shared leaf
 (`emit_field_deserialise[_wire]`), ahead of both clusters that depend on it; (4) cluster 1's own
 `TypeBody`-shape dispatch, by variant (refined/opaque, record, sum — likely 3 slices), gated on
 step 3; (5) cluster 3, the generic-instantiation helpers, gated on steps 2 and 3; (6) the
