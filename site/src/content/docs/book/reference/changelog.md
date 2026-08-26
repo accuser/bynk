@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.289.9** | A `for all`/contract-attack `Int` (bare, refined, or opaque) binding now coerces its drawn `bigint` value to `number` at the bind site, closing a runtime `TypeError: Cannot mix BigInt and other types` the instant a predicate or attacked function does ordinary arithmetic on it |
 | **v0.289.8** | Design pass — names the true floor for `ts_any` (a 7-file, 30-site distribution across four buckets, not the stale 2–3-site estimate) and `verbatim_sites` (an argued floor of at least 2, not 0 — three of the five sites are an unscoped signature capstone on `emit_project`/`emit_test_module`/`emit_integration_module`, not residue, with its own unnamed source-map prerequisite) |
 | **v0.289.7** | Arc E design pass — settles `emitter/serialisation.rs`'s conversion status (it converts, using the established Arc C pattern, unlike `emitter/lower.rs`'s permanent exclusion) and names an 8-slice decomposition order |
 | **v0.289.6** | A Sum-variant payload or Record field of type `Int` now coerces its drawn `bigint` value to `number`, closing a `tsc --strict` type mismatch at the real constructor/object-literal call site |

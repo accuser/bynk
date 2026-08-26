@@ -1,11 +1,6 @@
----
-level: patch
-changelog: A `for all`/contract-attack `Int` (bare, refined, or opaque) binding now coerces its drawn `bigint` value to `number` at the bind site, closing a runtime `TypeError: Cannot mix BigInt and other types` the instant a predicate or attacked function does ordinary arithmetic on it
----
+# 0400 — `destructure_vals` coerces every `Int`-drawing top-level generative binding to `number` at the bind site, closing #1426's bigint/number arithmetic crash
 
-## ADR: for-all-int-binding-arithmetic-coercion
-
-title: `destructure_vals` coerces every `Int`-drawing top-level generative binding to `number` at the bind site, closing #1426's bigint/number arithmetic crash
+- **Status:** Accepted (v0.289.9)
 
 summary: `binding_gen`'s boundaries/shrink machinery stays `bigint`-typed by design (#1398's own ADR 0397), but the local a property/contract-attack predicate or attacked-function body evaluates ordinary `Int` arithmetic against must not be — coercing at the destructure site, not the generator, fixes it without disturbing shrinking
 
