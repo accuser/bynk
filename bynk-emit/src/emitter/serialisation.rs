@@ -161,15 +161,17 @@ fn err_structural_mismatch(path_expr: &str, expected: &str, actual: TsExpr) -> T
 fn err_structural_mismatch_top(expected: &str, actual: TsExpr) -> TsExpr {
     call(
         ident("Err"),
-        vec![TsExpr::Object {
-            entries: vec![
-                TsObjectEntry::Prop("kind".to_string(), str_lit("StructuralMismatch")),
-                TsObjectEntry::Shorthand("path".to_string()),
-                TsObjectEntry::Prop("expected".to_string(), str_lit(expected)),
-                TsObjectEntry::Prop("actual".to_string(), actual),
-            ],
-            multiline: false,
-        }],
+        // Review of #1442, finding 3: `TsExpr::object_entries` already
+        // builds exactly this (a single-line object from a
+        // `Vec<TsObjectEntry>`) — `TsExpr::object`'s own doc only rules out
+        // the *other* convenience constructor, which takes `(String,
+        // TsExpr)` pairs and can't represent `Shorthand`.
+        vec![TsExpr::object_entries(vec![
+            TsObjectEntry::Prop("kind".to_string(), str_lit("StructuralMismatch")),
+            TsObjectEntry::Shorthand("path".to_string()),
+            TsObjectEntry::Prop("expected".to_string(), str_lit(expected)),
+            TsObjectEntry::Prop("actual".to_string(), actual),
+        ])],
     )
 }
 
@@ -734,17 +736,14 @@ fn emit_refined(
                 strict_eq(member(ident("validated"), "tag"), str_lit("Err")),
                 block(vec![return_(call(
                     ident("Err"),
-                    vec![TsExpr::Object {
-                        entries: vec![
-                            TsObjectEntry::Prop("kind".to_string(), str_lit("RefinementViolation")),
-                            TsObjectEntry::Shorthand("path".to_string()),
-                            TsObjectEntry::Prop(
-                                "violation".to_string(),
-                                member(ident("validated"), "error"),
-                            ),
-                        ],
-                        multiline: false,
-                    }],
+                    vec![TsExpr::object_entries(vec![
+                        TsObjectEntry::Prop("kind".to_string(), str_lit("RefinementViolation")),
+                        TsObjectEntry::Shorthand("path".to_string()),
+                        TsObjectEntry::Prop(
+                            "violation".to_string(),
+                            member(ident("validated"), "error"),
+                        ),
+                    ])],
                 ))]),
             ));
             body.push(return_(call(
@@ -801,24 +800,38 @@ fn emit_inline_refinement_checks(
     base_guards: &[BaseGuard],
     predicates: &[PredKind],
 ) -> Vec<TsStmt> {
+    // Review of #1442, finding 1: `msg` reaches here two ways — a static,
+    // hand-written literal from the base-guard arms below (never needs
+    // escaping) and, via `emit_inline_pred_check`, `pred_condition_and_
+    // message`'s own `PredKind::Matches` message, which is ALREADY run
+    // through `escape_ts_string` (that function's own doc names both
+    // callers' shared "splice unescaped" contract). `str_lit`'s own
+    // `TsLit::Str` re-escapes `\`/`"` unconditionally, so passing an
+    // already-escaped `Matches` message through it doubled every backslash
+    // (`must match /\d{4}/` → `must match /\\d{4}/`) — a real, silent
+    // output change no fixture caught (no fixture reaches this predicate
+    // through the inline-consumer path with a backslash/quote in its
+    // pattern). `TsLit::Raw` (pre-quoted, no further escaping) matches
+    // `pred_condition_and_message`'s own contract exactly, and is a no-op
+    // for the base-guard arms' own escaping-free text.
     let violation = |msg: &str| -> TsStmt {
         return_(call(
             ident("Err"),
-            vec![TsExpr::Object {
-                entries: vec![
-                    TsObjectEntry::Prop("kind".to_string(), str_lit("RefinementViolation")),
-                    TsObjectEntry::Shorthand("path".to_string()),
-                    TsObjectEntry::Prop(
-                        "violation".to_string(),
-                        TsExpr::object(vec![
-                            ("field".to_string(), str_lit(name)),
-                            ("message".to_string(), str_lit(msg)),
-                            ("value".to_string(), ident("json")),
-                        ]),
-                    ),
-                ],
-                multiline: false,
-            }],
+            vec![TsExpr::object_entries(vec![
+                TsObjectEntry::Prop("kind".to_string(), str_lit("RefinementViolation")),
+                TsObjectEntry::Shorthand("path".to_string()),
+                TsObjectEntry::Prop(
+                    "violation".to_string(),
+                    TsExpr::object(vec![
+                        ("field".to_string(), str_lit(name)),
+                        (
+                            "message".to_string(),
+                            TsExpr::Lit(TsLit::Raw(format!("\"{msg}\""))),
+                        ),
+                        ("value".to_string(), ident("json")),
+                    ]),
+                ),
+            ])],
         ))
     };
     // Base guards mirror `emit_refined_checks`: an `Int` is whole, a `Float`
@@ -876,6 +889,56 @@ fn emit_inline_pred_check(pred: &PredKind, violation: &dyn Fn(&str) -> TsStmt) -
         not_expr(TsExpr::Paren(Box::new(ident(cond)))),
         block(vec![violation(&msg)]),
     )]
+}
+
+/// Review of #1442, finding 1/2: direct coverage for
+/// [`emit_inline_refinement_checks`]/[`emit_inline_pred_check`], the two
+/// branches no fixture exercises. `matches_predicate_with_a_backslash_is_
+/// not_double_escaped` pins the actual regression (a `Matches` message
+/// already run through `escape_ts_string` was silently re-escaped by
+/// `str_lit`'s own `TsLit::Str`); `base_guard_finite_renders` closes the
+/// coverage gap the review named alongside it (`Number.isFinite(json)`
+/// appears in zero fixtures, unlike its `Integral` sibling).
+#[cfg(test)]
+mod emit_inline_refinement_checks_tests {
+    use super::*;
+
+    fn render(stmts: Vec<TsStmt>) -> String {
+        stmts
+            .iter()
+            .map(|s| bynk_ts::print_stmt(s, 1))
+            .collect::<Vec<_>>()
+            .join("")
+    }
+
+    #[test]
+    fn matches_predicate_with_a_backslash_is_not_double_escaped() {
+        // Pattern `\d{4}` (one real backslash) — `escape_ts_string` escapes
+        // it to a valid JS string literal, `\\d{4}` (two real backslash
+        // characters, correct and final); the bug re-escaped that already-
+        // escaped text through `TsLit::Str`, doubling it again to `\\\\d{4}`
+        // (four).
+        let stmts =
+            emit_inline_refinement_checks("name", &[], &[PredKind::Matches(r"\d{4}".to_string())]);
+        let out = render(stmts);
+        assert!(
+            out.contains(r"must match /\\d{4}/"),
+            "expected exactly one escaping round in the message, got: {out}"
+        );
+        assert!(
+            !out.contains(r"must match /\\\\d{4}/"),
+            "message was double-escaped: {out}"
+        );
+    }
+
+    #[test]
+    fn base_guard_finite_renders() {
+        let stmts = emit_inline_refinement_checks("name", &[BaseGuard::Finite], &[]);
+        assert_eq!(
+            render(stmts),
+            "  if (!Number.isFinite(json)) {\n    return Err({ kind: \"RefinementViolation\", path, violation: { field: \"name\", message: \"must be a finite number\", value: json } });\n  }\n"
+        );
+    }
 }
 
 /// #855 (Phase 2 step 7): builds the [`WireField`] list via
