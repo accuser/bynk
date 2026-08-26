@@ -18,7 +18,8 @@ use bynk_syntax::ast::{BaseType, PredKind, TypeBody, TypeDecl, TypeRef};
 use crate::emitter::RuntimeUse;
 use bynk_check::wire_default::lower_field_default_wire;
 use bynk_ts::{
-    TsArrowBody, TsBinaryOp, TsBindingName, TsExpr, TsLit, TsParam, TsStmt, TsType, TsUnaryOp,
+    TsArrowBody, TsBinaryOp, TsBindingName, TsDecl, TsExpr, TsLit, TsObjectEntry, TsParam, TsStmt,
+    TsType, TsUnaryOp,
 };
 
 // #1435 (Arc E slice 1): this file's own local `TsExpr` builder set, the
@@ -133,6 +134,42 @@ fn err_structural_mismatch(path_expr: &str, expected: &str, actual: TsExpr) -> T
             ("expected".to_string(), str_lit(expected)),
             ("actual".to_string(), actual),
         ])],
+    )
+}
+
+/// `Err({ kind: "StructuralMismatch", path, expected: <expected>, actual:
+/// <actual> })` — [`emit_bytes_named_codec`]/[`emit_refined`]'s own
+/// top-level boundary-guard failure shape (#1441, Arc E slice 4).
+///
+/// Deliberately a *second*, distinct helper rather than a call to
+/// [`err_structural_mismatch`] above: that one's own `path_expr` parameter
+/// is real call-site-supplied TS source text (a bare `path` identifier or a
+/// template literal like `` `${path}.value` ``), rendered as an ordinary
+/// `path: <path_expr>` property because every one of its real callers
+/// (`emit_field_deserialise_wire`'s own field-level guards) passes a
+/// rendered *sub*-path template, never the bare top-level `path` parameter
+/// itself — confirmed empirically (no fixture anywhere renders the literal
+/// text `path: path`). Every real call site *here*, by contrast, validates
+/// a function's own top-level `path` parameter directly, which TypeScript's
+/// object-literal shorthand prints as bare `path,` — confirmed byte-for-byte
+/// against `bynkc/tests/fixtures/positive/254_multi_file_commons_workers_
+/// codec/expected/money/cents.ts:26` (`emit_refined`'s own pre-conversion
+/// text). [`TsExpr::object`]'s convenience constructor only builds
+/// [`TsObjectEntry::Prop`] entries, which would print `path: path` instead
+/// — a different, wrong byte sequence — so this builds the mixed
+/// `Prop`/[`TsObjectEntry::Shorthand`] entry list directly.
+fn err_structural_mismatch_top(expected: &str, actual: TsExpr) -> TsExpr {
+    call(
+        ident("Err"),
+        vec![TsExpr::Object {
+            entries: vec![
+                TsObjectEntry::Prop("kind".to_string(), str_lit("StructuralMismatch")),
+                TsObjectEntry::Shorthand("path".to_string()),
+                TsObjectEntry::Prop("expected".to_string(), str_lit(expected)),
+                TsObjectEntry::Prop("actual".to_string(), actual),
+            ],
+            multiline: false,
+        }],
     )
 }
 
@@ -379,8 +416,23 @@ fn emit_one(
     ru: &RuntimeUse,
 ) {
     match &decl.body {
+        // #1441 (Arc E slice 4): `emit_refined` itself now builds real
+        // `bynk_ts::TsDecl` nodes (no `out: &mut String` parameter) — this
+        // call site is the one place that still needs `out`, so it prints
+        // each returned declaration at the boundary. `TsStmt::decl(..,
+        // None)` + `bynk_ts::print_stmt(&stmt, 0)` is the established
+        // pattern for printing one top-level `TsDecl` on its own (no
+        // dedicated `print_decl` entry point exists or is needed — this
+        // exact idiom is already `emit_free_fn`'s/`emit_agent`'s own real
+        // precedent, `emitter/emit.rs`/`emitter.rs`), followed by the same
+        // blank-line separator (`writeln!(out).unwrap()`) the
+        // pre-conversion `writeln!` calls always emitted after each
+        // function.
         TypeBody::Refined { .. } | TypeBody::Opaque { .. } => {
-            emit_refined(out, name, decl, types, qual, ru)
+            for d in emit_refined(name, decl, types, qual, ru) {
+                out.push_str(&bynk_ts::print_stmt(&TsStmt::decl(d, None), 0));
+                writeln!(out).unwrap();
+            }
         }
         TypeBody::Record(_) => emit_record(out, name, decl, types, qual, ru),
         TypeBody::Sum(_) => emit_sum(out, name, decl, types, qual, ru),
@@ -406,51 +458,111 @@ fn json_kind_ts(k: JsonKind) -> &'static str {
     }
 }
 
+/// `path: string = "$"` — the one JS default-valued parameter anywhere in
+/// this crate's generated output (#1441, Arc E slice 4). [`TsParam`] carries
+/// no `default: Option<TsExpr>` field (its own doc names only `optional` —
+/// "nothing in the grounding file needs a default value"), and adding one
+/// would touch every one of the ~120 existing `TsParam { .. }` literal
+/// construction sites across `bynk-emit`/`bynk-ts` for the sake of this
+/// single real occurrence — wildly disproportionate to a 4-function slice.
+/// `name` is already an established "raw-text slot" for a case bigger than
+/// a bare identifier: [`bynk_ts::TsDecl::Import`]'s own `names` field docs
+/// the identical move for a `"type KVNamespace"` specifier. Splicing the
+/// whole clause in as one opaque `name` (with `ty: None`, so
+/// `render_params` appends nothing further) reuses that precedent rather
+/// than inventing a new one.
+fn deserialise_path_param() -> TsParam {
+    TsParam {
+        name: "path: string = \"$\"".to_string(),
+        ty: None,
+        optional: false,
+    }
+}
+
 /// v0.110 (ADR 0142 D5): the codec for a named opaque/refined type over
 /// `Bytes` (`type Digest = Bytes`). Unlike the `number`-erased base types, a
 /// `Bytes` does not round-trip as itself — it is base64-encoded on serialise
 /// and decoded (rejecting a non-string or invalid-base64 wire value) on
 /// deserialise. There are no `Bytes` refinement predicates, so there is no
 /// `.of` re-validation to thread.
-fn emit_bytes_named_codec(out: &mut String, name: &str, qual: &Qual, ru: &RuntimeUse) {
+///
+/// #1441 (Arc E slice 4): returns the `[serialise, deserialise]` pair as
+/// real `bynk_ts::TsDecl` nodes instead of writing into an `out: &mut
+/// String` — `emit_refined`'s own early return threads them straight
+/// through unchanged (its only real caller, confirmed by grep), and
+/// `emit_one` prints both at the boundary. A `(TsDecl, TsDecl)` pair would
+/// say the same thing but `Vec<TsDecl>` is what the caller (`emit_one`,
+/// looping to print+blank-line each declaration) actually wants to iterate,
+/// and matches `emit_refined`'s own identical return shape below exactly —
+/// one shape for both halves of this slice's call tree, not two.
+fn emit_bytes_named_codec(name: &str, qual: &Qual, ru: &RuntimeUse) -> Vec<TsDecl> {
     ru.note_bytes();
     let ty = format!("{}{name}", qual_prefix(qual, name));
-    writeln!(
-        out,
-        "export function serialise_{name}(value: {ty}): JsonValue {{"
-    )
-    .unwrap();
-    writeln!(
-        out,
-        "  return __bynkBytesToBase64(value as unknown as Uint8Array);"
-    )
-    .unwrap();
-    writeln!(out, "}}").unwrap();
-    writeln!(out).unwrap();
 
-    writeln!(
-        out,
-        "export function deserialise_{name}(json: JsonValue, path: string = \"$\"): Result<{ty}, BoundaryError> {{"
-    )
-    .unwrap();
-    writeln!(out, "  if (typeof json !== \"string\") {{").unwrap();
-    writeln!(
-        out,
-        "    return Err({{ kind: \"StructuralMismatch\", path, expected: \"base64 string\", actual: typeof json }});"
-    )
-    .unwrap();
-    writeln!(out, "  }}").unwrap();
-    writeln!(out, "  const __b = __bynkBytesFromBase64(json);").unwrap();
-    writeln!(out, "  if (__b.tag === \"None\") {{").unwrap();
-    writeln!(
-        out,
-        "    return Err({{ kind: \"StructuralMismatch\", path, expected: \"base64 string\", actual: \"invalid base64\" }});"
-    )
-    .unwrap();
-    writeln!(out, "  }}").unwrap();
-    writeln!(out, "  return Ok(__b.value as unknown as {ty});").unwrap();
-    writeln!(out, "}}").unwrap();
-    writeln!(out).unwrap();
+    let serialise = TsDecl::Export(Box::new(TsDecl::Function {
+        name: format!("serialise_{name}"),
+        generics: Vec::new(),
+        params: vec![TsParam {
+            name: "value".to_string(),
+            ty: Some(TsType::named(ty.clone())),
+            optional: false,
+        }],
+        return_type: Some(TsType::named("JsonValue")),
+        body: vec![return_(call(
+            ident("__bynkBytesToBase64"),
+            vec![as_expr(
+                as_expr(ident("value"), TsType::named("unknown")),
+                TsType::named("Uint8Array"),
+            )],
+        ))],
+        is_async: false,
+        inline: false,
+    }));
+
+    let deserialise = TsDecl::Export(Box::new(TsDecl::Function {
+        name: format!("deserialise_{name}"),
+        generics: Vec::new(),
+        params: vec![
+            TsParam {
+                name: "json".to_string(),
+                ty: Some(TsType::named("JsonValue")),
+                optional: false,
+            },
+            deserialise_path_param(),
+        ],
+        return_type: Some(TsType::named(format!("Result<{ty}, BoundaryError>"))),
+        body: vec![
+            if_(
+                strict_neq(typeof_expr(ident("json")), str_lit("string")),
+                block(vec![return_(err_structural_mismatch_top(
+                    "base64 string",
+                    typeof_expr(ident("json")),
+                ))]),
+            ),
+            const_(
+                "__b",
+                call(ident("__bynkBytesFromBase64"), vec![ident("json")]),
+            ),
+            if_(
+                strict_eq(member(ident("__b"), "tag"), str_lit("None")),
+                block(vec![return_(err_structural_mismatch_top(
+                    "base64 string",
+                    str_lit("invalid base64"),
+                ))]),
+            ),
+            return_(call(
+                ident("Ok"),
+                vec![as_expr(
+                    as_expr(member(ident("__b"), "value"), TsType::named("unknown")),
+                    TsType::named(ty.clone()),
+                )],
+            )),
+        ],
+        is_async: false,
+        inline: false,
+    }));
+
+    vec![serialise, deserialise]
 }
 
 /// #855 (Phase 2 step 5): which of the four TS shapes a named scalar's codec
@@ -464,14 +576,35 @@ fn emit_bytes_named_codec(out: &mut String, name: &str, qual: &Qual, ru: &Runtim
 /// `Revalidation` — the `owner_unit` string it carries otherwise is not
 /// consumed by anything on this path (it exists for the Phase 4 peek), so
 /// the qualifier prefix stands in for it here.
+///
+/// #1441 (Arc E slice 4): returns the `[serialise, deserialise]` pair as
+/// real `bynk_ts::TsDecl` nodes — see [`emit_bytes_named_codec`]'s own doc
+/// for why `Vec<TsDecl>`, not a `(TsDecl, TsDecl)` pair, and why the two
+/// share one return shape. The `Revalidation::ViaConstructor` arm's runtime
+/// `.of` probe (below) stays one opaque [`TsStmt::raw`] block: its inline
+/// object type (`{ of?: (json: unknown) => Result<unknown,
+/// ValidationError> }`) needs a *named* function-type parameter (`json`),
+/// but [`bynk_ts::TsType::Fn`]'s own doc is explicit that it only ever
+/// numbers parameters positionally (`a0`, `a1`, …) — real TS grammar
+/// requires *some* name, but not this exact one, so building it as a real
+/// `TsType::Fn` would print `(a0: unknown) => ...` and break zero-diff. The
+/// ternary itself is multi-line (`bynk_ts::TsExpr::Conditional`'s own
+/// printer always renders `test ? consequent : alternate` on one line, no
+/// multiline form). Both are real, checked gaps in the existing algebra —
+/// not a default to opaque without checking — and closing either is
+/// disproportionate to this one call site, so the whole `const validated =
+/// …;` assignment stays hand-formatted text, the same "genuinely out of
+/// scope" precedent `workers.rs`'s own `claim_predicate_to_js` call already
+/// set (#1321). The `if (validated.tag === "Err") { … }
+/// return Ok(validated.value as {name});` tail that follows has no such
+/// gap, so it builds real nodes like everything else in this function.
 fn emit_refined(
-    out: &mut String,
     name: &str,
     decl: &TypeDecl,
     types: &std::collections::HashMap<String, Arc<TypeDecl>>,
     qual: &Qual,
     ru: &RuntimeUse,
-) {
+) -> Vec<TsDecl> {
     let qprefix = qual_prefix(qual, name);
     let ty = format!("{qprefix}{name}");
     let prov = if qprefix.is_empty() {
@@ -495,8 +628,7 @@ fn emit_refined(
     // `emit_refined`'s early return to it, mirrored from `Revalidation` rather
     // than a bare `base == BaseType::Bytes` check.
     if scalar.revalidation == Revalidation::Base64Decode {
-        emit_bytes_named_codec(out, name, qual, ru);
-        return;
+        return emit_bytes_named_codec(name, qual, ru);
     }
 
     // #661: a *consumed* type (one the caller qualifies through the callee's
@@ -510,33 +642,43 @@ fn emit_refined(
     // declaration, so it validates, just not through `.of`).
     let prim = json_kind_ts(scalar.json);
     let typeof_str = prim;
-    writeln!(
-        out,
-        "export function serialise_{name}(value: {ty}): JsonValue {{"
-    )
-    .unwrap();
-    writeln!(out, "  return value as unknown as {prim};").unwrap();
-    writeln!(out, "}}").unwrap();
-    writeln!(out).unwrap();
 
-    writeln!(
-        out,
-        "export function deserialise_{name}(json: JsonValue, path: string = \"$\"): Result<{ty}, BoundaryError> {{"
-    )
-    .unwrap();
-    writeln!(out, "  if (typeof json !== \"{typeof_str}\") {{").unwrap();
-    writeln!(
-        out,
-        "    return Err({{ kind: \"StructuralMismatch\", path, expected: \"{typeof_str}\", actual: typeof json }});"
-    )
-    .unwrap();
-    writeln!(out, "  }}").unwrap();
+    let serialise = TsDecl::Export(Box::new(TsDecl::Function {
+        name: format!("serialise_{name}"),
+        generics: Vec::new(),
+        params: vec![TsParam {
+            name: "value".to_string(),
+            ty: Some(TsType::named(ty.clone())),
+            optional: false,
+        }],
+        return_type: Some(TsType::named("JsonValue")),
+        body: vec![return_(as_expr(
+            as_expr(ident("value"), TsType::named("unknown")),
+            TsType::named(prim),
+        ))],
+        is_async: false,
+        inline: false,
+    }));
+
+    let mut body = vec![if_(
+        strict_neq(typeof_expr(ident("json")), str_lit(typeof_str)),
+        block(vec![return_(err_structural_mismatch_top(
+            typeof_str,
+            typeof_expr(ident("json")),
+        ))]),
+    )];
     match scalar.revalidation {
         Revalidation::StructuralOnly => {
             // Decision C: structural cast only — never reach for the owner's
             // `.of`, which would resurrect the value import this increment
             // removes and leak the opaque predicate into the consumer.
-            writeln!(out, "  return Ok(json as unknown as {ty});").unwrap();
+            body.push(return_(call(
+                ident("Ok"),
+                vec![as_expr(
+                    as_expr(ident("json"), TsType::named("unknown")),
+                    TsType::named(ty.clone()),
+                )],
+            )));
         }
         Revalidation::Inline => {
             // Decision D: a transparent refined consumed type validates inline.
@@ -544,8 +686,18 @@ fn emit_refined(
             // predicates, in the same order the owner's `.of` applies them, but
             // wrapped as this codec's `BoundaryError` rather than a
             // `ValidationError`.
-            emit_inline_refinement_checks(out, name, &scalar.base_guards, &scalar.predicates);
-            writeln!(out, "  return Ok(json as unknown as {ty});").unwrap();
+            body.extend(emit_inline_refinement_checks(
+                name,
+                &scalar.base_guards,
+                &scalar.predicates,
+            ));
+            body.push(return_(call(
+                ident("Ok"),
+                vec![as_expr(
+                    as_expr(ident("json"), TsType::named("unknown")),
+                    TsType::named(ty.clone()),
+                )],
+            )));
         }
         Revalidation::ViaConstructor => {
             // Owner's own module: re-validate via the type's own constructor
@@ -564,34 +716,66 @@ fn emit_refined(
             // annotated to match the same `Result<{name}, ValidationError>`
             // union so both ternary arms unify to one type instead of one
             // arm's `Ok(...)` inferring a narrower `Result<{name}, never>`.
-            writeln!(
-                out,
-                "  const validated = (typeof ({name} as unknown as {{ of?: (json: unknown) => Result<unknown, ValidationError> }}).of === \"function\")"
-            )
-            .unwrap();
-            writeln!(
-                out,
-                "    ? ({name} as unknown as {{ of: (json: unknown) => Result<unknown, ValidationError> }}).of(json)"
-            )
-            .unwrap();
-            writeln!(
-                out,
-                "    : (Ok(json as unknown as {name}) as Result<unknown, ValidationError>);"
-            )
-            .unwrap();
-            writeln!(out, "  if (validated.tag === \"Err\") {{").unwrap();
-            writeln!(
-                out,
-                "    return Err({{ kind: \"RefinementViolation\", path, violation: validated.error }});"
-            )
-            .unwrap();
-            writeln!(out, "  }}").unwrap();
-            writeln!(out, "  return Ok(validated.value as {name});").unwrap();
+            //
+            // This whole statement stays one opaque `TsStmt::raw` block — see
+            // this function's own doc for why (a real, checked gap in both
+            // `TsType::Fn`'s named-parameter support and
+            // `TsExpr::Conditional`'s single-line-only printer, not a default
+            // to opaque). Baked-in indent matches this body's own one-level
+            // depth exactly, the same contract `print_stmt`'s own doc holds
+            // every `Raw` statement to.
+            body.push(TsStmt::raw(
+                format!(
+                    "  const validated = (typeof ({name} as unknown as {{ of?: (json: unknown) => Result<unknown, ValidationError> }}).of === \"function\")\n    ? ({name} as unknown as {{ of: (json: unknown) => Result<unknown, ValidationError> }}).of(json)\n    : (Ok(json as unknown as {name}) as Result<unknown, ValidationError>);\n"
+                ),
+                None,
+            ));
+            body.push(if_(
+                strict_eq(member(ident("validated"), "tag"), str_lit("Err")),
+                block(vec![return_(call(
+                    ident("Err"),
+                    vec![TsExpr::Object {
+                        entries: vec![
+                            TsObjectEntry::Prop("kind".to_string(), str_lit("RefinementViolation")),
+                            TsObjectEntry::Shorthand("path".to_string()),
+                            TsObjectEntry::Prop(
+                                "violation".to_string(),
+                                member(ident("validated"), "error"),
+                            ),
+                        ],
+                        multiline: false,
+                    }],
+                ))]),
+            ));
+            body.push(return_(call(
+                ident("Ok"),
+                vec![as_expr(
+                    member(ident("validated"), "value"),
+                    TsType::named(name.to_string()),
+                )],
+            )));
         }
         Revalidation::Base64Decode => unreachable!("handled by the early return above"),
     }
-    writeln!(out, "}}").unwrap();
-    writeln!(out).unwrap();
+
+    let deserialise = TsDecl::Export(Box::new(TsDecl::Function {
+        name: format!("deserialise_{name}"),
+        generics: Vec::new(),
+        params: vec![
+            TsParam {
+                name: "json".to_string(),
+                ty: Some(TsType::named("JsonValue")),
+                optional: false,
+            },
+            deserialise_path_param(),
+        ],
+        return_type: Some(TsType::named(format!("Result<{ty}, BoundaryError>"))),
+        body,
+        is_async: false,
+        inline: false,
+    }));
+
+    vec![serialise, deserialise]
 }
 
 /// #661 (Decision D): inline the base-type and refinement checks a consumed
@@ -603,36 +787,65 @@ fn emit_refined(
 /// #855 (Phase 2 step 5): driven off a [`WireScalar`]'s `base_guards` +
 /// `predicates` (both **declaration order** — see `wire.rs`'s module doc)
 /// rather than a `BaseType` + raw `Option<&Refinement>` pair.
+///
+/// #1441 (Arc E slice 4): returns a real `Vec<bynk_ts::TsStmt>` — the
+/// statement-builder shape #1439 already established for
+/// `emit_field_deserialise_wire` — feeding straight into `emit_refined`'s
+/// own `Revalidation::Inline` arm, rather than writing into an `out: &mut
+/// String`. `violation` returns a `TsStmt` (a `return Err(...)` statement)
+/// instead of the pre-conversion `String`, for the same reason: both real
+/// call sites (the base-guard loop below, `emit_inline_pred_check`'s own
+/// loop) place it directly inside a real `block(vec![...])`.
 fn emit_inline_refinement_checks(
-    out: &mut String,
     name: &str,
     base_guards: &[BaseGuard],
     predicates: &[PredKind],
-) {
-    let violation = |msg: &str| {
-        format!(
-            "return Err({{ kind: \"RefinementViolation\", path, violation: {{ field: \"{name}\", message: \"{msg}\", value: json }} }});"
-        )
+) -> Vec<TsStmt> {
+    let violation = |msg: &str| -> TsStmt {
+        return_(call(
+            ident("Err"),
+            vec![TsExpr::Object {
+                entries: vec![
+                    TsObjectEntry::Prop("kind".to_string(), str_lit("RefinementViolation")),
+                    TsObjectEntry::Shorthand("path".to_string()),
+                    TsObjectEntry::Prop(
+                        "violation".to_string(),
+                        TsExpr::object(vec![
+                            ("field".to_string(), str_lit(name)),
+                            ("message".to_string(), str_lit(msg)),
+                            ("value".to_string(), ident("json")),
+                        ]),
+                    ),
+                ],
+                multiline: false,
+            }],
+        ))
     };
     // Base guards mirror `emit_refined_checks`: an `Int` is whole, a `Float`
     // finite. (`Duration`/`Instant` are not exposed as named refined bases.)
+    let mut stmts = Vec::new();
     for guard in base_guards {
         match guard {
-            BaseGuard::Integral => {
-                writeln!(out, "  if (!Number.isInteger(json)) {{").unwrap();
-                writeln!(out, "    {}", violation("must be an integer")).unwrap();
-                writeln!(out, "  }}").unwrap();
-            }
-            BaseGuard::Finite => {
-                writeln!(out, "  if (!Number.isFinite(json)) {{").unwrap();
-                writeln!(out, "    {}", violation("must be a finite number")).unwrap();
-                writeln!(out, "  }}").unwrap();
-            }
+            BaseGuard::Integral => stmts.push(if_(
+                not_expr(call(
+                    member(ident("Number"), "isInteger"),
+                    vec![ident("json")],
+                )),
+                block(vec![violation("must be an integer")]),
+            )),
+            BaseGuard::Finite => stmts.push(if_(
+                not_expr(call(
+                    member(ident("Number"), "isFinite"),
+                    vec![ident("json")],
+                )),
+                block(vec![violation("must be a finite number")]),
+            )),
         }
     }
     for pred in predicates {
-        emit_inline_pred_check(out, pred, &violation);
+        stmts.extend(emit_inline_pred_check(pred, &violation));
     }
+    stmts
 }
 
 /// #661 (Decision D): one refinement predicate as an inline `if (!…) return
@@ -640,11 +853,29 @@ fn emit_inline_refinement_checks(
 /// `emit::emit_pred_check` so a consumer-side rejection reads identically to an
 /// owner-side one; only the error envelope differs (`BoundaryError` here,
 /// `ValidationError` there).
-fn emit_inline_pred_check(out: &mut String, pred: &PredKind, violation: &dyn Fn(&str) -> String) {
+///
+/// #1441 (Arc E slice 4): returns `Vec<TsStmt>` (one `if`), same treatment
+/// as [`emit_inline_refinement_checks`] above. `super::pred_condition_and_
+/// message`'s own `cond` stays opaque text spliced through [`ident`] — it
+/// is `emitter.rs`'s `String`-returning `pred_condition_and_message`,
+/// confirmed by Arc B/P7.9's own proposal as genuinely out of that slice's
+/// scope, the same "cross-file `String`-producing dependency genuinely out
+/// of scope stays opaque" precedent `workers.rs`'s own `claim_predicate_
+/// to_js` call already set (#1321). Wrapped in an explicit
+/// [`TsExpr::Paren`] before negating — `cond` is often a compound boolean
+/// expression (e.g. `value.length >= 3 && value.length <= 10`), and unlike
+/// `Binary`/`As`, a bare `TsExpr::Ident` is never parenthesised by the
+/// printer's own unary-operand precedence logic (it has no way to know the
+/// opaque text it holds isn't atomic) — the original `if (!({cond}))`
+/// always wrapped explicitly for exactly this reason, and dropping the
+/// parens would both change the emitted bytes and, for a compound `cond`,
+/// the actual runtime meaning.
+fn emit_inline_pred_check(pred: &PredKind, violation: &dyn Fn(&str) -> TsStmt) -> Vec<TsStmt> {
     let (cond, msg) = super::pred_condition_and_message(pred, "json");
-    writeln!(out, "  if (!({cond})) {{").unwrap();
-    writeln!(out, "    {}", violation(&msg)).unwrap();
-    writeln!(out, "  }}").unwrap();
+    vec![if_(
+        not_expr(TsExpr::Paren(Box::new(ident(cond)))),
+        block(vec![violation(&msg)]),
+    )]
 }
 
 /// #855 (Phase 2 step 7): builds the [`WireField`] list via
