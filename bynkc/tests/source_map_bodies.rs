@@ -250,3 +250,47 @@ fn multi_file_test_group_has_multiple_sources() {
         "both sources referenced, got {used:?}"
     );
 }
+
+#[test]
+fn service_handler_with_subscriber_and_schema_prologue_maps_per_statement() {
+    // #1363: `from Events(Pattern { .. })` prepends a subscriber-filter guard
+    // line, and `via schema(N)` prepends a schema-gate guard line, both
+    // spliced into `body_out` *after* the body's own statements were already
+    // lowered and their checkpoints recorded against the pre-insert text.
+    // Both prologues at once (two inserted lines) is the case that used to
+    // resolve every real statement two generated lines too early.
+    let dir = tmp("evt");
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("bynk.toml"), "[project]\nname = \"evt\"\n").unwrap();
+    // Handler body on .bynk lines 11 (the effect-let) and 12 (the trailing call).
+    std::fs::write(
+        dir.join("src").join("notif.bynk"),
+        "context notif\n\nconsumes bynk { Logger }\n\nevent Tick = {\n\tregion: String,\n}\n\nservice OnTick from Events(Tick { region: \"known\", .. }) via schema(1) {\n\ton event(e: Tick) -> Effect[()] given Logger {\n\t\tlet _ <- Logger.info(\"hi\")\n\t\tLogger.info(\"bye\")\n\t}\n}\n",
+    )
+    .unwrap();
+
+    let (ts, map) = compile_file(&dir, false, "notif.ts");
+    let _ = std::fs::remove_dir_all(&dir);
+    let (sources, mappings) = parse_map(&map);
+    assert!(
+        sources.len() == 1 && sources[0].ends_with("notif.bynk"),
+        "single source ending in notif.bynk, got {sources:?}"
+    );
+    let lines = decode(&mappings);
+    let at = |g: usize| {
+        lines[g]
+            .unwrap_or_else(|| panic!("gen line {g} unmapped"))
+            .1
+    };
+
+    assert_eq!(
+        at(gen_line_of(&ts, "Logger.info(\"hi\")")),
+        10,
+        "effect-let -> .bynk:11"
+    );
+    assert_eq!(
+        at(gen_line_of(&ts, "Logger.info(\"bye\")")),
+        11,
+        "trailing call -> .bynk:12"
+    );
+}
