@@ -17,7 +17,9 @@ use bynk_syntax::ast::{BaseType, PredKind, TypeBody, TypeDecl, TypeRef};
 
 use crate::emitter::RuntimeUse;
 use bynk_check::wire_default::lower_field_default_wire;
-use bynk_ts::{TsArrowBody, TsBinaryOp, TsExpr, TsLit, TsParam, TsStmt, TsType, TsUnaryOp};
+use bynk_ts::{
+    TsArrowBody, TsBinaryOp, TsBindingName, TsExpr, TsLit, TsParam, TsStmt, TsType, TsUnaryOp,
+};
 
 // #1435 (Arc E slice 1): this file's own local `TsExpr` builder set, the
 // same "compose the real node algebra for this file's own repeated shapes"
@@ -52,6 +54,106 @@ fn as_expr(expr: TsExpr, ty: TsType) -> TsExpr {
     TsExpr::As {
         expr: Box::new(expr),
         ty,
+    }
+}
+
+// #1439 (Arc E slice 3): the statement-builder half of this file's own
+// local node-builder set — slices 1/2 (#1436/#1438) only ever needed the
+// `TsExpr` builders above (every prior conversion in this file returned one
+// expression); this slice's `emit_field_deserialise_wire` returns a real
+// `Vec<TsStmt>` per `WireRef` arm, so it needs the `TsStmt` half too. Same
+// naming/shape convention `workers.rs`/`workers_entry.rs` already
+// established for their own statement-builder sets (#1321/#1323).
+
+fn not_expr(expr: TsExpr) -> TsExpr {
+    TsExpr::Unary {
+        op: TsUnaryOp::Not,
+        expr: Box::new(expr),
+    }
+}
+
+fn typeof_expr(expr: TsExpr) -> TsExpr {
+    TsExpr::Unary {
+        op: TsUnaryOp::Typeof,
+        expr: Box::new(expr),
+    }
+}
+
+fn binary(op: TsBinaryOp, left: TsExpr, right: TsExpr) -> TsExpr {
+    TsExpr::Binary {
+        op,
+        left: Box::new(left),
+        right: Box::new(right),
+    }
+}
+
+fn strict_eq(left: TsExpr, right: TsExpr) -> TsExpr {
+    binary(TsBinaryOp::StrictEq, left, right)
+}
+
+fn strict_neq(left: TsExpr, right: TsExpr) -> TsExpr {
+    binary(TsBinaryOp::StrictNotEq, left, right)
+}
+
+fn const_(name: impl Into<String>, init: TsExpr) -> TsStmt {
+    TsStmt::const_stmt(TsBindingName::Ident(name.into()), None, init, None)
+}
+
+fn return_(expr: TsExpr) -> TsStmt {
+    TsStmt::return_stmt(Some(expr), None)
+}
+
+fn if_(cond: TsExpr, then_branch: TsStmt) -> TsStmt {
+    TsStmt::if_stmt(cond, then_branch, None)
+}
+
+fn block(stmts: Vec<TsStmt>) -> TsStmt {
+    TsStmt::block(stmts, None)
+}
+
+/// `Err({ kind: "StructuralMismatch", path: <path_expr>, expected:
+/// <expected>, actual: <actual> })` — the one wire-guard failure shape
+/// every real arm of [`emit_field_deserialise_wire`] returns. Distinct from
+/// `deserialise_expr_via`'s own `structural_mismatch` closure further down
+/// this file in two ways that matter: `path` here is spliced in as an
+/// already-rendered TS expression (`ident(path_expr)`), not a string
+/// literal (`str_lit`) — this function's own `path_expr` parameter is
+/// itself TS source text (a bare `path` identifier, or a template literal
+/// like `` `${path}.value` ``), never a bare string to quote; and the
+/// object is never cast `as BoundaryError` the way that closure's is (the
+/// pre-conversion `writeln!` output this replaces never added one either —
+/// only `deserialise_expr_via`'s own callers need the cast, since they
+/// build a whole `Result<T, BoundaryError>` return value directly).
+fn err_structural_mismatch(path_expr: &str, expected: &str, actual: TsExpr) -> TsExpr {
+    call(
+        ident("Err"),
+        vec![TsExpr::object(vec![
+            ("kind".to_string(), str_lit("StructuralMismatch")),
+            ("path".to_string(), ident(path_expr)),
+            ("expected".to_string(), str_lit(expected)),
+            ("actual".to_string(), actual),
+        ])],
+    )
+}
+
+/// Boundary-print — splices a real `Vec<bynk_ts::TsStmt>` into a still-
+/// `write!`-based caller's own `out: &mut String` accumulator, one
+/// `bynk_ts::print_stmt(&stmt, 1)` per statement. `depth: 1` is the
+/// one-level indent (`"  "`) every real call site's own pre-conversion
+/// `writeln!` calls used — confirmed against a real fixture's
+/// before/after diff (#1439), not assumed, the same "verify, don't
+/// assume" discipline #1437's own qualifier-prefix convention needed.
+/// All 8 real call sites (`emit_record_codec`, `emit_sum_codec`,
+/// `emit_generic_helpers_qualified`) sit at exactly this depth: a
+/// generated function's own top-level statement list.
+fn splice_stmts(out: &mut String, stmts: Vec<TsStmt>) {
+    // Review of #1440: every other boundary-print site in `bynk-emit`
+    // spells this `push_str`, not `write!` — matches that convention (an
+    // infallible append needs no `.unwrap()`, and doesn't itself add a
+    // `write!`-family line to the very `ts_writes` probe this slice drives
+    // down).
+    for stmt in &stmts {
+        out.push_str(&bynk_ts::print_stmt(stmt, 1));
     }
 }
 
@@ -681,7 +783,13 @@ fn emit_record_codec(
             format!("obj[\"{fname}\"]")
         };
         let sub_path = format!("`${{path}}.{}`", field.path_segment);
-        emit_field_deserialise_wire(out, fname, &field.shape, &access, &sub_path, ru);
+        // #1439 (Arc E slice 3): boundary-print — `emit_field_deserialise_wire`
+        // now returns a real `Vec<bynk_ts::TsStmt>`, spliced in via
+        // `splice_stmts` at this function's own one-level indent.
+        splice_stmts(
+            out,
+            emit_field_deserialise_wire(fname, &field.shape, &access, &sub_path, ru),
+        );
     }
     write!(out, "  return Ok({{ ").unwrap();
     let parts: Vec<String> = fields
@@ -826,7 +934,12 @@ fn emit_sum_codec(
             for field in &variant.payload {
                 let access = format!("obj[\"{}\"]", field.name);
                 let sub_path = format!("`${{path}}.{}`", field.path_segment);
-                emit_field_deserialise_wire(out, &field.name, &field.shape, &access, &sub_path, ru);
+                // #1439 (Arc E slice 3): boundary-print, same treatment as
+                // `emit_record_codec`'s own identical call site above.
+                splice_stmts(
+                    out,
+                    emit_field_deserialise_wire(&field.name, &field.shape, &access, &sub_path, ru),
+                );
             }
             write!(out, "      return Ok({{ {tag}: \"{vname}\"").unwrap();
             for field in &variant.payload {
@@ -863,28 +976,42 @@ fn emit_sum_codec(
 /// [`emit_field_deserialise_wire`] — a record/sum field built from the IR
 /// already carries its [`WireRef`] shape (`WireField::shape`) and calls that
 /// directly, with no `TypeRef` to convert back from.
+///
+/// #1439 (Arc E slice 3): returns the same `Vec<bynk_ts::TsStmt>`
+/// [`emit_field_deserialise_wire`] now does, rather than writing into an
+/// `out: &mut String` — this function's only job is resolving `t` to a
+/// [`WireRef`] before delegating, so it carries the signature change with
+/// zero body change beyond the return.
 fn emit_field_deserialise(
-    out: &mut String,
     name: &str,
     t: &TypeRef,
     json: &str,
     path_expr: &str,
     ru: &RuntimeUse,
-) {
-    emit_field_deserialise_wire(out, name, &wire_ref_of(t), json, path_expr, ru);
+) -> Vec<TsStmt> {
+    emit_field_deserialise_wire(name, &wire_ref_of(t), json, path_expr, ru)
 }
 
 /// The [`WireRef`]-driven body [`emit_field_deserialise`] delegates to,
 /// exposed directly for a caller that already holds a [`WireRef`] (a
 /// [`WireField`]'s `shape`) rather than the `TypeRef` it was resolved from.
+///
+/// #1439 (Arc E slice 3): returns a real `Vec<bynk_ts::TsStmt>` — a
+/// *sequence* of statements (one or more guard `if`s, then a `const`
+/// binding), not one expression, unlike slices 1/2's own `-> TsExpr`
+/// conversions (#1436/#1438) — hence `Vec`, not a single node. All 8 real
+/// call sites (`emit_record_codec`, `emit_sum_codec`,
+/// `emit_generic_helpers_qualified`) are still `write!`-based, so each
+/// splices the result back in via [`splice_stmts`] at the same one-level
+/// indent the original `writeln!` calls always used, confirmed
+/// byte-identical against the fixture corpus.
 fn emit_field_deserialise_wire(
-    out: &mut String,
     name: &str,
     wire: &WireRef,
     json: &str,
     path_expr: &str,
     ru: &RuntimeUse,
-) {
+) -> Vec<TsStmt> {
     match wire {
         // v0.110 (ADR 0142 D5): a bare `Bytes` field is a base64 JSON string —
         // require a string, then decode (rejecting invalid base64), binding the
@@ -892,34 +1019,45 @@ fn emit_field_deserialise_wire(
         // not a direct cast of its erased representation.
         WireRef::Bytes => {
             ru.note_bytes();
-            writeln!(out, "  if (typeof {json} !== \"string\") {{").unwrap();
-            writeln!(
-                out,
-                "    return Err({{ kind: \"StructuralMismatch\", path: {path_expr}, expected: \"base64 string\", actual: typeof {json} }});"
-            )
-            .unwrap();
-            writeln!(out, "  }}").unwrap();
-            writeln!(out, "  const __b_{name} = __bynkBytesFromBase64({json});").unwrap();
-            writeln!(out, "  if (__b_{name}.tag === \"None\") {{").unwrap();
-            writeln!(
-                out,
-                "    return Err({{ kind: \"StructuralMismatch\", path: {path_expr}, expected: \"base64 string\", actual: \"invalid base64\" }});"
-            )
-            .unwrap();
-            writeln!(out, "  }}").unwrap();
-            writeln!(out, "  const __{name} = __b_{name}.value;").unwrap();
+            vec![
+                if_(
+                    strict_neq(typeof_expr(ident(json)), str_lit("string")),
+                    block(vec![return_(err_structural_mismatch(
+                        path_expr,
+                        "base64 string",
+                        typeof_expr(ident(json)),
+                    ))]),
+                ),
+                const_(
+                    format!("__b_{name}"),
+                    call(ident("__bynkBytesFromBase64"), vec![ident(json)]),
+                ),
+                if_(
+                    strict_eq(member(ident(format!("__b_{name}")), "tag"), str_lit("None")),
+                    block(vec![return_(err_structural_mismatch(
+                        path_expr,
+                        "base64 string",
+                        str_lit("invalid base64"),
+                    ))]),
+                ),
+                const_(
+                    format!("__{name}"),
+                    member(ident(format!("__b_{name}")), "value"),
+                ),
+            ]
         }
         WireRef::Base {
             json: kind, guards, ..
         } => {
             let typeof_str = json_kind_ts(*kind);
-            writeln!(out, "  if (typeof {json} !== \"{typeof_str}\") {{").unwrap();
-            writeln!(
-                out,
-                "    return Err({{ kind: \"StructuralMismatch\", path: {path_expr}, expected: \"{typeof_str}\", actual: typeof {json} }});"
-            )
-            .unwrap();
-            writeln!(out, "  }}").unwrap();
+            let mut stmts = vec![if_(
+                strict_neq(typeof_expr(ident(json)), str_lit(typeof_str)),
+                block(vec![return_(err_structural_mismatch(
+                    path_expr,
+                    typeof_str,
+                    typeof_expr(ident(json)),
+                ))]),
+            )];
             // v0.22b: bare `Int` fields validate integrality (ADR 0049) —
             // with `Float` in the language there is no excuse for a
             // fractional `Int` from the wire. v0.90 (ADR 0114 D7): an `Instant`
@@ -928,55 +1066,51 @@ fn emit_field_deserialise_wire(
             // `JSON.parse("1e999")` yields `Infinity`, which must not be
             // admitted from the wire.
             for guard in guards {
-                match guard {
-                    BaseGuard::Integral => {
-                        writeln!(out, "  if (!Number.isInteger({json})) {{").unwrap();
-                        writeln!(
-                            out,
-                            "    return Err({{ kind: \"StructuralMismatch\", path: {path_expr}, expected: \"integer\", actual: String({json}) }});"
-                        )
-                        .unwrap();
-                        writeln!(out, "  }}").unwrap();
-                    }
-                    BaseGuard::Finite => {
-                        writeln!(out, "  if (!Number.isFinite({json})) {{").unwrap();
-                        writeln!(
-                            out,
-                            "    return Err({{ kind: \"StructuralMismatch\", path: {path_expr}, expected: \"finite number\", actual: String({json}) }});"
-                        )
-                        .unwrap();
-                        writeln!(out, "  }}").unwrap();
-                    }
-                }
+                let (method, expected) = match guard {
+                    BaseGuard::Integral => ("isInteger", "integer"),
+                    BaseGuard::Finite => ("isFinite", "finite number"),
+                };
+                stmts.push(if_(
+                    not_expr(call(member(ident("Number"), method), vec![ident(json)])),
+                    block(vec![return_(err_structural_mismatch(
+                        path_expr,
+                        expected,
+                        call(ident("String"), vec![ident(json)]),
+                    ))]),
+                ));
             }
-            writeln!(out, "  const __{name} = {json};").unwrap();
+            stmts.push(const_(format!("__{name}"), ident(json)));
+            stmts
         }
         // Named type (own module or generic instantiation, both keyed the
         // same way — `Named` for a declared type, `Inst` for `Result` /
         // `Option` / `List` / `Map` / a generic `App`): defer to its own
         // `deserialise_<key>`. Assumes it exists in scope (imported or
         // declared locally).
-        WireRef::Named { name: type_name } => {
-            writeln!(
-                out,
-                "  const __r_{name} = deserialise_{type_name}({json}, {path_expr});"
-            )
-            .unwrap();
-            writeln!(out, "  if (__r_{name}.tag === \"Err\") return __r_{name};").unwrap();
-            writeln!(out, "  const __{name} = __r_{name}.value;").unwrap();
-        }
-        WireRef::Inst { key } => {
-            writeln!(
-                out,
-                "  const __r_{name} = deserialise_{key}({json}, {path_expr});"
-            )
-            .unwrap();
-            writeln!(out, "  if (__r_{name}.tag === \"Err\") return __r_{name};").unwrap();
-            writeln!(out, "  const __{name} = __r_{name}.value;").unwrap();
-        }
-        WireRef::Unit => {
-            writeln!(out, "  const __{name} = undefined;").unwrap();
-        }
+        // Review of #1440: `Named`/`Inst` differ only in which callee they
+        // name (`type_name`/`key`, both a bare `String` — `bynk-check/src/
+        // wire.rs`'s own `WireRef` fields) — collapsed via an or-pattern
+        // rather than kept as two ~identical arms, the same "one shape, one
+        // arm" discipline this tree's own exhaustiveness rules already
+        // enforce for the printer side.
+        WireRef::Named { name: type_name } | WireRef::Inst { key: type_name } => vec![
+            const_(
+                format!("__r_{name}"),
+                call(
+                    ident(format!("deserialise_{type_name}")),
+                    vec![ident(json), ident(path_expr)],
+                ),
+            ),
+            if_(
+                strict_eq(member(ident(format!("__r_{name}")), "tag"), str_lit("Err")),
+                return_(ident(format!("__r_{name}"))),
+            ),
+            const_(
+                format!("__{name}"),
+                member(ident(format!("__r_{name}")), "value"),
+            ),
+        ],
+        WireRef::Unit => vec![const_(format!("__{name}"), ident("undefined"))],
         // The runtime-owned error family, plus a stray field-position
         // `Effect` (see this function's doc): no generated codec to name, so
         // the value is cast through unchecked.
@@ -994,39 +1128,173 @@ fn emit_field_deserialise_wire(
         // narrowing it is not part of this residual — `unknown` would
         // compile but silently drop the fact that it's still open, which is
         // worse than leaving `any` visible.
+        //
+        // #1439 (Arc E slice 3): the cast is now a real `TsExpr::As` node
+        // (nested `As`-under-`As` for the four bridged-through-`unknown`
+        // reasons, mirroring `serialise_field_expr_wire`'s own
+        // `WireRef::Unchecked` arm's identical shape) rather than a raw
+        // `"as any"`/`"as unknown as X"` string glued onto `{json} {cast}`.
+        // Per the accepted proposal's own explicit note: this moves the
+        // *construction* of the `Effect` arm's `any` from a string to a
+        // real node, but does NOT close the `ts_any` residual — `xtask`'s
+        // probe was deliberately widened (#1322's review) to also match
+        // `named("any"` in Rust source, so the count is expected to stay at
+        // 31, not drop to 30.
         WireRef::Unchecked { reason } => {
-            // Review of #1319/#1320, finding 1: `HttpResult<T>` is generic
-            // with no default type argument — a bare `HttpResult` is
-            // `tsc`'s TS2314. `UncheckedReason::HttpResult`
-            // (`bynk-check/src/wire.rs:246`) is payload-free, so the real
-            // element type genuinely isn't available here the way it is at
-            // `deserialise_expr_via`'s own `TypeRef::HttpResult` arm (which
-            // renders it precisely). `HttpResult<unknown>` names the real
-            // type this field's own value is: a real `HttpResult`, whose
-            // payload this residual has never checked and still doesn't —
-            // the immediately-surrounding assignment already carries its
-            // own final `as <Record>` cast to the field's real (possibly
-            // narrower) `HttpResult<T>` type, so this is not a new erosion.
-            //
-            // The same tsc run (finding 1) also found `{json} as <type>`
-            // fails TS2352 for `ValidationError`/`JsonError` — `json`'s own
-            // static type here is the `JsonValue` union, not structurally
-            // close enough to a real interface for a direct cast in either
-            // direction (the serialise-side sibling arm, immediately above
-            // in this file, has the identical fix for the identical reason).
-            // Bridged through `unknown` uniformly, `HttpResult`/`QueueResult`
-            // included even though they pass without it today, for the same
-            // "heuristic, not a guarantee" reason. `any` needs no bridge —
-            // it already casts to and from anything.
-            let cast = match reason {
-                UncheckedReason::Effect => "as any".to_string(),
-                UncheckedReason::ValidationError => "as unknown as ValidationError".to_string(),
-                UncheckedReason::JsonError => "as unknown as JsonError".to_string(),
-                UncheckedReason::HttpResult => "as unknown as HttpResult<unknown>".to_string(),
-                UncheckedReason::QueueResult => "as unknown as QueueResult".to_string(),
+            let value = match reason {
+                UncheckedReason::Effect => as_expr(ident(json), TsType::named("any")),
+                UncheckedReason::ValidationError => as_expr(
+                    as_expr(ident(json), TsType::named("unknown")),
+                    TsType::named("ValidationError"),
+                ),
+                UncheckedReason::JsonError => as_expr(
+                    as_expr(ident(json), TsType::named("unknown")),
+                    TsType::named("JsonError"),
+                ),
+                UncheckedReason::HttpResult => as_expr(
+                    as_expr(ident(json), TsType::named("unknown")),
+                    TsType::named_with_args("HttpResult", vec![TsType::named("unknown")]),
+                ),
+                UncheckedReason::QueueResult => as_expr(
+                    as_expr(ident(json), TsType::named("unknown")),
+                    TsType::named("QueueResult"),
+                ),
             };
-            writeln!(out, "  const __{name} = {json} {cast};").unwrap();
+            vec![const_(format!("__{name}"), value)]
         }
+    }
+}
+
+/// #1439 (Arc E slice 3): direct unit coverage for
+/// [`emit_field_deserialise_wire`], byte-checked against the exact strings
+/// its pre-conversion `writeln!` body used to produce. The project-form
+/// fixture corpus reaches most of these arms already (`bless_positive_
+/// fixtures`/`positive_fixtures` passing with zero fixture diff is the
+/// stronger, end-to-end proof for those), but a real gap check (per this
+/// issue's own "confirm this at implementation time" instruction) found
+/// `WireRef::Unchecked { reason: UncheckedReason::Effect }` is NOT reached
+/// by any real fixture — `1319_runtime_error_type_fields/expected/
+/// errortypes.ts` exercises the other four `Unchecked` reasons (via a
+/// record with one field of each runtime-owned error type), but a
+/// field-position `Effect` never appears in that fixture or any other in
+/// the corpus (a record/sum field can never legally *be* `Effect` per
+/// `wire_ref`'s own doc — this arm is reached only via the `TypeRef` path
+/// this file's callers don't exercise for that specific shape). This
+/// module closes that gap directly rather than leaving the arm asserted
+/// only by inspection.
+#[cfg(test)]
+mod emit_field_deserialise_wire_tests {
+    use super::*;
+    use bynk_check::wire::Expected;
+
+    fn render(stmts: Vec<TsStmt>) -> String {
+        stmts
+            .iter()
+            .map(|s| bynk_ts::print_stmt(s, 1))
+            .collect::<Vec<_>>()
+            .join("")
+    }
+
+    #[test]
+    fn unchecked_effect_casts_through_any() {
+        let ru = RuntimeUse::default();
+        let stmts = emit_field_deserialise_wire(
+            "name",
+            &WireRef::Unchecked {
+                reason: UncheckedReason::Effect,
+            },
+            "json",
+            "path",
+            &ru,
+        );
+        assert_eq!(render(stmts), "  const __name = json as any;\n");
+    }
+
+    #[test]
+    fn unchecked_validation_error_casts_through_unknown() {
+        let ru = RuntimeUse::default();
+        let stmts = emit_field_deserialise_wire(
+            "name",
+            &WireRef::Unchecked {
+                reason: UncheckedReason::ValidationError,
+            },
+            "json",
+            "path",
+            &ru,
+        );
+        assert_eq!(
+            render(stmts),
+            "  const __name = json as unknown as ValidationError;\n"
+        );
+    }
+
+    #[test]
+    fn unchecked_http_result_names_unknown_element_type() {
+        let ru = RuntimeUse::default();
+        let stmts = emit_field_deserialise_wire(
+            "name",
+            &WireRef::Unchecked {
+                reason: UncheckedReason::HttpResult,
+            },
+            "json",
+            "path",
+            &ru,
+        );
+        assert_eq!(
+            render(stmts),
+            "  const __name = json as unknown as HttpResult<unknown>;\n"
+        );
+    }
+
+    #[test]
+    fn unit_arm_binds_undefined() {
+        let ru = RuntimeUse::default();
+        let stmts = emit_field_deserialise_wire("name", &WireRef::Unit, "json", "path", &ru);
+        assert_eq!(render(stmts), "  const __name = undefined;\n");
+    }
+
+    #[test]
+    fn named_arm_propagates_the_error_branch() {
+        let ru = RuntimeUse::default();
+        let stmts = emit_field_deserialise_wire(
+            "name",
+            &WireRef::Named {
+                name: "Foo".to_string(),
+            },
+            "json",
+            "path",
+            &ru,
+        );
+        assert_eq!(
+            render(stmts),
+            "  const __r_name = deserialise_Foo(json, path);\n  if (__r_name.tag === \"Err\") return __r_name;\n  const __name = __r_name.value;\n"
+        );
+    }
+
+    #[test]
+    fn bytes_arm_decodes_base64_with_two_guards() {
+        let ru = RuntimeUse::default();
+        let stmts = emit_field_deserialise_wire("name", &WireRef::Bytes, "json", "path", &ru);
+        assert_eq!(
+            render(stmts),
+            "  if (typeof json !== \"string\") {\n    return Err({ kind: \"StructuralMismatch\", path: path, expected: \"base64 string\", actual: typeof json });\n  }\n  const __b_name = __bynkBytesFromBase64(json);\n  if (__b_name.tag === \"None\") {\n    return Err({ kind: \"StructuralMismatch\", path: path, expected: \"base64 string\", actual: \"invalid base64\" });\n  }\n  const __name = __b_name.value;\n"
+        );
+    }
+
+    #[test]
+    fn base_arm_with_integral_and_finite_guards() {
+        let ru = RuntimeUse::default();
+        let wire = WireRef::Base {
+            base: BaseType::Float,
+            json: JsonKind::Number,
+            guards: vec![BaseGuard::Integral, BaseGuard::Finite],
+            expected: Expected::Json(JsonKind::Number),
+        };
+        let stmts = emit_field_deserialise_wire("name", &wire, "json", "path", &ru);
+        assert_eq!(
+            render(stmts),
+            "  if (typeof json !== \"number\") {\n    return Err({ kind: \"StructuralMismatch\", path: path, expected: \"number\", actual: typeof json });\n  }\n  if (!Number.isInteger(json)) {\n    return Err({ kind: \"StructuralMismatch\", path: path, expected: \"integer\", actual: String(json) });\n  }\n  if (!Number.isFinite(json)) {\n    return Err({ kind: \"StructuralMismatch\", path: path, expected: \"finite number\", actual: String(json) });\n  }\n  const __name = json;\n"
+        );
     }
 }
 
@@ -1810,14 +2078,23 @@ pub(crate) fn emit_generic_helpers_qualified(
                 writeln!(out, "  }}").unwrap();
                 writeln!(out, "  const obj = json as {{ [k: string]: JsonValue }};").unwrap();
                 writeln!(out, "  if (obj[\"kind\"] === \"Ok\") {{").unwrap();
-                emit_field_deserialise(out, "v", ok, "obj[\"value\"]", "`${path}.value`", ru);
+                // #1439 (Arc E slice 3): boundary-print, same treatment as
+                // `emit_record_codec`'s own call site above.
+                splice_stmts(
+                    out,
+                    emit_field_deserialise("v", ok, "obj[\"value\"]", "`${path}.value`", ru),
+                );
                 writeln!(
                     out,
                     "    return Ok(Ok(__v) as Result<{ok_inner}, {err_inner}>);"
                 )
                 .unwrap();
                 writeln!(out, "  }} else if (obj[\"kind\"] === \"Err\") {{").unwrap();
-                emit_field_deserialise(out, "e", err, "obj[\"error\"]", "`${path}.error`", ru);
+                // #1439 (Arc E slice 3): boundary-print, same treatment as above.
+                splice_stmts(
+                    out,
+                    emit_field_deserialise("e", err, "obj[\"error\"]", "`${path}.error`", ru),
+                );
                 writeln!(
                     out,
                     "    return Ok(Err(__e) as Result<{ok_inner}, {err_inner}>);"
@@ -1863,7 +2140,11 @@ pub(crate) fn emit_generic_helpers_qualified(
                 writeln!(out, "  }}").unwrap();
                 writeln!(out, "  const obj = json as {{ [k: string]: JsonValue }};").unwrap();
                 writeln!(out, "  if (obj[\"kind\"] === \"Some\") {{").unwrap();
-                emit_field_deserialise(out, "v", inner, "obj[\"value\"]", "`${path}.value`", ru);
+                // #1439 (Arc E slice 3): boundary-print, same treatment as above.
+                splice_stmts(
+                    out,
+                    emit_field_deserialise("v", inner, "obj[\"value\"]", "`${path}.value`", ru),
+                );
                 writeln!(out, "    return Ok(Some(__v) as Option<{inner_ty}>);").unwrap();
                 writeln!(out, "  }} else if (obj[\"kind\"] === \"None\") {{").unwrap();
                 writeln!(out, "    return Ok(None as Option<{inner_ty}>);").unwrap();
@@ -1904,7 +2185,11 @@ pub(crate) fn emit_generic_helpers_qualified(
                 // Bind the element before validating: `json[i]` with a
                 // mutable index does not narrow under a typeof guard.
                 writeln!(out, "  const item = json[i];").unwrap();
-                emit_field_deserialise(out, "el", elem, "item", "`${path}[${i}]`", ru);
+                // #1439 (Arc E slice 3): boundary-print, same treatment as above.
+                splice_stmts(
+                    out,
+                    emit_field_deserialise("el", elem, "item", "`${path}[${i}]`", ru),
+                );
                 // The element deserialiser may come from the declaring
                 // commons and return the *unbranded* record; this module's
                 // element type may be the context's branded rebrand. Assert
@@ -1963,8 +2248,15 @@ pub(crate) fn emit_generic_helpers_qualified(
                 writeln!(out, "  }}").unwrap();
                 writeln!(out, "  const entryK = entry[0];").unwrap();
                 writeln!(out, "  const entryV = entry[1];").unwrap();
-                emit_field_deserialise(out, "k", key, "entryK", "`${path}[${i}][0]`", ru);
-                emit_field_deserialise(out, "v", val, "entryV", "`${path}[${i}][1]`", ru);
+                // #1439 (Arc E slice 3): boundary-print, same treatment as above.
+                splice_stmts(
+                    out,
+                    emit_field_deserialise("k", key, "entryK", "`${path}[${i}][0]`", ru),
+                );
+                splice_stmts(
+                    out,
+                    emit_field_deserialise("v", val, "entryV", "`${path}[${i}][1]`", ru),
+                );
                 // Same brand assertion as the List codec (#527).
                 writeln!(out, "  out.set(__k as {key_ty}, __v as {val_ty});").unwrap();
                 writeln!(out, "  }}").unwrap();
