@@ -3918,7 +3918,27 @@ fn gen_descriptor_entry(name: Option<TsExpr>, bg: &BindingGen) -> TsExpr {
             is_async: false,
             generics: Vec::new(),
             return_type: None,
-            body: Box::new(bg.gen_ts.clone()),
+            // #1397: an unparenthesised object-literal arrow body parses as
+            // a block (`{ a: … }` reads `a:` as a statement label, and a
+            // bare `{  }` reads as an empty block) — for a record-typed
+            // binding, `bg.gen_ts` is `TsExpr::Object` for a non-empty
+            // record, or `gen_ts_for_ty`'s own `"{  }"` sentinel `TsExpr::
+            // Ident` (its Record arm's double-space-quirk comment) for a
+            // zero-field one. Wrap either in `TsExpr::Paren` here, the one
+            // choke point all three call sites share. The `Ident` arm
+            // matches by leading `{` rather than the sentinel's exact
+            // double-space spelling (review of #1425): a valid identifier
+            // can never start with `{`, so this is still a no-op for every
+            // other `gen_ts` shape, but it keeps matching if that
+            // formatting quirk is ever normalised away (the same cleanup
+            // #1321/#1327/#1390 already invite for its other two copies).
+            body: Box::new(match &bg.gen_ts {
+                o @ TsExpr::Object { .. } => TsExpr::Paren(Box::new(o.clone())),
+                o @ TsExpr::Ident(s) if s.trim_start().starts_with('{') => {
+                    TsExpr::Paren(Box::new(o.clone()))
+                }
+                e => e.clone(),
+            }),
         },
     ));
     entries.push((
