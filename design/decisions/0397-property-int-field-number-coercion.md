@@ -1,11 +1,6 @@
----
-level: patch
-changelog: A Sum-variant payload or Record field of type `Int` now coerces its drawn `bigint` value to `number`, closing a `tsc --strict` type mismatch at the real constructor/object-literal call site
----
+# 0397 — gen_ts_for_ty/canon_ts_for_ty coerce a bare-Int payload/field value to number
 
-## ADR: property-int-field-number-coercion
-title: gen_ts_for_ty/canon_ts_for_ty coerce a bare-Int payload/field value to number
-summary: A Sum/Record's own recursive Int position needs a Number(...) coercion the top-level binding's own Int position must not have
+- **Status:** Accepted (v0.289.6)
 
 **Context.** `gen_ts_for_ty`'s/`canon_ts_for_ty`'s own top-level `Base(Int)`
 arms draw/emit a `bigint` (`rng.int(lo n, hi n)` / a bigint literal like
