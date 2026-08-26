@@ -203,8 +203,8 @@
 //! own node list grows: file by file, against real content.
 
 use crate::program::{
-    TsBinaryOp, TsBindingName, TsClassMethod, TsDecl, TsExpr, TsLit, TsObjectEntry, TsParam,
-    TsProgram, TsStmt, TsStmtKind, TsType, TsTypeMember, TsUnaryOp,
+    TsArrowBody, TsBinaryOp, TsBindingName, TsClassMethod, TsDecl, TsExpr, TsLit, TsObjectEntry,
+    TsParam, TsProgram, TsStmt, TsStmtKind, TsType, TsTypeMember, TsUnaryOp,
 };
 use crate::source_map::SourceMapBuilder;
 
@@ -1274,7 +1274,7 @@ fn render_expr(out: &mut String, expr: &TsExpr) {
                 render_type(out, rt);
             }
             out.push_str(" => ");
-            render_expr(out, body);
+            render_arrow_body(out, body);
         }
         TsExpr::Call { callee, args } => {
             render_operand(out, callee);
@@ -1420,6 +1420,27 @@ fn render_expr(out: &mut String, expr: &TsExpr) {
             out.push(')');
         }
         TsExpr::Lit(lit) => render_lit(out, lit),
+    }
+}
+
+/// [`TsExpr::Arrow`]'s own `body` renderer — see [`TsArrowBody`]'s own doc
+/// for why there are exactly two shapes. `Expr` is the ordinary case, no
+/// braces, the same plain `render_expr` recursion every arrow used before
+/// #1435. `Block` reuses [`render_compact_stmts`] (the same shared core
+/// `TsStmtKind::InlineBlock`'s own renderer already reduces to), not a
+/// fresh copy of its "one physical line, semicolon-separated" logic — every
+/// real `Block` site today (`serialisation.rs`'s `Float` guard) is exactly
+/// this one-line-IIFE shape, so no trailing newline is added here (unlike
+/// `render_inline_block`'s own statement-position form): this text is
+/// embedded mid-expression, not standing alone as a statement.
+fn render_arrow_body(out: &mut String, body: &TsArrowBody) {
+    match body {
+        TsArrowBody::Expr(expr) => render_expr(out, expr),
+        TsArrowBody::Block(stmts) => {
+            out.push_str("{ ");
+            render_compact_stmts(out, stmts);
+            out.push_str(" }");
+        }
     }
 }
 
@@ -1647,12 +1668,17 @@ pub fn print_type(ty: &TsType) -> String {
 /// Print a single [`TsExpr`] on its own — the expression-level sibling of
 /// [`print_type`]'s own "one fragment, not a whole document" entry point.
 /// Arc C, step (11) (#1388) need: `emit_icu_placeholder`'s own `Select` arm
-/// stays one opaque, hand-built block-bodied IIFE (`TsExpr::Arrow` has no
-/// block-body variant, and extending it for this one real site was
-/// rejected as disproportionate) — its own arm VALUES, `emit_sub_message`'s
-/// now-real `TsExpr` results, still need stringifying back into that
-/// opaque host text. No source-map/buffer machinery, matching
-/// [`print_type`]/[`print_stmt`]'s own scope exactly.
+/// stays one opaque, hand-built block-bodied IIFE (at the time, `TsExpr::
+/// Arrow` had no block-body variant at all, and extending it for that one
+/// site was rejected as disproportionate) — its own arm VALUES,
+/// `emit_sub_message`'s now-real `TsExpr` results, still need stringifying
+/// back into that opaque host text. #1435 (Arc E slice 1) later added
+/// [`TsArrowBody::Block`] for a genuinely different real site
+/// (`serialisation.rs`'s `Float` guard); `emit_icu_placeholder`'s own
+/// `Select` arm was not reconverted along with it — out of that slice's own
+/// scope — so this call site's opaque text stays exactly as it was. No
+/// source-map/buffer machinery, matching [`print_type`]/[`print_stmt`]'s
+/// own scope exactly.
 pub fn print_expr(expr: &TsExpr) -> String {
     let mut out = String::new();
     render_expr(&mut out, expr);
@@ -3243,10 +3269,10 @@ mod tests {
                 is_async: false,
                 generics: Vec::new(),
                 return_type: None,
-                body: Box::new(TsExpr::Call {
+                body: Box::new(TsArrowBody::Expr(Box::new(TsExpr::Call {
                     callee: Box::new(TsExpr::Ident("dispatch".to_string())),
                     args: vec![TsExpr::Ident("events".to_string())],
-                }),
+                }))),
             },
             None,
         ));
@@ -3272,7 +3298,9 @@ mod tests {
                 is_async: true,
                 generics: Vec::new(),
                 return_type: None,
-                body: Box::new(TsExpr::Ident("{ dispatch(events); }".to_string())),
+                body: Box::new(TsArrowBody::Expr(Box::new(TsExpr::Ident(
+                    "{ dispatch(events); }".to_string(),
+                )))),
             },
             None,
         ));
@@ -3280,6 +3308,71 @@ mod tests {
         assert_eq!(
             printed.text,
             "async (events: Array<Wire>) => { dispatch(events); };\n"
+        );
+    }
+
+    /// #1435 (Arc E slice 1): [`TsArrowBody::Block`], the first real
+    /// statement-bodied arrow — pins the exact `serialisation.rs` `Float`
+    /// non-finite guard shape (`serialise_field_expr_wire`'s own
+    /// `WireRef::Base { base: Float, .. }` arm) directly against a hand-built
+    /// tree, the same way #1322's own three parenthesisation tests below pin
+    /// their own gap. Proves `render_arrow_body`'s `Block` arm reuses
+    /// `render_compact_stmts` (an `If` with a brace-free `Throw` then-branch,
+    /// followed by a `Return`) correctly: both statements land on the SAME
+    /// physical line as the arrow's own `{ ... }`, with no trailing newline
+    /// leaking out of the block into the enclosing call's own `;`.
+    #[test]
+    fn prints_a_block_bodied_arrow_iife() {
+        let mut program = TsProgram::new();
+        let guard = TsExpr::Call {
+            callee: Box::new(TsExpr::Arrow {
+                params: vec![TsParam {
+                    name: "v".to_string(),
+                    ty: Some(TsType::named("number")),
+                    optional: false,
+                }],
+                is_async: false,
+                generics: Vec::new(),
+                return_type: None,
+                body: Box::new(TsArrowBody::Block(vec![
+                    TsStmt::if_stmt(
+                        TsExpr::Unary {
+                            op: TsUnaryOp::Not,
+                            expr: Box::new(TsExpr::Call {
+                                callee: Box::new(TsExpr::Member {
+                                    object: Box::new(TsExpr::Ident("Number".to_string())),
+                                    property: "isFinite".to_string(),
+                                }),
+                                args: vec![TsExpr::Ident("v".to_string())],
+                            }),
+                        },
+                        TsStmt::throw_stmt(
+                            TsExpr::New {
+                                callee: Box::new(TsExpr::Ident("Error".to_string())),
+                                args: vec![TsExpr::Lit(TsLit::Str(
+                                    "non-finite Float at boundary".to_string(),
+                                ))],
+                            },
+                            None,
+                        ),
+                        None,
+                    ),
+                    TsStmt::return_stmt(
+                        Some(TsExpr::As {
+                            expr: Box::new(TsExpr::Ident("v".to_string())),
+                            ty: TsType::named("JsonValue"),
+                        }),
+                        None,
+                    ),
+                ])),
+            }),
+            args: vec![TsExpr::Ident("value".to_string())],
+        };
+        program.push(TsStmt::expr_stmt(guard, None));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(
+            printed.text,
+            "((v: number) => { if (!Number.isFinite(v)) throw new Error(\"non-finite Float at boundary\"); return v as JsonValue; })(value);\n"
         );
     }
 
@@ -3304,7 +3397,7 @@ mod tests {
                     is_async: false,
                     generics: Vec::new(),
                     return_type: None,
-                    body: Box::new(TsExpr::Ident("x".to_string())),
+                    body: Box::new(TsArrowBody::Expr(Box::new(TsExpr::Ident("x".to_string())))),
                 }),
                 args: vec![TsExpr::Lit(TsLit::Num("1".to_string()))],
             },
@@ -3330,7 +3423,7 @@ mod tests {
                     is_async: false,
                     generics: Vec::new(),
                     return_type: None,
-                    body: Box::new(TsExpr::Ident("y".to_string())),
+                    body: Box::new(TsArrowBody::Expr(Box::new(TsExpr::Ident("y".to_string())))),
                 }),
             },
             None,
@@ -3353,7 +3446,7 @@ mod tests {
                     is_async: false,
                     generics: Vec::new(),
                     return_type: None,
-                    body: Box::new(TsExpr::Ident("y".to_string())),
+                    body: Box::new(TsArrowBody::Expr(Box::new(TsExpr::Ident("y".to_string())))),
                 }),
                 ty: TsType::named("Handler"),
             },
@@ -5352,13 +5445,15 @@ mod tests {
                 is_async: false,
                 generics: vec!["T".to_string()],
                 return_type: Some(TsType::named_with_args("Sum", vec![TsType::named("T")])),
-                body: Box::new(TsExpr::Paren(Box::new(TsExpr::object_entries(vec![
-                    TsObjectEntry::Prop(
-                        "tag".to_string(),
-                        TsExpr::Lit(TsLit::Str("some".to_string())),
-                    ),
-                    TsObjectEntry::Shorthand("value".to_string()),
-                ])))),
+                body: Box::new(TsArrowBody::Expr(Box::new(TsExpr::Paren(Box::new(
+                    TsExpr::object_entries(vec![
+                        TsObjectEntry::Prop(
+                            "tag".to_string(),
+                            TsExpr::Lit(TsLit::Str("some".to_string())),
+                        ),
+                        TsObjectEntry::Shorthand("value".to_string()),
+                    ]),
+                ))))),
             },
             None,
         ));

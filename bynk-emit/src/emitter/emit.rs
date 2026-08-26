@@ -580,7 +580,7 @@ fn emit_sum_type(
                     is_async: false,
                     generics: type_params.clone(),
                     return_type: Some(self_ty.clone()),
-                    body: Box::new(ctor_body),
+                    body: Box::new(bynk_ts::TsArrowBody::Expr(Box::new(ctor_body))),
                 },
             ));
         }
@@ -1008,12 +1008,14 @@ pub(crate) fn emit_free_fn(
 /// )();`/`const result = (() => { <body> })();`) stays ONE opaque
 /// [`bynk_ts::TsStmt::raw`] statement — not decomposed into a real
 /// `Const`/`Arrow`/`Call` — matching #1352's own identical treatment of
-/// `emit_free_fn`'s unguarded body one level up: `TsExpr::Arrow`'s own
-/// `body` is expression-only (#1327's own deliberate choice — a real
-/// block-body variant "would have needed new flatten-every-nested-statement
-/// ... printer machinery, disproportionate" for an analogous single site),
-/// and this IIFE's own body is a genuine multi-statement block, not an
-/// expression. `emit_block_as_function_body_with_return`'s own output
+/// `emit_free_fn`'s unguarded body one level up: #1327's own analogous
+/// single site found a real block-body `Arrow` "would have needed new
+/// flatten-every-nested-statement ... printer machinery, disproportionate";
+/// #1435 later added `TsArrowBody::Block` for a genuinely different real
+/// site (`serialisation.rs`'s `Float` guard), but that variant's own
+/// printer is still the same one-physical-line compact-statement renderer,
+/// which cannot represent this IIFE's own genuine multi-statement block
+/// body either. `emit_block_as_function_body_with_return`'s own output
 /// (still unconverted, out of scope) is captured into a local buffer inside
 /// that one opaque statement, the same way it always has been.
 ///
@@ -1543,7 +1545,7 @@ fn emit_message_entry_renderer(
         is_async: false,
         generics: Vec::new(),
         return_type: Some(bynk_ts::TsType::named("string")),
-        body: Box::new(body),
+        body: Box::new(bynk_ts::TsArrowBody::Expr(Box::new(body))),
     }
 }
 
@@ -1560,12 +1562,16 @@ fn emit_message_entry_renderer(
 /// the printer's own `needs_parens_as_operand`, so the IIFE's own
 /// `(...)(...)` wrapping comes free, no explicit `Paren`). `Select` stays
 /// one opaque `TsExpr::Ident` — the only one of the four real shapes with a
-/// BLOCK-bodied IIFE (`TsExpr::Arrow` has no block-body variant, and
-/// extending it for this one real site was rejected as disproportionate,
-/// the same "odd, one-off shape stays opaque text" posture this track uses
-/// repeatedly), though its own arm VALUES are still real
-/// `emit_sub_message` results, stringified back into that opaque host text
-/// via the new `bynk_ts::print_expr` (#1388's own second real gap).
+/// BLOCK-bodied IIFE (at the time, `TsExpr::Arrow` had no block-body variant
+/// at all, and extending it for this one real site was rejected as
+/// disproportionate, the same "odd, one-off shape stays opaque text"
+/// posture this track uses repeatedly), though its own arm VALUES are still
+/// real `emit_sub_message` results, stringified back into that opaque host
+/// text via the new `bynk_ts::print_expr` (#1388's own second real gap).
+/// #1435 (Arc E slice 1) later gave `TsExpr::Arrow` a real block-body shape
+/// (`TsArrowBody::Block`) for a different real site; this `Select` arm was
+/// not reconverted along with it (out of that slice's own scope) and stays
+/// exactly as it was.
 fn emit_icu_placeholder(
     p: &icu::IcuPlaceholder<'_>,
     locale_tag: &str,
@@ -1601,7 +1607,7 @@ fn emit_icu_placeholder(
             is_async: false,
             generics: Vec::new(),
             return_type: None,
-            body: Box::new(arrow_body),
+            body: Box::new(bynk_ts::TsArrowBody::Expr(Box::new(arrow_body))),
         }),
         args: vec![arg_expr()],
     };
@@ -1686,8 +1692,9 @@ fn emit_icu_placeholder(
             // is ES2022, which `emit_tsconfig` already targets.
             //
             // Stays one opaque `TsExpr::Ident` — the only one of this
-            // cluster's 4 real shapes with a BLOCK-bodied IIFE, a real gap
-            // `TsExpr::Arrow` doesn't cover (see this function's own doc).
+            // cluster's 4 real shapes with a BLOCK-bodied IIFE (see this
+            // function's own doc: `TsArrowBody::Block` exists since #1435,
+            // but this arm was not reconverted along with it).
             bynk_ts::TsExpr::Ident(format!(
                 "((__arg) => {{ if (__arg === undefined || __arg.tag !== \"Text\") {{ return {fallback_text}; }} const __arms: Record<string, string> = {{ {} }}; return Object.hasOwn(__arms, __arg.value) ? __arms[__arg.value] : __arms[\"other\"]; }})({arg})",
                 arms_obj.join(", "),
@@ -3554,7 +3561,7 @@ pub(crate) fn lower_workers_cross_context_call(
         args.len(),
     );
 
-    let mut args_serialised: Vec<String> = Vec::new();
+    let mut args_serialised: Vec<bynk_ts::TsExpr> = Vec::new();
     for (i, a) in args.iter().enumerate() {
         let lowered = pre.lower(a, cx);
         let (_, param_ty) = &svc.params[i];
@@ -3570,37 +3577,36 @@ pub(crate) fn lower_workers_cross_context_call(
     // new `bynk_ts::print_expr` (#1388) and handed to `pre.finish` exactly
     // as the old hand-built string was — the P7.9 pattern (`-> Lowered`
     // stays unchanged; `lower.rs`'s own general dispatch, `pre.absorb`'s own
-    // caller, still just wants a plain string). `args_serialised`'s own
-    // entries and `deser_ref` come from `serialise_expr_via`/
-    // `deserialise_ref_via` (unconverted `emitter::serialisation` siblings)
-    // and stay opaque `TsExpr::Ident` text — the multi-arg object literal
-    // that WRAPS them, though, is real: each param name is already a valid
-    // JS identifier (a service param name), so `TsObjectEntry::Prop`
-    // applies with no escaping concern. The zero-arg case is the SAME
-    // `{  }` (double-space, not the tight `{}` shortcut) quirk #1321
-    // (`workers.rs`'s own `deps` object) and #1327 (`project.rs`'s own
-    // `{ns}Deps`) already found and carried, a third real site now —
-    // `TsExpr::Object`'s own renderer always collapses an empty object to
-    // `{}`, so this one shape stays opaque text too, caught here only by
-    // the zero-diff fixture check (`172_integration_with_capability`), not
-    // reasoned about in the abstract. Review of #1391: kept as three
-    // independent, cross-referenced sites rather than one shared constant
-    // across `emit.rs`/`workers.rs`/`project.rs` — each already carries its
-    // own explanatory comment naming the others, and a shared constant's
-    // only real payoff (staying in sync if this quirk is ever normalised
-    // away) is speculative, not a real need today.
+    // caller, still just wants a plain string). #1435 (Arc E slice 1):
+    // `args_serialised`'s own entries and `deser_ref` (below) now come from
+    // `serialise_expr_via`/`deserialise_ref_via` as real `bynk_ts::TsExpr`
+    // trees, not opaque `TsExpr::Ident` text — consumed directly here, no
+    // print. The multi-arg object literal that wraps them is, and always
+    // was, real: each param name is already a valid JS identifier (a
+    // service param name), so `TsObjectEntry::Prop` applies with no
+    // escaping concern. The zero-arg case is the SAME `{  }` (double-space,
+    // not the tight `{}` shortcut) quirk #1321 (`workers.rs`'s own `deps`
+    // object) and #1327 (`project.rs`'s own `{ns}Deps`) already found and
+    // carried, a third real site now — `TsExpr::Object`'s own renderer
+    // always collapses an empty object to `{}`, so this one shape stays
+    // opaque text too, caught here only by the zero-diff fixture check
+    // (`172_integration_with_capability`), not reasoned about in the
+    // abstract. Review of #1391: kept as three independent,
+    // cross-referenced sites rather than one shared constant across
+    // `emit.rs`/`workers.rs`/`project.rs` — each already carries its own
+    // explanatory comment naming the others, and a shared constant's only
+    // real payoff (staying in sync if this quirk is ever normalised away)
+    // is speculative, not a real need today.
     let args_json_expr = if args_serialised.is_empty() {
         bynk_ts::TsExpr::Ident("{  }".to_string())
     } else if args_serialised.len() == 1 {
-        bynk_ts::TsExpr::Ident(args_serialised.into_iter().next().unwrap())
+        args_serialised.into_iter().next().unwrap()
     } else {
         let entries: Vec<bynk_ts::TsObjectEntry> = svc
             .params
             .iter()
             .zip(args_serialised)
-            .map(|((name, _), serialised)| {
-                bynk_ts::TsObjectEntry::Prop(name.clone(), bynk_ts::TsExpr::Ident(serialised))
-            })
+            .map(|((name, _), serialised)| bynk_ts::TsObjectEntry::Prop(name.clone(), serialised))
             .collect();
         bynk_ts::TsExpr::object_entries(entries)
     };
@@ -3637,7 +3643,7 @@ pub(crate) fn lower_workers_cross_context_call(
             },
             bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(method.name.clone())),
             args_json_expr,
-            bynk_ts::TsExpr::Ident(deser_ref),
+            deser_ref,
             // v0.54: stamp the calling context's qualified name so the
             // callee's `by c: Caller` handler reads a live `CallerId` (Q7).
             // A compile-time constant; the args body is unchanged. Raw
@@ -4612,7 +4618,17 @@ pub(crate) fn emit_agent(
             return;
         }
         let json = format!("({value_expr} as unknown as JsonValue)");
-        let d = serialisation::deserialise_expr(ty, &json, path, &ctx.runtime_use);
+        // #1435 (Arc E slice 1): `deserialise_expr` now returns a real
+        // `bynk_ts::TsExpr` — this closure stays `format!`-based (splicing
+        // into one `TsStmt::Raw` check line below), so it prints at the
+        // boundary, the same "opaque consumer needs its own print"
+        // treatment `lower.rs`/`tests_emit.rs`'s own call sites use.
+        let d = bynk_ts::print_expr(&serialisation::deserialise_expr(
+            ty,
+            &json,
+            path,
+            &ctx.runtime_use,
+        ));
         checks.push(format!(
             "  {{ const __r = {d}; if (__r.tag === \"Err\") throw rehydrationViolation(\"{agent_name}\", __r.error); }}"
         ));
@@ -4633,12 +4649,12 @@ pub(crate) fn emit_agent(
             rehydrate_checks.push(format!(
                 "  for (const __v of Object.values(s.{n})) {{ const __r = {d}; if (__r.tag === \"Err\") throw rehydrationViolation(\"{agent_name}\", __r.error); }}",
                 n = name.name,
-                d = serialisation::deserialise_expr(
+                d = bynk_ts::print_expr(&serialisation::deserialise_expr(
                     v,
                     "(__v as unknown as JsonValue)",
                     &name.name,
                     &ctx.runtime_use,
-                ),
+                )),
             ));
         }
         if let Some(k) = store_field_key_type(a, &name.name)
@@ -4647,7 +4663,7 @@ pub(crate) fn emit_agent(
             rehydrate_checks.push(format!(
                 "  for (const __k of Object.keys(s.{n})) {{ const __r = {d}; if (__r.tag === \"Err\") throw rehydrationViolation(\"{agent_name}\", __r.error); }}",
                 n = name.name,
-                d = serialisation::deserialise_expr(k, "(__k as unknown as JsonValue)", &name.name, &ctx.runtime_use),
+                d = bynk_ts::print_expr(&serialisation::deserialise_expr(k, "(__k as unknown as JsonValue)", &name.name, &ctx.runtime_use)),
             ));
         }
     }
@@ -4661,7 +4677,7 @@ pub(crate) fn emit_agent(
             rehydrate_checks.push(format!(
                 "  for (const __k of Object.keys(s.{n})) {{ const __r = {d}; if (__r.tag === \"Err\") throw rehydrationViolation(\"{agent_name}\", __r.error); }}",
                 n = name.name,
-                d = serialisation::deserialise_expr(k, "(__k as unknown as JsonValue)", &name.name, &ctx.runtime_use),
+                d = bynk_ts::print_expr(&serialisation::deserialise_expr(k, "(__k as unknown as JsonValue)", &name.name, &ctx.runtime_use)),
             ));
         }
     }
@@ -4672,7 +4688,7 @@ pub(crate) fn emit_agent(
             rehydrate_checks.push(format!(
                 "  for (const __k of Object.keys(s.{n})) {{ const __r = {d}; if (__r.tag === \"Err\") throw rehydrationViolation(\"{agent_name}\", __r.error); }}",
                 n = name.name,
-                d = serialisation::deserialise_expr(t, "(__k as unknown as JsonValue)", &name.name, &ctx.runtime_use),
+                d = bynk_ts::print_expr(&serialisation::deserialise_expr(t, "(__k as unknown as JsonValue)", &name.name, &ctx.runtime_use)),
             ));
         }
     }
@@ -4682,7 +4698,7 @@ pub(crate) fn emit_agent(
             rehydrate_checks.push(format!(
                 "  for (const __e of Object.values(s.{n})) {{ const __r = {d}; if (__r.tag === \"Err\") throw rehydrationViolation(\"{agent_name}\", __r.error); }}",
                 n = name.name,
-                d = serialisation::deserialise_expr(v, "(__e.v as unknown as JsonValue)", &name.name, &ctx.runtime_use),
+                d = bynk_ts::print_expr(&serialisation::deserialise_expr(v, "(__e.v as unknown as JsonValue)", &name.name, &ctx.runtime_use)),
             ));
         }
     }
@@ -4692,7 +4708,7 @@ pub(crate) fn emit_agent(
             rehydrate_checks.push(format!(
                 "  for (const __e of s.{n}) {{ const __r = {d}; if (__r.tag === \"Err\") throw rehydrationViolation(\"{agent_name}\", __r.error); }}",
                 n = name.name,
-                d = serialisation::deserialise_expr(t, "(__e.v as unknown as JsonValue)", &name.name, &ctx.runtime_use),
+                d = bynk_ts::print_expr(&serialisation::deserialise_expr(t, "(__e.v as unknown as JsonValue)", &name.name, &ctx.runtime_use)),
             ));
         }
     }
@@ -5577,23 +5593,25 @@ pub(crate) fn emit_agent(
                             is_async: false,
                             generics: Vec::new(),
                             return_type: None,
-                            body: Box::new(bynk_ts::TsExpr::Call {
-                                callee: Box::new(bynk_ts::TsExpr::Ident(
-                                    "dispatchToEventsFanout".to_string(),
-                                )),
-                                args: vec![
-                                    bynk_ts::TsExpr::As {
-                                        expr: Box::new(bynk_ts::TsExpr::Member {
-                                            object: Box::new(bynk_ts::TsExpr::Ident(
-                                                "env".to_string(),
-                                            )),
-                                            property: bind,
-                                        }),
-                                        ty: bynk_ts::TsType::named("DurableObjectNamespace"),
-                                    },
-                                    bynk_ts::TsExpr::Ident("events".to_string()),
-                                ],
-                            }),
+                            body: Box::new(bynk_ts::TsArrowBody::Expr(Box::new(
+                                bynk_ts::TsExpr::Call {
+                                    callee: Box::new(bynk_ts::TsExpr::Ident(
+                                        "dispatchToEventsFanout".to_string(),
+                                    )),
+                                    args: vec![
+                                        bynk_ts::TsExpr::As {
+                                            expr: Box::new(bynk_ts::TsExpr::Member {
+                                                object: Box::new(bynk_ts::TsExpr::Ident(
+                                                    "env".to_string(),
+                                                )),
+                                                property: bind,
+                                            }),
+                                            ty: bynk_ts::TsType::named("DurableObjectNamespace"),
+                                        },
+                                        bynk_ts::TsExpr::Ident("events".to_string()),
+                                    ],
+                                },
+                            ))),
                         },
                     )]),
                     None,
@@ -5780,10 +5798,12 @@ pub(crate) fn emit_agent(
                             is_async: false,
                             generics: Vec::new(),
                             return_type: None,
-                            body: Box::new(bynk_ts::TsExpr::New {
-                                callee: Box::new(bynk_ts::TsExpr::Ident(a.name.name.clone())),
-                                args: vec![bynk_ts::TsExpr::Ident("state".to_string())],
-                            }),
+                            body: Box::new(bynk_ts::TsArrowBody::Expr(Box::new(
+                                bynk_ts::TsExpr::New {
+                                    callee: Box::new(bynk_ts::TsExpr::Ident(a.name.name.clone())),
+                                    args: vec![bynk_ts::TsExpr::Ident("state".to_string())],
+                                },
+                            ))),
                         },
                     ],
                 }),
@@ -6506,7 +6526,7 @@ fn emit_ws_dispatch_handlers(
         stmts.push(bynk_ts::TsStmt::const_stmt(
             bynk_ts::TsBindingName::Ident("__dec".to_string()),
             None,
-            bynk_ts::TsExpr::Ident(decode),
+            decode,
             None,
         ));
         stmts.push(bynk_ts::TsStmt::if_stmt(

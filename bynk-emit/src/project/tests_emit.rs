@@ -33,7 +33,7 @@ use bynk_syntax::ast::{
 };
 use bynk_syntax::span::Span;
 use bynk_ts::{
-    SourceMapBuilder, TsBinaryOp, TsBindingName, TsClassMethod, TsDecl, TsExpr, TsLit,
+    SourceMapBuilder, TsArrowBody, TsBinaryOp, TsBindingName, TsClassMethod, TsDecl, TsExpr, TsLit,
     TsObjectEntry, TsParam, TsProgram, TsStmt, TsSwitchCase, TsType, TsTypeMember,
 };
 use std::sync::Arc;
@@ -743,12 +743,19 @@ fn emit_system_http_support(
             let body_arg = body_ps.first();
             let (body_stmt, body_init): (Option<TsStmt>, &str) = match body_arg {
                 Some(p) => {
-                    let ser = crate::emitter::serialisation::serialise_expr_via(
-                        &p.type_ref,
-                        &crate::emitter::ts_ident(&p.name.name),
-                        &type_ns,
-                        runtime_use,
-                    );
+                    // #1435 (Arc E slice 1): `serialise_expr_via` now returns
+                    // a real `bynk_ts::TsExpr` — this call site is still
+                    // `String`-based (not yet converted, out of this
+                    // slice's scope), so it prints at the boundary
+                    // (`bynk_ts::print_expr`), the same treatment
+                    // `lower.rs`'s own call sites use.
+                    let ser =
+                        bynk_ts::print_expr(&crate::emitter::serialisation::serialise_expr_via(
+                            &p.type_ref,
+                            &crate::emitter::ts_ident(&p.name.name),
+                            &type_ns,
+                            runtime_use,
+                        ));
                     let stmt = TsStmt::const_stmt(
                         TsBindingName::Ident("__body".to_string()),
                         None,
@@ -761,8 +768,14 @@ fn emit_system_http_support(
             };
             // The response payload deserialiser: the `T` of `Effect[HttpResult[T]]`.
             let payload_deser = match strip_effect_httpresult(&h.return_type) {
+                // #1435 (Arc E slice 1): boundary-print, same treatment as
+                // `ser` above.
                 Some(inner) => {
-                    crate::emitter::serialisation::deserialise_ref_via(inner, &type_ns, runtime_use)
+                    bynk_ts::print_expr(&crate::emitter::serialisation::deserialise_ref_via(
+                        inner,
+                        &type_ns,
+                        runtime_use,
+                    ))
                 }
                 None => format!("{type_ns}deserialise_unit"),
             };
@@ -983,13 +996,13 @@ fn emit_system_http_support(
                                     is_async: false,
                                     generics: Vec::new(),
                                     return_type: None,
-                                    body: Box::new(call(
+                                    body: Box::new(TsArrowBody::Expr(Box::new(call(
                                         ident("Ok"),
                                         vec![TsExpr::As {
                                             expr: Box::new(ident("__j")),
                                             ty: TsType::named("never"),
                                         }],
-                                    )),
+                                    )))),
                                 },
                             ],
                         )),
@@ -1139,11 +1152,11 @@ fn service_binding_forward(worker_ident: &str, env_ident: &str) -> TsExpr {
                 is_async: false,
                 generics: Vec::new(),
                 return_type: None,
-                body: Box::new(method_call(
+                body: Box::new(TsArrowBody::Expr(Box::new(method_call(
                     ident(worker_ident),
                     "fetch",
                     vec![ident("req"), ident(env_ident)],
-                )),
+                )))),
             },
         )])),
         ty: TsType::named("ServiceBinding"),
@@ -1215,10 +1228,10 @@ fn emit_integration_harness(
                             is_async: false,
                             generics: Vec::new(),
                             return_type: None,
-                            body: Box::new(TsExpr::New {
+                            body: Box::new(TsArrowBody::Expr(Box::new(TsExpr::New {
                                 callee: Box::new(member(ident(ns.clone()), agent)),
                                 args: vec![ident("state")],
-                            }),
+                            }))),
                         }],
                     ),
                     None,
@@ -2356,9 +2369,10 @@ fn emit_stub_class(
     // (#1359's own `emit_provider` precedent): each method's own body is one
     // opaque `TsStmt::raw` (it mixes real structure with `lower_stub_value_
     // block`'s own already-lowered opaque text, an `async () => { ... }`
-    // IIFE whose block body `TsExpr::Arrow` has no shape for — the same
-    // "block-bodied arrow stays opaque" call `emit_composition_root`'s own
-    // `__eventsDispatch` closure already made), so each method is printed as
+    // IIFE whose own multi-statement block body no `TsArrowBody::Block`
+    // renderer can flatten onto one line — the same "block-bodied arrow
+    // stays opaque" call `emit_composition_root`'s own `__eventsDispatch`
+    // closure already made), so each method is printed as
     // its own real `TsClassMethod` fragment via `bynk_ts::print_class_method`
     // at depth 0 — the only depth `render_class_method`'s own debug_assert
     // allows a `Raw`-bodied method to print correctly at — and spliced
@@ -3830,7 +3844,7 @@ fn gen_ts_for_ty(
                                 is_async: false,
                                 generics: Vec::new(),
                                 return_type: None,
-                                body: Box::new(body),
+                                body: Box::new(TsArrowBody::Expr(Box::new(body))),
                             }
                         })
                         .collect();
@@ -4077,7 +4091,7 @@ fn binding_gen(
                                     is_async: false,
                                     generics: Vec::new(),
                                     return_type: None,
-                                    body: Box::new(ident(shrunk)),
+                                    body: Box::new(TsArrowBody::Expr(Box::new(ident(shrunk)))),
                                 }],
                             ),
                         )
@@ -4105,7 +4119,7 @@ fn binding_gen(
                                     is_async: false,
                                     generics: Vec::new(),
                                     return_type: None,
-                                    body: Box::new(ident(shrunk)),
+                                    body: Box::new(TsArrowBody::Expr(Box::new(ident(shrunk)))),
                                 }],
                             ),
                         )
@@ -4177,13 +4191,13 @@ fn gen_descriptor_entry(name: Option<TsExpr>, bg: &BindingGen) -> TsExpr {
             // other `gen_ts` shape, but it keeps matching if that
             // formatting quirk is ever normalised away (the same cleanup
             // #1321/#1327/#1390 already invite for its other two copies).
-            body: Box::new(match &bg.gen_ts {
+            body: Box::new(TsArrowBody::Expr(Box::new(match &bg.gen_ts {
                 o @ TsExpr::Object { .. } => TsExpr::Paren(Box::new(o.clone())),
                 o @ TsExpr::Ident(s) if s.trim_start().starts_with('{') => {
                     TsExpr::Paren(Box::new(o.clone()))
                 }
                 e => e.clone(),
-            }),
+            }))),
         },
     ));
     entries.push((
@@ -4197,7 +4211,7 @@ fn gen_descriptor_entry(name: Option<TsExpr>, bg: &BindingGen) -> TsExpr {
             is_async: false,
             generics: Vec::new(),
             return_type: None,
-            body: Box::new(bg.shrink.clone()),
+            body: Box::new(TsArrowBody::Expr(Box::new(bg.shrink.clone()))),
         },
     ));
     entries.push((
@@ -4211,7 +4225,10 @@ fn gen_descriptor_entry(name: Option<TsExpr>, bg: &BindingGen) -> TsExpr {
             is_async: false,
             generics: Vec::new(),
             return_type: None,
-            body: Box::new(call(ident("__bynkShow"), vec![ident("v")])),
+            body: Box::new(TsArrowBody::Expr(Box::new(call(
+                ident("__bynkShow"),
+                vec![ident("v")],
+            )))),
         },
     ));
     TsExpr::object(entries)
@@ -4680,14 +4697,14 @@ fn emit_test_history_property_function(
             is_async: false,
             generics: Vec::new(),
             return_type: None,
-            body: Box::new(method_call(
+            body: Box::new(TsArrowBody::Expr(Box::new(method_call(
                 TsExpr::As {
                     expr: Box::new(ident(target_ns)),
                     ty: TsType::named("any"),
                 },
                 &format!("__bynkDriveHistory_{agent_name}"),
                 vec![ident("seq"), ident("deps")],
-            )),
+            )))),
         },
         None,
     );
@@ -5134,10 +5151,10 @@ fn build_run_function(dispatch_stmts: Vec<TsStmt>) -> TsStmt {
                 is_async: false,
                 generics: Vec::new(),
                 return_type: Some(TsType::named("boolean")),
-                body: Box::new(or_expr(
+                body: Box::new(TsArrowBody::Expr(Box::new(or_expr(
                     strict_eq(ident("only"), ident("undefined")),
                     strict_eq(ident("only"), ident("n")),
-                )),
+                )))),
             },
         ),
     ];
@@ -5304,11 +5321,11 @@ pub(crate) fn emit_test_main(tests: &[RunnableTest], import_ext: ImportExt) -> T
                 is_async: false,
                 generics: Vec::new(),
                 return_type: None,
-                body: Box::new(method_call(
+                body: Box::new(TsArrowBody::Expr(Box::new(method_call(
                     ident("console"),
                     "log",
                     vec![method_call(ident("JSON"), "stringify", vec![ident("o")])],
-                )),
+                )))),
             },
         ),
         emit_call(vec![

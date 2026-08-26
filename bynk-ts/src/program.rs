@@ -603,16 +603,10 @@ pub enum TsExpr {
         index: Box<TsExpr>,
     },
     /// `(params) => body` (`is_async: false`) or `async (params) => body`
-    /// (`is_async: true`) — an expression-bodied arrow function. No
-    /// block-body variant: `workers.rs`'s own one real site
-    /// (`emit_worker_compose`'s own `__eventsDispatch` entry,
-    /// `dispatchToEventsFanout(env.<bind>, events)`) has an expression body,
-    /// not a block, and nothing else in that slice's own grounding needed
-    /// one — extend narrowly, the same way `TsBinaryOp` only has the
-    /// operators real content needs rather than the full JS/TS table.
-    /// `is_async` added by #1327: `emit_composition_root`'s own
-    /// `__eventsDispatch` closure (`async (events: Array<...>) => {...}`) is
-    /// the first real `Arrow` site that's async — mirrors
+    /// (`is_async: true`) — an arrow function, expression- or block-bodied
+    /// (see [`TsArrowBody`]). `is_async` added by #1327: `emit_composition_root`'s
+    /// own `__eventsDispatch` closure (`async (events: Array<...>) => {...}`)
+    /// is the first real `Arrow` site that's async — mirrors
     /// `TsDecl::Function`'s own `is_async` field (#1325), added for the same
     /// reason. `generics`/`return_type` added by #1339: `emit_sum_type`'s
     /// own generic payload-constructor arrows (`<T>(name: T): Sum<T> =>
@@ -625,12 +619,32 @@ pub enum TsExpr {
     /// own real generic-payload arrows carries an explicit return-type
     /// annotation the arrow itself owns (`: {name}{params}`), not something
     /// the body's own type alone determines.
+    ///
+    /// `body`'s type became [`TsArrowBody`] (#1435, Arc E slice 1): from
+    /// P7.8 through #1434 this field was a bare `Box<TsExpr>` — expression-
+    /// bodied only, "extend narrowly" (the same posture `TsBinaryOp` takes
+    /// for its own operator table), since every real site up to and
+    /// including #1339's generic payload-constructor arrows had an
+    /// expression body. `serialisation.rs`'s `serialise_field_expr_wire`
+    /// (`bynk-emit`) is the first real site that doesn't: its `Float`
+    /// non-finite guard is a genuine statement-bodied IIFE (`((v: number) =>
+    /// { if (!Number.isFinite(v)) throw new Error(...); return v as
+    /// JsonValue; })(value)`), not reducible to one expression. Widening the
+    /// existing field (`TsArrowBody::Expr(Box<TsExpr>)` |
+    /// `TsArrowBody::Block(Vec<TsStmt>)`) rather than adding a second
+    /// sibling `TsExpr` variant matches this file's own repeated
+    /// "extend the existing variant when every real site still needs the
+    /// same node kind, only the body shape differs" precedent
+    /// (`TsObjectEntry::Method.inline`, #1337) — every prior `Arrow`
+    /// construction site across the workspace wraps its already-correct
+    /// expression body in `TsArrowBody::Expr(..)`, a mechanical change with
+    /// no behavior difference.
     Arrow {
         params: Vec<TsParam>,
         is_async: bool,
         generics: Vec<String>,
         return_type: Option<TsType>,
-        body: Box<TsExpr>,
+        body: Box<TsArrowBody>,
     },
     Call {
         callee: Box<TsExpr>,
@@ -755,6 +769,27 @@ pub enum TsExpr {
     /// precedence machinery unchanged.
     Paren(Box<TsExpr>),
     Lit(TsLit),
+}
+
+/// [`TsExpr::Arrow`]'s own `body` shape (#1435, Arc E slice 1) — see that
+/// field's own doc for why this is a widened field rather than a second
+/// `TsExpr` variant. `Expr` is every real site before this slice (and the
+/// overwhelming majority after it): the arrow's body is one expression,
+/// printed with no surrounding braces. `Block` is `serialisation.rs`'s own
+/// `Float` non-finite guard, the first real statement-bodied arrow anywhere
+/// in this tree — printed as a real braced block, reusing
+/// [`crate::printer`]'s existing compact-statement-list renderer
+/// (`render_compact_stmts`, the same one `TsStmtKind::InlineBlock` already
+/// shares with `render_branch`'s own same-line `if`/`else`) rather than a
+/// third copy of that "one physical line, semicolon-separated" logic. Every
+/// real `Block` site today is exactly this one-line IIFE shape (an arrow
+/// with no other real use of a genuinely multi-line block body has been
+/// found); a future multi-line block-bodied arrow is a real, separate gap
+/// this variant does not yet cover.
+#[derive(Debug, Clone)]
+pub enum TsArrowBody {
+    Expr(Box<TsExpr>),
+    Block(Vec<TsStmt>),
 }
 
 impl TsExpr {

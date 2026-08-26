@@ -3380,16 +3380,20 @@ fn emit_composition_root(
             }
             // Decision B (#1327): the closure's own body is a genuine block
             // statement (`for`/`switch`/`try`-`catch` nested), not an
-            // expression — `TsExpr::Arrow` is expression-body-only by
-            // design (see its own doc), and a real block-body variant would
-            // need new "flatten every nested statement to one line" printer
-            // machinery to satisfy this closure's own real one-line shape,
-            // disproportionate to what the 3 real fixtures reaching it need.
-            // Kept as the same nested `format!` calls as before conversion,
-            // just fed into a real `Arrow` node's `body` as one opaque
-            // `TsExpr::Ident` — the same "opaque text carrier" precedent
-            // `workers.rs`'s/`workers_entry.rs`'s own `deserialise_call`/
-            // `brand_assertion`/`claim_predicate_to_js` outputs already use.
+            // expression. #1435 later gave `TsExpr::Arrow` a real block-body
+            // shape (`TsArrowBody::Block`) — but that variant's own printer
+            // reuses the compact-statement-list renderer `TsStmtKind::
+            // InlineBlock` already shares (one physical line, semicolon-
+            // separated top-level statements), which cannot flatten a nested
+            // `for`/`switch` onto one line the way this closure's own real
+            // content needs; new "flatten every nested statement to one
+            // line" printer machinery for that would still be disproportionate
+            // to what the 3 real fixtures reaching this closure need. Kept as
+            // the same nested `format!` calls as before conversion, just fed
+            // into a real `Arrow` node's `body` as one opaque `TsExpr::Ident`
+            // — the same "opaque text carrier" precedent `workers.rs`'s/
+            // `workers_entry.rs`'s own `deserialise_call`/`brand_assertion`/
+            // `claim_predicate_to_js` outputs already use.
             let dispatch_body =
                 format!("{{ for (const ev of events) {{ switch (ev.type) {{ {cases}}} }} }}");
             let arrow = TsExpr::Arrow {
@@ -3404,7 +3408,7 @@ fn emit_composition_root(
                 is_async: true,
                 generics: Vec::new(),
                 return_type: None,
-                body: Box::new(ident(dispatch_body)),
+                body: Box::new(bynk_ts::TsArrowBody::Expr(Box::new(ident(dispatch_body)))),
             };
             deps_entries.push(("__eventsDispatch".to_string(), arrow));
         }

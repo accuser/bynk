@@ -26,8 +26,8 @@ use bynk_syntax::ast::{
     ActorDecl, ExprKind, Handler, HandlerKind, HttpMethod, ServiceProtocol, TypeRef,
 };
 use bynk_ts::{
-    TsBindingName, TsDecl, TsExpr, TsLit, TsObjectEntry, TsParam, TsProgram, TsStmt, TsType,
-    TsTypeMember,
+    TsArrowBody, TsBindingName, TsDecl, TsExpr, TsLit, TsObjectEntry, TsParam, TsProgram, TsStmt,
+    TsType, TsTypeMember,
 };
 
 /// Where `compose.ts` imports the runtime from — it sits two levels below the
@@ -552,10 +552,10 @@ pub(crate) fn emit_worker_compose(
             is_async: false,
             generics: Vec::new(),
             return_type: None,
-            body: Box::new(call(
+            body: Box::new(TsArrowBody::Expr(Box::new(call(
                 ident("dispatchToEventsFanout"),
                 vec![member(ident("env"), bind), ident("events")],
-            )),
+            )))),
         };
         deps_entries.push(TsObjectEntry::Prop("__eventsDispatch".to_string(), arrow));
     }
@@ -2050,19 +2050,18 @@ fn emit_http_sum_wrapper(
             )))]),
             None,
         ));
-        // #1321: `super::workers_entry::deserialise_call`/`brand_assertion`
-        // are `workers_entry.rs`'s own still-`String`-returning functions —
-        // that file is Arc C's own NEXT slice (not yet converted), so this
-        // is the same "opaque `Ident` carries pre-built text from an
-        // out-of-scope, not-yet-converted producer" situation as
-        // `claim_predicate_to_js` above, not a new pattern.
+        // #1321: `super::workers_entry::deserialise_call` delegates to
+        // `serialisation::deserialise_expr_via` (#1435, Arc E slice 1: a
+        // real `bynk_ts::TsExpr` now, not opaque text) — `brand_assertion`
+        // is the still-`String`-returning sibling this file's own
+        // `claim_predicate_to_js` situation names.
         let dser = super::workers_entry::deserialise_call(
             &body_param.type_ref,
             "__body_json",
             "$",
             runtime_use,
         );
-        stmts.push(const_("__r_body", ident(dser)));
+        stmts.push(const_("__r_body", dser));
         stmts.push(if_(
             strict_eq(member(ident("__r_body"), "tag"), str_lit("Err")),
             return_(Some(call(
