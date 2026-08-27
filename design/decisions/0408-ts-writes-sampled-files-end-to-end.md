@@ -1,11 +1,6 @@
----
-level: patch
-changelog: Resolves #1475 — reads `tests_emit.rs`'s 83 and `workers_entry.rs`'s 34 `ts_writes` sites end to end, closing Arc F's own long-standing sampling caveat. `workers_entry.rs` confirms Arc F's "all already-argued" claim exactly (no new gap; the unelaborated "small fold-in candidate" is most plausibly a repeated `format!("__r_{pname}")` re-derivation across 4-5 call sites, named but not scheduled). `tests_emit.rs`'s 83 breaks down as 51 cheap glue, 17 permanent (10 Decision A, 7 Decision C), 12 already inside #1472's own wrapper-function finding (confirmed, not just cross-referenced — the wrapper functions sit inside this 83, not on top of it), 2 further new small gaps in `destructure_vals` (folded into #1484), and 1 probe-only artifact (`:592`, already documented as an accepted gap by the probe's own code). Separately: the HS256 JWT-signer block #1472 found is structurally invisible to this probe (no `format!`/`write!` in it at all), not "already counted" as this pass's own first draft claimed — review of #1487 caught the error. Also lands two stale corrections: the track doc's own description of `pred_condition_and_message`/`inject_runtime_imports` (both since resolved, by #1471 and #1472 respectively) had drifted. No code change.
----
+# 0408 — tests_emit.rs's 83 and workers_entry.rs's 34 ts_writes sites read end to end, closing Arc F's sampling caveat
 
-## ADR: ts-writes-sampled-files-end-to-end
-title: tests_emit.rs's 83 and workers_entry.rs's 34 ts_writes sites read end to end, closing Arc F's sampling caveat
-summary: workers_entry.rs confirms "all already-argued"; tests_emit.rs's 83 breaks into 51 cheap, 17 permanent, 12 already covered by #1472's wrapper-function finding, 2 new small gaps folded into that same slice, and 1 probe-only artifact — no large probe-visible unconverted residue in either file, though the JWT-signer block (found separately by #1472) turns out to be invisible to this probe entirely, not counted inside it
+- **Status:** Accepted (v0.289.33)
 
 **Context.** Arc F's own opening pass (#1449) counted `ts_writes` file by file but only sampled
 `project/tests_emit.rs` (83 sites) and `emitter/workers_entry.rs` (34 sites), never reading either
