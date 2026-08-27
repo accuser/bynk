@@ -5830,4 +5830,117 @@ mod tests {
         let printed = print(&program, "x.bynk", "", "x.ts");
         assert_eq!(printed.text, "\"a\" in obj || \"b\" in obj;\n");
     }
+
+    /// Review of #1471, finding 1: `TsBinaryOp::GreaterThanEq`/`LessThanEq`
+    /// landed with no direct `bynk-ts` test — only pinned indirectly through
+    /// `bynk-emit`'s own fixture goldens. This test and the four below close
+    /// that locality gap, mirroring the coverage every other operator on
+    /// this precedence tier already has (`prints_an_in_check`/`add_binds_
+    /// tighter_than_in`/`in_binds_tighter_than_or_on_both_sides`).
+    #[test]
+    fn prints_a_greater_than_or_equal_comparison() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::expr_stmt(
+            TsExpr::Binary {
+                op: TsBinaryOp::GreaterThanEq,
+                left: Box::new(TsExpr::Ident("a".to_string())),
+                right: Box::new(TsExpr::Ident("b".to_string())),
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "a >= b;\n");
+    }
+
+    #[test]
+    fn prints_a_less_than_or_equal_comparison() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::expr_stmt(
+            TsExpr::Binary {
+                op: TsBinaryOp::LessThanEq,
+                left: Box::new(TsExpr::Ident("a".to_string())),
+                right: Box::new(TsExpr::Ident("b".to_string())),
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "a <= b;\n");
+    }
+
+    /// Pins `GreaterThanEq`/`LessThanEq`'s own tier-5 placement — the real
+    /// `pred_condition_and_message` `InRange` shape (#1471) nests both under
+    /// `And` (tier 3) and must print flat, with no parens on either side. A
+    /// regression that demoted either operator to `And`'s own tier or below
+    /// would silently wrap this in parens instead.
+    #[test]
+    fn greater_than_eq_and_less_than_eq_nest_flat_under_and() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::expr_stmt(
+            TsExpr::Binary {
+                op: TsBinaryOp::And,
+                left: Box::new(TsExpr::Binary {
+                    op: TsBinaryOp::GreaterThanEq,
+                    left: Box::new(TsExpr::Ident("value".to_string())),
+                    right: Box::new(TsExpr::Lit(TsLit::Num("0".to_string()))),
+                }),
+                right: Box::new(TsExpr::Binary {
+                    op: TsBinaryOp::LessThanEq,
+                    left: Box::new(TsExpr::Ident("value".to_string())),
+                    right: Box::new(TsExpr::Lit(TsLit::Num("100".to_string()))),
+                }),
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "value >= 0 && value <= 100;\n");
+    }
+
+    /// Same tier, *different* operator: `render_binary_operand`'s own doc
+    /// says equal precedence still parenthesises unless the two sides are
+    /// the exact same associative operator — `GreaterThan`/`GreaterThanEq`
+    /// are equal-tier but distinct, so nesting one under the other must
+    /// still keep its parens (the `_ => true` fallback of the equal-
+    /// precedence match, newly reachable now this tier has more than one
+    /// non-keyword operator).
+    #[test]
+    fn a_greater_than_eq_operand_of_a_different_relational_op_still_parenthesises() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::expr_stmt(
+            TsExpr::Binary {
+                op: TsBinaryOp::GreaterThan,
+                left: Box::new(TsExpr::Ident("a".to_string())),
+                right: Box::new(TsExpr::Binary {
+                    op: TsBinaryOp::GreaterThanEq,
+                    left: Box::new(TsExpr::Ident("b".to_string())),
+                    right: Box::new(TsExpr::Ident("c".to_string())),
+                }),
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "a > (b >= c);\n");
+    }
+
+    /// `GreaterThanEq`/`LessThanEq` nested in themselves are NOT associative
+    /// (`a >= b >= c` does not parse as `a >= (b >= c)`), unlike `||`/`&&` —
+    /// so, unlike `in_binds_tighter_than_or_on_both_sides`'s own flat `In`
+    /// chain, a same-operator nesting here must still parenthesise.
+    #[test]
+    fn a_right_nested_greater_than_eq_chain_keeps_its_parens() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::expr_stmt(
+            TsExpr::Binary {
+                op: TsBinaryOp::GreaterThanEq,
+                left: Box::new(TsExpr::Ident("a".to_string())),
+                right: Box::new(TsExpr::Binary {
+                    op: TsBinaryOp::GreaterThanEq,
+                    left: Box::new(TsExpr::Ident("b".to_string())),
+                    right: Box::new(TsExpr::Ident("c".to_string())),
+                }),
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "a >= (b >= c);\n");
+    }
 }

@@ -980,14 +980,15 @@ pub(crate) fn emit_free_fn(
 /// trailing `return result;` is a real [`bynk_ts::TsStmt::return_stmt`].
 ///
 /// `pred` (`Pre::lower`'s own return) and each hoisted `pre.stmts()` line
-/// stay opaque — carried the same way #1335's own `emit_pred_check` carries
-/// `pred_condition_and_message`'s `cond` (an `Ident` wrapped in this crate's
-/// real `Unary::Not`/`Paren`), but for a DIFFERENT, stronger reason: `Pre`
+/// stay opaque — carried the same way #1335's own `emit_pred_check` used to
+/// carry `pred_condition_and_message`'s `cond` (an `Ident` wrapped in this
+/// crate's real `Unary::Not`/`Paren`) before #1471 converted it to a real
+/// `TsExpr`, but for a DIFFERENT, stronger, and still-standing reason: `Pre`
 /// lives in `emitter/lower.rs` (`pre.lower` calls `lower_expr`, the general
 /// expression lowerer) — the one splice boundary ADR
 /// `arc-c-lower-rs-permanent-exclusion` names a *permanent* Arc C exclusion,
-/// not temporarily-unconverted-but-convertible-later machinery like
-/// `pred_condition_and_message` (which lives in `emitter.rs` proper). The
+/// not the temporarily-unconverted-but-convertible-later machinery
+/// `pred_condition_and_message` (`emitter.rs` proper) turned out to be. The
 /// error message (backtick-quoted, with its own already-escaped `\``
 /// clause-name delimiters and `${param}=...`-style interpolations already
 /// baked in as literal text by `param_dump`) is carried the same way as one
