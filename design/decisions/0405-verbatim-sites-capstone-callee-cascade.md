@@ -1,11 +1,6 @@
----
-level: patch
-changelog: Resolves #1461 (ground the `verbatim_sites` capstone) — its `lower.rs` prerequisite is already solved by ADR 0391, its source-map prerequisite only partly (top-level checkpoints only, not the nested per-statement ones `emit_project` relies on today); the real remaining blocker is a callee cascade neither prior pass counted (`emit_provider`'s own class wrapper and others already permanently opaque). Deferred as its own future multi-slice arc, not attempted here. No code change.
----
+# 0405 — The verbatim_sites capstone's lower.rs prerequisite is already solved, its source-map prerequisite only partly so; the real blocker is a callee cascade neither prior pass counted
 
-## ADR: verbatim-sites-capstone-callee-cascade
-title: The verbatim_sites capstone's lower.rs prerequisite is already solved, its source-map prerequisite only partly so; the real blocker is a callee cascade neither prior pass counted
-summary: ADR 0391 answers Part 1's lower.rs question in full; bynk_ts::printer::print answers the source-map question only for top-level checkpoints, not the nested ones emit_project's callees rely on today — the real remaining size driver is converting (or permanently arguing) every direct callee of the three orchestrator functions, not just their own signatures
+- **Status:** Accepted (v0.289.27)
 
 **Context.** The track doc's Floor-correction §6 Part 1 (#1423/ADR 0399) named `emit_project`/
 `emit_test_module`/`emit_integration_module`'s own `String`-returning signatures as the real
