@@ -118,6 +118,17 @@ fn in_expr(left: TsExpr, right: TsExpr) -> TsExpr {
     binary(TsBinaryOp::In, left, right)
 }
 
+/// `left < right` — Arc E slice 7 (#1447): `emit_generic_helpers_qualified`'s
+/// own `ListInst`/`MapInst` arms both need the loop-test half of a real
+/// `for (let i = 0; i < json.length; i++)` (see `bynk_ts::TsStmt::for_stmt`'s
+/// own doc, and `TsStmtKind::For`'s behind it, for why that construct exists
+/// at all). `TsBinaryOp::LessThan`
+/// itself already exists (Arc C slice 33, #1401) — this is this *file's*
+/// first real use of it, not a new operator.
+fn less_than(left: TsExpr, right: TsExpr) -> TsExpr {
+    binary(TsBinaryOp::LessThan, left, right)
+}
+
 /// `object[index]` — a computed member access, distinct from [`member`]'s
 /// dotted `object.property` form. #1443 (Arc E slice 5)'s own real gap:
 /// `emit_record_codec`'s default-value prevalidation ternary's own
@@ -2617,6 +2628,117 @@ mod deserialise_expr_via_error_type_tests {
 pub(crate) use bynk_check::wire::WireInst as GenericInst;
 pub(crate) use bynk_check::wire::collect_generic_instantiations;
 
+/// `if (typeof json !== "object" || json === null || Array.isArray(json)) {
+/// return Err(...); } const obj = json as { [k: string]: JsonValue };` — the
+/// exact 2-statement object-shape guard [`emit_record_codec`] already builds
+/// inline (#1443), needed verbatim by [`emit_generic_helpers_qualified`]'s
+/// own `ResultInst`/`OptionInst` arms (Arc E slice 7, #1447). A local helper
+/// here rather than a shared export, or a call into `emit_record_codec`
+/// itself: matches this file's own "private builder set, not promoted
+/// cross-function" precedent (#1435's own doc) — two real call sites inside
+/// this one function is exactly the shape that precedent already covers,
+/// and `emit_record_codec` has no reason to know this function exists.
+fn object_shape_guard() -> Vec<TsStmt> {
+    vec![
+        if_(
+            or_expr(
+                or_expr(
+                    strict_neq(typeof_expr(ident("json")), str_lit("object")),
+                    strict_eq(ident("json"), TsExpr::Lit(TsLit::Null)),
+                ),
+                call(member(ident("Array"), "isArray"), vec![ident("json")]),
+            ),
+            block(vec![return_(err_structural_mismatch_top(
+                "object",
+                typeof_expr(ident("json")),
+            ))]),
+        ),
+        TsStmt::const_stmt(
+            TsBindingName::Ident("obj".to_string()),
+            None,
+            as_expr(ident("json"), index_signature_record_ty()),
+            None,
+        ),
+    ]
+}
+
+/// `if (!Array.isArray(json)) { return Err(...); }` — `ListInst`/`MapInst`'s
+/// own shared array-shape guard (Arc E slice 7, #1447), the array-typed
+/// sibling of [`object_shape_guard`] just above.
+fn array_shape_guard() -> TsStmt {
+    if_(
+        not_expr(call(member(ident("Array"), "isArray"), vec![ident("json")])),
+        block(vec![return_(err_structural_mismatch_top(
+            "array",
+            typeof_expr(ident("json")),
+        ))]),
+    )
+}
+
+/// `if (obj["kind"] === "<key_a>") { <guard_a><return_a> } else if
+/// (obj["kind"] === "<key_b>") { <guard_b><return_b> }` — `ResultInst`'s
+/// (`"Ok"`/`"Err"`) and `OptionInst`'s (`"Some"`/`"None"`) own two-armed
+/// wire-kind dispatch (Arc E slice 7, #1447).
+///
+/// `bynk_ts::TsStmt` has no real "else if" continuation shape: the only way
+/// to nest a second `If` as this shape's own `else_branch` is
+/// [`TsStmt::if_else_same_line_stmt`], whose `} else <branch>` rendering
+/// falls to `render_inline_stmt`'s own fallback for a bare, non-`Block`
+/// `If` — which always renders at depth 0 (correct only for the genuinely
+/// brace-free, single-line bodies that fallback was built for; nothing in
+/// `events_fanout.rs`'s own grounding ever nested a multi-line block that
+/// way). Both real call sites here need `body_a`/`body_b` at depth 2
+/// (4-space, correctly nested one level inside this cascade's own `if`),
+/// which that depth-0 fallback cannot produce without mis-indenting them two
+/// spaces shallow. Building the whole two-branch cascade as one
+/// `TsStmt::Raw` sidesteps the gap entirely — the same "real,
+/// already-tree-native content the algebra can't yet nest correctly at this
+/// exact spot; print it and splice" move [`raw_stmts_at_depth_one`] already
+/// established for `emit_sum_codec`'s own switch-case content (#1445).
+/// `guard_a`/`guard_b`/`return_a`/`return_b` are still real
+/// `Vec<TsStmt>`/`TsStmt` nodes built by this function's own real callers
+/// (`emit_field_deserialise` and this arm's own `return_`/`call`/`as_expr`
+/// composition) — only the surrounding "if (...) { } else if (...) { }"
+/// skeleton itself is hand-assembled text, and even that skeleton's own two
+/// conditions are real `TsExpr` nodes (`strict_eq`/[`index`]), rendered via
+/// `bynk_ts::print_expr` rather than spelled out by hand.
+///
+/// `guard_a`/`guard_b` render at depth 1 (2-space) — one level shallower
+/// than their true nesting, the same pre-existing indentation quirk
+/// [`raw_stmts_at_depth_one`]'s own doc names for `emit_sum_codec`'s payload
+/// guards, confirmed byte-for-byte here too against
+/// `139_agent_state_zero_option/expected/demo/slot.ts`'s own
+/// `deserialise_Option_Int` (`if (obj["kind"] === "Some") {` immediately
+/// followed by a 2-space-indented `if (typeof obj["value"] !== "number")`,
+/// not the 4-space a correctly-nested `if`-inside-an-`if` would get).
+/// `return_a`/`return_b` render at depth 2 (4-space) — the correctly-nested
+/// depth for content one level inside the cascade, itself one level inside
+/// the enclosing function's own top-level body (depth 1).
+fn wire_kind_dispatch_raw(
+    key_a: &str,
+    guard_a: Vec<TsStmt>,
+    return_a: TsStmt,
+    key_b: &str,
+    guard_b: Vec<TsStmt>,
+    return_b: TsStmt,
+) -> TsStmt {
+    let wire_kind_eq = |key: &str| strict_eq(index(ident("obj"), str_lit("kind")), str_lit(key));
+
+    let mut text = String::new();
+    text.push_str("  if (");
+    text.push_str(&bynk_ts::print_expr(&wire_kind_eq(key_a)));
+    text.push_str(") {\n");
+    splice_stmts(&mut text, guard_a);
+    text.push_str(&bynk_ts::print_stmt(&return_a, 2));
+    text.push_str("  } else if (");
+    text.push_str(&bynk_ts::print_expr(&wire_kind_eq(key_b)));
+    text.push_str(") {\n");
+    splice_stmts(&mut text, guard_b);
+    text.push_str(&bynk_ts::print_stmt(&return_b, 2));
+    text.push_str("  }\n");
+    TsStmt::raw(text, None)
+}
+
 /// Emit specialised helpers for each `Result<A, B>` / `Option<A>`
 /// instantiation. They delegate to the named-type serialisers for A and B.
 /// v0.174 (#592): also emits a monomorphised record codec per generic
@@ -2755,170 +2877,285 @@ pub(crate) fn emit_generic_helpers_qualified(
                     writeln!(out).unwrap();
                 }
             }
+            // #1447 (Arc E slice 7): builds the `[serialise, deserialise]`
+            // pair as real `bynk_ts::TsDecl` nodes — the same shape
+            // `emit_record_codec`/`emit_sum_codec`/`emit_bytes_named_codec`
+            // already established (#1443/#1445/#1441) — and boundary-prints
+            // them the same way `RecordInst`/`SumInst` above already do.
+            // Unlike those two, there is no separate `emit_result_codec` to
+            // delegate to: this match arm IS the codec body (the issue's own
+            // scope note), so the `TsDecl::Function` construction sits
+            // inline here rather than behind a further indirection.
             GenericInst::ResultInst { ok, err } => {
                 let ok_ts = inner_ts_name(ok);
                 let err_ts = inner_ts_name(err);
                 let ok_inner = bynk_ts::print_type(&qualified_ts_type(ok, qual));
                 let err_inner = bynk_ts::print_type(&qualified_ts_type(err, qual));
-                // #1435 (Arc E slice 1): boundary-print — `emit_generic_helpers`
-                // stays `write!`-based (out of this slice's scope).
-                let serialise_ok =
-                    bynk_ts::print_expr(&serialise_field_expr(ok, "value.value", ru));
-                let serialise_err =
-                    bynk_ts::print_expr(&serialise_field_expr(err, "value.error", ru));
-                writeln!(
-                    out,
-                    "export function serialise_Result_{ok_ts}_{err_ts}(value: Result<{ok_inner}, {err_inner}>): JsonValue {{"
-                )
-                .unwrap();
-                writeln!(
-                    out,
-                    "  if (value.tag === \"Ok\") return {{ kind: \"Ok\", value: {serialise_ok} }};"
-                )
-                .unwrap();
-                writeln!(out, "  return {{ kind: \"Err\", error: {serialise_err} }};").unwrap();
-                writeln!(out, "}}").unwrap();
-                writeln!(out).unwrap();
+                let result_ty = TsType::named_with_args(
+                    "Result",
+                    vec![TsType::named(ok_inner), TsType::named(err_inner)],
+                );
 
-                writeln!(
-                    out,
-                    "export function deserialise_Result_{ok_ts}_{err_ts}(json: JsonValue, path: string = \"$\"): Result<Result<{ok_inner}, {err_inner}>, BoundaryError> {{"
-                )
-                .unwrap();
-                writeln!(
-                    out,
-                    "  if (typeof json !== \"object\" || json === null || Array.isArray(json)) {{"
-                )
-                .unwrap();
-                writeln!(
-                    out,
-                    "    return Err({{ kind: \"StructuralMismatch\", path, expected: \"object\", actual: typeof json }});"
-                )
-                .unwrap();
-                writeln!(out, "  }}").unwrap();
-                writeln!(out, "  const obj = json as {{ [k: string]: JsonValue }};").unwrap();
-                writeln!(out, "  if (obj[\"kind\"] === \"Ok\") {{").unwrap();
-                // #1439 (Arc E slice 3): boundary-print, same treatment as
-                // `emit_record_codec`'s own call site above.
-                splice_stmts(
-                    out,
+                let serialise = TsDecl::Export(Box::new(TsDecl::Function {
+                    name: format!("serialise_Result_{ok_ts}_{err_ts}"),
+                    generics: Vec::new(),
+                    params: vec![TsParam {
+                        name: "value".to_string(),
+                        ty: Some(result_ty.clone()),
+                        optional: false,
+                    }],
+                    return_type: Some(TsType::named("JsonValue")),
+                    body: vec![
+                        if_(
+                            strict_eq(member(ident("value"), "tag"), str_lit("Ok")),
+                            return_(TsExpr::object(vec![
+                                ("kind".to_string(), str_lit("Ok")),
+                                (
+                                    "value".to_string(),
+                                    serialise_field_expr(ok, "value.value", ru),
+                                ),
+                            ])),
+                        ),
+                        return_(TsExpr::object(vec![
+                            ("kind".to_string(), str_lit("Err")),
+                            (
+                                "error".to_string(),
+                                serialise_field_expr(err, "value.error", ru),
+                            ),
+                        ])),
+                    ],
+                    is_async: false,
+                    inline: false,
+                }));
+
+                let mut body = object_shape_guard();
+                body.push(wire_kind_dispatch_raw(
+                    "Ok",
                     emit_field_deserialise("v", ok, "obj[\"value\"]", "`${path}.value`", ru),
-                );
-                writeln!(
-                    out,
-                    "    return Ok(Ok(__v) as Result<{ok_inner}, {err_inner}>);"
-                )
-                .unwrap();
-                writeln!(out, "  }} else if (obj[\"kind\"] === \"Err\") {{").unwrap();
-                // #1439 (Arc E slice 3): boundary-print, same treatment as above.
-                splice_stmts(
-                    out,
+                    return_(call(
+                        ident("Ok"),
+                        vec![as_expr(
+                            call(ident("Ok"), vec![ident("__v")]),
+                            result_ty.clone(),
+                        )],
+                    )),
+                    "Err",
                     emit_field_deserialise("e", err, "obj[\"error\"]", "`${path}.error`", ru),
-                );
-                writeln!(
-                    out,
-                    "    return Ok(Err(__e) as Result<{ok_inner}, {err_inner}>);"
-                )
-                .unwrap();
-                writeln!(out, "  }}").unwrap();
-                writeln!(out, "  return Err({{ kind: \"StructuralMismatch\", path, expected: \"Ok | Err\", actual: String(obj[\"kind\"]) }});").unwrap();
-                writeln!(out, "}}").unwrap();
-                writeln!(out).unwrap();
+                    return_(call(
+                        ident("Ok"),
+                        vec![as_expr(
+                            call(ident("Err"), vec![ident("__e")]),
+                            result_ty.clone(),
+                        )],
+                    )),
+                ));
+                body.push(return_(err_structural_mismatch_top(
+                    "Ok | Err",
+                    call(ident("String"), vec![index(ident("obj"), str_lit("kind"))]),
+                )));
+
+                let deserialise = TsDecl::Export(Box::new(TsDecl::Function {
+                    name: format!("deserialise_Result_{ok_ts}_{err_ts}"),
+                    generics: Vec::new(),
+                    params: vec![
+                        TsParam {
+                            name: "json".to_string(),
+                            ty: Some(TsType::named("JsonValue")),
+                            optional: false,
+                        },
+                        deserialise_path_param(),
+                    ],
+                    return_type: Some(TsType::named_with_args(
+                        "Result",
+                        vec![result_ty, TsType::named("BoundaryError")],
+                    )),
+                    body,
+                    is_async: false,
+                    inline: false,
+                }));
+
+                for d in [serialise, deserialise] {
+                    out.push_str(&bynk_ts::print_stmt(&TsStmt::decl(d, None), 0));
+                    writeln!(out).unwrap();
+                }
             }
             GenericInst::OptionInst { inner } => {
                 let inner_ts = inner_ts_name(inner);
                 let inner_ty = bynk_ts::print_type(&qualified_ts_type(inner, qual));
-                // #1435 (Arc E slice 1): boundary-print, same treatment as
-                // `ResultInst` above.
-                let serialise_inner =
-                    bynk_ts::print_expr(&serialise_field_expr(inner, "value.value", ru));
-                writeln!(
-                    out,
-                    "export function serialise_Option_{inner_ts}(value: Option<{inner_ty}>): JsonValue {{"
-                )
-                .unwrap();
-                writeln!(out, "  if (value.tag === \"Some\") return {{ kind: \"Some\", value: {serialise_inner} }};").unwrap();
-                writeln!(out, "  return {{ kind: \"None\" }};").unwrap();
-                writeln!(out, "}}").unwrap();
-                writeln!(out).unwrap();
+                let option_ty = TsType::named_with_args("Option", vec![TsType::named(inner_ty)]);
 
-                writeln!(
-                    out,
-                    "export function deserialise_Option_{inner_ts}(json: JsonValue, path: string = \"$\"): Result<Option<{inner_ty}>, BoundaryError> {{"
-                )
-                .unwrap();
-                writeln!(
-                    out,
-                    "  if (typeof json !== \"object\" || json === null || Array.isArray(json)) {{"
-                )
-                .unwrap();
-                writeln!(
-                    out,
-                    "    return Err({{ kind: \"StructuralMismatch\", path, expected: \"object\", actual: typeof json }});"
-                )
-                .unwrap();
-                writeln!(out, "  }}").unwrap();
-                writeln!(out, "  const obj = json as {{ [k: string]: JsonValue }};").unwrap();
-                writeln!(out, "  if (obj[\"kind\"] === \"Some\") {{").unwrap();
-                // #1439 (Arc E slice 3): boundary-print, same treatment as above.
-                splice_stmts(
-                    out,
+                let serialise = TsDecl::Export(Box::new(TsDecl::Function {
+                    name: format!("serialise_Option_{inner_ts}"),
+                    generics: Vec::new(),
+                    params: vec![TsParam {
+                        name: "value".to_string(),
+                        ty: Some(option_ty.clone()),
+                        optional: false,
+                    }],
+                    return_type: Some(TsType::named("JsonValue")),
+                    body: vec![
+                        if_(
+                            strict_eq(member(ident("value"), "tag"), str_lit("Some")),
+                            return_(TsExpr::object(vec![
+                                ("kind".to_string(), str_lit("Some")),
+                                (
+                                    "value".to_string(),
+                                    serialise_field_expr(inner, "value.value", ru),
+                                ),
+                            ])),
+                        ),
+                        return_(TsExpr::object(vec![("kind".to_string(), str_lit("None"))])),
+                    ],
+                    is_async: false,
+                    inline: false,
+                }));
+
+                let mut body = object_shape_guard();
+                body.push(wire_kind_dispatch_raw(
+                    "Some",
                     emit_field_deserialise("v", inner, "obj[\"value\"]", "`${path}.value`", ru),
-                );
-                writeln!(out, "    return Ok(Some(__v) as Option<{inner_ty}>);").unwrap();
-                writeln!(out, "  }} else if (obj[\"kind\"] === \"None\") {{").unwrap();
-                writeln!(out, "    return Ok(None as Option<{inner_ty}>);").unwrap();
-                writeln!(out, "  }}").unwrap();
-                writeln!(out, "  return Err({{ kind: \"StructuralMismatch\", path, expected: \"Some | None\", actual: String(obj[\"kind\"]) }});").unwrap();
-                writeln!(out, "}}").unwrap();
-                writeln!(out).unwrap();
+                    return_(call(
+                        ident("Ok"),
+                        vec![as_expr(
+                            call(ident("Some"), vec![ident("__v")]),
+                            option_ty.clone(),
+                        )],
+                    )),
+                    "None",
+                    Vec::new(),
+                    return_(call(
+                        ident("Ok"),
+                        vec![as_expr(ident("None"), option_ty.clone())],
+                    )),
+                ));
+                body.push(return_(err_structural_mismatch_top(
+                    "Some | None",
+                    call(ident("String"), vec![index(ident("obj"), str_lit("kind"))]),
+                )));
+
+                let deserialise = TsDecl::Export(Box::new(TsDecl::Function {
+                    name: format!("deserialise_Option_{inner_ts}"),
+                    generics: Vec::new(),
+                    params: vec![
+                        TsParam {
+                            name: "json".to_string(),
+                            ty: Some(TsType::named("JsonValue")),
+                            optional: false,
+                        },
+                        deserialise_path_param(),
+                    ],
+                    return_type: Some(TsType::named_with_args(
+                        "Result",
+                        vec![option_ty, TsType::named("BoundaryError")],
+                    )),
+                    body,
+                    is_async: false,
+                    inline: false,
+                }));
+
+                for d in [serialise, deserialise] {
+                    out.push_str(&bynk_ts::print_stmt(&TsStmt::decl(d, None), 0));
+                    writeln!(out).unwrap();
+                }
             }
             // v0.20b: `List[T]` — element-wise wire format (a JSON array).
             GenericInst::ListInst { elem } => {
                 let elem_ts = inner_ts_name(elem);
-                let elem_ty = bynk_ts::print_type(&qualified_ts_type(elem, qual));
-                // #1435 (Arc E slice 1): boundary-print, same treatment as above.
-                let serialise_elem = bynk_ts::print_expr(&serialise_field_expr(elem, "v", ru));
-                writeln!(
-                    out,
-                    "export function serialise_List_{elem_ts}(value: readonly {elem_ty}[]): JsonValue {{"
-                )
-                .unwrap();
-                writeln!(out, "  return value.map((v) => {serialise_elem});").unwrap();
-                writeln!(out, "}}").unwrap();
-                writeln!(out).unwrap();
+                let elem_ty = TsType::named(bynk_ts::print_type(&qualified_ts_type(elem, qual)));
+                let readonly_elem_array = TsType::readonly_array(elem_ty.clone());
 
-                writeln!(
-                    out,
-                    "export function deserialise_List_{elem_ts}(json: JsonValue, path: string = \"$\"): Result<readonly {elem_ty}[], BoundaryError> {{"
-                )
-                .unwrap();
-                writeln!(out, "  if (!Array.isArray(json)) {{").unwrap();
-                writeln!(
-                    out,
-                    "    return Err({{ kind: \"StructuralMismatch\", path, expected: \"array\", actual: typeof json }});"
-                )
-                .unwrap();
-                writeln!(out, "  }}").unwrap();
-                writeln!(out, "  const out: {elem_ty}[] = [];").unwrap();
-                writeln!(out, "  for (let i = 0; i < json.length; i++) {{").unwrap();
+                let serialise = TsDecl::Export(Box::new(TsDecl::Function {
+                    name: format!("serialise_List_{elem_ts}"),
+                    generics: Vec::new(),
+                    params: vec![TsParam {
+                        name: "value".to_string(),
+                        ty: Some(readonly_elem_array.clone()),
+                        optional: false,
+                    }],
+                    return_type: Some(TsType::named("JsonValue")),
+                    body: vec![return_(call(
+                        member(ident("value"), "map"),
+                        vec![TsExpr::Arrow {
+                            params: vec![TsParam {
+                                name: "v".to_string(),
+                                ty: None,
+                                optional: false,
+                            }],
+                            is_async: false,
+                            generics: Vec::new(),
+                            return_type: None,
+                            body: Box::new(TsArrowBody::Expr(Box::new(serialise_field_expr(
+                                elem, "v", ru,
+                            )))),
+                        }],
+                    ))],
+                    is_async: false,
+                    inline: false,
+                }));
+
                 // Bind the element before validating: `json[i]` with a
                 // mutable index does not narrow under a typeof guard.
-                writeln!(out, "  const item = json[i];").unwrap();
-                // #1439 (Arc E slice 3): boundary-print, same treatment as above.
-                splice_stmts(
-                    out,
-                    emit_field_deserialise("el", elem, "item", "`${path}[${i}]`", ru),
-                );
+                let mut loop_body = vec![const_("item", index(ident("json"), ident("i")))];
+                loop_body.extend(emit_field_deserialise(
+                    "el",
+                    elem,
+                    "item",
+                    "`${path}[${i}]`",
+                    ru,
+                ));
                 // The element deserialiser may come from the declaring
                 // commons and return the *unbranded* record; this module's
                 // element type may be the context's branded rebrand. Assert
                 // the element like the Option codec above does (#527).
-                writeln!(out, "  out.push(__el as {elem_ty});").unwrap();
-                writeln!(out, "  }}").unwrap();
-                writeln!(out, "  return Ok(out);").unwrap();
-                writeln!(out, "}}").unwrap();
-                writeln!(out).unwrap();
+                loop_body.push(TsStmt::expr_stmt(
+                    call(
+                        member(ident("out"), "push"),
+                        vec![as_expr(ident("__el"), elem_ty.clone())],
+                    ),
+                    None,
+                ));
+
+                let deserialise = TsDecl::Export(Box::new(TsDecl::Function {
+                    name: format!("deserialise_List_{elem_ts}"),
+                    generics: Vec::new(),
+                    params: vec![
+                        TsParam {
+                            name: "json".to_string(),
+                            ty: Some(TsType::named("JsonValue")),
+                            optional: false,
+                        },
+                        deserialise_path_param(),
+                    ],
+                    return_type: Some(TsType::named_with_args(
+                        "Result",
+                        vec![readonly_elem_array, TsType::named("BoundaryError")],
+                    )),
+                    body: vec![
+                        array_shape_guard(),
+                        TsStmt::const_stmt(
+                            TsBindingName::Ident("out".to_string()),
+                            Some(TsType::array(elem_ty)),
+                            TsExpr::array(vec![]),
+                            None,
+                        ),
+                        TsStmt::for_stmt(
+                            "i",
+                            TsExpr::Lit(TsLit::Num("0".to_string())),
+                            less_than(ident("i"), member(ident("json"), "length")),
+                            ident("i"),
+                            block(vec![raw_stmts_at_depth_one(loop_body)]),
+                            None,
+                        ),
+                        return_(call(ident("Ok"), vec![ident("out")])),
+                    ],
+                    is_async: false,
+                    inline: false,
+                }));
+
+                for d in [serialise, deserialise] {
+                    out.push_str(&bynk_ts::print_stmt(&TsStmt::decl(d, None), 0));
+                    writeln!(out).unwrap();
+                }
             }
             // v0.20b: `Map[K, V]` — entries-array wire format `[[k, v], …]`,
             // uniform across String/Int keys and insertion-ordered
@@ -2926,63 +3163,159 @@ pub(crate) fn emit_generic_helpers_qualified(
             GenericInst::MapInst { key, val } => {
                 let key_ts = inner_ts_name(key);
                 let val_ts = inner_ts_name(val);
-                let key_ty = bynk_ts::print_type(&qualified_ts_type(key, qual));
-                let val_ty = bynk_ts::print_type(&qualified_ts_type(val, qual));
-                // #1435 (Arc E slice 1): boundary-print, same treatment as above.
-                let serialise_key = bynk_ts::print_expr(&serialise_field_expr(key, "k", ru));
-                let serialise_val = bynk_ts::print_expr(&serialise_field_expr(val, "v", ru));
-                writeln!(
-                    out,
-                    "export function serialise_Map_{key_ts}_{val_ts}(value: ReadonlyMap<{key_ty}, {val_ty}>): JsonValue {{"
-                )
-                .unwrap();
-                writeln!(out, "  const entries: JsonValue[] = [];").unwrap();
-                writeln!(out, "  for (const [k, v] of value) {{").unwrap();
-                writeln!(out, "    entries.push([{serialise_key}, {serialise_val}]);").unwrap();
-                writeln!(out, "  }}").unwrap();
-                writeln!(out, "  return entries;").unwrap();
-                writeln!(out, "}}").unwrap();
-                writeln!(out).unwrap();
+                let key_ty = TsType::named(bynk_ts::print_type(&qualified_ts_type(key, qual)));
+                let val_ty = TsType::named(bynk_ts::print_type(&qualified_ts_type(val, qual)));
+                let map_ty =
+                    TsType::named_with_args("ReadonlyMap", vec![key_ty.clone(), val_ty.clone()]);
+                // `new Map<{key_ty}, {val_ty}>()`'s own callee has no real
+                // `TsExpr::New` generics field to hold `<key_ty, val_ty>`
+                // (see `TsStmtKind::For`'s own sibling doc for this file's
+                // one other real algebra gap this slice found) — printing a
+                // real `TsType::named_with_args("Map", ..)` node through the
+                // same `bynk_ts::print_type` boundary this arm already uses
+                // for `key_ty`/`val_ty` themselves builds the exact callee
+                // text with no `format!` needed, spliced as an opaque
+                // `Ident` the same way `ident(format!("deserialise_{type_name}"))`
+                // already reuses that variant as a raw-text callee slot
+                // elsewhere in this file (`emit_field_deserialise_wire`'s
+                // own `Named`/`Inst` arm).
+                let map_ctor = bynk_ts::print_type(&TsType::named_with_args(
+                    "Map",
+                    vec![key_ty.clone(), val_ty.clone()],
+                ));
 
-                writeln!(
-                    out,
-                    "export function deserialise_Map_{key_ts}_{val_ts}(json: JsonValue, path: string = \"$\"): Result<ReadonlyMap<{key_ty}, {val_ty}>, BoundaryError> {{"
-                )
-                .unwrap();
-                writeln!(out, "  if (!Array.isArray(json)) {{").unwrap();
-                writeln!(
-                    out,
-                    "    return Err({{ kind: \"StructuralMismatch\", path, expected: \"array\", actual: typeof json }});"
-                )
-                .unwrap();
-                writeln!(out, "  }}").unwrap();
-                writeln!(out, "  const out = new Map<{key_ty}, {val_ty}>();").unwrap();
-                writeln!(out, "  for (let i = 0; i < json.length; i++) {{").unwrap();
-                writeln!(out, "  const entry = json[i];").unwrap();
-                writeln!(out, "  if (!Array.isArray(entry) || entry.length !== 2) {{").unwrap();
-                writeln!(
-                    out,
-                    "    return Err({{ kind: \"StructuralMismatch\", path: `${{path}}[${{i}}]`, expected: \"[key, value] entry\", actual: typeof entry }});"
-                )
-                .unwrap();
-                writeln!(out, "  }}").unwrap();
-                writeln!(out, "  const entryK = entry[0];").unwrap();
-                writeln!(out, "  const entryV = entry[1];").unwrap();
-                // #1439 (Arc E slice 3): boundary-print, same treatment as above.
-                splice_stmts(
-                    out,
-                    emit_field_deserialise("k", key, "entryK", "`${path}[${i}][0]`", ru),
-                );
-                splice_stmts(
-                    out,
-                    emit_field_deserialise("v", val, "entryV", "`${path}[${i}][1]`", ru),
-                );
+                let serialise = TsDecl::Export(Box::new(TsDecl::Function {
+                    name: format!("serialise_Map_{key_ts}_{val_ts}"),
+                    generics: Vec::new(),
+                    params: vec![TsParam {
+                        name: "value".to_string(),
+                        ty: Some(map_ty.clone()),
+                        optional: false,
+                    }],
+                    return_type: Some(TsType::named("JsonValue")),
+                    body: vec![
+                        TsStmt::const_stmt(
+                            TsBindingName::Ident("entries".to_string()),
+                            Some(TsType::array(TsType::named("JsonValue"))),
+                            TsExpr::array(vec![]),
+                            None,
+                        ),
+                        TsStmt::for_of(
+                            "[k, v]",
+                            ident("value"),
+                            block(vec![TsStmt::expr_stmt(
+                                call(
+                                    member(ident("entries"), "push"),
+                                    vec![TsExpr::array(vec![
+                                        serialise_field_expr(key, "k", ru),
+                                        serialise_field_expr(val, "v", ru),
+                                    ])],
+                                ),
+                                None,
+                            )]),
+                            None,
+                        ),
+                        return_(ident("entries")),
+                    ],
+                    is_async: false,
+                    inline: false,
+                }));
+
+                let mut loop_body = vec![
+                    const_("entry", index(ident("json"), ident("i"))),
+                    if_(
+                        or_expr(
+                            not_expr(call(
+                                member(ident("Array"), "isArray"),
+                                vec![ident("entry")],
+                            )),
+                            strict_neq(
+                                member(ident("entry"), "length"),
+                                TsExpr::Lit(TsLit::Num("2".to_string())),
+                            ),
+                        ),
+                        block(vec![return_(err_structural_mismatch(
+                            "`${path}[${i}]`",
+                            "[key, value] entry",
+                            typeof_expr(ident("entry")),
+                        ))]),
+                    ),
+                    const_(
+                        "entryK",
+                        index(ident("entry"), TsExpr::Lit(TsLit::Num("0".to_string()))),
+                    ),
+                    const_(
+                        "entryV",
+                        index(ident("entry"), TsExpr::Lit(TsLit::Num("1".to_string()))),
+                    ),
+                ];
+                loop_body.extend(emit_field_deserialise(
+                    "k",
+                    key,
+                    "entryK",
+                    "`${path}[${i}][0]`",
+                    ru,
+                ));
+                loop_body.extend(emit_field_deserialise(
+                    "v",
+                    val,
+                    "entryV",
+                    "`${path}[${i}][1]`",
+                    ru,
+                ));
                 // Same brand assertion as the List codec (#527).
-                writeln!(out, "  out.set(__k as {key_ty}, __v as {val_ty});").unwrap();
-                writeln!(out, "  }}").unwrap();
-                writeln!(out, "  return Ok(out);").unwrap();
-                writeln!(out, "}}").unwrap();
-                writeln!(out).unwrap();
+                loop_body.push(TsStmt::expr_stmt(
+                    call(
+                        member(ident("out"), "set"),
+                        vec![as_expr(ident("__k"), key_ty), as_expr(ident("__v"), val_ty)],
+                    ),
+                    None,
+                ));
+
+                let deserialise = TsDecl::Export(Box::new(TsDecl::Function {
+                    name: format!("deserialise_Map_{key_ts}_{val_ts}"),
+                    generics: Vec::new(),
+                    params: vec![
+                        TsParam {
+                            name: "json".to_string(),
+                            ty: Some(TsType::named("JsonValue")),
+                            optional: false,
+                        },
+                        deserialise_path_param(),
+                    ],
+                    return_type: Some(TsType::named_with_args(
+                        "Result",
+                        vec![map_ty, TsType::named("BoundaryError")],
+                    )),
+                    body: vec![
+                        array_shape_guard(),
+                        TsStmt::const_stmt(
+                            TsBindingName::Ident("out".to_string()),
+                            None,
+                            TsExpr::New {
+                                callee: Box::new(ident(map_ctor)),
+                                args: vec![],
+                            },
+                            None,
+                        ),
+                        TsStmt::for_stmt(
+                            "i",
+                            TsExpr::Lit(TsLit::Num("0".to_string())),
+                            less_than(ident("i"), member(ident("json"), "length")),
+                            ident("i"),
+                            block(vec![raw_stmts_at_depth_one(loop_body)]),
+                            None,
+                        ),
+                        return_(call(ident("Ok"), vec![ident("out")])),
+                    ],
+                    is_async: false,
+                    inline: false,
+                }));
+
+                for d in [serialise, deserialise] {
+                    out.push_str(&bynk_ts::print_stmt(&TsStmt::decl(d, None), 0));
+                    writeln!(out).unwrap();
+                }
             }
         }
     }

@@ -473,6 +473,25 @@ fn render_stmt(out: &mut String, stmt: &TsStmt, depth: usize) {
             out.push(')');
             render_branch(out, body, depth);
         }
+        TsStmtKind::For {
+            name,
+            init,
+            test,
+            update,
+            body,
+        } => {
+            out.push_str(&indent(depth));
+            out.push_str("for (let ");
+            out.push_str(name);
+            out.push_str(" = ");
+            render_expr(out, init);
+            out.push_str("; ");
+            render_expr(out, test);
+            out.push_str("; ");
+            render_expr(out, update);
+            out.push_str("++)");
+            render_branch(out, body, depth);
+        }
         TsStmtKind::TryCatch {
             try_block,
             catch_param,
@@ -740,6 +759,14 @@ fn render_inline_stmt(out: &mut String, stmt: &TsStmt) {
         | TsStmtKind::Let { .. }
         | TsStmtKind::If { .. }
         | TsStmtKind::ForOf { .. }
+        // Arc E slice 7 (#1447): not reachable today — `ListInst`/
+        // `MapInst`'s two real `For` sites both use a braced `Block` body,
+        // which `render_branch` dispatches to its own multi-line arm before
+        // this fallback group is ever consulted — but safe for the same
+        // reason `ForOf` already is: a brace-free `For` body renders through
+        // `render_stmt`'s own indented, newline-terminated form, which is
+        // exactly what this fallback provides.
+        | TsStmtKind::For { .. }
         | TsStmtKind::TryCatch { .. }
         | TsStmtKind::Block(_)
         | TsStmtKind::Assign { .. }
@@ -1816,7 +1843,7 @@ fn stmt_contains_raw(stmt: &TsStmt) -> bool {
         } => {
             stmt_contains_raw(then_branch) || else_branch.as_deref().is_some_and(stmt_contains_raw)
         }
-        TsStmtKind::ForOf { body, .. } => stmt_contains_raw(body),
+        TsStmtKind::ForOf { body, .. } | TsStmtKind::For { body, .. } => stmt_contains_raw(body),
         TsStmtKind::TryCatch {
             try_block,
             catch_block,
@@ -2413,6 +2440,64 @@ mod tests {
             printed.text,
             "for (const ev of events) {\n  return ev;\n}\n"
         );
+    }
+
+    /// Arc E slice 7 (#1447): `TsStmtKind::For` — pins the exact C-style
+    /// header shape `ListInst`/`MapInst`'s own real deserialise-side element
+    /// loops need (`for (let i = 0; i < json.length; i++) { ... }`),
+    /// including that `update` renders with an appended `++` the caller
+    /// never spells out itself (see `TsStmtKind::For`'s own doc for why).
+    #[test]
+    fn prints_a_c_style_for_loop_with_a_braced_body() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::for_stmt(
+            "i",
+            TsExpr::Lit(TsLit::Num("0".to_string())),
+            TsExpr::Binary {
+                op: TsBinaryOp::LessThan,
+                left: Box::new(TsExpr::Ident("i".to_string())),
+                right: Box::new(TsExpr::Member {
+                    object: Box::new(TsExpr::Ident("json".to_string())),
+                    property: "length".to_string(),
+                }),
+            },
+            TsExpr::Ident("i".to_string()),
+            TsStmt::block(
+                vec![TsStmt::expr_stmt(TsExpr::Ident("item".to_string()), None)],
+                None,
+            ),
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(
+            printed.text,
+            "for (let i = 0; i < json.length; i++) {\n  item;\n}\n"
+        );
+    }
+
+    /// A `For` loop's brace-free body falls back to the same inline
+    /// rendering `ForOf`'s own brace-free body already uses (not reachable
+    /// from any real `bynk-emit` content today — both real `For` sites are
+    /// braced — but exercised directly so the fallback arm this slice added
+    /// to `render_inline_stmt`'s own exhaustive match is proven correct
+    /// rather than merely plausible).
+    #[test]
+    fn prints_a_c_style_for_loops_brace_free_body_inline() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::for_stmt(
+            "i",
+            TsExpr::Lit(TsLit::Num("0".to_string())),
+            TsExpr::Binary {
+                op: TsBinaryOp::LessThan,
+                left: Box::new(TsExpr::Ident("i".to_string())),
+                right: Box::new(TsExpr::Ident("n".to_string())),
+            },
+            TsExpr::Ident("i".to_string()),
+            TsStmt::continue_stmt(None),
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "for (let i = 0; i < n; i++) continue;\n");
     }
 
     #[test]
