@@ -495,13 +495,26 @@ fn wire_ref_of(t: &TypeRef) -> WireRef {
 /// qualified name used as the brand path so that refinement-violation
 /// messages identify the origin context.
 pub(crate) fn emit_helpers_for_owner(
-    out: &mut String,
     type_names: &[String],
     types: &std::collections::HashMap<String, Arc<TypeDecl>>,
     owner_qualified: &str,
     ru: &RuntimeUse,
-) {
-    emit_helpers_for_owner_qualified(out, type_names, types, owner_qualified, &Qual::new(), ru);
+) -> Vec<TsDecl> {
+    emit_helpers_for_owner_qualified(type_names, types, owner_qualified, &Qual::new(), ru)
+}
+
+/// Boundary-prints `decls` into `out`, one blank line after each declaration —
+/// the shared print step every caller of [`emit_helpers_for_owner`]/
+/// [`emit_generic_helpers`] (and their `_qualified` twins) now performs once,
+/// itself, instead of each of `emit_one`'s three arms and
+/// `emit_generic_helpers_qualified`'s six arms boundary-printing inline.
+/// Arc F slice 1 (#1451): consolidates what used to be ten separate
+/// `write!`-family call sites into this one.
+pub(crate) fn print_decls(out: &mut String, decls: Vec<TsDecl>) {
+    for d in decls {
+        out.push_str(&bynk_ts::print_stmt(&TsStmt::decl(d, None), 0));
+        writeln!(out).unwrap();
+    }
 }
 
 /// #661: as [`emit_helpers_for_owner`], but the caller supplies a type
@@ -512,17 +525,16 @@ pub(crate) fn emit_helpers_for_owner(
 /// and refined validation inlines (transparent) or casts structurally (opaque)
 /// because the owner's `.of` is not importable.
 pub(crate) fn emit_helpers_for_owner_qualified(
-    out: &mut String,
     type_names: &[String],
     types: &std::collections::HashMap<String, Arc<TypeDecl>>,
     _owner_qualified: &str,
     qual: &Qual,
     ru: &RuntimeUse,
-) {
+) -> Vec<TsDecl> {
     // Only emit helpers for *named* types declared by this owner. Skip
     // unknown names — they belong to another module or to the runtime's
     // generic helpers (Result / Option).
-    let mut emitted_any = false;
+    let mut decls = Vec::new();
     for name in type_names {
         let Some(decl) = types.get(name) else {
             continue;
@@ -534,61 +546,33 @@ pub(crate) fn emit_helpers_for_owner_qualified(
         if !decl.type_params.is_empty() {
             continue;
         }
-        emitted_any = true;
-        emit_one(out, name, decl, types, qual, ru);
+        decls.extend(emit_one(name, decl, types, qual, ru));
     }
-    if emitted_any {
-        writeln!(out).unwrap();
-    }
+    decls
 }
 
+/// Arc F slice 1 (#1451): returns the real `bynk_ts::TsDecl` nodes for
+/// `name` directly — no `out: &mut String` parameter. The boundary-print
+/// step ([`print_decls`]) now happens once, at the caller.
 fn emit_one(
-    out: &mut String,
     name: &str,
     decl: &TypeDecl,
     types: &std::collections::HashMap<String, Arc<TypeDecl>>,
     qual: &Qual,
     ru: &RuntimeUse,
-) {
+) -> Vec<TsDecl> {
     match &decl.body {
         // #1441 (Arc E slice 4): `emit_refined` itself now builds real
-        // `bynk_ts::TsDecl` nodes (no `out: &mut String` parameter) — this
-        // call site is the one place that still needs `out`, so it prints
-        // each returned declaration at the boundary. `TsStmt::decl(..,
-        // None)` + `bynk_ts::print_stmt(&stmt, 0)` is the established
-        // pattern for printing one top-level `TsDecl` on its own (no
-        // dedicated `print_decl` entry point exists or is needed — this
-        // exact idiom is already `emit_free_fn`'s/`emit_agent`'s own real
-        // precedent, `emitter/emit.rs`/`emitter.rs`), followed by the same
-        // blank-line separator (`writeln!(out).unwrap()`) the
-        // pre-conversion `writeln!` calls always emitted after each
-        // function.
+        // `bynk_ts::TsDecl` nodes.
         TypeBody::Refined { .. } | TypeBody::Opaque { .. } => {
-            for d in emit_refined(name, decl, types, qual, ru) {
-                out.push_str(&bynk_ts::print_stmt(&TsStmt::decl(d, None), 0));
-                writeln!(out).unwrap();
-            }
+            emit_refined(name, decl, types, qual, ru)
         }
         // #1443 (Arc E slice 5): `emit_record` itself now builds real
-        // `bynk_ts::TsDecl` nodes (no `out: &mut String` parameter) — same
-        // boundary-print treatment as the `Refined`/`Opaque` arm just above
-        // (#1441), reused verbatim rather than re-derived.
-        TypeBody::Record(_) => {
-            for d in emit_record(name, decl, types, qual, ru) {
-                out.push_str(&bynk_ts::print_stmt(&TsStmt::decl(d, None), 0));
-                writeln!(out).unwrap();
-            }
-        }
+        // `bynk_ts::TsDecl` nodes.
+        TypeBody::Record(_) => emit_record(name, decl, types, qual, ru),
         // #1445 (Arc E slice 6): `emit_sum` itself now builds real
-        // `bynk_ts::TsDecl` nodes (no `out: &mut String` parameter) — same
-        // boundary-print treatment as the `Record`/`Refined`/`Opaque` arms
-        // just above (#1441, #1443), reused verbatim rather than re-derived.
-        TypeBody::Sum(_) => {
-            for d in emit_sum(name, decl, types, qual, ru) {
-                out.push_str(&bynk_ts::print_stmt(&TsStmt::decl(d, None), 0));
-                writeln!(out).unwrap();
-            }
-        }
+        // `bynk_ts::TsDecl` nodes.
+        TypeBody::Sum(_) => emit_sum(name, decl, types, qual, ru),
     }
 }
 
@@ -2745,12 +2729,11 @@ fn wire_kind_dispatch_raw(
 /// instantiation (`RecordInst`), which needs the declarations to substitute
 /// its type parameters.
 pub(crate) fn emit_generic_helpers(
-    out: &mut String,
     insts: &[GenericInst],
     types: &std::collections::HashMap<String, Arc<TypeDecl>>,
     ru: &RuntimeUse,
-) {
-    emit_generic_helpers_qualified(out, insts, types, &Qual::new(), ru);
+) -> Vec<TsDecl> {
+    emit_generic_helpers_qualified(insts, types, &Qual::new(), ru)
 }
 
 /// #661: as [`emit_generic_helpers`], but the value-type positions of each
@@ -2760,13 +2743,18 @@ pub(crate) fn emit_generic_helpers(
 /// codec calls stay local. The codec *suffix* (`Result_AuthId_PaymentError`) is
 /// namespace-independent by construction, which is exactly what keeps the
 /// caller's and callee's names in agreement across the wire.
+///
+/// Arc F slice 1 (#1451): returns the real `bynk_ts::TsDecl` nodes directly —
+/// no `out: &mut String` parameter. The boundary-print step ([`print_decls`])
+/// now happens once, at the caller, instead of inline in each of this
+/// function's six match arms.
 pub(crate) fn emit_generic_helpers_qualified(
-    out: &mut String,
     insts: &[GenericInst],
     types: &std::collections::HashMap<String, Arc<TypeDecl>>,
     qual: &Qual,
     ru: &RuntimeUse,
-) {
+) -> Vec<TsDecl> {
+    let mut decls = Vec::new();
     for inst in insts {
         match inst {
             // v0.174 (#592): a generic-record instantiation `Paginated[User]`
@@ -2817,10 +2805,7 @@ pub(crate) fn emit_generic_helpers_qualified(
                 // site needs the same boundary-print treatment `emit_one`'s
                 // `Record`/`Refined`/`Opaque` arms already use (#1441,
                 // #1443).
-                for d in emit_record_codec(&fn_suffix, &ts_type, &fields, types, ru) {
-                    out.push_str(&bynk_ts::print_stmt(&TsStmt::decl(d, None), 0));
-                    writeln!(out).unwrap();
-                }
+                decls.extend(emit_record_codec(&fn_suffix, &ts_type, &fields, types, ru));
             }
             // #593: a generic-sum instantiation `ApiResult[User]` emits
             // `serialise_ApiResult_User` / `deserialise_ApiResult_User`, its
@@ -2872,10 +2857,7 @@ pub(crate) fn emit_generic_helpers_qualified(
                 // call site needs the same boundary-print treatment
                 // `emit_one`'s `Sum`/`Record`/`Refined`/`Opaque` arms
                 // already use (#1441, #1443, #1445).
-                for d in emit_sum_codec(&fn_suffix, &ts_type, &sum, ru) {
-                    out.push_str(&bynk_ts::print_stmt(&TsStmt::decl(d, None), 0));
-                    writeln!(out).unwrap();
-                }
+                decls.extend(emit_sum_codec(&fn_suffix, &ts_type, &sum, ru));
             }
             // #1447 (Arc E slice 7): builds the `[serialise, deserialise]`
             // pair as real `bynk_ts::TsDecl` nodes — the same shape
@@ -2974,10 +2956,7 @@ pub(crate) fn emit_generic_helpers_qualified(
                     inline: false,
                 }));
 
-                for d in [serialise, deserialise] {
-                    out.push_str(&bynk_ts::print_stmt(&TsStmt::decl(d, None), 0));
-                    writeln!(out).unwrap();
-                }
+                decls.extend([serialise, deserialise]);
             }
             GenericInst::OptionInst { inner } => {
                 let inner_ts = inner_ts_name(inner);
@@ -3053,10 +3032,7 @@ pub(crate) fn emit_generic_helpers_qualified(
                     inline: false,
                 }));
 
-                for d in [serialise, deserialise] {
-                    out.push_str(&bynk_ts::print_stmt(&TsStmt::decl(d, None), 0));
-                    writeln!(out).unwrap();
-                }
+                decls.extend([serialise, deserialise]);
             }
             // v0.20b: `List[T]` — element-wise wire format (a JSON array).
             GenericInst::ListInst { elem } => {
@@ -3151,10 +3127,7 @@ pub(crate) fn emit_generic_helpers_qualified(
                     inline: false,
                 }));
 
-                for d in [serialise, deserialise] {
-                    out.push_str(&bynk_ts::print_stmt(&TsStmt::decl(d, None), 0));
-                    writeln!(out).unwrap();
-                }
+                decls.extend([serialise, deserialise]);
             }
             // v0.20b: `Map[K, V]` — entries-array wire format `[[k, v], …]`,
             // uniform across String/Int keys and insertion-ordered
@@ -3310,13 +3283,11 @@ pub(crate) fn emit_generic_helpers_qualified(
                     inline: false,
                 }));
 
-                for d in [serialise, deserialise] {
-                    out.push_str(&bynk_ts::print_stmt(&TsStmt::decl(d, None), 0));
-                    writeln!(out).unwrap();
-                }
+                decls.extend([serialise, deserialise]);
             }
         }
     }
+    decls
 }
 
 #[cfg(test)]

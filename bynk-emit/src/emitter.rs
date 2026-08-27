@@ -1089,19 +1089,22 @@ fn emit_json_codec_helpers(
         .into_iter()
         .filter(|n| !skip_names.contains(n))
         .collect();
-    emit_helpers_for_owner(
-        out,
-        &names,
-        &commons.types,
-        &ctx.commons_name,
-        &ctx.runtime_use,
-    );
+    let owner_decls =
+        emit_helpers_for_owner(&names, &commons.types, &ctx.commons_name, &ctx.runtime_use);
+    let owner_emitted_any = !owner_decls.is_empty();
+    serialisation::print_decls(out, owner_decls);
+    if owner_emitted_any {
+        writeln!(out).unwrap();
+    }
     let insts: Vec<serialisation::GenericInst> = insts
         .into_iter()
         .filter(|i| !skip_insts.contains(&i.ts_name()))
         .collect();
     if !insts.is_empty() {
-        emit_generic_helpers(out, &insts, &commons.types, &ctx.runtime_use);
+        serialisation::print_decls(
+            out,
+            emit_generic_helpers(&insts, &commons.types, &ctx.runtime_use),
+        );
     }
 }
 
@@ -1177,13 +1180,17 @@ fn emit_boundary_helpers(
             .filter(|n| !workers || locally_declared.contains(*n))
             .cloned()
             .collect();
-        emit_helpers_for_owner(
-            out,
+        let local_boundary_decls = emit_helpers_for_owner(
             &local_boundary,
             &commons.types,
             ctx.commons_name.as_str(),
             &ctx.runtime_use,
         );
+        let local_boundary_emitted_any = !local_boundary_decls.is_empty();
+        serialisation::print_decls(out, local_boundary_decls);
+        if local_boundary_emitted_any {
+            writeln!(out).unwrap();
+        }
 
         // Re-export helpers for commons-owned boundary types so consumers
         // can address them through this context's handlers.ts namespace
@@ -1279,7 +1286,10 @@ fn emit_boundary_helpers(
         // boundary either way.
         let insts =
             collect_generic_instantiations(&services, &agents, &local_boundary, &commons.types);
-        emit_generic_helpers(out, &insts, &commons.types, &ctx.runtime_use);
+        serialisation::print_decls(
+            out,
+            emit_generic_helpers(&insts, &commons.types, &ctx.runtime_use),
+        );
 
         // #661 (ADR 0199 Decision G discharged): the caller's own view of each
         // consumed context's boundary codecs, so a cross-context call reaches
@@ -1334,20 +1344,27 @@ fn emit_boundary_helpers(
             .map(|(name, _)| name.clone())
             .collect();
         locally.sort();
-        emit_helpers_for_owner(
-            out,
+        let locally_decls = emit_helpers_for_owner(
             &locally,
             &commons.types,
             ctx.commons_name.as_str(),
             &ctx.runtime_use,
         );
+        let locally_emitted_any = !locally_decls.is_empty();
+        serialisation::print_decls(out, locally_decls);
+        if locally_emitted_any {
+            writeln!(out).unwrap();
+        }
         let insts = collect_generic_instantiations(
             &HashMap::new(),
             &HashMap::new(),
             &locally,
             &commons.types,
         );
-        emit_generic_helpers(out, &insts, &commons.types, &ctx.runtime_use);
+        serialisation::print_decls(
+            out,
+            emit_generic_helpers(&insts, &commons.types, &ctx.runtime_use),
+        );
         (
             locally.into_iter().collect(),
             insts.iter().map(|i| i.ts_name()).collect(),
@@ -1524,14 +1541,18 @@ fn emit_consumed_context_helpers(
             .cloned()
             .collect();
         to_emit.sort();
-        emit_helpers_for_owner_qualified(
-            out,
+        let to_emit_decls = emit_helpers_for_owner_qualified(
             &to_emit,
             types_table,
             ctx.commons_name.as_str(),
             &qual,
             &ctx.runtime_use,
         );
+        let to_emit_emitted_any = !to_emit_decls.is_empty();
+        serialisation::print_decls(out, to_emit_decls);
+        if to_emit_emitted_any {
+            writeln!(out).unwrap();
+        }
         consumed_names_out.extend(to_emit);
 
         let to_emit_insts: Vec<serialisation::GenericInst> = cinsts
@@ -1541,7 +1562,10 @@ fn emit_consumed_context_helpers(
         for i in &to_emit_insts {
             consumed_insts_out.push(i.ts_name());
         }
-        emit_generic_helpers_qualified(out, &to_emit_insts, types_table, &qual, &ctx.runtime_use);
+        serialisation::print_decls(
+            out,
+            emit_generic_helpers_qualified(&to_emit_insts, types_table, &qual, &ctx.runtime_use),
+        );
     }
 
     (consumed_names_out, consumed_insts_out)
