@@ -17,7 +17,7 @@ Track slice T0.0 (#999); `ts_writes`/`ts_any` added by P7.0 (#1296); `verbatim_o
 | `ide_emit_edge` | yes | absent |
 | `ast_importers` | yes | 5 |
 | `emit_abi_shapes` | yes | 1 (bynk-cloudflare.ts:negotiateLocale) |
-| `ts_writes` | yes | 901 |
+| `ts_writes` | yes | 893 |
 | `ts_any` | yes | 30 |
 | `verbatim_origins` | yes | 1 |
 | `verbatim_sites` | yes | 5 |
