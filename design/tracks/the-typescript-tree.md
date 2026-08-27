@@ -1991,6 +1991,41 @@ E's slices land (bucket 1 zeroes, `ts_any`'s total drops by 2) — re-check both
 fresh probe run
 before citing them in a follow-on proposal.
 
+**Part 2 correction (#1459, the residual-argument writeup this pass's own §"What this pass
+recommends" authorised — landed).** Arc E has since landed, and re-verification against current
+`main` finds the drift this pass itself predicted: bucket 1's pair (`serialisation.rs:629/869` at
+this pass's own citation) did **not** both close — only the field-extraction site narrowed away
+entirely (confirmed `tsc --strict`); `UncheckedReason::Effect` (now `serialisation.rs:1867`)
+became a real `TsExpr::As` node but was never claimed to close (its own in-place comment says so).
+`project/tests_emit.rs` gained one site elsewhere (11 → 12). Net total unchanged at 30, composition
+shifted. #1459 re-argues all 26 non-collection-kernel sites (bucket 2's 4-site group is `#1460`'s
+own separate spike) as **six families**, not the flat bucket-3/bucket-4 split above:
+
+1. Cross-context event/dispatch qualification (5 — `workers.rs:1068,1070,1893`,
+   `project.rs:3298,3300`) — each already names a specific attempted-and-failed fix; the closest
+   candidate to real tractability among all 26, but needs a real qualification-scheme design, not
+   attempted here.
+2. `lower.rs`'s two non-kernel P7.2-deferred casts (2 — lines 2143, 2172) — unchanged from this
+   pass's own finding above.
+3. `emitter.rs:4259` (`unchecked_construct_test`) — unchanged from this pass's own finding above.
+4. `workers.rs:866`, the DO stub — **this pass's own exclusion recommendation is retracted, not
+   adopted.** Direct read finds it is a Bynk-authored `TsDecl::TypeAlias` fallback (not copied
+   foreign text), already carrying its own P7.2-deferred reason (a name collision with a real
+   imported `DurableObjectNamespace`, needing reconciliation) — governed by R7.1 like every other
+   site here, not excluded from it. The live floor does **not** drop to 29 as this pass's own §4
+   above speculated.
+5. `serialisation.rs:1867` (`UncheckedReason::Effect`) — already argued in place; not part of a
+   closing pair, was never claimed to close.
+6. Property-test driver/replay machinery (16 — `tests_emit.rs`'s 12 + `emit.rs`'s 4, one family
+   not two) — `gen_descriptor_entry`'s own `rng`/`v`/`v` arrow params (3 of `tests_emit.rs`'s 12)
+   had no individual in-place reason before #1459; argued fresh as the same "arbitrary shape across
+   an unbounded property-test surface" reasoning the other 13 sites in this family already state.
+
+No site among the 26 turned out newly tractable. The argued floor for these 26 is **26** — none
+excluded, none closed. Combined with whatever `#1460` resolves for the 4-site collection-kernel
+group, `ts_any`'s overall floor lands between 26 and 30, not the 29/28 this pass's own bucket-4
+language implied. Full argument: `design/decisions/`'s ADR from #1459 (number assigned at merge).
+
 ---
 
 **Arc F — design pass: decomposing `ts_writes`'s remaining surface after Arc E (#1449, a
