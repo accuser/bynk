@@ -1909,6 +1909,39 @@ genuinely unknown until the capstone slice is attempted**, the same honesty `ast
 5, not 0) already modelled. §5's `verbatim_sites` bullet is corrected below to an argued floor, not
 a fixed 0.
 
+**Part 1 correction (#1461, the capstone grounding this pass's own §"What this pass recommends"
+scheduled after Arc E — landed).** Both prerequisites named above turn out to already be solved,
+not open questions — and a third, previously-uncounted prerequisite is the real remaining size
+driver. **The `lower.rs` per-splice-point representation (prerequisite 1 of this Part) is
+already ADR 0391's own decision**, in active use by every Arc C/D/E/F slice that calls into
+`lower.rs`: one opaque blob per function, at `emit_block_as_function_body_with_return`'s own
+return value — nothing left to design. **The source-map rebuild (the "second, unnamed
+prerequisite" above) is already shipped**: `bynk_ts::printer::print` (`bynk-ts/src/
+printer.rs:229`) already builds a real source map from a `TsProgram`'s own top-level
+`TsStmt.span: Option<Span>` fields — not a `bynk-ts` change to design, a `bynk-emit`-side
+mechanical task (thread each item's real span into its `TsStmt`/`TsDecl` construction, mirroring
+the `smb.borrow_mut().record(out.len(), span)` calls already made at the same points today).
+
+**The real blocker: `verbatim_sites` counts source construction call sites, not runtime node
+counts, so wrapping `emit_project`'s own per-item loop body in one `TsStmt::verbatim(...)` call
+executed once per commons item is still exactly one call site — identical to today's single
+whole-file wrap.** The metric only moves once the *callees themselves* stop needing that wrap.
+Direct read of `emit_project`'s own per-item dispatch (`emitter.rs:420-473`) finds it calls
+`emit_capability`/`emit_provider`/`emit_service`/`emit_agent`, all four still `(out: &mut
+String, ...)` — and `emit_provider`'s own class wrapper is *already, permanently* decided to
+stay hand-written text (Decision C, found during #1457's own grounding of a different function).
+`emit_test_module`/`emit_integration_module` have the same shape one level down: `include_str!`-
+based runtime-helper text (`stub_runtime_helpers` and four siblings, `project/tests_emit.rs:
+2278-2289`) is foreign-shaped bundled content, the same permanent footing `adapter_bindings`/
+`runtime.ts` already have.
+
+**Corrected argued floor: not 0 even after full conversion.** At minimum one wrap per commons
+that declares a provider, plus the already-permanent foreign-content sites. The capstone is
+**not a single tractable slice** — it cascades into converting or individually, permanently
+arguing opaque a dozen-plus callees across `emitter.rs`/`emitter/emit.rs`/`project/tests_emit.rs`
+— genuinely its own multi-slice arc, comparable in scope to Arc C/D/E/F themselves, not a
+follow-up sized against the original three-signature framing.
+
 **Part 2 — `ts_any`: the real distribution, not the stale 2–3-site estimate.** ADR-C (§3.3, Q3)
 named a 2–3-site residual, deferred to R7.7's runtime-typing work, as the only open gap in
 "eliminated in full." That estimate predates every Arc C slice; a fresh, file-by-file read of the
