@@ -1,11 +1,6 @@
----
-level: patch
-changelog: Resolves #1472 (scope the `verbatim_sites` capstone arc) — enumerates every direct callee of `emit_project`/`emit_test_module`/`emit_integration_module` (15 + ~13 respectively), finds 12 of `emit_project`'s own 15 already cheap to convert (real-node internally, signature-only), and settles the nested source-map design question #1461 left open: the printer should report the print-time offset of an opaque body blob instead of `emit_class_method_and_merge_source_map` reverse-engineering it, reusing `SourceMapBuilder::merge` machinery that already exists. Finds `inject_runtime_imports` was never actually entangled with that gap — it has its own independent fix (build the runtime-import node after the body loop, once `ctx.runtime_use` is fully known, order it first). Names 9 new permanent `Verbatim` sites by callee (`emit_provider`/`emit_agent`'s class wrappers, `emit_agent`'s history-driver, `emit_stub_class`'s class wrapper, 5 `tests_emit.rs` `include_str!` blocks) and 2 genuinely new, previously-unargued conversion candidates (four-plus near-identical test-function wrappers; an HS256 JWT-signer block better suited to `include_str!` extraction than tree conversion). Proposes an 8-slice sequence, printer extension first. No code change.
----
+# 0407 — The verbatim_sites capstone's callee cascade, enumerated and classified; the nested source-map gap resolves by having the printer report opaque-blob offsets instead of bynk-emit reverse-engineering them
 
-## ADR: verbatim-sites-capstone-callee-cascade-and-nested-checkpoint
-title: The verbatim_sites capstone's callee cascade, enumerated and classified; the nested source-map gap resolves by having the printer report opaque-blob offsets instead of bynk-emit reverse-engineering them
-summary: 12 of emit_project's 15 direct callees are cheap signature conversions; the nested-checkpoint gap has concrete prior art already in bynk-emit (emit_class_method_and_merge_source_map's own offset-recovery hack) and resolves by extending the printer to report that offset directly; inject_runtime_imports turns out unblocked by a simple construction-order fix, not entangled with the source-map gap after all
+- **Status:** Accepted (v0.289.32)
 
 **Context.** #1461 (landed) found the `verbatim_sites` capstone's two named prerequisites already
 solved or partly solved, and one previously-uncounted prerequisite — a callee cascade — as the
