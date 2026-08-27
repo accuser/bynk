@@ -1629,7 +1629,7 @@ fn is_ts_writes_excluded_file(rel_path: &Path) -> bool {
 /// TypeScript-producing.
 ///
 /// **`.with_file_name(format!` found and added by Arc F's own item-4 investigation
-/// (#1457):** `project.rs:2097`'s `sibling_path` (`output_path.with_file_name(format!(
+/// (#1457):** `project.rs`'s `sibling_path` (`output_path.with_file_name(format!(
 /// "{name}.{suffix}"))`) builds a sibling filesystem path the same way the two idioms
 /// above do, but spelled with `.with_file_name(` — the prior substring match didn't
 /// catch it, over-counting `ts_writes` by this one site.
