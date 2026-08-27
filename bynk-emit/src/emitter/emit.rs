@@ -3284,34 +3284,61 @@ fn context_pascal(name: &str) -> String {
 /// context contributes plus the surfaces of any consumed contexts. Replaces
 /// the fragile `Parameters<typeof svc.call>[1]` indexing, which only resolved
 /// correctly for single-argument service operations.
+/// Arc F slice 3 (#1453): builds a real `bynk_ts::TsDecl::Interface`, the
+/// same `readonly`-member shape `emit_agent`'s own state interface already
+/// establishes (`emit_agent.rs:4436-4444`) — return contract stays
+/// `-> String` (just the interface's own name, used as a plain
+/// `TsType::named(deps_name)` type reference by `emit_make_surface`, its one
+/// caller), only the declaration's own construction/printing changed.
+///
+/// Two fields stay opaque `TsType::named(...)` text, deliberately, not
+/// guessed: `surface`'s type comes from `surface_ty`, itself still
+/// `String`-returning (#1449's own bucket-4 residual, out of this slice's
+/// scope) — wrapping its output opaquely is the established "carry an
+/// unconverted sibling's own text" pattern. `__eventsDispatch`'s function
+/// type needs a *named* parameter (`events`); `bynk_ts::TsType::Fn` only
+/// supports positional parameter names (`a0`, `a1`, …, confirmed against its
+/// own printer tests) — the same real, already-named algebra gap
+/// `ts_type_ref_to_ts_type`'s own `TypeRef::Query` arm (`emitter.rs`)
+/// resolved by pre-rendering and wrapping as opaque `Named` text rather than
+/// widening `TsType::Fn` for one call site.
 fn emit_context_deps_interface(
     out: &mut String,
     commons: &TypedCommons,
     ctx: &EmitProjectCtx,
 ) -> String {
     let deps_name = format!("{}Deps", context_pascal(&commons.commons.name.joined()));
-    let mut fields: Vec<String> = commons
+    let mut members: Vec<bynk_ts::TsTypeMember> = commons
         .commons
         .items
         .iter()
         .filter_map(|i| match i {
-            CommonsItem::Capability(c) => Some(format!("  readonly {n}: {n};", n = c.name.name)),
+            CommonsItem::Capability(c) => Some(bynk_ts::TsTypeMember::Prop {
+                name: c.name.name.clone(),
+                ty: bynk_ts::TsType::named(c.name.name.clone()),
+                optional: false,
+                readonly: true,
+            }),
             _ => None,
         })
         .collect();
     // v0.15: cross-context capabilities the context consumes appear in deps,
     // typed against the providing context's namespace.
     for (key, consumed) in cross_context_caps_used(commons, &ctx.cross_context) {
-        fields.push(format!(
-            "  readonly {key}: {ns}.{key};",
-            ns = qualified_to_ns(&consumed)
-        ));
+        members.push(bynk_ts::TsTypeMember::Prop {
+            ty: bynk_ts::TsType::named(format!("{}.{key}", qualified_to_ns(&consumed))),
+            name: key,
+            optional: false,
+            readonly: true,
+        });
     }
     if !ctx.cross_context.consumed_contexts.is_empty() && has_consumed_service(&ctx.cross_context) {
-        fields.push(format!(
-            "  readonly surface: {};",
-            surface_ty(&ctx.cross_context)
-        ));
+        members.push(bynk_ts::TsTypeMember::Prop {
+            name: "surface".to_string(),
+            ty: bynk_ts::TsType::named(surface_ty(&ctx.cross_context)),
+            optional: false,
+            readonly: true,
+        });
     }
     // Events track, slice 0 (spine #936): a context with any handler that
     // emits needs `__eventsDispatch` threaded all the way from `makeSurface`
@@ -3327,16 +3354,25 @@ fn emit_context_deps_interface(
             .map(String::as_str)
             == Some("bynk");
     if is_first_party_events && commons_uses_emit(commons) {
-        fields.push(format!(
-            "  readonly __eventsDispatch: (events: Array<{}>) => Promise<void>;",
-            crate::emitter::EVENTS_WIRE_EVENT_TS_TYPE
-        ));
+        members.push(bynk_ts::TsTypeMember::Prop {
+            name: "__eventsDispatch".to_string(),
+            ty: bynk_ts::TsType::named(format!(
+                "(events: Array<{}>) => Promise<void>",
+                crate::emitter::EVENTS_WIRE_EVENT_TS_TYPE
+            )),
+            optional: false,
+            readonly: true,
+        });
     }
-    writeln!(out, "export interface {deps_name} {{").unwrap();
-    for f in &fields {
-        writeln!(out, "{f}").unwrap();
-    }
-    writeln!(out, "}}").unwrap();
+    let interface_decl = bynk_ts::TsStmt::decl(
+        bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::Interface {
+            name: deps_name.clone(),
+            type_params: Vec::new(),
+            members,
+        })),
+        None,
+    );
+    out.push_str(&bynk_ts::print_stmt(&interface_decl, 0));
     writeln!(out).unwrap();
     deps_name
 }
@@ -3374,9 +3410,10 @@ pub(crate) fn any_service_binds_caller<'a>(
 /// exists in `bynk_ts`, and this function never lowers an expression through
 /// `LowerCtx` (no `source_map` parameter reaches it), so there is no
 /// sub-builder/merge machinery to get right here. `emit_context_deps_interface`
-/// stays exactly as it is — a separate, unconverted, confirmed-unaffected
-/// `String`-returning sibling this function calls once, not touched by this
-/// slice.
+/// converted later (Arc F slice 3, #1453) — it still returns `String` (just
+/// the interface's own name, used below as a plain `TsType::named` type
+/// reference), but the interface declaration itself is a real
+/// `bynk_ts::TsDecl::Interface` now, not `writeln!`-built text.
 pub(crate) fn emit_make_surface(out: &mut String, commons: &TypedCommons, ctx: &EmitProjectCtx) {
     let services: Vec<&ServiceDecl> = commons
         .commons
