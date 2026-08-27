@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.289.21** | Arc F slice 2 repoints `bynk-emit`'s `plan_agent_given_deps`/`native_platforms_of_context` at the tree-native `instantiate_provider_ts_expr`, deleting the now-uncalled `String`-returning `instantiate_provider_expr` — zero emitted-output change. |
 | **v0.289.20** | Arc F slice 1 converts `bynk-emit`'s `emit_helpers_for_owner[_qualified]`/`emit_generic_helpers[_qualified]` (and `emit_one`) to return real `Vec<TsDecl>` trees instead of `writeln!`-ing into `out: &mut String`, with the boundary-print step consolidated into one shared `print_decls` helper at every caller — zero emitted-output change. |
 | **v0.289.19** | Arc F design pass — decomposes `ts_writes`'s remaining non-`serialisation.rs` surface into three concretely-scoped conversion slices, one open investigation, and a named already-argued residual |
 | **v0.289.18** | Arc E slice 7 converts `bynk-emit`'s `emit_generic_helpers_qualified`'s remaining `ResultInst`/`OptionInst`/`ListInst`/`MapInst` arms to build real `TsDecl`/`TsStmt` trees instead of `write!`-ing strings, and adds a narrow C-style `TsStmt::For` to `bynk-ts` for the `List`/`Map` deserialise-side indexed element loop. |
