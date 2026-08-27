@@ -1043,25 +1043,17 @@ fn emit_inline_refinement_checks(
 /// `ValidationError` there).
 ///
 /// #1441 (Arc E slice 4): returns `Vec<TsStmt>` (one `if`), same treatment
-/// as [`emit_inline_refinement_checks`] above. `super::pred_condition_and_
-/// message`'s own `cond` stays opaque text spliced through [`ident`] — it
-/// is `emitter.rs`'s `String`-returning `pred_condition_and_message`,
-/// confirmed by Arc B/P7.9's own proposal as genuinely out of that slice's
-/// scope, the same "cross-file `String`-producing dependency genuinely out
-/// of scope stays opaque" precedent `workers.rs`'s own `claim_predicate_
-/// to_js` call already set (#1321). Wrapped in an explicit
-/// [`TsExpr::Paren`] before negating — `cond` is often a compound boolean
-/// expression (e.g. `value.length >= 3 && value.length <= 10`), and unlike
-/// `Binary`/`As`, a bare `TsExpr::Ident` is never parenthesised by the
-/// printer's own unary-operand precedence logic (it has no way to know the
-/// opaque text it holds isn't atomic) — the original `if (!({cond}))`
-/// always wrapped explicitly for exactly this reason, and dropping the
-/// parens would both change the emitted bytes and, for a compound `cond`,
-/// the actual runtime meaning.
+/// as [`emit_inline_refinement_checks`] above. #1471: `super::pred_
+/// condition_and_message`'s own `cond` is now a real `TsExpr` (a
+/// `Binary`/`Call` node), not opaque text spliced through [`ident`] — still
+/// wrapped in an explicit [`TsExpr::Paren`] before negating, byte-identical
+/// to the pre-#1471 output: the wrap was already unconditional (never
+/// derived from `cond`'s own shape), so a real, already-well-formed node
+/// underneath changes nothing about whether the surrounding parens print.
 fn emit_inline_pred_check(pred: &PredKind, violation: &dyn Fn(&str) -> TsStmt) -> Vec<TsStmt> {
     let (cond, msg) = super::pred_condition_and_message(pred, "json");
     vec![if_(
-        not_expr(TsExpr::Paren(Box::new(ident(cond)))),
+        not_expr(TsExpr::Paren(Box::new(cond))),
         block(vec![violation(&msg)]),
     )]
 }

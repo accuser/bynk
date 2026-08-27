@@ -360,27 +360,18 @@ fn print_guard_if_stmt(
 
 fn emit_pred_check(out: &mut String, type_name: &str, pred: &PredKind) {
     let (cond, msg) = crate::emitter::pred_condition_and_message(pred, "value");
-    // `cond` is opaque, already-formed JS condition text (e.g.
-    // `value >= 0`, or, for `PredKind::Matches`, a `RegExp(...)` expression
-    // whose own pattern text is already `escape_ts_string`-escaped) —
-    // carried as a raw `Ident` wrapped in the real `!(...)` this crate's
-    // own `Not`/`Paren` already represent, reproducing `if (!({cond}))`
-    // exactly. `msg` gets the SAME opaque, pre-quoted treatment, not
-    // `TsLit::Str` — deviating from the accepted proposal's own Decision B
-    // ("msg as an ordinary TsLit::Str"), because `PredKind::Matches`'s own
-    // message embeds that same already-`escape_ts_string`-escaped pattern
-    // text directly (`format!("must match /{escaped}/")`); running it a
-    // second time through `TsLit::Str`'s own renderer (which re-applies the
-    // identical escaper) would double-escape every backslash the pattern
-    // contains — a real correctness bug for any `Matches` predicate whose
-    // pattern needs one. Every other `PredKind` arm's own message is plain,
-    // already-safe English text with nothing to escape, so this is a
-    // uniform, always-correct choice, not a narrow special case.
+    // #1471: `cond` is now a real `TsExpr` (a `Binary`/`Call` node, not
+    // opaque text) — the explicit `Paren` stays regardless, matching this
+    // function's own pre-#1471 output byte-for-byte: it was already always
+    // applied unconditionally (never derived from `cond`'s own shape), and
+    // still is, just wrapping a real node instead of an `Ident`. `msg` is
+    // unchanged: still opaque, pre-quoted text, not `TsLit::Str` — see
+    // `pred_condition_and_message`'s own doc for why (the `Matches` arm's
+    // message embeds already-`escape_ts_string`-escaped pattern text that a
+    // second `TsLit::Str` escaping pass would double-escape).
     let cond_expr = bynk_ts::TsExpr::Unary {
         op: bynk_ts::TsUnaryOp::Not,
-        expr: Box::new(bynk_ts::TsExpr::Paren(Box::new(bynk_ts::TsExpr::Ident(
-            cond,
-        )))),
+        expr: Box::new(bynk_ts::TsExpr::Paren(Box::new(cond))),
     };
     out.push_str(&print_guard_if_stmt(
         cond_expr,

@@ -5135,6 +5135,13 @@ pub(crate) fn escape_ts_string(s: &str) -> String {
 /// generated condition reads (`value` or `json`); the returned message is the
 /// same either side of the boundary by construction.
 ///
+/// #1471: `cond` is a real [`bynk_ts::TsExpr`], not opaque text — the
+/// blocker (`bynk_ts::TsBinaryOp` had no `>=`/`<=`) is resolved by that
+/// enum's own new `GreaterThanEq`/`LessThanEq` variants. Both real callers
+/// wrap the returned expression in their own `Unary::Not`/`Paren` unchanged;
+/// only this function's own arms changed, from `format!`ing condition text
+/// to building the equivalent node tree.
+///
 /// Review of #1336: both real callers (`emit::emit_pred_check`,
 /// `serialisation::emit_inline_pred_check`) splice the returned `message`
 /// straight into a TypeScript string literal **unescaped** — safe today only
@@ -5145,49 +5152,107 @@ pub(crate) fn escape_ts_string(s: &str) -> String {
 /// sites, and nothing in the existing fixture corpus would catch it. This
 /// invariant must match at every arm added here, not just the ones that exist
 /// today — return plain text or already-`escape_ts_string`-escaped text only.
-pub(crate) fn pred_condition_and_message(pred: &PredKind, receiver: &str) -> (String, String) {
+/// `msg` stays exactly this opaque `String`, unchanged by #1471: only the
+/// `cond` side of the pair became a real node (see the `Matches` arm below
+/// for why the message keeps its own already-escaped copy of the pattern
+/// separate from the condition's raw, unescaped one).
+pub(crate) fn pred_condition_and_message(
+    pred: &PredKind,
+    receiver: &str,
+) -> (bynk_ts::TsExpr, String) {
+    use bynk_ts::{TsBinaryOp, TsExpr, TsLit};
+
+    let recv = || TsExpr::Ident(receiver.to_string());
+    let recv_length = || TsExpr::Member {
+        object: Box::new(recv()),
+        property: "length".to_string(),
+    };
+    let num = |n: String| TsExpr::Lit(TsLit::Num(n));
+    let cmp = |op, left, right| TsExpr::Binary {
+        op,
+        left: Box::new(left),
+        right: Box::new(right),
+    };
+
     match pred {
         PredKind::NonNegative => (
-            format!("{receiver} >= 0"),
+            cmp(TsBinaryOp::GreaterThanEq, recv(), num("0".to_string())),
             "must be non-negative".to_string(),
         ),
-        PredKind::Positive => (format!("{receiver} > 0"), "must be positive".to_string()),
+        PredKind::Positive => (
+            cmp(TsBinaryOp::GreaterThan, recv(), num("0".to_string())),
+            "must be positive".to_string(),
+        ),
         PredKind::InRange(a, b) => {
             let (a, b) = (a.value, b.value);
             (
-                format!("{receiver} >= {a} && {receiver} <= {b}"),
+                cmp(
+                    TsBinaryOp::And,
+                    cmp(TsBinaryOp::GreaterThanEq, recv(), num(a.to_string())),
+                    cmp(TsBinaryOp::LessThanEq, recv(), num(b.to_string())),
+                ),
                 format!("must be in range [{a}, {b}]"),
             )
         }
         PredKind::InRangeF(a, b) => {
             let (a, b) = (&a.lexeme, &b.lexeme);
             (
-                format!("{receiver} >= {a} && {receiver} <= {b}"),
+                cmp(
+                    TsBinaryOp::And,
+                    cmp(TsBinaryOp::GreaterThanEq, recv(), num(a.clone())),
+                    cmp(TsBinaryOp::LessThanEq, recv(), num(b.clone())),
+                ),
                 format!("must be in range [{a}, {b}]"),
             )
         }
         PredKind::NonEmpty => (
-            format!("{receiver}.length > 0"),
+            cmp(TsBinaryOp::GreaterThan, recv_length(), num("0".to_string())),
             "must be non-empty".to_string(),
         ),
         PredKind::MinLength(n) => (
-            format!("{receiver}.length >= {n}"),
+            cmp(TsBinaryOp::GreaterThanEq, recv_length(), num(n.to_string())),
             format!("length must be at least {n}"),
         ),
         PredKind::MaxLength(n) => (
-            format!("{receiver}.length <= {n}"),
+            cmp(TsBinaryOp::LessThanEq, recv_length(), num(n.to_string())),
             format!("length must be at most {n}"),
         ),
         PredKind::Length(n) => (
-            format!("{receiver}.length === {n}"),
+            cmp(TsBinaryOp::StrictEq, recv_length(), num(n.to_string())),
             format!("length must be exactly {n}"),
         ),
         PredKind::Matches(pat) => {
+            // The condition's own `RegExp` source uses `pat` raw, not
+            // `escaped` — `TsLit::Str`'s printer already applies the exact
+            // same escaping as `escape_ts_string`
+            // (`bynk_check::wire_default::escape_ts_literal`, kept
+            // deliberately identical — see `bynk-ts/src/printer.rs`'s own
+            // `render_lit`), so escaping `pat` here too would double-escape
+            // it, same bug class `msg`'s own doc above already argues
+            // against. `escaped` is still needed for `msg`, which is opaque
+            // text spliced with no further escaping.
             let escaped = escape_ts_string(pat);
-            (
-                format!("new RegExp(\"^(?:\" + \"{escaped}\" + \")$\").test({receiver})"),
-                format!("must match /{escaped}/"),
-            )
+            let pattern = cmp(
+                TsBinaryOp::Add,
+                cmp(
+                    TsBinaryOp::Add,
+                    TsExpr::Lit(TsLit::Str("^(?:".to_string())),
+                    TsExpr::Lit(TsLit::Str(pat.clone())),
+                ),
+                TsExpr::Lit(TsLit::Str(")$".to_string())),
+            );
+            let regexp = TsExpr::New {
+                callee: Box::new(TsExpr::Ident("RegExp".to_string())),
+                args: vec![pattern],
+            };
+            let test_call = TsExpr::Call {
+                callee: Box::new(TsExpr::Member {
+                    object: Box::new(regexp),
+                    property: "test".to_string(),
+                }),
+                args: vec![recv()],
+            };
+            (test_call, format!("must match /{escaped}/"))
         }
     }
 }

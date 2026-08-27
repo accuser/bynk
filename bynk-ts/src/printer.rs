@@ -920,7 +920,9 @@ fn binary_precedence(op: TsBinaryOp) -> u8 {
         TsBinaryOp::GreaterThan
         | TsBinaryOp::LessThan
         | TsBinaryOp::InstanceOf
-        | TsBinaryOp::In => 5,
+        | TsBinaryOp::In
+        | TsBinaryOp::GreaterThanEq
+        | TsBinaryOp::LessThanEq => 5,
         TsBinaryOp::Add => 6,
     }
 }
@@ -1439,6 +1441,8 @@ fn render_expr(out: &mut String, expr: &TsExpr) {
                 TsBinaryOp::InstanceOf => " instanceof ",
                 TsBinaryOp::Add => " + ",
                 TsBinaryOp::In => " in ",
+                TsBinaryOp::GreaterThanEq => " >= ",
+                TsBinaryOp::LessThanEq => " <= ",
             });
             render_binary_operand(out, *op, right, false);
         }
