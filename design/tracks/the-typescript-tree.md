@@ -357,7 +357,14 @@ reached through a green gate.
   nested-source-map finding), not proven impossible. Both belong in the same "argued, not yet
   attempted" bucket as the history-driver, not the permanent one — the same "retires at an argued
   floor, not a fixed 0" correction `verbatim_sites` already got below, not a fixed 0 this probe
-  can reach either.
+  can reach either. **Both since resolved further: `pred_condition_and_message` landed for real
+  (#1471); `inject_runtime_imports` turned out not entangled with the nested-source-map question
+  at all — a plain construction-order fix (#1472), implementation pending (#1476). #1475 read
+  `tests_emit.rs`'s 83 and `workers_entry.rs`'s 34 sites end to end (Arc F's own sampling-only
+  citations): both carry a real, small, permanent floor (17 sites, Decision A + Decision C) plus
+  the already-scheduled wrapper-function/`destructure_vals` conversions, no large *probe-visible*
+  unconverted
+  residue in either file.**
 - **`verbatim_origins`** — count of distinct `VerbatimOrigin` enum variants still constructed.
   Retires at an **argued floor**, expected small (1–3), named file-by-file at retirement the way
   `ast_importers`'s floor of 5 was. Measures how many *families* of residue remain, not their
@@ -2471,17 +2478,85 @@ already used, not a wall. `inject_runtime_imports` stays a real, unattempted des
 (genuine post-print text surgery, entangled with #1461's own nested-source-map finding), not
 proven impossible. Both are the "argued, not yet attempted" bucket's own real, remaining members
 — only `lower.rs`, the Decision-C wrapper text, and (per this correction) the history-driver are
-genuinely permanent. The `__eventsDispatch` carve-out was expected to track with #1463 — **it did
+genuinely permanent. **Corrected by #1471 (landed) and #1472 (landed) — see below and §6's own
+Part 1 correction (#1472) above: `pred_condition_and_message` closed for real** (the two
+`TsBinaryOp` variants landed, both real callers converted, `ts_writes` 860→851) **and
+`inject_runtime_imports` gained a concrete, unattempted-but-solved design** (a construction-order
+fix, not actually entangled with the nested-source-map question after all) — neither is a member
+of the "argued, not yet attempted" bucket any more; `inject_runtime_imports` moves to "solved
+design, implementation pending" (#1476), `pred_condition_and_message` is simply done. The
+`__eventsDispatch` carve-out was expected to track with #1463 — **it did
 not close there**: #1463's own landing found `TsType::Fn`'s anonymous, positional parameters
 can't name `__eventsDispatch`'s own `events` argument, the same real algebra gap
 `emit_context_deps_interface`'s identical field already named (#1453) — stays opaque, a small,
 independent, genuinely-open item of its own, not resolved as a side effect the way `surface`
-was. The argued floor is **not 0 and not fully known until `pred_condition_and_message`/
-`inject_runtime_imports` conversions are attempted** — `tests_emit.rs`'s 83 sites and
-`workers_entry.rs`'s 34 still carry Arc F's own sampling-only caveat, out of #1462's own scoped
-ask (`emit_agent`'s cluster specifically). Full argument: `design/decisions/`'s ADR from #1462
+was. Full argument: `design/decisions/`'s ADR from #1462
 (number assigned at merge) — itself carrying the history-driver mischaracterisation this note
 corrects; read alongside this correction, not instead of it.
+
+**#1475 landed — `tests_emit.rs`'s 83 and `workers_entry.rs`'s 34 sites read end to end, not
+sampled, closing Arc F's own long-standing caveat.** `workers_entry.rs`'s 34 sites confirm Arc F's
+own "all already-argued" claim exactly: every site is either cheap identifier/message-text glue
+feeding one of this file's own real node-builder helpers (`ident`/`const_`/`str_lit`/
+`method_call`/…), or a raw-text argument to the already-argued cross-file `deserialise_call`/
+`brand_assertion` pair (`workers.rs`'s own established precedent, #1321/#1323). No new gap found.
+The one unelaborated "small fold-in candidate" Arc F's own citation never named is most plausibly
+the repeated `format!("__r_{pname}")` re-derivation (independently re-built at 4-5 call sites
+within both `emit_http_route_dispatch` and `emit_path_param_construction` rather than bound once)
+— a real, tiny `ts_writes`-reducing tidy (fewer `format!` call sites, same output), not a
+tree-conversion gap; not confirmed against Arc F's own original intent, since it was never
+elaborated beyond the one phrase.
+
+`tests_emit.rs`'s 83 sites are **not** uniformly "no target" the way Arc F's own citation implied —
+read in full (review of #1487 caught this pass's own first draft mis-scoping `emit_stub_class`'s
+own range and miscounting its sites, corrected below): 51 cheap glue (same shape as
+`workers_entry.rs`'s 34 — including `emit_stub_rhs`'s own `__seq_{clause_idx}` identifier
+re-derivation at `:2555`/`:2562`/`:2565`, real cheap glue feeding `member(ident("this"), ...)`/
+`TsStmt::increment`, not part of `emit_stub_class`'s own wrapper as this pass's own first draft
+wrongly folded them in); 10 permanent, Decision A (#1407, `emit_system_http_support`'s own
+request-init options-object shape, already argued in-place); **7** permanent, Decision C
+(`emit_stub_class`'s own class wrapper, `:2296-2493` exactly — not `:2296-2493` extended to include
+the next function's own sites — #1472's own finding, mirroring `emit_provider`/`emit_agent`); **12
+are `#1472`'s own "test-function wrapper" finding** (`emit_integration_module`'s own inline case
+wrapper plus the four named wrapper functions' `async function { try { ... } catch (e) {...} }`
+headers/bodies) — confirming, not just cross-referencing, that #1472's new candidate sits *inside*
+this 83, not on top of it; **2 are a further real, small, previously-unnamed gap found by this
+pass**: `destructure_vals` (`tests_emit.rs:3706-3735`) returns raw text (`String`) for both its
+branches even though it already builds real nodes internally for the *value* side (`TsExpr::Index`,
+`coerce_top_level_int_binding`, printed via `bynk_ts::print_expr`) — only the surrounding statement
+wrapper stays `format!`-built text. The split is on `needs_coercion` (does any binding draw
+bigint), not name count (review of #1487 caught this pass's own first draft describing it
+backwards): the **no-coercion branch** (`format!("const [{}] = __vals;", ...)`, one array-destructure
+statement regardless of how many names) is the one that needs a new
+`TsBindingName::ArrayPattern(Vec<String>)` (`bynk-ts` has no array-destructuring binding shape yet,
+confirmed by direct read of `TsBindingName`, mirroring `ObjectPattern`'s own precedent); the
+**coercion branch** (one `format!("const {name} = {};", ...)` per binding, joined) converts today
+with the existing `TsStmt::const_stmt`, for however many bindings it runs over. Both call sites are
+inside the wrapper functions #1472/#1484 already scope, so this folds into that same future slice
+rather than needing its own. **1 site is not a real emission line at all** — `:592`'s
+`target_name: format!("integration · {suite}")` is the probe's own already-documented accepted gap
+(a human-readable struct-field label, not TypeScript text; `ts_writes_violations`'s own doc comment
+names this exact site), confirmed still present and still correctly excepted in spirit if not in
+the probe's own text-level rule. (51 + 10 + 7 + 12 + 2 + 1 = 83.)
+
+**Reconciled: #1472's two new candidates split — the wrapper functions sit inside the existing
+count, the JWT-signer block does not.** The wrapper functions are 12 of `tests_emit.rs`'s 83
+`ts_writes` sites (this pass). The JWT-signer block (`emit_system_http_support:1032-1044`) is
+**structurally invisible to this probe** (review of #1487 caught this pass's own first draft
+claiming otherwise): its two `out.push_str(...)` calls splice plain string literals with no
+`format!`/`write!`/`writeln!` anywhere in the block, so `ts_writes_violations`'s own line-level
+predicate never matches it at all — not "already counted, just unclassified" the way the wrapper
+functions are, but a real site this metric structurally cannot see. "No large unconverted residue
+in either file" is therefore a claim about `ts_writes`-visible residue only; the JWT-signer block
+is real, unconverted, generated TypeScript sitting entirely outside what this probe measures — a
+genuine blind spot, not a non-finding. **Corrected argued floor: `ts_writes`'s two long-sampled
+files carry no large *probe-visible* unconverted residue** — the only real, tractable, newly-named
+gaps from this whole re-read are `destructure_vals`'s 2 sites (small, already scoped into #1472's
+own wrapper-function slice), `workers_entry.rs`'s one stylistic fold-in tidy (independent, not
+scheduled), and the JWT-signer block (probe-invisible, already named by #1472/#1485 on its own
+`verbatim_sites`-motivated footing — not a `ts_writes` count this pass can move). The floor is now
+fully known for these two files: 17 permanent (10 + 7), the rest either cheap-to-convert as part of
+the capstone cascade, already scheduled, or outside this probe's own visibility.
 
 ---
 
