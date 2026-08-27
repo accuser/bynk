@@ -361,8 +361,9 @@ reached through a green gate.
   (#1471); `inject_runtime_imports` turned out not entangled with the nested-source-map question
   at all — a plain construction-order fix (#1472), implementation pending (#1476). #1475 read
   `tests_emit.rs`'s 83 and `workers_entry.rs`'s 34 sites end to end (Arc F's own sampling-only
-  citations): both carry a real, small, permanent floor (20 sites, Decision A + Decision C) plus
-  the already-scheduled wrapper-function/`destructure_vals` conversions, no large unconverted
+  citations): both carry a real, small, permanent floor (17 sites, Decision A + Decision C) plus
+  the already-scheduled wrapper-function/`destructure_vals` conversions, no large *probe-visible*
+  unconverted
   residue in either file.**
 - **`verbatim_origins`** — count of distinct `VerbatimOrigin` enum variants still constructed.
   Retires at an **argued floor**, expected small (1–3), named file-by-file at retirement the way
@@ -2483,7 +2484,7 @@ Part 1 correction (#1472) above: `pred_condition_and_message` closed for real** 
 `inject_runtime_imports` gained a concrete, unattempted-but-solved design** (a construction-order
 fix, not actually entangled with the nested-source-map question after all) — neither is a member
 of the "argued, not yet attempted" bucket any more; `inject_runtime_imports` moves to "solved
-design, implementation pending" (#1476), `pred_condition_and_message` is simply done.** The
+design, implementation pending" (#1476), `pred_condition_and_message` is simply done. The
 `__eventsDispatch` carve-out was expected to track with #1463 — **it did
 not close there**: #1463's own landing found `TsType::Fn`'s anonymous, positional parameters
 can't name `__eventsDispatch`'s own `events` argument, the same real algebra gap
@@ -2507,41 +2508,55 @@ tree-conversion gap; not confirmed against Arc F's own original intent, since it
 elaborated beyond the one phrase.
 
 `tests_emit.rs`'s 83 sites are **not** uniformly "no target" the way Arc F's own citation implied —
-read in full: 48 cheap glue (same shape as `workers_entry.rs`'s 34); 10 permanent, Decision A
-(#1407, `emit_system_http_support`'s own request-init options-object shape, already argued
-in-place); 10 permanent, Decision C (`emit_stub_class`'s own class wrapper, #1472's own finding,
-mirroring `emit_provider`/`emit_agent`); **12 are `#1472`'s own "test-function wrapper" finding**
-(`emit_integration_module`'s own inline case wrapper plus the four named wrapper functions'
-`async function { try { ... } catch (e) {...} }` headers/bodies) — confirming, not just
-cross-referencing, that #1472's new candidate sits *inside* this 83, not on top of it; **2 are a
-further real, small, previously-unnamed gap found by this pass**: `destructure_vals`
-(`tests_emit.rs:3706-3735`) returns raw text (`String`) for both its branches even though it
-already builds real nodes internally for the *value* side (`TsExpr::Index`, `coerce_top_level_int_binding`,
-printed via `bynk_ts::print_expr`) — only the surrounding `"const {name} = {value};"`/
-`"const [{names}] = __vals;"` statement wrapper stays `format!`-built text. The single-name branch
-converts today with the existing `TsStmt::const_stmt`; the multi-name branch needs a new
-`TsBindingName::ArrayPattern(Vec<String>)`, mirroring `ObjectPattern`'s own precedent (`bynk-ts`
-has no array-destructuring binding shape yet, confirmed by direct read of `TsBindingName`). Both
-call sites are inside the wrapper functions #1472/#1484 already scope, so this folds into that
-same future slice rather than needing its own. **1 site is not a real emission line at all** —
-`:592`'s `target_name: format!("integration · {suite}")` is the probe's own already-documented
-accepted gap (a human-readable struct-field label, not TypeScript text; `ts_writes_violations`'s
-own doc comment names this exact site), confirmed still present and still correctly excepted in
-spirit if not in the probe's own text-level rule.
+read in full (review of #1487 caught this pass's own first draft mis-scoping `emit_stub_class`'s
+own range and miscounting its sites, corrected below): 51 cheap glue (same shape as
+`workers_entry.rs`'s 34 — including `emit_stub_rhs`'s own `__seq_{clause_idx}` identifier
+re-derivation at `:2555`/`:2562`/`:2565`, real cheap glue feeding `member(ident("this"), ...)`/
+`TsStmt::increment`, not part of `emit_stub_class`'s own wrapper as this pass's own first draft
+wrongly folded them in); 10 permanent, Decision A (#1407, `emit_system_http_support`'s own
+request-init options-object shape, already argued in-place); **7** permanent, Decision C
+(`emit_stub_class`'s own class wrapper, `:2296-2493` exactly — not `:2296-2493` extended to include
+the next function's own sites — #1472's own finding, mirroring `emit_provider`/`emit_agent`); **12
+are `#1472`'s own "test-function wrapper" finding** (`emit_integration_module`'s own inline case
+wrapper plus the four named wrapper functions' `async function { try { ... } catch (e) {...} }`
+headers/bodies) — confirming, not just cross-referencing, that #1472's new candidate sits *inside*
+this 83, not on top of it; **2 are a further real, small, previously-unnamed gap found by this
+pass**: `destructure_vals` (`tests_emit.rs:3706-3735`) returns raw text (`String`) for both its
+branches even though it already builds real nodes internally for the *value* side (`TsExpr::Index`,
+`coerce_top_level_int_binding`, printed via `bynk_ts::print_expr`) — only the surrounding statement
+wrapper stays `format!`-built text. The split is on `needs_coercion` (does any binding draw
+bigint), not name count (review of #1487 caught this pass's own first draft describing it
+backwards): the **no-coercion branch** (`format!("const [{}] = __vals;", ...)`, one array-destructure
+statement regardless of how many names) is the one that needs a new
+`TsBindingName::ArrayPattern(Vec<String>)` (`bynk-ts` has no array-destructuring binding shape yet,
+confirmed by direct read of `TsBindingName`, mirroring `ObjectPattern`'s own precedent); the
+**coercion branch** (one `format!("const {name} = {};", ...)` per binding, joined) converts today
+with the existing `TsStmt::const_stmt`, for however many bindings it runs over. Both call sites are
+inside the wrapper functions #1472/#1484 already scope, so this folds into that same future slice
+rather than needing its own. **1 site is not a real emission line at all** — `:592`'s
+`target_name: format!("integration · {suite}")` is the probe's own already-documented accepted gap
+(a human-readable struct-field label, not TypeScript text; `ts_writes_violations`'s own doc comment
+names this exact site), confirmed still present and still correctly excepted in spirit if not in
+the probe's own text-level rule. (51 + 10 + 7 + 12 + 2 + 1 = 83.)
 
-**Reconciled: #1472's two new candidates (the wrapper functions, the JWT-signer block) both sit
-inside the existing counts, not on top of them** — the wrapper functions are 12 of `tests_emit.rs`'s
-83 `ts_writes` sites (this pass); the JWT-signer block (`emit_system_http_support:1032-1044`) sits
-inside `emit_system_http_support`'s own already-counted surface, not a site this probe's line-level
-scan separately flagged as suspicious (its own `format!`/string-literal construction reads no
-differently from the file's other already-argued Decision-A text to a line-level scanner). Neither
-finding changes `ts_writes`'s own live count — both were already inside 83, just unclassified
-until now. **Corrected argued floor: `ts_writes`'s two long-sampled files carry no large
-unconverted residue** — the only real, tractable, newly-named gap from this whole re-read is
-`destructure_vals`'s 2 sites (small, already scoped into #1472's own wrapper-function slice) plus
-`workers_entry.rs`'s one stylistic fold-in tidy (independent, not scheduled). The floor is now
-fully known for these two files: 20 permanent (10 + 10), the rest either cheap-to-convert as part
-of the capstone cascade or already scheduled.
+**Reconciled: #1472's two new candidates split — the wrapper functions sit inside the existing
+count, the JWT-signer block does not.** The wrapper functions are 12 of `tests_emit.rs`'s 83
+`ts_writes` sites (this pass). The JWT-signer block (`emit_system_http_support:1032-1044`) is
+**structurally invisible to this probe** (review of #1487 caught this pass's own first draft
+claiming otherwise): its two `out.push_str(...)` calls splice plain string literals with no
+`format!`/`write!`/`writeln!` anywhere in the block, so `ts_writes_violations`'s own line-level
+predicate never matches it at all — not "already counted, just unclassified" the way the wrapper
+functions are, but a real site this metric structurally cannot see. "No large unconverted residue
+in either file" is therefore a claim about `ts_writes`-visible residue only; the JWT-signer block
+is real, unconverted, generated TypeScript sitting entirely outside what this probe measures — a
+genuine blind spot, not a non-finding. **Corrected argued floor: `ts_writes`'s two long-sampled
+files carry no large *probe-visible* unconverted residue** — the only real, tractable, newly-named
+gaps from this whole re-read are `destructure_vals`'s 2 sites (small, already scoped into #1472's
+own wrapper-function slice), `workers_entry.rs`'s one stylistic fold-in tidy (independent, not
+scheduled), and the JWT-signer block (probe-invisible, already named by #1472/#1485 on its own
+`verbatim_sites`-motivated footing — not a `ts_writes` count this pass can move). The floor is now
+fully known for these two files: 17 permanent (10 + 7), the rest either cheap-to-convert as part of
+the capstone cascade, already scheduled, or outside this probe's own visibility.
 
 ---
 
