@@ -2268,29 +2268,39 @@ current sites: **66 confirmed already-argued print-and-splice** (state interface
 rehydration checks, `loadState`/`commitState`, the per-handler prologue/epilogue wrapper, the
 Workers `fetch` dispatch, the construction factory — each individually re-verified, not assumed);
 **the DO class wrapper is confirmed to be `emit_agent`'s own instance of `emit_provider`'s
-already-accepted Decision C**, not a separate unnamed gap; but **the history-driver
+already-accepted Decision C**, not a separate unnamed gap; and **the history-driver
 (`__bynkDriveHistory_*`, gated on `history_target_agents`, exactly 33 sites) is genuinely raw
-hand-templated text throughout, with no comment anywhere arguing why — a real, tractable,
-bounded, single-function conversion candidate**, named here for the first time rather than left
-as Arc F's own unverified assumption. `pred_condition_and_message`/`inject_runtime_imports` are
-formally collected, but review of #1468 corrected their own status: neither is actually
+hand-templated text throughout — but this pass's own original framing of it as "a real,
+tractable, previously-uncounted conversion candidate, found here for the first time" was **wrong,
+caught after this pass's own PR merged, not before**: #1386 (step (9)'s own sub-slice (6))
+already, explicitly decided this exact function is a deliberate, standing exclusion — test-
+support-only and stripped from deploy builds, the thinnest fixture coverage of anything this track
+has touched (2 fixtures), and its own real algebra question (a per-handler discriminated union for
+`call`) deferred to `any` **by design**, so converting the surrounding structure would relocate
+`writeln!` calls into `TsStmt`/`TsExpr` builders without closing the one interesting gap either
+way (§6's own "Revised estimate" narrative, `#1386`, predates this pass and was not checked
+against before writing the "found here for the first time" claim). The history-driver belongs
+in the **permanent** bucket alongside `lower.rs` and the Decision-C wrapper text, not the
+"argued, not yet attempted" one — #1386's own decision already is the formal argument this pass
+credited itself with producing. `pred_condition_and_message`/`inject_runtime_imports` are
+formally collected, and review of #1468 corrected their own status: neither is actually
 permanent. `pred_condition_and_message`'s real blocker is two missing `TsBinaryOp` variants
 (`>=`/`<=`) — an ordinary algebra addition, the same pattern `LessThan`/`InstanceOf`/`In` each
 already used, not a wall. `inject_runtime_imports` stays a real, unattempted design question
 (genuine post-print text surgery, entangled with #1461's own nested-source-map finding), not
-proven impossible. Both move to the "argued, not yet attempted" bucket alongside the
-history-driver — only `lower.rs` (ADR 0391) and the Decision-C wrapper text are genuinely
-permanent. The `__eventsDispatch` carve-out was expected to track with #1463 — **it did not
-close there**: #1463's own landing found `TsType::Fn`'s anonymous, positional parameters can't
-name `__eventsDispatch`'s own `events` argument, the same real algebra gap
+proven impossible. Both are the "argued, not yet attempted" bucket's own real, remaining members
+— only `lower.rs`, the Decision-C wrapper text, and (per this correction) the history-driver are
+genuinely permanent. The `__eventsDispatch` carve-out was expected to track with #1463 — **it did
+not close there**: #1463's own landing found `TsType::Fn`'s anonymous, positional parameters
+can't name `__eventsDispatch`'s own `events` argument, the same real algebra gap
 `emit_context_deps_interface`'s identical field already named (#1453) — stays opaque, a small,
 independent, genuinely-open item of its own, not resolved as a side effect the way `surface`
-was. The argued floor is **not 0 and
-not fully known until the history-driver (and, now, `pred_condition_and_message`/
-`inject_runtime_imports`) conversions are attempted** — `tests_emit.rs`'s 83 sites and
+was. The argued floor is **not 0 and not fully known until `pred_condition_and_message`/
+`inject_runtime_imports` conversions are attempted** — `tests_emit.rs`'s 83 sites and
 `workers_entry.rs`'s 34 still carry Arc F's own sampling-only caveat, out of #1462's own scoped
 ask (`emit_agent`'s cluster specifically). Full argument: `design/decisions/`'s ADR from #1462
-(number assigned at merge).
+(number assigned at merge) — itself carrying the history-driver mischaracterisation this note
+corrects; read alongside this correction, not instead of it.
 
 ---
 
