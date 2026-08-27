@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.289.18** | Arc E slice 7 converts `bynk-emit`'s `emit_generic_helpers_qualified`'s remaining `ResultInst`/`OptionInst`/`ListInst`/`MapInst` arms to build real `TsDecl`/`TsStmt` trees instead of `write!`-ing strings, and adds a narrow C-style `TsStmt::For` to `bynk-ts` for the `List`/`Map` deserialise-side indexed element loop. |
 | **v0.289.17** | Arc E slice 6 converts `bynk-emit`'s `emit_sum`/`emit_sum_codec` to build real `TsDecl`/`TsStmt`/`TsStmt::Switch` trees instead of `writeln!`-ing strings, adds `TsSwitchCase::case_braced` to `bynk-ts` for a real unbraced-non-default-case shape, and narrows the sum-codec's own `(value as any).<field>` cast to a bare, TypeScript-narrowed `value.<field>` (`ts_any` 31 → 30), reblessing the small fixture set that cast touched. |
 | **v0.289.16** | Arc E slice 5 converts `bynk-emit`'s `emit_record`/`emit_record_codec` to build real `TsDecl`/`TsStmt` trees instead of `writeln!`-ing strings, with zero emitted-output change, and adds a narrow `TsBinaryOp::In` to `bynk-ts` for the field-default prevalidation guard this needed. |
 | **v0.289.15** | Arc E slice 4 converts `bynk-emit`'s `emit_refined`/`emit_bytes_named_codec`/`emit_inline_refinement_checks`/`emit_inline_pred_check` to build real `TsDecl`/`TsStmt` trees instead of `writeln!`-ing strings, with zero emitted-output change. |
