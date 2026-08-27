@@ -5285,14 +5285,7 @@ pub(crate) fn emit_agent(
                 "__eventsDispatch: (events: Array<{}>) => Promise<void>",
                 crate::emitter::EVENTS_WIRE_EVENT_TS_TYPE
             );
-            deps_ty = if deps_ty == "{}" {
-                format!("{{ {field} }}")
-            } else {
-                format!(
-                    "{}; {field} }}",
-                    deps_ty.trim_end().trim_end_matches('}').trim_end()
-                )
-            };
+            deps_ty = append_deps_field(&deps_ty, &field);
         }
         params.push(bynk_ts::TsParam {
             name: "deps".to_string(),
@@ -6187,14 +6180,7 @@ fn emit_ws_do_method(
     );
     if let Some(seam) = host.seam.as_ref().filter(|s| s.binder.is_some()) {
         let field = format!("identity: {}", seam.identity_type);
-        deps_ty = if deps_ty == "{}" {
-            format!("{{ {field} }}")
-        } else {
-            format!(
-                "{}; {field} }}",
-                deps_ty.trim_end().trim_end_matches('}').trim_end()
-            )
-        };
+        deps_ty = append_deps_field(&deps_ty, &field);
     }
     params.push(bynk_ts::TsParam {
         name: "deps".to_string(),

@@ -2041,6 +2041,28 @@ not carried forward from the issue's own initial citation:**
 conversion plan by this pass. Not committed to a slice count — needs its own grounding read before
 scheduling, the same discipline #1319 applied to `serialisation.rs` before Arc E could decompose it.
 
+**Item 4's own grounding read (#1457) landed: tractable, and a net simplification, not a
+deferral.** Reading all four functions and their real callers in full found `TsType::
+Object(Vec<TsTypeMember>)` already renders byte-identical output for this exact shape
+(`bynk-ts/src/printer.rs:1569-1600`), and that the three handler-deps callers
+(`emit_service`/`emit_agent`/`emit_ws_do_method`) already build a real `TsParam` whose `ty`
+field currently wraps the whole hand-built string in one opaque `TsType::named(deps_ty)` — a
+call `#1361` made deliberately for `emit_service` ("much larger work than this slice's own
+scope"), before `TsTypeMember`/`Vec`-based widening existed as an alternative to the
+`trim_end_matches('}')` splice `append_deps_field` uses today. The tree-shaped widening
+(`Vec::push`) is simpler than the string splice, not harder — #1457 also found and folded two
+undocumented inline duplicates of `append_deps_field`'s own pattern (`emit_agent`,
+`emit_ws_do_method` — neither called the shared helper) into calling it directly, so a future
+slice only needs to redesign the widening once. A second, independent win falls out for free:
+`surface_ty` has a fourth caller, `emit_context_deps_interface` (Arc F slice 3, #1453), which
+already wraps `surface_ty`'s `String` output the same opaque way for the identical reason —
+converting `surface_ty` closes that named residual too. `emit_provider`'s own two `cap_ref_ty`
+call sites (`emit.rs:2340/2479`) stay out of scope, correctly: that class's whole wrapper is
+already independently decided to stay hand-written text (`Decision C`, `emit.rs:2360-2373`) —
+`cap_ref_ty` returning a real `TsType` still serves them via `bynk_ts::print_type`, no
+behaviour change. The real conversion is scoped and proposed as its own issue, #1463 ("Arc F,
+slice 4").
+
 **Decision: three concretely-scoped slices, order-independent (different files, no shared dependency
 edge), plus the one open investigation above:**
 
@@ -2060,8 +2082,9 @@ edge), plus the one open investigation above:**
    (`emit_agent`, `emit.rs:4755`) — the same "print a real fragment, splice into a still-textual
    caller" pattern #1395 already used.
 3. **`emit_context_deps_interface`** — converts its 9 sites to the same `TsDecl::Interface` shape
-   `emit_agent` already uses. Small enough to possibly bundle with a slice for the item-4
-   investigation, if that investigation confirms it's equally tractable.
+   `emit_agent` already uses. Landed separately from item 4 (Arc F slice 3, #1453), with its own
+   `surface` field kept opaque pending `surface_ty`'s own conversion — closed by #1463 above, not
+   a second slice.
 
 **Confirmed not targets, named so a future pass doesn't rediscover them as gaps:** `brand_assertion`
 (`workers_entry.rs:2482–2491`, 6 sites, already named in-place by `workers.rs:2053–2057`'s own
@@ -2081,16 +2104,18 @@ sites and `emitter/events_fanout.rs`'s 2 (Arc C slices #1317/#1321, fully conver
 catch — confirmed by direct read. A real, small false positive in the probe's own counting rule,
 worth a one-line `xtask` fix independent of slices 1–3 (drops the in-scope total by 1, to 458).
 
-**Consequences.** Slices 1–3 close 15 + 11 + 9 = 35 of the 459 in-scope sites plus whatever the
-item-4 investigation resolves to; a large, real, already-argued residual remains after all of them
-land — the DO-class Decision-C hand-written wrapper text, `pred_condition_and_message`,
+**Consequences.** Slices 1–3 close 15 + 11 + 9 = 35 of the 459 in-scope sites; item 4's own
+grounding (#1457) found its 12 sites tractable and scoped them as #1463 ("Arc F, slice 4") rather
+than resolving them in this pass. A large, real, already-argued residual remains after slices 1–4
+all land — the DO-class Decision-C hand-written wrapper text, `pred_condition_and_message`,
 `claim_predicate_to_js`, `inject_runtime_imports`, the `__eventsDispatch` carve-out, and
 `emit_agent`'s own 101-site cluster (this pass's own sampling found it consistently
 tree-native-with-print-and-splice at roughly a dozen sampled points, not read end to end — supports
 confidence but is not a guarantee against a hidden unconverted chunk). **This does not retire
-`ts_writes` to 0.** The honest next step after slices 1–3 (and 4, if it proves tractable) land is a
-separate argued-floor writeup for `ts_writes`'s own final residual — the same shape ADR 0399 already
-produced for `ts_any`/`verbatim_sites` — not a claim that a fourth or fifth slice reaches a genuine 0.
+`ts_writes` to 0.** The honest next step after slices 1–4 land is a separate argued-floor writeup
+for `ts_writes`'s own final residual — the same shape ADR 0399 already produced for `ts_any`/
+`verbatim_sites` — not a claim that a fourth or fifth slice reaches a genuine 0. That writeup is
+tracked as #1462.
 
 ---
 
