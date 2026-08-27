@@ -1623,11 +1623,20 @@ fn is_ts_writes_excluded_file(rel_path: &Path) -> bool {
 }
 
 /// True if `line` builds a filesystem path via `format!` rather than TypeScript text —
-/// the `PathBuf::from(format!(...))`/`.join(format!(...))` idiom [`ts_writes`] excludes
-/// at line granularity, not by file, because the files it appears in
-/// (`project.rs`, `project/tests_emit.rs`) are otherwise genuinely TypeScript-producing.
+/// the `PathBuf::from(format!(...))`/`.join(format!(...))`/`.with_file_name(format!(...))`
+/// idiom [`ts_writes`] excludes at line granularity, not by file, because the files it
+/// appears in (`project.rs`, `project/tests_emit.rs`) are otherwise genuinely
+/// TypeScript-producing.
+///
+/// **`.with_file_name(format!` found and added by Arc F's own item-4 investigation
+/// (#1457):** `project.rs:2097`'s `sibling_path` (`output_path.with_file_name(format!(
+/// "{name}.{suffix}"))`) builds a sibling filesystem path the same way the two idioms
+/// above do, but spelled with `.with_file_name(` — the prior substring match didn't
+/// catch it, over-counting `ts_writes` by this one site.
 fn is_path_construction_line(line: &str) -> bool {
-    line.contains("PathBuf::from(format!") || line.contains(".join(format!")
+    line.contains("PathBuf::from(format!")
+        || line.contains(".join(format!")
+        || line.contains(".with_file_name(format!")
 }
 
 /// Relativises every path in [`rust_files`]'s output against `dir`, so [`ts_writes`]
@@ -3220,6 +3229,9 @@ commons app.demo {
         ));
         assert!(is_path_construction_line(
             "root.join(format!(\"tests/integration_{sanitized}.test.ts\"))"
+        ));
+        assert!(is_path_construction_line(
+            "output_path.with_file_name(format!(\"{name}.{suffix}\"))"
         ));
         // An ordinary TS-producing `format!` call, no path construction, must not be
         // excluded by this idiom.
