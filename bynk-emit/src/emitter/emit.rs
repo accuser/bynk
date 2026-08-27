@@ -3313,32 +3313,24 @@ fn emit_context_deps_interface(
         .items
         .iter()
         .filter_map(|i| match i {
-            CommonsItem::Capability(c) => Some(bynk_ts::TsTypeMember::Prop {
-                name: c.name.name.clone(),
-                ty: bynk_ts::TsType::named(c.name.name.clone()),
-                optional: false,
-                readonly: true,
-            }),
+            CommonsItem::Capability(c) => Some(bynk_ts::TsTypeMember::readonly_prop(
+                c.name.name.clone(),
+                bynk_ts::TsType::named(c.name.name.clone()),
+            )),
             _ => None,
         })
         .collect();
     // v0.15: cross-context capabilities the context consumes appear in deps,
     // typed against the providing context's namespace.
     for (key, consumed) in cross_context_caps_used(commons, &ctx.cross_context) {
-        members.push(bynk_ts::TsTypeMember::Prop {
-            ty: bynk_ts::TsType::named(format!("{}.{key}", qualified_to_ns(&consumed))),
-            name: key,
-            optional: false,
-            readonly: true,
-        });
+        let ty = bynk_ts::TsType::named(format!("{}.{key}", qualified_to_ns(&consumed)));
+        members.push(bynk_ts::TsTypeMember::readonly_prop(key, ty));
     }
     if !ctx.cross_context.consumed_contexts.is_empty() && has_consumed_service(&ctx.cross_context) {
-        members.push(bynk_ts::TsTypeMember::Prop {
-            name: "surface".to_string(),
-            ty: bynk_ts::TsType::named(surface_ty(&ctx.cross_context)),
-            optional: false,
-            readonly: true,
-        });
+        members.push(bynk_ts::TsTypeMember::readonly_prop(
+            "surface",
+            bynk_ts::TsType::named(surface_ty(&ctx.cross_context)),
+        ));
     }
     // Events track, slice 0 (spine #936): a context with any handler that
     // emits needs `__eventsDispatch` threaded all the way from `makeSurface`
@@ -3354,15 +3346,13 @@ fn emit_context_deps_interface(
             .map(String::as_str)
             == Some("bynk");
     if is_first_party_events && commons_uses_emit(commons) {
-        members.push(bynk_ts::TsTypeMember::Prop {
-            name: "__eventsDispatch".to_string(),
-            ty: bynk_ts::TsType::named(format!(
+        members.push(bynk_ts::TsTypeMember::readonly_prop(
+            "__eventsDispatch",
+            bynk_ts::TsType::named(format!(
                 "(events: Array<{}>) => Promise<void>",
                 crate::emitter::EVENTS_WIRE_EVENT_TS_TYPE
             )),
-            optional: false,
-            readonly: true,
-        });
+        ));
     }
     let interface_decl = bynk_ts::TsStmt::decl(
         bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::Interface {
