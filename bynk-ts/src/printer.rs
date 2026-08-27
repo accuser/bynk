@@ -533,6 +533,16 @@ fn render_stmt(out: &mut String, stmt: &TsStmt, depth: usize) {
                     !(case.test.is_some() && case.default_braced),
                     "TsSwitchCase.default_braced only means something on the default (test: None) case — review of #1402's own nit"
                 );
+                // Review of #1446: the mirror invariant for `case_braced`
+                // (Arc E slice 6, #1445) — it only means something on a
+                // non-`default` (`test: Some(..)`) case; every real
+                // `test: None` call site sets it `true` with no effect
+                // (`default_braced` owns that arm's bracing instead), which
+                // would silently swallow a future caller's `false` there.
+                debug_assert!(
+                    case.test.is_some() || case.case_braced,
+                    "TsSwitchCase.case_braced only means something on a non-default (test: Some(..)) case"
+                );
                 out.push_str(&indent(depth + 1));
                 match &case.test {
                     Some(test) => {
