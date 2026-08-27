@@ -1,11 +1,6 @@
----
-level: patch
-changelog: Resolves #1462 (argue `ts_writes`'s final residual floor after Arc F) — reads `emit_agent`'s own 99-site cluster end to end (the one Arc F's own pass admitted was only sampled) and finds it is NOT uniformly already-converted: 66 sites match the established print-and-splice idiom, but the history-driver (`__bynkDriveHistory_*`, gated on `history_target_agents`) is genuinely raw hand-templated text throughout, 33 sites, a real tractable conversion candidate named here for the first time. The DO-class hand-written-wrapper decision (`emit_provider`'s own Decision C) is confirmed to also cover `emit_agent`'s identical wrapper. `pred_condition_and_message`/`inject_runtime_imports` are formally collected but corrected to "argued, not yet attempted" rather than permanent. No code change.
----
+# 0406 — ts_writes's residual after Arc F is mostly already-argued print-and-splice, with one real, previously-unverified gap in emit_agent's own history-driver
 
-## ADR: ts-writes-residual-floor-after-arc-f
-title: ts_writes's residual after Arc F is mostly already-argued print-and-splice, with one real, previously-unverified gap in emit_agent's own history-driver
-summary: emit_agent's 99-site cluster reads as 66 already-argued sites plus a genuinely-unconverted 33-site history-driver function; pred_condition_and_message/inject_runtime_imports are real, not permanent, corrected before merge by review of #1468
+- **Status:** Accepted (v0.289.28)
 
 **Context.** Arc F (#1449, landed as #1451–#1453) named a large residual after its own three
 slices — the DO-class Decision-C wrapper text, `pred_condition_and_message`,
