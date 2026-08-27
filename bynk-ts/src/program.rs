@@ -134,6 +134,48 @@ pub(crate) enum TsStmtKind {
         iter: TsExpr,
         body: Box<TsStmt>,
     },
+    /// `for (let <name> = <init>; <test>; <name>++) <body>` — a C-style
+    /// indexed loop, `ForOf`'s counterpart for index-based iteration (as
+    /// opposed to `for...of`'s element-based iteration over an existing
+    /// collection). Arc E slice 7 (#1447)'s own real, narrow gap:
+    /// `bynk-emit`'s `serialisation.rs` has two real sites — `ListInst`'s
+    /// and `MapInst`'s own deserialise-side element loops, both `for (let i
+    /// = 0; i < json.length; i++) { ... }` — that walk a JSON array by
+    /// index, a shape `ForOf` cannot represent (its own `binding` names a
+    /// per-element destructuring target bound fresh each iteration, not a
+    /// counter carrying its own init/test/update clauses across
+    /// iterations). Deliberately grounded in only what those two real call
+    /// sites need, not the general C-style-for grammar — the same "extend
+    /// narrowly" posture this file's own `TsBinaryOp::In`/`LessThan`
+    /// additions already took:
+    ///   - `name`/`init` are always a plain `let <name> = <init>;`
+    ///     declaration — no destructuring, no multi-declarator list, no
+    ///     explicit type annotation (neither real site needs one).
+    ///   - The update clause always renders as the postfix increment
+    ///     `<name>++`, over `name` itself rather than a separate field —
+    ///     review of #1448 found an independent `update: TsExpr` field
+    ///     structurally redundant with `name` (both real construction sites
+    ///     could only ever pass `ident(name)`) with a genuinely dangerous
+    ///     failure mode if the two ever disagreed: unlike a wrong `test`
+    ///     (which `tsc --strict` or a non-running loop tends to surface), a
+    ///     mismatched update clause (`for (let i = 0; i < json.length;
+    ///     j++)`) compiles cleanly whenever `j` is merely in scope and hangs
+    ///     the generated worker at runtime, with nothing in the type, the
+    ///     printer, or a test to catch it. Removing the field removes the
+    ///     failure mode entirely rather than merely asserting against it —
+    ///     the same "postfix increment has no expression-position
+    ///     representation, only a dedicated statement/clause shape"
+    ///     restriction `Increment`'s own doc above already states for a
+    ///     bare `<expr>++;` statement (#1325), applied here too.
+    ///   - `body` is the loop body; both real sites pass a `Block`, though
+    ///     the same brace-vs-inline rendering `If`/`ForOf` already share
+    ///     applies to any other shape too.
+    For {
+        name: String,
+        init: TsExpr,
+        test: TsExpr,
+        body: Box<TsStmt>,
+    },
     /// `try <try_block> catch (<catch_param>) <catch_block>` — a real gap
     /// beyond the reference sketch (`design/bynk-greenfield-compiler.md`'s
     /// §7.1 has no `TryCatch` at all), found and named by P7.8's own
@@ -490,6 +532,27 @@ impl TsStmt {
             kind: TsStmtKind::ForOf {
                 binding: binding.into(),
                 iter,
+                body: Box::new(body),
+            },
+            span,
+        }
+    }
+
+    /// `for (let <name> = <init>; <test>; <update>++) <body>` — see
+    /// `TsStmtKind::For`'s own doc for exactly what this construct does
+    /// and does not represent.
+    pub fn for_stmt(
+        name: impl Into<String>,
+        init: TsExpr,
+        test: TsExpr,
+        body: TsStmt,
+        span: Option<Span>,
+    ) -> Self {
+        Self {
+            kind: TsStmtKind::For {
+                name: name.into(),
+                init,
+                test,
                 body: Box::new(body),
             },
             span,
