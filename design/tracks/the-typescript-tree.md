@@ -1910,17 +1910,28 @@ genuinely unknown until the capstone slice is attempted**, the same honesty `ast
 a fixed 0.
 
 **Part 1 correction (#1461, the capstone grounding this pass's own §"What this pass recommends"
-scheduled after Arc E — landed).** Both prerequisites named above turn out to already be solved,
-not open questions — and a third, previously-uncounted prerequisite is the real remaining size
-driver. **The `lower.rs` per-splice-point representation (prerequisite 1 of this Part) is
-already ADR 0391's own decision**, in active use by every Arc C/D/E/F slice that calls into
-`lower.rs`: one opaque blob per function, at `emit_block_as_function_body_with_return`'s own
-return value — nothing left to design. **The source-map rebuild (the "second, unnamed
-prerequisite" above) is already shipped**: `bynk_ts::printer::print` (`bynk-ts/src/
-printer.rs:229`) already builds a real source map from a `TsProgram`'s own top-level
-`TsStmt.span: Option<Span>` fields — not a `bynk-ts` change to design, a `bynk-emit`-side
-mechanical task (thread each item's real span into its `TsStmt`/`TsDecl` construction, mirroring
-the `smb.borrow_mut().record(out.len(), span)` calls already made at the same points today).
+scheduled after Arc E — landed).** The `lower.rs` prerequisite turns out to already be solved;
+the source-map prerequisite only partly so (narrowed by review of #1467 before this correction
+merged); and a third, previously-uncounted prerequisite is the real remaining size driver. **The
+`lower.rs` per-splice-point representation (prerequisite 1 of this Part) is already ADR 0391's
+own decision**, in active use by every Arc C/D/E/F slice that calls into `lower.rs`: one opaque
+blob per function, at `emit_block_as_function_body_with_return`'s own return value — nothing
+left to design.
+
+**The source-map rebuild (the "second, unnamed prerequisite" above) is only partly shipped.**
+`bynk_ts::printer::print` (`bynk-ts/src/printer.rs:229`) does build a real source map, but only
+from a `TsProgram`'s own **top-level** `TsStmt.span` fields — it has no equivalent for the
+**nested**, per-statement checkpoints `emit_project` merges in today from a body-local
+`SourceMapBuilder` at a computed offset (`emitter/emit.rs:975`'s `merge(&body_smb.borrow(),
+&body_text, out, base, 0)`, the same pattern at `:2301`/`:2744-2770`) — and that merged map,
+not `printer::print`'s, is what actually ships (`project.rs:1273`'s own call, passed straight
+through to the `Verbatim`-wrapped `StagedFile`, whose node carries `span: None` today —
+`printer::print` isn't in the current production path at all). Once an item's own body stays an
+opaque printed blob — the common case, per the callee-cascade finding below — that blob's
+interior checkpoints have no `TsStmt`-side home yet: a real, still-open design question
+(extending the printer to accept a pre-built nested map alongside a `Raw`/`Verbatim` node, or a
+post-print reconciliation step in `bynk-emit`), close to the chicken-and-egg this Part originally
+named, not resolved by this pass.
 
 **The real blocker: `verbatim_sites` counts source construction call sites, not runtime node
 counts, so wrapping `emit_project`'s own per-item loop body in one `TsStmt::verbatim(...)` call
@@ -1936,11 +1947,12 @@ based runtime-helper text (`stub_runtime_helpers` and four siblings, `project/te
 `runtime.ts` already have.
 
 **Corrected argued floor: not 0 even after full conversion.** At minimum one wrap per commons
-that declares a provider, plus the already-permanent foreign-content sites. The capstone is
-**not a single tractable slice** — it cascades into converting or individually, permanently
-arguing opaque a dozen-plus callees across `emitter.rs`/`emitter/emit.rs`/`project/tests_emit.rs`
-— genuinely its own multi-slice arc, comparable in scope to Arc C/D/E/F themselves, not a
-follow-up sized against the original three-signature framing.
+that declares a provider, plus the already-permanent foreign-content sites, plus the nested-
+source-map gap above wherever a converted item's own body must stay an opaque blob. The
+capstone is **not a single tractable slice** — it cascades into converting or individually,
+permanently arguing opaque a dozen-plus callees across `emitter.rs`/`emitter/emit.rs`/
+`project/tests_emit.rs` — genuinely its own multi-slice arc, comparable in scope to Arc C/D/E/F
+themselves, not a follow-up sized against the original three-signature framing.
 
 **Part 2 — `ts_any`: the real distribution, not the stale 2–3-site estimate.** ADR-C (§3.3, Q3)
 named a 2–3-site residual, deferred to R7.7's runtime-typing work, as the only open gap in

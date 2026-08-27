@@ -1,11 +1,11 @@
 ---
 level: patch
-changelog: Resolves #1461 (ground the verbatim_sites capstone) — both prerequisites the track doc named as unresolved ("chicken-and-egg") turn out to already be solved by existing infrastructure (ADR 0391's lower.rs splice-boundary decision; bynk_ts::printer::print's own span-checkpoint source-map mechanism). A third, previously-uncounted prerequisite is the real blocker: every direct callee of emit_project/emit_test_module/emit_integration_module must also convert (or be individually, permanently argued as opaque) before the top-level signature conversion has any real verbatim_sites benefit — several of those callees (emit_provider's own class wrapper, foreign runtime-helper text) are already permanently decided to stay opaque. The capstone is deferred as a single slice and named as its own future multi-slice arc, not attempted here. No code change.
+changelog: Resolves #1461 (ground the verbatim_sites capstone) — the lower.rs splice-boundary prerequisite the track doc named as unresolved is already solved by ADR 0391; the source-map prerequisite is only partly solved (bynk_ts::printer::print already checkpoints top-level TsStmt spans, but has no equivalent yet for the nested, per-statement checkpoints emit_project's own body-splicing callees merge in today, so it stays a real, narrower open question, not fully closed). The real size driver, uncounted by either prior pass, is that every direct callee of emit_project/emit_test_module/emit_integration_module must also convert (or be individually, permanently argued as opaque) before the top-level signature conversion has any real verbatim_sites benefit — several of those callees (emit_provider's own class wrapper, foreign runtime-helper text) are already permanently decided to stay opaque. The capstone is deferred as a single slice and named as its own future multi-slice arc, not attempted here. No code change.
 ---
 
 ## ADR: verbatim-sites-capstone-callee-cascade
-title: The verbatim_sites capstone's two named prerequisites are already solved; the real blocker is a callee cascade neither prior pass counted
-summary: ADR 0391 and bynk_ts::printer::print already answer Part 1's "chicken-and-egg" — the real remaining size driver is converting (or permanently arguing) every direct callee of the three orchestrator functions, not just their own signatures
+title: The verbatim_sites capstone's lower.rs prerequisite is already solved, its source-map prerequisite only partly so; the real blocker is a callee cascade neither prior pass counted
+summary: ADR 0391 answers Part 1's lower.rs question in full; bynk_ts::printer::print answers the source-map question only for top-level checkpoints, not the nested ones emit_project's callees rely on today — the real remaining size driver is converting (or permanently arguing) every direct callee of the three orchestrator functions, not just their own signatures
 
 **Context.** The track doc's Floor-correction §6 Part 1 (#1423/ADR 0399) named `emit_project`/
 `emit_test_module`/`emit_integration_module`'s own `String`-returning signatures as the real
@@ -26,17 +26,27 @@ nodes while carrying its own spliced body as one opaque blob." This is exactly t
 per-splice-point representation Part 1 asked for — already in active use by every Arc C/D/E/F
 slice that touches a `lower.rs`-calling function. Nothing new to design here.
 
-**Prerequisite 3 is already answered, not open.** `bynk_ts::printer::print` (`bynk-ts/src/
-printer.rs:229`) already builds a real source map from a `TsProgram`'s own top-level
-`TsStmt.span: Option<Span>` fields (`TsStmt`'s own doc, `program.rs:47-56`, confirms this — "a
-top-level statement's own span is currently recorded as a source-map checkpoint"). This is a
-complete, already-shipped answer to "how does the map get rebuilt once printing happens once at
-the boundary instead of at every `out.len()` checkpoint" — no `bynk-ts` change needed, no
-choosing between "printer carries span attribution" and "rebuild from node spans" as Part 1
-framed it: the latter already exists and already works. Converting these three functions would
-need every top-level item they build to carry its own real span through to a `TsStmt`/`TsDecl`
-construction site (mirroring the `smb.borrow_mut().record(out.len(), span)` calls already made
-at the same points today) — real, mechanical work, but not a research question.
+**Prerequisite 3 is only partly answered — narrower than first claimed, review of #1467 caught
+this before merge.** `bynk_ts::printer::print` (`bynk-ts/src/printer.rs:229`) does build a real
+source map from a `TsProgram`'s own **top-level** `TsStmt.span: Option<Span>` fields (`TsStmt`'s
+own doc, `program.rs:47-56`, confirms the scope explicitly: "only a *top-level* statement's own
+span is currently recorded"). That covers items that convert to genuinely flat, top-level real
+nodes (`emit_type`/`emit_free_fn`'s straightforward cases). It does **not** cover what
+`emit_project` relies on today for the common case: a **nested**, per-statement source map
+merged in from a body-local `SourceMapBuilder` at a computed byte offset
+(`emitter/emit.rs:975`'s `module.borrow_mut().merge(&body_smb.borrow(), &body_text, out, base,
+0)`, the same pattern at `:2301`/`:2744-2770` for other spliced bodies) — and that finished,
+merged map is what actually ships today (`project.rs:1273`'s own `emit_project` call, passed
+straight through to the `Verbatim`-wrapped `StagedFile` at `project.rs:1285`, whose own node
+carries `span: None` — `printer::print`'s mechanism isn't even in the current production path).
+Once a handler/method body stays an opaque printed blob (ADR 0391's own splice-boundary
+decision, and — per the callee-cascade finding below — the common case for
+`emit_service`/`emit_agent`/`emit_provider`), that blob's own *interior* checkpoints have no
+`TsStmt`-side home: `printer::print` only ever records one checkpoint at the blob's own start,
+losing the fine-grained per-statement mapping inside it that real debugging depends on. This
+residue is close to the chicken-and-egg Part 1 originally named — a real, still-open design
+question (extending the printer to accept a pre-built nested map alongside a `Raw`/`Verbatim`
+node, or a post-print reconciliation step in `bynk-emit`), not one this pass resolves.
 
 **The real blocker, uncounted by either prior pass: every direct callee of these three
 functions must also convert (or be individually, permanently argued as opaque) before the
@@ -65,11 +75,14 @@ exclusions already have — plus `emit_stub_class`/case-body builders that thems
 `include_str!` runtime-helper text) already have accepted, permanent reasons to stay opaque —
 meaning the true floor for `verbatim_sites` via this path is **not 0 even after full conversion**,
 at minimum one wrap per commons that declares a provider, plus the already-permanent
-`adapter_bindings`/`runtime.ts`/foreign-runtime-helper sites. This capstone is deferred as a
-single slice; scheduling it needs its own multi-slice arc (comparable in scope to Arc C/D/E/F
-themselves — a real decomposition pass, not attempted here), not a follow-up issue sized against
-the original "convert three signatures" framing. `design/tracks/the-typescript-tree.md`'s
-Floor-correction §6 Part 1 is corrected: the source-map/lower.rs-opacity prerequisites are struck
-as already-solved, and the real remaining-size driver (the callee cascade, with `emit_provider`'s
-own permanent wrapper named as the first concrete non-zero-floor contributor) is recorded so a
-future pass doesn't re-derive either as a surprise.
+`adapter_bindings`/`runtime.ts`/foreign-runtime-helper sites, plus the nested-source-map gap
+above wherever a converted item's own body must stay an opaque blob. This capstone is deferred
+as a single slice; scheduling it needs its own multi-slice arc (comparable in scope to Arc
+C/D/E/F themselves — a real decomposition pass, not attempted here), not a follow-up issue sized
+against the original "convert three signatures" framing. `design/tracks/the-typescript-tree.md`'s
+Floor-correction §6 Part 1 is corrected: the `lower.rs`-opacity prerequisite is struck as
+already-solved, the source-map prerequisite is narrowed to its real remaining scope (nested
+checkpoints inside an opaque blob, not top-level items), and the real remaining-size driver (the
+callee cascade, with `emit_provider`'s own permanent wrapper named as the first concrete
+non-zero-floor contributor) is recorded so a future pass doesn't re-derive any of the three as a
+surprise.
