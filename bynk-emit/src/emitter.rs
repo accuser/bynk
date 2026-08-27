@@ -1089,13 +1089,10 @@ fn emit_json_codec_helpers(
         .into_iter()
         .filter(|n| !skip_names.contains(n))
         .collect();
-    let owner_decls =
-        emit_helpers_for_owner(&names, &commons.types, &ctx.commons_name, &ctx.runtime_use);
-    let owner_emitted_any = !owner_decls.is_empty();
-    serialisation::print_decls(out, owner_decls);
-    if owner_emitted_any {
-        writeln!(out).unwrap();
-    }
+    serialisation::print_decls_block(
+        out,
+        emit_helpers_for_owner(&names, &commons.types, &ctx.commons_name, &ctx.runtime_use),
+    );
     let insts: Vec<serialisation::GenericInst> = insts
         .into_iter()
         .filter(|i| !skip_insts.contains(&i.ts_name()))
@@ -1180,17 +1177,15 @@ fn emit_boundary_helpers(
             .filter(|n| !workers || locally_declared.contains(*n))
             .cloned()
             .collect();
-        let local_boundary_decls = emit_helpers_for_owner(
-            &local_boundary,
-            &commons.types,
-            ctx.commons_name.as_str(),
-            &ctx.runtime_use,
+        serialisation::print_decls_block(
+            out,
+            emit_helpers_for_owner(
+                &local_boundary,
+                &commons.types,
+                ctx.commons_name.as_str(),
+                &ctx.runtime_use,
+            ),
         );
-        let local_boundary_emitted_any = !local_boundary_decls.is_empty();
-        serialisation::print_decls(out, local_boundary_decls);
-        if local_boundary_emitted_any {
-            writeln!(out).unwrap();
-        }
 
         // Re-export helpers for commons-owned boundary types so consumers
         // can address them through this context's handlers.ts namespace
@@ -1344,17 +1339,15 @@ fn emit_boundary_helpers(
             .map(|(name, _)| name.clone())
             .collect();
         locally.sort();
-        let locally_decls = emit_helpers_for_owner(
-            &locally,
-            &commons.types,
-            ctx.commons_name.as_str(),
-            &ctx.runtime_use,
+        serialisation::print_decls_block(
+            out,
+            emit_helpers_for_owner(
+                &locally,
+                &commons.types,
+                ctx.commons_name.as_str(),
+                &ctx.runtime_use,
+            ),
         );
-        let locally_emitted_any = !locally_decls.is_empty();
-        serialisation::print_decls(out, locally_decls);
-        if locally_emitted_any {
-            writeln!(out).unwrap();
-        }
         let insts = collect_generic_instantiations(
             &HashMap::new(),
             &HashMap::new(),
@@ -1541,18 +1534,16 @@ fn emit_consumed_context_helpers(
             .cloned()
             .collect();
         to_emit.sort();
-        let to_emit_decls = emit_helpers_for_owner_qualified(
-            &to_emit,
-            types_table,
-            ctx.commons_name.as_str(),
-            &qual,
-            &ctx.runtime_use,
+        serialisation::print_decls_block(
+            out,
+            emit_helpers_for_owner_qualified(
+                &to_emit,
+                types_table,
+                ctx.commons_name.as_str(),
+                &qual,
+                &ctx.runtime_use,
+            ),
         );
-        let to_emit_emitted_any = !to_emit_decls.is_empty();
-        serialisation::print_decls(out, to_emit_decls);
-        if to_emit_emitted_any {
-            writeln!(out).unwrap();
-        }
         consumed_names_out.extend(to_emit);
 
         let to_emit_insts: Vec<serialisation::GenericInst> = cinsts

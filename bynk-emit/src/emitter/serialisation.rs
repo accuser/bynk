@@ -517,6 +517,30 @@ pub(crate) fn print_decls(out: &mut String, decls: Vec<TsDecl>) {
     }
 }
 
+/// As [`print_decls`], but also emits one more trailing blank line if
+/// anything was printed — the shared `if emitted_any { writeln!(out) }`
+/// trailer every [`emit_helpers_for_owner`]/[`emit_helpers_for_owner_qualified`]
+/// caller needs (their pre-conversion `out: &mut String` shape always had
+/// this trailer; [`emit_generic_helpers`]/[`emit_generic_helpers_qualified`]
+/// callers never did and stay on bare [`print_decls`]).
+///
+/// Review of #1454: derives "did anything get emitted?" directly from the
+/// real `decls` list, in this one place, rather than each caller
+/// re-deriving an `emitted_any` flag by hand (the pre-conversion shape set
+/// it per matched *name*, before `emit_one` ran — a subtly different
+/// condition that only happened to agree with "per returned declaration"
+/// because no `emit_one` arm can return an empty `Vec`). Keeping the check
+/// here, against the actual data, means a future arm that *can* return
+/// empty stays correct automatically instead of silently dropping the
+/// trailing blank line for the whole batch.
+pub(crate) fn print_decls_block(out: &mut String, decls: Vec<TsDecl>) {
+    let emitted_any = !decls.is_empty();
+    print_decls(out, decls);
+    if emitted_any {
+        writeln!(out).unwrap();
+    }
+}
+
 /// #661: as [`emit_helpers_for_owner`], but the caller supplies a type
 /// `Qual`. With an empty qualifier this is the owner's own module (every
 /// type named bare, refined validation through `.of`). With a non-empty one it
@@ -1158,9 +1182,11 @@ fn emit_record(
 /// real `bynk_ts::TsDecl` nodes — the same `Vec<TsDecl>` shape
 /// `emit_bytes_named_codec`/`emit_refined` already established (#1441), for
 /// the same reason (this function's two real callers, `emit_record` above
-/// and `emit_generic_helpers_qualified`'s own `RecordInst` arm, both print
-/// each entry via the same boundary loop). Two internal calls stay
-/// unprinted: `serialise_field_expr_wire` (`-> TsExpr` since #1435) and
+/// and `emit_generic_helpers_qualified`'s own `RecordInst` arm — as of Arc F
+/// slice 1, #1451, both `extend` a `Vec<TsDecl>` directly rather than
+/// printing; [`print_decls`] does the one shared boundary-print, once, at
+/// each caller's own caller). Two internal calls stay unprinted:
+/// `serialise_field_expr_wire` (`-> TsExpr` since #1435) and
 /// `emit_field_deserialise_wire` (`-> Vec<TsStmt>` since #1439) are both
 /// already tree-native, and this function itself is becoming tree-native
 /// too — consuming their return values directly (no
@@ -1384,8 +1410,10 @@ fn emit_sum(
 /// #1445 (Arc E slice 6): returns the `[serialise, deserialise]` pair as real
 /// `bynk_ts::TsDecl` nodes, the same `Vec<TsDecl>` shape #1441/#1443 already
 /// established — this function's two real callers ([`emit_sum`] above and
-/// `emit_generic_helpers_qualified`'s own `SumInst` arm) both print each
-/// entry via the same boundary loop.
+/// `emit_generic_helpers_qualified`'s own `SumInst` arm) — as of Arc F slice
+/// 1 (#1451), both `extend` a `Vec<TsDecl>` directly rather than printing;
+/// [`print_decls`] does the one shared boundary-print, once, at each
+/// caller's own caller.
 ///
 /// **The `(value as any).<field>` investigation (#1423's own residual,
 /// re-examined per this issue's own explicit instruction):** narrowed, not
