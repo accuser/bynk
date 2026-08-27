@@ -360,27 +360,18 @@ fn print_guard_if_stmt(
 
 fn emit_pred_check(out: &mut String, type_name: &str, pred: &PredKind) {
     let (cond, msg) = crate::emitter::pred_condition_and_message(pred, "value");
-    // `cond` is opaque, already-formed JS condition text (e.g.
-    // `value >= 0`, or, for `PredKind::Matches`, a `RegExp(...)` expression
-    // whose own pattern text is already `escape_ts_string`-escaped) —
-    // carried as a raw `Ident` wrapped in the real `!(...)` this crate's
-    // own `Not`/`Paren` already represent, reproducing `if (!({cond}))`
-    // exactly. `msg` gets the SAME opaque, pre-quoted treatment, not
-    // `TsLit::Str` — deviating from the accepted proposal's own Decision B
-    // ("msg as an ordinary TsLit::Str"), because `PredKind::Matches`'s own
-    // message embeds that same already-`escape_ts_string`-escaped pattern
-    // text directly (`format!("must match /{escaped}/")`); running it a
-    // second time through `TsLit::Str`'s own renderer (which re-applies the
-    // identical escaper) would double-escape every backslash the pattern
-    // contains — a real correctness bug for any `Matches` predicate whose
-    // pattern needs one. Every other `PredKind` arm's own message is plain,
-    // already-safe English text with nothing to escape, so this is a
-    // uniform, always-correct choice, not a narrow special case.
+    // #1471: `cond` is now a real `TsExpr` (a `Binary`/`Call` node, not
+    // opaque text) — the explicit `Paren` stays regardless, matching this
+    // function's own pre-#1471 output byte-for-byte: it was already always
+    // applied unconditionally (never derived from `cond`'s own shape), and
+    // still is, just wrapping a real node instead of an `Ident`. `msg` is
+    // unchanged: still opaque, pre-quoted text, not `TsLit::Str` — see
+    // `pred_condition_and_message`'s own doc for why (the `Matches` arm's
+    // message embeds already-`escape_ts_string`-escaped pattern text that a
+    // second `TsLit::Str` escaping pass would double-escape).
     let cond_expr = bynk_ts::TsExpr::Unary {
         op: bynk_ts::TsUnaryOp::Not,
-        expr: Box::new(bynk_ts::TsExpr::Paren(Box::new(bynk_ts::TsExpr::Ident(
-            cond,
-        )))),
+        expr: Box::new(bynk_ts::TsExpr::Paren(Box::new(cond))),
     };
     out.push_str(&print_guard_if_stmt(
         cond_expr,
@@ -989,14 +980,15 @@ pub(crate) fn emit_free_fn(
 /// trailing `return result;` is a real [`bynk_ts::TsStmt::return_stmt`].
 ///
 /// `pred` (`Pre::lower`'s own return) and each hoisted `pre.stmts()` line
-/// stay opaque — carried the same way #1335's own `emit_pred_check` carries
-/// `pred_condition_and_message`'s `cond` (an `Ident` wrapped in this crate's
-/// real `Unary::Not`/`Paren`), but for a DIFFERENT, stronger reason: `Pre`
+/// stay opaque — carried the same way #1335's own `emit_pred_check` used to
+/// carry `pred_condition_and_message`'s `cond` (an `Ident` wrapped in this
+/// crate's real `Unary::Not`/`Paren`) before #1471 converted it to a real
+/// `TsExpr`, but for a DIFFERENT, stronger, and still-standing reason: `Pre`
 /// lives in `emitter/lower.rs` (`pre.lower` calls `lower_expr`, the general
 /// expression lowerer) — the one splice boundary ADR
 /// `arc-c-lower-rs-permanent-exclusion` names a *permanent* Arc C exclusion,
-/// not temporarily-unconverted-but-convertible-later machinery like
-/// `pred_condition_and_message` (which lives in `emitter.rs` proper). The
+/// not the temporarily-unconverted-but-convertible-later machinery
+/// `pred_condition_and_message` (`emitter.rs` proper) turned out to be. The
 /// error message (backtick-quoted, with its own already-escaped `\``
 /// clause-name delimiters and `${param}=...`-style interpolations already
 /// baked in as literal text by `param_dump`) is carried the same way as one

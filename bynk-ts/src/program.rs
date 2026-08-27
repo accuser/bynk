@@ -1145,6 +1145,24 @@ pub enum TsBinaryOp {
     /// keyword `" in "`, the same textual-keyword-operator shape
     /// `InstanceOf` already established (not symbol punctuation).
     In,
+    /// `>=` — #1471's own real gap: `pred_condition_and_message`'s
+    /// (`bynk-emit`) `NonNegative`/`InRange`/`InRangeF`/`MinLength` arms
+    /// each build a real "at least" comparison (`{receiver} >= 0`,
+    /// `{receiver} >= {a}`, `{receiver}.length >= {n}`) that this enum had
+    /// no home for — [`TsBinaryOp::In`]'s own doc already named this exact
+    /// gap ("plus `<=`/`>=`, unmodelled here"). Same `RelationalExpression`
+    /// precedence tier as [`TsBinaryOp::GreaterThan`]/[`TsBinaryOp::
+    /// LessThan`]/[`TsBinaryOp::InstanceOf`]/[`TsBinaryOp::In`] (real
+    /// JS/TS puts all six at one level), rendered `" >= "` — symbol
+    /// punctuation, matching `GreaterThan`/`LessThan`'s own convention,
+    /// not a keyword like `InstanceOf`/`In`.
+    GreaterThanEq,
+    /// `<=` — the same gap's other half: `InRange`/`InRangeF`/`MaxLength`'s
+    /// own "at most" comparison (`{receiver} <= {b}`, `{receiver}.length
+    /// <= {n}`). Same tier and rendering convention as
+    /// [`TsBinaryOp::GreaterThanEq`], symmetric with it the way
+    /// `GreaterThan`/`LessThan` already are.
+    LessThanEq,
 }
 
 /// A literal — the three kinds `events_fanout.rs` uses (a string, a number,
