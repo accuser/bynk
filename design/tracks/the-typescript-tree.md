@@ -1993,6 +1993,107 @@ before citing them in a follow-on proposal.
 
 ---
 
+**Arc F — design pass: decomposing `ts_writes`'s remaining surface after Arc E (#1449, a
+design/decomposition increment, converts no code — the same gate #1422/#1430 used for Arc E's own
+opening).** With Arc E's 7 slices (#1435–#1447) landed, this pass re-counts `ts_writes` (901,
+`design/greenfield-status.md` on current `main`) directly against the tree, file by file:
+`emitter/lower.rs` (371, ADR 0391's permanent exclusion, not this pass's concern), `emitter/emit.rs`
+(235), `project/tests_emit.rs` (83, sampled at every large cluster — found fully tree-native
+internally or small identifier/text construction, no target), `emitter/serialisation.rs` (71, Arc
+E's own closed residual — `RecordInst`/`SumInst`'s boundary-print blank lines and function-name
+`format!`s — not re-opened here), `emitter.rs` (64), `emitter/workers_entry.rs` (34, sampled in
+full — all already-argued, one small fold-in candidate), `project.rs` (29), `emitter/workers.rs`
+(12, sampled in full — all already-argued, Arc C slices #1317/#1321), `emitter/events_fanout.rs`
+(2, both already-argued). The in-scope total (everything but `lower.rs` and `serialisation.rs`) is
+**459** — overwhelmingly already-argued residual, a materially different shape from
+`serialisation.rs` before Arc E, where whole functions were untouched.
+
+**Three sites ground the concrete targets, each independently re-verified against current `main`,
+not carried forward from the issue's own initial citation:**
+
+- `emitter.rs`'s `emit_json_codec_helpers`/`emit_boundary_helpers`/`emit_consumed_context_helpers`
+  (lines 1075/1114/1376, confirmed by direct read) are still `out: &mut String` — **Arc E's own
+  steps 6/7** (ADR 0398), named at Arc E's own opening but never filed as their own issue.
+- `project.rs`'s `plan_agent_given_deps` (2637–2749, 5 sites) and `instantiate_provider_expr`
+  (2787–2891, 6 sites) — **this pass's own re-verification corrects a line-range swap in the
+  originating issue**, which attributed 2637–2749 to `instantiate_provider_expr` and 2787–2891 to
+  `plan_agent_given_deps`; direct read of `project.rs` confirms the reverse. `instantiate_provider_expr`
+  already has a tree-native twin, `instantiate_provider_ts_expr` (2920, `-> bynk_ts::TsExpr`, built
+  by #1321/#1327 for `emit_worker_compose`/`emit_composition_root`) — `plan_agent_given_deps` (the
+  DO-side agent-deps-reconstruction path, #527) is a duplicate that can repoint at it directly, no
+  new `bynk_ts` algebra needed. `native_platforms_of_context` (2572–2622, confirmed) calls the
+  `String`-returning original twice purely for its referenced-unit side effect (`let _ =
+  instantiate_provider_expr(...)`, result discarded) — a separate, smaller oddity, not necessarily
+  fixed in the same slice.
+- `emit.rs`'s `emit_context_deps_interface` (3287–3342, 9 sites, confirmed) is already flagged
+  in-place as unconverted by its own caller's doc comment (`emit_make_surface`, 3376–3379,
+  confirmed verbatim: "a separate, unconverted, confirmed-unaffected `String`-returning sibling this
+  function calls once, not touched by this slice"). Its one real caller hand-`writeln!`s a plain
+  `interface {name}Deps { readonly f: T; ... }` shape `TsDecl::Interface`/`TsTypeMember::readonly_prop`
+  already renders elsewhere in this file (`emit_agent`'s own state interface, 4437).
+
+**A real gap, named rather than guessed at:** `emit.rs`'s `build_deps_object_ty_with_surface`/
+`cap_ref_ty`/`surface_ty`/`workers_env_ty` (2969/3119/3175/3228, 12 sites, confirmed) build the
+`deps: {...}` parameter type as semicolon-joined text for three real callers (`emit_service`/
+`emit_agent`/`emit_ws_do_method`). No in-place comment argues this stays opaque — but
+`emit_ws_do_method`'s own string-surgery on the returned type text (6161–6171, confirmed: raw
+`identity: {field}` splicing via `trim_end_matches('}')`) is a real complication not traced to a
+conversion plan by this pass. Not committed to a slice count — needs its own grounding read before
+scheduling, the same discipline #1319 applied to `serialisation.rs` before Arc E could decompose it.
+
+**Decision: three concretely-scoped slices, order-independent (different files, no shared dependency
+edge), plus the one open investigation above:**
+
+1. **Arc E's own step 6/7** — the `emitter.rs` wrapper trio threads real `Vec<TsDecl>`/`Vec<TsStmt>`
+   into `emit_project`'s tree instead of an `&mut String`, closing `emit_one`'s 4-site
+   print-then-append loop (`serialisation.rs`) and `emit_generic_helpers_qualified`'s 6-site
+   equivalent (both already print real nodes at their own boundary today) plus the wrapper trio's
+   own 5 sites (1227/1228/1256/1261/1513, confirmed) — 15 sites total. **Load-bearing, not
+   optional**: skipping this leaves Arc E's real `TsDecl` nodes printed into a `String` that never
+   itself becomes a tree node, reading as `ts_writes` progress while `verbatim_sites` stays exactly
+   where it is — the same gaming failure mode ADR-B (§11) names `verbatim_sites` to catch. The
+   legacy `emitter::emit`/`Compiled.ts` boundary (`emitter.rs:188`, `lib.rs:81`, confirmed) needs its
+   `-> String` signature confirmed compatible with `bynk-driver`/`bynk check`'s own real callers
+   before shipping — unresolved here, checked at implementation time.
+2. **`project.rs`'s duplicate provider-instantiation function** — repoint `plan_agent_given_deps` at
+   `instantiate_provider_ts_expr`, printing-and-splicing at its own still-textual caller
+   (`emit_agent`, `emit.rs:4755`) — the same "print a real fragment, splice into a still-textual
+   caller" pattern #1395 already used.
+3. **`emit_context_deps_interface`** — converts its 9 sites to the same `TsDecl::Interface` shape
+   `emit_agent` already uses. Small enough to possibly bundle with a slice for the item-4
+   investigation, if that investigation confirms it's equally tractable.
+
+**Confirmed not targets, named so a future pass doesn't rediscover them as gaps:** `brand_assertion`
+(`workers_entry.rs:2482–2491`, 6 sites, already named in-place by `workers.rs:2053–2057`'s own
+`claim_predicate_to_js` precedent — foldable into slice 1 or 2's own PR, not its own slice);
+`pred_condition_and_message` (`emitter.rs:5109–5154`, 16 sites, already decided opaque by Arc E
+slice 4's own review, #1441/#1442); `inject_runtime_imports`/`missing_bindings` (`emitter.rs`, ADR
+0142's post-print text-surgery mechanism, architecturally entangled with the same source-map-rebuild
+complication ADR 0399's own floor-correction pass already left open); `emitter/workers.rs`'s 12
+sites and `emitter/events_fanout.rs`'s 2 (Arc C slices #1317/#1321, fully converted); `tests_emit.rs`'s
+83 sites (Arc C slices #1395–#1409, fully tree-native internally).
+
+**A probe-accuracy finding, independent of any conversion slice:** `project.rs:2098`'s
+`sibling_path` builds a filesystem path via `output_path.with_file_name(format!("{name}.{suffix}"))`
+— semantically the same `PathBuf`-construction idiom `xtask`'s `is_path_construction_line`
+(`xtask/src/greenfield_status.rs:1629`) already excludes (the `PathBuf::from(format!` and
+`.join(format!` forms), but spelled with `.with_file_name(`, which that substring match does not
+catch — confirmed by direct read. A real, small false positive in the probe's own counting rule,
+worth a one-line `xtask` fix independent of slices 1–3 (drops the in-scope total by 1, to 458).
+
+**Consequences.** Slices 1–3 close 15 + 11 + 9 = 35 of the 459 in-scope sites plus whatever the
+item-4 investigation resolves to; a large, real, already-argued residual remains after all of them
+land — the DO-class Decision-C hand-written wrapper text, `pred_condition_and_message`,
+`claim_predicate_to_js`, `inject_runtime_imports`, the `__eventsDispatch` carve-out, and
+`emit_agent`'s own 101-site cluster (this pass's own sampling found it consistently
+tree-native-with-print-and-splice at roughly a dozen sampled points, not read end to end — supports
+confidence but is not a guarantee against a hidden unconverted chunk). **This does not retire
+`ts_writes` to 0.** The honest next step after slices 1–3 (and 4, if it proves tractable) land is a
+separate argued-floor writeup for `ts_writes`'s own final residual — the same shape ADR 0399 already
+produced for `ts_any`/`verbatim_sites` — not a claim that a fourth or fifth slice reaches a genuine 0.
+
+---
+
 ## 7. Out of scope — forward references, not refusals
 
 | Item | Phase | Entry condition |
