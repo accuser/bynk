@@ -373,7 +373,9 @@ reached through a green gate.
   basis alone. **Retires at an argued floor, not a fixed 0** (corrected by #1423, §6's own "Floor
   correction": at least 2 permanent sites — foreign adapter content, a committed runtime build
   artifact — plus an unknown-until-attempted number of scoped per-splice-point wraps at every real
-  caller of `emitter/lower.rs`'s permanently-opaque output, ADR 0391).
+  caller of `emitter/lower.rs`'s permanently-opaque output, ADR 0391; narrowed further by #1472,
+  §6's own "Part 1 correction (#1472...)": 9 more permanent sites named by callee, bringing the
+  floor's known component to 11 — the `lower.rs`-splice component alone stays open).
 
 `ts_writes` and `ts_any` were buildable against a real baseline (§1's own measurement) without
 `Verbatim` existing, and landed in **P7.0** (#1296, shipped — `xtask/src/greenfield_status.rs`
@@ -1965,6 +1967,185 @@ capstone is **not a single tractable slice** — it cascades into converting or 
 permanently arguing opaque a dozen-plus callees across `emitter.rs`/`emitter/emit.rs`/
 `project/tests_emit.rs` — genuinely its own multi-slice arc, comparable in scope to Arc C/D/E/F
 themselves, not a follow-up sized against the original three-signature framing.
+
+**Part 1 correction (#1472, the callee-cascade enumeration and nested-checkpoint resolution —
+landed).** Reads every direct `out: &mut String` callee of `emit_project`
+(`emitter.rs`)/`emit_test_module`/`emit_integration_module` (`project/tests_emit.rs`) in full,
+settles prerequisite 3 (the nested source-map gap) with a concrete, minimal design instead of
+leaving it "still open," and finds `inject_runtime_imports` was never actually entangled with
+that gap the way #1461/#1462 assumed — it has its own, independent, already-available fix.
+
+**The nested source-map gap (prerequisite 3) already has its own prior art in `bynk-emit` —
+reusable, not something to design from scratch.** `emit_class_method_and_merge_source_map`
+(`emit.rs:2270-2296`, review of #1381) is the shared helper `emit_provider`'s ops (`:2467`) and
+`emit_agent`'s handler methods (`:5526`/`:6338`) funnel through — but review of #1474 caught this
+pass's own first draft overclaiming: `emit_free_fn` is **not** a client of it. Direct read of
+`emit_free_fn`'s own tail (`:930-968`) finds a *second, independent* hand-rolled offset recovery,
+not a call into the shared helper — `Raw`'s own splice-verbatim guarantee lets it compute the
+blob's offset by exact arithmetic (`printed.len() - body_text.len() - "}\n".len()`, `:960`) rather
+than string-search, guarded by a loud `debug_assert!` (`:956-959`) instead of the helper's own
+silent skip. Two hand-rolled recoveries of the same fact, not one — a stronger version of this
+finding's own point, not a weaker one, and a real consequence for slice (1) below: `emit_free_fn`
+reaches the printer through `TsDecl::Function`/`print_stmt`, not `print_class_method`, so the
+nested-checkpoint carrier has to reach a function declaration's `Raw` body too, not just
+`TsClassMethod`/`TsObjectEntry::Method`, for "one printer extension unblocks every body-bearing
+callee at once" to actually hold. `emit_class_method_and_merge_source_map` itself does exactly the
+job prerequisite 3 needs for its own three call sites — merge a body-local `SourceMapBuilder`'s
+own per-statement checkpoints into the module map at the right absolute offset — but it has to
+**reverse-engineer** that offset today: `print_class_method` returns only the printed text, not
+where within it the opaque body blob landed, so the helper recovers the offset by subtracting
+known lengths and string-matching the tail
+(`printed.get(blob_offset_in_printed..).is_some_and(|tail| tail.starts_with(body.blob))`,
+`:2282-2286`), and **degrades to silently skipping the mapping** if any assumption is violated —
+"suppress rather than mis-record" (the helper's own doc, #1360 finding 3's discipline). `RawBody`
+(`:2231-2239`) already tracks the *inner* opaque body's own offset within the blob *by
+construction*, not by search — only the blob's own placement within the printer's returned text
+is unknown, because the printer never reports it.
+
+**The resolution: have the printer report that offset instead of making callers reverse-engineer
+it.** Once `emit_project` et al. hold a real `Vec<TsStmt>`/`TsProgram` and print once at the
+boundary, the printer's own top-level loop (`bynk_ts::printer::print`, `printer.rs:238-241`)
+already computes exactly this moment for every top-level statement — `map.record(out.len(), span)`
+runs immediately before `render_stmt`, so `out.len()` at that instant *is* the absolute offset the
+statement is about to land at. Extending this one further level — a `TsStmt`/`TsClassMethod`/
+`TsObjectEntry::Method` variant that carries an *optional* nested checkpoint table (relative
+offsets into its own opaque body text, exactly what a body-local `SourceMapBuilder` already
+collects) — lets the printer call `SourceMapBuilder::merge` itself, at the real print-time offset,
+using machinery (`merge`/`shift_checkpoints`) that already exists and is already exercised by every
+one of the sites above. This is the smallest correct change matching this track's own "extend
+narrowly" convention (the same posture `TsBinaryOp`'s per-operator additions took): one new
+optional field plus one new printer branch, not a parallel checkpoint system. It is a `bynk-ts`
+change with no `bynk-emit` behaviour change on its own — but it is the **one prerequisite slice
+that unblocks every other conversion in this arc's own cascade at once**, since every body-bearing
+callee (`emit_free_fn`, every service handler, every agent handler/`loadState`/`commitState`/
+rehydration check, and (per this pass's own read of `tests_emit.rs` below) every generated test
+function) hits this same gap independently today. It should be sequenced first, not discovered
+piecemeal once per callee.
+
+**`inject_runtime_imports` was never actually blocked by the source-map gap — it has its own,
+independent, already-available fix.** Direct read of `emit_project`'s own tail
+(`emitter.rs:550-583`) and `write_header` (`:2641-2868`, specifically the `runtime_import`
+construction at `:2663` on) shows the runtime import line's "base" name set comes from a
+syntax-level AST scan (`has_agent`/`has_agent_invariants`/`has_http`, no body lowering needed) done
+*before* the per-item body loop runs — while the `bytes()`/`icu()` extra names
+`inject_runtime_imports` currently splices in afterward come from `ctx.runtime_use`, populated
+*during* that same loop. The post-print text-surgery only exists because the current
+`String`-accumulator architecture commits the header's bytes to `out` before the facts needed to
+finish it are known, and a committed prefix can only be edited by scanning back into it. Once
+`emit_project` builds `Vec<TsStmt>` instead — where *construction order* and *final order* are
+independent, unlike an append-only string — the fix is not a new mechanism at all: **build the
+runtime-import `TsDecl::Import` node after the per-item loop finishes** (`ctx.runtime_use` is
+fully known by then, same as today), **and place it first in the assembled statement list**. No
+second pass over already-printed text, no reconciliation step. #1462's own "genuinely entangled...
+not proven impossible" and this track's own §5 "argued, not yet attempted" bucket both undersold
+this — it is not entangled with prerequisite 3 at all (that entanglement was this arc's own
+untested assumption, carried from #1461 through #1462 without being checked against
+`inject_runtime_imports`'s actual two call sites), and it is solved-design, not just
+"unattempted," once the orchestrator itself converts.
+
+**The direct-callee cascade, read in full, not sampled.** `emit_project`'s own 15 direct
+`out: &mut String` callees (`write_header`, `emit_project_imports`,
+`emit_cross_context_namespace_imports`, `emit_context_rebrands`, `write_commons_doc`, `emit_type`,
+`emit_free_fn`, `emit_messages_bundle`, `emit_capability`, `emit_provider`, `emit_service`,
+`emit_agent`, `emit_make_surface`, `emit_boundary_helpers`, `emit_json_codec_helpers`) split three
+ways:
+
+- **12 are cheap — already real-node internally, only their own top-level signature is legacy**:
+  `write_header`/`emit_project_imports`/`emit_cross_context_namespace_imports`/
+  `emit_context_rebrands`/`write_commons_doc` (the header cluster — real `TsDecl::Import`/
+  `TsStmt::Comment` throughout, confirmed by direct read, not the heuristic alone: a raw
+  `writeln!`/`format!` count under-reports real-node-ness whenever a function delegates to an
+  already-real private helper without spelling `TsStmt::`/`TsDecl::` at its own call site, so
+  every one of these 12 was read, not just grepped); `emit_type` (a real dispatcher to
+  `emit_refined_type`/`emit_record_type`/`emit_sum_type`, each already real internally);
+  `emit_free_fn`, `emit_messages_bundle`, `emit_capability`, `emit_make_surface` (each already
+  real-node-internally, per Arc C/D/#1361); `emit_boundary_helpers`/`emit_json_codec_helpers`
+  (pure dispatchers to `serialisation::print_decls[_block]` over `Vec<TsDecl>` Arc E already
+  built — the cheapest of all 15, mechanical signature threading with no internal work). Two of
+  the 12 carry one small, already-argued one-off opaque fragment each (`emit_boundary_helpers`'s
+  bare `export { ... };` re-export, `:1258`, no `TsDecl::ReExport` shape fits it; `emit_messages_
+  bundle`'s own `const messagesByLocale: Record<...> = { ... };` wrapper around an otherwise-real
+  object body) — noted, not blocking, the same "one odd shape stays opaque text" posture #1392
+  already established elsewhere.
+- **2 (`emit_provider`, `emit_agent`) are cheap for their own skeleton, but each contributes at
+  least one genuinely permanent `Verbatim` construction site of its own**: `emit_provider`'s class
+  wrapper (Decision C, `:2298-2522`) and `emit_agent`'s DO-class wrapper (the same Decision-C
+  instance, confirmed by #1462) each stay hand-written text forever — a real op/method's own body
+  is a real `TsClassMethod`, but the class header/`implements`/deps-field/constructor/closing
+  brace around it is not, and per Decision C's own reasoning (a real `TsDecl::Class` would need
+  every method's body captured into a local buffer for `Raw`-embedding anyway, and this class's
+  real spacing convention already disagrees with `TsDecl::Class`'s own). `emit_agent` additionally
+  carries its own history-driver (`__bynkDriveHistory_*`, currently `emit.rs:5969-6117` — drifted
+  ~76 lines from #1462's own `5893-6023` citation since intervening PRs, the function and #1386's
+  decision unchanged) as a second, separate permanent unit (#1386, corrected into this bucket by
+  #1462).
+- **1 (`emit_service`) is the clearest live instance of the nested-source-map gap above, not a
+  one-off**: its own object-literal skeleton (`export const {name} = { ... };`) is real
+  (`TsObjectEntry::Method` per handler, real `TsParam`s throughout, #1361), but every handler's own
+  *body* lowers into a local `body_smb`/`body_out` pair merged back via the exact
+  `emit_class_method_and_merge_source_map`-style pattern above — recurring once per handler, not
+  once per function. This is `ADR 0391`'s per-splice-point exclusion in its most common real shape,
+  not a new gap; it is simply the callee where prerequisite 3's resolution has the most leverage.
+
+**`project/tests_emit.rs`'s own two orchestrators carry the identical shape, plus two genuinely
+new findings #1461 never named.** `emit_test_module`/`emit_integration_module` each merge their
+own per-case/per-body local `SourceMapBuilder` the same way (`:1936`, `:537`) — the same gap, not a
+separate instance. Of their own direct callees: 5 are `include_str!`-based runtime-helper text
+(`expectation_runtime_helpers`/`stub_runtime_helpers`/`observation_runtime_helpers`/`property_
+runtime_helpers`/`history_runtime_helpers`, now at their own `fn` lines `:2278`/`:2286`/`:3404`/
+`:3408`/`:3420` (review of #1474: cited consistently by `fn` line, not a mix of `fn` and
+`include_str!` lines — the more drift-resistant anchor of the two) — the Part 1 correction's own
+`:2278-2289` citation above has drifted, no longer clustered, corrected here) — permanent, the
+same `adapter_bindings`/`runtime.ts` footing, previously counted only in
+the abstract ("five `include_str!`-based... blocks") not enumerated by site; `emit_stub_class`
+(`:2296-2493`) is a second, independent Decision-C class-wrapper instance (its own in-place
+comment at `:2372-2385` already argues it); `emit_ns_destructure`/`emit_integration_harness`/
+`emit_test_deps`/`observation_call_record_types` plus the codec-helper glue inside `emit_test_
+module` are cheap, the same `serialisation`-dispatch shape as `emit_project`'s own pair. **Two are
+new: `emit_test_case_function`/`emit_test_property_function`/`emit_test_history_property_
+function`/`emit_contract_attack_function` (four near-identical functions) plus `emit_integration_
+module`'s own inline case wrapper all hand-template an identical `async function { try { <spliced
+body> } catch (e) {...} }` wrapper via raw `push_str` text, with no comment anywhere arguing why —
+unlike every permanent site above, none of these five carries an existing decision to point to.**
+A real, tractable, bounded conversion candidate (one shared wrapper shape, five sites), the same
+class as `pred_condition_and_message` was before #1471 converted it — not permanent, just
+unattempted. **`emit_system_http_support`'s own HS256 JWT-signer block (`__bynkNow`/`__b64url`/
+`__bytesB64url`/`__bynkSignHs256`, `:1032-1044`) is the second new finding**: a whole hand-authored
+signing routine as one raw multi-line string literal, zero real nodes, zero justifying comment.
+Unlike the wrapper functions above, this one is fixed boilerplate independent of any Bynk
+declaration — not a tree-conversion candidate at all, but an `include_str!`-extraction candidate,
+the same treatment `adapter_bindings`/`runtime.ts`/the five test-runtime-helper blocks already
+get, once a reviewer confirms a committed `.ts` file is the right home for it.
+
+**Slice sequencing, sized against this reading, not a qualitative "dozen-plus."** (1) The
+nested-checkpoint printer extension (`bynk-ts` only, no behaviour change) — first, since it
+unblocks every body-bearing callee at once. (2) `inject_runtime_imports`'s reordering fix — fully
+independent of (1), can land any time, on its own. (3) The 12 cheap `emit_project` callees plus
+`tests_emit.rs`'s cheap callees — batchable by cluster (header trio, type/fn/messages,
+boundary/codec pair), several landable before (1) since they carry no per-item bodies at all
+(`emit_capability`, `emit_type`, the header cluster). (4) `emit_service`'s and `emit_agent`'s own
+signatures — blocked on (1). (5) `emit_provider`'s and `emit_stub_class`'s signatures — the class
+wrapper becomes one permanent `Verbatim` construction each, no other blocker. (6) The five
+test-function-wrapper sites — independent shared-fix slice. (7) The JWT-signer block —
+independent, tiny, `include_str!`-only. (8) `emit_project`/`emit_test_module`/`emit_integration_
+module`'s own top-level signatures, once every direct callee above has landed or been permanently
+argued. Roughly 8-10 real slices, not counting whatever (1) and prerequisite 2 (already solved,
+per #1461) reveal about `lower.rs`'s own call-site count once attempted — genuinely comparable in
+scope to Arc C/D/E/F, confirming rather than revising #1461's own estimate.
+
+**Corrected argued floor, numbered where #1461 could only gesture at "a dozen-plus."** Permanent
+`Verbatim`-construction sites this cascade will add, beyond the 2 already counted
+(`project.rs:2480`/`:2509`): `emit_provider`'s class wrapper (1), `emit_agent`'s DO-class wrapper
+(1) and history-driver (1), `emit_stub_class`'s class wrapper (1), the 5 `tests_emit.rs`
+`include_str!` blocks (5) — **9 newly-named permanent sites**, plus an unknown-until-attempted
+number of per-splice-point wraps proportional to the number of distinct source call sites that
+reach `lower.rs`'s opaque body output once every body-bearing callee above converts (`emit_free_fn`
+×1, each service-handler body, each agent-handler/`loadState`/`commitState`/rehydration body, each
+of the four-plus test-function bodies, `emit_integration_module`'s own spliced body — not
+enumerated exhaustively here, the single largest remaining unknown, the same honesty ADR 0399/
+#1461 already modelled). **11 (2 + 9) is the new floor's known component; the `lower.rs`-splice
+component stays genuinely open until the per-callee slices above are attempted** — narrower and
+more concrete than #1461's "a dozen-plus," not a final number.
 
 **Part 2 — `ts_any`: the real distribution, not the stale 2–3-site estimate.** ADR-C (§3.3, Q3)
 named a 2–3-site residual, deferred to R7.7's runtime-typing work, as the only open gap in
