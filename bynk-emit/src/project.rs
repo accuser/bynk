@@ -2557,7 +2557,7 @@ fn build_output(
 // P5.3 review (#1133): `resolve_consume_prefix` and `handler_cross_caps` used
 // to have their own copies here, byte-identical to `bynk-check::project_model`'s
 // (neither builds TypeScript, so neither had the codegen coupling that keeps
-// `instantiate_provider_expr`/`native_platforms_of_context` below in this
+// `instantiate_provider_ts_expr`/`native_platforms_of_context` below in this
 // crate) — deleted, every call site repointed at
 // `project_model::{resolve_consume_prefix, handler_cross_caps}`.
 
@@ -2577,9 +2577,12 @@ fn native_platforms_of_context(
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
     unit_flattened: &HashMap<String, HashMap<String, String>>,
 ) -> std::collections::BTreeMap<Platform, String> {
+    // Arc F slice 2 (#1452): repointed at the tree-native twin — only the
+    // `referenced` side effect matters here, the returned `TsExpr` (vs. the
+    // old `String`) is discarded either way.
     let mut referenced: BTreeSet<String> = BTreeSet::new();
     for cap in table.providers.keys() {
-        let _ = instantiate_provider_expr(
+        let _ = instantiate_provider_ts_expr(
             ctx,
             cap,
             unit_tables,
@@ -2596,7 +2599,7 @@ fn native_platforms_of_context(
     let aliases = unit_consumes_aliases.get(ctx).cloned().unwrap_or_default();
     let flattened = unit_flattened.get(ctx).cloned().unwrap_or_default();
     for (key, cctx) in handler_cross_caps(table, &consumed, &aliases, &flattened) {
-        let _ = instantiate_provider_expr(
+        let _ = instantiate_provider_ts_expr(
             &cctx,
             &key,
             unit_tables,
@@ -2691,7 +2694,17 @@ fn plan_agent_given_deps(
         if caps.is_empty() {
             continue;
         }
-        let parts: Vec<String> = caps
+        // Arc F slice 2 (#1452): `instantiate_provider_ts_expr` — the
+        // tree-native twin `emit_worker_compose`/`emit_composition_root`
+        // already use (#1321/#1327) — builds the same `new {ns}.{Class}(...)`
+        // shape as a real `bynk_ts::TsExpr`, byte-identical once printed
+        // (both share every recursive call/text-building step below the
+        // top level; only this per-agent object wrapper is new). Boundary-
+        // prints once, here, into `exprs: HashMap<String, String>` — the
+        // struct's own shape and `emit_agent`'s `TsExpr::Ident(expr.clone())`
+        // caller (`emitter/emit.rs`) both stay unchanged, the narrower of
+        // the two options the issue named.
+        let entries: Vec<(String, bynk_ts::TsExpr)> = caps
             .iter()
             .map(|(key, g)| {
                 let target_ctx = match &g.context {
@@ -2703,7 +2716,7 @@ fn plan_agent_given_deps(
                         .cloned()
                         .unwrap_or_else(|| name.to_string()),
                 };
-                let expr = instantiate_provider_expr(
+                let expr = instantiate_provider_ts_expr(
                     &target_ctx,
                     key,
                     &unit_tables,
@@ -2715,10 +2728,13 @@ fn plan_agent_given_deps(
                     None,
                     &mut referenced,
                 );
-                format!("{key}: {expr}")
+                (key.clone(), expr)
             })
             .collect();
-        exprs.insert(agent.clone(), format!("{{ {} }}", parts.join(", ")));
+        exprs.insert(
+            agent.clone(),
+            bynk_ts::print_expr(&bynk_ts::TsExpr::object(entries)),
+        );
     }
     if exprs.is_empty() {
         return None;
@@ -2772,124 +2788,6 @@ pub(crate) struct LocaleNegotiationArgs {
     pub(crate) reference_locale_expr: String,
 }
 
-/// `workers_ns` selects the namespace convention: a bodied provider's class
-/// lives in `{ns}` under the bundle root but `handlers_{ns}` in a Worker
-/// compose; external (binding) classes are `{ns}__binding` in both. When
-/// `env_ident` is set (workers), env-taking first-party providers receive it
-/// as a constructor argument.
-///
-/// Locale capability track, slice 2 (#882): `locale_negotiation`, when
-/// `Some`, is threaded to exactly the `(bynk, LocaleProvider)` pair, the same
-/// way `env_ident` is threaded to `provider_takes_env`'s pairs — a small,
-/// closed set of first-party providers that need ambient, request-scoped
-/// construction data no ordinary `given` clause could express.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn instantiate_provider_expr(
-    provider_ctx: &str,
-    cap: &str,
-    unit_tables: &HashMap<String, UnitTable>,
-    unit_consumes: &HashMap<String, Vec<String>>,
-    unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
-    unit_flattened: &HashMap<String, HashMap<String, String>>,
-    workers_ns: bool,
-    env_ident: Option<&str>,
-    locale_negotiation: Option<&LocaleNegotiationArgs>,
-    referenced_units: &mut BTreeSet<String>,
-) -> String {
-    let ns = provider_ctx.replace('.', "_");
-    let bodied_ns = if workers_ns {
-        format!("handlers_{ns}")
-    } else {
-        ns.clone()
-    };
-    referenced_units.insert(provider_ctx.to_string());
-    let Some(provider) = unit_tables
-        .get(provider_ctx)
-        .and_then(|t| t.providers.get(cap))
-    else {
-        return format!("new {bodied_ns}.{cap}()");
-    };
-    // Build the by-name deps object from the provider's `given`, if any.
-    // #1187's Provider given/deps-wiring slice: reads bynk-emit::ir's own
-    // CapRefIr (lower_provider_given_ir — a standalone reader, never a full
-    // IrItem::Provider; see that function's own doc comment for why) instead
-    // of walking the raw AST CapRef directly.
-    let given: Vec<CapRefIr> = lower_provider_given_ir(provider);
-    let deps_obj = if given.is_empty() {
-        None
-    } else {
-        let consumed = unit_consumes.get(provider_ctx).cloned().unwrap_or_default();
-        let aliases = unit_consumes_aliases
-            .get(provider_ctx)
-            .cloned()
-            .unwrap_or_default();
-        let flattened = unit_flattened
-            .get(provider_ctx)
-            .cloned()
-            .unwrap_or_default();
-        let deps: Vec<String> = given
-            .iter()
-            .map(|g| {
-                let target_ctx = match &g.context {
-                    Some(p) => resolve_consume_prefix(p, &consumed, &aliases)
-                        .unwrap_or_else(|| provider_ctx.to_string()),
-                    None => flattened
-                        .get(&g.name)
-                        .cloned()
-                        .unwrap_or_else(|| provider_ctx.to_string()),
-                };
-                let expr = instantiate_provider_expr(
-                    &target_ctx,
-                    &g.name,
-                    unit_tables,
-                    unit_consumes,
-                    unit_consumes_aliases,
-                    unit_flattened,
-                    workers_ns,
-                    env_ident,
-                    locale_negotiation,
-                    referenced_units,
-                );
-                format!("{}: {}", g.name, expr)
-            })
-            .collect();
-        Some(format!("{{ {} }}", deps.join(", ")))
-    };
-    let mut args: Vec<String> = deps_obj.into_iter().collect();
-    // v0.18/v0.19: env-taking first-party providers (the bynk surface's
-    // SecretsProvider; bynk.cloudflare's WorkersKv) receive the Worker `env`
-    // explicitly — decisions 0021/0025. Keyed by (unit, class).
-    if provider.external
-        && bynk_check::firstparty::provider_takes_env(provider_ctx, &provider.provider_name.name)
-        && let Some(env) = env_ident
-    {
-        args.push(env.to_string());
-    }
-    // Locale capability track, slice 2 (#882, Decision C): only the
-    // `(bynk, LocaleProvider)` pair ever receives these — every other
-    // provider's construction is unaffected since every other call site
-    // passes `None`.
-    if provider.external
-        && provider_ctx == bynk_check::firstparty::BYNK_UNIT
-        && provider.provider_name.name == "LocaleProvider"
-        && let Some(loc) = locale_negotiation
-    {
-        args.push(loc.request_expr.clone());
-        args.push(loc.declared_locales_expr.clone());
-        args.push(loc.reference_locale_expr.clone());
-    }
-    let class = &provider.provider_name.name;
-    let args = args.join(", ");
-    // v0.17: an external (adapter) provider's class lives in the binding module,
-    // not the adapter's interface module — instantiate it from the binding
-    // namespace (`<adapter>__binding`, imported by the composition root).
-    if provider.external {
-        format!("new {ns}__binding.{class}({args})")
-    } else {
-        format!("new {bodied_ns}.{class}({args})")
-    }
-}
-
 /// `new {ns}.{class}({args})` as a real [`bynk_ts::TsExpr::New`] node.
 fn new_call_ts_expr(ns: &str, class: &str, args: Vec<bynk_ts::TsExpr>) -> bynk_ts::TsExpr {
     bynk_ts::TsExpr::New {
@@ -2901,21 +2799,36 @@ fn new_call_ts_expr(ns: &str, class: &str, args: Vec<bynk_ts::TsExpr>) -> bynk_t
     }
 }
 
-/// `TsExpr`-returning twin of [`instantiate_provider_expr`] (the same
-/// "structural converter added alongside the `String` one" pattern
-/// Decision B already uses for `TypeRef -> TsType`, applied here to
-/// expressions) — #1321 (Arc C slice 3): `emitter::workers::
+/// `workers_ns` selects the namespace convention: a bodied provider's class
+/// lives in `{ns}` under the bundle root but `handlers_{ns}` in a Worker
+/// compose; external (binding) classes are `{ns}__binding` in both. When
+/// `env_ident` is set (workers), env-taking first-party providers receive it
+/// as a constructor argument.
+///
+/// Locale capability track, slice 2 (#882): `locale_negotiation`, when
+/// `Some`, is threaded to exactly the `(bynk, LocaleProvider)` pair, the same
+/// way `env_ident` is threaded to `provider_takes_env`'s pairs — a small,
+/// closed set of first-party providers that need ambient, request-scoped
+/// construction data no ordinary `given` clause could express.
+///
+/// Originally a `TsExpr`-returning twin *alongside* a `String`-returning
+/// `instantiate_provider_expr` (the same "structural converter added
+/// alongside the `String` one" pattern Decision B already uses for
+/// `TypeRef -> TsType`) — #1321 (Arc C slice 3): `emitter::workers::
 /// emit_worker_compose` now builds a real `TsProgram` directly, and its own
 /// cross-context capability-provider `const {key} = {expr};` lines need a
-/// real `TsExpr`, not a `String` to splice. `instantiate_provider_expr`
-/// itself is untouched — both `workers.rs`'s own `emit_worker_compose`
-/// (Workers mode, `workers_ns: true`) and `emit_composition_root`'s own
-/// Bundle-mode `compose.ts` (#1327, Arc C slice 6, `workers_ns: false`) call
-/// this twin now. Originally hardcoded `workers_ns = true` (the only mode
-/// `emit_worker_compose`'s own call site used at the time) — #1327 restored
-/// the `workers_ns: bool` parameter its `String`-returning sibling always
-/// had, matching that signature exactly, once a second real caller needed
-/// `false`.
+/// real `TsExpr`, not a `String` to splice. `workers.rs`'s own
+/// `emit_worker_compose` (Workers mode, `workers_ns: true`) and
+/// `emit_composition_root`'s own Bundle-mode `compose.ts` (#1327, Arc C
+/// slice 6, `workers_ns: false`) called this twin from the start. Originally
+/// hardcoded `workers_ns = true` (the only mode `emit_worker_compose`'s own
+/// call site used at the time) — #1327 restored the `workers_ns: bool`
+/// parameter its then-`String`-returning sibling always had, matching that
+/// signature exactly, once a second real caller needed `false`.
+/// Arc F slice 2 (#1452): `plan_agent_given_deps`/`native_platforms_of_context`
+/// (below in this file) repointed here too — `instantiate_provider_expr`
+/// itself had no callers left and is deleted; its parameter-contract prose
+/// and body rationale comments (below) moved here rather than being lost.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn instantiate_provider_ts_expr(
     provider_ctx: &str,
@@ -2942,6 +2855,11 @@ pub(crate) fn instantiate_provider_ts_expr(
     else {
         return new_call_ts_expr(&bodied_ns, cap, vec![]);
     };
+    // Build the by-name deps object from the provider's `given`, if any.
+    // #1187's Provider given/deps-wiring slice: reads bynk-emit::ir's own
+    // CapRefIr (lower_provider_given_ir — a standalone reader, never a full
+    // IrItem::Provider; see that function's own doc comment for why) instead
+    // of walking the raw AST CapRef directly.
     let given: Vec<CapRefIr> = lower_provider_given_ir(provider);
     let deps_obj: Option<bynk_ts::TsExpr> = if given.is_empty() {
         None
@@ -2984,12 +2902,19 @@ pub(crate) fn instantiate_provider_ts_expr(
         Some(bynk_ts::TsExpr::object(deps))
     };
     let mut args: Vec<bynk_ts::TsExpr> = deps_obj.into_iter().collect();
+    // v0.18/v0.19: env-taking first-party providers (the bynk surface's
+    // SecretsProvider; bynk.cloudflare's WorkersKv) receive the Worker `env`
+    // explicitly — decisions 0021/0025. Keyed by (unit, class).
     if provider.external
         && bynk_check::firstparty::provider_takes_env(provider_ctx, &provider.provider_name.name)
         && let Some(env) = env_ident
     {
         args.push(bynk_ts::TsExpr::Ident(env.to_string()));
     }
+    // Locale capability track, slice 2 (#882, Decision C): only the
+    // `(bynk, LocaleProvider)` pair ever receives these — every other
+    // provider's construction is unaffected since every other call site
+    // passes `None`.
     if provider.external
         && provider_ctx == bynk_check::firstparty::BYNK_UNIT
         && provider.provider_name.name == "LocaleProvider"
@@ -3000,6 +2925,9 @@ pub(crate) fn instantiate_provider_ts_expr(
         args.push(bynk_ts::TsExpr::Ident(loc.reference_locale_expr.clone()));
     }
     let class = &provider.provider_name.name;
+    // v0.17: an external (adapter) provider's class lives in the binding module,
+    // not the adapter's interface module — instantiate it from the binding
+    // namespace (`<adapter>__binding`, imported by the composition root).
     if provider.external {
         new_call_ts_expr(&format!("{ns}__binding"), class, args)
     } else {

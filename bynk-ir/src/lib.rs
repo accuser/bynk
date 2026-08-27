@@ -979,7 +979,7 @@ pub enum ProviderBody {
     /// slice, correcting a real gap this bare-unit shape left): an external
     /// provider's own `given` clause is populated the same way `Bynk`'s is
     /// (`ProviderDecl::given` is not gated on `external` anywhere in the
-    /// grammar or checker) and `instantiate_provider_expr`
+    /// grammar or checker) and `instantiate_provider_ts_expr`
     /// (`bynk-emit/src/project.rs`) needs it to build an external
     /// provider's own `deps` constructor argument — this variant's own doc
     /// comment already claimed `given` "lowers unconditionally" (P6.14's
