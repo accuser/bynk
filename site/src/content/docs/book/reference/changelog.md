@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.289.16** | Arc E slice 5 converts `bynk-emit`'s `emit_record`/`emit_record_codec` to build real `TsDecl`/`TsStmt` trees instead of `writeln!`-ing strings, with zero emitted-output change, and adds a narrow `TsBinaryOp::In` to `bynk-ts` for the field-default prevalidation guard this needed. |
 | **v0.289.15** | Arc E slice 4 converts `bynk-emit`'s `emit_refined`/`emit_bytes_named_codec`/`emit_inline_refinement_checks`/`emit_inline_pred_check` to build real `TsDecl`/`TsStmt` trees instead of `writeln!`-ing strings, with zero emitted-output change. |
 | **v0.289.14** | Arc E slice 3 converts `bynk-emit`'s `emit_field_deserialise`/`emit_field_deserialise_wire` to build real `TsStmt` trees instead of `writeln!`-ing strings, with zero emitted-output change. |
 | **v0.289.13** | Arc E, slice 2 — `serialisation.rs`'s duplicate qualified-type-text renderer (`ts_type_ref_qualified`/`ts_inner_type`) is deleted and its 9 real call sites (8 internal, plus `lower.rs`'s `Json.decode[T]` test-scaffold arm) fold into the general `emitter.rs::ts_type_ref_qualified_multi_ts_type` renderer via a new adapter, `serialisation::qualified_ts_type`, that bridges this file's dotted-prefix qualifier convention onto that renderer's bare-namespace one. No behaviour change — every fixture emits byte-identical TypeScript. |
