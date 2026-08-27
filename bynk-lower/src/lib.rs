@@ -2082,7 +2082,7 @@ pub fn lower_provider_item_ir(provider: &ProviderDecl, program: &CheckedProgram)
 /// [`ProviderBody`]'s `external`/`Bynk` dispatch and independent of
 /// [`lower_provider_item_ir`]'s own full assembly (#1187's Provider
 /// `given`/deps-wiring slice) — the standalone entry point
-/// `bynk-emit/src/project.rs`'s `instantiate_provider_expr` actually calls.
+/// `bynk-emit/src/project.rs`'s `instantiate_provider_ts_expr` actually calls.
 /// Building a real `IrItem::Provider` there would still need care for a
 /// `Bynk` provider specifically: `ProviderBody::Bynk::ops` unconditionally
 /// lowers every op's body through `lower_provider_op_ir` → `lower_expr_ir`,

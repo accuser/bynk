@@ -2685,7 +2685,7 @@ pub fn handler_cross_caps(
 
 /// The units a provider capability's `given` closure transitively reaches,
 /// recorded into `referenced_units`. P5.3: a pure resolution walk over the
-/// same graph `bynk-emit`'s `instantiate_provider_expr` walks to build a
+/// same graph `bynk-emit`'s `instantiate_provider_ts_expr` walks to build a
 /// TypeScript instantiation expression — this one builds no TypeScript at
 /// all, since `bynk-check` must never depend on `bynk-emit`'s codegen
 /// (`bynk-emit` depends on `bynk-check`, never the reverse). The two walks

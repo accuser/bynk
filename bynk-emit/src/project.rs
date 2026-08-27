@@ -2799,6 +2799,18 @@ fn new_call_ts_expr(ns: &str, class: &str, args: Vec<bynk_ts::TsExpr>) -> bynk_t
     }
 }
 
+/// `workers_ns` selects the namespace convention: a bodied provider's class
+/// lives in `{ns}` under the bundle root but `handlers_{ns}` in a Worker
+/// compose; external (binding) classes are `{ns}__binding` in both. When
+/// `env_ident` is set (workers), env-taking first-party providers receive it
+/// as a constructor argument.
+///
+/// Locale capability track, slice 2 (#882): `locale_negotiation`, when
+/// `Some`, is threaded to exactly the `(bynk, LocaleProvider)` pair, the same
+/// way `env_ident` is threaded to `provider_takes_env`'s pairs — a small,
+/// closed set of first-party providers that need ambient, request-scoped
+/// construction data no ordinary `given` clause could express.
+///
 /// Originally a `TsExpr`-returning twin *alongside* a `String`-returning
 /// `instantiate_provider_expr` (the same "structural converter added
 /// alongside the `String` one" pattern Decision B already uses for
@@ -2815,7 +2827,8 @@ fn new_call_ts_expr(ns: &str, class: &str, args: Vec<bynk_ts::TsExpr>) -> bynk_t
 /// signature exactly, once a second real caller needed `false`.
 /// Arc F slice 2 (#1452): `plan_agent_given_deps`/`native_platforms_of_context`
 /// (below in this file) repointed here too — `instantiate_provider_expr`
-/// itself had no callers left and is deleted.
+/// itself had no callers left and is deleted; its parameter-contract prose
+/// and body rationale comments (below) moved here rather than being lost.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn instantiate_provider_ts_expr(
     provider_ctx: &str,
@@ -2842,6 +2855,11 @@ pub(crate) fn instantiate_provider_ts_expr(
     else {
         return new_call_ts_expr(&bodied_ns, cap, vec![]);
     };
+    // Build the by-name deps object from the provider's `given`, if any.
+    // #1187's Provider given/deps-wiring slice: reads bynk-emit::ir's own
+    // CapRefIr (lower_provider_given_ir — a standalone reader, never a full
+    // IrItem::Provider; see that function's own doc comment for why) instead
+    // of walking the raw AST CapRef directly.
     let given: Vec<CapRefIr> = lower_provider_given_ir(provider);
     let deps_obj: Option<bynk_ts::TsExpr> = if given.is_empty() {
         None
@@ -2884,12 +2902,19 @@ pub(crate) fn instantiate_provider_ts_expr(
         Some(bynk_ts::TsExpr::object(deps))
     };
     let mut args: Vec<bynk_ts::TsExpr> = deps_obj.into_iter().collect();
+    // v0.18/v0.19: env-taking first-party providers (the bynk surface's
+    // SecretsProvider; bynk.cloudflare's WorkersKv) receive the Worker `env`
+    // explicitly — decisions 0021/0025. Keyed by (unit, class).
     if provider.external
         && bynk_check::firstparty::provider_takes_env(provider_ctx, &provider.provider_name.name)
         && let Some(env) = env_ident
     {
         args.push(bynk_ts::TsExpr::Ident(env.to_string()));
     }
+    // Locale capability track, slice 2 (#882, Decision C): only the
+    // `(bynk, LocaleProvider)` pair ever receives these — every other
+    // provider's construction is unaffected since every other call site
+    // passes `None`.
     if provider.external
         && provider_ctx == bynk_check::firstparty::BYNK_UNIT
         && provider.provider_name.name == "LocaleProvider"
@@ -2900,6 +2925,9 @@ pub(crate) fn instantiate_provider_ts_expr(
         args.push(bynk_ts::TsExpr::Ident(loc.reference_locale_expr.clone()));
     }
     let class = &provider.provider_name.name;
+    // v0.17: an external (adapter) provider's class lives in the binding module,
+    // not the adapter's interface module — instantiate it from the binding
+    // namespace (`<adapter>__binding`, imported by the composition root).
     if provider.external {
         new_call_ts_expr(&format!("{ns}__binding"), class, args)
     } else {
