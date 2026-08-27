@@ -538,12 +538,27 @@ fn render_stmt(out: &mut String, stmt: &TsStmt, depth: usize) {
                     Some(test) => {
                         out.push_str("case ");
                         render_expr(out, test);
-                        out.push_str(": {\n");
-                        for s in &case.body {
-                            render_stmt(out, s, depth + 2);
+                        // Arc E slice 6 (#1445): `case_braced` is the
+                        // non-`default` mirror of `default_braced` just
+                        // below — `emit_sum_codec`'s own payload-free
+                        // variant case (`case "Pending":\n  return { kind:
+                        // "Pending" };`) is real, unbraced content sitting
+                        // right beside a braced payload-carrying sibling in
+                        // the same switch (`212_json_codec`'s own `Status`
+                        // fixture).
+                        if case.case_braced {
+                            out.push_str(": {\n");
+                            for s in &case.body {
+                                render_stmt(out, s, depth + 2);
+                            }
+                            out.push_str(&indent(depth + 1));
+                            out.push_str("}\n");
+                        } else {
+                            out.push_str(":\n");
+                            for s in &case.body {
+                                render_stmt(out, s, depth + 2);
+                            }
                         }
-                        out.push_str(&indent(depth + 1));
-                        out.push_str("}\n");
                     }
                     None => {
                         if case.default_braced {
@@ -3747,6 +3762,7 @@ mod tests {
                     test: Some(TsExpr::Lit(TsLit::Str("orders".to_string()))),
                     body: vec![TsStmt::return_stmt(None, None)],
                     default_braced: false,
+                    case_braced: true,
                 },
                 TsSwitchCase {
                     test: None,
@@ -3761,6 +3777,7 @@ mod tests {
                         None,
                     )],
                     default_braced: false,
+                    case_braced: true,
                 },
             ],
             None,
@@ -3785,6 +3802,7 @@ mod tests {
                 test: None,
                 body: vec![TsStmt::expr_stmt(TsExpr::Ident("x".to_string()), None)],
                 default_braced: true,
+                case_braced: true,
             }],
             None,
         ));
@@ -3792,6 +3810,46 @@ mod tests {
         assert_eq!(
             printed.text,
             "switch (__k) {\n  default: {\n    x;\n  }\n}\n"
+        );
+    }
+
+    /// Arc E slice 6 (#1445): `TsSwitchCase.case_braced` — the mirror-image
+    /// gap `default_braced` left open. `emit_sum_codec`'s own payload-free
+    /// variant case is unbraced right beside a braced payload-carrying
+    /// sibling in the *same* switch, pinned against `212_json_codec`'s own
+    /// mixed `Status` fixture (`case "Pending": return { kind: "Pending"
+    /// };` then `case "Shipped": { ... }`).
+    #[test]
+    fn prints_a_switch_with_an_unbraced_case_beside_a_braced_one() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::switch_stmt(
+            TsExpr::Ident("kind".to_string()),
+            vec![
+                TsSwitchCase {
+                    test: Some(TsExpr::Lit(TsLit::Str("Pending".to_string()))),
+                    body: vec![TsStmt::return_stmt(
+                        Some(TsExpr::Ident("a".to_string())),
+                        None,
+                    )],
+                    default_braced: false,
+                    case_braced: false,
+                },
+                TsSwitchCase {
+                    test: Some(TsExpr::Lit(TsLit::Str("Shipped".to_string()))),
+                    body: vec![TsStmt::return_stmt(
+                        Some(TsExpr::Ident("b".to_string())),
+                        None,
+                    )],
+                    default_braced: false,
+                    case_braced: true,
+                },
+            ],
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(
+            printed.text,
+            "switch (kind) {\n  case \"Pending\":\n    return a;\n  case \"Shipped\": {\n    return b;\n  }\n}\n"
         );
     }
 

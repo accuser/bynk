@@ -96,16 +96,16 @@ export function deserialise_Message(json: JsonValue, path: string = "$"): Result
 export function serialise_MessageArg(value: MessageArg): JsonValue {
   switch (value.tag) {
     case "Text": {
-      return { kind: "Text", value: (value as any).value as JsonValue };
+      return { kind: "Text", value: value.value as JsonValue };
     }
     case "Whole": {
-      return { kind: "Whole", value: (value as any).value as JsonValue };
+      return { kind: "Whole", value: value.value as JsonValue };
     }
     case "Num": {
-      return { kind: "Num", value: ((v: number) => { if (!Number.isFinite(v)) throw new Error("non-finite Float at boundary"); return v as JsonValue; })((value as any).value) };
+      return { kind: "Num", value: ((v: number) => { if (!Number.isFinite(v)) throw new Error("non-finite Float at boundary"); return v as JsonValue; })(value.value) };
     }
     case "Moment": {
-      return { kind: "Moment", value: (value as any).value as JsonValue };
+      return { kind: "Moment", value: value.value as JsonValue };
     }
   }
 }

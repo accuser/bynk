@@ -56,10 +56,10 @@ export function deserialise_User(json: JsonValue, path: string = "$"): Result<Us
 export function serialise_ApiResult_User(value: ApiResult<User>): JsonValue {
   switch (value.tag) {
     case "Loaded": {
-      return { kind: "Loaded", value: serialise_User((value as any).value) };
+      return { kind: "Loaded", value: serialise_User(value.value) };
     }
     case "Failed": {
-      return { kind: "Failed", message: (value as any).message as JsonValue };
+      return { kind: "Failed", message: value.message as JsonValue };
     }
   }
 }
