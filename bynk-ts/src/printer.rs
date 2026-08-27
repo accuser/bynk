@@ -477,7 +477,6 @@ fn render_stmt(out: &mut String, stmt: &TsStmt, depth: usize) {
             name,
             init,
             test,
-            update,
             body,
         } => {
             out.push_str(&indent(depth));
@@ -488,7 +487,7 @@ fn render_stmt(out: &mut String, stmt: &TsStmt, depth: usize) {
             out.push_str("; ");
             render_expr(out, test);
             out.push_str("; ");
-            render_expr(out, update);
+            out.push_str(name);
             out.push_str("++)");
             render_branch(out, body, depth);
         }
@@ -2445,8 +2444,9 @@ mod tests {
     /// Arc E slice 7 (#1447): `TsStmtKind::For` — pins the exact C-style
     /// header shape `ListInst`/`MapInst`'s own real deserialise-side element
     /// loops need (`for (let i = 0; i < json.length; i++) { ... }`),
-    /// including that `update` renders with an appended `++` the caller
-    /// never spells out itself (see `TsStmtKind::For`'s own doc for why).
+    /// including the postfix `++` the printer appends over `name` itself
+    /// (see `TsStmtKind::For`'s own doc for why there is no separate
+    /// `update` field to pass).
     #[test]
     fn prints_a_c_style_for_loop_with_a_braced_body() {
         let mut program = TsProgram::new();
@@ -2461,7 +2461,6 @@ mod tests {
                     property: "length".to_string(),
                 }),
             },
-            TsExpr::Ident("i".to_string()),
             TsStmt::block(
                 vec![TsStmt::expr_stmt(TsExpr::Ident("item".to_string()), None)],
                 None,
@@ -2475,12 +2474,10 @@ mod tests {
         );
     }
 
-    /// A `For` loop's brace-free body falls back to the same inline
-    /// rendering `ForOf`'s own brace-free body already uses (not reachable
-    /// from any real `bynk-emit` content today — both real `For` sites are
-    /// braced — but exercised directly so the fallback arm this slice added
-    /// to `render_inline_stmt`'s own exhaustive match is proven correct
-    /// rather than merely plausible).
+    /// A `For` loop's own brace-free body falls back to the same inline
+    /// rendering `ForOf`'s own brace-free body already uses — exercised as
+    /// the *outer* statement, over a `Continue` body (not reachable from any
+    /// real `bynk-emit` content today, but a real, direct shape).
     #[test]
     fn prints_a_c_style_for_loops_brace_free_body_inline() {
         let mut program = TsProgram::new();
@@ -2492,12 +2489,43 @@ mod tests {
                 left: Box::new(TsExpr::Ident("i".to_string())),
                 right: Box::new(TsExpr::Ident("n".to_string())),
             },
-            TsExpr::Ident("i".to_string()),
             TsStmt::continue_stmt(None),
             None,
         ));
         let printed = print(&program, "x.bynk", "", "x.ts");
         assert_eq!(printed.text, "for (let i = 0; i < n; i++) continue;\n");
+    }
+
+    /// Review of #1448, finding 1: the previous test above pins a brace-free
+    /// `For` as the *outer* statement, which renders through `render_stmt`'s
+    /// own dedicated `For` arm, not the `render_inline_stmt` fallback this
+    /// slice's own `| TsStmtKind::For { .. }` line actually added. That
+    /// fallback only fires when a `For` is itself the brace-free body of an
+    /// ENCLOSING `if`/`for...of`/`For` — exercised directly here, nesting a
+    /// brace-free `For` as an `if`'s own brace-free branch.
+    #[test]
+    fn prints_a_brace_free_for_loop_nested_as_an_ifs_own_brace_free_body() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::if_stmt(
+            TsExpr::Ident("cond".to_string()),
+            TsStmt::for_stmt(
+                "i",
+                TsExpr::Lit(TsLit::Num("0".to_string())),
+                TsExpr::Binary {
+                    op: TsBinaryOp::LessThan,
+                    left: Box::new(TsExpr::Ident("i".to_string())),
+                    right: Box::new(TsExpr::Ident("n".to_string())),
+                },
+                TsStmt::continue_stmt(None),
+                None,
+            ),
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(
+            printed.text,
+            "if (cond) for (let i = 0; i < n; i++) continue;\n"
+        );
     }
 
     #[test]

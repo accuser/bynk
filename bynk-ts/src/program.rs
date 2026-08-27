@@ -134,7 +134,7 @@ pub(crate) enum TsStmtKind {
         iter: TsExpr,
         body: Box<TsStmt>,
     },
-    /// `for (let <name> = <init>; <test>; <update>++) <body>` — a C-style
+    /// `for (let <name> = <init>; <test>; <name>++) <body>` — a C-style
     /// indexed loop, `ForOf`'s counterpart for index-based iteration (as
     /// opposed to `for...of`'s element-based iteration over an existing
     /// collection). Arc E slice 7 (#1447)'s own real, narrow gap:
@@ -151,17 +151,22 @@ pub(crate) enum TsStmtKind {
     ///   - `name`/`init` are always a plain `let <name> = <init>;`
     ///     declaration — no destructuring, no multi-declarator list, no
     ///     explicit type annotation (neither real site needs one).
-    ///   - `update` always renders as the postfix increment `<update>++`,
-    ///     never a general update-expression position — the same "postfix
-    ///     increment has no expression-position representation, only a
-    ///     dedicated statement/clause shape" restriction `Increment`'s own
-    ///     doc above already states for a bare `<expr>++;` statement
-    ///     (#1325); this is that identical restriction applied to a
-    ///     for-header's own update clause instead. Both real sites pass
-    ///     `update` as the very same identifier `name` names, but the two
-    ///     are kept as independent fields rather than one derived from the
-    ///     other — nothing here enforces they agree, the same trust this
-    ///     type already places in `init`/`test` being mutually coherent.
+    ///   - The update clause always renders as the postfix increment
+    ///     `<name>++`, over `name` itself rather than a separate field —
+    ///     review of #1448 found an independent `update: TsExpr` field
+    ///     structurally redundant with `name` (both real construction sites
+    ///     could only ever pass `ident(name)`) with a genuinely dangerous
+    ///     failure mode if the two ever disagreed: unlike a wrong `test`
+    ///     (which `tsc --strict` or a non-running loop tends to surface), a
+    ///     mismatched update clause (`for (let i = 0; i < json.length;
+    ///     j++)`) compiles cleanly whenever `j` is merely in scope and hangs
+    ///     the generated worker at runtime, with nothing in the type, the
+    ///     printer, or a test to catch it. Removing the field removes the
+    ///     failure mode entirely rather than merely asserting against it —
+    ///     the same "postfix increment has no expression-position
+    ///     representation, only a dedicated statement/clause shape"
+    ///     restriction `Increment`'s own doc above already states for a
+    ///     bare `<expr>++;` statement (#1325), applied here too.
     ///   - `body` is the loop body; both real sites pass a `Block`, though
     ///     the same brace-vs-inline rendering `If`/`ForOf` already share
     ///     applies to any other shape too.
@@ -169,7 +174,6 @@ pub(crate) enum TsStmtKind {
         name: String,
         init: TsExpr,
         test: TsExpr,
-        update: TsExpr,
         body: Box<TsStmt>,
     },
     /// `try <try_block> catch (<catch_param>) <catch_block>` — a real gap
@@ -541,7 +545,6 @@ impl TsStmt {
         name: impl Into<String>,
         init: TsExpr,
         test: TsExpr,
-        update: TsExpr,
         body: TsStmt,
         span: Option<Span>,
     ) -> Self {
@@ -550,7 +553,6 @@ impl TsStmt {
                 name: name.into(),
                 init,
                 test,
-                update,
                 body: Box::new(body),
             },
             span,
