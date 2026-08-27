@@ -2335,9 +2335,19 @@ pub(crate) fn emit_provider(
     // for the same answer.
     let given_ir = bynk_lower::lower_provider_given_ir(p);
     if !p.given.is_empty() {
+        // Arc F, slice 4 (#1463): `cap_ref_ty` now returns a real `TsType`,
+        // but this class's own wrapper (this `deps` field/constructor
+        // signature text) stays hand-written per Decision C — re-serialise
+        // via `bynk_ts::print_type`, no behaviour change.
         let deps_ty = given_ir
             .iter()
-            .map(|c| format!("{}: {}", c.name, cap_ref_ty(c, &ctx.cross_context)))
+            .map(|c| {
+                format!(
+                    "{}: {}",
+                    c.name,
+                    bynk_ts::print_type(&cap_ref_ty(c, &ctx.cross_context))
+                )
+            })
             .collect::<Vec<_>>()
             .join("; ");
         // The field is declared separately and assigned in the constructor body
@@ -2474,9 +2484,17 @@ pub(crate) fn emit_provider(
         // The same `deps_ty` the constructor above declares for `deps`,
         // recomputed from the `given_ir` hoisted at the top of this function
         // (that `deps_ty` binding itself doesn't escape its own block).
+        // Arc F, slice 4 (#1463): re-serialised via `bynk_ts::print_type`,
+        // same reason as the constructor's own call site above.
         let deps_ty = given_ir
             .iter()
-            .map(|c| format!("{}: {}", c.name, cap_ref_ty(c, &ctx.cross_context)))
+            .map(|c| {
+                format!(
+                    "{}: {}",
+                    c.name,
+                    bynk_ts::print_type(&cap_ref_ty(c, &ctx.cross_context))
+                )
+            })
             .collect::<Vec<_>>()
             .join("; ");
         format!(
@@ -2494,22 +2512,24 @@ pub(crate) fn emit_provider(
     writeln!(out).unwrap();
 }
 
-/// Append one field to a `deps` object-type string under construction —
+/// Append one field to a `deps` object type under construction —
 /// `emit_service`'s own actor-seam/`__exec`/events-dispatch widening all
-/// repeat this exact splice: `{}` becomes `{ field }`; anything else gets
-/// `field` spliced in before the closing brace. Review of #1209: gathering
-/// the actor-seam widening into one `match` (below) made this splice's own
-/// repetition newly visible — six copies in `emit_service` alone before
-/// this helper.
-fn append_deps_field(deps_ty: &str, field: &str) -> String {
-    if deps_ty == "{}" {
-        format!("{{ {field} }}")
-    } else {
-        format!(
-            "{}; {field} }}",
-            deps_ty.trim_end().trim_end_matches('}').trim_end()
-        )
-    }
+/// need this. Review of #1209: gathering the actor-seam widening into one
+/// `match` (below) made this splice's own repetition newly visible — six
+/// copies in `emit_service` alone before this helper.
+///
+/// Arc F, slice 4 (#1463): `deps_ty` is always `build_deps_object_ty_with_
+/// surface`'s own return value, always a real `TsType::Object` — widening is
+/// now a plain `Vec::push`, replacing the `trim_end_matches('}')` string
+/// splice this helper used before every caller built a real tree instead of
+/// hand-joined text.
+fn append_deps_field(deps_ty: &mut bynk_ts::TsType, name: impl Into<String>, ty: bynk_ts::TsType) {
+    let bynk_ts::TsType::Object(members) = deps_ty else {
+        panic!(
+            "bynk internal error: append_deps_field's own deps_ty is always TsType::Object, found {deps_ty:?}"
+        );
+    };
+    members.push(bynk_ts::TsTypeMember::prop(name, ty));
 }
 
 pub(crate) fn emit_service(
@@ -2790,21 +2810,42 @@ pub(crate) fn emit_service(
         // rather than the type system).
         match &seam {
             ActorSeamIr::Bearer(s) if s.binder.is_some() => {
-                deps_ty = append_deps_field(&deps_ty, &format!("identity: {}", s.identity_type));
+                append_deps_field(
+                    &mut deps_ty,
+                    "identity",
+                    bynk_ts::TsType::named(s.identity_type.clone()),
+                );
             }
             // v0.151: an `Oidc`-binding handler threads its `sub`-minted
             // identity into deps exactly like Bearer.
             ActorSeamIr::Oidc(s) if s.binder.is_some() => {
-                deps_ty = append_deps_field(&deps_ty, &format!("identity: {}", s.identity_type));
+                append_deps_field(
+                    &mut deps_ty,
+                    "identity",
+                    bynk_ts::TsType::named(s.identity_type.clone()),
+                );
             }
             // v0.54: a Caller-binding call handler's deps carries the
             // caller's context name as its `CallerId` identity (a `string`).
             ActorSeamIr::Caller(_) => {
-                deps_ty = append_deps_field(&deps_ty, "identity: string");
+                append_deps_field(&mut deps_ty, "identity", bynk_ts::TsType::named("string"));
             }
             // v0.52: a sum handler's deps carries the resolved-actor tagged
             // union (`who`), which the body `match`es. A binder-less sum is
             // rejected by the checker, so a sum handler always captures `who`.
+            //
+            // Arc F, slice 4 (#1463): review of #1463 found this can't build
+            // as a real `TsType::Object`/`TsType::union` — each member's own
+            // `{ tag: "Name", identity: T }` shape is comma-separated
+            // (matching the pre-existing hand-written text), but
+            // `TsType::Object`'s own printer always joins members with `"; "`
+            // (`bynk-ts/src/printer.rs`'s own hardcoded convention) —
+            // confirmed by a real fixture byte-diff, not assumed. Rebuilding
+            // it would silently change the punctuation, not just the
+            // construction. Stays the pre-rendered text it already was,
+            // wrapped as opaque `Named` — the same "an odd, one-off shape
+            // stays opaque text" precedent this track uses elsewhere, not a
+            // gap this slice leaves unclosed.
             ActorSeamIr::Sum(members) => {
                 let union = members
                     .iter()
@@ -2814,7 +2855,7 @@ pub(crate) fn emit_service(
                     })
                     .collect::<Vec<_>>()
                     .join(" | ");
-                deps_ty = append_deps_field(&deps_ty, &format!("who: {union}"));
+                append_deps_field(&mut deps_ty, "who", bynk_ts::TsType::named(union));
             }
             // A binder-less Bearer/Oidc, or no seam at all — nothing to widen.
             ActorSeamIr::Bearer(_) | ActorSeamIr::Oidc(_) | ActorSeamIr::None => {}
@@ -2823,9 +2864,21 @@ pub(crate) fn emit_service(
         // (`__exec`) in its deps, so the fire-and-forget send can hand its promise
         // to `waitUntil`. Gated on the body so non-sending handlers are unchanged.
         if crate::emitter::block_uses_send(&handler.body) {
-            deps_ty = append_deps_field(
-                &deps_ty,
-                "__exec: { waitUntil(promise: Promise<unknown>): void }",
+            append_deps_field(
+                &mut deps_ty,
+                "__exec",
+                bynk_ts::TsType::Object(vec![bynk_ts::TsTypeMember::method(
+                    "waitUntil",
+                    vec![bynk_ts::TsParam {
+                        name: "promise".to_string(),
+                        ty: Some(bynk_ts::TsType::named_with_args(
+                            "Promise",
+                            vec![bynk_ts::TsType::named("unknown")],
+                        )),
+                        optional: false,
+                    }],
+                    bynk_ts::TsType::named("void"),
+                )]),
             );
         }
         // Events track, slice 0 (spine #936): a handler whose body uses
@@ -2851,25 +2904,29 @@ pub(crate) fn emit_service(
                     .agent_given_caps_used()
                     .is_some_and(|m| m.contains_key("Events")));
         if needs_events_dispatch {
-            deps_ty = append_deps_field(
-                &deps_ty,
-                &format!(
-                    "__eventsDispatch: (events: Array<{}>) => Promise<void>",
+            // Arc F, slice 4 (#1463): a bare function type has no way to name
+            // its own parameter (`TsType::Fn`'s params are anonymous,
+            // positional `a0`/`a1`/… — its own doc), the same real algebra
+            // gap `emit_context_deps_interface`'s own identical field already
+            // named (#1453) — stays opaque `Named` text, not a new pattern.
+            append_deps_field(
+                &mut deps_ty,
+                "__eventsDispatch",
+                bynk_ts::TsType::named(format!(
+                    "(events: Array<{}>) => Promise<void>",
                     crate::emitter::EVENTS_WIRE_EVENT_TS_TYPE
-                ),
+                )),
             );
         }
-        // #1361: `deps`'s own type stays one opaque `TsType::named` string
-        // — `deps_ty`'s own dynamic, multi-source construction (capability
-        // refs, the 4-way actor-seam widening above, `__exec`,
-        // `__eventsDispatch`) is real, separate, much larger work than this
-        // slice's own scope, the same "an odd, one-off/dynamically-built
-        // type shape stays opaque text" precedent P7.9 (#1315) already used
-        // for `Query[T]`'s own extra-paren-wrapped shape and #1355's own
-        // `messagesByLocale` type annotation.
+        // Arc F, slice 4 (#1463): `deps`'s own type is now the real
+        // `TsType::Object` `build_deps_object_ty_with_surface` builds,
+        // widened in place by every `append_deps_field` call above — closes
+        // #1361's own named residual ("deps's own type stays one opaque
+        // `TsType::named` string... real, separate, much larger work than
+        // this slice's own scope").
         params.push(bynk_ts::TsParam {
             name: "deps".to_string(),
-            ty: Some(bynk_ts::TsType::named(deps_ty)),
+            ty: Some(deps_ty),
             optional: false,
         });
         // Events track, slice 0 (spine #936): release-at-commit (events.md
@@ -2966,14 +3023,25 @@ pub(crate) fn emit_service(
 /// A local capability uses its bare interface name; a cross-context one is
 /// qualified with the providing context's import namespace
 /// (`platform_time.Clock`).
-fn cap_ref_ty(c: &bynk_ir::CapRefIr, info: &bynk_check::resolver::CrossContextInfo) -> String {
+///
+/// Arc F, slice 4 (#1463): a qualified capability name (`ns.Cap`) has no
+/// dedicated `bynk_ts::TsType` shape (no member-access-on-a-type variant in
+/// the algebra) — `Named` carrying the whole dotted string is the same
+/// honest-opaque representation `workers_env_ty`'s own `ServiceBinding`/
+/// `DurableObjectNamespace` entries already use for library-provided names.
+fn cap_ref_ty(
+    c: &bynk_ir::CapRefIr,
+    info: &bynk_check::resolver::CrossContextInfo,
+) -> bynk_ts::TsType {
     match c.context.as_deref().and_then(|p| info.resolve_prefix(p)) {
-        Some(consumed) => format!("{}.{}", qualified_to_ns(&consumed), c.name),
+        Some(consumed) => {
+            bynk_ts::TsType::named(format!("{}.{}", qualified_to_ns(&consumed), c.name))
+        }
         // v0.17: a bare flattened capability (`consumes U { Cap }`) keeps its
         // interface in the consumed unit's module — qualify the type there.
         None => match info.flattened_caps.get(&c.name) {
-            Some(unit) => format!("{}.{}", qualified_to_ns(unit), c.name),
-            None => c.name.clone(),
+            Some(unit) => bynk_ts::TsType::named(format!("{}.{}", qualified_to_ns(unit), c.name)),
+            None => bynk_ts::TsType::named(c.name.clone()),
         },
     }
 }
@@ -3121,15 +3189,18 @@ fn build_deps_object_ty_with_surface(
     cx: &LowerCtx<'_>,
     cross_context: &bynk_check::resolver::CrossContextInfo,
     target: BuildTarget,
-) -> String {
-    let mut parts: Vec<String> = given
+) -> bynk_ts::TsType {
+    let mut members: Vec<bynk_ts::TsTypeMember> = given
         .iter()
-        .map(|c| format!("{}: {}", c.name, cap_ref_ty(c, cross_context)))
+        .map(|c| bynk_ts::TsTypeMember::prop(c.name.clone(), cap_ref_ty(c, cross_context)))
         .collect();
     match target {
         BuildTarget::Bundle => {
             if cx.cross_context_used() {
-                parts.push(format!("surface: {}", surface_ty(cross_context)));
+                members.push(bynk_ts::TsTypeMember::prop(
+                    "surface",
+                    surface_ty(cross_context),
+                ));
             }
         }
         BuildTarget::Workers => {
@@ -3143,14 +3214,14 @@ fn build_deps_object_ty_with_surface(
                 } else {
                     Vec::new()
                 };
-                parts.push(format!("env: {}", workers_env_ty(cross_context, &agents)));
+                members.push(bynk_ts::TsTypeMember::prop(
+                    "env",
+                    workers_env_ty(cross_context, &agents),
+                ));
             }
         }
     }
-    if parts.is_empty() {
-        return "{}".to_string();
-    }
-    format!("{{ {} }}", parts.join("; "))
+    bynk_ts::TsType::Object(members)
 }
 
 /// Local agent names in this commons, sorted — the DO bindings `env` exposes
@@ -3175,10 +3246,10 @@ fn sorted_local_agents(cx: &LowerCtx<'_>) -> Vec<String> {
 fn workers_env_ty(
     cross_context: &bynk_check::resolver::CrossContextInfo,
     agents: &[String],
-) -> String {
+) -> bynk_ts::TsType {
     let mut consumed_sorted = cross_context.consumed_contexts.clone();
     consumed_sorted.sort();
-    let mut entries: Vec<String> = consumed_sorted
+    let mut members: Vec<bynk_ts::TsTypeMember> = consumed_sorted
         .iter()
         // A unit consumed only in the flattened-capability form
         // (`consumes bynk { Clock }` — adapters and the first-party surface)
@@ -3197,18 +3268,17 @@ fn workers_env_ty(
         })
         .map(|q| {
             let bind = crate::emitter::wrangler::consumed_binding_name(q);
-            format!("{bind}: ServiceBinding")
+            bynk_ts::TsTypeMember::prop(bind, bynk_ts::TsType::named("ServiceBinding"))
         })
         .collect();
     for agent in agents {
         let bind = crate::emitter::wrangler::agent_binding_name(agent);
-        entries.push(format!("{bind}: DurableObjectNamespace"));
+        members.push(bynk_ts::TsTypeMember::prop(
+            bind,
+            bynk_ts::TsType::named("DurableObjectNamespace"),
+        ));
     }
-    if entries.is_empty() {
-        "{}".to_string()
-    } else {
-        format!("{{ {} }}", entries.join("; "))
-    }
+    bynk_ts::TsType::Object(members)
 }
 
 /// v0.15: true when at least one consumed context exposes services (and thus
@@ -3225,7 +3295,12 @@ fn has_consumed_service(cross_context: &bynk_check::resolver::CrossContextInfo) 
 /// context by its surface key plus the consumed context's makeSurface type.
 /// Only service-bearing consumed contexts contribute (a capability-only
 /// consumed context has no `makeSurface`).
-fn surface_ty(cross_context: &bynk_check::resolver::CrossContextInfo) -> String {
+///
+/// Arc F, slice 4 (#1463): `ReturnType<typeof X>` has no dedicated algebra
+/// member either (not a type argument in the ordinary generic sense) —
+/// `Named` with the whole expression text is the same pragmatic, already-
+/// precedented choice `cap_ref_ty`'s own dotted names use above.
+fn surface_ty(cross_context: &bynk_check::resolver::CrossContextInfo) -> bynk_ts::TsType {
     let mut entries: Vec<(String, String)> = Vec::new();
     // Use alias if present, else the last segment of the qualified name.
     // Order: stable (sorted) so the diff is deterministic.
@@ -3249,15 +3324,12 @@ fn surface_ty(cross_context: &bynk_check::resolver::CrossContextInfo) -> String 
         let ns = qualified_to_ns(q);
         entries.push((key, format!("ReturnType<typeof {ns}.makeSurface>")));
     }
-    if entries.is_empty() {
-        return "{}".to_string();
-    }
-    let body = entries
-        .into_iter()
-        .map(|(k, v)| format!("{k}: {v}"))
-        .collect::<Vec<_>>()
-        .join("; ");
-    format!("{{ {body} }}")
+    bynk_ts::TsType::Object(
+        entries
+            .into_iter()
+            .map(|(k, v)| bynk_ts::TsTypeMember::prop(k, bynk_ts::TsType::named(v)))
+            .collect(),
+    )
 }
 
 /// Turn a qualified context name (e.g. `commerce.payment`) into the JS
@@ -3327,9 +3399,13 @@ fn emit_context_deps_interface(
         members.push(bynk_ts::TsTypeMember::readonly_prop(key, ty));
     }
     if !ctx.cross_context.consumed_contexts.is_empty() && has_consumed_service(&ctx.cross_context) {
+        // Arc F, slice 4 (#1463): `surface_ty` now returns a real `TsType`
+        // directly — closes the residual Arc F slice 3 (#1453) named here
+        // ("kept as opaque `TsType::named(...)` text... because its own
+        // source, `surface_ty`, is still `String`-returning").
         members.push(bynk_ts::TsTypeMember::readonly_prop(
             "surface",
-            bynk_ts::TsType::named(surface_ty(&ctx.cross_context)),
+            surface_ty(&ctx.cross_context),
         ));
     }
     // Events track, slice 0 (spine #936): a context with any handler that
@@ -5316,15 +5392,21 @@ pub(crate) fn emit_agent(
                     .agent_given_caps_used()
                     .is_some_and(|m| m.contains_key("Events")));
         if needs_events_dispatch {
-            let field = format!(
-                "__eventsDispatch: (events: Array<{}>) => Promise<void>",
-                crate::emitter::EVENTS_WIRE_EVENT_TS_TYPE
+            // Arc F, slice 4 (#1463): stays opaque `Named` text — the same
+            // `TsType::Fn`-has-no-named-params gap `emit_service`'s own
+            // identical field already names.
+            append_deps_field(
+                &mut deps_ty,
+                "__eventsDispatch",
+                bynk_ts::TsType::named(format!(
+                    "(events: Array<{}>) => Promise<void>",
+                    crate::emitter::EVENTS_WIRE_EVENT_TS_TYPE
+                )),
             );
-            deps_ty = append_deps_field(&deps_ty, &field);
         }
         params.push(bynk_ts::TsParam {
             name: "deps".to_string(),
-            ty: Some(bynk_ts::TsType::named(deps_ty)),
+            ty: Some(deps_ty),
             optional: false,
         });
         let ret = ts_type_ref_to_ts_type(&h.return_type, None);
@@ -6214,12 +6296,15 @@ fn emit_ws_do_method(
         ctx.target,
     );
     if let Some(seam) = host.seam.as_ref().filter(|s| s.binder.is_some()) {
-        let field = format!("identity: {}", seam.identity_type);
-        deps_ty = append_deps_field(&deps_ty, &field);
+        append_deps_field(
+            &mut deps_ty,
+            "identity",
+            bynk_ts::TsType::named(seam.identity_type.clone()),
+        );
     }
     params.push(bynk_ts::TsParam {
         name: "deps".to_string(),
-        ty: Some(bynk_ts::TsType::named(deps_ty)),
+        ty: Some(deps_ty),
         optional: false,
     });
     let method_entry = bynk_ts::TsClassMethod {
