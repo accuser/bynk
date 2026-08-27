@@ -343,9 +343,13 @@ again — trajectory §2's own failure mode ("a phase that half-lands leaves two
 reached through a green gate.
 
 - **`ts_writes`** — TypeScript-producing `write!`/`writeln!`/`format!` outside `bynk-ts` **and**
-  outside a `Verbatim` construction. Retires at **0**. Once every site routes through at least
-  `Verbatim`, this reads 0 by design — that is the intended, immediate win of landing the hatch
-  (P7.5), not a way to appear finished while unconverted.
+  outside a `Verbatim` construction. Originally: retires at **0**, once every site routes through
+  at least `Verbatim`. **Corrected by #1462, §6's own "Arc F" closing note**: a real, argued,
+  non-zero floor exists — `lower.rs`'s permanent exclusion (ADR 0391), `pred_condition_and_
+  message`/`inject_runtime_imports`'s own permanent post-print/shared-mapping shapes, and the
+  DO-class/`emit_provider` hand-written wrapper text (Decision C) — the same "retires at an
+  argued floor, not a fixed 0" correction `verbatim_sites` already got below, not a fixed 0 this
+  probe can reach either.
 - **`verbatim_origins`** — count of distinct `VerbatimOrigin` enum variants still constructed.
   Retires at an **argued floor**, expected small (1–3), named file-by-file at retirement the way
   `ast_importers`'s floor of 5 was. Measures how many *families* of residue remain, not their
@@ -2219,6 +2223,25 @@ confidence but is not a guarantee against a hidden unconverted chunk). **This do
 for `ts_writes`'s own final residual — the same shape ADR 0399 already produced for `ts_any`/
 `verbatim_sites` — not a claim that a fourth or fifth slice reaches a genuine 0. That writeup is
 tracked as #1462.
+
+**#1462 landed: `emit_agent`'s own cluster read end to end, not sampled — mostly confirmed, one
+real gap found.** `ts_writes` reads **875** today (`serialisation.rs`/`emit.rs`/`project.rs`
+dropped from Arc F's own opening figures once slices 1–3 landed). Of `emit_agent`'s own 99
+current sites: **~65 confirmed already-argued print-and-splice** (state interface, zero factory,
+rehydration checks, `loadState`/`commitState`, the per-handler prologue/epilogue wrapper, the
+Workers `fetch` dispatch, the construction factory — each individually re-verified, not assumed);
+**the DO class wrapper is confirmed to be `emit_agent`'s own instance of `emit_provider`'s
+already-accepted Decision C**, not a separate unnamed gap; but **the history-driver
+(`__bynkDriveHistory_*`, gated on `history_target_agents`, ~34 sites) is genuinely raw
+hand-templated text throughout, with no comment anywhere arguing why — a real, tractable,
+bounded, single-function conversion candidate**, named here for the first time rather than left
+as Arc F's own unverified assumption. `pred_condition_and_message`/`inject_runtime_imports` are
+formally collected (both permanent — the latter confirmed as genuine post-print text surgery,
+entangled with #1461's own nested-source-map finding); the `__eventsDispatch` carve-out tracks
+with #1463. The argued floor is **not 0 and not fully known until the history-driver conversion
+is attempted** — `tests_emit.rs`'s 83 sites and `workers_entry.rs`'s 34 still carry Arc F's own
+sampling-only caveat, out of #1462's own scoped ask (`emit_agent`'s cluster specifically). Full
+argument: `design/decisions/`'s ADR from #1462 (number assigned at merge).
 
 ---
 
