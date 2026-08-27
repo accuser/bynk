@@ -1,11 +1,6 @@
----
-level: patch
-changelog: Arc F design pass — decomposes `ts_writes`'s remaining non-`serialisation.rs` surface into three concretely-scoped conversion slices, one open investigation, and a named already-argued residual
----
+# 0403 — `ts_writes`'s remaining non-`serialisation.rs` surface splits into three concretely-scoped conversion slices (Arc E's own deferred steps 6/7, `project.rs`'s duplicate provider-instantiation function, `emit.rs`'s already-flagged `emit_context_deps_interface`), one open investigation (`emit.rs`'s deps-object-type builders), and a large already-argued residual
 
-## ADR: arc-f-ts-writes-remaining-surface-decomposition
-
-title: `ts_writes`'s remaining non-`serialisation.rs` surface splits into three concretely-scoped conversion slices (Arc E's own deferred steps 6/7, `project.rs`'s duplicate provider-instantiation function, `emit.rs`'s already-flagged `emit_context_deps_interface`), one open investigation (`emit.rs`'s deps-object-type builders), and a large already-argued residual
+- **Status:** Accepted (v0.289.19)
 
 summary: With Arc E's own 7 slices landed, a file-by-file re-count of `ts_writes`'s 901 sites finds `lower.rs` (371, ADR 0391) and `serialisation.rs` (71, Arc E's own closed residual) still excluded, and the remaining 459 sites in `emit.rs`/`emitter.rs`/`project.rs`/`tests_emit.rs`/`workers_entry.rs`/`workers.rs`/`events_fanout.rs` are overwhelmingly already-argued residual — three real, bounded targets remain
 
