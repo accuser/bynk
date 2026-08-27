@@ -1,11 +1,6 @@
----
-level: patch
-changelog: Resolves #1459 (ADR 0399 follow-on) — formalises `ts_any`'s 26 non-collection-kernel residual sites into six argued families, and corrects ADR 0399's own tentative recommendation to exclude `workers.rs`'s Durable Object stub from R7.1's scope. No code change — a documentation/argument settling pass.
----
+# 0404 — ts_any's non-collection-kernel residual is fully argued across six families; the Durable Object stub is not excluded
 
-## ADR: ts-any-residual-six-families
-title: ts_any's non-collection-kernel residual is fully argued across six families; the Durable Object stub is not excluded
-summary: 26 sites collapse into six already-(or newly-)argued families; ADR 0399's DO-stub exclusion recommendation is corrected, not adopted
+- **Status:** Accepted (v0.289.25)
 
 **Context.** ADR 0399 (#1423) named a 23-site "honest majority" (bucket 3) and a 1-site DO-stub
 question (bucket 4) as needing individual, file:line-grounded arguments before R7.1 could
