@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.289.22** | Arc F slice 3 converts `bynk-emit`'s `emit_context_deps_interface` to build a real `bynk_ts::TsDecl::Interface` instead of `writeln!`-ing text, with two fields (`surface`, `__eventsDispatch`) deliberately kept as opaque `TsType::named(...)` text — the former because its own source (`surface_ty`) is still `String`-returning, the latter because `bynk_ts::TsType::Fn` cannot represent a named parameter — zero emitted-output change. |
 | **v0.289.21** | Arc F slice 2 repoints `bynk-emit`'s `plan_agent_given_deps`/`native_platforms_of_context` at the tree-native `instantiate_provider_ts_expr`, deleting the now-uncalled `String`-returning `instantiate_provider_expr` — zero emitted-output change. |
 | **v0.289.20** | Arc F slice 1 converts `bynk-emit`'s `emit_helpers_for_owner[_qualified]`/`emit_generic_helpers[_qualified]` (and `emit_one`) to return real `Vec<TsDecl>` trees instead of `writeln!`-ing into `out: &mut String`, with the boundary-print step consolidated into one shared `print_decls` helper at every caller — zero emitted-output change. |
 | **v0.289.19** | Arc F design pass — decomposes `ts_writes`'s remaining non-`serialisation.rs` surface into three concretely-scoped conversion slices, one open investigation, and a named already-argued residual |
