@@ -2247,6 +2247,20 @@ it as a real node would have silently changed the punctuation. Confirmed by
 functions' own internal `format!` calls built TS-syntax text directly, not just the `TsParam`-level
 wrap; converting them removed the need for most of that text-building outright.
 
+**Review of #1469 sharpened this landing twice more, before merge.** `append_deps_field`'s own
+`&mut TsType` signature (with a runtime `let ... else { panic!() }` guard for the "found
+something else" case) encoded an invariant the type system could hold outright —
+`build_deps_object_ty_with_surface` now returns the bare `Vec<TsTypeMember>` directly, and
+`append_deps_field` takes `&mut Vec<TsTypeMember>`, removing the panic path entirely rather than
+documenting why it can't fire. The old `trim_end_matches('}')` splice this replaces was a **latent
+hazard**, not merely untidy: it strips every trailing `}`, and only produced the right answer
+because a nested object field always happened to end with a space before its own closing brace —
+`__exec`'s own `{ waitUntil(...): void }` shape was one stray space away from silently losing a
+brace. Separately, `surface_ty`'s own `ReturnType<T>` narrows one level further: `ReturnType<T>`
+itself is representable generically (`TsType::named_with_args`), so only its own `typeof
+{ns}.makeSurface` type argument stays opaque now, not the whole expression — the accurate account
+of what remains text, not what the first landing happened to leave opaque.
+
 **#1462 landed: `emit_agent`'s own cluster read end to end, not sampled — mostly confirmed, one
 real gap found.** `ts_writes` reads **875** today (`serialisation.rs`/`emit.rs`/`project.rs`
 dropped from Arc F's own opening figures once slices 1–3 landed). Of `emit_agent`'s own 99
