@@ -207,11 +207,13 @@ them.
 
 **Floor:** as already settled (not one of §3's open items — this predates the branch): named at
 settling, not discovered mid-track. `ts_writes` retires at **0** outside `bynk-ts` and outside a
-`Verbatim` construction; `verbatim_origins` retires at an **argued floor**, expected small (per
-§1's five-file residue and Q3's finding that `Any`-elimination needs no residual `Verbatim`
-coverage of its own); `verbatim_sites` retires at **0** — see §5 for why `verbatim_origins` alone
-cannot be the floor (a review of the settling PR caught this: distinct variants don't bound
-residual volume, and this third probe closes that gap).
+`Verbatim` construction (**both this and `verbatim_sites`' own "retires at 0" a few lines down
+are stale — §5 corrects both to an argued, non-zero floor; #1423 for `verbatim_sites`, #1462 for
+`ts_writes`**); `verbatim_origins` retires at an **argued floor**, expected small (per §1's
+five-file residue and Q3's finding that `Any`-elimination needs no residual `Verbatim` coverage
+of its own); `verbatim_sites` retires at **0** — see §5 for why `verbatim_origins` alone cannot
+be the floor (a review of the settling PR caught this: distinct variants don't bound residual
+volume, and this third probe closes that gap).
 
 ### 3.3 Q3 — Is `TsType::Any` actually eliminable across all current `as any`/bare-`any` sites, or does eliminating some re-open phase 6? **Settled — and the finding is better than the question assumed.**
 
@@ -343,9 +345,19 @@ again — trajectory §2's own failure mode ("a phase that half-lands leaves two
 reached through a green gate.
 
 - **`ts_writes`** — TypeScript-producing `write!`/`writeln!`/`format!` outside `bynk-ts` **and**
-  outside a `Verbatim` construction. Retires at **0**. Once every site routes through at least
-  `Verbatim`, this reads 0 by design — that is the intended, immediate win of landing the hatch
-  (P7.5), not a way to appear finished while unconverted.
+  outside a `Verbatim` construction. Originally: retires at **0**, once every site routes through
+  at least `Verbatim`. **Corrected by #1462, §6's own "Arc F" closing note**: a real, argued,
+  non-zero floor exists — `lower.rs`'s permanent exclusion (ADR 0391) and the DO-class/
+  `emit_provider` hand-written wrapper text (Decision C) are genuinely permanent. The
+  `pred_condition_and_message` mapping function and `inject_runtime_imports` are **not** — review
+  of #1468 found the former's own real blocker is just two missing `TsBinaryOp` variants
+  (`>=`/`<=`), matching this algebra's own established "add the operator, don't wall it off"
+  convention (`LessThan`/`InstanceOf`/`In` each landed the same way); the latter stays a real,
+  unattempted design question (post-print text surgery, entangled with #1461's own
+  nested-source-map finding), not proven impossible. Both belong in the same "argued, not yet
+  attempted" bucket as the history-driver, not the permanent one — the same "retires at an argued
+  floor, not a fixed 0" correction `verbatim_sites` already got below, not a fixed 0 this probe
+  can reach either.
 - **`verbatim_origins`** — count of distinct `VerbatimOrigin` enum variants still constructed.
   Retires at an **argued floor**, expected small (1–3), named file-by-file at retirement the way
   `ast_importers`'s floor of 5 was. Measures how many *families* of residue remain, not their
@@ -2219,6 +2231,32 @@ confidence but is not a guarantee against a hidden unconverted chunk). **This do
 for `ts_writes`'s own final residual — the same shape ADR 0399 already produced for `ts_any`/
 `verbatim_sites` — not a claim that a fourth or fifth slice reaches a genuine 0. That writeup is
 tracked as #1462.
+
+**#1462 landed: `emit_agent`'s own cluster read end to end, not sampled — mostly confirmed, one
+real gap found.** `ts_writes` reads **875** today (`serialisation.rs`/`emit.rs`/`project.rs`
+dropped from Arc F's own opening figures once slices 1–3 landed). Of `emit_agent`'s own 99
+current sites: **66 confirmed already-argued print-and-splice** (state interface, zero factory,
+rehydration checks, `loadState`/`commitState`, the per-handler prologue/epilogue wrapper, the
+Workers `fetch` dispatch, the construction factory — each individually re-verified, not assumed);
+**the DO class wrapper is confirmed to be `emit_agent`'s own instance of `emit_provider`'s
+already-accepted Decision C**, not a separate unnamed gap; but **the history-driver
+(`__bynkDriveHistory_*`, gated on `history_target_agents`, exactly 33 sites) is genuinely raw
+hand-templated text throughout, with no comment anywhere arguing why — a real, tractable,
+bounded, single-function conversion candidate**, named here for the first time rather than left
+as Arc F's own unverified assumption. `pred_condition_and_message`/`inject_runtime_imports` are
+formally collected, but review of #1468 corrected their own status: neither is actually
+permanent. `pred_condition_and_message`'s real blocker is two missing `TsBinaryOp` variants
+(`>=`/`<=`) — an ordinary algebra addition, the same pattern `LessThan`/`InstanceOf`/`In` each
+already used, not a wall. `inject_runtime_imports` stays a real, unattempted design question
+(genuine post-print text surgery, entangled with #1461's own nested-source-map finding), not
+proven impossible. Both move to the "argued, not yet attempted" bucket alongside the
+history-driver — only `lower.rs` (ADR 0391) and the Decision-C wrapper text are genuinely
+permanent. The `__eventsDispatch` carve-out tracks with #1463. The argued floor is **not 0 and
+not fully known until the history-driver (and, now, `pred_condition_and_message`/
+`inject_runtime_imports`) conversions are attempted** — `tests_emit.rs`'s 83 sites and
+`workers_entry.rs`'s 34 still carry Arc F's own sampling-only caveat, out of #1462's own scoped
+ask (`emit_agent`'s cluster specifically). Full argument: `design/decisions/`'s ADR from #1462
+(number assigned at merge).
 
 ---
 
