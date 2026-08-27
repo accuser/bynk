@@ -17,18 +17,26 @@ open. #1472 is that count and that resolution.
 
 **The nested source-map gap already has working prior art inside `bynk-emit` — it needs
 generalising, not designing from scratch.** `emit_class_method_and_merge_source_map`
-(`bynk-emit/src/emitter/emit.rs:2270-2296`, review of #1381) is the shared helper every real
-per-item body splice already funnels through (`emit_free_fn`, `emit_provider`'s ops,
-`emit_agent`'s handler methods). It merges a body-local `SourceMapBuilder`'s own checkpoints into
-the module map at the right offset — exactly prerequisite 3's job — but has to recover that offset
-by subtracting known lengths and string-matching the printed text's own tail, because
-`print_class_method` never reports where it placed the opaque body blob it was handed. It
-degrades to silently skipping the mapping if that recovery fails. The fix: extend
-`bynk_ts::printer::print`'s own existing per-statement mechanism (`out.len()` immediately before
-`render_stmt`, already used for top-level `TsStmt.span` checkpoints) one level further — a
-`TsStmt`/`TsClassMethod`/`TsObjectEntry::Method` variant carrying an optional nested checkpoint
-table lets the printer call `SourceMapBuilder::merge` itself, at the real print-time offset, with
-no reverse-engineering and no silent-skip fallback needed. One new optional field, one new printer
+(`bynk-emit/src/emitter/emit.rs:2270-2296`, review of #1381) is the shared helper `emit_provider`'s
+ops and `emit_agent`'s handler methods funnel through. **Review of #1474 caught this pass's own
+first draft overclaiming `emit_free_fn` as a client of it — it is a second, independent hand-rolled
+recovery of the same fact, not a call into the shared helper**: `emit_free_fn`'s own tail computes
+the opaque body blob's offset by exact arithmetic (`Raw` splices verbatim, so everything before/
+after it in the printed text is known-length), guarded by a loud `debug_assert!` rather than the
+helper's own silent skip. Two hand-rolled recoveries, not one — strengthens rather than weakens
+this finding, and means the printer extension below must reach a function declaration's `Raw` body
+(`emit_free_fn` prints via `TsDecl::Function`/`print_stmt`, not `print_class_method`) for "one
+extension unblocks every body-bearing callee" to actually hold. The helper itself merges a
+body-local `SourceMapBuilder`'s own checkpoints into the module map at the right offset — exactly
+prerequisite 3's job, for its own three call sites — but has to recover that offset by subtracting
+known lengths and string-matching the printed text's own tail, because `print_class_method` never
+reports where it placed the opaque body blob it was handed, and degrades to silently skipping the
+mapping if that recovery fails. The fix: extend `bynk_ts::printer::print`'s own existing
+per-statement mechanism (`out.len()` immediately before `render_stmt`, already used for top-level
+`TsStmt.span` checkpoints) one level further — a `TsStmt`/`TsClassMethod`/`TsObjectEntry::Method`
+variant carrying an optional nested checkpoint table lets the printer call `SourceMapBuilder::merge`
+itself, at the real print-time offset, with no reverse-engineering and no silent-skip fallback
+needed. One new optional field, one new printer
 branch — the same "extend narrowly" posture this track's every prior operator/variant addition
 took, not a parallel checkpoint system. `bynk-ts`-only; no `bynk-emit` behaviour change on its own.
 This is the one prerequisite slice that unblocks every body-bearing callee in the cascade
@@ -58,8 +66,8 @@ permanent Decision-C class-wrapper `Verbatim` site (`emit_agent` a second, the h
 #1386); 1 (`emit_service`) the clearest recurring instance of the nested-checkpoint gap, not a
 one-off. `project/tests_emit.rs`'s own two orchestrators carry the identical shape (own local
 `SourceMapBuilder` merges, `:1936`/`:537`) plus two genuinely new findings: `emit_stub_class`'s own
-Decision-C class wrapper, and 5 `include_str!` runtime-helper blocks (line citations corrected:
-`:2279`/`:2287`/`:3404`/`:3408`/`:3420`, drifted from the track doc's prior clustered
+Decision-C class wrapper, and 5 `include_str!` runtime-helper blocks (`fn`-line citations
+corrected: `:2278`/`:2286`/`:3404`/`:3408`/`:3420`, drifted from the track doc's prior clustered
 `:2278-2289`). **Two real, previously-unargued conversion candidates, found here for the first
 time:** four-plus near-identical hand-templated test-function wrappers
 (`emit_test_case_function`/`emit_test_property_function`/`emit_test_history_property_function`/

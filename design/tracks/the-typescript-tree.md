@@ -1977,13 +1977,24 @@ that gap the way #1461/#1462 assumed — it has its own, independent, already-av
 
 **The nested source-map gap (prerequisite 3) already has its own prior art in `bynk-emit` —
 reusable, not something to design from scratch.** `emit_class_method_and_merge_source_map`
-(`emit.rs:2270-2296`, review of #1381) is the shared helper every per-item body splice already
-funnels through (`emit_free_fn` at `:966`, `emit_provider`'s ops via `:2467`, `emit_agent`'s
-handler methods via `:5526`/`:6338`). It already does exactly the job prerequisite 3 needs — merge
-a body-local `SourceMapBuilder`'s own per-statement checkpoints into the module map at the right
-absolute offset — but it has to **reverse-engineer** that offset today: `print_class_method`
-returns only the printed text, not where within it the opaque body blob landed, so the helper
-recovers the offset by subtracting known lengths and string-matching the tail
+(`emit.rs:2270-2296`, review of #1381) is the shared helper `emit_provider`'s ops (`:2467`) and
+`emit_agent`'s handler methods (`:5526`/`:6338`) funnel through — but review of #1474 caught this
+pass's own first draft overclaiming: `emit_free_fn` is **not** a client of it. Direct read of
+`emit_free_fn`'s own tail (`:930-968`) finds a *second, independent* hand-rolled offset recovery,
+not a call into the shared helper — `Raw`'s own splice-verbatim guarantee lets it compute the
+blob's offset by exact arithmetic (`printed.len() - body_text.len() - "}\n".len()`, `:960`) rather
+than string-search, guarded by a loud `debug_assert!` (`:956-959`) instead of the helper's own
+silent skip. Two hand-rolled recoveries of the same fact, not one — a stronger version of this
+finding's own point, not a weaker one, and a real consequence for slice (1) below: `emit_free_fn`
+reaches the printer through `TsDecl::Function`/`print_stmt`, not `print_class_method`, so the
+nested-checkpoint carrier has to reach a function declaration's `Raw` body too, not just
+`TsClassMethod`/`TsObjectEntry::Method`, for "one printer extension unblocks every body-bearing
+callee at once" to actually hold. `emit_class_method_and_merge_source_map` itself does exactly the
+job prerequisite 3 needs for its own three call sites — merge a body-local `SourceMapBuilder`'s
+own per-statement checkpoints into the module map at the right absolute offset — but it has to
+**reverse-engineer** that offset today: `print_class_method` returns only the printed text, not
+where within it the opaque body blob landed, so the helper recovers the offset by subtracting
+known lengths and string-matching the tail
 (`printed.get(blob_offset_in_printed..).is_some_and(|tail| tail.starts_with(body.blob))`,
 `:2282-2286`), and **degrades to silently skipping the mapping** if any assumption is violated —
 "suppress rather than mis-record" (the helper's own doc, #1360 finding 3's discipline). `RawBody`
@@ -2081,9 +2092,11 @@ new findings #1461 never named.** `emit_test_module`/`emit_integration_module` e
 own per-case/per-body local `SourceMapBuilder` the same way (`:1936`, `:537`) — the same gap, not a
 separate instance. Of their own direct callees: 5 are `include_str!`-based runtime-helper text
 (`expectation_runtime_helpers`/`stub_runtime_helpers`/`observation_runtime_helpers`/`property_
-runtime_helpers`/`history_runtime_helpers`, now at `:2279`/`:2287`/`:3404`/`:3408`/`:3420` — the
-Part 1 correction's own `:2278-2289` citation above has drifted, no longer clustered, corrected
-here) — permanent, the same `adapter_bindings`/`runtime.ts` footing, previously counted only in
+runtime_helpers`/`history_runtime_helpers`, now at their own `fn` lines `:2278`/`:2286`/`:3404`/
+`:3408`/`:3420` (review of #1474: cited consistently by `fn` line, not a mix of `fn` and
+`include_str!` lines — the more drift-resistant anchor of the two) — the Part 1 correction's own
+`:2278-2289` citation above has drifted, no longer clustered, corrected here) — permanent, the
+same `adapter_bindings`/`runtime.ts` footing, previously counted only in
 the abstract ("five `include_str!`-based... blocks") not enumerated by site; `emit_stub_class`
 (`:2296-2493`) is a second, independent Decision-C class-wrapper instance (its own in-place
 comment at `:2372-2385` already argues it); `emit_ns_destructure`/`emit_integration_harness`/
