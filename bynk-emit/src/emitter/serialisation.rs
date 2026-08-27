@@ -1199,6 +1199,17 @@ fn emit_record_codec(
             ru,
         ));
     }
+    // Review of #1444: a *zero-field* record — `type X = {}`, parse-legal
+    // Bynk that never reaches a wire boundary in the current corpus, so no
+    // fixture exercises this — hits `TsExpr::object`'s own single-line
+    // collapse (`{}`), where the pre-conversion `write!(out, "  return Ok({{
+    // ")` + empty `parts.join(", ")` + `" }} as {ts_type});"` always built
+    // `Ok({  } as T)` (a literal double space, the same "`{  }`, not the
+    // tight `{}` shortcut" quirk `workers.rs`'s/`project.rs`'s own
+    // `deps`/`{ns}Deps` objects already carry). TS-parse-identical either
+    // way — documented rather than silently changed, the same "name a real,
+    // unreachable-today formatting hazard rather than fix it inline"
+    // precedent P7.9's own `Array`-over-`Union` hazard already set.
     body.push(return_(call(
         ident("Ok"),
         vec![as_expr(
