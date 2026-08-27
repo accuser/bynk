@@ -2026,6 +2026,29 @@ excluded, none closed. Combined with whatever `#1460` resolves for the 4-site co
 group, `ts_any`'s overall floor lands between 26 and 30, not the 29/28 this pass's own bucket-4
 language implied. Full argument: `design/decisions/`'s ADR from #1459 (number assigned at merge).
 
+**Bucket 2 resolved (#1460): all 4 collection-kernel sites narrowed — `ts_any` lands at the low
+end, 26.** The spike's own real question — "does `lower_*_kernel`'s call site have the real
+element `TypeRef` in scope?" — reads yes, uniformly: `lower.rs`'s `Ty::Query(elem)` dispatch arm
+(`emitter/lower.rs:2385`) already resolves the receiver's own element `TyId` and previously
+discarded it (`Ty::Query(_)`); `distinctBy`'s `__out`/`groupBy`'s `__h` bucket both hold the
+receiver's own rows, so this same `elem` (rendered via `ts_ty`) narrows both directly.
+`joinOn`/`leftJoin`'s own `__h` buckets hold the *other* argument's rows, a different `TyId` —
+resolved by reusing `join_other_elem_ts`, a helper the `List[T]` sibling kernel
+(`lower_list_kernel`) already built and calls for its own `joinOn`/`leftJoin`/`join` arms; the
+`Query[T]` kernel (`lower_query_method`) just never reused it. **A real, additional finding beyond
+the primary dispatch path:** the same shared `lower_query_method` is also reached by three other
+callers lifting a held `store Map[K, Connection]`, a plain `store Map[K, V]`, and a `store Log[T]`
+scan into the general query vocabulary — none of which had a ready element-type string in scope.
+Rather than leave those three paths silently emitting `any` while the static probe read 0 (the
+exact static-count-vs-real-output divergence #1459 just corrected for the DO-stub finding),
+`AgentStoreState` gains two new fields (`map_values`/`log_values`, mirroring `held_maps`/
+`held_maps_ts`'s own established construction) so all four real call paths narrow genuinely, not
+just the one the probe happens to scan most directly. Verified against real `tsc --strict`
+(fixtures 228/231 — the same two fixtures the original P7.2-deferred comment named as broken by a
+first, cruder `unknown[]` attempt) and reblessed with the only byte diff at the four narrowed
+sites. `ts_any`: 30 → 26 (`design/greenfield-status.md`), matching the "all four tractable"
+low end of the 26–30 range above.
+
 ---
 
 **Arc F — design pass: decomposing `ts_writes`'s remaining surface after Arc E (#1449, a

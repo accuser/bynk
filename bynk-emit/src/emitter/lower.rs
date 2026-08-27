@@ -1498,9 +1498,23 @@ fn lower_method_call(
             // Any non-entry op is a lazy query lifting the map into a scan over its
             // **resolved** connections (the present ones — a connId whose socket has
             // closed drops out).
-            _ => lower_query_method(format!(
-                    "Object.values({m}).flatMap((__cid) => {{ const __c = resolveConnection<{f_ts}>(this.state, __cid); return __c.tag === \"Some\" ? [__c.value] : []; }})"
-                ), method, &a, cx.commons().expr_types.get(&e.id).map(|te| te.ty), tys)
+            _ => {
+                let other_elem_ts = args
+                    .first()
+                    .map(|_| join_other_elem_ts(args, cx))
+                    .unwrap_or_default();
+                lower_query_method(
+                    format!(
+                        "Object.values({m}).flatMap((__cid) => {{ const __c = resolveConnection<{f_ts}>(this.state, __cid); return __c.tag === \"Some\" ? [__c.value] : []; }})"
+                    ),
+                    method,
+                    &a,
+                    cx.commons().expr_types.get(&e.id).map(|te| te.ty),
+                    &f_ts,
+                    &other_elem_ts,
+                    tys,
+                )
+            }
             .unwrap_or_else(|| {
                 format!("(/* unsupported held Map op {} */ undefined)", method.name)
             }),
@@ -1584,8 +1598,35 @@ fn lower_method_call(
             ),
             // v0.91 (ADR 0119): any non-entry op is a lazy query that lifts the
             // map into a scan over its values (`Object.values`).
-            _ => lower_query_method(format!("Object.values({m})"), method, &a, cx.commons().expr_types.get(&e.id).map(|te| te.ty), tys)
-            .unwrap_or_else(|| format!("(/* unsupported Map op {} */ undefined)", method.name)),
+            //
+            // Review of #1460: `elem_ts` is this map's own value type `V`
+            // (`agent_store_map_value_ts`, mirroring `f_ts` above's held-map
+            // equivalent) — falls back to `unknown` only for an
+            // already-diagnosed program the checker recorded no type for
+            // (`join_other_elem_ts`'s own identical fallback posture), not a
+            // real case on a certified one: this arm is only reached when
+            // `cx.is_agent_store_map` already matched, so `map_values` always
+            // has an entry for `id.name` here.
+            _ => {
+                let elem_ts = cx
+                    .agent_store_map_value_ts(&id.name)
+                    .cloned()
+                    .unwrap_or_else(|| "unknown".to_string());
+                let other_elem_ts = args
+                    .first()
+                    .map(|_| join_other_elem_ts(args, cx))
+                    .unwrap_or_default();
+                lower_query_method(
+                    format!("Object.values({m})"),
+                    method,
+                    &a,
+                    cx.commons().expr_types.get(&e.id).map(|te| te.ty),
+                    &elem_ts,
+                    &other_elem_ts,
+                    tys,
+                )
+                .unwrap_or_else(|| format!("(/* unsupported Map op {} */ undefined)", method.name))
+            }
         });
     }
     // v0.83: a storage-`Set` operation — `<set>.<op>(…)` on a `store Set[T]` field.
@@ -1713,8 +1754,30 @@ fn lower_method_call(
             )),
             "reversed" => thunk(format!("[...{g}].reverse().map((__e) => __e.v)")),
             // The general query vocabulary over the entry values.
-            _ => lower_query_method(values, method, &a, cx.commons().expr_types.get(&e.id).map(|te| te.ty), tys)
-                .unwrap_or_else(|| format!("(/* unsupported Log op {} */ undefined)", method.name)),
+            //
+            // Review of #1460: `elem_ts` is this log's own element type `T`
+            // (`agent_store_log_value_ts`) — same construction and fallback
+            // posture as the plain-Map scan above.
+            _ => {
+                let elem_ts = cx
+                    .agent_store_log_value_ts(&id.name)
+                    .cloned()
+                    .unwrap_or_else(|| "unknown".to_string());
+                let other_elem_ts = args
+                    .first()
+                    .map(|_| join_other_elem_ts(args, cx))
+                    .unwrap_or_default();
+                lower_query_method(
+                    values,
+                    method,
+                    &a,
+                    cx.commons().expr_types.get(&e.id).map(|te| te.ty),
+                    &elem_ts,
+                    &other_elem_ts,
+                    tys,
+                )
+                .unwrap_or_else(|| format!("(/* unsupported Log op {} */ undefined)", method.name))
+            }
         });
     }
     // v0.98 (ADR 0125): a storage-`Cell` operation — `<cell>.update(f)` on a
@@ -2330,13 +2393,24 @@ fn lower_method_call(
             }
             // v0.91 (ADR 0119): a chained op on a lazy `Query` — the source is
             // the receiver thunk, invoked (`(recv)()`).
-            Ty::Query(_) => {
+            Ty::Query(elem) => {
+                let elem_ts = ts_ty(*elem, tys);
                 let recv = pre.lower(receiver, cx);
                 let a: Vec<String> = args.iter().map(|x| pre.lower(x, cx)).collect();
                 let result_ty = cx.commons().expr_types.get(&e.id).map(|te| te.ty);
-                if let Some(s) =
-                    lower_query_method(format!("({recv})()"), method, &a, result_ty, tys)
-                {
+                let other_elem_ts = args
+                    .first()
+                    .map(|_| join_other_elem_ts(args, cx))
+                    .unwrap_or_default();
+                if let Some(s) = lower_query_method(
+                    format!("({recv})()"),
+                    method,
+                    &a,
+                    result_ty,
+                    &elem_ts,
+                    &other_elem_ts,
+                    tys,
+                ) {
                     return pre.finish(s);
                 }
             }
@@ -3281,11 +3355,37 @@ fn lower_stream_method(source: String, method: &Ident, a: &[String]) -> Option<S
 /// The element type is inferred from the typed source (`Record`'s values), so no
 /// `__x` annotations are needed. Callbacks are wrapped in a single-arg arrow so
 /// the array index never reaches a one-param Bynk fn.
+///
+/// `elem_ts` is the receiver's own element type, already rendered — resolved
+/// by review of #1460 (the `List[T]` sibling, `lower_list_kernel`, already
+/// threads the equivalent `elem: TyId` through for its own `distinctBy`/
+/// `joinOn`/`leftJoin`/`groupBy` arms; this function's own four collection-
+/// kernel sites just never reused it). A pre-rendered string, not a `TyId`,
+/// because this function has four real callers with four different sources
+/// for it: a genuine `store Query[T]` field/expression (`Ty::Query`'s own
+/// element `TyId`, via `ts_ty`), a held `store Map[K, Connection]`'s
+/// connection frame type (already a `String`, `agent_held_map_frame`), a
+/// plain `store Map[K, V]`'s value type (`agent_store_map_value_ts`, added by
+/// this review), and a `store Log[T]`'s element type
+/// (`agent_store_log_value_ts`, ditto) — the latter two mirror
+/// `held_maps`/`held_maps_ts`'s own established construction exactly, just
+/// for the non-held case.
+///
+/// `other_elem_ts` is `joinOn`/`leftJoin`'s own `other`-side bucket type,
+/// computed by every caller via the same `join_other_elem_ts` helper
+/// `lower_list_kernel`'s own `joinOn`/`leftJoin`/`join` arms already call —
+/// pushed to the call site (rather than this function taking `args`/`cx`
+/// itself, `join_other_elem_ts`'s own `args[0]` indexing) to stay under
+/// clippy's argument-count lint; every caller already has `args`/`cx` in
+/// scope and guards the empty-args case (`distinct`/`collect`/etc. have no
+/// `other` to derive one from — `other_elem_ts` is simply unused there).
 fn lower_query_method(
     source: String,
     method: &Ident,
     a: &[String],
     result_ty: Option<TyId>,
+    elem_ts: &str,
+    other_elem_ts: &str,
     tys: &Arc<Types>,
 ) -> Option<String> {
     let thunk = |body: String| format!("(() => {body})");
@@ -3301,33 +3401,46 @@ fn lower_query_method(
         ("take", [n]) => thunk(format!("{source}.slice(0, Math.max(0, {n}))")),
         ("skip", [n]) => thunk(format!("{source}.slice(Math.max(0, {n}))")),
         ("distinct", []) => thunk(format!("[...new Set({source})]")),
-        // P7.2: deferred, not narrowed — a first attempt used `unknown[]` here
-        // and broke real `tsc --strict` fixtures (228/231): the whole
-        // expression's result flows into a context expecting a specific
-        // element type (e.g. `readonly Reservation[]`), inferred *because*
-        // `__out`/`__h`'s buckets were left untyped for TS to infer through —
-        // pinning them to `unknown[]` blocks that inference rather than
-        // improving on it. Correctly narrowing needs the query's own resolved
-        // row type threaded through, not a same-line text change.
+        // Review of #1460: narrowed, not deferred. A first attempt used
+        // `unknown[]` here and broke real `tsc --strict` fixtures (228/231) —
+        // the whole expression's result flows into a context expecting a
+        // specific element type (e.g. `readonly Reservation[]`), inferred
+        // *because* `__out`/`__h`'s buckets were left untyped for TS to infer
+        // through; pinning them to `unknown[]` blocked that inference rather
+        // than improving on it. The real fix is the receiver's own `Query[T]`
+        // element type, `elem_ts` above — already resolved at every call site
+        // via `Ty::Query(elem)`, just never threaded into this function before
+        // (the `List[T]` sibling, `lower_list_kernel`, already does this for
+        // its own `distinctBy`/`joinOn`/`leftJoin`/`groupBy`).
         ("distinctBy", [key]) => thunk(format!(
-            "(() => {{ const __seen = new Set(); const __out: any[] = []; for (const __x of {source}) {{ const __k = ({key})(__x); if (!__seen.has(__k)) {{ __seen.add(__k); __out.push(__x); }} }} return __out; }})()"
+            "(() => {{ const __seen = new Set(); const __out: {elem_ts}[] = []; for (const __x of {source}) {{ const __k = ({key})(__x); if (!__seen.has(__k)) {{ __seen.add(__k); __out.push(__x); }} }} return __out; }})()"
         )),
         // v0.94 (ADR 0116/0120): joins & grouping over storage queries — lazy
         // builders. `other` is itself a `Query` thunk, invoked to materialise the
         // probed side; the result projects through `into` (no pair value). The
         // hash key is stringified (value-keyable); `groupBy`/`into` get the
         // original key, re-derived from a representative row.
+        //
+        // Review of #1460: `other`'s own element type is `other_elem_ts`,
+        // computed at the call site via `join_other_elem_ts` (the same
+        // helper `lower_list_kernel`'s own `joinOn`/`leftJoin`/`join` arms
+        // already call over `args[0]`'s checked type) — reused, not
+        // re-derived, and threaded as a param rather than called here to
+        // keep this function's own argument count under clippy's lint.
         ("joinOn", [other, left, right, into]) => thunk(format!(
-            "{{ const __h: Record<string, any[]> = {{}}; for (const __u of ({other})()) {{ const __k = String(({right})(__u)); (__h[__k] = __h[__k] ?? []).push(__u); }} return {source}.flatMap((__t) => {{ const __m = __h[String(({left})(__t))] ?? []; return __m.map((__u) => ({into})(__t, __u)); }}); }}"
+            "{{ const __h: Record<string, {other_elem_ts}[]> = {{}}; for (const __u of ({other})()) {{ const __k = String(({right})(__u)); (__h[__k] = __h[__k] ?? []).push(__u); }} return {source}.flatMap((__t: {elem_ts}) => {{ const __m = __h[String(({left})(__t))] ?? []; return __m.map((__u: {other_elem_ts}) => ({into})(__t, __u)); }}); }}"
         )),
         ("leftJoin", [other, left, right, into]) => thunk(format!(
-            "{{ const __h: Record<string, any[]> = {{}}; for (const __u of ({other})()) {{ const __k = String(({right})(__u)); (__h[__k] = __h[__k] ?? []).push(__u); }} return {source}.flatMap((__t) => {{ const __m = __h[String(({left})(__t))] ?? []; return __m.length > 0 ? __m.map((__u) => ({into})(__t, Some(__u))) : [({into})(__t, None)]; }}); }}"
+            "{{ const __h: Record<string, {other_elem_ts}[]> = {{}}; for (const __u of ({other})()) {{ const __k = String(({right})(__u)); (__h[__k] = __h[__k] ?? []).push(__u); }} return {source}.flatMap((__t: {elem_ts}) => {{ const __m = __h[String(({left})(__t))] ?? []; return __m.length > 0 ? __m.map((__u: {other_elem_ts}) => ({into})(__t, Some(__u))) : [({into})(__t, None)]; }}); }}"
         )),
         ("join", [other, on, into]) => thunk(format!(
             "{{ const __b = ({other})(); return {source}.flatMap((__t) => __b.filter((__u) => ({on})(__t, __u)).map((__u) => ({into})(__t, __u))); }}"
         )),
+        // Review of #1460: `__h`'s buckets hold `{source}`'s own rows
+        // (`elem_ts`), the receiver's element type — same as `distinctBy`
+        // above, not `other`-derived (`groupBy` has no `other` argument).
         ("groupBy", [key, into]) => thunk(format!(
-            "{{ const __h: Record<string, any[]> = {{}}; const __order: string[] = []; for (const __t of {source}) {{ const __k = String(({key})(__t)); if (!(__k in __h)) {{ __h[__k] = []; __order.push(__k); }} __h[__k].push(__t); }} return __order.map((__k) => {{ const __rows = __h[__k]; return ({into})(({key})(__rows[0]), __rows); }}); }}"
+            "{{ const __h: Record<string, {elem_ts}[]> = {{}}; const __order: string[] = []; for (const __t of {source}) {{ const __k = String(({key})(__t)); if (!(__k in __h)) {{ __h[__k] = []; __order.push(__k); }} __h[__k].push(__t); }} return __order.map((__k) => {{ const __rows = __h[__k]; return ({into})(({key})(__rows[0]), __rows); }}); }}"
         )),
         // -- terminals → read the source array (awaited at the `<-`) --
         ("collect", []) => source,

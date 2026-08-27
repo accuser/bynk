@@ -3229,6 +3229,17 @@ pub(crate) struct AgentStoreState {
     /// not the plain `Record<string, V>` ops (held maps are excluded from
     /// [`AgentStoreState::maps`]).
     held_maps: HashMap<String, String>,
+    /// Review of #1460: a plain `store Map[K, V]` field's own value type `V`
+    /// (name → its rendered TS type), for `lower_query_method`'s own
+    /// collection-kernel sites (`distinctBy`/`joinOn`/`leftJoin`/`groupBy`)
+    /// when the receiver is a plain map's own value scan lifted into the
+    /// general query vocabulary — mirrors `held_maps`'s own construction
+    /// exactly, just for the non-held case.
+    map_values: HashMap<String, String>,
+    /// Review of #1460: a `store Log[T]` field's own element type `T` (name →
+    /// its rendered TS type), for the identical reason `map_values` exists —
+    /// a Log's value scan is also lifted into the general query vocabulary.
+    log_values: HashMap<String, String>,
 }
 
 /// What [`LowerCtx`] is lowering *right now*. One variant per real body-emission
@@ -3731,6 +3742,19 @@ impl<'a> LowerCtx<'a> {
     pub(crate) fn is_agent_held_map(&self, name: &str) -> bool {
         self.agent_store()
             .is_some_and(|s| s.held_maps.contains_key(name))
+    }
+
+    /// Review of #1460: the value type `V` of the plain `store Map[K, V]`
+    /// field `name`, if it is one (`None` for a held map — see
+    /// [`Self::agent_held_map_frame`] instead).
+    pub(crate) fn agent_store_map_value_ts(&self, name: &str) -> Option<&String> {
+        self.agent_store().and_then(|s| s.map_values.get(name))
+    }
+
+    /// Review of #1460: the element type `T` of the `store Log[T]` field
+    /// `name`, if it is one.
+    pub(crate) fn agent_store_log_value_ts(&self, name: &str) -> Option<&String> {
+        self.agent_store().and_then(|s| s.log_values.get(name))
     }
 
     /// True when lowering an agent handler body — drives the `self.<keyField>`

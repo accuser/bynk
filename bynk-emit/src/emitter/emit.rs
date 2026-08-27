@@ -4156,6 +4156,24 @@ pub(crate) fn emit_agent(
         .iter()
         .map(|(n, _)| n.name.clone())
         .collect();
+    // Review of #1460: a plain map's own value type `V`, mirroring
+    // `held_maps_ts`'s exact construction (above) — needed so
+    // `lower_query_method`'s collection-kernel sites can narrow a plain map's
+    // own value scan lifted into the general query vocabulary the same way a
+    // real `store Query[T]` field already can.
+    let map_value_ts: HashMap<String, String> = store_map_fields
+        .iter()
+        .map(|(n, v)| {
+            let ts = store_field_ty
+                .get(n.name.as_str())
+                .and_then(|kind| match kind {
+                    StoreKindIr::Map(_, v_ty) => Some(ts_ty(*v_ty, tys)),
+                    _ => None,
+                })
+                .unwrap_or_else(|| ts_type_ref(v));
+            (n.name.clone(), ts)
+        })
+        .collect();
     // v0.93 (ADR 0118): `store Map[K, V] @indexed(by: f, …)` — each `by:` field
     // gets a maintained secondary index. `map name → [field, …]` (a deduped,
     // declaration-ordered list). The keys are validated against `V` in
@@ -4275,6 +4293,21 @@ pub(crate) fn emit_agent(
     let log_retains: HashMap<String, Option<i64>> = store_log_fields
         .iter()
         .map(|(n, _, r)| (n.name.clone(), *r))
+        .collect();
+    // Review of #1460: a Log's own element type `T`, same reason and
+    // construction as `map_value_ts` above.
+    let log_value_ts: HashMap<String, String> = store_log_fields
+        .iter()
+        .map(|(n, v, _)| {
+            let ts = store_field_ty
+                .get(n.name.as_str())
+                .and_then(|kind| match kind {
+                    StoreKindIr::Log(elem_ty, _) => Some(ts_ty(*elem_ty, tys)),
+                    _ => None,
+                })
+                .unwrap_or_else(|| ts_type_ref(v));
+            (n.name.clone(), ts)
+        })
         .collect();
     // 1) State record type.
     //
@@ -5200,6 +5233,8 @@ pub(crate) fn emit_agent(
                 logs: log_retains.clone(),
                 indexes: store_map_indexes.clone(),
                 held_maps: held_maps_ts.clone(),
+                map_values: map_value_ts.clone(),
+                log_values: log_value_ts.clone(),
             })
         });
         // #934: mirrors the `method` name resolved below (all non-`method_name`
