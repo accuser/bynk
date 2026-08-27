@@ -74,7 +74,7 @@ export class Inventory {
   async pending(deps: {}): Promise<readonly Reservation[]> {
     const __state = await this.loadState();
     const q = (() => Object.values(__state.reservations).filter((__x) => ((r) => r.qty > 0)(__x)));
-    return ((() => (() => { const __seen = new Set(); const __out: any[] = []; for (const __x of (q)()) { const __k = ((r) => r.id)(__x); if (!__seen.has(__k)) { __seen.add(__k); __out.push(__x); } } return __out; })()))();
+    return ((() => (() => { const __seen = new Set(); const __out: Reservation[] = []; for (const __x of (q)()) { const __k = ((r) => r.id)(__x); if (!__seen.has(__k)) { __seen.add(__k); __out.push(__x); } } return __out; })()))();
   }
 
   async firstBig(deps: {}): Promise<Reservation> {
