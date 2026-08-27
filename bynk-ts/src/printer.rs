@@ -866,7 +866,10 @@ fn binary_precedence(op: TsBinaryOp) -> u8 {
         TsBinaryOp::Or => 2,
         TsBinaryOp::And => 3,
         TsBinaryOp::StrictEq | TsBinaryOp::StrictNotEq => 4,
-        TsBinaryOp::GreaterThan | TsBinaryOp::LessThan | TsBinaryOp::InstanceOf => 5,
+        TsBinaryOp::GreaterThan
+        | TsBinaryOp::LessThan
+        | TsBinaryOp::InstanceOf
+        | TsBinaryOp::In => 5,
         TsBinaryOp::Add => 6,
     }
 }
@@ -1384,6 +1387,7 @@ fn render_expr(out: &mut String, expr: &TsExpr) {
                 TsBinaryOp::LessThan => " < ",
                 TsBinaryOp::InstanceOf => " instanceof ",
                 TsBinaryOp::Add => " + ",
+                TsBinaryOp::In => " in ",
             });
             render_binary_operand(out, *op, right, false);
         }
@@ -5573,5 +5577,72 @@ mod tests {
         ));
         let printed = print(&program, "x.bynk", "", "x.ts");
         assert_eq!(printed.text, "e instanceof A || e instanceof B;\n");
+    }
+
+    /// Arc E slice 5 (`serialisation.rs`, #1443): `TsBinaryOp::In` — pins
+    /// the keyword operator text itself, sharing `LessThan`/`GreaterThan`/
+    /// `InstanceOf`'s own precedence tier.
+    #[test]
+    fn prints_an_in_check() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::expr_stmt(
+            TsExpr::Binary {
+                op: TsBinaryOp::In,
+                left: Box::new(TsExpr::Lit(TsLit::Str("name".to_string()))),
+                right: Box::new(TsExpr::Ident("obj".to_string())),
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "\"name\" in obj;\n");
+    }
+
+    /// Mirrors `add_binds_tighter_than_instanceof`/`add_binds_tighter_than_
+    /// less_than` for the newest member of this shared precedence tier:
+    /// `Add` (tier 6) binds tighter than `In` (tier 5).
+    #[test]
+    fn add_binds_tighter_than_in() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::expr_stmt(
+            TsExpr::Binary {
+                op: TsBinaryOp::In,
+                left: Box::new(TsExpr::Binary {
+                    op: TsBinaryOp::Add,
+                    left: Box::new(TsExpr::Ident("a".to_string())),
+                    right: Box::new(TsExpr::Ident("b".to_string())),
+                }),
+                right: Box::new(TsExpr::Ident("obj".to_string())),
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "a + b in obj;\n");
+    }
+
+    /// Mirrors `instanceof_binds_tighter_than_or_on_both_sides`: `In` (tier
+    /// 5) binds tighter than `Or` (tier 2), so a real
+    /// `"a" in obj || "b" in obj` reads flat with no parens — a wrong tier
+    /// would silently over-parenthesize it.
+    #[test]
+    fn in_binds_tighter_than_or_on_both_sides() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::expr_stmt(
+            TsExpr::Binary {
+                op: TsBinaryOp::Or,
+                left: Box::new(TsExpr::Binary {
+                    op: TsBinaryOp::In,
+                    left: Box::new(TsExpr::Lit(TsLit::Str("a".to_string()))),
+                    right: Box::new(TsExpr::Ident("obj".to_string())),
+                }),
+                right: Box::new(TsExpr::Binary {
+                    op: TsBinaryOp::In,
+                    left: Box::new(TsExpr::Lit(TsLit::Str("b".to_string()))),
+                    right: Box::new(TsExpr::Ident("obj".to_string())),
+                }),
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(printed.text, "\"a\" in obj || \"b\" in obj;\n");
     }
 }

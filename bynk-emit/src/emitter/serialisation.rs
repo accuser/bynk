@@ -19,7 +19,7 @@ use crate::emitter::RuntimeUse;
 use bynk_check::wire_default::lower_field_default_wire;
 use bynk_ts::{
     TsArrowBody, TsBinaryOp, TsBindingName, TsDecl, TsExpr, TsLit, TsObjectEntry, TsParam, TsStmt,
-    TsType, TsUnaryOp,
+    TsType, TsTypeMember, TsUnaryOp,
 };
 
 // #1435 (Arc E slice 1): this file's own local `TsExpr` builder set, the
@@ -94,6 +94,43 @@ fn strict_eq(left: TsExpr, right: TsExpr) -> TsExpr {
 
 fn strict_neq(left: TsExpr, right: TsExpr) -> TsExpr {
     binary(TsBinaryOp::StrictNotEq, left, right)
+}
+
+/// `left || right` — #1443 (Arc E slice 5)'s own real gap:
+/// `emit_record_codec`'s structural-shape guard (`typeof json !== "object"
+/// || json === null || Array.isArray(json)`) is a genuine 3-term `Or`
+/// chain, this file's first (every prior `Or`/`And` use in this crate lives
+/// in `workers.rs`/`workers_entry.rs`, not here). Left-folding two calls
+/// (`or_expr(or_expr(a, b), c)`) prints flat with no parens — `||` is one
+/// of the two operators [`render_binary_operand`] (`bynk-ts/src/printer.rs`)
+/// already exempts from its "same-operator nesting still parenthesizes"
+/// rule, the exact precedent `workers_entry.rs`'s own
+/// `emit_call_handler_dispatch` 3-term chain established.
+fn or_expr(left: TsExpr, right: TsExpr) -> TsExpr {
+    binary(TsBinaryOp::Or, left, right)
+}
+
+/// `left in right` — #1443 (Arc E slice 5): the "is this wire key present
+/// at all" test `emit_record_codec`'s per-field default-value
+/// prevalidation line needs. See [`bynk_ts::TsBinaryOp::In`]'s own doc for
+/// why this is a new operator, not a re-derivation of an existing one.
+fn in_expr(left: TsExpr, right: TsExpr) -> TsExpr {
+    binary(TsBinaryOp::In, left, right)
+}
+
+/// `object[index]` — a computed member access, distinct from [`member`]'s
+/// dotted `object.property` form. #1443 (Arc E slice 5)'s own real gap:
+/// `emit_record_codec`'s default-value prevalidation ternary's own
+/// `obj["<field>"]` consequent is this *file's* first real computed-index
+/// access (`workers_entry.rs`'s own `index_expr` — an identical two-line
+/// builder — is the cross-file precedent for the shape; not shared here
+/// since this file already keeps its own private builder set per #1435's
+/// own doc).
+fn index(object: TsExpr, idx: TsExpr) -> TsExpr {
+    TsExpr::Index {
+        object: Box::new(object),
+        index: Box::new(idx),
+    }
 }
 
 fn const_(name: impl Into<String>, init: TsExpr) -> TsStmt {
@@ -182,9 +219,12 @@ fn err_structural_mismatch_top(expected: &str, actual: TsExpr) -> TsExpr {
 /// `writeln!` calls used — confirmed against a real fixture's
 /// before/after diff (#1439), not assumed, the same "verify, don't
 /// assume" discipline #1437's own qualifier-prefix convention needed.
-/// All 8 real call sites (`emit_record_codec`, `emit_sum_codec`,
-/// `emit_generic_helpers_qualified`) sit at exactly this depth: a
-/// generated function's own top-level statement list.
+/// All 7 real call sites (`emit_sum_codec`, `emit_generic_helpers_qualified`)
+/// sit at exactly this depth: a generated function's own top-level
+/// statement list. #1443 (Arc E slice 5): `emit_record_codec` no longer
+/// calls this — it builds a real `Vec<TsStmt>` body directly now, so its
+/// own internal `emit_field_deserialise_wire` calls `extend` straight in
+/// (no print/re-parse round trip), dropping the count from 8 to 7.
 fn splice_stmts(out: &mut String, stmts: Vec<TsStmt>) {
     // Review of #1440: every other boundary-print site in `bynk-emit`
     // spells this `push_str`, not `write!` — matches that convention (an
@@ -436,7 +476,16 @@ fn emit_one(
                 writeln!(out).unwrap();
             }
         }
-        TypeBody::Record(_) => emit_record(out, name, decl, types, qual, ru),
+        // #1443 (Arc E slice 5): `emit_record` itself now builds real
+        // `bynk_ts::TsDecl` nodes (no `out: &mut String` parameter) — same
+        // boundary-print treatment as the `Refined`/`Opaque` arm just above
+        // (#1441), reused verbatim rather than re-derived.
+        TypeBody::Record(_) => {
+            for d in emit_record(name, decl, types, qual, ru) {
+                out.push_str(&bynk_ts::print_stmt(&TsStmt::decl(d, None), 0));
+                writeln!(out).unwrap();
+            }
+        }
         TypeBody::Sum(_) => emit_sum(out, name, decl, types, qual, ru),
     }
 }
@@ -479,6 +528,22 @@ fn deserialise_path_param() -> TsParam {
         ty: None,
         optional: false,
     }
+}
+
+/// `{ [k: string]: JsonValue }` — the structural type
+/// `emit_record_codec`'s own `const obj = json as { ... };` cast needs
+/// before indexing it by field name. #1443 (Arc E slice 5): the identical
+/// shape `workers_entry.rs`'s own `index_signature_record_ty` already
+/// builds for its multi-param `on call` dispatch — kept as a second, local
+/// copy rather than shared cross-file, matching this file's own "private
+/// builder set" convention (#1435's own doc) rather than promoting a
+/// two-caller shape into `bynk-ts` itself.
+fn index_signature_record_ty() -> TsType {
+    TsType::Object(vec![TsTypeMember::index(
+        "k",
+        TsType::named("string"),
+        TsType::named("JsonValue"),
+    )])
 }
 
 /// v0.110 (ADR 0142 D5): the codec for a named opaque/refined type over
@@ -949,14 +1014,18 @@ mod emit_inline_refinement_checks_tests {
 /// one place a default's *rendered* wire-JSON literal is produced, called
 /// from `emit_record_codec` at the same point it always was (Part 1's
 /// seam: the IR carries the raw default, the emitter renders it).
+///
+/// #1443 (Arc E slice 5): returns [`emit_record_codec`]'s own `Vec<TsDecl>`
+/// straight through — a plain passthrough, the same shape
+/// [`emit_refined`]'s own early return to `emit_bytes_named_codec` already
+/// established (#1441).
 fn emit_record(
-    out: &mut String,
     name: &str,
     decl: &TypeDecl,
     types: &std::collections::HashMap<String, Arc<TypeDecl>>,
     qual: &Qual,
     ru: &RuntimeUse,
-) {
+) -> Vec<TsDecl> {
     let qprefix = qual_prefix(qual, name);
     let prov = if qprefix.is_empty() {
         Provenance::Owned
@@ -979,7 +1048,7 @@ fn emit_record(
     // bare and local. Its field codec calls are unqualified too — they resolve
     // to the caller's own locally-generated helpers.
     let ts_type = format!("{qprefix}{name}");
-    emit_record_codec(out, name, &ts_type, &fields, types, ru);
+    emit_record_codec(name, &ts_type, &fields, types, ru)
 }
 
 /// v0.174 (#592): the shared record codec body. `fn_suffix` is the codec name
@@ -998,58 +1067,81 @@ fn emit_record(
 /// instantiation's fields never carry a default (events are never generic),
 /// so `default` is always `None` on that path; only `deserialise_<fn_suffix>`
 /// consults it, `serialise_<fn_suffix>` is untouched (Decision B, #972).
+///
+/// #1443 (Arc E slice 5): returns the `[serialise, deserialise]` pair as
+/// real `bynk_ts::TsDecl` nodes — the same `Vec<TsDecl>` shape
+/// `emit_bytes_named_codec`/`emit_refined` already established (#1441), for
+/// the same reason (this function's two real callers, `emit_record` above
+/// and `emit_generic_helpers_qualified`'s own `RecordInst` arm, both print
+/// each entry via the same boundary loop). Two internal calls stay
+/// unprinted: `serialise_field_expr_wire` (`-> TsExpr` since #1435) and
+/// `emit_field_deserialise_wire` (`-> Vec<TsStmt>` since #1439) are both
+/// already tree-native, and this function itself is becoming tree-native
+/// too — consuming their return values directly (no
+/// `bynk_ts::print_expr`/`splice_stmts` boundary-print) is correct, not a
+/// gap; that print/splice treatment is only for a caller that is itself
+/// still `String`-based (`emit_generic_helpers_qualified`'s own
+/// `ResultInst`/`OptionInst`/etc. arms, still out of this slice's scope).
 fn emit_record_codec(
-    out: &mut String,
     fn_suffix: &str,
     ts_type: &str,
     fields: &[WireField],
     types: &std::collections::HashMap<String, Arc<TypeDecl>>,
     ru: &RuntimeUse,
-) {
-    // serialise
-    writeln!(
-        out,
-        "export function serialise_{fn_suffix}(value: {ts_type}): JsonValue {{"
-    )
-    .unwrap();
-    writeln!(out, "  return {{").unwrap();
-    for field in fields {
-        // #1435 (Arc E slice 1): `serialise_field_expr_wire` now returns a
-        // real `bynk_ts::TsExpr` — this caller stays `write!`-based (a
-        // different cluster of this same file, out of this slice's scope),
-        // so it prints at the boundary, the same "opaque consumer needs its
-        // own print" treatment `lower.rs`/`tests_emit.rs`'s own call sites
-        // use.
-        let expr = bynk_ts::print_expr(&serialise_field_expr_wire(
-            &field.shape,
-            &format!("value.{}", field.name),
-            "",
-            ru,
-        ));
-        writeln!(out, "    {}: {expr},", field.name).unwrap();
-    }
-    writeln!(out, "  }};").unwrap();
-    writeln!(out, "}}").unwrap();
-    writeln!(out).unwrap();
+) -> Vec<TsDecl> {
+    let serialise = TsDecl::Export(Box::new(TsDecl::Function {
+        name: format!("serialise_{fn_suffix}"),
+        generics: Vec::new(),
+        params: vec![TsParam {
+            name: "value".to_string(),
+            ty: Some(TsType::named(ts_type)),
+            optional: false,
+        }],
+        return_type: Some(TsType::named("JsonValue")),
+        body: vec![return_(TsExpr::multiline_object(
+            fields
+                .iter()
+                .map(|field| {
+                    (
+                        field.name.clone(),
+                        serialise_field_expr_wire(
+                            &field.shape,
+                            &format!("value.{}", field.name),
+                            "",
+                            ru,
+                        ),
+                    )
+                })
+                .collect(),
+        ))],
+        is_async: false,
+        inline: false,
+    }));
 
-    // deserialise
-    writeln!(
-        out,
-        "export function deserialise_{fn_suffix}(json: JsonValue, path: string = \"$\"): Result<{ts_type}, BoundaryError> {{"
-    )
-    .unwrap();
-    writeln!(
-        out,
-        "  if (typeof json !== \"object\" || json === null || Array.isArray(json)) {{"
-    )
-    .unwrap();
-    writeln!(
-        out,
-        "    return Err({{ kind: \"StructuralMismatch\", path, expected: \"object\", actual: typeof json }});"
-    )
-    .unwrap();
-    writeln!(out, "  }}").unwrap();
-    writeln!(out, "  const obj = json as {{ [k: string]: JsonValue }};").unwrap();
+    // `typeof json !== "object" || json === null || Array.isArray(json)` —
+    // a genuine 3-term `Or` chain (see `or_expr`'s own doc for why it
+    // prints flat with no parens).
+    let mut body = vec![
+        if_(
+            or_expr(
+                or_expr(
+                    strict_neq(typeof_expr(ident("json")), str_lit("object")),
+                    strict_eq(ident("json"), TsExpr::Lit(TsLit::Null)),
+                ),
+                call(member(ident("Array"), "isArray"), vec![ident("json")]),
+            ),
+            block(vec![return_(err_structural_mismatch_top(
+                "object",
+                typeof_expr(ident("json")),
+            ))]),
+        ),
+        TsStmt::const_stmt(
+            TsBindingName::Ident("obj".to_string()),
+            None,
+            as_expr(ident("json"), index_signature_record_ty()),
+            None,
+        ),
+    ];
     for field in fields {
         // Events slice 3a (#972): a defaulted field is read through a
         // pre-validated `__d_<field>` binding instead of the raw
@@ -1067,33 +1159,77 @@ fn emit_record_codec(
             .and_then(|(e, t)| lower_field_default_wire(e, t, types).ok());
         let fname = &field.name;
         let access = if let Some(d) = &default {
-            writeln!(
-                out,
-                "  const __d_{fname}: JsonValue = \"{fname}\" in obj ? obj[\"{fname}\"] : {d};"
-            )
-            .unwrap();
+            // #1443 (Arc E slice 5): `"<field>" in obj ? obj["<field>"] :
+            // <default>` — `d` is already-rendered wire-JSON literal *TS
+            // source text* (`lower_field_default_wire`'s own contract, the
+            // same "opaque, pre-rendered TS text" shape
+            // `emit_inline_pred_check`'s own `cond` splice already
+            // established in this file), spliced via `ident` rather than
+            // re-derived as a real node — it is never re-parenthesised: as
+            // a `Conditional`'s own `alternate`, it sits in an
+            // `AssignmentExpression` grammar position, which (per
+            // `bynk-ts/src/printer.rs`'s own `Conditional` render arm)
+            // never adds parens around either branch regardless of that
+            // branch's own shape.
+            body.push(TsStmt::const_stmt(
+                TsBindingName::Ident(format!("__d_{fname}")),
+                Some(TsType::named("JsonValue")),
+                TsExpr::Conditional {
+                    test: Box::new(in_expr(str_lit(fname.clone()), ident("obj"))),
+                    consequent: Box::new(index(ident("obj"), str_lit(fname.clone()))),
+                    alternate: Box::new(ident(d.clone())),
+                },
+                None,
+            ));
             format!("__d_{fname}")
         } else {
             format!("obj[\"{fname}\"]")
         };
         let sub_path = format!("`${{path}}.{}`", field.path_segment);
-        // #1439 (Arc E slice 3): boundary-print — `emit_field_deserialise_wire`
-        // now returns a real `Vec<bynk_ts::TsStmt>`, spliced in via
-        // `splice_stmts` at this function's own one-level indent.
-        splice_stmts(
-            out,
-            emit_field_deserialise_wire(fname, &field.shape, &access, &sub_path, ru),
-        );
+        // #1439 (Arc E slice 3): `emit_field_deserialise_wire` returns a
+        // real `Vec<bynk_ts::TsStmt>` — extended straight into this
+        // function's own body, no `splice_stmts` (that boundary-print
+        // helper is only for a caller that still prints into a `String`;
+        // this function's own body is a real `Vec<TsStmt>` now).
+        body.extend(emit_field_deserialise_wire(
+            fname,
+            &field.shape,
+            &access,
+            &sub_path,
+            ru,
+        ));
     }
-    write!(out, "  return Ok({{ ").unwrap();
-    let parts: Vec<String> = fields
-        .iter()
-        .map(|field| format!("{0}: __{0}", field.name))
-        .collect();
-    write!(out, "{}", parts.join(", ")).unwrap();
-    writeln!(out, " }} as {ts_type});").unwrap();
-    writeln!(out, "}}").unwrap();
-    writeln!(out).unwrap();
+    body.push(return_(call(
+        ident("Ok"),
+        vec![as_expr(
+            TsExpr::object(
+                fields
+                    .iter()
+                    .map(|field| (field.name.clone(), ident(format!("__{}", field.name))))
+                    .collect(),
+            ),
+            TsType::named(ts_type),
+        )],
+    )));
+
+    let deserialise = TsDecl::Export(Box::new(TsDecl::Function {
+        name: format!("deserialise_{fn_suffix}"),
+        generics: Vec::new(),
+        params: vec![
+            TsParam {
+                name: "json".to_string(),
+                ty: Some(TsType::named("JsonValue")),
+                optional: false,
+            },
+            deserialise_path_param(),
+        ],
+        return_type: Some(TsType::named(format!("Result<{ts_type}, BoundaryError>"))),
+        body,
+        is_async: false,
+        inline: false,
+    }));
+
+    vec![serialise, deserialise]
 }
 
 /// #855 (Phase 2 step 8): builds the [`WireSum`] via
@@ -1293,12 +1429,15 @@ fn emit_field_deserialise(
 /// #1439 (Arc E slice 3): returns a real `Vec<bynk_ts::TsStmt>` — a
 /// *sequence* of statements (one or more guard `if`s, then a `const`
 /// binding), not one expression, unlike slices 1/2's own `-> TsExpr`
-/// conversions (#1436/#1438) — hence `Vec`, not a single node. All 8 real
-/// call sites (`emit_record_codec`, `emit_sum_codec`,
+/// conversions (#1436/#1438) — hence `Vec`, not a single node. Of this
+/// function's 8 real call sites, 7 (`emit_sum_codec`,
 /// `emit_generic_helpers_qualified`) are still `write!`-based, so each
 /// splices the result back in via [`splice_stmts`] at the same one-level
 /// indent the original `writeln!` calls always used, confirmed
-/// byte-identical against the fixture corpus.
+/// byte-identical against the fixture corpus. The 8th, `emit_record_codec`,
+/// became tree-native itself (#1443, Arc E slice 5) and now `extend`s the
+/// returned statements directly into its own `Vec<TsStmt>` body — no print,
+/// no splice, since both sides of that call are real nodes.
 fn emit_field_deserialise_wire(
     name: &str,
     wire: &WireRef,
@@ -2283,7 +2422,17 @@ pub(crate) fn emit_generic_helpers_qualified(
                         default: None,
                     })
                     .collect();
-                emit_record_codec(out, &fn_suffix, &ts_type, &fields, types, ru);
+                // #1443 (Arc E slice 5): `emit_record_codec` itself now
+                // builds real `bynk_ts::TsDecl` nodes — this whole function
+                // stays `String`-based (out of this slice's scope, per the
+                // issue's own "real complications" note 3), so this call
+                // site needs the same boundary-print treatment `emit_one`'s
+                // `Record`/`Refined`/`Opaque` arms already use (#1441,
+                // #1443).
+                for d in emit_record_codec(&fn_suffix, &ts_type, &fields, types, ru) {
+                    out.push_str(&bynk_ts::print_stmt(&TsStmt::decl(d, None), 0));
+                    writeln!(out).unwrap();
+                }
             }
             // #593: a generic-sum instantiation `ApiResult[User]` emits
             // `serialise_ApiResult_User` / `deserialise_ApiResult_User`, its

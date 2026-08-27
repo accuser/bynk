@@ -1027,6 +1027,21 @@ pub enum TsBinaryOp {
     /// one-variant-per-real-operator convention.
     LessThan,
     Add,
+    /// `in` — Arc E slice 5 (`serialisation.rs`, #1443)'s own real gap:
+    /// `emit_record_codec`'s per-field default-value prevalidation line
+    /// (`"<field>" in obj ? obj["<field>"] : <default>`) needs a real "is
+    /// this wire key present at all" test, distinct from `!== undefined`
+    /// (Events slice 3a, #972's own Decision D: a wire key present with an
+    /// explicit `null`/`{"kind":"None"}` value must NOT fall through to the
+    /// default, only a genuinely *absent* key may). Real JS/TS grammar puts
+    /// `in` at the exact same `RelationalExpression` precedence tier as
+    /// `<`/`>`/`instanceof` (all five — plus `<=`/`>=`, unmodelled here —
+    /// share one level in the spec), so it joins [`TsBinaryOp::LessThan`]'s
+    /// tier rather than a new one, the same "share, don't multiply, tiers"
+    /// convention `InstanceOf`/`LessThan` already set. Rendered as the
+    /// keyword `" in "`, the same textual-keyword-operator shape
+    /// `InstanceOf` already established (not symbol punctuation).
+    In,
 }
 
 /// A literal — the three kinds `events_fanout.rs` uses (a string, a number,
