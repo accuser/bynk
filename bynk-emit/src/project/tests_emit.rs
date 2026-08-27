@@ -2573,6 +2573,10 @@ fn emit_stub_rhs(
                     test: Some(num_lit(j.to_string())),
                     body: vec![TsStmt::raw(reindent_by(&outcome_body(o), "    "), None)],
                     default_braced: false,
+                    // Arc E slice 6 (#1445): unaffected by `case_braced`'s
+                    // addition — this site's own non-`default` cases were
+                    // already, and stay, `{ }`-blocked.
+                    case_braced: true,
                 })
                 .collect();
             cases.push(TsSwitchCase {
@@ -2582,6 +2586,7 @@ fn emit_stub_rhs(
                     None,
                 )],
                 default_braced: true,
+                case_braced: true,
             });
             stmts.push(TsStmt::switch_stmt(ident("__k"), cases, None));
             stmts.iter().map(|s| bynk_ts::print_stmt(s, 0)).collect()

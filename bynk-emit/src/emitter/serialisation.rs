@@ -19,7 +19,7 @@ use crate::emitter::RuntimeUse;
 use bynk_check::wire_default::lower_field_default_wire;
 use bynk_ts::{
     TsArrowBody, TsBinaryOp, TsBindingName, TsDecl, TsExpr, TsLit, TsObjectEntry, TsParam, TsStmt,
-    TsType, TsTypeMember, TsUnaryOp,
+    TsSwitchCase, TsType, TsTypeMember, TsUnaryOp,
 };
 
 // #1435 (Arc E slice 1): this file's own local `TsExpr` builder set, the
@@ -149,6 +149,81 @@ fn block(stmts: Vec<TsStmt>) -> TsStmt {
     TsStmt::block(stmts, None)
 }
 
+/// `switch (<discriminant>) { <cases> }` — Arc E slice 6 (#1445),
+/// [`emit_sum_codec`]'s own first real `switch` statement in this file
+/// (`TsStmt::Switch`/[`TsSwitchCase`] themselves are Arc C slice 4/#1323,
+/// `workers_entry.rs`). Kept as this file's own private wrapper (matching
+/// `const_`/`return_`/`if_`/`block` just above) rather than calling
+/// `TsStmt::switch_stmt` directly at each of `emit_sum_codec`'s two call
+/// sites.
+fn switch_stmt(discriminant: TsExpr, cases: Vec<TsSwitchCase>) -> TsStmt {
+    TsStmt::switch_stmt(discriminant, cases, None)
+}
+
+/// `case <test>: <body>` — unlike `workers_entry.rs`'s own identically-named
+/// helper (which always braces, since every one of its real cases wants a
+/// `{ }` block), `emit_sum_codec` has BOTH real shapes side by side in the
+/// same switch: a payload-free variant's case is unbraced, a
+/// payload-carrying sibling's is braced (`212_json_codec`'s own mixed
+/// `Status` fixture: `case "Pending": return ...;` beside `case "Shipped":
+/// { ... }`). `braced` is the caller's own explicit choice rather than an
+/// inferred one, so this stays a thin, honest wrapper over
+/// [`TsSwitchCase::case_braced`] (`bynk-ts/src/program.rs`, #1445) instead
+/// of a heuristic derived from `body`'s own shape.
+fn case_(test: TsExpr, body: Vec<TsStmt>, braced: bool) -> TsSwitchCase {
+    TsSwitchCase {
+        test: Some(test),
+        body,
+        default_braced: false,
+        case_braced: braced,
+    }
+}
+
+/// `default: <body>` — unbraced, the same convention `workers_entry.rs`'s
+/// own `default_case` helper already established for every real `default`
+/// arm this file's own sum codec has (a `StructuralMismatch` one-liner).
+fn default_case(body: Vec<TsStmt>) -> TsSwitchCase {
+    TsSwitchCase {
+        test: None,
+        body,
+        default_braced: false,
+        case_braced: true,
+    }
+}
+
+/// A real `Vec<bynk_ts::TsStmt>`, pre-rendered into ONE `TsStmt::Raw` blob
+/// at the same depth-1 indent [`splice_stmts`] has always used for these
+/// exact statements. [`emit_sum_codec`]'s deserialise-side payload-carrying
+/// case needs `emit_field_deserialise_wire`'s own field guards spliced in
+/// at a depth that does NOT match where they structurally sit (inside a
+/// `TsStmt::Switch` case's own body, which `bynk-ts`'s printer would
+/// otherwise render two levels deeper, at depth 3/6-space indent) — a real,
+/// currently-shipped indentation quirk, not a hypothetical: confirmed
+/// byte-for-byte against `212_json_codec/expected.ts`'s own
+/// `deserialise_Status` (`if (typeof obj["tracking"] !== "string")` sits at
+/// 2-space indent, one level, directly inside `case "Shipped": {`'s own
+/// 6-space-indented block) and `407_workers_generic_sum_boundary`'s own
+/// `deserialise_ApiResult_User` (identical shape for a generic-sum
+/// instantiation). This slice's own zero-diff mandate rules out simply
+/// letting the switch case render these at their structurally-correct
+/// depth instead — that would be a real, deliberate formatting change with
+/// no fixture-corpus backing either way, unlike the `(value as any)`
+/// investigation this same issue explicitly authorises (see
+/// `emit_sum_codec`'s own doc). `TsStmtKind::Raw`'s own doc
+/// (`bynk-ts/src/program.rs`) names exactly this shape as a legitimate
+/// third reason to use it, alongside its two existing ones (`lower.rs`'s
+/// permanent exclusion; `emit_refined_type`'s own already-tree-sourced
+/// splice): real, already-tree-native statement text this call site cannot
+/// restructure into a properly-nested `Vec<TsStmt>` without changing bytes
+/// this slice is not the one authorised to change.
+fn raw_stmts_at_depth_one(stmts: Vec<TsStmt>) -> TsStmt {
+    let mut text = String::new();
+    for stmt in &stmts {
+        text.push_str(&bynk_ts::print_stmt(stmt, 1));
+    }
+    TsStmt::raw(text, None)
+}
+
 /// `Err({ kind: "StructuralMismatch", path: <path_expr>, expected:
 /// <expected>, actual: <actual> })` — the one wire-guard failure shape
 /// every real arm of [`emit_field_deserialise_wire`] returns. Distinct from
@@ -219,12 +294,19 @@ fn err_structural_mismatch_top(expected: &str, actual: TsExpr) -> TsExpr {
 /// `writeln!` calls used — confirmed against a real fixture's
 /// before/after diff (#1439), not assumed, the same "verify, don't
 /// assume" discipline #1437's own qualifier-prefix convention needed.
-/// All 7 real call sites (`emit_sum_codec`, `emit_generic_helpers_qualified`)
-/// sit at exactly this depth: a generated function's own top-level
-/// statement list. #1443 (Arc E slice 5): `emit_record_codec` no longer
-/// calls this — it builds a real `Vec<TsStmt>` body directly now, so its
-/// own internal `emit_field_deserialise_wire` calls `extend` straight in
-/// (no print/re-parse round trip), dropping the count from 8 to 7.
+/// All 6 remaining real call sites (`emit_generic_helpers_qualified`'s own
+/// still-`String`-based `ResultInst`/`OptionInst`/etc. arms) sit at exactly
+/// this depth: a generated function's own top-level statement list. #1443
+/// (Arc E slice 5): `emit_record_codec` no longer calls this — it builds a
+/// real `Vec<TsStmt>` body directly now, so its own internal
+/// `emit_field_deserialise_wire` calls `extend` straight in (no print/
+/// re-parse round trip), dropping the count from 8 to 7. #1445 (Arc E
+/// slice 6): `emit_sum_codec` no longer calls this either — its own
+/// deserialise-side payload case needs the exact same depth-1 splice, but
+/// pre-renders it into one `TsStmt::Raw` via [`raw_stmts_at_depth_one`]
+/// instead (that function's own doc explains why: the surrounding function
+/// body is itself a real `Vec<TsStmt>` now, not a `String`, so there is no
+/// `out` here to push into) — dropping the count from 7 to 6.
 fn splice_stmts(out: &mut String, stmts: Vec<TsStmt>) {
     // Review of #1440: every other boundary-print site in `bynk-emit`
     // spells this `push_str`, not `write!` — matches that convention (an
@@ -486,7 +568,16 @@ fn emit_one(
                 writeln!(out).unwrap();
             }
         }
-        TypeBody::Sum(_) => emit_sum(out, name, decl, types, qual, ru),
+        // #1445 (Arc E slice 6): `emit_sum` itself now builds real
+        // `bynk_ts::TsDecl` nodes (no `out: &mut String` parameter) — same
+        // boundary-print treatment as the `Record`/`Refined`/`Opaque` arms
+        // just above (#1441, #1443), reused verbatim rather than re-derived.
+        TypeBody::Sum(_) => {
+            for d in emit_sum(name, decl, types, qual, ru) {
+                out.push_str(&bynk_ts::print_stmt(&TsStmt::decl(d, None), 0));
+                writeln!(out).unwrap();
+            }
+        }
     }
 }
 
@@ -1246,14 +1337,17 @@ fn emit_record_codec(
 /// #855 (Phase 2 step 8): builds the [`WireSum`] via
 /// `bynk_check::wire::wire_type` — the same declaration-order variant/payload
 /// shape a peek would derive — instead of re-walking `body.variants` inline.
+///
+/// #1445 (Arc E slice 6): returns [`emit_sum_codec`]'s own `Vec<TsDecl>`
+/// straight through — a plain passthrough, the same shape [`emit_record`]'s
+/// own early return to `emit_record_codec` already established (#1443).
 fn emit_sum(
-    out: &mut String,
     name: &str,
     decl: &TypeDecl,
     types: &std::collections::HashMap<String, Arc<TypeDecl>>,
     qual: &Qual,
     ru: &RuntimeUse,
-) {
+) -> Vec<TsDecl> {
     // #661: a consumed sum's TS value type is namespace-qualified; the codec
     // function name and its per-variant codec calls stay bare and local. #593:
     // the codec body is the shared `emit_sum_codec` (also reused, unqualified,
@@ -1275,7 +1369,7 @@ fn emit_sum(
         _ => unreachable!("emit_sum is only ever called for a non-generic Sum declaration"),
     };
     let ty = format!("{qprefix}{name}");
-    emit_sum_codec(out, name, &ty, &sum, ru);
+    emit_sum_codec(name, &ty, &sum, ru)
 }
 
 /// The serialise/deserialise pair for a sum type, over an already-resolved
@@ -1291,114 +1385,275 @@ fn emit_sum(
 /// is the softest part of the seam, carried beside `wire_discriminant`
 /// because this codec's whole job is translating between them), so this is
 /// purely reading the fact from the IR, not a behaviour change.
-fn emit_sum_codec(
-    out: &mut String,
-    fn_suffix: &str,
-    ts_type: &str,
-    sum: &WireSum,
-    ru: &RuntimeUse,
-) {
+///
+/// #1445 (Arc E slice 6): returns the `[serialise, deserialise]` pair as real
+/// `bynk_ts::TsDecl` nodes, the same `Vec<TsDecl>` shape #1441/#1443 already
+/// established — this function's two real callers ([`emit_sum`] above and
+/// `emit_generic_helpers_qualified`'s own `SumInst` arm) both print each
+/// entry via the same boundary loop.
+///
+/// **The `(value as any).<field>` investigation (#1423's own residual,
+/// re-examined per this issue's own explicit instruction):** narrowed, not
+/// kept. Empirically confirmed under `tsc --strict` (not assumed): once
+/// `value.{tag}` is the `switch` discriminant, TypeScript's own control-flow
+/// analysis narrows `value` to the exact variant member inside each `case`
+/// block — the same narrowing `if (value.tag === "...")` gets, and `switch`
+/// on a discriminant property is documented TS behaviour, not a guess. This
+/// is a genuinely different shape from P7.2's own failed attempt (the
+/// comment this replaces): that attempt cast `value` itself to `Record<
+/// string, unknown>` BEFORE any narrowing, which throws away the literal
+/// discriminant entirely and hands `serialise_field_expr_wire`'s per-shape
+/// helpers (`(v: number) => ...` for `Float`, etc.) a field typed `unknown`
+/// no narrowing could ever recover. Reading the field through the
+/// switch-narrowed `value` directly, with NO cast at all, needs no such
+/// recovery — confirmed against both a plain-`string` field and a `Float`
+/// field (`Number.isFinite` guard intact) under `tsc --strict --lib es2020`,
+/// and again against a *generic*-sum instantiation (`ApiResult<User>`,
+/// `value.value` narrowed to the concrete `User` argument, not just the
+/// erased type parameter). Net effect: `ts_any` drops by exactly this one
+/// Rust-source site (31 → 30) — the opposite of slice 3's own "don't claim
+/// a false win" trap, a real, verified win. The fixture corpus's own
+/// `(value as any).<field>` bytes (`212_json_codec`,
+/// `407_workers_generic_sum_boundary`, et al.) change to a bare
+/// `value.<field>` as a direct, intended consequence — reblessed, not a
+/// zero-diff violation (this one narrow site is the explicitly-authorised
+/// exception to this slice's own zero-diff mandate, not an accidental
+/// formatting drift).
+fn emit_sum_codec(fn_suffix: &str, ts_type: &str, sum: &WireSum, ru: &RuntimeUse) -> Vec<TsDecl> {
     let kind = sum.wire_discriminant;
     let tag = sum.memory_discriminant;
-    writeln!(
-        out,
-        "export function serialise_{fn_suffix}(value: {ts_type}): JsonValue {{"
-    )
-    .unwrap();
-    writeln!(out, "  switch (value.{tag}) {{").unwrap();
-    for variant in &sum.variants {
-        let vname = &variant.name;
-        if variant.payload.is_empty() {
-            writeln!(out, "    case \"{vname}\":").unwrap();
-            writeln!(out, "      return {{ {kind}: \"{vname}\" }};").unwrap();
-        } else {
-            writeln!(out, "    case \"{vname}\": {{").unwrap();
-            write!(out, "      return {{ {kind}: \"{vname}\"").unwrap();
-            for field in &variant.payload {
-                // P7.2: deferred, not narrowed. A first attempt used
-                // `Record<string, unknown>` here and broke a real `tsc --strict`
-                // fixture (180/188/etc., the `Float` boundary guard): the
-                // extracted field's value flows into `serialise_field_expr_wire`'s
-                // own shape-specific helpers (e.g. a `(v: number) => ...`
-                // finiteness check for `Float`), which need the field's real
-                // per-shape type, not a blanket `unknown` — correctly narrowing
-                // needs deriving that type from `field.shape` itself, not a
-                // generic record cast.
-                // #1435 (Arc E slice 1): boundary-print, same treatment as
-                // `emit_record_codec`'s own identical call site above.
-                let expr = bynk_ts::print_expr(&serialise_field_expr_wire(
-                    &field.shape,
-                    &format!("(value as any).{}", field.name),
-                    "",
-                    ru,
-                ));
-                write!(out, ", {}: {expr}", field.name).unwrap();
-            }
-            writeln!(out, " }};").unwrap();
-            writeln!(out, "    }}").unwrap();
-        }
-    }
-    writeln!(out, "  }}").unwrap();
-    writeln!(out, "}}").unwrap();
-    writeln!(out).unwrap();
 
-    writeln!(
-        out,
-        "export function deserialise_{fn_suffix}(json: JsonValue, path: string = \"$\"): Result<{ts_type}, BoundaryError> {{"
-    )
-    .unwrap();
-    writeln!(
-        out,
-        "  if (typeof json !== \"object\" || json === null || Array.isArray(json)) {{"
-    )
-    .unwrap();
-    writeln!(
-        out,
-        "    return Err({{ kind: \"StructuralMismatch\", path, expected: \"object\", actual: typeof json }});"
-    )
-    .unwrap();
-    writeln!(out, "  }}").unwrap();
-    writeln!(out, "  const obj = json as {{ [k: string]: JsonValue }};").unwrap();
-    writeln!(out, "  const {kind} = obj[\"{kind}\"];").unwrap();
-    writeln!(out, "  switch ({kind}) {{").unwrap();
-    for variant in &sum.variants {
-        let vname = &variant.name;
-        if variant.payload.is_empty() {
-            writeln!(out, "    case \"{vname}\":").unwrap();
-            writeln!(
-                out,
-                "      return Ok({{ {tag}: \"{vname}\" }} as {ts_type});"
-            )
-            .unwrap();
-        } else {
-            writeln!(out, "    case \"{vname}\": {{").unwrap();
-            for field in &variant.payload {
-                let access = format!("obj[\"{}\"]", field.name);
-                let sub_path = format!("`${{path}}.{}`", field.path_segment);
-                // #1439 (Arc E slice 3): boundary-print, same treatment as
-                // `emit_record_codec`'s own identical call site above.
-                splice_stmts(
-                    out,
-                    emit_field_deserialise_wire(&field.name, &field.shape, &access, &sub_path, ru),
-                );
+    let serialise_cases: Vec<TsSwitchCase> = sum
+        .variants
+        .iter()
+        .map(|variant| {
+            let vname = &variant.name;
+            if variant.payload.is_empty() {
+                case_(
+                    str_lit(vname.clone()),
+                    vec![return_(TsExpr::object(vec![(
+                        kind.to_string(),
+                        str_lit(vname.clone()),
+                    )]))],
+                    false,
+                )
+            } else {
+                let mut entries = vec![(kind.to_string(), str_lit(vname.clone()))];
+                for field in &variant.payload {
+                    // Narrowed (see this function's own doc): `value` is
+                    // already the exact variant member inside this `case`
+                    // block (TypeScript's own discriminated-union narrowing
+                    // through the `switch (value.{tag})` above), so the
+                    // field reads through it directly — no `as any`, no
+                    // recovery cast.
+                    entries.push((
+                        field.name.clone(),
+                        serialise_field_expr_wire(
+                            &field.shape,
+                            &format!("value.{}", field.name),
+                            "",
+                            ru,
+                        ),
+                    ));
+                }
+                case_(
+                    str_lit(vname.clone()),
+                    vec![return_(TsExpr::object(entries))],
+                    true,
+                )
             }
-            write!(out, "      return Ok({{ {tag}: \"{vname}\"").unwrap();
-            for field in &variant.payload {
-                write!(out, ", {0}: __{0}", field.name).unwrap();
+        })
+        .collect();
+    let serialise = TsDecl::Export(Box::new(TsDecl::Function {
+        name: format!("serialise_{fn_suffix}"),
+        generics: Vec::new(),
+        params: vec![TsParam {
+            name: "value".to_string(),
+            ty: Some(TsType::named(ts_type)),
+            optional: false,
+        }],
+        return_type: Some(TsType::named("JsonValue")),
+        body: vec![switch_stmt(member(ident("value"), tag), serialise_cases)],
+        is_async: false,
+        inline: false,
+    }));
+
+    // The top-level structural guard + `obj` cast — the same shape
+    // `emit_record_codec`'s own deserialise body opens with (#1443), kept
+    // as a second, file-local copy rather than shared (this file's own
+    // "own builder set" convention, `index_signature_record_ty`'s own doc).
+    let mut deserialise_body = vec![
+        if_(
+            or_expr(
+                or_expr(
+                    strict_neq(typeof_expr(ident("json")), str_lit("object")),
+                    strict_eq(ident("json"), TsExpr::Lit(TsLit::Null)),
+                ),
+                call(member(ident("Array"), "isArray"), vec![ident("json")]),
+            ),
+            block(vec![return_(err_structural_mismatch_top(
+                "object",
+                typeof_expr(ident("json")),
+            ))]),
+        ),
+        TsStmt::const_stmt(
+            TsBindingName::Ident("obj".to_string()),
+            None,
+            as_expr(ident("json"), index_signature_record_ty()),
+            None,
+        ),
+        const_(
+            kind.to_string(),
+            index(ident("obj"), str_lit(kind.to_string())),
+        ),
+    ];
+    let mut deserialise_cases: Vec<TsSwitchCase> = sum
+        .variants
+        .iter()
+        .map(|variant| {
+            let vname = &variant.name;
+            if variant.payload.is_empty() {
+                case_(
+                    str_lit(vname.clone()),
+                    vec![return_(call(
+                        ident("Ok"),
+                        vec![as_expr(
+                            TsExpr::object(vec![(tag.to_string(), str_lit(vname.clone()))]),
+                            TsType::named(ts_type),
+                        )],
+                    ))],
+                    false,
+                )
+            } else {
+                let mut stmts = Vec::new();
+                for field in &variant.payload {
+                    let access = format!("obj[\"{}\"]", field.name);
+                    let sub_path = format!("`${{path}}.{}`", field.path_segment);
+                    // `raw_stmts_at_depth_one` (this file, above): preserves
+                    // the pre-existing depth-1 splice quirk byte-for-byte —
+                    // see its own doc for why this is a real, currently-
+                    // shipped shape, not something this slice restructures.
+                    stmts.push(raw_stmts_at_depth_one(emit_field_deserialise_wire(
+                        &field.name,
+                        &field.shape,
+                        &access,
+                        &sub_path,
+                        ru,
+                    )));
+                }
+                let mut entries = vec![(tag.to_string(), str_lit(vname.clone()))];
+                for field in &variant.payload {
+                    entries.push((field.name.clone(), ident(format!("__{}", field.name))));
+                }
+                stmts.push(return_(call(
+                    ident("Ok"),
+                    vec![as_expr(TsExpr::object(entries), TsType::named(ts_type))],
+                )));
+                case_(str_lit(vname.clone()), stmts, true)
             }
-            writeln!(out, " }} as {ts_type});").unwrap();
-            writeln!(out, "    }}").unwrap();
-        }
+        })
+        .collect();
+    deserialise_cases.push(default_case(vec![return_(err_structural_mismatch_top(
+        "sum variant kind",
+        call(ident("String"), vec![ident(kind)]),
+    ))]));
+    deserialise_body.push(switch_stmt(ident(kind), deserialise_cases));
+
+    let deserialise = TsDecl::Export(Box::new(TsDecl::Function {
+        name: format!("deserialise_{fn_suffix}"),
+        generics: Vec::new(),
+        params: vec![
+            TsParam {
+                name: "json".to_string(),
+                ty: Some(TsType::named("JsonValue")),
+                optional: false,
+            },
+            deserialise_path_param(),
+        ],
+        return_type: Some(TsType::named(format!("Result<{ts_type}, BoundaryError>"))),
+        body: deserialise_body,
+        is_async: false,
+        inline: false,
+    }));
+
+    vec![serialise, deserialise]
+}
+
+#[cfg(test)]
+mod emit_sum_codec_tests {
+    use super::*;
+    use bynk_check::wire::Expected;
+
+    fn render_decls(decls: Vec<TsDecl>) -> String {
+        decls
+            .into_iter()
+            .map(|d| bynk_ts::print_stmt(&TsStmt::decl(d, None), 0))
+            .collect::<Vec<_>>()
+            .join("\n")
     }
-    writeln!(out, "    default:").unwrap();
-    writeln!(
-        out,
-        "      return Err({{ kind: \"StructuralMismatch\", path, expected: \"sum variant kind\", actual: String({kind}) }});"
-    )
-    .unwrap();
-    writeln!(out, "  }}").unwrap();
-    writeln!(out, "}}").unwrap();
-    writeln!(out).unwrap();
+
+    /// Direct unit coverage for the one real shape no fixture in the current
+    /// corpus reaches (confirmed by grep — a Python scan over every emitted
+    /// `.ts` file in the tree for a `case "<variant>": { return { kind:
+    /// "...", f1: ..., f2: ..., ... }` shape with 2+ payload fields found
+    /// zero matches — not assumed): a payload-carrying variant with TWO OR
+    /// MORE fields. The one real multi-field sum in the fixture corpus
+    /// (`bynkc/tests/fixtures/positive/474_or_patterns`'s own
+    /// `BookingState`) never crosses the wire boundary, so `serialise_
+    /// BookingState`/`deserialise_BookingState` are never generated; every
+    /// sum type that DOES cross the boundary (`Status`, `MessageArg`,
+    /// `ApiResult<T>`, ...) happens to carry exactly one field per
+    /// payload-carrying variant. This test also re-pins, directly rather
+    /// than only end-to-end: the mixed payload-free/payload-carrying
+    /// `case_braced` shape (`212_json_codec`'s own real fixture, `Status`),
+    /// and the narrowed (no `as any`) field access this slice's own
+    /// investigation established (this function's own doc).
+    #[test]
+    fn multi_field_variant_and_payload_free_variant_share_one_switch() {
+        let ru = RuntimeUse::default();
+        let sum = WireSum {
+            wire_discriminant: "kind",
+            memory_discriminant: "tag",
+            variants: vec![
+                WireVariant {
+                    name: "Pending".to_string(),
+                    payload: vec![],
+                },
+                WireVariant {
+                    name: "Shipped".to_string(),
+                    payload: vec![
+                        WireField {
+                            name: "tracking".to_string(),
+                            shape: WireRef::Base {
+                                base: BaseType::String,
+                                json: JsonKind::String,
+                                guards: vec![],
+                                expected: Expected::Json(JsonKind::String),
+                            },
+                            path_segment: "tracking".to_string(),
+                            default: None,
+                        },
+                        WireField {
+                            name: "weight".to_string(),
+                            shape: WireRef::Base {
+                                base: BaseType::Int,
+                                json: JsonKind::Number,
+                                guards: vec![BaseGuard::Integral],
+                                expected: Expected::Json(JsonKind::Number),
+                            },
+                            path_segment: "weight".to_string(),
+                            default: None,
+                        },
+                    ],
+                },
+            ],
+        };
+        let decls = emit_sum_codec("Parcel", "Parcel", &sum, &ru);
+        assert_eq!(
+            render_decls(decls),
+            "export function serialise_Parcel(value: Parcel): JsonValue {\n  switch (value.tag) {\n    case \"Pending\":\n      return { kind: \"Pending\" };\n    case \"Shipped\": {\n      return { kind: \"Shipped\", tracking: value.tracking as JsonValue, weight: value.weight as JsonValue };\n    }\n  }\n}\n\nexport function deserialise_Parcel(json: JsonValue, path: string = \"$\"): Result<Parcel, BoundaryError> {\n  if (typeof json !== \"object\" || json === null || Array.isArray(json)) {\n    return Err({ kind: \"StructuralMismatch\", path, expected: \"object\", actual: typeof json });\n  }\n  const obj = json as { [k: string]: JsonValue };\n  const kind = obj[\"kind\"];\n  switch (kind) {\n    case \"Pending\":\n      return Ok({ tag: \"Pending\" } as Parcel);\n    case \"Shipped\": {\n  if (typeof obj[\"tracking\"] !== \"string\") {\n    return Err({ kind: \"StructuralMismatch\", path: `${path}.tracking`, expected: \"string\", actual: typeof obj[\"tracking\"] });\n  }\n  const __tracking = obj[\"tracking\"];\n  if (typeof obj[\"weight\"] !== \"number\") {\n    return Err({ kind: \"StructuralMismatch\", path: `${path}.weight`, expected: \"number\", actual: typeof obj[\"weight\"] });\n  }\n  if (!Number.isInteger(obj[\"weight\"])) {\n    return Err({ kind: \"StructuralMismatch\", path: `${path}.weight`, expected: \"integer\", actual: String(obj[\"weight\"]) });\n  }\n  const __weight = obj[\"weight\"];\n      return Ok({ tag: \"Shipped\", tracking: __tracking, weight: __weight } as Parcel);\n    }\n    default:\n      return Err({ kind: \"StructuralMismatch\", path, expected: \"sum variant kind\", actual: String(kind) });\n  }\n}\n"
+        );
+    }
 }
 
 /// Emit a let binding `__<field>` after destructuring & validating a
@@ -2487,7 +2742,18 @@ pub(crate) fn emit_generic_helpers_qualified(
                         })
                         .collect(),
                 };
-                emit_sum_codec(out, &fn_suffix, &ts_type, &sum, ru);
+                // #1445 (Arc E slice 6): `emit_sum_codec` itself now builds
+                // real `bynk_ts::TsDecl` nodes — this whole function stays
+                // `String`-based (out of this slice's scope, per the
+                // issue's own "real complications" note 4, mirroring
+                // `RecordInst`'s own identical treatment in #1443), so this
+                // call site needs the same boundary-print treatment
+                // `emit_one`'s `Sum`/`Record`/`Refined`/`Opaque` arms
+                // already use (#1441, #1443, #1445).
+                for d in emit_sum_codec(&fn_suffix, &ts_type, &sum, ru) {
+                    out.push_str(&bynk_ts::print_stmt(&TsStmt::decl(d, None), 0));
+                    writeln!(out).unwrap();
+                }
             }
             GenericInst::ResultInst { ok, err } => {
                 let ok_ts = inner_ts_name(ok);

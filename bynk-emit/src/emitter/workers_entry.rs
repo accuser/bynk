@@ -191,6 +191,9 @@ fn case_(test: TsExpr, body: Vec<TsStmt>) -> TsSwitchCase {
         test: Some(test),
         body,
         default_braced: false,
+        // Arc E slice 6 (#1445): every real non-`default` case in this file
+        // is `{ }`-blocked, same as before `case_braced` existed.
+        case_braced: true,
     }
 }
 
@@ -199,6 +202,7 @@ fn default_case(body: Vec<TsStmt>) -> TsSwitchCase {
         test: None,
         body,
         default_braced: false,
+        case_braced: true,
     }
 }
 

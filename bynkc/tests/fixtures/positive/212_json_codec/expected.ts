@@ -101,7 +101,7 @@ export function serialise_Status(value: Status): JsonValue {
     case "Pending":
       return { kind: "Pending" };
     case "Shipped": {
-      return { kind: "Shipped", tracking: (value as any).tracking as JsonValue };
+      return { kind: "Shipped", tracking: value.tracking as JsonValue };
     }
   }
 }

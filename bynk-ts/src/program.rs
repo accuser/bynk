@@ -233,10 +233,15 @@ pub(crate) enum TsStmtKind {
     /// straightforward one-block wrapper). `workers_entry.rs` has four real
     /// `switch` statements (the internal `/_bynk/call/` and `/_bynk/event/`
     /// dispatches, the `scheduled` handler's `event.cron` dispatch, the
-    /// `queue` handler's `batch.queue` dispatch); every real `case` here is
+    /// `queue` handler's `batch.queue` dispatch); every real `case` there is
     /// a `{ ... }`-blocked body ending in a terminal statement (`return`/
     /// `continue`), so no fallthrough/shared-body grouping is represented —
     /// extend narrowly, the same posture every other addition here takes.
+    /// Arc E slice 6 (#1445) widens this one further, narrowly: a
+    /// non-`default` case's own bracing is now per-case
+    /// ([`TsSwitchCase::case_braced`]) rather than unconditional —
+    /// `emit_sum_codec`'s own payload-free-variant case is real, unbraced
+    /// content, not a hypothetical.
     Switch {
         discriminant: TsExpr,
         cases: Vec<TsSwitchCase>,
@@ -294,12 +299,30 @@ pub(crate) enum TsStmtKind {
     /// real `bynk_ts::TsStmt`/`print_stmt` calls internally — genuinely
     /// statement-shaped pre-rendered text, the same mechanical fit `Raw`
     /// already provides, just for a different underlying reason than
-    /// `lower.rs`'s own permanent exclusion. Both real uses share the one
-    /// property that actually matters for this variant's own existence:
-    /// *real, already-correctly-indented statement text this call site
-    /// cannot restructure into a `Vec<TsStmt>` without changing scope it
-    /// isn't the one converting* — not whether the reason is permanent
-    /// or temporary.
+    /// `lower.rs`'s own permanent exclusion.
+    ///
+    /// #1445's own third real use (Arc E slice 6, `serialisation.rs`'s
+    /// `emit_sum_codec`, via that file's own `raw_stmts_at_depth_one`
+    /// helper): a real, currently-shipped BYTE-LEVEL quirk, not a scope
+    /// boundary. `emit_field_deserialise_wire`'s own field guards, spliced
+    /// into a sum's deserialise-side payload case, have always printed at
+    /// depth 1 (`splice_stmts`'s own fixed indent) even though they sit
+    /// structurally inside a `TsStmtKind::Switch` case's own body (which
+    /// this printer would otherwise render two levels deeper, at depth 3) —
+    /// confirmed byte-for-byte against `212_json_codec`/
+    /// `407_workers_generic_sum_boundary`'s own real fixtures. Letting the
+    /// switch case render these at their structurally-correct depth instead
+    /// would be a real, deliberate formatting change with no fixture-corpus
+    /// backing either way, which that slice's own zero-diff mandate ruled
+    /// out choosing unprompted.
+    ///
+    /// All three real uses share the one property that actually matters for
+    /// this variant's own existence: *real, already-correctly-indented (or,
+    /// for the third, real-but-deliberately-NOT-restructured) statement text
+    /// this call site cannot turn into a properly-nested `Vec<TsStmt>`
+    /// without changing scope or bytes it isn't the one authorised to
+    /// change* — not whether the reason is permanent, temporary, or a
+    /// preserved historical quirk.
     Raw(String),
 }
 
@@ -313,17 +336,34 @@ pub(crate) enum TsStmtKind {
 /// `emit_stub_class`'s own `ReturnsEach` dispatch is the first real site
 /// with a BRACED `default: { ... }`, a genuinely different convention from
 /// `workers_entry.rs`'s own unbraced one; only meaningful when `test` is
-/// `None` (a non-`default` case is unconditionally braced already, the same
-/// way it always was before this field existed). Kept a per-case flag
-/// rather than changing the existing unbraced-default rendering, since that
-/// would risk `workers_entry.rs`'s own real, already-zero-diff content for
-/// no benefit — the same "don't touch working, unrelated content" judgment
-/// this track makes repeatedly.
+/// `None` (a non-`default` case was unconditionally braced before
+/// `case_braced` existed, below). Kept a per-case flag rather than changing
+/// the existing unbraced-default rendering, since that would risk
+/// `workers_entry.rs`'s own real, already-zero-diff content for no benefit —
+/// the same "don't touch working, unrelated content" judgment this track
+/// makes repeatedly.
+///
+/// `case_braced` (Arc E slice 6, #1445) — the mirror-image gap `default_braced`
+/// left open: `serialisation.rs`'s `emit_sum_codec` (this tree's first real
+/// non-`default` case that is NOT `{ }`-blocked) needs `case "Pending":
+/// return { kind: "Pending" };` — unbraced — right beside a sibling
+/// payload-carrying `case "Shipped": { ... }` — braced — in the *same*
+/// switch (`212_json_codec`'s own mixed `Status` fixture, confirmed by
+/// direct grep before this field was added: a payload-free variant's case
+/// is always unbraced, a payload-carrying variant's is always braced, and a
+/// real fixture exercises both side by side). Every prior real non-`default`
+/// case (`workers_entry.rs`'s dispatches, `tests_emit.rs`'s own sequential-
+/// outcome cases) already wants braces, so those call sites all set this
+/// `true` — the same "narrow, argued, backward-compatible extension"
+/// shape `default_braced` itself set as precedent. Only meaningful when
+/// `test` is `Some(..)` (a `default` case's bracing is `default_braced`'s
+/// business, not this field's — the inverse of that field's own scoping).
 #[derive(Debug, Clone)]
 pub struct TsSwitchCase {
     pub test: Option<TsExpr>,
     pub body: Vec<TsStmt>,
     pub default_braced: bool,
+    pub case_braced: bool,
 }
 
 impl TsStmt {
