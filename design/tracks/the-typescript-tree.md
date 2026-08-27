@@ -2232,6 +2232,35 @@ for `ts_writes`'s own final residual — the same shape ADR 0399 already produce
 `verbatim_sites` — not a claim that a fourth or fifth slice reaches a genuine 0. That writeup is
 tracked as #1462.
 
+**#1463 landed ("Arc F, slice 4"): `cap_ref_ty`/`build_deps_object_ty_with_surface`/
+`workers_env_ty`/`surface_ty` build real `bynk_ts::TsType` nodes.** Closes #1361's own
+deliberately-deferred `TsType::named(deps_ty)` wrap at all three handler-deps call sites
+(`emit_service`/`emit_agent`/`emit_ws_do_method`) and `emit_context_deps_interface`'s own
+`surface`-field residual (#1453) as a side effect, exactly as #1457's own grounding predicted.
+`append_deps_field` widens a real `Vec<TsTypeMember>` now, not a string splice. **One field stays
+opaque, found only once a real fixture caught it, not assumed:** the actor-sum `who` union's own
+per-member tagged object (`{ tag: "Name", identity: T }`) is comma-separated in the pre-existing
+hand-written text, but `TsType::Object`'s own printer always joins members with `"; "` — building
+it as a real node would have silently changed the punctuation. Confirmed by
+`positive_fixtures`/`tsc_verify`'s full corpus, zero diff elsewhere. `ts_writes` drops from 875 to
+860 as a bonus beyond this slice's own `verbatim_sites`-motivated scope — most of these four
+functions' own internal `format!` calls built TS-syntax text directly, not just the `TsParam`-level
+wrap; converting them removed the need for most of that text-building outright.
+
+**Review of #1469 sharpened this landing twice more, before merge.** `append_deps_field`'s own
+`&mut TsType` signature (with a runtime `let ... else { panic!() }` guard for the "found
+something else" case) encoded an invariant the type system could hold outright —
+`build_deps_object_ty_with_surface` now returns the bare `Vec<TsTypeMember>` directly, and
+`append_deps_field` takes `&mut Vec<TsTypeMember>`, removing the panic path entirely rather than
+documenting why it can't fire. The old `trim_end_matches('}')` splice this replaces was a **latent
+hazard**, not merely untidy: it strips every trailing `}`, and only produced the right answer
+because a nested object field always happened to end with a space before its own closing brace —
+`__exec`'s own `{ waitUntil(...): void }` shape was one stray space away from silently losing a
+brace. Separately, `surface_ty`'s own `ReturnType<T>` narrows one level further: `ReturnType<T>`
+itself is representable generically (`TsType::named_with_args`), so only its own `typeof
+{ns}.makeSurface` type argument stays opaque now, not the whole expression — the accurate account
+of what remains text, not what the first landing happened to leave opaque.
+
 **#1462 landed: `emit_agent`'s own cluster read end to end, not sampled — mostly confirmed, one
 real gap found.** `ts_writes` reads **875** today (`serialisation.rs`/`emit.rs`/`project.rs`
 dropped from Arc F's own opening figures once slices 1–3 landed). Of `emit_agent`'s own 99
@@ -2251,7 +2280,12 @@ already used, not a wall. `inject_runtime_imports` stays a real, unattempted des
 (genuine post-print text surgery, entangled with #1461's own nested-source-map finding), not
 proven impossible. Both move to the "argued, not yet attempted" bucket alongside the
 history-driver — only `lower.rs` (ADR 0391) and the Decision-C wrapper text are genuinely
-permanent. The `__eventsDispatch` carve-out tracks with #1463. The argued floor is **not 0 and
+permanent. The `__eventsDispatch` carve-out was expected to track with #1463 — **it did not
+close there**: #1463's own landing found `TsType::Fn`'s anonymous, positional parameters can't
+name `__eventsDispatch`'s own `events` argument, the same real algebra gap
+`emit_context_deps_interface`'s identical field already named (#1453) — stays opaque, a small,
+independent, genuinely-open item of its own, not resolved as a side effect the way `surface`
+was. The argued floor is **not 0 and
 not fully known until the history-driver (and, now, `pred_condition_and_message`/
 `inject_runtime_imports`) conversions are attempted** — `tests_emit.rs`'s 83 sites and
 `workers_entry.rs`'s 34 still carry Arc F's own sampling-only caveat, out of #1462's own scoped
