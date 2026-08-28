@@ -512,7 +512,11 @@ fn emit_integration_module(
                 let mut type_names: Vec<String> = table.types.keys().cloned().collect();
                 type_names.sort();
                 type_names.dedup();
-                emit_ns_destructure(&mut out, &ns, &names, &type_names);
+                crate::emitter::extend_printed_at(
+                    &mut out,
+                    emit_ns_destructure(&ns, &names, &type_names),
+                    2,
+                );
             }
         }
         let (body_src, body_smb) = emitter::lower_integration_case_body(
@@ -2410,7 +2414,11 @@ fn emit_stub_class(
         let return_ty = emitter::ts_type_ref_qualified_multi_ts_type(&op.return_type, &type_ns);
 
         let mut body_text = String::new();
-        emit_ns_destructure(&mut body_text, &scope_ns, &scope_names, &scope_type_names);
+        crate::emitter::extend_printed_at(
+            &mut body_text,
+            emit_ns_destructure(&scope_ns, &scope_names, &scope_type_names),
+            2,
+        );
         for &idx in clause_idxs {
             let clause = &rp.clauses[idx];
             // Argument-pattern consts: a `Value(e)` pattern lowers to a const the
@@ -2897,27 +2905,30 @@ fn emit_test_deps(
 /// `tsc --strict`: nothing inside a generated test body was ever really
 /// checked. `type_names` (a subset of `value_names`) gets the alias;
 /// `value_names` is unconditionally destructured with no cast.
-fn emit_ns_destructure(out: &mut String, ns: &str, value_names: &[String], type_names: &[String]) {
+/// #1479: returns real [`TsStmt`]s (was `out: &mut String`) — every caller
+/// now appends via `crate::emitter::extend_printed_at(out, stmts, 2)`, the
+/// same depth-2 this scaffold body's own statements always printed at.
+fn emit_ns_destructure(ns: &str, value_names: &[String], type_names: &[String]) -> Vec<TsStmt> {
+    let mut stmts = Vec::new();
     if !value_names.is_empty() {
-        let stmt = TsStmt::const_stmt(
+        stmts.push(TsStmt::const_stmt(
             TsBindingName::ObjectPattern(value_names.to_vec()),
             None,
             ident(ns),
             None,
-        );
-        out.push_str(&bynk_ts::print_stmt(&stmt, 2));
+        ));
     }
     for t in type_names {
-        let stmt = TsStmt::decl(
+        stmts.push(TsStmt::decl(
             TsDecl::TypeAlias {
                 name: t.clone(),
                 type_params: Vec::new(),
                 ty: TsType::named(format!("{ns}.{t}")),
             },
             None,
-        );
-        out.push_str(&bynk_ts::print_stmt(&stmt, 2));
+        ));
     }
+    stmts
 }
 
 /// Emit the shared per-runner scope setup — agent reset, the `deps` factory, and
@@ -3081,7 +3092,11 @@ fn emit_test_scope_setup(
         let mut type_names: Vec<String> = table.types.keys().cloned().collect();
         type_names.sort();
         type_names.dedup();
-        emit_ns_destructure(out, &target_ns, &names, &type_names);
+        crate::emitter::extend_printed_at(
+            out,
+            emit_ns_destructure(&target_ns, &names, &type_names),
+            2,
+        );
     }
     // Bring in `uses` commons names too — the target's body can use them.
     // message-bundles slice 1 (#859): a name the target itself already
@@ -3119,7 +3134,11 @@ fn emit_test_scope_setup(
                     .collect();
                 type_names.sort();
                 type_names.dedup();
-                emit_ns_destructure(out, &ns, &names, &type_names);
+                crate::emitter::extend_printed_at(
+                    out,
+                    emit_ns_destructure(&ns, &names, &type_names),
+                    2,
+                );
             }
         }
     }
@@ -3144,7 +3163,7 @@ fn emit_test_scope_setup(
                 let mut names: Vec<String> = table.types.keys().cloned().collect();
                 names.sort();
                 names.dedup();
-                emit_ns_destructure(out, &ns, &names, &names);
+                crate::emitter::extend_printed_at(out, emit_ns_destructure(&ns, &names, &names), 2);
             }
             // An `adapter` target has no `makeSurface`/`deps.surface` entry —
             // its capabilities are already flattened onto `deps` directly

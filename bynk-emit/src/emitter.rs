@@ -179,14 +179,22 @@ pub(crate) fn runtime_import_for(from_source: &Path, ext: ImportExt) -> String {
     }
 }
 
-/// #1478: appends `stmts` to `out`, printing each at depth 0 — the shared
-/// "consume a real-node-returning callee's own output" step every one of
-/// `emit`/`emit_project`'s own now-converted-callee call sites uses, instead
-/// of each repeating the same `for stmt in ... { out.push_str(...) }` loop.
-fn extend_printed(out: &mut String, stmts: Vec<bynk_ts::TsStmt>) {
+/// #1478: appends `stmts` to `out`, printing each at `depth` — the shared
+/// "consume a real-node-returning callee's own output" step. #1479 adds the
+/// `depth` parameter (was hardcoded to 0): `emit`/`emit_project`'s own
+/// converted callees are all module-level (depth 0), but `project/
+/// tests_emit.rs`'s own scaffold-body callees (e.g. `emit_ns_destructure`)
+/// print nested inside a generated function body, at that body's own depth.
+pub(crate) fn extend_printed_at(out: &mut String, stmts: Vec<bynk_ts::TsStmt>, depth: usize) {
     for stmt in stmts {
-        out.push_str(&bynk_ts::print_stmt(&stmt, 0));
+        out.push_str(&bynk_ts::print_stmt(&stmt, depth));
     }
+}
+
+/// As [`extend_printed_at`], at depth 0 — every `emit`/`emit_project` call
+/// site's own shape.
+fn extend_printed(out: &mut String, stmts: Vec<bynk_ts::TsStmt>) {
+    extend_printed_at(out, stmts, 0);
 }
 
 /// Emit TypeScript source for the typed commons (single-file mode).
