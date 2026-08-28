@@ -2635,6 +2635,31 @@ bynkc` fixture-diff + e2e suite (`bless_positive_fixtures`/`positive_fixtures` i
 (gated probe) moves 851 → 829 — the real, intended reduction from these 12 sites (831) plus the
 review's own `print_decls` collapse (829) no longer writing through `format!`/`write!`.
 
+**#1479 landed — `tests_emit.rs`'s own no-body direct callees build real `bynk_ts` trees, the
+mirror of #1478 for this file.** `emit_ns_destructure` (`-> Vec<TsStmt>`, printed by every caller
+through a new `crate::emitter::extend_printed_at(out, stmts, depth)` — generalizes #1478's
+`extend_printed` with an explicit `depth` parameter, since this file's own scaffold-body callees
+print nested at depth 2, not `emitter.rs`'s own module-level depth 0), `emit_test_deps`/
+`emit_integration_harness` (each returns the one real `TsStmt` it ever built, was pre-printed
+`String`), `observation_call_record_types` (`-> Vec<TsStmt>`), the codec-helper glue inside
+`emit_test_module` (now `serialisation::decls_as_stmts[_block]` + `extend_printed_at`, not
+`serialisation::print_decls[_block]`), and `emit_system_http_support`/`sysdrive_driver`
+(`SystemHttpSupport.code` and `sysdrive_driver`'s return both go from pre-printed `String` to real
+`TsStmt`(s); the HS256 signer block, #1485's own separate scope, stays exactly the hand-written
+text it always was, carried forward as one `TsStmt::raw` — the same carrier `emit_messages_bundle`'s
+own #1478 conversion already established for an unconverted-sibling boundary). Converting the
+codec-helper glue's own two call sites removed `serialisation::print_decls`/`print_decls_block`'s
+own last two production callers anywhere in the crate — deleted both as genuine dead code, fixing
+the stale intra-doc `[`print_decls`]` links elsewhere in `serialisation.rs` that would otherwise
+have failed `RUSTDOCFLAGS=-D warnings`. `emit_test_module`/`emit_integration_module` themselves are
+**not** converted by this issue, matching its own explicit scope — that capstone is #1486, once
+every direct callee across both `emitter.rs` (#1478) and `tests_emit.rs` (#1479) has landed. Byte-
+identical output verified: `cargo test -p bynk-emit` (187/187) and the full `cargo test -p bynkc`
+fixture-diff + e2e suite (`tsc_verify`/`bless_positive_fixtures`/`positive_fixtures` included).
+`ts_writes` (gated probe) unchanged at 829 — every converted call site here was already
+`print_stmt`-based, not `format!`/`write!`-based (unlike several of #1478's own sites), so this
+slice moves construction style only, not that particular count.
+
 ---
 
 ## 7. Out of scope — forward references, not refusals
