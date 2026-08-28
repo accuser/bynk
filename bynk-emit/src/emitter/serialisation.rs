@@ -541,6 +541,31 @@ pub(crate) fn print_decls_block(out: &mut String, decls: Vec<TsDecl>) {
     }
 }
 
+/// #1478's own sibling to [`print_decls`]: the identical shape (one blank
+/// `TsStmt` after each declaration), but collected into a `Vec<TsStmt>`
+/// instead of printed immediately — for a caller that itself now returns a
+/// node collection rather than writing into `out: &mut String`.
+pub(crate) fn decls_as_stmts(decls: Vec<TsDecl>) -> Vec<TsStmt> {
+    let mut stmts = Vec::with_capacity(decls.len() * 2);
+    for d in decls {
+        stmts.push(TsStmt::decl(d, None));
+        stmts.push(TsStmt::blank(None));
+    }
+    stmts
+}
+
+/// #1478's own sibling to [`print_decls_block`]: the identical shape (one
+/// more trailing blank `TsStmt` if anything was collected), for a caller
+/// returning a node collection instead of writing into `out: &mut String`.
+pub(crate) fn decls_as_stmts_block(decls: Vec<TsDecl>) -> Vec<TsStmt> {
+    let emitted_any = !decls.is_empty();
+    let mut stmts = decls_as_stmts(decls);
+    if emitted_any {
+        stmts.push(TsStmt::blank(None));
+    }
+    stmts
+}
+
 /// #661: as [`emit_helpers_for_owner`], but the caller supplies a type
 /// `Qual`. With an empty qualifier this is the owner's own module (every
 /// type named bare, refined validation through `.of`). With a non-empty one it
