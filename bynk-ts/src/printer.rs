@@ -414,7 +414,9 @@ fn render_stmt(out: &mut String, stmt: &TsStmt, depth: usize, mut map: Option<Me
     {
         let base = out.len();
         render_stmt_kind(out, stmt, depth, None);
-        target.map.merge(nested, &out[base..], out, base, target.source_id);
+        target
+            .map
+            .merge(nested, &out[base..], out, base, target.source_id);
         return;
     }
     render_stmt_kind(out, stmt, depth, map);
@@ -423,7 +425,12 @@ fn render_stmt(out: &mut String, stmt: &TsStmt, depth: usize, mut map: Option<Me
 /// [`render_stmt`]'s own per-`kind` dispatch, split out so the nested-
 /// checkpoint check above runs exactly once per statement regardless of
 /// which arm below ends up recursing back into `render_stmt` for a child.
-fn render_stmt_kind(out: &mut String, stmt: &TsStmt, depth: usize, mut map: Option<MergeTarget<'_>>) {
+fn render_stmt_kind(
+    out: &mut String,
+    stmt: &TsStmt,
+    depth: usize,
+    mut map: Option<MergeTarget<'_>>,
+) {
     match &stmt.kind {
         TsStmtKind::Verbatim { text, .. } => {
             out.push_str(text);
@@ -914,7 +921,12 @@ fn render_inline_stmt(out: &mut String, stmt: &TsStmt) {
 /// a map into `render_branch` itself (out of scope — ADR 0391's own
 /// permanently-opaque content is always a whole function/method/constructor
 /// body, never embedded directly inside an `if`/loop branch).
-fn render_block_body(out: &mut String, block: &TsStmt, depth: usize, mut map: Option<MergeTarget<'_>>) {
+fn render_block_body(
+    out: &mut String,
+    block: &TsStmt,
+    depth: usize,
+    mut map: Option<MergeTarget<'_>>,
+) {
     out.push_str(" {\n");
     if let TsStmtKind::Block(stmts) = &block.kind {
         for s in stmts {
@@ -1880,7 +1892,7 @@ pub fn print_stmt(stmt: &TsStmt, depth: usize) -> String {
 /// a `debug_assert!`. Kept separate from `print_stmt` itself so every
 /// existing caller's own call sites are untouched. `source_id` is `map`'s
 /// own registered source this statement's content belongs to (see
-/// [`MergeTarget`]'s own doc for why this can't just be hardcoded).
+/// this crate's own private `MergeTarget`'s own doc for why this can't just be hardcoded).
 ///
 /// **Appends to the caller's own `out`, unlike `print_stmt`'s own
 /// return-a-fresh-`String` shape** — the merge computes each checkpoint's
@@ -1945,7 +1957,7 @@ pub fn print_object_entry(entry: &TsObjectEntry, depth: usize) -> String {
 ///
 /// Appends to the caller's own `out`, the same "must be the real buffer,
 /// not a throwaway local one" reasoning [`print_stmt_and_merge`]'s own doc
-/// explains in full. `source_id`: see [`MergeTarget`]'s own doc.
+/// explains in full. `source_id`: see this crate's own private `MergeTarget`'s own doc.
 pub fn print_object_entry_and_merge(
     out: &mut String,
     entry: &TsObjectEntry,
@@ -2036,7 +2048,7 @@ pub fn print_class_method(method: &TsClassMethod, depth: usize) -> String {
 ///
 /// Appends to the caller's own `out`, the same "must be the real buffer,
 /// not a throwaway local one" reasoning [`print_stmt_and_merge`]'s own doc
-/// explains in full. `source_id`: see [`MergeTarget`]'s own doc.
+/// explains in full. `source_id`: see this crate's own private `MergeTarget`'s own doc.
 pub fn print_class_method_and_merge(
     out: &mut String,
     method: &TsClassMethod,
@@ -2261,7 +2273,12 @@ fn render_decl_body(
                 out.push_str("constructor(");
                 render_params(out, &ctor.params);
                 out.push(')');
-                render_block_stmts(out, &ctor.body, depth + 1, map.as_mut().map(|t| t.reborrow()));
+                render_block_stmts(
+                    out,
+                    &ctor.body,
+                    depth + 1,
+                    map.as_mut().map(|t| t.reborrow()),
+                );
                 out.push('\n');
                 wrote_member = true;
             }
@@ -2859,7 +2876,10 @@ mod tests {
 
         let base_of_body = out.find(body_text).unwrap();
         let base_of_second_line = out.find("  return a;\n").unwrap();
-        assert!(base_of_second_line > base_of_body, "sanity: second line is after the first");
+        assert!(
+            base_of_second_line > base_of_body,
+            "sanity: second line is after the first"
+        );
 
         let mut expected = SourceMapBuilder::new();
         expected.add_source("x.bynk", source);
