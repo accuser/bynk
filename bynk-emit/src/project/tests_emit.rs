@@ -2091,24 +2091,30 @@ fn emit_test_module(
             runtime_use.note_json_codec();
             runtime_use.note_boundary_codec();
             let qual = runtime_use.json_codec_qual();
-            crate::emitter::serialisation::print_decls_block(
+            crate::emitter::extend_printed_at(
                 &mut out,
-                crate::emitter::serialisation::emit_helpers_for_owner_qualified(
-                    &codec_names,
-                    &synthetic.types,
-                    target_name,
-                    &qual,
-                    &runtime_use,
+                crate::emitter::serialisation::decls_as_stmts_block(
+                    crate::emitter::serialisation::emit_helpers_for_owner_qualified(
+                        &codec_names,
+                        &synthetic.types,
+                        target_name,
+                        &qual,
+                        &runtime_use,
+                    ),
                 ),
+                0,
             );
-            crate::emitter::serialisation::print_decls(
+            crate::emitter::extend_printed_at(
                 &mut out,
-                crate::emitter::serialisation::emit_generic_helpers_qualified(
-                    &codec_insts,
-                    &synthetic.types,
-                    &qual,
-                    &runtime_use,
+                crate::emitter::serialisation::decls_as_stmts(
+                    crate::emitter::serialisation::emit_generic_helpers_qualified(
+                        &codec_insts,
+                        &synthetic.types,
+                        &qual,
+                        &runtime_use,
+                    ),
                 ),
+                0,
             );
         }
     }

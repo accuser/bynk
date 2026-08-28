@@ -1135,7 +1135,7 @@ fn emit_json_codec_helpers(
 /// the v0.22b codec emission can dedupe against them.
 /// #1478: returns real [`bynk_ts::TsStmt`]s (was `out: &mut String`) as a
 /// new first element of the tuple — every `out`-write here is already
-/// exclusively through `serialisation::print_decls[_block]` or a real
+/// exclusively through `serialisation::decls_as_stmts[_block]` or a real
 /// `bynk_ts::print_stmt` call, so each becomes a `stmts.extend`/`stmts.push`
 /// into the same local `stmts`, threaded through `emit_consumed_context_
 /// helpers`'s own identical conversion.
@@ -1411,8 +1411,8 @@ fn emit_boundary_helpers(
 /// emitted, so the Json-codec pass dedupes against them too.
 /// #1478: returns real [`bynk_ts::TsStmt`]s (was `out: &mut String`) as a
 /// new first element of the tuple — every `out`-write here is already
-/// exclusively through `serialisation::print_decls[_block]`, so each becomes
-/// its sibling `decls_as_stmts[_block]` call, appended into `stmts`.
+/// exclusively through `serialisation::decls_as_stmts[_block]`, called
+/// directly since that slice, appended into `stmts`.
 fn emit_consumed_context_helpers(
     program: &CheckedProgram,
     ctx: &EmitProjectCtx,
