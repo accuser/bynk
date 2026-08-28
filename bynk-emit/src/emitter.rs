@@ -197,6 +197,25 @@ fn extend_printed(out: &mut String, stmts: Vec<bynk_ts::TsStmt>) {
     extend_printed_at(out, stmts, 0);
 }
 
+/// #1480: [`extend_printed`]'s merge-aware sibling — appends `stmts` to
+/// `out` at depth 0 through `bynk_ts::print_stmt_and_merge` instead of a
+/// plain `print_stmt`, so any `nested_map` a statement carries (e.g.
+/// `emit_free_fn`'s own `Raw` function body) merges into `map` at its real
+/// print-time offset. A stmt with no `nested_map` (a doc comment, a blank
+/// separator) just prints normally — the merge check inside `render_stmt`
+/// is a no-op for it, so mixing merge-needing and merge-free statements in
+/// one `stmts` list is always safe.
+fn extend_printed_and_merged(
+    out: &mut String,
+    stmts: Vec<bynk_ts::TsStmt>,
+    map: &mut SourceMapBuilder,
+    source_id: usize,
+) {
+    for stmt in stmts {
+        bynk_ts::print_stmt_and_merge(out, &stmt, 0, map, source_id);
+    }
+}
+
 /// Emit TypeScript source for the typed commons (single-file mode).
 ///
 /// Takes a [`CheckedProgram`] rather than a bare `TypedCommons` (T3.7, R3.10):
@@ -226,7 +245,10 @@ pub(crate) fn emit(program: &CheckedProgram) -> String {
         if let CommonsItem::Fn(f) = item
             && let FnName::Free(_) = &f.name
         {
-            emit_free_fn(&mut body, f, commons, None, false, &dummy_ctx.runtime_use);
+            extend_printed(
+                &mut body,
+                emit_free_fn(f, commons, false, &dummy_ctx.runtime_use),
+            );
         }
     }
     // v0.22b: module-local codec helpers for Json.encode/decode targets.
@@ -408,13 +430,11 @@ pub(crate) fn emit_project(
             && let FnName::Free(_) = &f.name
         {
             smb.borrow_mut().record(out.len(), f.span);
-            emit_free_fn(
+            extend_printed_and_merged(
                 &mut out,
-                f,
-                commons,
-                Some(&smb),
-                ctx.contracts,
-                &ctx.runtime_use,
+                emit_free_fn(f, commons, ctx.contracts, &ctx.runtime_use),
+                &mut smb.borrow_mut(),
+                0,
             );
         }
     }
@@ -460,7 +480,9 @@ pub(crate) fn emit_project(
             }
             CommonsItem::Provider(p) => {
                 smb.borrow_mut().record(out.len(), p.span);
-                emit_provider(&mut out, p, commons, ctx, Some(&smb));
+                if let Some(stmt) = emit_provider(p, commons, ctx) {
+                    bynk_ts::print_stmt_and_merge(&mut out, &stmt, 0, &mut smb.borrow_mut(), 0);
+                }
             }
             CommonsItem::Service(s) => {
                 smb.borrow_mut().record(out.len(), s.span);

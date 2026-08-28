@@ -883,20 +883,30 @@ fn emit_method(
 /// that buffer's own length") — `body_smb` collects checkpoints relative to
 /// `body_text`, then `merge`s into the real `source_map`, rebased at
 /// `body_text`'s own splice offset within the fully-printed declaration.
+/// #1480: returns real [`bynk_ts::TsStmt`]s (was `out: &mut String` plus a
+/// hand-rolled `merge` call) — `#1477` (`print_stmt_and_merge`) now recovers
+/// the `Raw` body's own print-time splice offset itself, so this function no
+/// longer needs to recover it by exact arithmetic over its own printed text
+/// (the `debug_assert!`-guarded computation this replaces). The body's own
+/// `body_smb` is attached directly to the `Raw` body statement's own
+/// `nested_map` field instead; every caller now prints (and, if it has a
+/// real module map to merge into, merges) through `print_stmt_and_merge`
+/// rather than a plain `print_stmt`/`push_str`.
 pub(crate) fn emit_free_fn(
-    out: &mut String,
     f: &FnDecl,
     commons: &TypedCommons,
-    source_map: Option<&RefCell<SourceMapBuilder>>,
     // v0.115: emit the contract call-site guard (dev/test profile). Stripped
     // (false) in the deploy build for zero runtime cost (DECISION J).
     contracts: bool,
     runtime_use: &RuntimeUse,
-) {
+) -> Vec<bynk_ts::TsStmt> {
     let FnName::Free(name) = &f.name else {
-        return;
+        return Vec::new();
     };
-    emit_doc_block(out, f.documentation.as_deref(), 0);
+    let mut stmts = Vec::new();
+    if let Some(doc) = f.documentation.as_deref() {
+        stmts.push(bynk_ts::TsStmt::doc_comment(doc, None));
+    }
     let params: Vec<bynk_ts::TsParam> = f
         .params
         .iter()
@@ -938,45 +948,22 @@ pub(crate) fn emit_free_fn(
         );
     }
 
-    let func_decl = bynk_ts::TsStmt::decl(
+    let mut raw_body = bynk_ts::TsStmt::raw(body_text, None);
+    raw_body.nested_map = Some(body_smb.into_inner());
+    stmts.push(bynk_ts::TsStmt::decl(
         bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::Function {
             name: ts_ident(&name.name),
             generics,
             params,
             return_type: Some(ts_type_ref_to_ts_type(&f.return_type, None)),
-            body: vec![bynk_ts::TsStmt::raw(body_text.clone(), None)],
+            body: vec![raw_body],
             is_async,
             inline: false,
         })),
         None,
-    );
-    let printed = bynk_ts::print_stmt(&func_decl, 0);
-    // `Raw`'s own text is spliced verbatim (`printer.rs`'s own documented
-    // guarantee), so its offset within `printed` is exact arithmetic, not a
-    // search: everything before it is the header/opening-brace text, and
-    // everything after it is the fixed closing `"}\n"` `TsDecl::Function`'s
-    // own render arm always appends.
-    //
-    // Review of #1352, finding 1: this arithmetic silently encodes 3
-    // invariants of a renderer in another crate (Raw splices verbatim,
-    // `TsDecl::Function` always ends in exactly `"}\n"`, `print_stmt` is
-    // called at depth 0) — if any of those ever changed, the failure mode
-    // is not a compile error or a text diff, it's a silently wrong source
-    // map, the exact bug class this function exists to fix. Guarded loudly
-    // rather than trusted silently.
-    debug_assert!(
-        printed.ends_with(&format!("{body_text}}}\n")),
-        "emit_free_fn: Raw body is no longer the verbatim tail of the printed decl"
-    );
-    let body_offset_in_printed = printed.len() - body_text.len() - "}\n".len();
-    let base = out.len() + body_offset_in_printed;
-    out.push_str(&printed);
-    if let Some(module) = source_map {
-        module
-            .borrow_mut()
-            .merge(&body_smb.borrow(), &body_text, out, base, 0);
-    }
-    writeln!(out).unwrap();
+    ));
+    stmts.push(bynk_ts::TsStmt::blank(None));
+    stmts
 }
 
 /// #1353 (R7.1): closes step (4) of the design pass's own decomposition
@@ -2323,20 +2310,37 @@ fn emit_class_method_and_merge_source_map(
     }
 }
 
+/// #1480: returns one real [`bynk_ts::TsStmt`] (was `out: &mut String`) — a
+/// `Verbatim`/`Raw` carrier for the whole provider declaration (class header/
+/// wrapper text, Decision C: a real `TsDecl::Class` would need every
+/// method's own body captured into a local buffer for `Raw`-embedding
+/// anyway, and this class's own spacing convention already disagrees with
+/// `TsDecl::Class`'s own — not a further decomposition this slice attempts),
+/// with a class-wide `nested_map` combining every op method's own
+/// `body_smb` at its own real print-time offset *within this function's own
+/// local `out` buffer* — computed by `bynk_ts::print_class_method_and_merge`
+/// itself (#1477) rather than the exact-arithmetic recovery
+/// `emit_class_method_and_merge_source_map` (above) still performs for
+/// `emit_service`/`emit_agent`'s own not-yet-converted call sites. The
+/// caller then merges this ONE combined map into its own real module map at
+/// the class's own real splice offset, via `print_stmt_and_merge` — the same
+/// two-level "local map merges into a local buffer, that buffer's own map
+/// merges into the real one at its own real offset" composition
+/// `print_stmt_and_merge`'s own doc already establishes for a nested `Raw`.
 pub(crate) fn emit_provider(
-    out: &mut String,
     p: &ProviderDecl,
     commons: &TypedCommons,
     ctx: &EmitProjectCtx,
-    source_map: Option<&RefCell<SourceMapBuilder>>,
-) {
+) -> Option<bynk_ts::TsStmt> {
     // v0.17: an external (bodiless) provider inside an adapter is supplied by
     // the adapter's binding — the compiler emits no class for it. Its symbol is
     // imported and constructed by the consumer's compose (§6.1, Phase 2).
     if p.external {
-        return;
+        return None;
     }
-    emit_doc_block(out, p.documentation.as_deref(), 0);
+    let mut out = String::new();
+    let mut class_smb = SourceMapBuilder::new();
+    emit_doc_block(&mut out, p.documentation.as_deref(), 0);
     writeln!(
         out,
         "export class {prov} implements {cap} {{",
@@ -2474,10 +2478,12 @@ pub(crate) fn emit_provider(
         );
 
         // The class is always printed at depth 0 — `class_depth` names that
-        // once, so `trailing`'s own indent (review of #1360, finding 3's
-        // own secondary note) can never drift out of lockstep with the
-        // depth `print_class_method` is actually called with.
+        // once, so a merge site's own indent assumptions can never drift out
+        // of lockstep with the depth `print_class_method_and_merge` is
+        // actually called with.
         let class_depth = 0;
+        let mut raw_body = bynk_ts::TsStmt::raw(body_text, None);
+        raw_body.nested_map = Some(body_smb.into_inner());
         let method = bynk_ts::TsClassMethod {
             name: op.name.name.clone(),
             private: false,
@@ -2485,16 +2491,9 @@ pub(crate) fn emit_provider(
             params,
             return_type: Some(ts_type_ref_to_ts_type(&op.return_type, None)),
             doc: None,
-            body: vec![bynk_ts::TsStmt::raw(body_text.clone(), None)],
+            body: vec![raw_body],
         };
-        emit_class_method_and_merge_source_map(
-            out,
-            &method,
-            class_depth,
-            RawBody::flat(&body_text),
-            &body_smb,
-            source_map,
-        );
+        bynk_ts::print_class_method_and_merge(&mut out, &method, class_depth, &mut class_smb, 0);
     }
     writeln!(out, "}}").unwrap();
     writeln!(out).unwrap();
@@ -2530,6 +2529,9 @@ pub(crate) fn emit_provider(
     )
     .unwrap();
     writeln!(out).unwrap();
+    let mut stmt = bynk_ts::TsStmt::raw(out, None);
+    stmt.nested_map = Some(class_smb);
+    Some(stmt)
 }
 
 /// Append one field to a `deps` object type under construction —
