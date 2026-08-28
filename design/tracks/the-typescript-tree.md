@@ -2607,12 +2607,26 @@ sub-call), and `emit_json_codec_helpers`. Two still-unconverted siblings this ba
 captured into a local buffer and carried as one `bynk_ts::TsStmtKind::Raw` statement, the same
 "already real-node-printed internally, still `String`-typed at its own call boundary" carrier
 `emit_refined_type`'s own `checks_text` already used before this slice. A new `extend_printed(out,
-stmts)` helper in `emitter.rs` bridges each converted callee's `Vec<TsStmt>` back to the three
-`out: &mut String` call sites that still need `String` output at the top (`emit`, `emit_project`,
-and `emit_project`'s own per-item loop — a third caller, `emit`, not originally accounted for in
-this slice's own framing); `serialisation::decls_as_stmts`/`decls_as_stmts_block` (new siblings of
-the existing `print_decls`/`print_decls_block`) let `emit_boundary_helpers`'s trio thread their real
-declarations through without an intermediate print. Byte-identical output verified: `cargo test -p
+stmts)` helper in `emitter.rs` bridges each converted callee's `Vec<TsStmt>` back to the two
+distinct `out: &mut String` buffers that still need `String` output at the top: `emit`'s own
+`body` (a third caller not originally accounted for in this slice's own framing) and
+`emit_project`'s own `out` (shared by its per-item loop and, later, its separately-built `header`
+buffer at the `write_header` call site); `serialisation::decls_as_stmts`/`decls_as_stmts_block` let
+`emit_boundary_helpers`'s trio thread their real declarations through without an intermediate print.
+
+**Review of #1491 found one real, non-blocking simplification, fixed before merge:** `decls_as_stmts`/
+`decls_as_stmts_block` started as hand-duplicated siblings of `print_decls`/`print_decls_block`
+(the same blank-line convention living in two independent copies, with `decls_as_stmts_block`
+silently re-deriving `print_decls_block`'s own `emitted_any` condition). Collapsed the instant
+`extend_printed` existed to do it: `decls_as_stmts`/`decls_as_stmts_block` are now the one real
+implementation, and `print_decls`/`print_decls_block` — kept only for `project/tests_emit.rs`'s two
+remaining `out: &mut String` callers — are thin wrappers (`super::extend_printed(out,
+decls_as_stmts(decls))`). Two smaller, non-blocking notes from the same review: `design/
+greenfield-status.md`'s incidental `keep_in_sync`/`bynk-ts` `test_density` drift (unrelated to this
+diff, picked up because the committed table missed a re-run after #1477/PR #1488 touched
+`bynk-ts/src`) is now called out explicitly in the pending changelog; the buffer-count phrasing
+above was corrected to name `header` as the actual third buffer, not `emit_project`'s per-item loop
+(which shares `emit_project`'s own `out`). Byte-identical output verified throughout: `cargo test -p
 bynk-emit` (187/187), `cargo test -p bynkc --test tsc_verify`, and the full `cargo test -p bynkc`
 fixture-diff + e2e suite (`bless_positive_fixtures`/`positive_fixtures` included). `ts_writes`
 (gated probe) moves 851 → 831 — the real, intended reduction from these 12 sites no longer writing

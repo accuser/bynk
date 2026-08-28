@@ -10,7 +10,6 @@
 //! Helpers live in the *owning* module — commons modules emit helpers for
 //! commons types, context modules emit helpers for the types they declare.
 
-use std::fmt::Write as _;
 use std::sync::Arc;
 
 use bynk_syntax::ast::{BaseType, PredKind, TypeBody, TypeDecl, TypeRef};
@@ -503,26 +502,30 @@ pub(crate) fn emit_helpers_for_owner(
     emit_helpers_for_owner_qualified(type_names, types, owner_qualified, &Qual::new(), ru)
 }
 
-/// Boundary-prints `decls` into `out`, one blank line after each declaration —
-/// the shared print step every caller of [`emit_helpers_for_owner`]/
-/// [`emit_generic_helpers`] (and their `_qualified` twins) now performs once,
-/// itself, instead of each of `emit_one`'s three arms and
-/// `emit_generic_helpers_qualified`'s six arms boundary-printing inline.
-/// Arc F slice 1 (#1451): consolidates what used to be ten separate
-/// `write!`-family call sites into this one.
-pub(crate) fn print_decls(out: &mut String, decls: Vec<TsDecl>) {
+/// Collects `decls` into real statements, one blank `TsStmt` after each
+/// declaration — the shared shape every caller of [`emit_helpers_for_owner`]/
+/// [`emit_generic_helpers`] (and their `_qualified` twins) now needs, whether
+/// it prints straight into its own `out: &mut String` (via [`print_decls`])
+/// or, since #1478, collects into its own returned `Vec<TsStmt>` instead
+/// (every direct caller left in this crate). Arc F slice 1 (#1451):
+/// consolidates what used to be ten separate `write!`-family call sites into
+/// this one; #1478 makes it the one real implementation `print_decls` itself
+/// now delegates to, rather than a hand-duplicated sibling.
+pub(crate) fn decls_as_stmts(decls: Vec<TsDecl>) -> Vec<TsStmt> {
+    let mut stmts = Vec::with_capacity(decls.len() * 2);
     for d in decls {
-        out.push_str(&bynk_ts::print_stmt(&TsStmt::decl(d, None), 0));
-        writeln!(out).unwrap();
+        stmts.push(TsStmt::decl(d, None));
+        stmts.push(TsStmt::blank(None));
     }
+    stmts
 }
 
-/// As [`print_decls`], but also emits one more trailing blank line if
-/// anything was printed — the shared `if emitted_any { writeln!(out) }`
-/// trailer every [`emit_helpers_for_owner`]/[`emit_helpers_for_owner_qualified`]
+/// As [`decls_as_stmts`], but also collects one more trailing blank `TsStmt`
+/// if anything was collected — the shared `if emitted_any { ... }` trailer
+/// every [`emit_helpers_for_owner`]/[`emit_helpers_for_owner_qualified`]
 /// caller needs (their pre-conversion `out: &mut String` shape always had
 /// this trailer; [`emit_generic_helpers`]/[`emit_generic_helpers_qualified`]
-/// callers never did and stay on bare [`print_decls`]).
+/// callers never did and stay on bare [`decls_as_stmts`]/[`print_decls`]).
 ///
 /// Review of #1454: derives "did anything get emitted?" directly from the
 /// real `decls` list, in this one place, rather than each caller
@@ -533,30 +536,6 @@ pub(crate) fn print_decls(out: &mut String, decls: Vec<TsDecl>) {
 /// here, against the actual data, means a future arm that *can* return
 /// empty stays correct automatically instead of silently dropping the
 /// trailing blank line for the whole batch.
-pub(crate) fn print_decls_block(out: &mut String, decls: Vec<TsDecl>) {
-    let emitted_any = !decls.is_empty();
-    print_decls(out, decls);
-    if emitted_any {
-        writeln!(out).unwrap();
-    }
-}
-
-/// #1478's own sibling to [`print_decls`]: the identical shape (one blank
-/// `TsStmt` after each declaration), but collected into a `Vec<TsStmt>`
-/// instead of printed immediately — for a caller that itself now returns a
-/// node collection rather than writing into `out: &mut String`.
-pub(crate) fn decls_as_stmts(decls: Vec<TsDecl>) -> Vec<TsStmt> {
-    let mut stmts = Vec::with_capacity(decls.len() * 2);
-    for d in decls {
-        stmts.push(TsStmt::decl(d, None));
-        stmts.push(TsStmt::blank(None));
-    }
-    stmts
-}
-
-/// #1478's own sibling to [`print_decls_block`]: the identical shape (one
-/// more trailing blank `TsStmt` if anything was collected), for a caller
-/// returning a node collection instead of writing into `out: &mut String`.
 pub(crate) fn decls_as_stmts_block(decls: Vec<TsDecl>) -> Vec<TsStmt> {
     let emitted_any = !decls.is_empty();
     let mut stmts = decls_as_stmts(decls);
@@ -564,6 +543,20 @@ pub(crate) fn decls_as_stmts_block(decls: Vec<TsDecl>) -> Vec<TsStmt> {
         stmts.push(TsStmt::blank(None));
     }
     stmts
+}
+
+/// Boundary-prints `decls` into `out` — [`decls_as_stmts`] plus
+/// `super::extend_printed`, kept as its own entry point for
+/// `project/tests_emit.rs`'s two remaining `out: &mut String` callers
+/// (#1478's own conversion left every in-crate caller on the `Vec<TsStmt>`
+/// form directly; this wrapper is what's left once those are gone).
+pub(crate) fn print_decls(out: &mut String, decls: Vec<TsDecl>) {
+    super::extend_printed(out, decls_as_stmts(decls));
+}
+
+/// As [`print_decls`], via [`decls_as_stmts_block`].
+pub(crate) fn print_decls_block(out: &mut String, decls: Vec<TsDecl>) {
+    super::extend_printed(out, decls_as_stmts_block(decls));
 }
 
 /// #661: as [`emit_helpers_for_owner`], but the caller supplies a type
