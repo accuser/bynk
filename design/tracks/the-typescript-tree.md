@@ -2626,11 +2626,14 @@ greenfield-status.md`'s incidental `keep_in_sync`/`bynk-ts` `test_density` drift
 diff, picked up because the committed table missed a re-run after #1477/PR #1488 touched
 `bynk-ts/src`) is now called out explicitly in the pending changelog; the buffer-count phrasing
 above was corrected to name `header` as the actual third buffer, not `emit_project`'s per-item loop
-(which shares `emit_project`'s own `out`). Byte-identical output verified throughout: `cargo test -p
-bynk-emit` (187/187), `cargo test -p bynkc --test tsc_verify`, and the full `cargo test -p bynkc`
-fixture-diff + e2e suite (`bless_positive_fixtures`/`positive_fixtures` included). `ts_writes`
-(gated probe) moves 851 → 831 — the real, intended reduction from these 12 sites no longer writing
-through `format!`/`write!`.
+(which shares `emit_project`'s own `out`). CI (both platforms) caught `design/greenfield-status.md`
+itself going stale a second time after this review round — the collapse above dropped
+`print_decls`/`print_decls_block`'s own last two `writeln!` call sites, moving `ts_writes` again;
+re-ran `--apply` and re-committed before merge. Byte-identical output verified throughout: `cargo
+test -p bynk-emit` (187/187), `cargo test -p bynkc --test tsc_verify`, and the full `cargo test -p
+bynkc` fixture-diff + e2e suite (`bless_positive_fixtures`/`positive_fixtures` included). `ts_writes`
+(gated probe) moves 851 → 829 — the real, intended reduction from these 12 sites (831) plus the
+review's own `print_decls` collapse (829) no longer writing through `format!`/`write!`.
 
 ---
 
