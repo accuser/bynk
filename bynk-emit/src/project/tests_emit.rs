@@ -627,10 +627,11 @@ type RouteBodyMap = HashMap<(String, String, String), (usize, bynk_syntax::ast::
 /// convert calls.
 ///
 /// #1479: `code` is now real [`TsStmt`]s (was pre-printed `String`) — the
-/// HS256 signer block (`:1032-1044`, #1485's own separate scope) is still
-/// hand-written text, carried as one [`bynk_ts::TsStmtKind::Raw`] statement,
-/// the same carrier this track's earlier still-`String`-typed-sibling
-/// conversions already used.
+/// HS256 signer block (`__bynkNow`/`__b64url`/`__bytesB64url`/
+/// `__bynkSignHs256`, #1485's own separate scope) is still hand-written
+/// text, carried as one [`bynk_ts::TsStmtKind::Raw`] statement, the same
+/// carrier this track's earlier still-`String`-typed-sibling conversions
+/// already used.
 struct SystemHttpSupport {
     code: Vec<TsStmt>,
     http_services: std::collections::HashSet<String>,
