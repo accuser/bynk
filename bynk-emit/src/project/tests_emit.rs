@@ -463,10 +463,9 @@ fn emit_integration_module(
 
     // The env-graph harness: stand each participant up as an in-process Worker
     // and wire its Service Bindings to its siblings; the root env binds to all.
-    out.push_str(&emit_integration_harness(
-        participants,
-        unit_consumes,
-        unit_tables,
+    out.push_str(&bynk_ts::print_stmt(
+        &emit_integration_harness(participants, unit_consumes, unit_tables),
+        0,
     ));
     out.push('\n');
 
@@ -474,7 +473,7 @@ fn emit_integration_module(
     // service, and the set of http service names so the lowering calls a driver.
     let http_support = emit_system_http_support(suite, unit_tables, &runtime_use);
     if !http_support.code.is_empty() {
-        out.push_str(&http_support.code);
+        crate::emitter::extend_printed_at(&mut out, http_support.code, 0);
         out.push('\n');
     }
 
@@ -512,7 +511,11 @@ fn emit_integration_module(
                 let mut type_names: Vec<String> = table.types.keys().cloned().collect();
                 type_names.sort();
                 type_names.dedup();
-                emit_ns_destructure(&mut out, &ns, &names, &type_names);
+                crate::emitter::extend_printed_at(
+                    &mut out,
+                    emit_ns_destructure(&ns, &names, &type_names),
+                    2,
+                );
             }
         }
         let (body_src, body_smb) = emitter::lower_integration_case_body(
@@ -619,10 +622,18 @@ type DeclaredRoutes = std::collections::HashSet<(String, String, String)>;
 /// serialise a typed body into the raw driver's `string` slot.
 type RouteBodyMap = HashMap<(String, String, String), (usize, bynk_syntax::ast::TypeRef)>;
 
-/// The emitted `emit_system_http_support` output: the driver/signer TS source
-/// plus the metadata the case-body lowering needs to route and convert calls.
+/// The emitted `emit_system_http_support` output: the driver/signer TS
+/// source plus the metadata the case-body lowering needs to route and
+/// convert calls.
+///
+/// #1479: `code` is now real [`TsStmt`]s (was pre-printed `String`) — the
+/// HS256 signer block (`__bynkNow`/`__b64url`/`__bytesB64url`/
+/// `__bynkSignHs256`, #1485's own separate scope) is still hand-written
+/// text, carried as one [`bynk_ts::TsStmtKind::Raw`] statement, the same
+/// carrier this track's earlier still-`String`-typed-sibling conversions
+/// already used.
 struct SystemHttpSupport {
-    code: String,
+    code: Vec<TsStmt>,
     http_services: std::collections::HashSet<String>,
     declared_routes: DeclaredRoutes,
     /// #708: per-route body-param position/type, for the raw driver's
@@ -644,7 +655,7 @@ fn emit_system_http_support(
     let mut route_body: RouteBodyMap = HashMap::new();
     let Some(table) = unit_tables.get(target) else {
         return SystemHttpSupport {
-            code: String::new(),
+            code: Vec::new(),
             http_services,
             declared_routes: declared,
             route_body,
@@ -655,7 +666,7 @@ fn emit_system_http_support(
     let binding = crate::emitter::wrangler::consumed_binding_name(target);
     let type_ns = format!("{ns}.");
 
-    let mut routes = String::new();
+    let mut routes: Vec<TsStmt> = Vec::new();
     let mut secrets: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
 
     let mut svc_names: Vec<&String> = table.services.keys().collect();
@@ -821,7 +832,7 @@ fn emit_system_http_support(
                 "{{ method: {method:?}, headers: {{ {content_type}{auth_header}}}, {body_init}}}",
                 method = method.as_str(),
             ));
-            routes.push_str(&sysdrive_driver(
+            routes.push(sysdrive_driver(
                 "",
                 sname,
                 &key,
@@ -851,7 +862,7 @@ fn emit_system_http_support(
                     "{{ method: {method:?}, headers: {{ {content_type}{auth_header}}}, {raw_body_init}}}",
                     method = method.as_str(),
                 ));
-                routes.push_str(&sysdrive_driver(
+                routes.push(sysdrive_driver(
                     "raw_",
                     sname,
                     &key,
@@ -876,7 +887,7 @@ fn emit_system_http_support(
                     "{{ method: {method:?}, headers: {{ {content_type}}}, {body_init}}}",
                     method = method.as_str(),
                 ));
-                routes.push_str(&sysdrive_driver(
+                routes.push(sysdrive_driver(
                     "noauth_",
                     sname,
                     &key,
@@ -908,7 +919,7 @@ fn emit_system_http_support(
                     "{{ method: {method:?}, headers: {{ {content_type}}}, {raw_body_init}}}",
                     method = method.as_str(),
                 ));
-                routes.push_str(&sysdrive_driver(
+                routes.push(sysdrive_driver(
                     "rawnoauth_",
                     sname,
                     &key,
@@ -1014,12 +1025,12 @@ fn emit_system_http_support(
             },
             None,
         );
-        routes.push_str(&bynk_ts::print_stmt(&wrongmethod, 0));
+        routes.push(wrongmethod);
     }
 
     if http_services.is_empty() {
         return SystemHttpSupport {
-            code: String::new(),
+            code: Vec::new(),
             http_services,
             declared_routes: declared,
             route_body,
@@ -1027,11 +1038,16 @@ fn emit_system_http_support(
         };
     }
 
-    let mut out = String::new();
+    // #1479: the HS256 signer block below (#1485's own separate scope) stays
+    // exactly the hand-written text it always was — built into a local
+    // buffer instead of this function's own former `out`, then carried
+    // forward as one `TsStmt::raw`, the same carrier `SystemHttpSupport`'s
+    // own doc above names.
+    let mut signer = String::new();
     // A monotonic clock the signer's `exp` uses; kept out of `bundle`d runtime.
-    out.push_str("function __bynkNow(): number { return Math.floor(Date.now() / 1000); }\n");
+    signer.push_str("function __bynkNow(): number { return Math.floor(Date.now() / 1000); }\n");
     // Test-only HS256 signer (never in the deployable app; e2e owns real auth).
-    out.push_str(
+    signer.push_str(
         "function __b64url(s: string): string { return btoa(s).replace(/\\+/g, \"-\").replace(/\\//g, \"_\").replace(/=+$/, \"\"); }\n\
          function __bytesB64url(bytes: Uint8Array): string { let bin = \"\"; for (const b of bytes) bin += String.fromCharCode(b); return btoa(bin).replace(/\\+/g, \"-\").replace(/\\//g, \"_\").replace(/=+$/, \"\"); }\n\
          async function __bynkSignHs256(payload: Record<string, unknown>, secret: string): Promise<string> {\n\
@@ -1043,6 +1059,7 @@ fn emit_system_http_support(
          \x20 return `${h}.${p}.${__bytesB64url(new Uint8Array(sig))}`;\n\
          }\n",
     );
+    let mut code = vec![TsStmt::raw(signer, None)];
     // Set each secret the target's actors read, so the real Bearer seam verifies.
     // P7.2: `Record<string, string>` — same reasoning as `__bynkSignHs256`'s own
     // `secret: string` parameter above.
@@ -1092,12 +1109,12 @@ fn emit_system_http_support(
             str_lit("__bynk_test_secret"),
             None,
         );
-        out.push_str(&bynk_ts::print_stmt(&assign_process, 0));
-        out.push_str(&bynk_ts::print_stmt(&assign_secret, 0));
+        code.push(assign_process);
+        code.push(assign_secret);
     }
-    out.push_str(&routes);
+    code.extend(routes);
     SystemHttpSupport {
-        code: out,
+        code,
         http_services,
         declared_routes: declared,
         route_body,
@@ -1168,11 +1185,15 @@ fn service_binding_forward(worker_ident: &str, env_ident: &str) -> TsExpr {
 /// Durable-Object namespaces back the participant's own agents in memory, plus a
 /// root env binding every participant (the test cases call in through it). A
 /// fresh harness per case gives each case clean agent state.
+/// #1479: returns the real [`TsStmt`] itself (was pre-printed `String`) —
+/// the one real declaration this function ever built; its caller now prints
+/// it directly, the same shape `emit_test_deps`'s own identical conversion
+/// used.
 fn emit_integration_harness(
     participants: &[String],
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_tables: &HashMap<String, UnitTable>,
-) -> String {
+) -> TsStmt {
     let mut body = Vec::new();
     // Declare every participant env first so sibling references resolve.
     //
@@ -1260,7 +1281,7 @@ fn emit_integration_harness(
         Some(TsExpr::object(vec![("env".to_string(), ident("rootEnv"))])),
         None,
     ));
-    let make_harness = TsStmt::decl(
+    TsStmt::decl(
         TsDecl::Function {
             name: "makeHarness".to_string(),
             generics: Vec::new(),
@@ -1271,8 +1292,7 @@ fn emit_integration_harness(
             inline: false,
         },
         None,
-    );
-    bynk_ts::print_stmt(&make_harness, 0)
+    )
 }
 
 /// Build the [`checker::TypedCommons`] used to lower integration case bodies —
@@ -1832,7 +1852,11 @@ fn emit_test_module(
         // The synthetic per-op call-record types a `trace(Cap.op)` result's
         // elements carry — so `trace(…).filter((c) => c.field …)` type-checks
         // against the operation's parameter names.
-        out.push_str(&observation_call_record_types(target_name, unit_tables));
+        crate::emitter::extend_printed_at(
+            &mut out,
+            observation_call_record_types(target_name, unit_tables),
+            0,
+        );
         out.push('\n');
     }
 
@@ -1861,14 +1885,17 @@ fn emit_test_module(
     }
 
     // Emit the deps factory.
-    out.push_str(&emit_test_deps(
-        target_name,
-        target_kind,
-        stubs,
-        unit_tables,
-        unit_consumes,
-        unit_consumes_aliases,
-        unit_flattened,
+    out.push_str(&bynk_ts::print_stmt(
+        &emit_test_deps(
+            target_name,
+            target_kind,
+            stubs,
+            unit_tables,
+            unit_consumes,
+            unit_consumes_aliases,
+            unit_flattened,
+        ),
+        0,
     ));
     out.push('\n');
 
@@ -2080,24 +2107,30 @@ fn emit_test_module(
             runtime_use.note_json_codec();
             runtime_use.note_boundary_codec();
             let qual = runtime_use.json_codec_qual();
-            crate::emitter::serialisation::print_decls_block(
+            crate::emitter::extend_printed_at(
                 &mut out,
-                crate::emitter::serialisation::emit_helpers_for_owner_qualified(
-                    &codec_names,
-                    &synthetic.types,
-                    target_name,
-                    &qual,
-                    &runtime_use,
+                crate::emitter::serialisation::decls_as_stmts_block(
+                    crate::emitter::serialisation::emit_helpers_for_owner_qualified(
+                        &codec_names,
+                        &synthetic.types,
+                        target_name,
+                        &qual,
+                        &runtime_use,
+                    ),
                 ),
+                0,
             );
-            crate::emitter::serialisation::print_decls(
+            crate::emitter::extend_printed_at(
                 &mut out,
-                crate::emitter::serialisation::emit_generic_helpers_qualified(
-                    &codec_insts,
-                    &synthetic.types,
-                    &qual,
-                    &runtime_use,
+                crate::emitter::serialisation::decls_as_stmts(
+                    crate::emitter::serialisation::emit_generic_helpers_qualified(
+                        &codec_insts,
+                        &synthetic.types,
+                        &qual,
+                        &runtime_use,
+                    ),
                 ),
+                0,
             );
         }
     }
@@ -2410,7 +2443,11 @@ fn emit_stub_class(
         let return_ty = emitter::ts_type_ref_qualified_multi_ts_type(&op.return_type, &type_ns);
 
         let mut body_text = String::new();
-        emit_ns_destructure(&mut body_text, &scope_ns, &scope_names, &scope_type_names);
+        crate::emitter::extend_printed_at(
+            &mut body_text,
+            emit_ns_destructure(&scope_ns, &scope_names, &scope_type_names),
+            2,
+        );
         for &idx in clause_idxs {
             let clause = &rp.clauses[idx];
             // Argument-pattern consts: a `Value(e)` pattern lowers to a const the
@@ -2748,6 +2785,10 @@ fn undefined_as_unknown_as(ty: impl Into<String>) -> TsExpr {
     }
 }
 
+/// #1479: returns the real [`TsStmt`] itself (was pre-printed `String`) — the
+/// one real declaration this function ever built; its caller now prints it
+/// directly via `bynk_ts::print_stmt`, the same shape it always used, just
+/// one call further out.
 fn emit_test_deps(
     target_name: &str,
     target_kind: UnitKind,
@@ -2756,7 +2797,7 @@ fn emit_test_deps(
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
     unit_flattened: &HashMap<String, HashMap<String, String>>,
-) -> String {
+) -> TsStmt {
     let mut entries: Vec<(String, TsExpr)> = Vec::new();
     if target_kind == UnitKind::Context
         && let Some(table) = unit_tables.get(target_name)
@@ -2869,7 +2910,7 @@ fn emit_test_deps(
     } else {
         TsExpr::object(entries)
     };
-    let make_test_deps = TsStmt::decl(
+    TsStmt::decl(
         TsDecl::Function {
             name: "makeTestDeps".to_string(),
             generics: Vec::new(),
@@ -2880,8 +2921,7 @@ fn emit_test_deps(
             inline: false,
         },
         None,
-    );
-    bynk_ts::print_stmt(&make_test_deps, 0)
+    )
 }
 
 /// #18 (testing-track infra): a real value destructure plus a per-type alias,
@@ -2897,27 +2937,30 @@ fn emit_test_deps(
 /// `tsc --strict`: nothing inside a generated test body was ever really
 /// checked. `type_names` (a subset of `value_names`) gets the alias;
 /// `value_names` is unconditionally destructured with no cast.
-fn emit_ns_destructure(out: &mut String, ns: &str, value_names: &[String], type_names: &[String]) {
+/// #1479: returns real [`TsStmt`]s (was `out: &mut String`) — every caller
+/// now appends via `crate::emitter::extend_printed_at(out, stmts, 2)`, the
+/// same depth-2 this scaffold body's own statements always printed at.
+fn emit_ns_destructure(ns: &str, value_names: &[String], type_names: &[String]) -> Vec<TsStmt> {
+    let mut stmts = Vec::new();
     if !value_names.is_empty() {
-        let stmt = TsStmt::const_stmt(
+        stmts.push(TsStmt::const_stmt(
             TsBindingName::ObjectPattern(value_names.to_vec()),
             None,
             ident(ns),
             None,
-        );
-        out.push_str(&bynk_ts::print_stmt(&stmt, 2));
+        ));
     }
     for t in type_names {
-        let stmt = TsStmt::decl(
+        stmts.push(TsStmt::decl(
             TsDecl::TypeAlias {
                 name: t.clone(),
                 type_params: Vec::new(),
                 ty: TsType::named(format!("{ns}.{t}")),
             },
             None,
-        );
-        out.push_str(&bynk_ts::print_stmt(&stmt, 2));
+        ));
     }
+    stmts
 }
 
 /// Emit the shared per-runner scope setup — agent reset, the `deps` factory, and
@@ -3081,7 +3124,11 @@ fn emit_test_scope_setup(
         let mut type_names: Vec<String> = table.types.keys().cloned().collect();
         type_names.sort();
         type_names.dedup();
-        emit_ns_destructure(out, &target_ns, &names, &type_names);
+        crate::emitter::extend_printed_at(
+            out,
+            emit_ns_destructure(&target_ns, &names, &type_names),
+            2,
+        );
     }
     // Bring in `uses` commons names too — the target's body can use them.
     // message-bundles slice 1 (#859): a name the target itself already
@@ -3119,7 +3166,11 @@ fn emit_test_scope_setup(
                     .collect();
                 type_names.sort();
                 type_names.dedup();
-                emit_ns_destructure(out, &ns, &names, &type_names);
+                crate::emitter::extend_printed_at(
+                    out,
+                    emit_ns_destructure(&ns, &names, &type_names),
+                    2,
+                );
             }
         }
     }
@@ -3144,7 +3195,7 @@ fn emit_test_scope_setup(
                 let mut names: Vec<String> = table.types.keys().cloned().collect();
                 names.sort();
                 names.dedup();
-                emit_ns_destructure(out, &ns, &names, &names);
+                crate::emitter::extend_printed_at(out, emit_ns_destructure(&ns, &names, &names), 2);
             }
             // An `adapter` target has no `makeSurface`/`deps.surface` entry —
             // its capabilities are already flattened onto `deps` directly
@@ -3339,12 +3390,15 @@ fn emit_test_case_function(
 /// `tsc` when a test projects a field (`c.msg`). Names mirror
 /// [`checker::call_record_type_name`]. Ordered by capability then operation for
 /// deterministic output.
+/// #1479: returns real [`TsStmt`]s (was `String`) — its one caller now
+/// appends via `crate::emitter::extend_printed_at(out, stmts, 0)`, the same
+/// depth-0 top-level shape these type aliases always printed at.
 fn observation_call_record_types(
     target_name: &str,
     unit_tables: &HashMap<String, UnitTable>,
-) -> String {
+) -> Vec<TsStmt> {
     let Some(table) = unit_tables.get(target_name) else {
-        return String::new();
+        return Vec::new();
     };
     // Named/opaque parameter types are re-exported under the target's namespace,
     // so qualify them (`AuthId` → `commerce_payment.AuthId`); base types are
@@ -3353,7 +3407,7 @@ fn observation_call_record_types(
     let scope_type_names: HashSet<String> = table.types.keys().cloned().collect();
     let mut caps: Vec<&String> = table.capabilities.keys().collect();
     caps.sort();
-    let mut out = String::new();
+    let mut stmts = Vec::new();
     for cap in caps {
         for op in &table.capabilities[cap].ops {
             let name = checker::call_record_type_name(cap, &op.name.name);
@@ -3383,18 +3437,17 @@ fn observation_call_record_types(
             } else {
                 TsType::Object(fields)
             };
-            let stmt = TsStmt::decl(
+            stmts.push(TsStmt::decl(
                 TsDecl::TypeAlias {
                     name,
                     type_params: Vec::new(),
                     ty,
                 },
                 None,
-            );
-            out.push_str(&bynk_ts::print_stmt(&stmt, 0));
+            ));
         }
     }
-    out
+    stmts
 }
 
 /// v0.117: the observation runtime — wraps each observed capability operation on
@@ -5014,7 +5067,7 @@ fn sysdrive_driver(
     binding: &str,
     decode_fn: &str,
     payload: &str,
-) -> String {
+) -> TsStmt {
     params.push(TsParam {
         name: "__sub".to_string(),
         ty: Some(TsType::named("string")),
@@ -5053,7 +5106,7 @@ fn sysdrive_driver(
         Some(call(ident(decode_fn), vec![ident("__res"), ident(payload)])),
         None,
     ));
-    let decl = TsStmt::decl(
+    TsStmt::decl(
         TsDecl::Function {
             name: format!("__sysdrive_{kind_prefix}{sname}_{key}"),
             generics: Vec::new(),
@@ -5064,8 +5117,7 @@ fn sysdrive_driver(
             inline: false,
         },
         None,
-    );
-    bynk_ts::print_stmt(&decl, 0)
+    )
 }
 
 fn and_expr(left: TsExpr, right: TsExpr) -> TsExpr {

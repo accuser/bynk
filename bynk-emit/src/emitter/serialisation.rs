@@ -504,13 +504,13 @@ pub(crate) fn emit_helpers_for_owner(
 
 /// Collects `decls` into real statements, one blank `TsStmt` after each
 /// declaration — the shared shape every caller of [`emit_helpers_for_owner`]/
-/// [`emit_generic_helpers`] (and their `_qualified` twins) now needs, whether
-/// it prints straight into its own `out: &mut String` (via [`print_decls`])
-/// or, since #1478, collects into its own returned `Vec<TsStmt>` instead
-/// (every direct caller left in this crate). Arc F slice 1 (#1451):
-/// consolidates what used to be ten separate `write!`-family call sites into
-/// this one; #1478 makes it the one real implementation `print_decls` itself
-/// now delegates to, rather than a hand-duplicated sibling.
+/// [`emit_generic_helpers`] (and their `_qualified` twins) collects into its
+/// own returned `Vec<TsStmt>`. Arc F slice 1 (#1451): consolidates what used
+/// to be ten separate `write!`-family call sites into this one; #1478 made
+/// it the one real implementation (dropping a hand-duplicated `out: &mut
+/// String`-printing sibling); #1479 removed that sibling's own last two
+/// production callers (`project/tests_emit.rs`'s codec-helper glue), so
+/// every caller in the crate is on this `Vec<TsStmt>` form directly now.
 pub(crate) fn decls_as_stmts(decls: Vec<TsDecl>) -> Vec<TsStmt> {
     let mut stmts = Vec::with_capacity(decls.len() * 2);
     for d in decls {
@@ -525,7 +525,7 @@ pub(crate) fn decls_as_stmts(decls: Vec<TsDecl>) -> Vec<TsStmt> {
 /// every [`emit_helpers_for_owner`]/[`emit_helpers_for_owner_qualified`]
 /// caller needs (their pre-conversion `out: &mut String` shape always had
 /// this trailer; [`emit_generic_helpers`]/[`emit_generic_helpers_qualified`]
-/// callers never did and stay on bare [`decls_as_stmts`]/[`print_decls`]).
+/// callers never did and stay on bare [`decls_as_stmts`]).
 ///
 /// Review of #1454: derives "did anything get emitted?" directly from the
 /// real `decls` list, in this one place, rather than each caller
@@ -543,20 +543,6 @@ pub(crate) fn decls_as_stmts_block(decls: Vec<TsDecl>) -> Vec<TsStmt> {
         stmts.push(TsStmt::blank(None));
     }
     stmts
-}
-
-/// Boundary-prints `decls` into `out` — [`decls_as_stmts`] plus
-/// `super::extend_printed`, kept as its own entry point for
-/// `project/tests_emit.rs`'s two remaining `out: &mut String` callers
-/// (#1478's own conversion left every in-crate caller on the `Vec<TsStmt>`
-/// form directly; this wrapper is what's left once those are gone).
-pub(crate) fn print_decls(out: &mut String, decls: Vec<TsDecl>) {
-    super::extend_printed(out, decls_as_stmts(decls));
-}
-
-/// As [`print_decls`], via [`decls_as_stmts_block`].
-pub(crate) fn print_decls_block(out: &mut String, decls: Vec<TsDecl>) {
-    super::extend_printed(out, decls_as_stmts_block(decls));
 }
 
 /// #661: as [`emit_helpers_for_owner`], but the caller supplies a type
@@ -594,8 +580,8 @@ pub(crate) fn emit_helpers_for_owner_qualified(
 }
 
 /// Arc F slice 1 (#1451): returns the real `bynk_ts::TsDecl` nodes for
-/// `name` directly — no `out: &mut String` parameter. The boundary-print
-/// step ([`print_decls`]) now happens once, at the caller.
+/// `name` directly — no `out: &mut String` parameter. The boundary-collect
+/// step ([`decls_as_stmts`]) now happens once, at the caller.
 fn emit_one(
     name: &str,
     decl: &TypeDecl,
@@ -1194,8 +1180,8 @@ fn emit_record(
 /// the same reason (this function's two real callers, `emit_record` above
 /// and `emit_generic_helpers_qualified`'s own `RecordInst` arm — as of Arc F
 /// slice 1, #1451, both `extend` a `Vec<TsDecl>` directly rather than
-/// printing; [`print_decls`] does the one shared boundary-print, once, at
-/// each caller's own caller). Two internal calls stay unprinted:
+/// printing; [`decls_as_stmts`] does the one shared boundary-collect, once,
+/// at each caller's own caller). Two internal calls stay unprinted:
 /// `serialise_field_expr_wire` (`-> TsExpr` since #1435) and
 /// `emit_field_deserialise_wire` (`-> Vec<TsStmt>` since #1439) are both
 /// already tree-native, and this function itself is becoming tree-native
@@ -1422,7 +1408,7 @@ fn emit_sum(
 /// established — this function's two real callers ([`emit_sum`] above and
 /// `emit_generic_helpers_qualified`'s own `SumInst` arm) — as of Arc F slice
 /// 1 (#1451), both `extend` a `Vec<TsDecl>` directly rather than printing;
-/// [`print_decls`] does the one shared boundary-print, once, at each
+/// [`decls_as_stmts`] does the one shared boundary-collect, once, at each
 /// caller's own caller.
 ///
 /// **The `(value as any).<field>` investigation (#1423's own residual,
@@ -2783,9 +2769,9 @@ pub(crate) fn emit_generic_helpers(
 /// caller's and callee's names in agreement across the wire.
 ///
 /// Arc F slice 1 (#1451): returns the real `bynk_ts::TsDecl` nodes directly —
-/// no `out: &mut String` parameter. The boundary-print step ([`print_decls`])
-/// now happens once, at the caller, instead of inline in each of this
-/// function's six match arms.
+/// no `out: &mut String` parameter. The boundary-collect step
+/// ([`decls_as_stmts`]) now happens once, at the caller, instead of inline in
+/// each of this function's six match arms.
 pub(crate) fn emit_generic_helpers_qualified(
     insts: &[GenericInst],
     types: &std::collections::HashMap<String, Arc<TypeDecl>>,
