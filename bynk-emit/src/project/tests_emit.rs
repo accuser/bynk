@@ -473,7 +473,7 @@ fn emit_integration_module(
     // service, and the set of http service names so the lowering calls a driver.
     let http_support = emit_system_http_support(suite, unit_tables, &runtime_use);
     if !http_support.code.is_empty() {
-        out.push_str(&http_support.code);
+        crate::emitter::extend_printed_at(&mut out, http_support.code, 0);
         out.push('\n');
     }
 
@@ -622,10 +622,17 @@ type DeclaredRoutes = std::collections::HashSet<(String, String, String)>;
 /// serialise a typed body into the raw driver's `string` slot.
 type RouteBodyMap = HashMap<(String, String, String), (usize, bynk_syntax::ast::TypeRef)>;
 
-/// The emitted `emit_system_http_support` output: the driver/signer TS source
-/// plus the metadata the case-body lowering needs to route and convert calls.
+/// The emitted `emit_system_http_support` output: the driver/signer TS
+/// source plus the metadata the case-body lowering needs to route and
+/// convert calls.
+///
+/// #1479: `code` is now real [`TsStmt`]s (was pre-printed `String`) — the
+/// HS256 signer block (`:1032-1044`, #1485's own separate scope) is still
+/// hand-written text, carried as one [`bynk_ts::TsStmtKind::Raw`] statement,
+/// the same carrier this track's earlier still-`String`-typed-sibling
+/// conversions already used.
 struct SystemHttpSupport {
-    code: String,
+    code: Vec<TsStmt>,
     http_services: std::collections::HashSet<String>,
     declared_routes: DeclaredRoutes,
     /// #708: per-route body-param position/type, for the raw driver's
@@ -647,7 +654,7 @@ fn emit_system_http_support(
     let mut route_body: RouteBodyMap = HashMap::new();
     let Some(table) = unit_tables.get(target) else {
         return SystemHttpSupport {
-            code: String::new(),
+            code: Vec::new(),
             http_services,
             declared_routes: declared,
             route_body,
@@ -658,7 +665,7 @@ fn emit_system_http_support(
     let binding = crate::emitter::wrangler::consumed_binding_name(target);
     let type_ns = format!("{ns}.");
 
-    let mut routes = String::new();
+    let mut routes: Vec<TsStmt> = Vec::new();
     let mut secrets: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
 
     let mut svc_names: Vec<&String> = table.services.keys().collect();
@@ -824,7 +831,7 @@ fn emit_system_http_support(
                 "{{ method: {method:?}, headers: {{ {content_type}{auth_header}}}, {body_init}}}",
                 method = method.as_str(),
             ));
-            routes.push_str(&sysdrive_driver(
+            routes.push(sysdrive_driver(
                 "",
                 sname,
                 &key,
@@ -854,7 +861,7 @@ fn emit_system_http_support(
                     "{{ method: {method:?}, headers: {{ {content_type}{auth_header}}}, {raw_body_init}}}",
                     method = method.as_str(),
                 ));
-                routes.push_str(&sysdrive_driver(
+                routes.push(sysdrive_driver(
                     "raw_",
                     sname,
                     &key,
@@ -879,7 +886,7 @@ fn emit_system_http_support(
                     "{{ method: {method:?}, headers: {{ {content_type}}}, {body_init}}}",
                     method = method.as_str(),
                 ));
-                routes.push_str(&sysdrive_driver(
+                routes.push(sysdrive_driver(
                     "noauth_",
                     sname,
                     &key,
@@ -911,7 +918,7 @@ fn emit_system_http_support(
                     "{{ method: {method:?}, headers: {{ {content_type}}}, {raw_body_init}}}",
                     method = method.as_str(),
                 ));
-                routes.push_str(&sysdrive_driver(
+                routes.push(sysdrive_driver(
                     "rawnoauth_",
                     sname,
                     &key,
@@ -1017,12 +1024,12 @@ fn emit_system_http_support(
             },
             None,
         );
-        routes.push_str(&bynk_ts::print_stmt(&wrongmethod, 0));
+        routes.push(wrongmethod);
     }
 
     if http_services.is_empty() {
         return SystemHttpSupport {
-            code: String::new(),
+            code: Vec::new(),
             http_services,
             declared_routes: declared,
             route_body,
@@ -1030,11 +1037,16 @@ fn emit_system_http_support(
         };
     }
 
-    let mut out = String::new();
+    // #1479: the HS256 signer block below (#1485's own separate scope) stays
+    // exactly the hand-written text it always was — built into a local
+    // buffer instead of this function's own former `out`, then carried
+    // forward as one `TsStmt::raw`, the same carrier `SystemHttpSupport`'s
+    // own doc above names.
+    let mut signer = String::new();
     // A monotonic clock the signer's `exp` uses; kept out of `bundle`d runtime.
-    out.push_str("function __bynkNow(): number { return Math.floor(Date.now() / 1000); }\n");
+    signer.push_str("function __bynkNow(): number { return Math.floor(Date.now() / 1000); }\n");
     // Test-only HS256 signer (never in the deployable app; e2e owns real auth).
-    out.push_str(
+    signer.push_str(
         "function __b64url(s: string): string { return btoa(s).replace(/\\+/g, \"-\").replace(/\\//g, \"_\").replace(/=+$/, \"\"); }\n\
          function __bytesB64url(bytes: Uint8Array): string { let bin = \"\"; for (const b of bytes) bin += String.fromCharCode(b); return btoa(bin).replace(/\\+/g, \"-\").replace(/\\//g, \"_\").replace(/=+$/, \"\"); }\n\
          async function __bynkSignHs256(payload: Record<string, unknown>, secret: string): Promise<string> {\n\
@@ -1046,6 +1058,7 @@ fn emit_system_http_support(
          \x20 return `${h}.${p}.${__bytesB64url(new Uint8Array(sig))}`;\n\
          }\n",
     );
+    let mut code = vec![TsStmt::raw(signer, None)];
     // Set each secret the target's actors read, so the real Bearer seam verifies.
     // P7.2: `Record<string, string>` — same reasoning as `__bynkSignHs256`'s own
     // `secret: string` parameter above.
@@ -1095,12 +1108,12 @@ fn emit_system_http_support(
             str_lit("__bynk_test_secret"),
             None,
         );
-        out.push_str(&bynk_ts::print_stmt(&assign_process, 0));
-        out.push_str(&bynk_ts::print_stmt(&assign_secret, 0));
+        code.push(assign_process);
+        code.push(assign_secret);
     }
-    out.push_str(&routes);
+    code.extend(routes);
     SystemHttpSupport {
-        code: out,
+        code,
         http_services,
         declared_routes: declared,
         route_body,
@@ -5053,7 +5066,7 @@ fn sysdrive_driver(
     binding: &str,
     decode_fn: &str,
     payload: &str,
-) -> String {
+) -> TsStmt {
     params.push(TsParam {
         name: "__sub".to_string(),
         ty: Some(TsType::named("string")),
@@ -5092,7 +5105,7 @@ fn sysdrive_driver(
         Some(call(ident(decode_fn), vec![ident("__res"), ident(payload)])),
         None,
     ));
-    let decl = TsStmt::decl(
+    TsStmt::decl(
         TsDecl::Function {
             name: format!("__sysdrive_{kind_prefix}{sname}_{key}"),
             generics: Vec::new(),
@@ -5103,8 +5116,7 @@ fn sysdrive_driver(
             inline: false,
         },
         None,
-    );
-    bynk_ts::print_stmt(&decl, 0)
+    )
 }
 
 fn and_expr(left: TsExpr, right: TsExpr) -> TsExpr {
