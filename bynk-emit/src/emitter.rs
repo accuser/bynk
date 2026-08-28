@@ -181,38 +181,15 @@ pub(crate) fn runtime_import_for(from_source: &Path, ext: ImportExt) -> String {
 
 /// #1478: appends `stmts` to `out`, printing each at `depth` — the shared
 /// "consume a real-node-returning callee's own output" step. #1479 adds the
-/// `depth` parameter (was hardcoded to 0): `emit`/`emit_project`'s own
-/// converted callees are all module-level (depth 0), but `project/
-/// tests_emit.rs`'s own scaffold-body callees (e.g. `emit_ns_destructure`)
-/// print nested inside a generated function body, at that body's own depth.
+/// `depth` parameter (was hardcoded to 0): `project/tests_emit.rs`'s own
+/// scaffold-body callees (e.g. `emit_ns_destructure`) print nested inside a
+/// generated function body, at that body's own depth — its own remaining
+/// callers, `emit`/`emit_project` converted off this (#1486) to a real
+/// `Vec<TsStmt>`/`TsProgram` collected and printed once via `bynk_ts::print`
+/// instead.
 pub(crate) fn extend_printed_at(out: &mut String, stmts: Vec<bynk_ts::TsStmt>, depth: usize) {
     for stmt in stmts {
         out.push_str(&bynk_ts::print_stmt(&stmt, depth));
-    }
-}
-
-/// As [`extend_printed_at`], at depth 0 — every `emit`/`emit_project` call
-/// site's own shape.
-fn extend_printed(out: &mut String, stmts: Vec<bynk_ts::TsStmt>) {
-    extend_printed_at(out, stmts, 0);
-}
-
-/// #1480: [`extend_printed`]'s merge-aware sibling — appends `stmts` to
-/// `out` at depth 0 through `bynk_ts::print_stmt_and_merge` instead of a
-/// plain `print_stmt`, so any `nested_map` a statement carries (e.g.
-/// `emit_free_fn`'s own `Raw` function body) merges into `map` at its real
-/// print-time offset. A stmt with no `nested_map` (a doc comment, a blank
-/// separator) just prints normally — the merge check inside `render_stmt`
-/// is a no-op for it, so mixing merge-needing and merge-free statements in
-/// one `stmts` list is always safe.
-fn extend_printed_and_merged(
-    out: &mut String,
-    stmts: Vec<bynk_ts::TsStmt>,
-    map: &mut SourceMapBuilder,
-    source_id: usize,
-) {
-    for stmt in stmts {
-        bynk_ts::print_stmt_and_merge(out, &stmt, 0, map, source_id);
     }
 }
 
@@ -230,14 +207,21 @@ pub(crate) fn emit(program: &CheckedProgram) -> String {
     // "What it referenced" comes from `dummy_ctx.runtime_use`, which the `Bytes`
     // lowerings write as they emit — not from scanning `body` for the helper's
     // name, which a user string literal or doc comment could also contain.
-    let mut body = String::new();
-    extend_printed(&mut body, write_commons_doc(commons));
+    // #1486: collects into a real `Vec<TsStmt>` and prints once via
+    // `bynk_ts::print`, rather than `extend_printed`'s flat per-stmt loop —
+    // `emit_type`/`emit_free_fn`/`emit_json_codec_helpers` (this function's
+    // own callees, shared with `emit_project`) dropped their own explicit
+    // inter-declaration blank `TsStmt`s as part of that conversion, relying
+    // on the printer's automatic top-level spacing policy; this single-file
+    // path needs the same policy to stay correctly spaced.
+    let mut body_stmts: Vec<bynk_ts::TsStmt> = Vec::new();
+    body_stmts.extend(write_commons_doc(commons));
     let dummy_ctx = single_file_ctx();
     // Types come first (they define interfaces and namespaces).
     for item in &commons.commons.items {
         if let CommonsItem::Type(t) = item {
             let shape = type_shape_for(t, program);
-            extend_printed(&mut body, emit_type(t, &shape, commons, &dummy_ctx));
+            body_stmts.extend(emit_type(t, &shape, commons, &dummy_ctx));
         }
     }
     // Free functions afterward.
@@ -245,17 +229,18 @@ pub(crate) fn emit(program: &CheckedProgram) -> String {
         if let CommonsItem::Fn(f) = item
             && let FnName::Free(_) = &f.name
         {
-            extend_printed(
-                &mut body,
-                emit_free_fn(f, commons, false, &dummy_ctx.runtime_use),
-            );
+            body_stmts.extend(emit_free_fn(f, commons, false, &dummy_ctx.runtime_use));
         }
     }
     // v0.22b: module-local codec helpers for Json.encode/decode targets.
-    extend_printed(
-        &mut body,
-        emit_json_codec_helpers(commons, &dummy_ctx, &HashSet::new(), &HashSet::new()),
-    );
+    body_stmts.extend(emit_json_codec_helpers(
+        commons,
+        &dummy_ctx,
+        &HashSet::new(),
+        &HashSet::new(),
+    ));
+    let body_program = bynk_ts::TsProgram { stmts: body_stmts };
+    let body = bynk_ts::print(&body_program, "", "", "").text;
     let mut out = String::new();
     // v0.153 (ADR 0177): a commons that names `HttpResult` in any signature —
     // e.g. a free `fn -> HttpResult[T]` using the `?`-Option lift — imports it.
@@ -359,54 +344,75 @@ pub(crate) fn emit_project(
     ctx: &EmitProjectCtx,
     source_text: &str,
     source_name: &str,
-) -> (String, Option<String>) {
+) -> (bynk_ts::TsProgram, Option<String>) {
     let commons = program.program();
-    let mut out = String::new();
-    // The file's source-map builder. The free-function bodies record statement /
-    // match-arm checkpoints through their `LowerCtx`; the declaration loops below
-    // record one checkpoint per top-level item so signatures (and the bodies of
-    // services/agents, which lower via spliced local buffers) anchor to their
-    // declaration (ADR 0103 D2, nearest-enclosing).
-    let smb = RefCell::new(SourceMapBuilder::new());
-    // The file's `.bynk` source is the primary map source (id 0); `record` targets
-    // it and spliced handler bodies in the same file merge against it (v0.70).
-    smb.borrow_mut().add_source(source_name, source_text);
-    // #1476: `write_header`'s own runtime-import line needs `ctx.runtime_use`'s
-    // `bytes()`/`icu()` flags, which the item-emission loop below sets as a side
-    // effect while it runs — every `record`/`merge` call below targets `out`
-    // starting from *this* point (item declarations only), not from the header's
-    // own eventual text. The header itself is built once every item has emitted
-    // (below, once `ctx.runtime_use` is fully known) and prepended — the
-    // checkpoints already recorded against this un-prefixed `out` are shifted by
-    // the header's own final length at that point (`SourceMapBuilder::shift_
-    // checkpoints`, the same mechanism `emit_service`'s own prologue insertion
-    // already uses), so this replaces the old post-print text-surgery pass
-    // (`inject_runtime_imports`) with ordinary out-of-order construction: the
-    // header's own bytes are unchanged, only *when* they're built moves.
+    // #1486: no more `RefCell<SourceMapBuilder>` — every top-level item's
+    // own checkpoint is `stmt.span` on the first statement its own emitter
+    // returns, and `bynk_ts::print`'s own top-level loop (per #1477's own
+    // extension) records it, and merges any `nested_map` (body-bearing
+    // statements — service/agent handler bodies, `emit_free_fn`'s own body,
+    // …) at its real print-time offset, automatically. This replaces the
+    // old `smb.borrow_mut().record(out.len(), item.span)` + `print_stmt_
+    // and_merge`/`extend_printed_and_merged` dance below with the printer
+    // doing the same work at the one place (R7.4) it always should have.
+    let mut stmts: Vec<bynk_ts::TsStmt> = Vec::new();
     // Compute which names this file actually references that live elsewhere
     // (sibling file in the same commons/context, or a used commons / consumed
     // context).
     let references = collect_external_references(commons, ctx);
-    extend_printed(&mut out, emit_project_imports(commons, ctx, &references));
-    if !references.is_empty() {
-        writeln!(out).unwrap();
+    let mut project_imports = emit_project_imports(commons, ctx, &references);
+    let mut cross_context_imports = emit_cross_context_namespace_imports(commons, ctx);
+    // #1486: the boundary between `emit_project_imports`'s own last
+    // statement and `emit_cross_context_namespace_imports`'s own first
+    // (when non-empty) must reproduce the pre-#1486 code's own unconditional
+    // rule exactly — no blank, *except* when `references` is non-empty,
+    // which wants exactly one separating "this file's own sibling imports"
+    // from "this file's cross-context namespace imports" — regardless of
+    // either side's real `TsStmtKind`, which the printer's automatic
+    // "no blank between adjacent imports" exemption cannot see through:
+    // `emit_project_imports`'s own last statement is not always a real
+    // import decl (its own `extra_import_lines` tail is pre-formatted `Raw`
+    // text that *reads* as an import but isn't classified as one —
+    // `328_agent_given_workers`'s own real fixture output: a `Raw`
+    // adapter-binding import directly followed by a real `ImportNamespace`,
+    // no blank between them despite neither side of the exemption matching).
+    if !cross_context_imports.is_empty() {
+        if references.is_empty() {
+            // Force the "no blank" default explicitly — the automatic
+            // exemption only reliably suppresses it when *both* sides are a
+            // real import decl, which is not guaranteed here.
+            cross_context_imports[0].no_blank_before = true;
+        } else {
+            // Force exactly one blank regardless of whether the automatic
+            // exemption would otherwise suppress it (both sides real import
+            // decls) or already supply it for free (either side `Raw`) —
+            // `no_blank_before` on both the spacer and the statement right
+            // after it suppresses the automatic policy on both sides,
+            // leaving only the spacer's own single rendered blank line.
+            let mut spacer = bynk_ts::TsStmt::blank(None);
+            spacer.no_blank_before = true;
+            project_imports.push(spacer);
+            cross_context_imports[0].no_blank_before = true;
+        }
     }
-    // v0.6: namespace imports for each consumed context that exposes services.
-    // v0.15: also for consumed contexts whose capabilities this context uses.
-    extend_printed(&mut out, emit_cross_context_namespace_imports(commons, ctx));
+    stmts.extend(project_imports);
+    stmts.extend(cross_context_imports);
     // For contexts: emit per-context nominal rebrand aliases for each type
     // imported via `uses` that this file references. The structural shape is
     // inherited from the original commons type; the brand makes the
     // rebranded type nominally distinct (v0.4 §6.2).
     if ctx.unit_kind == UnitKind::Context {
-        extend_printed(&mut out, emit_context_rebrands(&references, commons, ctx));
+        stmts.extend(emit_context_rebrands(&references, commons, ctx));
     }
-    extend_printed(&mut out, write_commons_doc(commons));
+    stmts.extend(write_commons_doc(commons));
     for item in &commons.commons.items {
         if let CommonsItem::Type(t) = item {
-            smb.borrow_mut().record(out.len(), t.span);
             let shape = type_shape_for(t, program);
-            extend_printed(&mut out, emit_type(t, &shape, commons, ctx));
+            let mut item_stmts = emit_type(t, &shape, commons, ctx);
+            if let Some(first) = item_stmts.first_mut() {
+                first.span = Some(t.span);
+            }
+            stmts.extend(item_stmts);
         }
     }
     // Events track, slice 0 (spine #936): an `event` is checker-visible as
@@ -420,22 +426,23 @@ pub(crate) fn emit_project(
     for item in &commons.commons.items {
         if let CommonsItem::Event(e) = item {
             let t = e.as_type_decl();
-            smb.borrow_mut().record(out.len(), t.span);
             let shape = type_shape_for(&t, program);
-            extend_printed(&mut out, emit_type(&t, &shape, commons, ctx));
+            let mut item_stmts = emit_type(&t, &shape, commons, ctx);
+            if let Some(first) = item_stmts.first_mut() {
+                first.span = Some(t.span);
+            }
+            stmts.extend(item_stmts);
         }
     }
     for item in &commons.commons.items {
         if let CommonsItem::Fn(f) = item
             && let FnName::Free(_) = &f.name
         {
-            smb.borrow_mut().record(out.len(), f.span);
-            extend_printed_and_merged(
-                &mut out,
-                emit_free_fn(f, commons, ctx.contracts, &ctx.runtime_use),
-                &mut smb.borrow_mut(),
-                0,
-            );
+            let mut item_stmts = emit_free_fn(f, commons, ctx.contracts, &ctx.runtime_use);
+            if let Some(first) = item_stmts.first_mut() {
+                first.span = Some(f.span);
+            }
+            stmts.extend(item_stmts);
         }
     }
     // message-bundles slice 2 (#874): every `messages` block in the commons
@@ -458,17 +465,16 @@ pub(crate) fn emit_project(
         .iter()
         .find(|m| m.annotations.iter().any(|a| a.name.name == "reference"))
     {
-        smb.borrow_mut().record(out.len(), reference.span);
-        extend_printed(
-            &mut out,
-            emit_messages_bundle(&messages_blocks, reference, &ctx.runtime_use),
-        );
+        let mut item_stmts = emit_messages_bundle(&messages_blocks, reference, &ctx.runtime_use);
+        if let Some(first) = item_stmts.first_mut() {
+            first.span = Some(reference.span);
+        }
+        stmts.extend(item_stmts);
     }
     // v0.5: behavioural items follow the type/fn declarations.
     for item in &commons.commons.items {
         match item {
             CommonsItem::Capability(c) => {
-                smb.borrow_mut().record(out.len(), c.span);
                 // P6.x (#1193, slice 3 of #1187): `emit_capability` reads
                 // each op's resolved types off `ops`, not `c`'s own raw
                 // `TypeRef`s (Decision B, #1193) — no separate helper, this
@@ -476,16 +482,19 @@ pub(crate) fn emit_project(
                 let IrItem::Capability { ops, .. } = lower_capability_item_ir(c, program) else {
                     unreachable!("lower_capability_item_ir always returns IrItem::Capability")
                 };
-                extend_printed(&mut out, emit_capability(c, &ops, commons));
+                let mut item_stmts = emit_capability(c, &ops, commons);
+                if let Some(first) = item_stmts.first_mut() {
+                    first.span = Some(c.span);
+                }
+                stmts.extend(item_stmts);
             }
             CommonsItem::Provider(p) => {
-                smb.borrow_mut().record(out.len(), p.span);
-                if let Some(stmt) = emit_provider(p, commons, ctx) {
-                    bynk_ts::print_stmt_and_merge(&mut out, &stmt, 0, &mut smb.borrow_mut(), 0);
+                if let Some(mut stmt) = emit_provider(p, commons, ctx) {
+                    stmt.span = Some(p.span);
+                    stmts.push(stmt);
                 }
             }
             CommonsItem::Service(s) => {
-                smb.borrow_mut().record(out.len(), s.span);
                 // #1187's slice 5: `emit_service` reads the protocol's own
                 // resolved data (`ProtocolIr`) and each handler's resolved
                 // signature (params/ret/effectful) instead of `s`'s own raw
@@ -501,22 +510,21 @@ pub(crate) fn emit_project(
                     .iter()
                     .map(|h| lower_service_handler_signature_ir(h, program))
                     .collect();
-                let stmt = emit_service(s, &protocol, &signatures, commons, ctx);
-                bynk_ts::print_stmt_and_merge(&mut out, &stmt, 0, &mut smb.borrow_mut(), 0);
+                let mut stmt = emit_service(s, &protocol, &signatures, commons, ctx);
+                stmt.span = Some(s.span);
+                stmts.push(stmt);
             }
             CommonsItem::Agent(a) => {
-                smb.borrow_mut().record(out.len(), a.span);
                 let state: Vec<_> = a
                     .store_fields
                     .iter()
                     .map(|f| lower_store_field_shape_ir(f, program))
                     .collect();
-                extend_printed_and_merged(
-                    &mut out,
-                    emit_agent(a, &state, commons, ctx),
-                    &mut smb.borrow_mut(),
-                    0,
-                );
+                let mut item_stmts = emit_agent(a, &state, commons, ctx);
+                if let Some(first) = item_stmts.first_mut() {
+                    first.span = Some(a.span);
+                }
+                stmts.extend(item_stmts);
             }
             _ => {}
         }
@@ -563,8 +571,7 @@ pub(crate) fn emit_project(
             })),
             None,
         );
-        out.push_str(&bynk_ts::print_stmt(&reset_fn, 0));
-        writeln!(out).unwrap();
+        stmts.push(reset_fn);
     }
     // v0.6: cross-context surface assembly. Emit `makeSurface` for any
     // context that declares services — the composition root references it
@@ -577,7 +584,7 @@ pub(crate) fn emit_project(
             .iter()
             .any(|i| matches!(i, CommonsItem::Service(_)));
         if has_services {
-            extend_printed(&mut out, emit_make_surface(commons, ctx));
+            stmts.extend(emit_make_surface(commons, ctx));
         }
     }
     // v0.8: in workers mode, the context module also exports per-type
@@ -588,116 +595,56 @@ pub(crate) fn emit_project(
     // agent-rehydration boundary helpers; bundle emits only the agent-rehydration
     // ones (the gate's deserialisers), since in-process calls need no wire codec.
     let (boundary_stmts, boundary_names, boundary_insts) = emit_boundary_helpers(program, ctx);
-    extend_printed(&mut out, boundary_stmts);
+    stmts.extend(boundary_stmts);
     // v0.22b: module-local codec helpers for this file's Json.encode/decode
     // targets, deduped against the workers boundary helpers above.
-    extend_printed(
-        &mut out,
-        emit_json_codec_helpers(commons, ctx, &boundary_names, &boundary_insts),
-    );
+    stmts.extend(emit_json_codec_helpers(
+        commons,
+        ctx,
+        &boundary_names,
+        &boundary_insts,
+    ));
     // #1476: `ctx.runtime_use` is fully populated now — every producer above has
     // had its chance to note `bytes()`/`icu()` (`emitter::runtime_use`'s own doc:
     // this used to key on `out.contains("<helper name>")`, wrong in both
     // directions — a user string literal/doc comment false-positive, or an
     // unrelated formatting change silently dropping a *required* import). Build
     // the header — including its own runtime-import line, `bytes()`/`icu()`
-    // folded in directly rather than spliced in afterward — then prepend it,
-    // shifting every checkpoint already recorded above by its own final length
-    // (the same `shift_checkpoints` mechanism `emit_service`'s own prologue
-    // insertion already uses for the identical "content prepended after
-    // checkpoints were recorded" shape).
-    let mut header = String::new();
-    extend_printed(&mut header, write_header(commons, ctx));
-    smb.borrow_mut().shift_checkpoints(header.len());
-    header.push_str(&out);
-    let out = header;
+    // folded in directly rather than spliced in afterward — then prepend it.
+    // #1486: no more `shift_checkpoints` — every item's own checkpoint lives
+    // on `stmt.span`/`stmt.nested_map`, which travel with the statement
+    // itself; prepending the header is now ordinary `Vec` splicing, nothing
+    // to rebase.
+    let mut program_stmts = write_header(commons, ctx);
+    // #1486: `write_header`'s own last statement (the runtime import, when
+    // the file has any commons items) sits directly adjacent to whatever
+    // `stmts` starts with — genuinely import-kind itself whenever
+    // `emit_project_imports` contributed any sibling/cross-unit imports,
+    // which exempts this boundary from the printer's automatic "no blank
+    // between adjacent imports" policy. This boundary always wants exactly
+    // one blank regardless (the pre-#1486 code's own unconditional-when-
+    // items-non-empty blank, replicated exactly), so it's forced the same
+    // way the project/cross-context import boundary above is, rather than
+    // relying on the automatic policy.
+    if !commons.commons.items.is_empty() {
+        let mut spacer = bynk_ts::TsStmt::blank(None);
+        spacer.no_blank_before = true;
+        program_stmts.push(spacer);
+        if let Some(first) = stmts.first_mut() {
+            first.no_blank_before = true;
+        }
+    }
+    program_stmts.append(&mut stmts);
+    let program = bynk_ts::TsProgram {
+        stmts: program_stmts,
+    };
     // The generated `file` name: the source basename with `.bynk` → `.ts`.
     let generated_file = Path::new(source_name)
         .file_stem()
         .map(|s| format!("{}.ts", s.to_string_lossy()))
         .unwrap_or_else(|| "module.ts".to_string());
-    let source_map = smb.borrow().to_v3(&out, &generated_file);
-    (out, source_map)
-}
-
-/// v0.110 (ADR 0142): append a set of runtime helpers to a module's existing
-/// runtime import. Done as a post-pass so the decision keys on what the body
-/// references, without a second emission or a source-map-shifting reorder.
-/// Generalised in message-bundles slice 3 (#878) from a `Bytes`-only helper
-/// to take `extra` as a parameter, shared with the ICU-formatting helpers.
-///
-/// v0.176 (#642): anchored on the runtime import's **exact specifier** rather
-/// than on the `type ValidationError` binding it happens to carry. With `Bytes`
-/// now able to cross a workers boundary (ADR 0142 D8's guard retired), the
-/// *Worker entry* references `__bynkBytesFromBase64` too — and its import line
-/// names no `ValidationError`, so the old anchor silently failed to inject and
-/// `tsc` reported an unresolved name.
-///
-/// The specifier is matched exactly (`from "<specifier>"`), not by substring: a
-/// `contains("runtime.js")` would also match a *user* module that happens to be
-/// named `runtime` — or anything like `"./my-runtime.js"` — and appending
-/// `extra`'s bindings to that import would produce an unresolved export. The
-/// caller already knows the exact path it emitted, so there is no reason to
-/// guess.
-pub(crate) fn inject_runtime_imports(out: String, runtime_specifier: &str, extra: &str) -> String {
-    let mut result = String::with_capacity(out.len() + extra.len());
-    let mut injected = false;
-    let from_runtime = format!(" }} from \"{runtime_specifier}\"");
-    for line in out.split_inclusive('\n') {
-        if !injected
-            && line.starts_with("import {")
-            && line.contains(&from_runtime)
-            && let Some(pos) = line.rfind(&from_runtime)
-        {
-            result.push_str(&line[..pos]);
-            result.push_str(&missing_bindings(&line[..pos], extra));
-            result.push_str(&line[pos..]);
-            injected = true;
-            continue;
-        }
-        result.push_str(line);
-    }
-    result
-}
-
-/// The subset of `extra` not already bound on `existing` — the head of an import
-/// line, e.g. `import { Ok, Err, type Result`.
-///
-/// #914: an injection target may already import some of what a group carries. The
-/// test-scaffold module lists `Ok`/`Err` in its fixed set but not `BoundaryError`,
-/// so injecting the boundary group wholesale would emit `import { Ok, …, Ok, … }` —
-/// a duplicate-identifier error, i.e. trading one uncompilable module for another.
-/// Comparing on the bare name lets `type BoundaryError` match an existing
-/// `BoundaryError` and vice versa.
-///
-/// Invariant: a group is a list of plain bindings, optionally `type`-prefixed —
-/// **never an alias**. `bare("Foo as Ok")` is the whole phrase, so an aliased
-/// binding on either side would compare unequal and inject a duplicate. No group
-/// carries one today; keep it that way rather than teaching this to split on
-/// `as`.
-fn missing_bindings(existing: &str, extra: &str) -> String {
-    fn bare(binding: &str) -> &str {
-        binding
-            .trim()
-            .strip_prefix("type ")
-            .unwrap_or(binding.trim())
-    }
-    let present: HashSet<&str> = existing
-        .strip_prefix("import {")
-        .unwrap_or(existing)
-        .split(',')
-        .map(bare)
-        .collect();
-    let wanted: Vec<&str> = extra
-        .split(',')
-        .map(str::trim)
-        .filter(|b| !b.is_empty() && !present.contains(bare(b)))
-        .collect();
-    if wanted.is_empty() {
-        String::new()
-    } else {
-        format!(", {}", wanted.join(", "))
-    }
+    let printed = bynk_ts::print(&program, source_name, source_text, &generated_file);
+    (program, printed.source_map)
 }
 
 /// v0.79: does this block contain a `~>` send anywhere — including nested
@@ -1296,14 +1243,19 @@ fn emit_boundary_helpers(
                 },
                 None,
             ));
-            stmts.push(bynk_ts::TsStmt::raw(
-                format!("export {{ {} }};\n", parts.join(", ")),
-                None,
-            ));
+            // #1486: this bare re-export's own text always sits directly
+            // under the import that binds the same names — no blank
+            // between them, despite `Raw` never being exempted from the
+            // printer's automatic policy on its own.
+            let mut reexport =
+                bynk_ts::TsStmt::raw(format!("export {{ {} }};\n", parts.join(", ")), None);
+            reexport.no_blank_before = true;
+            stmts.push(reexport);
         }
-        if !by_commons.is_empty() {
-            stmts.push(bynk_ts::TsStmt::blank(None));
-        }
+        // #1486: no explicit blank stmt here — the printer's automatic
+        // top-level spacing policy supplies the single blank before the
+        // Result_/Option_ helpers below (neither import- nor comment-kind,
+        // so never exempted from it).
 
         // Specialised Result_/Option_ helpers for the instantiations used —
         // in handler signatures or in boundary-type fields (v0.18).
@@ -1859,7 +1811,20 @@ fn emit_context_rebrands(
             stmts.push(const_decl);
         }
     }
-    stmts.push(bynk_ts::TsStmt::blank(None));
+    // #1486: no explicit trailing blank stmt here — the printer's automatic
+    // top-level spacing policy supplies the single blank before whatever
+    // follows.
+    //
+    // Every rebrand entry (a lone `type_alias`, or a `type_alias`+`const_decl`
+    // pair) sits directly under its predecessor with no blank between them —
+    // confirmed against `129_full_orders_http_api`'s own real fixture output,
+    // several rebrands stacked with zero blank lines anywhere among them.
+    // Only the very first statement in this whole function's own returned
+    // `Vec` keeps the printer's ordinary automatic blank relative to
+    // whatever precedes `emit_context_rebrands`'s own call site.
+    for stmt in stmts.iter_mut().skip(1) {
+        stmt.no_blank_before = true;
+    }
     stmts
 }
 
@@ -2472,7 +2437,14 @@ fn emit_cross_context_namespace_imports(
             None,
         ));
     }
-    stmts.push(bynk_ts::TsStmt::blank(None));
+    // #1486: no explicit trailing blank stmt here — the printer's automatic
+    // top-level spacing policy supplies the single blank before whatever
+    // follows (never import-kind at this function's own call sites, so
+    // never exempted from it). The boundary this function's own *first*
+    // statement forms with `emit_project_imports`'s own last statement
+    // (both import-kind, genuinely wanting a blank despite the "no blank
+    // between adjacent imports" exemption) is handled at `emit_project`'s
+    // own call site instead — the only place that knows both neighbours.
     stmts
 }
 
@@ -2622,6 +2594,23 @@ fn emit_project_imports(
     for line in &ctx.extra_import_lines {
         stmts.push(bynk_ts::TsStmt::raw(format!("{line}\n"), None));
     }
+    // #1486: every statement in this function's own return, whatever
+    // section it came from (sibling imports, cross-unit imports, the
+    // rebrand-aliasing pair, `extra_import_lines`' own pre-formatted `Raw`
+    // text), sits directly under its predecessor with no blank between
+    // them — this function never inserted one under the pre-#1486
+    // flat-print regime (confirmed: no explicit blank `TsStmt` anywhere in
+    // its own body), so every internal adjacency needs forcing regardless
+    // of `TsStmtKind` (a `Raw` import line next to a real `ImportNamespace`
+    // is exactly the case the printer's own kind-based "both imports"
+    // exemption can't see). The very first statement is left alone — its
+    // own blank-or-not relative to whatever precedes this function's call
+    // site is `emit_project`'s own call-site decision (the header/`emit_
+    // project_imports` boundary, and the project/cross-context import
+    // boundary, both forced explicitly there instead).
+    for stmt in stmts.iter_mut().skip(1) {
+        stmt.no_blank_before = true;
+    }
     stmts
 }
 
@@ -2700,10 +2689,14 @@ fn write_header(commons: &TypedCommons, ctx: &EmitProjectCtx) -> Vec<bynk_ts::Ts
         UnitKind::Integration => "integration test",
         UnitKind::Adapter => "adapter",
     };
+    // #1486: no explicit blank stmt after the banner — the printer's
+    // automatic top-level spacing policy already supplies the single blank
+    // after it (`Comment`→`Comment` is exempted, matching the banner's own
+    // two adjacent lines; the automatic policy is not exempted for whatever
+    // follows the banner, so the wanted blank appears there for free).
     let mut stmts = vec![
         bynk_ts::TsStmt::comment("Generated by bynkc — do not edit by hand.", None),
         bynk_ts::TsStmt::comment(format!("{kind} {}", commons.commons.name.joined()), None),
-        bynk_ts::TsStmt::blank(None),
     ];
     if !commons.commons.items.is_empty() {
         let runtime_import = runtime_import_for(&ctx.source_path, ctx.import_ext);
@@ -2931,7 +2924,10 @@ fn write_header(commons: &TypedCommons, ctx: &EmitProjectCtx) -> Vec<bynk_ts::Ts
             },
             None,
         ));
-        stmts.push(bynk_ts::TsStmt::blank(None));
+        // #1486: no explicit trailing blank stmt here — the printer's
+        // automatic top-level spacing policy supplies the single blank
+        // before whatever follows the header (never import-kind at this
+        // function's own call site, so never exempted from it).
     }
     stmts
 }
@@ -3025,7 +3021,11 @@ const MESSAGES_RUNTIME_IMPORTS: &str = ", selectPluralArm, formatIcuNumber, form
 /// arms — `Unit` and the runtime-owned error types — additionally annotate the
 /// result (`Ok(undefined) as Result<void, BoundaryError>`), which `compose.ts`'s
 /// structural list never carries; `Result` is in the group for those. The dedupe
-/// in [`inject_runtime_imports`] makes it free wherever it is already imported.
+/// every real caller applies this group through (`emitter/workers.rs`'s own
+/// `append_missing_bindings`, `project/tests_emit.rs`'s own copy — #1486
+/// retired this doc's own `inject_runtime_imports`, the pre-conversion
+/// post-print-text-splice mechanism both are the tree-level successor to)
+/// makes it free wherever it is already imported.
 pub(crate) const BOUNDARY_CODEC_RUNTIME_IMPORTS: &str =
     ", Ok, Err, type Result, type BoundaryError";
 
@@ -3065,7 +3065,10 @@ fn write_commons_doc(commons: &TypedCommons) -> Vec<bynk_ts::TsStmt> {
     let mut stmts = Vec::new();
     if let Some(doc) = &commons.commons.documentation {
         stmts.push(bynk_ts::TsStmt::doc_comment(doc, None));
-        stmts.push(bynk_ts::TsStmt::blank(None));
+        // #1486: no explicit trailing blank stmt here — `DocComment` (unlike
+        // `Comment`) is never exempted from the printer's automatic
+        // top-level spacing policy, so the single blank before whatever
+        // follows is already supplied for free.
     }
     stmts
 }
@@ -5548,106 +5551,6 @@ mod conditional_runtime_import_tests {
                 "`{helper}` must not be imported for a bundle with no ICU dispatch: {ts}"
             );
         }
-    }
-}
-
-/// #914: `inject_runtime_imports` must not add a binding the target line already
-/// has. The test-scaffold module lists `Ok`/`Err`/`Result` but not
-/// `BoundaryError`, so the boundary group is a partial overlap — injecting it
-/// wholesale would emit a duplicate identifier, trading one uncompilable module
-/// for another.
-#[cfg(test)]
-mod inject_runtime_imports_tests {
-    use super::*;
-
-    const SPEC: &str = "./runtime.js";
-
-    fn line(bindings: &str) -> String {
-        format!("import {{ {bindings} }} from \"{SPEC}\";\nconst x = 1;\n")
-    }
-
-    #[test]
-    fn appends_bindings_that_are_absent() {
-        let out = inject_runtime_imports(line("Ok, Err"), SPEC, BYTES_RUNTIME_IMPORTS);
-        assert!(out.contains("Ok, Err, __bynkBytesEqual"), "{out}");
-        assert!(out.contains("__bynkBytesDecodeUtf8 } from"), "{out}");
-    }
-
-    #[test]
-    fn skips_bindings_already_present() {
-        let out = inject_runtime_imports(
-            line("Ok, Err, type Result"),
-            SPEC,
-            BOUNDARY_CODEC_RUNTIME_IMPORTS,
-        );
-        assert_eq!(
-            out.matches("Ok").count(),
-            1,
-            "`Ok` was already imported and must not repeat: {out}"
-        );
-        assert!(
-            out.contains("Ok, Err, type Result, type BoundaryError"),
-            "{out}"
-        );
-    }
-
-    /// The bare name is what collides, so `type BoundaryError` must match an
-    /// existing `BoundaryError`.
-    #[test]
-    fn matches_a_type_prefixed_group_binding_against_a_bare_one() {
-        let out = inject_runtime_imports(
-            line("Ok, Err, type Result, BoundaryError"),
-            SPEC,
-            BOUNDARY_CODEC_RUNTIME_IMPORTS,
-        );
-        assert_eq!(
-            out,
-            line("Ok, Err, type Result, BoundaryError"),
-            "every binding was already present, so the line is untouched"
-        );
-    }
-
-    /// …and the other direction: a bare group binding against an existing
-    /// `type`-prefixed one. This is the case that would regress if `bare` were
-    /// applied to only one side of the comparison.
-    #[test]
-    fn matches_a_bare_group_binding_against_a_type_prefixed_one() {
-        // A group whose bindings are bare, against a line that `type`-prefixes
-        // them. `Result` is the realistic instance — the fixed test-scaffold
-        // list writes `type Result`.
-        let out = inject_runtime_imports(line("type Ok, type Err"), SPEC, ", Ok, Err");
-        assert_eq!(
-            out,
-            line("type Ok, type Err"),
-            "a bare binding must match an existing `type`-prefixed one: {out}"
-        );
-    }
-
-    /// The two injections run back to back over the same line, so the second
-    /// sees the first's output as `existing` — the overlap between the groups
-    /// (`Ok`, `Err`, `type Result`) must not double up.
-    #[test]
-    fn composes_across_two_sequential_injections() {
-        let out = inject_runtime_imports(
-            line("Ok, Err, type Result"),
-            SPEC,
-            BOUNDARY_CODEC_RUNTIME_IMPORTS,
-        );
-        let out = inject_runtime_imports(out, SPEC, JSON_CODEC_RUNTIME_IMPORTS);
-        assert_eq!(
-            out,
-            line("Ok, Err, type Result, type BoundaryError, type JsonValue, type JsonError"),
-            "the shared bindings must be injected once: {out}"
-        );
-    }
-
-    #[test]
-    fn leaves_a_line_for_another_specifier_alone() {
-        let other = "import { Ok } from \"./elsewhere.js\";\n".to_string();
-        assert_eq!(
-            inject_runtime_imports(other.clone(), SPEC, BYTES_RUNTIME_IMPORTS),
-            other
-        );
     }
 }
 

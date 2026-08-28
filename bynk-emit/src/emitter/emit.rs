@@ -55,6 +55,7 @@ pub(crate) fn emit_type(
     ctx: &EmitProjectCtx,
 ) -> Vec<bynk_ts::TsStmt> {
     let mut stmts = Vec::new();
+    let has_doc = t.documentation.is_some();
     if let Some(doc) = t.documentation.as_deref() {
         stmts.push(bynk_ts::TsStmt::doc_comment(doc, None));
     }
@@ -66,7 +67,7 @@ pub(crate) fn emit_type(
         .as_deref()
         .map(|c| format!("{c}."))
         .unwrap_or_default();
-    match shape {
+    let mut shape_stmts = match shape {
         // `Opaque` and `Refined` lower almost identically: a branded base type
         // alias plus an `of` constructor object. The one difference (ADR 0182)
         // is `unsafe`: opaque exposes it (its defining commons needs a
@@ -78,7 +79,7 @@ pub(crate) fn emit_type(
             base,
             refinement,
             opaque,
-        } => stmts.extend(emit_refined_type(
+        } => emit_refined_type(
             t,
             RefinedShape {
                 base: *base,
@@ -88,18 +89,24 @@ pub(crate) fn emit_type(
             commons,
             &brand_prefix,
             &ctx.runtime_use,
-        )),
-        TypeShape::Record { fields } => {
-            stmts.extend(emit_record_type(t, fields, commons, &ctx.runtime_use))
-        }
+        ),
+        TypeShape::Record { fields } => emit_record_type(t, fields, commons, &ctx.runtime_use),
         // `embeds` is not read here — today's emitter has no reader for
         // `SumBody::embeds` anywhere (confirmed by grep; `embeds` is checker-
         // enforced construction-time only), so `TypeShape::Sum::embeds` stays
         // unread by this slice too, not a gap introduced by it.
-        TypeShape::Sum { variants, .. } => {
-            stmts.extend(emit_sum_type(t, variants, commons, &ctx.runtime_use))
-        }
+        TypeShape::Sum { variants, .. } => emit_sum_type(t, variants, commons, &ctx.runtime_use),
+    };
+    // #1486: a leading doc comment sits directly above the declaration it
+    // documents, no blank between them — unlike `Comment`, `DocComment` is
+    // never exempted from the printer's automatic top-level spacing policy
+    // on its own, so the statement right after it needs `no_blank_before`
+    // explicitly (the same pattern `emit_free_fn`/`emit_capability` already
+    // use for their own leading doc comments).
+    if has_doc && let Some(first) = shape_stmts.first_mut() {
+        first.no_blank_before = true;
     }
+    stmts.extend(shape_stmts);
     stmts
 }
 
@@ -177,6 +184,13 @@ struct RefinedShape<'a> {
 /// entry` splice loop for this function, now that it owns the whole
 /// object's own construction. This function's own exact signature is
 /// unchanged, the same P7.9/step-1 pattern.
+///
+/// #1486: the two explicit `TsStmt::blank(None)` pushes this function used
+/// to carry (after `type_alias`, after `const_decl`) are gone — `emit_
+/// project`'s own top-level assembly now prints via `bynk_ts::print`
+/// itself, whose own top-level loop already inserts exactly one blank line
+/// between adjacent real statements; keeping both would have doubled every
+/// blank line this function's own two-statement output produces.
 fn emit_refined_type(
     t: &TypeDecl,
     shape: RefinedShape<'_>,
@@ -204,7 +218,7 @@ fn emit_refined_type(
         })),
         None,
     );
-    let mut stmts = vec![type_alias, bynk_ts::TsStmt::blank(None)];
+    let mut stmts = vec![type_alias];
 
     let checks_text = {
         let mut checks = String::new();
@@ -279,7 +293,6 @@ fn emit_refined_type(
         None,
     );
     stmts.push(const_decl);
-    stmts.push(bynk_ts::TsStmt::blank(None));
     stmts
 }
 
@@ -418,6 +431,10 @@ pub(crate) fn ts_type_params(params: &[TypeParam]) -> String {
 /// `ts_ty` itself already wraps, P7.9) instead of the opaque pre-printed
 /// `String` `ts_ty` returns — a real node, not text. This function's own
 /// exact signature is unchanged, the same P7.9/step-1 pattern.
+///
+/// #1486: no more explicit `TsStmt::blank(None)` entries — `bynk_ts::print`
+/// itself now supplies the one blank line between adjacent real statements
+/// (see `emit_refined_type`'s own identical note).
 fn emit_record_type(
     t: &TypeDecl,
     fields: &[(String, TyId)],
@@ -451,12 +468,7 @@ fn emit_record_type(
         })),
         None,
     );
-    vec![
-        interface,
-        bynk_ts::TsStmt::blank(None),
-        const_decl,
-        bynk_ts::TsStmt::blank(None),
-    ]
+    vec![interface, const_decl]
 }
 
 /// #1339 (R7.1): `export type {name}{params} =\n  | {...}\n  | {...};` is a
@@ -478,6 +490,10 @@ fn emit_record_type(
 /// construction, drop the per-entry splice loop" pattern `emit_refined_
 /// type`'s own conversion just used. This function's own exact signature
 /// is unchanged, the same P7.9/step-1 pattern.
+///
+/// #1486: no more explicit `TsStmt::blank(None)` entries — `bynk_ts::print`
+/// itself now supplies the one blank line between adjacent real statements
+/// (see `emit_refined_type`'s own identical note).
 fn emit_sum_type(
     t: &TypeDecl,
     variants: &[(String, Vec<(String, TyId)>)],
@@ -540,7 +556,7 @@ fn emit_sum_type(
         })),
         None,
     );
-    let mut stmts = vec![type_alias, bynk_ts::TsStmt::blank(None)];
+    let mut stmts = vec![type_alias];
 
     let mut entries: Vec<bynk_ts::TsObjectEntry> = Vec::new();
     for (tag, payload) in variants {
@@ -603,7 +619,6 @@ fn emit_sum_type(
         None,
     );
     stmts.push(const_decl);
-    stmts.push(bynk_ts::TsStmt::blank(None));
     stmts
 }
 
@@ -950,7 +965,13 @@ pub(crate) fn emit_free_fn(
 
     let mut raw_body = bynk_ts::TsStmt::raw(body_text, None);
     raw_body.nested_map = Some(body_smb.into_inner());
-    stmts.push(bynk_ts::TsStmt::decl(
+    // #1486: `no_blank_before` when this function's own doc comment is the
+    // preceding statement — `bynk_ts::print` itself now supplies the one
+    // blank line between adjacent real statements (a fresh call site's own
+    // preceding item, or nothing at all for the very first top-level
+    // statement), but a doc comment sits flush above the declaration it
+    // documents, no blank between them.
+    let mut fn_stmt = bynk_ts::TsStmt::decl(
         bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::Function {
             name: ts_ident(&name.name),
             generics,
@@ -961,8 +982,9 @@ pub(crate) fn emit_free_fn(
             inline: false,
         })),
         None,
-    ));
-    stmts.push(bynk_ts::TsStmt::blank(None));
+    );
+    fn_stmt.no_blank_before = f.documentation.is_some();
+    stmts.push(fn_stmt);
     stmts
 }
 
@@ -1904,7 +1926,6 @@ pub(crate) fn emit_messages_bundle(
     }
     writeln!(table, "}};").unwrap();
     stmts.push(bynk_ts::TsStmt::raw(table, None));
-    stmts.push(bynk_ts::TsStmt::blank(None));
 
     // `("tag" as string) as LocaleTag` — the inner `as` is wrapped in an
     // explicit `Paren`: `as` is left-associative, so the un-parenthesised
@@ -1944,7 +1965,12 @@ pub(crate) fn emit_messages_bundle(
     stmts.push(ref_locale_decl);
 
     let locale_list: Vec<bynk_ts::TsExpr> = blocks.iter().map(|m| tag_cast(&m.tag)).collect();
-    let locales_decl = bynk_ts::TsStmt::decl(
+    // #1486: no blank wanted between `ref_locale_decl` and `locales_decl` —
+    // matches the pre-conversion hand-written text this crate's own
+    // zero-diff discipline requires preserving exactly, not expressible
+    // through `bynk_ts::print`'s own uniform "always one blank" policy
+    // without this escape hatch (see `TsStmt::no_blank_before`'s own doc).
+    let mut locales_decl = bynk_ts::TsStmt::decl(
         bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::ConstDecl {
             name: "messagesLocales".to_string(),
             ty: Some(bynk_ts::TsType::readonly_array(bynk_ts::TsType::named(
@@ -1954,8 +1980,8 @@ pub(crate) fn emit_messages_bundle(
         })),
         None,
     );
+    locales_decl.no_blank_before = true;
     stmts.push(locales_decl);
-    stmts.push(bynk_ts::TsStmt::blank(None));
 
     let ident = |s: &str| bynk_ts::TsExpr::Ident(s.to_string());
     let member = |object: bynk_ts::TsExpr, property: &str| bynk_ts::TsExpr::Member {
@@ -2054,7 +2080,6 @@ pub(crate) fn emit_messages_bundle(
         None,
     );
     stmts.push(render_fn);
-    stmts.push(bynk_ts::TsStmt::blank(None));
     stmts
 }
 
@@ -2152,7 +2177,12 @@ pub(crate) fn emit_capability(
             }
         })
         .collect();
-    let interface = bynk_ts::TsStmt::decl(
+    // #1486: `no_blank_before` when this capability's own doc comment is the
+    // preceding statement — see `emit_free_fn`'s own identical note. The two
+    // explicit `TsStmt::blank(None)` pushes this function used to carry
+    // (after `interface`, after `token_decl`) are gone for the same reason
+    // `emit_refined_type`'s own note gives.
+    let mut interface = bynk_ts::TsStmt::decl(
         bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::Interface {
             name: c.name.name.clone(),
             type_params: Vec::new(),
@@ -2160,8 +2190,8 @@ pub(crate) fn emit_capability(
         })),
         None,
     );
+    interface.no_blank_before = c.documentation.is_some();
     stmts.push(interface);
-    stmts.push(bynk_ts::TsStmt::blank(None));
 
     // Injection token (symbol carrying the interface type).
     let token_decl = bynk_ts::TsStmt::decl(
@@ -2178,7 +2208,6 @@ pub(crate) fn emit_capability(
         None,
     );
     stmts.push(token_decl);
-    stmts.push(bynk_ts::TsStmt::blank(None));
     stmts
 }
 
@@ -2536,7 +2565,11 @@ pub(crate) fn emit_provider(
         cap = p.capability.name,
     )
     .unwrap();
-    writeln!(out).unwrap();
+    // #1486: no trailing blank baked into this Raw text any more —
+    // `bynk_ts::print` itself now supplies the one blank line between this
+    // statement and whatever follows it in `emit_project`'s own top-level
+    // list (see `TsStmt::no_blank_before`'s own doc for why keeping this
+    // would have doubled it).
     let mut stmt = bynk_ts::TsStmt::raw(out, None);
     stmt.nested_map = Some(class_smb);
     Some(stmt)
@@ -3065,7 +3098,8 @@ pub(crate) fn emit_service(
         );
     }
     writeln!(out, "}};").unwrap();
-    writeln!(out).unwrap();
+    // #1486: no trailing blank baked into this Raw text any more — see
+    // `emit_provider`'s own identical note.
     let mut stmt = bynk_ts::TsStmt::raw(out, None);
     stmt.nested_map = Some(service_smb);
     stmt
@@ -3504,7 +3538,9 @@ fn emit_context_deps_interface(
         None,
     );
     out.push_str(&bynk_ts::print_stmt(&interface_decl, 0));
-    writeln!(out).unwrap();
+    // #1486: no trailing blank baked in here — the printer's automatic
+    // top-level spacing policy supplies the single blank before whatever
+    // follows this interface once `emit_make_surface` wraps it as `Raw`.
     deps_name
 }
 
@@ -3665,7 +3701,10 @@ pub(crate) fn emit_make_surface(
         None,
     );
     stmts.push(func_decl);
-    stmts.push(bynk_ts::TsStmt::blank(None));
+    // #1486: no explicit trailing blank stmt here — the printer's automatic
+    // top-level spacing policy supplies the single blank before whatever
+    // follows (never import-kind at this function's own call site, so
+    // never exempted from it).
     stmts
 }
 
@@ -4681,7 +4720,12 @@ pub(crate) fn emit_agent(
             readonly: true,
         });
     }
-    let state_interface = bynk_ts::TsStmt::decl(
+    // #1486: `no_blank_before` when this agent's own doc comment is the
+    // preceding statement — see `emit_free_fn`'s own identical note. The
+    // explicit `TsStmt::blank(None)` push this used to carry is gone —
+    // `bynk_ts::print` itself now supplies the one blank line between
+    // adjacent real statements.
+    let mut state_interface = bynk_ts::TsStmt::decl(
         bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::Interface {
             name: state_ty.clone(),
             type_params: Vec::new(),
@@ -4689,8 +4733,8 @@ pub(crate) fn emit_agent(
         })),
         None,
     );
+    state_interface.no_blank_before = a.documentation.is_some();
     stmts.push(state_interface);
-    stmts.push(bynk_ts::TsStmt::blank(None));
     // v0.9.2: per-agent state registry (bundle mode + `bynkc test`) and the
     // zero-value factory used to initialise a fresh key's state.
     //
@@ -4819,7 +4863,15 @@ pub(crate) fn emit_agent(
             bynk_ts::TsExpr::array(vec![]),
         ));
     }
-    let zero_fn_decl = bynk_ts::TsStmt::decl(
+    // #1486: `no_blank_before: true`, unconditional — no blank line wanted
+    // between `registry_const` and this function, matching the
+    // pre-conversion hand-written text this crate's own zero-diff
+    // discipline requires preserving exactly (see `TsStmt::no_blank_
+    // before`'s own doc, added specifically for this real, already-shipped
+    // pairing). The explicit `TsStmt::blank(None)` push this used to carry
+    // afterward is also gone — `bynk_ts::print` itself now supplies the one
+    // blank line before whatever follows.
+    let mut zero_fn_decl = bynk_ts::TsStmt::decl(
         bynk_ts::TsDecl::Function {
             name: zero_fn.clone(),
             generics: Vec::new(),
@@ -4838,8 +4890,8 @@ pub(crate) fn emit_agent(
         },
         None,
     );
+    zero_fn_decl.no_blank_before = true;
     stmts.push(zero_fn_decl);
-    stmts.push(bynk_ts::TsStmt::blank(None));
     // v0.96 (ADR 0124): the rehydration validation gate. `loadState` validates a
     // *loaded* (merged) state against the current type definition before any
     // handler reads it — the load-time twin of the commit-time invariant gate.
@@ -4988,8 +5040,9 @@ pub(crate) fn emit_agent(
             },
             None,
         );
+        // #1486: no more explicit trailing `TsStmt::blank(None)` — see
+        // `emit_refined_type`'s own identical note.
         stmts.push(rehydrate_fn_decl);
-        stmts.push(bynk_ts::TsStmt::blank(None));
     }
     // 2) Durable Object class.
     //
@@ -5991,7 +6044,9 @@ pub(crate) fn emit_agent(
         }
     }
     writeln!(out, "}}").unwrap();
-    writeln!(out).unwrap();
+    // #1486: no trailing blank baked in here — the printer's automatic
+    // top-level spacing policy supplies the single blank before whatever
+    // statement follows.
     let mut class_stmt = bynk_ts::TsStmt::raw(out, None);
     class_stmt.nested_map = Some(class_smb.into_inner());
     stmts.push(class_stmt);
@@ -6076,7 +6131,8 @@ pub(crate) fn emit_agent(
         None,
     );
     stmts.push(factory_decl);
-    stmts.push(bynk_ts::TsStmt::blank(None));
+    // #1486: no explicit blank stmt here — the printer's automatic top-level
+    // spacing policy supplies the single blank before whatever follows.
 
     // v0.119 (testing track slice 7, ADR 0155): the history-property driver. Only
     // agents a `for all run: History[Agent]` property targets get this exported
@@ -6231,7 +6287,9 @@ pub(crate) fn emit_agent(
         writeln!(out, "  return __steps;").unwrap();
         writeln!(out, "  }} finally {{ console.error = __ce; }}").unwrap();
         writeln!(out, "}}").unwrap();
-        writeln!(out).unwrap();
+        // #1486: no trailing blank baked in here — the printer's automatic
+        // top-level spacing policy supplies the single blank before whatever
+        // statement follows.
         stmts.push(bynk_ts::TsStmt::raw(out, None));
     }
     stmts

@@ -2713,7 +2713,7 @@ returned `Vec` instead).
 
 | Item | Phase | Entry condition |
 |---|---|---|
-| Incrementality — query granularity, `UnitSignature`, the firewall | 8 | this track's probes (`ts_writes` = 0, `verbatim_origins` at its argued floor, `verbatim_sites` = 0) settle |
+| Incrementality — query granularity, `UnitSignature`, the firewall | 8 | this track's probes (`ts_writes` = 0, `verbatim_origins` at its argued floor, `verbatim_sites` at its argued floor — §12) settle |
 | R8.16's data-model half — a typed `ProjectGraph` | 8 | named by phase 4's own retirement note; this track only verifies R8.16's emission behaviour stays correct |
 | A further crate re-graph beyond `bynk-ts`/`bynk-ir`/`bynk-lower` (e.g. R10.5's `bynk-driver` consolidation) | *unopened — no trigger yet* | named in the reference (Part 10) but not this phase's own invariant |
 
@@ -2831,8 +2831,27 @@ this settling pass (numbers assigned at merge by the stamp; referred to by lette
 ## 12. Retirement
 
 Mirrors every prior track on this trajectory: retires when `ts_writes` reads 0,
-`verbatim_origins` reads its own argued floor, and `verbatim_sites` reads 0, with every surviving
+`verbatim_origins` reads its own argued floor, and `verbatim_sites` reads its own argued floor
+(corrected from a flat 0 by ADR 0399 — see §6's own "Floor correction"), with every surviving
 site named file-by-file in the closing summary. The retirement PR removes this doc, appends its
 closing summary to
 `../archive/retired-tracks.md`, and closes the spine issue
 ([#1293](https://github.com/accuser/bynk/issues/1293)).
+
+**#1486 (the `verbatim_sites` capstone — landed) re-checked this criterion against the actual
+landed floor.** `emit_project`/`emit_test_module`/`emit_integration_module` (the three orchestrator
+functions ADR 0399 found still returning `String` at their own top level regardless of internal
+conversion progress — the "three genuinely not residue" sites of the pre-#1486 count of 5) all now
+return a real `bynk_ts::TsProgram`/`Vec<TsStmt>`, printed once at the boundary via
+`bynk_ts::print`/`bynk_ts::print_multi_source`. `verbatim_sites` reads **2**, both already argued
+permanent by ADR 0399 and unchanged by this capstone: `project.rs:2478` (an adapter binding's own
+foreign, user-authored TS content, copied in verbatim so `compose`'s import resolves and the `tsc`
+gate checks the `implements` contract) and `project.rs:2507` (`runtime.ts`, a committed hand-
+written build artifact — `emitter::emit_runtime_module()`'s own return value). Neither is a
+residual conversion gap; both stay `String`-shaped because their content is not Bynk-compiler-
+generated in the first place.
+
+`ts_writes` and `verbatim_origins` are **not** re-verified against their own floors by this
+capstone (out of its own scope — see the issue's "Done when") — the track's own retirement PR
+(closing #1293) still needs that separate check before it can land, not just this one probe's
+correction.

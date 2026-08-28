@@ -502,45 +502,49 @@ pub(crate) fn emit_helpers_for_owner(
     emit_helpers_for_owner_qualified(type_names, types, owner_qualified, &Qual::new(), ru)
 }
 
-/// Collects `decls` into real statements, one blank `TsStmt` after each
-/// declaration — the shared shape every caller of [`emit_helpers_for_owner`]/
-/// [`emit_generic_helpers`] (and their `_qualified` twins) collects into its
-/// own returned `Vec<TsStmt>`. Arc F slice 1 (#1451): consolidates what used
-/// to be ten separate `write!`-family call sites into this one; #1478 made
-/// it the one real implementation (dropping a hand-duplicated `out: &mut
-/// String`-printing sibling); #1479 removed that sibling's own last two
-/// production callers (`project/tests_emit.rs`'s codec-helper glue), so
-/// every caller in the crate is on this `Vec<TsStmt>` form directly now.
+/// Collects `decls` into real statements — the shared shape every caller of
+/// [`emit_helpers_for_owner`]/[`emit_generic_helpers`] (and their
+/// `_qualified` twins) collects into its own returned `Vec<TsStmt>`. Arc F
+/// slice 1 (#1451): consolidates what used to be ten separate `write!`-family
+/// call sites into this one; #1478 made it the one real implementation
+/// (dropping a hand-duplicated `out: &mut String`-printing sibling); #1479
+/// removed that sibling's own last two production callers (`project/
+/// tests_emit.rs`'s codec-helper glue), so every caller in the crate is on
+/// this `Vec<TsStmt>` form directly now. #1486: no more explicit blank
+/// `TsStmt` after each declaration — none of these are import/comment-kind,
+/// so the printer's automatic top-level spacing policy already supplies
+/// exactly one blank between every adjacent pair (and after the last one,
+/// before whatever follows) once a real caller prints through it.
 pub(crate) fn decls_as_stmts(decls: Vec<TsDecl>) -> Vec<TsStmt> {
-    let mut stmts = Vec::with_capacity(decls.len() * 2);
-    for d in decls {
-        stmts.push(TsStmt::decl(d, None));
-        stmts.push(TsStmt::blank(None));
-    }
-    stmts
+    decls.into_iter().map(|d| TsStmt::decl(d, None)).collect()
 }
 
-/// As [`decls_as_stmts`], but also collects one more trailing blank `TsStmt`
-/// if anything was collected — the shared `if emitted_any { ... }` trailer
-/// every [`emit_helpers_for_owner`]/[`emit_helpers_for_owner_qualified`]
-/// caller needs (their pre-conversion `out: &mut String` shape always had
-/// this trailer; [`emit_generic_helpers`]/[`emit_generic_helpers_qualified`]
-/// callers never did and stay on bare [`decls_as_stmts`]).
-///
-/// Review of #1454: derives "did anything get emitted?" directly from the
-/// real `decls` list, in this one place, rather than each caller
-/// re-deriving an `emitted_any` flag by hand (the pre-conversion shape set
-/// it per matched *name*, before `emit_one` ran — a subtly different
-/// condition that only happened to agree with "per returned declaration"
-/// because no `emit_one` arm can return an empty `Vec`). Keeping the check
-/// here, against the actual data, means a future arm that *can* return
-/// empty stays correct automatically instead of silently dropping the
-/// trailing blank line for the whole batch.
+/// As [`decls_as_stmts`], plus one *extra* forced trailing blank `TsStmt`
+/// when anything was collected — the shared `if emitted_any { ... }`
+/// trailer every [`emit_helpers_for_owner`]/[`emit_helpers_for_owner_
+/// qualified`] caller needs. Under the pre-#1486 flat-print regime this
+/// trailer's own blank stacked on top of `decls_as_stmts`'s own per-decl
+/// blank (one `TsStmt::blank` after every decl, including the last),
+/// giving this group's own tail *two* blank lines total — a genuine,
+/// stronger "owner group" section break (confirmed against
+/// `118_workers_target_with_consume`'s own real fixture output: the
+/// `local_boundary` helpers group and the following `by_commons`
+/// re-export group are separated by two blank lines, not one), not a
+/// redundant duplicate of the ordinary one-blank-between-decls spacing
+/// [`decls_as_stmts`] now gets for free from the printer's automatic
+/// policy. `no_blank_before` on the extra blank itself suppresses *its
+/// own* automatic lead-in (which would otherwise stack with the ordinary
+/// one the policy already supplies between the last real decl and this
+/// blank), leaving exactly one blank line from this statement's own
+/// render plus the policy's own ordinary blank before whatever follows —
+/// two lines total, matching the pre-#1486 text exactly.
 pub(crate) fn decls_as_stmts_block(decls: Vec<TsDecl>) -> Vec<TsStmt> {
     let emitted_any = !decls.is_empty();
     let mut stmts = decls_as_stmts(decls);
     if emitted_any {
-        stmts.push(TsStmt::blank(None));
+        let mut extra_blank = TsStmt::blank(None);
+        extra_blank.no_blank_before = true;
+        stmts.push(extra_blank);
     }
     stmts
 }
