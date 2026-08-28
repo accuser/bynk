@@ -2660,6 +2660,52 @@ fixture-diff + e2e suite (`tsc_verify`/`bless_positive_fixtures`/`positive_fixtu
 `print_stmt`-based, not `format!`/`write!`-based (unlike several of #1478's own sites), so this
 slice moves construction style only, not that particular count.
 
+**#1480 landed — `emit_free_fn`/`emit_provider` build real `bynk_ts` trees at their own top-level
+signature, the first `bynk-emit` call sites #1477's own nested-checkpoint extension retires.** Both
+functions used to hand-roll their own `Raw`-body print-time-offset recovery by exact arithmetic
+(`emit_free_fn`'s own `debug_assert!`-guarded computation over its printed text;
+`emit_class_method_and_merge_source_map`'s own `blob_offset_in_printed` search) — #1477's
+`bynk_ts::print_stmt_and_merge`/`print_class_method_and_merge` (via the new `TsStmt::nested_map`
+field) now recover that offset themselves, at the real print-time position, instead of a caller
+re-deriving it after the fact.
+
+`emit_free_fn` returns `Vec<bynk_ts::TsStmt>` — an optional doc comment, the function decl with its
+own body's `nested_map` set to the lowering's own `body_smb`, a trailing blank — instead of writing
+into `out: &mut String` and merging the module map itself. Both its callers (`emit()`'s single-file
+mode, `emit_project()`'s multi-file mode) now print through one of two new `emitter.rs` helpers:
+`extend_printed` (no map to merge into, `emit()`'s own shape — the merge check inside `render_stmt`
+is a no-op when there's no map) or the new `extend_printed_and_merged` (has a real module map,
+`emit_project()`'s own shape) — both loop the same `Vec<TsStmt>`, differing only in whether
+`print_stmt`/`print_stmt_and_merge` is the per-statement print call.
+
+`emit_provider` returns one `bynk_ts::TsStmt` — the whole class-wrapper text stays exactly what
+Decision C already argued (a real `TsDecl::Class` would need every method's own body captured into
+a local buffer for `Raw`-embedding anyway, and this class's own spacing convention already disagrees
+with `TsDecl::Class`'s established one) — but is now built into a *local* buffer inside
+`emit_provider` itself, with a class-wide `SourceMapBuilder` (`class_smb`) that every op method's
+own `print_class_method_and_merge` call merges its own `body_smb` into, at that method's own real
+offset *within this local buffer*. The whole local buffer is then wrapped as one `TsStmt::raw` (not
+`TsStmt::verbatim` — that constructor's own `VerbatimOrigin` enum is a closed, specifically-reasoned
+set of four variants (`Contracts`/`Secrets`/`RuntimeUse`/`NotYetConverted`), none of which describe
+"a permanently hand-written class wrapper, Decision C" — `TsStmt::raw` is this track's own
+established general-purpose "argued, permanent, opaque" carrier instead, the same one
+`emit_refined_type`'s own `checks_text` and #1478/#1479's various unconverted-sibling captures
+already use) carrying `class_smb` as its own `nested_map` — a two-level composition: the class's own
+local map merges every op's own local map, and the caller then merges that ONE combined class map
+into the real module map via `print_stmt_and_merge`, at the class's own real splice offset. Its one
+call site in `emit_project()` does exactly that.
+
+`emit_class_method_and_merge_source_map`/`RawBody` (the hand-rolled recovery helper #1477 was
+specifically written to retire) are deliberately left untouched — still used by `emit_service`'s and
+`emit_agent`'s own not-yet-converted call sites (#1481/#1482), each its own future slice. Verified:
+`cargo test -p bynk-emit` (187/187), `cargo test -p bynkc --test source_map --test
+source_map_bodies` (14/14 — including `contract_guarded_body_keeps_its_own_statement_lines` and
+`provider_op_body_keeps_its_own_statement_lines`, the two tests that directly exercise these exact
+code paths), and the full `cargo test -p bynkc` fixture-diff + e2e suite. `ts_writes` (gated probe)
+moves 829 → 827 — both from `emit_free_fn`'s own retired code: its `debug_assert!`'s `format!`
+message, and its final `writeln!(out)` trailing-blank-line push (now a plain `TsStmt::blank` in the
+returned `Vec` instead).
+
 ---
 
 ## 7. Out of scope — forward references, not refusals
