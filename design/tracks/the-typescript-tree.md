@@ -2595,6 +2595,29 @@ scheduled), and the JWT-signer block (probe-invisible, already named by #1472/#1
 fully known for these two files: 17 permanent (10 + 7), the rest either cheap-to-convert as part of
 the capstone cascade, already scheduled, or outside this probe's own visibility.
 
+**#1478 landed — `emit_project`/`emit`'s own 12 "no-body direct callee"s now return real
+`Vec<bynk_ts::TsStmt>` at their own top-level signature, instead of writing into a shared
+`out: &mut String`.** `write_commons_doc`, `emit_context_rebrands`,
+`emit_cross_context_namespace_imports`, `emit_project_imports`, `write_header`, `emit_capability`,
+`emit_type` (plus its `emit_refined_type`/`emit_record_type`/`emit_sum_type` sub-dispatchers, all
+four converted together since the three sub-functions have no other callers), `emit_messages_bundle`,
+`emit_make_surface`, `emit_boundary_helpers` (plus its own `emit_consumed_context_helpers`
+sub-call), and `emit_json_codec_helpers`. Two still-unconverted siblings this batch calls
+(`emit_context_deps_interface`, `emit_refined_checks`) stay `String`-typed — their output is
+captured into a local buffer and carried as one `bynk_ts::TsStmtKind::Raw` statement, the same
+"already real-node-printed internally, still `String`-typed at its own call boundary" carrier
+`emit_refined_type`'s own `checks_text` already used before this slice. A new `extend_printed(out,
+stmts)` helper in `emitter.rs` bridges each converted callee's `Vec<TsStmt>` back to the three
+`out: &mut String` call sites that still need `String` output at the top (`emit`, `emit_project`,
+and `emit_project`'s own per-item loop — a third caller, `emit`, not originally accounted for in
+this slice's own framing); `serialisation::decls_as_stmts`/`decls_as_stmts_block` (new siblings of
+the existing `print_decls`/`print_decls_block`) let `emit_boundary_helpers`'s trio thread their real
+declarations through without an intermediate print. Byte-identical output verified: `cargo test -p
+bynk-emit` (187/187), `cargo test -p bynkc --test tsc_verify`, and the full `cargo test -p bynkc`
+fixture-diff + e2e suite (`bless_positive_fixtures`/`positive_fixtures` included). `ts_writes`
+(gated probe) moves 851 → 831 — the real, intended reduction from these 12 sites no longer writing
+through `format!`/`write!`.
+
 ---
 
 ## 7. Out of scope — forward references, not refusals
