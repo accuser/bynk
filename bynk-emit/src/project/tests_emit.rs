@@ -1871,15 +1871,18 @@ fn emit_test_module(
     let mut sorted_stubs: Vec<(&String, &ResolvedStub)> = stubs.iter().collect();
     sorted_stubs.sort_by(|a, b| a.0.cmp(b.0));
     for (_, rp) in sorted_stubs {
-        out.push_str(&emit_stub_class(
-            rp,
-            target_name,
-            unit_tables,
-            unit_uses,
-            unit_consumes,
-            unit_consumes_aliases,
-            &runtime_use,
-            tys,
+        out.push_str(&bynk_ts::print_stmt(
+            &emit_stub_class(
+                rp,
+                target_name,
+                unit_tables,
+                unit_uses,
+                unit_consumes,
+                unit_consumes_aliases,
+                &runtime_use,
+                tys,
+            ),
+            0,
         ));
         out.push('\n');
     }
@@ -2325,6 +2328,17 @@ fn stub_runtime_helpers() -> String {
 /// per overridden operation renders its clauses as a first-match-wins if-chain
 /// over the call's argument patterns; a matched clause returns its lowered
 /// value, throws an injected fault, or advances a per-call sequence cursor.
+///
+/// #1483: returns one real [`TsStmt`] (was `String`) — a `Raw` carrier for
+/// the whole class, the same Decision-C treatment `emit_provider` (#1480)
+/// already established: the class wrapper (header/fields) stays hand-written
+/// text (cited in place below), each method printed as its own real
+/// `TsClassMethod` fragment and spliced directly in. No `nested_map` — this
+/// function has no `LowerCtx`/source-map involvement anywhere in its own
+/// construction (`lower_stub_value_block`/`emit_stub_rhs` build already-
+/// formed text, not through a body-local `SourceMapBuilder`), so there is
+/// nothing to merge, unlike `emit_provider`/`emit_service`/`emit_agent`'s own
+/// per-handler bodies.
 #[allow(clippy::too_many_arguments)]
 fn emit_stub_class(
     rp: &ResolvedStub,
@@ -2335,7 +2349,7 @@ fn emit_stub_class(
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
     runtime_use: &RuntimeUse,
     tys: &Arc<Types>,
-) -> String {
+) -> TsStmt {
     let mut out = String::new();
     let cap = &rp.cap;
     // Value expressions are lowered in the target context's privileged view, so
@@ -2521,7 +2535,7 @@ fn emit_stub_class(
         out.push_str(&bynk_ts::print_class_method(&method_node, 0));
     }
     out.push_str("}\n");
-    out
+    TsStmt::raw(out, None)
 }
 
 /// `throw new Error("bynk: injected capability fault (stubs … fails)");` —
