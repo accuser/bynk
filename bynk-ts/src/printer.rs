@@ -35,6 +35,19 @@
 //!   own first real conversion slice (#1317): every `bynk-emit`-generated
 //!   file opens with a multi-line header banner, one [`TsStmtKind::Comment`]
 //!   per real line.
+//! - **[`TsStmt::no_blank_before`] suppresses that same blank immediately
+//!   before the statement carrying it**, composing with every rule above
+//!   rather than replacing any of them — a property of the *statement*, not
+//!   of a pair, so it stays correct however many different kinds end up
+//!   adjacent to it. Scoped to exactly [`print()`]'s own top-level loop: a
+//!   statement carrying it inside a `Block`/`InlineBlock`/function body, or
+//!   printed through [`print_stmt`] / `bynk-emit`'s own `extend_printed`
+//!   splicing helpers, is silently ignored there today — harmless only
+//!   because none of those paths inserts an automatic blank of its own in
+//!   the first place. Added for #1486: `emit_agent`'s own already-shipped
+//!   registry-`const`-then-zero-factory pairing needs zero blank lines
+//!   between two adjacent real top-level statements, a shape no existing
+//!   pair rule above can express without a `TsDecl`-pair special case.
 //! - **Inside a `class`, no blank line between fields and the constructor;
 //!   one blank line before each method.** [`render_decl_body`]'s own
 //!   `TsDecl::Class` arm — again, this is what `events_fanout.rs` itself
