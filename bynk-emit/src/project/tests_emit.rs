@@ -1865,14 +1865,17 @@ fn emit_test_module(
     }
 
     // Emit the deps factory.
-    out.push_str(&emit_test_deps(
-        target_name,
-        target_kind,
-        stubs,
-        unit_tables,
-        unit_consumes,
-        unit_consumes_aliases,
-        unit_flattened,
+    out.push_str(&bynk_ts::print_stmt(
+        &emit_test_deps(
+            target_name,
+            target_kind,
+            stubs,
+            unit_tables,
+            unit_consumes,
+            unit_consumes_aliases,
+            unit_flattened,
+        ),
+        0,
     ));
     out.push('\n');
 
@@ -2756,6 +2759,10 @@ fn undefined_as_unknown_as(ty: impl Into<String>) -> TsExpr {
     }
 }
 
+/// #1479: returns the real [`TsStmt`] itself (was pre-printed `String`) — the
+/// one real declaration this function ever built; its caller now prints it
+/// directly via `bynk_ts::print_stmt`, the same shape it always used, just
+/// one call further out.
 fn emit_test_deps(
     target_name: &str,
     target_kind: UnitKind,
@@ -2764,7 +2771,7 @@ fn emit_test_deps(
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
     unit_flattened: &HashMap<String, HashMap<String, String>>,
-) -> String {
+) -> TsStmt {
     let mut entries: Vec<(String, TsExpr)> = Vec::new();
     if target_kind == UnitKind::Context
         && let Some(table) = unit_tables.get(target_name)
@@ -2877,7 +2884,7 @@ fn emit_test_deps(
     } else {
         TsExpr::object(entries)
     };
-    let make_test_deps = TsStmt::decl(
+    TsStmt::decl(
         TsDecl::Function {
             name: "makeTestDeps".to_string(),
             generics: Vec::new(),
@@ -2888,8 +2895,7 @@ fn emit_test_deps(
             inline: false,
         },
         None,
-    );
-    bynk_ts::print_stmt(&make_test_deps, 0)
+    )
 }
 
 /// #18 (testing-track infra): a real value destructure plus a per-type alias,
