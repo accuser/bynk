@@ -272,10 +272,14 @@ pub fn print(
         // Readability policy (this module's own doc): one blank line
         // between top-level declarations, except two consecutive
         // `import`s, two consecutive `Comment`s, two consecutive
-        // `ReExportAll`s, or a `Comment` immediately before a
-        // `ReExportAll` — and never after `Verbatim` (P7.7's own boundary
-        // — `Verbatim` content's own spacing is not this printer's
-        // decision).
+        // `ReExportAll`s, a `Comment` immediately before a `ReExportAll`,
+        // or the next statement's own `no_blank_before` (#1486's own
+        // escape hatch — a real, already-shipped multi-statement sequence
+        // that genuinely needs no blank between two adjacent real
+        // statements, not expressible as a `TsStmtKind`-pair rule the way
+        // every case above is) — and never after `Verbatim` (P7.7's own
+        // boundary — `Verbatim` content's own spacing is not this
+        // printer's decision).
         if let Some(next) = program.stmts.get(i + 1) {
             // #1321: `workers.rs`'s own header has `import { ... } from
             // "runtime"` (named) adjacent to `import * as handlers from
@@ -317,6 +321,7 @@ pub fn print(
                 && !both_comments
                 && !both_reexport_all
                 && !comment_then_reexport_all
+                && !next.no_blank_before
                 && !matches!(stmt.kind, TsStmtKind::Verbatim { .. })
             {
                 out.push('\n');
@@ -3227,6 +3232,55 @@ mod tests {
         assert_eq!(
             printed.text,
             "import type { A } from \"../x.js\";\nimport { b } from \"../x.js\";\n\nconst c = null;\n"
+        );
+    }
+
+    /// #1486: `no_blank_before` suppresses the automatic blank line before
+    /// exactly the statement that carries it — a `const`/`function` pair
+    /// neither an import, a comment, a `ReExportAll`, nor `Verbatim`, so
+    /// none of the existing exemptions apply; without this field the two
+    /// would print with an unwanted blank between them (confirmed by
+    /// temporarily reverting the field during this same change — the
+    /// printer's own default policy really does insert one here). A third,
+    /// ordinary statement after it confirms the field is scoped to the one
+    /// carrying it, not sticky for the rest of the program.
+    #[test]
+    fn no_blank_before_suppresses_exactly_the_next_statements_own_blank() {
+        let mut program = TsProgram::new();
+        program.push(TsStmt::decl(
+            TsDecl::ConstDecl {
+                name: "__FooRegistry".to_string(),
+                ty: None,
+                init: TsExpr::Lit(TsLit::Null),
+            },
+            None,
+        ));
+        let mut zero_fn = TsStmt::decl(
+            TsDecl::Function {
+                name: "__zeroOfFooState".to_string(),
+                generics: Vec::new(),
+                params: Vec::new(),
+                return_type: None,
+                body: Vec::new(),
+                is_async: false,
+                inline: true,
+            },
+            None,
+        );
+        zero_fn.no_blank_before = true;
+        program.push(zero_fn);
+        program.push(TsStmt::decl(
+            TsDecl::ConstDecl {
+                name: "c".to_string(),
+                ty: None,
+                init: TsExpr::Lit(TsLit::Null),
+            },
+            None,
+        ));
+        let printed = print(&program, "x.bynk", "", "x.ts");
+        assert_eq!(
+            printed.text,
+            "const __FooRegistry = null;\nfunction __zeroOfFooState() {  }\n\nconst c = null;\n"
         );
     }
 
