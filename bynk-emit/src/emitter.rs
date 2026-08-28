@@ -2850,6 +2850,17 @@ fn write_header(out: &mut String, commons: &TypedCommons, ctx: &EmitProjectCtx) 
         // time `write_header` runs (moved to the end of `emit_project`), so this
         // needs no post-print text surgery at all, just reading the same two
         // flags one function call later than before.
+        //
+        // Review of #1490: this drops `inject_runtime_imports`'s own
+        // `missing_bindings` dedup (matching a `type Foo` group binding against
+        // an already-bound bare `Foo` and vice versa) — safe only because
+        // neither `BYTES_RUNTIME_IMPORTS`'s nor `MESSAGES_RUNTIME_IMPORTS`'s own
+        // names overlap anything `parts` already carries above (confirmed by
+        // direct inspection, not assumed). A future group that *does* overlap
+        // needs that filter reinstated here, not just appended unconditionally
+        // — `missing_bindings`'s own doc named exactly this case (the
+        // test-scaffold module's own `Ok`/`Err` overlap) before this issue
+        // deleted the only place that reasoning was written down.
         if ctx.runtime_use.bytes() {
             parts.extend(BYTES_RUNTIME_IMPORTS.trim_start_matches(", ").split(", "));
         }
