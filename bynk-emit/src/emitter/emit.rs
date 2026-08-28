@@ -2311,7 +2311,7 @@ fn emit_class_method_and_merge_source_map(
 }
 
 /// #1480: returns one real [`bynk_ts::TsStmt`] (was `out: &mut String`) — a
-/// `Verbatim`/`Raw` carrier for the whole provider declaration (class header/
+/// `Raw` carrier for the whole provider declaration (class header/
 /// wrapper text, Decision C: a real `TsDecl::Class` would need every
 /// method's own body captured into a local buffer for `Raw`-embedding
 /// anyway, and this class's own spacing convention already disagrees with
