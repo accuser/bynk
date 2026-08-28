@@ -1,0 +1,3 @@
+commons alpha {
+  type A = Int where NonNegative
+}

@@ -1872,7 +1872,24 @@ fn emit_test_module(
             .is_some_and(|t| t.cases.iter().any(|c| block_uses_observation(&c.body)))
     });
     if uses_observation {
-        let mut stmt = TsStmt::raw(observation_runtime_helpers(), None);
+        let record_types = observation_call_record_types(target_name, unit_tables);
+        // Review of #1486, finding 2: pre-conversion, this whole section was
+        // `out.push_str(observation_runtime_helpers()); out.push('\n');
+        // extend_printed_at(&mut out, record_types); out.push('\n');` — the
+        // *second* `push('\n')` ran unconditionally, so an empty
+        // `record_types` (a `unit_tables` miss, or a target with no
+        // capabilities/ops) still got two blank lines after the helpers, not
+        // one. Baking the second blank directly into the helpers' own Raw
+        // text when there is nothing to glue after it reproduces that;
+        // otherwise the printer's automatic policy alone supplies the one
+        // blank before the first record type, matching the old single
+        // `push('\n')` between them exactly.
+        let helpers_text = if record_types.is_empty() {
+            format!("{}\n", observation_runtime_helpers())
+        } else {
+            observation_runtime_helpers()
+        };
+        let mut stmt = TsStmt::raw(helpers_text, None);
         if suppress_next_blank {
             stmt.no_blank_before = true;
             suppress_next_blank = false;
@@ -1883,10 +1900,7 @@ fn emit_test_module(
         // against the operation's parameter names. Glued together (no blank
         // between them), the same shape `extend_printed_at` gave them
         // pre-conversion.
-        for (i, mut rec) in observation_call_record_types(target_name, unit_tables)
-            .into_iter()
-            .enumerate()
-        {
+        for (i, mut rec) in record_types.into_iter().enumerate() {
             if i > 0 {
                 rec.no_blank_before = true;
             }

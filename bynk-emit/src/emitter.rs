@@ -633,6 +633,16 @@ pub(crate) fn emit_project(
         if let Some(first) = stmts.first_mut() {
             first.no_blank_before = true;
         }
+    } else if stmts.is_empty() {
+        // Review of #1486, finding 2: pre-conversion, `write_header`
+        // unconditionally seeded a trailing blank line after the banner
+        // regardless of whether the file had any commons items — the
+        // automatic policy alone reproduces that gap everywhere else (it
+        // fires between the banner and whatever `stmts` starts with), but
+        // not in this fully-degenerate case, where there is no later
+        // statement left for it to fire before. Restores the old trailing
+        // blank line this module's own output would otherwise lose.
+        program_stmts.push(bynk_ts::TsStmt::blank(None));
     }
     program_stmts.append(&mut stmts);
     let program = bynk_ts::TsProgram {
@@ -1201,7 +1211,7 @@ fn emit_boundary_helpers(
         }
         let mut commons_keys: Vec<&String> = by_commons.keys().collect();
         commons_keys.sort();
-        for commons_name in commons_keys {
+        for (group_index, commons_name) in commons_keys.into_iter().enumerate() {
             let names = by_commons.get(commons_name).unwrap();
             let mut sorted_names: Vec<String> = names.clone();
             sorted_names.sort();
@@ -1235,14 +1245,25 @@ fn emit_boundary_helpers(
             // stays opaque `TsStmt::raw` rather than a new variant for a
             // single call site, the established "odd, one-off shape stays
             // opaque text" posture.
-            stmts.push(bynk_ts::TsStmt::decl(
+            let mut import_stmt = bynk_ts::TsStmt::decl(
                 bynk_ts::TsDecl::Import {
                     type_only: false,
                     names: parts.clone(),
                     from: import_spec,
                 },
                 None,
-            ));
+            );
+            // Review of #1486, finding 1: with two or more `commons_keys`,
+            // the previous group's bare re-export (`Raw`, `no_blank_before`
+            // pins it under its own import but does not exempt what follows
+            // it) is never `both_imports`-adjacent to this group's own
+            // `Import`, so the printer's automatic policy would insert a
+            // blank line the pre-conversion `extend_printed` output (flat,
+            // no automatic spacing) never had. Every group after the first
+            // pins its own import under the prior group's re-export the same
+            // way each re-export pins under its own import.
+            import_stmt.no_blank_before = group_index > 0;
+            stmts.push(import_stmt);
             // #1486: this bare re-export's own text always sits directly
             // under the import that binds the same names — no blank
             // between them, despite `Raw` never being exempted from the
