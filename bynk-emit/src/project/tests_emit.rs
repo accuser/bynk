@@ -463,10 +463,9 @@ fn emit_integration_module(
 
     // The env-graph harness: stand each participant up as an in-process Worker
     // and wire its Service Bindings to its siblings; the root env binds to all.
-    out.push_str(&emit_integration_harness(
-        participants,
-        unit_consumes,
-        unit_tables,
+    out.push_str(&bynk_ts::print_stmt(
+        &emit_integration_harness(participants, unit_consumes, unit_tables),
+        0,
     ));
     out.push('\n');
 
@@ -1172,11 +1171,15 @@ fn service_binding_forward(worker_ident: &str, env_ident: &str) -> TsExpr {
 /// Durable-Object namespaces back the participant's own agents in memory, plus a
 /// root env binding every participant (the test cases call in through it). A
 /// fresh harness per case gives each case clean agent state.
+/// #1479: returns the real [`TsStmt`] itself (was pre-printed `String`) —
+/// the one real declaration this function ever built; its caller now prints
+/// it directly, the same shape `emit_test_deps`'s own identical conversion
+/// used.
 fn emit_integration_harness(
     participants: &[String],
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_tables: &HashMap<String, UnitTable>,
-) -> String {
+) -> TsStmt {
     let mut body = Vec::new();
     // Declare every participant env first so sibling references resolve.
     //
@@ -1264,7 +1267,7 @@ fn emit_integration_harness(
         Some(TsExpr::object(vec![("env".to_string(), ident("rootEnv"))])),
         None,
     ));
-    let make_harness = TsStmt::decl(
+    TsStmt::decl(
         TsDecl::Function {
             name: "makeHarness".to_string(),
             generics: Vec::new(),
@@ -1275,8 +1278,7 @@ fn emit_integration_harness(
             inline: false,
         },
         None,
-    );
-    bynk_ts::print_stmt(&make_harness, 0)
+    )
 }
 
 /// Build the [`checker::TypedCommons`] used to lower integration case bodies —
