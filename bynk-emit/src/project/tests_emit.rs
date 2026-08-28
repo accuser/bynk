@@ -1836,7 +1836,11 @@ fn emit_test_module(
         // The synthetic per-op call-record types a `trace(Cap.op)` result's
         // elements carry — so `trace(…).filter((c) => c.field …)` type-checks
         // against the operation's parameter names.
-        out.push_str(&observation_call_record_types(target_name, unit_tables));
+        crate::emitter::extend_printed_at(
+            &mut out,
+            observation_call_record_types(target_name, unit_tables),
+            0,
+        );
         out.push('\n');
     }
 
@@ -3364,12 +3368,15 @@ fn emit_test_case_function(
 /// `tsc` when a test projects a field (`c.msg`). Names mirror
 /// [`checker::call_record_type_name`]. Ordered by capability then operation for
 /// deterministic output.
+/// #1479: returns real [`TsStmt`]s (was `String`) — its one caller now
+/// appends via `crate::emitter::extend_printed_at(out, stmts, 0)`, the same
+/// depth-0 top-level shape these type aliases always printed at.
 fn observation_call_record_types(
     target_name: &str,
     unit_tables: &HashMap<String, UnitTable>,
-) -> String {
+) -> Vec<TsStmt> {
     let Some(table) = unit_tables.get(target_name) else {
-        return String::new();
+        return Vec::new();
     };
     // Named/opaque parameter types are re-exported under the target's namespace,
     // so qualify them (`AuthId` → `commerce_payment.AuthId`); base types are
@@ -3378,7 +3385,7 @@ fn observation_call_record_types(
     let scope_type_names: HashSet<String> = table.types.keys().cloned().collect();
     let mut caps: Vec<&String> = table.capabilities.keys().collect();
     caps.sort();
-    let mut out = String::new();
+    let mut stmts = Vec::new();
     for cap in caps {
         for op in &table.capabilities[cap].ops {
             let name = checker::call_record_type_name(cap, &op.name.name);
@@ -3408,18 +3415,17 @@ fn observation_call_record_types(
             } else {
                 TsType::Object(fields)
             };
-            let stmt = TsStmt::decl(
+            stmts.push(TsStmt::decl(
                 TsDecl::TypeAlias {
                     name,
                     type_params: Vec::new(),
                     ty,
                 },
                 None,
-            );
-            out.push_str(&bynk_ts::print_stmt(&stmt, 0));
+            ));
         }
     }
-    out
+    stmts
 }
 
 /// v0.117: the observation runtime — wraps each observed capability operation on
