@@ -1057,7 +1057,7 @@ fn emit_system_http_support(
     let mut code = vec![TsStmt::raw(jwt_signer_runtime_helpers(), None)];
     // Set each secret the target's actors read, so the real Bearer seam verifies.
     // P7.2: `Record<string, string>` — same reasoning as `__bynkSignHs256`'s own
-    // `secret: string` parameter above.
+    // `secret: string` parameter in `emitter/test_runtime/jwt_signer.ts`.
     let record_string_string = TsType::named_with_args(
         "Record",
         vec![TsType::named("string"), TsType::named("string")],

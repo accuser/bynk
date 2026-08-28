@@ -91,8 +91,9 @@ IIFE-local offsets corrupt the map.
 **R7.7 is closed — confirmed by P7.1 (#1298), not just aged out.** Finding #17 reported ~300 lines
 of harness TypeScript as Rust string literals beside an `include_str!` of `runtime.ts`. Verified
 against the current tree: every runtime-shaped `.ts` file is `include_str!`'d from a real file —
-`emitter.rs:94` (`runtime.ts`), five sites in `project/tests_emit.rs` (`test_runtime/*.ts`), and
-four in `bynk-check/src/firstparty.rs` (the vendored first-party bindings) — and no hand-written
+`emitter.rs:94` (`runtime.ts`), six sites in `project/tests_emit.rs` (`test_runtime/*.ts` —
+`jwt_signer.ts` added by #1485), and four in `bynk-check/src/firstparty.rs` (the vendored
+first-party bindings) — and no hand-written
 runtime TypeScript survives as a Rust string literal anywhere in `bynk-emit/src` (a search of every
 `r#"..."#` raw string found each one is a *Bynk* source fixture for compiler tests, not
 TypeScript). Coverage is real CI enforcement, not just a config file claiming strict mode:
