@@ -2033,7 +2033,17 @@ fn emit_test_module(
                     tys,
                 )
             };
-            out.push_str(&bynk_ts::print_stmt(&prop_stmt, 0));
+            // Review of #1497, finding 2: `print_stmt_and_merge`, not a plain
+            // `print_stmt` — `async_test_runner_fn`'s own `nested_map`
+            // parameter makes "pass `Some` here, print with `print_stmt`
+            // there" a one-line mistake with no signal (a plain `print_stmt`
+            // silently drops a `nested_map`, the same class of silent drop
+            // `printer.rs`'s own review of #1488 finding 2 already named).
+            // A no-op today (this site's own `nested_map` is always `None`,
+            // the pre-existing "deliberate scope cut" for property/history
+            // bodies), but routes through the merge-aware call uniformly so
+            // a future site that DOES carry a real map can't silently lose it.
+            bynk_ts::print_stmt_and_merge(&mut out, &prop_stmt, 0, &mut module_smb, 0);
             out.push('\n');
         }
     }
@@ -2079,7 +2089,9 @@ fn emit_test_module(
             tys,
         );
         if let Some(attack_stmt) = attack_stmt {
-            out.push_str(&bynk_ts::print_stmt(&attack_stmt, 0));
+            // Review of #1497, finding 2 — same reasoning as the property/
+            // history call site above.
+            bynk_ts::print_stmt_and_merge(&mut out, &attack_stmt, 0, &mut module_smb, 0);
         }
         out.push('\n');
     }
