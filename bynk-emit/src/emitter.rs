@@ -501,15 +501,8 @@ pub(crate) fn emit_project(
                     .iter()
                     .map(|h| lower_service_handler_signature_ir(h, program))
                     .collect();
-                emit_service(
-                    &mut out,
-                    s,
-                    &protocol,
-                    &signatures,
-                    commons,
-                    ctx,
-                    Some(&smb),
-                );
+                let stmt = emit_service(s, &protocol, &signatures, commons, ctx);
+                bynk_ts::print_stmt_and_merge(&mut out, &stmt, 0, &mut smb.borrow_mut(), 0);
             }
             CommonsItem::Agent(a) => {
                 smb.borrow_mut().record(out.len(), a.span);

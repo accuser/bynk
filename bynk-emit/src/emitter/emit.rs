@@ -2558,17 +2558,36 @@ fn append_deps_field(
     deps_members.push(bynk_ts::TsTypeMember::prop(name, ty));
 }
 
+/// #1481: returns one real [`bynk_ts::TsStmt`] (was `out: &mut String`) — a
+/// `Raw` carrier for the whole `export const {name} = { ... };` object
+/// literal (Decision C, the same posture `emit_provider` (#1480) already
+/// takes for its class: a real `TsDecl::ConstDecl`/`TsExpr::multiline_
+/// object_entries` pair *could* represent this literal's own skeleton, but
+/// `render_decl_body`'s `ConstDecl` arm doesn't thread a source-map merge
+/// target into its own `init` — only a `TsDecl::Function`/`TsDecl::Class`
+/// body does, #1477's own scope — so a top-level `ConstDecl` here would
+/// silently lose every handler's own per-statement mapping), with a
+/// service-wide `service_smb` combining every handler's own `body_smb` at
+/// its own real print-time offset *within this function's own local `out`
+/// buffer* — computed by [`bynk_ts::print_object_entry_and_merge`] itself
+/// (#1477) rather than the exact-arithmetic/text-search recovery this
+/// function used to perform by hand, once per handler rather than once per
+/// function (the clearest, most recurring live instance of the
+/// nested-source-map gap #1477 closed). The caller merges this ONE combined
+/// map into its own real module map at the object's own real splice offset,
+/// via `print_stmt_and_merge` — the same two-level composition
+/// `emit_provider`'s own doc comment already establishes.
 pub(crate) fn emit_service(
-    out: &mut String,
     s: &ServiceDecl,
     protocol: &ProtocolIr,
     signatures: &[HandlerSignatureIr],
     commons: &TypedCommons,
     ctx: &EmitProjectCtx,
-    source_map: Option<&RefCell<SourceMapBuilder>>,
-) {
+) -> bynk_ts::TsStmt {
     let tys = commons.tys();
-    emit_doc_block(out, s.documentation.as_deref(), 0);
+    let mut out = String::new();
+    let mut service_smb = SourceMapBuilder::new();
+    emit_doc_block(&mut out, s.documentation.as_deref(), 0);
     writeln!(out, "export const {name} = {{", name = s.name.name).unwrap();
     let mut cron_idx = 0usize;
     let mut queue_idx = 0usize;
@@ -2999,6 +3018,20 @@ pub(crate) fn emit_service(
             writeln!(raw_body, "    return __result;").unwrap();
         }
 
+        // #1481: `body_smb`'s own checkpoints were recorded relative to
+        // `body_out` (offset 0 = `body_out`'s own first byte) — rebase them
+        // by `body_out_offset_in_raw` so they land relative to `raw_body`'s
+        // own start instead, the coordinate space `nested_map` requires (its
+        // checkpoints are relative to the `Raw` node's own whole text, not a
+        // sub-slice of it — `TsStmt::nested_map`'s own doc). The same rebase
+        // `shift_checkpoints` already performs above for the two prologues,
+        // applied once more for the events-IIFE wrapper this prepends.
+        body_smb
+            .borrow_mut()
+            .shift_checkpoints(body_out_offset_in_raw);
+        let mut raw_stmt = bynk_ts::TsStmt::raw(raw_body, None);
+        raw_stmt.nested_map = Some(body_smb.into_inner());
+
         let method_entry = bynk_ts::TsObjectEntry::Method {
             name: kind_name,
             is_async: *ir_effectful,
@@ -3007,46 +3040,27 @@ pub(crate) fn emit_service(
             return_type: Some(ts_ty_to_ts_type(*ir_ret, tys)),
             doc: handler.documentation.clone(),
             inline: false,
-            body: vec![bynk_ts::TsStmt::raw(raw_body.clone(), None)],
+            body: vec![raw_stmt],
         };
         // The object (`export const {name} = { ... }`) is always printed at
-        // depth 0 — `object_depth` names that once so the two offset
-        // computations below can't drift out of lockstep with the depth
-        // `print_object_entry` is actually called with (review of #1360,
-        // finding 3's own lesson, applied proactively here).
+        // depth 0 — `object_depth` names that once so this call's own depth
+        // can't drift out of lockstep with `print_object_entry_and_merge`'s
+        // real depth (review of #1360, finding 3's own lesson, applied
+        // proactively here).
         let object_depth = 0;
-        let printed = bynk_ts::print_object_entry(&method_entry, object_depth);
-        out.push_str(&printed);
-        if let Some(module) = source_map {
-            // Two-level offset: where `raw_body` starts within `printed`
-            // (fragment-level, the same #1352/#1359 arithmetic), plus where
-            // `body_out` starts within `raw_body` (blob-internal, known by
-            // construction above) — combined, the real offset of
-            // `body_out`'s own first byte within the fully-printed method.
-            // `Raw` splices verbatim and `TsObjectEntry::Method`'s own
-            // closing brace sits at `indent(object_depth + 1)` — degrades
-            // to no merge (no mapping for this handler) rather than risk a
-            // confidently WRONG one if either assumption is ever violated,
-            // the same "suppress rather than mis-record" discipline #1360
-            // finding 3 already established.
-            let trailing = format!("{}}},\n", "  ".repeat(object_depth + 1));
-            if let Some(raw_body_offset_in_printed) =
-                printed.len().checked_sub(raw_body.len() + trailing.len())
-                && printed
-                    .get(raw_body_offset_in_printed..)
-                    .is_some_and(|tail| tail.starts_with(&raw_body))
-                && printed.ends_with(&trailing)
-            {
-                let base =
-                    out.len() - printed.len() + raw_body_offset_in_printed + body_out_offset_in_raw;
-                module
-                    .borrow_mut()
-                    .merge(&body_smb.borrow(), &body_out, out, base, 0);
-            }
-        }
+        bynk_ts::print_object_entry_and_merge(
+            &mut out,
+            &method_entry,
+            object_depth,
+            &mut service_smb,
+            0,
+        );
     }
     writeln!(out, "}};").unwrap();
     writeln!(out).unwrap();
+    let mut stmt = bynk_ts::TsStmt::raw(out, None);
+    stmt.nested_map = Some(service_smb);
+    stmt
 }
 
 /// v0.15: the TypeScript deps-field type for a `given` capability reference.
