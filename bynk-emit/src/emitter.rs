@@ -334,7 +334,18 @@ pub(crate) fn emit_project(
     // The file's `.bynk` source is the primary map source (id 0); `record` targets
     // it and spliced handler bodies in the same file merge against it (v0.70).
     smb.borrow_mut().add_source(source_name, source_text);
-    write_header(&mut out, commons, ctx);
+    // #1476: `write_header`'s own runtime-import line needs `ctx.runtime_use`'s
+    // `bytes()`/`icu()` flags, which the item-emission loop below sets as a side
+    // effect while it runs — every `record`/`merge` call below targets `out`
+    // starting from *this* point (item declarations only), not from the header's
+    // own eventual text. The header itself is built once every item has emitted
+    // (below, once `ctx.runtime_use` is fully known) and prepended — the
+    // checkpoints already recorded against this un-prefixed `out` are shifted by
+    // the header's own final length at that point (`SourceMapBuilder::shift_
+    // checkpoints`, the same mechanism `emit_service`'s own prologue insertion
+    // already uses), so this replaces the old post-print text-surgery pass
+    // (`inject_runtime_imports`) with ordinary out-of-order construction: the
+    // header's own bytes are unchanged, only *when* they're built moves.
     // Compute which names this file actually references that live elsewhere
     // (sibling file in the same commons/context, or a used commons / consumed
     // context).
@@ -542,45 +553,28 @@ pub(crate) fn emit_project(
     // v0.22b: module-local codec helpers for this file's Json.encode/decode
     // targets, deduped against the workers boundary helpers above.
     emit_json_codec_helpers(&mut out, commons, ctx, &boundary_names, &boundary_insts);
+    // #1476: `ctx.runtime_use` is fully populated now — every producer above has
+    // had its chance to note `bytes()`/`icu()` (`emitter::runtime_use`'s own doc:
+    // this used to key on `out.contains("<helper name>")`, wrong in both
+    // directions — a user string literal/doc comment false-positive, or an
+    // unrelated formatting change silently dropping a *required* import). Build
+    // the header — including its own runtime-import line, `bytes()`/`icu()`
+    // folded in directly rather than spliced in afterward — then prepend it,
+    // shifting every checkpoint already recorded above by its own final length
+    // (the same `shift_checkpoints` mechanism `emit_service`'s own prologue
+    // insertion already uses for the identical "content prepended after
+    // checkpoints were recorded" shape).
+    let mut header = String::new();
+    write_header(&mut header, commons, ctx);
+    smb.borrow_mut().shift_checkpoints(header.len());
+    header.push_str(&out);
+    let out = header;
     // The generated `file` name: the source basename with `.bynk` → `.ts`.
     let generated_file = Path::new(source_name)
         .file_stem()
         .map(|s| format!("{}.ts", s.to_string_lossy()))
         .unwrap_or_else(|| "module.ts".to_string());
     let source_map = smb.borrow().to_v3(&out, &generated_file);
-    // Both injections below key on `ctx.runtime_use`, which the producers wrote as
-    // they emitted. They used to key on `out.contains("<helper name>")`, which was
-    // wrong in both directions: `out` also carries user string literals and doc
-    // comments (a spurious import), and the ICU scan additionally depended on the
-    // call being emitted with no space before its paren — so an unrelated
-    // formatting change could silently drop a *required* import and produce a
-    // module that does not compile. See `emitter::runtime_use`.
-    // v0.110 (ADR 0142): import the `Bytes` runtime helpers iff the emitted body
-    // actually references them. Injected into the existing runtime import line
-    // (no new line, no body-column shift), so the source map computed above from
-    // the pre-injection text stays valid.
-    if ctx.runtime_use.bytes() {
-        out = inject_runtime_imports(
-            out,
-            &runtime_import_for(&ctx.source_path, ctx.import_ext),
-            BYTES_RUNTIME_IMPORTS,
-        );
-    }
-    // message-bundles slice 3 (#878, Decision G): same mechanism, for the
-    // three ICU-formatting runtime helpers. `emit_messages_bundle` (called
-    // above, before this post-pass) is the only place that can reference
-    // them; a project with no `plural`/`select`/`number`/`date` placeholder
-    // anywhere never triggers this. All three are imported together
-    // (mirrors `BYTES_RUNTIME_IMPORTS`'s own all-or-nothing shape) rather
-    // than cherry-picked per-name — the emitted `tsconfig.json` has no
-    // `noUnusedLocals`, so an unused named import is inert.
-    if ctx.runtime_use.icu() {
-        out = inject_runtime_imports(
-            out,
-            &runtime_import_for(&ctx.source_path, ctx.import_ext),
-            MESSAGES_RUNTIME_IMPORTS,
-        );
-    }
     (out, source_map)
 }
 
@@ -2849,6 +2843,33 @@ fn write_header(out: &mut String, commons: &TypedCommons, ctx: &EmitProjectCtx) 
             // boundary helpers now emit on bundle too (for the rehydration gate).
             parts.push("type JsonValue");
             parts.push("type BoundaryError");
+        }
+        // #1476: `bytes()`/`icu()` fold in here directly now, in the same order
+        // the old post-print `inject_runtime_imports` pass appended them (bytes
+        // first, then icu) — `ctx.runtime_use` is already fully populated by the
+        // time `write_header` runs (moved to the end of `emit_project`), so this
+        // needs no post-print text surgery at all, just reading the same two
+        // flags one function call later than before.
+        //
+        // Review of #1490: this drops `inject_runtime_imports`'s own
+        // `missing_bindings` dedup (matching a `type Foo` group binding against
+        // an already-bound bare `Foo` and vice versa) — safe only because
+        // neither `BYTES_RUNTIME_IMPORTS`'s nor `MESSAGES_RUNTIME_IMPORTS`'s own
+        // names overlap anything `parts` already carries above (confirmed by
+        // direct inspection, not assumed). A future group that *does* overlap
+        // needs that filter reinstated here, not just appended unconditionally
+        // — `missing_bindings`'s own doc named exactly this case (the
+        // test-scaffold module's own `Ok`/`Err` overlap) before this issue
+        // deleted the only place that reasoning was written down.
+        if ctx.runtime_use.bytes() {
+            parts.extend(BYTES_RUNTIME_IMPORTS.trim_start_matches(", ").split(", "));
+        }
+        if ctx.runtime_use.icu() {
+            parts.extend(
+                MESSAGES_RUNTIME_IMPORTS
+                    .trim_start_matches(", ")
+                    .split(", "),
+            );
         }
         out.push_str(&bynk_ts::print_stmt(
             &bynk_ts::TsStmt::decl(
