@@ -1887,10 +1887,11 @@ pub fn print_stmt(stmt: &TsStmt, depth: usize) -> String {
 /// but merges any `nested_map` `stmt` carries — on `stmt` itself, or on
 /// anything nested inside it (a function's body, a class's constructor/
 /// methods, …) — into `map` as it prints, at the real print-time offset —
-/// the same offset `bynk-emit`'s own `emit_free_fn` (`emitter/emit.rs`) has
-/// to recover today by exact arithmetic over the returned text, guarded by
-/// a `debug_assert!`. Kept separate from `print_stmt` itself so every
-/// existing caller's own call sites are untouched. `source_id` is `map`'s
+/// the same offset `bynk-emit`'s own `emit_free_fn` (`emitter/emit.rs`) used
+/// to recover by exact arithmetic over the returned text, guarded by a
+/// `debug_assert!`, before #1480 converted it to set `nested_map` directly
+/// instead. Kept separate from `print_stmt` itself so every existing
+/// caller's own call sites are untouched. `source_id` is `map`'s
 /// own registered source this statement's content belongs to (see
 /// this crate's own private `MergeTarget`'s own doc for why this can't just be hardcoded).
 ///

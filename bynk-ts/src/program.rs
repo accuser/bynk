@@ -66,9 +66,12 @@ pub struct TsStmt {
     /// *outside* — `bynk-emit`'s own `emit_class_method_and_merge_source_map`
     /// (`emitter/emit.rs`) recovers it by subtracting known lengths and
     /// string-matching the printed text's own tail, degrading to a silent
-    /// skip if that search fails; `emit_free_fn` recovers it by separate,
-    /// independent exact arithmetic, guarded by a `debug_assert!`. Both
-    /// exist only because nothing reports *this* node's own real print-time
+    /// skip if that search fails; still live for `emit_service`/`emit_agent`'s
+    /// own not-yet-converted call sites (#1481/#1482). `emit_free_fn` used to
+    /// recover it by separate, independent exact arithmetic, guarded by a
+    /// `debug_assert!` — #1480 converted it to set this field directly
+    /// instead, the first real `bynk-emit` caller to do so. Both existed
+    /// only because nothing reported *this* node's own real print-time
     /// offset directly. Setting this field lets the printer itself do the
     /// merge, at the exact offset it is about to write this node's text to
     /// — no reverse-engineering, no silent-skip fallback (see this crate's
