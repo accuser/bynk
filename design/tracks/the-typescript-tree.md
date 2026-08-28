@@ -2140,6 +2140,23 @@ argued. Roughly 8-10 real slices, not counting whatever (1) and prerequisite 2 (
 per #1461) reveal about `lower.rs`'s own call-site count once attempted — genuinely comparable in
 scope to Arc C/D/E/F, confirming rather than revising #1461's own estimate.
 
+**Slice (1) landed (#1477).** `bynk_ts::TsStmt` gains `nested_map: Option<SourceMapBuilder>`;
+`render_block_stmts` (the one shared choke point every function/method/constructor body funnels
+through) merges a direct child's own `nested_map` into a caller-supplied map at the real
+print-time offset when present. Three new sibling entry points
+(`print_stmt_and_merge`/`print_class_method_and_merge`/`print_object_entry_and_merge`) expose this
+— each *appends into the caller's own buffer* rather than returning a fresh `String` (a real design
+error caught before merge: returning a fresh string computes the checkpoint's offset against that
+empty local buffer, silently wrong the instant the caller splices the result anywhere but byte 0 of
+its own real output). `print()`'s own top-level loop threads its module map through automatically
+too, so a real `TsProgram` benefits with no `bynk-emit` change at all. Existing
+`print_stmt`/`print_class_method`/`print_object_entry`/`print` signatures and behaviour are
+byte-for-byte unchanged — every one of the ~15 internal call sites this touched that isn't on the
+path from these new entry points passes `None`, verified by the full existing suite passing
+unchanged plus four new tests exercising the merge path directly (all three entry points, plus
+`print`'s own automatic top-level case). No `bynk-emit` call site converted — that begins at
+slice (4)/(5) (#1480 onward), now unblocked.
+
 **Corrected argued floor, numbered where #1461 could only gesture at "a dozen-plus."** Permanent
 `Verbatim`-construction sites this cascade will add, beyond the 2 already counted
 (`project.rs:2480`/`:2509`): `emit_provider`'s class wrapper (1), `emit_agent`'s DO-class wrapper

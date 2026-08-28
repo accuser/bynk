@@ -239,7 +239,13 @@ pub fn print(
         if let Some(span) = stmt.span {
             map.record(out.len(), span);
         }
-        render_stmt(&mut out, stmt, 0);
+        // #1477: also merges any nested checkpoints reachable through this
+        // top-level statement's own `Decl` arm (a function's body, or a
+        // class's constructor/methods) — the same mechanism `print_stmt_
+        // and_merge`/`print_class_method_and_merge` expose to a caller
+        // printing one fragment at a time, applied here automatically for
+        // every top-level statement in a real `TsProgram`.
+        render_stmt(&mut out, stmt, 0, Some(&mut map));
         // The printer owns line structure (R7.3), so a statement's own text
         // not ending in its own newline can't leave two statements sharing
         // a generated line — review of #1308, finding 2: nothing required
@@ -345,12 +351,19 @@ fn render_doc_comment(out: &mut String, text: &str, depth: usize) {
 }
 
 /// Render one statement, including its own leading indent.
-fn render_stmt(out: &mut String, stmt: &TsStmt, depth: usize) {
+///
+/// `map`: #1477's own thread-through — only the `Decl` arm ever forwards it
+/// (to a `TsDecl::Function`'s own body, or a `TsDecl::Class`'s constructor/
+/// methods, via [`render_decl`]); every other arm ignores it, since none of
+/// their own `Vec<TsStmt>` bodies (`Block`, a `Switch` case, …) is a real
+/// site for ADR 0391's permanently-opaque output today (see
+/// [`render_block_stmts`]'s own doc for the scope boundary this matches).
+fn render_stmt(out: &mut String, stmt: &TsStmt, depth: usize, map: Option<&mut SourceMapBuilder>) {
     match &stmt.kind {
         TsStmtKind::Verbatim { text, .. } => {
             out.push_str(text);
         }
-        TsStmtKind::Decl(decl) => render_decl(out, decl, depth),
+        TsStmtKind::Decl(decl) => render_decl(out, decl, depth, map),
         TsStmtKind::Const { name, ty, init } => {
             out.push_str(&indent(depth));
             out.push_str("const ");
@@ -512,7 +525,7 @@ fn render_stmt(out: &mut String, stmt: &TsStmt, depth: usize) {
             out.push_str(&indent(depth));
             out.push_str("{\n");
             for s in stmts {
-                render_stmt(out, s, depth + 1);
+                render_stmt(out, s, depth + 1, None);
             }
             out.push_str(&indent(depth));
             out.push_str("}\n");
@@ -577,14 +590,14 @@ fn render_stmt(out: &mut String, stmt: &TsStmt, depth: usize) {
                         if case.case_braced {
                             out.push_str(": {\n");
                             for s in &case.body {
-                                render_stmt(out, s, depth + 2);
+                                render_stmt(out, s, depth + 2, None);
                             }
                             out.push_str(&indent(depth + 1));
                             out.push_str("}\n");
                         } else {
                             out.push_str(":\n");
                             for s in &case.body {
-                                render_stmt(out, s, depth + 2);
+                                render_stmt(out, s, depth + 2, None);
                             }
                         }
                     }
@@ -592,14 +605,14 @@ fn render_stmt(out: &mut String, stmt: &TsStmt, depth: usize) {
                         if case.default_braced {
                             out.push_str("default: {\n");
                             for s in &case.body {
-                                render_stmt(out, s, depth + 2);
+                                render_stmt(out, s, depth + 2, None);
                             }
                             out.push_str(&indent(depth + 1));
                             out.push_str("}\n");
                         } else {
                             out.push_str("default:\n");
                             for s in &case.body {
-                                render_stmt(out, s, depth + 2);
+                                render_stmt(out, s, depth + 2, None);
                             }
                         }
                     }
@@ -817,7 +830,7 @@ fn render_inline_stmt(out: &mut String, stmt: &TsStmt) {
         // `inline: false` specifically to avoid exercising this arm.
         // Listed by name, not folded into a wildcard, for the same reason
         // as every other arm in this group.
-        | TsStmtKind::Raw(_) => render_stmt(out, stmt, 0),
+        | TsStmtKind::Raw(_) => render_stmt(out, stmt, 0, None),
     }
 }
 
@@ -832,7 +845,7 @@ fn render_block_body(out: &mut String, block: &TsStmt, depth: usize) {
     out.push_str(" {\n");
     if let TsStmtKind::Block(stmts) = &block.kind {
         for s in stmts {
-            render_stmt(out, s, depth + 1);
+            render_stmt(out, s, depth + 1, None);
         }
     } else if let TsStmtKind::InlineBlock(stmts) = &block.kind {
         // The braces sit on their own lines here (this function's own usual
@@ -843,7 +856,7 @@ fn render_block_body(out: &mut String, block: &TsStmt, depth: usize) {
         render_compact_stmts(out, stmts);
         out.push('\n');
     } else {
-        render_stmt(out, block, depth + 1);
+        render_stmt(out, block, depth + 1, None);
     }
     out.push_str(&indent(depth));
     out.push('}');
@@ -1075,7 +1088,7 @@ fn render_multiline_object(out: &mut String, entries: &[TsObjectEntry], depth: u
     // entries.
     out.push_str("{\n");
     for entry in entries {
-        render_multiline_object_entry(out, entry, depth);
+        render_multiline_object_entry(out, entry, depth, None);
     }
     out.push_str(&indent(depth));
     out.push('}');
@@ -1087,7 +1100,15 @@ fn render_multiline_object(out: &mut String, entries: &[TsObjectEntry], depth: u
 /// this one real per-kind dispatch rather than a second copy (the same
 /// "one document-fragment entry point, no duplicated rendering" posture
 /// [`print_stmt`]/[`print_type`] already established).
-fn render_multiline_object_entry(out: &mut String, entry: &TsObjectEntry, depth: usize) {
+/// `map`: see [`render_block_stmts`]'s own doc (#1477) — reaches a `Method`
+/// entry's own body unchanged; every other entry kind ignores it (no body
+/// of its own).
+fn render_multiline_object_entry(
+    out: &mut String,
+    entry: &TsObjectEntry,
+    depth: usize,
+    map: Option<&mut SourceMapBuilder>,
+) {
     // Review of #1340, finding 1: a `Raw`-bodied `Method` entry's own text
     // is captured pre-indented at a fixed absolute depth by its caller (see
     // `print_object_entry`'s own doc) — correct only when `depth` is `0`.
@@ -1168,7 +1189,7 @@ fn render_multiline_object_entry(out: &mut String, entry: &TsObjectEntry, depth:
                 render_compact_stmts(out, body);
                 out.push_str(" }");
             } else {
-                render_block_stmts(out, body, depth + 1);
+                render_block_stmts(out, body, depth + 1, map);
             }
             out.push_str(",\n");
         }
@@ -1280,7 +1301,7 @@ fn render_object_entry_inline(out: &mut String, entry: &TsObjectEntry) {
                 render_compact_stmts(out, body);
                 out.push_str(" }");
             } else {
-                render_block_stmts(out, body, 0);
+                render_block_stmts(out, body, 0, None);
             }
         }
     }
@@ -1772,8 +1793,39 @@ pub fn print_stmt(stmt: &TsStmt, depth: usize) -> String {
         "print_stmt: a Raw-bearing statement's own baked-in indent only matches depth 0"
     );
     let mut out = String::new();
-    render_stmt(&mut out, stmt, depth);
+    render_stmt(&mut out, stmt, depth, None);
     out
+}
+
+/// [`print_stmt`]'s own sibling (#1477), the `TsDecl::Function`-body
+/// counterpart to [`print_class_method_and_merge`]: identical rendering,
+/// but merges any `nested_map` reachable through `stmt`'s own `Decl` arm
+/// (a function's body, or a class's constructor/methods) into `map` as it
+/// prints, at the real print-time offset — the same offset
+/// `bynk-emit`'s own `emit_free_fn` (`emitter/emit.rs`) has to recover
+/// today by exact arithmetic over the returned text, guarded by a
+/// `debug_assert!`. Kept separate from `print_stmt` itself so every
+/// existing caller's own call sites are untouched.
+///
+/// **Appends to the caller's own `out`, unlike `print_stmt`'s own
+/// return-a-fresh-`String` shape** — the merge computes each checkpoint's
+/// absolute offset from `out.len()` *as this statement's own text is
+/// written*, so it must be the caller's real, already-populated buffer, not
+/// a throwaway local one starting at 0. Returning a fresh string here (the
+/// first shape this function took, caught before merge) would silently
+/// record every checkpoint at the wrong offset the moment the caller
+/// spliced the returned text anywhere but the very start of its own buffer.
+pub fn print_stmt_and_merge(
+    out: &mut String,
+    stmt: &TsStmt,
+    depth: usize,
+    map: &mut SourceMapBuilder,
+) {
+    debug_assert!(
+        depth == 0 || matches!(stmt.kind, TsStmtKind::Raw(_)) || !stmt_contains_raw(stmt),
+        "print_stmt_and_merge: a Raw-bearing statement's own baked-in indent only matches depth 0"
+    );
+    render_stmt(out, stmt, depth, Some(map));
 }
 
 /// Print a single [`TsObjectEntry`] on its own, at `depth` — the
@@ -1804,8 +1856,27 @@ pub fn print_stmt(stmt: &TsStmt, depth: usize) -> String {
 /// for every caller, not just this entry point.
 pub fn print_object_entry(entry: &TsObjectEntry, depth: usize) -> String {
     let mut out = String::new();
-    render_multiline_object_entry(&mut out, entry, depth);
+    render_multiline_object_entry(&mut out, entry, depth, None);
     out
+}
+
+/// [`print_object_entry`]'s own sibling (#1477), the `TsObjectEntry::Method`
+/// counterpart to [`print_class_method_and_merge`]/[`print_stmt_and_merge`]:
+/// identical rendering, but merges a `Method` entry's own body `nested_map`
+/// into `map` as it prints, at the real print-time offset. Kept separate
+/// from `print_object_entry` itself so every existing caller's own call
+/// sites are untouched.
+///
+/// Appends to the caller's own `out`, the same "must be the real buffer,
+/// not a throwaway local one" reasoning [`print_stmt_and_merge`]'s own doc
+/// explains in full.
+pub fn print_object_entry_and_merge(
+    out: &mut String,
+    entry: &TsObjectEntry,
+    depth: usize,
+    map: &mut SourceMapBuilder,
+) {
+    render_multiline_object_entry(out, entry, depth, Some(map));
 }
 
 /// Whether `stmts`, or any block/branch/case nested inside them at any
@@ -1873,8 +1944,29 @@ fn stmt_contains_raw(stmt: &TsStmt) -> bool {
 /// `print_object_entry` already established.
 pub fn print_class_method(method: &TsClassMethod, depth: usize) -> String {
     let mut out = String::new();
-    render_class_method(&mut out, method, depth);
+    render_class_method(&mut out, method, depth, None);
     out
+}
+
+/// [`print_class_method`]'s own sibling (#1477): identical rendering, but
+/// merges any of `method.body`'s own direct-child `nested_map`s into `map`
+/// as they print, at the real print-time offset — no reverse-engineering
+/// the offset from the returned text afterward, the way `bynk-emit`'s own
+/// `emit_class_method_and_merge_source_map` (`emitter/emit.rs`) has to
+/// today. Kept as a separate function, not an added parameter on
+/// `print_class_method` itself, so every existing caller's own call sites
+/// are untouched — this is a strict addition.
+///
+/// Appends to the caller's own `out`, the same "must be the real buffer,
+/// not a throwaway local one" reasoning [`print_stmt_and_merge`]'s own doc
+/// explains in full.
+pub fn print_class_method_and_merge(
+    out: &mut String,
+    method: &TsClassMethod,
+    depth: usize,
+    map: &mut SourceMapBuilder,
+) {
+    render_class_method(out, method, depth, Some(map));
 }
 
 /// The one real per-method render, shared by [`print_class_method`] and
@@ -1892,7 +1984,15 @@ pub fn print_class_method(method: &TsClassMethod, depth: usize) -> String {
 /// by review of #1340 finding 1). `print_class_method`'s own doc frames it
 /// as a general fragment entry point, so a future caller at a non-zero
 /// depth is the expected case this guards against, not a hypothetical.
-fn render_class_method(out: &mut String, method: &TsClassMethod, depth: usize) {
+///
+/// `map`: see [`render_block_stmts`]'s own doc (#1477) — forwarded
+/// unchanged to `method.body`'s own rendering.
+fn render_class_method(
+    out: &mut String,
+    method: &TsClassMethod,
+    depth: usize,
+    map: Option<&mut SourceMapBuilder>,
+) {
     debug_assert!(
         depth == 0 || !contains_raw(&method.body),
         "render_class_method: a Raw method body's own baked-in indent only matches depth 0"
@@ -1915,7 +2015,7 @@ fn render_class_method(out: &mut String, method: &TsClassMethod, depth: usize) {
         out.push_str(": ");
         render_type(out, rt);
     }
-    render_block_stmts(out, &method.body, depth + 1);
+    render_block_stmts(out, &method.body, depth + 1, map);
     out.push('\n');
 }
 
@@ -1935,7 +2035,7 @@ fn render_params(out: &mut String, params: &[TsParam]) {
     }
 }
 
-fn render_decl(out: &mut String, decl: &TsDecl, depth: usize) {
+fn render_decl(out: &mut String, decl: &TsDecl, depth: usize, map: Option<&mut SourceMapBuilder>) {
     // `render_decl_body`'s own `TsDecl::Export` arm already writes
     // `"export "` before recursing into the inner declaration — the
     // `if let Export` special case this replaced produced byte-identical
@@ -1943,14 +2043,24 @@ fn render_decl(out: &mut String, decl: &TsDecl, depth: usize) {
     // #1314, smaller note: the two branches were provably the same for
     // every input, so only one needs to exist).
     out.push_str(&indent(depth));
-    render_decl_body(out, decl, depth);
+    render_decl_body(out, decl, depth, map);
 }
 
 /// The declaration's own text, with no leading indent — [`render_decl`]
 /// writes the indent (and, for `Export`, the `export ` keyword) once, then
 /// hands off here so `Export(inner)` doesn't duplicate `inner`'s own
 /// leading whitespace.
-fn render_decl_body(out: &mut String, decl: &TsDecl, depth: usize) {
+///
+/// `map`: see [`render_block_stmts`]'s own doc (#1477) — reaches a
+/// `TsDecl::Function`'s own body, and a `TsDecl::Class`'s own constructor/
+/// methods, unchanged; every other arm ignores it (no body of its own to
+/// carry a `nested_map`).
+fn render_decl_body(
+    out: &mut String,
+    decl: &TsDecl,
+    depth: usize,
+    mut map: Option<&mut SourceMapBuilder>,
+) {
     match decl {
         TsDecl::Import {
             type_only,
@@ -2003,7 +2113,7 @@ fn render_decl_body(out: &mut String, decl: &TsDecl, depth: usize) {
         }
         TsDecl::Export(inner) => {
             out.push_str("export ");
-            render_decl_body(out, inner, depth);
+            render_decl_body(out, inner, depth, map);
         }
         TsDecl::Interface {
             name,
@@ -2073,7 +2183,7 @@ fn render_decl_body(out: &mut String, decl: &TsDecl, depth: usize) {
                 out.push_str("constructor(");
                 render_params(out, &ctor.params);
                 out.push(')');
-                render_block_stmts(out, &ctor.body, depth + 1);
+                render_block_stmts(out, &ctor.body, depth + 1, map.as_deref_mut());
                 out.push('\n');
                 wrote_member = true;
             }
@@ -2081,7 +2191,7 @@ fn render_decl_body(out: &mut String, decl: &TsDecl, depth: usize) {
                 if wrote_member {
                     out.push('\n');
                 }
-                render_class_method(out, m, depth);
+                render_class_method(out, m, depth, map.as_deref_mut());
                 wrote_member = true;
             }
             out.push_str(&indent(depth));
@@ -2113,7 +2223,7 @@ fn render_decl_body(out: &mut String, decl: &TsDecl, depth: usize) {
                 out.push(' ');
                 render_inline_block(out, body);
             } else {
-                render_block_stmts(out, body, depth);
+                render_block_stmts(out, body, depth, map);
                 out.push('\n');
             }
         }
@@ -2166,10 +2276,33 @@ fn render_decl_body(out: &mut String, decl: &TsDecl, depth: usize) {
 /// `TsClassMethod`'s own `body` field, not a boxed `TsStmt`), and always
 /// followed by the caller's own `\n` (constructor/method declarations, not
 /// a same-line `try`/`catch` continuation).
-fn render_block_stmts(out: &mut String, stmts: &[TsStmt], depth: usize) {
+/// `map: Some(_)` when the caller wants this body's own direct children
+/// merged into a module source map as they print (#1477) — see
+/// [`crate::program::TsStmt::nested_map`]'s own doc for the problem this
+/// solves and why. Scoped narrowly to *direct* elements of `stmts` (a
+/// function/method/constructor body, the only real shape ADR 0391's
+/// permanently-opaque output ever takes) — a `nested_map`-bearing statement
+/// nested any deeper (inside a further `Block`/`If`/`Switch` case within
+/// this body) is not checked; no real content builds that shape today, and
+/// generalising further before a real need exists would repeat the
+/// "guessing, not designing" risk this crate's own module doc already warns
+/// against.
+fn render_block_stmts(
+    out: &mut String,
+    stmts: &[TsStmt],
+    depth: usize,
+    mut map: Option<&mut SourceMapBuilder>,
+) {
     out.push_str(" {\n");
     for s in stmts {
-        render_stmt(out, s, depth + 1);
+        match (&s.nested_map, map.as_deref_mut()) {
+            (Some(nested), Some(m)) => {
+                let base = out.len();
+                render_stmt(out, s, depth + 1, None);
+                m.merge(nested, &out[base..], out, base, 0);
+            }
+            _ => render_stmt(out, s, depth + 1, None),
+        }
     }
     out.push_str(&indent(depth));
     out.push('}');
@@ -2348,6 +2481,181 @@ mod tests {
         let expected = expected_map.to_v3(&printed.text, "x.ts");
 
         assert_eq!(printed.source_map, expected);
+    }
+
+    // -- #1477: nested source-map checkpoints on an opaque body blob. --
+
+    /// `print_stmt_and_merge` — the `TsDecl::Function` shape (`emit_free_fn`'s
+    /// own real site): a `Raw` body statement's own `nested_map` merges into
+    /// the caller's map at the real print-time offset, appended into a
+    /// buffer that already has *other* content first (`base != 0`) — proving
+    /// this reads the caller's own real buffer position, not a fresh
+    /// throwaway one starting at 0 (the bug this function's own first draft
+    /// had, caught before merge: returning a `String` computes the offset
+    /// against that empty local buffer, silently wrong the moment the
+    /// caller splices the result anywhere but the very start of its own
+    /// `out`).
+    #[test]
+    fn print_stmt_and_merge_merges_a_function_bodys_own_nested_checkpoint() {
+        let source = "fn f() { return 1 }\n";
+        let ret_off = source.find("return 1").unwrap();
+        let ret_span = Span::new(ret_off, ret_off + 8);
+
+        let body_text = "  return 1;\n";
+        let mut nested = SourceMapBuilder::new();
+        nested.record(0, ret_span);
+
+        let mut raw = TsStmt::raw(body_text, None);
+        raw.nested_map = Some(nested);
+
+        let func = TsStmt::decl(
+            TsDecl::Function {
+                name: "f".to_string(),
+                generics: Vec::new(),
+                params: Vec::new(),
+                return_type: None,
+                body: vec![raw],
+                is_async: false,
+                inline: false,
+            },
+            None,
+        );
+
+        let mut out = String::from("// header\n");
+        let mut map = SourceMapBuilder::new();
+        map.add_source("x.bynk", source);
+
+        print_stmt_and_merge(&mut out, &func, 0, &mut map);
+
+        assert_eq!(out, "// header\nfunction f() {\n  return 1;\n}\n");
+        let base = out.find(body_text).unwrap();
+
+        let mut expected = SourceMapBuilder::new();
+        expected.add_source("x.bynk", source);
+        expected.record(base, ret_span);
+        assert_eq!(map.to_v3(&out, "x.ts"), expected.to_v3(&out, "x.ts"));
+    }
+
+    /// `print_class_method_and_merge` — the `TsClassMethod` shape
+    /// (`emit_provider`/`emit_agent`'s own real site, today reverse-engineered
+    /// by `emit_class_method_and_merge_source_map`'s own string-matching).
+    /// Same non-zero-`base` proof as the `TsDecl::Function` test above.
+    #[test]
+    fn print_class_method_and_merge_merges_a_methods_own_nested_checkpoint() {
+        let source = "on call m() { commit }\n";
+        let commit_off = source.find("commit").unwrap();
+        let commit_span = Span::new(commit_off, commit_off + 6);
+
+        let body_text = "    this.commit();\n";
+        let mut nested = SourceMapBuilder::new();
+        nested.record(0, commit_span);
+
+        let mut raw = TsStmt::raw(body_text, None);
+        raw.nested_map = Some(nested);
+
+        let method = TsClassMethod {
+            name: "m".to_string(),
+            private: false,
+            is_async: false,
+            params: Vec::new(),
+            return_type: None,
+            doc: None,
+            body: vec![raw],
+        };
+
+        let mut out = String::from("class C {\n");
+        let mut map = SourceMapBuilder::new();
+        map.add_source("x.bynk", source);
+
+        print_class_method_and_merge(&mut out, &method, 0, &mut map);
+
+        let base = out.find(body_text).unwrap();
+        let mut expected = SourceMapBuilder::new();
+        expected.add_source("x.bynk", source);
+        expected.record(base, commit_span);
+        assert_eq!(map.to_v3(&out, "x.ts"), expected.to_v3(&out, "x.ts"));
+    }
+
+    /// `print_object_entry_and_merge` — the `TsObjectEntry::Method` shape
+    /// (`emit_service`'s own real per-handler site): identical mechanism,
+    /// exercised through its own, third public entry point.
+    #[test]
+    fn print_object_entry_and_merge_merges_a_methods_own_nested_checkpoint() {
+        let source = "on call h() { reply }\n";
+        let reply_off = source.find("reply").unwrap();
+        let reply_span = Span::new(reply_off, reply_off + 5);
+
+        let body_text = "    return reply();\n";
+        let mut nested = SourceMapBuilder::new();
+        nested.record(0, reply_span);
+
+        let mut raw = TsStmt::raw(body_text, None);
+        raw.nested_map = Some(nested);
+
+        let entry = TsObjectEntry::Method {
+            name: "h".to_string(),
+            is_async: false,
+            generics: Vec::new(),
+            params: Vec::new(),
+            return_type: None,
+            doc: None,
+            inline: false,
+            body: vec![raw],
+        };
+
+        let mut out = String::from("export const svc = {\n");
+        let mut map = SourceMapBuilder::new();
+        map.add_source("x.bynk", source);
+
+        print_object_entry_and_merge(&mut out, &entry, 0, &mut map);
+
+        let base = out.find(body_text).unwrap();
+        let mut expected = SourceMapBuilder::new();
+        expected.add_source("x.bynk", source);
+        expected.record(base, reply_span);
+        assert_eq!(map.to_v3(&out, "x.ts"), expected.to_v3(&out, "x.ts"));
+    }
+
+    /// `print()`'s own top-level loop (#1477): a real `TsProgram` containing
+    /// a `Decl`-kinded top-level statement whose own body carries a
+    /// `nested_map` merges it automatically — no `bynk-emit` change needed
+    /// to benefit once a real construction site sets the field, since
+    /// `print()` already threads its own module map through `render_stmt`
+    /// for every top-level statement.
+    #[test]
+    fn print_merges_a_top_level_functions_own_nested_checkpoint_automatically() {
+        let source = "fn f() { return 1 }\n";
+        let ret_off = source.find("return 1").unwrap();
+        let ret_span = Span::new(ret_off, ret_off + 8);
+
+        let body_text = "  return 1;\n";
+        let mut nested = SourceMapBuilder::new();
+        nested.record(0, ret_span);
+
+        let mut raw = TsStmt::raw(body_text, None);
+        raw.nested_map = Some(nested);
+
+        let mut program = TsProgram::new();
+        program.push(TsStmt::decl(
+            TsDecl::Function {
+                name: "f".to_string(),
+                generics: Vec::new(),
+                params: Vec::new(),
+                return_type: None,
+                body: vec![raw],
+                is_async: false,
+                inline: false,
+            },
+            None,
+        ));
+
+        let printed = print(&program, "x.bynk", source, "x.ts");
+        let base = printed.text.find(body_text).unwrap();
+
+        let mut expected = SourceMapBuilder::new();
+        expected.add_source("x.bynk", source);
+        expected.record(base, ret_span);
+        assert_eq!(printed.source_map, expected.to_v3(&printed.text, "x.ts"));
     }
 
     // -- P7.8 (#1313): real node rendering. --
