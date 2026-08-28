@@ -252,6 +252,97 @@ fn multi_file_test_group_has_multiple_sources() {
 }
 
 #[test]
+fn system_suite_case_maps_to_its_own_bynk_source() {
+    // Review of #1497 (#1484's own conversion), finding 1: `emit_integration_
+    // module`'s own inline case wrapper now stages each case's body map in a
+    // local `case_smb` (merged under a placeholder source id) before the
+    // printer's own `nested_map` merge re-tags it to the real per-case
+    // `src_id` at print time — a genuine shape change from the pre-#1484
+    // direct `module_smb.merge(&body_smb, &body_src, &out, body_base,
+    // src_id)` call, not just a position change like every other site this
+    // track has converted so far. Nothing in the suite pinned that the
+    // re-tag still lands each case under its own `.bynk` file until this
+    // test — the multi-source guarantee `multi_file_test_group_has_multiple_
+    // sources` (above) already pins for a *unit* suite, mirrored here for a
+    // `system` one (two participant contexts, two test files each
+    // contributing one case to the same `suite ... as system` group).
+    let dir = tmp("sys");
+    std::fs::create_dir_all(dir.join("src").join("shop")).unwrap();
+    std::fs::create_dir_all(dir.join("tests").join("shop_orders")).unwrap();
+    std::fs::write(dir.join("bynk.toml"), "[project]\nname = \"sys\"\n").unwrap();
+    std::fs::write(
+        dir.join("src").join("shop").join("orders.bynk"),
+        "context shop.orders\n\nconsumes shop.payment as Pay\n\nexports transparent { OrderError }\n\ntype OrderError = enum { Rejected }\n\nservice place {\n  on call(cents: Int) -> Effect[Result[Int, OrderError]] {\n    let a <- Pay.authorise(cents)\n    match a {\n      Ok(n)  => Ok(n)\n      Err(_) => Err(Rejected)\n    }\n  }\n}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src").join("shop").join("payment.bynk"),
+        "context shop.payment\n\nexports transparent { PayError }\n\ntype PayError = enum { Declined }\n\ncapability Bank {\n  fn charge(cents: Int) -> Effect[Result[Int, PayError]]\n}\n\nprovides Bank = StubBank {\n  fn charge(cents: Int) -> Effect[Result[Int, PayError]] {\n    if cents > 10000 { Err(Declined) } else { Ok(cents) }\n  }\n}\n\nservice authorise {\n  on call(cents: Int) -> Effect[Result[Int, PayError]] given Bank {\n    let r <- Bank.charge(cents)\n    r\n  }\n}\n",
+    )
+    .unwrap();
+    // Each case's own `let r <- ...` is .bynk line 3 (0-based 2), `expect` is
+    // line 4 (0-based 3) — identical line numbers in both files, so a
+    // source mix-up (right line, wrong file) would slip past a same-file
+    // regression this shape alone couldn't catch.
+    std::fs::write(
+        dir.join("tests").join("shop_orders").join("a.bynk"),
+        "suite shop.orders as system {\n  case \"small order authorises across the wire\" {\n    let r <- shop.orders.place(100)\n    expect r is Ok(_)\n  }\n}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("tests").join("shop_orders").join("b.bynk"),
+        "suite shop.orders as system {\n  case \"large order is rejected end to end\" {\n    let r <- shop.orders.place(50000)\n    expect r is Err(_)\n  }\n}\n",
+    )
+    .unwrap();
+
+    let (ts, map) = compile_file(&dir, false, "tests/integration_shop_orders.test.ts");
+    let _ = std::fs::remove_dir_all(&dir);
+    let (sources, mappings) = parse_map(&map);
+    assert!(
+        sources.len() == 2
+            && sources.iter().any(|s| s.ends_with("shop_orders/a.bynk"))
+            && sources.iter().any(|s| s.ends_with("shop_orders/b.bynk")),
+        "module map should carry both system test files as sources, got {sources:?}"
+    );
+    let a_id = sources
+        .iter()
+        .position(|s| s.ends_with("shop_orders/a.bynk"))
+        .unwrap() as i64;
+    let b_id = sources
+        .iter()
+        .position(|s| s.ends_with("shop_orders/b.bynk"))
+        .unwrap() as i64;
+
+    let lines = decode(&mappings);
+    let at = |g: usize| lines[g].unwrap_or_else(|| panic!("gen line {g} unmapped in:\n{mappings}"));
+
+    // Case a's own body — the call-site `let`, distinguished from case b's by
+    // its literal argument, and the `expect`'s own lowered `Ok` tag check.
+    assert_eq!(
+        at(gen_line_of(&ts, "100 as JsonValue")),
+        (a_id, 2),
+        "case a's own call -> a.bynk:3, source a"
+    );
+    assert_eq!(
+        at(gen_line_of(&ts, "r.tag === \"Ok\"")),
+        (a_id, 3),
+        "case a's own expect -> a.bynk:4, source a"
+    );
+    // Case b's own body, same two lines in its own file — must resolve to
+    // source b, not a (the real risk this test exists to catch).
+    assert_eq!(
+        at(gen_line_of(&ts, "50000 as JsonValue")),
+        (b_id, 2),
+        "case b's own call -> b.bynk:3, source b"
+    );
+    assert_eq!(
+        at(gen_line_of(&ts, "r.tag === \"Err\"")),
+        (b_id, 3),
+        "case b's own expect -> b.bynk:4, source b"
+    );
+}
+
+#[test]
 fn service_handler_with_subscriber_and_schema_prologue_maps_per_statement() {
     // #1363: `from Events(Pattern { .. })` prepends a subscriber-filter guard
     // line, and `via schema(N)` prepends a schema-gate guard line, both

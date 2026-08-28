@@ -493,9 +493,15 @@ fn emit_integration_module(
         });
         let runner_name = sanitise_case_name(&case.name, &mut case_runners.len());
         case_runners.push(runner_name.clone());
-        out.push_str(&format!("async function {runner_name}() {{\n"));
-        out.push_str("  try {\n");
-        out.push_str("    const deps = makeHarness();\n");
+        // #1484: everything below builds into a local `case_out`/`case_smb`
+        // pair instead of this module's own `out`/`module_smb` directly — the
+        // same local-buffer-then-wrap shape `emit_test_case_function`'s own
+        // (separate-callee) sibling uses, needed here too since this is now a
+        // real `TsDecl::Function` (`async_test_runner_fn`) rather than
+        // hand-templated text spliced straight into the module.
+        let mut case_out = String::new();
+        case_out.push_str("  try {\n");
+        case_out.push_str("    const deps = makeHarness();\n");
         // Bring `uses` commons names into scope for argument construction.
         for u in uses_targets {
             let ns = u.replace('.', "_");
@@ -512,7 +518,7 @@ fn emit_integration_module(
                 type_names.sort();
                 type_names.dedup();
                 crate::emitter::extend_printed_at(
-                    &mut out,
+                    &mut case_out,
                     emit_ns_destructure(&ns, &names, &type_names),
                     2,
                 );
@@ -531,25 +537,28 @@ fn emit_integration_module(
             &runtime_use,
         );
         let src_id = module_smb.add_source(input.map_source.clone(), input.source.to_string());
-        let body_base = out.len();
+        let body_base = case_out.len();
         for line in body_src.lines() {
-            out.push_str("    ");
-            out.push_str(line);
-            out.push('\n');
+            case_out.push_str("    ");
+            case_out.push_str(line);
+            case_out.push('\n');
         }
-        module_smb.merge(&body_smb, &body_src, &out, body_base, src_id);
-        out.push_str("    return { pass: true };\n");
-        out.push_str("  } catch (e) {\n");
-        out.push_str("    if (e instanceof ExpectationError) {\n");
-        out.push_str(
+        let mut case_smb = SourceMapBuilder::new();
+        case_smb.merge(&body_smb, &body_src, &case_out, body_base, 0);
+        case_out.push_str("    return { pass: true };\n");
+        case_out.push_str("  } catch (e) {\n");
+        case_out.push_str("    if (e instanceof ExpectationError) {\n");
+        case_out.push_str(
             "      return { pass: false, error: { message: e.message, location: e.location } };\n",
         );
-        out.push_str("    }\n");
-        out.push_str(
+        case_out.push_str("    }\n");
+        case_out.push_str(
             "    return { pass: false, error: { message: String(e), location: \"unknown\" } };\n",
         );
-        out.push_str("  }\n");
-        out.push_str("}\n\n");
+        case_out.push_str("  }\n");
+        let case_stmt = async_test_runner_fn(&runner_name, case_out, Some(case_smb));
+        bynk_ts::print_stmt_and_merge(&mut out, &case_stmt, 0, &mut module_smb, src_id);
+        out.push('\n');
     }
 
     // Module runner. v0.127: `only` filters to a single case by name (the
@@ -1936,7 +1945,7 @@ fn emit_test_module(
                 ),
                 0,
             ));
-            let (case_text, case_smb) = emit_test_case_function(
+            let case_stmt = emit_test_case_function(
                 &runner_name,
                 case,
                 target_name,
@@ -1953,8 +1962,6 @@ fn emit_test_module(
             );
             // v0.70: merge this case's body checkpoints into the module map under
             // the case's `.bynk` source (a test group can span several files).
-            let base = out.len();
-            out.push_str(&case_text);
             // Forward slashes so the map's `sources` are portable (Windows joins
             // with `\`), matching the emitter's other specifier rendering.
             // v0.72: the map `source` is the file's absolute path (not the
@@ -1963,7 +1970,7 @@ fn emit_test_module(
             // `.bynk` test file binds.
             let src_id =
                 module_smb.add_source(parsed[i].map_source_name(), parsed[i].source().to_string());
-            module_smb.merge(&case_smb, &case_text, &out, base, src_id);
+            bynk_ts::print_stmt_and_merge(&mut out, &case_stmt, 0, &mut module_smb, src_id);
             out.push('\n');
         }
     }
@@ -1993,7 +2000,7 @@ fn emit_test_module(
             prop_runners.push(runner_name.clone());
             // v0.119: a `for all run: History[Agent]` property routes to the driven-
             // sequence runner; a value property keeps the existing path.
-            let prop_text = if prop_is_history(prop) {
+            let prop_stmt = if prop_is_history(prop) {
                 emit_test_history_property_function(
                     &runner_name,
                     prop,
@@ -2026,7 +2033,17 @@ fn emit_test_module(
                     tys,
                 )
             };
-            out.push_str(&prop_text);
+            // Review of #1497, finding 2: `print_stmt_and_merge`, not a plain
+            // `print_stmt` — `async_test_runner_fn`'s own `nested_map`
+            // parameter makes "pass `Some` here, print with `print_stmt`
+            // there" a one-line mistake with no signal (a plain `print_stmt`
+            // silently drops a `nested_map`, the same class of silent drop
+            // `printer.rs`'s own review of #1488 finding 2 already named).
+            // A no-op today (this site's own `nested_map` is always `None`,
+            // the pre-existing "deliberate scope cut" for property/history
+            // bodies), but routes through the merge-aware call uniformly so
+            // a future site that DOES carry a real map can't silently lose it.
+            bynk_ts::print_stmt_and_merge(&mut out, &prop_stmt, 0, &mut module_smb, 0);
             out.push('\n');
         }
     }
@@ -2056,7 +2073,7 @@ fn emit_test_module(
         let runner_name = format!("__prop_{}", sanitise_case_name(&attack_name, &mut idx));
         let prop_ordinal = prop_runners.len();
         prop_runners.push(runner_name.clone());
-        let attack_text = emit_contract_attack_function(
+        let attack_stmt = emit_contract_attack_function(
             &runner_name,
             f,
             attack_resolved.as_ref().unwrap(),
@@ -2071,7 +2088,11 @@ fn emit_test_module(
             &runtime_use,
             tys,
         );
-        out.push_str(&attack_text);
+        if let Some(attack_stmt) = attack_stmt {
+            // Review of #1497, finding 2 — same reasoning as the property/
+            // history call site above.
+            bynk_ts::print_stmt_and_merge(&mut out, &attack_stmt, 0, &mut module_smb, 0);
+        }
         out.push('\n');
     }
 
@@ -3249,6 +3270,52 @@ fn emit_test_scope_setup(
     }
 }
 
+/// #1484: the `async function {name}() { ... }` wrapper every test-generation
+/// runner shares (`emit_test_case_function`/`emit_test_property_function`/
+/// `emit_test_history_property_function`/`emit_contract_attack_function`, and
+/// `emit_integration_module`'s own inline case wrapper) — no return type
+/// annotation, no generics, no params, never exported. One shared
+/// construction (a real [`TsDecl::Function`]) instead of five separate
+/// `format!("async function {name}() {{\n")` hand-templates.
+///
+/// `body_text` is the function's own already-fully-formed inner content —
+/// everything between the wrapper's own opening and closing braces (a
+/// `try`/`catch`, or a flat sequence of statements ending in a `return`),
+/// carried as one opaque [`TsStmt::raw`] and not decomposed further: it mixes
+/// real node prints (`bynk_ts::print_stmt` calls already scattered through
+/// each caller) with genuinely-opaque lowered bodies (`lower.rs`'s permanent
+/// exclusion, ADR 0391) at depths this track's own established convention
+/// for these files uses, so decomposing the wrapper's *interior* into a
+/// fully real tree per site would risk silently changing that convention's
+/// baked-in indentation — the `TsDecl::Function`/`Raw`-body combination
+/// `emit_free_fn` (#1480) already established for exactly this reason.
+/// `nested_map`, when `Some`, is the one real per-case source map this
+/// track still merges (`emit_test_case_function`'s own `case_smb`/
+/// `emit_integration_module`'s own inline case) — every other caller's own
+/// body map is already a deliberate, pre-existing scope cut (property/
+/// history-property/contract-attack bodies are collaborator-free predicate
+/// scaffolding), unchanged by this conversion.
+fn async_test_runner_fn(
+    name: &str,
+    body_text: String,
+    nested_map: Option<SourceMapBuilder>,
+) -> TsStmt {
+    let mut raw_body = TsStmt::raw(body_text, None);
+    raw_body.nested_map = nested_map;
+    TsStmt::decl(
+        TsDecl::Function {
+            name: name.to_string(),
+            generics: Vec::new(),
+            params: Vec::new(),
+            return_type: None,
+            body: vec![raw_body],
+            is_async: true,
+            inline: false,
+        },
+        None,
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 fn emit_test_case_function(
     runner_name: &str,
@@ -3264,10 +3331,9 @@ fn emit_test_case_function(
     rel_path: &str,
     runtime_use: &RuntimeUse,
     tys: &Arc<Types>,
-) -> (String, SourceMapBuilder) {
+) -> TsStmt {
     let _ = stubs;
     let mut out = String::new();
-    out.push_str(&format!("async function {runner_name}() {{\n"));
     out.push_str("  try {\n");
     emit_test_scope_setup(
         &mut out,
@@ -3388,8 +3454,7 @@ fn emit_test_case_function(
     );
     out.push_str(&bynk_ts::print_stmt(&fallback_return, 2));
     out.push_str("  }\n");
-    out.push_str("}\n");
-    (out, case_smb)
+    async_test_runner_fn(runner_name, out, Some(case_smb))
 }
 
 /// v0.114 (testing track slice 2): the runtime the generative `property` runner
@@ -4329,9 +4394,8 @@ fn emit_test_property_function(
     rel_path: &str,
     runtime_use: &RuntimeUse,
     tys: &Arc<Types>,
-) -> String {
+) -> TsStmt {
     let mut out = String::new();
-    out.push_str(&format!("async function {runner_name}() {{\n"));
     emit_test_scope_setup(
         &mut out,
         target_name,
@@ -4562,8 +4626,7 @@ fn emit_test_property_function(
         None,
     );
     out.push_str(&bynk_ts::print_stmt(&return_run, 2));
-    out.push_str("}\n");
-    out
+    async_test_runner_fn(runner_name, out, None)
 }
 
 /// v0.119 (testing track slice 7, ADR 0155): emit one async runner for a history
@@ -4587,9 +4650,8 @@ fn emit_test_history_property_function(
     rel_path: &str,
     runtime_use: &RuntimeUse,
     tys: &Arc<Types>,
-) -> String {
+) -> TsStmt {
     let mut out = String::new();
-    out.push_str(&format!("async function {runner_name}() {{\n"));
     emit_test_scope_setup(
         &mut out,
         target_name,
@@ -4612,8 +4674,7 @@ fn emit_test_history_property_function(
             None,
         );
         out.push_str(&bynk_ts::print_stmt(&return_pass_true, 2));
-        out.push_str("}\n");
-        return out;
+        return async_test_runner_fn(runner_name, out, None);
     };
 
     // The synthesised call/step/state types are checker-only (never emitted as
@@ -4811,8 +4872,7 @@ fn emit_test_history_property_function(
         None,
     );
     out.push_str(&bynk_ts::print_stmt(&return_run, 2));
-    out.push_str("}\n");
-    out
+    async_test_runner_fn(runner_name, out, None)
 }
 
 /// v0.115 (testing track slice 3): emit one async runner that *attacks* a
@@ -4838,12 +4898,11 @@ fn emit_contract_attack_function(
     rel_path: &str,
     runtime_use: &RuntimeUse,
     tys: &Arc<Types>,
-) -> String {
+) -> Option<TsStmt> {
     let FnName::Free(fname) = &f.name else {
-        return String::new();
+        return None;
     };
     let mut out = String::new();
-    out.push_str(&format!("async function {runner_name}() {{\n"));
     emit_test_scope_setup(
         &mut out,
         target_name,
@@ -5000,8 +5059,7 @@ fn emit_contract_attack_function(
         None,
     );
     out.push_str(&bynk_ts::print_stmt(&return_run, 2));
-    out.push_str("}\n");
-    out
+    Some(async_test_runner_fn(runner_name, out, None))
 }
 
 // -- Small tree-construction helpers (#1325) ------------------------------
