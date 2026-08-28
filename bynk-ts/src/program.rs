@@ -81,6 +81,30 @@ pub struct TsStmt {
     /// common case, and the reason this is an `Option`, not a required
     /// field.
     pub nested_map: Option<SourceMapBuilder>,
+    /// #1486's own real gap, found converting `emit_project`/`emit_test_
+    /// module`/`emit_integration_module` off a single opaque top-level
+    /// `Verbatim` wrap: [`crate::printer::print`]'s own top-level loop
+    /// inserts exactly one blank line between every pair of adjacent
+    /// top-level statements (its own "readability policy" doc, right below
+    /// this field's own use site) — correct for content that was always
+    /// designed against that policy (`emit_composition_root`/`emit_test_
+    /// main`/`workers.rs`/`workers_entry.rs`, every one of them zero-diff
+    /// from day one), but `emit_agent`'s own already-shipped `Vec<TsStmt>`
+    /// (#1482, predating this field) was built against the *previous*
+    /// regime — where every real caller printed via `bynk-emit`'s own
+    /// `extend_printed`/`extend_printed_and_merged` (a flat per-stmt loop
+    /// with no automatic spacing of its own) — and genuinely needs a
+    /// same-registry-then-zero-factory pairing with **no** blank line
+    /// between them, matching the pre-conversion hand-written text this
+    /// crate's own zero-diff discipline requires preserving exactly.
+    /// `true` on a statement suppresses the automatic blank line
+    /// [`crate::printer::print`] would otherwise insert immediately before
+    /// it — the narrow, general escape hatch this real, already-shipped
+    /// content needs, not a special case hard-coded into the printer for
+    /// one specific pair of `TsDecl` variants. `false` (every site
+    /// predating this field, and the overwhelming majority after it) keeps
+    /// the automatic policy exactly as it already is.
+    pub no_blank_before: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -445,6 +469,7 @@ impl TsStmt {
             },
             span,
             nested_map: None,
+            no_blank_before: false,
         }
     }
 
@@ -453,6 +478,7 @@ impl TsStmt {
             kind: TsStmtKind::Decl(decl),
             span,
             nested_map: None,
+            no_blank_before: false,
         }
     }
 
@@ -466,6 +492,7 @@ impl TsStmt {
             kind: TsStmtKind::Const { name, ty, init },
             span,
             nested_map: None,
+            no_blank_before: false,
         }
     }
 
@@ -479,6 +506,7 @@ impl TsStmt {
             kind: TsStmtKind::Let { name, ty, init },
             span,
             nested_map: None,
+            no_blank_before: false,
         }
     }
 
@@ -487,6 +515,7 @@ impl TsStmt {
             kind: TsStmtKind::ExprStmt(expr),
             span,
             nested_map: None,
+            no_blank_before: false,
         }
     }
 
@@ -495,6 +524,7 @@ impl TsStmt {
             kind: TsStmtKind::Return(expr),
             span,
             nested_map: None,
+            no_blank_before: false,
         }
     }
 
@@ -503,6 +533,7 @@ impl TsStmt {
             kind: TsStmtKind::Throw(expr),
             span,
             nested_map: None,
+            no_blank_before: false,
         }
     }
 
@@ -516,6 +547,7 @@ impl TsStmt {
             },
             span,
             nested_map: None,
+            no_blank_before: false,
         }
     }
 
@@ -534,6 +566,7 @@ impl TsStmt {
             },
             span,
             nested_map: None,
+            no_blank_before: false,
         }
     }
 
@@ -556,6 +589,7 @@ impl TsStmt {
             },
             span,
             nested_map: None,
+            no_blank_before: false,
         }
     }
 
@@ -573,6 +607,7 @@ impl TsStmt {
             },
             span,
             nested_map: None,
+            no_blank_before: false,
         }
     }
 
@@ -595,6 +630,7 @@ impl TsStmt {
             },
             span,
             nested_map: None,
+            no_blank_before: false,
         }
     }
 
@@ -612,6 +648,7 @@ impl TsStmt {
             },
             span,
             nested_map: None,
+            no_blank_before: false,
         }
     }
 
@@ -620,6 +657,7 @@ impl TsStmt {
             kind: TsStmtKind::Block(stmts),
             span,
             nested_map: None,
+            no_blank_before: false,
         }
     }
 
@@ -628,6 +666,7 @@ impl TsStmt {
             kind: TsStmtKind::Continue,
             span,
             nested_map: None,
+            no_blank_before: false,
         }
     }
 
@@ -636,6 +675,7 @@ impl TsStmt {
             kind: TsStmtKind::Assign { target, value },
             span,
             nested_map: None,
+            no_blank_before: false,
         }
     }
 
@@ -644,6 +684,7 @@ impl TsStmt {
             kind: TsStmtKind::Comment(text.into()),
             span,
             nested_map: None,
+            no_blank_before: false,
         }
     }
 
@@ -652,6 +693,7 @@ impl TsStmt {
             kind: TsStmtKind::DocComment(text.into()),
             span,
             nested_map: None,
+            no_blank_before: false,
         }
     }
 
@@ -660,6 +702,7 @@ impl TsStmt {
             kind: TsStmtKind::Blank,
             span,
             nested_map: None,
+            no_blank_before: false,
         }
     }
 
@@ -671,6 +714,7 @@ impl TsStmt {
             },
             span,
             nested_map: None,
+            no_blank_before: false,
         }
     }
 
@@ -679,6 +723,7 @@ impl TsStmt {
             kind: TsStmtKind::InlineBlock(stmts),
             span,
             nested_map: None,
+            no_blank_before: false,
         }
     }
 
@@ -687,6 +732,7 @@ impl TsStmt {
             kind: TsStmtKind::Increment(expr),
             span,
             nested_map: None,
+            no_blank_before: false,
         }
     }
 
@@ -698,6 +744,7 @@ impl TsStmt {
             kind: TsStmtKind::Raw(text.into()),
             span,
             nested_map: None,
+            no_blank_before: false,
         }
     }
 }
