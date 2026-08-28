@@ -2140,21 +2140,41 @@ argued. Roughly 8-10 real slices, not counting whatever (1) and prerequisite 2 (
 per #1461) reveal about `lower.rs`'s own call-site count once attempted — genuinely comparable in
 scope to Arc C/D/E/F, confirming rather than revising #1461's own estimate.
 
-**Slice (1) landed (#1477).** `bynk_ts::TsStmt` gains `nested_map: Option<SourceMapBuilder>`;
-`render_block_stmts` (the one shared choke point every function/method/constructor body funnels
-through) merges a direct child's own `nested_map` into a caller-supplied map at the real
-print-time offset when present. Three new sibling entry points
-(`print_stmt_and_merge`/`print_class_method_and_merge`/`print_object_entry_and_merge`) expose this
-— each *appends into the caller's own buffer* rather than returning a fresh `String` (a real design
-error caught before merge: returning a fresh string computes the checkpoint's offset against that
-empty local buffer, silently wrong the instant the caller splices the result anywhere but byte 0 of
-its own real output). `print()`'s own top-level loop threads its module map through automatically
-too, so a real `TsProgram` benefits with no `bynk-emit` change at all. Existing
-`print_stmt`/`print_class_method`/`print_object_entry`/`print` signatures and behaviour are
-byte-for-byte unchanged — every one of the ~15 internal call sites this touched that isn't on the
-path from these new entry points passes `None`, verified by the full existing suite passing
-unchanged plus four new tests exercising the merge path directly (all three entry points, plus
-`print`'s own automatic top-level case). No `bynk-emit` call site converted — that begins at
+**Slice (1) landed (#1477), corrected once by review before merge.** `bynk_ts::TsStmt` gains
+`nested_map: Option<SourceMapBuilder>`. Three new sibling entry points
+(`print_stmt_and_merge`/`print_class_method_and_merge`/`print_object_entry_and_merge`) expose the
+merge — each *appends into the caller's own buffer* rather than returning a fresh `String` (a real
+design error caught before merge, by writing the actual test: returning a fresh string computes the
+checkpoint's offset against that empty local buffer, silently wrong the instant the caller splices
+the result anywhere but byte 0 of its own real output). `print()`'s own top-level loop threads its
+module map through automatically too, so a real `TsProgram` benefits with no `bynk-emit` change at
+all.
+
+**Review of #1488 found two more real gaps in the first landing, both fixed before this note's own
+correction, not carried forward:** (1) the merge always tagged a checkpoint to source id `0` —
+correct for `print`'s own single-source map and every real caller today, but silently wrong for a
+multi-source aggregate map (a test module's own map spanning several `.bynk` files,
+`tests_emit.rs:537`/`:1936`'s own real shape, exactly #1475's own next conversion target). Fixed by
+threading a `source_id` alongside the map everywhere (a small private `MergeTarget<'a> { map,
+source_id }` carrier, reborrowed once per child the same way a bare `&mut` was). (2) the merge was
+only ever checked inside `render_block_stmts`, for a body's own *direct* children — a `nested_map`
+set on the statement handed to `print`/`print_stmt_and_merge` *itself*, or nested one level deeper
+still (inside a `Block`/`Switch` case/`try`/`catch` within a real function body), silently vanished.
+Fixed by centralising the check inside `render_stmt` itself, once, rather than patching each
+call site independently — every caller, however deep, now gets the merge for free by simply
+forwarding the map on, closing the whole bug class rather than the one instance the review happened
+to find. `render_block_stmts`/`render_block_body` both simplified back down to plain map-forwarding
+as a result.
+
+Existing `print_stmt`/`print_class_method`/`print_object_entry`/`print` signatures and behaviour
+are byte-for-byte unchanged throughout — every internal call site not on the path from the new
+entry points passes `None`, verified by the full existing suite passing unchanged plus eight new
+tests exercising the merge path directly (all three entry points; `print`'s own automatic top-level
+case; a decisive `source_id` test, confirmed to actually fail without the fix by temporarily
+reverting it; a bare top-level `Raw` statement; a checkpoint on a body's own second line, the first
+test in this file to exercise the merge's real line-rebasing arithmetic rather than the degenerate
+line-0 case; and a `TsDecl::Class` with both a `nested_map`-bearing constructor and method, proving
+the reborrow-across-multiple-consumers path). No `bynk-emit` call site converted — that begins at
 slice (4)/(5) (#1480 onward), now unblocked.
 
 **Corrected argued floor, numbered where #1461 could only gesture at "a dozen-plus."** Permanent
