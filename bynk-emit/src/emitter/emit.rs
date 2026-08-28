@@ -2274,8 +2274,12 @@ impl<'a> RawBody<'a> {
 
 /// Prints `method` (always at `class_depth = 0` — every call site here
 /// prints a whole class body) into `out`, then — if `source_map` is
-/// `Some` — merges `body_smb`'s own per-statement mappings back into the
-/// module map.
+/// `Some` — merges `body_smb`'s own per-statement mappings into it. Despite
+/// the name, `source_map` isn't necessarily the real module map any more:
+/// `emit_agent`'s own callers (#1482) pass a class-local map that its own
+/// caller merges into the module map one level up, the same two-level
+/// composition `emit_provider`'s own doc comment (below) already
+/// establishes for its own class wrapper.
 ///
 /// Degrades to no merge (no mapping for this method) rather than risk a
 /// confidently WRONG one if any assumption is ever violated — the same
@@ -2320,8 +2324,12 @@ fn emit_class_method_and_merge_source_map(
 /// `body_smb` at its own real print-time offset *within this function's own
 /// local `out` buffer* — computed by `bynk_ts::print_class_method_and_merge`
 /// itself (#1477) rather than the exact-arithmetic recovery
-/// `emit_class_method_and_merge_source_map` (above) still performs for
-/// `emit_service`/`emit_agent`'s own not-yet-converted call sites. The
+/// `emit_class_method_and_merge_source_map` (above) still performs —
+/// `emit_service` no longer calls it at all (#1481); `emit_agent`'s own
+/// per-handler loop and `emit_ws_do_method` are its only remaining callers
+/// (#1482 converted `emit_agent`'s own top-level signature, but left this
+/// hand-rolled per-method recovery itself untouched, same as #1481 did).
+/// The
 /// caller then merges this ONE combined map into its own real module map at
 /// the class's own real splice offset, via `print_stmt_and_merge` — the same
 /// two-level "local map merges into a local buffer, that buffer's own map
