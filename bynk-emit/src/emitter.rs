@@ -179,6 +179,16 @@ pub(crate) fn runtime_import_for(from_source: &Path, ext: ImportExt) -> String {
     }
 }
 
+/// #1478: appends `stmts` to `out`, printing each at depth 0 — the shared
+/// "consume a real-node-returning callee's own output" step every one of
+/// `emit`/`emit_project`'s own now-converted-callee call sites uses, instead
+/// of each repeating the same `for stmt in ... { out.push_str(...) }` loop.
+fn extend_printed(out: &mut String, stmts: Vec<bynk_ts::TsStmt>) {
+    for stmt in stmts {
+        out.push_str(&bynk_ts::print_stmt(&stmt, 0));
+    }
+}
+
 /// Emit TypeScript source for the typed commons (single-file mode).
 ///
 /// Takes a [`CheckedProgram`] rather than a bare `TypedCommons` (T3.7, R3.10):
@@ -194,13 +204,13 @@ pub(crate) fn emit(program: &CheckedProgram) -> String {
     // lowerings write as they emit — not from scanning `body` for the helper's
     // name, which a user string literal or doc comment could also contain.
     let mut body = String::new();
-    write_commons_doc(&mut body, commons);
+    extend_printed(&mut body, write_commons_doc(commons));
     let dummy_ctx = single_file_ctx();
     // Types come first (they define interfaces and namespaces).
     for item in &commons.commons.items {
         if let CommonsItem::Type(t) = item {
             let shape = type_shape_for(t, program);
-            emit_type(&mut body, t, &shape, commons, &dummy_ctx);
+            extend_printed(&mut body, emit_type(t, &shape, commons, &dummy_ctx));
         }
     }
     // Free functions afterward.
@@ -212,12 +222,9 @@ pub(crate) fn emit(program: &CheckedProgram) -> String {
         }
     }
     // v0.22b: module-local codec helpers for Json.encode/decode targets.
-    emit_json_codec_helpers(
+    extend_printed(
         &mut body,
-        commons,
-        &dummy_ctx,
-        &HashSet::new(),
-        &HashSet::new(),
+        emit_json_codec_helpers(commons, &dummy_ctx, &HashSet::new(), &HashSet::new()),
     );
     let mut out = String::new();
     // v0.153 (ADR 0177): a commons that names `HttpResult` in any signature —
@@ -350,26 +357,26 @@ pub(crate) fn emit_project(
     // (sibling file in the same commons/context, or a used commons / consumed
     // context).
     let references = collect_external_references(commons, ctx);
-    emit_project_imports(&mut out, commons, ctx, &references);
+    extend_printed(&mut out, emit_project_imports(commons, ctx, &references));
     if !references.is_empty() {
         writeln!(out).unwrap();
     }
     // v0.6: namespace imports for each consumed context that exposes services.
     // v0.15: also for consumed contexts whose capabilities this context uses.
-    emit_cross_context_namespace_imports(&mut out, commons, ctx);
+    extend_printed(&mut out, emit_cross_context_namespace_imports(commons, ctx));
     // For contexts: emit per-context nominal rebrand aliases for each type
     // imported via `uses` that this file references. The structural shape is
     // inherited from the original commons type; the brand makes the
     // rebranded type nominally distinct (v0.4 §6.2).
     if ctx.unit_kind == UnitKind::Context {
-        emit_context_rebrands(&mut out, &references, commons, ctx);
+        extend_printed(&mut out, emit_context_rebrands(&references, commons, ctx));
     }
-    write_commons_doc(&mut out, commons);
+    extend_printed(&mut out, write_commons_doc(commons));
     for item in &commons.commons.items {
         if let CommonsItem::Type(t) = item {
             smb.borrow_mut().record(out.len(), t.span);
             let shape = type_shape_for(t, program);
-            emit_type(&mut out, t, &shape, commons, ctx);
+            extend_printed(&mut out, emit_type(t, &shape, commons, ctx));
         }
     }
     // Events track, slice 0 (spine #936): an `event` is checker-visible as
@@ -385,7 +392,7 @@ pub(crate) fn emit_project(
             let t = e.as_type_decl();
             smb.borrow_mut().record(out.len(), t.span);
             let shape = type_shape_for(&t, program);
-            emit_type(&mut out, &t, &shape, commons, ctx);
+            extend_printed(&mut out, emit_type(&t, &shape, commons, ctx));
         }
     }
     for item in &commons.commons.items {
@@ -424,7 +431,10 @@ pub(crate) fn emit_project(
         .find(|m| m.annotations.iter().any(|a| a.name.name == "reference"))
     {
         smb.borrow_mut().record(out.len(), reference.span);
-        emit_messages_bundle(&mut out, &messages_blocks, reference, &ctx.runtime_use);
+        extend_printed(
+            &mut out,
+            emit_messages_bundle(&messages_blocks, reference, &ctx.runtime_use),
+        );
     }
     // v0.5: behavioural items follow the type/fn declarations.
     for item in &commons.commons.items {
@@ -438,7 +448,7 @@ pub(crate) fn emit_project(
                 let IrItem::Capability { ops, .. } = lower_capability_item_ir(c, program) else {
                     unreachable!("lower_capability_item_ir always returns IrItem::Capability")
                 };
-                emit_capability(&mut out, c, &ops, commons);
+                extend_printed(&mut out, emit_capability(c, &ops, commons));
             }
             CommonsItem::Provider(p) => {
                 smb.borrow_mut().record(out.len(), p.span);
@@ -539,7 +549,7 @@ pub(crate) fn emit_project(
             .iter()
             .any(|i| matches!(i, CommonsItem::Service(_)));
         if has_services {
-            emit_make_surface(&mut out, commons, ctx);
+            extend_printed(&mut out, emit_make_surface(commons, ctx));
         }
     }
     // v0.8: in workers mode, the context module also exports per-type
@@ -549,10 +559,14 @@ pub(crate) fn emit_project(
     // v0.96 (ADR 0124): runs on both targets — workers emits service-call +
     // agent-rehydration boundary helpers; bundle emits only the agent-rehydration
     // ones (the gate's deserialisers), since in-process calls need no wire codec.
-    let (boundary_names, boundary_insts) = emit_boundary_helpers(&mut out, program, ctx);
+    let (boundary_stmts, boundary_names, boundary_insts) = emit_boundary_helpers(program, ctx);
+    extend_printed(&mut out, boundary_stmts);
     // v0.22b: module-local codec helpers for this file's Json.encode/decode
     // targets, deduped against the workers boundary helpers above.
-    emit_json_codec_helpers(&mut out, commons, ctx, &boundary_names, &boundary_insts);
+    extend_printed(
+        &mut out,
+        emit_json_codec_helpers(commons, ctx, &boundary_names, &boundary_insts),
+    );
     // #1476: `ctx.runtime_use` is fully populated now — every producer above has
     // had its chance to note `bytes()`/`icu()` (`emitter::runtime_use`'s own doc:
     // this used to key on `out.contains("<helper name>")`, wrong in both
@@ -565,7 +579,7 @@ pub(crate) fn emit_project(
     // insertion already uses for the identical "content prepended after
     // checkpoints were recorded" shape).
     let mut header = String::new();
-    write_header(&mut header, commons, ctx);
+    extend_printed(&mut header, write_header(commons, ctx));
     smb.borrow_mut().shift_checkpoints(header.len());
     header.push_str(&out);
     let out = header;
@@ -1066,37 +1080,43 @@ fn collect_json_codec_roots(commons: &TypedCommons) -> Vec<TypeRef> {
 /// closure machinery is shared with the workers boundary path; `skip_names`
 /// / `skip_insts` dedupe against helpers that path already emitted into
 /// this module.
+/// #1478: returns real [`bynk_ts::TsStmt`]s (was `out: &mut String`) — the
+/// same `decls_as_stmts[_block]` conversion `emit_boundary_helpers`/
+/// `emit_consumed_context_helpers` just used.
 fn emit_json_codec_helpers(
-    out: &mut String,
     commons: &TypedCommons,
     ctx: &EmitProjectCtx,
     skip_names: &HashSet<String>,
     skip_insts: &HashSet<String>,
-) {
+) -> Vec<bynk_ts::TsStmt> {
     use serialisation::{collect_codec_closure, emit_generic_helpers, emit_helpers_for_owner};
     let roots = collect_json_codec_roots(commons);
     if roots.is_empty() {
-        return;
+        return Vec::new();
     }
     let (names, insts) = collect_codec_closure(&roots, &commons.types);
     let names: Vec<String> = names
         .into_iter()
         .filter(|n| !skip_names.contains(n))
         .collect();
-    serialisation::print_decls_block(
-        out,
-        emit_helpers_for_owner(&names, &commons.types, &ctx.commons_name, &ctx.runtime_use),
-    );
+    let mut stmts = serialisation::decls_as_stmts_block(emit_helpers_for_owner(
+        &names,
+        &commons.types,
+        &ctx.commons_name,
+        &ctx.runtime_use,
+    ));
     let insts: Vec<serialisation::GenericInst> = insts
         .into_iter()
         .filter(|i| !skip_insts.contains(&i.ts_name()))
         .collect();
     if !insts.is_empty() {
-        serialisation::print_decls(
-            out,
-            emit_generic_helpers(&insts, &commons.types, &ctx.runtime_use),
-        );
+        stmts.extend(serialisation::decls_as_stmts(emit_generic_helpers(
+            &insts,
+            &commons.types,
+            &ctx.runtime_use,
+        )));
     }
+    stmts
 }
 
 /// Emit boundary serialise/deserialise helpers (v0.8 §3.4 / §5.2) for
@@ -1105,11 +1125,16 @@ fn emit_json_codec_helpers(
 /// Result/Option instantiation used at the boundary. Returns the emitted
 /// (or locally-bound) helper type names and generic-instantiation names so
 /// the v0.22b codec emission can dedupe against them.
+/// #1478: returns real [`bynk_ts::TsStmt`]s (was `out: &mut String`) as a
+/// new first element of the tuple — every `out`-write here is already
+/// exclusively through `serialisation::print_decls[_block]` or a real
+/// `bynk_ts::print_stmt` call, so each becomes a `stmts.extend`/`stmts.push`
+/// into the same local `stmts`, threaded through `emit_consumed_context_
+/// helpers`'s own identical conversion.
 fn emit_boundary_helpers(
-    out: &mut String,
     program: &CheckedProgram,
     ctx: &EmitProjectCtx,
-) -> (HashSet<String>, HashSet<String>) {
+) -> (Vec<bynk_ts::TsStmt>, HashSet<String>, HashSet<String>) {
     use serialisation::{
         collect_boundary_types, collect_generic_instantiations, emit_generic_helpers,
         emit_helpers_for_owner,
@@ -1161,6 +1186,7 @@ fn emit_boundary_helpers(
 
     let locally_declared: HashSet<String> = ctx.file_decl_index.types.keys().cloned().collect();
     if ctx.unit_kind == UnitKind::Context {
+        let mut stmts: Vec<bynk_ts::TsStmt> = Vec::new();
         let boundary_types_all = collect_boundary_types(&commons.types, &services, &agents);
         // Locally-declared boundary types get full helpers in this module. On
         // `bundle` (v0.96, ADR 0124) the commons modules emit no boundary helpers,
@@ -1171,15 +1197,12 @@ fn emit_boundary_helpers(
             .filter(|n| !workers || locally_declared.contains(*n))
             .cloned()
             .collect();
-        serialisation::print_decls_block(
-            out,
-            emit_helpers_for_owner(
-                &local_boundary,
-                &commons.types,
-                ctx.commons_name.as_str(),
-                &ctx.runtime_use,
-            ),
-        );
+        stmts.extend(serialisation::decls_as_stmts_block(emit_helpers_for_owner(
+            &local_boundary,
+            &commons.types,
+            ctx.commons_name.as_str(),
+            &ctx.runtime_use,
+        )));
 
         // Re-export helpers for commons-owned boundary types so consumers
         // can address them through this context's handlers.ts namespace
@@ -1237,24 +1260,21 @@ fn emit_boundary_helpers(
             // stays opaque `TsStmt::raw` rather than a new variant for a
             // single call site, the established "odd, one-off shape stays
             // opaque text" posture.
-            out.push_str(&bynk_ts::print_stmt(
-                &bynk_ts::TsStmt::decl(
-                    bynk_ts::TsDecl::Import {
-                        type_only: false,
-                        names: parts.clone(),
-                        from: import_spec,
-                    },
-                    None,
-                ),
-                0,
+            stmts.push(bynk_ts::TsStmt::decl(
+                bynk_ts::TsDecl::Import {
+                    type_only: false,
+                    names: parts.clone(),
+                    from: import_spec,
+                },
+                None,
             ));
-            out.push_str(&bynk_ts::print_stmt(
-                &bynk_ts::TsStmt::raw(format!("export {{ {} }};\n", parts.join(", ")), None),
-                0,
+            stmts.push(bynk_ts::TsStmt::raw(
+                format!("export {{ {} }};\n", parts.join(", ")),
+                None,
             ));
         }
         if !by_commons.is_empty() {
-            writeln!(out).unwrap();
+            stmts.push(bynk_ts::TsStmt::blank(None));
         }
 
         // Specialised Result_/Option_ helpers for the instantiations used —
@@ -1275,10 +1295,11 @@ fn emit_boundary_helpers(
         // boundary either way.
         let insts =
             collect_generic_instantiations(&services, &agents, &local_boundary, &commons.types);
-        serialisation::print_decls(
-            out,
-            emit_generic_helpers(&insts, &commons.types, &ctx.runtime_use),
-        );
+        stmts.extend(serialisation::decls_as_stmts(emit_generic_helpers(
+            &insts,
+            &commons.types,
+            &ctx.runtime_use,
+        )));
 
         // #661 (ADR 0199 Decision G discharged): the caller's own view of each
         // consumed context's boundary codecs, so a cross-context call reaches
@@ -1294,7 +1315,10 @@ fn emit_boundary_helpers(
                 emitted_names.extend(names.iter().cloned());
             }
             let mut emitted_insts: HashSet<String> = insts.iter().map(|i| i.ts_name()).collect();
-            emit_consumed_context_helpers(out, program, ctx, &mut emitted_names, &mut emitted_insts)
+            let (consumed_stmts, consumed_names, consumed_insts) =
+                emit_consumed_context_helpers(program, ctx, &mut emitted_names, &mut emitted_insts);
+            stmts.extend(consumed_stmts);
+            (consumed_names, consumed_insts)
         } else {
             (Vec::new(), Vec::new())
         };
@@ -1303,13 +1327,13 @@ fn emit_boundary_helpers(
         ret_names.extend(consumed_names);
         let mut ret_insts: HashSet<String> = insts.iter().map(|i| i.ts_name()).collect();
         ret_insts.extend(consumed_insts);
-        (ret_names, ret_insts)
+        (stmts, ret_names, ret_insts)
     } else if !workers {
         // Commons/adapters have no agents (no rehydration boundary), and on
         // `bundle` there is no cross-Worker call boundary either — so emit no
         // boundary helpers, matching pre-v0.96 bundle output (the rehydration
         // pass that now always runs is for context-declared agents only).
-        (HashSet::new(), HashSet::new())
+        (Vec::new(), HashSet::new(), HashSet::new())
     } else {
         // Commons/adapters (workers): emit helpers for every type declared in
         // this file, plus (v0.18) the generic instantiations their fields use —
@@ -1333,26 +1357,26 @@ fn emit_boundary_helpers(
             .map(|(name, _)| name.clone())
             .collect();
         locally.sort();
-        serialisation::print_decls_block(
-            out,
-            emit_helpers_for_owner(
-                &locally,
-                &commons.types,
-                ctx.commons_name.as_str(),
-                &ctx.runtime_use,
-            ),
-        );
+        let mut stmts: Vec<bynk_ts::TsStmt> = Vec::new();
+        stmts.extend(serialisation::decls_as_stmts_block(emit_helpers_for_owner(
+            &locally,
+            &commons.types,
+            ctx.commons_name.as_str(),
+            &ctx.runtime_use,
+        )));
         let insts = collect_generic_instantiations(
             &HashMap::new(),
             &HashMap::new(),
             &locally,
             &commons.types,
         );
-        serialisation::print_decls(
-            out,
-            emit_generic_helpers(&insts, &commons.types, &ctx.runtime_use),
-        );
+        stmts.extend(serialisation::decls_as_stmts(emit_generic_helpers(
+            &insts,
+            &commons.types,
+            &ctx.runtime_use,
+        )));
         (
+            stmts,
             locally.into_iter().collect(),
             insts.iter().map(|i| i.ts_name()).collect(),
         )
@@ -1377,13 +1401,16 @@ fn emit_boundary_helpers(
 /// `emitted_names` / `emitted_insts`, which the caller seeds with everything it
 /// has already emitted. Returns the names and generic-instantiation names newly
 /// emitted, so the Json-codec pass dedupes against them too.
+/// #1478: returns real [`bynk_ts::TsStmt`]s (was `out: &mut String`) as a
+/// new first element of the tuple — every `out`-write here is already
+/// exclusively through `serialisation::print_decls[_block]`, so each becomes
+/// its sibling `decls_as_stmts[_block]` call, appended into `stmts`.
 fn emit_consumed_context_helpers(
-    out: &mut String,
     program: &CheckedProgram,
     ctx: &EmitProjectCtx,
     emitted_names: &mut HashSet<String>,
     emitted_insts: &mut HashSet<String>,
-) -> (Vec<String>, Vec<String>) {
+) -> (Vec<bynk_ts::TsStmt>, Vec<String>, Vec<String>) {
     use serialisation::{
         collect_codec_closure, emit_generic_helpers_qualified, emit_helpers_for_owner_qualified,
     };
@@ -1391,6 +1418,7 @@ fn emit_consumed_context_helpers(
     // `emit_boundary_helpers`'s own identical note.
     let commons = program.program();
     let info = &ctx.cross_context;
+    let mut stmts: Vec<bynk_ts::TsStmt> = Vec::new();
     let mut consumed_names_out: Vec<String> = Vec::new();
     let mut consumed_insts_out: Vec<String> = Vec::new();
 
@@ -1528,8 +1556,7 @@ fn emit_consumed_context_helpers(
             .cloned()
             .collect();
         to_emit.sort();
-        serialisation::print_decls_block(
-            out,
+        stmts.extend(serialisation::decls_as_stmts_block(
             emit_helpers_for_owner_qualified(
                 &to_emit,
                 types_table,
@@ -1537,7 +1564,7 @@ fn emit_consumed_context_helpers(
                 &qual,
                 &ctx.runtime_use,
             ),
-        );
+        ));
         consumed_names_out.extend(to_emit);
 
         let to_emit_insts: Vec<serialisation::GenericInst> = cinsts
@@ -1547,13 +1574,12 @@ fn emit_consumed_context_helpers(
         for i in &to_emit_insts {
             consumed_insts_out.push(i.ts_name());
         }
-        serialisation::print_decls(
-            out,
+        stmts.extend(serialisation::decls_as_stmts(
             emit_generic_helpers_qualified(&to_emit_insts, types_table, &qual, &ctx.runtime_use),
-        );
+        ));
     }
 
-    (consumed_names_out, consumed_insts_out)
+    (stmts, consumed_names_out, consumed_insts_out)
 }
 
 /// #661: the cross-context services this unit actually **calls**, as `consumed
@@ -1615,14 +1641,16 @@ fn called_consumed_services(
 ///
 /// The brand makes two contexts that both `uses` the same commons see distinct
 /// nominal `Money` types in their TypeScript output (v0.4 §3.4 / §6.2).
+/// #1478: real-node-internally already — returns its real declarations
+/// (a rebrand type alias, and — for a refined/opaque base — a forwarding
+/// const, per name) instead of writing into `out: &mut String`.
 fn emit_context_rebrands(
-    out: &mut String,
     refs: &ExternalReferences,
     commons: &TypedCommons,
     ctx: &EmitProjectCtx,
-) {
+) -> Vec<bynk_ts::TsStmt> {
     let Some(owning) = &ctx.owning_context else {
-        return;
+        return Vec::new();
     };
     // Collect names imported via `uses` (kind == Commons in imported_from_kind).
     // R4.10/R8.2: reads `bynk_check::resolver::compute_is_uses_commons_type`, the same
@@ -1647,8 +1675,9 @@ fn emit_context_rebrands(
     names.sort();
     names.dedup();
     if names.is_empty() {
-        return;
+        return Vec::new();
     }
+    let mut stmts = Vec::new();
     for name in &names {
         // v0.174 (#592): a generic commons type keeps its parameters across the
         // rebrand — `Paginated[T]` aliases as `Paginated<T> =
@@ -1680,7 +1709,7 @@ fn emit_context_rebrands(
             })),
             None,
         );
-        out.push_str(&bynk_ts::print_stmt(&type_alias, 0));
+        stmts.push(type_alias);
         // v0.9.2: a commons refined/opaque type carries a value-side
         // constructor (`.of`, and `.unsafe` for opaque). Re-export it under the
         // rebranded name so a context calling `ShortCode.of(...)` resolves to a
@@ -1799,10 +1828,11 @@ fn emit_context_rebrands(
                 })),
                 None,
             );
-            out.push_str(&bynk_ts::print_stmt(&const_decl, 0));
+            stmts.push(const_decl);
         }
     }
-    writeln!(out).unwrap();
+    stmts.push(bynk_ts::TsStmt::blank(None));
+    stmts
 }
 
 /// If a type declaration is a refined or opaque base type, return its base
@@ -2333,11 +2363,13 @@ fn record_name_ref(
 /// Emit `import * as <ns> from "..."` for each consumed context that
 /// exposes services (so the consuming file can reference its `makeSurface`
 /// return type and brand the cross-context call arguments).
+/// #1478: real-node-internally already — returns one real `TsDecl::
+/// ImportNamespace` per consumed context instead of writing into
+/// `out: &mut String`.
 fn emit_cross_context_namespace_imports(
-    out: &mut String,
     commons: &TypedCommons,
     ctx: &EmitProjectCtx,
-) {
+) -> Vec<bynk_ts::TsStmt> {
     let info = &ctx.cross_context;
     // Consumed contexts that expose services (v0.6) plus, v0.15, those whose
     // capabilities this context references via `given B.Cap`.
@@ -2349,8 +2381,9 @@ fn emit_cross_context_namespace_imports(
         .collect();
     needed.extend(cross_context_cap_namespaces(commons, info));
     if needed.is_empty() {
-        return;
+        return Vec::new();
     }
+    let mut stmts = Vec::new();
     let consumed_with_services: Vec<&String> = needed.iter().collect();
     for q in &consumed_with_services {
         // Pick the first known file path for the consumed context as the
@@ -2402,27 +2435,28 @@ fn emit_cross_context_namespace_imports(
         // Arc C, slice 30 (#1392): a real `TsDecl::ImportNamespace` —
         // `type_only` (#1392's own new field) covers the `import type * as`
         // form.
-        out.push_str(&bynk_ts::print_stmt(
-            &bynk_ts::TsStmt::decl(
-                bynk_ts::TsDecl::ImportNamespace {
-                    type_only,
-                    alias: ns,
-                    from: import,
-                },
-                None,
-            ),
-            0,
+        stmts.push(bynk_ts::TsStmt::decl(
+            bynk_ts::TsDecl::ImportNamespace {
+                type_only,
+                alias: ns,
+                from: import,
+            },
+            None,
         ));
     }
-    writeln!(out).unwrap();
+    stmts.push(bynk_ts::TsStmt::blank(None));
+    stmts
 }
 
+/// #1478: real-node-internally already — returns one real `TsDecl::Import`
+/// per sibling/cross-unit import group instead of writing into
+/// `out: &mut String`.
 fn emit_project_imports(
-    out: &mut String,
     commons: &TypedCommons,
     ctx: &EmitProjectCtx,
     refs: &ExternalReferences,
-) {
+) -> Vec<bynk_ts::TsStmt> {
+    let mut stmts = Vec::new();
     // Events track, slice 0 (spine #936): the bare event-type names this
     // context's own `from Events(E)` service headers name — see the
     // Workers type-only-import narrowing below.
@@ -2460,16 +2494,13 @@ fn emit_project_imports(
         let mut sorted: Vec<&String> = names.iter().collect();
         sorted.sort();
         // Arc C, slice 30 (#1392): a real `TsDecl::Import`.
-        out.push_str(&bynk_ts::print_stmt(
-            &bynk_ts::TsStmt::decl(
-                bynk_ts::TsDecl::Import {
-                    type_only: false,
-                    names: sorted.iter().map(|s| ts_ident(s)).collect(),
-                    from: import,
-                },
-                None,
-            ),
-            0,
+        stmts.push(bynk_ts::TsStmt::decl(
+            bynk_ts::TsDecl::Import {
+                type_only: false,
+                names: sorted.iter().map(|s| ts_ident(s)).collect(),
+                from: import,
+            },
+            None,
         ));
     }
     // Cross-unit imports: group by *target file path*.
@@ -2546,16 +2577,13 @@ fn emit_project_imports(
             // own per-name `as __CommonsX`/`type X` prefixes already match
             // `names`'s own documented "raw text slot" convention, no new
             // gap.
-            out.push_str(&bynk_ts::print_stmt(
-                &bynk_ts::TsStmt::decl(
-                    bynk_ts::TsDecl::Import {
-                        type_only: false,
-                        names: parts,
-                        from: import,
-                    },
-                    None,
-                ),
-                0,
+            stmts.push(bynk_ts::TsStmt::decl(
+                bynk_ts::TsDecl::Import {
+                    type_only: false,
+                    names: parts,
+                    from: import,
+                },
+                None,
             ));
         }
     }
@@ -2564,11 +2592,9 @@ fn emit_project_imports(
     // formed statement text, stays opaque `TsStmt::raw`, the established
     // "pre-formatted pass-through" pattern.
     for line in &ctx.extra_import_lines {
-        out.push_str(&bynk_ts::print_stmt(
-            &bynk_ts::TsStmt::raw(format!("{line}\n"), None),
-            0,
-        ));
+        stmts.push(bynk_ts::TsStmt::raw(format!("{line}\n"), None));
     }
+    stmts
 }
 
 /// Compute a relative import specifier from `from_source` (a `.bynk` path)
@@ -2632,11 +2658,13 @@ fn relative_to(from: &Path, target: &Path) -> PathBuf {
     out
 }
 
-fn write_header(out: &mut String, commons: &TypedCommons, ctx: &EmitProjectCtx) {
+/// #1478: real-node-internally already — returns its own real statements
+/// (the two-comment banner, plus a conditional runtime-import declaration)
+/// instead of writing into `out: &mut String`.
+fn write_header(commons: &TypedCommons, ctx: &EmitProjectCtx) -> Vec<bynk_ts::TsStmt> {
     // Arc C, slice 30 (#1392): the 2-line banner converts to two real
     // `TsStmt::Comment` statements, the same `events_fanout.rs`-established
-    // precedent (#1317) every other Arc C header already uses, printed
-    // through `print_stmt` at depth 0.
+    // precedent (#1317) every other Arc C header already uses.
     let kind = match ctx.unit_kind {
         UnitKind::Commons => "commons",
         UnitKind::Context => "context",
@@ -2644,15 +2672,11 @@ fn write_header(out: &mut String, commons: &TypedCommons, ctx: &EmitProjectCtx) 
         UnitKind::Integration => "integration test",
         UnitKind::Adapter => "adapter",
     };
-    out.push_str(&bynk_ts::print_stmt(
-        &bynk_ts::TsStmt::comment("Generated by bynkc — do not edit by hand.", None),
-        0,
-    ));
-    out.push_str(&bynk_ts::print_stmt(
-        &bynk_ts::TsStmt::comment(format!("{kind} {}", commons.commons.name.joined()), None),
-        0,
-    ));
-    writeln!(out).unwrap();
+    let mut stmts = vec![
+        bynk_ts::TsStmt::comment("Generated by bynkc — do not edit by hand.", None),
+        bynk_ts::TsStmt::comment(format!("{kind} {}", commons.commons.name.joined()), None),
+        bynk_ts::TsStmt::blank(None),
+    ];
     if !commons.commons.items.is_empty() {
         let runtime_import = runtime_import_for(&ctx.source_path, ctx.import_ext);
         let has_agent = commons
@@ -2871,19 +2895,17 @@ fn write_header(out: &mut String, commons: &TypedCommons, ctx: &EmitProjectCtx) 
                     .split(", "),
             );
         }
-        out.push_str(&bynk_ts::print_stmt(
-            &bynk_ts::TsStmt::decl(
-                bynk_ts::TsDecl::Import {
-                    type_only: false,
-                    names: parts.into_iter().map(str::to_string).collect(),
-                    from: runtime_import,
-                },
-                None,
-            ),
-            0,
+        stmts.push(bynk_ts::TsStmt::decl(
+            bynk_ts::TsDecl::Import {
+                type_only: false,
+                names: parts.into_iter().map(str::to_string).collect(),
+                from: runtime_import,
+            },
+            None,
         ));
-        writeln!(out).unwrap();
+        stmts.push(bynk_ts::TsStmt::blank(None));
     }
+    stmts
 }
 
 /// Variant of write_header for single-file (no project context) emission.
@@ -3007,11 +3029,17 @@ pub(crate) const JSON_CODEC_RUNTIME_IMPORTS: &str =
     ", Ok, Err, type Result, type JsonValue, type JsonError";
 
 /// Emit the commons-level doc block (if any) at the current position.
-fn write_commons_doc(out: &mut String, commons: &TypedCommons) {
+/// #1478: real-node-internally already (a single `TsStmtKind::DocComment`,
+/// the same shape [`emit_doc_block`] itself builds — inlined directly here
+/// rather than calling that `out: &mut String`-shaped helper, since its own
+/// signature and 14 real callers stay unchanged, #1333's own doc).
+fn write_commons_doc(commons: &TypedCommons) -> Vec<bynk_ts::TsStmt> {
+    let mut stmts = Vec::new();
     if let Some(doc) = &commons.commons.documentation {
-        emit_doc_block(out, Some(doc), 0);
-        writeln!(out).unwrap();
+        stmts.push(bynk_ts::TsStmt::doc_comment(doc, None));
+        stmts.push(bynk_ts::TsStmt::blank(None));
     }
+    stmts
 }
 
 /// The module-level state-registry constant name for an agent class.

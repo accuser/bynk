@@ -43,14 +43,21 @@ use super::*;
 /// including this type's own attached methods via `emit_attached_methods`,
 /// which stays on the untouched, unconverted body-lowering path — see that
 /// function's own doc comment).
+/// #1478: returns real [`bynk_ts::TsStmt`]s (was `out: &mut String`) — the
+/// leading doc comment is now built inline (matching every other converted
+/// caller's own way of replacing an `emit_doc_block` call) since
+/// `emit_doc_block` itself stays `out`-writing (14 other callers, out of
+/// scope here).
 pub(crate) fn emit_type(
-    out: &mut String,
     t: &TypeDecl,
     shape: &TypeShape,
     commons: &TypedCommons,
     ctx: &EmitProjectCtx,
-) {
-    emit_doc_block(out, t.documentation.as_deref(), 0);
+) -> Vec<bynk_ts::TsStmt> {
+    let mut stmts = Vec::new();
+    if let Some(doc) = t.documentation.as_deref() {
+        stmts.push(bynk_ts::TsStmt::doc_comment(doc, None));
+    }
     // For contexts, the per-type brand string is qualified by the context's
     // name (so two contexts' locally-declared `Order` types have distinct
     // brands at the TS level).
@@ -71,8 +78,7 @@ pub(crate) fn emit_type(
             base,
             refinement,
             opaque,
-        } => emit_refined_type(
-            out,
+        } => stmts.extend(emit_refined_type(
             t,
             RefinedShape {
                 base: *base,
@@ -82,16 +88,19 @@ pub(crate) fn emit_type(
             commons,
             &brand_prefix,
             &ctx.runtime_use,
-        ),
-        TypeShape::Record { fields } => emit_record_type(out, t, fields, commons, &ctx.runtime_use),
+        )),
+        TypeShape::Record { fields } => {
+            stmts.extend(emit_record_type(t, fields, commons, &ctx.runtime_use))
+        }
         // `embeds` is not read here — today's emitter has no reader for
         // `SumBody::embeds` anywhere (confirmed by grep; `embeds` is checker-
         // enforced construction-time only), so `TypeShape::Sum::embeds` stays
         // unread by this slice too, not a gap introduced by it.
         TypeShape::Sum { variants, .. } => {
-            emit_sum_type(out, t, variants, commons, &ctx.runtime_use)
+            stmts.extend(emit_sum_type(t, variants, commons, &ctx.runtime_use))
         }
     }
+    stmts
 }
 
 /// Emit a doc block as a JSDoc-style comment at the given indent. Each line
@@ -169,13 +178,12 @@ struct RefinedShape<'a> {
 /// object's own construction. This function's own exact signature is
 /// unchanged, the same P7.9/step-1 pattern.
 fn emit_refined_type(
-    out: &mut String,
     t: &TypeDecl,
     shape: RefinedShape<'_>,
     commons: &TypedCommons,
     brand_prefix: &str,
     runtime_use: &RuntimeUse,
-) {
+) -> Vec<bynk_ts::TsStmt> {
     let RefinedShape {
         base,
         refinement,
@@ -196,8 +204,7 @@ fn emit_refined_type(
         })),
         None,
     );
-    out.push_str(&bynk_ts::print_stmt(&type_alias, 0));
-    writeln!(out).unwrap();
+    let mut stmts = vec![type_alias, bynk_ts::TsStmt::blank(None)];
 
     let checks_text = {
         let mut checks = String::new();
@@ -271,8 +278,9 @@ fn emit_refined_type(
         })),
         None,
     );
-    out.push_str(&bynk_ts::print_stmt(&const_decl, 0));
-    writeln!(out).unwrap();
+    stmts.push(const_decl);
+    stmts.push(bynk_ts::TsStmt::blank(None));
+    stmts
 }
 
 /// #1335 (R7.1): each guard is a real [`bynk_ts::TsStmt::If`] wrapping a
@@ -411,12 +419,11 @@ pub(crate) fn ts_type_params(params: &[TypeParam]) -> String {
 /// `String` `ts_ty` returns — a real node, not text. This function's own
 /// exact signature is unchanged, the same P7.9/step-1 pattern.
 fn emit_record_type(
-    out: &mut String,
     t: &TypeDecl,
     fields: &[(String, TyId)],
     commons: &TypedCommons,
     runtime_use: &RuntimeUse,
-) {
+) -> Vec<bynk_ts::TsStmt> {
     let type_params: Vec<String> = t.type_params.iter().map(|p| p.name.name.clone()).collect();
     let members: Vec<bynk_ts::TsTypeMember> = fields
         .iter()
@@ -435,14 +442,21 @@ fn emit_record_type(
         })),
         None,
     );
-    out.push_str(&bynk_ts::print_stmt(&interface, 0));
-    writeln!(out).unwrap();
-    writeln!(out, "export const {name} = {{", name = t.name.name).unwrap();
-    for entry in emit_attached_methods(&t.name.name, &t.type_params, commons, runtime_use) {
-        out.push_str(&bynk_ts::print_object_entry(&entry, 0));
-    }
-    writeln!(out, "}};").unwrap();
-    writeln!(out).unwrap();
+    let entries = emit_attached_methods(&t.name.name, &t.type_params, commons, runtime_use);
+    let const_decl = bynk_ts::TsStmt::decl(
+        bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::ConstDecl {
+            name: t.name.name.clone(),
+            ty: None,
+            init: bynk_ts::TsExpr::multiline_object_entries(entries),
+        })),
+        None,
+    );
+    vec![
+        interface,
+        bynk_ts::TsStmt::blank(None),
+        const_decl,
+        bynk_ts::TsStmt::blank(None),
+    ]
 }
 
 /// #1339 (R7.1): `export type {name}{params} =\n  | {...}\n  | {...};` is a
@@ -465,12 +479,11 @@ fn emit_record_type(
 /// type`'s own conversion just used. This function's own exact signature
 /// is unchanged, the same P7.9/step-1 pattern.
 fn emit_sum_type(
-    out: &mut String,
     t: &TypeDecl,
     variants: &[(String, Vec<(String, TyId)>)],
     commons: &TypedCommons,
     runtime_use: &RuntimeUse,
-) {
+) -> Vec<bynk_ts::TsStmt> {
     // #593: a generic sum erases to a TypeScript generic discriminated union,
     // exactly as a generic record erases to `interface Name<T>`. The type
     // parameters ride the `export type` header and each payload constructor
@@ -527,8 +540,7 @@ fn emit_sum_type(
         })),
         None,
     );
-    out.push_str(&bynk_ts::print_stmt(&type_alias, 0));
-    writeln!(out).unwrap();
+    let mut stmts = vec![type_alias, bynk_ts::TsStmt::blank(None)];
 
     let mut entries: Vec<bynk_ts::TsObjectEntry> = Vec::new();
     for (tag, payload) in variants {
@@ -590,17 +602,16 @@ fn emit_sum_type(
         })),
         None,
     );
-    out.push_str(&bynk_ts::print_stmt(&const_decl, 0));
-    writeln!(out).unwrap();
+    stmts.push(const_decl);
+    stmts.push(bynk_ts::TsStmt::blank(None));
+    stmts
 }
 
 /// #1337: returns real `bynk_ts::TsObjectEntry`s (was `out: &mut String`) —
-/// so `emit_refined_type`/`emit_record_type`/`emit_sum_type` (still
-/// unconverted) can splice them via `bynk_ts::print_object_entry`, and so a
-/// future slice converting those three can append them directly into a real
-/// `TsExpr::Object`'s own entries, with no opaque-entries carrier needed at
-/// all (the question this slice's own accepted proposal was asked to
-/// resolve).
+/// #1478's own `emit_refined_type`/`emit_record_type`/`emit_sum_type`
+/// conversion appends these directly into a real `TsExpr::Object`'s own
+/// entries, with no opaque-entries carrier needed at all (the question this
+/// slice's own accepted proposal was asked to resolve).
 fn emit_attached_methods(
     type_name: &str,
     type_params: &[TypeParam],
@@ -1861,24 +1872,33 @@ fn emit_sub_message(
 /// no opaque carve-outs, every shape they need (`TsExpr::As`, `TsExpr::
 /// Index`, `TsExpr::Conditional`, `TsBinaryOp::NullishCoalescing`, `TsStmt::
 /// If`/`Return`) already exists.
+/// #1478: returns real [`bynk_ts::TsStmt`]s (was `out: &mut String`). The
+/// `messagesByLocale` header/entries/closing-brace block stays exactly the
+/// opaque, hand-assembled text #1355's own doc above already carves out —
+/// built into a local buffer instead of the caller's `out`, then carried as
+/// one [`bynk_ts::TsStmtKind::Raw`] statement, the same "already real-node-
+/// printed internally, still `String`-typed at its own call boundary"
+/// carrier `emit_refined_type`'s own `checks_text` uses (#1478).
 pub(crate) fn emit_messages_bundle(
-    out: &mut String,
     blocks: &[&MessagesDecl],
     reference: &MessagesDecl,
     runtime_use: &RuntimeUse,
-) {
+) -> Vec<bynk_ts::TsStmt> {
+    let mut stmts = Vec::new();
+
     // One `code -> renderer` table per locale, inlined into a single
     // `messagesByLocale` object literal keyed by tag. No per-locale `const
     // __messages_<tag>` binding: a locale tag can be `"pt-BR"`, which is not a
     // valid TS identifier, so a named binding would be a syntax error — the
     // object is keyed by the tag *string* and needs no binding of its own.
+    let mut table = String::new();
     writeln!(
-        out,
+        table,
         "const messagesByLocale: Record<string, Record<string, (params: ReadonlyMap<string, MessageArg>) => string>> = {{"
     )
     .unwrap();
     for m in blocks {
-        emit_doc_block(out, m.documentation.as_deref(), INDENT_STEP);
+        emit_doc_block(&mut table, m.documentation.as_deref(), INDENT_STEP);
         let code_entries: Vec<bynk_ts::TsObjectEntry> = m
             .entries
             .iter()
@@ -1893,10 +1913,11 @@ pub(crate) fn emit_messages_bundle(
             format!("\"{}\"", escape_ts_string(&m.tag)),
             bynk_ts::TsExpr::multiline_object_entries(code_entries),
         );
-        out.push_str(&bynk_ts::print_object_entry(&locale_entry, 0));
+        table.push_str(&bynk_ts::print_object_entry(&locale_entry, 0));
     }
-    writeln!(out, "}};").unwrap();
-    writeln!(out).unwrap();
+    writeln!(table, "}};").unwrap();
+    stmts.push(bynk_ts::TsStmt::raw(table, None));
+    stmts.push(bynk_ts::TsStmt::blank(None));
 
     // `("tag" as string) as LocaleTag` — the inner `as` is wrapped in an
     // explicit `Paren`: `as` is left-associative, so the un-parenthesised
@@ -1933,7 +1954,7 @@ pub(crate) fn emit_messages_bundle(
         })),
         None,
     );
-    out.push_str(&bynk_ts::print_stmt(&ref_locale_decl, 0));
+    stmts.push(ref_locale_decl);
 
     let locale_list: Vec<bynk_ts::TsExpr> = blocks.iter().map(|m| tag_cast(&m.tag)).collect();
     let locales_decl = bynk_ts::TsStmt::decl(
@@ -1946,8 +1967,8 @@ pub(crate) fn emit_messages_bundle(
         })),
         None,
     );
-    out.push_str(&bynk_ts::print_stmt(&locales_decl, 0));
-    writeln!(out).unwrap();
+    stmts.push(locales_decl);
+    stmts.push(bynk_ts::TsStmt::blank(None));
 
     let ident = |s: &str| bynk_ts::TsExpr::Ident(s.to_string());
     let member = |object: bynk_ts::TsExpr, property: &str| bynk_ts::TsExpr::Member {
@@ -2045,8 +2066,9 @@ pub(crate) fn emit_messages_bundle(
         })),
         None,
     );
-    out.push_str(&bynk_ts::print_stmt(&render_fn, 0));
-    writeln!(out).unwrap();
+    stmts.push(render_fn);
+    stmts.push(bynk_ts::TsStmt::blank(None));
+    stmts
 }
 
 // -- v0.5 emission --
@@ -2088,13 +2110,18 @@ pub(crate) fn emit_messages_bundle(
 /// builds a `unique symbol` type). This function's own exact signature is
 /// unchanged, the P7.9/step-1 pattern — it never owned a `Verbatim`
 /// construction site.
+/// #1478: real-node-internally already — returns its two real declarations
+/// (an interface, an injection-token const) directly instead of writing into
+/// `out: &mut String`.
 pub(crate) fn emit_capability(
-    out: &mut String,
     c: &CapabilityDecl,
     ops: &[OpSig],
     commons: &TypedCommons,
-) {
-    emit_doc_block(out, c.documentation.as_deref(), 0);
+) -> Vec<bynk_ts::TsStmt> {
+    let mut stmts = Vec::new();
+    if let Some(doc) = c.documentation.as_deref() {
+        stmts.push(bynk_ts::TsStmt::doc_comment(doc, None));
+    }
     // Review of #1194: `zip` silently truncates to the shorter side — this
     // guards the by-index pairing invariant `ops`/`c.ops` are documented
     // (not enforced) to share, so a future second caller that passes a
@@ -2146,8 +2173,8 @@ pub(crate) fn emit_capability(
         })),
         None,
     );
-    out.push_str(&bynk_ts::print_stmt(&interface, 0));
-    writeln!(out).unwrap();
+    stmts.push(interface);
+    stmts.push(bynk_ts::TsStmt::blank(None));
 
     // Injection token (symbol carrying the interface type).
     let token_decl = bynk_ts::TsStmt::decl(
@@ -2163,8 +2190,9 @@ pub(crate) fn emit_capability(
         })),
         None,
     );
-    out.push_str(&bynk_ts::print_stmt(&token_decl, 0));
-    writeln!(out).unwrap();
+    stmts.push(token_decl);
+    stmts.push(bynk_ts::TsStmt::blank(None));
+    stmts
 }
 
 #[cfg(test)]
@@ -3493,7 +3521,16 @@ pub(crate) fn any_service_binds_caller<'a>(
 /// the interface's own name, used below as a plain `TsType::named` type
 /// reference), but the interface declaration itself is a real
 /// `bynk_ts::TsDecl::Interface` now, not `writeln!`-built text.
-pub(crate) fn emit_make_surface(out: &mut String, commons: &TypedCommons, ctx: &EmitProjectCtx) {
+/// #1478: returns real [`bynk_ts::TsStmt`]s (was `out: &mut String`).
+/// `emit_context_deps_interface` stays `out`-writing (unconverted, out of
+/// scope — see its own call site's doc above), so its output is captured
+/// into a local buffer and carried as one [`bynk_ts::TsStmtKind::Raw`]
+/// statement, the same carrier `emit_messages_bundle`'s own conversion
+/// (#1478) just used for the same reason.
+pub(crate) fn emit_make_surface(
+    commons: &TypedCommons,
+    ctx: &EmitProjectCtx,
+) -> Vec<bynk_ts::TsStmt> {
     let services: Vec<&ServiceDecl> = commons
         .commons
         .items
@@ -3504,9 +3541,11 @@ pub(crate) fn emit_make_surface(out: &mut String, commons: &TypedCommons, ctx: &
         })
         .collect();
     if services.is_empty() {
-        return;
+        return Vec::new();
     }
-    let deps_name = emit_context_deps_interface(out, commons, ctx);
+    let mut deps_block = String::new();
+    let deps_name = emit_context_deps_interface(&mut deps_block, commons, ctx);
+    let mut stmts = vec![bynk_ts::TsStmt::raw(deps_block, None)];
     // v0.54 (#655): an `on call … by c: Caller` handler reads a live `CallerId`
     // (the calling context's qualified name) threaded through `deps.identity`.
     // In bundle mode the compose root supplies that name to `makeSurface` as a
@@ -3601,8 +3640,9 @@ pub(crate) fn emit_make_surface(out: &mut String, commons: &TypedCommons, ctx: &
         })),
         None,
     );
-    out.push_str(&bynk_ts::print_stmt(&func_decl, 0));
-    writeln!(out).unwrap();
+    stmts.push(func_decl);
+    stmts.push(bynk_ts::TsStmt::blank(None));
+    stmts
 }
 
 /// Lower a cross-context call in workers mode to a `callService(...)`
