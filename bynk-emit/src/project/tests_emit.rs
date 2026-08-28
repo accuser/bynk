@@ -637,10 +637,11 @@ type RouteBodyMap = HashMap<(String, String, String), (usize, bynk_syntax::ast::
 ///
 /// #1479: `code` is now real [`TsStmt`]s (was pre-printed `String`) — the
 /// HS256 signer block (`__bynkNow`/`__b64url`/`__bytesB64url`/
-/// `__bynkSignHs256`, #1485's own separate scope) is still hand-written
-/// text, carried as one [`bynk_ts::TsStmtKind::Raw`] statement, the same
-/// carrier this track's earlier still-`String`-typed-sibling conversions
-/// already used.
+/// `__bynkSignHs256`) is committed `.ts` source (`emitter/test_runtime/
+/// jwt_signer.ts`, #1485), spliced in via [`jwt_signer_runtime_helpers`] and
+/// carried as one [`bynk_ts::TsStmtKind::Raw`] statement, the same carrier
+/// this track's earlier still-`String`-typed-sibling conversions already
+/// used.
 struct SystemHttpSupport {
     code: Vec<TsStmt>,
     http_services: std::collections::HashSet<String>,
@@ -1047,31 +1048,16 @@ fn emit_system_http_support(
         };
     }
 
-    // #1479: the HS256 signer block below (#1485's own separate scope) stays
-    // exactly the hand-written text it always was — built into a local
-    // buffer instead of this function's own former `out`, then carried
-    // forward as one `TsStmt::raw`, the same carrier `SystemHttpSupport`'s
-    // own doc above names.
-    let mut signer = String::new();
-    // A monotonic clock the signer's `exp` uses; kept out of `bundle`d runtime.
-    signer.push_str("function __bynkNow(): number { return Math.floor(Date.now() / 1000); }\n");
-    // Test-only HS256 signer (never in the deployable app; e2e owns real auth).
-    signer.push_str(
-        "function __b64url(s: string): string { return btoa(s).replace(/\\+/g, \"-\").replace(/\\//g, \"_\").replace(/=+$/, \"\"); }\n\
-         function __bytesB64url(bytes: Uint8Array): string { let bin = \"\"; for (const b of bytes) bin += String.fromCharCode(b); return btoa(bin).replace(/\\+/g, \"-\").replace(/\\//g, \"_\").replace(/=+$/, \"\"); }\n\
-         async function __bynkSignHs256(payload: Record<string, unknown>, secret: string): Promise<string> {\n\
-         \x20 const h = __b64url(JSON.stringify({ alg: \"HS256\", typ: \"JWT\" }));\n\
-         \x20 const p = __b64url(JSON.stringify(payload));\n\
-         \x20 const enc = new TextEncoder();\n\
-         \x20 const key = await crypto.subtle.importKey(\"raw\", enc.encode(secret) as BufferSource, { name: \"HMAC\", hash: \"SHA-256\" }, false, [\"sign\"]);\n\
-         \x20 const sig = await crypto.subtle.sign(\"HMAC\", key, enc.encode(`${h}.${p}`) as BufferSource);\n\
-         \x20 return `${h}.${p}.${__bytesB64url(new Uint8Array(sig))}`;\n\
-         }\n",
-    );
-    let mut code = vec![TsStmt::raw(signer, None)];
+    // #1485: the HS256 signer block — a monotonic clock the signer's `exp`
+    // uses (kept out of `bundle`d runtime), plus the test-only HS256 signer
+    // itself (never in the deployable app; e2e owns real auth) — now lives
+    // at `emitter/test_runtime/jwt_signer.ts`, the same committed-`.ts`-file
+    // treatment `expectation_runtime_helpers`/`stub_runtime_helpers` already
+    // get, rather than an unexplained raw string literal with `\`-continuations.
+    let mut code = vec![TsStmt::raw(jwt_signer_runtime_helpers(), None)];
     // Set each secret the target's actors read, so the real Bearer seam verifies.
     // P7.2: `Record<string, string>` — same reasoning as `__bynkSignHs256`'s own
-    // `secret: string` parameter above.
+    // `secret: string` parameter in `emitter/test_runtime/jwt_signer.ts`.
     let record_string_string = TsType::named_with_args(
         "Record",
         vec![TsType::named("string"), TsType::named("string")],
@@ -2342,6 +2328,19 @@ fn expectation_runtime_helpers() -> String {
 /// #17: source lives at `emitter/test_runtime/stub.ts`.
 fn stub_runtime_helpers() -> String {
     include_str!("../emitter/test_runtime/stub.ts").to_string()
+}
+
+/// #1485: the test-only HS256 JWT signer `emit_system_http_support`'s own
+/// `system` suite driver relies on to sign a `by User("bob")`-style actor's
+/// `Authorization: Bearer …` — `__bynkNow`/`__b64url`/`__bytesB64url`/
+/// `__bynkSignHs256`. Found by #1472's own callee-cascade read as a
+/// genuinely new gap (unlike every other permanent site in this arc, this
+/// one had no in-place argument for staying hand-written text): moved to
+/// `emitter/test_runtime/jwt_signer.ts`, the same committed-`.ts`-file
+/// treatment `expectation_runtime_helpers`/`stub_runtime_helpers` above
+/// already get, rather than a raw Rust string literal with `\`-continuations.
+fn jwt_signer_runtime_helpers() -> String {
+    include_str!("../emitter/test_runtime/jwt_signer.ts").to_string()
 }
 
 /// v0.118: emit the `__Stub_<Cap>` stub class for a capability seam
