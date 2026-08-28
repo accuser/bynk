@@ -1872,24 +1872,33 @@ fn emit_sub_message(
 /// no opaque carve-outs, every shape they need (`TsExpr::As`, `TsExpr::
 /// Index`, `TsExpr::Conditional`, `TsBinaryOp::NullishCoalescing`, `TsStmt::
 /// If`/`Return`) already exists.
+/// #1478: returns real [`bynk_ts::TsStmt`]s (was `out: &mut String`). The
+/// `messagesByLocale` header/entries/closing-brace block stays exactly the
+/// opaque, hand-assembled text #1355's own doc above already carves out —
+/// built into a local buffer instead of the caller's `out`, then carried as
+/// one [`bynk_ts::TsStmtKind::Raw`] statement, the same "already real-node-
+/// printed internally, still `String`-typed at its own call boundary"
+/// carrier `emit_refined_type`'s own `checks_text` uses (#1478).
 pub(crate) fn emit_messages_bundle(
-    out: &mut String,
     blocks: &[&MessagesDecl],
     reference: &MessagesDecl,
     runtime_use: &RuntimeUse,
-) {
+) -> Vec<bynk_ts::TsStmt> {
+    let mut stmts = Vec::new();
+
     // One `code -> renderer` table per locale, inlined into a single
     // `messagesByLocale` object literal keyed by tag. No per-locale `const
     // __messages_<tag>` binding: a locale tag can be `"pt-BR"`, which is not a
     // valid TS identifier, so a named binding would be a syntax error — the
     // object is keyed by the tag *string* and needs no binding of its own.
+    let mut table = String::new();
     writeln!(
-        out,
+        table,
         "const messagesByLocale: Record<string, Record<string, (params: ReadonlyMap<string, MessageArg>) => string>> = {{"
     )
     .unwrap();
     for m in blocks {
-        emit_doc_block(out, m.documentation.as_deref(), INDENT_STEP);
+        emit_doc_block(&mut table, m.documentation.as_deref(), INDENT_STEP);
         let code_entries: Vec<bynk_ts::TsObjectEntry> = m
             .entries
             .iter()
@@ -1904,10 +1913,11 @@ pub(crate) fn emit_messages_bundle(
             format!("\"{}\"", escape_ts_string(&m.tag)),
             bynk_ts::TsExpr::multiline_object_entries(code_entries),
         );
-        out.push_str(&bynk_ts::print_object_entry(&locale_entry, 0));
+        table.push_str(&bynk_ts::print_object_entry(&locale_entry, 0));
     }
-    writeln!(out, "}};").unwrap();
-    writeln!(out).unwrap();
+    writeln!(table, "}};").unwrap();
+    stmts.push(bynk_ts::TsStmt::raw(table, None));
+    stmts.push(bynk_ts::TsStmt::blank(None));
 
     // `("tag" as string) as LocaleTag` — the inner `as` is wrapped in an
     // explicit `Paren`: `as` is left-associative, so the un-parenthesised
@@ -1944,7 +1954,7 @@ pub(crate) fn emit_messages_bundle(
         })),
         None,
     );
-    out.push_str(&bynk_ts::print_stmt(&ref_locale_decl, 0));
+    stmts.push(ref_locale_decl);
 
     let locale_list: Vec<bynk_ts::TsExpr> = blocks.iter().map(|m| tag_cast(&m.tag)).collect();
     let locales_decl = bynk_ts::TsStmt::decl(
@@ -1957,8 +1967,8 @@ pub(crate) fn emit_messages_bundle(
         })),
         None,
     );
-    out.push_str(&bynk_ts::print_stmt(&locales_decl, 0));
-    writeln!(out).unwrap();
+    stmts.push(locales_decl);
+    stmts.push(bynk_ts::TsStmt::blank(None));
 
     let ident = |s: &str| bynk_ts::TsExpr::Ident(s.to_string());
     let member = |object: bynk_ts::TsExpr, property: &str| bynk_ts::TsExpr::Member {
@@ -2056,8 +2066,9 @@ pub(crate) fn emit_messages_bundle(
         })),
         None,
     );
-    out.push_str(&bynk_ts::print_stmt(&render_fn, 0));
-    writeln!(out).unwrap();
+    stmts.push(render_fn);
+    stmts.push(bynk_ts::TsStmt::blank(None));
+    stmts
 }
 
 // -- v0.5 emission --
@@ -3510,7 +3521,16 @@ pub(crate) fn any_service_binds_caller<'a>(
 /// the interface's own name, used below as a plain `TsType::named` type
 /// reference), but the interface declaration itself is a real
 /// `bynk_ts::TsDecl::Interface` now, not `writeln!`-built text.
-pub(crate) fn emit_make_surface(out: &mut String, commons: &TypedCommons, ctx: &EmitProjectCtx) {
+/// #1478: returns real [`bynk_ts::TsStmt`]s (was `out: &mut String`).
+/// `emit_context_deps_interface` stays `out`-writing (unconverted, out of
+/// scope — see its own call site's doc above), so its output is captured
+/// into a local buffer and carried as one [`bynk_ts::TsStmtKind::Raw`]
+/// statement, the same carrier `emit_messages_bundle`'s own conversion
+/// (#1478) just used for the same reason.
+pub(crate) fn emit_make_surface(
+    commons: &TypedCommons,
+    ctx: &EmitProjectCtx,
+) -> Vec<bynk_ts::TsStmt> {
     let services: Vec<&ServiceDecl> = commons
         .commons
         .items
@@ -3521,9 +3541,11 @@ pub(crate) fn emit_make_surface(out: &mut String, commons: &TypedCommons, ctx: &
         })
         .collect();
     if services.is_empty() {
-        return;
+        return Vec::new();
     }
-    let deps_name = emit_context_deps_interface(out, commons, ctx);
+    let mut deps_block = String::new();
+    let deps_name = emit_context_deps_interface(&mut deps_block, commons, ctx);
+    let mut stmts = vec![bynk_ts::TsStmt::raw(deps_block, None)];
     // v0.54 (#655): an `on call … by c: Caller` handler reads a live `CallerId`
     // (the calling context's qualified name) threaded through `deps.identity`.
     // In bundle mode the compose root supplies that name to `makeSurface` as a
@@ -3618,8 +3640,9 @@ pub(crate) fn emit_make_surface(out: &mut String, commons: &TypedCommons, ctx: &
         })),
         None,
     );
-    out.push_str(&bynk_ts::print_stmt(&func_decl, 0));
-    writeln!(out).unwrap();
+    stmts.push(func_decl);
+    stmts.push(bynk_ts::TsStmt::blank(None));
+    stmts
 }
 
 /// Lower a cross-context call in workers mode to a `callService(...)`
