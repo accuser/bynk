@@ -37,7 +37,8 @@ mod source_map;
 
 pub use lint::{Violation, verbatim_violations};
 pub use printer::{
-    Printed, print, print_class_method, print_expr, print_object_entry, print_stmt, print_type,
+    Printed, print, print_class_method, print_class_method_and_merge, print_expr,
+    print_object_entry, print_object_entry_and_merge, print_stmt, print_stmt_and_merge, print_type,
 };
 pub use program::{
     TsArrowBody, TsBinaryOp, TsBindingName, TsClassCtor, TsClassField, TsClassMethod, TsDecl,

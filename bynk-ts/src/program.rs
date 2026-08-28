@@ -13,6 +13,7 @@
 //! this layer — Arc C's later slices add more variants file by file, the
 //! same precedent [`VerbatimOrigin`] already set.
 
+use crate::source_map::SourceMapBuilder;
 use bynk_syntax::span::Span;
 
 /// A whole generated TypeScript module, as an ordered sequence of top-level
@@ -54,6 +55,29 @@ pub struct TsStmt {
     /// explicitly (P7.8's own accepted proposal: "an implementation-time
     /// call within this same shape") rather than left ambiguous.
     pub span: Option<Span>,
+    /// #1477's own real gap: a body-bearing statement — in practice always
+    /// a `TsStmtKind::Raw`/`TsStmtKind::Verbatim` opaque blob standing in
+    /// for a lowered function/method body (ADR 0391's own permanent
+    /// exclusion) — carries its *own* per-statement source-map checkpoints,
+    /// collected by the caller's own body-local `SourceMapBuilder` before
+    /// this node existed. Before this field, every real `bynk-emit` caller
+    /// that needed to merge those checkpoints into its own module map had to
+    /// reverse-engineer this node's own print-time byte offset from the
+    /// *outside* — `bynk-emit`'s own `emit_class_method_and_merge_source_map`
+    /// (`emitter/emit.rs`) recovers it by subtracting known lengths and
+    /// string-matching the printed text's own tail, degrading to a silent
+    /// skip if that search fails; `emit_free_fn` recovers it by separate,
+    /// independent exact arithmetic, guarded by a `debug_assert!`. Both
+    /// exist only because nothing reports *this* node's own real print-time
+    /// offset directly. Setting this field lets the printer itself do the
+    /// merge, at the exact offset it is about to write this node's text to
+    /// — no reverse-engineering, no silent-skip fallback (see this crate's
+    /// own private `printer::render_block_stmts` for the handling). `None`
+    /// for every real site that predates this field and every node whose own
+    /// text carries no nested checkpoints of its own — the overwhelmingly
+    /// common case, and the reason this is an `Option`, not a required
+    /// field.
+    pub nested_map: Option<SourceMapBuilder>,
 }
 
 #[derive(Debug, Clone)]
@@ -417,6 +441,7 @@ impl TsStmt {
                 text: text.into(),
             },
             span,
+            nested_map: None,
         }
     }
 
@@ -424,6 +449,7 @@ impl TsStmt {
         Self {
             kind: TsStmtKind::Decl(decl),
             span,
+            nested_map: None,
         }
     }
 
@@ -436,6 +462,7 @@ impl TsStmt {
         Self {
             kind: TsStmtKind::Const { name, ty, init },
             span,
+            nested_map: None,
         }
     }
 
@@ -448,6 +475,7 @@ impl TsStmt {
         Self {
             kind: TsStmtKind::Let { name, ty, init },
             span,
+            nested_map: None,
         }
     }
 
@@ -455,6 +483,7 @@ impl TsStmt {
         Self {
             kind: TsStmtKind::ExprStmt(expr),
             span,
+            nested_map: None,
         }
     }
 
@@ -462,6 +491,7 @@ impl TsStmt {
         Self {
             kind: TsStmtKind::Return(expr),
             span,
+            nested_map: None,
         }
     }
 
@@ -469,6 +499,7 @@ impl TsStmt {
         Self {
             kind: TsStmtKind::Throw(expr),
             span,
+            nested_map: None,
         }
     }
 
@@ -481,6 +512,7 @@ impl TsStmt {
                 same_line_else: false,
             },
             span,
+            nested_map: None,
         }
     }
 
@@ -498,6 +530,7 @@ impl TsStmt {
                 same_line_else: false,
             },
             span,
+            nested_map: None,
         }
     }
 
@@ -519,6 +552,7 @@ impl TsStmt {
                 same_line_else: true,
             },
             span,
+            nested_map: None,
         }
     }
 
@@ -535,6 +569,7 @@ impl TsStmt {
                 body: Box::new(body),
             },
             span,
+            nested_map: None,
         }
     }
 
@@ -556,6 +591,7 @@ impl TsStmt {
                 body: Box::new(body),
             },
             span,
+            nested_map: None,
         }
     }
 
@@ -572,6 +608,7 @@ impl TsStmt {
                 catch_block: Box::new(catch_block),
             },
             span,
+            nested_map: None,
         }
     }
 
@@ -579,6 +616,7 @@ impl TsStmt {
         Self {
             kind: TsStmtKind::Block(stmts),
             span,
+            nested_map: None,
         }
     }
 
@@ -586,6 +624,7 @@ impl TsStmt {
         Self {
             kind: TsStmtKind::Continue,
             span,
+            nested_map: None,
         }
     }
 
@@ -593,6 +632,7 @@ impl TsStmt {
         Self {
             kind: TsStmtKind::Assign { target, value },
             span,
+            nested_map: None,
         }
     }
 
@@ -600,6 +640,7 @@ impl TsStmt {
         Self {
             kind: TsStmtKind::Comment(text.into()),
             span,
+            nested_map: None,
         }
     }
 
@@ -607,6 +648,7 @@ impl TsStmt {
         Self {
             kind: TsStmtKind::DocComment(text.into()),
             span,
+            nested_map: None,
         }
     }
 
@@ -614,6 +656,7 @@ impl TsStmt {
         Self {
             kind: TsStmtKind::Blank,
             span,
+            nested_map: None,
         }
     }
 
@@ -624,6 +667,7 @@ impl TsStmt {
                 cases,
             },
             span,
+            nested_map: None,
         }
     }
 
@@ -631,6 +675,7 @@ impl TsStmt {
         Self {
             kind: TsStmtKind::InlineBlock(stmts),
             span,
+            nested_map: None,
         }
     }
 
@@ -638,6 +683,7 @@ impl TsStmt {
         Self {
             kind: TsStmtKind::Increment(expr),
             span,
+            nested_map: None,
         }
     }
 
@@ -648,6 +694,7 @@ impl TsStmt {
         Self {
             kind: TsStmtKind::Raw(text.into()),
             span,
+            nested_map: None,
         }
     }
 }
