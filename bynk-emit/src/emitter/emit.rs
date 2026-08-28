@@ -2274,8 +2274,12 @@ impl<'a> RawBody<'a> {
 
 /// Prints `method` (always at `class_depth = 0` — every call site here
 /// prints a whole class body) into `out`, then — if `source_map` is
-/// `Some` — merges `body_smb`'s own per-statement mappings back into the
-/// module map.
+/// `Some` — merges `body_smb`'s own per-statement mappings into it. Despite
+/// the name, `source_map` isn't necessarily the real module map any more:
+/// `emit_agent`'s own callers (#1482) pass a class-local map that its own
+/// caller merges into the module map one level up, the same two-level
+/// composition `emit_provider`'s own doc comment (below) already
+/// establishes for its own class wrapper.
 ///
 /// Degrades to no merge (no mapping for this method) rather than risk a
 /// confidently WRONG one if any assumption is ever violated — the same
@@ -2320,8 +2324,12 @@ fn emit_class_method_and_merge_source_map(
 /// `body_smb` at its own real print-time offset *within this function's own
 /// local `out` buffer* — computed by `bynk_ts::print_class_method_and_merge`
 /// itself (#1477) rather than the exact-arithmetic recovery
-/// `emit_class_method_and_merge_source_map` (above) still performs for
-/// `emit_service`/`emit_agent`'s own not-yet-converted call sites. The
+/// `emit_class_method_and_merge_source_map` (above) still performs —
+/// `emit_service` no longer calls it at all (#1481); `emit_agent`'s own
+/// per-handler loop and `emit_ws_do_method` are its only remaining callers
+/// (#1482 converted `emit_agent`'s own top-level signature, but left this
+/// hand-rolled per-method recovery itself untouched, same as #1481 did).
+/// The
 /// caller then merges this ONE combined map into its own real module map at
 /// the class's own real splice offset, via `print_stmt_and_merge` — the same
 /// two-level "local map merges into a local buffer, that buffer's own map
@@ -4163,15 +4171,47 @@ fn history_variant_tag(handler: &str) -> String {
     }
 }
 
+/// #1482: returns a real `Vec<bynk_ts::TsStmt>` (was `out: &mut String` plus
+/// a `source_map: Option<&RefCell<SourceMapBuilder>>` parameter) — the
+/// state interface/registry/zero-factory/rehydration-gate/construction-
+/// factory are each already real, fully-converted top-level nodes (#1367/
+/// #1369/#1371/#1377) and now push directly into the returned `Vec` instead
+/// of being printed through the removed `out` parameter (per #1462's own
+/// confirmed 66-site "already-argued print-and-splice" bucket — no internal
+/// construction logic changes here, only the outer plumbing). Two sites stay
+/// genuinely opaque, each wrapped as its own `TsStmt::raw`, mirroring
+/// `emit_provider`'s own Decision-C precedent (#1480):
+///
+/// - **The DO class** (`export class {Name} { ... }`) — `emit_agent`'s own
+///   instance of `emit_provider`'s Decision C (the class's own header/
+///   fields/constructor stay hand-written text, cited in place below); every
+///   real per-method/per-handler print-and-splice site inside it (`loadState`/
+///   `commitState`/the per-handler loop/the WS-hosted DO methods/`fetch`)
+///   still builds and merges exactly as before, just into a local buffer/map
+///   pair instead of this function's own former `out`/`source_map`
+///   parameters — captured as ONE `TsStmt::raw` carrying a class-wide
+///   `nested_map` that combines every one of those merges, the same
+///   two-level composition `emit_provider` already established.
+/// - **The history-driver** (`__bynkDriveHistory_*`) — #1386's own standing
+///   decision, confirmed still-permanent by #1462's own correction (test-
+///   support only, stripped from deploy, thinnest fixture coverage in the
+///   track, its own per-handler discriminated-union algebra deferred to
+///   `any` by design): genuinely raw hand-templated text throughout, zero
+///   `bynk_ts` nodes or `LowerCtx` involvement anywhere in it, captured as a
+///   second, separate `TsStmt::raw` with no `nested_map` (nothing to merge),
+///   not decomposed further, wrapping the whole function's own text output.
+///
+/// The caller (`emitter.rs`) merges every returned node into its own real
+/// module map via `print_stmt_and_merge`, the same composition
+/// `emit_free_fn`/`emit_provider`/`emit_service` already use.
 pub(crate) fn emit_agent(
-    out: &mut String,
     a: &AgentDecl,
     state: &[StoreFieldIr],
     commons: &TypedCommons,
     ctx: &EmitProjectCtx,
-    source_map: Option<&RefCell<SourceMapBuilder>>,
-) {
+) -> Vec<bynk_ts::TsStmt> {
     let tys = commons.tys();
+    let mut stmts = Vec::new();
     // #1187's Agent state-field slice: the checker-resolved TyId for each
     // Cell/Map/Cache/Log field's element type, keyed by field name — read
     // once here so the state-interface block below can render through
@@ -4179,7 +4219,9 @@ pub(crate) fn emit_agent(
     // this lookup at every one of its four sites.
     let store_field_ty: HashMap<&str, &StoreKindIr> =
         state.iter().map(|f| (f.field.as_str(), &f.kind)).collect();
-    emit_doc_block(out, a.documentation.as_deref(), 0);
+    if let Some(doc) = a.documentation.as_deref() {
+        stmts.push(bynk_ts::TsStmt::doc_comment(doc, None));
+    }
     let state_ty = format!("{}State", a.name.name);
     // v0.81 (storage track, ADR 0109): an agent's `Cell` fields ARE its state
     // record, so the whole state machinery (interface, zero factory, load/commit,
@@ -4647,8 +4689,8 @@ pub(crate) fn emit_agent(
         })),
         None,
     );
-    out.push_str(&bynk_ts::print_stmt(&state_interface, 0));
-    writeln!(out).unwrap();
+    stmts.push(state_interface);
+    stmts.push(bynk_ts::TsStmt::blank(None));
     // v0.9.2: per-agent state registry (bundle mode + `bynkc test`) and the
     // zero-value factory used to initialise a fresh key's state.
     //
@@ -4676,7 +4718,7 @@ pub(crate) fn emit_agent(
         },
         None,
     );
-    out.push_str(&bynk_ts::print_stmt(&registry_const, 0));
+    stmts.push(registry_const);
     // v0.11: build the fresh-state record. A field with an explicit initialiser
     // lowers its (static) expression; a field without one uses the v0.9.2
     // implicit zero.
@@ -4796,8 +4838,8 @@ pub(crate) fn emit_agent(
         },
         None,
     );
-    out.push_str(&bynk_ts::print_stmt(&zero_fn_decl, 0));
-    writeln!(out).unwrap();
+    stmts.push(zero_fn_decl);
+    stmts.push(bynk_ts::TsStmt::blank(None));
     // v0.96 (ADR 0124): the rehydration validation gate. `loadState` validates a
     // *loaded* (merged) state against the current type definition before any
     // handler reads it — the load-time twin of the commit-time invariant gate.
@@ -4946,10 +4988,20 @@ pub(crate) fn emit_agent(
             },
             None,
         );
-        out.push_str(&bynk_ts::print_stmt(&rehydrate_fn_decl, 0));
-        writeln!(out).unwrap();
+        stmts.push(rehydrate_fn_decl);
+        stmts.push(bynk_ts::TsStmt::blank(None));
     }
     // 2) Durable Object class.
+    //
+    // #1482: local buffer/map pair, replacing this function's own former
+    // `out`/`source_map` parameters for the rest of the class's own
+    // construction below (through its closing brace) — every internal
+    // print-and-splice call site inside the class (`loadState`/
+    // `commitState`/the per-handler loop/the WS-hosted DO methods/`fetch`)
+    // is unchanged, since each already just referenced these two names.
+    let mut out = String::new();
+    let class_smb = RefCell::new(SourceMapBuilder::new());
+    let source_map = Some(&class_smb);
     writeln!(out, "export class {name} {{", name = a.name.name).unwrap();
     writeln!(out, "  state: DurableObjectState;").unwrap();
     // #527: an agent whose methods take `given` capabilities rebuilds those
@@ -5099,7 +5151,7 @@ pub(crate) fn emit_agent(
     // no-op when a `LowerCtx` has no attached builder (`emitter.rs`'s own
     // doc), and neither the invariant nor the transition `LowerCtx` below
     // is ever given one (`LowerCtx::new(...)`, never `.with_source_map(...)`
-    // — `emit_agent`'s own `source_map` parameter isn't threaded into
+    // — `emit_agent`'s own local `source_map` binding isn't threaded into
     // either) — confirmed directly, not assumed, before writing this
     // comment. So despite the grounding pass's own earlier caution that
     // `commitState` would need the same sub-builder/merge care #1352/#1353
@@ -5575,7 +5627,7 @@ pub(crate) fn emit_agent(
             body: vec![bynk_ts::TsStmt::raw(raw_body.clone(), None)],
         };
         emit_class_method_and_merge_source_map(
-            out,
+            &mut out,
             &handler_method,
             class_depth,
             RawBody::nested(&raw_body, &body_out, body_out_offset_in_raw),
@@ -5595,7 +5647,7 @@ pub(crate) fn emit_agent(
     };
     for host in &ws_open_hosts {
         emit_ws_do_method(
-            out,
+            &mut out,
             a,
             host,
             host.handler,
@@ -5606,7 +5658,7 @@ pub(crate) fn emit_agent(
         );
         if let Some(m) = host.message {
             emit_ws_do_method(
-                out,
+                &mut out,
                 a,
                 host,
                 m,
@@ -5618,7 +5670,7 @@ pub(crate) fn emit_agent(
         }
         if let Some(c) = host.close {
             emit_ws_do_method(
-                out,
+                &mut out,
                 a,
                 host,
                 c,
@@ -5935,11 +5987,14 @@ pub(crate) fn emit_agent(
         // frame against `in:` (reject-and-close on failure), recover the sender
         // identity + route args from the socket attachment, and run the body.
         for host in &ws_open_hosts {
-            emit_ws_dispatch_handlers(out, host, &ctx.runtime_use, &commons.types, tys);
+            emit_ws_dispatch_handlers(&mut out, host, &ctx.runtime_use, &commons.types, tys);
         }
     }
     writeln!(out, "}}").unwrap();
     writeln!(out).unwrap();
+    let mut class_stmt = bynk_ts::TsStmt::raw(out, None);
+    class_stmt.nested_map = Some(class_smb.into_inner());
+    stmts.push(class_stmt);
     // v0.9.2: agent-construction factory. Lowering of `AgentName(key)` calls
     // this. A present DO binding (workers) routes through `makeWorkersAgent`;
     // otherwise the bundle registry path is taken. The single `makeAgent`
@@ -6020,8 +6075,8 @@ pub(crate) fn emit_agent(
         })),
         None,
     );
-    out.push_str(&bynk_ts::print_stmt(&factory_decl, 0));
-    writeln!(out).unwrap();
+    stmts.push(factory_decl);
+    stmts.push(bynk_ts::TsStmt::blank(None));
 
     // v0.119 (testing track slice 7, ADR 0155): the history-property driver. Only
     // agents a `for all run: History[Agent]` property targets get this exported
@@ -6033,6 +6088,12 @@ pub(crate) fn emit_agent(
     // committed `old` → `new` pair — for the runner's predicate. Test-only, so it
     // is stripped from deploy builds with the rest of the test surface.
     if ctx.history_target_agents.contains(&a.name.name) {
+        // #1386/#1462: a second, separate permanent exclusion from this
+        // function's own top-level signature — genuinely raw hand-templated
+        // text throughout, zero `bynk_ts` nodes or `LowerCtx` involvement,
+        // not decomposed further. Local buffer, replacing this block's own
+        // former use of the function's `out` parameter.
+        let mut out = String::new();
         let hs: Vec<&Handler> = a
             .handlers
             .iter()
@@ -6171,7 +6232,9 @@ pub(crate) fn emit_agent(
         writeln!(out, "  }} finally {{ console.error = __ce; }}").unwrap();
         writeln!(out, "}}").unwrap();
         writeln!(out).unwrap();
+        stmts.push(bynk_ts::TsStmt::raw(out, None));
     }
+    stmts
 }
 
 /// v0.104 (real-time track slice 3b): a `from websocket` `on open` handler hosted

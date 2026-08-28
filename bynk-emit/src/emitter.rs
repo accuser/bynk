@@ -511,7 +511,12 @@ pub(crate) fn emit_project(
                     .iter()
                     .map(|f| lower_store_field_shape_ir(f, program))
                     .collect();
-                emit_agent(&mut out, a, &state, commons, ctx, Some(&smb));
+                extend_printed_and_merged(
+                    &mut out,
+                    emit_agent(a, &state, commons, ctx),
+                    &mut smb.borrow_mut(),
+                    0,
+                );
             }
             _ => {}
         }
