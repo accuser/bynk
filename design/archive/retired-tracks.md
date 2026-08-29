@@ -890,3 +890,121 @@ imposed; entries keep the order they were retired in.
   (both unproposed, and may turn out to be the same helper). Retired 19 August 2026. Opens phase 7 (the
   printer, per the trajectory) inheriting a named, argued rendering-subtree boundary instead of a
   probe reading zero with no map of what's inside it.
+
+- **`the-typescript-tree.md`** — phase 7 of [`../bynk-compiler-trajectory.md`](../bynk-compiler-trajectory.md),
+  spine [#1293](https://github.com/accuser/bynk/issues/1293): a new `bynk-ts` crate (TS tree, printer,
+  source map) becomes the single writer of every character of generated TypeScript — `bynk-emit`
+  builds nodes, `bynk-ts` prints them — inheriting phase 6's own named boundary (`emitter.rs`/
+  `emitter/emit.rs`/`emitter/lower.rs`/`emitter/workers.rs`/`emitter/workers_entry.rs`, floor 5)
+  instead of a probe reading zero with no map of what was inside it. Settled across four
+  front-loaded design questions
+  ([ADR 0385](../decisions/0385-typescript-tree-crate-carve-timing.md) — `bynk-ts` carved as a
+  crate in the first slice, not built in-module and carved later, since carving it also
+  manufactures the second IR consumer ADR 0332 deferred the `bynk-ir`/`bynk-lower` split on;
+  [ADR 0386](../decisions/0386-typescript-tree-verbatim-hatch.md) — the migration escape hatch is
+  a statement-level `Verbatim` node with a closed `VerbatimOrigin` enum and a companion textual
+  lint, since a byte-golden fixture alone can't verify what an opaque block hides;
+  [ADR 0387](../decisions/0387-typescript-tree-any-elimination-scope.md) — `TsType::Any` is
+  eliminated in full, a 2–3-site residual named and deferred to R7.7's runtime-typing work rather
+  than re-opening phase 6's IR;
+  [ADR 0388](../decisions/0388-typescript-tree-r8-scope.md) — R8.1–R8.22 splits four ways: twelve
+  rules already closed, five closing as a byproduct of this track's own conversion, two (R8.2,
+  R8.14) getting named slices, one shared with phase 8), then run as six arcs. **Arc A** (5
+  slices, P7.0–P7.4, independent of the tree) landed the `ts_writes`/`ts_any` gated probes
+  ([#1296](https://github.com/accuser/bynk/issues/1296)), verified R7.7 already closed, narrowed
+  `ts_any` 55 → 31, and gave `wrangler.toml` its own `TomlDocument`/printer, closing R7.6/R8.20.
+  **Arc B** (5 slices, P7.5–P7.9) carved the `bynk-ts` crate per ADR-A, replaced `CompiledFile`
+  with a typed `Artefacts`/`Document` (R7.8), named the printer's existing readability guarantee
+  (R7.5, partial), and built the first real node algebra (`TsStmt`/`TsExpr`/`TsType`/`TsDecl`)
+  against `events_fanout.rs`'s own concrete shape before converting the `ts_type_ref`/`ts_ty`
+  type-building family (P7.9) to build real `TsType` internally instead of hand-`format!`-ing
+  text. **Arc D** (P7.d1–P7.d3, the R8 rule closures) carved `bynk-ir`/`bynk-lower` out of
+  `bynk-emit` with no code deleted — the split ADR 0332 deferred in phase 6 for want of a second
+  consumer, landing once `bynk-ts` supplied one
+  ([ADR 0392](../decisions/0392-p7d1-ir-lower-crate-carve.md)) — unified `bynk-check`'s and
+  `bynk-emit`'s independently-maintained brand-predicate copies
+  ([ADR 0393](../decisions/0393-p7d2-brand-predicate-unification.md)), and revisited P6.56's
+  declined JSON-codec-seed attempt for real, now that it could read `Callee::Intrinsic`
+  ([ADR 0394](../decisions/0394-p7d3-json-codec-seed-callee.md)). **Arc C** (the bulk of the
+  track, dozens of slices) converted `bynk-emit`'s own emission call sites to real `bynk-ts` trees
+  file by file — `contracts.rs`/`secrets.rs`/`runtime_use.rs`, Arc C's own originally-named
+  first-slice trio, turned out not to need conversion at all (they build JSON or aren't emission
+  code, found by P7.8/[#1313](https://github.com/accuser/bynk/issues/1313), a correction rather
+  than an error since the JSON/TS distinction was invisible before Arc B's own `Document` type
+  existed) — `events_fanout.rs`, `workers.rs`, `workers_entry.rs`, `project.rs`'s `emit_test_main`/
+  `emit_composition_root` and its per-item dispatch, `emitter/emit.rs`'s `emit_free_fn`/
+  `emit_provider`/`emit_service`/`emit_agent`/`emit_stub_class`, and `project/tests_emit.rs`'s own
+  wrapper-function family all converted, `lower.rs`'s per-splice-point opaque output staying a
+  deliberate, permanent exclusion throughout
+  ([ADR 0391](../decisions/0391-arc-c-lower-rs-permanent-exclusion.md)). **Arc E** (7 slices)
+  converted `emitter/serialisation.rs` in four bounded clusters plus two caller-side wrappers
+  ([ADR 0398](../decisions/0398-arc-e-serialisation-rs-conversion-decomposition.md)). **Arc F and
+  the closing floor-arguing arc** ([#1449](https://github.com/accuser/bynk/issues/1449)–
+  [#1502](https://github.com/accuser/bynk/issues/1502)) resolved every named residual rather than
+  leaving it open-ended: `pred_condition_and_message` converted for real once two missing
+  `TsBinaryOp` variants (`>=`/`<=`) were added, the same "add the operator, don't wall it off"
+  precedent `LessThan`/`InstanceOf`/`In` each already used; `inject_runtime_imports` turned out to
+  be a plain construction-order fix, not entangled with the source-map question it was first
+  thought to depend on; and the `verbatim_sites` capstone
+  ([#1486](https://github.com/accuser/bynk/issues/1486)) converted `emit_project`/
+  `emit_test_module`/`emit_integration_module` — the three orchestrator functions that stayed
+  `String`-typed at their own top level regardless of how completely their internals converted —
+  to return real trees printed once at the write boundary.
+
+  **All four gated probes retire at an argued floor, not the flat zero §5 first proposed — the
+  same honesty `ast_importers` (floor 5, not 0) already modelled for phase 6.** `ts_any` retires
+  at **26**
+  ([ADR 0404](../decisions/0404-ts-any-residual-six-families.md),
+  [#1459](https://github.com/accuser/bynk/issues/1459)/[#1460](https://github.com/accuser/bynk/issues/1460)):
+  26 sites across seven files collapse into six already-(or newly-)argued families (collection-
+  kernel element types, the Durable Object stub, cross-context dispatch casts, and R7.7's own
+  runtime-error-type residual); no site among them turned out newly tractable. `verbatim_sites`
+  retires at **2**
+  ([ADR 0399](../decisions/0399-ts-any-verbatim-sites-floor-correction.md)/
+  [ADR 0407](../decisions/0407-verbatim-sites-capstone-callee-cascade-and-nested-checkpoint.md),
+  confirmed unchanged by the #1486 capstone): `project.rs:2478` (an adapter binding's own foreign,
+  user-authored TypeScript, copied in verbatim so `compose`'s import resolves and the `tsc` gate
+  checks the `implements` contract) and `project.rs:2507` (`runtime.ts`, a committed npm build
+  artifact — `emitter::emit_runtime_module()`'s own return value), neither ever generated by
+  `bynk-emit`. `ts_writes` retires at **809**
+  ([ADR 0409](../decisions/0409-ts-writes-final-floor-after-1486.md),
+  [#1501](https://github.com/accuser/bynk/issues/1501)): 614 permanent and individually argued
+  (`lower.rs`'s 371 under ADR 0391; the four Decision-C hand-written class wrappers
+  `emit_provider`/`emit_service`/`emit_agent`/`emit_stub_class`, 126 together, each building its
+  own wrapper into a local buffer and wrapping the whole thing as one `TsStmt::raw`;
+  `emit_contract_guarded_body`'s 8 message-text-and-source-map-splice-entangled sites;
+  `workers_entry.rs`'s and `tests_emit.rs`'s already-read-end-to-end 106
+  ([ADR 0408](../decisions/0408-ts-writes-sampled-files-end-to-end.md)); `__eventsDispatch`'s
+  opaque carve-out, 3), 190 a newly-named permanent structural category (identifier/type-name/
+  message-text `String` construction feeding an already-real node's leaf field, the same
+  representational choice P7.9 already made explicit for `TsType::Named`'s pre-rendered text), and
+  5 real, small, tractable sites named but not scheduled (a bare blank-line `writeln!` in a
+  handful of functions not yet promoted to their own top-level `Vec<TsStmt>` signature).
+  `verbatim_origins` retires at **1**
+  ([ADR 0410](../decisions/0410-verbatim-origins-floor-at-retirement.md),
+  [#1502](https://github.com/accuser/bynk/issues/1502)): only the `NotYetConverted` variant has a
+  live reference anywhere in `bynk-emit/src`, at the identical two sites `verbatim_sites` already
+  names permanent; `Contracts`/`Secrets`/`RuntimeUse` are dead in production (only `bynk-ts`'s own
+  unit-test fixtures still reference them), kept rather than removed per this track's own §9
+  "Risks" precedent — orthogonal, later cleanup, not a retirement blocker.
+
+  Surface lives in `bynk-ts/src/{lib,program,printer,source_map,lint}.rs` (the new crate, ~9,500
+  LOC), `bynk-emit/src/emitter.rs`, `emitter/{emit,lower,workers,workers_entry,serialisation,
+  events_fanout,toml_doc,wrangler}.rs`, `project.rs`, `project/tests_emit.rs`, the carved
+  `bynk-ir`/`bynk-lower` crates, and `xtask/src/greenfield_status.rs` (four gated probes —
+  `ts_writes`, `ts_any`, `verbatim_origins`, `verbatim_sites` — stay in the tree, not deleted at
+  retirement, the same regression-ratchet precedent `ast_importers` set for phase 6). Twenty-one
+  ADRs (0385–0410, minus five numbers — 0396, 0397, 0400, 0401, 0402 — that belong to a
+  concurrent, unrelated property-generator track) carry this track's own decisions in full.
+  **Deferred follow-ons, named rather than left implicit:** incrementality — query granularity,
+  `UnitSignature`, the query firewall — gated on exactly the four probes this retirement settles
+  (phase 8); R8.16's deferred data-model half, a typed `ProjectGraph`, named by phase 4's own
+  retirement note (phase 8); a further crate re-graph beyond `bynk-ts`/`bynk-ir`/`bynk-lower`,
+  e.g. R10.5's `bynk-driver` consolidation (named in the reference, *unopened, no trigger yet*);
+  removing the three dead `VerbatimOrigin` variants (§9, separate cleanup); the small `ts_writes`
+  bucket-C residual, 5 sites (§5/#1501, named but not scheduled). Retired 29 August 2026. Per the
+  trajectory's own "a phase's track opens when the previous phase's probe reads zero" rule, this
+  retirement is what makes phase 8 openable — but §10 ("What this phase causes") already names
+  phase 8 as needing phases 3 and 4 *together with* this one, and its own settling review still
+  needs to ground a fresh spine issue against the current tree, the same way this track's own
+  opening did against phase 6's, rather than assuming the trigger alone is sufficient.

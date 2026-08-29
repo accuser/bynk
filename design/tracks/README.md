@@ -78,7 +78,6 @@ each track's spine issue; this table is deliberately just the map.
 |---|---|---|---|
 | [`documentation.md`](documentation.md) | [#557](https://github.com/accuser/bynk/issues/557) | Slicing (slice 0 shipped) | Documentation & web presence: the Astro + Starlight migration, a CI snippet-verification harness, playground integration seams |
 | [`idempotency-capability.md`](idempotency-capability.md) | [#921](https://github.com/accuser/bynk/issues/921) | Slicing (slice 0 shipped, #929; call-site key scoping follow-up shipped, #934) | The `Idempotency` capability: mechanical dedup for at-least-once delivery, per design notes §4, §12 |
-| [`the-typescript-tree.md`](the-typescript-tree.md) | [#1293](https://github.com/accuser/bynk/issues/1293) | Settled — Slicing on merge | Phase 7 of the compiler trajectory — emission produces nodes, one printer writes every character; `bynk-ts` holds the tree, the printer and the source map |
 
 (`documentation.md` pre-dates the GitHub-native flow, so its doc was
 committed by an ordinary PR rather than a settling draft PR; the spine issue
@@ -144,34 +143,28 @@ discipline). Its own gated probe, `ast_importers`, retired at a re-settled
 floor of 5, not the 0 first named — see `retired-tracks.md`'s closing
 summary for the per-file argument and the phase-7 entry-condition amendment
 this forced.
-`the-typescript-tree.md` is the twelfth, phase 7 of the same trajectory,
-entry-gated on `the-ir.md`'s own retirement note and its P6.58 amendment —
-`ast_importers` reading its re-settled floor of 5, not 0, since the five
-surviving files are this track's own future surface. Spine
+`the-typescript-tree.md` (now retired) was the twelfth, phase 7 of the same
+trajectory, entry-gated on `the-ir.md`'s own retirement note and its P6.58
+amendment — `ast_importers` reading its re-settled floor of 5, not 0, since
+the five surviving files were this track's own future surface. Spine
 [#1293](https://github.com/accuser/bynk/issues/1293); its settling PR closed
 all five of its design questions under review. Two of the five changed shape
 during settling, in the direction of more evidence, not more doubt: Q3
 (`TsType::Any` elimination) was framed as a risk of re-opening phase 6's IR,
 but a site-by-site classification of every `as any`/bare-`: any` occurrence
-(42 raw hits, not the 48 first measured; ~24 real emission sites) found full
-elimination achievable with zero IR work and only a small, named residual
-(2–3 sites) deferred to R7.7's runtime-typing work. Q4 (R8's scope) was
-framed as a closed/open binary, but a rule-by-rule audit against the current
-tree found a three-way split — twelve of twenty-one R8 rules already closed,
-five closing as a byproduct of this track's own conversion, two (R8.2,
-R8.14) needing named slices, one shared with phase 8. Q1 settled on carving
-`bynk-ts` as a crate up front (the reverse of `the-ir.md`'s own `ir.rs`-first
-precedent — both real prior-art precedents in this codebase, `bynk-strip`
-and `bynk-render`, were carved up front, not built in-module and split
-later). Q2 settled on a statement-level `Verbatim` escape hatch with a
-closed `VerbatimOrigin` enum and a companion textual lint, since golden
-fixtures alone can't see inside an opaque hatch node. All 37 slices
-(P7.0–P7.9 numbered, Arc C's ~19 provisional, Arc D lettered P7.d1–P7.d8
-pending Arc C's real count) shipped in the design doc, not yet built. Its
-own probe, `ts_writes` (TypeScript-producing `write!`/`format!` outside
-`bynk-ts`), was measured for the first time opening this track — 1,709
-total sites, ~1,540 genuinely TypeScript-producing — the trajectory's own
-§3.0 baseline had recorded it as "not measured".
+found full elimination achievable with zero IR work and only a small, named
+residual deferred to R7.7's runtime-typing work. Q4 (R8's scope) was framed
+as a closed/open binary, but a rule-by-rule audit against the current tree
+found a three-way split. Q1 settled on carving `bynk-ts` as a crate up front
+(the reverse of `the-ir.md`'s own `ir.rs`-first precedent). Q2 settled on a
+statement-level `Verbatim` escape hatch with a closed `VerbatimOrigin` enum
+and a companion textual lint, since golden fixtures alone can't see inside
+an opaque hatch node. Run as six arcs (A–F, dozens of slices, far beyond the
+37 first estimated at settling), all four of its own gated probes retired at
+an argued floor, not the flat zero first proposed, the same honesty
+`ast_importers` (floor 5) already modelled: `ts_any` at 26, `verbatim_sites`
+at 2, `ts_writes` at 809, `verbatim_origins` at 1 — see `retired-tracks.md`'s
+closing summary for the full, file-by-file argument behind each.
 `agent-capability-encapsulation.md` is a committed Draft that appears in
 neither this table nor `retired-tracks.md`; it predates this row's addition
 and needs a spine issue or a retirement — tracked separately, not by this
@@ -189,6 +182,24 @@ A retired track's closing summary — what shipped, which ADRs carry its
 decisions, the named follow-ons — is kept for the record in
 [`../archive/retired-tracks.md`](../archive/retired-tracks.md):
 
+- **`the-typescript-tree.md`** — phase 7 of
+  [`../bynk-compiler-trajectory.md`](../bynk-compiler-trajectory.md), spine
+  [#1293](https://github.com/accuser/bynk/issues/1293): a new `bynk-ts` crate (tree, printer,
+  source map) becomes the single writer of every generated TypeScript character. Run as six arcs
+  (A–F); all four gated probes retire at an argued floor — `ts_any` 26, `verbatim_sites` 2,
+  `ts_writes` 809, `verbatim_origins` 1 — the same honesty `ast_importers` (floor 5) already
+  modelled for phase 6. Twenty-one ADRs, 0385–0410 (minus five numbers belonging to a concurrent,
+  unrelated track). Retired 29 August 2026. Opens phase 8, once its own settling review grounds a
+  fresh spine against the current tree. Full closing summary in `../archive/retired-tracks.md`.
+- **`the-ir.md`** — phase 6 of
+  [`../bynk-compiler-trajectory.md`](../bynk-compiler-trajectory.md), spine
+  [#1137](https://github.com/accuser/bynk/issues/1137): `bynk-emit` gains a typed IR
+  (`ir.rs`/`ir/lower.rs`), the emitter's own dispatch decisions move off re-derived AST
+  name-matching onto resolved `Callee`/`IrItem`/`TyId` reads. Run as three arcs (IR construction,
+  completion, retirement), ~59 slices. `ast_importers` retires at a re-settled floor of 5, not 0
+  — `bynk-emit/src/emitter{,/**}` exactly, argued file by file. Fifty-one ADRs, 0332–0382. Retired
+  19 August 2026. Opens phase 7 (`the-typescript-tree.md`) inheriting this floor as a named,
+  argued rendering-subtree boundary. Full closing summary in `../archive/retired-tracks.md`.
 - **`semantics-in-the-checker.md`** — phase 5 of
   [`../bynk-compiler-trajectory.md`](../bynk-compiler-trajectory.md), opened directly by
   `project-model.md`'s own retirement note below: every remaining whole-project check still in
