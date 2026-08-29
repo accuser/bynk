@@ -1,21 +1,25 @@
 //! `cargo xtask greenfield-status` — the probe harness (track doc §8, proposal #999).
 //!
-//! Fifteen probes measuring the tree against `design/bynk-greenfield-compiler.md`:
+//! Seventeen probes measuring the tree against `design/bynk-greenfield-compiler.md`:
 //! the twelve in track doc §8, `emit_abi_shapes` (ADR 0310's probe, #999 Decision E —
 //! this slice measures the emit-ABI enumeration guard but does not wire it; wiring is
-//! packaging-track work), and `ts_writes`/`ts_any` (phase 7's own probes, P7.0/#1296 —
-//! `design/tracks/the-typescript-tree.md` §5).
+//! packaging-track work), and phase 7's own four — `ts_writes`, `ts_any`,
+//! `verbatim_origins`, `verbatim_sites` (P7.0/#1296, P7.5/#1307 — see phase 7's own
+//! closing summary in `design/archive/retired-tracks.md`).
 //!
-//! **Eleven are gated**, committed and diffed: `workspace_lints`, `fs_below_driver`,
+//! **Thirteen are gated**, committed and diffed: `workspace_lints`, `fs_below_driver`,
 //! `options_sources`, `hoist_sinks`, `span_keyed_maps`, `emit_diagnostics`,
-//! `ide_emit_edge`, `ast_importers`, `emit_abi_shapes`, `ts_writes`, `ts_any`. Nine of
-//! these are zero/closure-shaped — a boolean, or a count pinned at a small, argued
-//! floor (`ast_importers` = 5, `emit_abi_shapes` = 1). `ts_writes`/`ts_any` are not:
-//! they read 1641/55, converging toward a floor named at `the-typescript-tree.md`'s own
-//! retirement over dozens of slices, the same shape `ast_importers` had throughout
-//! phase 6's 59 — gated despite the churn that implies, a deliberate call argued in
-//! `design/pending/p7-0-ts-writes-ts-any-probes.md`'s own ADR (review of #1297), not an
-//! oversight of #999 Decision D's churn-avoidance principle. A disagreement between a
+//! `ide_emit_edge`, `ast_importers`, `emit_abi_shapes`, `ts_writes`, `ts_any`,
+//! `verbatim_origins`, `verbatim_sites`. Eleven of these are zero/closure-shaped — a
+//! boolean, or a count pinned at a small, argued floor (`ast_importers` = 5,
+//! `emit_abi_shapes` = 1). Phase 7's own four are the same shape: each converged toward
+//! an argued floor over dozens of slices, the same trajectory `ast_importers` had
+//! throughout phase 6's 59 — retired at `ts_writes` = 809, `ts_any` = 26,
+//! `verbatim_origins` = 1, `verbatim_sites` = 2 (phase 7's own closing summary,
+//! `design/archive/retired-tracks.md`), none the literal 0 first proposed — gated
+//! throughout despite the churn that implies, a deliberate call argued in ADR
+//! 0389/ADR 0390 (review of #1297), not an oversight of #999 Decision D's
+//! churn-avoidance principle. A disagreement between a
 //! fresh run and the committed table fails `greenfield_status_table_is_current`
 //! (`xtask/tests/greenfield_status.rs`), which rides both the `test` job (`cargo test
 //! --workspace`, any Rust-touching PR) and the `drift` job's existing `cargo test -p
@@ -1699,25 +1703,26 @@ fn ts_writes_violations(files: &[(PathBuf, String)]) -> usize {
 
 /// The trajectory's own phase-7 probe (`design/bynk-compiler-trajectory.md` §3):
 /// "TypeScript-producing `write!` outside a printer". Never measured before this slice
-/// (P7.0, #1296; track doc `design/tracks/the-typescript-tree.md` §5, §6) — `bynk-ts`
-/// does not exist yet, so "outside a printer" reduces today to "in `bynk-emit`, outside
-/// a `Verbatim` construction"; the `Verbatim` half of that exclusion is vacuous until
-/// phase 7's own P7.5 builds the type (track doc §5's own note).
+/// (P7.0, #1296; see phase 7's own closing summary, `design/archive/retired-tracks.md`,
+/// for the full retirement argument) — `bynk-ts` did not exist yet at measurement time,
+/// so "outside a printer" reduced then to "in `bynk-emit`, outside a `Verbatim`
+/// construction"; the `Verbatim` half of that exclusion was vacuous until P7.5 built the
+/// type.
 ///
 /// **Not "zero/closure"-shaped like this module's other twelve gated probes, and gated
-/// anyway — a deliberate choice, not an inherited one.** The reading is 1641, headed
-/// toward a phase-7 floor named at that track's own retirement, not toward 0 or a small
-/// fixed number the way `ast_importers`/`emit_abi_shapes` are. It moves on any
-/// `bynk-emit` PR that adds or removes a single `write!`/`writeln!`/`format!` line
-/// anywhere in the crate — the same volatility #999 Decision D cites for *not* gating
-/// `wildcard_arms` (311, ungated for exactly this reason). Gated here anyway, because
-/// this track's own Arc C is dozens of slices each claiming "I converted a file's
-/// emission to the tree", and only a diffed, committed number makes that claim
-/// CI-checkable rather than self-reported — the same trade `ast_importers` already made
-/// successfully across phase 6's 59 slices, a probe with the identical shape (a large
-/// count, converging over many slices, still gated throughout). The churn cost is real
-/// and accepted, not overlooked: see `design/pending/p7-0-ts-writes-ts-any-probes.md`'s
-/// own ADR for the argument in full (review of #1297).
+/// anyway — a deliberate choice, not an inherited one.** The reading started at 1641 and
+/// converged, over dozens of slices, to phase 7's own argued retirement floor, **809**
+/// (ADR 0409; the full bucket-by-bucket accounting is in phase 7's own closing summary,
+/// `design/archive/retired-tracks.md`) — never the literal 0 first proposed, nor a small
+/// fixed number the way `ast_importers`/`emit_abi_shapes` are. Stays gated after
+/// retirement, not deleted — a regression ratchet like `ast_importers` (floor 5) already
+/// is: it moves on any `bynk-emit` PR that adds or removes a single `write!`/`writeln!`/
+/// `format!` line anywhere in the crate — the same volatility #999 Decision D cites for
+/// *not* gating `wildcard_arms` (311, ungated for exactly this reason) — but a floor this
+/// track spent dozens of slices earning is worth catching a silent regression against,
+/// the same trade `ast_importers` already made successfully across phase 6's 59 slices.
+/// The churn cost is real and accepted, not overlooked: see ADR 0389/ADR 0390 for the
+/// argument in full (review of #1297).
 ///
 /// Counts `bynk-emit/src/**/*.rs` lines — excluding comments, `#[cfg(test)]` test-module
 /// ranges, [`TS_WRITES_EXCLUDED_FILES`], and [`is_path_construction_line`] matches —
@@ -1739,7 +1744,7 @@ fn ts_writes(root: &Path) -> Probe {
 /// position (`Array<any>`, `Record<string, any[]>`, `Promise<any>`).
 ///
 /// Six patterns, not `as any` alone, following three rounds of the same finding.
-/// Round one (Q3, `design/tracks/the-typescript-tree.md` §3.3) found `as any` alone
+/// Round one (Q3, phase 7's own settling pass) found `as any` alone
 /// under-counts R7.1 and added bare `: any`. Round two (review of #1297) found *that*
 /// still under-counts: `bynk-emit/src/emitter/lower.rs`'s `joinOn`/`leftJoin`/`groupBy`
 /// emit `const __h: Record<string, any[]> = {}` — `, any[]` contains neither `as any`
@@ -1796,10 +1801,12 @@ fn ts_any_violations(files: &[(PathBuf, String)]) -> usize {
 
 /// Reference rule R7.1 (`design/bynk-greenfield-compiler.md` Part 7) — "the tree
 /// contains no ... `TsType::Any`". Gated for the same reason [`ts_writes`] is (see its
-/// own doc comment): this reading, 55 (not the settling review's estimated ~24 — see
-/// `design/pending/p7-0-ts-writes-ts-any-probes.md`), is this track's own second
-/// completion ratchet, and only a diffed, committed number makes "I removed an `Any`"
-/// CI-checkable per slice.
+/// own doc comment): started at 55 (not the settling review's estimated ~24 — ADR
+/// 0390), converged over several slices to phase 7's own argued retirement floor, **26**
+/// (ADR 0404; six already-argued families, none newly tractable — full accounting in
+/// phase 7's own closing summary, `design/archive/retired-tracks.md`), and stays gated
+/// after retirement as a regression ratchet, the same "I removed an `Any`" CI-checkable
+/// claim every slice needed.
 ///
 /// Counts `bynk-emit/src/**/*.rs` lines — excluding `#[cfg(test)]` test-module ranges
 /// and [`TS_WRITES_EXCLUDED_FILES`] (the same files [`ts_writes`] excludes for producing
@@ -1822,11 +1829,14 @@ fn ts_any(root: &Path) -> Probe {
 /// P7.5 (#1307): distinct `bynk_ts::VerbatimOrigin` variants named in
 /// `bynk-emit/src` — how many *families* of residual, not-yet-converted
 /// emission remain, not their size (`verbatim_sites`, below, is the size).
-/// Retires at an **argued floor**, expected small (1-3), named file-by-file
-/// at retirement the way `ast_importers`'s floor of 5 was (`design/tracks/
-/// the-typescript-tree.md` §5). Reads **0** at this slice's own landing:
-/// `bynk-emit` builds no `Verbatim` content yet (#1307's Decision C) — Arc
-/// C's own first slice is what gives this probe something to count.
+/// Retired at an **argued floor**, named file-by-file the way `ast_importers`'s
+/// floor of 5 was: **1** (ADR 0410) — only `NotYetConverted` has a live
+/// production reference, at the same two sites `verbatim_sites`'s own floor
+/// names permanent; full accounting in phase 7's own closing summary,
+/// `design/archive/retired-tracks.md`. Read **0** at this slice's own
+/// landing (`bynk-emit` built no `Verbatim` content yet, #1307's Decision C
+/// — Arc C's own first slice is what gave this probe something to count);
+/// stays gated after retirement as a regression ratchet.
 ///
 /// Line-scans for `VerbatimOrigin::<Variant>` and counts distinct variant
 /// names referenced, the same needle-scan shape [`hoist_sinks`] uses. A
@@ -1884,13 +1894,20 @@ fn verbatim_origins_violations(files: &[(PathBuf, String)]) -> usize {
 
 /// P7.5 (#1307): distinct `TsStmt::verbatim(...)` construction call sites in
 /// `bynk-emit/src`, line-scanned the same way [`hoist_sinks`] counts
-/// `stmts: &mut Vec<String>` occurrences. Retires at **0**: every call site
-/// converting to a real tree node is what Arc C's own per-file slices are
-/// actually for (`design/tracks/the-typescript-tree.md` §5) —
+/// `stmts: &mut Vec<String>` occurrences. Every call site converting to a
+/// real tree node is what Arc C's own per-file slices were actually for —
 /// `verbatim_origins` alone can't distinguish "3 variants, 12 residual call
 /// sites" from "3 variants, 900 residual call sites, two files never
-/// decomposed"; this is what closes that gap. Reads **0** at this slice's
-/// own landing, same reason `verbatim_origins` does.
+/// decomposed"; this is what closes that gap. Retired at an **argued
+/// floor**, not the flat 0 first proposed: **2** (ADR 0399/ADR 0407,
+/// confirmed unchanged by the #1486 capstone) — `project.rs`'s
+/// adapter-binding copy loop (a foreign, user-authored TypeScript payload)
+/// and its `runtime.ts` staging (a committed npm build artifact), neither
+/// ever generated by `bynk-emit`; full accounting in phase 7's own closing
+/// summary, `design/archive/retired-tracks.md`. Read **0** at this slice's
+/// own landing, same reason
+/// `verbatim_origins` did; stays gated after retirement as a regression
+/// ratchet.
 fn verbatim_sites(root: &Path) -> Probe {
     let dir = root.join("bynk-emit/src");
     Probe {
