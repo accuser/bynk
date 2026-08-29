@@ -74,8 +74,8 @@ re-parses from `&str`") and #62 ("`for_each_unit` never filters the cursor's own
 — issue [#733](https://github.com/accuser/bynk/issues/733) ("lsp: interactive requests trigger
 full-project re-analysis and re-parse-from-disk, defeating the debounce") is closed, and
 `bynk-ide/src/completion.rs`'s `for_each_unit` (`:1578`) now takes a caller-built `files` overlay
-rather than re-sweeping disk, backed by a content-keyed cache, `PROJECT_UNIT_CACHE` (cap 4096,
-`:1530`), through `cached_project_unit` (`:1537–1561`). **But the diagnostics path is untouched.**
+rather than re-sweeping disk, backed by a content-keyed cache, `PROJECT_UNIT_CACHE` (`:1520`, cap
+4096 at `:1530`), through `cached_project_unit` (`:1537–1561`). **But the diagnostics path is untouched.**
 `bynk-ide::diagnose_project_with` (`bynk-ide/src/lib.rs:299`) calls
 `bynk_check::analysis::analyse_project` (`bynk-check/src/analysis.rs:262`) unconditionally on
 every invocation — full discovery, parse, resolve and check over the whole project, with no cache
@@ -85,9 +85,10 @@ touched. This is not the "phases 0–1 were fixed by accident" story the traject
 tells about itself; it is the same story, half-told: one call site paid down, the sibling call
 site — the one this phase's probe is named after — still live.
 
-**None of R3.13's four query types exist as real identifiers anywhere in the workspace.** A
-grep for `UnitSignature`, `ProjectGraph`, `TypeOf(`, `Body(`, `Tokens(FileId` as code, not doc
-prose, across every crate returns zero hits. `bynk-project` (2,458 lines across nine files —
+**None of R3.13's four query levels have their types built as real identifiers anywhere in the
+workspace.** A grep for the five type names those four levels name — `UnitSignature`, `ProjectGraph`,
+`TypeOf(`, `Body(`, `Tokens(FileId` (`Ast(FileId` shares the file level with `Tokens(FileId` and
+returns the same zero) — as code, not doc prose, across every crate returns zero hits. `bynk-project` (2,458 lines across nine files —
 `discovery.rs` 616, `paths.rs` 623, `graph.rs` 331, `roots.rs` 319, `schema_registry.rs` 220,
 `consistency.rs` 183, `json.rs` 94, `lib.rs` 52, `diagnostics.rs` 20) is the crate this phase's
 `ProjectGraph` would sit in, per phase 4's own placement — but its closest types, `graph.rs`'s and
@@ -99,9 +100,12 @@ defer to phase 8."
 ADR 0200's cross-context contract hash — the piece R3.14's own rationale cites as "the query
 already exists in substance" — is real: `combined_types_for` (`bynk-check/src/symbols.rs:1147`,
 22 lines) folds a unit's own declared types with its direct `uses` targets' types into one
-`HashMap<String, Arc<TypeDecl>>`, called from 24 sites across `bynk-check`, `bynk-emit`,
-`bynk-lower`, `bynk-ide` and `bynkc/tests/contract_hash.rs`. It is genuinely signature-shaped
-(declared types only, no bodies) and already keyed per-unit. But it computes **types only** — not
+`HashMap<String, Arc<TypeDecl>>`, called from **7 sites across 2 crates** (`bynk-check/src/symbols.rs:862`,
+`check_pipeline.rs:284`, `analysis.rs:666`; `bynk-emit/src/project.rs:927,2227,2402,2428`) — 24
+textual references turn up on a plain grep, but 17 of those are the definition, two `use` imports
+and fourteen doc comments describing its shape rather than invoking it, including the one in
+`bynkc/tests/contract_hash.rs:16`, which names the function but never calls it. It is genuinely
+signature-shaped (declared types only, no bodies) and already keyed per-unit. But it computes **types only** — not
 the full surface design notes §15's own annotation policy requires at "visible boundaries":
 function and handler declarations, agent storage declarations, cross-context type references, and
 capability sets via `given` (`design/bynk-design-notes.md:921–936`, "**Visible boundaries,
@@ -167,20 +171,24 @@ already done and the tension it leaves.
 
 ### 3.1 Q1 — Is `UnitSignature` built by extending ADR 0200's `combined_types_for` in place, or as a new, parallel type?
 
-`combined_types_for` is real, per-unit, signature-shaped, and has 24 call sites depending on its
-current, narrower shape (types only). R3.14 needs a wider surface — function/handler signatures,
-storage declarations, cross-context type references, capability sets — the same list design notes
-§15 already names as "required" annotation sites. Widening the existing function in place risks
-disturbing 24 call sites that depend on its current contract (notably `bynkc/tests/contract_hash.rs`,
-the fixture pinning ADR 0200's own correctness guarantee); building a new, parallel
-`UnitSignature` type risks the "two facts, one hand-synced" failure phase 1's own invariant exists
-to prevent (`design/bynk-compiler-trajectory.md` §3, Phase 1: "no fact exists in two hand-synced
-copies where one can be derived"). This question also folds in `the-typescript-tree.md` §10's own
+`combined_types_for` is real, per-unit, signature-shaped, and has 7 call sites across 2 crates
+(`bynk-check`, `bynk-emit` — §1 has the exact locations) depending on its current, narrower shape
+(types only). R3.14 needs a wider surface — function/handler signatures, storage declarations,
+cross-context type references, capability sets — the same list design notes §15 already names as
+"required" annotation sites. Widening the existing function in place risks disturbing those 7 call
+sites' current contract; building a new, parallel `UnitSignature` type risks the "two facts, one
+hand-synced" failure phase 1's own invariant exists to prevent (`design/bynk-compiler-trajectory.md`
+§3, Phase 1: "no fact exists in two hand-synced copies where one can be derived"). At 7 call sites
+in 2 crates, in-place extension looks materially cheaper than a parallel type — worth weighing
+against a genuinely open, not yet closed, question. (`bynkc/tests/contract_hash.rs` names the
+function in a doc comment but never calls it directly, so it would not break on a widened
+signature — it would only go stale as prose, which is its own, smaller risk to name if extension
+is chosen.) This question also folds in `the-typescript-tree.md` §10's own
 open note — whether `Artefacts` (R7.8) is a second, emit-side signature target, or whether one
 `UnitSignature` on the check side is sufficient and the emit side reads through it.
 
 **Needs settling:** extend `combined_types_for` into `UnitSignature`'s real identity function
-(widening its return type and threading the additional annotation-policy fields through its 24
+(widening its return type and threading the additional annotation-policy fields through its 7
 existing call sites), or introduce `UnitSignature` as a superset type constructed from
 `combined_types_for`'s output plus the additional fields, leaving the existing function's contract
 untouched for its current callers? And: does `Artefacts` need its own signature concept for the
@@ -328,11 +336,13 @@ yet built" is stale — it has existed since the phase 0–2 track and gates thi
 
 ## 9. Risks
 
-**Q1's answer touches 24 existing call sites if extension is chosen.** `combined_types_for` is
-depended on by `bynk-check`, `bynk-emit`, `bynk-lower`, `bynk-ide` and `bynkc/tests/contract_hash.rs`
-— the fixture pinning ADR 0200's own correctness guarantee. Widening its signature without
-breaking any of the 24 needs care; this is the reason Q1 is a front-loaded ADR candidate rather
-than a slice-time decision.
+**Q1's answer touches 7 existing call sites across `bynk-check` and `bynk-emit` if extension is
+chosen** — fewer, and narrower, than this doc first counted (§1 corrects an earlier draft's raw
+grep of 24 textual references down to the 7 that are real invocations). Widening the function's
+signature without breaking any of the 7 still needs care, and `bynkc/tests/contract_hash.rs`'s own
+doc comment describing the function (not a call) means a signature change would not be caught by
+that fixture — a smaller, different risk than "breaks a caller," worth naming when Q1 is argued.
+This is the reason Q1 is a front-loaded ADR candidate rather than a slice-time decision.
 
 **The probe's own shape is unresolved going into this doc's own settling review**, more than any
 prior phase's opening. Every other phase's settling review closed its open questions against a
@@ -367,7 +377,7 @@ pending §3 actually closing under review (numbers assigned at merge by the stam
 track's own convention of referring to them by letter until then):
 
 - **ADR-A** — whether `UnitSignature` extends `combined_types_for` in place or is built as a
-  parallel type (§3.1, Q1). The most load-bearing of the set — it decides whether 24 existing call
+  parallel type (§3.1, Q1). The most load-bearing of the set — it decides whether 7 existing call
   sites change shape or a new type is introduced beside them, and whether `Artefacts` (phase 7)
   gets its own signature concept or none.
 - **ADR-B** — whether this track builds a hand-rolled memo table or stops at the query
@@ -377,7 +387,7 @@ track's own convention of referring to them by letter until then):
   work clarifies what is actually measurable, the same way `the-ir.md`'s own floor-of-5 argument
   was P6.58, not a day-one ADR.
 
-## Threat model
+## Threat model (per the ADR 0076 trigger check — not ticked, kept for the template's required section)
 
 None, because this phase's invariant — `UnitSignature` stability, cache correctness — is a
 performance and architecture property. A defect here produces wrong or stale analysis results

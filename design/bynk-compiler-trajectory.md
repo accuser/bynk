@@ -424,10 +424,11 @@ designed so that is always available.
 **Probes, not prose.** Each phase's invariant is a number that CI can compute. A phase is complete
 when its number is zero, not when it feels done.
 
-**`cargo xtask greenfield-status`** — specified, not yet built (track slice T0.0) — will regenerate
-the reference's Appendix D from `Closes-Rule:` PR trailers plus the mechanical probes, and fail CI
-when the committed table is stale. It is specified here to also report the current phase and the
-distance to its invariant, once it exists.
+**`cargo xtask greenfield-status`** — built (track slice T0.0, `xtask/src/greenfield_status.rs`),
+regenerating the committed `design/greenfield-status.md` from thirteen gated probes plus four
+trend-only ones, and failing CI (`greenfield_status_table_is_current`) when that table goes stale.
+It does not yet report the current phase or the distance to its own invariant the way this
+paragraph originally specified — that reporting is still open, not the command itself.
 
 **The evidence ages.** The review is v0.237.1; the workspace is v0.245.0; `bynk-ide` has already been
 demoted to a dev-dependency of `bynkc` citing finding #41. Every slice re-checks its finding. A
