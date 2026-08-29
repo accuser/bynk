@@ -376,7 +376,7 @@ and tightly coupled — 0 enables both, 1 is independent, 2 needs only 0 — so 
 | 5 | *(retired)* | **Retired 9 August 2026** (settled 8 August 2026; spine [#1126](https://github.com/accuser/bynk/issues/1126), settling PR [#1127](https://github.com/accuser/bynk/pull/1127), closing summary in [`archive/retired-tracks.md`](archive/retired-tracks.md)). All six named slices shipped, closing R3.5 in full — the seven `bynk-check/src/analysis.rs`-named diagnostic categories plus two sites its own accounting didn't cover relocated out of `bynk-emit`, five categories closing a named, fixture-pinned editor regression, the rest for R3.5 compliance alone with no observable change; `check_function_type_boundaries`'s reach-back hook closed; R10.1 closed with a crate-doc correction, not a `bynk-driver` split; R4.6/R4.11/R10.4 reverified still closed, not reopened. `emit_diagnostics` reads 4/6 (true/naive), true=4 the named floor |
 | 6 | *(retired)* | **Retired 19 August 2026** (settled 17 August 2026; spine [#1137](https://github.com/accuser/bynk/issues/1137), closing summary in [`archive/retired-tracks.md`](archive/retired-tracks.md)). `bynk-emit` gained a typed IR (`ir.rs`/`ir/lower.rs`) and every genuinely convertible declaration-read site the track's own research found moved onto it; `ast_importers` reads its re-settled floor, **5**, not the 0 first named — `bynk-emit/src/emitter{,/**}`, the TypeScript-rendering subtree phase 7's own printer inherits, argued file by file in the closing summary rather than left as an unmet criterion. `bynk-ir`/`bynk-lower` stay inside `bynk-emit` (Part 10's own crate split deferred to phase 7, per this track's own settling); R6.5's store-write data-loss defect (§1's "strongest single argument") closed structurally, not patched |
 | 7 | *(retired)* | **Retired 29 August 2026** (settled 20 August 2026; spine [#1293](https://github.com/accuser/bynk/issues/1293), closing summary in [`archive/retired-tracks.md`](archive/retired-tracks.md)). A new `bynk-ts` crate (tree, printer, source map) became the single writer of every generated TypeScript character; `TsType::Any` eliminated in full bar a small, named residual on R7.7's runtime-typing work; R8.1–R8.22 closed or relocated rule by rule. Run as six arcs, far beyond the 37 slices first estimated at settling. All four gated probes retired at an argued floor, not the flat zero first proposed, the same honesty `ast_importers` (floor 5) already modelled: `ts_any` **26**, `verbatim_sites` **2**, `ts_writes` **809**, `verbatim_origins` **1** — each argued file by file in the closing summary rather than left as an unmet criterion |
-| 8 | *(to be opened)* | Openable now that phase 7 has retired (below) — a fresh settling review still needs to ground its own spine against the current tree before a track opens, the same discipline phase 7's own opening applied to phase 6's |
+| 8 | [`incrementality.md`](tracks/incrementality.md) | **Settling** — spine open, draft PR grounding §3's open questions against the current tree, the same discipline phase 7's own opening applied to phase 6's |
 
 A phase's track opens when the previous phase's probe reads zero. Not before — an open track for a
 phase whose prerequisite is unmet is how a trajectory becomes a wish list. Phase 6 was the first
@@ -424,10 +424,11 @@ designed so that is always available.
 **Probes, not prose.** Each phase's invariant is a number that CI can compute. A phase is complete
 when its number is zero, not when it feels done.
 
-**`cargo xtask greenfield-status`** — specified, not yet built (track slice T0.0) — will regenerate
-the reference's Appendix D from `Closes-Rule:` PR trailers plus the mechanical probes, and fail CI
-when the committed table is stale. It is specified here to also report the current phase and the
-distance to its invariant, once it exists.
+**`cargo xtask greenfield-status`** — built (track slice T0.0, `xtask/src/greenfield_status.rs`),
+regenerating the committed `design/greenfield-status.md` from thirteen gated probes plus four
+trend-only ones, and failing CI (`greenfield_status_table_is_current`) when that table goes stale.
+It does not yet report the current phase or the distance to its own invariant the way this
+paragraph originally specified — that reporting is still open, not the command itself.
 
 **The evidence ages.** The review is v0.237.1; the workspace is v0.245.0; `bynk-ide` has already been
 demoted to a dev-dependency of `bynkc` citing finding #41. Every slice re-checks its finding. A

@@ -78,6 +78,7 @@ each track's spine issue; this table is deliberately just the map.
 |---|---|---|---|
 | [`documentation.md`](documentation.md) | [#557](https://github.com/accuser/bynk/issues/557) | Slicing (slice 0 shipped) | Documentation & web presence: the Astro + Starlight migration, a CI snippet-verification harness, playground integration seams |
 | [`idempotency-capability.md`](idempotency-capability.md) | [#921](https://github.com/accuser/bynk/issues/921) | Slicing (slice 0 shipped, #929; call-site key scoping follow-up shipped, #934) | The `Idempotency` capability: mechanical dedup for at-least-once delivery, per design notes §4, §12 |
+| [`incrementality.md`](incrementality.md) | [#1507](https://github.com/accuser/bynk/issues/1507) | Settling | Phase 8 of the compiler trajectory (the last phase) — query granularity (`Tokens`/`UnitSignature`/`Body`/`ProjectGraph`) and the firewall, per `bynk-greenfield-compiler.md` R3.13–R3.15 |
 
 (`documentation.md` pre-dates the GitHub-native flow, so its doc was
 committed by an ordinary PR rather than a settling draft PR; the spine issue
@@ -165,6 +166,22 @@ an argued floor, not the flat zero first proposed, the same honesty
 `ast_importers` (floor 5) already modelled: `ts_any` at 26, `verbatim_sites`
 at 2, `ts_writes` at 809, `verbatim_origins` at 1 — see `retired-tracks.md`'s
 closing summary for the full, file-by-file argument behind each.
+`incrementality.md` is the thirteenth, phase 8 of the same trajectory — the
+last phase — entry-gated on `the-typescript-tree.md`'s own retirement note,
+which named phases 3 and 4 *together with* itself as this phase's real
+precondition rather than the trajectory's own §4 diagram alone. Spine
+[#1507](https://github.com/accuser/bynk/issues/1507); its
+settling draft PR is open, grounding five design questions against the
+current tree: whether `UnitSignature` extends ADR 0200's existing
+`combined_types_for` in place or is built as a parallel type; whether the
+diagnostics path's missing file-level cache (`analyse_project` re-parses the
+whole project on every call, unlike completion's own `PROJECT_UNIT_CACHE`,
+which closed issue #733 for that one path only) is this track's own
+file-level business; whether a hand-rolled memo table is this track's
+deliverable or a later one's; what `UnitSignature` actually needs to contain
+and how its stability is proved; and what the gated probe should measure,
+since "keystroke-to-diagnostic latency by query level" cannot be measured
+until the query levels it attributes latency to exist.
 `agent-capability-encapsulation.md` is a committed Draft that appears in
 neither this table nor `retired-tracks.md`; it predates this row's addition
 and needs a spine issue or a retirement — tracked separately, not by this
