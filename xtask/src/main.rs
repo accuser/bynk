@@ -3,9 +3,9 @@
 //! - `check-pending` (Slice 0) validates the files under `design/pending/`.
 //! - `stamp` (Slice 1) assigns the version(s) + ADR number(s) for the pending
 //!   files and materialises them; dry-run by default, `--apply` to write.
-//! - `greenfield-status` (compiler-architecture track, T0.0, #999) runs the
-//!   fourteen gated probes against the tree and prints the report; `--apply` writes
-//!   the committed table.
+//! - `greenfield-status` (compiler-architecture track, T0.0, #999) runs all nineteen
+//!   probes against the tree and prints the report (the fourteen gated ones are what
+//!   the committed table is diffed on); `--apply` writes the committed table.
 //! - `ci` runs the gates CI runs, locally, in CI's own cheapest-first order —
 //!   `--fast` stops after the two that need no compile-and-link.
 
