@@ -1,0 +1,10 @@
+context api
+
+uses alpha
+uses beta
+
+service check {
+  on call(a: A, b: B) -> Effect[Int] {
+    Effect.pure(0)
+  }
+}

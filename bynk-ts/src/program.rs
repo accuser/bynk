@@ -81,6 +81,23 @@ pub struct TsStmt {
     /// common case, and the reason this is an `Option`, not a required
     /// field.
     pub nested_map: Option<SourceMapBuilder>,
+    /// #1486's own second real gap, found converting `emit_test_module`/
+    /// `emit_integration_module`: [`crate::printer::print`]'s own top-level
+    /// loop always merges a statement's [`nested_map`](Self::nested_map)
+    /// against parent source id `0` (`crate::printer::MergeTarget`'s own
+    /// review-of-#1488 fix threads a `source_id` through every *manual*
+    /// merge entry point, but `print`'s own automatic top-level case never
+    /// had a per-statement way to say "not 0") — correct for every
+    /// single-source module (`emit_project`, every other real caller so
+    /// far), but wrong for a test/integration module's own aggregate map,
+    /// which registers one source per fragment file a case's body came from
+    /// (`SourceMapBuilder::add_source`) and needs each such case's own
+    /// top-level statement merged against *that* source's id, not the
+    /// module's primary one. `0` (every site predating this field, and
+    /// every single-source module after it) keeps the automatic policy
+    /// exactly as it already was; a case/property/attack wrapper statement
+    /// sets this to its own registered source id before `print` sees it.
+    pub nested_map_source_id: usize,
     /// #1486's own real gap, found converting `emit_project`/`emit_test_
     /// module`/`emit_integration_module` off a single opaque top-level
     /// `Verbatim` wrap: [`crate::printer::print`]'s own top-level loop
@@ -470,6 +487,7 @@ impl TsStmt {
             span,
             nested_map: None,
             no_blank_before: false,
+            nested_map_source_id: 0,
         }
     }
 
@@ -479,6 +497,7 @@ impl TsStmt {
             span,
             nested_map: None,
             no_blank_before: false,
+            nested_map_source_id: 0,
         }
     }
 
@@ -493,6 +512,7 @@ impl TsStmt {
             span,
             nested_map: None,
             no_blank_before: false,
+            nested_map_source_id: 0,
         }
     }
 
@@ -507,6 +527,7 @@ impl TsStmt {
             span,
             nested_map: None,
             no_blank_before: false,
+            nested_map_source_id: 0,
         }
     }
 
@@ -516,6 +537,7 @@ impl TsStmt {
             span,
             nested_map: None,
             no_blank_before: false,
+            nested_map_source_id: 0,
         }
     }
 
@@ -525,6 +547,7 @@ impl TsStmt {
             span,
             nested_map: None,
             no_blank_before: false,
+            nested_map_source_id: 0,
         }
     }
 
@@ -534,6 +557,7 @@ impl TsStmt {
             span,
             nested_map: None,
             no_blank_before: false,
+            nested_map_source_id: 0,
         }
     }
 
@@ -548,6 +572,7 @@ impl TsStmt {
             span,
             nested_map: None,
             no_blank_before: false,
+            nested_map_source_id: 0,
         }
     }
 
@@ -567,6 +592,7 @@ impl TsStmt {
             span,
             nested_map: None,
             no_blank_before: false,
+            nested_map_source_id: 0,
         }
     }
 
@@ -590,6 +616,7 @@ impl TsStmt {
             span,
             nested_map: None,
             no_blank_before: false,
+            nested_map_source_id: 0,
         }
     }
 
@@ -608,6 +635,7 @@ impl TsStmt {
             span,
             nested_map: None,
             no_blank_before: false,
+            nested_map_source_id: 0,
         }
     }
 
@@ -631,6 +659,7 @@ impl TsStmt {
             span,
             nested_map: None,
             no_blank_before: false,
+            nested_map_source_id: 0,
         }
     }
 
@@ -649,6 +678,7 @@ impl TsStmt {
             span,
             nested_map: None,
             no_blank_before: false,
+            nested_map_source_id: 0,
         }
     }
 
@@ -658,6 +688,7 @@ impl TsStmt {
             span,
             nested_map: None,
             no_blank_before: false,
+            nested_map_source_id: 0,
         }
     }
 
@@ -667,6 +698,7 @@ impl TsStmt {
             span,
             nested_map: None,
             no_blank_before: false,
+            nested_map_source_id: 0,
         }
     }
 
@@ -676,6 +708,7 @@ impl TsStmt {
             span,
             nested_map: None,
             no_blank_before: false,
+            nested_map_source_id: 0,
         }
     }
 
@@ -685,6 +718,7 @@ impl TsStmt {
             span,
             nested_map: None,
             no_blank_before: false,
+            nested_map_source_id: 0,
         }
     }
 
@@ -694,6 +728,7 @@ impl TsStmt {
             span,
             nested_map: None,
             no_blank_before: false,
+            nested_map_source_id: 0,
         }
     }
 
@@ -703,6 +738,7 @@ impl TsStmt {
             span,
             nested_map: None,
             no_blank_before: false,
+            nested_map_source_id: 0,
         }
     }
 
@@ -715,6 +751,7 @@ impl TsStmt {
             span,
             nested_map: None,
             no_blank_before: false,
+            nested_map_source_id: 0,
         }
     }
 
@@ -724,6 +761,7 @@ impl TsStmt {
             span,
             nested_map: None,
             no_blank_before: false,
+            nested_map_source_id: 0,
         }
     }
 
@@ -733,6 +771,7 @@ impl TsStmt {
             span,
             nested_map: None,
             no_blank_before: false,
+            nested_map_source_id: 0,
         }
     }
 
@@ -745,6 +784,7 @@ impl TsStmt {
             span,
             nested_map: None,
             no_blank_before: false,
+            nested_map_source_id: 0,
         }
     }
 }

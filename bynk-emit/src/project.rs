@@ -1270,7 +1270,12 @@ fn emit_unit(
     // path the debugger loads (project-relative would resolve against the output
     // `.ts`'s directory — the wrong place). Synthetic units fall back to relative.
     let source_name = pf.map_source_name();
-    let (ts, source_map) = emitter::emit_project(program, &emit_ctx, pf.source(), &source_name);
+    // #1486: `emit_project` now returns the real `TsProgram` (printed once
+    // at the write boundary via `Document::text`) plus the source map
+    // `bynk_ts::print` already computed while building it — no more
+    // `Verbatim`-wrapping a pre-rendered string.
+    let (program, source_map) =
+        emitter::emit_project(program, &emit_ctx, pf.source(), &source_name);
     // Slice 3: the handler-label sidecar for this unit (ADR 0105) — names stack
     // frames by their Bynk operation. `None` for units with no handlers.
     let debug_metadata = emitter::collect_handler_labels(typed);
@@ -1281,13 +1286,7 @@ fn emit_unit(
     };
     compiled.push(StagedFile {
         output_path,
-        document: Document::Ts(bynk_ts::TsProgram {
-            stmts: vec![bynk_ts::TsStmt::verbatim(
-                bynk_ts::VerbatimOrigin::NotYetConverted,
-                ts,
-                None,
-            )],
-        }),
+        document: Document::Ts(program),
         source_map,
         debug_metadata,
     });

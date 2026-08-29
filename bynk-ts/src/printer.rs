@@ -245,9 +245,41 @@ pub fn print(
     source_text: &str,
     output_file: &str,
 ) -> Printed {
-    let mut out = String::new();
     let mut map = SourceMapBuilder::new();
     map.add_source(source_name, source_text);
+    print_with_map(program, map, output_file)
+}
+
+/// #1486's own multi-source sibling of [`print()`]: a test/integration
+/// module's own aggregate map spans one source per fragment file a case's
+/// body was spliced in from (`emit_test_module`/`emit_integration_module`,
+/// `project/tests_emit.rs`), not the single `.bynk` file `print`'s own
+/// signature assumes — see [`TsStmt::nested_map_source_id`]'s own doc for
+/// why a per-statement source selector needs a caller that can register
+/// more than one source in the first place. Takes the caller's own already-
+/// built `map` directly (rather than a `(name, text)` list built fresh
+/// here) so a caller can keep registering sources incrementally as it
+/// discovers them — `emit_test_module`'s own per-case loop, one `add_source`
+/// call per case, exactly as it already did before this function existed —
+/// and get each call's own returned id back immediately, to set on that
+/// case's own top-level statement's `nested_map_source_id`, instead of
+/// having to pre-compute the full source list up front. Every statement's
+/// own `nested_map_source_id` selects which of `map`'s already-registered
+/// sources (by id) its own `nested_map` merges against; a statement with no
+/// `span` of its own (this whole module's own shape — an aggregate with no
+/// single "primary" source of its own) never records a top-level
+/// checkpoint, so `map`'s own id-`0` source (if any) needs no special
+/// "primary" meaning here the way [`print()`]'s single source does.
+pub fn print_multi_source(
+    program: &TsProgram,
+    map: SourceMapBuilder,
+    output_file: &str,
+) -> Printed {
+    print_with_map(program, map, output_file)
+}
+
+fn print_with_map(program: &TsProgram, mut map: SourceMapBuilder, output_file: &str) -> Printed {
+    let mut out = String::new();
     for (i, stmt) in program.stmts.iter().enumerate() {
         if let Some(span) = stmt.span {
             map.record(out.len(), span);
@@ -257,15 +289,18 @@ pub fn print(
         // same mechanism `print_stmt_and_merge`/`print_class_method_and_
         // merge` expose to a caller printing one fragment at a time,
         // applied here automatically for every top-level statement in a
-        // real `TsProgram`. `source_id: 0` matches `record`'s own
-        // unconditional targeting of the primary source just above.
+        // real `TsProgram`. `source_id` defaults to `stmt.
+        // nested_map_source_id`'s own default of `0`, matching `record`'s
+        // own unconditional targeting of the primary source just above for
+        // every single-source module; #1486's own multi-source case
+        // (`nested_map_source_id`'s own doc comment) sets it per statement.
         render_stmt(
             &mut out,
             stmt,
             0,
             Some(MergeTarget {
                 map: &mut map,
-                source_id: 0,
+                source_id: stmt.nested_map_source_id,
             }),
         );
         // The printer owns line structure (R7.3), so a statement's own text
@@ -2820,6 +2855,62 @@ mod tests {
 
         assert!(
             map.to_v3(&out, "x.ts").is_some(),
+            "the checkpoint resolved against the wrong source (id 0) and was silently dropped"
+        );
+    }
+
+    /// #1486's own sibling gap to the one above, but in [`print_multi_
+    /// source`]'s own automatic top-level loop rather than the manual
+    /// `print_stmt_and_merge` entry point: a real `TsProgram` built for a
+    /// multi-source module (a test/integration module aggregating several
+    /// `.bynk` fragment files, one per case) needs each case's own
+    /// top-level statement merged against *its own* registered source, not
+    /// the module's primary one (id 0) — `nested_map_source_id`'s own doc
+    /// comment. Decisive the same way the sibling test above is: source 0's
+    /// text is too short to contain the real span, so a wrong-source merge
+    /// silently drops the checkpoint (`to_v3`'s own out-of-range guard) and
+    /// the map comes back missing it.
+    #[test]
+    fn print_multi_source_honours_a_top_level_statements_own_nested_map_source_id() {
+        let primary = "x\n";
+        let secondary = "fn f() { return 1 }\n";
+        let ret_off = secondary.find("return 1").unwrap();
+        let ret_span = Span::new(ret_off, ret_off + 8);
+        assert!(
+            ret_span.start > primary.len(),
+            "sanity: the span must fall outside source 0's own short text"
+        );
+
+        let body_text = "  return 1;\n";
+        let mut nested = SourceMapBuilder::new();
+        nested.record(0, ret_span);
+
+        let mut raw = TsStmt::raw(body_text, None);
+        raw.nested_map = Some(nested);
+
+        let mut func = TsStmt::decl(
+            TsDecl::Function {
+                name: "f".to_string(),
+                generics: Vec::new(),
+                params: Vec::new(),
+                return_type: None,
+                body: vec![raw],
+                is_async: false,
+                inline: false,
+            },
+            None,
+        );
+        func.nested_map_source_id = 1;
+
+        let mut program = TsProgram::new();
+        program.push(func);
+
+        let mut map = SourceMapBuilder::new();
+        map.add_source("primary.bynk", primary);
+        map.add_source("secondary.bynk", secondary);
+        let printed = print_multi_source(&program, map, "x.ts");
+        assert!(
+            printed.source_map.is_some(),
             "the checkpoint resolved against the wrong source (id 0) and was silently dropped"
         );
     }

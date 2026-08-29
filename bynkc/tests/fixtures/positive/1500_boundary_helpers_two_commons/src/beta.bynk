@@ -1,0 +1,3 @@
+commons beta {
+  type B = Int where NonNegative
+}
