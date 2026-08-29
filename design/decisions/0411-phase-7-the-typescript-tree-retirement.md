@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "Phase 7 (`the-typescript-tree.md`, spine #1293) retires — all four gated probes read their own argued floor: `ts_any` 26, `verbatim_sites` 2, `ts_writes` 809, `verbatim_origins` 1. The retirement PR itself: deletes the track doc, archives its closing summary, re-points every doc that named it, closes the spine issue."
----
+# 0411 — Phase 7 (`the-typescript-tree.md`, spine #1293) retires — all four gated probes at their own argued floor
 
-## ADR: phase-7-the-typescript-tree-retirement
-title: Phase 7 (`the-typescript-tree.md`, spine #1293) retires — all four gated probes at their own argued floor
-summary: The retirement PR itself — deletes the track doc, archives its closing summary, re-points every doc that named it, closes the spine issue
+- **Status:** Accepted (v0.289.48)
 
 **Context.** §12's own retirement condition — `ts_writes`, `verbatim_origins` and
 `verbatim_sites` each reading their own argued floor — was met once #1501 (`ts_writes`, ADR
