@@ -33,7 +33,7 @@ resolver = "3"
 
 [workspace.package]
 edition = "2024"
-version = "0.289.49"
+version = "0.289.50"
 # Minimum supported Rust version. Edition 2024 floors it at 1.85, but `oxc`
 # (the TS→JS stripper behind `bynk-strip`, in-browser track slice 1) requires
 # rustc 1.94, so the effective floor rose to match it — set to 1.95 (the pinned
@@ -65,21 +65,21 @@ wildcard_enum_match_arm = "warn"
 [workspace.dependencies]
 # version is required alongside path so the published crates carry a crates.io
 # dependency requirement; path is used for in-workspace builds.
-bynk-syntax = { path = "bynk-syntax", version = "0.289.49" }
-bynk-ts = { path = "bynk-ts", version = "0.289.49" }
-bynk-render = { path = "bynk-render", version = "0.289.49" }
-bynk-check = { path = "bynk-check", version = "0.289.49" }
-bynk-ir = { path = "bynk-ir", version = "0.289.49" }
-bynk-lower = { path = "bynk-lower", version = "0.289.49" }
-bynk-project = { path = "bynk-project", version = "0.289.49" }
-bynk-emit = { path = "bynk-emit", version = "0.289.49" }
-bynk-driver = { path = "bynk-driver", version = "0.289.49" }
-bynk-strip = { path = "bynk-strip", version = "0.289.49" }
-bynk-ide = { path = "bynk-ide", version = "0.289.49" }
-bynkc = { path = "bynkc", version = "0.289.49" }
-bynk-fmt = { path = "bynk-fmt", version = "0.289.49" }
-bynk-grammar = { path = "bynk-grammar", version = "0.289.49" }
-bynk-testkit = { path = "bynk-testkit", version = "0.289.49" }
+bynk-syntax = { path = "bynk-syntax", version = "0.289.50" }
+bynk-ts = { path = "bynk-ts", version = "0.289.50" }
+bynk-render = { path = "bynk-render", version = "0.289.50" }
+bynk-check = { path = "bynk-check", version = "0.289.50" }
+bynk-ir = { path = "bynk-ir", version = "0.289.50" }
+bynk-lower = { path = "bynk-lower", version = "0.289.50" }
+bynk-project = { path = "bynk-project", version = "0.289.50" }
+bynk-emit = { path = "bynk-emit", version = "0.289.50" }
+bynk-driver = { path = "bynk-driver", version = "0.289.50" }
+bynk-strip = { path = "bynk-strip", version = "0.289.50" }
+bynk-ide = { path = "bynk-ide", version = "0.289.50" }
+bynkc = { path = "bynkc", version = "0.289.50" }
+bynk-fmt = { path = "bynk-fmt", version = "0.289.50" }
+bynk-grammar = { path = "bynk-grammar", version = "0.289.50" }
+bynk-testkit = { path = "bynk-testkit", version = "0.289.50" }
 ariadne = "0.6"
 clap = { version = "4", features = ["derive"] }
 logos = "0.16"
