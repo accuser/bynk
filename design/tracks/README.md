@@ -78,7 +78,7 @@ each track's spine issue; this table is deliberately just the map.
 |---|---|---|---|
 | [`documentation.md`](documentation.md) | [#557](https://github.com/accuser/bynk/issues/557) | Slicing (slice 0 shipped) | Documentation & web presence: the Astro + Starlight migration, a CI snippet-verification harness, playground integration seams |
 | [`idempotency-capability.md`](idempotency-capability.md) | [#921](https://github.com/accuser/bynk/issues/921) | Slicing (slice 0 shipped, #929; call-site key scoping follow-up shipped, #934) | The `Idempotency` capability: mechanical dedup for at-least-once delivery, per design notes §4, §12 |
-| [`incrementality.md`](incrementality.md) | [#1507](https://github.com/accuser/bynk/issues/1507) | Settling | Phase 8 of the compiler trajectory (the last phase) — query granularity (`Tokens`/`UnitSignature`/`Body`/`ProjectGraph`) and the firewall, per `bynk-greenfield-compiler.md` R3.13–R3.15 |
+| [`incrementality.md`](incrementality.md) | [#1507](https://github.com/accuser/bynk/issues/1507) | Settled — Slicing on merge | Phase 8 of the compiler trajectory (the last phase) — query granularity (`Tokens`/`UnitSignature`/`Body`/`ProjectGraph`) and the firewall, per `bynk-greenfield-compiler.md` R3.13–R3.15 |
 
 (`documentation.md` pre-dates the GitHub-native flow, so its doc was
 committed by an ordinary PR rather than a settling draft PR; the spine issue
@@ -170,18 +170,33 @@ closing summary for the full, file-by-file argument behind each.
 last phase — entry-gated on `the-typescript-tree.md`'s own retirement note,
 which named phases 3 and 4 *together with* itself as this phase's real
 precondition rather than the trajectory's own §4 diagram alone. Spine
-[#1507](https://github.com/accuser/bynk/issues/1507); its
-settling draft PR is open, grounding five design questions against the
-current tree: whether `UnitSignature` extends ADR 0200's existing
-`combined_types_for` in place or is built as a parallel type; whether the
-diagnostics path's missing file-level cache (`analyse_project` re-parses the
-whole project on every call, unlike completion's own `PROJECT_UNIT_CACHE`,
-which closed issue #733 for that one path only) is this track's own
-file-level business; whether a hand-rolled memo table is this track's
-deliverable or a later one's; what `UnitSignature` actually needs to contain
-and how its stability is proved; and what the gated probe should measure,
-since "keystroke-to-diagnostic latency by query level" cannot be measured
-until the query levels it attributes latency to exist.
+[#1507](https://github.com/accuser/bynk/issues/1507); its settling PR closed
+all five of its design questions under review. Three (Q1, Q2, Q4) each
+turned on a concrete fact the draft hadn't yet checked, in every case
+narrowing the option space rather than reversing the draft's own leaning.
+Q1 (`UnitSignature`'s shape) found no existing type in the workspace is
+close enough to widen — `combined_types_for` only ever computed one of
+design notes §15's four required categories, and every closer candidate
+(`UnitTable`'s own `FnDecl`/`Handler` types) carries a full body — so
+`UnitSignature` is a new type wrapping `combined_types_for`'s output
+unchanged plus fresh projections read from `UnitTable`, leaving all 7 of
+`combined_types_for`'s existing call sites untouched. Q2 (the file level)
+found that sharing completion's own `PROJECT_UNIT_CACHE` with the
+diagnostics path was never actually available — `bynk-check` cannot depend
+on `bynk-ide`, the crate graph runs the other way — so the settled answer
+builds one new, shared `Tokens(FileId)`/`Ast(FileId)` cache in
+`bynk-project` instead, which also needs a durable path↔`FileId` interning
+table since `FileId` today is reallocated fresh on every parse call, not
+interned across them. Q3 settled that this track builds no memo table at
+all — R3.15's scheduler decision defers whole, resolved by Q5 settling the
+gated probe as an existence-and-proof check rather than a latency number
+that would otherwise need one to measure anything. Q4 audited
+`UnitSignature`'s field list against the real `FnDecl`/`Handler`/
+`StoreField` shapes, field by field, excluding every body or body-adjacent
+one (contracts, storage initialisers). Settled slice count: **6** (P8.0–
+P8.5), matching the trajectory's own row-5 sizing almost exactly — the
+first phase on this trajectory whose settled count doesn't need revising
+upward the way phase 5, 6 and 7 all did.
 `agent-capability-encapsulation.md` is a committed Draft that appears in
 neither this table nor `retired-tracks.md`; it predates this row's addition
 and needs a spine issue or a retirement — tracked separately, not by this

@@ -1,9 +1,11 @@
 # Incrementality — query granularity and the firewall (phase 8)
 
-- **Status:** **Draft — Settling.** Spine open. This file is drafted for a settling draft PR
-  (`tracks/README.md` step 2). Nothing here is decided — every question in §3 is open, each with
-  the investigation it needs, not yet argued under review. Marking that PR ready for review
-  asserts §3's questions are closed.
+- **Status:** **Settled — Slicing on merge.** §3's five questions were argued under a settling
+  review on this branch. None reversed the draft's own working candidates, but three (Q1, Q2, Q4)
+  each turned on a concrete fact the draft hadn't yet checked, tightening the decision rather than
+  complicating it — see the provenance note at the head of §3. Merging settles **direction**; it
+  is not a build authorisation. Each slice is still an ordinary increment proposal, and `accepted`
+  on that sub-issue is the approval to build.
 - **Spine:** [#1507](https://github.com/accuser/bynk/issues/1507).
 - **Theme:** **Phase 8** of [`../bynk-compiler-trajectory.md`](../bynk-compiler-trajectory.md) —
   the last phase. Every compiler output is decomposed to the granularity at which it is
@@ -12,9 +14,10 @@
   `ProjectGraph` at project level — with `UnitSignature` proved stable under any edit to a body
   inside that unit (the firewall). The scheduler that would actually memoise these queries — salsa,
   a hand-rolled table, or nothing at all — is a separable decision this phase commits the
-  *granularity* for and explicitly defers. The trajectory's endpoint is the current compiler
-  rebuilt on [`../bynk-greenfield-compiler.md`](../bynk-greenfield-compiler.md); this track walks
-  the last phase of it, and its retirement is the trajectory's own.
+  *granularity* for and explicitly defers (settled: **nothing at all**, this phase — Q3). The
+  trajectory's endpoint is the current compiler rebuilt on
+  [`../bynk-greenfield-compiler.md`](../bynk-greenfield-compiler.md); this track walks the last
+  phase of it, and its retirement is the trajectory's own.
 - **Phase boundaries are safe stopping points** (trajectory §2). Phase 7 is retired
   ([#1293](https://github.com/accuser/bynk/issues/1293), retired 29 August 2026) and leaves a
   coherent compiler regardless of whether this phase lands.
@@ -23,10 +26,11 @@
   preconditions for demand-driven recomputation, each already claimed closed by a named prior
   phase (P1 purity — phase 2; P3/R2.3 no ambient state — phase 0; R2.4 stable interned identity —
   phase 3; R2.5 total side tables — phase 3; R3.11 explicit cross-build state — phase 4; R3.3
-  serialisable/comparable outputs — assumed, not separately tracked by any phase). Part 15.1's
-  "demand-driven query framework" entry (lines 2195–2200) is this phase's own standing frame:
-  "the **architecture is adopted**... the **framework is deferred**," triggered separately by "a
-  hand-rolled memo table... measurably the bottleneck."
+  serialisable/comparable outputs — assumed, not separately tracked by any phase). **Q2 found R2.4
+  more partial than this list assumed** — see §3.2. Part 15.1's "demand-driven query framework"
+  entry (lines 2195–2200) is this phase's own standing frame: "the **architecture is adopted**...
+  the **framework is deferred**," triggered separately by "a hand-rolled memo table... measurably
+  the bottleneck" — a trigger this phase's own Q3 decision confirms cannot fire yet.
 - **Precedent:** `the-typescript-tree.md` (retired) is this track's direct predecessor on the same
   trajectory. Its own §10 ("What this phase causes") named this phase's entry condition explicitly
   — "needs phases 3 and 4 **together with** this one, since a query firewall over an emitter that
@@ -37,18 +41,19 @@
   left "R8.16's data-model half" — a typed `ProjectGraph` — as phase 8's, matching
   [ADR 0326](../decisions/0326-project-model-phase4-scope.md)'s own deferral from phase 4: "extract
   today's name-keyed shape; the typed `ProjectGraph`/`UnitId`/`ContractHash` defer to phase 8."
-  Neither note is settled here — both become §3's Q1. `incrementality.md` would be the thirteenth
-  track to run the ADR 0167 flow from the start, after `compiler-architecture.md` (sixth),
-  `identity-and-totality.md` (seventh), `content-ownership.md` (eighth), `project-model.md`
-  (ninth), `semantics-in-the-checker.md` (tenth), `the-ir.md` (eleventh) and `the-typescript-tree.md`
-  (twelfth).
+  **Both notes are settled by Q1, below: this phase's `UnitSignature` covers the check side only;
+  `Artefacts` gets no signature concept of its own unless an emit-side query is actually proposed
+  later.** `incrementality.md` is the thirteenth track to run the ADR 0167 flow from the start,
+  after `compiler-architecture.md` (sixth), `identity-and-totality.md` (seventh),
+  `content-ownership.md` (eighth), `project-model.md` (ninth), `semantics-in-the-checker.md`
+  (tenth), `the-ir.md` (eleventh) and `the-typescript-tree.md` (twelfth).
 
 ### ADR 0076 trigger check
 
 | Trigger | Met? |
 |---|---|
-| Spans several increments | **Yes, but the smallest margin on this trajectory.** Trajectory §5 rates this phase relative size 5, medium confidence — smaller than every phase from 3 onward, on the strength of "the preconditions are all paid by then." §1 below finds that claim substantially true, which is unusual: every other track on this trajectory found its row understated (phase 5, phase 6, phase 7 all revised upward). This is the first phase whose real surface may be close to its own row |
-| Surface not yet settled | **No** — R3.13–R3.15 fully specify the destination: the four query levels, the firewall property, and the scheduler-deferred posture. What's open is the same "migration method" question every internal-architecture track on this trajectory has had: whether `bynk-project`'s existing untyped, name-keyed shape becomes `ProjectGraph`/`UnitSignature` by extension or by parallel construction, whether a memo table is this track's own deliverable or a later one's, and where the four query levels actually cut against the current tree |
+| Spans several increments | **Yes, on the smallest margin on this trajectory, and settled at that margin.** §6's settled slice count is **6** (P8.0–P8.5) against the trajectory's own row-5, medium-confidence sizing — the first phase on this trajectory whose real surface does not need revising upward once actually measured (phase 5, 6 and 7 each did) |
+| Surface not yet settled | **No, and now settled here.** R3.13–R3.15 fully specify the destination; §3 closes the migration method for all five questions — whether `UnitSignature` extends or wraps `combined_types_for` (Q1), whether the file level shares one cache or two (Q2), whether a memo table ships here (Q3, decided: no), what `UnitSignature` actually contains and how its stability is proved (Q4), and what the gated probe measures (Q5) |
 | Security/safety boundary | **No** — this phase's invariant (`UnitSignature` stability, no stale re-parse) is a performance and architecture property. A defect here produces wrong or slow analysis, not an authorization or capability failure |
 
 **One of three**, the same count as every internal-architecture track on this trajectory before it.
@@ -64,77 +69,100 @@ zero" — is satisfied: all four of phase 7's gated probes (`ts_writes` 809, `ts
 `the-typescript-tree.md`'s own §10 went further, naming this phase's real precondition as phases 3
 **and** 4 *together with* phase 7 — not the trajectory's own §4 diagram, which shows only "3 and 4
 before 8" and no edge from 7. That gap is real, not decorative: `Artefacts` (R7.8, phase 7's typed
-document set) is the only candidate today for what an incremental **emit** side would key on, and
-nothing about it is settled here — see Q1.
+document set) was the only candidate for what an incremental **emit** side would key on — **Q1
+settles this phase does not need it**, since this phase's own scope is the check side, per design
+notes §15's annotation policy being a check-side (not emit-side) contract.
 
 **The rationale bugs R3.13 cites are half-closed, and the surviving half is the one the probe is
 literally named for.** R3.13's own rationale cites two bugs: #65 ("every IDE query re-lexes and
 re-parses from `&str`") and #62 ("`for_each_unit` never filters the cursor's own path out of
 `files`, so the current file is parsed twice per keystroke"). Both are closed for **completion**
-— issue [#733](https://github.com/accuser/bynk/issues/733) ("lsp: interactive requests trigger
-full-project re-analysis and re-parse-from-disk, defeating the debounce") is closed, and
+— issue [#733](https://github.com/accuser/bynk/issues/733) is closed, and
 `bynk-ide/src/completion.rs`'s `for_each_unit` (`:1578`) now takes a caller-built `files` overlay
 rather than re-sweeping disk, backed by a content-keyed cache, `PROJECT_UNIT_CACHE` (`:1520`, cap
-4096 at `:1530`), through `cached_project_unit` (`:1537–1561`). **But the diagnostics path is untouched.**
-`bynk-ide::diagnose_project_with` (`bynk-ide/src/lib.rs:299`) calls
+4096 at `:1530`), through `cached_project_unit` (`:1537–1561`). **But the diagnostics path is
+untouched.** `bynk-ide::diagnose_project_with` (`bynk-ide/src/lib.rs:299`) calls
 `bynk_check::analysis::analyse_project` (`bynk-check/src/analysis.rs:262`) unconditionally on
 every invocation — full discovery, parse, resolve and check over the whole project, with no cache
-of any kind below the file-overlay level. "Keystroke-to-diagnostic latency," the probe's own name,
-names exactly this path — the half of R3.13's own cited defect that ordinary paydown has not
-touched. This is not the "phases 0–1 were fixed by accident" story the trajectory's own §3.0
-tells about itself; it is the same story, half-told: one call site paid down, the sibling call
-site — the one this phase's probe is named after — still live.
+of any kind below the file-overlay level. **Settling found this is not just a missing patch —
+it's structurally unreachable as one:** `bynk-check`'s own `Cargo.toml` cannot depend on
+`bynk-ide` (the crate graph runs the other way — `bynk-project` ← `bynk-check` ← `bynk-ide`,
+confirmed fresh against both crates' manifests), so `PROJECT_UNIT_CACHE` cannot be reached from
+`analyse_project`'s own `phase_parse` call, however it's patched. See Q2.
 
-**None of R3.13's four query levels have their types built as real identifiers anywhere in the
-workspace.** A grep for the five type names those four levels name — `UnitSignature`, `ProjectGraph`,
-`TypeOf(`, `Body(`, `Tokens(FileId` (`Ast(FileId` shares the file level with `Tokens(FileId` and
-returns the same zero) — as code, not doc prose, across every crate returns zero hits. `bynk-project` (2,458 lines across nine files —
-`discovery.rs` 616, `paths.rs` 623, `graph.rs` 331, `roots.rs` 319, `schema_registry.rs` 220,
-`consistency.rs` 183, `json.rs` 94, `lib.rs` 52, `diagnostics.rs` 20) is the crate this phase's
-`ProjectGraph` would sit in, per phase 4's own placement — but its closest types, `graph.rs`'s and
-`roots.rs`'s own, are untyped and name-keyed, exactly as ADR 0326 described them at phase 4's
-retirement: "extract today's name-keyed shape; the typed `ProjectGraph`/`UnitId`/`ContractHash`
-defer to phase 8."
+**None of R3.13's four query levels have their *query* types built anywhere in the workspace — but
+one level's *key* type already exists, just not durably.** A grep for the four query levels'
+names — `UnitSignature`, `ProjectGraph`, `TypeOf(`, `Body(`, `Tokens(FileId` — as code, not doc
+prose, across every crate returns zero hits, confirming the draft's own claim. But `FileId`
+(`bynk-syntax/src/span.rs:16`, `pub struct FileId(pub u32)`) already exists, built at phase 3
+(T3.5, R2.4, "one counter, threaded from the per-project parse loop... the same shape T3.4 used
+for `ExprId`") specifically to give a `Span` a stable, comparable file identity. **Settling found
+a real limit to this, worth naming precisely: the counter is a local `let mut next_file_id: u32 =
+0` inside `bynk_check::project_model::phase_parse`, reset to zero on every call** — real,
+deterministic *within* one project analysis (its stated R2.2 purpose — attributing a label to the
+right file inside one build), not *interned* durably *across* calls the way a cache key needs to
+be. Phase 3's own R2.4 precondition ("stable interned identity usable as a key") is therefore only
+half-true for the file level today: the identifier concept exists, a persistent path↔`FileId`
+table across calls does not — real, additional work for Q2's own slice (P8.4), not a freebie
+inherited from phase 3. `bynk-project` (2,458 lines across nine files — `discovery.rs` 616,
+`paths.rs` 623, `graph.rs` 331, `roots.rs` 319, `schema_registry.rs` 220, `consistency.rs` 183,
+`json.rs` 94, `lib.rs` 52, `diagnostics.rs` 20) is the crate this phase's `ProjectGraph` sits in,
+per phase 4's own placement — but its closest types, `graph.rs`'s and `roots.rs`'s own, are
+untyped and name-keyed (confirmed fresh: `detect_consumes_cycles` and its callers key every map by
+plain `String`, not a `UnitId`), exactly as ADR 0326 described them at phase 4's retirement.
 
-**One piece of the firewall already exists, and it is smaller and narrower than R3.14 needs.**
+**One piece of the firewall already exists, and settling found it's narrower than the draft even
+suspected — narrow enough that no existing type in the workspace is close to signature-shaped.**
 ADR 0200's cross-context contract hash — the piece R3.14's own rationale cites as "the query
 already exists in substance" — is real: `combined_types_for` (`bynk-check/src/symbols.rs:1147`,
 22 lines) folds a unit's own declared types with its direct `uses` targets' types into one
-`HashMap<String, Arc<TypeDecl>>`, called from **7 sites across 2 crates** (`bynk-check/src/symbols.rs:862`,
-`check_pipeline.rs:284`, `analysis.rs:666`; `bynk-emit/src/project.rs:927,2227,2402,2428`) — 24
-textual references turn up on a plain grep, but 17 of those are the definition, two `use` imports
-and fourteen doc comments describing its shape rather than invoking it, including the one in
-`bynkc/tests/contract_hash.rs:16`, which names the function but never calls it. It is genuinely
-signature-shaped (declared types only, no bodies) and already keyed per-unit. But it computes **types only** — not
-the full surface design notes §15's own annotation policy requires at "visible boundaries":
-function and handler declarations, agent storage declarations, cross-context type references, and
-capability sets via `given` (`design/bynk-design-notes.md:921–936`, "**Visible boundaries,
-invisible internals**"). "Already substantially exists" is accurate; "already is
-`UnitSignature`" is not — see Q1.
+`HashMap<String, Arc<TypeDecl>>`, called from **7 real call sites across 2 crates** (confirmed
+fresh: `bynk-check/src/symbols.rs:862`, `analysis.rs:666`, `check_pipeline.rs:284`;
+`bynk-emit/src/project.rs:927,2227,2402,2428` — a plain grep turns up 24 textual hits, but 17 are
+the definition, imports and doc comments, including `bynkc/tests/contract_hash.rs:16`, which names
+the function in a doc comment but never calls it). It computes **types only** — one of design
+notes §15's four required-annotation categories (cross-context type references), and none of the
+other three (function/handler declarations, agent storage declarations, capability sets via
+`given`). **Settling checked whether the natural next-broadest thing — `UnitTable`
+(`bynk-check/src/symbols.rs:295`), the per-unit table `combined_types_for` itself reads —
+already carries those other three categories in a body-free shape, and found it does not:**
+`UnitTable.fns: HashMap<String, Arc<FnDecl>>` and every `Handler` inside `UnitTable.agents`/
+`UnitTable.services` both carry a full `body: Block` (`bynk-syntax/src/ast.rs:2005,1208`)
+alongside their signatures — editing a function or handler body changes the `FnDecl`/`Handler`
+value itself, not just something adjacent to it. `UnitTable`'s own `store_fields`
+(`StoreField`, `ast.rs:945`) is closer — `name`/`kind: StoreKind` are body-free, but `init:
+Option<Expr>` (the field's initialiser) is not. **No existing type in the workspace is already
+`UnitSignature`-shaped; every one that's close (`UnitTable`'s own decl types) carries bodies
+`UnitSignature` must strip.** One further, direct in-repo precedent bears on Q1 itself:
+`combined_types_for_unit_info` (`symbols.rs:1170`), a sibling function reimplemented against
+`UnitInfo` rather than calling `combined_types_for` directly, exists *because* the two call
+contexts have genuinely different shapes (project-wide flat maps vs. a per-unit emission
+prologue) — a real, contemporaneous example in the same file of "build alongside, don't widen"
+when a consumer's shape differs enough. See Q1.
 
 **No memoisation infrastructure of any kind exists below the file-overlay layer.** Zero
 occurrences of `salsa` in any `Cargo.toml` or `Cargo.lock` in the repository. Zero occurrences of
 `Database`, `MemoTable` or `memo_table` as identifiers. This is exactly R3.15's own stated
 posture — "the architecture is adopted, the framework is deferred" — confirmed true today, not
 merely claimed: there is nothing to migrate away from, no accreted hand-rolled cache to reconcile
-with a real query decomposition, no framework dependency to argue about removing.
+with a real query decomposition, no framework dependency to argue about removing. **Settled (Q3):
+this phase adds none either** — the granularity and the firewall are this phase's whole business.
 
 **The probe as literally named cannot be measured — not "not yet measured," structurally cannot
 be, until the query levels it attributes latency to exist.** §3.0's baseline records "not
 measured"; it still reads that way, because no `criterion` harness, no `Instant`/`Duration`
 instrumentation and no benchmark of any kind touches the diagnostic path anywhere in the repo
-today. This is not an oversight to fix with a stopwatch — "attributed by query level" presupposes
-levels this phase has not built yet. Every other phase on this trajectory found its own gated
-probe needed correcting once real work started (`ast_importers`'s floor of 5, four separate
-argued floors at phase 7's retirement); this is the first phase where the correction is visible
-*before* any slice lands rather than discovered mid-track — see Q5.
+today. Every other phase on this trajectory found its own gated probe needed correcting once real
+work started (`ast_importers`'s floor of 5, four separate argued floors at phase 7's retirement);
+this is the first phase where the correction is visible *before* any slice lands, closed here as
+Q5, rather than discovered mid-track.
 
 **One correction to the trajectory document itself, the same "evidence ages" housekeeping every
 phase's opening has carried.** §9 describes `cargo xtask greenfield-status` as "specified, not
 yet built (track slice T0.0)." It has existed since phase 0–2's own track (`xtask/src/greenfield_status.rs`,
 3,419 lines, `design/greenfield-status.md` the committed, CI-gated output) and now runs thirteen
-gated probes plus four trend-only probes. A phase 8 probe, once §3.5 settles its shape, would be
-the fourteenth gated probe — following `ts_writes`/`ts_any`'s own precedent of landing as an
+gated probes plus four trend-only probes. This phase's probes (§5) are the fourteenth gated and
+fifth trend-only probes — following `ts_writes`/`ts_any`'s own precedent of landing as an
 early, dedicated slice (P7.0/[#1296](https://github.com/accuser/bynk/issues/1296)), not a
 retirement-week afterthought.
 
@@ -142,12 +170,15 @@ retirement-week afterthought.
 
 ## 2. What this track is not
 
-- **Not adopting salsa or any query framework.** R3.15 defers the scheduler explicitly, and its
-  own trigger — "a hand-rolled memo table... measurably the bottleneck" — cannot have fired, since
-  no memo table exists yet to be a bottleneck. This track's business is the granularity (R3.13)
-  and the firewall (R3.14); the scheduler stays a separate, later decision with its own evidence
-  requirement (keystroke-to-diagnostic latency on a multi-context project, attributed by level —
-  data this track's own work is a precondition for collecting, not a deliverable of it).
+- **Not adopting salsa, and not building a hand-rolled memo table either — settled as one
+  decision, not two (Q3).** R3.15 frames "salsa, a hand-rolled table, or nothing at all" as three
+  options; this phase picks the third. Neither branch's own trigger has fired: salsa's trigger is
+  a hand-rolled table measurably becoming the bottleneck, and a hand-rolled table has nothing to
+  be measured against until the granularity this phase builds exists. This track's business is
+  the granularity (R3.13) and the firewall (R3.14); a scheduler of either kind stays a separate,
+  later decision with its own evidence requirement (keystroke-to-diagnostic latency on a
+  multi-context project, attributed by level — data this track's own work is a precondition for
+  collecting, not a deliverable of it).
 - **Not rebuilding `bynk-project`'s discovery machinery wholesale.** `discovery.rs` and `paths.rs`
   (616 and 623 lines) stay; this track's business is giving their output a typed, query-shaped
   identity (`ProjectGraph`), not re-deriving what they discover.
@@ -161,99 +192,179 @@ retirement-week afterthought.
   middle: the generation logic itself (already correct, per `the-typescript-tree.md`'s own
   verification) stays phase 7's closed business; only its data-model half — a typed `ProjectGraph`
   to build it from, instead of an untyped `HashMap` — is this track's.
+- **Not building `Artefacts` (R7.8) its own signature concept.** Settled by Q1: this phase's
+  `UnitSignature` is check-side only. If an emit-side query is ever proposed, it is a new,
+  separate decision with its own trigger — not inherited from this phase's own scope.
 
 ---
 
-## 3. Design questions — open
+## 3. Design questions — settled
 
-None of the five below has been argued under a settling review yet. Each states the investigation
-already done and the tension it leaves.
+> **Provenance: Q1, Q2 and Q4 each turned during this settling pass on one concrete fact the
+> draft hadn't yet checked — in every case the fact narrowed the option space, it didn't reverse
+> the draft's own leaning.**
+>
+> Q1 leaned toward weighing in-place extension as "materially cheaper" against 7 call sites; a
+> direct read of what `combined_types_for` actually returns (types only) against what
+> `UnitTable`'s own decl types actually carry (signatures, but never without a body) found no
+> existing type is close enough to widen — the real choice was never "widen vs. build," it was
+> "build fresh, reusing what already reuses cleanly."
+>
+> Q2 leaned toward "share completion's existing cache" reading like the cheap option; a fresh
+> check of `bynk-check`'s and `bynk-ide`'s own `Cargo.toml` dependency edges found that option is
+> not available at all — `bynk-check` cannot depend on `bynk-ide`. The real choice was always
+> "build a new shared cache one layer down," just not visible as *the only* option until checked.
+>
+> Q4's field list is close to the draft's own working list (design notes §15's four categories),
+> sharpened by finding exactly which struct fields on `FnDecl`/`Handler`/`StoreField` carry a body
+> or an initialiser and must be excluded, rather than left as "audit needed."
+>
+> Q3 and Q5 settled exactly as the draft's own working candidates framed them, once Q1/Q2/Q4 gave
+> them something concrete to settle against.
 
-### 3.1 Q1 — Is `UnitSignature` built by extending ADR 0200's `combined_types_for` in place, or as a new, parallel type?
+### 3.1 Q1 — Is `UnitSignature` built by extending ADR 0200's `combined_types_for` in place, or as a new, parallel type? **Settled.**
 
-`combined_types_for` is real, per-unit, signature-shaped, and has 7 call sites across 2 crates
-(`bynk-check`, `bynk-emit` — §1 has the exact locations) depending on its current, narrower shape
-(types only). R3.14 needs a wider surface — function/handler signatures, storage declarations,
-cross-context type references, capability sets — the same list design notes §15 already names as
-"required" annotation sites. Widening the existing function in place risks disturbing those 7 call
-sites' current contract; building a new, parallel `UnitSignature` type risks the "two facts, one
-hand-synced" failure phase 1's own invariant exists to prevent (`design/bynk-compiler-trajectory.md`
-§3, Phase 1: "no fact exists in two hand-synced copies where one can be derived"). At 7 call sites
-in 2 crates, in-place extension looks materially cheaper than a parallel type — worth weighing
-against a genuinely open, not yet closed, question. (`bynkc/tests/contract_hash.rs` names the
-function in a doc comment but never calls it directly, so it would not break on a widened
-signature — it would only go stale as prose, which is its own, smaller risk to name if extension
-is chosen.) This question also folds in `the-typescript-tree.md` §10's own
-open note — whether `Artefacts` (R7.8) is a second, emit-side signature target, or whether one
-`UnitSignature` on the check side is sufficient and the emit side reads through it.
+**Decision: a new type, `UnitSignature`, that reuses `combined_types_for`'s existing output
+unchanged as one field and adds new fields built fresh from `UnitTable`. `combined_types_for`
+itself is not touched — its 7 call sites, and its contract for them, are untouched.**
 
-**Needs settling:** extend `combined_types_for` into `UnitSignature`'s real identity function
-(widening its return type and threading the additional annotation-policy fields through its 7
-existing call sites), or introduce `UnitSignature` as a superset type constructed from
-`combined_types_for`'s output plus the additional fields, leaving the existing function's contract
-untouched for its current callers? And: does `Artefacts` need its own signature concept for the
-emit side, or is that question out of this track's scope until a query on the emit side is
-actually proposed?
+`combined_types_for` returns `HashMap<String, Arc<TypeDecl>>` — one of design notes §15's four
+required-annotation categories (cross-context type references), and structurally incapable of
+carrying the other three (it never reads `UnitTable.fns`/`.agents`/`.services`/`.capabilities` at
+all). Widening its *return type* to also carry function/handler signatures, storage declarations
+and capability sets would not be "widening a narrow function" — it would be replacing its purpose
+entirely, while its 7 real callers (confirmed fresh: 3 in `bynk-check`, 4 in `bynk-emit` — the
+draft's own count already corrected a stale 24-textual-hit grep down to this figure and settling
+reconfirmed it against the current tree) still want exactly its current, narrow, types-only
+shape for cross-context resolution and the contract hash. Building `UnitSignature` as a superset
+*type* that **contains** `combined_types_for`'s own output as one field, unchanged, sidesteps
+both risks the draft weighed: the 7 call sites never see a changed function, and `UnitSignature`
+does not duplicate the types table by hand — it is that table plus new fields, not two competing
+copies of it (satisfying phase 1's own "no fact in two hand-synced copies" invariant by
+construction, not by discipline).
 
-### 3.2 Q2 — Does the file level (`Tokens(FileId)`, `Ast(FileId)`) need any work at all, or is the diagnostics path's missing cache this track's whole file-level business?
+The new fields, built directly from `UnitTable` (`bynk-check/src/symbols.rs:295`) and its decl
+types, not reinvented:
 
-`bynk-ide/src/completion.rs`'s `PROJECT_UNIT_CACHE`/`cached_project_unit` already closes #733 for
-completion requests — a real, working, content-keyed cache at file granularity. But it is
-`bynk-ide`-local, ad hoc (a `HashMap` behind a cache constant, not a typed `Tokens(FileId)` query),
-and — critically — `analyse_project`'s own diagnostics path does not use it: `diagnose_project_with`
-calls `analyse_project` directly, with no cache anywhere in between. R3.13 names `Tokens(FileId)`/
-`Ast(FileId)` as real query types with an invalidation contract, not an incidental
-`bynk-ide`-local optimisation.
+- **Function/handler declarations** — from `UnitTable.fns` (`FnDecl`: `name`, `type_params`,
+  `params`, `return_type`, `has_self` — explicitly *not* `body`, and explicitly *not*
+  `requires`/`ensures`; see Q4) and from every `Handler` reachable via `UnitTable.agents[*]` and
+  `.services[*]` (`method_name`, `params`, `return_type`, `given` — not `body`).
+- **Capability sets via `given`** — the same `Handler.given: Vec<CapRef>` fields above, plus
+  `ProviderDecl.given` and `ServiceDecl.default_given`, plus `UnitTable.exported_capabilities:
+  HashSet<String>` copied as-is (already just names).
+- **Agent storage declarations** — from `UnitTable.agents[*].store_fields` (`StoreField`:
+  `name`, `kind: StoreKind` only — explicitly *not* `init: Option<Expr>`, an initialiser
+  expression, and not `annotations`, which govern internal storage behaviour, not the field's
+  externally-relevant shape).
+- **Cross-context type references** — `combined_types_for`'s own output, unmodified.
 
-**Needs settling:** does this track give the diagnostics path the same cache completion already
-has (the cheap fix, closing the probe's own namesake bug directly), generalise
-`PROJECT_UNIT_CACHE`'s existing shape into a real `Tokens(FileId)`/`Ast(FileId)` query type both
-paths share (closing the duplication as well as the bug), or treat file-level caching as
-sufficiently addressed by #733's precedent and scope this track to Unit/Definition/Project levels
-only, with the diagnostics-path gap filed as separate, smaller paydown?
+`Artefacts` (phase 7's typed emit-side document set, R7.8) gets no signature concept of its own
+in this phase — the annotation policy this phase's firewall is built on (design notes §15) is a
+check-side contract, and nothing in this phase's own scope proposes an emit-side query to key
+against it. If one is proposed later, it's that proposal's decision to make, not inherited here.
 
-### 3.3 Q3 — Is a hand-rolled memo table this track's own deliverable, or does the track stop once the query keys and the firewall exist?
+### 3.2 Q2 — Does the file level need any work at all, or is the diagnostics path's missing cache this track's whole file-level business? **Settled.**
 
-R3.15's own rationale: "the hard part is R3.13/R3.14. Once queries have the right keys and the
-firewall holds, a scheduler is a few hundred lines." That reads as license to stop before building
-any scheduler at all — but a query decomposition with no caching behind it produces no measurable
-change in `analyse_project`'s own behaviour, which makes the probe (§3.5) unmeasurable in
-practice even after the types exist.
+**Decision: build one real, shared `Tokens(FileId)`/`Ast(FileId)` cache in `bynk-project`,
+migrating both `bynk-ide::completion` and `bynk_check::analyse_project`'s own `phase_parse` onto
+it — not a `bynk-ide`-local patch, because that option does not exist in this codebase's crate
+graph.**
 
-**Needs settling:** does this track's own completion criterion require a working, if minimal,
-hand-rolled memo table wired into `analyse_project`'s call path (so the probe becomes measurable
-at all), or does "the granularity is committed" mean the types and the firewall proof are
-sufficient, with wiring a cache in as a phase-8-adjacent follow-on named but not built here?
+`PROJECT_UNIT_CACHE` (`bynk-ide/src/completion.rs:1520`) already closes #733 for completion, and
+is a real, working, content-keyed cache — but it lives in `bynk-ide`, and `bynk-ide`'s own
+`Cargo.toml` depends on `bynk-check` (`bynk-check.workspace = true`, "`analyse_project`... lives
+here too"), not the reverse. `analyse_project` and its `phase_parse` step live in `bynk-check`,
+which structurally **cannot** reach a `bynk-ide`-owned cache — not a design preference, a
+dependency-direction fact, confirmed against both crates' manifests during settling. So "give the
+diagnostics path completion's existing cache" was never actually one of the draft's three
+options; the real choice is between building a new shared cache in a crate both paths can reach,
+or leaving the diagnostics path uncached and filing the gap as separate paydown outside this
+track. Given R3.13 names `Tokens(FileId)`/`Ast(FileId)` as real query types, not an incidental
+optimisation, and `bynk-project` already sits below both `bynk-check` and `bynk-ide` (and is
+where `ProjectGraph` is going per Q1/§6's own P8.3), that crate is the natural, and only
+structurally reachable, shared home.
 
-### 3.4 Q4 — What does `UnitSignature` actually need to contain, and what proves R3.14 holds?
+**One real dependency this decision surfaces, not free:** as §1 found, `FileId` exists but is
+reallocated by a local counter reset to zero on every `phase_parse` call — not durable across
+calls. A `Tokens(FileId)` cache keyed on today's `FileId` would collide or thrash across separate
+requests. P8.4 (§6) therefore also builds the missing piece: a persistent path↔`FileId`
+interning table living in `bynk-project` alongside discovery, so a given file keeps the same
+`FileId` across every call for the life of one analysis session — not only within a single
+`phase_parse` invocation, as today. Once that exists, `bynk-ide::completion`'s own
+`cached_project_unit` and `bynk_check::analyse_project`'s `phase_parse` both read through the same
+`bynk-project`-owned cache; `PROJECT_UNIT_CACHE` retires as a `bynk-ide`-local duplicate rather
+than staying a second, divergent cache beside the new one.
 
-Design notes §15's required list (function/handler declarations, storage declarations,
-cross-context type references, capability sets via `given`) is a starting point, not a verified
-final field list — no prior phase has audited it against R3.14's own literal text ("stable under
-an edit to any `Body(DefId)` within that unit"). Phase 4's own P4.1 slice built a differential
-fixture (`bynk-check/tests/differential_analysis.rs`) to pin a new entry point's output against an
-existing one; the same technique is a candidate for proving `UnitSignature` stability
-mechanically — edit a body, assert the signature's hash is unchanged — rather than by inspection.
+### 3.3 Q3 — Is a hand-rolled memo table this track's own deliverable, or does the track stop once the query keys and the firewall exist? **Settled.**
 
-**Needs settling:** the field list, rule by rule against design notes §15 and the current
-`AgentDecl`/service/handler declaration shapes; and whether a differential/property fixture
-(edit-a-body-assert-signature-unchanged) is this track's own required proof or an optional
-strengthening.
+**Decision: the track stops at the query decomposition and the firewall proof. No memo table
+ships in this phase.**
 
-### 3.5 Q5 — What does the gated probe actually measure, given the literal one can't be?
+R3.15's own rationale is explicit and is taken at face value: "the hard part is R3.13/R3.14. Once
+queries have the right keys and the firewall holds, a scheduler is a few hundred lines." The
+draft's own worry — that an un-memoised decomposition leaves the probe unmeasurable — is resolved
+differently than by building a scheduler to satisfy it: Q5 settles the gated probe as a
+structural existence-and-proof check (does `UnitSignature`/`ProjectGraph`/`Body`/`TypeOf` exist as
+real types, proved stable), not a latency number, so nothing in this phase's own completion
+criterion actually requires a working cache behind the new query types. Building one anyway would
+take on real, separate risk this phase doesn't need: cache-invalidation correctness under
+concurrent IDE writes is a materially different, harder problem than proving a type's shape is
+stable under a body edit, and R3.15's own text frames it as a decision with its own trigger
+("measurably the bottleneck") that structurally cannot fire before the granularity exists to be a
+bottleneck in. Keeping the memo table an explicit forward reference (§7), on the same footing as
+salsa itself, keeps this phase's risk bounded to what R3.13/R3.14 actually require.
 
-"Keystroke-to-diagnostic latency by query level" needs query levels and a scheduler wired in
-before it means anything (Q3). Every other phase on this trajectory corrected an unmeasurable-
-or-wrong-shaped probe at retirement, once real work exposed the gap (`ast_importers`'s floor of 5,
-`ts_writes`/`ts_any`/`verbatim_sites`/`verbatim_origins`'s four argued floors); this phase can name
-the correction now, before any slice lands, rather than discover it mid-track.
+### 3.4 Q4 — What does `UnitSignature` actually need to contain, and what proves R3.14 holds? **Settled.**
 
-**Needs settling:** a structural gated probe — candidates include "the four query types exist as
-real Rust types" (a one-time existence check, not a trend) and "a differential fixture proves
-`UnitSignature` stability under body edits" (Q4) — with the literal latency number staying a
-trend-only probe (following `test_density`'s own precedent in `greenfield_status.rs`) reported
-once instrumentation exists, not gated on, since nothing in this track's own scope requires
-building a benchmark harness to satisfy R3.13/R3.14's own text.
+**Decision: the field list is Q1's own four groups above, each audited field-by-field against the
+real `FnDecl`/`Handler`/`StoreField`/`ProviderDecl`/`ServiceDecl` shapes to exclude every body or
+body-adjacent field; stability is proved by a required, purpose-built property fixture — edit a
+body only, rebuild, assert the signature is unchanged — not by reuse of `differential_analysis.rs`
+as-is.**
+
+Design notes §15's four categories map cleanly onto real AST shapes already in the tree (Q1 lists
+the exact fields). Two exclusions are worth naming explicitly because they were the ones most
+tempting to include: `FnDecl.requires`/`.ensures` (preconditions/postconditions, `ast.rs:2001,2004`)
+are predicates scoped over parameters and the result — architecturally close to a signature, but
+excluded here, because they aren't part of design notes §15's own required-annotation list and a
+caller's own type-checking of a call site never needs them (only `Body`/`TypeOf`-level analysis of
+the callee's own contract-checking does) — including them would make `UnitSignature` unstable
+under edits that don't change what a caller needs, defeating R3.14 rather than serving it.
+`StoreField.annotations` (`@indexed`/`@ttl`/etc., `ast.rs:955`) are excluded on the same
+"invisible internals" reasoning — they govern the field's own storage behaviour, not its
+externally-relevant shape, and design notes §15's own "visible boundaries, invisible internals"
+line is the reasoning being applied, not a new one being invented for this decision.
+
+**On the proof:** phase 4's `differential_analysis.rs` (`bynk-check/tests/`) is the closest prior
+technique on this trajectory, but settling checked its actual shape rather than assume the fit —
+it compares two **analysis paths'** output for parity, not one type's stability under an edit. It
+is precedent for "prove an architectural invariant mechanically, not by inspection" as a house
+discipline, not a template to copy verbatim. R3.14's own literal text ("stable under an edit to
+any `Body(DefId)` within that unit") needs its own, new fixture shape: build `UnitSignature` for a
+fixture unit, edit only a handler or function **body** (never a parameter, return type, storage
+field or `given` clause) in the source, rebuild, and assert equality — a required part of P8.2
+(§6), not an optional strengthening, since R3.14 is this phase's own named firewall and its own
+§9 risk section already treats getting this proof right as the track's central stake.
+
+### 3.5 Q5 — What does the gated probe actually measure, given the literal one can't be? **Settled.**
+
+**Decision: a new gated probe, `incremental_query_types` — a one-time existence-and-proof check,
+not a shrinking count — plus a trend-only `keystroke_latency` probe reporting "not measured" until
+a scheduler exists to time it.**
+
+`incremental_query_types` reads **satisfied** once, and only once: `UnitSignature`, `ProjectGraph`
+and the `Body`/`TypeOf` query functions exist as real Rust types/functions in `bynk-project`/
+`bynk-check` (not doc prose — the same "grep for the real identifier" standard §1 already
+applied), the shared `Tokens(FileId)`/`Ast(FileId)` cache (Q2) is wired into both `bynk-ide`'s
+completion path and `bynk_check::analyse_project`, and P8.2's property fixture (Q4) passes,
+proving `UnitSignature` stability under a body edit mechanically rather than by inspection. This
+is the first gated probe on this trajectory whose target is a proof, not a count trending to zero
+or an argued floor — R3.13/R3.14 describe a property to construct, not a defect to exhaust, so a
+shrinking-count probe would be the wrong shape regardless of how it's tuned. `keystroke_latency`
+follows `test_density`'s own precedent (`xtask/src/greenfield_status.rs`'s `run_trend`) for a
+probe that's reported, never gated — it stays "not measured" through this phase's own retirement,
+per Q3's decision that no scheduler ships here to produce a real number.
 
 ---
 
@@ -261,8 +372,8 @@ building a benchmark harness to satisfy R3.13/R3.14's own text.
 
 Extends ADR 0059 as amended by ADR 0309, the same standing properties every track on this
 trajectory has run under: behaviour-preserving by default (a slice that changes observable
-behaviour states so, ships a fixture, gets a CHANGELOG entry — the diagnostics-path cache in §3.2
-is the one slice here with real behavioural stakes, since a wrong cache invalidation would produce
+behaviour states so, ships a fixture, gets a CHANGELOG entry — P8.4's shared file-level cache is
+the one slice here with real behavioural stakes, since a wrong cache invalidation would produce
 stale diagnostics silently); short-lived branches, one PR per slice; no per-increment ADRs beyond
 what §11 front-loads; every slice citing `Closes-Rule:`.
 
@@ -270,44 +381,41 @@ what §11 front-loads; every slice citing `Closes-Rule:`.
 
 ## 5. The completion criterion
 
-Pending Q5, not asserted here: the working candidate is two probes, one gated and structural, one
-trend-only:
+Two probes, as settled by Q5:
 
-- **`query_types_exist`** (candidate name) — do `UnitSignature`, `ProjectGraph`, `Body`/`TypeOf`
-  keyed types exist as real Rust types in `bynk-project`/`bynk-check`, with `UnitSignature`
-  proved stable under a body edit by a differential or property fixture (Q4)? A one-time
-  existence-and-proof check, not a count that trends toward zero the way every prior phase's
-  probe has — the first phase on this trajectory whose gate is a proof rather than a shrinking
-  number, since R3.13/R3.14 describe a property to construct, not a defect to exhaust.
-- **`keystroke_latency`** (trend-only, not gated) — reported once a scheduler exists to measure
-  (Q3), following `test_density`'s own precedent for trend-reported-not-gated probes in
-  `xtask/src/greenfield_status.rs`.
+- **`incremental_query_types`** — a one-time existence-and-proof gate: do `UnitSignature`,
+  `ProjectGraph`, `Body`/`TypeOf` exist as real types/functions in `bynk-project`/`bynk-check`; is
+  the shared `Tokens(FileId)`/`Ast(FileId)` cache wired into both completion and diagnostics; does
+  P8.2's property fixture pass, proving `UnitSignature` stability under a body edit. Retires at
+  **satisfied**, not 0 or a floor — the first probe on this trajectory shaped as a proof rather
+  than a shrinking count.
+- **`keystroke_latency`** (trend-only, not gated) — reported as "not measured" through this
+  phase's own retirement, per Q3: no scheduler ships in this phase to produce a real number.
 
-Both need adding to `xtask/src/greenfield_status.rs` (14th/15th probes) — a candidate first slice,
-mirroring `the-ir.md`'s P6.0 and `the-typescript-tree.md`'s P7.0 both being real instrumentation
-work, not ceremony.
+Both need adding to `xtask/src/greenfield_status.rs` (13 gated + 4 trend probes exist today) —
+P8.0, this track's own first slice, mirroring `the-ir.md`'s P6.0 and `the-typescript-tree.md`'s
+P7.0 both being real instrumentation work, not ceremony.
 
 ---
 
-## 6. Slice decomposition — candidate, pending §3
+## 6. Slice decomposition
 
-None of the below is accepted yet; §3 governs both which of these actually ship and their real
-order. Provisional, in rough dependency order:
+§3 is settled; all six slices below are accepted, buildable, not forward references.
 
-| Slice (candidate) | What it does | Rules | Gated on |
+| Slice | What it does | Rules | Gated on |
 |---|---|---|---|
-| **P8.0** | Structural probe(s) added to `xtask/src/greenfield_status.rs`, per §5 | instrumentation | Q5 |
-| **P8.1** | `UnitSignature` type built — extension or parallel, per Q1's answer — carrying design notes §15's required-annotation fields | R3.14 | Q1, Q4 |
-| **P8.2** | Differential/property fixture proving `UnitSignature` stability under a body edit | R3.14 | P8.1, Q4 |
-| **P8.3** | Typed `ProjectGraph` in `bynk-project`, replacing `graph.rs`/`roots.rs`'s untyped shape (ADR 0326/ADR 0388's own deferral) | R3.13, R8.16 (data-model half) | — |
-| **P8.4** | File-level fix for the diagnostics path (§3.2's answer): either share `PROJECT_UNIT_CACHE`'s existing cache or a real `Tokens(FileId)`/`Ast(FileId)` query type | R3.13 | Q2 |
-| **P8.5** | Definition-level queries (`Body(DefId)`, `TypeOf(DefId)`) decomposed out of `analyse_project`'s current monolithic pass | R3.13 | P8.1 |
-| **P8.6** | Hand-rolled memo table wired into `analyse_project`'s call path, if Q3 settles that this track builds one | R3.15 | Q3, P8.1–P8.5 |
+| **P8.0** | `incremental_query_types` (gated) and `keystroke_latency` (trend) probes added to `xtask/src/greenfield_status.rs`, per §5 | instrumentation | — |
+| **P8.1** | `UnitId` and `UnitSignature` built in `bynk-check` — `combined_types_for`'s existing output reused unchanged as one field, plus new fn/handler/storage/capability-set projections read fresh from `UnitTable`, per Q1/Q4's exact field list | R3.14 | — |
+| **P8.2** | Property fixture proving `UnitSignature` stability under a body-only edit, per Q4's own new fixture shape (not `differential_analysis.rs` reused as-is) | R3.14 | P8.1 |
+| **P8.3** | Typed `ProjectGraph` in `bynk-project` (keyed by `UnitId` from P8.1), replacing `graph.rs`/`roots.rs`'s untyped, name-keyed shape (ADR 0326/ADR 0388's own deferral) | R3.13, R8.16 (data-model half) | P8.1 |
+| **P8.4** | A durable path↔`FileId` interning table plus a shared `Tokens(FileId)`/`Ast(FileId)` cache in `bynk-project`; `bynk-ide::completion` and `bynk_check::analyse_project`'s `phase_parse` both migrate onto it; `PROJECT_UNIT_CACHE` retires as a duplicate | R3.13 | — |
+| **P8.5** | `Body(DefId)`/`TypeOf(DefId)` as real, pure, `DefId`-keyed query functions, decomposed out of `analyse_project`'s current monolithic per-file pass — no memo table wrapping them yet, per Q3 | R3.13 | P8.1 |
 
-**Working slice-count estimate: 6–9.** Close to the trajectory's own row (relative size 5, medium
-confidence) — the first phase on this trajectory where the opening measurement does not obviously
-contradict the trajectory's own sizing, though Q3's answer (whether a memo table ships here) is
-the single biggest swing factor.
+**Settled slice count: 6.** Tightened from the draft's own provisional 6–9 range once Q3 ruled out
+P8.6 (a hand-rolled memo table) entirely rather than leaving it conditional — matching the
+trajectory's own row-5, medium-confidence sizing almost exactly, the first phase on this
+trajectory whose settled count doesn't need the sizing revised upward the way phase 5, 6 and 7 all
+did.
 
 ---
 
@@ -315,15 +423,16 @@ the single biggest swing factor.
 
 | Item | Phase | Entry condition |
 |---|---|---|
-| A demand-driven query framework (salsa or equivalent) | *unopened — no trigger yet* | R3.15's own trigger: a hand-rolled memo table (this phase's own P8.6, if built) measurably becomes the bottleneck |
+| A demand-driven query framework (salsa or a hand-rolled memo table) | *unopened — no trigger yet* | R3.15's own trigger: a hand-rolled memo table measurably becomes the bottleneck — cannot fire before this phase's own granularity (P8.1–P8.5) exists to be a bottleneck in |
 | R10.5's `bynk-driver` consolidation | *unopened — no trigger yet* | named in the reference (Part 10) but not this phase's own invariant |
-| A lossless CST (rowan) | *unopened — no trigger yet* | Part 15.1's own trigger: per-file reparse timings on the largest real file measured as costly — this phase's own P8.4 is the first place such a timing could be collected, but collecting it is not this phase's job |
+| A lossless CST (rowan) | *unopened — no trigger yet* | Part 15.1's own trigger: per-file reparse timings on the largest real file measured as costly — P8.4's own interning table is the first place such a timing could be collected, but collecting it is not this phase's job |
+| An emit-side `UnitSignature`-equivalent keyed on `Artefacts` (R7.8) | *unopened — no trigger yet* | Q1's own settled scope: this phase's firewall covers the check side only; an emit-side query would need its own proposal and its own trigger |
 
 ---
 
 ## 8. Keeping the reference true
 
-This phase's own probe needs building from nothing — `xtask/src/greenfield_status.rs` has
+This phase's own probes needed building from nothing — `xtask/src/greenfield_status.rs` has
 thirteen gated and four trend probes today, none phase-8-shaped. P8.0 is this track's own first
 slice for exactly that reason, the same "instrumentation first" precedent `the-ir.md`'s P6.0 and
 `the-typescript-tree.md`'s P7.0 both set.
@@ -336,24 +445,23 @@ yet built" is stale — it has existed since the phase 0–2 track and gates thi
 
 ## 9. Risks
 
-**Q1's answer touches 7 existing call sites across `bynk-check` and `bynk-emit` if extension is
-chosen** — fewer, and narrower, than this doc first counted (§1 corrects an earlier draft's raw
-grep of 24 textual references down to the 7 that are real invocations). Widening the function's
-signature without breaking any of the 7 still needs care, and `bynkc/tests/contract_hash.rs`'s own
-doc comment describing the function (not a call) means a signature change would not be caught by
-that fixture — a smaller, different risk than "breaks a caller," worth naming when Q1 is argued.
-This is the reason Q1 is a front-loaded ADR candidate rather than a slice-time decision.
+**P8.1's `UnitSignature` field list is a settled decision, not a discovered one — the residual
+risk is in the fixture, not the design.** Q4 excluded `requires`/`ensures` and `StoreField`
+annotations on stated reasoning (caller-irrelevant, "invisible internals"); if a future slice
+finds a real caller-visible dependency on either, that is new evidence against this settling's own
+reasoning, worth a fresh look rather than a silent field addition.
 
-**The probe's own shape is unresolved going into this doc's own settling review**, more than any
-prior phase's opening. Every other phase's settling review closed its open questions against a
-probe whose *target* was already fixed (0, or an argued floor of an existing count); this phase's
-own Q5 is deciding what the gate even measures. If §3's review cannot converge on a structural
-probe that is both meaningful and buildable without a scheduler, this phase may need its
-invariant restated before any slice is proposed — worth surfacing to the settling PR's reviewer
-explicitly rather than assumed resolvable.
+**P8.4 is the one slice with real behavioural stakes.** A wrong invalidation rule in the shared
+`Tokens(FileId)`/`Ast(FileId)` cache would produce stale diagnostics silently — the same failure
+class #733 fixed for completion, reopened at a different layer if the new interning table's
+content-equality check has a gap. Worth a dedicated staleness fixture (edit a file, assert the
+cache actually invalidates), not just a byte-golden pass, per this trajectory's own repeated
+"tests must prove the specific claim" lesson (`the-typescript-tree.md`'s own P7.3/P7.6 findings).
 
 **The evidence ages.** Every fact, line number and count in this doc was measured against `main`
-on 29 August 2026. Re-check before a slice proposal cites one, per every prior track's own §9.
+on 29 August 2026, several (the crate-dependency direction, `FileId`'s own allocation, `UnitTable`'s
+field shapes) refreshed again during this settling pass on the same date. Re-check before a slice
+proposal cites one, per every prior track's own §9.
 
 ---
 
@@ -363,29 +471,29 @@ on 29 August 2026. Re-check before a slice proposal cites one, per every prior t
 phase — trajectory §1's endpoint ("the compiler Bynk ships today, feature for feature, rebuilt on
 the architecture in `bynk-greenfield-compiler.md`") is reached when this phase's probe (§5) is
 satisfied, not before. What this phase does *not* close, named so a future reader does not mistake
-silence for completeness: R3.15's scheduler decision (§7, its own separate trigger), R10.5's
-`bynk-driver` consolidation (§7, no trigger), and rowan's lossless-CST question (§7, its own
-trigger against real reparse timings this phase's own P8.4 could — but is not required to —
-start collecting).
+silence for completeness: R3.15's scheduler decision (§7, its own separate trigger, settled here as
+*not this phase's business* — Q3), R10.5's `bynk-driver` consolidation (§7, no trigger), rowan's
+lossless-CST question (§7, its own trigger against real reparse timings P8.4 could — but is not
+required to — start collecting), and an emit-side signature concept for `Artefacts` (§7, Q1's own
+settled scope boundary).
 
 ---
 
 ## 11. ADRs
 
-Per ADR 0167 step 2, load-bearing, hard-to-reverse decisions land before slicing. Candidates,
-pending §3 actually closing under review (numbers assigned at merge by the stamp, per every prior
-track's own convention of referring to them by letter until then):
+Per ADR 0167 step 2, load-bearing, hard-to-reverse decisions land before slicing (numbers assigned
+at merge by the stamp, referred to by letter until then — see
+`design/pending/incrementality-settling.md` for the full text):
 
-- **ADR-A** — whether `UnitSignature` extends `combined_types_for` in place or is built as a
-  parallel type (§3.1, Q1). The most load-bearing of the set — it decides whether 7 existing call
-  sites change shape or a new type is introduced beside them, and whether `Artefacts` (phase 7)
-  gets its own signature concept or none.
-- **ADR-B** — whether this track builds a hand-rolled memo table or stops at the query
-  decomposition and firewall proof (§3.3, Q3). Directly determines the completion criterion's own
-  shape (§5) and the slice count (§6).
-- **ADR-C** — the gated probe's final shape (§3.5, Q5) — likely written once P8.0's instrumentation
-  work clarifies what is actually measurable, the same way `the-ir.md`'s own floor-of-5 argument
-  was P6.58, not a day-one ADR.
+- **ADR-A** — `UnitSignature` is a new type wrapping `combined_types_for`'s existing output
+  unchanged, plus new fn/handler/storage/capability-set projections read fresh from `UnitTable`
+  (§3.1, Q1). The most load-bearing of the set — it fixes the shape every later slice (P8.2–P8.5)
+  builds against, and settles that `Artefacts` (phase 7) gets no signature concept in this phase.
+- **ADR-B** — this track builds no memo table; the granularity and the firewall proof are the
+  whole deliverable, R3.15's scheduler decision deferred whole (§3.3, Q3). Fixes the completion
+  criterion's shape (§5) and the settled slice count (§6).
+- **ADR-C** — the gated probe is `incremental_query_types`, a one-time existence-and-proof check,
+  not a shrinking count; `keystroke_latency` stays trend-only (§3.5, Q5).
 
 ## Threat model (per the ADR 0076 trigger check — not ticked, kept for the template's required section)
 
