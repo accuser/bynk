@@ -12,7 +12,7 @@
 //! **Fourteen are gated**, committed and diffed: `workspace_lints`, `fs_below_driver`,
 //! `options_sources`, `hoist_sinks`, `span_keyed_maps`, `emit_diagnostics`,
 //! `ide_emit_edge`, `ast_importers`, `emit_abi_shapes`, `ts_writes`, `ts_any`,
-//! `verbatim_origins`, `verbatim_sites`, `incremental_query_types`. Eleven of these are
+//! `verbatim_origins`, `verbatim_sites`, `incremental_query_types`. Nine of these are
 //! zero/closure-shaped — a boolean, or a count pinned at a small, argued floor
 //! (`ast_importers` = 5, `emit_abi_shapes` = 1). Phase 7's own four are the same shape:
 //! each converged toward an argued floor over dozens of slices, the same trajectory
@@ -2006,14 +2006,17 @@ fn ts_named_imports_from_runtime_modules(src: &str) -> Vec<String> {
 ///    ADR 0412/ADR 0413's own settled naming) and `body`/`type_of` query functions
 ///    (P8.5, snake_case Rust spelling — R3.13's own `Body(DefId)`/`TypeOf(DefId)` is
 ///    query-level notation, not a committed identifier; #1510's own Decision A) exist
-///    as real code in `bynk-check`/`bynk-project`?
+///    as real code in `bynk-check`/`bynk-project` — `body`/`type_of` are searched
+///    across *both* crates, since P8.5 hasn't picked a home for them yet.
 /// 2. **Shared cache** — has the file-level parse cache migrated off
 ///    `PROJECT_UNIT_CACHE` (`bynk-ide/src/completion.rs`), the `bynk-ide`-local cache
-///    ADR 0413/P8.4 replaces with one shared, `bynk-project`-owned cache? Today's only
-///    checkable fact is *absence* — `PROJECT_UNIT_CACHE` still present means the
-///    migration hasn't happened; #1510's own Decision B names P8.4's proposal as the
-///    one to pin the real cache identifier and tighten this clause's positive
-///    detection.
+///    ADR 0413/P8.4 replaces with one shared, `bynk-project`-owned cache? Checked two
+///    ways: `PROJECT_UNIT_CACHE` gone from `bynk-ide/src`, *and* some cache-shaped
+///    `static`/`struct` actually present in `bynk-project/src` — absence alone reads
+///    "migrated" for a bare rename or deletion with nothing shared put in its place,
+///    which is not what this clause means to certify. #1510's own Decision B names
+///    P8.4's proposal as the one to pin the real cache identifier and tighten this
+///    clause's positive detection further.
 /// 3. **Stability test** — does any `#[test]` under `bynk-check/tests/` prove
 ///    `UnitSignature`'s stability under a body edit (P8.2, ADR 0412)? Deliberately
 ///    loose (any test name containing both `unit_signature` and `stab`, #1510's own
@@ -2025,7 +2028,7 @@ fn incremental_query_types(root: &Path) -> Probe {
     let check_tests = rust_files(&root.join("bynk-check/tests"));
 
     let found = query_types_found(&check_src, &project_src);
-    let cache_migrated = shared_cache_migrated(&ide_src);
+    let cache_migrated = shared_cache_migrated(&ide_src, &project_src);
     let test_present = stability_test_present(&check_tests);
 
     let reads = format!(
@@ -2071,10 +2074,14 @@ fn query_types_found(
     if any_real_code_line(project_src, "struct ProjectGraph") {
         found.push("ProjectGraph");
     }
-    if defid_query_fn_present(check_src, "fn body(") {
+    // `body`/`type_of` are searched across both crates — see this fn's own doc comment
+    // (clause 1 of [`incremental_query_types`]) for why `bynk-check` alone is too
+    // narrow a scope to pin down before P8.5 exists.
+    let defid_src: Vec<(PathBuf, String)> = check_src.iter().chain(project_src).cloned().collect();
+    if defid_query_fn_present(&defid_src, "fn body(") {
         found.push("Body");
     }
-    if defid_query_fn_present(check_src, "fn type_of(") {
+    if defid_query_fn_present(&defid_src, "fn type_of(") {
         found.push("TypeOf");
     }
     found
@@ -2103,23 +2110,64 @@ fn defid_query_fn_present(files: &[(PathBuf, String)], fn_needle: &str) -> bool 
 }
 
 /// Whether the file-level parse cache has migrated off `bynk-ide`'s own
-/// `PROJECT_UNIT_CACHE` — see [`incremental_query_types`]'s own doc comment (clause 2)
-/// for why "absent" is the only fact this slice can honestly check before P8.4 names
-/// the real shared cache it migrates onto.
-fn shared_cache_migrated(ide_src: &[(PathBuf, String)]) -> bool {
-    !any_real_code_line(ide_src, "PROJECT_UNIT_CACHE")
+/// `PROJECT_UNIT_CACHE` onto some shared cache in `bynk-project` — see
+/// [`incremental_query_types`]'s own doc comment (clause 2) for why *both* halves are
+/// checked: absence from `bynk-ide` alone cannot distinguish a real migration from a
+/// bare rename or deletion with nothing shared put in its place. The needle is
+/// anchored on the `static` declaration line (`static PROJECT_UNIT_CACHE`), not a bare
+/// substring, so `PROJECT_UNIT_CACHE_CAP` (a real, unrelated `const` in
+/// `bynk-ide/src/completion.rs`) can't hold this false on its own.
+fn shared_cache_migrated(ide_src: &[(PathBuf, String)], project_src: &[(PathBuf, String)]) -> bool {
+    !any_real_code_line(ide_src, "static PROJECT_UNIT_CACHE")
+        && cache_shaped_item_present(project_src)
+}
+
+/// Whether `bynk-project/src` has a `static`/`struct` item whose name mentions "cache"
+/// (case-insensitive) — the only crate-boundary-checkable proxy for "some shared cache
+/// now lives where P8.4 is meant to put it," until that slice pins the real identifier
+/// down. Deliberately loose, the same "exact name not yet proposed" reasoning
+/// [`stability_test_present`] already uses.
+fn cache_shaped_item_present(project_src: &[(PathBuf, String)]) -> bool {
+    project_src.iter().any(|(_, contents)| {
+        contents.lines().any(|line| {
+            if is_line_comment(line) {
+                return false;
+            }
+            let trimmed = line.trim_start();
+            let is_item = trimmed.starts_with("static ")
+                || trimmed.starts_with("pub static ")
+                || trimmed.starts_with("struct ")
+                || trimmed.starts_with("pub struct ");
+            is_item && line.to_lowercase().contains("cache")
+        })
+    })
 }
 
 /// Whether any `#[test]` fn under `bynk-check/tests/` looks like P8.2's own
 /// body-edit-stability property test — see [`incremental_query_types`]'s own doc
-/// comment (clause 3) for why this match is deliberately loose.
+/// comment (clause 3) for why the name match (`unit_signature` + `stab`) is
+/// deliberately loose. The `#[test]` attribute itself is *not* loose: it must be on the
+/// matching `fn` line or on a contiguous run of attribute lines directly above it, so a
+/// same-named non-test helper (a fixture builder, say) can't satisfy this clause.
 fn stability_test_present(check_tests: &[(PathBuf, String)]) -> bool {
     check_tests.iter().any(|(_, contents)| {
-        contents.lines().any(|line| {
-            !is_line_comment(line) && {
-                let lower = line.to_lowercase();
-                lower.contains("fn ") && lower.contains("unit_signature") && lower.contains("stab")
+        let lines: Vec<&str> = contents.lines().collect();
+        lines.iter().enumerate().any(|(i, line)| {
+            if is_line_comment(line) {
+                return false;
             }
+            let lower = line.to_lowercase();
+            let name_matches =
+                lower.contains("fn ") && lower.contains("unit_signature") && lower.contains("stab");
+            if !name_matches {
+                return false;
+            }
+            line.contains("#[test]")
+                || lines[..i]
+                    .iter()
+                    .rev()
+                    .take_while(|l| l.trim_start().starts_with('#'))
+                    .any(|l| l.trim() == "#[test]")
         })
     })
 }
@@ -3680,6 +3728,24 @@ commons app.demo {
         assert!(found.contains(&"TypeOf"));
     }
 
+    /// **The real hole finding 2 caught**: `body`/`type_of` used to be searched in
+    /// `bynk-check` only, though clause 1's own doc says `bynk-check`/`bynk-project` —
+    /// if P8.5 lands these in `bynk-project` (plausible, since that's where
+    /// `ProjectGraph` and, post-P8.4, the shared cache live), the old scope would read
+    /// 2/4 forever while the work was actually done.
+    #[test]
+    fn query_types_found_recognises_defid_keyed_fns_landing_in_the_project_crate() {
+        let found = query_types_found_over(
+            &[],
+            &[(
+                "queries.rs",
+                "pub fn body(id: DefId) -> Body {\n    todo!()\n}\n\npub fn type_of(id: DefId) -> TypeOf {\n    todo!()\n}\n",
+            )],
+        );
+        assert!(found.contains(&"Body"));
+        assert!(found.contains(&"TypeOf"));
+    }
+
     #[test]
     fn shared_cache_migrated_is_false_while_project_unit_cache_still_exists() {
         let ide_src: Vec<(PathBuf, String)> = vec![(
@@ -3687,17 +3753,57 @@ commons app.demo {
             "static PROJECT_UNIT_CACHE: LazyLock<Mutex<HashMap<PathBuf, CachedUnit>>> = ..;"
                 .to_string(),
         )];
-        assert!(!shared_cache_migrated(&ide_src));
+        let project_src: Vec<(PathBuf, String)> = vec![(
+            PathBuf::from("cache.rs"),
+            "pub struct SharedUnitCache { .. }".to_string(),
+        )];
+        assert!(!shared_cache_migrated(&ide_src, &project_src));
     }
 
     #[test]
-    fn shared_cache_migrated_is_true_once_project_unit_cache_is_gone() {
+    fn shared_cache_migrated_is_true_once_project_unit_cache_is_gone_and_a_shared_cache_lands() {
         let ide_src: Vec<(PathBuf, String)> = vec![(
             PathBuf::from("completion.rs"),
             "fn cached_project_unit(path: &Path, content: &str) -> Option<Arc<SourceUnit>> { .. }"
                 .to_string(),
         )];
-        assert!(shared_cache_migrated(&ide_src));
+        let project_src: Vec<(PathBuf, String)> = vec![(
+            PathBuf::from("cache.rs"),
+            "pub struct SharedUnitCache { units: HashMap<FileId, Arc<SourceUnit>> }".to_string(),
+        )];
+        assert!(shared_cache_migrated(&ide_src, &project_src));
+    }
+
+    /// **The real hole finding 1 caught**: absence of `PROJECT_UNIT_CACHE` from
+    /// `bynk-ide` alone used to read "migrated" even when nothing shared replaced it —
+    /// a rename or deletion with no cache anywhere in `bynk-project` satisfied the old
+    /// clause. Now requires a cache-shaped item to actually land in
+    /// `bynk-project/src` too.
+    #[test]
+    fn shared_cache_migrated_is_false_when_project_unit_cache_is_gone_but_nothing_shared_replaces_it()
+     {
+        let ide_src: Vec<(PathBuf, String)> = vec![(
+            PathBuf::from("completion.rs"),
+            "fn cached_project_unit(path: &Path, content: &str) -> Option<Arc<SourceUnit>> { .. }"
+                .to_string(),
+        )];
+        assert!(!shared_cache_migrated(&ide_src, &[]));
+    }
+
+    /// The needle is anchored on `static PROJECT_UNIT_CACHE`, not a bare substring —
+    /// `PROJECT_UNIT_CACHE_CAP` (a real, unrelated `const` in
+    /// `bynk-ide/src/completion.rs`) must not hold this false on its own.
+    #[test]
+    fn shared_cache_migrated_is_not_confused_by_project_unit_cache_cap() {
+        let ide_src: Vec<(PathBuf, String)> = vec![(
+            PathBuf::from("completion.rs"),
+            "const PROJECT_UNIT_CACHE_CAP: usize = 4096;".to_string(),
+        )];
+        let project_src: Vec<(PathBuf, String)> = vec![(
+            PathBuf::from("cache.rs"),
+            "pub struct SharedUnitCache { .. }".to_string(),
+        )];
+        assert!(shared_cache_migrated(&ide_src, &project_src));
     }
 
     #[test]
@@ -3705,6 +3811,16 @@ commons app.demo {
         let check_tests: Vec<(PathBuf, String)> = vec![(
             PathBuf::from("unit_signature.rs"),
             "#[test]\nfn unit_signature_is_stable_under_a_body_edit() { .. }\n".to_string(),
+        )];
+        assert!(stability_test_present(&check_tests));
+    }
+
+    #[test]
+    fn stability_test_present_recognises_test_attribute_separated_by_other_attributes() {
+        let check_tests: Vec<(PathBuf, String)> = vec![(
+            PathBuf::from("unit_signature.rs"),
+            "#[test]\n#[should_panic]\nfn unit_signature_panics_when_stability_is_violated() { .. }\n"
+                .to_string(),
         )];
         assert!(stability_test_present(&check_tests));
     }
@@ -3723,6 +3839,20 @@ commons app.demo {
         let check_tests: Vec<(PathBuf, String)> = vec![(
             PathBuf::from("lib.rs"),
             "// TODO: add a unit_signature stability test (P8.2)\n".to_string(),
+        )];
+        assert!(!stability_test_present(&check_tests));
+    }
+
+    /// **The real hole finding 3 caught**: the old match required only
+    /// `fn `+`unit_signature`+`stab` on one line, with no check for an actual
+    /// `#[test]` attribute — a plain, non-test helper used to satisfy the clause with
+    /// no passing test in existence.
+    #[test]
+    fn stability_test_present_is_false_for_a_non_test_helper_with_a_matching_name() {
+        let check_tests: Vec<(PathBuf, String)> = vec![(
+            PathBuf::from("unit_signature.rs"),
+            "fn unit_signature_stability_fixture(edit: &Edit) -> UnitSignature { .. }\n"
+                .to_string(),
         )];
         assert!(!stability_test_present(&check_tests));
     }
