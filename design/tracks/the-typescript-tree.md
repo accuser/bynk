@@ -384,19 +384,20 @@ reached through a green gate.
   already argues, extended to a direct caller); `workers_entry.rs`'s already-#1475-audited 34;
   `tests_emit.rs`'s already-#1475-audited 72 (of its 79, `emit_stub_class`'s 7 counted separately
   above); `emit_composition_root`'s `__eventsDispatch` closure body, 3 (#1463). **Bucket
-  B — a newly-named permanent structural category, 191 sites:** identifier/type-name/message-text
+  B — a newly-named permanent structural category, 190 sites:** identifier/type-name/message-text
   `String` construction feeding an already-real `bynk_ts` node's leaf field — the same
   representational choice P7.9 already made explicit for `TsType::Named`'s pre-rendered text,
   confirmed by direct sampling across every remaining file (`serialisation.rs`'s codec helpers,
   `emitter.rs`'s `ts_ty`-adjacent naming helpers, `emit.rs`'s `ws_*_do_method_name`-class helpers
   and `emit_message_entry_renderer`, `project.rs`'s remaining `emit_composition_root` sites,
   `workers.rs`, `events_fanout.rs`) — not further AST-decomposable without inventing new leaf
-  algebra no real content needs. **Bucket C — real, small, tractable, named but not scheduled, at
-  least 4 sites:** a bare `writeln!(out).unwrap()` blank-line push in a handful of functions not
+  algebra no real content needs. **Bucket C — real, small, tractable, named but not scheduled, 5
+  sites:** a bare `writeln!(out).unwrap()` blank-line push in a handful of functions not
   yet promoted from `out: &mut String` to `Vec<TsStmt>` at their own top-level signature
-  (`write_header_single`, `emit.rs:2957`, 2 sites; `emit_ws_dispatch_handlers`, `emit.rs:6722`, 1
-  site; `emit_ws_do_method`, `emit.rs:6417`, 1 site) — mechanically trivial, the same "named, not
-  scheduled" treatment #1487 already gave a near-identical minor fold-in candidate. Full argument:
+  (`write_header_single`, `emitter.rs:2957/3019` (`emitter.rs`, not `emit.rs`), 2 sites;
+  `emit_ws_dispatch_handlers`, `emit.rs:6949/7005`, 2 sites; `emit_ws_do_method`, `emit.rs:6518`, 1
+  site) — mechanically trivial, the same "named, not scheduled" treatment #1487 already gave a
+  near-identical minor fold-in candidate. Full argument:
   `design/decisions/`'s ADR from #1501 (number assigned at merge).
 - **`verbatim_origins`** — count of distinct `VerbatimOrigin` enum variants still constructed.
   Retires at an **argued floor**, expected small (1–3), named file-by-file at retirement the way

@@ -1,6 +1,6 @@
 ---
 level: patch
-changelog: Resolves #1501 (argue `ts_writes`'s final floor after #1486, reconcile `design/tracks/the-typescript-tree.md` §6 with #1481–#1486's own landings). All 809 live `ts_writes` sites are now accounted for across three buckets — 614 permanent and individually argued (`lower.rs`'s 371 under ADR 0391, the four Decision-C hand-written class wrappers `emit_provider`/`emit_service`/`emit_agent`/`emit_stub_class` at 126, `emit_contract_guarded_body`'s 8 message-text-and-source-map-splice-entangled sites, `workers_entry.rs`'s and `tests_emit.rs`'s already-#1475-audited 106, `__eventsDispatch`'s 3), 191 a newly-named permanent structural category (identifier/type-name/message-text `String` construction feeding an already-real `bynk_ts` node's leaf field, the same representational choice P7.9 already made for `TsType::Named`'s pre-rendered text), and at least 4 real, small, tractable sites named but not scheduled. §6 gains six landing entries for #1481–#1486 (PRs #1494–#1500), closing the gap left after #1480's own row. No code change.
+changelog: Resolves #1501 (argue `ts_writes`'s final floor after #1486, reconcile `design/tracks/the-typescript-tree.md` §6 with #1481–#1486's own landings). All 809 live `ts_writes` sites are now accounted for across three buckets — 614 permanent and individually argued (`lower.rs`'s 371 under ADR 0391, the four Decision-C hand-written class wrappers `emit_provider`/`emit_service`/`emit_agent`/`emit_stub_class` at 126, `emit_contract_guarded_body`'s 8 message-text-and-source-map-splice-entangled sites, `workers_entry.rs`'s and `tests_emit.rs`'s already-#1475-audited 106, `__eventsDispatch`'s 3), 190 a newly-named permanent structural category (identifier/type-name/message-text `String` construction feeding an already-real `bynk_ts` node's leaf field, the same representational choice P7.9 already made for `TsType::Named`'s pre-rendered text), and 5 real, small, tractable sites named but not scheduled. §6 gains six landing entries for #1481–#1486 (PRs #1494–#1500), closing the gap left after #1480's own row. No code change.
 ---
 
 ## ADR: ts-writes-final-floor-after-1486
@@ -42,7 +42,7 @@ trusting the track doc's own possibly-stale narrative:
   non-`emit_stub_class` remainder (72) — both already read end to end by #1475/PR #1487, not
   re-derived here. `emit_composition_root`'s `__eventsDispatch` closure body (3, #1463's own
   finding that `TsType::Fn`'s anonymous params can't name its `events` argument).
-- **Bucket B — a newly-named permanent structural category (191 sites).** Identifier/type-name/
+- **Bucket B — a newly-named permanent structural category (190 sites).** Identifier/type-name/
   message-text `String` construction feeding an already-real `bynk_ts` node's leaf field —
   confirmed by direct sampling across every remaining file (`serialisation.rs`'s codec helpers,
   `emitter.rs`'s naming helpers, `emit.rs`'s `ws_*_do_method_name`-class helpers and
@@ -52,17 +52,17 @@ trusting the track doc's own possibly-stale narrative:
   text. `bynk-ts`'s own algebra already represents these leaf fields as bare `String`, not further
   AST-decomposed — the same representational choice P7.9 made explicit for `TsType::Named`'s
   pre-rendered text. Genuinely structural, not residue.
-- **Bucket C — real, small, tractable, named but not scheduled (at least 4 sites).** A bare
+- **Bucket C — real, small, tractable, named but not scheduled (5 sites).** A bare
   `writeln!(out).unwrap()` blank-line push in functions not yet promoted from `out: &mut String`
-  to `Vec<TsStmt>` at their own top-level signature: `write_header_single` (`emitter.rs:2957`, 2
-  sites), `emit_ws_dispatch_handlers` (`emitter/emit.rs:6722`, 1 site), `emit_ws_do_method`
-  (`emitter/emit.rs:6417`, 1 site). Mechanically trivial (swap for a `TsStmt::blank(None)` push
-  once each function returns a `Vec`), the same "named, not scheduled" treatment #1487 already
-  gave a near-identical minor fold-in candidate — not blocking retirement.
+  to `Vec<TsStmt>` at their own top-level signature: `write_header_single` (`emitter.rs:2957` and
+  `:3019`, 2 sites), `emit_ws_dispatch_handlers` (`emitter/emit.rs:6949` and `:7005`, 2 sites —
+  found by review of #1504, corrected from an initial undercount of 1: this function's own two
+  branches, `host.message`/`host.close`, each end with the identical blank-line push), and
+  `emit_ws_do_method` (`emitter/emit.rs:6518`, 1 site). Mechanically trivial (swap for a
+  `TsStmt::blank(None)` push once each function returns a `Vec`), the same "named, not scheduled"
+  treatment #1487 already gave a near-identical minor fold-in candidate — not blocking retirement.
 
-614 (A) + 191 (B) + 4 (C, a lower bound — a handful more of the identical one-line shape likely
-exist, unhunted) accounts for 809 exactly modulo that small, explicitly-non-blocking C residual.
-No unclassified site remains.
+614 (A) + 190 (B) + 5 (C) accounts for 809 exactly. No unclassified site remains.
 
 Also added six §6 landing entries (#1481 → #1486, PRs #1494–#1500), reconciling the doc's own
 slice table with work that had already merged: `ts_writes` moved 827 → 826 (#1481) → 822 (#1482)
