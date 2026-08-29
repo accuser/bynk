@@ -1,25 +1,29 @@
 //! `cargo xtask greenfield-status` — the probe harness (track doc §8, proposal #999).
 //!
-//! Seventeen probes measuring the tree against `design/bynk-greenfield-compiler.md`:
+//! Nineteen probes measuring the tree against `design/bynk-greenfield-compiler.md`:
 //! the twelve in track doc §8, `emit_abi_shapes` (ADR 0310's probe, #999 Decision E —
 //! this slice measures the emit-ABI enumeration guard but does not wire it; wiring is
-//! packaging-track work), and phase 7's own four — `ts_writes`, `ts_any`,
+//! packaging-track work), phase 7's own four — `ts_writes`, `ts_any`,
 //! `verbatim_origins`, `verbatim_sites` (P7.0/#1296, P7.5/#1307 — see phase 7's own
-//! closing summary in `design/archive/retired-tracks.md`).
+//! closing summary in `design/archive/retired-tracks.md`) — and phase 8's own two,
+//! `incremental_query_types` and `keystroke_latency` (P8.0/#1510, settled by #1509's
+//! Q5/ADR 0414 — see `design/tracks/incrementality.md` §5).
 //!
-//! **Thirteen are gated**, committed and diffed: `workspace_lints`, `fs_below_driver`,
+//! **Fourteen are gated**, committed and diffed: `workspace_lints`, `fs_below_driver`,
 //! `options_sources`, `hoist_sinks`, `span_keyed_maps`, `emit_diagnostics`,
 //! `ide_emit_edge`, `ast_importers`, `emit_abi_shapes`, `ts_writes`, `ts_any`,
-//! `verbatim_origins`, `verbatim_sites`. Eleven of these are zero/closure-shaped — a
-//! boolean, or a count pinned at a small, argued floor (`ast_importers` = 5,
-//! `emit_abi_shapes` = 1). Phase 7's own four are the same shape: each converged toward
-//! an argued floor over dozens of slices, the same trajectory `ast_importers` had
-//! throughout phase 6's 59 — retired at `ts_writes` = 809, `ts_any` = 26,
-//! `verbatim_origins` = 1, `verbatim_sites` = 2 (phase 7's own closing summary,
-//! `design/archive/retired-tracks.md`), none the literal 0 first proposed — gated
-//! throughout despite the churn that implies, a deliberate call argued in ADR
+//! `verbatim_origins`, `verbatim_sites`, `incremental_query_types`. Eleven of these are
+//! zero/closure-shaped — a boolean, or a count pinned at a small, argued floor
+//! (`ast_importers` = 5, `emit_abi_shapes` = 1). Phase 7's own four are the same shape:
+//! each converged toward an argued floor over dozens of slices, the same trajectory
+//! `ast_importers` had throughout phase 6's 59 — retired at `ts_writes` = 809,
+//! `ts_any` = 26, `verbatim_origins` = 1, `verbatim_sites` = 2 (phase 7's own closing
+//! summary, `design/archive/retired-tracks.md`), none the literal 0 first proposed —
+//! gated throughout despite the churn that implies, a deliberate call argued in ADR
 //! 0389/ADR 0390 (review of #1297), not an oversight of #999 Decision D's
-//! churn-avoidance principle. A disagreement between a
+//! churn-avoidance principle. `incremental_query_types` is a different shape again —
+//! phase 8's own probe reads a one-time existence proof, not a count trending toward a
+//! floor (settled §5/Q5, ADR 0414); see its own doc comment. A disagreement between a
 //! fresh run and the committed table fails `greenfield_status_table_is_current`
 //! (`xtask/tests/greenfield_status.rs`), which rides both the `test` job (`cargo test
 //! --workspace`, any Rust-touching PR) and the `drift` job's existing `cargo test -p
@@ -27,11 +31,15 @@
 //! explains why a `drift`-job *step* would have been silently skipped on the PRs that
 //! move these probes most).
 //!
-//! **Four are count/ratio trend probes**, recomputed and printed but never diffed:
-//! `wildcard_arms`, `keep_in_sync`, `test_density`, `fixture_kinds`. These move on
-//! nearly any ordinary Rust PR with no slice actively driving them toward a floor (§8
-//! calls two of them "trends, not gates"); hard-gating them would make the committed
-//! table churn, and conflict, on routine work for no corresponding benefit.
+//! **Five are count/ratio trend probes**, recomputed and printed but never diffed:
+//! `wildcard_arms`, `keep_in_sync`, `test_density`, `fixture_kinds`,
+//! `keystroke_latency`. The first four move on nearly any ordinary Rust PR with no
+//! slice actively driving them toward a floor (§8 calls two of them "trends, not
+//! gates"); hard-gating them would make the committed table churn, and conflict, on
+//! routine work for no corresponding benefit. `keystroke_latency` moves on nothing
+//! yet — settled (Q3/ADR 0414) as staying "not measured" for phase 8's own whole
+//! lifetime, since no scheduler ships this phase to produce a real number; reported
+//! anyway so the trajectory's own §3.0 baseline has a live, CI-computed row.
 //!
 //! `Closes-Rule:` rule-id provenance (#999 Decision B) is deferred to a follow-on
 //! slice — the committed table below carries no rule-citation column yet.
@@ -64,7 +72,7 @@ impl Report {
 }
 
 /// Run every probe against the tree rooted at `root` (the repo root). Used by the CLI's
-/// full report; the gating test uses the thirteen gated probes alone
+/// full report; the gating test uses the fourteen gated probes alone
 /// ([`gated_disagreements`]) so it never pays for a workspace-wide clippy pass
 /// (`wildcard_arms`) just to check the probes that are actually diffed.
 pub fn run(root: &Path) -> Report {
@@ -89,10 +97,11 @@ fn run_gated(root: &Path) -> Vec<Probe> {
         ts_any(root),
         verbatim_origins(root),
         verbatim_sites(root),
+        incremental_query_types(root),
     ]
 }
 
-/// The four reported-only trend probes — never diffed, and notably including the one
+/// The five reported-only trend probes — never diffed, and notably including the one
 /// (`wildcard_arms`) that shells out to a full `cargo clippy --workspace` pass, which
 /// the gating test must not pay for on every run.
 fn run_trend(root: &Path) -> Vec<Probe> {
@@ -101,6 +110,7 @@ fn run_trend(root: &Path) -> Vec<Probe> {
         keep_in_sync(root),
         test_density(root),
         fixture_kinds(root),
+        keystroke_latency(root),
     ]
 }
 
@@ -1978,6 +1988,152 @@ fn ts_named_imports_from_runtime_modules(src: &str) -> Vec<String> {
     out
 }
 
+// --- Gated probe 14: incremental_query_types --------------------------------
+
+/// Phase 8's own completion criterion (`design/bynk-compiler-trajectory.md` §3,
+/// "keystroke-to-diagnostic latency by query level"), settled by #1509 (Q5, ADR 0414;
+/// `design/tracks/incrementality.md` §5) as a one-time **existence** proof, not a count
+/// trending toward a floor the way every other gated probe in this module is shaped —
+/// R3.13/R3.14 describe a property to construct (four real query levels, a proved
+/// firewall), not a defect to exhaust, so a shrinking count would be the wrong shape
+/// regardless of how it was tuned.
+///
+/// Three clauses, each a static read (never a nested build or test run — see
+/// [`query_types_found`]'s own doc comment for why a fourth "does the stability test
+/// *pass*" clause was deliberately rejected, #1510's own review-shaped framing):
+///
+/// 1. **Query types** — do `UnitSignature`/`ProjectGraph` (P8.1/P8.3, both pinned by
+///    ADR 0412/ADR 0413's own settled naming) and `body`/`type_of` query functions
+///    (P8.5, snake_case Rust spelling — R3.13's own `Body(DefId)`/`TypeOf(DefId)` is
+///    query-level notation, not a committed identifier; #1510's own Decision A) exist
+///    as real code in `bynk-check`/`bynk-project`?
+/// 2. **Shared cache** — has the file-level parse cache migrated off
+///    `PROJECT_UNIT_CACHE` (`bynk-ide/src/completion.rs`), the `bynk-ide`-local cache
+///    ADR 0413/P8.4 replaces with one shared, `bynk-project`-owned cache? Today's only
+///    checkable fact is *absence* — `PROJECT_UNIT_CACHE` still present means the
+///    migration hasn't happened; #1510's own Decision B names P8.4's proposal as the
+///    one to pin the real cache identifier and tighten this clause's positive
+///    detection.
+/// 3. **Stability test** — does any `#[test]` under `bynk-check/tests/` prove
+///    `UnitSignature`'s stability under a body edit (P8.2, ADR 0412)? Deliberately
+///    loose (any test name containing both `unit_signature` and `stab`, #1510's own
+///    Decision C) since P8.2 hasn't proposed an exact name yet.
+fn incremental_query_types(root: &Path) -> Probe {
+    let check_src = rust_files(&root.join("bynk-check/src"));
+    let project_src = rust_files(&root.join("bynk-project/src"));
+    let ide_src = rust_files(&root.join("bynk-ide/src"));
+    let check_tests = rust_files(&root.join("bynk-check/tests"));
+
+    let found = query_types_found(&check_src, &project_src);
+    let cache_migrated = shared_cache_migrated(&ide_src);
+    let test_present = stability_test_present(&check_tests);
+
+    let reads = format!(
+        "query_types {}/4 ({}); shared_cache {}; stability_test {}",
+        found.len(),
+        if found.is_empty() {
+            "none".to_string()
+        } else {
+            found.join(", ")
+        },
+        if cache_migrated {
+            "migrated"
+        } else {
+            "not migrated (PROJECT_UNIT_CACHE still bynk-ide-local)"
+        },
+        if test_present { "present" } else { "absent" },
+    );
+    Probe {
+        name: "incremental_query_types",
+        gated: true,
+        reads,
+    }
+}
+
+/// Which of the four R3.13 query-level identifiers exist as real code (not a comment
+/// or doc prose) — the same "grep for the real identifier, not the doc claim"
+/// discipline `design/tracks/incrementality.md` §1 already used to measure this same
+/// reading as zero at settling. Deliberately *not* a "does P8.2's fixture pass" check:
+/// every gated probe here is a static read of the tree, computed from inside
+/// `xtask/tests/greenfield_status.rs`'s own `#[test]`; shelling out to `cargo test` to
+/// check another test's outcome from inside a running `cargo test` process is the
+/// identical nested-invocation cost [`wildcard_arms`] (the one probe that shells out to
+/// `cargo`, and stays trend-only for exactly this reason) avoids — #1510's own Decision
+/// pinned this scope down before it could be rediscovered mid-implementation.
+fn query_types_found(
+    check_src: &[(PathBuf, String)],
+    project_src: &[(PathBuf, String)],
+) -> Vec<&'static str> {
+    let mut found = Vec::new();
+    if any_real_code_line(check_src, "struct UnitSignature") {
+        found.push("UnitSignature");
+    }
+    if any_real_code_line(project_src, "struct ProjectGraph") {
+        found.push("ProjectGraph");
+    }
+    if defid_query_fn_present(check_src, "fn body(") {
+        found.push("Body");
+    }
+    if defid_query_fn_present(check_src, "fn type_of(") {
+        found.push("TypeOf");
+    }
+    found
+}
+
+/// A `fn_needle`-matching signature line that *also* names `DefId` on the same line —
+/// not just `fn_needle` alone. **A real, empirically-confirmed false positive this
+/// slice's own first run caught, not a hypothetical:** `bynk-check/src/checker.rs`
+/// already has a `pub(crate) fn type_of(expr: &Expr, expected: Option<TyId>, ctx: &mut
+/// Ctx) -> Option<TyId>` — real, pre-existing, ordinary per-expression type-inference
+/// plumbing that predates this whole track and has nothing to do with R3.13's
+/// `DefId`-keyed query — a naive `fn type_of(` scan reads this as `TypeOf` already
+/// existing on the very first run, before P8.5 does any work at all. Requiring
+/// `DefId` on the same signature line is a real, if narrow, precision fix: it correctly
+/// reads false against `checker.rs`'s own `type_of` today, and correctly flips true
+/// once P8.5 lands a real `DefId`-keyed function, whatever it ends up calling it, as
+/// long as the parameter appears on the `fn` line itself (a wrapped multi-line
+/// signature would need widening this scan window — not needed for any function in
+/// the tree today).
+fn defid_query_fn_present(files: &[(PathBuf, String)], fn_needle: &str) -> bool {
+    files.iter().any(|(_, contents)| {
+        contents.lines().any(|line| {
+            !is_line_comment(line) && line.contains(fn_needle) && line.contains("DefId")
+        })
+    })
+}
+
+/// Whether the file-level parse cache has migrated off `bynk-ide`'s own
+/// `PROJECT_UNIT_CACHE` — see [`incremental_query_types`]'s own doc comment (clause 2)
+/// for why "absent" is the only fact this slice can honestly check before P8.4 names
+/// the real shared cache it migrates onto.
+fn shared_cache_migrated(ide_src: &[(PathBuf, String)]) -> bool {
+    !any_real_code_line(ide_src, "PROJECT_UNIT_CACHE")
+}
+
+/// Whether any `#[test]` fn under `bynk-check/tests/` looks like P8.2's own
+/// body-edit-stability property test — see [`incremental_query_types`]'s own doc
+/// comment (clause 3) for why this match is deliberately loose.
+fn stability_test_present(check_tests: &[(PathBuf, String)]) -> bool {
+    check_tests.iter().any(|(_, contents)| {
+        contents.lines().any(|line| {
+            !is_line_comment(line) && {
+                let lower = line.to_lowercase();
+                lower.contains("fn ") && lower.contains("unit_signature") && lower.contains("stab")
+            }
+        })
+    })
+}
+
+/// Whether any line in `files` (excluding comments) contains `needle` — the shared
+/// existence-check primitive [`query_types_found`]/[`shared_cache_migrated`] both use.
+fn any_real_code_line(files: &[(PathBuf, String)], needle: &str) -> bool {
+    files.iter().any(|(_, contents)| {
+        contents
+            .lines()
+            .any(|line| !is_line_comment(line) && line.contains(needle))
+    })
+}
+
 // --- Reported probe 1: wildcard_arms --------------------------------------
 
 /// R2.12. `clippy::wildcard_enum_match_arm` diagnostics, forced on via `-W` so the
@@ -2155,6 +2311,28 @@ fn count_files_named_walk(dir: &Path, filename: &str, count: &mut usize) {
     }
 }
 
+// --- Reported probe 5: keystroke_latency ------------------------------------
+
+/// Phase 8's own trend-only probe (`design/bynk-compiler-trajectory.md` §3,
+/// "keystroke-to-diagnostic latency by query level") — settled (Q3/Q5, ADR 0414;
+/// `design/tracks/incrementality.md` §5) as staying **"not measured" for this whole
+/// phase's lifetime**: R3.15's scheduler decision defers whole (no memo table, salsa or
+/// otherwise, ships in phase 8), and the literal latency number presupposes query
+/// levels attributing latency to — levels [`incremental_query_types`] itself proves
+/// exist, but attributing real latency to them needs a scheduler this phase
+/// deliberately does not build. Added now, not deferred to whenever a scheduler
+/// exists, so the trajectory's own §3.0 baseline table carries a live, CI-computed row
+/// instead of a static doc claim — the same "instrument even a number that won't move
+/// yet" precedent `test_density`/`fixture_kinds` already set for this module.
+fn keystroke_latency(_root: &Path) -> Probe {
+    Probe {
+        name: "keystroke_latency",
+        gated: false,
+        reads: "not measured — no scheduler exists yet (R3.15, deferred whole this phase)"
+            .to_string(),
+    }
+}
+
 // --- Rendering + diffing ---------------------------------------------------
 
 /// The committed table: a plain Markdown table, probe name → gated?/reads, plus a
@@ -2167,10 +2345,11 @@ pub fn render_table(report: &Report) -> String {
     out.push_str("# Greenfield status\n\n");
     out.push_str(
         "Track slice T0.0 (#999); `ts_writes`/`ts_any` added by P7.0 (#1296); \
-         `verbatim_origins`/`verbatim_sites` added by P7.5 (#1307). Thirteen \
+         `verbatim_origins`/`verbatim_sites` added by P7.5 (#1307); \
+         `incremental_query_types`/`keystroke_latency` added by P8.0 (#1510). Fourteen \
          probes are gated — a disagreement between this file and a fresh run fails \
          `greenfield_status_table_is_current` (`xtask/tests/greenfield_status.rs`). \
-         Four are trend probes, reported only.\n\n",
+         Five are trend probes, reported only.\n\n",
     );
     out.push_str("| Probe | Gated | Reads |\n|---|---|---|\n");
     for probe in &report.probes {
@@ -2203,10 +2382,10 @@ pub fn render_table(report: &Report) -> String {
 
 /// Every gated probe whose live reading disagrees with the committed table's, as
 /// `(probe name, committed, live)`. Trend probes are never compared, and never
-/// computed here — this only runs the thirteen gated probes, so checking currency never
+/// computed here — this only runs the fourteen gated probes, so checking currency never
 /// pays for `wildcard_arms`'s workspace-wide clippy pass. For a caller that has already
 /// run the full report (e.g. to print it), use [`gated_disagreements_in`] instead so the
-/// thirteen gated probes aren't computed a second time.
+/// fourteen gated probes aren't computed a second time.
 pub fn gated_disagreements(root: &Path) -> Vec<(String, String, String)> {
     gated_disagreements_in(&run_gated(root), root)
 }
@@ -3415,5 +3594,136 @@ commons app.demo {
             1,
             "the test-only construction site must be excluded"
         );
+    }
+
+    // --- incremental_query_types (P8.0, #1510) --------------------------------
+
+    /// Owned conversion for [`query_types_found`], mirroring every other `_over`
+    /// helper in this module.
+    fn query_types_found_over(
+        check_src: &[(&str, &str)],
+        project_src: &[(&str, &str)],
+    ) -> Vec<&'static str> {
+        let owned = |files: &[(&str, &str)]| -> Vec<(PathBuf, String)> {
+            files
+                .iter()
+                .map(|(p, s)| (PathBuf::from(p), (*s).to_string()))
+                .collect()
+        };
+        query_types_found(&owned(check_src), &owned(project_src))
+    }
+
+    #[test]
+    fn query_types_found_is_empty_before_any_slice_lands() {
+        assert!(query_types_found_over(&[], &[]).is_empty());
+    }
+
+    #[test]
+    fn query_types_found_recognises_unit_signature_and_project_graph() {
+        let found = query_types_found_over(
+            &[(
+                "symbols.rs",
+                "pub struct UnitSignature {\n    types: HashMap<String, Arc<TypeDecl>>,\n}\n",
+            )],
+            &[(
+                "graph.rs",
+                "pub struct ProjectGraph {\n    units: HashMap<UnitId, Unit>,\n}\n",
+            )],
+        );
+        assert!(found.contains(&"UnitSignature"));
+        assert!(found.contains(&"ProjectGraph"));
+    }
+
+    #[test]
+    fn query_types_found_ignores_a_comment_mentioning_the_struct_name() {
+        let found = query_types_found_over(
+            &[(
+                "lib.rs",
+                "// TODO: build a struct UnitSignature here eventually\n",
+            )],
+            &[],
+        );
+        assert!(!found.contains(&"UnitSignature"));
+    }
+
+    /// **The empirically-confirmed false positive this slice's own first run caught**
+    /// (see [`defid_query_fn_present`]'s own doc comment): `bynk-check/src/checker.rs`
+    /// already has an ordinary, pre-existing `fn type_of(expr: &Expr, ..)` with no
+    /// `DefId` anywhere in its signature — a naive `fn type_of(` scan would read
+    /// `TypeOf` as already built, before P8.5 does any real work. Pinned directly
+    /// against the real function's own signature text, not a paraphrase.
+    #[test]
+    fn query_types_found_does_not_count_checkers_pre_existing_type_of() {
+        let found = query_types_found_over(
+            &[(
+                "checker.rs",
+                "pub(crate) fn type_of(expr: &Expr, expected: Option<TyId>, ctx: &mut Ctx) -> Option<TyId> {\n",
+            )],
+            &[],
+        );
+        assert!(
+            !found.contains(&"TypeOf"),
+            "checker.rs's own type_of has no DefId parameter and must not count: {found:?}"
+        );
+    }
+
+    #[test]
+    fn query_types_found_recognises_a_real_defid_keyed_body_and_type_of() {
+        let found = query_types_found_over(
+            &[(
+                "queries.rs",
+                "pub fn body(id: DefId) -> Body {\n    todo!()\n}\n\npub fn type_of(id: DefId) -> TypeOf {\n    todo!()\n}\n",
+            )],
+            &[],
+        );
+        assert!(found.contains(&"Body"));
+        assert!(found.contains(&"TypeOf"));
+    }
+
+    #[test]
+    fn shared_cache_migrated_is_false_while_project_unit_cache_still_exists() {
+        let ide_src: Vec<(PathBuf, String)> = vec![(
+            PathBuf::from("completion.rs"),
+            "static PROJECT_UNIT_CACHE: LazyLock<Mutex<HashMap<PathBuf, CachedUnit>>> = ..;"
+                .to_string(),
+        )];
+        assert!(!shared_cache_migrated(&ide_src));
+    }
+
+    #[test]
+    fn shared_cache_migrated_is_true_once_project_unit_cache_is_gone() {
+        let ide_src: Vec<(PathBuf, String)> = vec![(
+            PathBuf::from("completion.rs"),
+            "fn cached_project_unit(path: &Path, content: &str) -> Option<Arc<SourceUnit>> { .. }"
+                .to_string(),
+        )];
+        assert!(shared_cache_migrated(&ide_src));
+    }
+
+    #[test]
+    fn stability_test_present_recognises_a_matching_test_name() {
+        let check_tests: Vec<(PathBuf, String)> = vec![(
+            PathBuf::from("unit_signature.rs"),
+            "#[test]\nfn unit_signature_is_stable_under_a_body_edit() { .. }\n".to_string(),
+        )];
+        assert!(stability_test_present(&check_tests));
+    }
+
+    #[test]
+    fn stability_test_present_is_false_for_an_unrelated_test() {
+        let check_tests: Vec<(PathBuf, String)> = vec![(
+            PathBuf::from("differential_analysis.rs"),
+            "#[test]\nfn new_entry_point_matches_analyse_project_with() { .. }\n".to_string(),
+        )];
+        assert!(!stability_test_present(&check_tests));
+    }
+
+    #[test]
+    fn stability_test_present_ignores_a_comment_mentioning_it() {
+        let check_tests: Vec<(PathBuf, String)> = vec![(
+            PathBuf::from("lib.rs"),
+            "// TODO: add a unit_signature stability test (P8.2)\n".to_string(),
+        )];
+        assert!(!stability_test_present(&check_tests));
     }
 }

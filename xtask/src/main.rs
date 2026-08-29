@@ -4,8 +4,8 @@
 //! - `stamp` (Slice 1) assigns the version(s) + ADR number(s) for the pending
 //!   files and materialises them; dry-run by default, `--apply` to write.
 //! - `greenfield-status` (compiler-architecture track, T0.0, #999) runs the
-//!   thirteen probes against the tree and prints the report; `--apply` writes the
-//!   committed table.
+//!   fourteen gated probes against the tree and prints the report; `--apply` writes
+//!   the committed table.
 //! - `ci` runs the gates CI runs, locally, in CI's own cheapest-first order —
 //!   `--fast` stops after the two that need no compile-and-link.
 

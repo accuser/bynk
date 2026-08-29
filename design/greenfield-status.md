@@ -4,7 +4,7 @@
 
 # Greenfield status
 
-Track slice T0.0 (#999); `ts_writes`/`ts_any` added by P7.0 (#1296); `verbatim_origins`/`verbatim_sites` added by P7.5 (#1307). Thirteen probes are gated — a disagreement between this file and a fresh run fails `greenfield_status_table_is_current` (`xtask/tests/greenfield_status.rs`). Four are trend probes, reported only.
+Track slice T0.0 (#999); `ts_writes`/`ts_any` added by P7.0 (#1296); `verbatim_origins`/`verbatim_sites` added by P7.5 (#1307); `incremental_query_types`/`keystroke_latency` added by P8.0 (#1510). Fourteen probes are gated — a disagreement between this file and a fresh run fails `greenfield_status_table_is_current` (`xtask/tests/greenfield_status.rs`). Five are trend probes, reported only.
 
 | Probe | Gated | Reads |
 |---|---|---|
@@ -21,10 +21,12 @@ Track slice T0.0 (#999); `ts_writes`/`ts_any` added by P7.0 (#1296); `verbatim_o
 | `ts_any` | yes | 26 |
 | `verbatim_origins` | yes | 1 |
 | `verbatim_sites` | yes | 2 |
+| `incremental_query_types` | yes | query_types 0/4 (none); shared_cache not migrated (PROJECT_UNIT_CACHE still bynk-ide-local); stability_test absent |
 | `wildcard_arms` | no (trend) | 320 |
 | `keep_in_sync` | no (trend) | 235 |
-| `test_density` | no (trend) | bynk=13.6%, bynk-check=9.4%, bynk-driver=22.3%, bynk-emit=11.8%, bynk-fmt=15.6%, bynk-grammar=33.2%, bynk-ide=40.9%, bynk-ir=0.0%, bynk-lower=66.6%, bynk-lsp=35.7%, bynk-project=33.6%, bynk-render=41.8%, bynk-strip=53.5%, bynk-syntax=10.7%, bynk-testkit=0.0%, bynk-ts=59.6%, bynk-wasm=45.1%, bynkc=0.0%, xtask=37.7% |
+| `test_density` | no (trend) | bynk=13.6%, bynk-check=9.4%, bynk-driver=22.3%, bynk-emit=11.8%, bynk-fmt=15.6%, bynk-grammar=33.2%, bynk-ide=40.9%, bynk-ir=0.0%, bynk-lower=66.6%, bynk-lsp=35.7%, bynk-project=33.6%, bynk-render=41.8%, bynk-strip=53.5%, bynk-syntax=10.7%, bynk-testkit=0.0%, bynk-ts=59.6%, bynk-wasm=45.1%, bynkc=0.0%, xtask=38.5% |
 | `fixture_kinds` | no (trend) | contains=3, absent=2, diagnostics=5, error=424 |
+| `keystroke_latency` | no (trend) | not measured — no scheduler exists yet (R3.15, deferred whole this phase) |
 
 ## Rules closed
 
