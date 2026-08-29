@@ -1,11 +1,11 @@
 ---
 level: patch
-changelog: Settle phase 8 of the compiler trajectory (`design/tracks/incrementality.md`) — `UnitSignature` is a new type wrapping ADR 0200's `combined_types_for` unchanged plus fresh fn/handler/storage/capability-set projections, the file level gets one shared `Tokens(FileId)`/`Ast(FileId)` cache in `bynk-project` (not a `bynk-ide`-local patch — the crate graph rules that out), this track builds no memo table, and its own gated probe is a one-time existence-and-proof check rather than a shrinking count
+changelog: Settle phase 8 of the compiler trajectory (`design/tracks/incrementality.md`) — `UnitSignature` is a new type wrapping ADR 0200's `combined_types_for` unchanged plus fresh fn/handler/storage/capability-set projections, compared through a canonical span/trivia-erased rendering rather than raw AST values; the file level gets one shared `Tokens(FileId)`/`Ast(FileId)` cache in `bynk-project` (not a `bynk-ide`-local patch — the crate graph rules that out); this track builds no memo table; and its own gated probe is a one-time existence check (query types exist, the cache is wired in, the stability test exists) rather than a shrinking count or a check that a test passes
 ---
 
 ## ADR: incrementality-unit-signature-shape
-title: `UnitSignature` is a new type wrapping `combined_types_for`'s existing output unchanged, plus fresh fn/handler/storage/capability-set projections read from `UnitTable`
-summary: No existing type in the workspace is already signature-shaped enough to extend in place — `combined_types_for` only ever computed one of design notes §15's four required categories, and every closer candidate (`UnitTable`'s own decl types) carries a full body
+title: `UnitSignature` is a new type wrapping `combined_types_for`'s existing output unchanged, plus fresh fn/handler/storage/capability-set projections read from `UnitTable`, compared through a canonical span/trivia-erased rendering rather than raw AST values
+summary: No existing type in the workspace is already signature-shaped enough to extend in place — `combined_types_for` only ever computed one of design notes §15's four required categories, every closer candidate (`UnitTable`'s own decl types) carries a full body, and every candidate fragment carries a `Span` that shifts under an unrelated edit unless erased through the same canonical-form technique ADR 0200 already uses
 
 **Context.** R3.14 needs `UnitSignature` to cover four categories design notes §15 already names
 as required annotations: function/handler declarations, agent storage declarations, cross-context
@@ -44,8 +44,8 @@ keep their current contract exactly as today. The remaining three categories are
 directly from `UnitTable`, each stripped to signature shape:
 
 - Function/handler declarations: `FnDecl`'s `name`/`type_params`/`params`/`return_type`/`has_self`
-  (not `body`, not `requires`/`ensures` — see the differential-fixture ADR's own field-exclusion
-  note) and every `Handler`'s `method_name`/`params`/`return_type`/`given` (not `body`).
+  (not `body`, not `requires`/`ensures`) and every `Handler`'s
+  `method_name`/`params`/`return_type`/`given` (not `body`).
 - Capability sets via `given`: the same `Handler.given`/`ProviderDecl.given`/
   `ServiceDecl.default_given` fields, plus `UnitTable.exported_capabilities` copied as-is.
 - Agent storage declarations: `StoreField`'s `name`/`kind: StoreKind` only — not `init`, not
@@ -55,13 +55,34 @@ directly from `UnitTable`, each stripped to signature shape:
 this phase. Design notes §15's annotation policy — the firewall's own foundation — is a check-side
 contract; nothing in this phase's scope proposes an emit-side query to key one against.
 
+**A field-exclusion list is not enough on its own: every fragment above carries a `Span`, and
+several (`TypeDecl`, reused unchanged from `combined_types_for`'s own output) also carry `trivia`/
+`documentation`.** `Ident` (`ast.rs:7`), `Param` (`ast.rs:2179`), every `TypeRef` variant
+(`ast.rs:2187` onward) and `TypeDecl` (`ast.rs:1529`) each carry their own `Span`. Editing a
+function body changes that file's byte length, shifting the `start`/`end` of every span *after*
+the edit point in the same file — including every later declaration's own name, params and return
+type, and every field of `combined_types_for`'s reused `TypeDecl` values. Comparing
+`UnitSignature` as literal AST values would make it unstable under exactly the edit R3.14 says it
+must survive. This is not a new erasure scheme to invent: `bynk-check/src/contract.rs`'s
+`canon_type`/`service_normal_form` (ADR 0200) already solves the identical problem — a canonical
+form that must compare equal across two semantically-identical builds regardless of source layout
+— by rendering each `TypeRef` to a plain `String` and discarding every span (`contract.rs:103`
+onward, every match arm binds `_` where a `Span` would be). `UnitSignature`'s own stability
+comparison reuses that technique, extended to cover `FnDecl`/`Handler`/`StoreField` shapes
+`canon_type` doesn't reach today: every field is rendered through a canonical form, and R3.14's
+proof (see the accompanying track-doc §3.4/Q4) is defined over that rendering, never over the raw
+AST values.
+
 **Consequences.** Every one of `combined_types_for`'s 7 existing callers is unaffected by this
 track landing — no widened signature to thread through them, no risk to `bynkc/tests/contract_hash.rs`'s
 own no-false-positive guarantee (which never called the function directly, only named it in a doc
 comment, so it wouldn't have caught a signature change either way). `UnitSignature` composes
 `combined_types_for`'s output rather than duplicating it, satisfying phase 1's "no fact in two
-hand-synced copies" invariant by construction. P8.1 (the track doc's own §6) is the slice that
-builds this; P8.2–P8.5 build against its exact field list.
+hand-synced copies" invariant by construction. Reusing `canon_type`'s own technique for the span
+erasure means R3.14's proof rests on machinery this codebase already trusts (guarded by
+`contract_hash.rs`'s own no-false-positive fixture) rather than a new, unproven erasure path. P8.1
+(the track doc's own §6) is the slice that builds this; P8.2–P8.5 build against its exact field
+list and its canonical rendering.
 
 ## ADR: incrementality-shared-file-level-cache
 title: The file level gets one shared `Tokens(FileId)`/`Ast(FileId)` cache in `bynk-project`, migrating both completion and diagnostics onto it — not a `bynk-ide`-local patch, which the crate graph rules out entirely
@@ -107,7 +128,7 @@ fixture, not just a byte-golden pass.
 
 ## ADR: incrementality-no-memo-table-this-phase
 title: This track builds no memo table of any kind — the granularity and the firewall proof are the whole deliverable, R3.15's scheduler decision deferred whole
-summary: R3.15's own rationale text is taken at face value; the probe's own shape (a proof, not a latency number, per the third ADR in this set) means an un-memoised decomposition is not actually unmeasurable, so nothing forces a scheduler build here
+summary: R3.15's own rationale text is taken at face value; the gated probe's own shape (an existence check, not a latency number — settled in the track doc's own §3.5/§5, not a fourth ADR here) means an un-memoised decomposition is not actually unmeasurable, so nothing forces a scheduler build here
 
 **Context.** R3.15 names three options — salsa, a hand-rolled memo table, or nothing — and defers
 the choice to a later, separate trigger ("a hand-rolled memo table... measurably the bottleneck").
@@ -115,11 +136,16 @@ The draft's own worry was that stopping at the query decomposition, with no cach
 would leave nothing for the phase's own probe to measure — implicitly pressuring this track toward
 building at least a minimal hand-rolled table just to have a number to report.
 
-**Decision.** No memo table ships in this phase, hand-rolled or otherwise. The gated probe (see
-the companion ADR on its shape) is settled as a one-time existence-and-proof check — do the query
-types exist, and is `UnitSignature` proved stable under a body edit — not a latency number, so the
-draft's own pressure toward "build something just to measure it" is resolved by changing what's
-measured, not by building a scheduler. R3.15's own trigger for either salsa or a hand-rolled table
+**Decision.** No memo table ships in this phase, hand-rolled or otherwise. The gated probe
+(`incremental_query_types`, settled in the track doc's own §3.5/§5 as an ordinary decision, not a
+front-loaded ADR — a probe definition is cheap to revise later, unlike the three decisions that do
+get an ADR here) is a one-time existence check — do the query types exist, is the shared file-level
+cache wired into both call sites, does the body-edit stability test (P8.2) exist — not a latency
+number and not a check that the test *passes* (a gated probe is a static read run from inside a
+`#[test]` itself; shelling out to `cargo test` to check an outcome would be the same
+nested-invocation cost `wildcard_arms` avoids by staying trend-only). So the draft's own pressure
+toward "build something just to measure it" is resolved by changing what's measured, not by
+building a scheduler. R3.15's own trigger for either salsa or a hand-rolled table
 is "measurably the bottleneck," which cannot fire before real query types exist to be a bottleneck
 in — building one now would be committing to solve a problem (cache-invalidation correctness
 under concurrent IDE writes) this phase has no evidence yet even exists at a scale worth solving.

@@ -257,7 +257,9 @@ types, not reinvented:
   `name`, `kind: StoreKind` only — explicitly *not* `init: Option<Expr>`, an initialiser
   expression, and not `annotations`, which govern internal storage behaviour, not the field's
   externally-relevant shape).
-- **Cross-context type references** — `combined_types_for`'s own output, unmodified.
+- **Cross-context type references** — `combined_types_for`'s own output, unmodified as a
+  *derivation* (no new function computes it) — but see Q4 for how it, and every other field
+  above, is actually *compared* for stability.
 
 `Artefacts` (phase 7's typed emit-side document set, R7.8) gets no signature concept of its own
 in this phase — the annotation policy this phase's firewall is built on (design notes §15) is a
@@ -319,9 +321,10 @@ salsa itself, keeps this phase's risk bounded to what R3.13/R3.14 actually requi
 
 **Decision: the field list is Q1's own four groups above, each audited field-by-field against the
 real `FnDecl`/`Handler`/`StoreField`/`ProviderDecl`/`ServiceDecl` shapes to exclude every body or
-body-adjacent field; stability is proved by a required, purpose-built property fixture — edit a
-body only, rebuild, assert the signature is unchanged — not by reuse of `differential_analysis.rs`
-as-is.**
+body-adjacent field, compared through a canonical, span/trivia/documentation-erased rendering (not
+the raw AST values); stability is proved by a required, purpose-built property fixture — edit a
+body only, rebuild, assert the canonical rendering is unchanged — not by reuse of
+`differential_analysis.rs` as-is.**
 
 Design notes §15's four categories map cleanly onto real AST shapes already in the tree (Q1 lists
 the exact fields). Two exclusions are worth naming explicitly because they were the ones most
@@ -336,6 +339,27 @@ under edits that don't change what a caller needs, defeating R3.14 rather than s
 externally-relevant shape, and design notes §15's own "visible boundaries, invisible internals"
 line is the reasoning being applied, not a new one being invented for this decision.
 
+**A third exclusion, found only once the fixture in P8.2 was actually reasoned through: every
+included fragment's `span` (and, where present, `trivia`/`documentation`) must be erased before
+comparison, not just excluded field-by-field at the top level named above.** `Ident`
+(`ast.rs:7`), `Param` (`ast.rs:2179`), every `TypeRef` variant (`ast.rs:2187` onward) and
+`TypeDecl` (`ast.rs:1529`, which also carries `trivia`/`documentation`) each carry their own
+`Span`. Editing a function body changes that file's byte length, shifting the `start`/`end` of
+every span *after* the edit point in the same file — including the name, params and return type
+of every later declaration, and every field of `combined_types_for`'s own reused `TypeDecl`
+values. Comparing `UnitSignature` as literal AST values, spans included, would make it unstable
+under exactly the edit R3.14 says it must survive — the same class of defect Q4's first two
+exclusions were closing, one level down, in the fields that carry a `Span` implicitly rather than
+a whole sub-tree. **This is not a new erasure scheme to invent: `bynk-check/src/contract.rs`'s
+`canon_type`/`service_normal_form` (ADR 0200) already solves the identical problem — a canonical
+form that must compare equal across two semantically-identical builds regardless of source
+layout — by rendering each `TypeRef` to a plain `String`, matching every span as `_` and
+discarding it (`contract.rs:103` onward). `UnitSignature`'s own stability comparison reuses that
+same technique: every field is rendered through a canonical form (extending `canon_type` to cover
+`FnDecl`/`Handler`/`StoreField` shapes it doesn't reach today, not inventing a parallel one), and
+equality/hashing for R3.14's own proof is defined over that rendering, never over the raw AST
+values or `combined_types_for`'s `Arc<TypeDecl>` directly.**
+
 **On the proof:** phase 4's `differential_analysis.rs` (`bynk-check/tests/`) is the closest prior
 technique on this trajectory, but settling checked its actual shape rather than assume the fit —
 it compares two **analysis paths'** output for parity, not one type's stability under an edit. It
@@ -343,7 +367,8 @@ is precedent for "prove an architectural invariant mechanically, not by inspecti
 discipline, not a template to copy verbatim. R3.14's own literal text ("stable under an edit to
 any `Body(DefId)` within that unit") needs its own, new fixture shape: build `UnitSignature` for a
 fixture unit, edit only a handler or function **body** (never a parameter, return type, storage
-field or `given` clause) in the source, rebuild, and assert equality — a required part of P8.2
+field or `given` clause) in the source, rebuild, and assert the canonical rendering above compares
+equal — a required part of P8.2
 (§6), not an optional strengthening, since R3.14 is this phase's own named firewall and its own
 §9 risk section already treats getting this proof right as the track's central stake.
 
@@ -357,11 +382,19 @@ a scheduler exists to time it.**
 and the `Body`/`TypeOf` query functions exist as real Rust types/functions in `bynk-project`/
 `bynk-check` (not doc prose — the same "grep for the real identifier" standard §1 already
 applied), the shared `Tokens(FileId)`/`Ast(FileId)` cache (Q2) is wired into both `bynk-ide`'s
-completion path and `bynk_check::analyse_project`, and P8.2's property fixture (Q4) passes,
-proving `UnitSignature` stability under a body edit mechanically rather than by inspection. This
-is the first gated probe on this trajectory whose target is a proof, not a count trending to zero
-or an argued floor — R3.13/R3.14 describe a property to construct, not a defect to exhaust, so a
-shrinking-count probe would be the wrong shape regardless of how it's tuned. `keystroke_latency`
+completion path and `bynk_check::analyse_project`, and P8.2's body-edit stability test (Q4)
+**exists** as a named test in `bynk-check/tests/`. All three are static reads of the tree — every
+existing gated probe's own shape (`xtask::greenfield_status::Probe { name, gated, reads }`) and
+necessarily so, since `gated_disagreements` runs from inside a `#[test]` itself
+(`xtask/tests/greenfield_status.rs`); a fourth condition asking "does that test actually *pass*"
+would need to shell out to `cargo test` from inside a running `cargo test` process, the identical
+nested-invocation cost this codebase's own `wildcard_arms` probe (the one existing probe that
+shells out to `cargo`, for a workspace clippy pass) is kept trend-only to avoid, per its own doc
+comment (`greenfield_status.rs:66–69`). Ordinary CI proves the fixture passes; this probe proves
+only that it exists to be run. This is the first gated probe on this trajectory whose target is a
+proof, not a count trending to zero or an argued floor — R3.13/R3.14 describe a property to
+construct, not a defect to exhaust, so a shrinking-count probe would be the wrong shape regardless
+of how it's tuned. `keystroke_latency`
 follows `test_density`'s own precedent (`xtask/src/greenfield_status.rs`'s `run_trend`) for a
 probe that's reported, never gated — it stays "not measured" through this phase's own retirement,
 per Q3's decision that no scheduler ships here to produce a real number.
@@ -383,10 +416,16 @@ what §11 front-loads; every slice citing `Closes-Rule:`.
 
 Two probes, as settled by Q5:
 
-- **`incremental_query_types`** — a one-time existence-and-proof gate: do `UnitSignature`,
-  `ProjectGraph`, `Body`/`TypeOf` exist as real types/functions in `bynk-project`/`bynk-check`; is
-  the shared `Tokens(FileId)`/`Ast(FileId)` cache wired into both completion and diagnostics; does
-  P8.2's property fixture pass, proving `UnitSignature` stability under a body edit. Retires at
+- **`incremental_query_types`** — a one-time existence gate, three static reads, no nested build
+  or test run: do `UnitSignature`, `ProjectGraph`, `Body`/`TypeOf` exist as real types/functions in
+  `bynk-project`/`bynk-check`; is the shared `Tokens(FileId)`/`Ast(FileId)` cache wired into both
+  completion and diagnostics; does P8.2's own body-edit stability test **exist** as a named test in
+  `bynk-check/tests/` (not "does it pass" — a gated probe is a static read of the tree
+  (`xtask::greenfield_status::Probe`), and `gated_disagreements` runs from inside a `#[test]`
+  itself (`xtask/tests/greenfield_status.rs`); shelling out to `cargo test` from there to check a
+  fixture's outcome is the same nested-cargo-invocation cost `wildcard_arms`'s own doc comment
+  names as the reason *that* probe stays trend-only. Ordinary CI (ordinary `cargo test`) is what
+  actually proves the fixture passes; the probe only proves it's there to run). Retires at
   **satisfied**, not 0 or a floor — the first probe on this trajectory shaped as a proof rather
   than a shrinking count.
 - **`keystroke_latency`** (trend-only, not gated) — reported as "not measured" through this
@@ -405,8 +444,8 @@ P7.0 both being real instrumentation work, not ceremony.
 | Slice | What it does | Rules | Gated on |
 |---|---|---|---|
 | **P8.0** | `incremental_query_types` (gated) and `keystroke_latency` (trend) probes added to `xtask/src/greenfield_status.rs`, per §5 | instrumentation | — |
-| **P8.1** | `UnitId` and `UnitSignature` built in `bynk-check` — `combined_types_for`'s existing output reused unchanged as one field, plus new fn/handler/storage/capability-set projections read fresh from `UnitTable`, per Q1/Q4's exact field list | R3.14 | — |
-| **P8.2** | Property fixture proving `UnitSignature` stability under a body-only edit, per Q4's own new fixture shape (not `differential_analysis.rs` reused as-is) | R3.14 | P8.1 |
+| **P8.1** | `UnitId` and `UnitSignature` built in `bynk-check` — `combined_types_for`'s existing output reused unchanged as one field, plus new fn/handler/storage/capability-set projections read fresh from `UnitTable`, per Q1/Q4's exact field list; stability compares every field through a canonical, span/trivia/documentation-erased rendering, extending ADR 0200's own `canon_type`/`service_normal_form` rather than a new erasure scheme | R3.14 | — |
+| **P8.2** | Property test proving `UnitSignature`'s canonical rendering is stable under a body-only edit, per Q4's own new fixture shape (not `differential_analysis.rs` reused as-is) | R3.14 | P8.1 |
 | **P8.3** | Typed `ProjectGraph` in `bynk-project` (keyed by `UnitId` from P8.1), replacing `graph.rs`/`roots.rs`'s untyped, name-keyed shape (ADR 0326/ADR 0388's own deferral) | R3.13, R8.16 (data-model half) | P8.1 |
 | **P8.4** | A durable path↔`FileId` interning table plus a shared `Tokens(FileId)`/`Ast(FileId)` cache in `bynk-project`; `bynk-ide::completion` and `bynk_check::analyse_project`'s `phase_parse` both migrate onto it; `PROJECT_UNIT_CACHE` retires as a duplicate | R3.13 | — |
 | **P8.5** | `Body(DefId)`/`TypeOf(DefId)` as real, pure, `DefId`-keyed query functions, decomposed out of `analyse_project`'s current monolithic per-file pass — no memo table wrapping them yet, per Q3 | R3.13 | P8.1 |
@@ -486,14 +525,25 @@ at merge by the stamp, referred to by letter until then — see
 `design/pending/incrementality-settling.md` for the full text):
 
 - **ADR-A** — `UnitSignature` is a new type wrapping `combined_types_for`'s existing output
-  unchanged, plus new fn/handler/storage/capability-set projections read fresh from `UnitTable`
-  (§3.1, Q1). The most load-bearing of the set — it fixes the shape every later slice (P8.2–P8.5)
-  builds against, and settles that `Artefacts` (phase 7) gets no signature concept in this phase.
-- **ADR-B** — this track builds no memo table; the granularity and the firewall proof are the
+  unchanged, plus new fn/handler/storage/capability-set projections read fresh from `UnitTable`,
+  compared through a canonical, span/trivia/documentation-erased rendering extending ADR 0200's
+  own `canon_type` (§3.1, §3.4, Q1/Q4). The most load-bearing of the set — it fixes the shape every
+  later slice (P8.2–P8.5) builds against, and settles that `Artefacts` (phase 7) gets no signature
+  concept in this phase.
+- **ADR-B** — the file level gets one new, shared `Tokens(FileId)`/`Ast(FileId)` cache in
+  `bynk-project`, plus the durable path↔`FileId` interning table it needs — not a `bynk-ide`-local
+  patch, which the crate graph rules out entirely (§3.2, Q2). The one slice (P8.4) with real
+  behavioural stakes, per §9.
+- **ADR-C** — this track builds no memo table; the granularity and the firewall proof are the
   whole deliverable, R3.15's scheduler decision deferred whole (§3.3, Q3). Fixes the completion
   criterion's shape (§5) and the settled slice count (§6).
-- **ADR-C** — the gated probe is `incremental_query_types`, a one-time existence-and-proof check,
-  not a shrinking count; `keystroke_latency` stays trend-only (§3.5, Q5).
+
+Q5's own probe shape (`incremental_query_types`, a one-time existence gate rather than a shrinking
+count) is settled in §3.5 as an ordinary decision, not a fourth front-loaded ADR — a probe
+definition in `xtask/src/greenfield_status.rs` is cheap to revise later if its shape turns out
+wrong, unlike A–C above, each of which fixes a type/cache/scope shape later slices build directly
+against. `the-ir.md`'s own precedent set this: its probe floor was argued at retirement (P6.58),
+not written as a day-one ADR.
 
 ## Threat model (per the ADR 0076 trigger check — not ticked, kept for the template's required section)
 
