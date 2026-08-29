@@ -365,7 +365,40 @@ reached through a green gate.
   citations): both carry a real, small, permanent floor (17 sites, Decision A + Decision C) plus
   the already-scheduled wrapper-function/`destructure_vals` conversions, no large *probe-visible*
   unconverted
-  residue in either file.**
+  residue in either file.** **Settled by #1501, after every implementation issue this track named
+  (#1475–#1486, including the `verbatim_sites` capstone) landed: the argued floor is 809,
+  matching the live probe exactly.** Every one of the 809 sites (reproduced directly against
+  `ts_writes_violations`'s own predicate, not `grep`: `lower.rs` 371, `emit.rs` 185,
+  `tests_emit.rs` 79, `serialisation.rs` 61, `emitter.rs` 45, `workers_entry.rs` 34, `project.rs`
+  20, `workers.rs` 12, `events_fanout.rs` 2) traces to one of three buckets. **Bucket
+  A — permanent, individually argued, 614 sites:** `lower.rs`'s 371 (ADR 0391); the four
+  Decision-C hand-written class wrappers — `emit_provider` (11, #1480), `emit_service` (15,
+  #1481), `emit_agent`'s DO-class-wrapper-plus-history-driver (93, #1482, the history-driver
+  itself reconfirmed permanent per #1386), `emit_stub_class` (7, #1483) — together 126;
+  `emit_contract_guarded_body`'s 8 (`emitter/emit.rs:1046`, argued fresh by #1501: two sites are
+  predicate-failure message text, the same permanent shape #1471 already argued for
+  `pred_condition_and_message`'s own `msg` half; the rest build into `out: &mut String` because
+  `emit_block_as_function_body_with_return` calls `cx.record_span(out.len(), ...)` against it —
+  wrapping this in a local buffer would reproduce the exact stale-offset bug #1352 already fixed
+  one level up in `emit_free_fn`, the same `lower.rs`-splice source-map entanglement ADR 0391
+  already argues, extended to a direct caller); `workers_entry.rs`'s already-#1475-audited 34;
+  `tests_emit.rs`'s already-#1475-audited 72 (of its 79, `emit_stub_class`'s 7 counted separately
+  above); `emit_composition_root`'s `__eventsDispatch` closure body, 3 (#1463). **Bucket
+  B — a newly-named permanent structural category, 190 sites:** identifier/type-name/message-text
+  `String` construction feeding an already-real `bynk_ts` node's leaf field — the same
+  representational choice P7.9 already made explicit for `TsType::Named`'s pre-rendered text,
+  confirmed by direct sampling across every remaining file (`serialisation.rs`'s codec helpers,
+  `emitter.rs`'s `ts_ty`-adjacent naming helpers, `emit.rs`'s `ws_*_do_method_name`-class helpers
+  and `emit_message_entry_renderer`, `project.rs`'s remaining `emit_composition_root` sites,
+  `workers.rs`, `events_fanout.rs`) — not further AST-decomposable without inventing new leaf
+  algebra no real content needs. **Bucket C — real, small, tractable, named but not scheduled, 5
+  sites:** a bare `writeln!(out).unwrap()` blank-line push in a handful of functions not
+  yet promoted from `out: &mut String` to `Vec<TsStmt>` at their own top-level signature
+  (`write_header_single`, `emitter.rs:2957/3019` (`emitter.rs`, not `emit.rs`), 2 sites;
+  `emit_ws_dispatch_handlers`, `emit.rs:6949/7005`, 2 sites; `emit_ws_do_method`, `emit.rs:6518`, 1
+  site) — mechanically trivial, the same "named, not scheduled" treatment #1487 already gave a
+  near-identical minor fold-in candidate. Full argument:
+  `design/decisions/`'s ADR from #1501 (number assigned at merge).
 - **`verbatim_origins`** — count of distinct `VerbatimOrigin` enum variants still constructed.
   Retires at an **argued floor**, expected small (1–3), named file-by-file at retirement the way
   `ast_importers`'s floor of 5 was. Measures how many *families* of residue remain, not their
@@ -2707,13 +2740,130 @@ moves 829 → 827 — both from `emit_free_fn`'s own retired code: its `debug_as
 message, and its final `writeln!(out)` trailing-blank-line push (now a plain `TsStmt::blank` in the
 returned `Vec` instead).
 
+**#1481 landed (#1494) — `emit_service` builds a real `bynk_ts::TsStmt` at its own top-level
+signature.** Returns one real `TsStmt` (was `out: &mut String` plus `source_map: Option<&RefCell<
+SourceMapBuilder>>`) — the whole `export const {name} = { ... };` object literal, built into a
+local buffer with an object-wide `nested_map` combining every handler's own `body_smb`. Per-handler
+source-map merging now routes through the shared `bynk_ts::print_object_entry_and_merge` helper
+(#1477) instead of the hand-rolled text-search offset recovery this function performed once per
+handler — the same `emit_class_method_and_merge_source_map`/`print_class_method_and_merge`
+composition `emit_provider` (#1480) already established, applied to `TsObjectEntry::Method` instead
+of `TsClassMethod`. Each handler body stays one opaque, correctly-source-mapped `Raw` node (ADR
+0391) — Decision C, matching this issue's own scope; `emit_class_method_and_merge_source_map`/
+`RawBody` stay in use by `emit_agent`'s own not-yet-converted call site (#1482). Verified:
+`cargo test -p bynk-emit` (187/187), `cargo test -p bynkc --test source_map --test
+source_map_bodies` (14/14, including the three service-handler-body tests exercising this path
+directly), full workspace suite green, byte-identical `tsc_verify` corpus. `ts_writes` (gated
+probe) 827 → **826**.
+
+**#1482 landed (#1495) — `emit_agent` builds a real `bynk_ts::TsStmt` tree at its own top-level
+signature.** Returns `Vec<bynk_ts::TsStmt>` (was `out: &mut String` plus `source_map`). Per #1462's
+own end-to-end audit of `emit_agent`'s 99 sites, the 66 already-argued print-and-splice sites
+(state interface, registry, zero factory, rehydration gate, construction factory) push their
+already-real top-level nodes directly into the returned `Vec`, no internal construction logic
+changed. Two sites stay genuinely opaque, each its own `TsStmt::raw` (not `Verbatim` —
+`Verbatim`/`VerbatimOrigin` is reserved for temporary residue the `verbatim_sites`/
+`verbatim_origins` probes track toward zero, and using it here would misrepresent permanent content
+as unfinished): the DO class (`emit_provider`'s own Decision C, #1480, built into a local
+buffer/map pair with every internal print-and-splice site unchanged) and the history-driver
+(`__bynkDriveHistory_*`, #1386's own standing permanent-exclusion decision, reconfirmed by #1462).
+Review of #1495 also fixed a stale doc cross-reference in `emit_class_method_and_merge_source_map`
+(its own callers had changed since #1481). Verified: full workspace suite green including both
+`tsc_verify` full-corpus runs, `cargo test -p bynk-emit` (187/187). `ts_writes` (gated probe)
+826 → **822** (four retired `writeln!(out).unwrap()` blank-line calls, now plain `TsStmt::blank`
+pushes).
+
+**#1483 landed (#1496) — `emit_stub_class` builds a real `bynk_ts::TsStmt` at its own top-level
+signature.** `emit_stub_class` (`project/tests_emit.rs`) now returns one real `TsStmt` (was a
+plain `String`). The class wrapper (header/fields) stays hand-written text — Decision C, the same
+`emit_provider` precedent (#1480) — wrapped as one `TsStmt::raw`; no `nested_map`, since this
+function has no `LowerCtx`/source-map involvement anywhere in its own construction
+(`lower_stub_value_block`/`emit_stub_rhs` build already-formed text, not through a body-local
+`SourceMapBuilder`), unlike `emit_provider`/`emit_service`/`emit_agent`'s own per-handler bodies.
+Each method still prints as its own real `TsClassMethod` fragment, spliced directly into the
+wrapper exactly as before. The one call site (`emit_test_module`) now prints the returned node
+through `bynk_ts::print_stmt`. Verified: full workspace suite green including both `tsc_verify`
+full-corpus runs, `cargo test -p bynk-emit` (187/187). `ts_writes` (gated probe) unchanged at
+**822** — no `write!`/`writeln!`/`format!` call site was retired here, only the return shape
+changed.
+
+**#1484 landed (#1497) — the near-identical test-function wrappers convert to a real `bynk_ts`
+shape.** Five near-identical `async function {name}() { ... }` test-generation wrappers
+(`emit_test_case_function`, `emit_test_property_function`, `emit_test_history_property_function`,
+`emit_contract_attack_function`, and `emit_integration_module`'s own inline case wrapper) now build
+their outer function declaration via one shared construction, `async_test_runner_fn` — a real
+`TsDecl::Function` — instead of five separate `format!("async function {name}() {{\n")`
+hand-templates. Each function's own inner content stays one opaque `TsStmt::raw`, matching
+`emit_free_fn`'s own established `TsDecl::Function` + `Raw`-body precedent (#1480): a direct read
+of the printer confirmed this file's own generated-function interior uses a fixed 4-space indent,
+not real AST-nesting-derived depth, for 3 of the 5 sites (no `try`/`catch`), so a fully-real nested
+tree would render one indent level shallower than the actual bytes — kept opaque to avoid that
+regression risk. `emit_test_case_function`'s own `case_smb` and `emit_integration_module`'s own
+inline per-case map carry a real `nested_map` (#1477); the other three carry none, unchanged from
+before. **A real bug caught during implementation, not left to golden-diff alone:**
+`TsDecl::Function`'s own printer arm adds exactly one trailing `\n` after its closing brace, not an
+extra blank-line separator as first assumed — each caller needed its own explicit blank-line push
+restored, caught by a real `tsc_verify`/e2e-fixture failure, fixed and re-verified. Review of #1497
+additionally routed three call sites through `print_stmt_and_merge` instead of a plain `print_stmt`
+(a plain call silently drops a `nested_map`, a latent footgun) and added a direct source-map test
+for `emit_integration_module`'s own inline case wrapper. Verified: full workspace suite green
+including the full `tsc_verify` fixture corpus and the `bynkc` e2e positive-fixtures suite,
+`cargo test -p bynk-emit` (187/187). `ts_writes` (gated probe) 822 → **817** (the five retired
+`format!` call sites).
+
+**#1485 landed (#1498) — `emit_system_http_support`'s HS256 JWT-signer block moves to a committed
+`.ts` file.** Moves from a raw Rust multi-line string literal (`\`-continuations, zero justifying
+comment) to a committed `emitter/test_runtime/jwt_signer.ts` file, spliced in via `include_str!`
+through a new `jwt_signer_runtime_helpers()` function — the same treatment
+`expectation_runtime_helpers`/`stub_runtime_helpers` (and the rest of `test_runtime/*.ts`) already
+get. The `.ts` file's own content was extracted byte-for-byte from a real fixture's expected output
+(`bynkc/tests/fixtures/positive/379_system_http_boundary`), not hand-transcribed from the escaped
+Rust literal, to guarantee fidelity. `emit_system_http_support` still carries the signer as one
+opaque `TsStmt::raw` — only its own source moved. Verified: full workspace suite green,
+byte-identical fixture output via the `tsc_verify` corpus, `cargo test -p bynk-emit` (187/187).
+`ts_writes`/`verbatim_sites`/`verbatim_origins` unchanged — no live site retired, only a
+Rust-literal-to-committed-file move.
+
+**#1486 landed (#1499 prerequisite + #1500) — the `verbatim_sites` capstone: `emit_project`/
+`emit_test_module`/`emit_integration_module` build real `bynk_ts` trees at their own top-level
+signature.** The three orchestrator functions ADR 0399 found still returning a pre-rendered
+`String` wrapped in one opaque `TsStmt::verbatim`, regardless of internal conversion progress, now
+all return a real `bynk_ts::TsProgram`/`Vec<TsStmt>`, printed once at the write boundary via
+`bynk_ts::print`/the new `bynk_ts::print_multi_source` (which builds the source map directly from
+each statement's own `span`/`nested_map`, replacing a hand-driven `SourceMapBuilder`). The three
+real call sites (`project.rs`'s `emit_unit`, `project/tests_emit.rs`'s `process_tests`/
+`process_integration_tests`) drop their own `Verbatim`-wrapping. **Prerequisite (#1499):**
+`bynk_ts::TsStmt` gains `no_blank_before: bool` (default `false`) — converting the three
+orchestrators exposes every constituent callee's own internal multi-statement spacing to the
+printer's automatic one-blank-line-between-top-level-statements policy for the first time, and
+`emit_agent`'s own already-shipped `registry`-then-zero-factory pairing (#1482) genuinely needs
+zero blank lines between two adjacent real statements, a shape the uniform policy couldn't express
+without a per-statement escape hatch (confirmed empirically before choosing this over accepting
+fixture format drift or misusing `Raw` to dodge the `verbatim_sites` probe). `verbatim_sites`
+(gated probe) drops from 5 to its argued floor of **2** — `project.rs:2478`/`:2507`, an adapter
+binding's own foreign, user-authored TS content and the committed `runtime.ts` build artifact, both
+already argued permanent by ADR 0399. Fixes a real pre-existing byte-for-byte regression this
+conversion uncovered (two json-codec-closure blank-line fixtures) and retires the now-dead
+`emitter::inject_runtime_imports`/`missing_bindings` post-print text-splice mechanism (#1472's own
+solved design), both converted callers now building the runtime-import statement's own
+`names: Vec<String>` directly through a `Vec`-level dedup helper. **Review of #1500** found a real
+divergence on a two-source-commons workers-target context (`emit_boundary_helpers`'s own
+re-export-group loop pinned each group's re-export under its own import but never exempted the
+*next* group's import from the automatic blank-line policy) — fixed with a new fixture
+(`bynkc/tests/fixtures/positive/1500_boundary_helpers_two_commons`) confirmed to fail without the
+fix; also fixed two lower-priority blank-line regressions the same review found. Verified: full
+workspace suite green (171 `test result: ok` blocks), `cargo test -p bynk-emit -p bynk-ts -p
+xtask` (including `greenfield_status_table_is_current`), full `tsc_verify` corpus including
+`emitted_typescript_passes_tsc_strict`. `ts_writes` (gated probe) 817 → 808 → **809** (a
+post-merge review fix's own one new `import_stmt` construction site).
+
 ---
 
 ## 7. Out of scope — forward references, not refusals
 
 | Item | Phase | Entry condition |
 |---|---|---|
-| Incrementality — query granularity, `UnitSignature`, the firewall | 8 | this track's probes (`ts_writes` = 0, `verbatim_origins` at its argued floor, `verbatim_sites` at its argued floor — §12) settle |
+| Incrementality — query granularity, `UnitSignature`, the firewall | 8 | this track's probes (`ts_writes` at its argued floor — §5/§6, #1501 — `verbatim_origins` at its argued floor, `verbatim_sites` at its argued floor — §12) settle |
 | R8.16's data-model half — a typed `ProjectGraph` | 8 | named by phase 4's own retirement note; this track only verifies R8.16's emission behaviour stays correct |
 | A further crate re-graph beyond `bynk-ts`/`bynk-ir`/`bynk-lower` (e.g. R10.5's `bynk-driver` consolidation) | *unopened — no trigger yet* | named in the reference (Part 10) but not this phase's own invariant |
 
@@ -2830,7 +2980,8 @@ this settling pass (numbers assigned at merge by the stamp; referred to by lette
 
 ## 12. Retirement
 
-Mirrors every prior track on this trajectory: retires when `ts_writes` reads 0,
+Mirrors every prior track on this trajectory: retires when `ts_writes` reads its own argued floor
+(corrected from a flat 0 by #1501 — see §5/§6),
 `verbatim_origins` reads its own argued floor, and `verbatim_sites` reads its own argued floor
 (corrected from a flat 0 by ADR 0399 — see §6's own "Floor correction"), with every surviving
 site named file-by-file in the closing summary. The retirement PR removes this doc, appends its
@@ -2855,3 +3006,11 @@ generated in the first place.
 capstone (out of its own scope — see the issue's "Done when") — the track's own retirement PR
 (closing #1293) still needs that separate check before it can land, not just this one probe's
 correction.
+
+**#1501 (landed) settles `ts_writes`'s own floor at 809, matching the live probe exactly — see §5
+for the full bucket accounting (614 permanent, individually argued; 191 a newly-named permanent
+structural category — identifier/type-name/message-text `String` construction feeding an
+already-real node's leaf field; at least 4 real, small, tractable, named-but-not-scheduled sites)
+and §6 for the six landing entries (#1481–#1486) that closed the gap between Arc F's own opening
+figure and this floor.** `verbatim_origins` is the one probe this retirement PR still needs to
+settle before §12's own three-probe bar is met in full — tracked separately as #1502.
