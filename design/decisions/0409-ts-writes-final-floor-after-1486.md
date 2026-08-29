@@ -1,11 +1,6 @@
----
-level: patch
-changelog: Resolves #1501 (argue `ts_writes`'s final floor after #1486, reconcile `design/tracks/the-typescript-tree.md` §6 with #1481–#1486's own landings). All 809 live `ts_writes` sites are now accounted for across three buckets — 614 permanent and individually argued (`lower.rs`'s 371 under ADR 0391, the four Decision-C hand-written class wrappers `emit_provider`/`emit_service`/`emit_agent`/`emit_stub_class` at 126, `emit_contract_guarded_body`'s 8 message-text-and-source-map-splice-entangled sites, `workers_entry.rs`'s and `tests_emit.rs`'s already-#1475-audited 106, `__eventsDispatch`'s 3), 190 a newly-named permanent structural category (identifier/type-name/message-text `String` construction feeding an already-real `bynk_ts` node's leaf field, the same representational choice P7.9 already made for `TsType::Named`'s pre-rendered text), and 5 real, small, tractable sites named but not scheduled. §6 gains six landing entries for #1481–#1486 (PRs #1494–#1500), closing the gap left after #1480's own row. No code change.
----
+# 0409 — ts_writes's argued floor is 809, matching the live probe exactly, after all twelve #1462/Arc-F-named implementation issues landed
 
-## ADR: ts-writes-final-floor-after-1486
-title: ts_writes's argued floor is 809, matching the live probe exactly, after all twelve #1462/Arc-F-named implementation issues landed
-summary: Every one of the 809 live ts_writes sites traces to a permanent, individually-argued bucket, a newly-named permanent structural category (leaf-field string construction), or a small named-but-not-scheduled residual — no unclassified residue remains
+- **Status:** Accepted (v0.289.46)
 
 **Context.** #1462 (landed as #1468/#1470) argued `ts_writes`'s residual after Arc F's own three
 slices, explicitly naming the honest next step as a separate argued-floor writeup once the
