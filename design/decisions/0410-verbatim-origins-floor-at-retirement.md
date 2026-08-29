@@ -1,11 +1,6 @@
----
-level: patch
-changelog: Resolves #1502 (argue `verbatim_origins`'s floor at retirement, named file-by-file). The argued floor is **1**, matching the live probe exactly: of `VerbatimOrigin`'s four variants (`Contracts`/`Secrets`/`RuntimeUse`/`NotYetConverted`), only `NotYetConverted` has a real production construction site anywhere in `bynk-emit/src` — `project.rs:2480`/`:2509`, the same two sites `verbatim_sites`' own floor of 2 already names permanent (ADR 0399/#1486). `Contracts`/`Secrets`/`RuntimeUse` are dead in production, consistent with §9's own "Risks" finding; removing them stays separate, later cleanup, not this issue's scope. No code change.
----
+# 0410 — verbatim_origins's argued floor is 1, matching the live probe exactly — the one surviving variant traces to verbatim_sites' own two already-permanent sites
 
-## ADR: verbatim-origins-floor-at-retirement
-title: verbatim_origins's argued floor is 1, matching the live probe exactly — the one surviving variant traces to verbatim_sites' own two already-permanent sites
-summary: Only NotYetConverted has a real production construction site; Contracts/Secrets/RuntimeUse are dead in production, confirmed by direct grep, matching §9's own prior finding
+- **Status:** Accepted (v0.289.47)
 
 **Context.** §5 named `verbatim_origins`'s retirement bar as "an argued floor, expected small
 (1–3), named file-by-file at retirement the way `ast_importers`'s floor of 5 was" — but that
