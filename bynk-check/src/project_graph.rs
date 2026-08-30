@@ -7,7 +7,8 @@
 //! existing name-keyed cycle detection or `bynk-emit`'s compose-root
 //! generator (R8.16) onto it (\[DECISION D\]).
 //!
-//! See ADR 0415 for the full reasoning behind every decision below,
+//! See `design/pending/p8-3-project-graph.md`'s own ADR block (number
+//! assigned at merge) for the full reasoning behind every decision below,
 //! including [DECISION E] — why this type lives in `bynk-check`, not
 //! `bynk-project` as this slice's own issue first proposed.
 //!
@@ -111,8 +112,19 @@ pub fn project_graph_for(
         let kind = *kinds
             .get(name)
             .expect("phase_group's own groups/kinds maps share the same key set");
+        // PR #1519's own bot review, finding #1: a synthetic first-party unit
+        // (`bynk`, `bynk.map`, …) is tokenised via `lexer::tokenize`
+        // (`firstparty_parsed`, `project_model.rs:320`), which stamps every
+        // span — including the unit-name span this maps from —
+        // `FileId::UNKNOWN`. Reading that span for every synthetic unit
+        // would collide every one of them onto the same key in `files`
+        // below (last insert silently wins), and would be dishonest anyway:
+        // a synthetic unit has no on-disk file (`ParsedFile::abs_path` is
+        // `None`), so an empty `files` list is the accurate answer, not a
+        // sentinel FileId standing in for "no real file".
         let file_ids: Vec<FileId> = indices
             .iter()
+            .filter(|&&i| !parsed[i].is_synthetic())
             .map(|&i| parsed[i].unit().name().span.file)
             .collect();
         for &fid in &file_ids {
