@@ -2007,7 +2007,12 @@ fn ts_named_imports_from_runtime_modules(src: &str) -> Vec<String> {
 ///    (P8.5, snake_case Rust spelling — R3.13's own `Body(DefId)`/`TypeOf(DefId)` is
 ///    query-level notation, not a committed identifier; #1510's own Decision A) exist
 ///    as real code in `bynk-check`/`bynk-project` — `body`/`type_of` are searched
-///    across *both* crates, since P8.5 hasn't picked a home for them yet.
+///    across *both* crates, since P8.5 hasn't picked a home for them yet, and (as of
+///    P8.3, #1514, ADR 0415's own \[DECISION E\]) so is `ProjectGraph`: `bynk-project`
+///    cannot depend on `bynk-check`'s `UnitId` (the crate graph runs the other way),
+///    so `ProjectGraph` landed in `bynk-check` beside it, not in `bynk-project` as
+///    this probe originally assumed — scanning `bynk-project` alone would have read
+///    `query_types` permanently one short.
 /// 2. **Shared cache** — has the file-level parse cache migrated off
 ///    `PROJECT_UNIT_CACHE` (`bynk-ide/src/completion.rs`), the `bynk-ide`-local cache
 ///    ADR 0413/P8.4 replaces with one shared, `bynk-project`-owned cache? Checked two
@@ -2071,7 +2076,12 @@ fn query_types_found(
     if any_real_code_line(check_src, "struct UnitSignature") {
         found.push("UnitSignature");
     }
-    if any_real_code_line(project_src, "struct ProjectGraph") {
+    // Searched across both crates (P8.3, #1514) — see this fn's own doc comment
+    // (clause 1 of [`incremental_query_types`]) for why `bynk-project` alone would
+    // have missed `ProjectGraph`'s real landed location in `bynk-check`.
+    if any_real_code_line(check_src, "struct ProjectGraph")
+        || any_real_code_line(project_src, "struct ProjectGraph")
+    {
         found.push("ProjectGraph");
     }
     // `body`/`type_of` are searched across both crates — see this fn's own doc comment
@@ -3679,6 +3689,24 @@ commons app.demo {
             )],
         );
         assert!(found.contains(&"UnitSignature"));
+        assert!(found.contains(&"ProjectGraph"));
+    }
+
+    /// P8.3 (#1514): `ProjectGraph`'s real landed location is `bynk-check`, not
+    /// `bynk-project` — `bynk-project` cannot depend on `bynk-check`'s `UnitId`, so a
+    /// scan of `bynk-project` alone (this probe's original shape) would have read
+    /// `query_types` permanently one short of 4/4. A real regression this fix closes,
+    /// not a hypothetical: `query_types_found_recognises_unit_signature_and_project_graph`
+    /// above only ever exercised `ProjectGraph` in `project_src`.
+    #[test]
+    fn query_types_found_recognises_project_graph_in_bynk_check() {
+        let found = query_types_found_over(
+            &[(
+                "project_graph.rs",
+                "pub struct ProjectGraph {\n    units: HashMap<UnitId, Unit>,\n}\n",
+            )],
+            &[],
+        );
         assert!(found.contains(&"ProjectGraph"));
     }
 
