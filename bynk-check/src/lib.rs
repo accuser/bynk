@@ -47,6 +47,7 @@ pub mod secrets;
 pub mod store_ops;
 pub mod symbols;
 pub mod test_suites;
+pub mod unit_signature;
 pub mod websocket;
 pub mod wire;
 pub mod wire_default;

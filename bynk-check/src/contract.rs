@@ -28,10 +28,14 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write as _;
 use std::sync::Arc;
 
-use bynk_syntax::ast::{PredKind, Refinement, TypeBody, TypeDecl, TypeRef};
+use bynk_syntax::ast::{Ident, PredKind, Refinement, TypeBody, TypeDecl, TypeRef};
+use bynk_syntax::span::Span;
 
 use crate::resolver::{CrossContextService, cross_context_service_for};
 use crate::symbols::UnitTable;
+use crate::unit_signature::{
+    FnSignature, HandlerSignature, ParamSignature, StoreFieldSignature, UnitSignature,
+};
 
 /// The canonical normal form of one `on call` service contract.
 ///
@@ -361,6 +365,166 @@ pub fn own_contract_hashes(
         };
         out.insert(sname.clone(), service_contract_hash(&svc, own_types));
     }
+    out
+}
+
+/// P8.1 (#1512, [DECISION C]): the canonical form of a body-free parameter
+/// list — shared by [`canon_fn_signature`] and [`canon_handler_signature`] so
+/// the two categories can't drift on how a parameter renders.
+fn canon_params(params: &[ParamSignature], types: &HashMap<String, Arc<TypeDecl>>) -> String {
+    let mut out = String::new();
+    for (i, p) in params.iter().enumerate() {
+        if i > 0 {
+            out.push_str(", ");
+        }
+        let _ = write!(
+            out,
+            "{}: {}",
+            p.name,
+            canon_type(&p.type_ref, types, &mut HashSet::new())
+        );
+    }
+    out
+}
+
+/// P8.1 (#1512, [DECISION C]): the canonical form of a [`FnSignature`] —
+/// extends this module's own `canon_type` (ADR 0200) to a shape it doesn't
+/// reach today. Body-free by construction ([DECISION B]): there is no
+/// `body`/`requires`/`ensures` field on `FnSignature` to accidentally
+/// include here.
+pub fn canon_fn_signature(f: &FnSignature, types: &HashMap<String, Arc<TypeDecl>>) -> String {
+    let mut out = String::new();
+    let _ = write!(out, "fn {}", f.name);
+    if !f.type_params.is_empty() {
+        let _ = write!(out, "[{}]", f.type_params.join(", "));
+    }
+    let _ = write!(out, "({})", canon_params(&f.params, types));
+    let _ = write!(
+        out,
+        " -> {}",
+        canon_type(&f.return_type, types, &mut HashSet::new())
+    );
+    if f.has_self {
+        out.push_str(" self");
+    }
+    out
+}
+
+/// P8.1 (#1512, [DECISION C]): the canonical form of a [`HandlerSignature`].
+/// `given` renders sorted — its rendered `CapRef` names have no meaningful
+/// order to preserve (it's a set, not a sequence).
+pub fn canon_handler_signature(
+    h: &HandlerSignature,
+    types: &HashMap<String, Arc<TypeDecl>>,
+) -> String {
+    let mut out = String::new();
+    let _ = write!(out, "on {}", h.method_name.as_deref().unwrap_or("call"));
+    let _ = write!(out, "({})", canon_params(&h.params, types));
+    let _ = write!(
+        out,
+        " -> {}",
+        canon_type(&h.return_type, types, &mut HashSet::new())
+    );
+    if !h.given.is_empty() {
+        let mut given = h.given.clone();
+        given.sort();
+        let _ = write!(out, " given {}", given.join(", "));
+    }
+    out
+}
+
+/// P8.1 (#1512, [DECISION C]): the canonical form of a [`StoreFieldSignature`].
+pub fn canon_store_field_signature(
+    f: &StoreFieldSignature,
+    types: &HashMap<String, Arc<TypeDecl>>,
+) -> String {
+    let mut out = String::new();
+    let _ = write!(out, "{}: {}", f.name, f.kind_head);
+    if !f.kind_args.is_empty() {
+        let args: Vec<String> = f
+            .kind_args
+            .iter()
+            .map(|a| canon_type(a, types, &mut HashSet::new()))
+            .collect();
+        let _ = write!(out, "[{}]", args.join(", "));
+    }
+    out
+}
+
+/// P8.1 (#1512, [DECISION C]): the canonical form of a unit's own combined
+/// type table — the cross-context-types category, `combined_types_for`'s
+/// output reused unchanged. Each named type expands structurally via
+/// [`canon_named_in`] (through a synthetic, zero-span [`TypeRef::Named`] —
+/// spans are erased by every canonical renderer in this module already, so a
+/// dummy span here carries no information loss), sorted by name so map
+/// iteration order can't perturb the rendering.
+fn canon_types_table(types: &HashMap<String, Arc<TypeDecl>>) -> String {
+    let mut names: Vec<&String> = types.keys().collect();
+    names.sort();
+    let mut out = String::new();
+    for name in names {
+        let named = TypeRef::Named(Ident {
+            name: name.clone(),
+            span: Span::new(0, 0),
+        });
+        let _ = write!(
+            out,
+            "{}={};",
+            name,
+            canon_type(&named, types, &mut HashSet::new())
+        );
+    }
+    out
+}
+
+/// P8.1 (#1512, [DECISION C]): [`UnitSignature::canonical`]'s own
+/// implementation — the single rendering R3.14's own stability proof
+/// compares. Every category is rendered sorted (by the caller's own
+/// `BTreeMap`/`BTreeSet` keys, or an explicit sort for `Vec`-shaped fields
+/// like a handler's own `given`), so construction order never perturbs the
+/// form — the same "compare the canonical string, not map/vec iteration
+/// order" discipline [`service_normal_form`]'s record-field sort already
+/// established for ADR 0200.
+pub fn canon_unit_signature(sig: &UnitSignature) -> String {
+    let types = &sig.combined_types;
+    let mut out = String::new();
+    let _ = writeln!(out, "unit {}", sig.id.0);
+    let _ = writeln!(out, "types: {}", canon_types_table(types));
+
+    out.push_str("fns:\n");
+    for f in sig.fns.values() {
+        let _ = writeln!(out, "  {}", canon_fn_signature(f, types));
+    }
+
+    out.push_str("handlers:\n");
+    for (owner, hs) in &sig.handlers {
+        for h in hs {
+            let _ = writeln!(out, "  {owner}: {}", canon_handler_signature(h, types));
+        }
+    }
+
+    out.push_str("store:\n");
+    for (owner, fs) in &sig.store_fields {
+        for f in fs {
+            let _ = writeln!(out, "  {owner}: {}", canon_store_field_signature(f, types));
+        }
+    }
+
+    out.push_str("capabilities:\n");
+    for c in &sig.capabilities.exported {
+        let _ = writeln!(out, "  exports {c}");
+    }
+    for (cap, given) in &sig.capabilities.provider_given {
+        let mut given = given.clone();
+        given.sort();
+        let _ = writeln!(out, "  provides {cap} given {}", given.join(", "));
+    }
+    for (svc, given) in &sig.capabilities.service_given {
+        let mut given = given.clone();
+        given.sort();
+        let _ = writeln!(out, "  service {svc} given {}", given.join(", "));
+    }
+
     out
 }
 
