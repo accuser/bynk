@@ -1084,12 +1084,15 @@ imposed; entries keep the order they were retired in.
   **Deferred follow-ons, named rather than left implicit:** R3.15's scheduler decision (salsa or a
   hand-rolled memo table — *unopened, no trigger yet*: needs a hand-rolled table measurably
   becoming the bottleneck, which cannot fire before this phase's own granularity exists to be a
-  bottleneck in); R10.5's `bynk-driver` consolidation (*unopened, no trigger yet*); a lossless CST
-  (rowan) (*unopened, no trigger yet*: needs a real per-file reparse timing measured as costly,
-  which P8.4's own interning table is the first place such a timing could be collected, but
-  collecting it was not this phase's job); an emit-side `UnitSignature`-equivalent keyed on
-  `Artefacts` (R7.8) (*unopened, no trigger yet* — Q1's own settled scope covers the check side
-  only). Retired 30 August 2026.
+  bottleneck in — tracked as [#1523](https://github.com/accuser/bynk/issues/1523)); R10.5's
+  `bynk-driver` consolidation (*unopened, no trigger yet* —
+  [#1525](https://github.com/accuser/bynk/issues/1525)); a lossless CST (rowan) (*unopened, no
+  trigger yet*: needs a real per-file reparse timing measured as costly, which P8.4's own interning
+  table is the first place such a timing could be collected, but collecting it was not this phase's
+  job — [#1524](https://github.com/accuser/bynk/issues/1524)); an emit-side
+  `UnitSignature`-equivalent keyed on `Artefacts` (R7.8) (*unopened, no trigger yet* — Q1's own
+  settled scope covers the check side only — [#1526](https://github.com/accuser/bynk/issues/1526)).
+  Retired 30 August 2026.
 
   **This is the trajectory's last phase.** Per `bynk-compiler-trajectory.md` §1, its endpoint — "the
   compiler Bynk ships today, feature for feature, rebuilt on the architecture in
