@@ -4032,8 +4032,6 @@ mod tests {
             Path::new("adapters"),
             &rel_path,
             "adapter payments {\n  binding \"./payments.binding.ts\"\n\n  exports capability { Pay }\n\n  capability Pay {\n    fn charge(amount: Int) -> Effect[String]\n  }\n\n  provides Pay = RealPay\n}\n".to_string(),
-            &mut 0,
-            &mut 0,
         )
         .expect("trivial adapter source must parse");
         assert_eq!(

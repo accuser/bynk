@@ -7,8 +7,6 @@ use bynk_syntax::ast::{
     TestTier, Trivia, TypeRef, UsesDecl,
 };
 use bynk_syntax::error::CompileError;
-use bynk_syntax::lexer;
-use bynk_syntax::parser;
 use bynk_syntax::span::Span;
 
 use crate::roots::{Roots, UnitKind};
@@ -391,21 +389,28 @@ impl ParsedFile {
 /// (`src`, `tests`, …), empty for a single-root project. It builds each file's
 /// `identity_path`; `source_path` stays relative to `root` (the tree), which is
 /// what unit validation reads. See [`ParsedFile`].
+///
+/// P8.4 (#1515): the actual tokenize+parse now runs through
+/// [`crate::parse_cache::cached_parse`], keyed on the file's own absolute
+/// path — durable across separate calls to this function, not just within
+/// one, so a `FileId` (and the `ExprId`s a file's own expressions carry) no
+/// longer resets every time a fresh analysis pass parses an unchanged file.
+/// `next_expr_id`/`next_file_id` are no longer threaded in from the caller
+/// for this reason — the cache owns both counters now, durably.
 pub fn parse_sources(
     root: &Path,
     prefix: &Path,
     path: &Path,
     source: String,
-    next_expr_id: &mut u32,
-    next_file_id: &mut u32,
 ) -> Result<(Vec<ParsedFile>, Vec<CompileError>), Vec<CompileError>> {
-    // T3.5 (R2.2): one `FileId` per file this project parse touches, allocated
-    // here (the same choke point `next_expr_id` uses) rather than by the
-    // caller, so every span the lexer stamps for this file carries a real,
-    // distinct file identity instead of `FileId::UNKNOWN`.
-    let file = bynk_syntax::span::FileId(*next_file_id);
-    *next_file_id += 1;
-    let tokens = lexer::tokenize_in(&source, file).map_err(|e| vec![e])?;
+    // v0.72: cache (and identify a `ParsedFile`) by the *absolute* path —
+    // `path` is relative when the compiler was invoked with a relative input
+    // (`bynkc test .`), and a relative cache key would let the same file seen
+    // through two differently-rooted calls collide, or worse, miss. Falls
+    // back to `path` itself on the rare `std::path::absolute` failure, same
+    // as the pre-existing `abs_path` field it also feeds.
+    let abs_path = std::path::absolute(path).ok();
+    let cache_key: &Path = abs_path.as_deref().unwrap_or(path);
     // v0.113: a file may declare more than one top-level unit — an *atomic*
     // file holding `commons`/`context` alongside a `suite` (DECISION S). Each
     // unit becomes its own `ParsedFile` sharing the file's source and path, so
@@ -414,23 +419,12 @@ pub fn parse_sources(
     // ADR 0117: a warning-severity parse diagnostic (an orphan doc block)
     // must not hard-fail discovery — the parsed units flow to the build and
     // the warnings ride out to the caller's severity-aware sink.
-    // T3.4 (R2.4): `next_expr_id` continues one `ExprId` counter across every
-    // file `phase_parse` parses in this project, not just this one file — a
-    // multi-file commons later merges sibling files' methods into one
-    // `check_record` call (`collect_unit_methods`), and two independently
-    // zero-based files would otherwise collide on the same id in the same
-    // `expr_types` map. Caught live by finding #28's debug assertion on
-    // `bynkc/tests/fixtures/positive/64_full_time_commons` before this fix.
-    let (units, warnings) = parser::parse_units_with_warnings_from(&tokens, &source, next_expr_id)?;
+    let (_file_id, result) = crate::parse_cache::cached_parse(cache_key, &source);
+    let (units, warnings) = result.map_err(|errors| (*errors).clone())?;
     let rel = path.strip_prefix(root).unwrap_or(path).to_path_buf();
-    // v0.72: store an *absolute* path — `path` is relative when the compiler
-    // was invoked with a relative input (`bynkc test .`), and a relative map
-    // `source` would resolve against the emitted `.ts`'s directory, not the
-    // real file. `std::path::absolute` resolves against cwd without touching
-    // the filesystem (so it works for not-yet-saved overlay buffers too).
-    let abs_path = std::path::absolute(path).ok();
     let files = units
-        .into_iter()
+        .iter()
+        .cloned()
         .map(|unit| {
             let kind = match &unit {
                 SourceUnit::Commons(_) => UnitKind::Commons,
@@ -453,7 +447,7 @@ pub fn parse_sources(
             }
         })
         .collect();
-    Ok((files, warnings))
+    Ok((files, (*warnings).clone()))
 }
 
 pub fn discover_bynk_files(

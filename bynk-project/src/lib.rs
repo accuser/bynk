@@ -25,6 +25,7 @@ pub mod consistency;
 pub mod discovery;
 pub mod graph;
 pub mod json;
+pub mod parse_cache;
 pub mod paths;
 pub mod roots;
 pub mod schema_registry;

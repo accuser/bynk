@@ -355,23 +355,18 @@ pub fn phase_parse(
     snapshots: &mut Vec<(PathBuf, String)>,
 ) -> Result<(Vec<ParsedFile>, bool, bool), ()> {
     let mut parsed: Vec<ParsedFile> = Vec::new();
-    // T3.4 (R2.4): one `ExprId` counter across every file this project parse
-    // touches (every tree) — see `parse_sources`'s own doc comment for why a
-    // per-file counter would collide once `collect_unit_methods` merges
-    // sibling files' methods together.
-    let mut next_expr_id: u32 = 0;
-    // T3.5 (R2.2): one `FileId` counter across every file this project parse
-    // touches, mirroring `next_expr_id` above — see `parse_sources`'s own doc
-    // comment.
-    let mut next_file_id: u32 = 0;
+    // P8.4 (#1515): `FileId`/`ExprId` allocation is no longer threaded through
+    // this function — `parse_sources` now resolves both through
+    // `bynk_project::parse_cache`'s own durable, process-lifetime counters
+    // (see that module's own doc comment, [DECISION D]), which trivially
+    // keeps the old within-one-call uniqueness guarantee T3.4/T3.5 named
+    // (global uniqueness implies uniqueness within any one call).
     let parse_tree = |root: &Path,
                       prefix: &Path,
                       files: &[PathBuf],
                       parsed: &mut Vec<ParsedFile>,
                       errors: &mut ErrorSink,
-                      snapshots: &mut Vec<(PathBuf, String)>,
-                      next_expr_id: &mut u32,
-                      next_file_id: &mut u32| {
+                      snapshots: &mut Vec<(PathBuf, String)>| {
         for path in files {
             // Tree-relative: what unit validation reads.
             let rel = path.strip_prefix(root).unwrap_or(path).to_path_buf();
@@ -393,7 +388,7 @@ pub fn phase_parse(
                 }
             };
             snapshots.push((id.clone(), source.clone()));
-            match parse_sources(root, prefix, path, source, next_expr_id, next_file_id) {
+            match parse_sources(root, prefix, path, source) {
                 Ok((pfs, warnings)) => {
                     parsed.extend(pfs);
                     // ADR 0117: the sink classifies these as warnings — they
@@ -405,16 +400,7 @@ pub fn phase_parse(
         }
     };
     for ((root, prefix), files) in trees.iter().zip(file_lists.iter()) {
-        parse_tree(
-            root,
-            prefix,
-            files,
-            &mut parsed,
-            errors,
-            snapshots,
-            &mut next_expr_id,
-            &mut next_file_id,
-        );
+        parse_tree(root, prefix, files, &mut parsed, errors, snapshots);
     }
     if !errors.is_empty() && parsed.is_empty() {
         return Err(());
