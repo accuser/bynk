@@ -1,11 +1,6 @@
----
-level: patch
-changelog: `bynk-check` gains a real `DefId` identity and `Body(DefId)`/`TypeOf(DefId)` query functions (R3.13's definition-level row) — built and tested, not yet wired into any production check path (P8.5).
----
+# 0417 — P8.5's `DefId` — a split Fn/Handler enum, plain-`DefId` query signatures, and fresh per-call sinks
 
-## ADR: p8-5-defid-split-and-fresh-sinks
-title: P8.5's `DefId` — a split Fn/Handler enum, plain-`DefId` query signatures, and fresh per-call sinks
-summary: Resolving #1516's own Decisions A-D, plus one fork the issue didn't examine
+- **Status:** Accepted (v0.289.55)
 
 **Context.** #1516 proposed `Body(DefId)`/`TypeOf(DefId)` as real, callable query functions
 wrapping `checker::check_body`/`checker::check_handler_body`, built but not wired into
