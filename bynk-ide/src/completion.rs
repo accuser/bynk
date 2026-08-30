@@ -39,7 +39,7 @@
 
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{Arc, LazyLock};
 
 use bynk_check::checker::{NamedKind, Ty, TyId, Types};
 use bynk_check::kernel_methods;
@@ -1501,63 +1501,22 @@ static EMBEDDED_UNITS: LazyLock<Vec<Arc<SourceUnit>>> = LazyLock::new(|| {
         .collect()
 });
 
-/// A cached parse of one project file's content, tagged with the exact
-/// content string it was parsed from. Content-ownership track (#1086) slice
-/// 0+1: `content` is supplied by the caller (`bynk-lsp`'s overlay-then-disk
-/// sweep, `bynk_lsp::content::sweep_project_content`) rather than read here —
-/// this cache no longer touches disk at all, so an open buffer's unsaved edit
-/// (which has no meaningful mtime) invalidates it exactly like a saved one.
-struct CachedUnit {
-    content: Arc<str>,
-    unit: Option<Arc<SourceUnit>>,
-}
-
-/// Per-file project-source parse cache, keyed by absolute path. Shared across
-/// requests and worker threads (completion/signature-help/hover all enumerate
-/// the same project sources). Keyed on the path so distinct fixtures/projects
-/// never collide, and invalidated by content equality so any change — saved
-/// or an unsaved buffer edit alike — is picked up.
-static PROJECT_UNIT_CACHE: LazyLock<Mutex<HashMap<PathBuf, CachedUnit>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-
-/// Cap on distinct cached files. Without it, a long-lived server hopping across
-/// many workspaces accumulates one entry per path ever enumerated — and
-/// renamed/deleted files leave dangling `None`s behind (#776 review). Past the
-/// cap the cache is cleared wholesale: crude, but entries repopulate lazily on
-/// the next access, and a project with this many files is already far past where
-/// a per-keystroke parse cache pays off. Generous, so a normal project never
-/// trips it.
-const PROJECT_UNIT_CACHE_CAP: usize = 4096;
-
-/// The parsed unit for a project file's already-read `content`, from the
-/// cache when `content` is byte-identical to what was last parsed for `path`,
-/// else parsed fresh and stored. A file whose content fails to parse caches a
-/// `None` unit under its (now current) content, so a transient parse failure
-/// is not retried on every request either.
+/// The parsed unit for a project file's already-read `content`. P8.4
+/// (#1515): served from `bynk_project::parse_cache`'s own shared, durable
+/// cache (replacing this module's former `PROJECT_UNIT_CACHE` — one cache
+/// of the same fact, not two independently-invalidated ones, per ADR
+/// 0413/[DECISION C]) when the cached/fresh **strict** parse is clean; a
+/// syntax error elsewhere in the project falls back to a local, uncached
+/// recovery-parse for that one file ([DECISION E], `bynk-project::
+/// parse_cache`'s own doc comment) — for clean source (the overwhelming
+/// common case) the strict and recovery parsers produce the identical AST,
+/// since there is nothing to recover from.
 fn cached_project_unit(path: &Path, content: &str) -> Option<Arc<SourceUnit>> {
-    {
-        let cache = PROJECT_UNIT_CACHE.lock().unwrap();
-        if let Some(entry) = cache.get(path)
-            && &*entry.content == content
-        {
-            return entry.unit.clone();
-        }
+    let (_file_id, result) = bynk_project::parse_cache::cached_parse(path, content);
+    match result {
+        Ok((units, _warnings)) if !units.is_empty() => Some(Arc::new(units[0].clone())),
+        _ => parse_source_unit(content).map(Arc::new),
     }
-    let unit = parse_source_unit(content).map(Arc::new);
-    let mut cache = PROJECT_UNIT_CACHE.lock().unwrap();
-    // Bound the cache: a fresh path past the cap clears it rather than growing
-    // without limit (refreshing an existing entry never grows the map).
-    if cache.len() >= PROJECT_UNIT_CACHE_CAP && !cache.contains_key(path) {
-        cache.clear();
-    }
-    cache.insert(
-        path.to_path_buf(),
-        CachedUnit {
-            content: Arc::from(content),
-            unit: unit.clone(),
-        },
-    );
-    unit
 }
 
 /// Parse every project unit, plus the embedded first-party adapters (the
