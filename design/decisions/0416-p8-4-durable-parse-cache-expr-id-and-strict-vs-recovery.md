@@ -1,11 +1,6 @@
----
-level: patch
-changelog: On-keystroke diagnostics no longer re-lex/re-parse every first-party file on every request — `bynk-project` gains a durable `FileId` interning table and one shared, content-keyed parse cache (P8.4), replacing the IDE-local `PROJECT_UNIT_CACHE` completion alone used to benefit from.
----
+# 0416 — P8.4's shared parse cache — durable `ExprId` allocation, and why it caches the strict parse only
 
-## ADR: p8-4-durable-parse-cache-expr-id-and-strict-vs-recovery
-title: P8.4's shared parse cache — durable `ExprId` allocation, and why it caches the strict parse only
-summary: Two forks ADR 0413 didn't examine, found while implementing the cache it specified
+- **Status:** Accepted (v0.289.54)
 
 **Context.** ADR 0413 settled that phase 8's file level needs one real, `bynk-project`-owned parse
 cache — not a `bynk-ide`-local patch — so `bynk_check::analysis::analyse_project`'s own diagnostics
