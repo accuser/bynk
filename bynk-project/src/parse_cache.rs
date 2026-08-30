@@ -119,6 +119,19 @@ struct ParseCacheState {
 /// time the cap is hit.
 const PARSE_CACHE_CAP: usize = 4096;
 
+/// Must match `bynk_check::project_model::FIRSTPARTY_ID_BASE` exactly.
+/// `bynk-project` cannot depend on `bynk-check` (the crate graph runs the
+/// other way), so this is a duplicated, keep-in-sync value — guarded by the
+/// `debug_assert!` in `cached_parse_in`, not by the type system. PR
+/// #1520's own bot review (finding #3): a durable counter that quietly
+/// crossed this boundary would silently alias a project file's `ExprId`s
+/// onto a first-party unit's own reserved block — wrong types, wrong
+/// diagnostics, sharing one `expr_types` map, with nothing to point at. In
+/// practice this needs on the order of a billion `ExprId`s consumed over one
+/// process's lifetime to become reachable; the assertion exists so crossing
+/// it is loud, not because it is expected to fire.
+const FIRSTPARTY_ID_BASE: u32 = 1_000_000_000;
+
 static CACHE: LazyLock<Mutex<ParseCacheState>> =
     LazyLock::new(|| Mutex::new(ParseCacheState::default()));
 
@@ -126,8 +139,23 @@ static CACHE: LazyLock<Mutex<ParseCacheState>> =
 /// stable for the life of the process from then on, even across content
 /// edits to that same path (a `FileId` is a path identity, not a content
 /// one; [`cached_parse`]'s own content-keyed cache is what tracks edits).
+///
+/// PR #1520's own bot review (finding #1): recovers from a poisoned lock
+/// rather than propagating the poison — a parser panic on one input (a real,
+/// reachable failure mode this codebase already handles at the wasm
+/// boundary, `bynk-wasm/src/lib.rs`'s own `catch_unwind`) must not brick
+/// every later, perfectly valid parse for the life of the process. Safe
+/// specifically because this cache's own invariants — `file_ids` maps a
+/// path to a stable id; `entries[id].content` is the content
+/// `entries[id].result` was parsed from — both hold even mid-panic: a panic
+/// during the parse call in `cached_parse_in` happens strictly before that
+/// entry would have been inserted, so the state a panicked lock holder left
+/// behind is never a half-written entry, only a possibly-stale (never
+/// wrong) one.
 pub fn file_id_for(path: &Path) -> FileId {
-    let mut state = CACHE.lock().unwrap();
+    let mut state = CACHE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     file_id_for_locked(&mut state, path)
 }
 
@@ -156,10 +184,30 @@ fn file_id_for_locked(state: &mut ParseCacheState, path: &Path) -> FileId {
 /// is fast enough (sub-millisecond, ordinarily) that this is a deliberate,
 /// documented trade of a little concurrency for not having to invent a
 /// block-reservation scheme — revisit only if profiling ever shows real
-/// contention.
+/// contention. See [`file_id_for`]'s own doc comment for why the lock's
+/// `unwrap_or_else(PoisonError::into_inner)` here is safe.
 pub fn cached_parse(path: &Path, content: &str) -> (FileId, StrictParseResult) {
-    let mut state = CACHE.lock().unwrap();
-    let id = file_id_for_locked(&mut state, path);
+    let mut state = CACHE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    cached_parse_in(&mut state, path, content, PARSE_CACHE_CAP)
+}
+
+/// [`cached_parse`]'s own core, parameterised over the cache state and its
+/// eviction cap so a test can drive a small, locally-owned
+/// `ParseCacheState` to exercise the eviction boundary precisely — PR
+/// #1520's own bot review (finding #2): a test that instead forced the
+/// real, global `CACHE` past its real, 4096-entry cap raced every other
+/// test in this module asserting on that same process-wide `static`
+/// (`cargo test` runs one binary's tests concurrently by default), and cost
+/// thousands of real parses to do it.
+fn cached_parse_in(
+    state: &mut ParseCacheState,
+    path: &Path,
+    content: &str,
+    cap: usize,
+) -> (FileId, StrictParseResult) {
+    let id = file_id_for_locked(state, path);
     if let Some(entry) = state.entries.get(&id)
         && &*entry.content == content
     {
@@ -176,8 +224,14 @@ pub fn cached_parse(path: &Path, content: &str) -> (FileId, StrictParseResult) {
         }
         Err(e) => Err(Arc::new(vec![e])),
     };
+    debug_assert!(
+        state.next_expr_id < FIRSTPARTY_ID_BASE,
+        "durable ExprId counter ({}) reached the first-party reservation ({FIRSTPARTY_ID_BASE}) \
+         — see this module's own doc comment",
+        state.next_expr_id,
+    );
 
-    if state.entries.len() >= PARSE_CACHE_CAP && !state.entries.contains_key(&id) {
+    if state.entries.len() >= cap && !state.entries.contains_key(&id) {
         state.entries.clear();
     }
     state.entries.insert(
@@ -351,22 +405,32 @@ mod tests {
     /// `PROJECT_UNIT_CACHE_CAP`'s own precedent) recovers cleanly — a path
     /// evicted and later re-queried reparses correctly rather than serving
     /// stale or corrupted state.
+    ///
+    /// Drives a small, locally-owned `ParseCacheState` through
+    /// `cached_parse_in` directly (PR #1520's own bot review, finding #2)
+    /// rather than forcing the real, global `CACHE` past its real,
+    /// 4096-entry cap — that would race every other test in this module
+    /// asserting on the same process-wide `static` (`cargo test` runs one
+    /// binary's tests concurrently by default) and cost thousands of real
+    /// parses to do it. A local state with a cap of 2 exercises the exact
+    /// same eviction branch precisely, cheaply, and in isolation.
     #[test]
     fn an_evicted_entry_reparses_correctly_rather_than_serving_stale_state() {
-        let survivor = unique_path("evict-survivor");
-        let (_, before) = cached_parse(&survivor, CLEAN);
+        let mut state = ParseCacheState::default();
+        let cap = 2;
+        let survivor = PathBuf::from("/parse-cache-test/evict-survivor.bynk");
+        let (_, before) = cached_parse_in(&mut state, &survivor, CLEAN, cap);
         let (survivor_units_before, _) = before.expect("clean source parses");
 
-        // Force the cache past its cap so `survivor`'s own entry is cleared
-        // wholesale (`cached_parse`'s own eviction policy) — the same "past
-        // the cap, clear and let entries repopulate lazily" contract
-        // `PROJECT_UNIT_CACHE_CAP` already used.
-        for i in 0..PARSE_CACHE_CAP {
-            let p = unique_path(&format!("evict-filler-{i}"));
-            let _ = cached_parse(&p, CLEAN);
+        // Push past the cap with filler paths — the last one triggers the
+        // "past the cap, clear and let entries repopulate lazily" eviction,
+        // clearing `survivor`'s own entry along with everything else.
+        for i in 0..cap {
+            let p = PathBuf::from(format!("/parse-cache-test/evict-filler-{i}.bynk"));
+            let _ = cached_parse_in(&mut state, &p, CLEAN, cap);
         }
 
-        let (_, after) = cached_parse(&survivor, CLEAN);
+        let (_, after) = cached_parse_in(&mut state, &survivor, CLEAN, cap);
         let (survivor_units_after, _) = after.expect("clean source parses");
         // Correctness, not identity: post-eviction the entry is necessarily
         // re-parsed (a fresh `Arc`), but it must still be the *same* parse of

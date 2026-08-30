@@ -1511,11 +1511,21 @@ static EMBEDDED_UNITS: LazyLock<Vec<Arc<SourceUnit>>> = LazyLock::new(|| {
 /// parse_cache`'s own doc comment) — for clean source (the overwhelming
 /// common case) the strict and recovery parsers produce the identical AST,
 /// since there is nothing to recover from.
+///
+/// PR #1520's own bot review (finding #4): `parser::
+/// parse_units_with_warnings_from` (what the shared cache stores) always
+/// converts an empty unit list into `Err("bynk.parse.unexpected_eof")`
+/// (`bynk-syntax/src/parser.rs`'s own `parse_units_with_drain_check_from`)
+/// — `Ok` with zero units is not a real case this parser produces, so
+/// `units.first()` alone says what is meant without an `is_empty()` guard
+/// that would otherwise route a (nonexistent) clean-but-empty parse down
+/// the same uncached recovery-parse fallback as a genuine syntax error,
+/// permanently, on every request.
 fn cached_project_unit(path: &Path, content: &str) -> Option<Arc<SourceUnit>> {
     let (_file_id, result) = bynk_project::parse_cache::cached_parse(path, content);
     match result {
-        Ok((units, _warnings)) if !units.is_empty() => Some(Arc::new(units[0].clone())),
-        _ => parse_source_unit(content).map(Arc::new),
+        Ok((units, _warnings)) => units.first().cloned().map(Arc::new),
+        Err(_) => parse_source_unit(content).map(Arc::new),
     }
 }
 
