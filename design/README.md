@@ -41,7 +41,8 @@ the canonical, reader-facing spec and reference.
   architecture theme**: eight phases from the shipped compiler to
   `bynk-greenfield-compiler.md`, each a safe stopping point, realised one track
   per phase (`tracks/compiler-architecture.md` is the first, covering phases
-  0–2).
+  0–2). **Complete** — all eight phases retired, the last (incrementality) on
+  30 August 2026; the document stays in place as the historical record.
 
 **Canonical design** — the long-form rationale and the type theory:
 

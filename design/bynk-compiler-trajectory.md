@@ -2,9 +2,13 @@
 
 **From v0.245.0 to the greenfield reference, in eight phases, without losing a feature.**
 
-- **Status:** Draft. This is the **theme** document: it holds the endpoint and the order. It is not a
-  track and not a build authorisation. Each phase is realised by its own track
-  (`design/tracks/`), each track by its own slices.
+- **Status:** **Complete.** All eight phases retired — phase 8 (`incrementality.md`, the last) retired
+  30 August 2026, closing spine [#1507](https://github.com/accuser/bynk/issues/1507) and, per this
+  track's own §12, this document itself: §1's endpoint is reached. This is the **theme** document: it
+  holds the endpoint and the order. It was not a track and not a build authorisation; each phase was
+  realised by its own track (`design/tracks/`, now all retired), each track by its own slices. See the
+  closing note at the end of §1 for what "reached" does and does not mean, and §7's per-phase
+  retirement links for the full record.
 - **Companion to:** [`bynk-greenfield-compiler.md`](bynk-greenfield-compiler.md) — the destination
   specification, 130 numbered rules. This document holds the *path*; that one holds the *place*.
 - **Evidence:** [`reviews/2026-07-27-compiler-pipeline-review.md`](reviews/2026-07-27-compiler-pipeline-review.md).
@@ -32,6 +36,20 @@ and locale, WebSockets and held resources, the query algebra and `@indexed`, the
 the test sublanguage, the boundary codecs, the deploy artefacts, and the LSP surface. Part 13 is the
 evidence that the architecture carries them; phases 6 and 7 are where that evidence is tested for
 real rather than argued.
+
+**Closing note (30 August 2026): this endpoint is reached, and what "reached" does and does not
+mean.** Phase 8, the last, retired the same day as this note — closing summary in
+[`archive/retired-tracks.md`](archive/retired-tracks.md), §7's table below has every phase's own
+retirement. No phase dropped a capability (§2's invariant held for all eight); every construct that
+compiled at v0.245.0 compiles today, on the architecture `bynk-greenfield-compiler.md` specifies.
+**What this endpoint does not claim:** R3.15's own scheduler decision (salsa, a hand-rolled memo
+table, or nothing) was a separable decision phase 8 explicitly deferred whole, not silently dropped
+— it stays *unopened, no trigger yet* (phase 8's own §7), the same standing as R10.5's `bynk-driver`
+consolidation, a lossless CST (rowan), and an emit-side signature concept for `Artefacts`. None of
+these four is a construct the shipped compiler loses; each is a forward reference with a named,
+unfired trigger, per R15.1's own discipline against recording an intention as a refusal. This
+document stays in place as the historical record of the path walked, per the LSP theme's own
+precedent above — `bynk-greenfield-compiler.md` continues to hold the place.
 
 ---
 
@@ -376,7 +394,7 @@ and tightly coupled — 0 enables both, 1 is independent, 2 needs only 0 — so 
 | 5 | *(retired)* | **Retired 9 August 2026** (settled 8 August 2026; spine [#1126](https://github.com/accuser/bynk/issues/1126), settling PR [#1127](https://github.com/accuser/bynk/pull/1127), closing summary in [`archive/retired-tracks.md`](archive/retired-tracks.md)). All six named slices shipped, closing R3.5 in full — the seven `bynk-check/src/analysis.rs`-named diagnostic categories plus two sites its own accounting didn't cover relocated out of `bynk-emit`, five categories closing a named, fixture-pinned editor regression, the rest for R3.5 compliance alone with no observable change; `check_function_type_boundaries`'s reach-back hook closed; R10.1 closed with a crate-doc correction, not a `bynk-driver` split; R4.6/R4.11/R10.4 reverified still closed, not reopened. `emit_diagnostics` reads 4/6 (true/naive), true=4 the named floor |
 | 6 | *(retired)* | **Retired 19 August 2026** (settled 17 August 2026; spine [#1137](https://github.com/accuser/bynk/issues/1137), closing summary in [`archive/retired-tracks.md`](archive/retired-tracks.md)). `bynk-emit` gained a typed IR (`ir.rs`/`ir/lower.rs`) and every genuinely convertible declaration-read site the track's own research found moved onto it; `ast_importers` reads its re-settled floor, **5**, not the 0 first named — `bynk-emit/src/emitter{,/**}`, the TypeScript-rendering subtree phase 7's own printer inherits, argued file by file in the closing summary rather than left as an unmet criterion. `bynk-ir`/`bynk-lower` stay inside `bynk-emit` (Part 10's own crate split deferred to phase 7, per this track's own settling); R6.5's store-write data-loss defect (§1's "strongest single argument") closed structurally, not patched |
 | 7 | *(retired)* | **Retired 29 August 2026** (settled 20 August 2026; spine [#1293](https://github.com/accuser/bynk/issues/1293), closing summary in [`archive/retired-tracks.md`](archive/retired-tracks.md)). A new `bynk-ts` crate (tree, printer, source map) became the single writer of every generated TypeScript character; `TsType::Any` eliminated in full bar a small, named residual on R7.7's runtime-typing work; R8.1–R8.22 closed or relocated rule by rule. Run as six arcs, far beyond the 37 slices first estimated at settling. All four gated probes retired at an argued floor, not the flat zero first proposed, the same honesty `ast_importers` (floor 5) already modelled: `ts_any` **26**, `verbatim_sites` **2**, `ts_writes` **809**, `verbatim_origins` **1** — each argued file by file in the closing summary rather than left as an unmet criterion |
-| 8 | [`incrementality.md`](tracks/incrementality.md) | **Settled — Slicing on merge** (spine [#1507](https://github.com/accuser/bynk/issues/1507)). All five design questions closed under review; three (Q1, Q2, Q4) each turned on a concrete fact the draft hadn't checked, narrowing rather than reversing it — `UnitSignature` is a new type wrapping ADR 0200's `combined_types_for` unchanged, plus fresh projections from `UnitTable`, since no existing type is already body-free enough to widen; the file level needs a new shared `Tokens(FileId)`/`Ast(FileId)` cache in `bynk-project` since `bynk-check` cannot depend on `bynk-ide`, where completion's own cache lives; this track builds no memo table, deferring R3.15's scheduler decision whole. 6 slices named (P8.0–P8.5); none shipped yet |
+| 8 | *(retired)* | **Retired 30 August 2026** (settled 29 August 2026; spine [#1507](https://github.com/accuser/bynk/issues/1507), closing summary in [`archive/retired-tracks.md`](archive/retired-tracks.md)). All six slices shipped (P8.0–P8.5); `UnitSignature` built as a new type wrapping ADR 0200's `combined_types_for` unchanged, plus fresh projections from `UnitTable`, since no existing type was already body-free enough to widen; a new shared `Tokens(FileId)`/`Ast(FileId)` cache landed in `bynk-project` since `bynk-check` cannot depend on `bynk-ide`, where completion's own cache lives; `ProjectGraph`/`Body`/`TypeOf` landed in `bynk-check`; no memo table shipped, deferring R3.15's scheduler decision whole. `incremental_query_types` retires at **satisfied**, not a floor — the first probe on this trajectory shaped as a proof rather than a shrinking count; `keystroke_latency` stays trend-only, "not measured," per this phase's own settled scope. **This is the trajectory's last phase — its retirement reaches this document's own §1 endpoint; see the status note above** |
 
 A phase's track opens when the previous phase's probe reads zero. Not before — an open track for a
 phase whose prerequisite is unmet is how a trajectory becomes a wish list. Phase 6 was the first
