@@ -39,6 +39,7 @@ pub mod icu;
 pub mod index;
 pub mod kernel_methods;
 pub mod locals;
+pub mod project_graph;
 pub mod project_model;
 pub mod requirements;
 pub mod resolver;
