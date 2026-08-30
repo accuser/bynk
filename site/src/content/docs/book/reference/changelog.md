@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.289.54** | On-keystroke diagnostics no longer re-lex/re-parse every first-party file on every request — `bynk-project` gains a durable `FileId` interning table and one shared, content-keyed parse cache (P8.4), replacing the IDE-local `PROJECT_UNIT_CACHE` completion alone used to benefit from. |
 | **v0.289.53** | Internal — a typed `ProjectGraph` (P8.3) lands in `bynk-check`, populated from resolved discovery/uses/consumes facts; data-model half only, not yet wired into cycle detection or the compose-root generator. |
 | **v0.289.52** | Internal — a property test proves `UnitSignature` (P8.1) is stable under a body-only edit (R3.14), phase 8's own firewall. |
 | **v0.289.51** | Internal — `UnitId`/`UnitSignature` land in `bynk-check` (P8.1, phase 8), a body-free, canonically-rendered per-unit signature nothing calls yet. |
