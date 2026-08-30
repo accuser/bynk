@@ -2220,6 +2220,7 @@ re-checks on every keystroke inside any function. Declared capabilities are a pr
 incrementality.
 *Trigger:* none identified; both reasons would have to fail.
 *Evidence:* n/a — but the §15 versus §2.8.4 contradiction should still be resolved deliberately.
+*Tracked:* [#1529](https://github.com/accuser/bynk/issues/1529) — not left to memory.
 
 **A diagnostic error enum.**
 *Cost avoided:* 434 variants in one enum, and `miette`'s renderer displacing an ariadne setup already
@@ -2228,6 +2229,7 @@ tuned for byte indexing.
 bodies without hand-duplication.
 *Evidence:* the count of message templates not generated from the registry. It is 42 for one code
 today (#45).
+*Tracked:* [#1531](https://github.com/accuser/bynk/issues/1531) — not left to memory.
 
 **Tuples.**
 *Cost avoided:* a second product type beside records, and a second codec story.
@@ -2236,6 +2238,7 @@ nominal records without combinatorial growth.
 *Evidence:* the corpus already contradicts itself here — ADR 0120 says no tuples, type-system spec
 §2.7.6 lists them as built-in, and design notes §11 types `join` as returning `Query[(T, U)]`. Resolve
 before it becomes evidence.
+*Tracked:* [#1530](https://github.com/accuser/bynk/issues/1530) — not left to memory.
 
 ### 15.2 What this design costs
 
