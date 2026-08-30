@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.289.53** | Internal — a typed `ProjectGraph` (P8.3) lands in `bynk-check`, populated from resolved discovery/uses/consumes facts; data-model half only, not yet wired into cycle detection or the compose-root generator. |
 | **v0.289.52** | Internal — a property test proves `UnitSignature` (P8.1) is stable under a body-only edit (R3.14), phase 8's own firewall. |
 | **v0.289.51** | Internal — `UnitId`/`UnitSignature` land in `bynk-check` (P8.1, phase 8), a body-free, canonically-rendered per-unit signature nothing calls yet. |
 | **v0.289.50** | P8.0 (#1510) — `cargo xtask greenfield-status` gains `incremental_query_types` (gated, 14th) and `keystroke_latency` (trend, 5th) probes for phase 8's completion criterion (design/tracks/incrementality.md §5); both read absent/not-measured today, as no P8.x slice has landed yet |

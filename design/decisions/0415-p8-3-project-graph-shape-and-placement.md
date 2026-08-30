@@ -1,11 +1,6 @@
----
-level: patch
-changelog: Internal — a typed `ProjectGraph` (P8.3) lands in `bynk-check`, populated from resolved discovery/uses/consumes facts; data-model half only, not yet wired into cycle detection or the compose-root generator.
----
+# 0415 — P8.3's `ProjectGraph` — deferred `contract`, hand-rolled maps, dual `Provides` edges, and why it lives in `bynk-check`
 
-## ADR: p8-3-project-graph-shape-and-placement
-title: P8.3's `ProjectGraph` — deferred `contract`, hand-rolled maps, dual `Provides` edges, and why it lives in `bynk-check`
-summary: Five decisions settling ADR 0326's phase-8 deferral for the typed project graph
+- **Status:** Accepted (v0.289.53)
 
 **Context.** ADR 0326 (phase 4) deferred the reference's typed `ProjectGraph` (`design/bynk-greenfield-compiler.md`
 §3.2 — `units: IndexVec<UnitId, Unit>`, `files: IndexVec<FileId, UnitId>`, `edges: Vec<(UnitId, UnitId,
