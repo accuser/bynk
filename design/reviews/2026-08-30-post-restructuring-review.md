@@ -290,10 +290,13 @@ This is the P5 shape one more time, and the detail that makes it worse than "nob
 cleanup" is that **somebody did**. `bynk-check/Cargo.toml:30-31` carries the removal condition in
 full: *"P4.1-only: remove alongside `tests/differential_analysis.rs` once phase 5 deletes
 `run_checks`'s `Mode::Analyse` arm and the fixture self-deletes."* Phase 5 retired on 9 August 2026.
-The arm did not go with it — `Mode::Analyse` is live at `bynk-emit/src/project.rs:531`, `:657` and
-`:809` — so the trigger never fired, the fixture never self-deleted, and nothing noticed. A written
-trigger with no probe behind it is a comment, and P2 is precisely the rule that a comment is not a
-mechanism. The follow-through is still the same three moves: delete the legacy entry points, drop the
+The arm did not go with it: analyse mode is still a live branch at `bynk-emit/src/project.rs:1394`,
+inside `check_unit_files`, with `Mode` itself at `project/diagnostics.rs:35`. So the trigger never
+fired, the fixture never self-deleted, and nothing noticed. Note where the arm actually is — the
+condition names `run_checks` (`project.rs:1541`), which only threads `mode: Mode` through as a
+parameter and has no arm of its own. A written trigger with no probe behind it is a comment; it
+drifts from the code it describes exactly the way this one already has, and P2 is precisely the rule
+that a comment is not a mechanism. The follow-through is still the same three moves: delete the legacy entry points, drop the
 dev-dependency, keep the fixture as a plain golden test of the new path.
 
 ### 4.3 The comments outlived their citations
