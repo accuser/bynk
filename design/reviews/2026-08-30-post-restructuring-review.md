@@ -37,8 +37,9 @@ July review opened on is *gone*, not mitigated. `Ty::Error` and `certify` exist 
 `bynk-ide` → `bynk-emit` edge is deleted. Diagnostic ownership moved decisively: `bynk-emit`
 originated 200 `bynk.*` codes at the 30 July baseline and originates **4** today, with `bynk-check`
 at 389 — the semantics live in the crate named for them. And phase 7 is the
-one that should be held up as the model — `bynk-emit` builds **1,251** real `bynk_ts` node
-constructions across eight files, with exactly **two** `Verbatim` escape hatches left
+one that should be held up as the model — `bynk-emit` names a `bynk_ts` node variant on **1,205**
+non-comment lines across eight files (construction and match sites together), with exactly **two**
+`Verbatim` escape hatches left
 (`bynk-emit/src/project.rs:2480`, `:2509`). That is adoption, not availability, and it is what the
 other phases should be measured against.
 
@@ -174,11 +175,15 @@ today because nothing calls the function.
 They are also the honest measure of how far phase 6 got: the IR is not a representation of the
 language, it is a representation of the fragment its own single-file test harness could reach.
 
-The cost is not hypothetical. `bynk-lower` is 4,054 production lines against **6,052 test lines** —
-66.6% test density, the highest in the workspace by a wide margin, most of it exercising code with no
-consumer. `bynk-ir` is the mirror image: 445 code lines under 1,415 comment lines, a 76% comment
-ratio and a **0.0%** test density. Between them that is a crate pair carrying the documentation of a
-finished design and the tests of a finished design, around a component that is not wired in.
+The cost is not hypothetical. `bynk-lower/src/lib.rs` splits **4,054 lines before its `#[cfg(test)]`
+boundary against 6,052 after it** — more test than implementation, most of it exercising code with no
+consumer. (`greenfield-status`'s own `test_density` probe reads 66.6% for the crate; that is a
+different measure — lines inside `#[test]` bodies and `#[cfg(test)]` blocks over non-blank
+non-comment lines under `src/` — and is quoted here only as the workspace-relative figure, where it
+is the highest by a wide margin. The two numbers are not derivable from each other.) `bynk-ir` is the
+mirror image: 445 code lines under 1,415 comment lines, a 76% comment ratio and a **0.0%** test
+density. Between them that is a crate pair carrying the documentation of a finished design and the
+tests of a finished design, around a component that is not wired in.
 
 ---
 
@@ -281,10 +286,15 @@ bynk-check` builds the entire emitter, and it means the old path cannot be delet
 the test that justifies keeping it — a circular anchor. Both functions are `pub` on a published
 crate, so they are also API surface.
 
-This is the P5 shape one more time, with a guard rail: the old path stayed reachable, and a
-differential test was built to make that safe rather than to make it temporary. The differential test
-did its job; the follow-through — delete the legacy entry points, drop the dev-dependency, keep the
-fixture as a plain golden test of the new path — was never scheduled.
+This is the P5 shape one more time, and the detail that makes it worse than "nobody scheduled the
+cleanup" is that **somebody did**. `bynk-check/Cargo.toml:30-31` carries the removal condition in
+full: *"P4.1-only: remove alongside `tests/differential_analysis.rs` once phase 5 deletes
+`run_checks`'s `Mode::Analyse` arm and the fixture self-deletes."* Phase 5 retired on 9 August 2026.
+The arm did not go with it — `Mode::Analyse` is live at `bynk-emit/src/project.rs:531`, `:657` and
+`:809` — so the trigger never fired, the fixture never self-deleted, and nothing noticed. A written
+trigger with no probe behind it is a comment, and P2 is precisely the rule that a comment is not a
+mechanism. The follow-through is still the same three moves: delete the legacy entry points, drop the
+dev-dependency, keep the fixture as a plain golden test of the new path.
 
 ### 4.3 The comments outlived their citations
 
@@ -298,8 +308,8 @@ following `design/tracks/the-ir.md §6a` from `workers_entry.rs:375` gets nothin
 Three specific comments are now false rather than merely dangling:
 
 - `bynk-ts/src/lib.rs:26-28` — *"`bynk-emit` still builds no `TsProgram` beyond `Verbatim`"*. It
-  builds 1,251 nodes. This is the single most misleading comment in the tree, because it understates
-  the best work in it.
+  names a node variant on 1,205 non-comment lines. This is the single most misleading comment in the
+  tree, because it understates the best work in it.
 - `bynk-strip/Cargo.toml:16` — *"the LSP (via `bynk-ide` → `bynk-emit`) never pulls oxc"*. That edge
   was deleted by P4.2; `ide_emit_edge` reads `absent`.
 - `bynk-check/src/checker.rs:684`, `:768` and `bynk-check/src/checker/calls.rs:211` cite
@@ -406,10 +416,16 @@ grep -rn --include='*.rs' 'UnitSignature\|ProjectGraph\|UnitId\|queries::body\|q
 **TS-tree adoption vs. the `Ident` escape hatch:**
 
 ```sh
-grep -rc 'TsExpr::\|TsStmt::\|TsDecl::' bynk-emit/src --include='*.rs' -r | grep -v ':0'   # 1,251 total
-grep -rn 'TsExpr::Ident(format!' bynk-emit/src --include='*.rs' | wc -l                    # 15
-grep -rn 'Verbatim' bynk-emit/src --include='*.rs' | grep -v '///'                         # 2 sites
-grep -rn 'verbatim_violations' --include='*.rs' . | grep -v 'bynk-ts/src/lint.rs'          # only the pub use
+# Non-comment lines naming a TS-tree variant. The `///` filter matters: 80 of the 1,285
+# raw matches are doc-comment lines, and the count is lines that *name* a variant —
+# construction and match arms together — not constructions alone.
+grep -rh 'TsExpr::\|TsStmt::\|TsDecl::' bynk-emit/src --include='*.rs' |
+  grep -v '^\s*///' | wc -l                                                    # 1,205
+grep -rn 'TsExpr::Ident(format!' bynk-emit/src --include='*.rs' | wc -l         # 15
+# Both comment forms must be filtered: 4 of the 6 raw matches are plain `//` lines.
+grep -rn 'Verbatim' bynk-emit/src --include='*.rs' |
+  grep -v '///' | grep -vE '^[^:]+:[0-9]+: *//'                                 # 2 sites
+grep -rn 'verbatim_violations' --include='*.rs' . | grep -v 'bynk-ts/src/lint.rs'  # only the pub use
 ```
 
 **`Span::default()` sites and the `FileId(0)` default:**
@@ -426,7 +442,7 @@ grep -rn 'span\.file' --include='*.rs' . | grep -v test            # 8 readers, 
 ```sh
 grep -rhn 'design/tracks/' --include='*.rs' . | grep -oE 'design/tracks/[a-z0-9-]+\.md' |
   sort | uniq -c | sort -rn
-ls design/tracks/     # only events.md and idempotency-capability.md still exist
+ls design/tracks/     # 5 entries remain; none of the six cited above is among them
 ```
 
 **Dangling markdown links inside `design/`** (7):
@@ -441,8 +457,9 @@ design/archive/bynk-cicd-roadmap.md                      -> bynk-tooling-roadmap
 design/archive/retired-tracks.md                         -> ../decisions/0203-test-body-service-calls-resolved.md
 ```
 
-**Crate line counts and comment ratios** (production `src/` only, `#[cfg(test)]` blocks counted
-separately for `bynk-lower`):
+**Crate line counts and comment ratios.** Every `.rs` file under each crate's `src/`, counted whole:
+"code" is non-blank non-comment lines and includes in-file `#[cfg(test)]` blocks, so these rows are a
+different cut from the `#[cfg(test)]`-boundary split quoted below them:
 
 | Crate | code | comments | ratio |
 |---|---|---|---|
@@ -454,7 +471,8 @@ separately for `bynk-lower`):
 | `bynk-check` | 32,748 | 8,327 | 20.3% |
 | `bynk-syntax` | 12,949 | 3,162 | 19.6% |
 
-`bynk-lower/src/lib.rs` splits 4,054 production lines / 6,052 `#[cfg(test)]` lines.
+`bynk-lower/src/lib.rs` splits 4,054 lines before its `#[cfg(test)]` boundary / 6,052 after it
+(10,106 total: 7,263 non-blank non-comment + 2,301 comment + 542 blank).
 
 **Trend probes against their own baselines:**
 
