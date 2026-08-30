@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.289.56** | "Phase 8 (`incrementality.md`, spine #1507) retires — `incremental_query_types` reads satisfied: `UnitSignature`, `ProjectGraph`, `Body`/`TypeOf` all real in `bynk-check`, the shared file-level cache migrated, P8.2's stability test present. The retirement PR itself: deletes the track doc, archives its closing summary, re-points every doc that named it, closes the spine issue — and, uniquely, closes `design/bynk-compiler-trajectory.md` itself, reaching its own §1 endpoint after all eight phases." |
 | **v0.289.55** | `bynk-check` gains a real `DefId` identity and `Body(DefId)`/`TypeOf(DefId)` query functions (R3.13's definition-level row) — built and tested, not yet wired into any production check path (P8.5). |
 | **v0.289.54** | On-keystroke diagnostics no longer re-lex/re-parse every first-party file on every request — `bynk-project` gains a durable `FileId` interning table and one shared, content-keyed parse cache (P8.4), replacing the IDE-local `PROJECT_UNIT_CACHE` completion alone used to benefit from. |
 | **v0.289.53** | Internal — a typed `ProjectGraph` (P8.3) lands in `bynk-check`, populated from resolved discovery/uses/consumes facts; data-model half only, not yet wired into cycle detection or the compose-root generator. |
