@@ -46,10 +46,17 @@ compiled at v0.245.0 compiles today, on the architecture `bynk-greenfield-compil
 table, or nothing) was a separable decision phase 8 explicitly deferred whole, not silently dropped
 — it stays *unopened, no trigger yet* (phase 8's own §7), the same standing as R10.5's `bynk-driver`
 consolidation, a lossless CST (rowan), and an emit-side signature concept for `Artefacts`. None of
-these four is a construct the shipped compiler loses; each is a forward reference with a named,
-unfired trigger, per R15.1's own discipline against recording an intention as a refusal. This
-document stays in place as the historical record of the path walked, per the LSP theme's own
-precedent above — `bynk-greenfield-compiler.md` continues to hold the place.
+these four is a construct the shipped compiler loses. Two (R3.15, rowan) already carry a named,
+unfired trigger in `bynk-greenfield-compiler.md` Part 15.1's own register, per R15.1's own
+discipline against recording an intention as a refusal with no trigger; the other two (R10.5,
+`Artefacts`) have never had one written down, so naming one is itself the open work. Tracked, not
+left to memory, as [#1523](https://github.com/accuser/bynk/issues/1523) (R3.15),
+[#1524](https://github.com/accuser/bynk/issues/1524) (rowan),
+[#1525](https://github.com/accuser/bynk/issues/1525) (R10.5) and
+[#1526](https://github.com/accuser/bynk/issues/1526) (`Artefacts`) — each marked deferred with no
+trigger yet, not ready to build. This document stays in place as the historical record of the path
+walked, per the LSP theme's own precedent above — `bynk-greenfield-compiler.md` continues to hold
+the place.
 
 ---
 
