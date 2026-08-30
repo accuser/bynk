@@ -34,7 +34,8 @@ use bynk_syntax::span::Span;
 use crate::resolver::{CrossContextService, cross_context_service_for};
 use crate::symbols::UnitTable;
 use crate::unit_signature::{
-    FnSignature, HandlerSignature, ParamSignature, StoreFieldSignature, UnitSignature,
+    CapabilityOpSignature, FnSignature, HandlerKindSignature, HandlerSignature,
+    MethodTableSignature, ParamSignature, ProtocolSignature, StoreFieldSignature, UnitSignature,
 };
 
 /// The canonical normal form of one `on call` service contract.
@@ -410,15 +411,38 @@ pub fn canon_fn_signature(f: &FnSignature, types: &HashMap<String, Arc<TypeDecl>
     out
 }
 
+/// P8.1 (#1512, [DECISION C]): the canonical form of a [`HandlerKindSignature`].
+/// Added alongside the rest of [`canon_handler_signature`] by PR #1517's own
+/// bot review (finding #1) — every field here is already a plain value
+/// (`HttpMethod`'s own rendered name, a route/cron `String`), so nothing
+/// needs excluding beyond the enum discriminant itself carrying no `Span`.
+fn canon_handler_kind(k: &HandlerKindSignature) -> String {
+    match k {
+        HandlerKindSignature::Call => "call".to_string(),
+        HandlerKindSignature::Http { method, path } => format!("http {method} {path:?}"),
+        HandlerKindSignature::Cron { expr } => format!("cron {expr:?}"),
+        HandlerKindSignature::Message => "message".to_string(),
+        HandlerKindSignature::Open => "open".to_string(),
+        HandlerKindSignature::Close => "close".to_string(),
+        HandlerKindSignature::Event => "event".to_string(),
+    }
+}
+
 /// P8.1 (#1512, [DECISION C]): the canonical form of a [`HandlerSignature`].
 /// `given` renders sorted — its rendered `CapRef` names have no meaningful
-/// order to preserve (it's a set, not a sequence).
+/// order to preserve (it's a set, not a sequence). `kind` is rendered first
+/// (PR #1517's own bot review, finding #1) — two handlers that differ only
+/// in HTTP method or route, or in `on call` vs. `on message`, must not
+/// canonicalise identically.
 pub fn canon_handler_signature(
     h: &HandlerSignature,
     types: &HashMap<String, Arc<TypeDecl>>,
 ) -> String {
     let mut out = String::new();
-    let _ = write!(out, "on {}", h.method_name.as_deref().unwrap_or("call"));
+    let _ = write!(out, "on {}", canon_handler_kind(&h.kind));
+    if let Some(m) = &h.method_name {
+        let _ = write!(out, " {m}");
+    }
     let _ = write!(out, "({})", canon_params(&h.params, types));
     let _ = write!(
         out,
@@ -431,6 +455,58 @@ pub fn canon_handler_signature(
         let _ = write!(out, " given {}", given.join(", "));
     }
     out
+}
+
+/// P8.1 (#1512, [DECISION C]): the canonical form of a [`CapabilityOpSignature`]
+/// — added by PR #1517's own bot review (finding #3): a `capability`
+/// declaration's own ops are the abstract signature a consumer's
+/// `Cap.op(...)` call site compiles against.
+pub fn canon_capability_op_signature(
+    op: &CapabilityOpSignature,
+    types: &HashMap<String, Arc<TypeDecl>>,
+) -> String {
+    let mut out = String::new();
+    let _ = write!(out, "fn {}", op.name);
+    if !op.type_params.is_empty() {
+        let _ = write!(out, "[{}]", op.type_params.join(", "));
+    }
+    let _ = write!(out, "({})", canon_params(&op.params, types));
+    let _ = write!(
+        out,
+        " -> {}",
+        canon_type(&op.return_type, types, &mut HashSet::new())
+    );
+    out
+}
+
+/// P8.1 (#1512, [DECISION C]): the canonical form of a [`ProtocolSignature`]
+/// — added by PR #1517's own bot review ("worth a look"): `from http` vs.
+/// `from queue(...)` vs. `from websocket(...)` changes a service's entire
+/// external surface. `Events`' own `pattern`/`schema_dispatch` render only as
+/// presence (see `unit_signature.rs`'s own module doc comment for why).
+fn canon_protocol_signature(
+    p: &ProtocolSignature,
+    types: &HashMap<String, Arc<TypeDecl>>,
+) -> String {
+    match p {
+        ProtocolSignature::Call => "call".to_string(),
+        ProtocolSignature::Http => "http".to_string(),
+        ProtocolSignature::Cron => "cron".to_string(),
+        ProtocolSignature::Queue { name } => format!("queue {name:?}"),
+        ProtocolSignature::WebSocket { in_type, out_type } => format!(
+            "websocket in={} out={}",
+            canon_type(in_type, types, &mut HashSet::new()),
+            canon_type(out_type, types, &mut HashSet::new())
+        ),
+        ProtocolSignature::Events {
+            event_type,
+            has_pattern,
+            has_schema_dispatch,
+        } => format!(
+            "events {} pattern={has_pattern} schema_dispatch={has_schema_dispatch}",
+            canon_type(event_type, types, &mut HashSet::new())
+        ),
+    }
 }
 
 /// P8.1 (#1512, [DECISION C]): the canonical form of a [`StoreFieldSignature`].
@@ -496,11 +572,38 @@ pub fn canon_unit_signature(sig: &UnitSignature) -> String {
         let _ = writeln!(out, "  {}", canon_fn_signature(f, types));
     }
 
-    out.push_str("handlers:\n");
-    for (owner, hs) in &sig.handlers {
+    // Methods (PR #1517's own bot review, finding #2): rendered per owning
+    // type, instance and static kept in their own sections so a rename
+    // between the two buckets is visible too, not just a param/return change
+    // within one.
+    out.push_str("methods:\n");
+    for (owner, mt) in &sig.methods {
+        let MethodTableSignature { instance, statics } = mt;
+        for f in instance.values() {
+            let _ = writeln!(out, "  {owner}.{}", canon_fn_signature(f, types));
+        }
+        for f in statics.values() {
+            let _ = writeln!(out, "  {owner}::{}", canon_fn_signature(f, types));
+        }
+    }
+
+    out.push_str("service_handlers:\n");
+    for (owner, hs) in &sig.service_handlers {
         for h in hs {
             let _ = writeln!(out, "  {owner}: {}", canon_handler_signature(h, types));
         }
+    }
+
+    out.push_str("agent_handlers:\n");
+    for (owner, hs) in &sig.agent_handlers {
+        for h in hs {
+            let _ = writeln!(out, "  {owner}: {}", canon_handler_signature(h, types));
+        }
+    }
+
+    out.push_str("service_protocols:\n");
+    for (owner, p) in &sig.service_protocols {
+        let _ = writeln!(out, "  {owner}: {}", canon_protocol_signature(p, types));
     }
 
     out.push_str("store:\n");
@@ -513,6 +616,15 @@ pub fn canon_unit_signature(sig: &UnitSignature) -> String {
     out.push_str("capabilities:\n");
     for c in &sig.capabilities.exported {
         let _ = writeln!(out, "  exports {c}");
+    }
+    for (cap, ops) in &sig.capabilities.declared {
+        for op in ops {
+            let _ = writeln!(
+                out,
+                "  declares {cap}.{}",
+                canon_capability_op_signature(op, types)
+            );
+        }
     }
     for (cap, given) in &sig.capabilities.provider_given {
         let mut given = given.clone();
