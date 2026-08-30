@@ -1211,7 +1211,11 @@ pub struct Handler {
     pub trivia: Trivia,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// `Hash` (P8.5, #1516): a `HandlerKind` value is a body-free, span-free
+/// discriminant — exactly what `bynk-check::queries::HandlerDefId` needs as
+/// part of a handler's own stable identity. Purely additive; no existing
+/// caller matches on hashing behaviour.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum HandlerKind {
     /// `on call(...)` — typed RPC (the only kind in v0.5).
     Call,
