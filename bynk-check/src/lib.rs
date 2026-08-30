@@ -41,6 +41,7 @@ pub mod kernel_methods;
 pub mod locals;
 pub mod project_graph;
 pub mod project_model;
+pub mod queries;
 pub mod requirements;
 pub mod resolver;
 pub mod schema_registry;
