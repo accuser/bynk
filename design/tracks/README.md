@@ -78,7 +78,6 @@ each track's spine issue; this table is deliberately just the map.
 |---|---|---|---|
 | [`documentation.md`](documentation.md) | [#557](https://github.com/accuser/bynk/issues/557) | Slicing (slice 0 shipped) | Documentation & web presence: the Astro + Starlight migration, a CI snippet-verification harness, playground integration seams |
 | [`idempotency-capability.md`](idempotency-capability.md) | [#921](https://github.com/accuser/bynk/issues/921) | Slicing (slice 0 shipped, #929; call-site key scoping follow-up shipped, #934) | The `Idempotency` capability: mechanical dedup for at-least-once delivery, per design notes §4, §12 |
-| [`incrementality.md`](incrementality.md) | [#1507](https://github.com/accuser/bynk/issues/1507) | Settled — Slicing on merge | Phase 8 of the compiler trajectory (the last phase) — query granularity (`Tokens`/`UnitSignature`/`Body`/`ProjectGraph`) and the firewall, per `bynk-greenfield-compiler.md` R3.13–R3.15 |
 
 (`documentation.md` pre-dates the GitHub-native flow, so its doc was
 committed by an ordinary PR rather than a settling draft PR; the spine issue
@@ -166,13 +165,13 @@ an argued floor, not the flat zero first proposed, the same honesty
 `ast_importers` (floor 5) already modelled: `ts_any` at 26, `verbatim_sites`
 at 2, `ts_writes` at 809, `verbatim_origins` at 1 — see `retired-tracks.md`'s
 closing summary for the full, file-by-file argument behind each.
-`incrementality.md` is the thirteenth, phase 8 of the same trajectory — the
-last phase — entry-gated on `the-typescript-tree.md`'s own retirement note,
-which named phases 3 and 4 *together with* itself as this phase's real
-precondition rather than the trajectory's own §4 diagram alone. Spine
-[#1507](https://github.com/accuser/bynk/issues/1507); its settling PR closed
-all five of its design questions under review. Three (Q1, Q2, Q4) each
-turned on a concrete fact the draft hadn't yet checked, in every case
+`incrementality.md` (now retired) was the thirteenth, phase 8 of the same
+trajectory — the last phase — entry-gated on `the-typescript-tree.md`'s own
+retirement note, which named phases 3 and 4 *together with* itself as this
+phase's real precondition rather than the trajectory's own §4 diagram alone.
+Spine [#1507](https://github.com/accuser/bynk/issues/1507); its settling PR
+closed all five of its design questions under review. Three (Q1, Q2, Q4)
+each turned on a concrete fact the draft hadn't yet checked, in every case
 narrowing the option space rather than reversing the draft's own leaning.
 Q1 (`UnitSignature`'s shape) found no existing type in the workspace is
 close enough to widen — `combined_types_for` only ever computed one of
@@ -193,10 +192,17 @@ gated probe as an existence-and-proof check rather than a latency number
 that would otherwise need one to measure anything. Q4 audited
 `UnitSignature`'s field list against the real `FnDecl`/`Handler`/
 `StoreField` shapes, field by field, excluding every body or body-adjacent
-one (contracts, storage initialisers). Settled slice count: **6** (P8.0–
-P8.5), matching the trajectory's own row-5 sizing almost exactly — the
-first phase on this trajectory whose settled count doesn't need revising
-upward the way phase 5, 6 and 7 all did.
+one (contracts, storage initialisers). All six settled slices shipped
+(P8.0–P8.5); its own gated probe, `incremental_query_types`, retired at
+**satisfied**, not a floor — the first probe on this trajectory shaped as a
+proof rather than a shrinking count. Two implementing slices (P8.3, P8.4)
+and one (P8.5) each surfaced a real fork the settling review hadn't
+examined, each recorded in its own ADR (0415–0417) rather than silently
+absorbed. Retired 30 August 2026 — **this being the trajectory's own last
+phase, this retirement also closes
+[`../bynk-compiler-trajectory.md`](../bynk-compiler-trajectory.md) itself**,
+per that document's own §1 endpoint and this track's own §12. Full closing
+summary in `../archive/retired-tracks.md`.
 `agent-capability-encapsulation.md` is a committed Draft that appears in
 neither this table nor `retired-tracks.md`; it predates this row's addition
 and needs a spine issue or a retirement — tracked separately, not by this
@@ -214,6 +220,22 @@ A retired track's closing summary — what shipped, which ADRs carry its
 decisions, the named follow-ons — is kept for the record in
 [`../archive/retired-tracks.md`](../archive/retired-tracks.md):
 
+- **`incrementality.md`** — phase 8 of
+  [`../bynk-compiler-trajectory.md`](../bynk-compiler-trajectory.md), spine
+  [#1507](https://github.com/accuser/bynk/issues/1507), **the trajectory's last phase**: every
+  compiler output decomposed to the granularity at which it is invalidated —
+  `Tokens(FileId)`/`Ast(FileId)`, `UnitSignature(UnitId)`, `Body(DefId)`/`TypeOf(DefId)`,
+  `ProjectGraph` — with `UnitSignature` proved stable under a body-only edit (the R3.14 firewall).
+  Settled across five design questions; three (Q1, Q2, Q4) each turned on a concrete fact the
+  draft hadn't checked, narrowing rather than reversing it. All six slices shipped (P8.0–P8.5);
+  `incremental_query_types` retires at **satisfied**, the first gated probe on this trajectory
+  shaped as a proof rather than a shrinking count; `keystroke_latency` stays trend-only,
+  "not measured," per this phase's own settled scope (no scheduler ships here). Six ADRs,
+  0412–0417 — three front-loaded at settling, three more recording real forks P8.3–P8.5 each
+  found. Retired 30 August 2026. **This retirement also closes
+  [`../bynk-compiler-trajectory.md`](../bynk-compiler-trajectory.md) itself** — its own §1 endpoint
+  is reached, the last of the trajectory's eight phases. Full closing summary in
+  `../archive/retired-tracks.md`.
 - **`the-typescript-tree.md`** — phase 7 of
   [`../bynk-compiler-trajectory.md`](../bynk-compiler-trajectory.md), spine
   [#1293](https://github.com/accuser/bynk/issues/1293): a new `bynk-ts` crate (tree, printer,

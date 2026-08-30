@@ -1008,3 +1008,96 @@ imposed; entries keep the order they were retired in.
   phase 8 as needing phases 3 and 4 *together with* this one, and its own settling review still
   needs to ground a fresh spine issue against the current tree, the same way this track's own
   opening did against phase 6's, rather than assuming the trigger alone is sufficient.
+- **`incrementality.md`** — phase 8 of [`../bynk-compiler-trajectory.md`](../bynk-compiler-trajectory.md),
+  spine [#1507](https://github.com/accuser/bynk/issues/1507), **the trajectory's last phase**: every
+  compiler output decomposed to the granularity at which it is invalidated —
+  `Tokens(FileId)`/`Ast(FileId)` at file level, `UnitSignature(UnitId)` at unit level (declarations
+  only, no bodies), `Body(DefId)`/`TypeOf(DefId)` at definition level, `ProjectGraph` at project
+  level — with `UnitSignature` proved stable under any edit to a body inside that unit (the R3.14
+  firewall). The scheduler that would actually memoise these queries (R3.15) is a separable
+  decision this phase commits the granularity for and explicitly defers, per Q3 below.
+
+  Settled across five design questions under review on the settling branch
+  ([ADR 0412](../decisions/0412-incrementality-unit-signature-shape.md)–
+  [ADR 0414](../decisions/0414-incrementality-no-memo-table-this-phase.md)). Three (Q1, Q2, Q4) each
+  turned on a concrete fact the draft hadn't yet checked, narrowing the option space rather than
+  reversing the draft's own leaning: **Q1** found no existing type in the workspace is already
+  signature-shaped enough to widen — ADR 0200's `combined_types_for` computes only one of design
+  notes §15's four required-annotation categories, and every closer candidate (`UnitTable`'s own
+  `FnDecl`/`Handler`/`StoreField` types) carries a full body or initialiser — so `UnitSignature` is
+  a new type wrapping `combined_types_for`'s existing output unchanged, plus fresh projections read
+  from `UnitTable`, compared through a canonical, span/trivia/documentation-erased rendering
+  extending ADR 0200's own `canon_type`/`service_normal_form` rather than a new erasure scheme
+  ([ADR 0412](../decisions/0412-incrementality-unit-signature-shape.md)). **Q2** found sharing
+  completion's own `PROJECT_UNIT_CACHE` with the diagnostics path was never actually available —
+  `bynk-check` cannot depend on `bynk-ide`, the crate graph runs the other way — so the settled
+  answer builds one new, shared `Tokens(FileId)`/`Ast(FileId)` cache in `bynk-project` instead, plus
+  the durable path↔`FileId` interning table it needs, since `FileId` was reallocated fresh on every
+  `phase_parse` call rather than interned across them
+  ([ADR 0413](../decisions/0413-incrementality-shared-file-level-cache.md)). **Q3** settled that this
+  track builds no memo table of any kind — R3.15's own scheduler decision defers whole, on the
+  reasoning that its own trigger ("a hand-rolled table measurably becoming the bottleneck") cannot
+  fire before this phase's own granularity exists to be a bottleneck in
+  ([ADR 0414](../decisions/0414-incrementality-no-memo-table-this-phase.md)). **Q4** audited
+  `UnitSignature`'s field list field-by-field against the real `FnDecl`/`Handler`/`StoreField`/
+  `ProviderDecl`/`ServiceDecl` shapes, excluding every body or body-adjacent field
+  (`requires`/`ensures`, `StoreField.init`/`.annotations`) and — found only once P8.2's own fixture
+  was reasoned through — every field's own `Span`/`trivia`/`documentation`, which shift under an
+  edit elsewhere in the same file even when nothing semantically relevant changed. **Q5** settled the
+  gated probe's own shape as a one-time existence-and-proof check, not a shrinking count — the first
+  probe on this trajectory shaped as a proof rather than a floor.
+
+  All six settled slices shipped: **P8.0** ([#1510](https://github.com/accuser/bynk/issues/1510)) —
+  the `incremental_query_types`/`keystroke_latency` probes themselves; **P8.1**
+  ([#1517](https://github.com/accuser/bynk/pull/1517)) — `UnitId`/`UnitSignature` in `bynk-check`;
+  **P8.2** ([#1518](https://github.com/accuser/bynk/pull/1518)) — the property test proving
+  `UnitSignature`'s canonical rendering is stable under a body-only edit; **P8.3**
+  ([#1519](https://github.com/accuser/bynk/pull/1519)) — a typed `ProjectGraph`, landing in
+  `bynk-check` beside `UnitId` rather than in `bynk-project` as the track doc originally assumed,
+  since `bynk-project` cannot depend on `bynk-check`'s own `UnitId`
+  ([ADR 0415](../decisions/0415-p8-3-project-graph-shape-and-placement.md)); **P8.4**
+  ([#1520](https://github.com/accuser/bynk/pull/1520)) — the durable path↔`FileId` interning table
+  and the shared parse cache Q2 specified, plus two real forks the settling review didn't examine:
+  `ExprId` allocation needed the identical durability treatment as `FileId` (a cached file's stale
+  `ExprId`s could collide with a freshly-parsed sibling file's fresh ones), and the shared cache
+  stores the strict parse only, not completion's own recovery-tolerant parse, since the two are
+  genuinely different parser configurations
+  ([ADR 0416](../decisions/0416-p8-4-durable-parse-cache-expr-id-and-strict-vs-recovery.md));
+  **P8.5** ([#1521](https://github.com/accuser/bynk/pull/1521)) — `DefId`/`Body(DefId)`/
+  `TypeOf(DefId)` in `bynk-check`, split into `DefId::Fn`/`DefId::Handler`/`DefId::ProviderOp`
+  (a provider op turned out to need its own identity variant — reusing `HandlerDefId`'s shape let
+  two ops of the same provider collide on one key, caught in this PR's own review) and built with a
+  fresh `CheckSinks` per call, not wired into any production check path
+  ([ADR 0417](../decisions/0417-p8-5-defid-split-and-fresh-sinks.md)).
+
+  **`incremental_query_types` retires at *satisfied*, not a floor** — the first gated probe on this
+  trajectory shaped as a proof rather than a shrinking count: `UnitSignature`, `ProjectGraph`,
+  `Body`/`TypeOf` all exist as real code in `bynk-check`, the shared file-level cache is migrated
+  (`PROJECT_UNIT_CACHE` deleted), and P8.2's own stability test is present. `keystroke_latency`
+  (trend-only) stays "not measured," per Q3/Q5's own settled scope — no scheduler ships in this
+  phase to produce a real number, and none is owed by this phase's own completion criterion.
+
+  Six ADRs, 0412–0417, carry every decision in full — the first three (0412–0414) front-loaded at
+  the settling PR merge, the remaining three (0415–0417) each recording a real fork an implementing
+  PR's own review found that the settling review had not examined, the same "flag the fork, don't
+  silently absorb it" discipline every prior track on this trajectory has applied.
+  **Deferred follow-ons, named rather than left implicit:** R3.15's scheduler decision (salsa or a
+  hand-rolled memo table — *unopened, no trigger yet*: needs a hand-rolled table measurably
+  becoming the bottleneck, which cannot fire before this phase's own granularity exists to be a
+  bottleneck in); R10.5's `bynk-driver` consolidation (*unopened, no trigger yet*); a lossless CST
+  (rowan) (*unopened, no trigger yet*: needs a real per-file reparse timing measured as costly,
+  which P8.4's own interning table is the first place such a timing could be collected, but
+  collecting it was not this phase's job); an emit-side `UnitSignature`-equivalent keyed on
+  `Artefacts` (R7.8) (*unopened, no trigger yet* — Q1's own settled scope covers the check side
+  only). Retired 30 August 2026.
+
+  **This is the trajectory's last phase.** Per `bynk-compiler-trajectory.md` §1, its endpoint — "the
+  compiler Bynk ships today, feature for feature, rebuilt on the architecture in
+  `bynk-greenfield-compiler.md`" — is reached at this retirement, not before. This retirement PR
+  therefore closes `../bynk-compiler-trajectory.md` itself alongside this track and its spine, per
+  that document's own §1 and this track's own §12 — the one retirement on this trajectory that
+  closes two documents, not one. What the trajectory's own eight phases do not close, named so a
+  future reader does not mistake silence for completeness: R3.15's scheduler decision, R10.5's
+  `bynk-driver` consolidation, rowan's lossless-CST question, and an emit-side signature concept for
+  `Artefacts` — each a real, later decision with its own trigger, not inherited from any phase that
+  came before it.
