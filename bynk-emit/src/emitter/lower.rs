@@ -5587,6 +5587,85 @@ fn lower_call(e: &Expr, name: &Ident, args: &[Expr], cx: &mut LowerCtx) -> Lower
     ))
 }
 
+/// Slice 3.2 of #1542: [`lower_call`]'s `IrExpr`-typed sibling. A genuine
+/// restructuring, not a retype — every branch below already had a `Callee`
+/// arm to read from (`cx.commons().callee(e.id)`, re-fetched per branch); this
+/// version takes `callee` once, already destructured from
+/// `IrExprKind::Call { callee, args, .. }` by its caller, and dispatches on
+/// its own variant directly, extending the pattern the original's own
+/// `Callee::Ctor` branch already used (`sum.name.name`/`tag`, never
+/// `name.name`) to every other branch: `HttpResult`/`QueueResult` read
+/// `Callee::Intrinsic`'s own `op` (recorded from the same source text
+/// `name.name` was), `AgentInit` reads its own `String` payload directly. No
+/// longer takes `e`/`name` at all — nothing below needed them for anything
+/// but a `Callee` lookup or a name `Callee`'s own fields already carry.
+fn lower_call_v2(callee: &Callee, args: &[IrExpr], cx: &mut LowerCtx) -> Lowered {
+    let mut pre = Pre::new();
+    let args_lowered: Vec<String> = args.iter().map(|a| pre.lower_ir(a, cx)).collect();
+    match callee {
+        // v0.9: HttpResult variant call.
+        Callee::Intrinsic { ns, op } if *ns == HTTP_RESULT => {
+            pre.finish(format!("HttpResult.{op}({})", args_lowered.join(", ")))
+        }
+        // v0.44: a QueueResult variant call (`Retry(reason)`) → `QueueResult.Retry(...)`.
+        Callee::Intrinsic { ns, op } if *ns == QUEUE_RESULT => {
+            pre.finish(format!("QueueResult.{op}({})", args_lowered.join(", ")))
+        }
+        // P6.21: agent instantiation `AgentName(key)` lowers to the generated
+        // `__makeAgentName(key)` factory.
+        Callee::AgentInit(agent) => {
+            let key_expr = args_lowered.first().unwrap_or_else(|| {
+                panic!(
+                    "bynk internal error (ADR 0334): Callee::AgentInit records agent construction \
+                     `{agent}(...)` with {} args, but every AgentDecl declares exactly one key \
+                     field — the checker already accepted this call",
+                    args_lowered.len()
+                )
+            });
+            pre.finish(cx.agent_construct(agent, key_expr))
+        }
+        // P6.21: sum-variant construction.
+        Callee::Ctor { sum, tag } => {
+            pre.finish(format!("{}.{tag}({})", sum.name.name, args_lowered.join(", ")))
+        }
+        // A free function call — the only `FnName` shape reachable through a
+        // bare `Call` (a method needs receiver syntax, `lower_method_call_v2`'s
+        // own territory).
+        Callee::Fn(f) => {
+            let FnName::Free(id) = &f.name else {
+                unreachable!(
+                    "lower_call_v2's Callee::Fn is always a bare-call free function — a method \
+                     reaches lower_method_call_v2, never this function"
+                )
+            };
+            let name = &id.name;
+            // #527: a commons-imported fn speaks the *unbranded* commons types,
+            // but this context rebrands them; assert the call back into the
+            // local namespace so branded positions accept it. Pure fns only.
+            if cx.commons_imported_fns().contains(name)
+                && !matches!(f.return_type, TypeRef::Effect(..))
+                && typeref_mentions_any(&f.return_type, cx.rebranded_types())
+            {
+                pre.finish(format!(
+                    "({}({}) as {})",
+                    ts_ident(name),
+                    args_lowered.join(", "),
+                    ts_type_ref(&f.return_type)
+                ))
+            } else {
+                pre.finish(format!("{}({})", ts_ident(name), args_lowered.join(", ")))
+            }
+        }
+        // Applying a function-typed local or parameter — no declaration to
+        // read a return type off, so no rebrand-assertion case applies.
+        Callee::Value(name) => pre.finish(format!("{}({})", ts_ident(name), args_lowered.join(", "))),
+        other => unreachable!(
+            "lower_call_v2: {other:?} is not a Callee a bare Call expression can classify as — \
+             every other variant needs receiver syntax and reaches lower_method_call_v2 instead"
+        ),
+    }
+}
+
 /// True when `r` references any of `names` (recursing through the compound
 /// constructors).
 fn typeref_mentions_any(r: &TypeRef, names: &HashSet<String>) -> bool {
