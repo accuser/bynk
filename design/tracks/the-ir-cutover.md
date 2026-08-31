@@ -158,12 +158,15 @@ plan never proposed an IR target for (`:2345`'s own comment: *"not named by any 
 commissions"*) and are gated behind `ctx.in_test_body`, structurally unreachable through
 `bynk-lower`'s single-file harness without bynk-check's heavier project-level test machinery (Decision
 C, `#1145`) — wiring the real emitter in does not make these reachable, and they stay out of this
-track's scope, matching the-ir.md's own posture. One (the final fallback at `:3531`) is already
-claimed, in its own comment, to be structurally unreachable through `lower_fn_body_ir` and left only as
-a defensive catch-all — Slice 3.1 (§5) should add a verification (a debug assertion or a fixture
-proving it's never hit) rather than a real implementation. The remaining two (`:3346` "no `Callee`
-recorded for this call," `:3521` "bare ident names a free function used as a value") are genuine, live
-gaps that same slice does need to close before it's safe to wire `lower_expr_ir` into a real caller.
+track's scope, matching the-ir.md's own posture. **Slice 3.1 (`#1564`) closed the remaining three,
+shipped.** The final fallback (then `:3531`) is now `unreachable!()`, matching what its own comment
+already claimed. The other two turned out not to be the "genuine, live gaps" first assumed: tracing
+`:3346`'s three named Decision-C shapes against the current checker (and confirming empirically, via
+the real per-context checking pipeline, not the bare single-file harness which under-populates
+handler-body `Callee`s) found every one of them already Callee-recording — that branch is
+`unreachable!()` too. `:3521`'s free-function-as-value case was real and is now
+`bynk_ir::IrExprKind::FnRef`, a new variant (not `Global`, which is narrowly scoped to nullary
+sum-variant constructors).
 
 ## 5. Slice decomposition (final)
 
@@ -221,10 +224,10 @@ entirely into the new item-assembly slice (its own real home, per its functions'
   blocker (`emit_statement` already bridges through `Pre`/`lower_expr` today; only what's *inside* that
   bridge needs to change type) — it converts for free alongside the rest, not as its own prerequisite
   slice. Sub-decomposition:
-  - **Slice 3.1 — close the two live `todo!()` gaps** named in §4 (`:3346`, `:3521`), plus a
-    verification (not an implementation) for `:3531`. Pure `bynk-lower`-internal: both gaps are reached
-    only from inside `lower_expr_ir`'s own dispatch, called by nothing in `bynk-emit` today — zero
-    emitter-side risk, genuinely independent, lands first.
+  - **Slice 3.1 — close the two live `todo!()` gaps. Shipped (`#1564`).** One (the missing-`Callee`
+    guard) turned out to already be unreachable — every shape once suspected of missing a `Callee`
+    traced, and confirmed empirically, to have one. The other (a bare free-function-as-value reference)
+    was real and is now `IrExprKind::FnRef`. See §4 for the full account.
   - **Slice 3.2 — the coordinated cutover itself.** Converts the mutually recursive family (kernels,
     match compilation, `lower_expr`'s own dispatch, the block/statement sink layer) from AST-typed to
     IR-typed parameters, and flips all seven external entry points (`emit_method`, `emit_free_fn`,
@@ -260,7 +263,7 @@ entirely into the new item-assembly slice (its own real home, per its functions'
 - [ ] Slice 0 — this doc
 - [x] Slice 1 — discard-site cleanup + the `HttpMethod` surface around it (`#1556`)
 - [x] Slice 2 — signatures (already satisfied — see §5, no code landed)
-- [ ] Slice 3.1 — close `bynk-lower`'s two live `todo!()` gaps
+- [x] Slice 3.1 — close `bynk-lower`'s two live `todo!()` gaps (`#1564`)
 - [ ] Slice 3.2 — the coordinated expr/stmt-core cutover (was Slice 6)
 - [ ] Slice 4 — handler/body (was Slice 5)
 - [ ] Slice 5 — item assembly (was Slice 4; absorbs old Slice 3 in full)

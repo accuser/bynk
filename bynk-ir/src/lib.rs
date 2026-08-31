@@ -379,6 +379,20 @@ pub enum IrExprKind {
     /// A bare reference to something with no scope of its own — narrowly
     /// scoped per Decision C; see [`GlobalRef`].
     Global(GlobalRef),
+    /// A bare free-function reference used as a **value**, not a call — legal
+    /// only in a function-typed expected position (v0.20a,
+    /// `bynk-check/src/checker/expressions.rs:47-77`'s own gate on
+    /// `check_ident`; every other bare reference to a function name is a
+    /// `bynk.resolve.fn_without_call` error). Not [`IrExprKind::Global`]:
+    /// that variant's own doc comment narrowly scopes it to a bare nullary
+    /// sum-variant constructor, and a free function is neither nullary nor a
+    /// sum variant — reusing it would misdescribe both. Not
+    /// [`IrExprKind::Call`] either, since nothing is being called here, only
+    /// referenced. Carries the function's own name — the same "identity, not
+    /// a copy" posture `GlobalRef`/`Callee::Store::field` already establish;
+    /// a printer emits it as that name unchanged, since a top-level function
+    /// is already a first-class value in the target.
+    FnRef(String),
     /// A bare `store Map[K, V]` field name used as a **value**, not a
     /// method-call receiver (`Callee::Store`/`Callee::Query` already lower
     /// those separately) and not a `Cell` (those are bound into scope as an

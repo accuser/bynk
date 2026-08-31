@@ -1678,7 +1678,7 @@ pub fn lower_agent_item_ir(agent: &AgentDecl, program: &CheckedProgram) -> IrIte
     // therefore not checker-legal today (`bynk.resolve.unknown_name` on a
     // certified program) — the same bucket `Set`/`Cache` are already in,
     // for the same reason: leaving it out of this table and falling through
-    // to `lower_ident_ir`'s own `todo!()` is correct, structurally
+    // to `lower_ident_ir`'s own final assertion is correct, structurally
     // unreachable rather than merely unhandled. If a future checker slice
     // makes a bare `Log` value legal, this table (and `ir.rs`'s own
     // `StoreQuery` doc comment) need revisiting alongside it.
@@ -2113,12 +2113,18 @@ pub fn lower_provider_item_ir(provider: &ProviderDecl, program: &CheckedProgram)
 /// contain. **Correction (P6.25, 2026-08-19): `?` propagation
 /// (`ExprKind::Question`) and an `is`-expression (`ExprKind::Is`) are no
 /// longer among those gaps** — both landed (P6.15/ADR 0337, P6.16/ADR 0338,
-/// following #1225's own `Ok`/`Err`/`Some`/`None` construction fix) — but
-/// `lower_expr_ir` still has two production-reachable `todo!()`s
-/// (`lower_call_ir`'s missing-`Callee` guard and a bare ident naming a free
-/// fn used as a value, P6.2 territory), so a real op body is not yet
-/// unconditionally safe to build; the risk has just narrowed. This function
-/// never touches `ops`/bodies, so it carries none of that risk;
+/// following #1225's own `Ok`/`Err`/`Some`/`None` construction fix).
+/// **Second correction (Slice 3.1 of #1542, `design/tracks/the-ir-cutover.md`
+/// §5): `lower_call_ir`'s missing-`Callee` guard and `lower_ident_ir`'s bare
+/// free-fn-as-value case are no longer gaps either** — the former is
+/// asserted unreachable (every call shape once suspected of missing a
+/// `Callee` traced, and empirically confirmed, to have one), the latter now
+/// lowers to `IrExprKind::FnRef`. `lower_expr_ir`'s only remaining `todo!()`s
+/// are the six test-sublanguage constructs (`expect`, `Val[T]`, `Wire`,
+/// `Observation`, `trace`) gated behind `ctx.in_test_body` — never legal
+/// inside a provider op body — so a real op body is now unconditionally safe
+/// to build as far as expression coverage goes. This function never touches
+/// `ops`/bodies, so it carried none of that risk either way;
 /// [`lower_provider_item_ir`] itself now calls it too, rather than
 /// hand-duplicating the one-line `map`.
 pub fn lower_provider_given_ir(provider: &ProviderDecl) -> Vec<CapRefIr> {
@@ -3352,8 +3358,8 @@ fn lower_interp_part_ir(part: &InterpPart, cx: &mut LowerIrCtx) -> IrInterpPart 
 /// identity is already recorded) and wrong at worst (a bare type name like
 /// `Point` in `Point.origin()` is not a `Local`, not a `Global`-shaped
 /// nullary variant, and not a free function — lowering it as an ordinary
-/// expression would hit `lower_ident_ir`'s own fallback `todo!()` for no
-/// good reason). This is a lowering-time convention with no consumer yet to
+/// expression would hit `lower_ident_ir`'s own final assertion for no good
+/// reason). This is a lowering-time convention with no consumer yet to
 /// validate it against (Decision A, #1143) — worth a second look once a
 /// real `Ir → TS` printer is proposed.
 fn lower_call_ir(
@@ -3365,11 +3371,38 @@ fn lower_call_ir(
 ) -> IrExpr {
     let ty = cx.expr_ty(e.id);
     let span = e.span;
+    // Slice 3.1 of #1542 (`design/tracks/the-ir-cutover.md` §5): the three
+    // shapes this branch's own history named as Decision C's (#1143)
+    // deliberately Callee-less exclusions are, in the current tree, all
+    // confirmed Callee-recording and none of them reaches here in the first
+    // place — traced directly against `bynk-check/src/checker/calls.rs` and
+    // confirmed against the real per-context checking pipeline (not the bare
+    // single-file harness, which under-populates `callees` for a handler
+    // body and would misreport every miss as real):
+    //   - a bare `HttpResult`/`QueueResult` nullary variant reference
+    //     (`NotFound`, `Ack`) is an `ExprKind::Ident`, never reaches
+    //     `lower_call_ir` at all, and `lower_ident_ir`'s own `Callee::Intrinsic`
+    //     arm already handles it (P6.21/P6.23, review of #1251/#1252).
+    //   - `Events.emit[E](event)` resolves through `check_static_call`'s
+    //     ordinary `ctx.caps.capabilities.get("Events")` branch (`calls.rs`,
+    //     first-party-gated) exactly like any other capability op — it
+    //     records a real `Callee::Capability`, confirmed both by direct
+    //     reading and by an empirical per-context check of a structurally
+    //     identical capability-op call.
+    //   - a test-body `svc.<VERB>("/path", …)` system-http address records a
+    //     real `Callee::TestService` (`check_test_service_address`, 6 sites
+    //     in `calls.rs`) — and test bodies are excluded from this whole pass
+    //     regardless (Decision C, `#1145`), the same gate the six
+    //     test-sublanguage `todo!()`s above answer for.
+    // No other call shape was found reachable through a `fn`/method body —
+    // this entry point's own scope, per `lower_fn_body_ir`'s doc comment —
+    // that resolves without a `Callee`. Asserted, not merely assumed.
     let Some(callee) = cx.callee(e.id).cloned() else {
-        todo!(
-            "no Callee recorded for this call at {span:?} — one of the shapes Decision C (#1143) \
-             left out on purpose (HttpResult/QueueResult bare-variant construction, Events.emit, \
-             the production is_system_http_service address), or a genuine, newly-discovered gap"
+        unreachable!(
+            "no Callee recorded for this call at {span:?} — every shape traced during Slice \
+             3.1's investigation resolves to a real Callee (see this function's own doc comment \
+             just above); this is either a newly-introduced checker regression or a genuinely \
+             new call shape neither the original Decision C survey nor this one considered"
         )
     };
     if let Callee::Ctor { tag, .. } = callee {
@@ -3474,29 +3507,30 @@ fn lower_lambda_ir(e: &Expr, lambda: &LambdaExpr, cx: &mut LowerIrCtx) -> IrExpr
     }
 }
 
-/// Classify a bare `Ident` as `Local` or `Global` — Decision C's narrow
-/// scope (refined during implementation, see [`GlobalRef`]'s doc comment for
-/// why the `HttpResult`/`QueueResult` case named in the original proposal
-/// was dropped).
+/// Classify a bare `Ident` as `Local`, `StoreQuery`, `FnRef`, or `Global` —
+/// Decision C's narrow scope (refined during implementation, see
+/// [`GlobalRef`]'s doc comment for why the `HttpResult`/`QueueResult` case
+/// named in the original proposal was dropped).
 ///
 /// The `Global` probe is a pure name-shaped lookup with nothing tying it to
 /// "this name is not one of the other, unmigrated forms" — a real
-/// collision risk a review of this slice named directly. Only one of those
-/// forms is cheaply excludable here (a bare free-function name, `ctx.input.
+/// collision risk a review of this slice named directly. Every other form
+/// this pass can actually reach today (a bare free-function name, `ctx.input.
 /// fns` in `check_ident`'s own ladder, `checker/expressions.rs:56-101` —
-/// checked *before* its own nullary-variant fallback): excluding it first
-/// closes the one case this pass can actually reach today, since this
-/// entry point only ever runs over a `fn`/method body ([`lower_fn_body_ir`]'s
-/// own doc comment) where a free function is the one non-local, non-variant
-/// bare ident that legitimately occurs (a fn-value reference, `Callee`/
-/// `Lambda`-adjacent, P6.2 territory). The remaining forms —
-/// `bynk-emit/src/emitter/lower.rs`'s `lower_ident` still special-cases
-/// `old`/`new` transition binders, invariant state-field reads, agent
-/// store-cell/store-map/store-log reads, the multi-actor `deps.who` binder —
-/// are handler-body-only and structurally unreachable through this entry
-/// point (it has no `store_fields`/`agent_state_ty`/`actor_binding`
-/// parameter to carry them), not merely unexcluded; each needs its own
-/// resolved-identity plumbing this slice does not commission (Decision C).
+/// checked *before* its own nullary-variant fallback) is excluded first,
+/// since this entry point only ever runs over a `fn`/method body
+/// ([`lower_fn_body_ir`]'s own doc comment) where a free function is the one
+/// non-local, non-variant bare ident that legitimately occurs (a fn-value
+/// reference — [`IrExprKind::FnRef`], not `Global`; see its own doc comment).
+/// The remaining forms — `bynk-emit/src/emitter/lower.rs`'s `lower_ident`
+/// still special-cases `old`/`new` transition binders, invariant state-field
+/// reads, agent store-cell/store-map/store-log reads, the multi-actor
+/// `deps.who` binder — are handler-body-only and structurally unreachable
+/// through this entry point (it has no `store_fields`/`agent_state_ty`/
+/// `actor_binding` parameter to carry them), not merely unexcluded; each
+/// needs its own resolved-identity plumbing this slice does not commission
+/// (Decision C) — the function's own final arm asserts this rather than
+/// merely assuming it.
 fn lower_ident_ir(name: &str, expr_id: Option<ExprId>, cx: &LowerIrCtx) -> IrExprKind {
     if cx.lookup(name).is_some() {
         return IrExprKind::Local(name.to_string());
@@ -3540,22 +3574,25 @@ fn lower_ident_ir(name: &str, expr_id: Option<ExprId>, cx: &LowerIrCtx) -> IrExp
     if cx.store_queryable.contains(name) {
         return IrExprKind::StoreQuery(name.to_string());
     }
+    // Slice 3.1 of #1542 (`design/tracks/the-ir-cutover.md` §5): a bare free
+    // function referenced as a value (v0.20a, `check_ident`'s own
+    // function-typed-expected-position gate) — see `IrExprKind::FnRef`'s own
+    // doc comment for why this isn't `Global`, `Call`, or `Local`.
     if cx.program.fns.contains_key(name) {
-        todo!(
-            "bare ident `{name}` names a free function used as a value — Callee/Lambda-adjacent, \
-             P6.2 territory, not a Global reference"
-        )
+        return IrExprKind::FnRef(name.to_string());
     }
     if nullary_variant_owner(name, cx).is_some() {
         return IrExprKind::Global(GlobalRef {
             tag: name.to_string(),
         });
     }
-    todo!(
+    unreachable!(
         "bare ident `{name}` is neither a locally-bound name, a free function, nor a bare \
          nullary sum-variant reference — one of lower_ident's other special cases (store field, \
          agent `self`, actor binder, transition `old`/`new`), structurally unreachable through \
-         lower_fn_body_ir (see its own doc comment) but left unhandled here defensively"
+         lower_fn_body_ir (see its own doc comment): it has no store_fields/agent_state_ty/\
+         actor_binding parameter to carry any of them, so no caller of this entry point can ever \
+         construct an ident of that shape"
     )
 }
 
@@ -4221,7 +4258,7 @@ commons demo {
         // failure mode `checker.rs`'s own `Ctx::type_vars` +
         // `resolve_type_ref_in` exists to avoid. Without it, `x`'s own type
         // never binds, and this test's own body — a bare `Local` — would
-        // wrongly fall through to `lower_ident_ir`'s `todo!()`.
+        // wrongly fall through to `lower_ident_ir`'s final assertion.
         let program = checked_program(
             r#"
 commons demo {
@@ -4256,13 +4293,14 @@ commons demo {
     }
 
     #[test]
-    #[should_panic(expected = "Callee/Lambda-adjacent")]
-    fn bare_free_function_reference_is_excluded_from_the_global_probe() {
-        // A bare function-value reference (not a call) is the one non-local,
-        // non-variant ident this pass can actually reach — `lower_ident_ir`
-        // must stop here rather than risk `nullary_variant_owner` matching a
-        // same-named variant by coincidence (a real collision risk a review
-        // of this slice named directly).
+    fn bare_free_function_reference_lowers_to_fn_ref_not_the_global_probe() {
+        // Slice 3.1 of #1542: a bare function-value reference (not a call)
+        // is the one non-local, non-variant ident this pass can actually
+        // reach — `lower_ident_ir` must classify it as `FnRef` before
+        // `nullary_variant_owner` gets a chance to match a same-named
+        // variant by coincidence (a real collision risk a review of this
+        // slice named directly), and must not reuse `Global`, which is
+        // narrowly scoped to nullary sum-variant constructors.
         let program = checked_program(
             r#"
 commons demo {
@@ -4272,7 +4310,13 @@ commons demo {
 }
 "#,
         );
-        let _ = lower_fn(&program, "get_double");
+        let ir = lower_fn(&program, "get_double");
+        let tail = fn_tail(&ir);
+        assert!(
+            matches!(&tail.kind, IrExprKind::FnRef(name) if name == "double"),
+            "expected FnRef(\"double\"), got {:?}",
+            tail.kind
+        );
     }
 
     #[test]
@@ -6259,7 +6303,7 @@ commons demo {
         // Not just `form` — the guard itself must actually lower, and
         // (R5.4 ordering) must see the pattern's own bound name `flag`
         // already in scope, resolving as a `Local` rather than falling
-        // through to `lower_ident_ir`'s `todo!()`. `lower_arm_ir` already
+        // through to `lower_ident_ir`'s final assertion. `lower_arm_ir` already
         // covers this standalone (`pattern_ir_arm_guard_lowers_and_sees_the_
         // patterns_own_bindings`); this pins the same property reached
         // through the real `ExprKind::Match` arm instead.
@@ -8567,7 +8611,7 @@ service Api {
         // same claim as `binder` actually reaching the body's own scope —
         // walk the lowered body and confirm a real `Local("c")` read
         // reached the tree where `c.identity` was written, rather than
-        // `lower_ident_ir`'s own unresolved-ident `todo!()`.
+        // `lower_ident_ir`'s own unresolved-ident final assertion.
         let IrExprKind::Block { tail, .. } = &ir.body.kind else {
             panic!("expected a Block, got {:?}", ir.body.kind)
         };
@@ -8933,10 +8977,14 @@ service Outbox from queue("orders") {
     /// `IrHandler` is still unsafe to build unconditionally at
     /// `emit_service`'s call site — correction, P6.25, 2026-08-19:
     /// `ExprKind::Question`/`ExprKind::Is` no longer among the reasons why,
-    /// both landed as P6.15/ADR 0337 and P6.16/ADR 0338; `lower_expr_ir`'s
-    /// two remaining production-reachable `todo!()`s are P6.2-territory
-    /// `Callee`/free-fn gaps instead), so the fixture stays as-is rather than
-    /// chasing a body shape that still panics today.
+    /// both landed as P6.15/ADR 0337 and P6.16/ADR 0338; second correction,
+    /// Slice 3.1 of #1542: the `Callee`/free-fn gaps that were the remaining
+    /// reason are closed too, so `lower_expr_ir` has no known
+    /// production-reachable `todo!()` left at all), so the fixture stays
+    /// as-is on its own terms — this test's own claim (pinning
+    /// `lower_service_handler_signature_ir` as the real entry point,
+    /// independent of whether a full `IrHandler` build would also succeed
+    /// now) is unaffected either way.
     #[test]
     fn service_handler_signature_lowers_without_touching_a_body_that_constructs_ok() {
         let program = checked_context_program(
