@@ -1,4 +1,0 @@
----
-level: patch
-changelog: Part 15.1's refusal register named three residuals that were flagged in prose but never given a durable tracking home: an unresolved effect-inference contradiction between design notes §15 and type-system spec §2.8.4, a diagnostic-error-enum trigger whose registry-drift evidence is unmeasured since a July finding, and a tuples contradiction spanning ADR 0120, the type-system spec and design notes §11. Now tracked as issues ([#1529](https://github.com/accuser/bynk/issues/1529), [#1531](https://github.com/accuser/bynk/issues/1531), [#1530](https://github.com/accuser/bynk/issues/1530)) and cross-linked from `design/bynk-greenfield-compiler.md`, alongside a fourth `*Tracked:*` line the same register was missing for rowan's pre-existing issue ([#1524](https://github.com/accuser/bynk/issues/1524), filed by #1528).
----
