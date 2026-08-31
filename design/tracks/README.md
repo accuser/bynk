@@ -78,7 +78,8 @@ each track's spine issue; this table is deliberately just the map.
 |---|---|---|---|
 | [`documentation.md`](documentation.md) | [#557](https://github.com/accuser/bynk/issues/557) | Slicing (slice 0 shipped) | Documentation & web presence: the Astro + Starlight migration, a CI snippet-verification harness, playground integration seams |
 | [`idempotency-capability.md`](idempotency-capability.md) | [#921](https://github.com/accuser/bynk/issues/921) | Slicing (slice 0 shipped, #929; call-site key scoping follow-up shipped, #934) | The `Idempotency` capability: mechanical dedup for at-least-once delivery, per design notes §4, §12 |
-| [`the-ir-cutover.md`](the-ir-cutover.md) | [#1542](https://github.com/accuser/bynk/issues/1542) | Settled (slice 1 proposed, #1556) | Wiring `bynk-lower`'s unconsumed lowering into `bynk-emit` — the cutover `the-ir.md` (phase 6) settled the shape of but never sliced before retiring |
+| [`post-trajectory-crate-hygiene.md`](post-trajectory-crate-hygiene.md) | [#1533](https://github.com/accuser/bynk/issues/1533) | Settling | READMEs, crate-local unit tests, comment rewrite, and module decomposition left open after the compiler-trajectory's eight phases closed — internal-architecture theme, not language surface, continuing the posture `compiler-architecture.md`/`crate-decomposition.md`/`content-ownership.md` took |
+| [`the-ir-cutover.md`](the-ir-cutover.md) | [#1542](https://github.com/accuser/bynk/issues/1542) | Slicing (slice 1 shipped, #1556) | Wiring `bynk-lower`'s unconsumed lowering into `bynk-emit` — the cutover `the-ir.md` (phase 6) settled the shape of but never sliced before retiring |
 
 (`documentation.md` pre-dates the GitHub-native flow, so its doc was
 committed by an ordinary PR rather than a settling draft PR; the spine issue
