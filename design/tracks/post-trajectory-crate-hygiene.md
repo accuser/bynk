@@ -118,11 +118,17 @@ workstreams can move one of them:
 | `emit_diagnostics` | `bynk-emit=4/6`, `bynk-check=389/397` | **distinct** `"bynk.*"` literals per crate `src/`; **no test-range exclusion** | tests (S6) |
 | `fs_below_driver` | 0 files | files touching `std::fs` below the driver | splits, via malformed test modules (S4, S9) |
 | `options_sources` | present | `struct CompileOptions` with `sources`, `bynk-emit/src/project.rs` | splits (S9) |
-| `ts_writes` / `ts_any` | 809 / 26 | occurrences in `bynk-emit/src`, test ranges excluded | splits, via malformed test modules (S9) |
+| `ts_writes` / `ts_any` | 809 / 26 | `write!`/`writeln!`/`format!` (`ts_writes`) or `: any`-shaped (`ts_any`) occurrences in `bynk-emit/src`, test ranges excluded — **call sites, not the `out: &mut String`/sink-signature count** | splits, via malformed test modules (S9); **also S6** — any test helper added to `bynk-emit` that calls `format!` outside a canonical `#[cfg(test)] mod` block adds to it, Trap A applied to this probe rather than `fs_below_driver` |
 | `span_keyed_maps` | 4 | `HashMap<Span` across all `src/`, **comments included** | comments (S8), splits (S4) |
 | `workspace_lints` | present | **first line** of root `Cargo.toml` naming the lint | comments (S8) |
 | `test_density` | trend only | non-comment lines in trailing `#[cfg(test)] mod`, `src/` only | tests (S5–S7), splits (S4, S9) |
 | `keep_in_sync` | trend, 239 | comment lines matching "in sync"/"mirrors"/"parity"/"must match" | READMEs (S2), comments (S8) |
+
+`hoist_sinks` (gated, reads 0 — the `stmts: &mut Vec<String>` sink Tier B/T2.1
+already deleted) is omitted from this table deliberately, checked rather than
+assumed: its needle names no file this track plans to touch, its count
+excludes comments, and nothing here reintroduces that specific signature —
+safe to leave gated and unmentioned.
 
 Three traps, all verified in the probe source, that every slice touching
 `bynk-emit`, `bynk-ide`, `bynk-fmt`, `bynk-check`, or comments must check
@@ -142,8 +148,14 @@ uses the canonical two-line form.*
 unit test asserting on an emitted import specifier (`"bynk.locale"` is a *module
 name*, not a diagnostic code) is likely, not merely possible, to add a seventh
 literal. *Guard before every commit touching `bynk-emit`/`bynk-check` source:*
-`rg -o '"bynk\.[a-zA-Z0-9_.]*"' <crate>/src | sort -u | wc -l` must still read
-6 (`bynk-emit`) / 397 (`bynk-check`, naive).
+`rg -o --no-filename '"bynk\.[a-zA-Z0-9_.]*"' <crate>/src | sort -u | wc -l` must still read
+6 (`bynk-emit`) / 397 (`bynk-check`, naive) — `rg -o` prefixes each match with
+its path when searching a directory, so `sort -u` without `--no-filename`
+dedupes *(file, literal)* pairs, not literals; run against the tree as of this
+correction, the command without that flag reads 439 for `bynk-check` (the flag
+is required, not cosmetic — confirmed live: `bynk-emit`'s 6 happens to hold
+either way only because every one of its literals sits in a single file,
+`project.rs`).
 
 **C. The C′ loophole in `ast_importers`.** `has_module_level_super_glob`
 (`:1470`) is exact string equality on `use super::*;`. A split child that
@@ -236,12 +248,22 @@ Triage by API shape, per P1/R11.1:
   `context_checks::{ts_type_ref_display, type_ref_is_keyable, cache_ttl_millis}`,
   `calls::flatten_ident_chain`, `kernels::{is_orderable, is_numeric, is_keyable,
   is_query_op}`.
-- **`bynk-emit` (11.8%) — the fix is the signature, not the test.** 53 functions
-  take an `out: &mut String` sink (`ts_writes = 809` *is* this measurement).
-  **Do not bulk-add tests around a `&mut String` parameter** — it cements the
-  shape R7 is in the process of removing. Add tests only to functions that
-  already return `TsStmt`/`TsExpr`/`TsType`, extending the pattern the nine
-  existing test modules in `emit.rs` already use.
+- **`bynk-emit` (11.8%) — the fix is the signature, not the test.** 26 functions
+  currently take an `out: &mut String` sink (counted directly: a multiline scan
+  for `fn <name>(...out: &mut String...)`, distinct names, across
+  `bynk-emit/src`; a bare substring grep over-counts at 53, because 28 of those
+  hits are doc comments narrating an *already-converted* function's old
+  signature — "returns real `TsStmt`s (was `out: &mut String`)" — not a live
+  parameter). This is **not** what either gated probe measures: `ts_writes`
+  (809) counts `write!`/`writeln!`/`format!` call sites, not sink signatures,
+  and `hoist_sinks` (gated, reads 0) tracks a different, already-eliminated
+  needle, `stmts: &mut Vec<String>` (Tier B/T2.1's own sink, distinct from this
+  one). No probe currently gates this count; §5's `ts_writes` citation was
+  wrong to claim it did. **Do not bulk-add tests around a `&mut String`
+  parameter** — it cements the shape R7 is in the process of removing. Add
+  tests only to functions that already return `TsStmt`/`TsExpr`/`TsType`,
+  extending the pattern the nine existing test modules in `emit.rs` already
+  use.
 - **`bynk-ir` (0.0%) — a real signature defect, not a testing gap.** ~40 data
   definitions need no test. But `block_uses_emit`
   (`bynk-ir/src/lib.rs:1792`) makes a pure data crate depend on **`bynk-check`**
@@ -294,9 +316,18 @@ three tests all pass, at seams chosen by cohesion, never by line count:
 - **Hard veto — no orphan context.** A seam requiring a new `&mut Ctx` parameter
   that did not previously exist is a re-architecture, not a split.
 - **Floor.** No child below ~600 production lines — a 200-line module adds file
-  indirection without naming a family.
+  indirection without naming a family. **Carve-out:** a child below the floor
+  is allowed when the extraction is itself the point — a pure, independently
+  testable family the parent's size was hiding, per T1 (it still needs a real
+  noun-phrase name, not a line-count justification). `bynk-lsp`'s `cursor.rs`
+  (~200 lines of pure `&str -> Option<usize>`) and `bynk-fmt`'s `verify.rs`
+  (~150) are both this case, not an exception to it — the whole point of
+  splitting them out is making that small pure family visible and testable
+  (workstream 2's own argument), which a 600-line floor applied uniformly
+  would forbid.
 
-**S4 — the safe set, ~65,700 lines, zero gated-probe exposure.**
+**S4 — the safe set, ~66,700 lines (the sixteen sizes below sum to 66,713),
+zero gated-probe exposure.**
 `bynk-ts/src/printer.rs` (6703 lines) is the reference split — the cleanest
 seams in the workspace and fully outside every probe's universe:
 `printer/stmt.rs`, `printer/expr.rs`, `printer/ty.rs`, `printer/decl.rs`, with
@@ -348,7 +379,10 @@ all in this track — a child would need a new `TS_WRITES_EXCLUDED_FILES` entry.
    the right call for this pass). See §10.
 3. **Does `test_density` stay ungated?** §5's position: yes, for the reasons
    given there. Settle whether a future, separate, zero/closure-shaped probe
-   (e.g. "no crate under `bynk-check`'s dependency direction on `bynk-ir`") is
+   (e.g. "no crate below `bynk-check` in the dependency graph may name
+   `bynk_check::`" — the direction §5 actually found reversed, `bynk-ir`
+   depending *up* on `bynk-check` via `block_uses_emit`, not the other way
+   round) is
    worth building as part of S7, or left as a named follow-on.
 4. **`crate_readmes`'s exact contract (S3).** Presence-only, or badges + `## Use`
    version-pin conformance + dependency-diagram conformance? Recommend the
@@ -407,6 +441,17 @@ comment* made), `bynk-lower/src/lib.rs:3086-3094` (eleven inline lines ending
 ("was `lower_handler_signature_ir` … the wrong sibling for a *service*
 handler"), and `bynk-ir/src/lib.rs:1` (a crate-level `//!` opening with a slice
 ID and issue number before saying what the crate is).
+
+**These line anchors, and the §6 marker-hit counts below, are taken against the
+pre-S4 tree — sequencing matters.** `bynk-lower/src/lib.rs`, `bynk-ir/src/lib.rs`
+and (via `bynk-ts/src/printer.rs`) two of the census's five files are S4 split
+targets; by the time S8 opens, `printer.rs` has already become
+`printer/{stmt,expr,ty,decl}.rs` and its own marker hits will have scattered
+across the children the same way its production lines do. **S4 runs before S8**
+— the slice numbering already implies this, but it is worth saying outright
+rather than leaving a later reader to infer it: treat every line anchor and
+per-file hit count here as evidence for *sizing* S8, re-censused against
+whatever tree exists once S4 lands, not as S8's literal worklist.
 
 Comments that must be kept despite carrying markers, because no regex can
 separate them from the defective class: `bynk-wasm/src/lib.rs:116-124` (states
@@ -502,10 +547,14 @@ one of this track's own slices:
   which *are* on the list. The last release run predates `bynk-project`'s
   extraction (30 July 2026 vs. 7 August 2026), so this has not been exercised
   since phase 4 and will break the next release regardless of this track's
-  timeline.
+  timeline. Filed:
+  [#1559](https://github.com/accuser/bynk/issues/1559).
 - **`bynk-testkit` is a versioned dev-dependency of three published crates**
-  (`bynk-lsp`, `bynk`, `bynkc`) while itself `publish = false` — the same
-  failure shape as above, unverified against a real dry-run.
+  (`bynk-lsp`, `bynk`, `bynkc`) while itself `publish = false` — confirmed
+  live that neither release workflow passes `cargo publish` `--no-verify`, so
+  publish verification builds the dev-dependency graph too; unverified
+  against a real dry-run whether that actually fails. Filed:
+  [#1560](https://github.com/accuser/bynk/issues/1560).
 - **Three entries in the probe harness's own exception lists name files the
   P7.12 crate carve deleted** — `NAMED_FS_EXCEPTIONS` names
   `bynk-emit/project/discovery.rs` twice and `project/paths.rs` once;
@@ -514,6 +563,7 @@ one of this track's own slices:
   `schema_registry.rs`, `tests_emit.rs`. `fs_below_driver`'s "0 named floor" for
   `bynk-emit` is therefore currently vacuous — it reads zero because the
   exception targets are gone, not because the residue they named was cleared.
+  Filed: [#1561](https://github.com/accuser/bynk/issues/1561).
 - **`design/tracks/README.md` notes `agent-capability-encapsulation.md` is a
   committed Draft in neither the active-tracks table nor
   `retired-tracks.md`** — needs a spine issue or a retirement, unrelated to this
