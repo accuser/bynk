@@ -160,11 +160,10 @@ commissions"*) and are gated behind `ctx.in_test_body`, structurally unreachable
 C, `#1145`) — wiring the real emitter in does not make these reachable, and they stay out of this
 track's scope, matching the-ir.md's own posture. One (the final fallback at `:3531`) is already
 claimed, in its own comment, to be structurally unreachable through `lower_fn_body_ir` and left only as
-a defensive catch-all — Slice 3 (§5; the expr/stmt-core cutover, renumbered from the original Slice 6)
-should add a verification (a debug assertion or a fixture proving it's never hit) rather than a real
-implementation. The remaining two (`:3346` "no `Callee` recorded for this call," `:3521` "bare ident
-names a free function used as a value") are genuine, live gaps that same slice does need to close
-before it's safe to wire `lower_expr_ir` into a real caller.
+a defensive catch-all — Slice 3.1 (§5) should add a verification (a debug assertion or a fixture
+proving it's never hit) rather than a real implementation. The remaining two (`:3346` "no `Callee`
+recorded for this call," `:3521` "bare ident names a free function used as a value") are genuine, live
+gaps that same slice does need to close before it's safe to wire `lower_expr_ir` into a real caller.
 
 ## 5. Slice decomposition (final)
 
@@ -207,10 +206,46 @@ entirely into the new item-assembly slice (its own real home, per its functions'
   mentions only, genuinely zero callers — confirming this was Slice 2's own shape, not a pattern across
   the other clusters (it wasn't — see above).
 - **Slice 3 — expr/stmt core** *(was Slice 6)*. `lower_expr_ir`/`lower_block_ir` wired into
-  `emitter/lower.rs`'s `lower_expr`. Requires closing exactly the two live gaps named in §4 (`:3346`,
-  `:3521`) first, plus a verification (not an implementation) for `:3531`. Unblocks `#1225`'s dormant
-  `@cache`/`@limit` accumulator work, which no shipped path currently reaches. **This is now the real
-  next slice** — everything below depends on it.
+  `emitter/lower.rs`'s `lower_expr`. **This is the real next slice — everything below depends on it —
+  and it does not decompose into many small, independently-mergeable pieces the way Slice 1 did.**
+  Investigated before proposing: `lower_expr` (`lower.rs:920`) is the single funnel for a mutually
+  recursive family — every one of the eleven `lower_*_kernel` functions, the match-compilation cluster
+  (`lower_match_as_iife` → `build_match_iife` → `emit_match_case` → `emit_match_body` →
+  `emit_match_if_chain`), `lower_method_call`/`lower_call`/`lower_if`/`lower_lambda`/
+  `lower_field_access`, and the block/statement layer (`emit_block_inner`/`emit_statement`, still on
+  the older `out: &mut String` sink convention `Lowered` replaced everywhere else) all call back into
+  the shared lowerer for their own sub-expressions — `lower_list_kernel` alone makes 71 such calls.
+  None of the ~46 AST-typed functions in this file is a leaf with no AST-typed dependents; a kernel's
+  own parameter type can't move to `&IrExpr` independently of the caller that hands it that value
+  already being IR-typed. The sink-vs-`Lowered` calling-convention question is **not** a separate
+  blocker (`emit_statement` already bridges through `Pre`/`lower_expr` today; only what's *inside* that
+  bridge needs to change type) — it converts for free alongside the rest, not as its own prerequisite
+  slice. Sub-decomposition:
+  - **Slice 3.1 — close the two live `todo!()` gaps** named in §4 (`:3346`, `:3521`), plus a
+    verification (not an implementation) for `:3531`. Pure `bynk-lower`-internal: both gaps are reached
+    only from inside `lower_expr_ir`'s own dispatch, called by nothing in `bynk-emit` today — zero
+    emitter-side risk, genuinely independent, lands first.
+  - **Slice 3.2 — the coordinated cutover itself.** Converts the mutually recursive family (kernels,
+    match compilation, `lower_expr`'s own dispatch, the block/statement sink layer) from AST-typed to
+    IR-typed parameters, and flips all seven external entry points (`emit_method`, `emit_free_fn`,
+    `emit_contract_guarded_body`, `emit_provider`, `emit_service`, `emit_agent`, `emit_ws_do_method` —
+    all reaching this machinery through `emit_block_as_function_body_with_return`, `lower.rs:201`) to
+    call `bynk_lower::lower_block_ir`/`lower_fn_body_ir` first and thread the result through. Lands as
+    **one slice, not several independently-mergeable ones** — a half-converted state (some entry points
+    reading IR, others still reading AST, for the same shared functions) would mean the family exists
+    in two incompatible signatures at once: either a temporary duplicate copy of the whole mutually
+    recursive machinery (real maintenance cost, discarded once migration finishes, and a live second
+    copy to keep in sync in the meantime), or genuinely broken intermediate states that don't compile.
+    Neither buys real safety over one well-tested PR. Internally sequenced as ordered commits within the
+    one PR for reviewability (kernels and other near-leaves
+    first, match compilation next, `lower_expr`'s own dispatch and the statement/block layer last, the
+    seven entry-point call sites last of all) even though intermediate commits won't independently
+    compile against a stable interface. The size is real (order of 46 signatures across 6,321 lines),
+    but the risk profile is not the same as a feature change of that size: emitted output must be
+    byte-identical (a mechanical retype, not new logic), and the full e2e fixture corpus's zero-diff
+    bless (the same gate every `#1137` slice used) is exhaustive verification for exactly that claim —
+    unblocks `#1225`'s dormant `@cache`/`@limit` accumulator work, which no shipped path currently
+    reaches, as a real side effect of 3.2 rather than a reason to split further.
 - **Slice 4 — handler/body** *(was Slice 5)*. `lower_fn_body_ir`, `lower_handler_ir`,
   `lower_service_handler_ir`. Depends on Slice 3 (fn/handler bodies lower through `lower_expr_ir`). The
   `Message`-arm `ServiceProtocol` check is explicitly **out of scope** — stays declined per §3.3.
@@ -225,7 +260,8 @@ entirely into the new item-assembly slice (its own real home, per its functions'
 - [ ] Slice 0 — this doc
 - [x] Slice 1 — discard-site cleanup + the `HttpMethod` surface around it (`#1556`)
 - [x] Slice 2 — signatures (already satisfied — see §5, no code landed)
-- [ ] Slice 3 — expr/stmt core (was Slice 6)
+- [ ] Slice 3.1 — close `bynk-lower`'s two live `todo!()` gaps
+- [ ] Slice 3.2 — the coordinated expr/stmt-core cutover (was Slice 6)
 - [ ] Slice 4 — handler/body (was Slice 5)
 - [ ] Slice 5 — item assembly (was Slice 4; absorbs old Slice 3 in full)
 
