@@ -81,11 +81,13 @@ signature/comparison surface around them: three wrapper signatures
 (`emit_http_wrapper`/`emit_http_sum_wrapper`/`emit_http_oidc_wrapper`, `workers.rs:1527, 1699, 1820`),
 the `HttpRoute::method` field itself (`workers_entry.rs:1679`), `derive_allowed_methods(methods: impl
 Iterator<Item = HttpMethod>) -> Vec<String>` (`workers_entry.rs:1462`, fed from that field at `:1513`
-and `:1579`), and three direct `route.method == HttpMethod::Get` comparisons (`workers_entry.rs:447`,
-`:1803`, `:2114`). `IrHttpMethod::as_str()` (`bynk-ir/src/lib.rs:1704`, P6.51, a field-for-field
-mirror) makes all of these mechanical, no behaviour change. ADR 0355's "cascade well beyond this
-slice's own scope" was sized against the *whole* `HttpMethod` surface before P6.51 narrowed it; the
-remaining gap is bounded, if wider than a first read of the two discard sites alone would suggest.
+and `:1579`), and four direct `route.method == HttpMethod::Get` comparisons (`workers_entry.rs:447`,
+`:1803`, `:2114`, `:2168` — the fourth found only during Slice 1's implementation, a `HEAD`-from-`GET`
+synthesis check this section's own review pass missed). `IrHttpMethod::as_str()`
+(`bynk-ir/src/lib.rs:1704`, P6.51, a field-for-field mirror) makes all of these mechanical, no
+behaviour change. ADR 0355's "cascade well beyond this slice's own scope" was sized against the
+*whole* `HttpMethod` surface before P6.51 narrowed it; the remaining gap is bounded, if wider than a
+first read of the two discard sites alone would suggest.
 
 Converting these signatures retires every production caller of the AST-typed twin,
 `http_handler_method_name` (`emit.rs:1253`) — its four callers are exactly the three wrappers
@@ -166,13 +168,14 @@ does need to close before it's safe to wire `lower_expr_ir` into a real caller.
 ## 5. Slice decomposition (final)
 
 - **Slice 0 (this doc).** No code.
-- **Slice 1 — discard-site cleanup + the `HttpMethod` surface around it.** The four discard sites
-  (`emitter.rs:292`/`:482`, `workers_entry.rs:380-384`/`workers.rs:606-613`) need no new dependency
-  threaded — every site already holds the IR value it needs. Alongside them, per §3.2: the three
-  `emit_http_*_wrapper` signatures, `HttpRoute::method`, `derive_allowed_methods`, the three
-  `route.method == HttpMethod::Get` comparisons, and deleting `http_handler_method_name` (updating its
-  one remaining caller, `tests_emit.rs:718`, to call `http_handler_method_name_ir`). Front-loads a
-  small ADR reversing ADR 0355's `HttpMethod` deferral (§7).
+- **Slice 1 — discard-site cleanup + the `HttpMethod` surface around it. Shipped (`#1556`).** The four
+  discard sites (`emitter.rs:292`/`:482`, `workers_entry.rs:380-384`/`workers.rs:606-613`) needed no
+  new dependency threaded — every site already held the IR value it needed. Alongside them, per §3.2:
+  the three `emit_http_*_wrapper` signatures, `HttpRoute::method`, `derive_allowed_methods`, four
+  `route.method == HttpMethod::Get` comparisons (one more than §3.2 counted — found during
+  implementation), and deleting `http_handler_method_name` (its one remaining caller,
+  `tests_emit.rs:718`, repointed to `http_handler_method_name_ir`). Front-loaded a small ADR reversing
+  ADR 0355's `HttpMethod` deferral (§7).
 - **Slice 2 — signatures.** `lower_fn_sig_ir_from_types`, `lower_op_sig_ir_from_commons`.
 - **Slice 3 — store/commit/invariant/transition.** `lower_store_field_ir`, `lower_commit_shape_ir`,
   `lower_invariant_ir`, `lower_transition_ir`.
@@ -188,7 +191,7 @@ does need to close before it's safe to wire `lower_expr_ir` into a real caller.
 ## 6. Slice status
 
 - [ ] Slice 0 — this doc
-- [ ] Slice 1 — discard-site cleanup + the `HttpMethod` surface around it
+- [x] Slice 1 — discard-site cleanup + the `HttpMethod` surface around it (`#1556`)
 - [ ] Slice 2 — signatures
 - [ ] Slice 3 — store/commit/invariant/transition
 - [ ] Slice 4 — item assembly

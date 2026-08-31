@@ -16,8 +16,8 @@ use bynk_check::actors::ActorDecl;
 use bynk_check::checker::{TyId, TypedCommons, Types};
 use bynk_syntax::ast::{
     AgentDecl, BaseType, CapabilityDecl, CommonsItem, Expr, ExprKind, FnDecl, FnName, Handler,
-    HttpMethod, Ident, MessageEntry, MessagesDecl, Param, PredKind, ProviderDecl, RecordField,
-    Refinement, ServiceDecl, StoreField, TypeBody, TypeDecl, TypeParam, TypeRef,
+    Ident, MessageEntry, MessagesDecl, Param, PredKind, ProviderDecl, RecordField, Refinement,
+    ServiceDecl, StoreField, TypeBody, TypeDecl, TypeParam, TypeRef,
 };
 
 use bynk_ir::{
@@ -1250,16 +1250,12 @@ fn compute() -> Effect[Int] {
 /// as the identifier the Worker fetch handler invokes. Path parameter
 /// segments (`:name`) become `Param_name` to remain distinct from literal
 /// segments. (v0.9 §5.3)
-pub(crate) fn http_handler_method_name(method: HttpMethod, path: &str) -> String {
-    http_handler_method_name_from_str(method.as_str(), path)
-}
-
-/// P6.51 (design/tracks/the-ir.md §6b): [`http_handler_method_name`]'s own
-/// `IrHttpMethod` sibling, for the call sites that already hold an
-/// `IrHandlerKind::Http`'s own resolved method rather than the raw AST
-/// `HandlerKind::Http`'s. Both share [`http_handler_method_name_from_str`],
-/// since the two `HttpMethod`/`IrHttpMethod` enums render to identical
-/// strings via their own respective `as_str()`.
+///
+/// Slice 1 of `#1542` (`design/tracks/the-ir-cutover.md` §5): this used to
+/// have an AST-typed `HttpMethod` twin, `http_handler_method_name` — deleted
+/// once its last production caller converted to this `IrHttpMethod` version,
+/// which every call site now holds already-resolved (`IrHandlerKind::Http`'s
+/// own payload) rather than re-deriving from `HandlerKind::Http`.
 pub(crate) fn http_handler_method_name_ir(method: IrHttpMethod, path: &str) -> String {
     http_handler_method_name_from_str(method.as_str(), path)
 }
