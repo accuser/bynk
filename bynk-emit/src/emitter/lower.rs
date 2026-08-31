@@ -13,7 +13,7 @@ use bynk_syntax::ast::{
     PredKind, Refinement, Statement, TypeBody, TypeDecl, TypeRef, UnaryOp,
 };
 
-use bynk_ir::{ConstVal, EventPatternIr, EventPatternValueIr, IrHttpMethod};
+use bynk_ir::{ConstVal, EventPatternIr, EventPatternValueIr, IrExpr, IrExprKind, IrHttpMethod};
 use bynk_lower::is_effectful_return;
 
 use super::*;
@@ -871,6 +871,16 @@ impl Pre {
     /// but the callee never saw the buffer.
     pub(crate) fn lower(&mut self, e: &Expr, cx: &mut LowerCtx) -> String {
         let lowered = lower_expr(e, cx);
+        self.absorb(lowered)
+    }
+
+    /// Slice 3.2 of #1542 (`design/tracks/the-ir-cutover.md` §5): [`Self::lower`]'s
+    /// `IrExpr`-typed sibling, for the cutover's own WIP `_v2` functions —
+    /// [`lower_expr_v2`] is this pass's real entry point once the cutover
+    /// completes; every `_v2` suffix in this file is dropped in the same
+    /// change that deletes the AST-typed originals.
+    pub(crate) fn lower_ir(&mut self, e: &IrExpr, cx: &mut LowerCtx) -> String {
+        let lowered = lower_expr_v2(e, cx);
         self.absorb(lowered)
     }
 
@@ -4161,6 +4171,1013 @@ fn lower_map_kernel(
     text.map(|expr| pre.finish(expr))
 }
 
+// ============================================================================
+// Slice 3.2 of #1542 (design/tracks/the-ir-cutover.md §5): the coordinated
+// expr/stmt-core cutover. Every `_v2`-suffixed function below is the IrExpr-
+// typed sibling of an AST-typed function above it, built alongside the
+// original (not replacing it yet) so the crate keeps compiling throughout
+// construction -- the final change of this slice deletes every AST-typed
+// original these replace and drops the `_v2` suffix from every survivor.
+// ============================================================================
+
+fn lower_list_kernel_v2(
+    e: &IrExpr,
+    receiver: &IrExpr,
+    op: &str,
+    args: &[IrExpr],
+    elem: TyId,
+    cx: &mut LowerCtx,
+) -> Option<Lowered> {
+    let tys = cx.commons().tys();
+    let mut pre = Pre::new();
+    let elem_ts = ts_ty(elem, tys);
+    let text: Option<String> = match (op, args) {
+        ("length", []) => {
+            let recv = pre.lower_ir(receiver, cx);
+            Some(format!("({recv}).length"))
+        }
+        ("get", [index]) => {
+            let recv = pre.lower_ir(receiver, cx);
+            let idx = pre.lower_ir(index, cx);
+            Some(format!(
+                "((__xs: readonly {elem_ts}[], __i: number) => __i >= 0 && __i < __xs.length ? Some(__xs[__i] as {elem_ts}) : None)({recv}, {idx})"
+            ))
+        }
+        ("prepend", [head]) => {
+            let head = pre.lower_ir(head, cx);
+            let recv = pre.lower_ir(receiver, cx);
+            Some(format!("[{head}, ...{recv}]"))
+        }
+        ("fold", [init, f]) => {
+            // The call's checked type is the accumulator type.
+            let acc_ts = ts_ty(e.ty, tys);
+            let recv = pre.lower_ir(receiver, cx);
+            let init = pre.lower_ir(init, cx);
+            let f = pre.lower_ir(f, cx);
+            Some(format!(
+                "((__xs: readonly {elem_ts}[], __acc: {acc_ts}, __f: (acc: {acc_ts}, x: {elem_ts}) => {acc_ts}) => {{ for (const __x of __xs) __acc = __f(__acc, __x); return __acc; }})({recv}, {init}, {f})"
+            ))
+        }
+        (FOLD_EFF, [init, f]) => {
+            // The call's checked type is `Effect[Acc]` — peel for the TS
+            // accumulator annotation.
+            let acc_ts = match &*tys.get(e.ty) {
+                Ty::Effect(acc) => ts_ty(*acc, tys),
+                _ => ts_ty(e.ty, tys),
+            };
+            let recv = pre.lower_ir(receiver, cx);
+            let init = pre.lower_ir(init, cx);
+            let f = pre.lower_ir(f, cx);
+            Some(format!(
+                "(async (__xs: readonly {elem_ts}[], __acc: {acc_ts}, __f: (acc: {acc_ts}, x: {elem_ts}) => Promise<{acc_ts}>) => {{ for (const __x of __xs) __acc = await __f(__acc, __x); return __acc; }})({recv}, {init}, {f})"
+            ))
+        }
+        // v0.146 (ADR 0170): `forEach` — run an effectful step per element in
+        // order, awaiting each; yields `Promise<void>`. The eager `List`
+        // analogue of the `Query.forEach` terminal, emitted inline.
+        (FOR_EACH, [f]) => {
+            let recv = pre.lower_ir(receiver, cx);
+            let f = pre.lower_ir(f, cx);
+            Some(format!(
+                "(async (__xs: readonly {elem_ts}[]) => {{ for (const __x of __xs) {{ await ({f})(__x); }} }})({recv})"
+            ))
+        }
+        // v0.147 (ADR 0171): `parTraverse` — issue the effectful fn over every
+        // element concurrently and await them together, so one slow element does
+        // not head-of-line-block the rest. The eager `List` analogue of the
+        // `Query.parTraverse` terminal, emitted inline.
+        (PAR_TRAVERSE, [f]) => {
+            let recv = pre.lower_ir(receiver, cx);
+            let f = pre.lower_ir(f, cx);
+            Some(format!(
+                "(async (__xs: readonly {elem_ts}[]) => {{ await Promise.all(__xs.map((__x: {elem_ts}) => ({f})(__x))); }})({recv})"
+            ))
+        }
+        // v0.148 (ADR 0172): the collect-all iterators — every element's
+        // `Result` outcome is gathered (an `Err` is a value, so nothing rejects).
+        // `traverseAll` awaits each in order into a typed array; `parTraverseAll`
+        // issues all at once and `Promise.all`s the resolved `Result`s. Both
+        // yield `Promise<Result<…>[]>`.
+        (TRAVERSE_ALL, [f]) => {
+            // The call's checked type is `Effect[List[Result[B, E]]]` — peel to
+            // the `Result[B, E]` TS for the output-array annotation.
+            let res_ts = match &*tys.get(e.ty) {
+                Ty::Effect(inner) => match &*tys.get(*inner) {
+                    Ty::List(el) => ts_ty(*el, tys),
+                    _ => ts_ty(*inner, tys),
+                },
+                other => panic!(
+                    "bynk internal error (finding #28): emitter expected `Effect[List[_]]` \
+                     recorded for a `traverseAll` call at {:?}, but found {other:?} — the \
+                     checker should already have typed it",
+                    e.span
+                ),
+            };
+            let recv = pre.lower_ir(receiver, cx);
+            let f = pre.lower_ir(f, cx);
+            Some(format!(
+                "(async (__xs: readonly {elem_ts}[]) => {{ const __out: {res_ts}[] = []; for (const __x of __xs) {{ __out.push(await ({f})(__x)); }} return __out; }})({recv})"
+            ))
+        }
+        (PAR_TRAVERSE_ALL, [f]) => {
+            let recv = pre.lower_ir(receiver, cx);
+            let f = pre.lower_ir(f, cx);
+            Some(format!(
+                "(async (__xs: readonly {elem_ts}[]) => await Promise.all(__xs.map((__x: {elem_ts}) => ({f})(__x))))({recv})"
+            ))
+        }
+        // v0.150 (ADR 0174): the short-circuit collect iterators — stop at the
+        // first `Err` and return it (`Effect[Result[List[U], E]]`). `traverseTry`
+        // awaits each in order, bailing on the first `Err`; `parTraverseTry`
+        // issues all at once, then scans the resolved `Result`s in input order.
+        (TRAVERSE_TRY, [f]) => {
+            let u_ts = list_ok_elem_ts(Some(e.ty), tys);
+            let recv = pre.lower_ir(receiver, cx);
+            let f = pre.lower_ir(f, cx);
+            Some(format!(
+                "(async (__xs: readonly {elem_ts}[]) => {{ const __out: {u_ts}[] = []; for (const __x of __xs) {{ const __r = await ({f})(__x); if (__r.tag === \"Err\") {{ return Err(__r.error); }} __out.push(__r.value); }} return Ok(__out); }})({recv})"
+            ))
+        }
+        (PAR_TRAVERSE_TRY, [f]) => {
+            let u_ts = list_ok_elem_ts(Some(e.ty), tys);
+            let recv = pre.lower_ir(receiver, cx);
+            let f = pre.lower_ir(f, cx);
+            Some(format!(
+                "(async (__xs: readonly {elem_ts}[]) => {{ const __rs = await Promise.all(__xs.map((__x: {elem_ts}) => ({f})(__x))); const __out: {u_ts}[] = []; for (const __r of __rs) {{ if (__r.tag === \"Err\") {{ return Err(__r.error); }} __out.push(__r.value); }} return Ok(__out); }})({recv})"
+            ))
+        }
+        // v0.88 (ADR 0116): the eager builder/terminal vocabulary. Most lower
+        // to native array methods; callbacks are wrapped in a single-arg arrow
+        // so the array index/array extra args never reach a Bynk one-param fn.
+        ("map", [f]) => {
+            let recv = pre.lower_ir(receiver, cx);
+            let f = pre.lower_ir(f, cx);
+            Some(format!("({recv}).map((__x: {elem_ts}) => ({f})(__x))"))
+        }
+        ("filter", [p]) => {
+            let recv = pre.lower_ir(receiver, cx);
+            let p = pre.lower_ir(p, cx);
+            Some(format!("({recv}).filter((__x: {elem_ts}) => ({p})(__x))"))
+        }
+        ("flatMap", [f]) => {
+            let recv = pre.lower_ir(receiver, cx);
+            let f = pre.lower_ir(f, cx);
+            Some(format!("({recv}).flatMap((__x: {elem_ts}) => ({f})(__x))"))
+        }
+        ("take", [n]) => {
+            let recv = pre.lower_ir(receiver, cx);
+            let n = pre.lower_ir(n, cx);
+            Some(format!("({recv}).slice(0, Math.max(0, {n}))"))
+        }
+        ("skip", [n]) => {
+            let recv = pre.lower_ir(receiver, cx);
+            let n = pre.lower_ir(n, cx);
+            Some(format!("({recv}).slice(Math.max(0, {n}))"))
+        }
+        ("count", []) => {
+            let recv = pre.lower_ir(receiver, cx);
+            Some(format!("({recv}).length"))
+        }
+        ("any", [p]) => {
+            let recv = pre.lower_ir(receiver, cx);
+            let p = pre.lower_ir(p, cx);
+            Some(format!("({recv}).some((__x: {elem_ts}) => ({p})(__x))"))
+        }
+        ("all", [p]) => {
+            let recv = pre.lower_ir(receiver, cx);
+            let p = pre.lower_ir(p, cx);
+            Some(format!("({recv}).every((__x: {elem_ts}) => ({p})(__x))"))
+        }
+        // v0.119 (ADR 0155, DECISION C-a): `run.upTo(step)` — the driven history
+        // strictly before `step`. Steps are distinct object instances in the run
+        // array, so `indexOf` is reference identity. An IIFE avoids re-evaluating
+        // the receiver.
+        ("upTo", [step]) => {
+            let recv = pre.lower_ir(receiver, cx);
+            let step = pre.lower_ir(step, cx);
+            Some(format!(
+                "((__xs: readonly {elem_ts}[], __s: {elem_ts}) => __xs.slice(0, __xs.indexOf(__s)))({recv}, {step})"
+            ))
+        }
+        ("first", []) => {
+            let recv = pre.lower_ir(receiver, cx);
+            Some(format!(
+                "((__xs: readonly {elem_ts}[]) => __xs.length > 0 ? Some(__xs[0]) : None)({recv})"
+            ))
+        }
+        ("firstOrElse", [default]) => {
+            let recv = pre.lower_ir(receiver, cx);
+            let default = pre.lower_ir(default, cx);
+            Some(format!(
+                "((__xs: readonly {elem_ts}[], __d: {elem_ts}) => __xs.length > 0 ? __xs[0] : __d)({recv}, {default})"
+            ))
+        }
+        // v0.88 (ADR 0116 D2/D3/D4): ordering + aggregates. The comparator
+        // `<`/`>` works for the numeric- and string-erased orderable keys
+        // alike, so no key-type branch is needed (except average's rounding).
+        ("sortBy", [key]) => {
+            let recv = pre.lower_ir(receiver, cx);
+            let key = pre.lower_ir(key, cx);
+            Some(format!(
+                "[...{recv}].sort((__a: {elem_ts}, __b: {elem_ts}) => {{ const __ka = ({key})(__a), __kb = ({key})(__b); return __ka < __kb ? -1 : __ka > __kb ? 1 : 0; }})"
+            ))
+        }
+        ("distinct", []) => {
+            let recv = pre.lower_ir(receiver, cx);
+            Some(format!("[...new Set({recv})]"))
+        }
+        ("distinctBy", [key]) => {
+            let recv = pre.lower_ir(receiver, cx);
+            let key = pre.lower_ir(key, cx);
+            Some(format!(
+                "((__xs: readonly {elem_ts}[]) => {{ const __seen = new Set(); const __out: {elem_ts}[] = []; for (const __x of __xs) {{ const __k = ({key})(__x); if (!__seen.has(__k)) {{ __seen.add(__k); __out.push(__x); }} }} return __out; }})({recv})"
+            ))
+        }
+        ("sum", [key]) => {
+            let recv = pre.lower_ir(receiver, cx);
+            let key = pre.lower_ir(key, cx);
+            Some(format!(
+                "({recv}).reduce((__s: number, __x: {elem_ts}) => __s + ({key})(__x), 0)"
+            ))
+        }
+        ("min" | "max", [key]) => {
+            let cmp = if op == "min" { "<" } else { ">" };
+            let recv = pre.lower_ir(receiver, cx);
+            let key = pre.lower_ir(key, cx);
+            Some(format!(
+                "((__xs: readonly {elem_ts}[]) => {{ if (__xs.length === 0) return None; let __m = ({key})(__xs[0]); for (const __x of __xs) {{ const __k = ({key})(__x); if (__k {cmp} __m) __m = __k; }} return Some(__m); }})({recv})"
+            ))
+        }
+        ("average", [key]) => {
+            // D3: Duration averages round to integer millis; Int/Float -> Float.
+            let round = matches!(
+                &*tys.get(e.ty),
+                Ty::Option(inner) if matches!(&*tys.get(*inner), Ty::Base(BaseType::Duration))
+            );
+            let mean = if round {
+                "Math.round(__s / __xs.length)"
+            } else {
+                "__s / __xs.length"
+            };
+            let recv = pre.lower_ir(receiver, cx);
+            let key = pre.lower_ir(key, cx);
+            Some(format!(
+                "((__xs: readonly {elem_ts}[]) => {{ if (__xs.length === 0) return None; let __s = 0; for (const __x of __xs) __s += ({key})(__x); return Some({mean}); }})({recv})"
+            ))
+        }
+        // v0.94 (ADR 0116/0120): joins & grouping. Hash on a stringified key
+        // (value-keyable, like the `@indexed` posting list), probe, and project
+        // each result through `into` — there is no pair value. `joinOn`/`leftJoin`
+        // build the hash from `other`'s key; `join` is a nested-loop predicate;
+        // `groupBy` partitions in first-seen key order. Group/`into` receive the
+        // **original** key (re-derived from a representative row), not the
+        // stringified hash key.
+        ("joinOn", [other, left, right, into]) => {
+            let recv = pre.lower_ir(receiver, cx);
+            let u_ts = join_other_elem_ts_v2(args, cx);
+            let other = pre.lower_ir(other, cx);
+            let left = pre.lower_ir(left, cx);
+            let right = pre.lower_ir(right, cx);
+            let into = pre.lower_ir(into, cx);
+            Some(format!(
+                "(() => {{ const __h: Record<string, {u_ts}[]> = {{}}; for (const __u of {other}) {{ const __k = String(({right})(__u)); (__h[__k] = __h[__k] ?? []).push(__u); }} return ({recv}).flatMap((__t: {elem_ts}) => {{ const __m = __h[String(({left})(__t))] ?? []; return __m.map((__u: {u_ts}) => ({into})(__t, __u)); }}); }})()"
+            ))
+        }
+        ("leftJoin", [other, left, right, into]) => {
+            let recv = pre.lower_ir(receiver, cx);
+            let u_ts = join_other_elem_ts_v2(args, cx);
+            let other = pre.lower_ir(other, cx);
+            let left = pre.lower_ir(left, cx);
+            let right = pre.lower_ir(right, cx);
+            let into = pre.lower_ir(into, cx);
+            Some(format!(
+                "(() => {{ const __h: Record<string, {u_ts}[]> = {{}}; for (const __u of {other}) {{ const __k = String(({right})(__u)); (__h[__k] = __h[__k] ?? []).push(__u); }} return ({recv}).flatMap((__t: {elem_ts}) => {{ const __m = __h[String(({left})(__t))] ?? []; return __m.length > 0 ? __m.map((__u: {u_ts}) => ({into})(__t, Some(__u))) : [({into})(__t, None)]; }}); }})()"
+            ))
+        }
+        ("join", [other, on, into]) => {
+            let recv = pre.lower_ir(receiver, cx);
+            let u_ts = join_other_elem_ts_v2(args, cx);
+            let other = pre.lower_ir(other, cx);
+            let on = pre.lower_ir(on, cx);
+            let into = pre.lower_ir(into, cx);
+            Some(format!(
+                "(() => {{ const __b: readonly {u_ts}[] = {other}; return ({recv}).flatMap((__t: {elem_ts}) => __b.filter((__u: {u_ts}) => ({on})(__t, __u)).map((__u: {u_ts}) => ({into})(__t, __u))); }})()"
+            ))
+        }
+        ("groupBy", [key, into]) => {
+            let recv = pre.lower_ir(receiver, cx);
+            let key = pre.lower_ir(key, cx);
+            let into = pre.lower_ir(into, cx);
+            Some(format!(
+                "(() => {{ const __h: Record<string, {elem_ts}[]> = {{}}; const __order: string[] = []; for (const __t of {recv}) {{ const __k = String(({key})(__t)); if (!(__k in __h)) {{ __h[__k] = []; __order.push(__k); }} __h[__k].push(__t); }} return __order.map((__k) => {{ const __rows = __h[__k]; return ({into})(({key})(__rows[0]), __rows); }}); }})()"
+            ))
+        }
+        _ => None,
+    };
+    text.map(|expr| pre.finish(expr))
+}
+
+/// v0.94 (ADR 0120): the TS element type of a join's `other` collection (its
+/// `List`/`Query` element), for typing the hash-map buckets. Falls back to
+/// `unknown` if the checker recorded no type (an already-diagnosed program).
+fn join_other_elem_ts_v2(args: &[IrExpr], cx: &LowerCtx) -> String {
+    let tys = cx.commons().tys();
+    match &*tys.get(args[0].ty) {
+        Ty::List(u) | Ty::Query(u) => ts_ty(*u, tys),
+        _ => "unknown".to_string(),
+    }
+}
+
+/// v0.100 (real-time track slice 0): lower a `Stream[T]` op over a `source`
+/// async-iterable expression. **Builders** (`map`/`take`) wrap the source in a
+/// new async generator — still lazy, still an `AsyncIterable`. The **terminal**
+/// `collect` drains the source into an array (an `Effect`, awaited with `<-`).
+/// Emitted inline, like the collection kernels, so non-stream files are
+/// untouched. Callbacks are wrapped in a single-arg arrow so no extra iterator
+/// argument reaches a one-param Bynk fn.
+fn lower_stream_method_v2(source: String, op: &str, a: &[String]) -> Option<String> {
+    match (op, a) {
+        // -- builders (return an AsyncIterable) --
+        ("map", [f]) => Some(format!(
+            "(async function* (__s) {{ for await (const __e of __s) {{ yield ({f})(__e); }} }})({source})"
+        )),
+        ("take", [n]) => Some(format!(
+            "(async function* (__s) {{ const __n = {n}; if (__n <= 0) {{ return; }} let __i = 0; for await (const __e of __s) {{ yield __e; if (++__i >= __n) {{ return; }} }} }})({source})"
+        )),
+        // -- terminal (drains to a list; Effect-typed) --
+        ("collect", []) => Some(format!(
+            "(async (__s) => {{ const __r = []; for await (const __e of __s) {{ __r.push(__e); }} return __r; }})({source})"
+        )),
+        _ => None,
+    }
+}
+
+/// v0.91 (ADR 0119, query-algebra slice 2): lower a lazy storage-query op over a
+/// `source` array expression. **Builders** wrap the source in a deferred thunk
+/// `() => …[]` (so the terminal reads *staged* state when it runs —
+/// read-your-writes, ADR 0109/0119 D7). **Terminals** read the source array and
+/// produce the result; they are `Effect`-typed (awaited with `<-`), but the
+/// staged map is in memory, so a synchronous expression suffices (`await` on a
+/// non-promise is identity) — except `forEach`, which awaits its effectful fn.
+/// The element type is inferred from the typed source (`Record`'s values), so no
+/// `__x` annotations are needed. Callbacks are wrapped in a single-arg arrow so
+/// the array index never reaches a one-param Bynk fn.
+///
+/// `elem_ts` is the receiver's own element type, already rendered — resolved
+/// by review of #1460 (the `List[T]` sibling, `lower_list_kernel`, already
+/// threads the equivalent `elem: TyId` through for its own `distinctBy`/
+/// `joinOn`/`leftJoin`/`groupBy` arms; this function's own four collection-
+/// kernel sites just never reused it). A pre-rendered string, not a `TyId`,
+/// because this function has four real callers with four different sources
+/// for it: a genuine `store Query[T]` field/expression (`Ty::Query`'s own
+/// element `TyId`, via `ts_ty`), a held `store Map[K, Connection]`'s
+/// connection frame type (already a `String`, `agent_held_map_frame`), a
+/// plain `store Map[K, V]`'s value type (`agent_store_map_value_ts`, added by
+/// this review), and a `store Log[T]`'s element type
+/// (`agent_store_log_value_ts`, ditto) — the latter two mirror
+/// `held_maps`/`held_maps_ts`'s own established construction exactly, just
+/// for the non-held case.
+///
+/// `other_elem_ts` is `joinOn`/`leftJoin`'s own `other`-side bucket type,
+/// computed by every caller via the same `join_other_elem_ts` helper
+/// `lower_list_kernel`'s own `joinOn`/`leftJoin`/`join` arms already call —
+/// pushed to the call site (rather than this function taking `args`/`cx`
+/// itself, `join_other_elem_ts`'s own `args[0]` indexing) to stay under
+/// clippy's argument-count lint; every caller already has `args`/`cx` in
+/// scope and guards the empty-args case (`distinct`/`collect`/etc. have no
+/// `other` to derive one from — `other_elem_ts` is simply unused there).
+fn lower_query_method_v2(
+    source: String,
+    op: &str,
+    a: &[String],
+    result_ty: Option<TyId>,
+    elem_ts: &str,
+    other_elem_ts: &str,
+    tys: &Arc<Types>,
+) -> Option<String> {
+    let thunk = |body: String| format!("(() => {body})");
+    Some(match (op, a) {
+        // -- builders → a deferred thunk over the narrowed source --
+        ("filter", [p]) => thunk(format!("{source}.filter((__x) => ({p})(__x))")),
+        ("map", [f]) => thunk(format!("{source}.map((__x) => ({f})(__x))")),
+        // storage flatMap: the fn returns a `Query` (a thunk) — invoke each.
+        ("flatMap", [f]) => thunk(format!("{source}.flatMap((__x) => ({f})(__x)())")),
+        ("sortBy", [key]) => thunk(format!(
+            "[...{source}].sort((__a, __b) => {{ const __ka = ({key})(__a), __kb = ({key})(__b); return __ka < __kb ? -1 : __ka > __kb ? 1 : 0; }})"
+        )),
+        ("take", [n]) => thunk(format!("{source}.slice(0, Math.max(0, {n}))")),
+        ("skip", [n]) => thunk(format!("{source}.slice(Math.max(0, {n}))")),
+        ("distinct", []) => thunk(format!("[...new Set({source})]")),
+        // Review of #1460: narrowed, not deferred. A first attempt used
+        // `unknown[]` here and broke real `tsc --strict` fixtures (228/231) —
+        // the whole expression's result flows into a context expecting a
+        // specific element type (e.g. `readonly Reservation[]`), inferred
+        // *because* `__out`/`__h`'s buckets were left untyped for TS to infer
+        // through; pinning them to `unknown[]` blocked that inference rather
+        // than improving on it. The real fix is the receiver's own `Query[T]`
+        // element type, `elem_ts` above — already resolved at every call site
+        // via `Ty::Query(elem)`, just never threaded into this function before
+        // (the `List[T]` sibling, `lower_list_kernel`, already does this for
+        // its own `distinctBy`/`joinOn`/`leftJoin`/`groupBy`).
+        ("distinctBy", [key]) => thunk(format!(
+            "(() => {{ const __seen = new Set(); const __out: {elem_ts}[] = []; for (const __x of {source}) {{ const __k = ({key})(__x); if (!__seen.has(__k)) {{ __seen.add(__k); __out.push(__x); }} }} return __out; }})()"
+        )),
+        // v0.94 (ADR 0116/0120): joins & grouping over storage queries — lazy
+        // builders. `other` is itself a `Query` thunk, invoked to materialise the
+        // probed side; the result projects through `into` (no pair value). The
+        // hash key is stringified (value-keyable); `groupBy`/`into` get the
+        // original key, re-derived from a representative row.
+        //
+        // Review of #1460: `other`'s own element type is `other_elem_ts`,
+        // computed at the call site via `join_other_elem_ts` (the same
+        // helper `lower_list_kernel`'s own `joinOn`/`leftJoin`/`join` arms
+        // already call over `args[0]`'s checked type) — reused, not
+        // re-derived, and threaded as a param rather than called here to
+        // keep this function's own argument count under clippy's lint.
+        ("joinOn", [other, left, right, into]) => thunk(format!(
+            "{{ const __h: Record<string, {other_elem_ts}[]> = {{}}; for (const __u of ({other})()) {{ const __k = String(({right})(__u)); (__h[__k] = __h[__k] ?? []).push(__u); }} return {source}.flatMap((__t: {elem_ts}) => {{ const __m = __h[String(({left})(__t))] ?? []; return __m.map((__u: {other_elem_ts}) => ({into})(__t, __u)); }}); }}"
+        )),
+        ("leftJoin", [other, left, right, into]) => thunk(format!(
+            "{{ const __h: Record<string, {other_elem_ts}[]> = {{}}; for (const __u of ({other})()) {{ const __k = String(({right})(__u)); (__h[__k] = __h[__k] ?? []).push(__u); }} return {source}.flatMap((__t: {elem_ts}) => {{ const __m = __h[String(({left})(__t))] ?? []; return __m.length > 0 ? __m.map((__u: {other_elem_ts}) => ({into})(__t, Some(__u))) : [({into})(__t, None)]; }}); }}"
+        )),
+        ("join", [other, on, into]) => thunk(format!(
+            "{{ const __b = ({other})(); return {source}.flatMap((__t) => __b.filter((__u) => ({on})(__t, __u)).map((__u) => ({into})(__t, __u))); }}"
+        )),
+        // Review of #1460: `__h`'s buckets hold `{source}`'s own rows
+        // (`elem_ts`), the receiver's element type — same as `distinctBy`
+        // above, not `other`-derived (`groupBy` has no `other` argument).
+        ("groupBy", [key, into]) => thunk(format!(
+            "{{ const __h: Record<string, {elem_ts}[]> = {{}}; const __order: string[] = []; for (const __t of {source}) {{ const __k = String(({key})(__t)); if (!(__k in __h)) {{ __h[__k] = []; __order.push(__k); }} __h[__k].push(__t); }} return __order.map((__k) => {{ const __rows = __h[__k]; return ({into})(({key})(__rows[0]), __rows); }}); }}"
+        )),
+        // -- terminals → read the source array (awaited at the `<-`) --
+        ("collect", []) => source,
+        ("first", []) => format!(
+            "(() => {{ const __a = {source}; return __a.length > 0 ? Some(__a[0]) : None; }})()"
+        ),
+        ("firstOrElse", [default]) => format!(
+            "(() => {{ const __a = {source}; return __a.length > 0 ? __a[0] : ({default}); }})()"
+        ),
+        ("count", []) => format!("{source}.length"),
+        ("fold", [init, f]) => format!(
+            "(() => {{ let __acc = {init}; for (const __x of {source}) __acc = ({f})(__acc, __x); return __acc; }})()"
+        ),
+        ("any", [p]) => format!("{source}.some((__x) => ({p})(__x))"),
+        ("all", [p]) => format!("{source}.every((__x) => ({p})(__x))"),
+        ("sum", [key]) => format!("{source}.reduce((__s: number, __x) => __s + ({key})(__x), 0)"),
+        ("min" | "max", [key]) => {
+            let cmp = if op == "min" { "<" } else { ">" };
+            format!(
+                "(() => {{ const __a = {source}; if (__a.length === 0) return None; let __m = ({key})(__a[0]); for (const __x of __a) {{ const __k = ({key})(__x); if (__k {cmp} __m) __m = __k; }} return Some(__m); }})()"
+            )
+        }
+        ("average", [key]) => {
+            // Duration averages round to integer millis (checker result decides).
+            let round = matches!(
+                result_ty.map(|t| tys.get(t)).as_deref(),
+                Some(Ty::Effect(inner))
+                    if matches!(&*tys.get(*inner), Ty::Option(o)
+                        if matches!(&*tys.get(*o), Ty::Base(BaseType::Duration)))
+            );
+            let mean = if round {
+                "Math.round(__s / __a.length)"
+            } else {
+                "__s / __a.length"
+            };
+            format!(
+                "(() => {{ const __a = {source}; if (__a.length === 0) return None; let __s = 0; for (const __x of __a) __s += ({key})(__x); return Some({mean}); }})()"
+            )
+        }
+        ("forEach", [f]) => {
+            format!("(async () => {{ for (const __x of {source}) {{ await ({f})(__x); }} }})()")
+        }
+        // v0.107 (slice 4): the parallel broadcast form — issue the effectful fn over
+        // every element concurrently and await them together, so one slow element
+        // does not head-of-line-block the rest.
+        ("parTraverse", [f]) => {
+            format!("(async () => {{ await Promise.all({source}.map((__x) => ({f})(__x))); }})()")
+        }
+        // v0.149 (ADR 0173): the collect-all terminals over a query/broadcast —
+        // gather every `Result` outcome (an `Err` is a value, so nothing rejects).
+        ("traverseAll", [f]) => {
+            let res_ts = match result_ty.map(|t| tys.get(t)).as_deref() {
+                Some(Ty::Effect(inner)) => match &*tys.get(*inner) {
+                    Ty::List(el) => ts_ty(*el, tys),
+                    _ => ts_ty(*inner, tys),
+                },
+                _ => "any".to_string(),
+            };
+            format!(
+                "(async () => {{ const __out: {res_ts}[] = []; for (const __x of {source}) {{ __out.push(await ({f})(__x)); }} return __out; }})()"
+            )
+        }
+        ("parTraverseAll", [f]) => {
+            format!("(async () => await Promise.all({source}.map((__x) => ({f})(__x))))()")
+        }
+        // v0.150 (ADR 0174): the short-circuit collect terminals — stop at the
+        // first `Err`, returning `Result[List[U], E]`.
+        ("traverseTry", [f]) => {
+            let u_ts = list_ok_elem_ts(result_ty, tys);
+            format!(
+                "(async () => {{ const __out: {u_ts}[] = []; for (const __x of {source}) {{ const __r = await ({f})(__x); if (__r.tag === \"Err\") {{ return Err(__r.error); }} __out.push(__r.value); }} return Ok(__out); }})()"
+            )
+        }
+        ("parTraverseTry", [f]) => {
+            let u_ts = list_ok_elem_ts(result_ty, tys);
+            format!(
+                "(async () => {{ const __rs = await Promise.all({source}.map((__x) => ({f})(__x))); const __out: {u_ts}[] = []; for (const __r of __rs) {{ if (__r.tag === \"Err\") {{ return Err(__r.error); }} __out.push(__r.value); }} return Ok(__out); }})()"
+            )
+        }
+        _ => return None,
+    })
+}
+
+fn lower_numeric_kernel_v2(
+    receiver: &IrExpr,
+    op: &str,
+    args: &[IrExpr],
+    cx: &mut LowerCtx,
+) -> Option<Lowered> {
+    let mut pre = Pre::new();
+    let text: Option<String> = match (op, args) {
+        ("toFloat", []) => Some(pre.lower_ir(receiver, cx)),
+        ("round" | "floor" | "ceil" | "abs", []) => {
+            let recv = pre.lower_ir(receiver, cx);
+            Some(format!("Math.{}({recv})", op))
+        }
+        ("truncate", []) => {
+            let recv = pre.lower_ir(receiver, cx);
+            Some(format!("Math.trunc({recv})"))
+        }
+        ("min" | "max", [other]) => {
+            let recv = pre.lower_ir(receiver, cx);
+            let other = pre.lower_ir(other, cx);
+            Some(format!("Math.{}({recv}, {other})", op))
+        }
+        ("clamp", [lo, hi]) => {
+            let recv = pre.lower_ir(receiver, cx);
+            let lo = pre.lower_ir(lo, cx);
+            let hi = pre.lower_ir(hi, cx);
+            Some(format!("Math.min(Math.max({recv}, {lo}), {hi})"))
+        }
+        ("isNaN" | "isFinite", []) => {
+            let recv = pre.lower_ir(receiver, cx);
+            Some(format!("Number.{}({recv})", op))
+        }
+        // v0.42 (ADR 0074): host number→string — `String(n)` is ECMAScript's
+        // Number::toString (shortest round-trip; `1e21`/`Infinity`/`NaN` as the
+        // host renders them). The normative contract is the platform's.
+        ("toString", []) => {
+            let recv = pre.lower_ir(receiver, cx);
+            Some(format!("String({recv})"))
+        }
+        _ => None,
+    };
+    text.map(|expr| pre.finish(expr))
+}
+
+/// v0.86 (ADR 0112): lower a `Duration` kernel method. `toMillis` is the
+/// identity (a `Duration` lowers to its milliseconds); `toString` renders it.
+fn lower_duration_kernel_v2(
+    receiver: &IrExpr,
+    op: &str,
+    args: &[IrExpr],
+    cx: &mut LowerCtx,
+) -> Option<Lowered> {
+    let mut pre = Pre::new();
+    let text: Option<String> = match (op, args) {
+        ("toMillis", []) => Some(pre.lower_ir(receiver, cx)),
+        ("toString", []) => {
+            let recv = pre.lower_ir(receiver, cx);
+            Some(format!("String({recv})"))
+        }
+        _ => None,
+    };
+    text.map(|expr| pre.finish(expr))
+}
+
+/// v0.90 (ADR 0114): lower an `Instant` kernel method. `toEpochMillis` is the
+/// identity (an `Instant` lowers to its epoch milliseconds); `toString` renders
+/// it.
+fn lower_instant_kernel_v2(
+    receiver: &IrExpr,
+    op: &str,
+    args: &[IrExpr],
+    cx: &mut LowerCtx,
+) -> Option<Lowered> {
+    let mut pre = Pre::new();
+    let text: Option<String> = match (op, args) {
+        ("toEpochMillis", []) => Some(pre.lower_ir(receiver, cx)),
+        ("toString", []) => {
+            let recv = pre.lower_ir(receiver, cx);
+            Some(format!("String({recv})"))
+        }
+        _ => None,
+    };
+    text.map(|expr| pre.finish(expr))
+}
+
+/// v0.110 (ADR 0142 D3/D4): lower a `Bytes` kernel method. `length` is the
+/// `Uint8Array.length` (octet count, not any string length); `toBase64` is a
+/// total encode; `decodeUtf8` is a guarded fatal decode returning `Option`
+/// (`None` on an invalid UTF-8 sequence).
+fn lower_bytes_kernel_v2(
+    receiver: &IrExpr,
+    op: &str,
+    args: &[IrExpr],
+    cx: &mut LowerCtx,
+) -> Option<Lowered> {
+    let mut pre = Pre::new();
+    let text: Option<String> = match (op, args) {
+        ("length", []) => {
+            let recv = pre.lower_ir(receiver, cx);
+            Some(format!("({recv}).length"))
+        }
+        ("toBase64", []) => {
+            let recv = pre.lower_ir(receiver, cx);
+            cx.note_bytes();
+            Some(format!("__bynkBytesToBase64({recv})"))
+        }
+        ("decodeUtf8", []) => {
+            let recv = pre.lower_ir(receiver, cx);
+            cx.note_bytes();
+            Some(format!("__bynkBytesDecodeUtf8({recv})"))
+        }
+        _ => None,
+    };
+    text.map(|expr| pre.finish(expr))
+}
+
+/// v0.22a: lower a built-in `String` kernel method (ADR 0046). Pinned
+/// semantics: `replace` is replace-**all** (`replaceAll`); `chars()` is
+/// code **points** (`[...s]`), not code units; `slice` clamps negative
+/// indices to `0` (no TS wrap-around); `indexOf` turns `-1` into `None`.
+fn lower_string_kernel_v2(
+    receiver: &IrExpr,
+    op: &str,
+    args: &[IrExpr],
+    cx: &mut LowerCtx,
+) -> Option<Lowered> {
+    let mut pre = Pre::new();
+    let text: Option<String> = match (op, args) {
+        ("length", []) => {
+            let recv = pre.lower_ir(receiver, cx);
+            Some(format!("({recv}).length"))
+        }
+        ("trim", []) => {
+            let recv = pre.lower_ir(receiver, cx);
+            Some(format!("{recv}.trim()"))
+        }
+        ("toUpper", []) => {
+            let recv = pre.lower_ir(receiver, cx);
+            Some(format!("{recv}.toUpperCase()"))
+        }
+        ("toLower", []) => {
+            let recv = pre.lower_ir(receiver, cx);
+            Some(format!("{recv}.toLowerCase()"))
+        }
+        ("chars", []) => {
+            let recv = pre.lower_ir(receiver, cx);
+            Some(format!("[...{recv}]"))
+        }
+        ("split", [sep]) => {
+            let recv = pre.lower_ir(receiver, cx);
+            let sep = pre.lower_ir(sep, cx);
+            Some(format!("{recv}.split({sep})"))
+        }
+        ("contains", [sub]) => {
+            let recv = pre.lower_ir(receiver, cx);
+            let sub = pre.lower_ir(sub, cx);
+            Some(format!("{recv}.includes({sub})"))
+        }
+        ("startsWith" | "endsWith", [sub]) => {
+            let recv = pre.lower_ir(receiver, cx);
+            let sub = pre.lower_ir(sub, cx);
+            Some(format!("{recv}.{}({sub})", op))
+        }
+        ("concat", [other]) => {
+            let recv = pre.lower_ir(receiver, cx);
+            let other = pre.lower_ir(other, cx);
+            Some(format!("{recv}.concat({other})"))
+        }
+        ("replace", [from, to]) => {
+            let recv = pre.lower_ir(receiver, cx);
+            let from = pre.lower_ir(from, cx);
+            let to = pre.lower_ir(to, cx);
+            Some(format!("{recv}.replaceAll({from}, {to})"))
+        }
+        ("slice", [lo, hi]) => {
+            let recv = pre.lower_ir(receiver, cx);
+            let lo = pre.lower_ir(lo, cx);
+            let hi = pre.lower_ir(hi, cx);
+            Some(format!(
+                "{recv}.slice(Math.max(0, {lo}), Math.max(0, {hi}))"
+            ))
+        }
+        ("indexOf", [sub]) => {
+            let recv = pre.lower_ir(receiver, cx);
+            let sub = pre.lower_ir(sub, cx);
+            Some(format!(
+                "((__i: number) => __i < 0 ? None : Some(__i))({recv}.indexOf({sub}))"
+            ))
+        }
+        _ => None,
+    };
+    text.map(|expr| pre.finish(expr))
+}
+
+/// v0.22a: lower a built-in `Option[T]` kernel method (ADR 0048). Typed
+/// IIFEs in the v0.20b posture — no runtime imports beyond the
+/// `Some`/`None`/`Ok`/`Err` constructors every module already has.
+#[allow(clippy::too_many_arguments)]
+fn lower_option_kernel_v2(
+    e: &IrExpr,
+    receiver: &IrExpr,
+    op: &str,
+    args: &[IrExpr],
+    inner: TyId,
+    cx: &mut LowerCtx,
+) -> Option<Lowered> {
+    let tys = cx.commons().tys();
+    let mut pre = Pre::new();
+    let t = ts_ty(inner, tys);
+    let text: Option<String> = match (op, args) {
+        ("map", [f]) => {
+            // The call's checked type is `Option[B]` — peel for B.
+            let b = match &*tys.get(e.ty) {
+                Ty::Option(b) => ts_ty(*b, tys),
+                other => panic!(
+                    "bynk internal error (finding #28): emitter expected `Option[_]` recorded \
+                     for an `Option.map` call at {:?}, but found {other:?} — the checker \
+                     should already have typed it",
+                    e.span
+                ),
+            };
+            let recv = pre.lower_ir(receiver, cx);
+            let f = pre.lower_ir(f, cx);
+            Some(format!(
+                "((__o: Option<{t}>, __f: (x: {t}) => {b}) => __o.tag === \"Some\" ? Some(__f(__o.value)) : None)({recv}, {f})"
+            ))
+        }
+        ("andThen", [f]) => {
+            let b = match &*tys.get(e.ty) {
+                Ty::Option(b) => ts_ty(*b, tys),
+                other => panic!(
+                    "bynk internal error (finding #28): emitter expected `Option[_]` recorded \
+                     for an `Option.andThen` call at {:?}, but found {other:?} — the checker \
+                     should already have typed it",
+                    e.span
+                ),
+            };
+            let recv = pre.lower_ir(receiver, cx);
+            let f = pre.lower_ir(f, cx);
+            Some(format!(
+                "((__o: Option<{t}>, __f: (x: {t}) => Option<{b}>) => __o.tag === \"Some\" ? __f(__o.value) : None)({recv}, {f})"
+            ))
+        }
+        ("getOrElse", [fallback]) => {
+            let recv = pre.lower_ir(receiver, cx);
+            let fallback = pre.lower_ir(fallback, cx);
+            Some(format!(
+                "((__o: Option<{t}>, __d: {t}) => __o.tag === \"Some\" ? __o.value : __d)({recv}, {fallback})"
+            ))
+        }
+        ("isSome", []) => {
+            let recv = pre.lower_ir(receiver, cx);
+            Some(format!("({recv}.tag === \"Some\")"))
+        }
+        ("okOr", [error]) => {
+            // The call's checked type is `Result[T, E]` — peel for E.
+            let err = match &*tys.get(e.ty) {
+                Ty::Result(_, err) => ts_ty(*err, tys),
+                other => panic!(
+                    "bynk internal error (finding #28): emitter expected `Result[_, _]` \
+                     recorded for an `Option.okOr` call at {:?}, but found {other:?} — the \
+                     checker should already have typed it",
+                    e.span
+                ),
+            };
+            let recv = pre.lower_ir(receiver, cx);
+            let error = pre.lower_ir(error, cx);
+            Some(format!(
+                "((__o: Option<{t}>, __e: {err}) => __o.tag === \"Some\" ? Ok(__o.value) : Err(__e))({recv}, {error})"
+            ))
+        }
+        _ => None,
+    };
+    text.map(|expr| pre.finish(expr))
+}
+
+/// v0.22a: lower a built-in `Result[T, E]` kernel method (ADR 0048). The
+/// miss branches return the narrowed receiver — TS's discriminated-union
+/// narrowing makes the `Err` arm assignable to `Result<B, E>` directly.
+#[allow(clippy::too_many_arguments)]
+fn lower_result_kernel_v2(
+    e: &IrExpr,
+    receiver: &IrExpr,
+    op: &str,
+    args: &[IrExpr],
+    ok: TyId,
+    err: TyId,
+    cx: &mut LowerCtx,
+) -> Option<Lowered> {
+    let tys = cx.commons().tys();
+    let mut pre = Pre::new();
+    let t = ts_ty(ok, tys);
+    let et = ts_ty(err, tys);
+    let text: Option<String> = match (op, args) {
+        ("map", [f]) => {
+            // The call's checked type is `Result[B, E]` — peel for B.
+            let b = match &*tys.get(e.ty) {
+                Ty::Result(b, _) => ts_ty(*b, tys),
+                other => panic!(
+                    "bynk internal error (finding #28): emitter expected `Result[_, _]` \
+                     recorded for a `Result.map` call at {:?}, but found {other:?} — the \
+                     checker should already have typed it",
+                    e.span
+                ),
+            };
+            let recv = pre.lower_ir(receiver, cx);
+            let f = pre.lower_ir(f, cx);
+            Some(format!(
+                "((__r: Result<{t}, {et}>, __f: (x: {t}) => {b}) => __r.tag === \"Ok\" ? Ok(__f(__r.value)) : __r)({recv}, {f})"
+            ))
+        }
+        ("andThen", [f]) => {
+            let b = match &*tys.get(e.ty) {
+                Ty::Result(b, _) => ts_ty(*b, tys),
+                other => panic!(
+                    "bynk internal error (finding #28): emitter expected `Result[_, _]` \
+                     recorded for a `Result.andThen` call at {:?}, but found {other:?} — the \
+                     checker should already have typed it",
+                    e.span
+                ),
+            };
+            let recv = pre.lower_ir(receiver, cx);
+            let f = pre.lower_ir(f, cx);
+            Some(format!(
+                "((__r: Result<{t}, {et}>, __f: (x: {t}) => Result<{b}, {et}>) => __r.tag === \"Ok\" ? __f(__r.value) : __r)({recv}, {f})"
+            ))
+        }
+        ("mapErr", [f]) => {
+            // The call's checked type is `Result[T, F]` — peel for F.
+            let fts = match &*tys.get(e.ty) {
+                Ty::Result(_, f) => ts_ty(*f, tys),
+                other => panic!(
+                    "bynk internal error (finding #28): emitter expected `Result[_, _]` \
+                     recorded for a `Result.mapErr` call at {:?}, but found {other:?} — the \
+                     checker should already have typed it",
+                    e.span
+                ),
+            };
+            let recv = pre.lower_ir(receiver, cx);
+            let f = pre.lower_ir(f, cx);
+            Some(format!(
+                "((__r: Result<{t}, {et}>, __f: (e: {et}) => {fts}) => __r.tag === \"Err\" ? Err(__f(__r.error)) : __r)({recv}, {f})"
+            ))
+        }
+        ("getOrElse", [fallback]) => {
+            let recv = pre.lower_ir(receiver, cx);
+            let fallback = pre.lower_ir(fallback, cx);
+            Some(format!(
+                "((__r: Result<{t}, {et}>, __d: {t}) => __r.tag === \"Ok\" ? __r.value : __d)({recv}, {fallback})"
+            ))
+        }
+        ("isOk", []) => {
+            let recv = pre.lower_ir(receiver, cx);
+            Some(format!("({recv}.tag === \"Ok\")"))
+        }
+        _ => None,
+    };
+    text.map(|expr| pre.finish(expr))
+}
+
+/// §2.8.3: lower an `Effect[Result[T, E]]` combinator. `Effect[T]` is
+/// `Promise<T>` at runtime, so each method is an `async` IIFE that `await`s the
+/// receiver Promise and rebuilds the transformed `Result` — the exact
+/// desugaring the spec gives (`mapOk` ≡ `map(r => r.map(f))`, etc.), inlined so
+/// no runtime helper is needed. `ok`/`err` are the receiver's peeled `Result`
+/// parameters; the call's checked type supplies the transformed parameter for
+/// the TS annotation.
+#[allow(clippy::too_many_arguments)]
+fn lower_effect_result_kernel_v2(
+    e: &IrExpr,
+    receiver: &IrExpr,
+    op: &str,
+    args: &[IrExpr],
+    ok: TyId,
+    err: TyId,
+    cx: &mut LowerCtx,
+) -> Option<Lowered> {
+    let tys = cx.commons().tys();
+    let mut pre = Pre::new();
+    let t = ts_ty(ok, tys);
+    let et = ts_ty(err, tys);
+    // The call's checked type is `Effect[Result[a, b]]`; peel `(a, b)` for the
+    // transformed parameter's TS type.
+    let (a_ts, b_ts) = match &*tys.get(e.ty) {
+        Ty::Effect(inner) => match &*tys.get(*inner) {
+            Ty::Result(a, b) => (ts_ty(*a, tys), ts_ty(*b, tys)),
+            other => panic!(
+                "bynk internal error (finding #28): emitter expected `Effect[Result[_, _]]` \
+                 recorded for an effectful `Result` combinator call at {:?}, but found \
+                 `Effect[{other:?}]` — the checker should already have typed it",
+                e.span
+            ),
+        },
+        other => panic!(
+            "bynk internal error (finding #28): emitter expected `Effect[Result[_, _]]` \
+             recorded for an effectful `Result` combinator call at {:?}, but found {other:?} \
+             — the checker should already have typed it",
+            e.span
+        ),
+    };
+    let text: Option<String> = match (op, args) {
+        ("mapOk", [f]) => {
+            // result `Effect[Result[U, E]]` — `a_ts` is `U`.
+            let recv = pre.lower_ir(receiver, cx);
+            let f = pre.lower_ir(f, cx);
+            Some(format!(
+                "(async (__e: Promise<Result<{t}, {et}>>, __f: (x: {t}) => {a_ts}) => {{ const __r = await __e; return __r.tag === \"Ok\" ? Ok(__f(__r.value)) : __r; }})({recv}, {f})"
+            ))
+        }
+        ("mapErr", [f]) => {
+            // result `Effect[Result[T, F]]` — `b_ts` is `F`.
+            let recv = pre.lower_ir(receiver, cx);
+            let f = pre.lower_ir(f, cx);
+            Some(format!(
+                "(async (__e: Promise<Result<{t}, {et}>>, __f: (e: {et}) => {b_ts}) => {{ const __r = await __e; return __r.tag === \"Err\" ? Err(__f(__r.error)) : __r; }})({recv}, {f})"
+            ))
+        }
+        ("flatMapOk", [f]) => {
+            // `f: T -> Effect[Result[U, E]]`; result `Effect[Result[U, E]]`.
+            let recv = pre.lower_ir(receiver, cx);
+            let f = pre.lower_ir(f, cx);
+            Some(format!(
+                "(async (__e: Promise<Result<{t}, {et}>>, __f: (x: {t}) => Promise<Result<{a_ts}, {et}>>) => {{ const __r = await __e; return __r.tag === \"Ok\" ? await __f(__r.value) : __r; }})({recv}, {f})"
+            ))
+        }
+        ("flatMapErr", [f]) => {
+            // `f: E -> Effect[Result[T, F]]`; result `Effect[Result[T, F]]`.
+            let recv = pre.lower_ir(receiver, cx);
+            let f = pre.lower_ir(f, cx);
+            Some(format!(
+                "(async (__e: Promise<Result<{t}, {et}>>, __f: (e: {et}) => Promise<Result<{t}, {b_ts}>>) => {{ const __r = await __e; return __r.tag === \"Err\" ? await __f(__r.error) : __r; }})({recv}, {f})"
+            ))
+        }
+        _ => None,
+    };
+    text.map(|expr| pre.finish(expr))
+}
+
+/// v0.20b: lower a built-in `Map` kernel method. `insert` copies — the
+/// emitted `ReadonlyMap` is never mutated in place; updating an existing key
+/// keeps its insertion position (JS `Map` semantics, normative in §7).
+fn lower_map_kernel_v2(
+    receiver: &IrExpr,
+    op: &str,
+    args: &[IrExpr],
+    key: TyId,
+    val: TyId,
+    cx: &mut LowerCtx,
+) -> Option<Lowered> {
+    let tys = cx.commons().tys();
+    let mut pre = Pre::new();
+    let key_ts = ts_ty(key, tys);
+    let val_ts = ts_ty(val, tys);
+    let text: Option<String> = match (op, args) {
+        ("length", []) => {
+            let recv = pre.lower_ir(receiver, cx);
+            Some(format!("({recv}).size"))
+        }
+        ("keys", []) => {
+            let recv = pre.lower_ir(receiver, cx);
+            Some(format!("[...({recv}).keys()]"))
+        }
+        // v0.149 (ADR 0173): the values in key order — the `keys()` sibling over
+        // the in-memory `ReadonlyMap`.
+        ("values", []) => {
+            let recv = pre.lower_ir(receiver, cx);
+            Some(format!("[...({recv}).values()]"))
+        }
+        ("get", [k]) => {
+            let recv = pre.lower_ir(receiver, cx);
+            let k = pre.lower_ir(k, cx);
+            Some(format!(
+                "((__m: ReadonlyMap<{key_ts}, {val_ts}>, __k: {key_ts}) => __m.has(__k) ? Some(__m.get(__k) as {val_ts}) : None)({recv}, {k})"
+            ))
+        }
+        ("insert", [k, v]) => {
+            let recv = pre.lower_ir(receiver, cx);
+            let k = pre.lower_ir(k, cx);
+            let v = pre.lower_ir(v, cx);
+            Some(format!("new Map({recv}).set({k}, {v})"))
+        }
+        _ => None,
+    };
+    text.map(|expr| pre.finish(expr))
+}
+
+
 fn lower_if(
     e: &Expr,
     cond: &Expr,
@@ -5039,6 +6056,18 @@ fn decode_map_key(k: Option<TyId>, raw: &str, tys: &Arc<Types>) -> String {
              decode_map_key has no wire-decode case for it"
         ),
         None => raw.to_string(),
+    }
+}
+
+/// Slice 3.2 of #1542 (`design/tracks/the-ir-cutover.md` §5): the `IrExpr`-typed
+/// sibling of [`lower_expr`] — WIP, grown one `IrExprKind` variant at a time.
+/// Every arm not yet converted panics loudly (`todo!()`), matching the same
+/// discipline `bynk_lower::lower_expr_ir`'s own construction-side `todo!()`s
+/// used during phase 6. Never called from production today — nothing builds an
+/// `IrExpr` to hand it one — so an unconverted arm here has zero shipped risk.
+pub(crate) fn lower_expr_v2(e: &IrExpr, cx: &mut LowerCtx) -> Lowered {
+    match &e.kind {
+        _ => todo!("lower_expr_v2: {:?} not yet converted (Slice 3.2, #1542)", e.kind),
     }
 }
 
