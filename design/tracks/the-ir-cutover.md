@@ -160,12 +160,30 @@ commissions"*) and are gated behind `ctx.in_test_body`, structurally unreachable
 C, `#1145`) — wiring the real emitter in does not make these reachable, and they stay out of this
 track's scope, matching the-ir.md's own posture. One (the final fallback at `:3531`) is already
 claimed, in its own comment, to be structurally unreachable through `lower_fn_body_ir` and left only as
-a defensive catch-all — Slice 6 should add a verification (a debug assertion or a fixture proving it's
-never hit) rather than a real implementation. The remaining two (`:3346` "no `Callee` recorded for this
-call," `:3521` "bare ident names a free function used as a value") are genuine, live gaps that Slice 6
-does need to close before it's safe to wire `lower_expr_ir` into a real caller.
+a defensive catch-all — Slice 3 (§5; the expr/stmt-core cutover, renumbered from the original Slice 6)
+should add a verification (a debug assertion or a fixture proving it's never hit) rather than a real
+implementation. The remaining two (`:3346` "no `Callee` recorded for this call," `:3521` "bare ident
+names a free function used as a value") are genuine, live gaps that same slice does need to close
+before it's safe to wire `lower_expr_ir` into a real caller.
 
 ## 5. Slice decomposition (final)
+
+**Reordered after the Slice 3 investigation — the original 3→4→5→6 ordering had the dependency
+direction backwards.** The original "store/commit/invariant/transition" grouping (old Slice 3) is not
+a coherent, independently-adoptable unit: `lower_store_field_ir`'s hard part
+(`kind`/`indexed`) is *already* adopted through its sibling `lower_store_field_shape_ir` (called from
+`emitter.rs:516`) — only its `init` field remains. `lower_commit_shape_ir`'s hard part
+(`body_writes_state`) is likewise *already* adopted (`emit.rs:5472`, confirmed as R6.5's real
+replacement for the deleted `block_writes_state`) — what's missing is constructing the real
+`CommitShape` enum in place of the bare bool that adoption currently feeds inline, and the function's
+own doc comment says that needs `body` already lowered to `IrExpr` — old Slice 6. `lower_invariant_ir`
+and `lower_transition_ir`'s own doc comments say, near-verbatim, they are meant to be "called once per
+agent's own invariant/transition list, by whichever future slice builds `IrItem::Agent` for real" —
+i.e. item assembly (old Slice 4), not a standalone slice — and both internally call `lower_expr_ir`
+(old Slice 6) themselves. So every real piece of old Slice 3 is downstream of either old Slice 4 or old
+Slice 6, and old Slice 6 sits under both. **The expr/stmt-core cutover is the foundation the rest of
+this track builds on, not the largest slice saved for last.** Renumbered accordingly; old Slice 3 folds
+entirely into the new item-assembly slice (its own real home, per its functions' own doc comments).
 
 - **Slice 0 (this doc).** No code.
 - **Slice 1 — discard-site cleanup + the `HttpMethod` surface around it. Shipped (`#1556`).** The four
@@ -185,29 +203,31 @@ does need to close before it's safe to wire `lower_expr_ir` into a real caller.
   called by `capability_op_sig_from_commons`, called from `bynk-emit/src/emitter/lower.rs`'s
   `cap_op_param_names` — and, since Slice 1 added `lower_capability_ops_ir`, also reached via
   `emitter.rs`'s capability loop through the private `lower_op_sig_ir`. Checked as a sanity bound
-  before trusting this generalises: `lower_store_field_ir` (Slice 3) has no such wrapper — comment
-  mentions only, genuinely zero callers — so this is Slice 2's own shape, not evidence the other four
-  clusters are similarly already-done.
-- **Slice 3 — store/commit/invariant/transition.** `lower_store_field_ir`, `lower_commit_shape_ir`,
-  `lower_invariant_ir`, `lower_transition_ir`.
-- **Slice 4 — item assembly.** `lower_fn_item_ir`, `lower_agent_item_ir`, `lower_service_item_ir`,
-  `lower_provider_item_ir`.
-- **Slice 5 — handler/body.** `lower_fn_body_ir`, `lower_handler_ir`, `lower_service_handler_ir`. The
+  before trusting this generalises: `lower_store_field_ir` (then-Slice 3) had no such wrapper — comment
+  mentions only, genuinely zero callers — confirming this was Slice 2's own shape, not a pattern across
+  the other clusters (it wasn't — see above).
+- **Slice 3 — expr/stmt core** *(was Slice 6)*. `lower_expr_ir`/`lower_block_ir` wired into
+  `emitter/lower.rs`'s `lower_expr`. Requires closing exactly the two live gaps named in §4 (`:3346`,
+  `:3521`) first, plus a verification (not an implementation) for `:3531`. Unblocks `#1225`'s dormant
+  `@cache`/`@limit` accumulator work, which no shipped path currently reaches. **This is now the real
+  next slice** — everything below depends on it.
+- **Slice 4 — handler/body** *(was Slice 5)*. `lower_fn_body_ir`, `lower_handler_ir`,
+  `lower_service_handler_ir`. Depends on Slice 3 (fn/handler bodies lower through `lower_expr_ir`). The
   `Message`-arm `ServiceProtocol` check is explicitly **out of scope** — stays declined per §3.3.
-- **Slice 6 — expr/stmt core.** `lower_expr_ir`/`lower_block_ir` wired into `emitter/lower.rs`'s
-  `lower_expr`. Requires closing exactly the two live gaps named in §4 (`:3346`, `:3521`) first, plus a
-  verification (not an implementation) for `:3531`. Unblocks `#1225`'s dormant `@cache`/`@limit`
-  accumulator work, which no shipped path currently reaches.
+- **Slice 5 — item assembly** *(was Slice 4, now absorbing old Slice 3 in full)*.
+  `lower_fn_item_ir`, `lower_agent_item_ir`, `lower_service_item_ir`, `lower_provider_item_ir` — plus,
+  as part of building a real `IrItem::Agent`: `lower_store_field_ir`'s `init` gap,
+  `lower_commit_shape_ir`, `lower_invariant_ir`, `lower_transition_ir`. Depends on Slice 3 (item bodies)
+  and Slice 4 (handler assembly feeds `IrItem::Agent`/`IrItem::Service`).
 
 ## 6. Slice status
 
 - [ ] Slice 0 — this doc
 - [x] Slice 1 — discard-site cleanup + the `HttpMethod` surface around it (`#1556`)
 - [x] Slice 2 — signatures (already satisfied — see §5, no code landed)
-- [ ] Slice 3 — store/commit/invariant/transition
-- [ ] Slice 4 — item assembly
-- [ ] Slice 5 — handler/body
-- [ ] Slice 6 — expr/stmt core
+- [ ] Slice 3 — expr/stmt core (was Slice 6)
+- [ ] Slice 4 — handler/body (was Slice 5)
+- [ ] Slice 5 — item assembly (was Slice 4; absorbs old Slice 3 in full)
 
 ## 7. Front-loaded ADR candidates
 
