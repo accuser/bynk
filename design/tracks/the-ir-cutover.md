@@ -176,7 +176,18 @@ does need to close before it's safe to wire `lower_expr_ir` into a real caller.
   implementation), and deleting `http_handler_method_name` (its one remaining caller,
   `tests_emit.rs:718`, repointed to `http_handler_method_name_ir`). Front-loaded a small ADR reversing
   ADR 0355's `HttpMethod` deferral (§7).
-- **Slice 2 — signatures.** `lower_fn_sig_ir_from_types`, `lower_op_sig_ir_from_commons`.
+- **Slice 2 — signatures. Already satisfied; no code needed.** Both functions fail the review's own
+  strict "external-to-the-crate call site" test — which is why they were counted among the 15 — but
+  neither is actually unwired: each is called by a same-crate sibling wrapper that *is* reached from
+  production `bynk-emit` code. `lower_fn_sig_ir_from_types` is called by
+  `lower_attached_fn_sig_ir_from_types`, called from `bynk-emit/src/project.rs`'s `build_emit_unit_ctx`
+  (resolving `uses`-imported types' attached-method signatures). `lower_op_sig_ir_from_commons` is
+  called by `capability_op_sig_from_commons`, called from `bynk-emit/src/emitter/lower.rs`'s
+  `cap_op_param_names` — and, since Slice 1 added `lower_capability_ops_ir`, also reached via
+  `emitter.rs`'s capability loop through the private `lower_op_sig_ir`. Checked as a sanity bound
+  before trusting this generalises: `lower_store_field_ir` (Slice 3) has no such wrapper — comment
+  mentions only, genuinely zero callers — so this is Slice 2's own shape, not evidence the other four
+  clusters are similarly already-done.
 - **Slice 3 — store/commit/invariant/transition.** `lower_store_field_ir`, `lower_commit_shape_ir`,
   `lower_invariant_ir`, `lower_transition_ir`.
 - **Slice 4 — item assembly.** `lower_fn_item_ir`, `lower_agent_item_ir`, `lower_service_item_ir`,
@@ -192,7 +203,7 @@ does need to close before it's safe to wire `lower_expr_ir` into a real caller.
 
 - [ ] Slice 0 — this doc
 - [x] Slice 1 — discard-site cleanup + the `HttpMethod` surface around it (`#1556`)
-- [ ] Slice 2 — signatures
+- [x] Slice 2 — signatures (already satisfied — see §5, no code landed)
 - [ ] Slice 3 — store/commit/invariant/transition
 - [ ] Slice 4 — item assembly
 - [ ] Slice 5 — handler/body
