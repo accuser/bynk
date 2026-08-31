@@ -76,12 +76,25 @@ payload, and `http_handler_method_name_ir` (`bynk-emit/src/emitter/emit.rs:1263`
 `lower.rs:2129`, `lower.rs:2245`). P6.51 already did this conversion for most of the surface — what's
 left is exactly the two discard sites this track's spine issue named
 (`emitter/workers_entry.rs:380-384`, `emitter/workers.rs:606-613`, which build `IrHandlerKind::Http`,
-then re-destructure `h.kind` via `unreachable!()` for the values they already have) plus three wrapper
-signatures (`emit_http_wrapper`/`emit_http_sum_wrapper`/`emit_http_oidc_wrapper`, `workers.rs:1527,
-1699, 1820`) and the `HttpRoute::method` field itself (`workers_entry.rs:1677`). No further fan-out
-found: nothing downstream of these five signature sites re-declares `HttpMethod` as its own parameter
-type. ADR 0355's "cascade well beyond this slice's own scope" was sized against the *whole*
-`HttpMethod` surface before P6.51 narrowed it; the remaining gap is bounded and mechanical.
+then re-destructure `h.kind` via `unreachable!()` for the values they already have) plus the AST-typed
+signature/comparison surface around them: three wrapper signatures
+(`emit_http_wrapper`/`emit_http_sum_wrapper`/`emit_http_oidc_wrapper`, `workers.rs:1527, 1699, 1820`),
+the `HttpRoute::method` field itself (`workers_entry.rs:1679`), `derive_allowed_methods(methods: impl
+Iterator<Item = HttpMethod>) -> Vec<String>` (`workers_entry.rs:1462`, fed from that field at `:1513`
+and `:1579`), and three direct `route.method == HttpMethod::Get` comparisons (`workers_entry.rs:447`,
+`:1803`, `:2114`). `IrHttpMethod::as_str()` (`bynk-ir/src/lib.rs:1704`, P6.51, a field-for-field
+mirror) makes all of these mechanical, no behaviour change. ADR 0355's "cascade well beyond this
+slice's own scope" was sized against the *whole* `HttpMethod` surface before P6.51 narrowed it; the
+remaining gap is bounded, if wider than a first read of the two discard sites alone would suggest.
+
+Converting these signatures retires every production caller of the AST-typed twin,
+`http_handler_method_name` (`emit.rs:1253`) — its four callers are exactly the three wrappers
+(`workers.rs:1534, 1706, 1830`) and `workers_entry.rs:1798`, all touched by this slice. After
+conversion its only remaining caller is a test, `bynk-emit/src/project/tests_emit.rs:718`. Slice 1
+therefore includes deleting `http_handler_method_name` and updating that test to call
+`http_handler_method_name_ir` directly — left unreferenced it fails `-D warnings` on `dead_code`; left
+called only by a test it's exactly the API-shaped-by-a-test residue `#1541` is separately cleaning up
+elsewhere.
 
 ### 3.3 Q3 — does phase 8's `ProjectGraph` supply `emit_worker_compose`'s missing context?
 
@@ -109,21 +122,30 @@ resolves. (Comment posted on `#1537` updating the earlier cross-reference.)
 ### 3.4 Q4 — real first-slice ordering
 
 §3.2's finding changes the answer from the spine issue's provisional guess (cheapest-file-first,
-`serialisation.rs`). The four discard-site cleanups found in §3.2 plus the spine's original two
-(`emitter.rs:292`/`:482`, the `Type`/`Capability` item detours) are the same shape of fix — an IR value
-is already computed and sitting in hand, the code just re-derives the same fact from the AST a second
-time instead of using it — and need no new dependency threaded anywhere. That is a stronger first slice
-than raw import-count did: it closes literal "worse than not using it" sites the 30 August review named
-outright, with zero risk of the kind Q1–Q3 exist to screen for. See the finalised decomposition below.
+`serialisation.rs`). There are exactly **four discard sites** across the two questions this doc closes
+— `emitter.rs:292`/`:482` (the spine's original `Type`/`Capability` item detours) and
+`emitter/workers_entry.rs:380-384`/`emitter/workers.rs:606-613` (§3.2's `Http` handler-kind detours) —
+all the same shape of fix: an IR value is already computed and sitting in hand, the code just
+re-derives the same fact from the AST a second time instead of using it, with no new dependency
+threaded anywhere. §3.2's `HttpMethod` signature/comparison surface around its two discard sites (the
+three wrappers, the field, `derive_allowed_methods`, the three comparisons, and retiring
+`http_handler_method_name`) is additional work in the same slice, not itself discard-site cleanup — the
+full list is in §5, slice 1. Together this is a stronger first slice than raw import-count would have
+been: it closes literal "worse than not using it" sites the 30 August review named outright, with zero
+risk of the kind Q1–Q3 exist to screen for.
 
 ### 3.5 Q5 — do the ADR 0381/0366 exclusions still hold?
 
 **Closed: yes, unchanged.** Direct check against the current tree (`track/the-ir-cutover`, based on
-`origin/main`@`996911e2`): all six functions ADR 0381 declined
-(`collect_json_codec_roots`/`refined_or_opaque_base`/`emit_context_rebrands`/
-`sum_owner_of_variant`/`positional_field_name`/`is_refined_is_check`/`ts_binop` — seven names, one
-declined pair) exist unchanged, one definition each. `TypeShape::Refined`'s `base: BaseType` field
-(`bynk-ir/src/lib.rs:1324`) is unchanged. None of these are back in scope.
+`origin/main`@`996911e2`): all seven function names ADR 0381's declined list carries
+(`collect_json_codec_roots`, `refined_or_opaque_base`, `emit_context_rebrands`, `sum_owner_of_variant`,
+`positional_field_name`, `is_refined_is_check`, `ts_binop`) exist unchanged, one definition each
+(`bynk-emit/src/emitter.rs:1003, 1648, 1862, 2325, 4223, 4265, 5126`). Note for a future reader: ADR
+0381's own title says six declined sites, but its list groups seven names into five bullets (two
+bullets each cover a pair) — an arithmetic inconsistency in that ADR itself, not resolved here; it
+doesn't affect this section's purpose, which is only to confirm none of the seven are back in scope.
+`TypeShape::Refined`'s `base: BaseType` field (`bynk-ir/src/lib.rs:1324`) is unchanged. None of these
+are back in scope.
 
 ## 4. A correction to the spine issue's own framing
 
@@ -144,11 +166,13 @@ does need to close before it's safe to wire `lower_expr_ir` into a real caller.
 ## 5. Slice decomposition (final)
 
 - **Slice 0 (this doc).** No code.
-- **Slice 1 — discard-site cleanup.** `emitter.rs:292`/`:482` (`Type`/`Capability` item detours),
-  `workers_entry.rs:380-384`/`workers.rs:606-613` (`Http` handler-kind detours), the three
-  `emit_http_*_wrapper` signatures, and `HttpRoute::method`. Zero new dependencies threaded; every site
-  already holds the IR value it needs. Front-loads a small ADR reversing ADR 0355's `HttpMethod`
-  deferral (§6).
+- **Slice 1 — discard-site cleanup + the `HttpMethod` surface around it.** The four discard sites
+  (`emitter.rs:292`/`:482`, `workers_entry.rs:380-384`/`workers.rs:606-613`) need no new dependency
+  threaded — every site already holds the IR value it needs. Alongside them, per §3.2: the three
+  `emit_http_*_wrapper` signatures, `HttpRoute::method`, `derive_allowed_methods`, the three
+  `route.method == HttpMethod::Get` comparisons, and deleting `http_handler_method_name` (updating its
+  one remaining caller, `tests_emit.rs:718`, to call `http_handler_method_name_ir`). Front-loads a
+  small ADR reversing ADR 0355's `HttpMethod` deferral (§7).
 - **Slice 2 — signatures.** `lower_fn_sig_ir_from_types`, `lower_op_sig_ir_from_commons`.
 - **Slice 3 — store/commit/invariant/transition.** `lower_store_field_ir`, `lower_commit_shape_ir`,
   `lower_invariant_ir`, `lower_transition_ir`.
@@ -164,7 +188,7 @@ does need to close before it's safe to wire `lower_expr_ir` into a real caller.
 ## 6. Slice status
 
 - [ ] Slice 0 — this doc
-- [ ] Slice 1 — discard-site cleanup
+- [ ] Slice 1 — discard-site cleanup + the `HttpMethod` surface around it
 - [ ] Slice 2 — signatures
 - [ ] Slice 3 — store/commit/invariant/transition
 - [ ] Slice 4 — item assembly
