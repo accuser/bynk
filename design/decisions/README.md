@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0418](0418-un-defer-http-method-rendering.md) | **Un-defer the HTTP-method rendering-signature cutover — P6.51 narrowed it enough to be worth it now** (v0.289.58) — Reverses ADR 0355's HttpMethod deferral once phase 7 shipped and P6.51 turned out to have already converted most of the surface | Accepted (v0.289.58) |
 | [0417](0417-p8-5-defid-split-and-fresh-sinks.md) | **P8.5's `DefId` — a split Fn/Handler enum, plain-`DefId` query signatures, and fresh per-call sinks** (v0.289.55) — Resolving #1516's own Decisions A-D, plus one fork the issue didn't examine | Accepted (v0.289.55) |
 | [0416](0416-p8-4-durable-parse-cache-expr-id-and-strict-vs-recovery.md) | **P8.4's shared parse cache — durable `ExprId` allocation, and why it caches the strict parse only** (v0.289.54) — Two forks ADR 0413 didn't examine, found while implementing the cache it specified | Accepted (v0.289.54) |
 | [0415](0415-p8-3-project-graph-shape-and-placement.md) | **P8.3's `ProjectGraph` — deferred `contract`, hand-rolled maps, dual `Provides` edges, and why it lives in `bynk-check`** (v0.289.53) — Five decisions settling ADR 0326's phase-8 deferral for the typed project graph | Accepted (v0.289.53) |

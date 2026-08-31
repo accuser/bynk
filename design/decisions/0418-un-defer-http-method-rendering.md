@@ -1,11 +1,6 @@
----
-level: patch
-changelog: Slice 1 of the IR cutover (`#1542`) — `emit_worker_compose`/the Worker entry now read `IrHandlerKind::Http`'s own `method`/`path` instead of re-deriving them from the AST, closing four build-then-discard sites
----
+# 0418 — Un-defer the HTTP-method rendering-signature cutover — P6.51 narrowed it enough to be worth it now
 
-## ADR: un-defer-http-method-rendering
-title: Un-defer the HTTP-method rendering-signature cutover — P6.51 narrowed it enough to be worth it now
-summary: Reverses ADR 0355's HttpMethod deferral once phase 7 shipped and P6.51 turned out to have already converted most of the surface
+- **Status:** Accepted (v0.289.58)
 
 **Context.** ADR 0355 kept `HttpRoute::method`, the three `emit_http_*_wrapper` signatures,
 `derive_allowed_methods`, and the direct `HttpMethod` comparisons in `emitter/workers.rs`/
