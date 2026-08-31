@@ -35,11 +35,11 @@ use bynk_check::builtin_names::methods::{
 };
 use bynk_check::builtin_names::types::*;
 use bynk_check::checker::{CheckedProgram, ExprId, NamedKind, Ty, TyId, TypedCommons, Types};
-use bynk_ir::{IrItem, TypeShape};
+use bynk_ir::TypeShape;
 use bynk_ir::{block_uses_emit, walk_block_exprs};
 use bynk_lower::{
-    lower_capability_item_ir, lower_protocol_ir, lower_service_handler_signature_ir,
-    lower_store_field_shape_ir, lower_type_item_ir,
+    lower_capability_ops_ir, lower_protocol_ir, lower_service_handler_signature_ir,
+    lower_store_field_shape_ir, lower_type_shape_ir,
 };
 use bynk_syntax::ast::{
     AgentDecl, BaseType, BinOp, Block, CommonsItem, Expr, ExprKind, FnDecl, FnName, Ident,
@@ -289,10 +289,7 @@ fn type_shape_for(t: &TypeDecl, program: &CheckedProgram) -> TypeShape {
             t.name.name
         )
     });
-    let IrItem::Type { shape, .. } = lower_type_item_ir(def, program) else {
-        unreachable!("lower_type_item_ir always returns IrItem::Type")
-    };
-    shape
+    lower_type_shape_ir(def, program)
 }
 
 /// A no-op project context for single-file emission. Single-file mode never
@@ -479,9 +476,7 @@ pub(crate) fn emit_project(
                 // each op's resolved types off `ops`, not `c`'s own raw
                 // `TypeRef`s (Decision B, #1193) — no separate helper, this
                 // is `emit_capability`'s one and only call site.
-                let IrItem::Capability { ops, .. } = lower_capability_item_ir(c, program) else {
-                    unreachable!("lower_capability_item_ir always returns IrItem::Capability")
-                };
+                let ops = lower_capability_ops_ir(c, program);
                 let mut item_stmts = emit_capability(c, &ops, commons);
                 if let Some(first) = item_stmts.first_mut() {
                     first.span = Some(c.span);

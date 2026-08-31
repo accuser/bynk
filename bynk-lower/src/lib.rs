@@ -860,23 +860,27 @@ pub fn lower_service_handler_ir(
     }
 }
 
-/// P6.6 (#1161): lower a `type` declaration into a real [`IrItem::Type`] —
-/// [`IrItem`]'s own doc comment names which of its seven design-sketch
-/// variants are real as of this slice (`Type`/`Fn` only, Decision D). Takes
-/// a certified `&CheckedProgram`, matching this module's own categorical
-/// discipline (this file's own header doc: "every entry point here takes a
-/// `&CheckedProgram`"), even though only `TypedCommons::types`/`ty_intern`
-/// are read — no per-expression `expr_types` lookup is involved (Q2,
-/// `design/tracks/the-ir.md` §3.2), but *which fields are read* isn't the
-/// discipline; *which failures are allowed to `panic!`* is. Every panic
-/// below asserts "the checker already accepted this declaration" — true
-/// only once `certify` has run: a bare `TypedCommons` is not certified by
-/// construction (`checker.rs`'s own `CheckedProgram` doc notes the
-/// project/batch path holds per-unit `TypedCommons` values *before* that
-/// unit's build-wide gate is decided), so accepting one here would make
-/// `resolve_type_ref_in` returning `None` a reachable, not just a buggy,
-/// outcome.
-pub fn lower_type_item_ir(decl: &Arc<TypeDecl>, program: &CheckedProgram) -> IrItem {
+/// Slice 1 of `#1542` (`design/tracks/the-ir-cutover.md` §5): the
+/// `TypeShape`-only half of [`lower_type_item_ir`], for callers that already
+/// hold a `TypeDecl` and want its shape directly — [`IrItem::Type`] wraps
+/// exactly this one field, so the round-trip through the full enum
+/// (`emitter.rs`'s own `type_shape_for`, formerly a build-then-`unreachable!`
+/// discard) was pure ceremony.
+///
+/// Takes a certified `&CheckedProgram`, matching this module's own
+/// categorical discipline (this file's own header doc: "every entry point
+/// here takes a `&CheckedProgram`"), even though only
+/// `TypedCommons::types`/`ty_intern` are read — no per-expression
+/// `expr_types` lookup is involved (Q2, `design/tracks/the-ir.md` §3.2), but
+/// *which fields are read* isn't the discipline; *which failures are allowed
+/// to `panic!`* is. Every panic below asserts "the checker already accepted
+/// this declaration" — true only once `certify` has run: a bare
+/// `TypedCommons` is not certified by construction (`checker.rs`'s own
+/// `CheckedProgram` doc notes the project/batch path holds per-unit
+/// `TypedCommons` values *before* that unit's build-wide gate is decided),
+/// so accepting one here would make `resolve_type_ref_in` returning `None` a
+/// reachable, not just a buggy, outcome.
+pub fn lower_type_shape_ir(decl: &Arc<TypeDecl>, program: &CheckedProgram) -> TypeShape {
     let program = program.program();
     let type_vars: HashSet<String> = decl
         .type_params
@@ -886,7 +890,7 @@ pub fn lower_type_item_ir(decl: &Arc<TypeDecl>, program: &CheckedProgram) -> IrI
     let resolve = |r: &bynk_syntax::ast::TypeRef| {
         checker::resolve_type_ref_in(r, &program.types, &type_vars, &program.ty_intern)
     };
-    let shape = match &decl.body {
+    match &decl.body {
         TypeBody::Record(r) => TypeShape::Record {
             fields: r
                 .fields
@@ -956,8 +960,18 @@ pub fn lower_type_item_ir(decl: &Arc<TypeDecl>, program: &CheckedProgram) -> IrI
             refinement: refinement.clone(),
             opaque: true,
         },
-    };
-    IrItem::Type { shape }
+    }
+}
+
+/// P6.6 (#1161): lower a `type` declaration into a real [`IrItem::Type`] —
+/// [`IrItem`]'s own doc comment names which of its seven design-sketch
+/// variants are real as of this slice (`Type`/`Fn` only, Decision D). A thin
+/// wrapper over [`lower_type_shape_ir`] (slice 1 of `#1542`) for a caller
+/// that wants the full `IrItem`, not just its one field.
+pub fn lower_type_item_ir(decl: &Arc<TypeDecl>, program: &CheckedProgram) -> IrItem {
+    IrItem::Type {
+        shape: lower_type_shape_ir(decl, program),
+    }
 }
 
 /// P6.6 (#1161): lower a `fn` declaration into a real [`IrItem::Fn`] —
@@ -1811,12 +1825,21 @@ pub fn lower_event_subscriber_shapes_ir(
 pub fn lower_capability_item_ir(cap: &CapabilityDecl, program: &CheckedProgram) -> IrItem {
     IrItem::Capability {
         def: cap.name.name.clone(),
-        ops: cap
-            .ops
-            .iter()
-            .map(|op| lower_op_sig_ir(op, program))
-            .collect(),
+        ops: lower_capability_ops_ir(cap, program),
     }
+}
+
+/// Slice 1 of `#1542` (`design/tracks/the-ir-cutover.md` §5): the `ops`-only
+/// half of [`lower_capability_item_ir`], for a caller (`emitter.rs`'s own
+/// capability-item loop) that already has the capability's name from the AST
+/// declaration it's holding and only needs the resolved op signatures —
+/// avoids the build-then-discard-`def` round-trip through the full
+/// `IrItem::Capability`.
+pub fn lower_capability_ops_ir(cap: &CapabilityDecl, program: &CheckedProgram) -> Vec<OpSig> {
+    cap.ops
+        .iter()
+        .map(|op| lower_op_sig_ir(op, program))
+        .collect()
 }
 
 /// P6.29 (design/tracks/the-ir.md §6a): the `TypedCommons`-only counterpart to
