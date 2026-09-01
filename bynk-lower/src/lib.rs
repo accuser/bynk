@@ -1764,19 +1764,31 @@ pub fn lower_service_item_ir(service: &ServiceDecl, program: &CheckedProgram) ->
     }
 }
 
-/// P6.47 (design/tracks/the-ir.md §6b): every `from Events(E)` service in
-/// `program`'s own unit, captured as an [`bynk_ir::EventSubscriberShape`]
-/// keyed by service name — see that struct's own doc comment for why this is
-/// captured now rather than re-derived cross-unit at compose time. Absorbs
-/// the `ServiceProtocol::Events` pre-filter this function's own single call
-/// site used to apply externally: [`lower_service_item_ir`] unconditionally
-/// lowers every handler's own *body* (not just its declared shape), so the
-/// guard stays first here too — a cheap, structural pre-filter (which
-/// services even have a shape to capture), not a resurrected raw-AST *read*
-/// — before paying for a full lowering pass on a matching service. Safe as
-/// of #1254: a `catch_unwind` probe wrapping [`lower_service_item_ir`] across
-/// the entire e2e fixture corpus found zero panics, down from ~51 when the
-/// P6.23 investigation first ran.
+/// Every `from Events(E)` service in `program`'s own unit, captured as an
+/// [`bynk_ir::EventSubscriberShape`] keyed by service name — see that
+/// struct's own doc comment for why this is captured now rather than
+/// re-derived cross-unit at compose time (P6.47, `#1254`).
+///
+/// Slice D0 of `#1542` (`design/tracks/the-ir-cutover.md` §10.5, `#1574`):
+/// reads the two facts it returns from the shape-only helpers that own them —
+/// [`lower_protocol_ir`] for `schema_dispatch`, and [`lower_handler_kind_ir`]
+/// plus [`lower_service_handler_signature_ir`] for the `Event` handler's
+/// parameter count. Before D0 this function went through
+/// `lower_service_item_ir`, which lowers every handler's *body* to `IrExpr`
+/// through the expression lowerer and then discards it — the one production
+/// route into that lowerer, and the detour §10.2 of the track doc names (the
+/// body lowering's own `unreachable!()` safety argument covered
+/// `lower_fn_body_ir`'s callers only, never this path). The values are
+/// identical by construction: `lower_service_handler_ir` itself took its
+/// `params` from [`lower_service_handler_signature_ir`] and its `kind` from
+/// [`lower_handler_kind_ir`], and `lower_service_item_ir` its `protocol` from
+/// [`lower_protocol_ir`] — this function now calls those three directly and
+/// skips the body.
+///
+/// The `ServiceProtocol::Events` pre-filter stays first: a cheap, structural
+/// "which services even have a shape to capture" check (the same match
+/// [`lower_protocol_ir`] performs), not a raw-AST *read* of anything the IR
+/// side owns.
 pub fn lower_event_subscriber_shapes_ir(
     program: &CheckedProgram,
 ) -> HashMap<String, EventSubscriberShape> {
@@ -1785,25 +1797,21 @@ pub fn lower_event_subscriber_shapes_ir(
         if let CommonsItem::Service(s) = item
             && matches!(&s.protocol, ServiceProtocol::Events { .. })
         {
-            let IrItem::Service {
-                protocol:
-                    ProtocolIr::Events {
-                        schema_dispatch, ..
-                    },
-                handlers,
-                ..
-            } = lower_service_item_ir(s, program)
+            let ProtocolIr::Events {
+                schema_dispatch, ..
+            } = lower_protocol_ir(&s.protocol, program)
             else {
                 panic!(
-                    "bynk internal error: lower_service_item_ir did not return \
-                     IrItem::Service{{ protocol: ProtocolIr::Events, .. }} for a service \
-                     whose own AST protocol is ServiceProtocol::Events"
+                    "bynk internal error: lower_protocol_ir did not return \
+                     ProtocolIr::Events for a service whose own AST protocol is \
+                     ServiceProtocol::Events"
                 )
             };
-            let two_param_handler = handlers
+            let two_param_handler = s
+                .handlers
                 .iter()
-                .find(|h| matches!(h.kind, IrHandlerKind::Event))
-                .is_some_and(|h| h.params.len() == 2);
+                .find(|h| matches!(lower_handler_kind_ir(&h.kind), IrHandlerKind::Event))
+                .is_some_and(|h| lower_service_handler_signature_ir(h, program).0.len() == 2);
             out.insert(
                 s.name.name.clone(),
                 EventSubscriberShape {
