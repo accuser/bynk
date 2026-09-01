@@ -283,7 +283,25 @@ entirely into the new item-assembly slice (its own real home, per its functions'
 - [x] Slice 1 — discard-site cleanup + the `HttpMethod` surface around it (`#1556`)
 - [x] Slice 2 — signatures (already satisfied — see §5, no code landed)
 - [x] Slice 3.1 — close `bynk-lower`'s two live `todo!()` gaps (`#1564`)
-- [ ] Slice 3.2 — the coordinated expr/stmt-core cutover (was Slice 6)
+- [ ] Slice 3.2 — the coordinated expr/stmt-core cutover (was Slice 6). **In progress**: the
+  mechanical AST→IR conversion (§5's own correction above) is done; of the seven entry points, three
+  are flipped and verified against the real e2e corpus + full workspace suite —
+  `emit_free_fn`/`emit_contract_guarded_body`/`emit_method` (all `FnDecl`-based, `lower_fn_body_ir`).
+  Each flip found and fixed a real bug along the way (missing precedence-aware parenthesization, a
+  dropped constructor payload, a guard-blind non-exhaustive-match check, a missing `?`-in-match-arm
+  case, absent `cx.record_span` calls, `?` losing its hoisted-statement form, a lambda's own `?`
+  picking up the wrong `embeds` conversion) — see the three commits on `slice3-2-expr-stmt-core` for
+  the full account of each. Two e2e diffs remain, both structurally unrecoverable without a further
+  `bynk-lower` change (redundant source parens the grammar didn't require, `1019_implies_rhs_
+  question_return_escape`/`244_contract_passes`) — accepted, not silently absorbed.
+  Remaining: `emit_provider`/`emit_service`/`emit_agent`/`emit_ws_do_method` — all handler-bodied, not
+  `FnDecl`-bodied, needing `lower_handler_ir`/`lower_service_handler_ir` instead of `lower_fn_body_ir`.
+  **Found in passing, not yet reconciled with Slice 4's own listing below**: both of those functions
+  already exist, fully built (confirmed by reading them) — Slice 4's "needs building" framing is stale
+  the same way Slice 2's turned out to be (§5). The real remaining work for the handler entry points is
+  the *wiring* (this slice's own concern), not construction (nominally Slice 4's) — worth a doc
+  correction once the handler flips land and the true boundary between the two slices is clear from
+  having actually done it, not guessed at.
 - [ ] Slice 4 — handler/body (was Slice 5)
 - [ ] Slice 5 — item assembly (was Slice 4; absorbs old Slice 3 in full)
 
