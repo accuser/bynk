@@ -387,11 +387,17 @@ just its declared shape)" — and cites the #1254 `catch_unwind` probe that foun
 panic through it. That is a detour of exactly the §1.2 shape the review *did* name at
 `workers_entry.rs:380`, one level deeper, and it has two consequences for this decision:
 
-- `lower_expr_ir`'s six `todo!()`s and its R5.9 `unreachable!()` are **live** on `main` for any
-  events-service handler body that reaches them — held off by the test-body gate and by the corpus
-  happening not to contain the shape, not by construction. A `lower_ident_ir` panic on a legal
-  program is a shipped-compiler crash, reachable today, in code whose only production purpose is to
-  be discarded.
+- `lower_ident_ir`'s terminal `unreachable!()` (`lib.rs:3589`) is **live** on `main` through this
+  chain, and its own safety argument does not cover it: the message says the arm is "structurally
+  unreachable through `lower_fn_body_ir` (see its own doc comment): it has no
+  store_fields/agent_state_ty/actor_binding parameter to carry any of them" — an argument scoped to
+  `lower_fn_body_ir`'s callers, written before the events-service path above was a second production
+  caller (`lower_service_handler_body_ir`), which it never considers. The corpus not containing the
+  shape is what holds it off, not construction. (The six `todo!()`s are *not* in this category: each
+  names the checker's `ctx.in_test_body` gate, so a legal events-service handler body cannot reach
+  them — they go with D1 because they are dead, not because they are dangerous.) A shipped-compiler
+  panic whose safety argument covers the wrong call graph, in code whose only production purpose is
+  to be discarded, is the reason D0 lands first.
 - Both values the caller needs are already available from adopted, shape-only helpers:
   `lower_protocol_ir` (`lib.rs:1449`, 3 production callers) carries `schema_dispatch`, and
   `lower_service_handler_signature_ir` (`lib.rs:645`, called from `emitter.rs:506`) carries the
@@ -445,14 +451,17 @@ with a production caller after D0:** `lower_handler_kind_ir` (25 production refe
 `lower_store_field_shape_ir` (2), `body_writes_state` (2), `lower_capability_ops_ir` (2),
 `lower_attached_fn_sig_ir_from_types` (2), `lower_service_handler_signature_ir` (2),
 `lower_event_subscriber_shapes_ir` (1, repointed by D0), `lower_route_cache_ir` (1),
-`lower_route_limit_ir` (1), `capability_op_sig_from_commons` (1), and their private support
-(`lower_fn_sig_ir_from_types`, `lower_op_sig_ir_from_commons`, `lower_op_sig_ir`,
+`lower_route_limit_ir` (1), `capability_op_sig_from_commons` (1); two that are `pub` today but
+have no caller outside the crate — `lower_fn_sig_ir_from_types` (`lib.rs:1983`, called only by
+`lower_attached_fn_sig_ir_from_types`) and `lower_op_sig_ir_from_commons` (`lib.rs:1929`, called only
+at `:1874`/`:1908`) — which **D1 demotes to private**, since §10.4's adoption probe counts `pub`
+items and would otherwise read 2, not 0; and the genuinely private support (`lower_op_sig_ir`,
 `lower_event_pattern_ir`, `lower_http_method_ir`, `lower_cap_ref_ir`, `store_field_kind_and_indexed`,
 `resolve_store_field_ty`, `duration_millis_annotation`). Roughly 1,000 production lines and ~2,200
 test lines: the crate its own description already claims to be, "the small set of shared
 AST-analysis helpers both `bynk-emit` and `bynk-lower` need."
 
-**`bynk-ir/src/lib.rs` — 23 of 44 public items, ~830 of 1,923 lines, plus the crate doc.** Every
+**`bynk-ir/src/lib.rs` — 23 of 47 public items, ~830 of 1,923 lines, plus the crate doc.** Every
 item below has no consumer in any production source outside `bynk-ir` once the `bynk-lower` set
 above is gone (`IrItem` is included because its only surviving reference is the D0 detour's
 destructuring, which D0 removes):
@@ -465,18 +474,37 @@ destructuring, which D0 removes):
 | Policy | `PolicyIr` `CorsIr` `SecurityIr` |
 | Crate doc | `lib.rs:1–158` narrates the IR as a finished design, naming `lower_handler_ir`/`lower_service_handler_ir`/`lower_fn_body_ir` seven times; rewritten by D2 to describe the analysis-helper vocabulary that remains |
 
-**What `bynk-ir` keeps — 21 items, each with a `bynk-emit` consumer today:** `IrHandlerKind` (six
-files), `IrHttpMethod`, `CapRefIr`, `ActorSeamIr`, `ProtocolIr`, `TypeShape`, `StoreFieldIr`,
+**What `bynk-ir` keeps — 24 items, each with a consumer outside the crate today:** `IrHandlerKind`
+(six files), `IrHttpMethod`, `CapRefIr`, `ActorSeamIr`, `ProtocolIr`, `TypeShape`, `StoreFieldIr`,
 `StoreKindIr`, `IndexIr`, `FnSig`, `OpSig`, `CacheIr`, `EventSubscriberShape`, `EventPatternIr`,
-`EventPatternValueIr`, `ConstVal` (the event-pattern renderer at `emitter/lower.rs:5712`), and the
-four AST-walk helpers `block_uses_emit`, `walk_block_exprs`, `walk_exprs`, `match_needs_if_chain`.
+`EventPatternValueIr`, `ConstVal` (the event-pattern renderer at `emitter/lower.rs:5712`), the four
+AST-walk helpers `block_uses_emit`, `walk_block_exprs`, `walk_exprs`, `match_needs_if_chain`, and
+the four `pub const MUTATING_{MAP_CACHE,SET,LOG,CELL}_OPS` tables (`lib.rs:1840–1849`), consumed by
+the kept `body_writes_state` (`bynk-lower/src/lib.rs:1316–1319`). 47 = 23 deleted + 24 kept.
 `TypeShape::Refined`'s `BaseType`/`Refinement` embedding (ADR 0366) stays exactly as §2 already
 argued.
 
-**Elsewhere.** `bynk-check/src/checker.rs:684`, `:768` and `checker/calls.rs:211` cite
-`lower_service_handler_ir`/`lower_expr_ir` in doc comments (already stale — they name the
-pre-P7.12 module path); D1 rewrites those three so no comment names a deleted function. No manifest,
-release-list, or probe change: `bynk-ir`/`bynk-lower` stay as crates and stay published,
+**Elsewhere — and this is where D1/D2 would otherwise fail CI.** `.github/workflows/ci.yml:243`
+runs `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace`, so a rustdoc intra-doc link from a
+*surviving* item to a deleted one is a hard failure, invisible to `cargo test` and clippy. Surviving
+items carry such links today: in `bynk-ir`, `CapRefIr` → `[IrItem]` (`:1014`), `OpSig` →
+`[IrItem::Fn::receiver]` (`:1073`), `FnSig` → `[IrItem::Fn]` (`:1083`), `ProtocolIr` →
+`[ConnectionBinder]` (`:1135`), `EventPatternValueIr` → `[GlobalRef]` (`:1200`), `TypeShape` →
+`[IrItem::Type]`/`[EmbedIr]` (`:1307`, `:1328`), `StoreKindIr`/`IndexIr` → `[EmbedIr]` (`:1414`,
+`:1426`), `IrHandlerKind` → `[IrHandler::kind]` (`:1683`); in `bynk-lower`, `lower_type_shape_ir` →
+`[lower_type_item_ir]`/`[IrItem::Type]` (`:864–865`), `lower_event_subscriber_shapes_ir` →
+`[lower_service_item_ir]` (`:1772`, `:1777`), `lower_capability_ops_ir` and
+`capability_op_sig_from_commons` → `[lower_capability_item_ir]` (`:1833`, `:1846`), and `:1501`. **D1
+and D2 each rewrite every surviving doc comment that links a deleted item**, not only the crate doc,
+and run the strict `cargo doc` locally before pushing. Plain `//` comments naming deleted types are
+not a CI failure but are the same defect: `bynk-check/src/checker.rs:684`, `:768` and
+`checker/calls.rs:211` (`lower_service_handler_ir`/`lower_expr_ir`, already stale — they name the
+pre-P7.12 module path); `bynk-emit/src/emitter.rs:496–498` (`IrItem::Service`, `IrHandler`),
+`emitter.rs:5115–5116` (`IrBinOp` — worth *rewriting*, not deleting: it records why `ts_binop` was
+never converted, a piece of §10.1(2)'s own argument), `project.rs:2860` (`IrItem::Provider`),
+`emitter/emit.rs:2089–2093` (`IrItem::Capability::{def,ops}`), `emitter/wrangler.rs:45–46`
+(`IrItem::Service`, `IrHandler::kind`). D1/D2 rewrite those too, so no comment in the tree names a
+deleted item. No manifest, release-list, or probe change: `bynk-ir`/`bynk-lower` stay as crates and stay published,
 `ast_importers` does not walk them, and `test_density` is a trend row. The Slice 3.2 branch's two
 `bynk-lower`-side fixes (`ConstVal::Float` carrying its lexeme; a lambda `?`'s `embeds`) land
 inside deleted code and are not salvaged — `ConstVal::Float` has no surviving consumer that renders
@@ -506,7 +534,8 @@ argued and accepted mid-phase") would not serve better. A second miscompile of t
 purity alone does not.
 *Evidence:* the adoption probe D3 adds (for each `pub` item in `bynk-ir`/`bynk-lower`, a production
 call site outside the owning crate and outside a test — the review's Part 5 §8), reading **0
-unconsumed** by construction after D1/D2 and gated as a ratchet so it can only fall; and
+unconsumed** by construction after D1/D2 (D1's two demotions are what make it 0 rather than 2) and
+gated as a ratchet so it can only fall; and
 `emit_diagnostics`/`ts_writes` unchanged by D0–D3.
 *Note:* refusing the expression IR is not refusing the IR — 21 `bynk-ir` items and 17 `bynk-lower`
 entry points stay, with consumers. And it is not a refusal of tree-native emission, which is the
@@ -524,14 +553,18 @@ table current):
   (the two booleans it returns come from the same values). Lands first and alone because it is
   correct under either option in §10.3, and because it is the change that makes §10.3's inventory
   literally `rustc`-dead rather than inferred-dead.
-- **D1 — `bynk-lower`.** Delete the 48 functions and slim `LowerIrCtx` per §10.3; delete the tests
-  that exercised them; prune the test module's helpers to what survives; rewrite the three
-  `bynk-check` comments. `rustc` with `-D warnings` is the proof
-  nothing reachable was removed.
+- **D1 — `bynk-lower`.** Delete the 48 functions and slim `LowerIrCtx` per §10.3; demote
+  `lower_fn_sig_ir_from_types` and `lower_op_sig_ir_from_commons` to private; delete the tests that
+  exercised the deleted functions; prune the test module's helpers to what survives; rewrite every
+  surviving doc comment that links a deleted item (§10.3 "Elsewhere" lists them) and the three
+  `bynk-check` comments. `rustc` with `-D warnings` is the proof nothing reachable was removed;
+  `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p bynk-lower` is the proof no link dangles.
 - **D2 — `bynk-ir`.** Delete the 23 items; rewrite `lib.rs`'s crate doc to describe the helper
-  vocabulary that remains; drop the `bynk_syntax::ast` imports only the deleted items needed (the
-  `Block`/`Expr`/`MatchArm` imports the four walk helpers use stay, and so does ADR 0366's
-  `BaseType`/`Refinement`).
+  vocabulary that remains; rewrite the nine surviving-item doc comments that link deleted items
+  (§10.3 "Elsewhere") and the five `bynk-emit` plain comments; drop the `bynk_syntax::ast` imports
+  only the deleted items needed (the `Block`/`Expr`/`MatchArm` imports the four walk helpers use stay,
+  and so does ADR 0366's `BaseType`/`Refinement`). Same strict `cargo doc` proof, workspace-wide,
+  since `bynk-emit`'s docs link into `bynk-ir`.
 - **D3 — record and retire.** The ADR (superseding the-ir.md's Q7/#1175 "cutover" decision and
   ADR 0338's R5.9 deferral, both of which become moot); the Part 15.1 register entry from §10.4;
   the adoption probe, gated; this doc's closing summary to `../archive/retired-tracks.md`; the spine
