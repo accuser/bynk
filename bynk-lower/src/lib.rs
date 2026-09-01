@@ -5,24 +5,34 @@
 //! [`IrStmt`] arm is a `todo!()` naming the slice that completes it
 //! (Decision D).
 //!
-//! **Correction (Arc D, P7.12): the claim this paragraph made through the
-//! crate carve — "nothing in this module is called from anywhere in
-//! `bynk-emit`'s existing emission path... it has no consumer yet" — was
-//! false and is corrected here rather than left standing.** `lower_service_
-//! item_ir` unconditionally lowers every handler's own *body*, and is
-//! reached for real from `bynk_check`-typed `Events`-protocol services via
-//! `lower_event_subscriber_shapes_ir` (`bynk-emit/src/project.rs`), reaching
-//! `lower_service_handler_ir` → `lower_service_handler_body_ir` →
-//! `lower_block_ir` → `lower_expr_ir`/`lower_stmt_ir` and the rest of this
-//! module's own recursive expression-lowering machinery — real, live,
-//! production code, verified panic-free across the whole e2e fixture corpus
-//! by a `catch_unwind` safety probe (see `lower_service_item_ir`'s own doc
-//! comment). A handful of top-level item constructors genuinely have no
-//! caller outside this crate's own test suite (`lower_agent_item_ir`,
-//! `lower_provider_item_ir`, `lower_fn_item_ir`, and the handler/store-field/
-//! invariant/transition helpers only those three call) — each of those is
-//! real test-harness infrastructure for the shared lowering machinery above,
-//! not dead code, per this crate carve's own accepted proposal issue.
+//! **Reachability, corrected twice and now settled (Slice D0 of `#1542`,
+//! `design/tracks/the-ir-cutover.md` §10).** Through the crate carve (Arc D,
+//! P7.12) this paragraph claimed nothing here was reached from `bynk-emit`'s
+//! emission path; that was false — `lower_event_subscriber_shapes_ir`
+//! (called from `bynk-emit/src/project.rs`) went through
+//! `lower_service_item_ir`, which lowers every handler's own *body*, so the
+//! whole recursive expression-lowering machinery (`lower_service_handler_ir`
+//! → `lower_service_handler_body_ir` → `lower_block_ir` → `lower_expr_ir`/
+//! `lower_stmt_ir`) ran in production for every `from Events(E)` service and
+//! had its result discarded. Slice D0 repointed that one caller at the
+//! shape-only helpers it actually needs (see its own doc comment), so the
+//! original claim is now *true* by construction rather than false by
+//! oversight: **every item constructor and the expression/statement/body
+//! lowering beneath it — `lower_service_item_ir`, `lower_agent_item_ir`,
+//! `lower_provider_item_ir`, `lower_fn_item_ir`, `lower_type_item_ir`,
+//! `lower_capability_item_ir`, the handler/store-field/commit-shape/
+//! invariant/transition helpers, `lower_fn_body_ir`, `lower_block_ir`,
+//! `lower_expr_ir` and everything they call — has no caller outside this
+//! crate's own test module.** The 30 August 2026 review's "zero callers"
+//! finding was right about the end state and wrong about the path; the
+//! track doc's §10.2 has the trace. That machinery is scheduled for deletion
+//! by Slice D1 of the same track, after which `rustc`'s own dead-code
+//! analysis (not this paragraph) is the reachability record. What stays is
+//! the AST-analysis helper vocabulary `bynk-emit` consumes today —
+//! `lower_handler_kind_ir`, `lower_handler_given_ir`,
+//! `lower_protocol_ir{,_from_commons}`, `lower_type_shape_ir`,
+//! `lower_service_handler_signature_ir`, `body_writes_state`, and their
+//! siblings — each with a production call site.
 //!
 //! **Totality discipline (ADR 0334, Q2):** every entry point here takes a
 //! `&CheckedProgram`, not a bare `&TypedCommons` — a certified program only,
