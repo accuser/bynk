@@ -952,7 +952,7 @@ pub(crate) fn emit_free_fn(
     let guarded = contracts && (!f.requires.is_empty() || !f.ensures.is_empty());
     let mut body_text = String::new();
     if guarded {
-        emit_contract_guarded_body(&mut body_text, f, &mut cx, async_tail);
+        emit_contract_guarded_body(&mut body_text, f, program, &mut cx, async_tail);
     } else if !body_uses_is_pattern(&f.body) && !body_uses_record_spread(&f.body) {
         // Slice 3.2 of #1542 (`design/tracks/the-ir-cutover.md` §5): the
         // first of the seven entry points to flip, staged ahead of the
@@ -1058,7 +1058,13 @@ pub(crate) fn emit_free_fn(
 /// `result` before it is returned. Each violation throws with the clause name
 /// and the offending argument/`result` values. This wrapper is emitted only in
 /// the dev/test profile and is O(1) in code size (one guard, not per call site).
-fn emit_contract_guarded_body(out: &mut String, f: &FnDecl, cx: &mut LowerCtx, async_tail: bool) {
+fn emit_contract_guarded_body(
+    out: &mut String,
+    f: &FnDecl,
+    program: &CheckedProgram,
+    cx: &mut LowerCtx,
+    async_tail: bool,
+) {
     let FnName::Free(name) = &f.name else {
         return;
     };
@@ -1120,14 +1126,26 @@ fn emit_contract_guarded_body(out: &mut String, f: &FnDecl, cx: &mut LowerCtx, a
     } else {
         writeln!(out, "  const result = (() => {{").unwrap();
     }
-    emit_block_as_function_body_with_return(
-        out,
-        &f.body,
-        cx,
-        INDENT_STEP * 2,
-        async_tail,
-        Some(&f.return_type),
-    );
+    // Slice 3.2 of #1542: the same per-body static gate `emit_free_fn`'s own
+    // unguarded branch already uses — see that function's own commit for the
+    // full account of what it protects against (R5.9's is-binding gap,
+    // RecordSpread's own concise-`...`-syntax loss). Written directly into
+    // `out`, matching this function's own established "no local buffer"
+    // discipline just above: `emit_block_inner_v2` calls `cx.record_span`
+    // internally too, so the identical offset-correctness reasoning applies.
+    if !body_uses_is_pattern(&f.body) && !body_uses_record_spread(&f.body) {
+        let ir_body = lower_fn_body_ir(f, program);
+        emit_block_inner_v2(out, &ir_body, cx, INDENT_STEP * 2, async_tail);
+    } else {
+        emit_block_as_function_body_with_return(
+            out,
+            &f.body,
+            cx,
+            INDENT_STEP * 2,
+            async_tail,
+            Some(&f.return_type),
+        );
+    }
     writeln!(out, "  }})();").unwrap();
     // Postcondition guards — `result` (and the parameters) are in scope.
     for c in &f.ensures {
