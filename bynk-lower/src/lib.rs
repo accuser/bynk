@@ -2309,6 +2309,7 @@ fn lower_stmt_ir(s: &Statement, cx: &mut LowerIrCtx) -> IrStmt {
             IrStmt::Let {
                 local: l.name.name.clone(),
                 value,
+                annotation: l.type_annot.as_ref().map(|_| bound_ty),
             }
         }
         Statement::EffectLet(l) => {
@@ -2340,6 +2341,7 @@ fn lower_stmt_ir(s: &Statement, cx: &mut LowerIrCtx) -> IrStmt {
                     ty,
                     span,
                 },
+                annotation: l.type_annot.as_ref().map(|_| bound_ty),
             }
         }
         Statement::Send(send) => {
@@ -2680,6 +2682,7 @@ fn lower_is_ir(
             stmts: vec![IrStmt::Let {
                 local: recv_local,
                 value: scrutinee,
+                annotation: None,
             }],
             tail: Box::new(bool_expr),
         },
@@ -2941,8 +2944,8 @@ pub fn lower_expr_ir(e: &Expr, cx: &mut LowerIrCtx) -> IrExpr {
             ty,
             span,
         },
-        ExprKind::FloatLit { value, .. } => IrExpr {
-            kind: IrExprKind::Const(ConstVal::Float(*value)),
+        ExprKind::FloatLit { value, lexeme } => IrExpr {
+            kind: IrExprKind::Const(ConstVal::Float(*value, lexeme.clone())),
             ty,
             span,
         },
@@ -2978,6 +2981,7 @@ pub fn lower_expr_ir(e: &Expr, cx: &mut LowerIrCtx) -> IrExpr {
                 fields: fields
                     .iter()
                     .map(|f| {
+                        let is_shorthand = f.value.is_none();
                         let value = match &f.value {
                             Some(v) => lower_expr_ir(v, cx),
                             // Shorthand `{ x }` — no `Expr`/`ExprId` of its
@@ -3001,7 +3005,7 @@ pub fn lower_expr_ir(e: &Expr, cx: &mut LowerIrCtx) -> IrExpr {
                                 }
                             }
                         };
-                        (f.name.name.clone(), value)
+                        (f.name.name.clone(), value, is_shorthand)
                     })
                     .collect(),
             },
@@ -3472,8 +3476,8 @@ fn lower_call_ir(
 /// resolving it from an annotation this pass could re-derive.
 fn lower_lambda_ir(e: &Expr, lambda: &LambdaExpr, cx: &mut LowerIrCtx) -> IrExpr {
     let ty = cx.expr_ty(e.id);
-    let param_tys: Vec<TyId> = match &*cx.program.ty_intern.get(ty) {
-        Ty::Fn { params, .. } => params.clone(),
+    let (param_tys, lam_ret): (Vec<TyId>, TyId) = match &*cx.program.ty_intern.get(ty) {
+        Ty::Fn { params, ret } => (params.clone(), *ret),
         _ => panic!(
             "bynk internal error (ADR 0334): a Lambda's own recorded type is not Ty::Fn — \
              check_lambda only ever types one as a function type"
@@ -3490,11 +3494,31 @@ fn lower_lambda_ir(e: &Expr, lambda: &LambdaExpr, cx: &mut LowerIrCtx) -> IrExpr
     for (p, pty) in lambda.params.iter().zip(&param_tys) {
         cx.bind(p.name.name.clone(), *pty);
     }
+    // A lambda is its own return scope (v0.154, ADR 0178) — a `return`/`?`
+    // in its body exits the lambda, not the enclosing function, so
+    // `embed_conversion_ir` (read from `cx.return_ty` by any `?` inside)
+    // must see the lambda's *own* declared return type, not the enclosing
+    // one. Found running the real e2e corpus against #1542's Slice 3.2
+    // (fixture `937_lambda_expr_body_return_ty`): without this save/
+    // restore, a `?` inside a lambda picked up whatever `embeds` conversion
+    // the *enclosing* function declared, producing a real type error under
+    // `tsc --strict` (wrapping the propagated error in the wrong sum
+    // entirely) — mirrors `bynk-emit/src/emitter/lower.rs`'s own
+    // `lower_lambda`/`lower_lambda_v2`, which already got this right on the
+    // string-emitter side.
+    let saved_return_ty = cx.return_ty;
+    cx.set_return_ty(Some(lam_ret));
     let body = lower_expr_ir(&lambda.body, cx);
+    cx.return_ty = saved_return_ty;
     cx.pop_scope();
     IrExpr {
         kind: IrExprKind::Lambda {
-            params: lambda.params.iter().map(|p| p.name.name.clone()).collect(),
+            params: lambda
+                .params
+                .iter()
+                .zip(&param_tys)
+                .map(|(p, pty)| (p.name.name.clone(), p.type_ref.as_ref().map(|_| *pty)))
+                .collect(),
             body: Box::new(body),
             // Free-variable analysis isn't built here — nothing consumes
             // Lambda's IR yet (Decision A, #1143); a later slice computes
@@ -3700,6 +3724,7 @@ fn lower_record_spread_ir(
     let mut stmts = vec![IrStmt::Let {
         local: tmp.clone(),
         value: base_ir,
+        annotation: None,
     }];
 
     // Lower every override's value in source order — same order the string
@@ -3760,12 +3785,20 @@ fn lower_record_spread_ir(
     for (i, (name, _)) in overridden.iter().enumerate() {
         last_index.insert(name.clone(), i);
     }
-    let mut fields: Vec<(String, IrExpr)> = Vec::with_capacity(record_body.fields.len());
+    // `IrExprKind::Record`'s own third tuple field (`is_shorthand`) is
+    // `false` uniformly for every field this constructor appends — not
+    // fully correct for an override that was itself written in shorthand
+    // (`{ ...base, x }`), but moot today: `bynk-emit`'s own consumer gates
+    // every `RecordSpread`-using body onto the AST path entirely (this
+    // constructor's own doc comment already explains why — the concise
+    // `...` JS spread syntax itself isn't preserved either), so nothing
+    // reads this bit from a `RecordSpread`-produced `Record` yet.
+    let mut fields: Vec<(String, IrExpr, bool)> = Vec::with_capacity(record_body.fields.len());
     let mut overridden_names: HashSet<String> = HashSet::new();
     for (i, (name, value)) in overridden.into_iter().enumerate() {
         if last_index[&name] == i {
             overridden_names.insert(name.clone());
-            fields.push((name, value));
+            fields.push((name, value, false));
         } else {
             stmts.push(IrStmt::Expr { value });
         }
@@ -3811,6 +3844,7 @@ fn lower_record_spread_ir(
                 ty: field_ty,
                 span: decl_field.span,
             },
+            false,
         ));
     }
 
@@ -4221,7 +4255,7 @@ commons demo {
         );
         let cases: &[(&str, ConstVal)] = &[
             ("int_lit", ConstVal::Int(1)),
-            ("float_lit", ConstVal::Float(1.5)),
+            ("float_lit", ConstVal::Float(1.5, "1.5".to_string())),
             ("duration_lit", ConstVal::DurationMillis(5 * 60 * 1000)),
             ("str_lit", ConstVal::Str("hi".to_string())),
             ("bool_lit", ConstVal::Bool(true)),
@@ -4522,7 +4556,7 @@ commons demo {
             panic!("expected Block")
         };
         assert_eq!(stmts.len(), 1);
-        let IrStmt::Let { local, value } = &stmts[0] else {
+        let IrStmt::Let { local, value, .. } = &stmts[0] else {
             panic!("expected Let, got {:?}", stmts[0])
         };
         assert_eq!(local, "x");
@@ -4556,7 +4590,7 @@ commons demo {
         let IrExprKind::Block { stmts, tail } = &ir.kind else {
             panic!("expected Block")
         };
-        let IrStmt::Let { local, value } = &stmts[0] else {
+        let IrStmt::Let { local, value, .. } = &stmts[0] else {
             panic!("expected Let, got {:?}", stmts[0])
         };
         assert_eq!(local, "n");
@@ -5203,7 +5237,7 @@ commons demo {
         let IrExprKind::Block { stmts, tail: inner } = &tail.kind else {
             panic!("expected Block, got {:?}", tail.kind)
         };
-        let IrStmt::Let { local, value } = &stmts[0] else {
+        let IrStmt::Let { local, value, .. } = &stmts[0] else {
             panic!(
                 "expected the first statement to be a Let, got {:?}",
                 stmts[0]
@@ -5427,7 +5461,8 @@ commons demo {
         else {
             panic!("expected Lambda, got {:?}", args[1].kind)
         };
-        assert_eq!(params, &["y".to_string()]);
+        assert_eq!(params.len(), 1);
+        assert_eq!(params[0].0, "y");
         assert!(captures.is_empty());
         assert!(matches!(&body.kind, IrExprKind::Local(n) if n == "y"));
     }
@@ -5658,7 +5693,7 @@ commons demo {
             panic!("expected Block, got {:?}", tail.kind)
         };
         assert_eq!(stmts.len(), 1);
-        let IrStmt::Let { local, value } = &stmts[0] else {
+        let IrStmt::Let { local, value, .. } = &stmts[0] else {
             panic!("expected Let, got {:?}", stmts[0])
         };
         assert_eq!(local, "__spread_base_0");
@@ -5720,7 +5755,7 @@ commons demo {
         let IrExprKind::Record { fields, .. } = &block_tail.kind else {
             panic!("expected Record, got {:?}", block_tail.kind)
         };
-        let names: Vec<&str> = fields.iter().map(|(n, _)| n.as_str()).collect();
+        let names: Vec<&str> = fields.iter().map(|(n, _, _)| n.as_str()).collect();
         assert_eq!(names, vec!["y", "x", "z"]);
     }
 
@@ -5798,9 +5833,9 @@ commons demo {
         let IrExprKind::Record { fields, .. } = &block_tail.kind else {
             panic!("expected Record, got {:?}", block_tail.kind)
         };
-        let (_, item) = fields
+        let (_, item, _) = fields
             .iter()
-            .find(|(n, _)| n == "item")
+            .find(|(n, _, _)| n == "item")
             .expect("item field present");
         let IrExprKind::Field { .. } = &item.kind else {
             panic!(
@@ -8053,7 +8088,7 @@ agent Ledger {
             panic!("expected a Block, got {:?}", ir.body.kind)
         };
         assert_eq!(stmts.len(), 1);
-        let IrStmt::Let { local, value } = &stmts[0] else {
+        let IrStmt::Let { local, value, .. } = &stmts[0] else {
             panic!("expected IrStmt::Let, got {:?}", stmts[0])
         };
         assert_eq!(local, "t");
@@ -8096,7 +8131,7 @@ agent Ledger {
             panic!("expected a Block, got {:?}", ir.body.kind)
         };
         assert_eq!(stmts.len(), 1);
-        let IrStmt::Let { local, value } = &stmts[0] else {
+        let IrStmt::Let { local, value, .. } = &stmts[0] else {
             panic!("expected IrStmt::Let, got {:?}", stmts[0])
         };
         assert_eq!(local, "_");
@@ -9097,9 +9132,9 @@ fn pack(id: String) -> Order {
         let IrExprKind::Record { fields, .. } = &body.kind else {
             panic!("expected a Record construction, got {:?}", body.kind)
         };
-        let (_, region_value) = fields
+        let (_, region_value, _) = fields
             .iter()
-            .find(|(name, _)| name == "region")
+            .find(|(name, _, _)| name == "region")
             .expect("Order has a `region` field");
         assert!(
             matches!(&region_value.kind, IrExprKind::Variant { tag, payload } if tag == "International" && payload.is_empty()),

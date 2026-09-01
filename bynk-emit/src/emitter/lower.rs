@@ -14,7 +14,7 @@ use bynk_syntax::ast::{
 };
 
 use bynk_ir::{
-    ConstVal, EventPatternIr, EventPatternValueIr, Exhaustive, GlobalRef, IrArm, IrExpr,
+    ConstVal, EventPatternIr, EventPatternValueIr, GlobalRef, IrArm, IrExpr,
     IrExprKind, IrHttpMethod, IrInterpPart, IrPat, IrStmt,
 };
 use bynk_lower::is_effectful_return;
@@ -542,18 +542,32 @@ fn tail_lowers_as_expression(e: &Expr, cx: &LowerCtx) -> bool {
 /// it's out of this track's (§4/§8), so `IrStmt` never carries one for this
 /// function to see.
 ///
-/// **Known open risk, not yet resolved (found during Slice 3.2 implementation):**
-/// `IrStmt::Let` carries only `local`/`value`, never whether the source
-/// wrote an explicit `let x: Type = ...` annotation (`bynk_lower`'s own
-/// `Statement::Let`/`EffectLet` arms fold `l.type_annot` into `bound_ty` —
-/// the *scope* type a later reference resolves against — and discard whether
-/// it came from an annotation or the RHS's own inferred type). This function
-/// never emits one, matching the AST original's un-annotated case; an
-/// explicitly-annotated `let` in the corpus would diff.
+/// **Fixed real gap, found running the real e2e corpus against this slice's
+/// first flipped entry point:** `IrStmt::Let` now carries an `annotation:
+/// Option<TyId>` field alongside `local`/`value` (`bynk-ir`'s own doc
+/// comment on it has the full account) — rendered here via `ts_ty` the same
+/// way the AST original renders an explicit `let x: Type = ...`/`let x:
+/// Type <- effect` via `ts_type_ref`.
 fn emit_statement_v2(out: &mut String, stmt: &IrStmt, cx: &mut LowerCtx, indent: usize) {
+    // Slice 1 (ADR 0103 D2): matches `emit_statement`'s own entry call
+    // exactly (`cx.record_span(out.len(), stmt.span())`) — found missing
+    // entirely running the real coverage/source-map test suite against
+    // this slice's first flipped entry point, invisible to the e2e
+    // fixture corpus's own text-only diffing. `IrStmt` carries no `span`
+    // of its own (unlike `Statement`, Decision B's "no arena" substitution
+    // never added one) — every variant's own `value: IrExpr` does, so that
+    // stands in; it's the same span the statement's own value would be
+    // anchored to anyway.
+    let stmt_span = match stmt {
+        IrStmt::Let { value, .. } | IrStmt::Expr { value } | IrStmt::Assign { value, .. } => {
+            value.span
+        }
+    };
+    cx.record_span(out.len(), stmt_span);
     match stmt {
-        IrStmt::Let { local, value } => {
+        IrStmt::Let { local, value, annotation } => {
             let mut pre = Pre::new();
+            let ty_annot = annotation.map(|t| ts_ty(t, cx.commons().tys()));
             match &value.kind {
                 IrExprKind::Await { effect } => {
                     let v = pre.lower_ir(effect, cx);
@@ -562,7 +576,10 @@ fn emit_statement_v2(out: &mut String, stmt: &IrStmt, cx: &mut LowerCtx, indent:
                     }
                     let bind_name = cx.bind_local_name(local);
                     cx.emitted_await = true;
-                    write_line(out, indent, &format!("const {bind_name} = await {v};"));
+                    match &ty_annot {
+                        Some(ty) => write_line(out, indent, &format!("const {bind_name}: {ty} = await {v};")),
+                        None => write_line(out, indent, &format!("const {bind_name} = await {v};")),
+                    }
                 }
                 _ => {
                     let v = pre.lower_ir(value, cx);
@@ -570,7 +587,10 @@ fn emit_statement_v2(out: &mut String, stmt: &IrStmt, cx: &mut LowerCtx, indent:
                         write_line(out, indent, s);
                     }
                     let bind_name = cx.bind_local_name(local);
-                    write_line(out, indent, &format!("const {bind_name} = {v};"));
+                    match &ty_annot {
+                        Some(ty) => write_line(out, indent, &format!("const {bind_name}: {ty} = {v};")),
+                        None => write_line(out, indent, &format!("const {bind_name} = {v};")),
+                    }
                 }
             }
         }
@@ -988,6 +1008,32 @@ impl Pre {
     pub(crate) fn lower_ir(&mut self, e: &IrExpr, cx: &mut LowerCtx) -> String {
         let lowered = lower_expr_v2(e, cx);
         self.absorb(lowered)
+    }
+
+    /// [`Self::lower_ir`], for a method-call **receiver** position
+    /// specifically — a kernel/UFCS receiver, never a bare call argument.
+    /// Bynk's own method-call grammar (`parse_postfix`) only ever accepts a
+    /// receiver already at postfix precedence, so any receiver that isn't
+    /// (a `BinOp`/`And`/`Or`/`Not`/`Neg` `IrExpr`) is *structurally*
+    /// guaranteed to have been explicitly parenthesized in the source —
+    /// there is no other way to have written it — unlike an ordinary
+    /// binary-operator operand, where parens are only sometimes needed and
+    /// [`paren_operand_v2`] computes exactly when. Unconditional, not
+    /// precedence-compared: matches the AST original's own behavior, which
+    /// gets this for free by echoing the receiver's own (always-present, in
+    /// this position) `ExprKind::Paren` node — a gap IR's own transparent
+    /// `Paren` unwrapping erases, found running the real e2e corpus against
+    /// this slice's first flipped entry point (fixtures `206_float_
+    /// conversions_refined`/`210_numeric_kernel_and_parse`/
+    /// `244_contract_passes`: `Math.round((p * 100.0))`, not the equally
+    /// correct but non-byte-identical `Math.round(p * 100.0)`).
+    pub(crate) fn lower_ir_receiver(&mut self, e: &IrExpr, cx: &mut LowerCtx) -> String {
+        let text = self.lower_ir(e, cx);
+        if ir_expr_prec(e) == IrPrec::Atom {
+            text
+        } else {
+            format!("({text})")
+        }
     }
 
     /// Absorb an already-built [`Lowered`] and hand back its text.
@@ -4805,35 +4851,41 @@ fn lower_numeric_kernel_v2(
 ) -> Option<Lowered> {
     let mut pre = Pre::new();
     let text: Option<String> = match (op, args) {
-        ("toFloat", []) => Some(pre.lower_ir(receiver, cx)),
+        // `toFloat` erases entirely — the receiver's own text *is* the
+        // result — so it needs `lower_ir_receiver`'s unconditional wrap even
+        // more than the others: without it, a receiver like `(a + b)` used
+        // as `x.toFloat() * y` would silently render `a + b * y` (the outer
+        // precedence system sees this whole call as an atom, since nothing
+        // else marks the erasure), not just a byte-fidelity nit.
+        ("toFloat", []) => Some(pre.lower_ir_receiver(receiver, cx)),
         ("round" | "floor" | "ceil" | "abs", []) => {
-            let recv = pre.lower_ir(receiver, cx);
+            let recv = pre.lower_ir_receiver(receiver, cx);
             Some(format!("Math.{}({recv})", op))
         }
         ("truncate", []) => {
-            let recv = pre.lower_ir(receiver, cx);
+            let recv = pre.lower_ir_receiver(receiver, cx);
             Some(format!("Math.trunc({recv})"))
         }
         ("min" | "max", [other]) => {
-            let recv = pre.lower_ir(receiver, cx);
+            let recv = pre.lower_ir_receiver(receiver, cx);
             let other = pre.lower_ir(other, cx);
             Some(format!("Math.{}({recv}, {other})", op))
         }
         ("clamp", [lo, hi]) => {
-            let recv = pre.lower_ir(receiver, cx);
+            let recv = pre.lower_ir_receiver(receiver, cx);
             let lo = pre.lower_ir(lo, cx);
             let hi = pre.lower_ir(hi, cx);
             Some(format!("Math.min(Math.max({recv}, {lo}), {hi})"))
         }
         ("isNaN" | "isFinite", []) => {
-            let recv = pre.lower_ir(receiver, cx);
+            let recv = pre.lower_ir_receiver(receiver, cx);
             Some(format!("Number.{}({recv})", op))
         }
         // v0.42 (ADR 0074): host number→string — `String(n)` is ECMAScript's
         // Number::toString (shortest round-trip; `1e21`/`Infinity`/`NaN` as the
         // host renders them). The normative contract is the platform's.
         ("toString", []) => {
-            let recv = pre.lower_ir(receiver, cx);
+            let recv = pre.lower_ir_receiver(receiver, cx);
             Some(format!("String({recv})"))
         }
         _ => None,
@@ -5410,7 +5462,7 @@ fn lower_tail_expr_v2(e: &IrExpr, cx: &mut LowerCtx, async_tail: bool) -> Lowere
 /// body's `match`/`if` tail still take the switch/ternary/if-chain shapes
 /// below instead of always falling through to the generic `return
 /// <Return-wrapped-value>;` arm.
-fn emit_block_inner_v2(out: &mut String, block: &IrExpr, cx: &mut LowerCtx, indent: usize, async_tail: bool) {
+pub(crate) fn emit_block_inner_v2(out: &mut String, block: &IrExpr, cx: &mut LowerCtx, indent: usize, async_tail: bool) {
     let IrExprKind::Block { stmts, tail } = &block.kind else {
         panic!("bynk internal error (#1542 Slice 3.2): emit_block_inner_v2 called on a non-Block IrExpr");
     };
@@ -5422,6 +5474,10 @@ fn emit_block_inner_v2(out: &mut String, block: &IrExpr, cx: &mut LowerCtx, inde
     for stmt in stmts {
         emit_statement_v2(out, stmt, cx, indent);
     }
+    // Slice 1 (ADR 0103 D2): matches `emit_block_inner`'s own
+    // `cx.record_span(out.len(), block.tail.span)` — anchors the tail's own
+    // generated lines to its source span, same as every statement above it.
+    cx.record_span(out.len(), tail.span);
     match &tail.kind {
         IrExprKind::Match { .. } => {
             emit_match_tail_v2(out, tail, cx, indent, async_tail);
@@ -6364,6 +6420,66 @@ fn capability_call_type_args_ts_v2(targs: &[TyId], tys: &Arc<Types>) -> String {
     )
 }
 
+/// [`lower_json_codec_call`]'s `IrExpr`-typed sibling. `ty_to_type_ref` is
+/// already a pure `TyId`-based helper with no AST/IR dependency, reused
+/// unchanged; the AST original's own `Callee::Intrinsic` guard (already
+/// authoritative there — P6.21/R8.14's own review) is redundant here, since
+/// `lower_call_v2`'s own dispatch only ever reaches this function for
+/// exactly that shape. `arg_ty` reads `args[0].ty` directly (always
+/// resolved) instead of the AST original's `expr_types.get(&args[0].id)`
+/// lookup (which can miss); `e.ty` replaces the AST original's
+/// `cx.commons().expr_ty(e.id)` the same way.
+fn lower_json_codec_call_v2(e: &IrExpr, op: &str, args: &[IrExpr], cx: &mut LowerCtx) -> Option<Lowered> {
+    let tys = cx.commons().tys();
+    let mut pre = Pre::new();
+    if op == "encode"
+        && let Some(tref) = ty_to_type_ref(args[0].ty, tys)
+    {
+        if cx.in_test_scaffold() {
+            cx.runtime_use().note_json_codec_root(args[0].ty);
+        }
+        let v = pre.lower_ir(&args[0], cx);
+        let ser = bynk_ts::print_expr(&serialisation::serialise_expr(&tref, &v, cx.runtime_use()));
+        return Some(pre.finish(format!("JSON.stringify({ser})")));
+    }
+    if op == "decode"
+        && let Ty::Result(t, _) = &*tys.get(e.ty)
+        && let Some(tref) = ty_to_type_ref(*t, tys)
+    {
+        let t = *t;
+        let ts = if cx.in_test_scaffold() {
+            let qual = cx.runtime_use().json_codec_qual();
+            bynk_ts::print_type(&serialisation::qualified_ts_type(&tref, &qual))
+        } else {
+            ts_ty(t, tys)
+        };
+        if cx.in_test_scaffold() {
+            cx.runtime_use().note_json_codec_root(t);
+        }
+        cx.runtime_use().note_json_codec();
+        let des = bynk_ts::print_expr(&serialisation::deserialise_expr(
+            &tref,
+            "__j",
+            "$",
+            cx.runtime_use(),
+        ));
+        let arg = pre.lower_ir(&args[0], cx);
+        return Some(pre.finish(format!(
+            "((__s: string): Result<{ts}, JsonError> => {{ \
+             let __j: JsonValue; \
+             try {{ __j = JSON.parse(__s) as JsonValue; }} \
+             catch (__e) {{ return Err({{ kind: \"Malformed\", path: \"$\", message: String(__e) }}); }} \
+             const __r = {des}; \
+             if (__r.tag === \"Ok\") return Ok(__r.value as {ts}); \
+             const __be = __r.error; \
+             return Err({{ kind: __be.kind, \
+             path: (__be.kind === \"StructuralMismatch\" || __be.kind === \"RefinementViolation\") ? __be.path : \"$\", \
+             message: __be.kind === \"StructuralMismatch\" ? `expected ${{__be.expected}}, got ${{String(__be.actual)}}` : __be.kind === \"RefinementViolation\" ? __be.violation.message : __be.details }}); }})({arg})"
+        )));
+    }
+    None
+}
+
 fn lower_call_v2(e: &IrExpr, callee: &Callee, targs: &[TyId], args: &[IrExpr], cx: &mut LowerCtx) -> Lowered {
     // `Callee::Method`/`Kernel`/`Agent` pack the receiver as `args[0]`
     // unlowered (`lower_call_ir`'s own `receiver_is_a_value` gate) — these
@@ -6443,6 +6559,14 @@ fn lower_call_v2(e: &IrExpr, callee: &Callee, targs: &[TyId], args: &[IrExpr], c
     match callee {
         Callee::Store { field, op } | Callee::Query { field, op, .. } => {
             return Lowered::bare(lower_store_or_query_call_v2(e, field, op, args, cx));
+        }
+        // v0.22b: the typed JSON codec (ADR 0045) — same "own internal
+        // lowering, must run before the eager pass below" reasoning as
+        // Store/Query just above.
+        Callee::Intrinsic { ns, op } if *ns == JSON => {
+            if let Some(lowered) = lower_json_codec_call_v2(e, op, args, cx) {
+                return lowered;
+            }
         }
         _ => {}
     }
@@ -6634,8 +6758,7 @@ fn lower_call_v2(e: &IrExpr, callee: &Callee, targs: &[TyId], args: &[IrExpr], c
             "lower_call_v2: {other:?} not yet converted (Slice 3.2, #1542) — Cross (cross-\
              context service calls), TestService (structurally unreachable — test bodies never \
              construct IR at all, bynk_lower's own Statement::Expect todo!() gates the whole \
-             test-sublanguage out) still need their own arms; the JSON codec \
-             (Intrinsic {{ ns: Json, .. }}) is also not yet ported"
+             test-sublanguage out) still need their own arms"
         ),
     }
 }
@@ -6670,6 +6793,82 @@ fn typeref_mentions_any(r: &TypeRef, names: &HashSet<String>) -> bool {
         | TypeRef::ValidationError(_)
         | TypeRef::JsonError(_)
         | TypeRef::Unit(_) => false,
+    }
+}
+
+/// Bynk's own binary-operator precedence ladder (`bynk-syntax/src/parser/
+/// expressions.rs`'s `parse_implies` → `parse_or` → `parse_and` → `parse_eq`
+/// → `parse_cmp` → `parse_add` → `parse_mul` → `parse_unary`, each level
+/// calling the next as its own operand parser — lowest precedence first,
+/// standard recursive-descent precedence climbing). Higher binds tighter.
+///
+/// **Fixed real correctness bug, found running the real e2e corpus against
+/// this slice's first flipped entry point** (fixtures `13_function_
+/// arithmetic`/`15_function_boolean`, among many others): the AST emitter
+/// never computes this — it doesn't need to, because the parser's own
+/// `ExprKind::Paren` node preserves exactly where the *source* wrote
+/// explicit parens, and every `_v2` operator renderer built earlier in this
+/// branch spliced `"{l} {op} {r}"` with **no parens at all**, silently
+/// relying on the same "the source already told us" assumption. But
+/// `bynk_lower::lower_expr_ir`'s own `ExprKind::Paren` arm is transparent —
+/// "carries no semantic weight once parsed... unwrapped here" — erasing
+/// that signal entirely at construction time. The result wasn't a
+/// byte-fidelity nit: `(a + b) * (a - b) / 2` rendered as `a + b * a - b /
+/// 2`, a different *computed value*, not just different-looking text. This
+/// precedence table plus [`paren_operand_v2`] below replace "echo the
+/// source's own parens" with genuine precedence-aware auto-parenthesization
+/// — the only shape of fix IR's information loss here actually admits.
+#[derive(Clone, Copy, PartialEq, PartialOrd)]
+enum IrPrec {
+    Or,
+    And,
+    Eq,
+    Cmp,
+    Add,
+    Mul,
+    Unary,
+    /// Everything else (calls, idents, literals, records, …) — never needs
+    /// parenthesising as anyone's operand.
+    Atom,
+}
+
+fn ir_expr_prec(e: &IrExpr) -> IrPrec {
+    use bynk_ir::IrBinOp;
+    match &e.kind {
+        IrExprKind::Or { .. } => IrPrec::Or,
+        IrExprKind::And { .. } => IrPrec::And,
+        IrExprKind::BinOp { op, .. } => match op {
+            IrBinOp::Eq | IrBinOp::NotEq => IrPrec::Eq,
+            IrBinOp::Lt | IrBinOp::LtEq | IrBinOp::Gt | IrBinOp::GtEq => IrPrec::Cmp,
+            IrBinOp::Add | IrBinOp::Sub => IrPrec::Add,
+            IrBinOp::Mul | IrBinOp::Div => IrPrec::Mul,
+        },
+        IrExprKind::Not { .. } | IrExprKind::Neg { .. } => IrPrec::Unary,
+        _ => IrPrec::Atom,
+    }
+}
+
+/// Wraps `text` (already `operand`'s own fully-lowered rendering) in parens
+/// exactly when leaving it bare would change what the expression parses
+/// as, given it sits at operand position of an operator whose own
+/// precedence is `ctx_prec`. Every one of Bynk's binary operators here is
+/// left-associative (the parser's own precedence-climbing loop shape), so
+/// the left operand only needs parens when its own precedence is strictly
+/// lower than `ctx_prec` (`(a - b) - c` prints fine as `a - b - c`), while
+/// the right operand needs them at *or below* `ctx_prec` too (`a - (b -
+/// c)` must keep its parens, or it silently becomes `a - b - c` — the same
+/// class of bug this whole precedence table exists to close).
+fn paren_operand_v2(operand: &IrExpr, text: String, ctx_prec: IrPrec, is_right: bool) -> String {
+    let operand_prec = ir_expr_prec(operand);
+    let needs_parens = if is_right {
+        operand_prec <= ctx_prec
+    } else {
+        operand_prec < ctx_prec
+    };
+    if needs_parens {
+        format!("({text})")
+    } else {
+        text
     }
 }
 
@@ -6734,8 +6933,16 @@ fn lower_short_circuit_v2(op: IrShortCircuitOp, lhs: &IrExpr, rhs: &IrExpr, cx: 
         return pre.finish(value);
     }
     let rhs_text = if r.pre.is_empty() {
-        r.expr
+        let ctx_prec = match op {
+            IrShortCircuitOp::And => IrPrec::And,
+            IrShortCircuitOp::Or => IrPrec::Or,
+        };
+        paren_operand_v2(rhs, r.expr, ctx_prec, true)
     } else {
+        // A hoisted-to-arrow rhs is already a self-delimiting call
+        // (`(() => { ...; return X; })()`) — never needs an extra wrap
+        // regardless of `X`'s own precedence, since it never sits directly
+        // next to `&&`/`||` in the output text.
         let mut s = String::from("(() => { ");
         for p in &r.pre {
             s.push_str(p);
@@ -6744,6 +6951,11 @@ fn lower_short_circuit_v2(op: IrShortCircuitOp, lhs: &IrExpr, rhs: &IrExpr, cx: 
         s.push_str(&format!("return {}; }})()", r.expr));
         s
     };
+    let ctx_prec = match op {
+        IrShortCircuitOp::And => IrPrec::And,
+        IrShortCircuitOp::Or => IrPrec::Or,
+    };
+    let l = paren_operand_v2(lhs, l, ctx_prec, false);
     pre.finish(match op {
         IrShortCircuitOp::And => format!("{l} && {rhs_text}"),
         IrShortCircuitOp::Or => format!("{l} || {rhs_text}"),
@@ -6783,6 +6995,12 @@ fn lower_bin_op_v2(op: bynk_ir::IrBinOp, lhs: &IrExpr, rhs: &IrExpr, cx: &mut Lo
     let l = pre.lower_ir(lhs, cx);
     let r = pre.lower_ir(rhs, cx);
     let text = if op == IrBinOp::Div {
+        // `{l} / {r}` (bare, or nested inside `Math.trunc(...)`) still needs
+        // its own operands precedence-wrapped relative to `/` — the
+        // enclosing call's parens only delimit the whole division from the
+        // *outside*.
+        let l = paren_operand_v2(lhs, l, IrPrec::Mul, false);
+        let r = paren_operand_v2(rhs, r, IrPrec::Mul, true);
         let lhs_is_float = lhs.ty.base(tys) == Some(BaseType::Float);
         if lhs_is_float {
             format!("{l} / {r}")
@@ -6791,6 +7009,8 @@ fn lower_bin_op_v2(op: bynk_ir::IrBinOp, lhs: &IrExpr, rhs: &IrExpr, cx: &mut Lo
         }
     } else if matches!(op, IrBinOp::Eq | IrBinOp::NotEq) && lhs.ty.base(tys) == Some(BaseType::Bytes)
     {
+        // `l`/`r` are function-call arguments here — comma-delimited, never
+        // ambiguous regardless of their own precedence, so no wrap needed.
         cx.note_bytes();
         let eq = format!("__bynkBytesEqual({l}, {r})");
         if op == IrBinOp::Eq {
@@ -6799,6 +7019,14 @@ fn lower_bin_op_v2(op: bynk_ir::IrBinOp, lhs: &IrExpr, rhs: &IrExpr, cx: &mut Lo
             format!("!{eq}")
         }
     } else {
+        let ctx_prec = match op {
+            IrBinOp::Eq | IrBinOp::NotEq => IrPrec::Eq,
+            IrBinOp::Lt | IrBinOp::LtEq | IrBinOp::Gt | IrBinOp::GtEq => IrPrec::Cmp,
+            IrBinOp::Add | IrBinOp::Sub => IrPrec::Add,
+            IrBinOp::Mul | IrBinOp::Div => IrPrec::Mul,
+        };
+        let l = paren_operand_v2(lhs, l, ctx_prec, false);
+        let r = paren_operand_v2(rhs, r, ctx_prec, true);
         format!("{l} {} {r}", ts_ir_binop(op))
     };
     pre.finish(text)
@@ -7038,25 +7266,31 @@ fn lower_bin_op(op: BinOp, lhs: &Expr, rhs: &Expr, cx: &mut LowerCtx) -> Lowered
 
 /// [`lower_record_construction`]'s `IrExpr`-typed sibling.
 ///
-/// **Known open risk, not yet resolved (found during Slice 3.2 implementation):**
-/// `bynk_lower`'s own `RecordConstruction` construction resolves a shorthand
-/// field (`{ x }`) to an ordinary `IrExprKind::Local(name)` value — the exact
-/// same shape an *explicit* same-name field (`{ x: x }`) also produces, so
-/// this function cannot tell the two apart. It renders both as JS shorthand
-/// (`{ x }`, matching the AST original's own `f.value.is_none()` case) —
-/// the AST original renders an explicit `{ x: x }` as `{ x: x }` instead,
-/// never collapsing it. An explicit same-name field is unusual (redundant
-/// with shorthand) but not illegal; if the corpus has one, this diffs.
-fn lower_record_v2(fields: &[(String, IrExpr)], cx: &mut LowerCtx) -> Lowered {
+/// **Fixed real gap, found running the real e2e corpus against this slice's
+/// first flipped entry point:** `IrExprKind::Record`'s own fields now carry
+/// a third `is_shorthand: bool` (`bynk-ir`'s own doc comment on it has the
+/// full account) — an explicit `{ x: x }` and a shorthand `{ x }` resolve
+/// to the identical `Local(x)` value shape, so this bit is the only way to
+/// tell them apart and render each the way the AST original does (shorthand
+/// only when the source itself wrote it).
+fn lower_record_v2(fields: &[(String, IrExpr, bool)], cx: &mut LowerCtx) -> Lowered {
     let mut pre = Pre::new();
     let mut parts = Vec::new();
-    for (name, value) in fields {
-        if matches!(&value.kind, IrExprKind::Local(local) if local == name) {
+    for (name, value, is_shorthand) in fields {
+        if *is_shorthand {
+            // Matches the AST original's own `None`-branch fallback
+            // exactly: bare `ts_ident`, not this file's fuller
+            // `lower_ident_v2`/`resolved_local_name` resolution chain — a
+            // shorthand field only ever expands for *reserved-word*
+            // renaming, never a re-`let` shadow (`value` is never lowered
+            // through `pre` here on purpose).
             let v = ts_ident(name);
             if v == *name {
                 parts.push(name.clone());
-                continue;
+            } else {
+                parts.push(format!("{name}: {v}"));
             }
+            continue;
         }
         let val = pre.lower_ir(value, cx);
         parts.push(format!("{name}: {val}"));
@@ -7072,21 +7306,28 @@ fn lower_record_v2(fields: &[(String, IrExpr)], cx: &mut LowerCtx) -> Lowered {
 /// bare-rendered, no type qualifier — except `Ok` when the enclosing type
 /// resolves to `HttpResult`, v0.9's overload; `None` renders with no call
 /// parens at all, matching `ExprKind::None`'s own bare `"None".to_string()`)
-/// and a *qualified* nullary user-sum-variant reference (`Region.Domestic`,
-/// `payload` always empty, always qualified). Disambiguated the same way the
-/// doc comment says any consumer must: by asking `e.ty`, not `tag`.
+/// and a *qualified* user-sum-variant construction (`Outcome.Hit(1)` /
+/// `Region.Domestic`, qualified, `payload` however many fields the variant
+/// declares — possibly none). Disambiguated the same way the doc comment
+/// says any consumer must: by asking `e.ty`, not `tag`.
 ///
-/// **Known open risk, not yet resolved (found during Slice 3.2 implementation):**
-/// the qualified-nullary-user-sum-variant case has no confirmed AST-emitter
-/// precedent to mirror — `lower_field_access`'s own AST original has no
-/// branch for "receiver names a sum type, field names a nullary variant of
-/// it" (only the *called* form, `Region.Domestic()`, reaches
-/// `ConstructorCall`/`Callee::Ctor`/`lower_call_v2` already), so whether a
-/// bare, uncalled `Region.Domestic` is even legal source and, if so, whether
-/// the runtime's nullary-variant representation is callable (parens) or a
-/// plain value (none) is unconfirmed. Rendered bare (no parens) here as the
-/// more plausible reading — a *value* reference, not a call — not verified
-/// against a real fixture.
+/// **Fixed, found running the real e2e corpus against this slice's first
+/// flipped entry point (fixture `947_short_circuit_rhs_hoist`):** this arm
+/// originally assumed the qualified-user-sum case was always nullary,
+/// rendering `{type_name}.{tag}` unconditionally — dropping a non-empty
+/// `payload` silently (`Outcome.Hit(1)` emitted as bare `Outcome.Hit`, a
+/// real miscompile, not a byte-fidelity nit). The premise was wrong at its
+/// root: `bynk_lower::lower_call_ir` special-cases `Callee::Ctor` *before*
+/// ever constructing an `IrExprKind::Call` — a qualified constructor call
+/// with args (`Outcome.Hit(1)`, parsed as `ConstructorCall`, checked as
+/// `Callee::Ctor`) becomes this same `Variant` node, never a `Call`, making
+/// `lower_call_v2`'s own `Callee::Ctor` arm dead code (confirmed
+/// unreachable, left in place rather than deleted — harmless, and it may
+/// find a real caller once a construction site elsewhere in `bynk_lower`
+/// changes). Whether a genuinely nullary qualified reference with **no**
+/// call syntax at all (`Region.Domestic`, no parens) is even legal source is
+/// still unconfirmed either way — this arm's own empty-payload branch stays
+/// the same conservative, unverified guess as before.
 fn lower_variant_v2(e: &IrExpr, tag: &str, payload: &[IrExpr], cx: &mut LowerCtx) -> Lowered {
     let tys = cx.commons().tys();
     let mut pre = Pre::new();
@@ -7106,7 +7347,11 @@ fn lower_variant_v2(e: &IrExpr, tag: &str, payload: &[IrExpr], cx: &mut LowerCtx
         ..
     } = &*ty_node
     {
-        format!("{type_name}.{tag}")
+        if args.is_empty() {
+            format!("{type_name}.{tag}")
+        } else {
+            format!("{type_name}.{tag}({})", args.join(", "))
+        }
     } else {
         panic!(
             "bynk internal error (#1542 Slice 3.2): IrExprKind::Variant {{ tag: {tag:?}, .. }}'s \
@@ -7430,28 +7675,20 @@ fn decode_map_key(k: Option<TyId>, raw: &str, tys: &Arc<Types>) -> String {
 /// `FloatLit`, `DurationLit`, `StrLit`, `BoolLit`, `UnitLit`), as `ConstVal`'s
 /// `_v2` sibling.
 ///
-/// **Known real gap, not a risk — confirmed, not yet fixed:**
-/// `ConstVal::Float(f64)` carries only the parsed value, never the source
-/// lexeme. The AST original renders a `FloatLit` from its stored lexeme
-/// *verbatim* (`ExprKind::FloatLit`'s own comment: "`1e10` must not
-/// normalise") specifically because Rust's own `f64` formatting does
-/// normalise it (`1e10.to_string()` is `"10000000000"`, not `"1e10"`) —
-/// silently different, still-valid-JS output that zero-diff bless would
-/// still catch as a diff, but a real double round-trip (very small/large
-/// magnitudes, or a value with no exact `f64` representation) can also
-/// silently render a *different number*, not just different notation. This
-/// needs a fix in `bynk-ir`/`bynk-lower` (carrying the lexeme through
-/// `ConstVal::Float`, not something reachable from `bynk-emit` alone) —
-/// `todo!()` rather than a best-effort re-format, so a `FloatLit`-using
-/// fixture fails loudly instead of silently miscompiling once this path is
-/// live.
+/// **Fixed gap, found running the real e2e corpus against this slice's
+/// first flipped entry point:** `ConstVal::Float` originally carried only
+/// the parsed `f64`, never the source lexeme — `f64`'s own `Display`
+/// normalises exponential notation (`1e10.to_string()` is
+/// `"10000000000"`, not `"1e10"`), so a `FloatLit`-using fixture panicked
+/// the moment `emit_free_fn` actually reached it. Fixed at the source
+/// (`bynk-ir`'s own `ConstVal::Float(f64, String)`, `bynk-lower`'s
+/// `FloatLit` arm now threading the lexeme through) rather than worked
+/// around here, matching `ExprKind::FloatLit`'s own AST comment ("`1e10`
+/// must not normalise").
 fn lower_const_v2(c: &ConstVal) -> String {
     match c {
         ConstVal::Int(n) => n.to_string(),
-        ConstVal::Float(_) => todo!(
-            "lower_const_v2: ConstVal::Float has no source lexeme to render verbatim — needs a \
-             bynk-ir/bynk-lower fix, not resolvable in bynk-emit alone (Slice 3.2, #1542)"
-        ),
+        ConstVal::Float(_, lexeme) => lexeme.clone(),
         ConstVal::DurationMillis(millis) => millis.to_string(),
         ConstVal::Str(s) => format!("\"{}\"", escape_ts_string(s)),
         ConstVal::Bool(b) => b.to_string(),
@@ -7575,7 +7812,141 @@ pub(crate) fn body_uses_is_pattern(block: &Block) -> bool {
     block_fn(block)
 }
 
+/// [`body_uses_is_pattern`]'s sibling for a second, independent gating
+/// reason found running the real e2e corpus against this slice's first
+/// flipped entry point (fixture `93_record_spread_basic`): `true` means
+/// this body must keep using the AST path because `bynk_lower`'s own
+/// `lower_record_spread_ir` fully expands a `{ ...base, field: value }`
+/// spread into an explicit field list (`{ field: value, other:
+/// __spread_base_0.other }`) rather than preserving the source's own `...`
+/// JS spread syntax — a deliberate, well-reasoned representation choice
+/// (that function's own doc comment: evaluation order, duplicate-override
+/// handling, effect preservation all need the expansion), not a bug, and
+/// not something reachable from `bynk-emit` alone to undo — recovering the
+/// concise `{ ...base, field: value }` form would need a new, dedicated
+/// `IrExprKind` variant in `bynk-ir` (the current `Record { fields }` has
+/// nowhere to record "and these fields came from a spread base" at all),
+/// a real design change, not a mechanical `_v2` port. Semantically correct
+/// either way; gated here purely for zero-diff bless's own byte-exactness.
+///
+/// Same exhaustive-walk structure and same conservative posture as
+/// `body_uses_is_pattern` — kept as an independent sibling walk rather than
+/// folded into one combined function, so each gate's own exhaustiveness
+/// stays separately, trivially checkable (a missed variant is a silent-
+/// panic risk for `body_uses_is_pattern`; here it would just be a missed
+/// byte-fidelity exclusion, but keeping the two symmetric is what makes the
+/// stronger claim easy to audit).
+#[allow(clippy::too_many_lines)]
+pub(crate) fn body_uses_record_spread(block: &Block) -> bool {
+    fn expr(e: &Expr) -> bool {
+        match &e.kind {
+            ExprKind::RecordSpread { .. } => true,
+            ExprKind::IntLit { .. }
+            | ExprKind::FloatLit { .. }
+            | ExprKind::DurationLit { .. }
+            | ExprKind::StrLit(_)
+            | ExprKind::BoolLit(_)
+            | ExprKind::None
+            | ExprKind::UnitLit
+            | ExprKind::Ident(_)
+            | ExprKind::Observation(_)
+            | ExprKind::Trace { .. } => false,
+            ExprKind::InterpStr(parts) => parts.iter().any(|p| match p {
+                InterpPart::Hole(h) => expr(h),
+                InterpPart::Chunk(_) => false,
+            }),
+            ExprKind::ListLit(elems) => elems.iter().any(expr),
+            ExprKind::Wire(inner)
+            | ExprKind::EffectPure(inner)
+            | ExprKind::Expect(inner)
+            | ExprKind::Ok(inner)
+            | ExprKind::Err(inner)
+            | ExprKind::Some(inner)
+            | ExprKind::Question(inner)
+            | ExprKind::UnaryOp(_, inner)
+            | ExprKind::Paren(inner) => expr(inner),
+            ExprKind::Lambda(lambda) => expr(&lambda.body),
+            ExprKind::Val { args, .. } => args.iter().any(expr),
+            ExprKind::Is { value, .. } => expr(value),
+            ExprKind::Call { args, .. } => args.iter().any(expr),
+            ExprKind::BinOp(_, lhs, rhs) => expr(lhs) || expr(rhs),
+            ExprKind::Block(b) => block_fn(b),
+            ExprKind::If { cond, then_block, else_block } => {
+                expr(cond) || block_fn(then_block) || block_fn(else_block)
+            }
+            ExprKind::ConstructorCall { args, .. } => args.iter().any(expr),
+            ExprKind::RecordConstruction { fields, .. } => {
+                fields.iter().any(|f| f.value.as_ref().is_some_and(expr))
+            }
+            ExprKind::FieldAccess { receiver, .. } => expr(receiver),
+            ExprKind::MethodCall { receiver, args, .. } => expr(receiver) || args.iter().any(expr),
+            ExprKind::Match { discriminant, arms } => {
+                expr(discriminant)
+                    || arms.iter().any(|arm| match &arm.body {
+                        MatchBody::Expr(e) => expr(e),
+                        MatchBody::Block(b) => block_fn(b),
+                    })
+            }
+        }
+    }
+    fn block_fn(b: &Block) -> bool {
+        b.statements.iter().any(|stmt| match stmt {
+            Statement::Let(l) | Statement::EffectLet(l) => expr(&l.value),
+            Statement::Expect(a) => expr(&a.value),
+            Statement::Send(s) => expr(&s.value),
+            Statement::Do(d) => expr(&d.value),
+            Statement::Assign(a) => expr(&a.value),
+        }) || expr(&b.tail)
+    }
+    block_fn(block)
+}
+
+/// The raw TypeScript text of a compile-time literal `e` may render as, if
+/// `e` is one of the shapes `bynk-check`'s own refined-literal admission
+/// (v0.9.4, expected-type-directed construction) can brand — mirrors
+/// [`lower_const_literal_raw`]'s own AST-typed sibling exactly (reusing
+/// [`lower_const_v2`] for the shared Int/Float/Str rendering, since IR never
+/// needed a separate helper for those three).
+fn ir_const_literal_raw(e: &IrExpr) -> Option<String> {
+    match &e.kind {
+        IrExprKind::Const(ConstVal::Int(_) | ConstVal::Float(..) | ConstVal::Str(_)) => {
+            let IrExprKind::Const(c) = &e.kind else {
+                unreachable!()
+            };
+            Some(lower_const_v2(c))
+        }
+        IrExprKind::Neg { operand } => match &operand.kind {
+            IrExprKind::Const(c @ (ConstVal::Int(_) | ConstVal::Float(..))) => {
+                Some(format!("-{}", lower_const_v2(c)))
+            }
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 pub(crate) fn lower_expr_v2(e: &IrExpr, cx: &mut LowerCtx) -> Lowered {
+    // v0.9.4: a literal the checker admitted as a refined type (expected-
+    // type-directed construction) is branded directly, found running the
+    // real e2e corpus against this slice's first flipped entry point
+    // (fixture `143_refined_literal_admission`) — `lower_expr`'s own AST
+    // original checks this *before* its own main dispatch too, for the
+    // identical reason: the refinement was already verified at compile
+    // time, so this is not a value `IrExprKind::RefinedCheck` (a runtime
+    // `is`-test) would ever cover.
+    if let Ty::Named {
+        name,
+        kind: NamedKind::Refined(_),
+        ..
+    } = &*cx.commons().tys().get(e.ty)
+        && let Some(raw) = ir_const_literal_raw(e)
+    {
+        return Lowered::bare(if cx.in_test_scaffold() {
+            unchecked_construct_test(name, &raw, false)
+        } else {
+            unchecked_construct(name, &raw, false)
+        });
+    }
     match &e.kind {
         IrExprKind::Local(name) => Lowered::bare(lower_ident_v2(e, name, cx)),
         IrExprKind::Global(GlobalRef { tag }) => {
@@ -7600,11 +7971,17 @@ pub(crate) fn lower_expr_v2(e: &IrExpr, cx: &mut LowerCtx) -> Lowered {
         IrExprKind::Not { operand } => {
             let mut pre = Pre::new();
             let v = pre.lower_ir(operand, cx);
+            // Prefix, not infix: `!` chained onto another `!`/`-` (same
+            // precedence) is unambiguous as-is (`!!x`, never `!(!x)`) — the
+            // strict `<`, non-right rule, not the infix right-operand `<=`
+            // one `paren_operand_v2`'s other callers use.
+            let v = paren_operand_v2(operand, v, IrPrec::Unary, false);
             pre.finish(format!("!{v}"))
         }
         IrExprKind::Neg { operand } => {
             let mut pre = Pre::new();
             let v = pre.lower_ir(operand, cx);
+            let v = paren_operand_v2(operand, v, IrPrec::Unary, false);
             pre.finish(format!("-{v}"))
         }
         IrExprKind::BinOp { op, lhs, rhs } => lower_bin_op_v2(*op, lhs, rhs, cx),
@@ -7632,9 +8009,10 @@ pub(crate) fn lower_expr_v2(e: &IrExpr, cx: &mut LowerCtx) -> Lowered {
         IrExprKind::Match {
             scrutinee,
             arms,
-            exhaustive,
             form,
-        } => lower_match_as_iife_v2(scrutinee, arms, exhaustive, *form, cx),
+            ..
+        } => try_lower_question_v2(e, cx)
+            .unwrap_or_else(|| lower_match_as_iife_v2(scrutinee, arms, *form, cx)),
         _ => todo!("lower_expr_v2: {:?} not yet converted (Slice 3.2, #1542)", e.kind),
     }
 }
@@ -7694,33 +8072,26 @@ mod decode_map_key_tests {
 
 /// [`lower_lambda`]'s `IrExpr`-typed sibling.
 ///
-/// **Known open risk, not yet resolved (found during Slice 3.2 implementation):**
-/// `bynk_lower::lower_lambda_ir`'s own doc comment says so directly —
-/// `LambdaParam::type_ref` is optional, and when a param carries none, the
-/// checker infers the type from context rather than from an annotation that
-/// pass could re-derive, so `IrExprKind::Lambda`'s own `params: Vec<String>`
-/// carries only names, never whether the source annotated them. This
-/// function always renders an explicit `: Type` (from `e.ty`'s own
-/// `Ty::Fn.params`, the only source left), where the AST original renders
-/// one only when `LambdaParam::type_ref` was `Some`. Semantically inert (an
-/// explicit annotation TS already agrees with never changes behavior) but
-/// zero-diff bless is byte-exact — an un-annotated-lambda-param fixture, if
-/// one exists in the corpus, will diff on this exact text until checked.
-fn lower_lambda_v2(e: &IrExpr, params: &[String], body: &IrExpr, cx: &mut LowerCtx) -> String {
+/// **Fixed real gap, found running the real e2e corpus against this slice's
+/// first flipped entry point:** `IrExprKind::Lambda`'s own `params` now
+/// pairs each name with `Option<TyId>` — `Some` only when the source wrote
+/// an explicit annotation for that param (`bynk-ir`'s own doc comment on
+/// the field has the full account, mirroring `IrStmt::Let::annotation`'s
+/// identical fix). Rendered exactly like the AST original: an explicit `:
+/// Type` only where the source itself put one, bare otherwise.
+fn lower_lambda_v2(e: &IrExpr, params: &[(String, Option<TyId>)], body: &IrExpr, cx: &mut LowerCtx) -> String {
     let tys = cx.commons().tys();
-    let Ty::Fn {
-        params: param_tys,
-        ret,
-    } = &*tys.get(e.ty)
-    else {
+    let Ty::Fn { ret, .. } = &*tys.get(e.ty) else {
         panic!("bynk internal error (#1542 Slice 3.2): a Lambda's own recorded type is not Ty::Fn");
     };
     let is_async = ret.is_effect(tys);
     let prefix = if is_async { "async " } else { "" };
     let params: Vec<String> = params
         .iter()
-        .zip(param_tys)
-        .map(|(name, pty)| format!("{}: {}", ts_ident(name), ts_ty(*pty, tys)))
+        .map(|(name, annot)| match annot {
+            Some(ty) => format!("{}: {}", ts_ident(name), ts_ty(*ty, tys)),
+            None => ts_ident(name),
+        })
         .collect();
     let params = params.join(", ");
     cx.shadow_scopes.push(HashMap::new());
@@ -7982,13 +8353,15 @@ fn finish_async_iife(iife: String, needs_async: bool) -> String {
 /// [`bynk_ir::MatchForm`] directly instead of re-deriving the flat-vs-
 /// if-chain shape decision via `bynk_ir::match_needs_if_chain(arms)` —
 /// `bynk_lower`'s own construction already computed it once (P6.5,
-/// R5.2/R5.3), the same "trust the precomputed field" posture
-/// [`emit_match_if_chain_v2`] applies to `exhaustive`.
+/// R5.2/R5.3). No `exhaustive` parameter (dropped after a real bug found
+/// running the real e2e corpus — see [`emit_match_if_chain_v2`]'s own doc
+/// comment): the flat/switch form's own trailing throw is unconditional
+/// either way, matching the AST original exactly, so nothing here ever
+/// needed it.
 fn build_match_iife_v2(
     disc_expr: &str,
     scrutinee_ty: TyId,
     arms: &[IrArm],
-    exhaustive: &Exhaustive,
     form: bynk_ir::MatchForm,
     cx: &mut LowerCtx,
 ) -> String {
@@ -7996,7 +8369,7 @@ fn build_match_iife_v2(
     let mut out = String::new();
     out.push_str("((__d) => {\n");
     if matches!(form, bynk_ir::MatchForm::IfChain) {
-        emit_match_if_chain_v2(&mut out, "__d", scrutinee_ty, arms, exhaustive, cx, INDENT_STEP * 2, false);
+        emit_match_if_chain_v2(&mut out, "__d", scrutinee_ty, arms, cx, INDENT_STEP * 2, false);
     } else {
         for _ in 0..(INDENT_STEP * 2) {
             out.push(' ');
@@ -8027,10 +8400,126 @@ fn build_match_iife_v2(
 }
 
 /// [`lower_match_as_iife`]'s `IrExpr`-typed sibling.
+/// Recognizes `bynk_lower::lower_question_ir`'s (ADR 0337) own canonical
+/// two-arm `Match` shape and, when found, renders it the way
+/// `lower_expr`'s own *dedicated* `ExprKind::Question` arm always has —
+/// hoisted as real statements (`const {tmp} = ...; if ({tmp}.tag === ...)
+/// return ...;`), never nested as a value-position IIFE — instead of
+/// falling through to the generic `Match` rendering [`lower_match_as_iife_v2`]
+/// would otherwise give it.
+///
+/// **Found running the real e2e corpus against this slice's first flipped
+/// entry point** (fixture `946_match_discriminant_question_propagates`):
+/// IR desugars `?` into an *ordinary* value-producing `Match` at
+/// construction time — there is no dedicated `IrExprKind::Question` node
+/// generic `Match` rendering could special-case structurally — so without
+/// this detector, every `?` (not just the one fixture's own match-
+/// discriminant position — *any* consumption site, since every one reaches
+/// this same generic path) loses the AST original's hoisting entirely,
+/// nesting the whole propagation check inside an IIFE instead. Still
+/// semantically correct either way — this is a byte-fidelity/shape
+/// optimization, not a correctness fix — but a real, common-case one:
+/// `?` is pervasive in real Bynk code, so falling back to nested IIFEs for
+/// every occurrence would have made the flip's real-world value much
+/// smaller than the mechanical-correctness argument alone suggests.
+///
+/// Returns `None` (never wrong, only a missed optimization) whenever the
+/// shape isn't *exactly* what `lower_question_ir` is confirmed to build —
+/// deliberately conservative pattern-matching over guessing.
+fn try_lower_question_v2(e: &IrExpr, cx: &mut LowerCtx) -> Option<Lowered> {
+    let IrExprKind::Match { scrutinee, arms, .. } = &e.kind else {
+        return None;
+    };
+    let [ok_arm, err_arm] = arms.as_slice() else {
+        return None;
+    };
+    let IrPat::Variant {
+        tag: ok_tag,
+        fields: ok_fields,
+        ..
+    } = &ok_arm.pat
+    else {
+        return None;
+    };
+    let [(_, ok_bind)] = ok_fields.as_slice() else {
+        return None;
+    };
+    let IrPat::Bind { local: ok_local } = ok_bind.as_ref() else {
+        return None;
+    };
+    if ok_arm.guard.is_some()
+        || !matches!(&ok_arm.body.kind, IrExprKind::Local(n) if n == ok_local)
+    {
+        return None;
+    }
+    let IrPat::Variant { tag: err_tag, .. } = &err_arm.pat else {
+        return None;
+    };
+    let is_option = match (ok_tag.as_str(), err_tag.as_str()) {
+        ("Ok", "Err") => false,
+        ("Some", "None") => true,
+        _ => return None,
+    };
+    if err_arm.guard.is_some() {
+        return None;
+    }
+    let IrExprKind::Return { value: return_value } = &err_arm.body.kind else {
+        return None;
+    };
+
+    let mut pre = Pre::new();
+    let scrut_expr = pre.lower_ir(scrutinee, cx);
+    let tmp = cx.fresh();
+    pre.push(format!("const {tmp} = {scrut_expr};"));
+
+    if is_option {
+        if !matches!(&return_value.kind, IrExprKind::HttpResultNotFound) {
+            return None;
+        }
+        pre.push(format!(
+            "if ({tmp}.tag === \"None\") return HttpResult.NotFound;"
+        ));
+    } else {
+        let IrExprKind::Variant {
+            tag: outer_tag,
+            payload: outer_payload,
+        } = &return_value.kind
+        else {
+            return None;
+        };
+        let [converted] = outer_payload.as_slice() else {
+            return None;
+        };
+        if outer_tag != "Err" {
+            return None;
+        }
+        match &converted.kind {
+            IrExprKind::Local(_) => {
+                pre.push(format!("if ({tmp}.tag === \"Err\") return {tmp};"));
+            }
+            IrExprKind::Variant {
+                tag: embed_variant,
+                payload: embed_payload,
+            } if matches!(embed_payload.as_slice(), [inner] if matches!(inner.kind, IrExprKind::Local(_))) =>
+            {
+                let tys = cx.commons().tys();
+                let Ty::Named { name: embed_ty, .. } = &*tys.get(converted.ty) else {
+                    return None;
+                };
+                pre.push(format!(
+                    "if ({tmp}.tag === \"Err\") return Err({embed_ty}.{embed_variant}({tmp}.error));"
+                ));
+            }
+            _ => return None,
+        }
+    }
+    cx.emitted_early_return = true;
+    Some(pre.finish(format!("{tmp}.value")))
+}
+
 fn lower_match_as_iife_v2(
     scrutinee: &IrExpr,
     arms: &[IrArm],
-    exhaustive: &Exhaustive,
     form: bynk_ir::MatchForm,
     cx: &mut LowerCtx,
 ) -> Lowered {
@@ -8039,8 +8528,7 @@ fn lower_match_as_iife_v2(
     let disc = pre.lower_ir(scrutinee, cx);
     let saved = cx.return_ty.take();
     let saved_await = std::mem::take(&mut cx.emitted_await);
-    let built =
-        cx.without_source_map(|cx| build_match_iife_v2(&disc, disc_ty, arms, exhaustive, form, cx));
+    let built = cx.without_source_map(|cx| build_match_iife_v2(&disc, disc_ty, arms, form, cx));
     let needs_async = cx.emitted_await;
     cx.emitted_await = saved_await || needs_async;
     let inner_iife = finish_async_iife(built, needs_async);
@@ -8165,12 +8653,17 @@ fn emit_match_tail_v2(out: &mut String, tail: &IrExpr, cx: &mut LowerCtx, indent
     let IrExprKind::Match {
         scrutinee,
         arms,
-        exhaustive,
         form,
+        ..
     } = &tail.kind
     else {
         panic!("bynk internal error (#1542 Slice 3.2): emit_match_tail_v2 called on a non-Match IrExpr");
     };
+    // Slice 1 (ADR 0103 D2): matches `emit_match_tail`'s own
+    // `cx.record_span(out.len(), discriminant.span)` — anchors the
+    // discriminant lowering + `switch (…) {`/`if (…) {` header to the
+    // match's own scrutinee span.
+    cx.record_span(out.len(), scrutinee.span);
     let mut pre = Pre::new();
     let mut disc = pre.lower_ir(scrutinee, cx);
     for s in pre.stmts() {
@@ -8182,7 +8675,7 @@ fn emit_match_tail_v2(out: &mut String, tail: &IrExpr, cx: &mut LowerCtx, indent
         disc = tmp;
     }
     if matches!(form, bynk_ir::MatchForm::IfChain) {
-        emit_match_if_chain_v2(out, &disc, scrutinee.ty, arms, exhaustive, cx, indent, async_tail);
+        emit_match_if_chain_v2(out, &disc, scrutinee.ty, arms, cx, indent, async_tail);
         return;
     }
     let tys = cx.commons().tys();
@@ -8268,6 +8761,25 @@ fn emit_match_tail(
 fn emit_match_body_v2(out: &mut String, body: &IrExpr, cx: &mut LowerCtx, indent: usize, async_tail: bool) {
     match &body.kind {
         IrExprKind::Block { .. } => emit_block_inner_v2(out, body, cx, indent, async_tail),
+        // `bynk_lower::lower_question_ir` (ADR 0337) desugars `?` into a
+        // `Match` whose propagating arm's own body is `Return { value }` —
+        // an early `return Err(...)`/`return None`-shaped exit from the
+        // *enclosing function*, not an ordinary tail value (found running
+        // the real e2e corpus against this slice's first flipped entry
+        // point — no AST-original precedent to mirror by inspection alone,
+        // since the AST path never reifies `?`'s early return as its own
+        // node at all: `lower_expr`'s own `ExprKind::Question` arm inlines
+        // `if ({tmp}.tag === "Err") return {tmp};` as text, directly, with
+        // no async-tail treatment — matched here exactly, a bare
+        // `lower_expr_v2` on `value`, never `lower_tail_expr_v2`).
+        IrExprKind::Return { value } => {
+            let mut pre = Pre::new();
+            let v = pre.absorb(lower_expr_v2(value, cx));
+            for s in pre.stmts() {
+                write_line(out, indent, s);
+            }
+            write_line(out, indent, &format!("return {v};"));
+        }
         _ => {
             let mut pre = Pre::new();
             let v = pre.absorb(lower_tail_expr_v2(body, cx, async_tail));
@@ -8288,6 +8800,11 @@ fn emit_match_case_v2(
     indent: usize,
     async_tail: bool,
 ) {
+    // Slice 1 (ADR 0103 D2): matches `emit_match_case`'s own
+    // `cx.record_span(out.len(), arm.span)` — `IrArm` carries no `span` of
+    // its own (unlike `MatchArm`), so `arm.body.span` stands in; the
+    // closest available anchor, not the whole arm including its pattern.
+    cx.record_span(out.len(), arm.body.span);
     cx.shadow_scopes.push(HashMap::new());
     match &arm.pat {
         IrPat::Wild => {
@@ -8735,7 +9252,7 @@ pub(crate) fn event_pattern_guard_ir(
             }
             EventPatternValueIr::Const(ConstVal::Bool(b)) => format!("{path}.{name} === {b}"),
             EventPatternValueIr::Const(
-                ConstVal::Float(_) | ConstVal::DurationMillis(_) | ConstVal::Unit,
+                ConstVal::Float(_, _) | ConstVal::DurationMillis(_) | ConstVal::Unit,
             ) => {
                 unreachable!(
                     "EventPatternValueIr::Const only ever holds Int/Str/Bool (its own doc \
@@ -9059,22 +9576,41 @@ fn pattern_binding_paths(
 /// tail `return` short-circuits the remaining arms. A guard failing falls
 /// through to the next arm, which a `switch` cannot express. Per-arm span
 /// anchoring is preserved (ADR 0103).
-/// [`emit_match_if_chain`]'s `IrArm`-typed sibling. `has_catchall` reads
-/// `exhaustive` directly (`Exhaustive::Total`) instead of re-deriving it by
-/// scanning `arms` for an unguarded irrefutable one — `bynk_lower`'s own
-/// `lower_match_ir`-family construction already computed this once (P6.4's
-/// own `Exhaustive`, R5.6/R5.7).
+/// [`emit_match_if_chain`]'s `IrArm`-typed sibling.
+///
+/// **Fixed real bug, found running the real e2e corpus against this
+/// slice's first flipped entry point** (fixtures `332_match_nested_payload`/
+/// `333_match_arm_guard`/`408_generic_sum_nested_pattern`/`474_or_patterns`):
+/// this originally read `exhaustive` directly (`Exhaustive::Total`) to
+/// decide whether the trailing `throw` is needed, on the assumption that
+/// `bynk_lower`'s own precomputed `Exhaustive` already subsumed the AST
+/// original's `has_catchall` scan. It doesn't: `Exhaustive` answers whether
+/// the arms' *patterns* jointly cover every value — a purely structural,
+/// guard-blind fact — while a guarded arm can still fail its guard at
+/// runtime even when its pattern matches, falling through with nothing left
+/// to catch it. A match built entirely from guarded arms (`333_match_arm_
+/// guard`'s own fixture name) is `Exhaustive::Total` by pattern coverage
+/// alone yet still needs the runtime safety net — dropping it isn't a
+/// byte-fidelity nit, it silently swallows a genuinely reachable "every
+/// guard failed" case that would otherwise crash loudly. Re-derives
+/// `has_catchall` the same way the AST original does instead: an unguarded,
+/// irrefutable arm — the only shape that actually guarantees no value falls
+/// through both structurally *and* at runtime.
 fn emit_match_if_chain_v2(
     out: &mut String,
     disc_var: &str,
     scrutinee_ty: TyId,
     arms: &[IrArm],
-    exhaustive: &Exhaustive,
     cx: &mut LowerCtx,
     indent: usize,
     async_tail: bool,
 ) {
     for arm in arms {
+        // Slice 1 (ADR 0103 D2): matches `emit_match_if_chain`'s own
+        // per-arm `cx.record_span(out.len(), arm.span)` — see
+        // `emit_match_case_v2`'s own comment for why `arm.body.span`
+        // stands in for the AST original's own `arm.span`.
+        cx.record_span(out.len(), arm.body.span);
         cx.shadow_scopes.push(HashMap::new());
         let mut tests = Vec::new();
         pattern_match_tests_v2(disc_var, scrutinee_ty, &arm.pat, cx, &mut tests);
@@ -9101,7 +9637,10 @@ fn emit_match_if_chain_v2(
         }
         cx.shadow_scopes.pop();
     }
-    if !matches!(exhaustive, Exhaustive::Total) {
+    let has_catchall = arms
+        .iter()
+        .any(|a| a.guard.is_none() && ir_pat_is_irrefutable(&a.pat));
+    if !has_catchall {
         write_line(out, indent, "throw new Error(\"non-exhaustive match\");");
     }
 }

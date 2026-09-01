@@ -186,7 +186,13 @@ pub struct IrExpr {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ConstVal {
     Int(i64),
-    Float(f64),
+    /// A float value paired with its source lexeme (mirrors
+    /// `bynk_syntax::ast::ExprKind::FloatLit`'s own `value`/`lexeme` pair) —
+    /// `f64`'s own `Display` normalises exponential notation (`1e10` prints
+    /// as `10000000000`), so the parsed value alone can't reproduce the
+    /// verbatim source text emission requires (found running the real e2e
+    /// corpus against #1542's Slice 3.2, its first flipped entry point).
+    Float(f64, String),
     DurationMillis(i64),
     Str(String),
     Bool(bool),
@@ -432,7 +438,19 @@ pub enum IrExprKind {
     /// P6.39: `def: Arc<TypeDecl>` dropped — zero production readers
     /// (verified), only test assertions. `fields` alone is this variant's
     /// whole payload now.
-    Record { fields: Vec<(String, IrExpr)> },
+    /// The `bool` is `true` exactly when the *source* wrote this field in
+    /// shorthand (`{ x }`, `f.value.is_none()` at `RecordConstruction`'s own
+    /// construction site) — `false` for an explicit `field: value` (even
+    /// one that happens to read `x: x`) and for every spread-through field
+    /// `lower_record_spread_ir` appends (that constructor has no shorthand
+    /// concept of its own to preserve). Found running the real e2e corpus
+    /// against #1542's Slice 3.2, its first flipped entry point: an
+    /// explicit `{ x: x }` and a shorthand `{ x }` both resolve their value
+    /// to the identical `Local(x)` shape, so without this bit a consumer
+    /// can't tell them apart — the same class of AST/IR information-loss
+    /// `IrStmt::Let::annotation`/`IrExprKind::Lambda`'s own per-param
+    /// `Option<TyId>` already fix for their own constructs.
+    Record { fields: Vec<(String, IrExpr, bool)> },
     /// Sum-variant construction — a user-declared sum's own constructor
     /// (`Circle(n)`/`Shape.Circle(n)`, driven by `Callee::Ctor`) *and*, as
     /// of the #1225 ADR, the four built-in constructors `Ok`/`Err`/`Some`/
@@ -586,8 +604,18 @@ pub enum IrExprKind {
     /// A lambda. Lowering deferred to P6.2, alongside `Call` (a lambda's
     /// only use today is as a kernel-method argument, `Callee::Kernel`
     /// territory).
+    ///
+    /// Each param carries its own resolved type (`Ty::Fn`'s own `params`,
+    /// always resolvable — `check_lambda` never leaves one unrecorded) and,
+    /// separately, whether the *source* wrote an explicit annotation for it
+    /// — `None` when it didn't, the same distinction `IrStmt::Let`'s own
+    /// `annotation` field draws for a `let` binding, and for the identical
+    /// reason (found running the real e2e corpus against #1542's Slice
+    /// 3.2, its first flipped entry point): the AST emitter renders a
+    /// lambda param's type only when the source itself annotated it, and
+    /// that choice isn't recoverable from the resolved type alone.
     Lambda {
-        params: Vec<String>,
+        params: Vec<(String, Option<TyId>)>,
         body: Box<IrExpr>,
         captures: Vec<String>,
     },
@@ -620,6 +648,20 @@ pub enum IrStmt {
     Let {
         local: String,
         value: IrExpr,
+        /// The resolved type of an explicit `let x: Type = ...`/`let x: Type
+        /// <- effect` annotation, or `None` when the source wrote no
+        /// annotation at all — distinct from `value.ty`, which is always the
+        /// RHS's own honest checked type regardless (`bynk_lower`'s own
+        /// `Statement::Let`/`EffectLet` arms already compute this exact
+        /// value as `bound_ty`, for scope bookkeeping, but previously
+        /// discarded whether it came from an annotation or the RHS's own
+        /// inferred type once bound — found running the real e2e corpus
+        /// against #1542's Slice 3.2, its first flipped entry point: an
+        /// explicitly-annotated `let` rendered with no annotation at all,
+        /// a real (if semantically inert) byte-fidelity gap against the AST
+        /// emitter, which always preserves the source's own annotation
+        /// choice verbatim).
+        annotation: Option<TyId>,
     },
     Expr {
         value: IrExpr,

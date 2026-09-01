@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use crate::project::EmitProjectCtx;
 use bynk_check::actors::ActorDecl;
-use bynk_check::checker::{TyId, TypedCommons, Types};
+use bynk_check::checker::{CheckedProgram, TyId, TypedCommons, Types};
 use bynk_syntax::ast::{
     AgentDecl, BaseType, CapabilityDecl, CommonsItem, Expr, ExprKind, FnDecl, FnName, Handler,
     Ident, MessageEntry, MessagesDecl, Param, PredKind, ProviderDecl, RecordField, Refinement,
@@ -26,7 +26,7 @@ use bynk_ir::{
 };
 use bynk_lower::{
     HandlerSignatureIr, body_writes_state, is_effectful_return, lower_actor_seam_ir,
-    lower_handler_kind_ir, lower_protocol_ir_from_commons,
+    lower_fn_body_ir, lower_handler_kind_ir, lower_protocol_ir_from_commons,
 };
 
 use super::*;
@@ -909,12 +909,13 @@ fn emit_method(
 /// rather than a plain `print_stmt`/`push_str`.
 pub(crate) fn emit_free_fn(
     f: &FnDecl,
-    commons: &TypedCommons,
+    program: &CheckedProgram,
     // v0.115: emit the contract call-site guard (dev/test profile). Stripped
     // (false) in the deploy build for zero runtime cost (DECISION J).
     contracts: bool,
     runtime_use: &RuntimeUse,
 ) -> Vec<bynk_ts::TsStmt> {
+    let commons = program.program();
     let FnName::Free(name) = &f.name else {
         return Vec::new();
     };
@@ -952,6 +953,20 @@ pub(crate) fn emit_free_fn(
     let mut body_text = String::new();
     if guarded {
         emit_contract_guarded_body(&mut body_text, f, &mut cx, async_tail);
+    } else if !body_uses_is_pattern(&f.body) && !body_uses_record_spread(&f.body) {
+        // Slice 3.2 of #1542 (`design/tracks/the-ir-cutover.md` §5): the
+        // first of the seven entry points to flip, staged ahead of the
+        // rest so the real e2e corpus — not guesswork — decides which of
+        // this branch's own documented byte-fidelity risks are real.
+        // `cx.return_ty` is deliberately left unset here (unlike the AST
+        // path below) — it exists solely for `embed_conversion`'s `?`-
+        // embedding decision, and `bynk_lower::lower_question_ir` (ADR
+        // 0337) already resolves that decision once, at IR construction
+        // time, baking it into the desugared `Match` this body's own `?`
+        // usages become; nothing downstream of `lower_fn_body_ir`'s own
+        // output ever reads `cx.return_ty` again.
+        let ir_body = lower_fn_body_ir(f, program);
+        emit_block_inner_v2(&mut body_text, &ir_body, &mut cx, INDENT_STEP, async_tail);
     } else {
         emit_block_as_function_body_with_return(
             &mut body_text,

@@ -229,7 +229,7 @@ pub(crate) fn emit(program: &CheckedProgram) -> String {
         if let CommonsItem::Fn(f) = item
             && let FnName::Free(_) = &f.name
         {
-            body_stmts.extend(emit_free_fn(f, commons, false, &dummy_ctx.runtime_use));
+            body_stmts.extend(emit_free_fn(f, program, false, &dummy_ctx.runtime_use));
         }
     }
     // v0.22b: module-local codec helpers for Json.encode/decode targets.
@@ -435,7 +435,7 @@ pub(crate) fn emit_project(
         if let CommonsItem::Fn(f) = item
             && let FnName::Free(_) = &f.name
         {
-            let mut item_stmts = emit_free_fn(f, commons, ctx.contracts, &ctx.runtime_use);
+            let mut item_stmts = emit_free_fn(f, program, ctx.contracts, &ctx.runtime_use);
             if let Some(first) = item_stmts.first_mut() {
                 first.span = Some(f.span);
             }
