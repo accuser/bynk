@@ -15,7 +15,7 @@ use bynk_syntax::ast::{
 
 use bynk_ir::{
     ConstVal, EventPatternIr, EventPatternValueIr, GlobalRef, IrExpr, IrExprKind, IrHttpMethod,
-    IrStmt,
+    IrInterpPart, IrStmt,
 };
 use bynk_lower::is_effectful_return;
 
@@ -803,6 +803,23 @@ fn lower_const_literal_raw(e: &Expr) -> Option<String> {
 /// `String(…)` is identity for a `String` hole and the display form for
 /// `Int`/`Float`/`Bool` — and the checker guarantees only base scalars reach
 /// here, so no `[object Object]` can be emitted.
+/// [`lower_interp_str`]'s `IrExpr`-typed sibling.
+fn lower_interp_str_v2(parts: &[IrInterpPart], cx: &mut LowerCtx) -> Lowered {
+    let mut pre = Pre::new();
+    let mut out = String::from("`");
+    for part in parts {
+        match part {
+            IrInterpPart::Chunk(text) => out.push_str(&escape_ts_template(text)),
+            IrInterpPart::Hole(hole) => {
+                let lowered = pre.lower_ir(hole, cx);
+                out.push_str(&format!("${{String({lowered})}}"));
+            }
+        }
+    }
+    out.push('`');
+    pre.finish(out)
+}
+
 fn lower_interp_str(parts: &[InterpPart], cx: &mut LowerCtx) -> Lowered {
     let mut pre = Pre::new();
     let mut out = String::from("`");
@@ -6455,6 +6472,90 @@ fn lower_record_construction(
     pre.finish(format!("{{ {} }}", parts.join(", ")))
 }
 
+/// [`lower_field_access`]'s `IrExpr`-typed sibling. `bynk_lower`'s own
+/// `FieldAccess` construction (`lib.rs`'s `ExprKind::FieldAccess` arm) only
+/// special-cases one shape (a qualified nullary sum-variant reference,
+/// `Region.Domestic` → `IrExprKind::Variant`) — every other receiver shape
+/// this function's AST original distinguishes collapses into the same
+/// generic `IrExprKind::Field { base, field }`, so this still needs the same
+/// per-receiver-shape ladder, keyed off `base.kind` being `IrExprKind::Local`
+/// (the same "everything bindable is `Local`" collapse `lower_ident_v2`'s
+/// own doc comment explains) instead of `ExprKind::Ident`.
+///
+/// **Known gap, not ported:** the AST original's `HttpResult`/`QueueResult`
+/// *qualified* nullary-variant field access (`HttpResult.NotFound`, v0.9,
+/// read via `cx.commons().callee(e.id)` on the field-access expression
+/// itself) has no IR counterpart — `lower_expr_ir`'s `FieldAccess` arm
+/// doesn't special-case it, and lowering `receiver` (the bare namespace
+/// ident `HttpResult`) through `lower_ident_ir` would hit that function's own
+/// "neither local nor free fn nor nullary variant" `unreachable!()`. Whether
+/// this is real (someone writes qualified `HttpResult.X`) or dead (the
+/// grammar only ever produces the bare, unqualified form the `Ident` path in
+/// `lower_ident_v2` already covers) is unconfirmed — flagged rather than
+/// guessed at, the same posture as R5.9.
+fn lower_field_access_v2(e: &IrExpr, base: &IrExpr, field: &str, cx: &mut LowerCtx) -> Lowered {
+    let tys = cx.commons().tys();
+    let mut pre = Pre::new();
+    // v0.158 (ADR 0184): `<map>.entries` / `.keys` / `.values` on a `store
+    // Map[K, V]` field.
+    if let IrExprKind::Local(name) = &base.kind
+        && cx.is_agent_store_map(name)
+        && !cx.is_agent_held_map(name)
+        && matches!(field, map_query::ENTRIES | map_query::KEYS | map_query::VALUES)
+    {
+        let var = cx.agent_store_var().to_string();
+        let m = format!("{var}.{name}");
+        return pre.finish(match field {
+            map_query::VALUES => format!("(() => Object.values({m}))"),
+            map_query::KEYS => {
+                let decoded = decode_map_key(map_key_ty_v2(e, tys), "__k", tys);
+                if decoded == "__k" {
+                    format!("(() => Object.keys({m}))")
+                } else {
+                    format!("(() => Object.keys({m}).map((__k) => {decoded}))")
+                }
+            }
+            // entries
+            _ => {
+                let decoded = decode_map_key(map_key_ty_v2(e, tys), "__k", tys);
+                format!(
+                    "(() => Object.entries({m}).map(([__k, __v]) => ({{ key: {decoded}, value: __v }})))"
+                )
+            }
+        });
+    }
+    // Agent-handler `self.<key>` rewrite.
+    if cx.in_agent_handler()
+        && let IrExprKind::Local(name) = &base.kind
+        && name == "self"
+        && let Some(k) = cx.agent_key_field()
+        && field == k
+    {
+        return pre.finish(format!("(this.state.id.toString() as {k})"));
+    }
+    // v0.45/v0.47: `<binder>.identity` on a verified actor binding.
+    if field == "identity" && matches!(&*tys.get(base.ty), Ty::Actor(_)) {
+        if let (Some(binder), IrExprKind::Local(name)) = (cx.deps_identity_binder(), &base.kind)
+            && name == binder
+        {
+            return pre.finish("deps.identity".to_string());
+        }
+        return pre.finish("undefined".to_string());
+    }
+    let r = pre.lower_ir(base, cx);
+    // `.raw` on an opaque value compiles to a TypeScript type assertion back
+    // to the base type.
+    if field == RAW
+        && let Ty::Named {
+            kind: NamedKind::Opaque(base_ty),
+            ..
+        } = &*tys.get(base.ty)
+    {
+        return pre.finish(format!("({r} as {})", ts_base(*base_ty)));
+    }
+    pre.finish(format!("{r}.{field}"))
+}
+
 fn lower_field_access(e: &Expr, receiver: &Expr, field: &Ident, cx: &mut LowerCtx) -> Lowered {
     let tys = cx.commons().tys();
     let mut pre = Pre::new();
@@ -6566,6 +6667,19 @@ fn lower_field_access(e: &Expr, receiver: &Expr, field: &Ident, cx: &mut LowerCt
 /// break, not a runtime input. The `debug_assert!` in [`decode_map_key`] pins
 /// that: the fallback identity decode must never be reached for an `Int` key,
 /// which would silently emit a string where a `number` is expected.
+/// [`map_key_ty`]'s `IrExpr`-typed sibling — reads `e.ty` directly (always
+/// resolved) instead of the AST original's `cx.commons().expr_types.get(&e.id)`
+/// lookup (which can miss).
+fn map_key_ty_v2(e: &IrExpr, tys: &Arc<Types>) -> Option<TyId> {
+    match &*tys.get(e.ty) {
+        Ty::Query(inner) => match &*tys.get(*inner) {
+            Ty::Named { name, args, .. } if name == MAP_ENTRY && !args.is_empty() => Some(args[0]),
+            _ => Some(*inner),
+        },
+        _ => None,
+    }
+}
+
 fn map_key_ty(e: &Expr, cx: &LowerCtx) -> Option<TyId> {
     let tys = cx.commons().tys();
     match &*tys.get(cx.commons().expr_types.get(&e.id).map(|te| te.ty)?) {
@@ -6652,6 +6766,11 @@ pub(crate) fn lower_expr_v2(e: &IrExpr, cx: &mut LowerCtx) -> Lowered {
             pre.finish(format!("!{v}"))
         }
         IrExprKind::BinOp { op, lhs, rhs } => lower_bin_op_v2(*op, lhs, rhs, cx),
+        IrExprKind::InterpStr { parts } => lower_interp_str_v2(parts, cx),
+        IrExprKind::Field { base, field } => lower_field_access_v2(e, base, field, cx),
+        IrExprKind::Lambda { params, body, .. } => {
+            Lowered::bare(lower_lambda_v2(e, params, body, cx))
+        }
         _ => todo!("lower_expr_v2: {:?} not yet converted (Slice 3.2, #1542)", e.kind),
     }
 }
@@ -6707,6 +6826,79 @@ mod decode_map_key_tests {
         let b = TYS.intern(Ty::Base(BaseType::Bool));
         decode_map_key(Some(b), "k", &TYS);
     }
+}
+
+/// [`lower_lambda`]'s `IrExpr`-typed sibling.
+///
+/// **Known open risk, not yet resolved (found during Slice 3.2 implementation):**
+/// `bynk_lower::lower_lambda_ir`'s own doc comment says so directly —
+/// `LambdaParam::type_ref` is optional, and when a param carries none, the
+/// checker infers the type from context rather than from an annotation that
+/// pass could re-derive, so `IrExprKind::Lambda`'s own `params: Vec<String>`
+/// carries only names, never whether the source annotated them. This
+/// function always renders an explicit `: Type` (from `e.ty`'s own
+/// `Ty::Fn.params`, the only source left), where the AST original renders
+/// one only when `LambdaParam::type_ref` was `Some`. Semantically inert (an
+/// explicit annotation TS already agrees with never changes behavior) but
+/// zero-diff bless is byte-exact — an un-annotated-lambda-param fixture, if
+/// one exists in the corpus, will diff on this exact text until checked.
+fn lower_lambda_v2(e: &IrExpr, params: &[String], body: &IrExpr, cx: &mut LowerCtx) -> String {
+    let tys = cx.commons().tys();
+    let Ty::Fn {
+        params: param_tys,
+        ret,
+    } = &*tys.get(e.ty)
+    else {
+        panic!("bynk internal error (#1542 Slice 3.2): a Lambda's own recorded type is not Ty::Fn");
+    };
+    let is_async = ret.is_effect(tys);
+    let prefix = if is_async { "async " } else { "" };
+    let params: Vec<String> = params
+        .iter()
+        .zip(param_tys)
+        .map(|(name, pty)| format!("{}: {}", ts_ident(name), ts_ty(*pty, tys)))
+        .collect();
+    let params = params.join(", ");
+    cx.shadow_scopes.push(HashMap::new());
+    let saved = cx.return_ty.take();
+    cx.return_ty = Some(*ret);
+    let result = match &body.kind {
+        IrExprKind::Block { .. } => {
+            let mut out = format!("{prefix}({params}) => {{\n");
+            cx.without_source_map(|cx| {
+                emit_block_inner_v2(&mut out, body, cx, INDENT_STEP * 2, is_async)
+            });
+            for _ in 0..INDENT_STEP {
+                out.push(' ');
+            }
+            out.push('}');
+            out
+        }
+        _ => {
+            let lowered = lower_expr_v2(body, cx);
+            let body_stmts = lowered.pre;
+            let body_text = lowered.expr;
+            if body_stmts.is_empty() {
+                let body_text = if body_text.trim_start().starts_with('{') {
+                    format!("({body_text})")
+                } else {
+                    body_text
+                };
+                format!("{prefix}({params}) => {body_text}")
+            } else {
+                let mut out = format!("{prefix}({params}) => {{\n");
+                for s in &body_stmts {
+                    out.push_str(s);
+                    out.push('\n');
+                }
+                out.push_str(&format!("  return {body_text};\n}}"));
+                out
+            }
+        }
+    };
+    cx.return_ty = saved;
+    cx.shadow_scopes.pop();
+    result
 }
 
 fn lower_lambda(e: &Expr, lambda: &LambdaExpr, cx: &mut LowerCtx) -> String {
