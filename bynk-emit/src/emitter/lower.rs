@@ -6939,6 +6939,28 @@ fn lower_const_v2(c: &ConstVal) -> String {
     }
 }
 
+/// [`ExprKind::EffectPure`]'s own `lower_expr` arm, `IrExprKind::Pure`'s
+/// `_v2` sibling.
+fn lower_pure_v2(inner: &IrExpr, cx: &mut LowerCtx) -> Lowered {
+    let mut pre = Pre::new();
+    let v = pre.lower_ir(inner, cx);
+    pre.finish(format!("Promise.resolve({v})"))
+}
+
+/// `IrExprKind::RefinedCheck`'s `_v2` sibling — `refined_check_as_bool`
+/// itself is a pure `BaseType`/`Refinement` helper with no AST/IR dependency,
+/// reused unchanged; this only lowers the receiver.
+fn lower_refined_check_v2(
+    value: &IrExpr,
+    base: BaseType,
+    refinement: Option<&Refinement>,
+    cx: &mut LowerCtx,
+) -> Lowered {
+    let mut pre = Pre::new();
+    let recv = pre.lower_ir(value, cx);
+    pre.finish(refined_check_as_bool(&recv, base, refinement))
+}
+
 pub(crate) fn lower_expr_v2(e: &IrExpr, cx: &mut LowerCtx) -> Lowered {
     match &e.kind {
         IrExprKind::Local(name) => Lowered::bare(lower_ident_v2(e, name, cx)),
@@ -6966,6 +6988,11 @@ pub(crate) fn lower_expr_v2(e: &IrExpr, cx: &mut LowerCtx) -> Lowered {
             let v = pre.lower_ir(operand, cx);
             pre.finish(format!("!{v}"))
         }
+        IrExprKind::Neg { operand } => {
+            let mut pre = Pre::new();
+            let v = pre.lower_ir(operand, cx);
+            pre.finish(format!("-{v}"))
+        }
         IrExprKind::BinOp { op, lhs, rhs } => lower_bin_op_v2(*op, lhs, rhs, cx),
         IrExprKind::InterpStr { parts } => lower_interp_str_v2(parts, cx),
         IrExprKind::Field { base, field } => lower_field_access_v2(e, base, field, cx),
@@ -6980,6 +7007,14 @@ pub(crate) fn lower_expr_v2(e: &IrExpr, cx: &mut LowerCtx) -> Lowered {
             let lowered: Vec<String> = elems.iter().map(|el| pre.lower_ir(el, cx)).collect();
             pre.finish(format!("[{}]", lowered.join(", ")))
         }
+        IrExprKind::Pure { value } => lower_pure_v2(value, cx),
+        IrExprKind::RefinedCheck {
+            value,
+            base,
+            refinement,
+        } => lower_refined_check_v2(value, *base, refinement.as_ref(), cx),
+        IrExprKind::HttpResultNotFound => Lowered::bare("HttpResult.NotFound"),
+        IrExprKind::Block { .. } => Lowered::bare(lower_block_as_expr_v2(e, cx)),
         _ => todo!("lower_expr_v2: {:?} not yet converted (Slice 3.2, #1542)", e.kind),
     }
 }
@@ -7212,6 +7247,21 @@ fn lower_record_spread(base: &Expr, overrides: &[FieldInit], cx: &mut LowerCtx) 
         }
     }
     pre.finish(format!("{{ {} }}", parts.join(", ")))
+}
+
+/// [`lower_block_as_expr`]'s `IrExpr`-typed sibling — `block` is an `IrExpr`
+/// of kind `IrExprKind::Block`.
+fn lower_block_as_expr_v2(block: &IrExpr, cx: &mut LowerCtx) -> String {
+    let mut iife = String::new();
+    iife.push_str("(() => {\n");
+    let saved = cx.return_ty.take();
+    cx.without_source_map(|cx| emit_block_inner_v2(&mut iife, block, cx, INDENT_STEP * 2, false));
+    cx.return_ty = saved;
+    for _ in 0..INDENT_STEP {
+        iife.push(' ');
+    }
+    iife.push_str("})()");
+    iife
 }
 
 fn lower_block_as_expr(b: &Block, cx: &mut LowerCtx) -> String {
