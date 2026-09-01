@@ -7481,6 +7481,100 @@ fn lower_refined_check_v2(
     pre.finish(refined_check_as_bool(&recv, base, refinement))
 }
 
+/// Slice 3.2 of #1542 (`design/tracks/the-ir-cutover.md` §5's correction):
+/// the per-body static pre-check the entry-point flip gates on, in place of
+/// the unconditional flip the track doc originally described. `true` means
+/// this body must keep using the AST path — `bynk_lower::lower_fn_body_ir`
+/// (and its handler/service siblings) hard-panic constructing IR for any
+/// body where an `is`-pattern binding is referenced outside its own
+/// `if`-then-branch (R5.9, ADR 0338; confirmed empirically against fixtures
+/// `#734`/`#1019` during this slice's own implementation).
+///
+/// Deliberately conservative, not a real use-analysis: flags a body
+/// containing **any** `ExprKind::Is` node at all, whether or not its pattern
+/// binds a name, and whether or not a bound name is ever referenced. A
+/// tighter check would need `LowerCtx`-level context this pre-flight gate
+/// doesn't have (`cx.is_refined_is_check`'s own checker-context lookup,
+/// needed to know whether a *bindingless* refined-narrowing `is` still
+/// introduces a shadow binding downstream — `pattern_is_has_bindings`'s own
+/// v0.13 case) — see that function's own doc comment for the shape this
+/// gate declines to re-derive. Every legal `is`-using program still
+/// compiles correctly; it just keeps taking the AST path until R5.9 lands.
+///
+/// Structure mirrors `bynk-check/src/resolver.rs`'s own
+/// `check_expr_references`/`check_block_references` — the one other
+/// exhaustive walk over every `ExprKind`/`Statement` shape in this codebase
+/// — recursion only, no diagnostics: reusing that shape (rather than a
+/// fresh survey) is what makes "exhaustive" a checkable claim instead of an
+/// assertion, since a missed variant here is a silent-panic risk, not a
+/// missed optimisation.
+#[allow(clippy::too_many_lines)]
+pub(crate) fn body_uses_is_pattern(block: &Block) -> bool {
+    fn expr(e: &Expr) -> bool {
+        match &e.kind {
+            ExprKind::Is { .. } => true,
+            ExprKind::IntLit { .. }
+            | ExprKind::FloatLit { .. }
+            | ExprKind::DurationLit { .. }
+            | ExprKind::StrLit(_)
+            | ExprKind::BoolLit(_)
+            | ExprKind::None
+            | ExprKind::UnitLit
+            | ExprKind::Ident(_)
+            | ExprKind::Observation(_)
+            | ExprKind::Trace { .. } => false,
+            ExprKind::InterpStr(parts) => parts.iter().any(|p| match p {
+                InterpPart::Hole(h) => expr(h),
+                InterpPart::Chunk(_) => false,
+            }),
+            ExprKind::ListLit(elems) => elems.iter().any(expr),
+            ExprKind::Wire(inner)
+            | ExprKind::EffectPure(inner)
+            | ExprKind::Expect(inner)
+            | ExprKind::Ok(inner)
+            | ExprKind::Err(inner)
+            | ExprKind::Some(inner)
+            | ExprKind::Question(inner)
+            | ExprKind::UnaryOp(_, inner)
+            | ExprKind::Paren(inner) => expr(inner),
+            ExprKind::Lambda(lambda) => expr(&lambda.body),
+            ExprKind::Val { args, .. } => args.iter().any(expr),
+            ExprKind::RecordSpread { base, overrides, .. } => {
+                expr(base) || overrides.iter().any(|f| f.value.as_ref().is_some_and(expr))
+            }
+            ExprKind::Call { args, .. } => args.iter().any(expr),
+            ExprKind::BinOp(_, lhs, rhs) => expr(lhs) || expr(rhs),
+            ExprKind::Block(b) => block_fn(b),
+            ExprKind::If { cond, then_block, else_block } => {
+                expr(cond) || block_fn(then_block) || block_fn(else_block)
+            }
+            ExprKind::ConstructorCall { args, .. } => args.iter().any(expr),
+            ExprKind::RecordConstruction { fields, .. } => {
+                fields.iter().any(|f| f.value.as_ref().is_some_and(expr))
+            }
+            ExprKind::FieldAccess { receiver, .. } => expr(receiver),
+            ExprKind::MethodCall { receiver, args, .. } => expr(receiver) || args.iter().any(expr),
+            ExprKind::Match { discriminant, arms } => {
+                expr(discriminant)
+                    || arms.iter().any(|arm| match &arm.body {
+                        MatchBody::Expr(e) => expr(e),
+                        MatchBody::Block(b) => block_fn(b),
+                    })
+            }
+        }
+    }
+    fn block_fn(b: &Block) -> bool {
+        b.statements.iter().any(|stmt| match stmt {
+            Statement::Let(l) | Statement::EffectLet(l) => expr(&l.value),
+            Statement::Expect(a) => expr(&a.value),
+            Statement::Send(s) => expr(&s.value),
+            Statement::Do(d) => expr(&d.value),
+            Statement::Assign(a) => expr(&a.value),
+        }) || expr(&b.tail)
+    }
+    block_fn(block)
+}
+
 pub(crate) fn lower_expr_v2(e: &IrExpr, cx: &mut LowerCtx) -> Lowered {
     match &e.kind {
         IrExprKind::Local(name) => Lowered::bare(lower_ident_v2(e, name, cx)),
@@ -9405,5 +9499,80 @@ mod async_iife_effectfulness_tests {
             ts.contains("const r = await await (async (__d) => {"),
             "a do-only effectful arm must also force the switch arrow async: {ts}"
         );
+    }
+}
+
+#[cfg(test)]
+mod body_uses_is_pattern_tests {
+    use super::*;
+    use bynk_syntax::ast::{CommonsItem, FnDecl};
+    use bynk_syntax::{lexer, parser};
+
+    /// A pure syntactic walk (no type-checking needed) — parse-only, matching
+    /// this function's own claim that it needs no checker context.
+    fn parse_fn_body(source: &str, name: &str) -> Block {
+        let tokens = lexer::tokenize(source).expect("lex");
+        let (commons, _warnings) = parser::parse_with_warnings(&tokens, source).expect("parse");
+        let f: &FnDecl = commons
+            .items
+            .iter()
+            .find_map(|item| match item {
+                CommonsItem::Fn(f) if f.name.display() == name => Some(f),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no fn named `{name}` in this fixture"));
+        f.body.clone()
+    }
+
+    #[test]
+    fn no_is_at_all_is_false() {
+        let body = parse_fn_body(
+            "commons t\n\nfn f(n: Int) -> Int {\n  if n > 0 { n } else { 0 }\n}\n",
+            "f",
+        );
+        assert!(!body_uses_is_pattern(&body));
+    }
+
+    #[test]
+    fn top_level_is_in_condition_is_true() {
+        let body = parse_fn_body(
+            "commons t\n\ntype Outcome =\n  | Hit(n: Int)\n  | Miss\n\n\
+             fn f(o: Outcome) -> Int {\n  if o is Hit(n) { n } else { 0 }\n}\n",
+            "f",
+        );
+        assert!(body_uses_is_pattern(&body));
+    }
+
+    #[test]
+    fn wildcard_is_still_flags_true() {
+        // Deliberately conservative — see this function's own doc comment.
+        let body = parse_fn_body(
+            "commons t\n\ntype Outcome =\n  | Hit(n: Int)\n  | Miss\n\n\
+             fn f(o: Outcome) -> Bool {\n  o is Hit(_)\n}\n",
+            "f",
+        );
+        assert!(body_uses_is_pattern(&body));
+    }
+
+    #[test]
+    fn nested_in_lambda_body_is_true() {
+        let body = parse_fn_body(
+            "commons t\n\ntype Outcome =\n  | Hit(n: Int)\n  | Miss\n\n\
+             fn f(xs: List[Outcome]) -> List[Bool] {\n  \
+             xs.map((o) => o is Hit(_))\n}\n",
+            "f",
+        );
+        assert!(body_uses_is_pattern(&body));
+    }
+
+    #[test]
+    fn nested_in_match_arm_is_true() {
+        let body = parse_fn_body(
+            "commons t\n\ntype Outcome =\n  | Hit(n: Int)\n  | Miss\n\n\
+             fn f(o: Outcome, flag: Bool) -> Bool {\n  \
+             match flag {\n    true => o is Hit(_)\n    false => false\n  }\n}\n",
+            "f",
+        );
+        assert!(body_uses_is_pattern(&body));
     }
 }
