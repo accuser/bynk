@@ -6148,6 +6148,209 @@ fn lower_kernel_call_v2(
     }
 }
 
+/// `Callee::Store`/`Callee::Query`'s shared `_v2` sibling — the storage-field
+/// cluster `lower_method_call`'s own AST original spans across six branches
+/// (held `Map`, ordinary `Map`, `Set`, `Cache`, `Log`, `Cell`; `lower.rs`
+/// ~1592-1923), each gated by `ExprKind::Ident(id) = &receiver.kind` plus a
+/// `cx.agent_*`/`cx.is_agent_*` lookup keyed on `id.name`. Both `Callee`
+/// variants already carry that same name directly as `field` — no receiver
+/// AST shape to inspect at all, so this dispatches on `field` alone, tried
+/// in the AST original's own precedence order (held map first — held maps
+/// are excluded from `agent_store_map`, so the two never collide).
+///
+/// **Known gap, not ported:** `route_indexed_filter`'s posting-list fast path
+/// for an equality `filter` on an `@indexed` field (the AST original's own
+/// `idx_map_put`/`remove`/`update`/`upsert` string-building helpers *are*
+/// reused unchanged below — they take no `Expr`/`IrExpr` at all — but the
+/// *routing* itself inspects a lambda's body structurally, which needs its
+/// own `_v2` port not yet built). Every indexed mutator still re-indexes
+/// correctly; only the `filter` fast path is missing, falling back to the
+/// always-correct full `Object.values` scan `lower_query_method_v2` already
+/// gives every other `filter`.
+fn lower_store_or_query_call_v2(
+    e: &IrExpr,
+    field: &str,
+    op: &str,
+    args: &[IrExpr],
+    cx: &mut LowerCtx,
+) -> String {
+    let tys = cx.commons().tys();
+    let mut pre = Pre::new();
+    // Held `Map[K, Connection]` — a connIdOf/resolveConnection wrapper.
+    if let Some(f_ts) = cx.agent_held_map_frame(field).cloned() {
+        let var = cx.agent_store_var().to_string();
+        let m = format!("{var}.{field}");
+        let a: Vec<String> = args.iter().map(|x| pre.lower_ir(x, cx)).collect();
+        return pre.finish(match op {
+            "put" => format!("(({m}[String({})] = connIdOf({})), undefined)", a[0], a[1]),
+            "remove" => format!(
+                "(async () => {{ const __k = String({0}); const __cid = {m}[__k]; if (__cid !== undefined) {{ const __c = resolveConnection<{f_ts}>(this.state, __cid); if (__c.tag === \"Some\") {{ await __c.value.close(); }} delete {m}[__k]; }} return undefined; }})()",
+                a[0]
+            ),
+            "contains" => format!("(String({}) in {m})", a[0]),
+            "size" => format!("Object.keys({m}).length"),
+            "get" => format!(
+                "(() => {{ const __k = String({0}); return (__k in {m}) ? resolveConnection<{f_ts}>(this.state, {m}[__k]) : None; }})()",
+                a[0]
+            ),
+            _ => {
+                let other_elem_ts = args.first().map(|_| join_other_elem_ts_v2(args, cx)).unwrap_or_default();
+                lower_query_method_v2(
+                    format!(
+                        "Object.values({m}).flatMap((__cid) => {{ const __c = resolveConnection<{f_ts}>(this.state, __cid); return __c.tag === \"Some\" ? [__c.value] : []; }})"
+                    ),
+                    op,
+                    &a,
+                    Some(e.ty),
+                    &f_ts,
+                    &other_elem_ts,
+                    tys,
+                )
+            }
+            .unwrap_or_else(|| format!("(/* unsupported held Map op {op} */ undefined)")),
+        }).expr;
+    }
+    // Ordinary `Map[K, V]`.
+    if cx.is_agent_store_map(field) {
+        let var = cx.agent_store_var().to_string();
+        let m = format!("{var}.{field}");
+        let idx_fields: Vec<String> = cx.agent_store_index_fields(field);
+        let a: Vec<String> = args.iter().map(|x| pre.lower_ir(x, cx)).collect();
+        return match op {
+            "put" if !idx_fields.is_empty() => idx_map_put(&m, &var, field, &idx_fields, &a),
+            "remove" if !idx_fields.is_empty() => idx_map_remove(&m, &var, field, &idx_fields, &a),
+            "update" if !idx_fields.is_empty() => idx_map_update(&m, &var, field, &idx_fields, &a),
+            "upsert" if !idx_fields.is_empty() => idx_map_upsert(&m, &var, field, &idx_fields, &a),
+            "put" => format!("(({m}[{}] = {}), undefined)", a[0], a[1]),
+            "remove" => format!("((delete {m}[{}]), undefined)", a[0]),
+            "contains" => format!("(({}) in {m})", a[0]),
+            "size" => format!("Object.keys({m}).length"),
+            "get" => format!(
+                "(() => {{ const __k = {0}; return (__k in {m}) ? Some({m}[__k]) : None; }})()",
+                a[0]
+            ),
+            "update" => format!(
+                "(() => {{ const __k = {0}; if (!(__k in {m})) {{ throw new Error(\"Map.update: key absent\"); }} {m}[__k] = ({1})({m}[__k]); return undefined; }})()",
+                a[0], a[1]
+            ),
+            "upsert" => format!(
+                "(() => {{ const __k = {0}; {m}[__k] = ({2})((__k in {m}) ? {m}[__k] : ({1})); return undefined; }})()",
+                a[0], a[1], a[2]
+            ),
+            _ => {
+                let elem_ts = cx.agent_store_map_value_ts(field).cloned().unwrap_or_else(|| "unknown".to_string());
+                let other_elem_ts = args.first().map(|_| join_other_elem_ts_v2(args, cx)).unwrap_or_default();
+                lower_query_method_v2(format!("Object.values({m})"), op, &a, Some(e.ty), &elem_ts, &other_elem_ts, tys)
+                    .unwrap_or_else(|| format!("(/* unsupported Map op {op} */ undefined)"))
+            }
+        };
+    }
+    // `Set[T]`.
+    if cx.is_agent_store_set(field) {
+        let var = cx.agent_store_var().to_string();
+        let s = format!("{var}.{field}");
+        let a: Vec<String> = args.iter().map(|x| pre.lower_ir(x, cx)).collect();
+        return match op {
+            "add" => format!("(({s}[{}] = true), undefined)", a[0]),
+            "remove" => format!("((delete {s}[{}]), undefined)", a[0]),
+            "contains" => format!("(({}) in {s})", a[0]),
+            "size" => format!("Object.keys({s}).length"),
+            other => format!("(/* unsupported Set op {other} */ undefined)"),
+        };
+    }
+    // `Cache[K, V]`.
+    if let Some(ttl) = cx.agent_store_cache_ttl(field) {
+        let var = cx.agent_store_var().to_string();
+        let c = format!("{var}.{field}");
+        let now = format!("await {}.Clock.now()", cx.cap_deps_expr());
+        let a: Vec<String> = args.iter().map(|x| pre.lower_ir(x, cx)).collect();
+        return match op {
+            "remove" => format!("((delete {c}[{}]), undefined)", a[0]),
+            "put" => format!(
+                "(async () => {{ const __now = {now}; {c}[{0}] = {{ v: {1}, exp: __now + {ttl} }}; return undefined; }})()",
+                a[0], a[1]
+            ),
+            "get" => format!(
+                "(async () => {{ const __now = {now}; const __k = {0}; return ((__k in {c}) && {c}[__k].exp > __now) ? Some({c}[__k].v) : None; }})()",
+                a[0]
+            ),
+            "contains" => format!(
+                "(async () => {{ const __now = {now}; const __k = {0}; return (__k in {c}) && {c}[__k].exp > __now; }})()",
+                a[0]
+            ),
+            "size" => format!(
+                "(async () => {{ const __now = {now}; return Object.values({c}).filter((__e) => __e.exp > __now).length; }})()"
+            ),
+            "update" => format!(
+                "(async () => {{ const __now = {now}; const __k = {0}; if (!((__k in {c}) && {c}[__k].exp > __now)) {{ throw new Error(\"Cache.update: key absent\"); }} {c}[__k] = {{ v: ({1})({c}[__k].v), exp: __now + {ttl} }}; return undefined; }})()",
+                a[0], a[1]
+            ),
+            "upsert" => format!(
+                "(async () => {{ const __now = {now}; const __k = {0}; const __cur = ((__k in {c}) && {c}[__k].exp > __now) ? {c}[__k].v : ({1}); {c}[__k] = {{ v: ({2})(__cur), exp: __now + {ttl} }}; return undefined; }})()",
+                a[0], a[1], a[2]
+            ),
+            other => format!("(/* unsupported Cache op {other} */ undefined)"),
+        };
+    }
+    // `Log[T]`.
+    if let Some(retain) = cx.agent_store_log_retain(field) {
+        let var = cx.agent_store_var().to_string();
+        let g = format!("{var}.{field}");
+        let a: Vec<String> = args.iter().map(|x| pre.lower_ir(x, cx)).collect();
+        if op == "append" {
+            let now = format!("await {}.Clock.now()", cx.cap_deps_expr());
+            let prune = match retain {
+                Some(ms) => format!(
+                    " for (let __i = {g}.length - 1; __i >= 0; __i--) {{ if ({g}[__i].t < __now - {ms}) {g}.splice(__i, 1); }}"
+                ),
+                None => String::new(),
+            };
+            return format!(
+                "(async () => {{ const __now = {now}; {g}.push({{ t: __now, v: {0} }});{prune} return undefined; }})()",
+                a[0]
+            );
+        }
+        let values = format!("{g}.map((__e) => __e.v)");
+        let thunk = |body: String| format!("(() => {body})");
+        return match op {
+            "since" => thunk(format!("{g}.filter((__e) => __e.t >= ({0})).map((__e) => __e.v)", a[0])),
+            "before" => thunk(format!("{g}.filter((__e) => __e.t < ({0})).map((__e) => __e.v)", a[0])),
+            "between" => thunk(format!(
+                "{g}.filter((__e) => __e.t >= ({0}) && __e.t <= ({1})).map((__e) => __e.v)",
+                a[0], a[1]
+            )),
+            "recent" => thunk(format!(
+                "{g}.slice(Math.max(0, {g}.length - Math.max(0, {0}))).reverse().map((__e) => __e.v)",
+                a[0]
+            )),
+            "reversed" => thunk(format!("[...{g}].reverse().map((__e) => __e.v)")),
+            _ => {
+                let elem_ts = cx.agent_store_log_value_ts(field).cloned().unwrap_or_else(|| "unknown".to_string());
+                let other_elem_ts = args.first().map(|_| join_other_elem_ts_v2(args, cx)).unwrap_or_default();
+                lower_query_method_v2(values, op, &a, Some(e.ty), &elem_ts, &other_elem_ts, tys)
+                    .unwrap_or_else(|| format!("(/* unsupported Log op {op} */ undefined)"))
+            }
+        };
+    }
+    // `Cell[T]`.
+    if let Some((var, cells)) = cx.agent_store_cells()
+        && cells.contains(field)
+    {
+        let var = var.to_string();
+        let n = format!("{var}.{field}");
+        let a: Vec<String> = args.iter().map(|x| pre.lower_ir(x, cx)).collect();
+        return match op {
+            "update" => format!("(() => {{ {n} = ({0})({n}); return undefined; }})()", a[0]),
+            other => format!("(/* unsupported Cell op {other} */ undefined)"),
+        };
+    }
+    panic!(
+        "bynk internal error (#1542 Slice 3.2): Callee::Store/Query {{ field: {field:?}, \
+         op: {op:?} }} but bynk-emit's own LowerCtx recognizes {field:?} as none of held-map/\
+         map/set/cache/log/cell — bynk_lower's classification and bynk-emit's own have diverged"
+    )
+}
+
 fn lower_call_v2(e: &IrExpr, callee: &Callee, args: &[IrExpr], cx: &mut LowerCtx) -> Lowered {
     // `Callee::Method`/`Kernel`/`Agent` pack the receiver as `args[0]`
     // unlowered (`lower_call_ir`'s own `receiver_is_a_value` gate) — these
@@ -6163,6 +6366,20 @@ fn lower_call_v2(e: &IrExpr, callee: &Callee, args: &[IrExpr], cx: &mut LowerCtx
         // Falls through to the UFCS tail below when no kernel arm matched —
         // `lower_method_call`'s own AST original does the identical fall-
         // through (`lower.rs:2666`'s comment: "Instance call: UFCS lowering").
+    }
+    // `Callee::Store`/`Callee::Query` carry no receiver in `args` at all (not
+    // one of `receiver_is_a_value`'s three variants) — handled here, before
+    // the eager `args`-lowering below, only because
+    // `lower_store_or_query_call_v2` does its own internal lowering (a fresh
+    // `Pre`, matching each AST-original branch's own per-branch `pre.lower`
+    // pass); lowering `args` a second time downstream would double every
+    // side effect a hoisting argument produces (a `?`'s early-return guard,
+    // a fresh temp), not just waste one.
+    match callee {
+        Callee::Store { field, op } | Callee::Query { field, op, .. } => {
+            return Lowered::bare(lower_store_or_query_call_v2(e, field, op, args, cx));
+        }
+        _ => {}
     }
     let tys = cx.commons().tys();
     let mut pre = Pre::new();
