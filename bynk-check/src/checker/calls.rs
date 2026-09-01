@@ -206,12 +206,14 @@ pub(crate) fn check_fn(
 /// the expected type, so refined literals admit (v0.9.4) and sum variants
 /// resolve. The init's expression types are recorded into `expr_types` for
 /// emission, and its `Callee` classification (a `.of`/`.unsafe`/variant-
-/// constructor call, at most) into `callees` (P6.7, #1163) — `bynk-emit::ir`'s
-/// `lower_store_field_ir` lowers a `Cell` field's own `init` through the same
-/// `lower_expr_ir` any other call-shaped expression goes through, which reads
-/// `program.callees` unconditionally (ADR 0334): a call-shaped static
-/// initialiser with no entry there would panic on a certified program the
-/// checker legitimately accepted, not a recoverable state. `code`/`subject`
+/// constructor call, at most) into `callees` (P6.7, #1163) — every
+/// `Callee`-driven reader of a call-shaped expression reads `program.callees`
+/// unconditionally (ADR 0334), so a call-shaped static initialiser with no
+/// entry there would panic on a certified program the checker legitimately
+/// accepted, not a recoverable state. (The IR-side `Cell`-init lowering that
+/// first motivated this was deleted by Slice D1 of #1542; the invariant
+/// outlives it because `bynk-emit`'s own emitter reads the same table.)
+/// `code`/`subject`
 /// name the caller's own diagnostic and the noun used in its message ("state
 /// field initialiser" / "event field default").
 #[allow(clippy::too_many_arguments)]
