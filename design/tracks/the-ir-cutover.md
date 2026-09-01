@@ -249,6 +249,25 @@ entirely into the new item-assembly slice (its own real home, per its functions'
     bless (the same gate every `#1137` slice used) is exhaustive verification for exactly that claim —
     unblocks `#1225`'s dormant `@cache`/`@limit` accumulator work, which no shipped path currently
     reaches, as a real side effect of 3.2 rather than a reason to split further.
+
+    **Correction (found during implementation): the "flip all seven, unconditionally" framing above
+    doesn't survive contact with R5.9.** `bynk_lower::lower_fn_body_ir` returns `IrExpr` directly, no
+    `Result`/`Option` — and it hard-panics (`unreachable!` in `lower_ident_ir`) on any body where an
+    `is`-pattern binding from a condition is referenced in the then-branch it flows into (`o is Hit(n)`
+    then `n` used inside `{ ... }`). This is real, reachable, tested shape — fixtures `#734` and `#1019`
+    are exactly this pattern — not a hypothetical. It's ADR 0338's own R5.9: `Is`'s IR desugar builds the
+    forced-temp and the boolean test, never the narrowing *binding* — nothing pushes those names into
+    `LowerIrCtx::scopes`, and ADR 0338 named that machinery "a genuinely separate, still-open design
+    question... for a future slice," not a Slice 3.2 prerequisite. Unconditionally flipping all seven
+    entry points as originally written would turn every is-binding-in-then-branch program in the corpus
+    into a panic. Resolution: Slice 3.2 keeps its scope to the mechanical AST→IR retype above, and the
+    entry-point flip becomes **conditional per function body**, not unconditional — a cheap static
+    pre-check (does this body contain an `is`-pattern with a non-wildcard binding, anywhere reachable;
+    conservative on purpose, no attempt at real use-analysis) decides AST-path vs. IR-path per body,
+    mirroring the existing `BodyMode` test-mode gate rather than adding a second, different gating
+    mechanism. R5.9 itself — threading is-bound names into `LowerIrCtx::scopes` for `If`/`And`/`Implies`,
+    the IR-side equivalent of the AST emitter's `shadow_scopes`/`gather_is_bindings_for_emit` — is named
+    here as its own follow-on slice, not silently folded into 3.2 or silently dropped.
 - **Slice 4 — handler/body** *(was Slice 5)*. `lower_fn_body_ir`, `lower_handler_ir`,
   `lower_service_handler_ir`. Depends on Slice 3 (fn/handler bodies lower through `lower_expr_ir`). The
   `Message`-arm `ServiceProtocol` check is explicitly **out of scope** — stays declined per §3.3.
@@ -284,6 +303,11 @@ now-stale deferral.
   stronger reason: the per-unit `CheckedProgram` drop, not just parameter-threading cost).
 - Six of `bynk-lower`'s nine `todo!()` sites — the test-sublanguage constructs (§4), out of this
   track's scope the same way they were out of `the-ir.md`'s.
+- R5.9 — threading `is`-pattern narrowing bindings into `LowerIrCtx::scopes` for `If`/`And`/`Implies`
+  bodies (found during Slice 3.2 implementation, corrected into §5's Slice 3.2 entry above). ADR 0338's
+  own deferral, reconfirmed here rather than folded into 3.2: real, reachable (fixtures `#734`/`#1019`),
+  and blocking only the *unconditional* form of the seven-entry-point flip, which Slice 3.2 no longer
+  attempts — its conditional, per-body pre-check stands in until this lands as its own slice.
 
 ## 9. Threat model
 
