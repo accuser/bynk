@@ -221,7 +221,7 @@ pub(crate) fn emit(program: &CheckedProgram) -> String {
     for item in &commons.commons.items {
         if let CommonsItem::Type(t) = item {
             let shape = type_shape_for(t, program);
-            body_stmts.extend(emit_type(t, &shape, commons, &dummy_ctx));
+            body_stmts.extend(emit_type(t, &shape, program, &dummy_ctx));
         }
     }
     // Free functions afterward.
@@ -405,7 +405,7 @@ pub(crate) fn emit_project(
     for item in &commons.commons.items {
         if let CommonsItem::Type(t) = item {
             let shape = type_shape_for(t, program);
-            let mut item_stmts = emit_type(t, &shape, commons, ctx);
+            let mut item_stmts = emit_type(t, &shape, program, ctx);
             if let Some(first) = item_stmts.first_mut() {
                 first.span = Some(t.span);
             }
@@ -424,7 +424,7 @@ pub(crate) fn emit_project(
         if let CommonsItem::Event(e) = item {
             let t = e.as_type_decl();
             let shape = type_shape_for(&t, program);
-            let mut item_stmts = emit_type(&t, &shape, commons, ctx);
+            let mut item_stmts = emit_type(&t, &shape, program, ctx);
             if let Some(first) = item_stmts.first_mut() {
                 first.span = Some(t.span);
             }

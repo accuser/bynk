@@ -51,7 +51,7 @@ use super::*;
 pub(crate) fn emit_type(
     t: &TypeDecl,
     shape: &TypeShape,
-    commons: &TypedCommons,
+    program: &CheckedProgram,
     ctx: &EmitProjectCtx,
 ) -> Vec<bynk_ts::TsStmt> {
     let mut stmts = Vec::new();
@@ -86,16 +86,16 @@ pub(crate) fn emit_type(
                 refinement: refinement.as_ref(),
                 is_opaque: *opaque,
             },
-            commons,
+            program,
             &brand_prefix,
             &ctx.runtime_use,
         ),
-        TypeShape::Record { fields } => emit_record_type(t, fields, commons, &ctx.runtime_use),
+        TypeShape::Record { fields } => emit_record_type(t, fields, program, &ctx.runtime_use),
         // `embeds` is not read here — today's emitter has no reader for
         // `SumBody::embeds` anywhere (confirmed by grep; `embeds` is checker-
         // enforced construction-time only), so `TypeShape::Sum::embeds` stays
         // unread by this slice too, not a gap introduced by it.
-        TypeShape::Sum { variants, .. } => emit_sum_type(t, variants, commons, &ctx.runtime_use),
+        TypeShape::Sum { variants, .. } => emit_sum_type(t, variants, program, &ctx.runtime_use),
     };
     // #1486: a leading doc comment sits directly above the declaration it
     // documents, no blank between them — unlike `Comment`, `DocComment` is
@@ -194,7 +194,7 @@ struct RefinedShape<'a> {
 fn emit_refined_type(
     t: &TypeDecl,
     shape: RefinedShape<'_>,
-    commons: &TypedCommons,
+    program: &CheckedProgram,
     brand_prefix: &str,
     runtime_use: &RuntimeUse,
 ) -> Vec<bynk_ts::TsStmt> {
@@ -281,7 +281,7 @@ fn emit_refined_type(
     entries.extend(emit_attached_methods(
         &t.name.name,
         &t.type_params,
-        commons,
+        program,
         runtime_use,
     ));
     let const_decl = bynk_ts::TsStmt::decl(
@@ -438,9 +438,10 @@ pub(crate) fn ts_type_params(params: &[TypeParam]) -> String {
 fn emit_record_type(
     t: &TypeDecl,
     fields: &[(String, TyId)],
-    commons: &TypedCommons,
+    program: &CheckedProgram,
     runtime_use: &RuntimeUse,
 ) -> Vec<bynk_ts::TsStmt> {
+    let commons = program.program();
     let type_params: Vec<String> = t.type_params.iter().map(|p| p.name.name.clone()).collect();
     let members: Vec<bynk_ts::TsTypeMember> = fields
         .iter()
@@ -459,7 +460,7 @@ fn emit_record_type(
         })),
         None,
     );
-    let entries = emit_attached_methods(&t.name.name, &t.type_params, commons, runtime_use);
+    let entries = emit_attached_methods(&t.name.name, &t.type_params, program, runtime_use);
     let const_decl = bynk_ts::TsStmt::decl(
         bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::ConstDecl {
             name: t.name.name.clone(),
@@ -497,9 +498,10 @@ fn emit_record_type(
 fn emit_sum_type(
     t: &TypeDecl,
     variants: &[(String, Vec<(String, TyId)>)],
-    commons: &TypedCommons,
+    program: &CheckedProgram,
     runtime_use: &RuntimeUse,
 ) -> Vec<bynk_ts::TsStmt> {
+    let commons = program.program();
     // #593: a generic sum erases to a TypeScript generic discriminated union,
     // exactly as a generic record erases to `interface Name<T>`. The type
     // parameters ride the `export type` header and each payload constructor
@@ -607,7 +609,7 @@ fn emit_sum_type(
     entries.extend(emit_attached_methods(
         &t.name.name,
         &t.type_params,
-        commons,
+        program,
         runtime_use,
     ));
     let const_decl = bynk_ts::TsStmt::decl(
@@ -630,9 +632,10 @@ fn emit_sum_type(
 fn emit_attached_methods(
     type_name: &str,
     type_params: &[TypeParam],
-    commons: &TypedCommons,
+    program: &CheckedProgram,
     runtime_use: &RuntimeUse,
 ) -> Vec<bynk_ts::TsObjectEntry> {
+    let commons = program.program();
     let mut entries = Vec::new();
     for item in &commons.commons.items {
         let CommonsItem::Fn(f) = item else { continue };
@@ -651,7 +654,7 @@ fn emit_attached_methods(
             type_name,
             type_params,
             method_name,
-            commons,
+            program,
             runtime_use,
         ));
     }
@@ -784,9 +787,10 @@ fn emit_method(
     type_name: &str,
     type_params: &[TypeParam],
     method_name: &Ident,
-    commons: &TypedCommons,
+    program: &CheckedProgram,
     runtime_use: &RuntimeUse,
 ) -> bynk_ts::TsObjectEntry {
+    let commons = program.program();
     // #1337: a real gap the accepted proposal's own citation missed (it
     // searched for `///`-style doc markers; this language's own doc block
     // is `---`-delimited, per the lexer — `Timestamp.diff`/`Timestamp.add`
@@ -848,14 +852,23 @@ fn emit_method(
     // `Promise.resolve(...)` because there's no surrounding `async` to absorb
     // it. (Methods aren't expected to return `Effect[T]` in v0–v0.7.1.)
     let mut body_text = String::new();
-    emit_block_as_function_body_with_return(
-        &mut body_text,
-        &f.body,
-        &mut cx,
-        INDENT_STEP * 2,
-        false,
-        Some(&f.return_type),
-    );
+    // Slice 3.2 of #1542: the same per-body static gate emit_free_fn's own
+    // unguarded branch uses. lower_fn_body_ir already handles `self` for a
+    // method body correctly on its own (binds it via fn_receiver_ty, mirroring
+    // check_fn's own f.has_self arm) — no extra wiring needed for that part.
+    if !body_uses_is_pattern(&f.body) && !body_uses_record_spread(&f.body) {
+        let ir_body = lower_fn_body_ir(f, program);
+        emit_block_inner_v2(&mut body_text, &ir_body, &mut cx, INDENT_STEP * 2, false);
+    } else {
+        emit_block_as_function_body_with_return(
+            &mut body_text,
+            &f.body,
+            &mut cx,
+            INDENT_STEP * 2,
+            false,
+            Some(&f.return_type),
+        );
+    }
     bynk_ts::TsObjectEntry::Method {
         name: method_name.name.clone(),
         is_async: false,
