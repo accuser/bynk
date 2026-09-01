@@ -6,6 +6,14 @@ IR nodes... never an AST declaration."
 **Continues, does not reopen:** [`#1137`](https://github.com/accuser/bynk/issues/1137) (`the-ir.md`,
 phase 6), retired 19 August 2026 at an argued floor (`ast_importers` = 5), archived in
 [`../archive/retired-tracks.md`](../archive/retired-tracks.md).
+**Status (re-settled 1 September 2026):** **the cutover stops at Slice 3.1.** Slice 3.2's own
+evidence (§10.1) falsified the premise §5 rests on — that the cutover is a mechanical retype whose
+output is byte-identical — and the branch that tested it built the exact second path §5 said must not
+exist. §10 records the decision this track's spine now carries instead: repoint the one production
+detour, **delete** the unconsumed lowering and the IR types only it constructs, keep the adopted
+analysis helpers, and record the refusal in R15.1's four-field form with a named trigger. §§1–9 stay
+as written — they are the record of what was tried, not a plan still in force — and this doc retires
+(closing summary to `../archive/retired-tracks.md`) when §10.5's slices land.
 
 ## 1. What this is, and isn't
 
@@ -264,9 +272,17 @@ entirely into the new item-assembly slice (its own real home, per its functions'
 - [x] Slice 1 — discard-site cleanup + the `HttpMethod` surface around it (`#1556`)
 - [x] Slice 2 — signatures (already satisfied — see §5, no code landed)
 - [x] Slice 3.1 — close `bynk-lower`'s two live `todo!()` gaps (`#1564`)
-- [ ] Slice 3.2 — the coordinated expr/stmt-core cutover (was Slice 6)
-- [ ] Slice 4 — handler/body (was Slice 5)
-- [ ] Slice 5 — item assembly (was Slice 4; absorbs old Slice 3 in full)
+- ~~Slice 3.2 — the coordinated expr/stmt-core cutover (was Slice 6)~~ **Stopped, not merged
+  (§10).** Reached 3 of 7 entry points on `slice3-2-expr-stmt-core` (19 commits from `31a949ae`),
+  retained as a reference tag; §10.1 has the measurements.
+- ~~Slice 4 — handler/body (was Slice 5)~~ — struck by §10; superseded by §10.5's D-slices.
+- ~~Slice 5 — item assembly (was Slice 4; absorbs old Slice 3 in full)~~ — struck by §10; superseded
+  by §10.5's D-slices.
+- [ ] Slice D0 — repoint `lower_event_subscriber_shapes_ir` off the body-lowering detour (§10.5)
+- [ ] Slice D1 — delete `bynk-lower`'s unconsumed lowering and its tests (§10.3)
+- [ ] Slice D2 — delete `bynk-ir`'s orphaned IR types; rewrite the crate doc (§10.3)
+- [ ] Slice D3 — the R15.1 register entry, the ADR, the adoption probe, and this track's retirement
+  (§10.4, §10.5)
 
 ## 7. Front-loaded ADR candidates
 
@@ -291,3 +307,250 @@ None, because this track changes no language surface, no runtime behaviour, and 
 boundary — internal dispatch-source relocation only, verified by the same means every `#1137` slice
 used: a full zero-diff bless against the e2e fixture corpus, `cargo test --workspace`, `cargo clippy
 --workspace --all-targets -- -D warnings`.
+
+## 10. Re-settling (1 September 2026): the cutover stops here
+
+### 10.1 What Slice 3.2 actually found, measured
+
+§5 accepted Slice 3.2 on two premises: that the cutover is *a mechanical retype* ("emitted output
+must be byte-identical … not new logic"), and that it therefore lands as *one slice* because "a
+half-converted state … would mean the family exists in two incompatible signatures at once: either a
+temporary duplicate copy of the whole mutually recursive machinery … or genuinely broken intermediate
+states. Neither buys real safety." Both premises were tested on `slice3-2-expr-stmt-core` (19
+commits from `31a949ae`, then `origin/main`). Read against `origin/main`@`067b94a4`:
+
+| Measure | `main` | `slice3-2-expr-stmt-core` |
+|---|---|---|
+| `bynk-emit/src/emitter/lower.rs`, lines | 6,321 | 10,117 |
+| `_v2` sibling functions duplicating an AST-typed lowering function | 0 | 56 |
+| AST-typed lowering functions still present (`&Expr`/`&Block`/`&Statement`/…) | 26 | 32 |
+| `todo!()` in production emitter code | 0 | 6 |
+| `unreachable!()` in `emitter/lower.rs` | 8 | 26 |
+| `ts_writes` (gated probe) | 809 | 1,079 |
+| Entry points flipped to the IR path | 0 of 7 | 3 of 7 |
+| e2e goldens accepted as "structurally unrecoverable" diffs | 0 | 2 |
+| Follow-on issues filed for gaps in the new path | — | 7 (#1566–#1572) |
+
+Each flip on that branch found and fixed a real behavioural difference between the two paths —
+missing precedence-aware parenthesisation, a dropped constructor payload, a guard-blind
+non-exhaustive-match check, a missing `?`-in-match-arm case, absent `cx.record_span` calls, `?`
+losing its hoisted form, a lambda's `?` picking the wrong `embeds` conversion — every one a bug in
+the *IR* path, fixed there, with the shipped AST path right each time. Three things follow, each of
+which §5 said would mean the slice is not done:
+
+1. **It is the duplicate copy, not the retype.** Every converted function is a `_v2` *sibling*; no
+   AST-typed function was retyped and none was deleted. The two families coexist, and a per-body
+   static gate (`body_uses_is_pattern`, `body_uses_record_spread`) chooses between them at each of
+   the three flipped entry points. That gate is not migration scaffolding with a deletion date: it
+   stays until [#1567](https://github.com/accuser/bynk/issues/1567) (R5.9, is-binding scopes) and
+   [#1569](https://github.com/accuser/bynk/issues/1569) (spread representation) land, and both are
+   *new representation choices in `bynk-lower`*, not mechanical work — #1569's own filing says so.
+   This is `bynk-compiler-trajectory.md` §6's question 3 and `bynk-greenfield-compiler.md` P5,
+   verbatim, reproduced by the track that was opened to close them.
+2. **The output is not byte-identical, and cannot be made so from `bynk-emit`.** The two residual
+   diffs ([#1568](https://github.com/accuser/bynk/issues/1568)) are information the IR does not
+   carry; closing them means widening `bynk-ir`, not fixing `bynk-emit`. A "mechanical retype"
+   whose every step is a semantic reconciliation against the old code generator is not a retype. It
+   is a second code generator being brought up to parity with the first, feature by feature — which
+   is a rewrite, and `bynk-compiler-trajectory.md` §2 names exactly that as the thing a migration is
+   not.
+3. **The remaining cost is at least the cost already paid, and open-ended.** Three of seven entry
+   points, the `FnDecl`-bodied ones, took ~4,400 lines. The four handler-bodied ones are flagged in
+   [#1566](https://github.com/accuser/bynk/issues/1566) as "materially higher risk" because
+   `lower_ident_v2`'s store-cell/agent-`self`/actor-binder branches "were designed against
+   `lower_handler_ir`'s own doc comment but never exercised against a real handler body." After
+   them: `Callee::Cross` (#1570), the indexed-filter fast path (#1571), two unconfirmed edge cases
+   (#1572), R5.9, spread, parens — and only *then* the deletion of the 26 AST-typed functions and the
+   gate, which is the step that would make any of it a cutover rather than a fork. Q7's end state,
+   after all of that, is still `String`s out of `emitter/lower.rs`.
+
+### 10.2 A finding the 30 August review missed: the IR path already runs in production, and is discarded
+
+The review's "fifteen entry points with zero production call sites" counted *direct* callers. Traced
+transitively (a scratch build with those fifteen made private and `rustc`'s own dead-code analysis
+read off), the expression lowerer is **reachable from production on `main` today** — through one
+chain:
+
+```
+bynk-emit/src/project.rs:1445   lower_event_subscriber_shapes_ir(&program)
+bynk-lower/src/lib.rs:1780        └─ lower_service_item_ir(s, program)        for every `from Events(E)` service
+bynk-lower/src/lib.rs:1754           └─ lower_service_handler_ir(h, ..)     for every handler on it
+bynk-lower/src/lib.rs:789               └─ lower_block_ir → lower_stmt_ir → lower_expr_ir   the whole body
+```
+
+and then keeps two booleans of the result: `two_param_handler` (the `Event` handler's parameter
+count) and `schema_dispatch.is_some()` (from the protocol). Every handler *body* on every events
+service in the project is lowered to `IrExpr` and dropped on the floor. Twenty e2e fixtures declare
+`from Events(`; each pays for a full body lowering it never reads. The function's own doc comment
+already says this — "`lower_service_item_ir` unconditionally lowers every handler's own *body* (not
+just its declared shape)" — and cites the #1254 `catch_unwind` probe that found the corpus doesn't
+panic through it. That is a detour of exactly the §1.2 shape the review *did* name at
+`workers_entry.rs:380`, one level deeper, and it has two consequences for this decision:
+
+- `lower_expr_ir`'s six `todo!()`s and its R5.9 `unreachable!()` are **live** on `main` for any
+  events-service handler body that reaches them — held off by the test-body gate and by the corpus
+  happening not to contain the shape, not by construction. A `lower_ident_ir` panic on a legal
+  program is a shipped-compiler crash, reachable today, in code whose only production purpose is to
+  be discarded.
+- Both values the caller needs are already available from adopted, shape-only helpers:
+  `lower_protocol_ir` (`lib.rs:1449`, 3 production callers) carries `schema_dispatch`, and
+  `lower_service_handler_signature_ir` (`lib.rs:645`, called from `emitter.rs:506`) carries the
+  parameter list. Repointing `lower_event_subscriber_shapes_ir` at those two is a ~10-line change
+  that closes the detour **under either option in §10.3** and is Slice D0 for that reason.
+
+### 10.3 The decision: delete, with the inventory
+
+Two options were priced. Both are stated so the choice can be argued with; the first is the one this
+track now carries.
+
+**Option A (chosen) — delete the unconsumed lowering; keep the adopted analysis helpers; record the
+refusal.** `bynk-compiler-trajectory.md` §8: "A phase's estimate is wrong by a large factor … the
+phase boundary is the stopping point, and the trajectory's value is what has already landed, not what
+remains." Phase 6's retirement boundary is the coherent state; Slice 3.2 is the mid-phase state §2 of
+the trajectory says is not safe to stop in — so the branch does not merge, and the question becomes
+what `main` should hold. P5's answer is not "the available-but-unwired shape, indefinitely."
+
+**Option B (declined, priced) — finish to parity, then delete the AST path.** Merge criterion would
+be §5's own: one PR in which the 26 AST-typed lowering functions, the AST route through
+`emit_block_as_function_body_with_return`, and both gate functions are *gone*. Remaining work is
+§10.1(3)'s list, sized against the 3-of-7 already paid: not less than another ~4,400 lines of `_v2`
+code plus three `bynk-ir` widenings, for an end state that still emits strings and closes R6.13 for
+`emitter/lower.rs`'s *reads* only. If the language is settled enough to fund that, it is settled
+enough to fund tree-native emission (`bynk_ts` nodes out of the lowerer) instead, which would retire
+`ts_writes` rather than raise it — and that is a different track with a different trigger, not this
+one continued.
+
+**The deletion inventory**, computed on `origin/main`@`067b94a4` by the method §10.2 describes (make
+the fifteen review-named entry points private, stub the §10.2 detour, read `rustc`'s dead-code
+warnings; then grep each `bynk-ir` public item for a consumer in any remaining production source).
+Reproducible from that description; the scratch script is not committed because the D-slices
+re-derive it against the tree they land on.
+
+**`bynk-lower/src/lib.rs` — 48 functions plus four fields of `LowerIrCtx`, roughly 3,000 of the
+4,114 production lines (doc comments included), and up to 73 of 134 tests (~3,877 of 6,064
+test-region lines).**
+
+| Group | Items | Count |
+|---|---|---|
+| Public entry points: the review's fifteen minus the two Slice 2 found adopted, plus `lower_type_item_ir`/`lower_capability_item_ir` (Slice 1 replaced both with `lower_type_shape_ir`/`lower_capability_ops_ir`) | `lower_expr_ir` `lower_block_ir` `lower_fn_body_ir` `lower_fn_item_ir` `lower_handler_ir` `lower_service_handler_ir` `lower_service_item_ir` `lower_agent_item_ir` `lower_provider_item_ir` `lower_store_field_ir` `lower_commit_shape_ir` `lower_invariant_ir` `lower_transition_ir` `lower_type_item_ir` `lower_capability_item_ir` | 15 fns |
+| The lowering context, slimmed, not deleted | `LowerIrCtx` (`lib.rs:74`) stays — `lower_service_handler_signature_ir` and the other kept helpers construct it for `resolve_type_ref`/`unit_ty` — but `rustc` reports "fields `scopes`, `tmp_counter`, `return_ty`, and `store_queryable` are never read" and "multiple methods are never used" once the functions above go; those four fields and their scope/temp/return methods are removed | 4 fields |
+| Private helpers reachable only from the above | `lower_stmt_ir` `lower_question_ir` `lower_call_ir` `lower_lambda_ir` `lower_ident_ir` `lower_is_ir` `lower_pattern_ir` `lower_pattern_test_ir` `lower_arm_ir` `lower_exhaustive_ir` `lower_record_spread_ir` `lower_interp_part_ir` `lower_handler_body_ir` `lower_handler_signature_ir` `lower_service_handler_body_ir` `lower_provider_op_ir` `lower_policy_ir` `wrap_body_return` `fn_receiver_ty` `fn_rigid_type_vars` `peel_effect_ty` `embed_conversion_ir` `is_refined_is_check_ir` `refined_check_ir` `is_irrefutable_ir` `literal_base_of_ty_ir` `fold_and_ir` `fold_or_ir` `named_decl` `nullary_variant_owner` `variant_info_of` `collect_pattern_binding_tys` `ir_pat_contains_or` | 33 fns |
+| `todo!()` sites | all six remaining (`lib.rs:2374, 3302, 3309, 3313, 3317, 3321` — the test-sublanguage arms §4 kept out of scope) sit inside `lower_stmt_ir`/`lower_expr_ir` and go with them; **`bynk-lower` ships with zero `todo!()` afterwards** | 6 |
+| Tests | every `#[test]` in the trailing module that names one of the above (73 name at least one, five of those only `LowerIrCtx` and may survive slimmed); the ~281 test-module helper fns pruned to what the surviving tests use | ≤73 tests |
+
+**What `bynk-lower` keeps — the AST-analysis helpers the review said earn their place, every one
+with a production caller after D0:** `lower_handler_kind_ir` (25 production references), `lower_handler_given_ir`
+(14), `is_effectful_return` (10), `lower_protocol_ir_from_commons` (6), `lower_provider_given_ir`
+(6), `lower_protocol_ir` (3), `lower_actor_seam_ir` (3), `lower_type_shape_ir` (2),
+`lower_store_field_shape_ir` (2), `body_writes_state` (2), `lower_capability_ops_ir` (2),
+`lower_attached_fn_sig_ir_from_types` (2), `lower_service_handler_signature_ir` (2),
+`lower_event_subscriber_shapes_ir` (1, repointed by D0), `lower_route_cache_ir` (1),
+`lower_route_limit_ir` (1), `capability_op_sig_from_commons` (1), and their private support
+(`lower_fn_sig_ir_from_types`, `lower_op_sig_ir_from_commons`, `lower_op_sig_ir`,
+`lower_event_pattern_ir`, `lower_http_method_ir`, `lower_cap_ref_ir`, `store_field_kind_and_indexed`,
+`resolve_store_field_ty`, `duration_millis_annotation`). Roughly 1,000 production lines and ~2,200
+test lines: the crate its own description already claims to be, "the small set of shared
+AST-analysis helpers both `bynk-emit` and `bynk-lower` need."
+
+**`bynk-ir/src/lib.rs` — 23 of 44 public items, ~830 of 1,923 lines, plus the crate doc.** Every
+item below has no consumer in any production source outside `bynk-ir` once the `bynk-lower` set
+above is gone (`IrItem` is included because its only surviving reference is the D0 detour's
+destructuring, which D0 removes):
+
+| Group | Items |
+|---|---|
+| The expression IR | `IrExpr` `IrExprKind` (~235 lines) `IrStmt` `IrBinOp` `IrInterpPart` `GlobalRef` `EmbedIr` |
+| Patterns and match compilation | `IrPat` `IrArm` `BindingMode` `Exhaustive` `MatchForm` |
+| Declarations and handlers | `IrItem` `IrHandler` `ProviderBody` `ProviderOpIr` `ActorBinder` `ConnectionBinder` `CommitShape` `IrPredicate` |
+| Policy | `PolicyIr` `CorsIr` `SecurityIr` |
+| Crate doc | `lib.rs:1–158` narrates the IR as a finished design, naming `lower_handler_ir`/`lower_service_handler_ir`/`lower_fn_body_ir` seven times; rewritten by D2 to describe the analysis-helper vocabulary that remains |
+
+**What `bynk-ir` keeps — 21 items, each with a `bynk-emit` consumer today:** `IrHandlerKind` (six
+files), `IrHttpMethod`, `CapRefIr`, `ActorSeamIr`, `ProtocolIr`, `TypeShape`, `StoreFieldIr`,
+`StoreKindIr`, `IndexIr`, `FnSig`, `OpSig`, `CacheIr`, `EventSubscriberShape`, `EventPatternIr`,
+`EventPatternValueIr`, `ConstVal` (the event-pattern renderer at `emitter/lower.rs:5712`), and the
+four AST-walk helpers `block_uses_emit`, `walk_block_exprs`, `walk_exprs`, `match_needs_if_chain`.
+`TypeShape::Refined`'s `BaseType`/`Refinement` embedding (ADR 0366) stays exactly as §2 already
+argued.
+
+**Elsewhere.** `bynk-check/src/checker.rs:684`, `:768` and `checker/calls.rs:211` cite
+`lower_service_handler_ir`/`lower_expr_ir` in doc comments (already stale — they name the
+pre-P7.12 module path); D1 rewrites those three so no comment names a deleted function. No manifest,
+release-list, or probe change: `bynk-ir`/`bynk-lower` stay as crates and stay published,
+`ast_importers` does not walk them, and `test_density` is a trend row. The Slice 3.2 branch's two
+`bynk-lower`-side fixes (`ConstVal::Float` carrying its lexeme; a lambda `?`'s `embeds`) land
+inside deleted code and are not salvaged — `ConstVal::Float` has no surviving consumer that renders
+it (`emitter/lower.rs:5718` matches it only to reject it).
+
+### 10.4 The refusal, in R15.1's four fields
+
+Landed in `bynk-greenfield-compiler.md` Part 15.1's register by D3, alongside the entries that already
+carry a `Tracked:` line, and mirrored on the spine at retirement. Written here first so it is
+reviewed with the decision it records rather than after.
+
+**A typed expression IR between the checker and the string-emitting lowerer.**
+*Claim:* `bynk-emit/src/emitter/lower.rs` reads `bynk_syntax::ast` directly for expression,
+statement and body dispatch, and stays the single lowering path. Declaration-level facts flow
+through the adopted `bynk-ir`/`bynk-lower` analysis helpers; expression-level facts do not.
+*Cost avoided:* a second expression code generator brought to feature parity with the first — measured
+at ~4,400 lines and seven follow-on issues for three of seven entry points, with the remaining four
+flagged as higher risk — plus the gate that keeps both reachable meanwhile, plus three `bynk-ir`
+representation widenings (#1567, #1568, #1569) that exist only to let the new path reproduce the old
+one's bytes. R6.13 stays closed at the declaration level phase 6 retired it at; it does not extend to
+expression reads.
+*Trigger:* an emit-side change that needs expression-level facts the checker already resolved and
+`emitter/lower.rs` cannot get from `TypedCommons` without re-deriving them — **and** which the
+tree-native route (lowering to `bynk_ts` nodes, retiring `ts_writes`, per phase 7's own "correction,
+argued and accepted mid-phase") would not serve better. A second miscompile of the kind T2.1 closed
+(hoisting, short-circuit) originating in AST re-classification would fire this; a desire for R6.13
+purity alone does not.
+*Evidence:* the adoption probe D3 adds (for each `pub` item in `bynk-ir`/`bynk-lower`, a production
+call site outside the owning crate and outside a test — the review's Part 5 §8), reading **0
+unconsumed** by construction after D1/D2 and gated as a ratchet so it can only fall; and
+`emit_diagnostics`/`ts_writes` unchanged by D0–D3.
+*Note:* refusing the expression IR is not refusing the IR — 21 `bynk-ir` items and 17 `bynk-lower`
+entry points stay, with consumers. And it is not a refusal of tree-native emission, which is the
+other way to reach the same end state and was never this track's scope.
+*Tracked:* the spine, #1542, at retirement.
+
+### 10.5 What lands, in order, and what closes
+
+Four slices, each an ordinary sub-issue of the spine, each verified the way §9 already requires
+(zero-diff e2e bless, `cargo test --workspace`, clippy `-D warnings`, `cargo xtask greenfield-status`
+table current):
+
+- **D0 — repoint the detour.** `lower_event_subscriber_shapes_ir` reads `lower_protocol_ir` and
+  `lower_service_handler_signature_ir` instead of `lower_service_item_ir`. Zero-diff by construction
+  (the two booleans it returns come from the same values). Lands first and alone because it is
+  correct under either option in §10.3, and because it is the change that makes §10.3's inventory
+  literally `rustc`-dead rather than inferred-dead.
+- **D1 — `bynk-lower`.** Delete the 48 functions and slim `LowerIrCtx` per §10.3; delete the tests
+  that exercised them; prune the test module's helpers to what survives; rewrite the three
+  `bynk-check` comments. `rustc` with `-D warnings` is the proof
+  nothing reachable was removed.
+- **D2 — `bynk-ir`.** Delete the 23 items; rewrite `lib.rs`'s crate doc to describe the helper
+  vocabulary that remains; drop the `bynk_syntax::ast` imports only the deleted items needed (the
+  `Block`/`Expr`/`MatchArm` imports the four walk helpers use stay, and so does ADR 0366's
+  `BaseType`/`Refinement`).
+- **D3 — record and retire.** The ADR (superseding the-ir.md's Q7/#1175 "cutover" decision and
+  ADR 0338's R5.9 deferral, both of which become moot); the Part 15.1 register entry from §10.4;
+  the adoption probe, gated; this doc's closing summary to `../archive/retired-tracks.md`; the spine
+  closed.
+
+**The branch.** `slice3-2-expr-stmt-core` is tagged (`archive/slice3-2-expr-stmt-core`) and no PR
+is opened for it. It stays readable as the evidence §10.1 cites.
+
+**The satellite issues.** [#1566](https://github.com/accuser/bynk/issues/1566),
+[#1567](https://github.com/accuser/bynk/issues/1567), [#1568](https://github.com/accuser/bynk/issues/1568),
+[#1569](https://github.com/accuser/bynk/issues/1569), [#1570](https://github.com/accuser/bynk/issues/1570),
+[#1571](https://github.com/accuser/bynk/issues/1571), [#1572](https://github.com/accuser/bynk/issues/1572)
+exist only to bring the second path to parity; each closes as "not planned, superseded by #1542
+§10" when this re-settling merges, with a one-line comment pointing here.
+[#1225](https://github.com/accuser/bynk/issues/1225)'s `@cache`/`@limit` accumulator work, which §5
+named as a side benefit of 3.2, was closed before this track opened and is not reopened by it.
+
+**What this does not decide.** Phase 8's unadopted query layer
+([#1537](https://github.com/accuser/bynk/issues/1537)) is the same decision on different evidence
+and gets its own short settling note, not a ride-along here. The hygiene track
+(`post-trajectory-crate-hygiene.md`, #1533) should re-cut its S4/S8 targets after D1/D2 land —
+`bynk-lower/src/lib.rs`, its largest split target, drops from 10,177 lines to roughly 3,200.
