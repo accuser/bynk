@@ -6351,7 +6351,20 @@ fn lower_store_or_query_call_v2(
     )
 }
 
-fn lower_call_v2(e: &IrExpr, callee: &Callee, args: &[IrExpr], cx: &mut LowerCtx) -> Lowered {
+/// [`capability_call_type_args_ts`]'s `TyId`-typed sibling — `targs` is
+/// `IrExprKind::Call`'s own already-resolved type-argument list, rendered
+/// via `ts_ty` instead of `ts_type_ref`.
+fn capability_call_type_args_ts_v2(targs: &[TyId], tys: &Arc<Types>) -> String {
+    if targs.is_empty() {
+        return String::new();
+    }
+    format!(
+        "<{}>",
+        targs.iter().map(|t| ts_ty(*t, tys)).collect::<Vec<_>>().join(", ")
+    )
+}
+
+fn lower_call_v2(e: &IrExpr, callee: &Callee, targs: &[TyId], args: &[IrExpr], cx: &mut LowerCtx) -> Lowered {
     // `Callee::Method`/`Kernel`/`Agent` pack the receiver as `args[0]`
     // unlowered (`lower_call_ir`'s own `receiver_is_a_value` gate) — these
     // three arms must run before any eager `args`-lowering, since a kernel
@@ -6366,6 +6379,58 @@ fn lower_call_v2(e: &IrExpr, callee: &Callee, args: &[IrExpr], cx: &mut LowerCtx
         // Falls through to the UFCS tail below when no kernel arm matched —
         // `lower_method_call`'s own AST original does the identical fall-
         // through (`lower.rs:2666`'s comment: "Instance call: UFCS lowering").
+    }
+    // v0.182: agent handler dispatch — `agent.handler(args)`. `Callee::Agent`
+    // carries the agent's own declared type name directly (`agent`), unlike
+    // the AST original's `local_agent_vars.get(&id.name)` lookup (mapping the
+    // receiver's *local var name* to the agent type it was constructed with,
+    // tracked by `emit_statement`'s own `Let` handling) — no re-derivation
+    // needed. `id.name`/`resolved_local_name` are still needed, for the
+    // receiver's own (possibly re-`let`-renamed) binding text — `receiver`
+    // must be `IrExprKind::Local`, the only shape `lower_ident_ir` ever
+    // resolves a bound agent variable to.
+    if let Callee::Agent { agent, handler } = callee {
+        let receiver = &args[0];
+        let real_args = &args[1..];
+        let IrExprKind::Local(name) = &receiver.kind else {
+            panic!(
+                "bynk internal error (#1542 Slice 3.2): Callee::Agent's receiver is {:?}, not \
+                 IrExprKind::Local — every agent-holding binding lower_ident_ir ever resolves \
+                 is a Local",
+                receiver.kind
+            );
+        };
+        cx.record_agent_call(agent, handler);
+        let mut pre = Pre::new();
+        let mut all: Vec<String> = real_args.iter().map(|a| pre.lower_ir(a, cx)).collect();
+        all.push("deps".to_string());
+        let recv = cx.resolved_local_name(name).unwrap_or_else(|| name.clone());
+        return pre.finish(format!("{recv}.{handler}({})", all.join(", ")));
+    }
+    // UFCS: a user-declared instance method. `receiver_namespace_v2` reads
+    // the *receiver's own* checked type (`receiver.ty`, always resolved),
+    // matching the AST original's `cx.receiver_namespace(receiver)` exactly
+    // — not `Callee::Method(f)`'s own declaring `f.name.type_name()`, which
+    // can differ for an inherited/embedded method.
+    if let Callee::Method(_) = callee {
+        let receiver = &args[0];
+        let real_args = &args[1..];
+        let mut pre = Pre::new();
+        let tys = cx.commons().tys();
+        let ns = match &*tys.get(receiver.ty) {
+            Ty::Named { name, .. } => name.clone(),
+            _ => "/* unknown */".to_string(),
+        };
+        let recv = pre.lower_ir(receiver, cx);
+        let mut all = vec![recv];
+        for a in real_args {
+            all.push(pre.lower_ir(a, cx));
+        }
+        let method = match callee {
+            Callee::Method(f) => f.name.ident().name.clone(),
+            _ => unreachable!(),
+        };
+        return pre.finish(format!("{ns}.{method}({})", all.join(", ")));
     }
     // `Callee::Store`/`Callee::Query` carry no receiver in `args` at all (not
     // one of `receiver_is_a_value`'s three variants) — handled here, before
@@ -6493,10 +6558,84 @@ fn lower_call_v2(e: &IrExpr, callee: &Callee, args: &[IrExpr], cx: &mut LowerCtx
         // Applying a function-typed local or parameter — no declaration to
         // read a return type off, so no rebrand-assertion case applies.
         Callee::Value(name) => pre.finish(format!("{}({})", ts_ident(name), args_lowered.join(", "))),
-        other => unreachable!(
-            "lower_call_v2: {other:?} is not yet converted (Slice 3.2, #1542) — every Callee \
-             variant not yet handled here still needs its own arm (Method/Static/Refine/Unsafe/\
-             Capability/CrossCap/Cross/Agent/TestService/Store/Query)"
+        // A user-declared static method (`Type.method(...)`) — `f.name` is
+        // always `FnName::Method { type_name, .. }` for a static method
+        // (never `Free`), giving the declaring type's own name directly,
+        // unlike the AST original's `ExprKind::Ident(id) if cx.commons()
+        // .types.contains_key(&id.name)` receiver-shape re-derivation.
+        Callee::Static(f) => {
+            let FnName::Method { type_name, method_name } = &f.name else {
+                unreachable!("Callee::Static's FnDecl is always a FnName::Method")
+            };
+            pre.finish(format!(
+                "{}.{}({})",
+                type_name.name,
+                method_name.name,
+                args_lowered.join(", ")
+            ))
+        }
+        // `T.of(value)` — the refined/opaque runtime constructor. Its method
+        // name is implied by the variant itself (never anything but `of`),
+        // unlike `Callee::Static`, which needs `f.name` for it.
+        Callee::Refine(decl) => {
+            pre.finish(format!("{}.of({})", decl.name.name, args_lowered.join(", ")))
+        }
+        // `T.unsafe(value)` — the opaque constructor, defining-unit only.
+        Callee::Unsafe(decl) => {
+            pre.finish(format!("{}.unsafe({})", decl.name.name, args_lowered.join(", ")))
+        }
+        // Events track, slice 2: `Events.emit[E](event)` buffers into the
+        // handler's own `__events` local rather than calling through a
+        // provider.
+        Callee::Capability { cap, op } if cap == "Events" && op == "emit" && cx.is_first_party_events() => {
+            let event_name = targs
+                .first()
+                .map(|t| ts_ty(*t, tys))
+                .unwrap_or_else(|| "unknown".to_string());
+            let payload = &args_lowered[0];
+            let schema_version = cx.event_schema_version(&event_name);
+            let publisher_id = escape_ts_string(cx.owning_context().unwrap_or_default());
+            pre.finish(format!(
+                "(async () => {{ __events.push({{ type: \"{event_name}\", payload: {payload}, envelope: {{ eventId: crypto.randomUUID(), publisherId: \"{publisher_id}\", emittedAt: Date.now(), schemaVersion: {schema_version} }} }}); }})()"
+            ))
+        }
+        // A same-context capability operation call (`Cap.op(...)`).
+        // `Callee::Capability` carries `cap` directly — no receiver-name
+        // shadowing question to settle the way the AST original's
+        // `cx.has_capability(&id.name)` guard did.
+        Callee::Capability { cap, op } => {
+            let mut args_lowered = args_lowered;
+            let is_first_party = cap == "Idempotency"
+                && (cx.in_bynk_unit()
+                    || cx.cross_context().flattened_caps.get(cap).map(String::as_str) == Some("bynk"));
+            scope_idempotency_key(is_first_party, op, &mut args_lowered, cx);
+            pre.finish(format!(
+                "{}.{cap}.{op}{}({})",
+                cx.cap_deps_expr(),
+                capability_call_type_args_ts_v2(targs, tys),
+                args_lowered.join(", ")
+            ))
+        }
+        // A cross-context capability operation call (`B.Cap.op(...)` /
+        // `Alias.Cap.op(...)`). `Callee::CrossCap` carries `cap`/`op`
+        // directly — no `flatten_emit_ident_chain`/`resolve_cross_capability`
+        // re-derivation from the receiver's own AST chain needed.
+        Callee::CrossCap { unit, cap, op } => {
+            let mut args_lowered = args_lowered;
+            scope_idempotency_key(cap == "Idempotency" && unit == "bynk", op, &mut args_lowered, cx);
+            pre.finish(format!(
+                "{}.{cap}.{op}{}({})",
+                cx.cap_deps_expr(),
+                capability_call_type_args_ts_v2(targs, tys),
+                args_lowered.join(", ")
+            ))
+        }
+        other => todo!(
+            "lower_call_v2: {other:?} not yet converted (Slice 3.2, #1542) — Cross (cross-\
+             context service calls), TestService (structurally unreachable — test bodies never \
+             construct IR at all, bynk_lower's own Statement::Expect todo!() gates the whole \
+             test-sublanguage out) still need their own arms; the JSON codec \
+             (Intrinsic {{ ns: Json, .. }}) is also not yet ported"
         ),
     }
 }
@@ -7361,7 +7500,7 @@ pub(crate) fn lower_expr_v2(e: &IrExpr, cx: &mut LowerCtx) -> Lowered {
             cx.resolved_local_name(name).unwrap_or_else(|| ts_ident(name)),
         ),
         IrExprKind::If { cond, then_, else_ } => lower_if_v2(e, cond, then_, else_, cx),
-        IrExprKind::Call { callee, args, .. } => lower_call_v2(e, callee, args, cx),
+        IrExprKind::Call { callee, targs, args } => lower_call_v2(e, callee, targs, args, cx),
         IrExprKind::And { lhs, rhs } => lower_short_circuit_v2(IrShortCircuitOp::And, lhs, rhs, cx),
         IrExprKind::Or { lhs, rhs } => lower_short_circuit_v2(IrShortCircuitOp::Or, lhs, rhs, cx),
         IrExprKind::Not { operand } => {
