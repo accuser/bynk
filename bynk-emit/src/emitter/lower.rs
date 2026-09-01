@@ -13,7 +13,10 @@ use bynk_syntax::ast::{
     PredKind, Refinement, Statement, TypeBody, TypeDecl, TypeRef, UnaryOp,
 };
 
-use bynk_ir::{ConstVal, EventPatternIr, EventPatternValueIr, IrExpr, IrExprKind, IrHttpMethod};
+use bynk_ir::{
+    ConstVal, EventPatternIr, EventPatternValueIr, GlobalRef, IrExpr, IrExprKind, IrHttpMethod,
+    IrStmt,
+};
 use bynk_lower::is_effectful_return;
 
 use super::*;
@@ -526,6 +529,18 @@ fn tail_lowers_as_expression(e: &Expr, cx: &LowerCtx) -> bool {
         } => ternary_shaped(cond, then_block, else_block, cx),
         _ => true,
     }
+}
+
+/// Slice 3.2 of #1542: [`emit_statement`]'s `IrStmt`-typed sibling — WIP, not
+/// yet converted. `IrStmt` has only three shapes (`Let`/`Expr`/`Assign`) where
+/// `Statement` has six: `EffectLet`/`Send`/`Do` desugar into `Let`/`Expr`
+/// whose *value* carries `IrExprKind::Await`/`Send` (see those variants' own
+/// doc comments) rather than getting their own `IrStmt` variant, and `Expect`
+/// is test-sublanguage — out of `bynk_lower`'s scope the same way it's out of
+/// this track's (§4/§8).
+fn emit_statement_v2(out: &mut String, stmt: &IrStmt, cx: &mut LowerCtx, indent: usize) {
+    let _ = (out, cx, indent);
+    todo!("emit_statement_v2: {stmt:?} not yet converted (Slice 3.2, #1542)")
 }
 
 fn emit_statement(out: &mut String, stmt: &Statement, cx: &mut LowerCtx, indent: usize) {
@@ -5177,6 +5192,340 @@ fn lower_map_kernel_v2(
     text.map(|expr| pre.finish(expr))
 }
 
+// ---------------------------------------------------------------------------
+// Slice 3.2 of #1542: the tail-position / `if` / bare-ident cluster's
+// `IrExpr`-typed siblings. `ternary_shaped_v2`/`tail_lowers_as_expression_v2`
+// drop the AST originals' `cond_has_is_bindings`/`!cond_has_is_bindings`
+// check entirely — not an oversight, a scope boundary: the entry-point flip
+// this cutover lands (see `design/tracks/the-ir-cutover.md` §5's Slice 3.2
+// correction) is gated per function body on exactly that same static check,
+// so no `IrExpr` this cluster ever sees can contain an `is`-binding an
+// enclosing `&&`/then-branch depends on — `bynk_lower::lower_fn_body_ir`
+// itself would have hard-panicked (R5.9, ADR 0338) constructing it otherwise.
+// `lower_if_v2`'s `else` arm therefore also drops the AST original's
+// `gather_is_bindings_for_emit`/`shadow_scopes` injection — dead code under
+// the same gate, not a missing port.
+// ---------------------------------------------------------------------------
+
+/// [`checked_ty_ts`]'s `IrExpr`-typed sibling. Always `Some` — unlike the AST
+/// checker's per-`ExprId` table lookup (which can miss), every `IrExpr` this
+/// pass ever builds already carries its own resolved `ty`. Kept `Option`-typed
+/// anyway: its one caller, [`hoist_if_as_statement`], is untouched (already
+/// `Lowered`-typed, shared as-is between both paths) and takes `Option<String>`.
+fn checked_ty_ts_v2(e: &IrExpr, cx: &LowerCtx) -> Option<String> {
+    Some(ts_ty(e.ty, cx.commons().tys()))
+}
+
+/// [`tail_lowers_as_expression`]'s `IrExpr`-typed sibling.
+fn tail_lowers_as_expression_v2(e: &IrExpr) -> bool {
+    match &e.kind {
+        IrExprKind::Match { .. } => false,
+        IrExprKind::If { then_, else_, .. } => ternary_shaped_v2(then_, else_),
+        _ => true,
+    }
+}
+
+/// [`ternary_shaped`]'s `IrExpr`-typed sibling — see the cluster banner above
+/// for why the AST original's `is`-binding guard has no `_v2` counterpart.
+/// `then_block`/`else_block` are always `IrExprKind::Block` (every
+/// `IrExprKind::If`'s branches are built via `lower_block_ir`), matched
+/// rather than assumed so a future IR shape change fails loudly here instead
+/// of silently mis-routing.
+fn ternary_shaped_v2(then_block: &IrExpr, else_block: &IrExpr) -> bool {
+    let IrExprKind::Block {
+        stmts: then_stmts,
+        tail: then_tail,
+    } = &then_block.kind
+    else {
+        panic!("bynk internal error (#1542 Slice 3.2): an IrExprKind::If's then_ branch is not an IrExprKind::Block");
+    };
+    let IrExprKind::Block {
+        stmts: else_stmts,
+        tail: else_tail,
+    } = &else_block.kind
+    else {
+        panic!("bynk internal error (#1542 Slice 3.2): an IrExprKind::If's else_ branch is not an IrExprKind::Block");
+    };
+    then_stmts.is_empty()
+        && else_stmts.is_empty()
+        && tail_lowers_as_expression_v2(then_tail)
+        && tail_lowers_as_expression_v2(else_tail)
+}
+
+/// [`async_tail_slot_ty`]'s `IrExpr`-typed sibling.
+fn async_tail_slot_ty_v2(e: &IrExpr, cx: &LowerCtx) -> Option<String> {
+    let tys = cx.commons().tys();
+    match &*tys.get(e.ty) {
+        Ty::Effect(inner) => {
+            let inner_ts = match &*tys.get(*inner) {
+                Ty::Unit => "void".to_string(),
+                _ => ts_ty(*inner, tys),
+            };
+            Some(format!("{inner_ts} | Promise<{inner_ts}>"))
+        }
+        _ => checked_ty_ts_v2(e, cx),
+    }
+}
+
+/// [`lower_tail_expr`]'s `IrExpr`-typed sibling.
+fn lower_tail_expr_v2(e: &IrExpr, cx: &mut LowerCtx, async_tail: bool) -> Lowered {
+    if !async_tail {
+        return lower_expr_v2(e, cx);
+    }
+    match &e.kind {
+        IrExprKind::Pure { value } => lower_expr_v2(value, cx),
+        IrExprKind::Block { stmts, tail } if stmts.is_empty() => {
+            lower_tail_expr_v2(tail, cx, true)
+        }
+        IrExprKind::If { cond, then_, else_ } if ternary_shaped_v2(then_, else_) => {
+            let mut pre = Pre::new();
+            let cond_expr = pre.lower_ir(cond, cx);
+            let IrExprKind::Block { tail: then_tail, .. } = &then_.kind else {
+                unreachable!()
+            };
+            let IrExprKind::Block { tail: else_tail, .. } = &else_.kind else {
+                unreachable!()
+            };
+            let then_tail = lower_tail_expr_v2(then_tail, cx, true);
+            let else_tail = lower_tail_expr_v2(else_tail, cx, true);
+            if then_tail.pre.is_empty() && else_tail.pre.is_empty() {
+                return pre.finish(format!(
+                    "({cond_expr} ? {t} : {e})",
+                    t = then_tail.expr,
+                    e = else_tail.expr
+                ));
+            }
+            let slot_ty = async_tail_slot_ty_v2(e, cx);
+            let value =
+                hoist_if_as_statement(&mut pre, cond_expr, then_tail, else_tail, slot_ty, cx);
+            pre.finish(value)
+        }
+        _ => lower_expr_v2(e, cx),
+    }
+}
+
+/// [`emit_block_inner`]'s `IrExpr`-typed sibling. `block` is an `IrExpr` of
+/// kind `IrExprKind::Block` — every `_v2` caller (an `If`'s branch, a
+/// function/handler body via `wrap_body_return`) hands one of those, never a
+/// bare `IrStmt` list, so the shape is asserted rather than threaded as two
+/// separate parameters the way the AST `&Block` naturally was.
+fn emit_block_inner_v2(out: &mut String, block: &IrExpr, cx: &mut LowerCtx, indent: usize, async_tail: bool) {
+    let IrExprKind::Block { stmts, tail } = &block.kind else {
+        panic!("bynk internal error (#1542 Slice 3.2): emit_block_inner_v2 called on a non-Block IrExpr");
+    };
+    cx.shadow_scopes.push(HashMap::new());
+    for stmt in stmts {
+        emit_statement_v2(out, stmt, cx, indent);
+    }
+    match &tail.kind {
+        IrExprKind::Match { .. } => {
+            emit_match_tail_v2(out, tail, cx, indent, async_tail);
+        }
+        IrExprKind::If { cond, then_, else_ } if ternary_shaped_v2(then_, else_) => {
+            let mut pre = Pre::new();
+            let cond_expr = pre.lower_ir(cond, cx);
+            let IrExprKind::Block { tail: then_tail, .. } = &then_.kind else {
+                unreachable!()
+            };
+            let IrExprKind::Block { tail: else_tail, .. } = &else_.kind else {
+                unreachable!()
+            };
+            let then_tail = lower_tail_expr_v2(then_tail, cx, async_tail);
+            let else_tail = lower_tail_expr_v2(else_tail, cx, async_tail);
+            for s in pre.stmts() {
+                write_line(out, indent, s);
+            }
+            if then_tail.pre.is_empty() && else_tail.pre.is_empty() {
+                write_line(
+                    out,
+                    indent,
+                    &format!(
+                        "return ({cond_expr} ? {t} : {e});",
+                        t = then_tail.expr,
+                        e = else_tail.expr
+                    ),
+                );
+            } else {
+                write_line(out, indent, &format!("if ({cond_expr}) {{"));
+                emit_pure_tail_branch(out, then_tail, indent + INDENT_STEP);
+                write_line(out, indent, "} else {");
+                emit_pure_tail_branch(out, else_tail, indent + INDENT_STEP);
+                write_line(out, indent, "}");
+            }
+        }
+        IrExprKind::If { cond, then_, else_ } => {
+            emit_if_tail_v2(out, cond, then_, else_, cx, indent, async_tail);
+        }
+        _ => {
+            let tail = lower_tail_expr_v2(tail, cx, async_tail);
+            for s in &tail.pre {
+                write_line(out, indent, s);
+            }
+            write_line(out, indent, &format!("return {};", tail.expr));
+        }
+    }
+    cx.shadow_scopes.pop();
+}
+
+/// [`lower_if`]'s `IrExpr`-typed sibling.
+fn lower_if_v2(e: &IrExpr, cond: &IrExpr, then_block: &IrExpr, else_block: &IrExpr, cx: &mut LowerCtx) -> Lowered {
+    let mut pre = Pre::new();
+    let slot_ty = checked_ty_ts_v2(e, cx);
+    let cond_expr = pre.lower_ir(cond, cx);
+    if ternary_shaped_v2(then_block, else_block) {
+        let IrExprKind::Block { tail: then_tail, .. } = &then_block.kind else {
+            unreachable!()
+        };
+        let IrExprKind::Block { tail: else_tail, .. } = &else_block.kind else {
+            unreachable!()
+        };
+        let then_tail = lower_expr_v2(then_tail, cx);
+        let else_tail = lower_expr_v2(else_tail, cx);
+        if then_tail.pre.is_empty() && else_tail.pre.is_empty() {
+            return pre.finish(format!(
+                "({cond_expr} ? {t} : {e})",
+                t = then_tail.expr,
+                e = else_tail.expr
+            ));
+        }
+        let value = hoist_if_as_statement(&mut pre, cond_expr, then_tail, else_tail, slot_ty, cx);
+        pre.finish(value)
+    } else {
+        let saved_await = std::mem::take(&mut cx.emitted_await);
+        debug_assert!(
+            !cond_expr.contains("await "),
+            "cond text lands inside this arrow; its awaits must feed `needs_async`, not `saved_await`: {cond_expr}"
+        );
+        let mut iife = String::new();
+        iife.push_str("(() => {\n");
+        iife.push_str("    if (");
+        iife.push_str(&cond_expr);
+        iife.push_str(") {\n");
+        cx.shadow_scopes.push(HashMap::new());
+        let saved = cx.return_ty.take();
+        cx.without_source_map(|cx| {
+            emit_block_inner_v2(&mut iife, then_block, cx, INDENT_STEP * 3, false)
+        });
+        cx.shadow_scopes.pop();
+        for _ in 0..(INDENT_STEP * 2) {
+            iife.push(' ');
+        }
+        iife.push_str("} else {\n");
+        cx.without_source_map(|cx| {
+            emit_block_inner_v2(&mut iife, else_block, cx, INDENT_STEP * 3, false)
+        });
+        cx.return_ty = saved;
+        for _ in 0..(INDENT_STEP * 2) {
+            iife.push(' ');
+        }
+        iife.push_str("}\n");
+        for _ in 0..INDENT_STEP {
+            iife.push(' ');
+        }
+        iife.push_str("})()");
+        let needs_async = cx.emitted_await;
+        cx.emitted_await = saved_await || needs_async;
+        pre.finish(finish_async_iife(iife, needs_async))
+    }
+}
+
+/// [`emit_if_tail`]'s `IrExpr`-typed sibling.
+fn emit_if_tail_v2(
+    out: &mut String,
+    cond: &IrExpr,
+    then_block: &IrExpr,
+    else_block: &IrExpr,
+    cx: &mut LowerCtx,
+    indent: usize,
+    async_tail: bool,
+) {
+    let mut pre = Pre::new();
+    let cond_expr = pre.lower_ir(cond, cx);
+    for s in pre.stmts() {
+        write_line(out, indent, s);
+    }
+    write_line(out, indent, &format!("if ({cond_expr}) {{"));
+    cx.shadow_scopes.push(HashMap::new());
+    emit_block_inner_v2(out, then_block, cx, indent + INDENT_STEP, async_tail);
+    cx.shadow_scopes.pop();
+    write_line(out, indent, "} else {");
+    emit_block_inner_v2(out, else_block, cx, indent + INDENT_STEP, async_tail);
+    write_line(out, indent, "}");
+}
+
+/// [`lower_ident`]'s `IrExpr`-typed sibling. `bynk-lower` resolves every bare-
+/// ident classification the checker can make into one of four `IrExprKind`
+/// shapes before this ever runs — `Local` covers not just ordinary locals/
+/// params but every name `lower_handler_body_ir`/`lower_service_handler_body_ir`
+/// seed via `cx.bind` (agent `self`, store cells, the actor-sum binder), so
+/// this still needs the same precedence ladder `lower_ident` applies — keyed
+/// off the plain `&str` name instead of AST identity — minus the shapes IR
+/// already splits out elsewhere: an `HttpResult`/`QueueResult` nullary variant
+/// is `IrExprKind::Call` (see `lower_call_v2`), a nullary sum-variant
+/// reference is `IrExprKind::Global`, and the three store-queryable renderings
+/// (held map / store map / store log) share one `IrExprKind::StoreQuery`
+/// marker, disambiguated in `lower_store_query_v2` below the same way the AST
+/// path always has. The `invariant_state`/`transition_states` branches are
+/// dead code on every path reachable from the seven entry points this cutover
+/// flips (`lower_invariant_ir`/`lower_transition_ir` are a separate, still
+/// AST-only lowering context) — kept because they cost nothing and
+/// `lower_ident`'s own precedence ladder is the one source of truth for this
+/// logic, not because anything here exercises them yet.
+fn lower_ident_v2(e: &IrExpr, name: &str, cx: &mut LowerCtx) -> String {
+    if let Some((old_var, new_var)) = cx.transition_states() {
+        if name == "old" {
+            return old_var.to_string();
+        }
+        if name == "new" {
+            return new_var.to_string();
+        }
+    }
+    if let Some((var, fields)) = cx.invariant_state()
+        && fields.contains(name)
+    {
+        return format!("{var}.{name}");
+    }
+    if let Some((var, cells)) = cx.agent_store_cells()
+        && cells.contains(name)
+    {
+        return format!("{var}.{name}");
+    }
+    let tys = cx.commons().tys();
+    if cx.actor_sum_binder() == Some(name) && matches!(&*tys.get(e.ty), Ty::ActorSum(_)) {
+        return "deps.who".to_string();
+    }
+    cx.resolved_local_name(name).unwrap_or_else(|| ts_ident(name))
+}
+
+/// The three store-queryable renderings `IrExprKind::StoreQuery(name)`
+/// collapses into one IR shape — disambiguated here the same way
+/// `lower_ident`'s AST original does, by asking `cx`'s own agent-context
+/// state which of the three `name` actually is. `bynk_lower`'s own
+/// `store_queryable` classification (`lower_ident_ir`) is checked only after
+/// `cx.lookup(name).is_some()` fails, mirroring the checker's own precedence —
+/// so unlike the AST original, no `!cx.is_local(name)` guard is needed here:
+/// IR construction already gave this name that shadowing property once.
+fn lower_store_query_v2(name: &str, cx: &LowerCtx) -> String {
+    if let Some(f_ts) = cx.agent_held_map_frame(name) {
+        let var = cx.agent_store_var();
+        return format!(
+            "(() => Object.values({var}.{name}).flatMap((__cid) => {{ const __c = resolveConnection<{f_ts}>(this.state, __cid); return __c.tag === \"Some\" ? [__c.value] : []; }}))",
+        );
+    }
+    if cx.is_agent_store_map(name) {
+        let var = cx.agent_store_var();
+        return format!("(() => Object.values({var}.{name}))");
+    }
+    if cx.is_agent_store_log(name) {
+        let var = cx.agent_store_var();
+        return format!("(() => {var}.{name}.map((__e) => __e.v))");
+    }
+    unreachable!(
+        "bynk internal error (#1542 Slice 3.2): IrExprKind::StoreQuery({name:?}) but bynk-emit's \
+         own LowerCtx recognizes it as none of held-map/store-map/store-log — bynk_lower's \
+         store_queryable classification and bynk-emit's own have diverged"
+    )
+}
 
 fn lower_if(
     e: &Expr,
@@ -5699,6 +6048,137 @@ fn typeref_mentions_any(r: &TypeRef, names: &HashSet<String>) -> bool {
     }
 }
 
+/// [`lower_bin_op`]'s own `&&`/`||` tag, `IrExprKind`-shaped: IR gives each of
+/// `And`/`Or` (and desugars `Implies` away entirely into `Or{Not(lhs), rhs}`
+/// at construction time, `bynk-lower/src/lib.rs`'s own `BinOp::Implies` arm)
+/// its own dedicated variant rather than sharing one `BinOp` tag the way the
+/// AST does — this local enum exists only so [`lower_short_circuit_v2`] can
+/// share one function body between the two the same way `lower_bin_op`'s own
+/// `matches!(op, BinOp::And | BinOp::Or | BinOp::Implies)` block did.
+///
+/// **Known open risk, not yet resolved (found during Slice 3.2 implementation):**
+/// because `Implies` desugars to the *same* `Or{Not(lhs), rhs}` shape a
+/// literal `!p || q` also produces, this function cannot recover which
+/// source form produced a given `Or{Not(_), _}` — so it renders both
+/// uniformly as the plain `||` form (no outer parens, matching `BinOp::Or`'s
+/// AST rendering), rather than `lower_bin_op`'s own `BinOp::Implies` arm's
+/// `(!({l}) || {r})`. An `implies`-using fixture's IR-path output may
+/// therefore diverge from its AST-path golden by exactly this paren
+/// difference — semantically inert, but zero-diff bless is byte-exact, so
+/// this needs checking against the real corpus once enough of the cutover is
+/// wired to run it, not asserted safe from reasoning alone.
+#[derive(Clone, Copy)]
+enum IrShortCircuitOp {
+    And,
+    Or,
+}
+
+/// [`lower_bin_op`]'s ordinary (no `is`-binding) `&&`/`||` short-circuit
+/// path — lines 6160-6239 of this file's AST original — as the `_v2` sibling.
+/// No `_v2` counterpart exists for that original's `is`-binding branch
+/// (`lower_and_with_is`, its own first ~100 lines): see the cluster banner
+/// above `checked_ty_ts_v2` for why — the per-body static gate this cutover's
+/// entry-point flip applies means no `IrExprKind::And` this function ever
+/// sees can have an `is`-binding on its `lhs` reaching `rhs`.
+fn lower_short_circuit_v2(op: IrShortCircuitOp, lhs: &IrExpr, rhs: &IrExpr, cx: &mut LowerCtx) -> Lowered {
+    let mut pre = Pre::new();
+    let l = pre.lower_ir(lhs, cx);
+    let saved_early_return = std::mem::take(&mut cx.emitted_early_return);
+    let r = lower_expr_v2(rhs, cx);
+    let rhs_returns = cx.emitted_early_return;
+    cx.emitted_early_return = saved_early_return || rhs_returns;
+    if !r.pre.is_empty() && rhs_returns {
+        let value = match op {
+            IrShortCircuitOp::And => hoist_if_as_statement(
+                &mut pre,
+                l,
+                r,
+                Lowered::bare("false"),
+                Some("boolean".to_string()),
+                cx,
+            ),
+            IrShortCircuitOp::Or => hoist_if_as_statement(
+                &mut pre,
+                l,
+                Lowered::bare("true"),
+                r,
+                Some("boolean".to_string()),
+                cx,
+            ),
+        };
+        return pre.finish(value);
+    }
+    let rhs_text = if r.pre.is_empty() {
+        r.expr
+    } else {
+        let mut s = String::from("(() => { ");
+        for p in &r.pre {
+            s.push_str(p);
+            s.push(' ');
+        }
+        s.push_str(&format!("return {}; }})()", r.expr));
+        s
+    };
+    pre.finish(match op {
+        IrShortCircuitOp::And => format!("{l} && {rhs_text}"),
+        IrShortCircuitOp::Or => format!("{l} || {rhs_text}"),
+    })
+}
+
+/// [`ts_binop`]'s `IrBinOp`-typed sibling — covers exactly `IrBinOp`'s own
+/// ten members (`Eq`/`NotEq`/`Lt`/`LtEq`/`Gt`/`GtEq`/`Add`/`Sub`/`Mul`/`Div`);
+/// `And`/`Or` have their own dedicated `IrExprKind` variants and never reach
+/// here, unlike `ts_binop`'s own `BinOp`, which also (unreachably) covers
+/// `Implies`/`Or`/`And`.
+fn ts_ir_binop(op: bynk_ir::IrBinOp) -> &'static str {
+    use bynk_ir::IrBinOp;
+    match op {
+        IrBinOp::Eq => "===",
+        IrBinOp::NotEq => "!==",
+        IrBinOp::Lt => "<",
+        IrBinOp::LtEq => "<=",
+        IrBinOp::Gt => ">",
+        IrBinOp::GtEq => ">=",
+        IrBinOp::Add => "+",
+        IrBinOp::Sub => "-",
+        IrBinOp::Mul => "*",
+        IrBinOp::Div => "/",
+    }
+}
+
+/// [`lower_bin_op`]'s comparison/arithmetic tail (lines 6240-6281 of this
+/// file's AST original) as the `_v2` sibling — the `Div`/`Bytes`-equality
+/// operand-type dispatch reads `lhs.ty` directly (every `IrExpr` always
+/// carries its own resolved type) rather than the AST original's
+/// `cx.commons().expr_types.get(&lhs.id)` lookup (which can miss).
+fn lower_bin_op_v2(op: bynk_ir::IrBinOp, lhs: &IrExpr, rhs: &IrExpr, cx: &mut LowerCtx) -> Lowered {
+    use bynk_ir::IrBinOp;
+    let tys = cx.commons().tys();
+    let mut pre = Pre::new();
+    let l = pre.lower_ir(lhs, cx);
+    let r = pre.lower_ir(rhs, cx);
+    let text = if op == IrBinOp::Div {
+        let lhs_is_float = lhs.ty.base(tys) == Some(BaseType::Float);
+        if lhs_is_float {
+            format!("{l} / {r}")
+        } else {
+            format!("Math.trunc({l} / {r})")
+        }
+    } else if matches!(op, IrBinOp::Eq | IrBinOp::NotEq) && lhs.ty.base(tys) == Some(BaseType::Bytes)
+    {
+        cx.note_bytes();
+        let eq = format!("__bynkBytesEqual({l}, {r})");
+        if op == IrBinOp::Eq {
+            eq
+        } else {
+            format!("!{eq}")
+        }
+    } else {
+        format!("{l} {} {r}", ts_ir_binop(op))
+    };
+    pre.finish(text)
+}
+
 fn lower_bin_op(op: BinOp, lhs: &Expr, rhs: &Expr, cx: &mut LowerCtx) -> Lowered {
     let tys = cx.commons().tys();
     let mut pre = Pre::new();
@@ -6146,6 +6626,32 @@ fn decode_map_key(k: Option<TyId>, raw: &str, tys: &Arc<Types>) -> String {
 /// `IrExpr` to hand it one — so an unconverted arm here has zero shipped risk.
 pub(crate) fn lower_expr_v2(e: &IrExpr, cx: &mut LowerCtx) -> Lowered {
     match &e.kind {
+        IrExprKind::Local(name) => Lowered::bare(lower_ident_v2(e, name, cx)),
+        IrExprKind::Global(GlobalRef { tag }) => {
+            let tys = cx.commons().tys();
+            let Ty::Named { name: type_name, .. } = &*tys.get(e.ty) else {
+                panic!(
+                    "bynk internal error (#1542 Slice 3.2): an IrExprKind::Global's enclosing \
+                     type {:?} is not Ty::Named",
+                    e.ty
+                );
+            };
+            Lowered::bare(format!("{type_name}.{tag}"))
+        }
+        IrExprKind::StoreQuery(name) => Lowered::bare(lower_store_query_v2(name, cx)),
+        IrExprKind::FnRef(name) => Lowered::bare(
+            cx.resolved_local_name(name).unwrap_or_else(|| ts_ident(name)),
+        ),
+        IrExprKind::If { cond, then_, else_ } => lower_if_v2(e, cond, then_, else_, cx),
+        IrExprKind::Call { callee, args, .. } => lower_call_v2(callee, args, cx),
+        IrExprKind::And { lhs, rhs } => lower_short_circuit_v2(IrShortCircuitOp::And, lhs, rhs, cx),
+        IrExprKind::Or { lhs, rhs } => lower_short_circuit_v2(IrShortCircuitOp::Or, lhs, rhs, cx),
+        IrExprKind::Not { operand } => {
+            let mut pre = Pre::new();
+            let v = pre.lower_ir(operand, cx);
+            pre.finish(format!("!{v}"))
+        }
+        IrExprKind::BinOp { op, lhs, rhs } => lower_bin_op_v2(*op, lhs, rhs, cx),
         _ => todo!("lower_expr_v2: {:?} not yet converted (Slice 3.2, #1542)", e.kind),
     }
 }
@@ -6497,6 +7003,19 @@ fn is_narrowable_path(e: &Expr) -> bool {
         ExprKind::Paren(inner) => is_narrowable_path(inner),
         _ => false,
     }
+}
+
+/// Slice 3.2 of #1542: [`emit_match_tail`]'s `IrExpr`-typed sibling — WIP, not
+/// yet converted. `tail` is an `IrExpr` of kind `IrExprKind::Match`.
+fn emit_match_tail_v2(
+    out: &mut String,
+    tail: &IrExpr,
+    cx: &mut LowerCtx,
+    indent: usize,
+    async_tail: bool,
+) {
+    let _ = (out, cx, indent, async_tail);
+    todo!("emit_match_tail_v2: {:?} not yet converted (Slice 3.2, #1542)", tail.kind)
 }
 
 fn emit_match_tail(
