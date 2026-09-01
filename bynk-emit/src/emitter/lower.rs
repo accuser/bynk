@@ -6053,7 +6053,118 @@ fn lower_call(e: &Expr, name: &Ident, args: &[Expr], cx: &mut LowerCtx) -> Lower
 /// `name.name` was), `AgentInit` reads its own `String` payload directly. No
 /// longer takes `e`/`name` at all — nothing below needed them for anything
 /// but a `Callee` lookup or a name `Callee`'s own fields already carry.
-fn lower_call_v2(callee: &Callee, args: &[IrExpr], cx: &mut LowerCtx) -> Lowered {
+/// The recv-type-dispatched kernel ladder `lower_method_call`'s own AST
+/// original runs inline (`lower.rs:2497-2666`) — built-in methods on the
+/// collection/query/stream/connection/numeric/duration/instant/bytes/
+/// string/option/result/effect-result kernels, exactly the set
+/// `Callee::Kernel`'s own doc comment names. The AST original never actually
+/// reads `Callee::Kernel` to route here — it re-derives the same dispatch
+/// from the receiver's own checked type (R6.11: "no `KernelOp` enum exists
+/// yet in this crate") — but `bynk_lower::lower_call_ir` already resolves
+/// this same set of calls to `Callee::Kernel { recv, op }` (confirmed via
+/// `lower_call_ir`'s own `receiver_is_a_value` gate, which prepends the
+/// receiver as `args[0]` for exactly `Method`/`Kernel`/`Agent`), so this
+/// function dispatches on `recv` (`Callee::Kernel`'s own field) directly
+/// instead of re-deriving it — the same simplification `lower_ident_v2`/
+/// `lower_field_access_v2` already made for their own AST-side re-derivations.
+fn lower_kernel_call_v2(
+    e: &IrExpr,
+    recv: TyId,
+    op: &str,
+    receiver: &IrExpr,
+    args: &[IrExpr],
+    cx: &mut LowerCtx,
+) -> Option<Lowered> {
+    let tys = cx.commons().tys();
+    match &*tys.get(recv) {
+        Ty::List(elem) => lower_list_kernel_v2(e, receiver, op, args, *elem, cx),
+        // v0.91 (ADR 0119): a chained op on a lazy `Query`.
+        Ty::Query(elem) => {
+            let mut pre = Pre::new();
+            let elem_ts = ts_ty(*elem, tys);
+            let recv_expr = pre.lower_ir(receiver, cx);
+            let a: Vec<String> = args.iter().map(|x| pre.lower_ir(x, cx)).collect();
+            let other_elem_ts = args
+                .first()
+                .map(|_| join_other_elem_ts_v2(args, cx))
+                .unwrap_or_default();
+            lower_query_method_v2(
+                format!("({recv_expr})()"),
+                op,
+                &a,
+                Some(e.ty),
+                &elem_ts,
+                &other_elem_ts,
+                tys,
+            )
+            .map(|s| pre.finish(s))
+        }
+        // v0.100: a chained op on a `Stream`.
+        Ty::Stream(_) => {
+            let mut pre = Pre::new();
+            let recv_expr = pre.lower_ir(receiver, cx);
+            let a: Vec<String> = args.iter().map(|x| pre.lower_ir(x, cx)).collect();
+            lower_stream_method_v2(recv_expr, op, &a).map(|s| pre.finish(s))
+        }
+        // v0.102: `Connection[F]`'s held-resource operations.
+        Ty::Connection(_) => {
+            let mut pre = Pre::new();
+            let recv_expr = pre.lower_ir(receiver, cx);
+            let a: Vec<String> = args.iter().map(|x| pre.lower_ir(x, cx)).collect();
+            Some(pre.finish(format!("({recv_expr}).{op}({})", a.join(", "))))
+        }
+        Ty::Map(key, val) => lower_map_kernel_v2(receiver, op, args, *key, *val, cx),
+        Ty::Base(BaseType::Int | BaseType::Float) => lower_numeric_kernel_v2(receiver, op, args, cx),
+        Ty::Base(BaseType::Duration) => lower_duration_kernel_v2(receiver, op, args, cx),
+        Ty::Base(BaseType::Instant) => lower_instant_kernel_v2(receiver, op, args, cx),
+        Ty::Base(BaseType::Bytes) => lower_bytes_kernel_v2(receiver, op, args, cx),
+        Ty::Base(BaseType::String) => lower_string_kernel_v2(receiver, op, args, cx),
+        Ty::Option(inner) => lower_option_kernel_v2(e, receiver, op, args, *inner, cx),
+        Ty::Result(ok, err) => lower_result_kernel_v2(e, receiver, op, args, *ok, *err, cx),
+        Ty::Effect(inner) => match &*tys.get(*inner) {
+            Ty::Result(ok, err) => lower_effect_result_kernel_v2(e, receiver, op, args, *ok, *err, cx),
+            _ => None,
+        },
+        // #561: a refined receiver inherits its base type's read-only kernel
+        // methods — the emitted call is byte-identical to a plain base
+        // receiver's, no unwrap/`.raw` step. `Callee::Kernel` itself is only
+        // ever recorded when the checker did *not* instead resolve this call
+        // to a declared method (`Callee::Method`), so — unlike the AST
+        // original — no "declared methods win" guard is needed here: a
+        // reachable `Callee::Kernel` on a refined receiver already means the
+        // declared-method check lost.
+        Ty::Named {
+            kind: NamedKind::Refined(base),
+            ..
+        } => match base {
+            BaseType::Int | BaseType::Float => lower_numeric_kernel_v2(receiver, op, args, cx),
+            BaseType::String => lower_string_kernel_v2(receiver, op, args, cx),
+            BaseType::Duration => lower_duration_kernel_v2(receiver, op, args, cx),
+            BaseType::Instant => lower_instant_kernel_v2(receiver, op, args, cx),
+            BaseType::Bytes => lower_bytes_kernel_v2(receiver, op, args, cx),
+            BaseType::Bool => None,
+        },
+        _ => None,
+    }
+}
+
+fn lower_call_v2(e: &IrExpr, callee: &Callee, args: &[IrExpr], cx: &mut LowerCtx) -> Lowered {
+    // `Callee::Method`/`Kernel`/`Agent` pack the receiver as `args[0]`
+    // unlowered (`lower_call_ir`'s own `receiver_is_a_value` gate) — these
+    // three arms must run before any eager `args`-lowering, since a kernel
+    // function decides *which* of its own args need lowering (and how) per
+    // operation, the same way its AST-original sibling does.
+    if let Callee::Kernel { recv, op } = callee {
+        let receiver = &args[0];
+        let real_args = &args[1..];
+        if let Some(lowered) = lower_kernel_call_v2(e, *recv, op, receiver, real_args, cx) {
+            return lowered;
+        }
+        // Falls through to the UFCS tail below when no kernel arm matched —
+        // `lower_method_call`'s own AST original does the identical fall-
+        // through (`lower.rs:2666`'s comment: "Instance call: UFCS lowering").
+    }
+    let tys = cx.commons().tys();
     let mut pre = Pre::new();
     let args_lowered: Vec<String> = args.iter().map(|a| pre.lower_ir(a, cx)).collect();
     match callee {
@@ -6065,6 +6176,58 @@ fn lower_call_v2(callee: &Callee, args: &[IrExpr], cx: &mut LowerCtx) -> Lowered
         Callee::Intrinsic { ns, op } if *ns == QUEUE_RESULT => {
             pre.finish(format!("QueueResult.{op}({})", args_lowered.join(", ")))
         }
+        // v0.20b: `List.empty()` / `Map.empty()` — the checker recorded the
+        // instantiated type; emit it explicitly (`e.ty`, always resolved) so
+        // the value doesn't infer as `never[]`/`Map<unknown, unknown>`.
+        Callee::Intrinsic { ns, op } if (*ns == LIST || *ns == MAP) && op == "empty" => {
+            match &*tys.get(e.ty) {
+                Ty::List(t) => pre.finish(format!("([] as readonly {}[])", ts_ty(*t, tys))),
+                Ty::Map(k, v) => {
+                    pre.finish(format!("new Map<{}, {}>()", ts_ty(*k, tys), ts_ty(*v, tys)))
+                }
+                other => panic!(
+                    "bynk internal error (#1542 Slice 3.2): Callee::Intrinsic {{ ns: {ns:?}, \
+                     op: \"empty\" }}'s call expression's own type is {other:?}, neither \
+                     Ty::List nor Ty::Map"
+                ),
+            }
+        }
+        // v0.22a: `Int.parse(s)` / `Float.parse(s)` (ADR 0048).
+        Callee::Intrinsic { ns, op } if (*ns == INT || *ns == FLOAT) && op == "parse" => {
+            let s = &args_lowered[0];
+            let guard = if *ns == INT {
+                "Number.isSafeInteger(__n)"
+            } else {
+                "Number.isFinite(__n)"
+            };
+            pre.finish(format!(
+                "((__s: string) => {{ const __n = __s.trim() === \"\" ? Number.NaN : Number(__s); return {guard} ? Some(__n) : None; }})({s})"
+            ))
+        }
+        // v0.86 (ADR 0112): `Duration.millis(n)` — identity on the argument.
+        Callee::Intrinsic { ns, op } if *ns == DURATION && op == "millis" => {
+            pre.finish(args_lowered[0].clone())
+        }
+        // v0.90 (ADR 0114): `Instant.fromEpochMillis(n)` — identity.
+        Callee::Intrinsic { ns, op } if *ns == INSTANT && op == "fromEpochMillis" => {
+            pre.finish(args_lowered[0].clone())
+        }
+        // v0.110 (ADR 0142 D2): the `Bytes` static constructors.
+        Callee::Intrinsic { ns, op } if *ns == BYTES && op == "fromUtf8" => {
+            pre.finish(format!("new TextEncoder().encode({})", args_lowered[0]))
+        }
+        Callee::Intrinsic { ns, op } if *ns == BYTES && op == "fromBase64" => {
+            cx.note_bytes();
+            pre.finish(format!("__bynkBytesFromBase64({})", args_lowered[0]))
+        }
+        Callee::Intrinsic { ns, op } if *ns == BYTES && op == "empty" => {
+            pre.finish("new Uint8Array()".to_string())
+        }
+        // v0.100: `Stream.of(xs)` — wraps a list as an async generator.
+        Callee::Intrinsic { ns, op } if *ns == STREAM && op == "of" => pre.finish(format!(
+            "(async function* () {{ for (const __e of {}) {{ yield __e; }} }})()",
+            args_lowered[0]
+        )),
         // P6.21: agent instantiation `AgentName(key)` lowers to the generated
         // `__makeAgentName(key)` factory.
         Callee::AgentInit(agent) => {
@@ -6114,8 +6277,9 @@ fn lower_call_v2(callee: &Callee, args: &[IrExpr], cx: &mut LowerCtx) -> Lowered
         // read a return type off, so no rebrand-assertion case applies.
         Callee::Value(name) => pre.finish(format!("{}({})", ts_ident(name), args_lowered.join(", "))),
         other => unreachable!(
-            "lower_call_v2: {other:?} is not a Callee a bare Call expression can classify as — \
-             every other variant needs receiver syntax and reaches lower_method_call_v2 instead"
+            "lower_call_v2: {other:?} is not yet converted (Slice 3.2, #1542) — every Callee \
+             variant not yet handled here still needs its own arm (Method/Static/Refine/Unsafe/\
+             Capability/CrossCap/Cross/Agent/TestService/Store/Query)"
         ),
     }
 }
@@ -6980,7 +7144,7 @@ pub(crate) fn lower_expr_v2(e: &IrExpr, cx: &mut LowerCtx) -> Lowered {
             cx.resolved_local_name(name).unwrap_or_else(|| ts_ident(name)),
         ),
         IrExprKind::If { cond, then_, else_ } => lower_if_v2(e, cond, then_, else_, cx),
-        IrExprKind::Call { callee, args, .. } => lower_call_v2(callee, args, cx),
+        IrExprKind::Call { callee, args, .. } => lower_call_v2(e, callee, args, cx),
         IrExprKind::And { lhs, rhs } => lower_short_circuit_v2(IrShortCircuitOp::And, lhs, rhs, cx),
         IrExprKind::Or { lhs, rhs } => lower_short_circuit_v2(IrShortCircuitOp::Or, lhs, rhs, cx),
         IrExprKind::Not { operand } => {
