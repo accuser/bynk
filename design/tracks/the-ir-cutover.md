@@ -278,7 +278,7 @@ entirely into the new item-assembly slice (its own real home, per its functions'
 - ~~Slice 4 — handler/body (was Slice 5)~~ — struck by §10; superseded by §10.5's D-slices.
 - ~~Slice 5 — item assembly (was Slice 4; absorbs old Slice 3 in full)~~ — struck by §10; superseded
   by §10.5's D-slices.
-- [ ] Slice D0 — repoint `lower_event_subscriber_shapes_ir` off the body-lowering detour (§10.5)
+- [x] Slice D0 — repoint `lower_event_subscriber_shapes_ir` off the body-lowering detour (§10.5; `#1574`)
 - [ ] Slice D1 — delete `bynk-lower`'s unconsumed lowering and its tests (§10.3)
 - [ ] Slice D2 — delete `bynk-ir`'s orphaned IR types; rewrite the crate doc (§10.3)
 - [ ] Slice D3 — the R15.1 register entry, the ADR, the adoption probe, and this track's retirement
