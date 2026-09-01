@@ -531,16 +531,90 @@ fn tail_lowers_as_expression(e: &Expr, cx: &LowerCtx) -> bool {
     }
 }
 
-/// Slice 3.2 of #1542: [`emit_statement`]'s `IrStmt`-typed sibling — WIP, not
-/// yet converted. `IrStmt` has only three shapes (`Let`/`Expr`/`Assign`) where
-/// `Statement` has six: `EffectLet`/`Send`/`Do` desugar into `Let`/`Expr`
-/// whose *value* carries `IrExprKind::Await`/`Send` (see those variants' own
-/// doc comments) rather than getting their own `IrStmt` variant, and `Expect`
-/// is test-sublanguage — out of `bynk_lower`'s scope the same way it's out of
-/// this track's (§4/§8).
+/// Slice 3.2 of #1542: [`emit_statement`]'s `IrStmt`-typed sibling. `IrStmt`
+/// has only three shapes (`Let`/`Expr`/`Assign`) where `Statement` has six:
+/// `EffectLet`/`Send`/`Do` desugar at construction time into `Let`/`Expr`
+/// whose *value* carries `IrExprKind::Await`/`Send` (`bynk_lower`'s own
+/// `Statement::EffectLet`/`Send`/`Do` arms), so this dispatches on that inner
+/// shape instead of getting six arms of its own. `Expect` is test-sublanguage
+/// — `bynk_lower`'s own `Statement::Expect` arm is itself a `todo!()`, "not
+/// named by any rule this track commissions" — out of scope the same way
+/// it's out of this track's (§4/§8), so `IrStmt` never carries one for this
+/// function to see.
+///
+/// **Known open risk, not yet resolved (found during Slice 3.2 implementation):**
+/// `IrStmt::Let` carries only `local`/`value`, never whether the source
+/// wrote an explicit `let x: Type = ...` annotation (`bynk_lower`'s own
+/// `Statement::Let`/`EffectLet` arms fold `l.type_annot` into `bound_ty` —
+/// the *scope* type a later reference resolves against — and discard whether
+/// it came from an annotation or the RHS's own inferred type). This function
+/// never emits one, matching the AST original's un-annotated case; an
+/// explicitly-annotated `let` in the corpus would diff.
 fn emit_statement_v2(out: &mut String, stmt: &IrStmt, cx: &mut LowerCtx, indent: usize) {
-    let _ = (out, cx, indent);
-    todo!("emit_statement_v2: {stmt:?} not yet converted (Slice 3.2, #1542)")
+    match stmt {
+        IrStmt::Let { local, value } => {
+            let mut pre = Pre::new();
+            match &value.kind {
+                IrExprKind::Await { effect } => {
+                    let v = pre.lower_ir(effect, cx);
+                    for s in pre.stmts() {
+                        write_line(out, indent, s);
+                    }
+                    let bind_name = cx.bind_local_name(local);
+                    cx.emitted_await = true;
+                    write_line(out, indent, &format!("const {bind_name} = await {v};"));
+                }
+                _ => {
+                    let v = pre.lower_ir(value, cx);
+                    for s in pre.stmts() {
+                        write_line(out, indent, s);
+                    }
+                    let bind_name = cx.bind_local_name(local);
+                    write_line(out, indent, &format!("const {bind_name} = {v};"));
+                }
+            }
+        }
+        IrStmt::Expr { value } => match &value.kind {
+            IrExprKind::Await { effect } => {
+                let mut pre = Pre::new();
+                let v = pre.lower_ir(effect, cx);
+                for s in pre.stmts() {
+                    write_line(out, indent, s);
+                }
+                cx.emitted_await = true;
+                write_line(out, indent, &format!("await {v};"));
+            }
+            IrExprKind::Send { effect } => {
+                let mut pre = Pre::new();
+                let v = pre.lower_ir(effect, cx);
+                for s in pre.stmts() {
+                    write_line(out, indent, s);
+                }
+                write_line(
+                    out,
+                    indent,
+                    &format!("{deps}.__exec.waitUntil({v});", deps = cx.cap_deps_expr()),
+                );
+            }
+            other => unreachable!(
+                "bynk internal error (#1542 Slice 3.2): IrStmt::Expr's value is {other:?} — \
+                 bynk_lower only ever constructs one from Statement::Send/Do, both Await/Send-\
+                 kinded"
+            ),
+        },
+        IrStmt::Assign { field, value } => {
+            let mut pre = Pre::new();
+            let v = pre.lower_ir(value, cx);
+            for s in pre.stmts() {
+                write_line(out, indent, s);
+            }
+            let lhs = match cx.agent_store_cells() {
+                Some((var, _)) => format!("{var}.{field}"),
+                None => field.clone(),
+            };
+            write_line(out, indent, &format!("{lhs} = {v};"));
+        }
+    }
 }
 
 fn emit_statement(out: &mut String, stmt: &Statement, cx: &mut LowerCtx, indent: usize) {
@@ -5326,9 +5400,23 @@ fn lower_tail_expr_v2(e: &IrExpr, cx: &mut LowerCtx, async_tail: bool) -> Lowere
 /// function/handler body via `wrap_body_return`) hands one of those, never a
 /// bare `IrStmt` list, so the shape is asserted rather than threaded as two
 /// separate parameters the way the AST `&Block` naturally was.
+///
+/// `bynk_lower::wrap_body_return` wraps a *top-level* function/handler body's
+/// own tail in `IrExprKind::Return { value }` exactly once (a nested block —
+/// an `If`'s branch — is never wrapped, only `lower_block_ir`'s own plain
+/// value). Peeled here, at the one place a `_v2` caller can ever see it,
+/// rather than in `lower_expr_v2`'s own dispatch: unwrapping *before* this
+/// function's own tail-shape match, not after, is what lets a top-level
+/// body's `match`/`if` tail still take the switch/ternary/if-chain shapes
+/// below instead of always falling through to the generic `return
+/// <Return-wrapped-value>;` arm.
 fn emit_block_inner_v2(out: &mut String, block: &IrExpr, cx: &mut LowerCtx, indent: usize, async_tail: bool) {
     let IrExprKind::Block { stmts, tail } = &block.kind else {
         panic!("bynk internal error (#1542 Slice 3.2): emit_block_inner_v2 called on a non-Block IrExpr");
+    };
+    let tail: &IrExpr = match &tail.kind {
+        IrExprKind::Return { value } => value,
+        _ => tail,
     };
     cx.shadow_scopes.push(HashMap::new());
     for stmt in stmts {
