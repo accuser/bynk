@@ -6,7 +6,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use bynk_check::checker::{Callee, NamedKind, Ty, TyId, TypedCommons};
+use bynk_check::checker::{Callee, NamedKind, Ty, TyId, TypedCommons, variants_of};
 use bynk_syntax::ast::{
     BaseType, BinOp, Block, Expr, ExprKind, FieldInit, Ident, InterpPart, LambdaExpr, LiteralValue,
     MatchArm, MatchBody, ObservationExpr, ObservationMatcher, Pattern, PatternBindingKind,
@@ -14,8 +14,8 @@ use bynk_syntax::ast::{
 };
 
 use bynk_ir::{
-    ConstVal, EventPatternIr, EventPatternValueIr, GlobalRef, IrExpr, IrExprKind, IrHttpMethod,
-    IrInterpPart, IrStmt,
+    ConstVal, EventPatternIr, EventPatternValueIr, Exhaustive, GlobalRef, IrArm, IrExpr,
+    IrExprKind, IrHttpMethod, IrInterpPart, IrPat, IrStmt,
 };
 use bynk_lower::is_effectful_return;
 
@@ -7015,6 +7015,12 @@ pub(crate) fn lower_expr_v2(e: &IrExpr, cx: &mut LowerCtx) -> Lowered {
         } => lower_refined_check_v2(value, *base, refinement.as_ref(), cx),
         IrExprKind::HttpResultNotFound => Lowered::bare("HttpResult.NotFound"),
         IrExprKind::Block { .. } => Lowered::bare(lower_block_as_expr_v2(e, cx)),
+        IrExprKind::Match {
+            scrutinee,
+            arms,
+            exhaustive,
+            form,
+        } => lower_match_as_iife_v2(scrutinee, arms, exhaustive, *form, cx),
         _ => todo!("lower_expr_v2: {:?} not yet converted (Slice 3.2, #1542)", e.kind),
     }
 }
@@ -7358,6 +7364,76 @@ fn finish_async_iife(iife: String, needs_async: bool) -> String {
     format!("await {async_iife}")
 }
 
+/// [`build_match_iife`]'s `IrExpr`-typed sibling. `form` reads
+/// [`bynk_ir::MatchForm`] directly instead of re-deriving the flat-vs-
+/// if-chain shape decision via `bynk_ir::match_needs_if_chain(arms)` —
+/// `bynk_lower`'s own construction already computed it once (P6.5,
+/// R5.2/R5.3), the same "trust the precomputed field" posture
+/// [`emit_match_if_chain_v2`] applies to `exhaustive`.
+fn build_match_iife_v2(
+    disc_expr: &str,
+    scrutinee_ty: TyId,
+    arms: &[IrArm],
+    exhaustive: &Exhaustive,
+    form: bynk_ir::MatchForm,
+    cx: &mut LowerCtx,
+) -> String {
+    let tys = cx.commons().tys();
+    let mut out = String::new();
+    out.push_str("((__d) => {\n");
+    if matches!(form, bynk_ir::MatchForm::IfChain) {
+        emit_match_if_chain_v2(&mut out, "__d", scrutinee_ty, arms, exhaustive, cx, INDENT_STEP * 2, false);
+    } else {
+        for _ in 0..(INDENT_STEP * 2) {
+            out.push(' ');
+        }
+        let scrutinee = if is_literal_match(&Some(scrutinee_ty), tys) {
+            "__d"
+        } else {
+            "__d.tag"
+        };
+        out.push_str(&format!("switch ({scrutinee}) {{\n"));
+        for arm in arms {
+            emit_match_case_v2(&mut out, "__d", arm, cx, INDENT_STEP * 3, false);
+        }
+        for _ in 0..(INDENT_STEP * 2) {
+            out.push(' ');
+        }
+        out.push_str("}\n");
+        for _ in 0..(INDENT_STEP * 2) {
+            out.push(' ');
+        }
+        out.push_str("throw new Error(\"non-exhaustive match\");\n");
+    }
+    for _ in 0..INDENT_STEP {
+        out.push(' ');
+    }
+    out.push_str(&format!("}})({disc_expr})"));
+    out
+}
+
+/// [`lower_match_as_iife`]'s `IrExpr`-typed sibling.
+fn lower_match_as_iife_v2(
+    scrutinee: &IrExpr,
+    arms: &[IrArm],
+    exhaustive: &Exhaustive,
+    form: bynk_ir::MatchForm,
+    cx: &mut LowerCtx,
+) -> Lowered {
+    let mut pre = Pre::new();
+    let disc_ty = scrutinee.ty;
+    let disc = pre.lower_ir(scrutinee, cx);
+    let saved = cx.return_ty.take();
+    let saved_await = std::mem::take(&mut cx.emitted_await);
+    let built =
+        cx.without_source_map(|cx| build_match_iife_v2(&disc, disc_ty, arms, exhaustive, form, cx));
+    let needs_async = cx.emitted_await;
+    cx.emitted_await = saved_await || needs_async;
+    let inner_iife = finish_async_iife(built, needs_async);
+    cx.return_ty = saved;
+    pre.finish(inner_iife)
+}
+
 fn build_match_iife(
     disc_expr: &str,
     disc_ty: &Option<TyId>,
@@ -7456,17 +7532,57 @@ fn is_narrowable_path(e: &Expr) -> bool {
     }
 }
 
-/// Slice 3.2 of #1542: [`emit_match_tail`]'s `IrExpr`-typed sibling — WIP, not
-/// yet converted. `tail` is an `IrExpr` of kind `IrExprKind::Match`.
-fn emit_match_tail_v2(
-    out: &mut String,
-    tail: &IrExpr,
-    cx: &mut LowerCtx,
-    indent: usize,
-    async_tail: bool,
-) {
-    let _ = (out, cx, indent, async_tail);
-    todo!("emit_match_tail_v2: {:?} not yet converted (Slice 3.2, #1542)", tail.kind)
+/// [`is_narrowable_path`]'s `IrExpr`-typed sibling. Any "ident-shaped" leaf
+/// (`Local`/`Global`/`StoreQuery`/`FnRef` — everything the AST's own single
+/// `ExprKind::Ident` covered before IR split it by classification) is
+/// narrowable, exactly like the AST original's syntactic (not semantic)
+/// test — `Paren` needs no arm, transparent in IR already.
+fn is_narrowable_path_v2(e: &IrExpr) -> bool {
+    match &e.kind {
+        IrExprKind::Local(_) | IrExprKind::Global(_) | IrExprKind::StoreQuery(_) | IrExprKind::FnRef(_) => true,
+        IrExprKind::Field { base, .. } => is_narrowable_path_v2(base),
+        _ => false,
+    }
+}
+
+/// [`emit_match_tail`]'s `IrExpr`-typed sibling. `tail` is an `IrExpr` of
+/// kind `IrExprKind::Match`.
+fn emit_match_tail_v2(out: &mut String, tail: &IrExpr, cx: &mut LowerCtx, indent: usize, async_tail: bool) {
+    let IrExprKind::Match {
+        scrutinee,
+        arms,
+        exhaustive,
+        form,
+    } = &tail.kind
+    else {
+        panic!("bynk internal error (#1542 Slice 3.2): emit_match_tail_v2 called on a non-Match IrExpr");
+    };
+    let mut pre = Pre::new();
+    let mut disc = pre.lower_ir(scrutinee, cx);
+    for s in pre.stmts() {
+        write_line(out, indent, s);
+    }
+    if !is_narrowable_path_v2(scrutinee) {
+        let tmp = cx.fresh();
+        write_line(out, indent, &format!("const {tmp} = {disc};"));
+        disc = tmp;
+    }
+    if matches!(form, bynk_ir::MatchForm::IfChain) {
+        emit_match_if_chain_v2(out, &disc, scrutinee.ty, arms, exhaustive, cx, indent, async_tail);
+        return;
+    }
+    let tys = cx.commons().tys();
+    let scrutinee_expr = if is_literal_match(&Some(scrutinee.ty), tys) {
+        disc.clone()
+    } else {
+        format!("{disc}.tag")
+    };
+    write_line(out, indent, &format!("switch ({scrutinee_expr}) {{"));
+    for arm in arms {
+        emit_match_case_v2(out, &disc, arm, cx, indent + INDENT_STEP, async_tail);
+    }
+    write_line(out, indent, "}");
+    write_line(out, indent, "throw new Error(\"non-exhaustive match\");");
 }
 
 fn emit_match_tail(
@@ -7527,6 +7643,109 @@ fn emit_match_tail(
     }
     write_line(out, indent, "}");
     write_line(out, indent, "throw new Error(\"non-exhaustive match\");");
+}
+
+/// [`emit_match_body`]'s `IrExpr`-typed sibling. `body` is an `IrExpr` —
+/// `bynk_lower`'s own `MatchBody::Expr`/`Block` construction produces a
+/// non-`Block`-kinded `IrExpr` for the former and an `IrExprKind::Block` for
+/// the latter (via `lower_block_ir`), so the two AST-original arms are
+/// recovered structurally, by matching `body.kind`, rather than lost the way
+/// several other AST/IR seams in this cutover are.
+fn emit_match_body_v2(out: &mut String, body: &IrExpr, cx: &mut LowerCtx, indent: usize, async_tail: bool) {
+    match &body.kind {
+        IrExprKind::Block { .. } => emit_block_inner_v2(out, body, cx, indent, async_tail),
+        _ => {
+            let mut pre = Pre::new();
+            let v = pre.absorb(lower_tail_expr_v2(body, cx, async_tail));
+            for s in pre.stmts() {
+                write_line(out, indent, s);
+            }
+            write_line(out, indent, &format!("return {v};"));
+        }
+    }
+}
+
+/// [`emit_match_case`]'s `IrArm`-typed sibling.
+fn emit_match_case_v2(
+    out: &mut String,
+    disc_var: &str,
+    arm: &IrArm,
+    cx: &mut LowerCtx,
+    indent: usize,
+    async_tail: bool,
+) {
+    cx.shadow_scopes.push(HashMap::new());
+    match &arm.pat {
+        IrPat::Wild => {
+            write_line(out, indent, "default: {");
+            emit_match_body_v2(out, &arm.body, cx, indent + INDENT_STEP, async_tail);
+            write_line(out, indent, "}");
+        }
+        IrPat::Bind { local } => {
+            write_line(out, indent, "default: {");
+            write_line(
+                out,
+                indent + INDENT_STEP,
+                &format!("const {} = {disc_var};", ts_ident(local)),
+            );
+            cx.declare_binder(local);
+            emit_match_body_v2(out, &arm.body, cx, indent + INDENT_STEP, async_tail);
+            write_line(out, indent, "}");
+        }
+        IrPat::Const { value } => {
+            write_line(out, indent, &format!("case {}: {{", const_case_label_v2(value)));
+            emit_match_body_v2(out, &arm.body, cx, indent + INDENT_STEP, async_tail);
+            write_line(out, indent, "}");
+        }
+        IrPat::Refined { .. } => {
+            unreachable!("an IrPat::Refined arm always routes through emit_match_if_chain_v2")
+        }
+        IrPat::Variant { tag, fields, .. } => {
+            write_line(out, indent, &format!("case \"{tag}\": {{"));
+            for (field, sp) in fields {
+                let IrPat::Bind { local } = sp.as_ref() else {
+                    continue;
+                };
+                write_line(
+                    out,
+                    indent + INDENT_STEP,
+                    &format!("const {} = {disc_var}.{field};", ts_ident(local)),
+                );
+                cx.declare_binder(local);
+            }
+            emit_match_body_v2(out, &arm.body, cx, indent + INDENT_STEP, async_tail);
+            write_line(out, indent, "}");
+        }
+        IrPat::Or { alts } if ir_pat_is_irrefutable(&arm.pat) => {
+            write_line(out, indent, "default: {");
+            emit_match_body_v2(out, &arm.body, cx, indent + INDENT_STEP, async_tail);
+            write_line(out, indent, "}");
+        }
+        IrPat::Or { alts } => {
+            let last = alts.len() - 1;
+            for (i, alt) in alts.iter().enumerate() {
+                let label = match alt {
+                    IrPat::Const { value } => const_case_label_v2(value),
+                    IrPat::Variant { tag, .. } => format!("\"{tag}\""),
+                    IrPat::Wild | IrPat::Bind { .. } => unreachable!(
+                        "ir_pat_is_irrefutable(&arm.pat) is false, so no alternative is Wild/Bind"
+                    ),
+                    IrPat::Or { .. } => unreachable!("an Or's alternatives are always leaves"),
+                    IrPat::Refined { .. } => {
+                        unreachable!("an Or's alternatives are never a Refined pattern")
+                    }
+                };
+                if i == last {
+                    write_line(out, indent, &format!("case {label}: {{"));
+                } else {
+                    write_line(out, indent, &format!("case {label}:"));
+                }
+            }
+            emit_match_body_v2(out, &arm.body, cx, indent + INDENT_STEP, async_tail);
+            write_line(out, indent, "}");
+        }
+    }
+    cx.shadow_scopes.pop();
 }
 
 fn emit_match_case(
@@ -7684,6 +7903,115 @@ fn emit_match_body(
 /// Emit the boolean tests that must hold for `pattern` to match the value at
 /// runtime `path` (static type `path_ty`). Irrefutable patterns add nothing;
 /// nested variant/literal payloads recurse into `path.<field>`.
+/// The type of a variant's payload field named `field`, resolved through
+/// `variants_of` — the same function `IrPat::Variant`'s own doc comment says
+/// `bynk_lower::lower_pattern_ir` already uses to resolve a positional
+/// binding to a real field name during construction. Unlike the AST
+/// original's `payload_field_ty`/`positional_field_name` pair (index-based,
+/// because `Pattern::Variant`'s own bindings can still be positional at emit
+/// time), `IrPat::Variant.fields` is always already-named — no index-based
+/// resolution, and no `"value"`/`"identity"` single-field fallback, is
+/// needed on this side at all.
+fn payload_field_ty_v2(scrutinee_ty: TyId, tag: &str, field: &str, cx: &LowerCtx) -> TyId {
+    let tys = cx.commons().tys();
+    variants_of(scrutinee_ty, &cx.commons().types, tys)
+        .and_then(|variants| variants.into_iter().find(|v| v.name == tag))
+        .and_then(|v| v.payload.into_iter().find(|(name, _)| name == field))
+        .map(|(_, ty)| ty)
+        .unwrap_or_else(|| {
+            panic!(
+                "bynk internal error (#1542 Slice 3.2): variants_of has no payload field \
+                 {field:?} on variant {tag:?} of {scrutinee_ty:?} — bynk_lower's own IrPat::\
+                 Variant construction resolved this field from the same function"
+            )
+        })
+}
+
+/// [`literal_case_label`]'s `ConstVal`-typed sibling — `IrPat::Const` only
+/// ever holds `Int`/`Str`/`Bool` (ADR 0001's closed literal-pattern set,
+/// the same doc comment `IrPat::Const` itself carries); `Float`/
+/// `DurationMillis`/`Unit` are structurally unreachable here.
+fn const_case_label_v2(value: &ConstVal) -> String {
+    match value {
+        ConstVal::Int(n) => n.to_string(),
+        ConstVal::Str(s) => format!("\"{}\"", escape_ts_string(s)),
+        ConstVal::Bool(b) => b.to_string(),
+        other => unreachable!(
+            "bynk internal error (#1542 Slice 3.2): IrPat::Const holds {other:?} — ADR 0001's \
+             closed literal-pattern set is Int/Str/Bool only"
+        ),
+    }
+}
+
+/// `true` when `p` matches every value — [`Pattern::is_irrefutable`]'s
+/// `IrPat`-typed sibling.
+fn ir_pat_is_irrefutable(p: &IrPat) -> bool {
+    match p {
+        IrPat::Wild | IrPat::Bind { .. } => true,
+        IrPat::Or { alts } => alts.iter().any(ir_pat_is_irrefutable),
+        _ => false,
+    }
+}
+
+/// [`pattern_match_tests`]'s `IrPat`-typed sibling. `path_ty` stays a plain
+/// `TyId`, not the AST original's `Option<TyId>` — threaded top-down from the
+/// enclosing `IrExprKind::Match`'s own `scrutinee.ty` the same way the AST
+/// original threads it from the checker's `expr_types` lookup, but never a
+/// resolution miss to propagate: every `IrPat::Variant`'s own recursion step
+/// resolves a field's type via [`payload_field_ty_v2`], which panics rather
+/// than degrading to `None`, since `bynk_lower`'s own construction already
+/// proved the field resolves.
+fn pattern_match_tests_v2(
+    path: &str,
+    path_ty: TyId,
+    pattern: &IrPat,
+    cx: &LowerCtx,
+    tests: &mut Vec<String>,
+) {
+    match pattern {
+        IrPat::Wild | IrPat::Bind { .. } => {}
+        IrPat::Const { value } => {
+            tests.push(format!("{path} === {}", const_case_label_v2(value)));
+        }
+        IrPat::Refined { inner, refinement } => {
+            pattern_match_tests_v2(path, path_ty, inner, cx, tests);
+            let base = literal_base_of_ty(path_ty, cx.commons().tys()).unwrap_or_else(|| {
+                panic!("a refined pattern's scrutinee must be literal-kind (Int/String)")
+            });
+            tests.push(refined_check_as_bool(path, base, Some(refinement)));
+        }
+        IrPat::Variant {
+            scrutinee_ty,
+            tag,
+            fields,
+        } => {
+            tests.push(format!("{path}.tag === \"{tag}\""));
+            for (field, sp) in fields {
+                if ir_pat_is_irrefutable(sp) {
+                    continue;
+                }
+                let field_ty = payload_field_ty_v2(*scrutinee_ty, tag, field, cx);
+                pattern_match_tests_v2(&format!("{path}.{field}"), field_ty, sp, cx, tests);
+            }
+        }
+        IrPat::Or { alts } => {
+            let terms: Vec<String> = alts
+                .iter()
+                .map(|alt| {
+                    let mut t = Vec::new();
+                    pattern_match_tests_v2(path, path_ty, alt, cx, &mut t);
+                    if t.is_empty() {
+                        "true".to_string()
+                    } else {
+                        t.join(" && ")
+                    }
+                })
+                .collect();
+            tests.push(format!("({})", terms.join(" || ")));
+        }
+    }
+}
+
 fn pattern_match_tests(
     path: &str,
     path_ty: Option<TyId>,
@@ -7857,6 +8185,121 @@ mod event_pattern_guard_ir_tests {
 
 /// Emit `const` declarations binding the names in `pattern` from runtime `path`,
 /// recursing through nested payloads (ADR 0169).
+/// [`Pattern::bound_names`]'s `IrPat`-typed sibling.
+fn ir_pat_bound_names(p: &IrPat) -> Vec<String> {
+    match p {
+        IrPat::Wild | IrPat::Const { .. } => Vec::new(),
+        IrPat::Bind { local } => vec![local.clone()],
+        IrPat::Variant { fields, .. } => fields
+            .iter()
+            .flat_map(|(_, sp)| ir_pat_bound_names(sp))
+            .collect(),
+        IrPat::Refined { inner, .. } => ir_pat_bound_names(inner),
+        IrPat::Or { alts } => alts.first().map(ir_pat_bound_names).unwrap_or_default(),
+    }
+}
+
+/// [`emit_pattern_bindings`]'s `IrPat`-typed sibling.
+fn emit_pattern_bindings_v2(
+    out: &mut String,
+    indent: usize,
+    path: &str,
+    path_ty: TyId,
+    pattern: &IrPat,
+    cx: &mut LowerCtx,
+) {
+    match pattern {
+        IrPat::Wild | IrPat::Const { .. } => {}
+        IrPat::Bind { local } => {
+            write_line(out, indent, &format!("const {} = {path};", ts_ident(local)));
+            cx.declare_binder(local);
+        }
+        IrPat::Refined { inner, .. } => {
+            emit_pattern_bindings_v2(out, indent, path, path_ty, inner, cx);
+        }
+        IrPat::Variant {
+            scrutinee_ty,
+            tag,
+            fields,
+        } => {
+            for (field, sp) in fields {
+                let field_ty = payload_field_ty_v2(*scrutinee_ty, tag, field, cx);
+                emit_pattern_bindings_v2(
+                    out,
+                    indent,
+                    &format!("{path}.{field}"),
+                    field_ty,
+                    sp,
+                    cx,
+                );
+            }
+        }
+        IrPat::Or { alts } => {
+            let names = ir_pat_bound_names(pattern);
+            if names.is_empty() {
+                return;
+            }
+            let decl: Vec<String> = names.iter().map(|n| ts_ident(n)).collect();
+            write_line(out, indent, &format!("let {};", decl.join(", ")));
+            for n in &names {
+                cx.declare_binder(n);
+            }
+            let last = alts.len() - 1;
+            for (i, alt) in alts.iter().enumerate() {
+                if i == last {
+                    write_line(out, indent, "} else {");
+                } else {
+                    let mut t = Vec::new();
+                    pattern_match_tests_v2(path, path_ty, alt, cx, &mut t);
+                    let cond = if t.is_empty() {
+                        "true".to_string()
+                    } else {
+                        t.join(" && ")
+                    };
+                    let kw = if i == 0 { "if" } else { "} else if" };
+                    write_line(out, indent, &format!("{kw} ({cond}) {{"));
+                }
+                let mut pairs = Vec::new();
+                pattern_binding_paths_v2(path, path_ty, alt, cx, &mut pairs);
+                for (name, p) in &pairs {
+                    write_line(out, indent + INDENT_STEP, &format!("{} = {p};", ts_ident(name)));
+                }
+            }
+            write_line(out, indent, "}");
+        }
+    }
+}
+
+/// [`pattern_binding_paths`]'s `IrPat`-typed sibling.
+fn pattern_binding_paths_v2(
+    path: &str,
+    path_ty: TyId,
+    pattern: &IrPat,
+    cx: &LowerCtx,
+    out: &mut Vec<(String, String)>,
+) {
+    match pattern {
+        IrPat::Wild | IrPat::Const { .. } => {}
+        IrPat::Bind { local } => out.push((local.clone(), path.to_string())),
+        IrPat::Variant {
+            scrutinee_ty,
+            tag,
+            fields,
+        } => {
+            for (field, sp) in fields {
+                let field_ty = payload_field_ty_v2(*scrutinee_ty, tag, field, cx);
+                pattern_binding_paths_v2(&format!("{path}.{field}"), field_ty, sp, cx, out);
+            }
+        }
+        IrPat::Or { alts } => {
+            if let Some(first) = alts.first() {
+                pattern_binding_paths_v2(path, path_ty, first, cx, out);
+            }
+        }
+        IrPat::Refined { inner, .. } => pattern_binding_paths_v2(path, path_ty, inner, cx, out),
+    }
+}
+
 fn emit_pattern_bindings(
     out: &mut String,
     indent: usize,
@@ -8002,6 +8445,53 @@ fn pattern_binding_paths(
 /// tail `return` short-circuits the remaining arms. A guard failing falls
 /// through to the next arm, which a `switch` cannot express. Per-arm span
 /// anchoring is preserved (ADR 0103).
+/// [`emit_match_if_chain`]'s `IrArm`-typed sibling. `has_catchall` reads
+/// `exhaustive` directly (`Exhaustive::Total`) instead of re-deriving it by
+/// scanning `arms` for an unguarded irrefutable one — `bynk_lower`'s own
+/// `lower_match_ir`-family construction already computed this once (P6.4's
+/// own `Exhaustive`, R5.6/R5.7).
+fn emit_match_if_chain_v2(
+    out: &mut String,
+    disc_var: &str,
+    scrutinee_ty: TyId,
+    arms: &[IrArm],
+    exhaustive: &Exhaustive,
+    cx: &mut LowerCtx,
+    indent: usize,
+    async_tail: bool,
+) {
+    for arm in arms {
+        cx.shadow_scopes.push(HashMap::new());
+        let mut tests = Vec::new();
+        pattern_match_tests_v2(disc_var, scrutinee_ty, &arm.pat, cx, &mut tests);
+        let has_tests = !tests.is_empty();
+        if has_tests {
+            write_line(out, indent, &format!("if ({}) {{", tests.join(" && ")));
+        }
+        let body_indent = if has_tests { indent + INDENT_STEP } else { indent };
+        emit_pattern_bindings_v2(out, body_indent, disc_var, scrutinee_ty, &arm.pat, cx);
+        if let Some(guard) = &arm.guard {
+            let guard_lowered = lower_expr_v2(guard, cx);
+            let gv = guard_lowered.expr;
+            for s in &guard_lowered.pre {
+                write_line(out, body_indent, s);
+            }
+            write_line(out, body_indent, &format!("if ({gv}) {{"));
+            emit_match_body_v2(out, &arm.body, cx, body_indent + INDENT_STEP, async_tail);
+            write_line(out, body_indent, "}");
+        } else {
+            emit_match_body_v2(out, &arm.body, cx, body_indent, async_tail);
+        }
+        if has_tests {
+            write_line(out, indent, "}");
+        }
+        cx.shadow_scopes.pop();
+    }
+    if !matches!(exhaustive, Exhaustive::Total) {
+        write_line(out, indent, "throw new Error(\"non-exhaustive match\");");
+    }
+}
+
 fn emit_match_if_chain(
     out: &mut String,
     disc_var: &str,
