@@ -6738,6 +6738,39 @@ fn decode_map_key(k: Option<TyId>, raw: &str, tys: &Arc<Types>) -> String {
 /// discipline `bynk_lower::lower_expr_ir`'s own construction-side `todo!()`s
 /// used during phase 6. Never called from production today — nothing builds an
 /// `IrExpr` to hand it one — so an unconverted arm here has zero shipped risk.
+/// The literal-shaped arms of [`lower_expr`]'s own dispatch (`IntLit`,
+/// `FloatLit`, `DurationLit`, `StrLit`, `BoolLit`, `UnitLit`), as `ConstVal`'s
+/// `_v2` sibling.
+///
+/// **Known real gap, not a risk — confirmed, not yet fixed:**
+/// `ConstVal::Float(f64)` carries only the parsed value, never the source
+/// lexeme. The AST original renders a `FloatLit` from its stored lexeme
+/// *verbatim* (`ExprKind::FloatLit`'s own comment: "`1e10` must not
+/// normalise") specifically because Rust's own `f64` formatting does
+/// normalise it (`1e10.to_string()` is `"10000000000"`, not `"1e10"`) —
+/// silently different, still-valid-JS output that zero-diff bless would
+/// still catch as a diff, but a real double round-trip (very small/large
+/// magnitudes, or a value with no exact `f64` representation) can also
+/// silently render a *different number*, not just different notation. This
+/// needs a fix in `bynk-ir`/`bynk-lower` (carrying the lexeme through
+/// `ConstVal::Float`, not something reachable from `bynk-emit` alone) —
+/// `todo!()` rather than a best-effort re-format, so a `FloatLit`-using
+/// fixture fails loudly instead of silently miscompiling once this path is
+/// live.
+fn lower_const_v2(c: &ConstVal) -> String {
+    match c {
+        ConstVal::Int(n) => n.to_string(),
+        ConstVal::Float(_) => todo!(
+            "lower_const_v2: ConstVal::Float has no source lexeme to render verbatim — needs a \
+             bynk-ir/bynk-lower fix, not resolvable in bynk-emit alone (Slice 3.2, #1542)"
+        ),
+        ConstVal::DurationMillis(millis) => millis.to_string(),
+        ConstVal::Str(s) => format!("\"{}\"", escape_ts_string(s)),
+        ConstVal::Bool(b) => b.to_string(),
+        ConstVal::Unit => "undefined".to_string(),
+    }
+}
+
 pub(crate) fn lower_expr_v2(e: &IrExpr, cx: &mut LowerCtx) -> Lowered {
     match &e.kind {
         IrExprKind::Local(name) => Lowered::bare(lower_ident_v2(e, name, cx)),
@@ -6770,6 +6803,12 @@ pub(crate) fn lower_expr_v2(e: &IrExpr, cx: &mut LowerCtx) -> Lowered {
         IrExprKind::Field { base, field } => lower_field_access_v2(e, base, field, cx),
         IrExprKind::Lambda { params, body, .. } => {
             Lowered::bare(lower_lambda_v2(e, params, body, cx))
+        }
+        IrExprKind::Const(c) => Lowered::bare(lower_const_v2(c)),
+        IrExprKind::List { elems } => {
+            let mut pre = Pre::new();
+            let lowered: Vec<String> = elems.iter().map(|el| pre.lower_ir(el, cx)).collect();
+            pre.finish(format!("[{}]", lowered.join(", ")))
         }
         _ => todo!("lower_expr_v2: {:?} not yet converted (Slice 3.2, #1542)", e.kind),
     }
