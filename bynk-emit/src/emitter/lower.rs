@@ -6428,6 +6428,86 @@ fn lower_bin_op(op: BinOp, lhs: &Expr, rhs: &Expr, cx: &mut LowerCtx) -> Lowered
     pre.finish(text)
 }
 
+/// [`lower_record_construction`]'s `IrExpr`-typed sibling.
+///
+/// **Known open risk, not yet resolved (found during Slice 3.2 implementation):**
+/// `bynk_lower`'s own `RecordConstruction` construction resolves a shorthand
+/// field (`{ x }`) to an ordinary `IrExprKind::Local(name)` value — the exact
+/// same shape an *explicit* same-name field (`{ x: x }`) also produces, so
+/// this function cannot tell the two apart. It renders both as JS shorthand
+/// (`{ x }`, matching the AST original's own `f.value.is_none()` case) —
+/// the AST original renders an explicit `{ x: x }` as `{ x: x }` instead,
+/// never collapsing it. An explicit same-name field is unusual (redundant
+/// with shorthand) but not illegal; if the corpus has one, this diffs.
+fn lower_record_v2(fields: &[(String, IrExpr)], cx: &mut LowerCtx) -> Lowered {
+    let mut pre = Pre::new();
+    let mut parts = Vec::new();
+    for (name, value) in fields {
+        if matches!(&value.kind, IrExprKind::Local(local) if local == name) {
+            let v = ts_ident(name);
+            if v == *name {
+                parts.push(name.clone());
+                continue;
+            }
+        }
+        let val = pre.lower_ir(value, cx);
+        parts.push(format!("{name}: {val}"));
+    }
+    pre.finish(format!("{{ {} }}", parts.join(", ")))
+}
+
+/// [`lower_constructor_call`]/the `Ok`/`Err`/`Some`/`None` arms of
+/// [`lower_expr`]'s own dispatch, `IrExprKind::Variant`'s `_v2` sibling.
+/// `IrExprKind::Variant` covers two source shapes `bynk_lower` collapses into
+/// one IR node (`bynk_ir::IrExprKind::Variant`'s own doc comment): the four
+/// built-in constructors (`Ok`/`Err`/`Some`/`None`, `payload` 0-or-1 long,
+/// bare-rendered, no type qualifier — except `Ok` when the enclosing type
+/// resolves to `HttpResult`, v0.9's overload; `None` renders with no call
+/// parens at all, matching `ExprKind::None`'s own bare `"None".to_string()`)
+/// and a *qualified* nullary user-sum-variant reference (`Region.Domestic`,
+/// `payload` always empty, always qualified). Disambiguated the same way the
+/// doc comment says any consumer must: by asking `e.ty`, not `tag`.
+///
+/// **Known open risk, not yet resolved (found during Slice 3.2 implementation):**
+/// the qualified-nullary-user-sum-variant case has no confirmed AST-emitter
+/// precedent to mirror — `lower_field_access`'s own AST original has no
+/// branch for "receiver names a sum type, field names a nullary variant of
+/// it" (only the *called* form, `Region.Domestic()`, reaches
+/// `ConstructorCall`/`Callee::Ctor`/`lower_call_v2` already), so whether a
+/// bare, uncalled `Region.Domestic` is even legal source and, if so, whether
+/// the runtime's nullary-variant representation is callable (parens) or a
+/// plain value (none) is unconfirmed. Rendered bare (no parens) here as the
+/// more plausible reading — a *value* reference, not a call — not verified
+/// against a real fixture.
+fn lower_variant_v2(e: &IrExpr, tag: &str, payload: &[IrExpr], cx: &mut LowerCtx) -> Lowered {
+    let tys = cx.commons().tys();
+    let mut pre = Pre::new();
+    let args: Vec<String> = payload.iter().map(|p| pre.lower_ir(p, cx)).collect();
+    let ty_node = tys.get(e.ty);
+    let text = if tag == "Ok" && matches!(&*ty_node, Ty::HttpResult(_)) {
+        format!("HttpResult.Ok({})", args.join(", "))
+    } else if matches!(&*ty_node, Ty::Option(_) | Ty::Result(_, _)) {
+        if args.is_empty() {
+            tag.to_string()
+        } else {
+            format!("{tag}({})", args.join(", "))
+        }
+    } else if let Ty::Named {
+        kind: NamedKind::Sum,
+        name: type_name,
+        ..
+    } = &*ty_node
+    {
+        format!("{type_name}.{tag}")
+    } else {
+        panic!(
+            "bynk internal error (#1542 Slice 3.2): IrExprKind::Variant {{ tag: {tag:?}, .. }}'s \
+             enclosing type is neither Option/Result/HttpResult nor a user Ty::Named Sum"
+        );
+    };
+    pre.finish(text)
+}
+
 fn lower_constructor_call(
     type_name: &Ident,
     method: &Ident,
@@ -6805,6 +6885,8 @@ pub(crate) fn lower_expr_v2(e: &IrExpr, cx: &mut LowerCtx) -> Lowered {
             Lowered::bare(lower_lambda_v2(e, params, body, cx))
         }
         IrExprKind::Const(c) => Lowered::bare(lower_const_v2(c)),
+        IrExprKind::Record { fields } => lower_record_v2(fields, cx),
+        IrExprKind::Variant { tag, payload } => lower_variant_v2(e, tag, payload, cx),
         IrExprKind::List { elems } => {
             let mut pre = Pre::new();
             let lowered: Vec<String> = elems.iter().map(|el| pre.lower_ir(el, cx)).collect();
