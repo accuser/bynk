@@ -37,14 +37,20 @@
 //! `lower_service_handler_signature_ir`, `body_writes_state`, and their
 //! siblings — each with a production call site.
 //!
-//! **Totality discipline (ADR 0334, Q2):** every entry point here takes a
-//! `&CheckedProgram`, not a bare `&TypedCommons` — a certified program only,
-//! so `LowerIrCtx::expr_ty`'s `.expect()` on a miss is the checker and this
-//! pass disagreeing about which expressions a unit contains, a compiler bug,
-//! not a recoverable state. This scoping is the same discipline
+//! **Totality discipline (ADR 0334, Q2), as it stands after Slice D1:** the
+//! rule was "every entry point takes a certified `&CheckedProgram`, so a
+//! per-expression type lookup that misses is a compiler bug, not a
+//! recoverable state." The per-expression lookup went with the expression
+//! lowering, so what the rule now governs is narrower: a helper that reads
+//! a *declaration's* own type references still takes `&CheckedProgram` by
+//! default (`lower_type_shape_ir`'s doc comment has the full argument — a
+//! bare `TypedCommons` is not certified by construction), and the four that
+//! take a bare `&TypedCommons` instead — `body_writes_state`,
+//! `lower_protocol_ir_from_commons`, `capability_op_sig_from_commons`,
+//! `lower_attached_fn_sig_ir_from_types` — each document why their reads
+//! cannot reach a certification-dependent panic. The same discipline
 //! `bynk-emit/src/emitter/emit.rs`'s `lower_workers_cross_context_call`
-//! already applies to its own `bynk.emit.unresolved_cross_context_signature`
-//! panic.
+//! applies to its own `bynk.emit.unresolved_cross_context_signature` panic.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -91,9 +97,10 @@ impl<'a> LowerIrCtx<'a> {
     }
 
     /// #1187's own closing scoping pass: a `TypedCommons`-only constructor,
-    /// for the one real call path (`lower_op_sig_ir_from_commons`, below)
-    /// that never has a `&CheckedProgram` to unwrap. See that function's
-    /// own doc comment for why.
+    /// for the call paths (`lower_op_sig_ir_from_commons` and
+    /// `lower_attached_fn_sig_ir_from_types`, below) that never have a
+    /// `&CheckedProgram` to unwrap. See `lower_op_sig_ir_from_commons`'s
+    /// own doc comment for why that is sound.
     fn from_commons(commons: &'a TypedCommons, type_vars: HashSet<String>) -> Self {
         Self {
             program: commons,
@@ -120,11 +127,11 @@ impl<'a> LowerIrCtx<'a> {
     }
 }
 
-/// `(params, given, ret, effectful)` — `lower_handler_signature_ir`'s own
-/// return shape, and [`lower_service_handler_signature_ir`]'s (#1187's slice
-/// 5), reused as a named alias rather than a bare tuple at both call sites
-/// once one of them (`emit_service`, `bynk-emit/src/emitter/emit.rs`) had to
-/// spell it out in a function signature.
+/// `(params, given, ret, effectful)` — [`lower_service_handler_signature_ir`]'s
+/// return shape (#1187's slice 5), a named alias rather than a bare tuple
+/// because its consumer (`emit_service`, `bynk-emit/src/emitter/emit.rs`)
+/// has to spell it out in a function signature. (The agent-handler
+/// signature reader that shared it went with Slice D1 of `#1542`.)
 pub type HandlerSignatureIr = (Vec<(String, TyId)>, Vec<String>, TyId, bool);
 
 /// P6.50 (design/tracks/the-ir.md §6b): a return type's own syntactic
@@ -816,10 +823,10 @@ fn lower_op_sig_ir(op: &CapabilityOp, program: &CheckedProgram) -> OpSig {
 /// here would misrepresent an uncertified value as certified
 /// (`CheckedProgram`'s own doc comment, `bynk-check/src/checker.rs`, warns
 /// against exactly this). Splitting this out is sound precisely because
-/// this function never calls `LowerIrCtx::expr_ty` — the one method whose
-/// `.expect()`-panic needs a genuinely certified program, the reason this
-/// module's own file-level doc comment gives for taking `&CheckedProgram`
-/// everywhere else. `resolve_type_ref`/`unit_ty()` (below) both degrade via
+/// this function never reads a per-expression type — the one lookup whose
+/// `.expect()`-panic needed a genuinely certified program, and the reason
+/// this module's own file-level doc comment gives for taking
+/// `&CheckedProgram` by default elsewhere. `resolve_type_ref`/`unit_ty()` (below) both degrade via
 /// `.unwrap_or_else` and read nothing `TypedCommons` doesn't already expose
 /// directly.
 fn lower_op_sig_ir_from_commons(op: &CapabilityOp, commons: &TypedCommons) -> OpSig {
@@ -2119,5 +2126,429 @@ agent Widget {
         let program = store_write_fixture();
         let handler = find_handler(find_agent(&program, "Widget"), "logAppend");
         assert!(body_writes_state(&handler.body, program.program()));
+    }
+
+    fn checked_program(source: &str) -> CheckedProgram {
+        let tokens = lexer::tokenize(source).expect("lex");
+        let (commons, warnings) = parser::parse_with_warnings(&tokens, source).expect("parse");
+        let resolved = resolver::resolve(commons).expect("resolve");
+        let typed = checker::check(resolved).expect("check");
+        checker::certify(typed, warnings).expect("certify")
+    }
+
+    fn find_type<'a>(program: &'a CheckedProgram, name: &str) -> &'a Arc<TypeDecl> {
+        program
+            .program()
+            .types
+            .get(name)
+            .unwrap_or_else(|| panic!("no type named `{name}` in this fixture"))
+    }
+
+    fn find_capability<'a>(program: &'a CheckedProgram, name: &str) -> &'a CapabilityDecl {
+        program
+            .program()
+            .commons
+            .items
+            .iter()
+            .find_map(|item| match item {
+                CommonsItem::Capability(c) if c.name.name == name => Some(c),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no capability named `{name}` in this fixture"))
+    }
+
+    fn find_provider<'a>(program: &'a CheckedProgram, name: &str) -> &'a ProviderDecl {
+        program
+            .program()
+            .commons
+            .items
+            .iter()
+            .find_map(|item| match item {
+                CommonsItem::Provider(p) if p.provider_name.name == name => Some(p),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no provider named `{name}` in this fixture"))
+    }
+
+    // The six `type_shape_*` tests below, the capability/provider/handler-kind
+    // tests after them, and the `body_writes_state_*` tests above were all
+    // re-created by Slice D1 of `#1542`: each pinned a kept helper only
+    // through a deleted item constructor (`IrItem::Type`/`Capability`/
+    // `Provider`/`Service`) and now calls the helper directly, asserting the
+    // same facts minus the constructor's own wrapper field.
+
+    #[test]
+    fn type_shape_record_resolves_fields_and_generic_rigid_vars() {
+        let program = checked_program(
+            r#"
+commons demo {
+  type Box[T] = { value: T }
+}
+"#,
+        );
+        let shape = lower_type_shape_ir(find_type(&program, "Box"), &program);
+        let TypeShape::Record { fields } = &shape else {
+            panic!("expected TypeShape::Record, got {shape:?}")
+        };
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].0, "value");
+        assert!(matches!(
+            &*program.program().ty_intern.get(fields[0].1),
+            Ty::Var(name) if name == "T"
+        ));
+    }
+
+    #[test]
+    fn type_shape_sum_resolves_variant_payloads_and_embeds() {
+        let program = checked_program(
+            r#"
+commons demo {
+  type PaymentError = enum { Declined, InsufficientFunds }
+
+  type OrderError =
+    | OutOfStock(sku: String, qty: Int)
+    | Payment(reason: PaymentError)
+    embeds PaymentError as Payment
+}
+"#,
+        );
+        let shape = lower_type_shape_ir(find_type(&program, "OrderError"), &program);
+        let TypeShape::Sum { variants, embeds } = &shape else {
+            panic!("expected TypeShape::Sum, got {shape:?}")
+        };
+        assert_eq!(variants.len(), 2);
+        assert_eq!(variants[0].0, "OutOfStock");
+        assert_eq!(variants[0].1.len(), 2);
+        assert_eq!(variants[0].1[0].0, "sku");
+        assert!(matches!(
+            &*program.program().ty_intern.get(variants[0].1[0].1),
+            Ty::Base(bynk_syntax::ast::BaseType::String)
+        ));
+        assert_eq!(variants[0].1[1].0, "qty");
+        assert!(matches!(
+            &*program.program().ty_intern.get(variants[0].1[1].1),
+            Ty::Base(bynk_syntax::ast::BaseType::Int)
+        ));
+        assert_eq!(variants[1].0, "Payment");
+        assert_eq!(variants[1].1.len(), 1);
+        assert_eq!(variants[1].1[0].0, "reason");
+
+        assert_eq!(embeds.len(), 1);
+        let (source, tag) = &embeds[0];
+        assert_eq!(tag, "Payment");
+        let Ty::Named { name, .. } = &*program.program().ty_intern.get(*source) else {
+            panic!("expected embeds source to resolve to a named type")
+        };
+        assert_eq!(name, "PaymentError");
+    }
+
+    #[test]
+    fn type_shape_refined_and_opaque_cover_bare_and_predicated_and_opaque_forms() {
+        let program = checked_program(
+            r#"
+commons demo {
+  type Age = Int where Positive
+  type UserId = opaque Int
+  type Bare = Int
+}
+"#,
+        );
+        let TypeShape::Refined {
+            base,
+            refinement,
+            opaque,
+        } = lower_type_shape_ir(find_type(&program, "Age"), &program)
+        else {
+            panic!("expected TypeShape::Refined for Age")
+        };
+        assert_eq!(base, bynk_syntax::ast::BaseType::Int);
+        assert!(refinement.is_some());
+        assert!(!opaque);
+
+        let TypeShape::Refined {
+            refinement, opaque, ..
+        } = lower_type_shape_ir(find_type(&program, "UserId"), &program)
+        else {
+            panic!("expected TypeShape::Refined for UserId")
+        };
+        assert!(refinement.is_none());
+        assert!(opaque);
+
+        let TypeShape::Refined {
+            refinement, opaque, ..
+        } = lower_type_shape_ir(find_type(&program, "Bare"), &program)
+        else {
+            panic!("expected TypeShape::Refined for Bare")
+        };
+        assert!(refinement.is_none());
+        assert!(!opaque);
+    }
+
+    #[test]
+    fn type_shape_sum_covers_a_payload_less_variant() {
+        let program = checked_program(
+            r#"
+commons demo {
+  type PaymentError = enum { Declined, InsufficientFunds }
+}
+"#,
+        );
+        let shape = lower_type_shape_ir(find_type(&program, "PaymentError"), &program);
+        let TypeShape::Sum { variants, embeds } = &shape else {
+            panic!("expected TypeShape::Sum, got {shape:?}")
+        };
+        assert_eq!(variants.len(), 2);
+        assert_eq!(variants[0].0, "Declined");
+        assert!(
+            variants[0].1.is_empty(),
+            "a bare variant carries no payload"
+        );
+        assert_eq!(variants[1].0, "InsufficientFunds");
+        assert!(variants[1].1.is_empty());
+        assert!(embeds.is_empty());
+    }
+
+    #[test]
+    fn type_shape_record_drops_a_fields_own_inline_refinement() {
+        // Decision B extension, `bynk-ir`'s own `TypeShape::Record` doc
+        // comment: a field's inline `where` clause is a construction-time
+        // constraint the checker already enforces, not part of the emitted
+        // shape — pin that the field still lowers to `(name, ty)` with the
+        // refinement silently absent, not that lowering rejects it.
+        let program = checked_program(
+            r#"
+commons demo {
+  type Account = { balance: Int where NonNegative }
+}
+"#,
+        );
+        let shape = lower_type_shape_ir(find_type(&program, "Account"), &program);
+        let TypeShape::Record { fields } = &shape else {
+            panic!("expected TypeShape::Record, got {shape:?}")
+        };
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].0, "balance");
+        assert!(matches!(
+            &*program.program().ty_intern.get(fields[0].1),
+            Ty::Base(bynk_syntax::ast::BaseType::Int)
+        ));
+    }
+
+    #[test]
+    fn type_shape_record_resolves_a_generic_type_application_field() {
+        // The `TypeRef::App` arm of `resolve_type_ref_in` — the one arm
+        // that returns `None` for an unknown/unapplied name, and so the one
+        // most likely to silently hit this pass's own ADR 0334 panic if the
+        // field's resolution were ever wired up wrong.
+        let program = checked_program(
+            r#"
+commons demo {
+  type Box[T] = { value: T }
+  type Wrapper = { boxed: Box[Int] }
+}
+"#,
+        );
+        let shape = lower_type_shape_ir(find_type(&program, "Wrapper"), &program);
+        let TypeShape::Record { fields } = &shape else {
+            panic!("expected TypeShape::Record, got {shape:?}")
+        };
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].0, "boxed");
+        let Ty::Named { name, args, .. } = &*program.program().ty_intern.get(fields[0].1) else {
+            panic!("expected `boxed` to resolve to a named type")
+        };
+        assert_eq!(name, "Box");
+        assert_eq!(args.len(), 1);
+        assert!(matches!(
+            &*program.program().ty_intern.get(args[0]),
+            Ty::Base(bynk_syntax::ast::BaseType::Int)
+        ));
+    }
+
+    #[test]
+    fn lower_capability_ops_ir_assembles_ops_in_declaration_order() {
+        let program = checked_context_program(
+            r#"
+context demo
+
+capability Store {
+  fn get(key: String) -> Effect[Int]
+  fn put(key: String, value: Int) -> Effect[()]
+}
+"#,
+        );
+        let ops = lower_capability_ops_ir(find_capability(&program, "Store"), &program);
+        assert_eq!(ops.len(), 2, "declaration order preserved");
+
+        assert_eq!(ops[0].name, "get");
+        assert!(ops[0].type_params.is_empty());
+        assert_eq!(ops[0].params.len(), 1);
+        assert_eq!(ops[0].params[0].0, "key");
+        assert!(matches!(
+            &*program.program().ty_intern.get(ops[0].params[0].1),
+            Ty::Base(bynk_syntax::ast::BaseType::String)
+        ));
+        // `return_ty` is Effect-wrapped, not peeled — `get`'s declared
+        // `Effect[Int]` resolves whole, the same convention `FnSig::ret`
+        // uses.
+        assert!(matches!(
+            &*program.program().ty_intern.get(ops[0].return_ty),
+            Ty::Effect(inner) if matches!(
+                &*program.program().ty_intern.get(*inner),
+                Ty::Base(bynk_syntax::ast::BaseType::Int)
+            )
+        ));
+
+        assert_eq!(ops[1].name, "put");
+        assert_eq!(ops[1].params.len(), 2);
+        assert_eq!(ops[1].params[0].0, "key");
+        assert_eq!(ops[1].params[1].0, "value");
+        assert!(matches!(
+            &*program.program().ty_intern.get(ops[1].params[1].1),
+            Ty::Base(bynk_syntax::ast::BaseType::Int)
+        ));
+    }
+
+    #[test]
+    fn lower_provider_given_ir_preserves_declaration_order_including_unused_entries() {
+        // `given Random, Clock` (reverse-alphabetical, deliberately) pins
+        // that `given`'s own declaration order survives — neither op body
+        // below calls either capability, pinning review of #1186's point
+        // that an *unused* `given` entry must still appear (it feeds R8.1's
+        // own `deps` constructor, not anything the op bodies reference).
+        let program = checked_context_program(
+            r#"
+context demo
+
+capability Clock {
+  fn now() -> Effect[Int]
+}
+
+capability Random {
+  fn next() -> Effect[Int]
+}
+
+capability Store {
+  fn get(key: String) -> Effect[Int]
+  fn put(key: String, value: Int) -> Effect[()]
+}
+
+provides Store = MemStore given Random, Clock {
+  fn get(key: String) -> Effect[Int] {
+    Effect.pure(0)
+  }
+  fn put(key: String, value: Int) -> Effect[()] {
+    Effect.pure(())
+  }
+}
+"#,
+        );
+        let given = lower_provider_given_ir(find_provider(&program, "MemStore"));
+        assert_eq!(
+            given.iter().map(|g| g.name.as_str()).collect::<Vec<_>>(),
+            vec!["Random", "Clock"],
+            "given's own declaration order preserved, unused entries included"
+        );
+        assert!(given.iter().all(|g| g.context.is_none()));
+    }
+
+    #[test]
+    fn lower_provider_given_ir_reads_an_external_providers_given_too() {
+        // v0.17: an external (bodiless) provider is only legal inside an
+        // `adapter` unit (`bynk-check/src/symbols.rs`), which this test
+        // harness's own `checked_context_program` cannot build (it only
+        // ever parses a `context`). `lower_provider_given_ir` never reads
+        // `program` at all, so this hand-constructs the `ProviderDecl` the
+        // parser would produce for `provides Store = ExternalStore given
+        // Clock` inside an adapter. Nothing in the grammar or checker gates
+        // `given` on `external`, so an external provider's `given` must come
+        // through the same way a Bynk one's does (review of #1187's own
+        // Provider given/deps-wiring slice).
+        let provider = ProviderDecl {
+            capability: bynk_syntax::ast::Ident {
+                name: "Store".to_string(),
+                span: Span::default(),
+            },
+            provider_name: bynk_syntax::ast::Ident {
+                name: "ExternalStore".to_string(),
+                span: Span::default(),
+            },
+            given: vec![CapRef {
+                context: None,
+                name: bynk_syntax::ast::Ident {
+                    name: "Clock".to_string(),
+                    span: Span::default(),
+                },
+                span: Span::default(),
+            }],
+            ops: Vec::new(),
+            external: true,
+            documentation: None,
+            span: Span::default(),
+            trivia: Default::default(),
+        };
+        let given = lower_provider_given_ir(&provider);
+        assert_eq!(given.len(), 1);
+        assert_eq!(given[0].context, None);
+        assert_eq!(given[0].name, "Clock");
+    }
+
+    #[test]
+    fn an_http_service_lowers_its_protocol_and_per_handler_route_kind() {
+        let program = checked_context_program(
+            r#"
+context demo
+
+fn ok(s: String) -> HttpResult[String] { Ok(s) }
+
+service Api from http {
+  on GET("/ping") () -> Effect[HttpResult[String]] by v: Visitor {
+    Effect.pure(ok("pong"))
+  }
+}
+"#,
+        );
+        let service = find_service(&program, "Api");
+        assert!(matches!(
+            lower_protocol_ir(&service.protocol, &program),
+            ProtocolIr::Http
+        ));
+        assert_eq!(
+            lower_handler_kind_ir(&service.handlers[0].kind),
+            IrHandlerKind::Http {
+                method: IrHttpMethod::Get,
+                path: "/ping".to_string(),
+            },
+            "the route binding lives per-handler — this is why ProtocolIr::Http itself \
+             carries no payload"
+        );
+    }
+
+    #[test]
+    fn a_cron_service_lowers_its_schedule_from_the_handler_not_the_protocol() {
+        let program = checked_context_program(
+            r#"
+context demo
+
+fn done() -> Result[(), String] { Ok(()) }
+
+service Sweeper from cron {
+  on schedule("*/5 * * * *") () -> Effect[Result[(), String]] {
+    Effect.pure(done())
+  }
+}
+"#,
+        );
+        let service = find_service(&program, "Sweeper");
+        assert!(matches!(
+            lower_protocol_ir(&service.protocol, &program),
+            ProtocolIr::Cron
+        ));
+        assert_eq!(
+            lower_handler_kind_ir(&service.handlers[0].kind),
+            IrHandlerKind::Cron {
+                expr: "*/5 * * * *".to_string()
+            }
+        );
     }
 }
