@@ -181,7 +181,6 @@ dependencies = [
 name = "bynk-check"
 version = "0.289.66"
 dependencies = [
- "bynk-emit",
  "bynk-project",
  "bynk-syntax",
  "regress",
