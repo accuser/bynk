@@ -13,9 +13,11 @@
 //! seam ([`ActorSeamIr`]), an events subscription's pattern and shape
 //! ([`EventPatternIr`]/[`EventPatternValueIr`]/[`EventSubscriberShape`]),
 //! and the literal values a pattern can carry ([`ConstVal`]). Alongside
-//! them: four AST-walk helpers both crates share ([`block_uses_emit`],
-//! [`walk_block_exprs`], [`walk_exprs`], [`match_needs_if_chain`]) and the
-//! four mutating-op tables `bynk_lower::body_writes_state` reads.
+//! them: four AST-walk helpers `bynk-emit` reads ([`block_uses_emit`],
+//! [`walk_block_exprs`], [`walk_exprs`], [`match_needs_if_chain`] — they
+//! live here rather than in the emitter because they were written to be
+//! shared with `bynk-lower`, and `bynk-emit` is the consumer that remains)
+//! and the four mutating-op tables `bynk_lower::body_writes_state` reads.
 //!
 //! **What this crate is not, and was.** Phase 6 of
 //! `design/bynk-compiler-trajectory.md` (`the-ir.md`, #1137) built here a
@@ -155,7 +157,7 @@ pub struct FnSig {
 /// `Http`/`Cron` carry no payload, not because one was dropped: the actual
 /// per-trigger binding (a route, a schedule) lives on each *handler*
 /// (`HandlerKind::Http { method, path }`/`Cron { expr }`), already
-/// reachable through `IrHandler::kind` — `ServiceProtocol`'s own doc
+/// reachable through [`IrHandlerKind`] — `ServiceProtocol`'s own doc
 /// comment says this in as many words ("the endpoint lives on each
 /// handler"), which is why the reference never spells these three out
 /// either. E2 (`:1737`) constrains the *set*, not the shape: "a closed
@@ -224,9 +226,8 @@ pub struct EventSubscriberShape {
 #[derive(Debug, Clone)]
 pub struct EventPatternIr {
     /// `(field name, matched value)`, in source order — no dedicated
-    /// `EventPatternFieldIr` struct, mirroring `IrPat::Variant`'s own
-    /// `fields: Vec<(String, Box<IrPat>)>` precedent for a two-part fact
-    /// with no further structure.
+    /// `EventPatternFieldIr` struct: a two-part fact with no further
+    /// structure, the same plain-tuple shape [`EmbedIr`] uses.
     pub fields: Vec<(String, EventPatternValueIr)>,
 }
 
@@ -234,8 +235,8 @@ pub struct EventPatternIr {
 #[derive(Debug, Clone)]
 pub enum EventPatternValueIr {
     /// Reuses [`ConstVal`] for the closed `Int`/`Str`/`Bool` literal set —
-    /// verbatim the same reuse `IrPat::Const` already made for
-    /// `Pattern::Literal`'s identical closed set.
+    /// `Pattern::Literal`'s own closed set, and the only reason `ConstVal`
+    /// is still a type of its own.
     Const(ConstVal),
     /// A nullary sum-variant tag, resolved and unqualified — a bare
     /// `tag: String`. The AST's own optional qualifying `type_name` is
@@ -588,14 +589,14 @@ pub fn walk_exprs(e: &Expr, f: &mut impl FnMut(&Expr)) {
 /// neither. Flat, unguarded matches keep the `switch` (zero churn to existing
 /// output).
 ///
-/// `pub` since P6.5 (#1159, Decision B) — `bynk-lower`'s own lowering pass
-/// reuses this pure predicate verbatim to decide `MatchForm`, rather than
-/// re-deriving an equivalent one over `IrPat`'s own shape, so the string
-/// emitter's own if-chain-vs-switch choice and the IR's own recorded `form`
-/// can never silently disagree. Lives in `bynk-ir` (not `bynk-emit` or
-/// `bynk-lower` specifically) since both `bynk-emit`'s own string emitter and
-/// `bynk-lower`'s IR lowering need it — moved out of `bynk-emit::emitter::lower`
-/// at the P7.12 crate carve, no behaviour change.
+/// Consumed only by `bynk-emit`'s string emitter today (`emitter/lower.rs`'s
+/// two match-lowering sites). It became `pub` and moved here at P6.5/P7.12
+/// so the IR lowering pass could reuse the identical predicate to record its
+/// own match form and the two could never silently disagree; that second
+/// consumer went with Slices D1/D2 of #1542. It stays in `bynk-ir` rather
+/// than moving back because it is a pure predicate over the AST with no
+/// emitter state, the same footing as its three sibling walk helpers above,
+/// and moving it would be churn with no reader gained.
 pub fn match_needs_if_chain(arms: &[MatchArm]) -> bool {
     arms.iter().any(|a| {
         a.guard.is_some()
