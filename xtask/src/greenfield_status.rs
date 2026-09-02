@@ -247,14 +247,17 @@ fn workspace_lints(root: &Path) -> Probe {
 ///
 /// #1104 (a content-ownership (#1086) probe-precision follow-on): a flagged *count*
 /// alone can't tell a residual R2.3 violation from a documented, permanent exception —
-/// `bynk-emit`'s 3 have read that way since the track's retirement (`design/archive/
-/// retired-tracks.md`'s closing summary), each named in [`NAMED_FS_EXCEPTIONS`]. So
-/// each flagged file is additionally classified as a **named floor** file — every
+/// `bynk-emit` read 3 that way from the track's retirement (`design/archive/
+/// retired-tracks.md`'s closing summary) until P4.0 moved all three named files out of
+/// `bynk-emit` entirely, leaving [`NAMED_FS_EXCEPTIONS`] empty (#1561) — the mechanism
+/// stays live for whatever named exception is decided next. So each flagged file is
+/// additionally classified as a **named floor** file — every
 /// production-scope touch it has is either inside one of those named functions, or is
 /// a bare import declaration (no fn encloses it — [`enclosing_fn`] returns `None`) that
 /// performs no I/O of its own, existing only so a *descendant* module's bare `fs::`
-/// call can resolve (exactly `project.rs`'s `use std::fs;`, which `discovery.rs` and
-/// `paths.rs` glob-import via `use super::*;`) — or a **residual** file: any other file
+/// call can resolve (the motivating case, #1013: `project.rs`'s own `use std::fs;`,
+/// which `discovery.rs` and `paths.rs` glob-imported via `use super::*;` before P4.0
+/// moved both files out) — or a **residual** file: any other file
 /// touching `std::fs` in production scope, which still reads as a real R2.3 violation
 /// ([`file_is_named_fs_floor`]).
 fn fs_below_driver(root: &Path) -> Probe {
@@ -281,7 +284,9 @@ fn fs_below_driver(root: &Path) -> Probe {
             .collect();
         let floor = flagged
             .iter()
-            .filter(|&&i| file_is_named_fs_floor(krate, &files, &facts, &parents, i))
+            .filter(|&&i| {
+                file_is_named_fs_floor(krate, &files, &facts, &parents, i, NAMED_FS_EXCEPTIONS)
+            })
             .count();
         total_floor += floor;
         let residual = count - floor;
@@ -310,17 +315,16 @@ fn fs_below_driver(root: &Path) -> Probe {
 /// carve-out decided the same deliberate way joins this list; anything touching
 /// `std::fs` in production scope that isn't listed here reads as a residual R2.3
 /// violation, per [`file_is_named_fs_floor`].
-const NAMED_FS_EXCEPTIONS: &[(&str, &str, &str)] = &[
-    // The bare enumeration walk — no content read, no overlay parameter at all.
-    ("bynk-emit", "project/discovery.rs", "discover_bynk_files"),
-    // An adapter's `.binding.ts` path is only known post-parse, so no discovery walk
-    // can pre-populate it into a caller-supplied overlay the way `.bynk` files are.
-    ("bynk-emit", "project/discovery.rs", "read_adapter_binding"),
-    // The plain, no-overlay manifest reader's contract has always been "read the real
-    // file"; nothing above it in the call chain can supply this for a caller that
-    // doesn't build its own overlay.
-    ("bynk-emit", "project/paths.rs", "try_read_project_paths"),
-];
+///
+/// Empty since #1561: these three entries were real when #1104 (`769a60a3`,
+/// 6 Aug 2026) added them, but P4.0 (`69af8f2d`, the very next day) moved
+/// `discover_bynk_files`/`read_adapter_binding` (`project/discovery.rs`) and
+/// `try_read_project_paths` (`project/paths.rs`) out of `bynk-emit` into
+/// `bynk-project` entirely — dead from that point on, unnoticed for weeks.
+/// `fs_below_driver`'s `bynk-emit` reading was already 0 with them present
+/// (nothing in the tree matched the dead tuples), confirmed unchanged with
+/// them gone.
+const NAMED_FS_EXCEPTIONS: &[(&str, &str, &str)] = &[];
 
 /// Is flagged file `files[i]` (already known, by [`production_std_fs_files`], to touch
 /// `std::fs` in production scope) a **named floor** file — every production-scope touch
@@ -339,12 +343,19 @@ const NAMED_FS_EXCEPTIONS: &[(&str, &str, &str)] = &[
 /// flagged — [`line_touches_std_fs`]'s re-implementation of the file-level detection
 /// disagreeing with it) reads as residual, not floor: an unattributable touch means this
 /// classifier doesn't understand the file, which must fail loud, not quiet.
+///
+/// `exceptions` is [`NAMED_FS_EXCEPTIONS`] at the one production call site
+/// ([`fs_below_driver`]) — parameterised (#1561) so a test can exercise the
+/// matching logic against a synthetic tuple instead of real, currently-empty
+/// production data, the same way `facts`/`parents` are caller-supplied rather
+/// than recomputed.
 fn file_is_named_fs_floor(
     krate: &str,
     files: &[(PathBuf, String)],
     facts: &[FsImportFacts],
     parents: &[Option<usize>],
     i: usize,
+    exceptions: &[(&str, &str, &str)],
 ) -> bool {
     let (path, _) = &files[i];
     let rel = path.to_string_lossy().replace('\\', "/");
@@ -371,7 +382,7 @@ fn file_is_named_fs_floor(
             }
             return false;
         };
-        let named = NAMED_FS_EXCEPTIONS
+        let named = exceptions
             .iter()
             .any(|&(c, f, func)| c == krate && f == rel && func == fn_name);
         if !named {
@@ -1615,23 +1626,24 @@ fn emit_abi_shapes(root: &Path) -> Probe {
 /// argued individually the same way [`AST_IMPORTER_EXCEPTIONS`] is, not assumed from a
 /// path prefix: `emitter/wrangler.rs` writes `wrangler.toml`; `emitter/secrets.rs`
 /// writes `bynk-secrets.json`; `emitter/contracts.rs` writes `bynk-contracts.json`;
-/// `emitter/source_map.rs` writes source-map JSON; `testkit.rs` builds a `.bynk` source
-/// fixture — a compiler *input* for tests, not output. P7.3 (#1303): `emitter/toml_doc.rs`
-/// writes `wrangler.toml` text too — `emitter/wrangler.rs`'s own writes moved here when
-/// it stopped building the TOML text directly and started building a typed
-/// `TomlDocument` for this module to print — same rationale, same exclusion.
+/// `testkit.rs` builds a `.bynk` source fixture — a compiler *input* for tests, not
+/// output. P7.3 (#1303): `emitter/toml_doc.rs` writes `wrangler.toml` text too —
+/// `emitter/wrangler.rs`'s own writes moved here when it stopped building the TOML text
+/// directly and started building a typed `TomlDocument` for this module to print — same
+/// rationale, same exclusion.
 ///
 /// (`ir/lower.rs` — Rust-internal `String` values stored on `Ir*` struct fields during
 /// the checker→IR lowering pass, never emitted syntax — was excluded here for the same
 /// reason until Arc D's P7.12 crate carve moved it to `bynk-lower` entirely, outside
 /// this probe's own `bynk-emit/src` universe; no exclusion needed for a file this probe
-/// no longer walks.)
+/// no longer walks. `emitter/source_map.rs`, which wrote source-map JSON, is the same
+/// shape one carve earlier — P7.5 (#1308) relocated it to `bynk-ts/src/source_map.rs`
+/// in full; its own #1561 removal from this list.)
 const TS_WRITES_EXCLUDED_FILES: &[&str] = &[
     "emitter/wrangler.rs",
     "emitter/toml_doc.rs",
     "emitter/secrets.rs",
     "emitter/contracts.rs",
-    "emitter/source_map.rs",
     "testkit.rs",
 ];
 
@@ -3682,32 +3694,57 @@ commons app.demo {
         );
     }
 
+    /// #1561: [`NAMED_FS_EXCEPTIONS`] itself is empty (P4.0 moved every file it used to
+    /// name out of `bynk-emit` entirely — see the const's own doc comment), so the tests
+    /// below that exercise a *match* use these synthetic tuples instead of real,
+    /// currently-empty production data — same crate as the real #1104 shape, but a
+    /// file/fn pair invented for this test and never a real production exception.
+    const SYNTHETIC_EXCEPTIONS: &[(&str, &str, &str)] = &[
+        (
+            "bynk-emit",
+            "project/synthetic_example.rs",
+            "synthetic_named_fn_a",
+        ),
+        (
+            "bynk-emit",
+            "project/synthetic_example.rs",
+            "synthetic_named_fn_b",
+        ),
+    ];
+
     /// Build the `facts`/`parents` vectors [`file_is_named_fs_floor`] now takes as
     /// caller-supplied arguments, the same way [`fs_below_driver`] does, so each test
     /// below reads as "classify this file" rather than repeating the setup.
-    fn classify(krate: &str, files: &[(PathBuf, String)], i: usize) -> bool {
+    fn classify(
+        krate: &str,
+        files: &[(PathBuf, String)],
+        i: usize,
+        exceptions: &[(&str, &str, &str)],
+    ) -> bool {
         let facts: Vec<FsImportFacts> = files.iter().map(|(_, s)| fs_import_facts(s)).collect();
         let parents: Vec<Option<usize>> =
             files.iter().map(|(p, _)| module_parent(p, files)).collect();
-        file_is_named_fs_floor(krate, files, &facts, &parents, i)
+        file_is_named_fs_floor(krate, files, &facts, &parents, i, exceptions)
     }
 
-    /// The concrete #1104 shape, in miniature: `project.rs`'s bare `use std::fs;` (no
-    /// enclosing fn — never itself a violation) plus `discovery.rs`'s two named-exception
-    /// functions. The whole file must read as a named floor, not residual.
+    /// The concrete #1104 shape, in miniature (#1561: against [`SYNTHETIC_EXCEPTIONS`],
+    /// `NAMED_FS_EXCEPTIONS` itself being empty): `project.rs`'s bare `use std::fs;` (no
+    /// enclosing fn — never itself a violation) plus `synthetic_example.rs`'s two
+    /// named-exception functions. The whole file must read as a named floor, not
+    /// residual.
     #[test]
-    fn file_is_named_fs_floor_true_for_the_real_discovery_rs_shape() {
+    fn file_is_named_fs_floor_true_for_a_file_of_only_named_exceptions() {
         let files = [
             (
                 PathBuf::from("project.rs"),
-                "use std::fs;\n\nmod discovery;\n".to_string(),
+                "use std::fs;\n\nmod synthetic_example;\n".to_string(),
             ),
             (
-                PathBuf::from("project/discovery.rs"),
-                "use super::*;\n\npub(crate) fn discover_bynk_files() {\n    let _ = fs::read_dir(\".\");\n}\n\npub(crate) fn read_adapter_binding(path: &Path) -> std::io::Result<String> {\n    fs::read_to_string(path)\n}\n".to_string(),
+                PathBuf::from("project/synthetic_example.rs"),
+                "use super::*;\n\npub(crate) fn synthetic_named_fn_a() {\n    let _ = fs::read_dir(\".\");\n}\n\npub(crate) fn synthetic_named_fn_b(path: &Path) -> std::io::Result<String> {\n    fs::read_to_string(path)\n}\n".to_string(),
             ),
         ];
-        assert!(classify("bynk-emit", &files, 1));
+        assert!(classify("bynk-emit", &files, 1, SYNTHETIC_EXCEPTIONS));
     }
 
     /// A new, unlisted fn touching `std::fs` in the *same file* as two named exceptions
@@ -3718,29 +3755,30 @@ commons app.demo {
         let files = [
             (
                 PathBuf::from("project.rs"),
-                "use std::fs;\n\nmod discovery;\n".to_string(),
+                "use std::fs;\n\nmod synthetic_example;\n".to_string(),
             ),
             (
-                PathBuf::from("project/discovery.rs"),
-                "use super::*;\n\npub(crate) fn discover_bynk_files() {\n    let _ = fs::read_dir(\".\");\n}\n\nfn some_new_helper() {\n    let _ = fs::write(\"x\", \"y\");\n}\n".to_string(),
+                PathBuf::from("project/synthetic_example.rs"),
+                "use super::*;\n\npub(crate) fn synthetic_named_fn_a() {\n    let _ = fs::read_dir(\".\");\n}\n\nfn some_new_helper() {\n    let _ = fs::write(\"x\", \"y\");\n}\n".to_string(),
             ),
         ];
-        assert!(!classify("bynk-emit", &files, 1));
+        assert!(!classify("bynk-emit", &files, 1, SYNTHETIC_EXCEPTIONS));
     }
 
     /// A file whose only production-scope touch is a bare `use std::fs;` import — no
     /// enclosing fn at all — is trivially a named floor: the import performs no I/O by
-    /// itself, and the descendant it enables is checked (and named) separately.
+    /// itself, and the descendant it enables is checked (and named) separately. No
+    /// named exceptions needed at all here — nothing to match against.
     #[test]
     fn file_is_named_fs_floor_true_for_an_import_only_file() {
         let files = [(
             PathBuf::from("project.rs"),
             "use std::fs;\n\nmod discovery;\n".to_string(),
         )];
-        assert!(classify("bynk-emit", &files, 0));
+        assert!(classify("bynk-emit", &files, 0, &[]));
     }
 
-    /// The same `discovery.rs` shape under the wrong crate label must not read as a
+    /// The same synthetic-example shape under the wrong crate label must not read as a
     /// floor — [`NAMED_FS_EXCEPTIONS`] is keyed on `(crate, file, fn)`, not `(file, fn)`
     /// alone, so a same-named file/fn pair in a different crate isn't accidentally
     /// covered.
@@ -3749,14 +3787,14 @@ commons app.demo {
         let files = [
             (
                 PathBuf::from("project.rs"),
-                "use std::fs;\n\nmod discovery;\n".to_string(),
+                "use std::fs;\n\nmod synthetic_example;\n".to_string(),
             ),
             (
-                PathBuf::from("project/discovery.rs"),
-                "use super::*;\n\npub(crate) fn discover_bynk_files() {\n    let _ = fs::read_dir(\".\");\n}\n".to_string(),
+                PathBuf::from("project/synthetic_example.rs"),
+                "use super::*;\n\npub(crate) fn synthetic_named_fn_a() {\n    let _ = fs::read_dir(\".\");\n}\n".to_string(),
             ),
         ];
-        assert!(!classify("bynk-ide", &files, 1));
+        assert!(!classify("bynk-ide", &files, 1, SYNTHETIC_EXCEPTIONS));
     }
 
     /// Review finding (#1106): a module-scope `std::fs` touch that isn't an import
@@ -3770,7 +3808,7 @@ commons app.demo {
             "use std::fs;\n\nstatic ROOT: once_cell::sync::Lazy<String> = once_cell::sync::Lazy::new(|| fs::read_to_string(\"x\").unwrap());\n"
                 .to_string(),
         )];
-        assert!(!classify("bynk-emit", &files, 0));
+        assert!(!classify("bynk-emit", &files, 0, &[]));
     }
 
     /// Same review finding, the [`fn_name_on_line`] half: an `extern "C" fn` (a modifier
@@ -3784,7 +3822,7 @@ commons app.demo {
             "use std::fs;\n\nextern \"C\" fn callback() {\n    let _ = fs::read_dir(\".\");\n}\n"
                 .to_string(),
         )];
-        assert!(!classify("bynk-emit", &files, 0));
+        assert!(!classify("bynk-emit", &files, 0, &[]));
     }
 
     // --- emit_abi_shapes (#999 Decision E) ----------------------------------
@@ -3933,17 +3971,19 @@ commons app.demo {
         assert!(is_ts_writes_excluded_file(Path::new(
             "emitter/contracts.rs"
         )));
-        assert!(is_ts_writes_excluded_file(Path::new(
-            "emitter/source_map.rs"
-        )));
         assert!(is_ts_writes_excluded_file(Path::new("testkit.rs")));
         // Name proximity to a file that used to be excluded must not false-positive:
         // `emitter/lower.rs` (the emitter's own lowering pass) is genuinely
         // TS-producing and must stay counted — unlike `ir/lower.rs` (the checker→IR
         // pass), which isn't a name-proximity risk at all any more: it left
-        // `bynk-emit/src` entirely at Arc D's P7.12 crate carve.
+        // `bynk-emit/src` entirely at Arc D's P7.12 crate carve. `emitter/source_map.rs`
+        // is the same shape (#1561): it left for `bynk-ts/src/source_map.rs` at P7.5
+        // (#1308), so it's no longer excluded either — there's nothing left to exclude.
         assert!(!is_ts_writes_excluded_file(Path::new("emitter/lower.rs")));
         assert!(!is_ts_writes_excluded_file(Path::new("ir/lower.rs")));
+        assert!(!is_ts_writes_excluded_file(Path::new(
+            "emitter/source_map.rs"
+        )));
         assert!(!is_ts_writes_excluded_file(Path::new("emitter.rs")));
         assert!(!is_ts_writes_excluded_file(Path::new("project.rs")));
         assert!(!is_ts_writes_excluded_file(Path::new(
