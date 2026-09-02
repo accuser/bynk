@@ -2200,6 +2200,29 @@ the batch path paying for the incremental path on the deploy-critical route.
 *Trigger:* a hand-rolled memo table over R3.13's four query levels is measurably the bottleneck.
 *Evidence:* keystroke-to-diagnostic latency on a multi-context project, attributed by level.
 
+**A typed expression IR between the checker and the string-emitting lowerer.**
+*Status:* the **declaration-level IR is adopted** (`bynk-ir`'s shapes, read through `bynk-lower`'s
+helpers — R6.13 at the level phase 6 retired it); the **expression-level IR is refused**.
+*Claim:* `bynk-emit/src/emitter/lower.rs` reads `bynk_syntax::ast` directly for expression,
+statement and body dispatch, and stays the single lowering path.
+*Cost avoided:* a second expression code generator brought to feature parity with the first — measured
+at ~4,400 lines and seven follow-on issues for three of seven entry points, with the remaining four
+flagged as higher risk — plus the gate that keeps both reachable meanwhile, plus three `bynk-ir`
+representation widenings that would exist only to let the new path reproduce the old one's bytes.
+*Trigger:* an emit-side change that needs expression-level facts the checker already resolved and
+`emitter/lower.rs` cannot get from `TypedCommons` without re-deriving them — **and** which the
+tree-native route (lowering to `bynk_ts` nodes, retiring `ts_writes`) would not serve better. A second
+miscompile of the kind T2.1 closed (hoisting, short-circuit) originating in AST re-classification would
+fire this; a desire for R6.13 purity alone does not.
+*Evidence:* the gated `unconsumed_ir_items` probe (`cargo xtask greenfield-status`), reading 0 and
+ratcheted so it can only fall; `emit_diagnostics`/`ts_writes` unchanged by the deletion.
+*Note:* refusing the expression IR is not refusing the IR — 19 `bynk-ir` items and 17 `bynk-lower`
+entry points stay, each with a reader outside both crates. It is not a refusal of tree-native emission either, which is
+the other way to reach the same end state and was never the cutover's scope.
+*Tracked:* [#1542](https://github.com/accuser/bynk/issues/1542) (the IR cutover track, retired) —
+the measurements, the priced alternative and the deletion inventory are in its closing summary in
+`design/archive/retired-tracks.md`.
+
 **An optimising IR, CFG or SSA form.**
 *Cost avoided:* the whole apparatus, for a target that has a JIT.
 *Trigger:* a supported target without a JIT appears.

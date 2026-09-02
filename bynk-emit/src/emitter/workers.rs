@@ -592,7 +592,7 @@ pub(crate) fn emit_worker_compose(
             // P6.30 (design/tracks/the-ir.md §6a): dispatches on the checker-
             // classified `IrHandlerKind` (P6.24a's own pure, unconditional
             // mirror) rather than the raw AST `HandlerKind` directly. Slice 1
-            // of `#1542` (`design/tracks/the-ir-cutover.md` §5): the `Http`
+            // of `#1542` (the IR cutover, `design/archive/retired-tracks.md`): the `Http`
             // arm now reads `method`/`path` straight off that same
             // `IrHandlerKind::Http` payload instead of re-deriving them from
             // `h.kind` — un-deferred from Q7's original "wrapper signatures

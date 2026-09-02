@@ -1,18 +1,21 @@
 //! `cargo xtask greenfield-status` — the probe harness (track doc §8, proposal #999).
 //!
-//! Nineteen probes measuring the tree against `design/bynk-greenfield-compiler.md`:
+//! Twenty probes measuring the tree against `design/bynk-greenfield-compiler.md`:
 //! the twelve in track doc §8, `emit_abi_shapes` (ADR 0310's probe, #999 Decision E —
 //! this slice measures the emit-ABI enumeration guard but does not wire it; wiring is
 //! packaging-track work), phase 7's own four — `ts_writes`, `ts_any`,
 //! `verbatim_origins`, `verbatim_sites` (P7.0/#1296, P7.5/#1307 — see phase 7's own
 //! closing summary in `design/archive/retired-tracks.md`) — and phase 8's own two,
 //! `incremental_query_types` and `keystroke_latency` (P8.0/#1510, settled by #1509's
-//! Q5/ADR 0414 — see `design/tracks/incrementality.md` §5).
+//! Q5/ADR 0414 — see `design/tracks/incrementality.md` §5), plus the IR cutover
+//! track's own adoption probe, `unconsumed_ir_items` (Slice D3 of #1542 — the gate the
+//! 30 August 2026 post-restructuring review's Part 5 §8 asked for).
 //!
-//! **Fourteen are gated**, committed and diffed: `workspace_lints`, `fs_below_driver`,
+//! **Fifteen are gated**, committed and diffed: `workspace_lints`, `fs_below_driver`,
 //! `options_sources`, `hoist_sinks`, `span_keyed_maps`, `emit_diagnostics`,
 //! `ide_emit_edge`, `ast_importers`, `emit_abi_shapes`, `ts_writes`, `ts_any`,
-//! `verbatim_origins`, `verbatim_sites`, `incremental_query_types`. Nine of these are
+//! `verbatim_origins`, `verbatim_sites`, `incremental_query_types`,
+//! `unconsumed_ir_items`. Ten of these are
 //! zero/closure-shaped — a boolean, or a count pinned at a small, argued floor
 //! (`ast_importers` = 5, `emit_abi_shapes` = 1). Phase 7's own four are the same shape:
 //! each converged toward an argued floor over dozens of slices, the same trajectory
@@ -72,7 +75,7 @@ impl Report {
 }
 
 /// Run every probe against the tree rooted at `root` (the repo root). Used by the CLI's
-/// full report; the gating test uses the fourteen gated probes alone
+/// full report; the gating test uses the fifteen gated probes alone
 /// ([`gated_disagreements`]) so it never pays for a workspace-wide clippy pass
 /// (`wildcard_arms`) just to check the probes that are actually diffed.
 pub fn run(root: &Path) -> Report {
@@ -81,7 +84,7 @@ pub fn run(root: &Path) -> Report {
     Report { probes }
 }
 
-/// The thirteen gated (zero/closure) probes only — what [`gated_disagreements`] diffs.
+/// The fifteen gated (zero/closure) probes only — what [`gated_disagreements`] diffs.
 fn run_gated(root: &Path) -> Vec<Probe> {
     vec![
         workspace_lints(root),
@@ -98,6 +101,7 @@ fn run_gated(root: &Path) -> Vec<Probe> {
         verbatim_origins(root),
         verbatim_sites(root),
         incremental_query_types(root),
+        unconsumed_ir_items(root),
     ]
 }
 
@@ -2191,6 +2195,239 @@ fn any_real_code_line(files: &[(PathBuf, String)], needle: &str) -> bool {
     })
 }
 
+// --- Gated probe 15: unconsumed_ir_items ------------------------------------
+
+/// Slice D3 of #1542 (`design/archive/retired-tracks.md`, the IR cutover's own
+/// closing summary): the adoption probe the 30 August 2026 post-restructuring
+/// review (`design/reviews/2026-08-30-post-restructuring-review.md`, Part 5 §8)
+/// asked for — for each `pub` item in `bynk-ir/src` and `bynk-lower/src`, does
+/// a production call site exist outside the owning crate and outside a test
+/// module? That review found phase 6 had shipped an expression IR nothing
+/// consumed (fifteen `bynk-lower` entry points, twenty-one `bynk-ir` types),
+/// invisible to every existing gate because each of them certifies that a name
+/// *exists* in a directory, not that anything *reads* it. Scoped to the two IR
+/// crates because their entire purpose is to be consumed elsewhere: a `pub`
+/// item in either with no reader in another crate is, by construction, either
+/// dead or a second path waiting to be wired in — the P5 failure
+/// (`bynk-greenfield-compiler.md`) both phases 6 and 8 reproduced.
+///
+/// Reads **0** at its own landing, by construction: Slices D0–D2 deleted every
+/// unconsumed item (D1 also demoted the two crate-internal helpers,
+/// `lower_fn_sig_ir_from_types`/`lower_op_sig_ir_from_commons`, that would
+/// otherwise have read as 2). Gated as a ratchet: a new `pub` item in either
+/// crate with no consumer moves it off zero and fails
+/// `greenfield_status_table_is_current`, so the "available but unwired" state
+/// cannot land silently again. The reading names the offending items so the
+/// failure is actionable, not just a count.
+///
+/// **What counts as a consumer.** A non-comment line, outside any `#[cfg(test)]
+/// mod` range ([`test_mod_ranges`]), in a workspace crate's `src/` that is
+/// **neither owner crate**, containing the item's name as a whole word. The
+/// two owners do not vouch for each other, on purpose (review of this slice's
+/// own PR, #1581): run against pre-D0 `main` with only the owning crate
+/// excluded, every one of phase 6's twenty-one unconsumed `bynk-ir` types
+/// would have read as consumed, because `bynk-lower`'s own unconsumed
+/// constructors named them — the probe would have missed half the surface it
+/// was built to see. With both excluded, its first honest run read 5
+/// (`IndexIr` and the four `MUTATING_*_OPS` tables, read only from
+/// `bynk-lower`), resolved by inlining the alias and moving the tables beside
+/// their one reader rather than arguing a floor. Text-level, like every probe
+/// in this file — a name that happens to be shared with an unrelated item in
+/// another crate would read as consumed (a false negative for the ratchet,
+/// never a false positive that blocks a PR), accepted the same way
+/// [`ts_writes`]'s own known over-count is. Items are `pub` at column zero
+/// only — `fn`, `struct`, `enum`, `type`, `const`, `static`, `trait`, `union`,
+/// with any `async`/`unsafe`/`const`/`extern` qualifier on a `fn` — see
+/// [`column_zero_pub_item_name`]: `pub(crate)` is by definition not offered
+/// to another crate, a `pub` item nested inside an `impl` block is reachable
+/// only through its owner (which is what gets counted), and `pub use`/`pub
+/// mod` re-export rather than declare.
+fn unconsumed_ir_items(root: &Path) -> Probe {
+    let owners = ["bynk-ir", "bynk-lower"];
+    let mut owner_files = Vec::new();
+    for owner in owners {
+        for (path, contents) in rust_files_relative(&root.join(owner).join("src")) {
+            owner_files.push((owner.to_string(), path, contents));
+        }
+    }
+    let consumer_files = workspace_crate_src_files(root);
+    let unconsumed = unconsumed_pub_items(&owners, &owner_files, &consumer_files);
+    let reads = if unconsumed.is_empty() {
+        "0".to_string()
+    } else {
+        format!("{} ({})", unconsumed.len(), unconsumed.join(", "))
+    };
+    Probe {
+        name: "unconsumed_ir_items",
+        gated: true,
+        reads,
+    }
+}
+
+/// Every `.rs` file under `<crate>/src` for every workspace crate — each entry
+/// tagged with its crate directory name so [`unconsumed_pub_items`] can exclude
+/// an item's own crate. A workspace crate is any immediate child of `root` with
+/// both a `Cargo.toml` and a `src/`, the same shape every `members` entry in the
+/// root manifest has; reading the manifest itself would add a TOML parse for no
+/// gain in precision.
+fn workspace_crate_src_files(root: &Path) -> Vec<(String, PathBuf, String)> {
+    let mut out = Vec::new();
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return out;
+    };
+    let mut crates: Vec<PathBuf> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.join("Cargo.toml").is_file() && p.join("src").is_dir())
+        .collect();
+    crates.sort();
+    for krate in crates {
+        let name = krate
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        for (path, contents) in rust_files_relative(&krate.join("src")) {
+            out.push((name.clone(), path, contents));
+        }
+    }
+    out
+}
+
+/// [`unconsumed_ir_items`]'s counting logic over explicit `(crate, relative
+/// path, contents)` lists — see [`rust_files_relative`] for why this isn't
+/// `root: &Path`. Returns `crate::item` for every column-zero `pub` item in
+/// `owner_files` that no non-comment, non-test line in a file belonging to a
+/// crate outside `owners` names as a whole word; sorted and deduplicated (a
+/// name declared in two files of one crate is one item, not two), so the
+/// reading is stable across runs and across a crate being split into modules.
+///
+/// Each consumer file is split and its `#[cfg(test)]` ranges computed once,
+/// up front, not once per candidate item (review of #1581): this runs under
+/// `cargo test --workspace` on every Rust-touching PR, and the failure path —
+/// an item with no consumer — is exactly the one that scans every file.
+fn unconsumed_pub_items(
+    owners: &[&str],
+    owner_files: &[(String, PathBuf, String)],
+    consumer_files: &[(String, PathBuf, String)],
+) -> Vec<String> {
+    let mut items: Vec<(String, String)> = Vec::new();
+    for (krate, _, contents) in owner_files {
+        let lines: Vec<&str> = contents.lines().collect();
+        let ranges = test_mod_ranges(&lines);
+        for (i, line) in lines.iter().enumerate() {
+            if in_test_range(i, &ranges) {
+                continue;
+            }
+            if let Some(name) = column_zero_pub_item_name(line) {
+                items.push((krate.clone(), name.to_string()));
+            }
+        }
+    }
+    items.sort();
+    items.dedup();
+
+    // Production, non-owner lines only — preprocessed once.
+    let consumer_lines: Vec<&str> = consumer_files
+        .iter()
+        .filter(|(krate, _, _)| !owners.contains(&krate.as_str()))
+        .flat_map(|(_, _, contents)| {
+            let lines: Vec<&str> = contents.lines().collect();
+            let ranges = test_mod_ranges(&lines);
+            lines
+                .iter()
+                .enumerate()
+                .filter(|(i, line)| !in_test_range(*i, &ranges) && !is_line_comment(line))
+                .map(|(_, line)| *line)
+                .collect::<Vec<_>>()
+        })
+        .collect();
+
+    items
+        .iter()
+        .filter(|(_, name)| !consumer_lines.iter().any(|line| contains_word(line, name)))
+        .map(|(owner, name)| format!("{owner}::{name}"))
+        .collect()
+}
+
+/// The name of a column-zero `pub` item declaration, if `line` is one: `pub`
+/// followed by `fn`, `struct`, `enum`, `type`, `const`, `static`, `trait` or
+/// `union`, where a `fn` may carry `async`/`unsafe`/`const`/`extern "…"`
+/// qualifiers in any order. `pub(crate)`/`pub(super)` do not qualify (they
+/// are not offered to other crates), and neither does anything indented (a
+/// method or associated item, reachable only through its owner), nor `pub
+/// use`/`pub mod` (re-exports and module declarations, not items).
+fn column_zero_pub_item_name(line: &str) -> Option<&str> {
+    let mut rest = line.strip_prefix("pub ")?;
+    // `pub const fn` / `pub async unsafe fn` / `pub unsafe extern "C" fn` …:
+    // peel qualifiers until the item keyword is exposed. A bare `pub const X`
+    // is a constant, not a qualifier, so `const` only peels when a `fn`
+    // (possibly behind further qualifiers) follows it.
+    loop {
+        if let Some(r) = rest
+            .strip_prefix("async ")
+            .or_else(|| rest.strip_prefix("unsafe "))
+        {
+            rest = r;
+            continue;
+        }
+        if let Some(r) = rest.strip_prefix("extern ") {
+            // `extern "C" fn` — skip the ABI string if present.
+            let r = r.trim_start();
+            let r = if let Some(after_quote) = r.strip_prefix('"') {
+                after_quote
+                    .find('"')
+                    .map(|q| after_quote[q + 1..].trim_start())
+                    .unwrap_or(r)
+            } else {
+                r
+            };
+            rest = r;
+            continue;
+        }
+        if let Some(r) = rest.strip_prefix("const ")
+            && (r.starts_with("fn ")
+                || r.starts_with("async ")
+                || r.starts_with("unsafe ")
+                || r.starts_with("extern "))
+        {
+            rest = r;
+            continue;
+        }
+        break;
+    }
+    let rest = [
+        "fn ", "struct ", "enum ", "type ", "const ", "static ", "trait ", "union ",
+    ]
+    .iter()
+    .find_map(|kw| rest.strip_prefix(kw))?;
+    let end = rest
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .unwrap_or(rest.len());
+    (end > 0).then(|| &rest[..end])
+}
+
+/// Does `line` contain `word` as a whole identifier — not as a prefix or
+/// suffix of a longer one (`IrExpr` inside `IrExprKind` must not count)?
+fn contains_word(line: &str, word: &str) -> bool {
+    let bytes = line.as_bytes();
+    let mut from = 0;
+    while let Some(pos) = line[from..].find(word) {
+        let start = from + pos;
+        let end = start + word.len();
+        let before_ok = start == 0 || !is_ident_byte(bytes[start - 1]);
+        let after_ok = end == bytes.len() || !is_ident_byte(bytes[end]);
+        if before_ok && after_ok {
+            return true;
+        }
+        from = start + 1;
+    }
+    false
+}
+
+fn is_ident_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_'
+}
+
 // --- Reported probe 1: wildcard_arms --------------------------------------
 
 /// R2.12. `clippy::wildcard_enum_match_arm` diagnostics, forced on via `-W` so the
@@ -2403,7 +2640,8 @@ pub fn render_table(report: &Report) -> String {
     out.push_str(
         "Track slice T0.0 (#999); `ts_writes`/`ts_any` added by P7.0 (#1296); \
          `verbatim_origins`/`verbatim_sites` added by P7.5 (#1307); \
-         `incremental_query_types`/`keystroke_latency` added by P8.0 (#1510). Fourteen \
+         `incremental_query_types`/`keystroke_latency` added by P8.0 (#1510); \
+         `unconsumed_ir_items` added by Slice D3 of the IR cutover (#1542). Fifteen \
          probes are gated — a disagreement between this file and a fresh run fails \
          `greenfield_status_table_is_current` (`xtask/tests/greenfield_status.rs`). \
          Five are trend probes, reported only.\n\n",
@@ -2439,10 +2677,10 @@ pub fn render_table(report: &Report) -> String {
 
 /// Every gated probe whose live reading disagrees with the committed table's, as
 /// `(probe name, committed, live)`. Trend probes are never compared, and never
-/// computed here — this only runs the fourteen gated probes, so checking currency never
+/// computed here — this only runs the fifteen gated probes, so checking currency never
 /// pays for `wildcard_arms`'s workspace-wide clippy pass. For a caller that has already
 /// run the full report (e.g. to print it), use [`gated_disagreements_in`] instead so the
-/// fourteen gated probes aren't computed a second time.
+/// fifteen gated probes aren't computed a second time.
 pub fn gated_disagreements(root: &Path) -> Vec<(String, String, String)> {
     gated_disagreements_in(&run_gated(root), root)
 }
@@ -2699,6 +2937,242 @@ mod tests {
     fn cfg_test_external_mod_declaration_does_not_open_a_test_region() {
         let src = "#[cfg(test)]\npub(crate) mod testkit;\n\nfn load(p: &Path) -> String {\n    std::fs::read_to_string(p).unwrap()\n}\n";
         assert!(has_production_std_fs(src));
+    }
+
+    // --- unconsumed_ir_items (Slice D3 of #1542) ----------------------------
+
+    fn files(entries: &[(&str, &str, &str)]) -> Vec<(String, PathBuf, String)> {
+        entries
+            .iter()
+            .map(|(k, p, c)| (k.to_string(), PathBuf::from(p), c.to_string()))
+            .collect()
+    }
+
+    /// The ordinary case: a `pub` item read from another crate's production
+    /// code is consumed; one read from nowhere is not.
+    #[test]
+    fn unconsumed_pub_items_reports_only_items_with_no_other_crate_reader() {
+        let owners = files(&[(
+            "bynk-ir",
+            "lib.rs",
+            "pub struct Used;\npub struct Unused;\npub fn helper() {}\n",
+        )]);
+        let consumers = files(&[
+            (
+                "bynk-ir",
+                "lib.rs",
+                "pub struct Used;\npub struct Unused;\npub fn helper() {}\n",
+            ),
+            (
+                "bynk-emit",
+                "a.rs",
+                "fn f(x: bynk_ir::Used) { helper(); }\n",
+            ),
+        ]);
+        assert_eq!(
+            unconsumed_pub_items(&["bynk-ir"], &owners, &consumers),
+            vec!["bynk-ir::Unused"]
+        );
+    }
+
+    /// A mention in a comment, inside a `#[cfg(test)]` module, or in the
+    /// owning crate itself is not a consumer.
+    #[test]
+    fn unconsumed_pub_items_ignores_comments_tests_and_the_owning_crate() {
+        let owners = files(&[(
+            "bynk-lower",
+            "lib.rs",
+            "pub fn lower_x() {}\npub fn lower_y() {}\npub fn lower_z() {}\n",
+        )]);
+        let consumers = files(&[
+            (
+                "bynk-lower",
+                "lib.rs",
+                "pub fn lower_x() {}\nfn own() { lower_x(); }\n",
+            ),
+            (
+                "bynk-emit",
+                "a.rs",
+                "// lower_y() used to be called here\n/// and [`lower_y`] linked here\n",
+            ),
+            (
+                "bynk-emit",
+                "b.rs",
+                "fn prod() {}\n\n#[cfg(test)]\nmod tests {\n    fn t() { lower_z(); }\n}\n",
+            ),
+        ]);
+        assert_eq!(
+            unconsumed_pub_items(&["bynk-lower"], &owners, &consumers),
+            vec![
+                "bynk-lower::lower_x",
+                "bynk-lower::lower_y",
+                "bynk-lower::lower_z"
+            ]
+        );
+    }
+
+    /// Whole-word matching: `IrExpr` inside `IrExprKind` is not a read of
+    /// `IrExpr`, and `pub(crate)`/indented items are not offered to other
+    /// crates so are never counted either way.
+    #[test]
+    fn unconsumed_pub_items_matches_whole_words_and_skips_non_public_items() {
+        let owners = files(&[(
+            "bynk-ir",
+            "lib.rs",
+            "pub struct IrExpr;\npub enum IrExprKind {}\npub(crate) fn internal() {}\nimpl IrExpr {\n    pub fn method() {}\n}\n",
+        )]);
+        let consumers = files(&[("bynk-emit", "a.rs", "fn f(k: IrExprKind) {}\n")]);
+        assert_eq!(
+            unconsumed_pub_items(&["bynk-ir"], &owners, &consumers),
+            vec!["bynk-ir::IrExpr"]
+        );
+    }
+
+    /// The two IR crates do not vouch for each other (review of #1581): a
+    /// `bynk-ir` type read only from `bynk-lower` is unconsumed, and so is a
+    /// `bynk-lower` helper read only from `bynk-ir` — pre-D0 `main`'s exact
+    /// shape, where `bynk-lower`'s own unconsumed constructors named every
+    /// unconsumed `bynk-ir` type.
+    #[test]
+    fn unconsumed_pub_items_does_not_let_owner_crates_vouch_for_each_other() {
+        let owners = files(&[
+            (
+                "bynk-ir",
+                "lib.rs",
+                "pub struct IrExpr;\npub struct Shape;\n",
+            ),
+            (
+                "bynk-lower",
+                "lib.rs",
+                "pub fn lower_expr_ir() -> IrExpr { IrExpr }\npub fn shape() -> Shape { Shape }\n",
+            ),
+        ]);
+        let consumers = files(&[
+            (
+                "bynk-ir",
+                "lib.rs",
+                "pub struct IrExpr;\npub struct Shape;\n",
+            ),
+            (
+                "bynk-lower",
+                "lib.rs",
+                "pub fn lower_expr_ir() -> IrExpr { IrExpr }\npub fn shape() -> Shape { Shape }\n",
+            ),
+            (
+                "bynk-emit",
+                "a.rs",
+                "fn f() -> Shape { bynk_lower::shape() }\n",
+            ),
+        ]);
+        assert_eq!(
+            unconsumed_pub_items(&["bynk-ir", "bynk-lower"], &owners, &consumers),
+            vec!["bynk-ir::IrExpr", "bynk-lower::lower_expr_ir"]
+        );
+    }
+
+    /// One item declared in two files of the same crate (a split module) is
+    /// reported once, not twice.
+    #[test]
+    fn unconsumed_pub_items_deduplicates_a_name_declared_in_two_files() {
+        let owners = files(&[
+            ("bynk-lower", "a.rs", "pub fn twice() {}\n"),
+            ("bynk-lower", "b.rs", "pub fn twice() {}\n"),
+        ]);
+        assert_eq!(
+            unconsumed_pub_items(&["bynk-lower"], &owners, &[]),
+            vec!["bynk-lower::twice"]
+        );
+    }
+
+    #[test]
+    fn column_zero_pub_item_name_accepts_every_item_kind_and_fn_qualifier() {
+        assert_eq!(column_zero_pub_item_name("pub fn f(x: i32) {}"), Some("f"));
+        assert_eq!(column_zero_pub_item_name("pub struct S<'a> {"), Some("S"));
+        assert_eq!(column_zero_pub_item_name("pub enum E {"), Some("E"));
+        assert_eq!(
+            column_zero_pub_item_name("pub type T = (u8, u8);"),
+            Some("T")
+        );
+        assert_eq!(
+            column_zero_pub_item_name("pub const C: &[&str] = &[];"),
+            Some("C")
+        );
+        assert_eq!(
+            column_zero_pub_item_name("pub static S: &[&str] = &[];"),
+            Some("S")
+        );
+        assert_eq!(column_zero_pub_item_name("pub trait Tr {}"), Some("Tr"));
+        assert_eq!(column_zero_pub_item_name("pub union U {"), Some("U"));
+        // `fn` qualifiers, alone and stacked (review of #1581).
+        assert_eq!(column_zero_pub_item_name("pub async fn a() {}"), Some("a"));
+        assert_eq!(column_zero_pub_item_name("pub unsafe fn u() {}"), Some("u"));
+        assert_eq!(column_zero_pub_item_name("pub const fn c() {}"), Some("c"));
+        assert_eq!(
+            column_zero_pub_item_name("pub extern \"C\" fn x() {}"),
+            Some("x")
+        );
+        assert_eq!(
+            column_zero_pub_item_name("pub const unsafe fn cu() {}"),
+            Some("cu")
+        );
+        assert_eq!(
+            column_zero_pub_item_name("pub unsafe extern \"C\" fn ue() {}"),
+            Some("ue")
+        );
+        assert_eq!(
+            column_zero_pub_item_name("pub async unsafe fn au() {}"),
+            Some("au")
+        );
+        // Not items offered to another crate.
+        assert_eq!(column_zero_pub_item_name("pub(crate) fn g() {}"), None);
+        assert_eq!(column_zero_pub_item_name("pub(super) struct P;"), None);
+        assert_eq!(column_zero_pub_item_name("    pub fn method() {}"), None);
+        assert_eq!(column_zero_pub_item_name("pub use foo::Bar;"), None);
+        assert_eq!(column_zero_pub_item_name("pub mod m;"), None);
+        assert_eq!(column_zero_pub_item_name("pub impl Foo {}"), None);
+    }
+
+    /// [`workspace_crate_src_files`] tags each file with its crate directory
+    /// and only walks directories that are actually crates (a `Cargo.toml`
+    /// *and* a `src/`), so a stray directory with one but not the other is
+    /// neither an owner nor a consumer.
+    #[test]
+    fn workspace_crate_src_files_tags_files_by_crate_and_skips_non_crates() {
+        let root = std::env::temp_dir().join(format!(
+            "bynk-xtask-unconsumed-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let mk = |rel: &str, contents: &str| {
+            let p = root.join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, contents).unwrap();
+        };
+        mk("alpha/Cargo.toml", "[package]\nname = \"alpha\"\n");
+        mk("alpha/src/lib.rs", "pub fn a() {}\n");
+        mk("alpha/src/inner/mod.rs", "pub fn b() {}\n");
+        mk("beta/Cargo.toml", "[package]\nname = \"beta\"\n");
+        mk("beta/src/lib.rs", "fn c() { alpha::a() }\n");
+        mk("no-src/Cargo.toml", "[package]\nname = \"no-src\"\n");
+        mk("no-manifest/src/lib.rs", "pub fn d() {}\n");
+        let files = workspace_crate_src_files(&root);
+        let _ = std::fs::remove_dir_all(&root);
+        let mut tagged: Vec<(String, String)> = files
+            .iter()
+            .map(|(k, p, _)| (k.clone(), p.to_string_lossy().replace('\\', "/")))
+            .collect();
+        tagged.sort();
+        assert_eq!(
+            tagged,
+            vec![
+                ("alpha".to_string(), "inner/mod.rs".to_string()),
+                ("alpha".to_string(), "lib.rs".to_string()),
+                ("beta".to_string(), "lib.rs".to_string()),
+            ]
+        );
     }
 
     /// Regression test for the bug caught in review: a file with **two** scattered

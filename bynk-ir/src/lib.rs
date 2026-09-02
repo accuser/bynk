@@ -7,7 +7,7 @@
 //! `bynk-emit` site consumes — a service's protocol ([`ProtocolIr`]), a
 //! handler's kind ([`IrHandlerKind`]) and route cache ([`CacheIr`]), a
 //! `type` declaration's structure ([`TypeShape`]), an agent store field's
-//! storage shape ([`StoreFieldIr`]/[`StoreKindIr`]/[`IndexIr`]), a
+//! storage shape ([`StoreFieldIr`]/[`StoreKindIr`]), a
 //! capability op's or attached method's signature ([`OpSig`]/[`FnSig`]), a
 //! `given` capability reference ([`CapRefIr`]), an actor's authentication
 //! seam ([`ActorSeamIr`]), an events subscription's pattern and shape
@@ -16,8 +16,14 @@
 //! them: four AST-walk helpers `bynk-emit` reads ([`block_uses_emit`],
 //! [`walk_block_exprs`], [`walk_exprs`], [`match_needs_if_chain`] — they
 //! live here rather than in the emitter because they were written to be
-//! shared with `bynk-lower`, and `bynk-emit` is the consumer that remains)
-//! and the four mutating-op tables `bynk_lower::body_writes_state` reads.
+//! shared with `bynk-lower`, and `bynk-emit` is the consumer that remains).
+//!
+//! **Every `pub` item here has a reader outside both `bynk-ir` and
+//! `bynk-lower`**, and the gated `unconsumed_ir_items` probe
+//! (`cargo xtask greenfield-status`) fails CI if one ever does not — the
+//! two crates do not get to vouch for each other, since a `bynk-ir` type
+//! constructed only by a `bynk-lower` helper nobody calls is exactly the
+//! shape phase 6 shipped.
 //!
 //! **What this crate is not, and was.** Phase 6 of
 //! `design/bynk-compiler-trajectory.md` (`the-ir.md`, #1137) built here a
@@ -27,7 +33,7 @@
 //! that constructed it. The emitter never consumed any of it: its own
 //! string-emitting lowerer kept reading the AST, and the one production
 //! route into the IR constructors lowered every events-service handler body
-//! and discarded the result. The follow-on track (`the-ir-cutover.md`,
+//! and discarded the result. The follow-on track (the IR cutover,
 //! #1542) priced finishing that cutover, found it was a second code
 //! generator rather than a retype, and re-settled on deletion: Slices D0–D2
 //! removed the detour, the constructors and those 23 types. The refusal is
@@ -227,7 +233,7 @@ pub struct EventSubscriberShape {
 pub struct EventPatternIr {
     /// `(field name, matched value)`, in source order — no dedicated
     /// `EventPatternFieldIr` struct: a two-part fact with no further
-    /// structure, the same plain-tuple shape [`EmbedIr`] uses.
+    /// structure, the same plain-tuple shape `TypeShape::Sum::embeds` uses.
     pub fields: Vec<(String, EventPatternValueIr)>,
 }
 
@@ -293,10 +299,12 @@ pub enum TypeShape {
     /// `refinement` from a future store field too.
     Record { fields: Vec<(String, TyId)> },
     /// Every variant the sum declares, each with its own payload field
-    /// list, plus any `embeds` clauses ([DECISION C]: [`EmbedIr`]).
+    /// list, plus any `embeds` clauses ([DECISION C], #1161) — each a
+    /// `(source type, target variant tag)` pair, a two-part fact with no
+    /// further structure and so a plain tuple, not a dedicated struct.
     Sum {
         variants: Vec<(String, Vec<(String, TyId)>)>,
-        embeds: Vec<EmbedIr>,
+        embeds: Vec<(TyId, String)>,
     },
     /// `type X = base where refinement` (`Refined`) or `type X = unsafe
     /// base ...` (`Opaque`, `opaque: true`). `refinement` is `Option`, not
@@ -308,12 +316,6 @@ pub enum TypeShape {
         opaque: bool,
     },
 }
-
-/// The payload of [`TypeShape::Sum`]'s own `embeds` — a resolved `embeds`
-/// clause ([DECISION C], #1161): the source type paired with the target
-/// variant's own tag name. A plain tuple, not a dedicated struct: a
-/// two-part fact with no further structure.
-pub type EmbedIr = (TyId, String);
 
 /// An agent `store` field's storage shape (`design/bynk-greenfield-compiler.md`
 /// §6.6, R6.14, #1163) — `bynk_lower::lower_store_field_shape_ir`'s return
@@ -341,8 +343,14 @@ pub struct StoreFieldIr {
     /// `bynk_lower::lower_store_field_shape_ir` guards against it, mirroring the
     /// shipped emitter's own `store_map_indexes` dedup. Empty for every kind
     /// but `Map`, the only kind `@indexed` attaches to (`ANNOTATIONS`'s own
-    /// registry, `bynk-check/src/context_checks.rs`).
-    pub indexed: Vec<IndexIr>,
+    /// registry, `bynk-check/src/context_checks.rs`). Each key is the
+    /// indexed value-field's own name, a bare `String` ([DECISION C],
+    /// #1163): the sibling table's own emitted shape
+    /// (`Record<string, string[]>`) is fixed by the *map's own key type*,
+    /// not the indexed field's, so the indexed field's resolved type is not
+    /// needed downstream — the same "no further structure" plain-value
+    /// shape `TypeShape::Sum::embeds` uses.
+    pub indexed: Vec<String>,
 }
 
 /// P6.7's real `StoreKindIr` (Part 6.6, R6.14, #1163) — five variants, one
@@ -366,17 +374,6 @@ pub enum StoreKindIr {
     /// `Log[T] [@retain(...)]` — element type, optional retain millis.
     Log(TyId, Option<i64>),
 }
-
-/// The payload of [`StoreFieldIr::indexed`] — one `@indexed(by: …)` key,
-/// identified by the indexed value-field's own name ([DECISION C], #1163):
-/// referenced by the reference's own `StoreFieldIr.indexed: Vec<IndexIr>`
-/// but never defined anywhere in the document, the same "referenced, not
-/// specified" gap #1161's own Decision C named for [`EmbedIr`]. No
-/// dedicated struct: the sibling table's own emitted shape
-/// (`Record<string, string[]>`) is fixed by the *map's own key type*, not
-/// the indexed field's, so the indexed field's resolved type is not needed
-/// downstream — mirrors `EmbedIr`'s own "no further structure" precedent.
-pub type IndexIr = String;
 
 /// #1187's slice 3: a handler's resolved actor-verification seam, wrapping
 /// `bynk-check`'s own five already-resolved seam structs
@@ -530,35 +527,6 @@ pub fn block_uses_emit(b: &Block, callees: &HashMap<ExprId, bynk_check::checker:
     });
     found
 }
-
-/// Decision C (#1165): the closed sets of mutating storage-op names, one
-/// `pub` constant per kind group — read by `bynk_lower::body_writes_state`'s
-/// own `Callee::Store`-keyed write-detection walk (P6.8, Decision B), which
-/// needs no receiver-name gate at all: a `Callee::Store` already carries the
-/// field's own resolved identity, not a name that could be shadowed. Until
-/// #1196, this module also had its own bare-`Ident`-receiver-name-matching
-/// reader (`block_writes_state`'s own `mutating_op`, deleted) — a single
-/// shared source avoided the class of drift #1164's own review caught twice
-/// for a different pair of independently hand-maintained copies
-/// (`cache_ttl_millis`'s `DurationLit` extraction, `store_map_indexes`'s
-/// dedup); now there is only the one reader. Live in `bynk-ir` (not
-/// `bynk-emit` or `bynk-lower` specifically, moved here from
-/// `bynk-emit::emitter` at the P7.12 crate carve, no behaviour change)
-/// since a future `bynk-emit`-side reader (a `Service` handler's own write
-/// detection, say) may need them again, the same reasoning that kept them
-/// `pub(crate)` rather than `bynk-lower`-private before the carve.
-/// `Map`/`Cache` share one list — both support the same four entry ops —
-/// rather than two identical ones.
-pub const MUTATING_MAP_CACHE_OPS: &[&str] = &["put", "remove", "update", "upsert"];
-/// v0.83: `<set>.add`/`<set>.remove` mutate a `store Set[T]` field.
-pub const MUTATING_SET_OPS: &[&str] = &["add", "remove"];
-/// v0.95: `<log>.append` mutates the durable array (ADR 0121) — every other
-/// `Log` method is a query-lifting read.
-pub const MUTATING_LOG_OPS: &[&str] = &["append"];
-/// v0.98 (ADR 0125): `<cell>.update(f)` is a read-modify-write of the
-/// working state — the bare `:=` write form is `Statement::Assign`, checked
-/// separately and unconditionally, no method name involved.
-pub const MUTATING_CELL_OPS: &[&str] = &["update"];
 
 pub fn walk_block_exprs(b: &Block, f: &mut impl FnMut(&Expr)) {
     let mut exprs = Vec::new();

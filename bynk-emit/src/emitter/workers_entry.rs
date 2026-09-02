@@ -370,7 +370,7 @@ pub(crate) fn emit_worker_entry(
     for sname in &service_names {
         let service = table.services.get(*sname).unwrap();
         for h in &service.handlers {
-            // Slice 1 of `#1542` (`design/tracks/the-ir-cutover.md` §5): reads
+            // Slice 1 of `#1542` (the IR cutover, `design/archive/retired-tracks.md` §5): reads
             // `IrHandlerKind::Http`'s own `method`/`path` directly — the IR
             // payload P6.24a already computes here, no longer re-derived from
             // `h.kind` a second time. `HttpRoute::method` is `IrHttpMethod`
