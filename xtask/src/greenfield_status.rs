@@ -27,7 +27,8 @@
 //! churn-avoidance principle. `incremental_query_types` is a different shape again —
 //! phase 8's own probe reads a one-time existence proof, not a count trending toward a
 //! floor (settled §5/Q5, ADR 0414), re-settled by #1537 to certify that the two
-//! levels that never found a consumer stay deleted; see its own doc comment. A disagreement between a
+//! levels that never found a consumer stay deleted; see its own doc comment. A
+//! disagreement between a
 //! fresh run and the committed table fails `greenfield_status_table_is_current`
 //! (`xtask/tests/greenfield_status.rs`), which rides both the `test` job (`cargo test
 //! --workspace`, any Rust-touching PR) and the `drift` job's existing `cargo test -p
@@ -2024,13 +2025,22 @@ fn ts_named_imports_from_runtime_modules(src: &str) -> Vec<String> {
 /// 3. **Stability test** — some `#[test]` under `bynk-check/tests/` proves
 ///    `UnitSignature`'s stability under a body edit (P8.2): any test name containing
 ///    both `unit_signature` and `stab`.
-/// 4. **Definition and project levels absent** — no `struct ProjectGraph` in
-///    `bynk-check`/`bynk-project`, and no `DefId`-keyed `fn body(`/`fn type_of(`
-///    (`checker.rs`'s own pre-existing per-expression `type_of`, which has no `DefId`
-///    parameter, does not count — the false positive #1510's first run caught). This
-///    clause is what makes the probe a gate on #1537 rather than a memorial: re-adding
-///    either level changes the committed reading, so it cannot land without a consumer
-///    and a re-settling — the trigger R3.15/#1523 names.
+/// 4. **Definition and project levels absent** — no `struct ProjectGraph`, and no
+///    `DefId`-keyed `fn body(`/`fn type_of(`, in **any** workspace crate's `src/`
+///    ([`workspace_crate_src_files`], the same walk `unconsumed_ir_items` uses, minus
+///    `xtask` itself, whose source spells the needles) — not just the two crates
+///    phase 8 landed them in, since R3.13's own table
+///    assigns `DefId` bindings to a `bynk-resolve` crate that does not exist yet and
+///    a rebuild might put them there (review of #1582). `checker.rs`'s own
+///    pre-existing per-expression `type_of`, which has no `DefId` parameter, does
+///    not count — the false positive #1510's first run caught, now with the opposite
+///    consequence. This clause is what makes the probe a gate on #1537 rather than a
+///    memorial: re-adding either level changes the committed reading and fails the
+///    currency test, so it needs a consumer and a re-settling — the trigger
+///    R3.15/#1523 names. **What the gate does not see, stated rather than asserted
+///    away:** a `DefId` parameter wrapped onto the line after `fn body(` (the
+///    same-line rule [`defid_query_fn_present`] documents), or a query function under
+///    any other name. Text-level, like every probe in this file.
 ///
 /// Every clause is a static read of the tree (never a nested build or test run — see
 /// [`unit_signature_present`]'s own doc comment for why a "does the stability test
@@ -2044,7 +2054,15 @@ fn incremental_query_types(root: &Path) -> Probe {
     let unit_present = unit_signature_present(&check_src);
     let cache_migrated = shared_cache_migrated(&ide_src, &project_src);
     let test_present = stability_test_present(&check_tests);
-    let readded = deleted_levels_present(&check_src, &project_src);
+    // Every workspace crate but this one: the harness's own source spells the
+    // needles it scans for (in these very functions and their tests), so it
+    // would read as a re-add of both levels on every run.
+    let workspace_src: Vec<(PathBuf, String)> = workspace_crate_src_files(root)
+        .into_iter()
+        .filter(|(krate, _, _)| krate != "xtask")
+        .map(|(_, path, contents)| (path, contents))
+        .collect();
+    let readded = deleted_levels_present(&workspace_src);
 
     let reads = format!(
         "unit_signature {}; shared_cache {}; stability_test {}; definition/project levels {}",
@@ -2085,25 +2103,19 @@ fn unit_signature_present(check_src: &[(PathBuf, String)]) -> bool {
 }
 
 /// Clause 4 of [`incremental_query_types`]: which of the two levels #1537 deleted are
-/// back — `ProjectGraph` as a real struct in either crate, or a `DefId`-keyed
+/// back anywhere in `src` — `ProjectGraph` as a real struct, or a `DefId`-keyed
 /// `body`/`type_of` query function ([`defid_query_fn_present`]). Empty is the
 /// committed reading; any entry changes the table and fails the currency gate, which
 /// is the point.
-fn deleted_levels_present(
-    check_src: &[(PathBuf, String)],
-    project_src: &[(PathBuf, String)],
-) -> Vec<&'static str> {
+fn deleted_levels_present(src: &[(PathBuf, String)]) -> Vec<&'static str> {
     let mut found = Vec::new();
-    if any_real_code_line(check_src, "struct ProjectGraph")
-        || any_real_code_line(project_src, "struct ProjectGraph")
-    {
+    if any_real_code_line(src, "struct ProjectGraph") {
         found.push("ProjectGraph");
     }
-    let defid_src: Vec<(PathBuf, String)> = check_src.iter().chain(project_src).cloned().collect();
-    if defid_query_fn_present(&defid_src, "fn body(") {
+    if defid_query_fn_present(src, "fn body(") {
         found.push("Body");
     }
-    if defid_query_fn_present(&defid_src, "fn type_of(") {
+    if defid_query_fn_present(src, "fn type_of(") {
         found.push("TypeOf");
     }
     found
@@ -2195,7 +2207,8 @@ fn stability_test_present(check_tests: &[(PathBuf, String)]) -> bool {
 }
 
 /// Whether any line in `files` (excluding comments) contains `needle` — the shared
-/// existence-check primitive [`unit_signature_present`]/[`deleted_levels_present`]/[`shared_cache_migrated`] all use.
+/// existence-check primitive [`unit_signature_present`]/[`deleted_levels_present`]/
+/// [`shared_cache_migrated`] all use.
 fn any_real_code_line(files: &[(PathBuf, String)], needle: &str) -> bool {
     files.iter().any(|(_, contents)| {
         contents
@@ -4161,28 +4174,29 @@ commons app.demo {
     /// The committed reading after #1537: neither deleted level is back.
     #[test]
     fn deleted_levels_present_is_empty_when_neither_level_exists() {
-        assert!(deleted_levels_present(&[], &[]).is_empty());
+        assert!(deleted_levels_present(&[]).is_empty());
     }
 
-    /// Re-adding `ProjectGraph` in either crate flips the reading — both crates are
-    /// scanned because P8.3 (ADR 0415) landed it in `bynk-check`, not `bynk-project`
-    /// as first assumed, and a one-crate scan would have missed it then too.
+    /// Re-adding `ProjectGraph` anywhere flips the reading — the whole workspace is
+    /// scanned (review of #1582) because P8.3 (ADR 0415) already landed it in a
+    /// different crate from the one first assumed, and R3.13's table names a third
+    /// (`bynk-resolve`) that does not exist yet.
     #[test]
-    fn deleted_levels_present_sees_project_graph_in_either_crate() {
+    fn deleted_levels_present_sees_project_graph_wherever_it_lands() {
         let graph = "pub struct ProjectGraph {\n    units: HashMap<UnitId, Unit>,\n}\n";
         assert_eq!(
-            deleted_levels_present(&owned(&[("project_graph.rs", graph)]), &[]),
+            deleted_levels_present(&owned(&[("project_graph.rs", graph)])),
             vec!["ProjectGraph"]
         );
         assert_eq!(
-            deleted_levels_present(&[], &owned(&[("graph.rs", graph)])),
+            deleted_levels_present(&owned(&[("resolve/graph.rs", graph)])),
             vec!["ProjectGraph"]
         );
         assert!(
-            deleted_levels_present(
-                &owned(&[("lib.rs", "// a struct ProjectGraph used to live here\n")]),
-                &[]
-            )
+            deleted_levels_present(&owned(&[(
+                "lib.rs",
+                "// a struct ProjectGraph used to live here\n"
+            )]))
             .is_empty()
         );
     }
@@ -4195,13 +4209,10 @@ commons app.demo {
     /// real function's own signature text here too.
     #[test]
     fn deleted_levels_present_does_not_count_checkers_pre_existing_type_of() {
-        let found = deleted_levels_present(
-            &owned(&[(
-                "checker.rs",
-                "pub(crate) fn type_of(expr: &Expr, expected: Option<TyId>, ctx: &mut Ctx) -> Option<TyId> {\n",
-            )]),
-            &[],
-        );
+        let found = deleted_levels_present(&owned(&[(
+            "checker.rs",
+            "pub(crate) fn type_of(expr: &Expr, expected: Option<TyId>, ctx: &mut Ctx) -> Option<TyId> {\n",
+        )]));
         assert!(
             found.is_empty(),
             "checker.rs's own type_of has no DefId parameter and must not count: {found:?}"
@@ -4209,14 +4220,10 @@ commons app.demo {
     }
 
     #[test]
-    fn deleted_levels_present_sees_a_real_defid_keyed_body_and_type_of_in_either_crate() {
+    fn deleted_levels_present_sees_a_real_defid_keyed_body_and_type_of() {
         let queries = "pub fn body(id: DefId) -> Body {\n    todo!()\n}\n\npub fn type_of(id: DefId) -> TypeOf {\n    todo!()\n}\n";
         assert_eq!(
-            deleted_levels_present(&owned(&[("queries.rs", queries)]), &[]),
-            vec!["Body", "TypeOf"]
-        );
-        assert_eq!(
-            deleted_levels_present(&[], &owned(&[("queries.rs", queries)])),
+            deleted_levels_present(&owned(&[("queries.rs", queries)])),
             vec!["Body", "TypeOf"]
         );
     }
