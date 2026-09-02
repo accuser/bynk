@@ -132,6 +132,85 @@ fn render(errors: &[AttributedError]) -> Vec<RenderedError> {
         .collect()
 }
 
+/// Sorted, forward-slashed keys of a `PathBuf`-keyed map — for pinning a
+/// `ProjectAnalysis` field's file coverage without depending on platform
+/// path-separator rendering.
+fn sorted_path_keys<V>(m: &HashMap<PathBuf, V>) -> Vec<String> {
+    let mut ks: Vec<String> = m
+        .keys()
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
+        .collect();
+    ks.sort();
+    ks
+}
+
+fn sorted_keys<K: Ord + Clone, V>(m: &HashMap<K, V>) -> Vec<K> {
+    let mut ks: Vec<K> = m.keys().cloned().collect();
+    ks.sort();
+    ks
+}
+
+/// Expected file/unit coverage for [`assert_structural_coverage`] — grouped
+/// into a struct rather than seven parameters (clippy's `too_many_arguments`).
+struct ExpectedCoverage<'a> {
+    hints: &'a [&'a str],
+    locals: &'a [&'a str],
+    expr_types: &'a [&'a str],
+    requirements: &'a [&'a str],
+    sequence_info: &'a [&'a str],
+    boundary_info: &'a [&'a str],
+    doc_scope: &'a [&'a str],
+}
+
+/// Structural parity beyond `errors`: the ten other `ProjectAnalysis` fields
+/// `bynk-ide` reads and P4.2 exists to repoint — review feedback on #1117 (a
+/// fixture that pins two of twelve fields "cannot observe" a divergence in
+/// the other ten by construction). #1541 retired the differential this
+/// originally checked against `bynk-emit`'s `analyse_project_with`; these are
+/// now literal golden pins on `analyse_project` alone, not a comparison.
+/// `ty_intern` stays excluded: it's an opaque per-call intern table (`Types`
+/// exposes no length accessor), and `expr_types`'s key set (pinned here)
+/// already carries the signal a length would.
+fn assert_structural_coverage(a: &analysis::ProjectAnalysis, expected: &ExpectedCoverage) {
+    assert_eq!(
+        sorted_path_keys(&a.hints),
+        expected.hints,
+        "hints' file coverage"
+    );
+    assert_eq!(
+        sorted_path_keys(&a.locals),
+        expected.locals,
+        "locals' file coverage"
+    );
+    assert_eq!(
+        sorted_path_keys(&a.expr_types),
+        expected.expr_types,
+        "expr_types' file coverage"
+    );
+    assert_eq!(
+        sorted_path_keys(&a.requirements),
+        expected.requirements,
+        "requirements' file coverage"
+    );
+    assert_eq!(
+        sorted_keys(&a.sequence_info),
+        expected.sequence_info,
+        "sequence_info's unit coverage"
+    );
+    assert_eq!(
+        sorted_keys(&a.boundary_info),
+        expected.boundary_info,
+        "boundary_info's unit coverage"
+    );
+    assert_eq!(
+        sorted_keys(&a.doc_scope),
+        expected.doc_scope,
+        "doc_scope's unit coverage"
+    );
+    assert_eq!(a.index.foreign_refs.len(), 0, "index.foreign_refs");
+    assert_eq!(a.index.refinements.len(), 0, "index.refinements");
+}
+
 #[test]
 fn new_entry_point_reports_no_errors_on_a_clean_project() {
     let (root, overlay) = setup_project(
@@ -158,6 +237,19 @@ fn new_entry_point_reports_no_errors_on_a_clean_project() {
     assert_eq!(analysed.index.symbols.len(), 8);
     assert_eq!(analysed.index.calls.len(), 1);
     assert_eq!(analysed.index.impls.len(), 1);
+
+    assert_structural_coverage(
+        &analysed,
+        &ExpectedCoverage {
+            hints: &["demo/svc.bynk"],
+            locals: &["demo/svc.bynk"],
+            expr_types: &["demo/shared.bynk", "demo/svc.bynk"],
+            requirements: &["demo/svc.bynk"],
+            sequence_info: &["demo.svc"],
+            boundary_info: &["demo.svc"],
+            doc_scope: &["demo.shared", "demo.svc"],
+        },
+    );
 }
 
 /// Same fixture, but with an obvious semantic error (an unknown `given`
@@ -209,6 +301,21 @@ fn new_entry_point_reports_errors_on_a_broken_project() {
             },
         ],
         "renaming the `given` capability must report exactly this set of downstream errors"
+    );
+
+    // No hints: `hints::record`'s binding sites only fire on a clean
+    // type-check (ADR 0056); every unit here has at least one error.
+    assert_structural_coverage(
+        &analysed,
+        &ExpectedCoverage {
+            hints: &[],
+            locals: &["demo/svc.bynk"],
+            expr_types: &["demo/shared.bynk", "demo/svc.bynk"],
+            requirements: &["demo/svc.bynk"],
+            sequence_info: &["demo.svc"],
+            boundary_info: &["demo.svc"],
+            doc_scope: &["demo.shared", "demo.svc"],
+        },
     );
 }
 
