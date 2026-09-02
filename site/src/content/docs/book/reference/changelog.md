@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.289.68** | "xtask's `fs_below_driver`/`ts_writes` probes no longer carry exception entries for files P4.0/P7.5 already moved out of `bynk-emit` (#1561)" |
 | **v0.289.67** | Removed bynk-emit's unreachable `analyse_project`/`analyse_project_with` pub API and bynk-check's dev-dependency on bynk-emit |
 | **v0.289.66** | A `Span` with no file identity now carries `FileId::UNKNOWN`, not the id of the first interned file |
 | **v0.289.65** | "Phase 8's definition- and project-level query layer (`bynk-check`'s `queries.rs` and `project_graph.rs`, no production caller) is deleted; `UnitSignature` and its stability proof stay, and `incremental_query_types` now gates that the deleted levels stay deleted (#1537)" |
