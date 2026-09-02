@@ -26,7 +26,8 @@
 //! 0389/ADR 0390 (review of #1297), not an oversight of #999 Decision D's
 //! churn-avoidance principle. `incremental_query_types` is a different shape again —
 //! phase 8's own probe reads a one-time existence proof, not a count trending toward a
-//! floor (settled §5/Q5, ADR 0414); see its own doc comment. A disagreement between a
+//! floor (settled §5/Q5, ADR 0414), re-settled by #1537 to certify that the two
+//! levels that never found a consumer stay deleted; see its own doc comment. A disagreement between a
 //! fresh run and the committed table fails `greenfield_status_table_is_current`
 //! (`xtask/tests/greenfield_status.rs`), which rides both the `test` job (`cargo test
 //! --workspace`, any Rust-touching PR) and the `drift` job's existing `cargo test -p
@@ -1997,62 +1998,71 @@ fn ts_named_imports_from_runtime_modules(src: &str) -> Vec<String> {
 /// "keystroke-to-diagnostic latency by query level"), settled by #1509 (Q5, ADR 0414;
 /// `design/tracks/incrementality.md` §5) as a one-time **existence** proof, not a count
 /// trending toward a floor the way every other gated probe in this module is shaped —
-/// R3.13/R3.14 describe a property to construct (four real query levels, a proved
-/// firewall), not a defect to exhaust, so a shrinking count would be the wrong shape
-/// regardless of how it was tuned.
+/// R3.13/R3.14 describe a property to construct, not a defect to exhaust, so a
+/// shrinking count would be the wrong shape regardless of how it was tuned.
 ///
-/// Three clauses, each a static read (never a nested build or test run — see
-/// [`query_types_found`]'s own doc comment for why a fourth "does the stability test
-/// *pass*" clause was deliberately rejected, #1510's own review-shaped framing):
+/// **Re-settled by #1537 (2 September 2026), after the 30 August post-restructuring
+/// review found the probe could not tell adoption from existence.** Phase 8 built all
+/// four R3.13 levels; only the file level (P8.4's shared parse cache) and the unit
+/// level's *proof* (P8.2's stability test over `UnitSignature`) had a consumer. The
+/// definition level (`Body(DefId)`/`TypeOf(DefId)`, 816 lines) and the project level
+/// (`ProjectGraph`, 174 lines) were reachable only from their own tests, with no
+/// scheduler to call them and — per R3.15 and #1523 — no trigger yet for one. Both
+/// were deleted rather than left "available but unwired" (P5), the same decision the
+/// IR cutover (#1542) reached for phase 6's expression IR. This probe now certifies
+/// the decision, in both directions:
 ///
-/// 1. **Query types** — do `UnitSignature`/`ProjectGraph` (P8.1/P8.3, both pinned by
-///    ADR 0412/ADR 0413's own settled naming) and `body`/`type_of` query functions
-///    (P8.5, snake_case Rust spelling — R3.13's own `Body(DefId)`/`TypeOf(DefId)` is
-///    query-level notation, not a committed identifier; #1510's own Decision A) exist
-///    as real code in `bynk-check`/`bynk-project` — `body`/`type_of` are searched
-///    across *both* crates, since P8.5 hasn't picked a home for them yet, and (as of
-///    P8.3, #1514, ADR 0415's own \[DECISION E\]) so is `ProjectGraph`: `bynk-project`
-///    cannot depend on `bynk-check`'s `UnitId` (the crate graph runs the other way),
-///    so `ProjectGraph` landed in `bynk-check` beside it, not in `bynk-project` as
-///    this probe originally assumed — scanning `bynk-project` alone would have read
-///    `query_types` permanently one short.
-/// 2. **Shared cache** — has the file-level parse cache migrated off
-///    `PROJECT_UNIT_CACHE` (`bynk-ide/src/completion.rs`), the `bynk-ide`-local cache
-///    ADR 0413/P8.4 replaces with one shared, `bynk-project`-owned cache? Checked two
-///    ways: `PROJECT_UNIT_CACHE` gone from `bynk-ide/src`, *and* some cache-shaped
-///    `static`/`struct` actually present in `bynk-project/src` — absence alone reads
-///    "migrated" for a bare rename or deletion with nothing shared put in its place,
-///    which is not what this clause means to certify. #1510's own Decision B names
-///    P8.4's proposal as the one to pin the real cache identifier and tighten this
-///    clause's positive detection further.
-/// 3. **Stability test** — does any `#[test]` under `bynk-check/tests/` prove
-///    `UnitSignature`'s stability under a body edit (P8.2, ADR 0412)? Deliberately
-///    loose (any test name containing both `unit_signature` and `stab`, #1510's own
-///    Decision C) since P8.2 hasn't proposed an exact name yet.
+/// 1. **Unit level** — `struct UnitSignature` exists as real code in `bynk-check`
+///    (P8.1, ADR 0412). It is the R3.14 firewall's own specification, and the one
+///    phase 8 artefact #1523's trigger presupposes; it stays as a *proof*, not a
+///    production path (its only reader is clause 3's test), argued in #1537's ADR.
+/// 2. **Shared cache** — the file-level parse cache has migrated off
+///    `PROJECT_UNIT_CACHE` (`bynk-ide/src/completion.rs`) onto one shared,
+///    `bynk-project`-owned cache (P8.4, ADR 0413). Checked two ways: the old static
+///    gone from `bynk-ide/src`, *and* some cache-shaped `static`/`struct` present in
+///    `bynk-project/src` — absence alone would read "migrated" for a bare deletion.
+/// 3. **Stability test** — some `#[test]` under `bynk-check/tests/` proves
+///    `UnitSignature`'s stability under a body edit (P8.2): any test name containing
+///    both `unit_signature` and `stab`.
+/// 4. **Definition and project levels absent** — no `struct ProjectGraph` in
+///    `bynk-check`/`bynk-project`, and no `DefId`-keyed `fn body(`/`fn type_of(`
+///    (`checker.rs`'s own pre-existing per-expression `type_of`, which has no `DefId`
+///    parameter, does not count — the false positive #1510's first run caught). This
+///    clause is what makes the probe a gate on #1537 rather than a memorial: re-adding
+///    either level changes the committed reading, so it cannot land without a consumer
+///    and a re-settling — the trigger R3.15/#1523 names.
+///
+/// Every clause is a static read of the tree (never a nested build or test run — see
+/// [`unit_signature_present`]'s own doc comment for why a "does the stability test
+/// *pass*" clause was deliberately rejected, #1510's own review-shaped framing).
 fn incremental_query_types(root: &Path) -> Probe {
     let check_src = rust_files(&root.join("bynk-check/src"));
     let project_src = rust_files(&root.join("bynk-project/src"));
     let ide_src = rust_files(&root.join("bynk-ide/src"));
     let check_tests = rust_files(&root.join("bynk-check/tests"));
 
-    let found = query_types_found(&check_src, &project_src);
+    let unit_present = unit_signature_present(&check_src);
     let cache_migrated = shared_cache_migrated(&ide_src, &project_src);
     let test_present = stability_test_present(&check_tests);
+    let readded = deleted_levels_present(&check_src, &project_src);
 
     let reads = format!(
-        "query_types {}/4 ({}); shared_cache {}; stability_test {}",
-        found.len(),
-        if found.is_empty() {
-            "none".to_string()
-        } else {
-            found.join(", ")
-        },
+        "unit_signature {}; shared_cache {}; stability_test {}; definition/project levels {}",
+        if unit_present { "present" } else { "absent" },
         if cache_migrated {
             "migrated"
         } else {
             "not migrated (PROJECT_UNIT_CACHE still bynk-ide-local)"
         },
         if test_present { "present" } else { "absent" },
+        if readded.is_empty() {
+            "absent (deleted by #1537)".to_string()
+        } else {
+            format!(
+                "re-added ({}) — need a consumer and a re-settling of #1537",
+                readded.join(", ")
+            )
+        },
     );
     Probe {
         name: "incremental_query_types",
@@ -2061,35 +2071,34 @@ fn incremental_query_types(root: &Path) -> Probe {
     }
 }
 
-/// Which of the four R3.13 query-level identifiers exist as real code (not a comment
-/// or doc prose) — the same "grep for the real identifier, not the doc claim"
-/// discipline `design/tracks/incrementality.md` §1 already used to measure this same
-/// reading as zero at settling. Deliberately *not* a "does P8.2's fixture pass" check:
-/// every gated probe here is a static read of the tree, computed from inside
-/// `xtask/tests/greenfield_status.rs`'s own `#[test]`; shelling out to `cargo test` to
-/// check another test's outcome from inside a running `cargo test` process is the
-/// identical nested-invocation cost [`wildcard_arms`] (the one probe that shells out to
-/// `cargo`, and stays trend-only for exactly this reason) avoids — #1510's own Decision
-/// pinned this scope down before it could be rediscovered mid-implementation.
-fn query_types_found(
+/// Clause 1 of [`incremental_query_types`]: does `struct UnitSignature` exist as real
+/// code (not a comment or doc prose) in `bynk-check`? The same "grep for the real
+/// identifier, not the doc claim" discipline `design/tracks/incrementality.md` §1 used
+/// to measure this reading as zero at settling. Deliberately *not* a "does P8.2's
+/// fixture pass" check: every gated probe here is a static read of the tree, computed
+/// from inside `xtask/tests/greenfield_status.rs`'s own `#[test]`; shelling out to
+/// `cargo test` from inside a running `cargo test` is the identical nested-invocation
+/// cost [`wildcard_arms`] (the one probe that shells out, and stays trend-only for
+/// exactly this reason) avoids.
+fn unit_signature_present(check_src: &[(PathBuf, String)]) -> bool {
+    any_real_code_line(check_src, "struct UnitSignature")
+}
+
+/// Clause 4 of [`incremental_query_types`]: which of the two levels #1537 deleted are
+/// back — `ProjectGraph` as a real struct in either crate, or a `DefId`-keyed
+/// `body`/`type_of` query function ([`defid_query_fn_present`]). Empty is the
+/// committed reading; any entry changes the table and fails the currency gate, which
+/// is the point.
+fn deleted_levels_present(
     check_src: &[(PathBuf, String)],
     project_src: &[(PathBuf, String)],
 ) -> Vec<&'static str> {
     let mut found = Vec::new();
-    if any_real_code_line(check_src, "struct UnitSignature") {
-        found.push("UnitSignature");
-    }
-    // Searched across both crates (P8.3, #1514) — see this fn's own doc comment
-    // (clause 1 of [`incremental_query_types`]) for why `bynk-project` alone would
-    // have missed `ProjectGraph`'s real landed location in `bynk-check`.
     if any_real_code_line(check_src, "struct ProjectGraph")
         || any_real_code_line(project_src, "struct ProjectGraph")
     {
         found.push("ProjectGraph");
     }
-    // `body`/`type_of` are searched across both crates — see this fn's own doc comment
-    // (clause 1 of [`incremental_query_types`]) for why `bynk-check` alone is too
-    // narrow a scope to pin down before P8.5 exists.
     let defid_src: Vec<(PathBuf, String)> = check_src.iter().chain(project_src).cloned().collect();
     if defid_query_fn_present(&defid_src, "fn body(") {
         found.push("Body");
@@ -2186,7 +2195,7 @@ fn stability_test_present(check_tests: &[(PathBuf, String)]) -> bool {
 }
 
 /// Whether any line in `files` (excluding comments) contains `needle` — the shared
-/// existence-check primitive [`query_types_found`]/[`shared_cache_migrated`] both use.
+/// existence-check primitive [`unit_signature_present`]/[`deleted_levels_present`]/[`shared_cache_migrated`] all use.
 fn any_real_code_line(files: &[(PathBuf, String)], needle: &str) -> bool {
     files.iter().any(|(_, contents)| {
         contents
@@ -4127,124 +4136,89 @@ commons app.demo {
         );
     }
 
-    // --- incremental_query_types (P8.0, #1510) --------------------------------
+    // --- incremental_query_types (P8.0, #1510; re-settled by #1537) ----------
 
-    /// Owned conversion for [`query_types_found`], mirroring every other `_over`
-    /// helper in this module.
-    fn query_types_found_over(
-        check_src: &[(&str, &str)],
-        project_src: &[(&str, &str)],
-    ) -> Vec<&'static str> {
-        let owned = |files: &[(&str, &str)]| -> Vec<(PathBuf, String)> {
-            files
-                .iter()
-                .map(|(p, s)| (PathBuf::from(p), (*s).to_string()))
-                .collect()
-        };
-        query_types_found(&owned(check_src), &owned(project_src))
+    fn owned(files: &[(&str, &str)]) -> Vec<(PathBuf, String)> {
+        files
+            .iter()
+            .map(|(p, s)| (PathBuf::from(p), (*s).to_string()))
+            .collect()
     }
 
     #[test]
-    fn query_types_found_is_empty_before_any_slice_lands() {
-        assert!(query_types_found_over(&[], &[]).is_empty());
+    fn unit_signature_present_recognises_the_real_struct_and_ignores_a_comment() {
+        assert!(unit_signature_present(&owned(&[(
+            "unit_signature.rs",
+            "pub struct UnitSignature {\n    types: HashMap<String, Arc<TypeDecl>>,\n}\n",
+        )])));
+        assert!(!unit_signature_present(&owned(&[(
+            "lib.rs",
+            "// TODO: build a struct UnitSignature here eventually\n",
+        )])));
+        assert!(!unit_signature_present(&[]));
     }
 
+    /// The committed reading after #1537: neither deleted level is back.
     #[test]
-    fn query_types_found_recognises_unit_signature_and_project_graph() {
-        let found = query_types_found_over(
-            &[(
-                "symbols.rs",
-                "pub struct UnitSignature {\n    types: HashMap<String, Arc<TypeDecl>>,\n}\n",
-            )],
-            &[(
-                "graph.rs",
-                "pub struct ProjectGraph {\n    units: HashMap<UnitId, Unit>,\n}\n",
-            )],
+    fn deleted_levels_present_is_empty_when_neither_level_exists() {
+        assert!(deleted_levels_present(&[], &[]).is_empty());
+    }
+
+    /// Re-adding `ProjectGraph` in either crate flips the reading — both crates are
+    /// scanned because P8.3 (ADR 0415) landed it in `bynk-check`, not `bynk-project`
+    /// as first assumed, and a one-crate scan would have missed it then too.
+    #[test]
+    fn deleted_levels_present_sees_project_graph_in_either_crate() {
+        let graph = "pub struct ProjectGraph {\n    units: HashMap<UnitId, Unit>,\n}\n";
+        assert_eq!(
+            deleted_levels_present(&owned(&[("project_graph.rs", graph)]), &[]),
+            vec!["ProjectGraph"]
         );
-        assert!(found.contains(&"UnitSignature"));
-        assert!(found.contains(&"ProjectGraph"));
-    }
-
-    /// P8.3 (#1514): `ProjectGraph`'s real landed location is `bynk-check`, not
-    /// `bynk-project` — `bynk-project` cannot depend on `bynk-check`'s `UnitId`, so a
-    /// scan of `bynk-project` alone (this probe's original shape) would have read
-    /// `query_types` permanently one short of 4/4. A real regression this fix closes,
-    /// not a hypothetical: `query_types_found_recognises_unit_signature_and_project_graph`
-    /// above only ever exercised `ProjectGraph` in `project_src`.
-    #[test]
-    fn query_types_found_recognises_project_graph_in_bynk_check() {
-        let found = query_types_found_over(
-            &[(
-                "project_graph.rs",
-                "pub struct ProjectGraph {\n    units: HashMap<UnitId, Unit>,\n}\n",
-            )],
-            &[],
+        assert_eq!(
+            deleted_levels_present(&[], &owned(&[("graph.rs", graph)])),
+            vec!["ProjectGraph"]
         );
-        assert!(found.contains(&"ProjectGraph"));
-    }
-
-    #[test]
-    fn query_types_found_ignores_a_comment_mentioning_the_struct_name() {
-        let found = query_types_found_over(
-            &[(
-                "lib.rs",
-                "// TODO: build a struct UnitSignature here eventually\n",
-            )],
-            &[],
+        assert!(
+            deleted_levels_present(
+                &owned(&[("lib.rs", "// a struct ProjectGraph used to live here\n")]),
+                &[]
+            )
+            .is_empty()
         );
-        assert!(!found.contains(&"UnitSignature"));
     }
 
-    /// **The empirically-confirmed false positive this slice's own first run caught**
-    /// (see [`defid_query_fn_present`]'s own doc comment): `bynk-check/src/checker.rs`
-    /// already has an ordinary, pre-existing `fn type_of(expr: &Expr, ..)` with no
-    /// `DefId` anywhere in its signature — a naive `fn type_of(` scan would read
-    /// `TypeOf` as already built, before P8.5 does any real work. Pinned directly
-    /// against the real function's own signature text, not a paraphrase.
+    /// **The empirically-confirmed false positive #1510's own first run caught** (see
+    /// [`defid_query_fn_present`]): `bynk-check/src/checker.rs` has an ordinary,
+    /// pre-existing `fn type_of(expr: &Expr, ..)` with no `DefId` anywhere in its
+    /// signature. After #1537 the direction of the mistake reverses — it would now
+    /// read as the deleted level having been *re-added* — so it is pinned against the
+    /// real function's own signature text here too.
     #[test]
-    fn query_types_found_does_not_count_checkers_pre_existing_type_of() {
-        let found = query_types_found_over(
-            &[(
+    fn deleted_levels_present_does_not_count_checkers_pre_existing_type_of() {
+        let found = deleted_levels_present(
+            &owned(&[(
                 "checker.rs",
                 "pub(crate) fn type_of(expr: &Expr, expected: Option<TyId>, ctx: &mut Ctx) -> Option<TyId> {\n",
-            )],
+            )]),
             &[],
         );
         assert!(
-            !found.contains(&"TypeOf"),
+            found.is_empty(),
             "checker.rs's own type_of has no DefId parameter and must not count: {found:?}"
         );
     }
 
     #[test]
-    fn query_types_found_recognises_a_real_defid_keyed_body_and_type_of() {
-        let found = query_types_found_over(
-            &[(
-                "queries.rs",
-                "pub fn body(id: DefId) -> Body {\n    todo!()\n}\n\npub fn type_of(id: DefId) -> TypeOf {\n    todo!()\n}\n",
-            )],
-            &[],
+    fn deleted_levels_present_sees_a_real_defid_keyed_body_and_type_of_in_either_crate() {
+        let queries = "pub fn body(id: DefId) -> Body {\n    todo!()\n}\n\npub fn type_of(id: DefId) -> TypeOf {\n    todo!()\n}\n";
+        assert_eq!(
+            deleted_levels_present(&owned(&[("queries.rs", queries)]), &[]),
+            vec!["Body", "TypeOf"]
         );
-        assert!(found.contains(&"Body"));
-        assert!(found.contains(&"TypeOf"));
-    }
-
-    /// **The real hole finding 2 caught**: `body`/`type_of` used to be searched in
-    /// `bynk-check` only, though clause 1's own doc says `bynk-check`/`bynk-project` —
-    /// if P8.5 lands these in `bynk-project` (plausible, since that's where
-    /// `ProjectGraph` and, post-P8.4, the shared cache live), the old scope would read
-    /// 2/4 forever while the work was actually done.
-    #[test]
-    fn query_types_found_recognises_defid_keyed_fns_landing_in_the_project_crate() {
-        let found = query_types_found_over(
-            &[],
-            &[(
-                "queries.rs",
-                "pub fn body(id: DefId) -> Body {\n    todo!()\n}\n\npub fn type_of(id: DefId) -> TypeOf {\n    todo!()\n}\n",
-            )],
+        assert_eq!(
+            deleted_levels_present(&[], &owned(&[("queries.rs", queries)])),
+            vec!["Body", "TypeOf"]
         );
-        assert!(found.contains(&"Body"));
-        assert!(found.contains(&"TypeOf"));
     }
 
     #[test]
