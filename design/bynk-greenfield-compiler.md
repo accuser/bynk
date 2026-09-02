@@ -2194,7 +2194,14 @@ file (R3.13), so this is currently far from the line.
 *Tracked:* [#1524](https://github.com/accuser/bynk/issues/1524) — not left to memory.
 
 **A demand-driven query framework (salsa or equivalent).**
-*Status:* the **architecture is adopted** (§3.4); the **framework is deferred**.
+*Status:* the **architecture is adopted** (§3.4) at the file and unit levels — the shared
+`Tokens`/`Ast` cache and `UnitSignature` with its R3.14 stability proof; the definition and project
+levels (`Body(DefId)`/`TypeOf(DefId)`, `ProjectGraph`) were built by phase 8 and **deleted** on
+2 September 2026 ([#1537](https://github.com/accuser/bynk/issues/1537)) after the 30 August review
+found nothing called them and no scheduler existed to — the same P5 posture the IR cutover took for
+phase 6's expression IR. They are a few hundred lines to rebuild against the checker's own
+per-definition entry points when the trigger below fires; R3.13's table stays the specification. The
+**framework is deferred**.
 *Cost avoided:* a dependency with a live API surface against an MSRV policy and a `deny.toml`; plus
 the batch path paying for the incremental path on the deploy-critical route.
 *Trigger:* a hand-rolled memo table over R3.13's four query levels is measurably the bottleneck.

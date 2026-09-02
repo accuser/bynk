@@ -1094,6 +1094,17 @@ imposed; entries keep the order they were retired in.
   settled scope covers the check side only — [#1526](https://github.com/accuser/bynk/issues/1526)).
   Retired 30 August 2026.
 
+  **Postscript (2 September 2026, [#1537](https://github.com/accuser/bynk/issues/1537)):** the 30
+  August post-restructuring review found that of the four levels above, only P8.4's shared cache had
+  a production consumer and only P8.2's test read `UnitSignature`; `ProjectGraph` (P8.3) and
+  `Body`/`TypeOf` (P8.5) — 990 lines — were reachable from their own tests alone, with no scheduler
+  to call them and, per R3.15/#1523, no trigger yet for one. Both were deleted, the same P5 decision
+  the IR cutover (#1542) reached for phase 6's expression IR; `UnitSignature` and its stability test
+  stay as the R3.14 proof #1523's trigger presupposes. `incremental_query_types` was re-settled to
+  certify the decision in both directions — the surviving levels present, the deleted ones absent —
+  so re-adding either without a consumer changes the committed reading. ADR 0415 and ADR 0417 stand
+  as the record of what was built; the ADR #1537's own PR carries supersedes their "landed" status.
+
   **This is the trajectory's last phase.** Per `bynk-compiler-trajectory.md` §1, its endpoint — "the
   compiler Bynk ships today, feature for feature, rebuilt on the architecture in
   `bynk-greenfield-compiler.md`" — is reached at this retirement, not before. This retirement PR
