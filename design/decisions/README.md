@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0420](0420-phase-8-unadopted-query-layer-deleted.md) | **Phase 8's definition- and project-level queries are deleted, not adopted — the unit-level firewall proof stays** (v0.289.65) — Resolves #1537 on the same terms as the IR cutover: no consumer and no scheduler means P5 applies; UnitSignature stays as R3.14's proof and #1523's precondition; the probe now gates the decision | Accepted (v0.289.65) |
 | [0419](0419-the-ir-cutover-stops-and-deletes.md) | **The IR cutover stops at Slice 3.1 and deletes the unconsumed expression lowering — a second code generator is not a retype** (v0.289.64) — Supersedes the-ir.md's Q7/#1175 cutover shape and ADR 0338's R5.9 deferral; the measured cost of Slice 3.2 reversed the track's opening decision, and the refusal now carries a trigger and a gate | Accepted (v0.289.64) |
 | [0418](0418-un-defer-http-method-rendering.md) | **Un-defer the HTTP-method rendering-signature cutover — P6.51 narrowed it enough to be worth it now** (v0.289.58) — Reverses ADR 0355's HttpMethod deferral once phase 7 shipped and P6.51 turned out to have already converted most of the surface | Accepted (v0.289.58) |
 | [0417](0417-p8-5-defid-split-and-fresh-sinks.md) | **P8.5's `DefId` — a split Fn/Handler enum, plain-`DefId` query signatures, and fresh per-call sinks** (v0.289.55) — Resolving #1516's own Decisions A-D, plus one fork the issue didn't examine | Accepted (v0.289.55) |

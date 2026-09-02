@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "Phase 8's definition- and project-level query layer (`bynk-check`'s `queries.rs` and `project_graph.rs`, no production caller) is deleted; `UnitSignature` and its stability proof stay, and `incremental_query_types` now gates that the deleted levels stay deleted (#1537)"
----
+# 0420 — Phase 8's definition- and project-level queries are deleted, not adopted — the unit-level firewall proof stays
 
-## ADR: phase-8-unadopted-query-layer-deleted
-title: Phase 8's definition- and project-level queries are deleted, not adopted — the unit-level firewall proof stays
-summary: Resolves #1537 on the same terms as the IR cutover: no consumer and no scheduler means P5 applies; UnitSignature stays as R3.14's proof and #1523's precondition; the probe now gates the decision
+- **Status:** Accepted (v0.289.65)
 
 **Context.** Phase 8 (`incrementality.md`, spine #1507) built all four of R3.13's query levels and
 retired on 30 August 2026 with `incremental_query_types` reading `4/4` — an existence proof, by its own
