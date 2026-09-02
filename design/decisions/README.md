@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0419](0419-the-ir-cutover-stops-and-deletes.md) | **The IR cutover stops at Slice 3.1 and deletes the unconsumed expression lowering — a second code generator is not a retype** (v0.289.64) — Supersedes the-ir.md's Q7/#1175 cutover shape and ADR 0338's R5.9 deferral; the measured cost of Slice 3.2 reversed the track's opening decision, and the refusal now carries a trigger and a gate | Accepted (v0.289.64) |
 | [0418](0418-un-defer-http-method-rendering.md) | **Un-defer the HTTP-method rendering-signature cutover — P6.51 narrowed it enough to be worth it now** (v0.289.58) — Reverses ADR 0355's HttpMethod deferral once phase 7 shipped and P6.51 turned out to have already converted most of the surface | Accepted (v0.289.58) |
 | [0417](0417-p8-5-defid-split-and-fresh-sinks.md) | **P8.5's `DefId` — a split Fn/Handler enum, plain-`DefId` query signatures, and fresh per-call sinks** (v0.289.55) — Resolving #1516's own Decisions A-D, plus one fork the issue didn't examine | Accepted (v0.289.55) |
 | [0416](0416-p8-4-durable-parse-cache-expr-id-and-strict-vs-recovery.md) | **P8.4's shared parse cache — durable `ExprId` allocation, and why it caches the strict parse only** (v0.289.54) — Two forks ADR 0413 didn't examine, found while implementing the cache it specified | Accepted (v0.289.54) |

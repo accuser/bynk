@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.289.64** | "The IR cutover track retires: the expression-IR refusal is recorded in the greenfield reference's Part 15.1 with a trigger, and a gated `unconsumed_ir_items` probe ratchets `bynk-ir`/`bynk-lower`'s unconsumed public surface at 0" |
 | **v0.289.63** | "`bynk-ir`: the 22 IR types that lost their last consumer with the expression lowering (`IrExpr`, `IrItem`, `IrHandler`, `CommitShape`, patterns, policy, …) are deleted; the crate doc now describes the declaration-level vocabulary that remains (IR cutover track, Slice D2)" |
 | **v0.289.62** | "`bynk-lower`: the unconsumed expression/statement/body/item lowering is deleted (48 functions, all six `todo!()`s, 121 tests), leaving the AST-analysis helpers `bynk-emit` consumes (IR cutover track, Slice D1)" |
 | **v0.289.61** | "`bynk-lower`: the events-service subscriber-shape helper reads protocol and handler shape directly instead of lowering and discarding every handler body (IR cutover track, Slice D0)" |

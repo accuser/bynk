@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "The IR cutover track retires: the expression-IR refusal is recorded in the greenfield reference's Part 15.1 with a trigger, and a gated `unconsumed_ir_items` probe ratchets `bynk-ir`/`bynk-lower`'s unconsumed public surface at 0"
----
+# 0419 — The IR cutover stops at Slice 3.1 and deletes the unconsumed expression lowering — a second code generator is not a retype
 
-## ADR: the-ir-cutover-stops-and-deletes
-title: The IR cutover stops at Slice 3.1 and deletes the unconsumed expression lowering — a second code generator is not a retype
-summary: Supersedes the-ir.md's Q7/#1175 cutover shape and ADR 0338's R5.9 deferral; the measured cost of Slice 3.2 reversed the track's opening decision, and the refusal now carries a trigger and a gate
+- **Status:** Accepted (v0.289.64)
 
 **Context.** `design/tracks/the-ir.md` (phase 6, spine #1137) settled at Q7/#1175 how the emitter would
 eventually consume the IR it built: `emitter/lower.rs` keeps writing strings, only its dispatch *reads*
