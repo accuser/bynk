@@ -15,7 +15,7 @@
 //! `options_sources`, `hoist_sinks`, `span_keyed_maps`, `emit_diagnostics`,
 //! `ide_emit_edge`, `ast_importers`, `emit_abi_shapes`, `ts_writes`, `ts_any`,
 //! `verbatim_origins`, `verbatim_sites`, `incremental_query_types`,
-//! `unconsumed_ir_items`. Nine of these are
+//! `unconsumed_ir_items`. Ten of these are
 //! zero/closure-shaped — a boolean, or a count pinned at a small, argued floor
 //! (`ast_importers` = 5, `emit_abi_shapes` = 1). Phase 7's own four are the same shape:
 //! each converged toward an argued floor over dozens of slices, the same trajectory
@@ -2221,15 +2221,27 @@ fn any_real_code_line(files: &[(PathBuf, String)], needle: &str) -> bool {
 /// failure is actionable, not just a count.
 ///
 /// **What counts as a consumer.** A non-comment line, outside any `#[cfg(test)]
-/// mod` range ([`test_mod_ranges`]), in some *other* workspace crate's `src/`,
-/// containing the item's name as a whole word. Text-level, like every probe in
-/// this file — a name that happens to be shared with an unrelated item in
+/// mod` range ([`test_mod_ranges`]), in a workspace crate's `src/` that is
+/// **neither owner crate**, containing the item's name as a whole word. The
+/// two owners do not vouch for each other, on purpose (review of this slice's
+/// own PR, #1581): run against pre-D0 `main` with only the owning crate
+/// excluded, every one of phase 6's twenty-one unconsumed `bynk-ir` types
+/// would have read as consumed, because `bynk-lower`'s own unconsumed
+/// constructors named them — the probe would have missed half the surface it
+/// was built to see. With both excluded, its first honest run read 5
+/// (`IndexIr` and the four `MUTATING_*_OPS` tables, read only from
+/// `bynk-lower`), resolved by inlining the alias and moving the tables beside
+/// their one reader rather than arguing a floor. Text-level, like every probe
+/// in this file — a name that happens to be shared with an unrelated item in
 /// another crate would read as consumed (a false negative for the ratchet,
 /// never a false positive that blocks a PR), accepted the same way
 /// [`ts_writes`]'s own known over-count is. Items are `pub` at column zero
-/// only: `pub(crate)` is by definition not offered to another crate, and a
-/// `pub` item nested inside an `impl` block is reachable only through its
-/// owner, which is what gets counted.
+/// only — `fn`, `struct`, `enum`, `type`, `const`, `static`, `trait`, `union`,
+/// with any `async`/`unsafe`/`const`/`extern` qualifier on a `fn` — see
+/// [`column_zero_pub_item_name`]: `pub(crate)` is by definition not offered
+/// to another crate, a `pub` item nested inside an `impl` block is reachable
+/// only through its owner (which is what gets counted), and `pub use`/`pub
+/// mod` re-export rather than declare.
 fn unconsumed_ir_items(root: &Path) -> Probe {
     let owners = ["bynk-ir", "bynk-lower"];
     let mut owner_files = Vec::new();
@@ -2239,7 +2251,7 @@ fn unconsumed_ir_items(root: &Path) -> Probe {
         }
     }
     let consumer_files = workspace_crate_src_files(root);
-    let unconsumed = unconsumed_pub_items(&owner_files, &consumer_files);
+    let unconsumed = unconsumed_pub_items(&owners, &owner_files, &consumer_files);
     let reads = if unconsumed.is_empty() {
         "0".to_string()
     } else {
@@ -2284,10 +2296,17 @@ fn workspace_crate_src_files(root: &Path) -> Vec<(String, PathBuf, String)> {
 /// [`unconsumed_ir_items`]'s counting logic over explicit `(crate, relative
 /// path, contents)` lists — see [`rust_files_relative`] for why this isn't
 /// `root: &Path`. Returns `crate::item` for every column-zero `pub` item in
-/// `owner_files` that no non-comment, non-test line in a *different* crate's
-/// file in `consumer_files` names as a whole word; sorted, so the reading is
-/// stable across runs.
+/// `owner_files` that no non-comment, non-test line in a file belonging to a
+/// crate outside `owners` names as a whole word; sorted and deduplicated (a
+/// name declared in two files of one crate is one item, not two), so the
+/// reading is stable across runs and across a crate being split into modules.
+///
+/// Each consumer file is split and its `#[cfg(test)]` ranges computed once,
+/// up front, not once per candidate item (review of #1581): this runs under
+/// `cargo test --workspace` on every Rust-touching PR, and the failure path —
+/// an item with no consumer — is exactly the one that scans every file.
 fn unconsumed_pub_items(
+    owners: &[&str],
     owner_files: &[(String, PathBuf, String)],
     consumer_files: &[(String, PathBuf, String)],
 ) -> Vec<String> {
@@ -2304,37 +2323,83 @@ fn unconsumed_pub_items(
             }
         }
     }
-    let mut unconsumed: Vec<String> = items
+    items.sort();
+    items.dedup();
+
+    // Production, non-owner lines only — preprocessed once.
+    let consumer_lines: Vec<&str> = consumer_files
         .iter()
-        .filter(|(owner, name)| {
-            !consumer_files.iter().any(|(krate, _, contents)| {
-                if krate == owner {
-                    return false;
-                }
-                let lines: Vec<&str> = contents.lines().collect();
-                let ranges = test_mod_ranges(&lines);
-                lines.iter().enumerate().any(|(i, line)| {
-                    !in_test_range(i, &ranges)
-                        && !is_line_comment(line)
-                        && contains_word(line, name)
-                })
-            })
+        .filter(|(krate, _, _)| !owners.contains(&krate.as_str()))
+        .flat_map(|(_, _, contents)| {
+            let lines: Vec<&str> = contents.lines().collect();
+            let ranges = test_mod_ranges(&lines);
+            lines
+                .iter()
+                .enumerate()
+                .filter(|(i, line)| !in_test_range(*i, &ranges) && !is_line_comment(line))
+                .map(|(_, line)| *line)
+                .collect::<Vec<_>>()
         })
-        .map(|(owner, name)| format!("{owner}::{name}"))
         .collect();
-    unconsumed.sort();
-    unconsumed
+
+    items
+        .iter()
+        .filter(|(_, name)| !consumer_lines.iter().any(|line| contains_word(line, name)))
+        .map(|(owner, name)| format!("{owner}::{name}"))
+        .collect()
 }
 
-/// The name of a column-zero `pub fn|struct|enum|type|const|trait NAME` item,
-/// if `line` declares one. `pub(crate)`/`pub(super)` do not qualify (they are
-/// not offered to other crates), and neither does anything indented (a method
-/// or associated item, reachable only through its owner).
+/// The name of a column-zero `pub` item declaration, if `line` is one: `pub`
+/// followed by `fn`, `struct`, `enum`, `type`, `const`, `static`, `trait` or
+/// `union`, where a `fn` may carry `async`/`unsafe`/`const`/`extern "…"`
+/// qualifiers in any order. `pub(crate)`/`pub(super)` do not qualify (they
+/// are not offered to other crates), and neither does anything indented (a
+/// method or associated item, reachable only through its owner), nor `pub
+/// use`/`pub mod` (re-exports and module declarations, not items).
 fn column_zero_pub_item_name(line: &str) -> Option<&str> {
-    let rest = line.strip_prefix("pub ")?;
-    let rest = ["fn ", "struct ", "enum ", "type ", "const ", "trait "]
-        .iter()
-        .find_map(|kw| rest.strip_prefix(kw))?;
+    let mut rest = line.strip_prefix("pub ")?;
+    // `pub const fn` / `pub async unsafe fn` / `pub unsafe extern "C" fn` …:
+    // peel qualifiers until the item keyword is exposed. A bare `pub const X`
+    // is a constant, not a qualifier, so `const` only peels when a `fn`
+    // (possibly behind further qualifiers) follows it.
+    loop {
+        if let Some(r) = rest
+            .strip_prefix("async ")
+            .or_else(|| rest.strip_prefix("unsafe "))
+        {
+            rest = r;
+            continue;
+        }
+        if let Some(r) = rest.strip_prefix("extern ") {
+            // `extern "C" fn` — skip the ABI string if present.
+            let r = r.trim_start();
+            let r = if let Some(after_quote) = r.strip_prefix('"') {
+                after_quote
+                    .find('"')
+                    .map(|q| after_quote[q + 1..].trim_start())
+                    .unwrap_or(r)
+            } else {
+                r
+            };
+            rest = r;
+            continue;
+        }
+        if let Some(r) = rest.strip_prefix("const ")
+            && (r.starts_with("fn ")
+                || r.starts_with("async ")
+                || r.starts_with("unsafe ")
+                || r.starts_with("extern "))
+        {
+            rest = r;
+            continue;
+        }
+        break;
+    }
+    let rest = [
+        "fn ", "struct ", "enum ", "type ", "const ", "static ", "trait ", "union ",
+    ]
+    .iter()
+    .find_map(|kw| rest.strip_prefix(kw))?;
     let end = rest
         .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
         .unwrap_or(rest.len());
@@ -2905,7 +2970,7 @@ mod tests {
             ),
         ]);
         assert_eq!(
-            unconsumed_pub_items(&owners, &consumers),
+            unconsumed_pub_items(&["bynk-ir"], &owners, &consumers),
             vec!["bynk-ir::Unused"]
         );
     }
@@ -2937,7 +3002,7 @@ mod tests {
             ),
         ]);
         assert_eq!(
-            unconsumed_pub_items(&owners, &consumers),
+            unconsumed_pub_items(&["bynk-lower"], &owners, &consumers),
             vec![
                 "bynk-lower::lower_x",
                 "bynk-lower::lower_y",
@@ -2958,13 +3023,69 @@ mod tests {
         )]);
         let consumers = files(&[("bynk-emit", "a.rs", "fn f(k: IrExprKind) {}\n")]);
         assert_eq!(
-            unconsumed_pub_items(&owners, &consumers),
+            unconsumed_pub_items(&["bynk-ir"], &owners, &consumers),
             vec!["bynk-ir::IrExpr"]
         );
     }
 
+    /// The two IR crates do not vouch for each other (review of #1581): a
+    /// `bynk-ir` type read only from `bynk-lower` is unconsumed, and so is a
+    /// `bynk-lower` helper read only from `bynk-ir` — pre-D0 `main`'s exact
+    /// shape, where `bynk-lower`'s own unconsumed constructors named every
+    /// unconsumed `bynk-ir` type.
     #[test]
-    fn column_zero_pub_item_name_accepts_the_six_item_kinds_only() {
+    fn unconsumed_pub_items_does_not_let_owner_crates_vouch_for_each_other() {
+        let owners = files(&[
+            (
+                "bynk-ir",
+                "lib.rs",
+                "pub struct IrExpr;\npub struct Shape;\n",
+            ),
+            (
+                "bynk-lower",
+                "lib.rs",
+                "pub fn lower_expr_ir() -> IrExpr { IrExpr }\npub fn shape() -> Shape { Shape }\n",
+            ),
+        ]);
+        let consumers = files(&[
+            (
+                "bynk-ir",
+                "lib.rs",
+                "pub struct IrExpr;\npub struct Shape;\n",
+            ),
+            (
+                "bynk-lower",
+                "lib.rs",
+                "pub fn lower_expr_ir() -> IrExpr { IrExpr }\npub fn shape() -> Shape { Shape }\n",
+            ),
+            (
+                "bynk-emit",
+                "a.rs",
+                "fn f() -> Shape { bynk_lower::shape() }\n",
+            ),
+        ]);
+        assert_eq!(
+            unconsumed_pub_items(&["bynk-ir", "bynk-lower"], &owners, &consumers),
+            vec!["bynk-ir::IrExpr", "bynk-lower::lower_expr_ir"]
+        );
+    }
+
+    /// One item declared in two files of the same crate (a split module) is
+    /// reported once, not twice.
+    #[test]
+    fn unconsumed_pub_items_deduplicates_a_name_declared_in_two_files() {
+        let owners = files(&[
+            ("bynk-lower", "a.rs", "pub fn twice() {}\n"),
+            ("bynk-lower", "b.rs", "pub fn twice() {}\n"),
+        ]);
+        assert_eq!(
+            unconsumed_pub_items(&["bynk-lower"], &owners, &[]),
+            vec!["bynk-lower::twice"]
+        );
+    }
+
+    #[test]
+    fn column_zero_pub_item_name_accepts_every_item_kind_and_fn_qualifier() {
         assert_eq!(column_zero_pub_item_name("pub fn f(x: i32) {}"), Some("f"));
         assert_eq!(column_zero_pub_item_name("pub struct S<'a> {"), Some("S"));
         assert_eq!(column_zero_pub_item_name("pub enum E {"), Some("E"));
@@ -2976,11 +3097,82 @@ mod tests {
             column_zero_pub_item_name("pub const C: &[&str] = &[];"),
             Some("C")
         );
+        assert_eq!(
+            column_zero_pub_item_name("pub static S: &[&str] = &[];"),
+            Some("S")
+        );
         assert_eq!(column_zero_pub_item_name("pub trait Tr {}"), Some("Tr"));
+        assert_eq!(column_zero_pub_item_name("pub union U {"), Some("U"));
+        // `fn` qualifiers, alone and stacked (review of #1581).
+        assert_eq!(column_zero_pub_item_name("pub async fn a() {}"), Some("a"));
+        assert_eq!(column_zero_pub_item_name("pub unsafe fn u() {}"), Some("u"));
+        assert_eq!(column_zero_pub_item_name("pub const fn c() {}"), Some("c"));
+        assert_eq!(
+            column_zero_pub_item_name("pub extern \"C\" fn x() {}"),
+            Some("x")
+        );
+        assert_eq!(
+            column_zero_pub_item_name("pub const unsafe fn cu() {}"),
+            Some("cu")
+        );
+        assert_eq!(
+            column_zero_pub_item_name("pub unsafe extern \"C\" fn ue() {}"),
+            Some("ue")
+        );
+        assert_eq!(
+            column_zero_pub_item_name("pub async unsafe fn au() {}"),
+            Some("au")
+        );
+        // Not items offered to another crate.
         assert_eq!(column_zero_pub_item_name("pub(crate) fn g() {}"), None);
+        assert_eq!(column_zero_pub_item_name("pub(super) struct P;"), None);
         assert_eq!(column_zero_pub_item_name("    pub fn method() {}"), None);
         assert_eq!(column_zero_pub_item_name("pub use foo::Bar;"), None);
         assert_eq!(column_zero_pub_item_name("pub mod m;"), None);
+        assert_eq!(column_zero_pub_item_name("pub impl Foo {}"), None);
+    }
+
+    /// [`workspace_crate_src_files`] tags each file with its crate directory
+    /// and only walks directories that are actually crates (a `Cargo.toml`
+    /// *and* a `src/`), so a stray directory with one but not the other is
+    /// neither an owner nor a consumer.
+    #[test]
+    fn workspace_crate_src_files_tags_files_by_crate_and_skips_non_crates() {
+        let root = std::env::temp_dir().join(format!(
+            "bynk-xtask-unconsumed-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let mk = |rel: &str, contents: &str| {
+            let p = root.join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, contents).unwrap();
+        };
+        mk("alpha/Cargo.toml", "[package]\nname = \"alpha\"\n");
+        mk("alpha/src/lib.rs", "pub fn a() {}\n");
+        mk("alpha/src/inner/mod.rs", "pub fn b() {}\n");
+        mk("beta/Cargo.toml", "[package]\nname = \"beta\"\n");
+        mk("beta/src/lib.rs", "fn c() { alpha::a() }\n");
+        mk("no-src/Cargo.toml", "[package]\nname = \"no-src\"\n");
+        mk("no-manifest/src/lib.rs", "pub fn d() {}\n");
+        let files = workspace_crate_src_files(&root);
+        let _ = std::fs::remove_dir_all(&root);
+        let mut tagged: Vec<(String, String)> = files
+            .iter()
+            .map(|(k, p, _)| (k.clone(), p.to_string_lossy().replace('\\', "/")))
+            .collect();
+        tagged.sort();
+        assert_eq!(
+            tagged,
+            vec![
+                ("alpha".to_string(), "inner/mod.rs".to_string()),
+                ("alpha".to_string(), "lib.rs".to_string()),
+                ("beta".to_string(), "lib.rs".to_string()),
+            ]
+        );
     }
 
     /// Regression test for the bug caught in review: a file with **two** scattered

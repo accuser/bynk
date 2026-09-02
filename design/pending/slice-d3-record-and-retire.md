@@ -48,7 +48,7 @@ review's "zero callers" had counted direct callers only.
 tag for the evidence. The one production detour is repointed at the two shape-only helpers it needed
 (D0, zero-diff by construction). Everything `rustc` then reports unreachable is deleted (D1: 48
 `bynk-lower` functions, four `LowerIrCtx` fields and their methods, every `todo!()` the crate carried;
-D2: 23 `bynk-ir` items after D3's probe caught `EmbedIr`), with the tests that pinned a *kept* helper
+D2: 23 `bynk-ir` items, then D3's probe caught `EmbedIr`, `IndexIr` and the four mutating-op tables), with the tests that pinned a *kept* helper
 only through a deleted constructor re-created directly against the helper (21 in D1), and every
 surviving doc comment that narrated a deleted item rewritten rather than unlinked. The refusal is
 recorded in `bynk-greenfield-compiler.md` Part 15.1 in R15.1's four fields — claim, cost avoided,
@@ -65,8 +65,9 @@ evidence and is not decided here.
 **Consequences.** `bynk-lower/src/lib.rs` 10,195 → 2,123 lines and `bynk-ir/src/lib.rs` 1,923 →
 634, with zero emitted-output change across the whole e2e corpus at every step. `bynk-lower` is the
 AST-analysis-helper crate its own description always claimed (17 public entry points, each with a
-production caller); `bynk-ir` is the declaration-level vocabulary those helpers return (24 items, each
-with a consumer). The "available but unwired" state cannot land silently again in either crate: a new
+production caller); `bynk-ir` is the declaration-level vocabulary those helpers return (19 items, each with a reader
+outside both crates — the probe's own review tightened it so the two IR crates cannot vouch for each
+other, which caught and resolved five more). The "available but unwired" state cannot land silently again in either crate: a new
 `pub` item with no reader fails `greenfield_status_table_is_current` by name. The hygiene track
 (#1533) should re-cut its `bynk-lower` split target, which no longer exists at the size it planned
 for. What was lost is real and named: the IR path's own test corpus (121 tests) and the design work

@@ -1160,9 +1160,15 @@ imposed; entries keep the order they were retired in.
   rewrote the crate doc and every surviving doc comment that narrated a deleted item; **D3**
   ([#1580](https://github.com/accuser/bynk/issues/1580), this retirement) recorded the refusal in
   `bynk-greenfield-compiler.md` Part 15.1's four-field form, added the gated `unconsumed_ir_items`
-  adoption probe the review's Part 5 §8 asked for — which on its first run found two more `pub` items
-  with no reader outside their crate (`EmbedIr`, `LowerIrCtx`), both demoted, so the final accounting
-  is 47 `bynk-ir` items = 23 gone + 24 kept — and closed the spine.
+  adoption probe the review's Part 5 §8 asked for, and closed the spine. The probe earned its place
+  before it merged: its first run found two more `pub` items with no reader outside their crate
+  (`EmbedIr`, `LowerIrCtx`); its own review then found it let the two IR crates vouch for each other —
+  run against pre-D0 `main` it would have missed every `bynk-ir` type, since `bynk-lower`'s own
+  unconsumed constructors named them — and, once both owners were excluded, five more (`IndexIr` and
+  the four `MUTATING_*_OPS` tables, read only from `bynk-lower`). All resolved by inlining the two
+  aliases, demoting the struct and moving the tables beside their one reader, never by arguing a
+  floor: the final accounting is 47 `bynk-ir` public items = 23 deleted + 2 inlined + 4 relocated +
+  1 demoted-in-`bynk-lower`-territory aside, **19 kept**, each with a reader outside both crates.
 
   **What stays declined, named rather than left implicit:** ADR 0381's six conversions and ADR 0366's
   `TypeShape::Refined` AST embedding (unchanged from the track's own §2); `emit_worker_compose`'s

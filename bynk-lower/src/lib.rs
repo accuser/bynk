@@ -66,8 +66,7 @@ use bynk_syntax::ast::{
 
 use bynk_ir::{
     ActorSeamIr, CacheIr, CapRefIr, ConstVal, EventPatternIr, EventPatternValueIr,
-    EventSubscriberShape, FnSig, IndexIr, IrHandlerKind, IrHttpMethod, MUTATING_CELL_OPS,
-    MUTATING_LOG_OPS, MUTATING_MAP_CACHE_OPS, MUTATING_SET_OPS, OpSig, ProtocolIr, StoreFieldIr,
+    EventSubscriberShape, FnSig, IrHandlerKind, IrHttpMethod, OpSig, ProtocolIr, StoreFieldIr,
     StoreKindIr, TypeShape,
 };
 
@@ -347,7 +346,7 @@ fn duration_millis_annotation(
 /// without either duplicating the `Cell`/`Map`/`Set`/`Cache`/`Log` dispatch
 /// or paying for a `&mut LowerIrCtx` it never needs (nothing here lowers an
 /// expression).
-fn store_field_kind_and_indexed(f: &StoreField, cx: &LowerIrCtx) -> (StoreKindIr, Vec<IndexIr>) {
+fn store_field_kind_and_indexed(f: &StoreField, cx: &LowerIrCtx) -> (StoreKindIr, Vec<String>) {
     let head = f.kind.head.name.as_str();
     let kind = match head {
         "Cell" => StoreKindIr::Cell(resolve_store_field_ty(cx, &f.kind.args[0])),
@@ -391,7 +390,7 @@ fn store_field_kind_and_indexed(f: &StoreField, cx: &LowerIrCtx) -> (StoreKindIr
     // `store_map_indexes` guard (`emit.rs`'s `!fields.contains(&k.name)`),
     // grounded during P6.7's own review (#1163): dropping this would mean a
     // duplicate `by:` produces the same sibling index table twice.
-    let mut indexed: Vec<IndexIr> = Vec::new();
+    let mut indexed: Vec<String> = Vec::new();
     for arg in f
         .annotations
         .iter()
@@ -431,6 +430,29 @@ pub fn lower_store_field_shape_ir(f: &StoreField, program: &CheckedProgram) -> S
         indexed,
     }
 }
+
+/// Decision C (#1165): the closed sets of mutating storage-op names, one
+/// constant per kind group, read only by [`body_writes_state`]'s
+/// `Callee::Store`-keyed write-detection walk (P6.8, Decision B), which
+/// needs no receiver-name gate at all: a `Callee::Store` already carries the
+/// field's own resolved identity, not a name that could be shadowed. These
+/// lived in `bynk-ir` as `pub` tables from the P7.12 crate carve until Slice
+/// D3 of #1542, on the theory that a `bynk-emit`-side reader might want them
+/// again; none ever did, and the `unconsumed_ir_items` probe that slice
+/// added counts a `pub` item read only from this crate as unconsumed — so
+/// they now live beside their one reader, private. `Map`/`Cache` share one
+/// list — both support the same four entry ops — rather than two identical
+/// ones.
+const MUTATING_MAP_CACHE_OPS: &[&str] = &["put", "remove", "update", "upsert"];
+/// v0.83: `<set>.add`/`<set>.remove` mutate a `store Set[T]` field.
+const MUTATING_SET_OPS: &[&str] = &["add", "remove"];
+/// v0.95: `<log>.append` mutates the durable array (ADR 0121) — every other
+/// `Log` method is a query-lifting read.
+const MUTATING_LOG_OPS: &[&str] = &["append"];
+/// v0.98 (ADR 0125): `<cell>.update(f)` is a read-modify-write of the
+/// working state — the bare `:=` write form is `Statement::Assign`, checked
+/// separately and unconditionally, no method name involved.
+const MUTATING_CELL_OPS: &[&str] = &["update"];
 
 /// [DECISION B]/[DECISION C] (#1165): does `body` reach a mutating
 /// `Callee::Store` write, or an unconditional `Statement::Assign` (`:=`),
