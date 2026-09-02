@@ -1,9 +1,10 @@
-//! P6.1 (#1141): the `&CheckedProgram → Ir` lowering pass — real construction
-//! for the node kinds `design/tracks/the-ir.md`'s own P6.1 row names (`Const`,
-//! `Local`, `Global`, `Record`, `Field`, `List`, `Block`, `If`, `And`, `Or`,
-//! `Not`, `Return`, `Await`, `Send`, `Pure`); every other [`IrExprKind`]/
-//! [`IrStmt`] arm is a `todo!()` naming the slice that completes it
-//! (Decision D).
+//! `bynk-lower`: the AST-analysis helpers `bynk-emit` reads resolved
+//! declaration-level facts through — handler kinds and `given` clauses,
+//! service protocols, store-field shapes, capability op and attached-method
+//! signatures, route cache/limit annotations, event-subscriber shapes, and
+//! the store-write walk behind `emit_agent`'s implicit-commit decision. Each
+//! takes a checked program (or its `TypedCommons`) and a syntax-tree node
+//! and returns a `bynk_ir` value; none lowers an expression body.
 //!
 //! **Reachability, corrected twice and now settled (Slice D0 of `#1542`,
 //! `design/tracks/the-ir-cutover.md` §10).** Through the crate carve (Arc D,
@@ -25,113 +26,69 @@
 //! `lower_expr_ir` and everything they call — has no caller outside this
 //! crate's own test module.** The 30 August 2026 review's "zero callers"
 //! finding was right about the end state and wrong about the path; the
-//! track doc's §10.2 has the trace. That machinery is scheduled for deletion
-//! by Slice D1 of the same track, after which `rustc`'s own dead-code
-//! analysis (not this paragraph) is the reachability record. What stays is
-//! the AST-analysis helper vocabulary `bynk-emit` consumes today —
+//! track doc's §10.2 has the trace. Slice D1 of the same track then deleted
+//! that machinery outright — 48 functions, the lowering context's scope
+//! stack/temp counter/return-type/store-queryable fields, and every
+//! `todo!()` this crate ever carried — so `rustc`'s own dead-code analysis,
+//! not this paragraph, is the reachability record from here on. What stays
+//! is the AST-analysis helper vocabulary `bynk-emit` consumes today —
 //! `lower_handler_kind_ir`, `lower_handler_given_ir`,
 //! `lower_protocol_ir{,_from_commons}`, `lower_type_shape_ir`,
 //! `lower_service_handler_signature_ir`, `body_writes_state`, and their
 //! siblings — each with a production call site.
 //!
-//! **Totality discipline (ADR 0334, Q2):** every entry point here takes a
-//! `&CheckedProgram`, not a bare `&TypedCommons` — a certified program only,
-//! so `LowerIrCtx::expr_ty`'s `.expect()` on a miss is the checker and this
-//! pass disagreeing about which expressions a unit contains, a compiler bug,
-//! not a recoverable state. This scoping is the same discipline
+//! **Totality discipline (ADR 0334, Q2), as it stands after Slice D1:** the
+//! rule was "every entry point takes a certified `&CheckedProgram`, so a
+//! per-expression type lookup that misses is a compiler bug, not a
+//! recoverable state." The per-expression lookup went with the expression
+//! lowering, so what the rule now governs is narrower: a helper that reads
+//! a *declaration's* own type references still takes `&CheckedProgram` by
+//! default (`lower_type_shape_ir`'s doc comment has the full argument — a
+//! bare `TypedCommons` is not certified by construction), and the four that
+//! take a bare `&TypedCommons` instead — `body_writes_state`,
+//! `lower_protocol_ir_from_commons`, `capability_op_sig_from_commons`,
+//! `lower_attached_fn_sig_ir_from_types` — each document why their reads
+//! cannot reach a certification-dependent panic. The same discipline
 //! `bynk-emit/src/emitter/emit.rs`'s `lower_workers_cross_context_call`
-//! already applies to its own `bynk.emit.unresolved_cross_context_signature`
-//! panic.
+//! applies to its own `bynk.emit.unresolved_cross_context_signature` panic.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use bynk_check::checker::{self, Callee, CheckedProgram, NamedKind, Ty, TyId, TypedCommons, Types};
+use bynk_check::checker::{self, Callee, CheckedProgram, Ty, TyId, TypedCommons, Types};
 use bynk_check::resolver::MethodTable;
 use bynk_syntax::ast::{
-    ActorDecl, AgentDecl, BaseType, BinOp, Block, CapRef, CapabilityDecl, CapabilityOp,
-    CommonsItem, EventPattern, EventPatternValue, Expr, ExprId, ExprKind, FieldInit, FnDecl,
-    FnName, Handler, HandlerKind, HttpMethod, InterpPart, Invariant, LambdaExpr, LiteralValue,
-    MatchArm, MatchBody, Pattern, PatternBindingKind, ProviderDecl, ProviderOp, QualifiedName,
-    ServiceDecl, ServiceProtocol, Statement, StoreField, Transition, TypeBody, TypeDecl, TypeRef,
-    UnaryOp, expr_children,
+    ActorDecl, Block, CapRef, CapabilityDecl, CapabilityOp, CommonsItem, EventPattern,
+    EventPatternValue, Expr, ExprKind, FnDecl, FnName, Handler, HandlerKind, HttpMethod,
+    LiteralValue, MatchBody, ProviderDecl, QualifiedName, ServiceProtocol, Statement, StoreField,
+    TypeBody, TypeDecl, TypeRef, expr_children,
 };
-use bynk_syntax::span::Span;
 
 use bynk_ir::{
-    ActorBinder, ActorSeamIr, BindingMode, CacheIr, CapRefIr, CommitShape, ConnectionBinder,
-    ConstVal, CorsIr, EventPatternIr, EventPatternValueIr, EventSubscriberShape, Exhaustive, FnSig,
-    GlobalRef, IndexIr, IrArm, IrBinOp, IrExpr, IrExprKind, IrHandler, IrHandlerKind, IrHttpMethod,
-    IrInterpPart, IrItem, IrPat, IrPredicate, IrStmt, MUTATING_CELL_OPS, MUTATING_LOG_OPS,
-    MUTATING_MAP_CACHE_OPS, MUTATING_SET_OPS, MatchForm, OpSig, PolicyIr, ProtocolIr, ProviderBody,
-    ProviderOpIr, SecurityIr, StoreFieldIr, StoreKindIr, TypeShape, block_uses_emit,
-    match_needs_if_chain,
+    ActorSeamIr, CacheIr, CapRefIr, ConstVal, EventPatternIr, EventPatternValueIr,
+    EventSubscriberShape, FnSig, IndexIr, IrHandlerKind, IrHttpMethod, MUTATING_CELL_OPS,
+    MUTATING_LOG_OPS, MUTATING_MAP_CACHE_OPS, MUTATING_SET_OPS, OpSig, ProtocolIr, StoreFieldIr,
+    StoreKindIr, TypeShape,
 };
 
-/// The lowering pass's own working state: the certified program's typed
-/// output (for `.ty`/`.types` lookups), a lexical scope stack this pass
-/// tracks itself — `TypedCommons` has no persisted "what type does this bound
-/// name have" table (that lived only in the checker's own transient `Ctx`),
-/// so the one case that needs it (a record shorthand field, `{ x }`, which
-/// has no `ExprId` of its own to key `expr_types` by) re-derives it from the
-/// same param/`let` binding sites the checker itself walked — and the
-/// enclosing fn/method's own rigid type variables (`fn identity[T](x: T)`,
-/// and a generic type's own params on one of its methods), needed by
-/// `resolve_type_ref_in` the same way `Ctx::type_vars` is
-/// (`bynk-check/src/checker.rs:2816`); `resolve_type_ref` (no `vars` set)
+/// The resolution context the AST-analysis helpers below share: the checked
+/// program's own `TypedCommons` (for type interning and declared-type
+/// lookups) plus the enclosing fn/method's own rigid type variables
+/// (`fn identity[T](x: T)`, and a generic type's own params on one of its
+/// methods), needed by `resolve_type_ref_in` the same way `Ctx::type_vars`
+/// is (`bynk-check/src/checker.rs`); `resolve_type_ref` (no `vars` set)
 /// would otherwise resolve a rigid `T` as an unknown declared type and
 /// silently fail.
+///
+/// Slice D1 of `#1542` (`design/tracks/the-ir-cutover.md` §10.3) slimmed
+/// this from the expression lowerer's full context — the lexical scope
+/// stack, the synthetic-temp counter, the enclosing return type and the
+/// agent handler's store-queryable field set all went with the body
+/// lowering that was their only reader. What remains is exactly what a
+/// signature/shape reader needs.
 pub struct LowerIrCtx<'a> {
     program: &'a TypedCommons,
-    scopes: Vec<HashMap<String, TyId>>,
     type_vars: HashSet<String>,
-    /// Bumped once per synthetic temp name this pass mints — originally
-    /// [`lower_record_spread_ir`]-only (`__spread_base_{n}`: a fixed name is
-    /// unique against every *source-level* name, `__` is unlexable, but not
-    /// against another spread on the same nesting chain), generalised by
-    /// P6.15/P6.16 (review of #1238) into the one shared counter every
-    /// synthetic-temp minter uses via [`LowerIrCtx::fresh_tmp`] — `?`'s own
-    /// receiver/error temps and `is`'s own forced-receiver temp included.
-    /// A per-purpose counter (the shape this field started as) only
-    /// guarantees uniqueness *within* one kind of temp; two different kinds
-    /// nested inside each other (a spread inside a `?`'s operand, two `?`s
-    /// in one function) need the same global monotonic guarantee a
-    /// hoisting printer's own flat `const` scope requires.
-    tmp_counter: usize,
-    /// P6.15: the enclosing fn/handler/provider-op's own declared return
-    /// type, resolved by whichever of the four real body-lowering entry
-    /// points (`lower_fn_body_ir`, `lower_handler_body_ir`,
-    /// `lower_service_handler_body_ir`, `lower_provider_op_ir`) constructed
-    /// this `cx`, via [`LowerIrCtx::set_return_ty`] — `None` for every other
-    /// construction site (a signature-only reader, which never lowers an
-    /// expression body and so never reaches `ExprKind::Question`), **and**
-    /// `None` on a genuine resolve miss (review of #1238) — mirroring
-    /// `lower_service_handler_signature_ir`'s own `.unwrap_or_else(|| cx.
-    /// unit_ty())` degrade one call away: a service handler's own
-    /// `return_type` is not checker-guaranteed to resolve (that function's
-    /// own doc comment gives the full grounding), so panicking here would
-    /// turn an existing, accepted, harmless-until-now gap into an eager
-    /// crash on every fn/handler/provider-op body this pass ever lowers,
-    /// including the overwhelming majority that never read `return_ty` at
-    /// all. Every real consumer already handles `None` — mirrors
-    /// `bynk-emit/src/emitter/lower.rs`'s own `LowerCtx::return_ty`, the
-    /// value [`embed_conversion_ir`] needs for the identical reason that
-    /// function's string-emitter sibling, `embed_conversion`, needs
-    /// `cx.return_ty` — deciding whether a `Result[T,E]?`'s error type
-    /// matches the enclosing function's own declared error type, or needs a
-    /// declared `embeds` conversion first.
-    return_ty: Option<TyId>,
-    /// P6.20-pre: the enclosing agent handler's own `store Map`/`store Log`
-    /// field names — the ones `lower_handler_body_ir` deliberately does
-    /// *not* bind into `scopes` (only `Cell` fields are, v0.81's "implicit
-    /// deref" rule) because they are not ordinary locals: a bare reference
-    /// lowers to [`bynk_ir::IrExprKind::StoreQuery`], not
-    /// [`bynk_ir::IrExprKind::Local`]. Set once via
-    /// [`LowerIrCtx::set_store_queryable`], empty (and never consulted) for
-    /// every other construction site — mirrors [`LowerIrCtx::return_ty`]'s
-    /// own "`None`/empty everywhere but the one real body-lowering entry
-    /// point that needs it" shape.
-    store_queryable: HashSet<String>,
 }
 
 impl<'a> LowerIrCtx<'a> {
@@ -140,49 +97,15 @@ impl<'a> LowerIrCtx<'a> {
     }
 
     /// #1187's own closing scoping pass: a `TypedCommons`-only constructor,
-    /// for the one real call path (`lower_op_sig_ir_from_commons`, below)
-    /// that never has a `&CheckedProgram` to unwrap. See that function's
-    /// own doc comment for why.
+    /// for the call paths (`lower_op_sig_ir_from_commons` and
+    /// `lower_attached_fn_sig_ir_from_types`, below) that never have a
+    /// `&CheckedProgram` to unwrap. See `lower_op_sig_ir_from_commons`'s
+    /// own doc comment for why that is sound.
     fn from_commons(commons: &'a TypedCommons, type_vars: HashSet<String>) -> Self {
         Self {
             program: commons,
-            scopes: vec![HashMap::new()],
             type_vars,
-            tmp_counter: 0,
-            return_ty: None,
-            store_queryable: HashSet::new(),
         }
-    }
-
-    /// P6.15: called once, by a real body-lowering entry point only, right
-    /// after resolving its own `return_type` — see [`LowerIrCtx::return_ty`]'s
-    /// own doc comment. Takes the resolve `Option` directly (review of
-    /// #1238) rather than a caller-side `.unwrap_or_else(|| panic!(..))` —
-    /// see that field's own doc comment for why a miss must degrade, not
-    /// crash.
-    fn set_return_ty(&mut self, ty: Option<TyId>) {
-        self.return_ty = ty;
-    }
-
-    /// P6.20-pre: called once, by `lower_handler_body_ir` only, right
-    /// after seeding `self`/`store_cells` — see
-    /// [`LowerIrCtx::store_queryable`]'s own doc comment for why this is a
-    /// separate table from `scopes` rather than an ordinary [`Self::bind`].
-    fn set_store_queryable(&mut self, names: HashSet<String>) {
-        self.store_queryable = names;
-    }
-
-    /// P6.15/P6.16 (review of #1238): the one shared synthetic-temp minter
-    /// every caller uses — see [`LowerIrCtx::tmp_counter`]'s own doc comment
-    /// for why a shared counter, not one per purpose, is load-bearing here.
-    fn fresh_tmp(&mut self, prefix: &str) -> String {
-        let n = self.tmp_counter;
-        self.tmp_counter += 1;
-        format!("{prefix}_{n}")
-    }
-
-    fn fresh_spread_tmp(&mut self) -> String {
-        self.fresh_tmp("__spread_base")
     }
 
     /// A type reference resolved in this pass's own rigid-variable scope —
@@ -199,390 +122,17 @@ impl<'a> LowerIrCtx<'a> {
         )
     }
 
-    fn push_scope(&mut self) {
-        self.scopes.push(HashMap::new());
-    }
-
-    fn pop_scope(&mut self) {
-        self.scopes.pop();
-    }
-
-    fn bind(&mut self, name: String, ty: TyId) {
-        self.scopes
-            .last_mut()
-            .expect("bynk internal error: LowerIrCtx's scope stack is never empty")
-            .insert(name, ty);
-    }
-
-    fn lookup(&self, name: &str) -> Option<TyId> {
-        self.scopes.iter().rev().find_map(|s| s.get(name).copied())
-    }
-
-    /// R6.1 / ADR 0334: the checker already resolved every real expression's
-    /// type before this pass runs — a miss here means this pass and the
-    /// checker disagree about which expressions the unit contains, which is
-    /// a compiler bug on the certified-program path this pass is scoped to,
-    /// not a fallback-shaped state.
-    fn expr_ty(&self, id: ExprId) -> TyId {
-        self.program
-            .expr_types
-            .get(&id)
-            .unwrap_or_else(|| {
-                panic!(
-                    "bynk internal error (ADR 0334): no recorded type for {id:?} — \
-                     bynk_lower and bynk-check disagree about which \
-                     expressions this certified unit contains"
-                )
-            })
-            .ty
-    }
-
-    /// `Effect[T] -> T` — the type an `Await`/`EffectLet`/`Do` binds, not the
-    /// effect value's own recorded type. Falls back to `ty` unchanged on a
-    /// non-`Effect` input rather than panicking: every real call site here
-    /// only peels a type the checker already required to be `Effect[_]`
-    /// (`<-`/`do`/`~>`'s own gate, `bynk-check/src/checker.rs`'s
-    /// `Ctx::effectful` sites), so this is defensive, not load-bearing.
-    fn peel_effect(&self, ty: TyId) -> TyId {
-        match &*self.program.ty_intern.get(ty) {
-            Ty::Effect(inner) => *inner,
-            _ => ty,
-        }
-    }
-
     fn unit_ty(&self) -> TyId {
         self.program.ty_intern.intern(Ty::Unit)
     }
-
-    /// P6.2 (#1143): the `Callee` `bynk-check` recorded for a call-shaped
-    /// expression (P6.0), if any. Deliberately `Option`, not `.expect()`-ed
-    /// like `expr_ty` — a certified program is only guaranteed a `Callee`
-    /// for shapes `calls.rs`'s six functions or the store-field ladder
-    /// dispatch (P6.0/P6.2's own "Done when" scope); a handful of shapes
-    /// this slice's own Decision C left out on purpose (`HttpResult`/
-    /// `QueueResult` bare-variant construction, `Events.emit`, the
-    /// production `is_system_http_service` address) reach here with none —
-    /// an expected miss, not a bug, so the caller decides what to do with
-    /// `None` rather than this accessor panicking on a state that is
-    /// sometimes legitimate.
-    fn callee(&self, id: ExprId) -> Option<&Callee> {
-        self.program.callees.get(&id)
-    }
 }
 
-/// A fn/method's own rigid type variables — its own `[T, ...]` type
-/// parameters, plus a generic receiver's, for a method — the `vars` set
-/// `resolve_type_ref_in` needs to resolve a rigid `T` as `Ty::Var` rather
-/// than an unknown declared type. Shared by [`lower_fn_body_ir`] and
-/// [`lower_fn_item_ir`] so the two can never independently drift on which
-/// names are rigid for the same `f`: both functions' own `ADR 0334` panic
-/// text warns specifically against `bynk_lower`'s `type_vars`
-/// disagreeing with `bynk-check`'s `Ctx::type_vars`, and a hand-duplicated
-/// copy of this exact computation would be one more place that guarantee
-/// could quietly stop holding.
-fn fn_rigid_type_vars(f: &FnDecl, program: &TypedCommons) -> HashSet<String> {
-    let mut type_vars: HashSet<String> = f
-        .type_params
-        .iter()
-        .map(|tp| tp.name.name.clone())
-        .collect();
-    if let FnName::Method { type_name, .. } = &f.name
-        && let Some(decl) = program.types.get(&type_name.name)
-    {
-        type_vars.extend(decl.type_params.iter().map(|tp| tp.name.name.clone()));
-    }
-    type_vars
-}
-
-/// A method's own generic receiver type — `Box[A]`'s `self` is
-/// `Ty::Named { name: "Box", args: [Ty::Var("A")], .. }`, not a fixed
-/// instantiation like `Box[Int]` — or `None` for a free function or a
-/// method declared with no `self` parameter. Shared by
-/// [`lower_fn_body_ir`] (which binds the result into scope under
-/// `"self"`) and [`lower_fn_item_ir`] (which records it verbatim as
-/// `IrItem::Fn::receiver`) — the same value, computed once.
-fn fn_receiver_ty(f: &FnDecl, program: &TypedCommons) -> Option<TyId> {
-    let FnName::Method { type_name, .. } = &f.name else {
-        return None;
-    };
-    if !f.has_self {
-        return None;
-    }
-    let decl = program.types.get(&type_name.name)?;
-    let self_args = decl
-        .type_params
-        .iter()
-        .map(|tp| program.ty_intern.intern(Ty::Var(tp.name.name.clone())))
-        .collect();
-    Some(checker::named_ty_with_args(
-        decl,
-        self_args,
-        &program.ty_intern,
-    ))
-}
-
-/// Wrap a lowered body block's own tail in [`IrExprKind::Return`] — the one
-/// place this pass builds a `Return` node (Bynk has no `return` keyword; see
-/// that variant's own doc comment). Shared by [`lower_fn_body_ir`] and
-/// `lower_handler_body_ir` (P6.9, #1167) — both are body-lowering entry
-/// points that produce a `Block` and need the exact same tail-wrapping, and
-/// hand-duplicating it a second time is exactly the kind of re-derivation
-/// this module's own header doc (`Callee`, P6.0) already avoids elsewhere.
-fn wrap_body_return(block: IrExpr) -> IrExpr {
-    let IrExpr {
-        kind: IrExprKind::Block { stmts, tail },
-        ty,
-        span,
-    } = block
-    else {
-        unreachable!("lower_block_ir always returns IrExprKind::Block");
-    };
-    let tail_ty = tail.ty;
-    let tail_span = tail.span;
-    IrExpr {
-        kind: IrExprKind::Block {
-            stmts,
-            tail: Box::new(IrExpr {
-                kind: IrExprKind::Return { value: tail },
-                ty: tail_ty,
-                span: tail_span,
-            }),
-        },
-        ty,
-        span,
-    }
-}
-
-/// Lower a function/method body: seeds scope from `f`'s params (and its own
-/// rigid type variables — its own `[T, ...]` type parameters, plus a
-/// generic receiver's, for a method), lowers the body as an ordinary value
-/// block, then wraps the tail via `wrap_body_return`. Distinct from
-/// [`lower_block_ir`], which lowers a *nested* block as a bare value with no
-/// such wrapping.
-///
-/// Handler bodies are out of scope for this entry point: a handler's own
-/// non-local bare-ident forms (store-field/cell reads, agent `self`, the
-/// actor binder, transition `old`/`new`) need resolved-identity plumbing
-/// (`store_fields`, `agent_state_ty`, `actor_binding` — the `Ctx` fields
-/// `check_handler_body` seeds, `checker.rs:930-960`) this entry point has no
-/// parameter for and does not commission (P6.1's own Decision C) — calling
-/// this on a handler body would silently misclassify any bare ident
-/// matching one of those forms as a `Local`/`Global` miss (`todo!()`)
-/// rather than the specific kind it actually is. `lower_handler_body_ir`
-/// (P6.9, #1167) is that dedicated entry point, finally closing this gap —
-/// it is *not* built by widening this function, since a free fn/method and
-/// an agent handler seed genuinely different scopes (rigid type variables
-/// here, agent `self`/store cells there) that would otherwise have to
-/// coexist behind one signature for no shared benefit.
-/// `lower_service_handler_body_ir` (P6.11, #1171) is the third sibling on
-/// the same rule, not a second widening — a service handler's own scope
-/// (`params`/`binder` only) is disjoint from both of the other two.
-pub fn lower_fn_body_ir(f: &FnDecl, program: &CheckedProgram) -> IrExpr {
-    let type_vars = fn_rigid_type_vars(f, program.program());
-    let mut cx = LowerIrCtx::new(program, type_vars);
-    cx.set_return_ty(cx.resolve_type_ref(&f.return_type));
-    // `self` is never in `f.params` (`FnDecl::has_self` gates it) — mirrors
-    // `check_fn`'s own binding (`checker.rs`, the `f.has_self` arm): a
-    // generic receiver's `self` carries the receiver applied to its own
-    // rigid type variables (`Box[A]`'s `self`, not a fixed `Box[Int]`).
-    if let Some(self_ty) = fn_receiver_ty(f, program.program()) {
-        cx.bind("self".to_string(), self_ty);
-    }
-    for p in &f.params {
-        let ty = cx.resolve_type_ref(&p.type_ref).unwrap_or_else(|| {
-            panic!(
-                "bynk internal error (ADR 0334): parameter `{}`'s type does not resolve in this \
-                 pass's own rigid-variable scope, but the checker already accepted this fn body — \
-                 bynk_lower's type_vars disagrees with bynk-check's Ctx::type_vars",
-                p.name.name
-            )
-        });
-        cx.bind(p.name.name.clone(), ty);
-    }
-    let block = lower_block_ir(&f.body, &mut cx);
-    wrap_body_return(block)
-}
-
-/// Lower an agent `on call` handler's own body ([DECISION E], P6.9, #1167) —
-/// [`lower_fn_body_ir`]'s own doc comment names exactly why that entry point
-/// cannot be reused here: seeds a fresh scope from `self` (bound to
-/// `state_ty`, mirroring `check_handler_body`'s own `agent_self_scope`
-/// construction, `context_checks.rs:2900-2915`), every `store_cells` entry
-/// by bare name (the v0.81 "implicit deref in read position" rule the
-/// checker's own `self_scope` loop applies, `context_checks.rs:2910-2915`),
-/// and `h`'s own `params` — then lowers the body as an ordinary value block
-/// and wraps the tail via `wrap_body_return`, same as
-/// [`lower_fn_body_ir`]. No rigid type variables: `AgentDecl` carries no
-/// `type_params` of its own, the same fact
-/// [`resolve_store_field_ty`]'s own doc comment already grounds for
-/// [`lower_store_field_ir`]. `binder` is not bound into scope: this entry
-/// point is only ever reached from [`lower_handler_ir`]'s own agent-only
-/// path ([DECISION D]), where `binder` is `None` unconditionally
-/// ([`bynk_ir::IrHandler`]'s own doc comment). As of P6.11 (#1171) a real
-/// service-handler caller does exist — `lower_service_handler_body_ir` —
-/// and it is a sibling of this function, not a widening of it; that
-/// function's own doc comment names the scope-seeding differences in full.
-///
-/// Once scope is seeded, every store-field method call and every bare `:=`
-/// in `h.body` reaches the *ordinary* [`lower_block_ir`]/[`lower_expr_ir`]/
-/// [`lower_stmt_ir`] path and lowers correctly with no new call-lowering
-/// logic ([DECISION F]): [`lower_call_ir`]'s own existing, already-shipped
-/// generic `Callee`-wrapping (P6.2) already lowers a `Callee::Store`- or
-/// `Callee::Capability`-classified call the moment it's reached, and
-/// [`lower_stmt_ir`]'s own `Statement::Assign` arm ([DECISION B]) is real as
-/// of this same slice — this function's only job is making both reachable
-/// on a handler body at all, by seeding the scope [`lower_ident_ir`] needs
-/// to classify `self`/a store cell as `Local` rather than falling through to
-/// its own unresolved-ident `todo!()`. `store_queryable` (P6.20-pre) is the
-/// same idea one step further: a bare `store Map`/`store Log` field is not a
-/// `Local` (it is not bound into `scopes` at all — a `Map`/`Log` is not a
-/// value type, [`StoreField`]'s own doc comment), so [`lower_ident_ir`]
-/// needs a second table to classify it as [`bynk_ir::IrExprKind::StoreQuery`]
-/// instead of falling through to the same `todo!()`.
-fn lower_handler_body_ir(
-    h: &Handler,
-    store_cells: &HashMap<String, TyId>,
-    store_queryable: &HashSet<String>,
-    state_ty: TyId,
-    program: &CheckedProgram,
-) -> IrExpr {
-    let mut cx = LowerIrCtx::new(program, HashSet::new());
-    cx.set_return_ty(cx.resolve_type_ref(&h.return_type));
-    cx.set_store_queryable(store_queryable.clone());
-    cx.bind("self".to_string(), state_ty);
-    for (name, ty) in store_cells {
-        cx.bind(name.clone(), *ty);
-    }
-    for p in &h.params {
-        let ty = cx.resolve_type_ref(&p.type_ref).unwrap_or_else(|| {
-            panic!(
-                "bynk internal error (ADR 0334): handler parameter `{}`'s type does not resolve \
-                 in this pass's own scope, but the checker already accepted this handler",
-                p.name.name
-            )
-        });
-        cx.bind(p.name.name.clone(), ty);
-    }
-    let block = lower_block_ir(&h.body, &mut cx);
-    wrap_body_return(block)
-}
-
-/// P6.9's real `IrHandler` constructor ([DECISION C]/[DECISION D]/
-/// [DECISION E], #1167) — lowers an agent `on call` handler `h` into a real
-/// [`IrHandler`]. `store_cells`/`state_ty`/`invariants`/`transitions` are
-/// parameters, not re-derived ([DECISION E], mirroring
-/// [`lower_invariant_ir`]'s/[`lower_transition_ir`]'s own precedent, P6.8):
-/// no persisted "this agent's store cells / state type" table survives
-/// `check_agent_decls`'s own transient scope, and `invariants`/`transitions`
-/// are themselves already-lowered [`IrPredicate`]s a caller must have
-/// produced via those same two functions — this function only threads them
-/// into [`lower_commit_shape_ir`], never lowers or re-derives them itself. A
-/// future `IrItem::Agent` builder (not commissioned by this slice — see
-/// [`bynk_ir::IrItem`]'s own doc comment) computes all four once per agent
-/// and calls this function once per handler, not re-deriving any of them per
-/// call.
-///
-/// Threading real `invariants`/`transitions` through (review of #1167,
-/// replacing this function's own original empty-slices posture) matters
-/// beyond completeness: an empty pair is structurally indistinguishable from
-/// a correct lowering of an agent that genuinely declares neither, so an
-/// empty-by-construction `commit` would have been a silent-wrong-value trap
-/// for whatever future caller forgot to populate them for real.
-///
-/// Stays agent-only as of P6.11 (#1171) — [`lower_service_handler_ir`] is
-/// this function's own sibling for a service handler, not a widening of
-/// it; see that function's own doc comment for the three reasons the split
-/// is deliberate, and this function's own `by_clause.is_none()` assert
-/// below for the guard widening would have deleted.
-pub fn lower_handler_ir(
-    h: &Handler,
-    store_cells: &HashMap<String, TyId>,
-    store_queryable: &HashSet<String>,
-    state_ty: TyId,
-    invariants: &[IrPredicate],
-    transitions: &[IrPredicate],
-    program: &CheckedProgram,
-) -> IrHandler {
-    // [DECISION D] is agent-only by contract, not merely by convention — an
-    // agent handler is checker-guaranteed to carry no `by` clause
-    // (`bynk.actor.by_on_agent`, `context_checks.rs:2986-2996`), so a
-    // `Handler` that has one has reached this entry point in error (a future
-    // service-handler caller silently dropping the binder), the same
-    // "assert the checker's invariant loudly" idiom this module's own ADR
-    // 0334 panics already use throughout.
-    assert!(
-        h.by_clause.is_none(),
-        "bynk internal error (ADR 0334): lower_handler_ir is agent-only (DECISION D) — an agent \
-         handler cannot carry a `by` clause (bynk.actor.by_on_agent), so a handler that does is a \
-         service handler reaching the wrong entry point"
-    );
-    let cx = LowerIrCtx::new(program, HashSet::new());
-    let (params, given, ret, effectful) = lower_handler_signature_ir(h, &cx);
-    let emits = block_uses_emit(&h.body, &program.program().callees);
-    let commit = lower_commit_shape_ir(&h.body, invariants, transitions, emits, program);
-    let body = lower_handler_body_ir(h, store_cells, store_queryable, state_ty, program);
-    IrHandler {
-        kind: lower_handler_kind_ir(&h.kind),
-        params,
-        given,
-        // `h.by_clause.is_none()` was just asserted above — always empty,
-        // not merely usually so.
-        actors: Vec::new(),
-        binder: None,
-        // Agent-only by contract (asserted above): the synthetic
-        // `connection` binding is a `from websocket` service-handler
-        // concept exclusively — see [`ConnectionBinder`]'s own doc
-        // comment.
-        connection: None,
-        body,
-        commit,
-        ret,
-        effectful,
-        method_name: h.method_name.as_ref().map(|i| i.name.clone()),
-    }
-}
-
-/// `(params, given, ret, effectful)` — `lower_handler_signature_ir`'s own
-/// return shape, and [`lower_service_handler_signature_ir`]'s (#1187's slice
-/// 5), reused as a named alias rather than a bare tuple at both call sites
-/// once one of them (`emit_service`, `bynk-emit/src/emitter/emit.rs`) had to
-/// spell it out in a function signature.
+/// `(params, given, ret, effectful)` — [`lower_service_handler_signature_ir`]'s
+/// return shape (#1187's slice 5), a named alias rather than a bare tuple
+/// because its consumer (`emit_service`, `bynk-emit/src/emitter/emit.rs`)
+/// has to spell it out in a function signature. (The agent-handler
+/// signature reader that shared it went with Slice D1 of `#1542`.)
 pub type HandlerSignatureIr = (Vec<(String, TyId)>, Vec<String>, TyId, bool);
-
-/// A handler's own `params`/`given`/`effectful` — the one part of
-/// [`IrHandler`] construction genuinely identical between an agent handler
-/// ([`lower_handler_ir`]) and a service handler
-/// ([`lower_service_handler_ir`], P6.11, #1171), extracted so the two don't
-/// hand-duplicate it. Everything else about the two — scope seeding,
-/// `binder`, the WebSocket deferral — is genuinely different and stays
-/// unshared; see [`lower_handler_ir`]'s own doc comment for why that split
-/// is deliberate, not an oversight.
-fn lower_handler_signature_ir(h: &Handler, cx: &LowerIrCtx) -> HandlerSignatureIr {
-    let params: Vec<(String, TyId)> = h
-        .params
-        .iter()
-        .map(|p| {
-            let ty = cx.resolve_type_ref(&p.type_ref).unwrap_or_else(|| {
-                panic!(
-                    "bynk internal error (ADR 0334): handler parameter `{}`'s type does not \
-                     resolve in this pass's own scope, but the checker already accepted this \
-                     handler",
-                    p.name.name
-                )
-            });
-            (p.name.name.clone(), ty)
-        })
-        .collect();
-    let given: Vec<String> = h.given.iter().map(|c| c.key().to_string()).collect();
-    let ret = cx.resolve_type_ref(&h.return_type).unwrap_or_else(|| {
-        panic!(
-            "bynk internal error (ADR 0334): a handler's return type does not resolve in this \
-             pass's own scope, but the checker already accepted this handler"
-        )
-    });
-    let effectful = matches!(&*cx.program.ty_intern.get(ret), Ty::Effect(_));
-    (params, given, ret, effectful)
-}
 
 /// P6.50 (design/tracks/the-ir.md §6b): a return type's own syntactic
 /// `Effect[...]` wrapper — `TypeRef::Effect(_, _)`, not the *resolved*
@@ -601,57 +151,23 @@ pub fn is_effectful_return(r: &TypeRef) -> bool {
     matches!(r, TypeRef::Effect(_, _))
 }
 
-/// #1187's slice 5 (the `Service` emitter cutover): `emit_service`'s own
-/// standalone entry point for a handler's resolved *signature* only —
-/// `params`/`ret`/`effectful`, never the body. Deliberately does not build
-/// a real [`IrHandler`]/[`bynk_ir::IrItem::Service`]: both
-/// [`lower_handler_ir`]/[`lower_service_handler_ir`] unconditionally lower
-/// the handler's own body into a real `IrExpr` (`IrHandler::body` is not
-/// `Option`), and an ordinary `from http` handler's body routinely uses `?`
-/// propagation (`ExprKind::Question`) or an `is`-expression (`ExprKind::Is`).
-/// **Correction (P6.25, 2026-08-19): both landed** — `Question` as P6.15
-/// (ADR 0337, `lower_question_ir`, decomposing to `IrExprKind::Match` per
-/// #1225's own `Ok`/`Err`/`Some`/`None` identity precedent) and `Is` as P6.16
-/// (ADR 0338, `lower_is_ir`, a forced-temp `Let` discharging R5.10). Neither
-/// is reached from this call site or any other shipped emitter path yet —
-/// `emitter/lower.rs`'s own P6.2 `Call`/`Lambda` cutover hasn't landed — so
-/// the reasoning below (a real `IrHandler` here would still panic on other,
-/// still-unconverted constructs reachable from an ordinary `from http` body)
-/// stands, just not on `Question`/`Is` specifically anymore. Building a real
-/// `IrHandler` at `emit_service`'s own call
-/// site would panic on exactly the ordinary Http services this slice needs
-/// to keep working. Mirrors
-/// [`body_writes_state`]'s own precedent (#1196): a narrow, standalone
-/// reader of already-resolved data, not the full `IrItem`/`IrHandler`
-/// assembly — the same posture, applied to signature data instead of a
-/// single boolean.
-/// Deliberately **not** `lower_handler_signature_ir(h, &cx)` (review of
-/// #1198) — that helper's own ADR 0334 `.unwrap_or_else(|| panic!(..))` on a
-/// resolution miss is correct for an *agent* handler (the checker
-/// guarantees resolution there) but not for a *service* one:
-/// `resolver.rs` skips `CommonsItem::Service` in every type-ref-resolution
-/// pass, `check_handler_body` silently skips a param whose type doesn't
-/// resolve and silently returns on an unresolvable return type (no
-/// diagnostic either way), and `check_http_handler` only constrains a
-/// param's *name* (path segment or `body`), never validates a `body:`
-/// param's own declared type. A service handler naming an undeclared type
-/// certifies today (and previously just emitted that bad name verbatim, a
-/// `tsc`-only failure) — reusing the strict helper here would turn that
-/// pre-existing, real-but-harmless-to-the-compiler gap into an ICE on the
-/// production emit path for every service in every project (confirmed live:
-/// `on POST("/x") (body: Nope) -> Effect[HttpResult[String]] by v: Visitor
-/// { ... }` panics `bynkc` before this fix). Mirrors [`lower_protocol_ir`]'s
-/// own `Ty::Unit`-on-miss posture, for the identical underlying reason (that
-/// function's own doc comment already documents the checker's Service-wide
-/// resolution gap).
+/// A service handler's resolved *signature* — `params`/`given`/`ret`/
+/// `effectful` — and never its body. This is what `emit_service`
+/// (`bynk-emit/src/emitter/emit.rs`) reads per handler, and what
+/// `lower_event_subscriber_shapes_ir` reads for a subscriber's parameter
+/// count. Mirrors [`body_writes_state`]'s posture (#1196): a narrow,
+/// standalone reader of already-resolved data, applied to signature data
+/// instead of a body walk.
 ///
-/// `effectful` is computed from `h.return_type`'s own AST shape
-/// (`TypeRef::Effect(..)`, matching [`is_effectful_return`] exactly), not
-/// from the *resolved* `ret`'s `Ty::Effect(_)` shape — a
-/// resolution miss on `ret` (falling back to `Ty::Unit` below) must not
-/// silently flip an `Effect[Nope]`-returning handler to non-effectful; the
-/// top-level `Effect[...]` wrapper is always syntactically determinable
-/// regardless of whether its own inner type resolves.
+/// A service handler's own param type is *not* resolution-checked by the
+/// checker at all (`1199_service_handler_unresolvable_param_type_no_ice`
+/// pins it), so a resolve miss degrades to `Ty::Unit` here rather than
+/// panicking — the same fallback `lower_protocol_ir` documents for a
+/// WebSocket frame type, and for the same reason: an ADR 0334 panic may
+/// only assert a guarantee the checker actually gives. (The agent-handler
+/// signature reader that did panic on a miss was correct for *its* input,
+/// which the checker does guarantee resolves; it went with the body
+/// lowering in Slice D1 of `#1542`.)
 pub fn lower_service_handler_signature_ir(
     h: &Handler,
     program: &CheckedProgram,
@@ -675,207 +191,12 @@ pub fn lower_service_handler_signature_ir(
     (params, given, ret, effectful)
 }
 
-/// P6.11 ([DECISION E], #1171): lower a service handler's own body — the
-/// sibling of `lower_handler_body_ir` the reasoning in
-/// [`lower_service_handler_ir`]'s own doc comment argues for, not a
-/// widening of it. Seeds scope from `connection` (P6.13, #1179) if this
-/// handler carries one, then `h.params`, then `binder` if one was resolved
-/// — matching `check_handler_body`'s own `param_scope` construction order
-/// for a service (`checker.rs`: `params_for_check` — synthetic `connection`
-/// prepended first when present, `open_connection_param`,
-/// `context_checks.rs:1944-1954` — then `actor_binding`, then
-/// `agent_self_scope` only when present). Binder last has no observable
-/// effect today only because `handler_actor_binding` already suppresses a
-/// param-shadowing binder before this ever runs (`context_checks.rs:2050-
-/// 2055`) — recorded here so the ordering isn't silently "fixed" by a later
-/// reader who doesn't know it's already load-bearing-adjacent. No rigid
-/// type variables: `ServiceDecl` carries no `type_params` of its own, the
-/// same fact [`resolve_store_field_ty`]'s own doc comment already grounds
-/// for [`lower_store_field_ir`].
-fn lower_service_handler_body_ir(
-    h: &Handler,
-    binder: Option<&ActorBinder>,
-    connection: Option<&ConnectionBinder>,
-    program: &CheckedProgram,
-) -> IrExpr {
-    let mut cx = LowerIrCtx::new(program, HashSet::new());
-    cx.set_return_ty(cx.resolve_type_ref(&h.return_type));
-    if let Some(connection) = connection {
-        cx.bind("connection".to_string(), connection.ty);
-    }
-    // Review of #1253 (P6.23 root-cause pass): degrades to `cx.unit_ty()`
-    // on a resolve miss instead of panicking, matching this function's own
-    // signature-only sibling, `lower_service_handler_signature_ir`, one
-    // call away — an inconsistency this pass's own review process should
-    // have caught the moment the signature-only reader picked up the
-    // graceful fallback. Not an ADR 0334 violation to begin with: a
-    // service/HTTP handler's own param type is never actually
-    // resolution-checked — the fixture pinning this directly,
-    // `1199_service_handler_unresolvable_param_type_no_ice`, names why:
-    // `check_http_handler` validates a param's *name* only, never its
-    // declared type, and `resolver.rs`'s own passes skip `CommonsItem::
-    // Service` entirely — so panicking here on a state the checker itself
-    // accepts was the actual bug, not the miss.
-    for p in &h.params {
-        let ty = cx
-            .resolve_type_ref(&p.type_ref)
-            .unwrap_or_else(|| cx.unit_ty());
-        cx.bind(p.name.name.clone(), ty);
-    }
-    if let Some(binder) = binder {
-        cx.bind(binder.binder.clone(), binder.ty);
-    }
-    let block = lower_block_ir(&h.body, &mut cx);
-    wrap_body_return(block)
-}
-
-/// P6.11's real service-handler `IrHandler` constructor ([DECISION E],
-/// #1171) — the sibling to [`lower_handler_ir`], not a widening of it.
-/// [`lower_fn_body_ir`]'s own doc comment already states the governing
-/// rule ("a free fn/method and an agent handler seed genuinely different
-/// scopes … that would otherwise have to coexist behind one signature for
-/// no shared benefit"); the same reasoning gives the same answer here,
-/// more strongly:
-/// - The two scopes are disjoint, not overlapping — an agent handler body
-///   seeds `self`/`store_cells`; a service handler body seeds `params`/
-///   `binder` only. Not one of `store_cells`/`state_ty`/`invariants`/
-///   `transitions` means anything for a service.
-/// - [`lower_handler_ir`] asserts `h.by_clause.is_none()` — an explicit
-///   "agent-only by contract" guard. Widening would delete the one thing
-///   that today catches a service handler reaching the wrong entry point.
-///
-/// `protocol` is a parameter solely to disambiguate `HandlerKind::Message`
-/// — the same literal AST variant is a *queue* consumer under
-/// `ServiceProtocol::Queue` and a *WebSocket inbound frame* under
-/// `ServiceProtocol::WebSocket` (`HandlerKind::Close`'s own doc comment
-/// says so), and the checker itself dispatches on exactly this `(kind,
-/// protocol)` pair (`context_checks.rs:1938-1945`) — without `protocol`
-/// here, the `ConnectionBinder` derivation below would wrongly capture
-/// every queue consumer in the language too.
-///
-/// **`binder` is read back, not threaded in as a parameter** — the
-/// deliberate inverse of [`lower_handler_ir`]'s own [DECISION E]
-/// (`store_cells`/`state_ty`/`invariants`/`transitions` are parameters
-/// *because* no persisted table survives `check_agent_decls`'s own
-/// transient scope). Here the opposite premise holds: #1170 persisted
-/// exactly this pair into `TypedCommons::actor_bindings`, so the opposite
-/// choice follows. `None` is a legitimate outcome, not an error — a
-/// binder-less `by <Actor>`, no `by` clause at all, or a binder that
-/// shadowed a param and was suppressed (`context_checks.rs:2050-2055`) all
-/// resolve to `None` here exactly as they do in `handler_actor_binding`
-/// itself; this function does not, and must not, assert `binder.is_some()`
-/// from `h.by_clause.is_some()`.
-///
-/// `commit` passes empty `invariants`/`transitions` slices to
-/// [`lower_commit_shape_ir`] — [DECISION F]'s own predicted service call
-/// site, real for the first time. `CommitShape::Transactional` is
-/// structurally unreachable here, not merely unproduced by convention: a
-/// service declares no `store` fields for `body_writes_state` to find a
-/// write against. No `is_service` flag is added anywhere — Decision F's
-/// whole point is that none is needed.
-///
-/// **The websocket lifecycle case, closed (P6.13, [DECISION G], #1179).**
-/// A `from websocket` service's `on open`/`on message`/`on close` handler
-/// receives the synthetic leading `connection: Connection[out]` binding
-/// the checker injects into its own `params_for_check` only
-/// (`open_connection_param`, `context_checks.rs:2020-2032`, injected at
-/// `:1944-1954`) — never into `h.params`, so `params`/`given` above stay
-/// derived from `h.params` alone, exactly mirroring the checker's own
-/// asymmetry (`handler.params` itself is never mutated either). This
-/// function re-derives the same `Connection[out]` type via
-/// `cx.resolve_type_ref` over a freshly-built `TypeRef::Connection`, the
-/// same construction `open_connection_param` performs, since that function
-/// is private to `bynk-check` and there is no persisted `TypedCommons`
-/// table to read it back from (contrast `binder`, below, which #1170 did
-/// persist). `borrowed` mirrors the checker's own `borrowed_held`
-/// distinction (`context_checks.rs:1955-1963`): `false` for `on open` (a
-/// fresh owned socket, disposed via transfer to an agent), `true` for `on
-/// message`/`on close` (the borrowed firing socket). The resulting
-/// [`ConnectionBinder`] is threaded into
-/// `lower_service_handler_body_ir` so `connection.…` reads resolve via
-/// `cx.lookup` like any other bound name, and carried on [`IrHandler`]
-/// itself for any consumer that needs the owned/borrowed distinction
-/// without re-deriving it from `kind`/`protocol`.
-pub fn lower_service_handler_ir(
-    h: &Handler,
-    protocol: &ServiceProtocol,
-    program: &CheckedProgram,
-) -> IrHandler {
-    let cx = LowerIrCtx::new(program, HashSet::new());
-    // Review of #1253 (P6.23 root-cause pass): was `lower_handler_signature_ir`
-    // (the agent-oriented signature reader, which panics on a resolve miss —
-    // correct for an agent handler's own param type, which the checker does
-    // guarantee resolves) — the wrong sibling for a *service* handler, whose
-    // own param type is not resolution-checked at all
-    // (`1199_service_handler_unresolvable_param_type_no_ice` pins it; see
-    // `lower_service_handler_body_ir`'s own matching fix). Swapped for
-    // `lower_service_handler_signature_ir`, this function's own real
-    // sibling, already graceful (`cx.unit_ty()` on a miss) since it was
-    // written — this call site was simply never updated to use it.
-    let (params, given, ret, effectful) = lower_service_handler_signature_ir(h, program);
-    // Read straight off `h.by_clause`, not derived from `binder` below —
-    // review of #1180: `binder` alone loses the gate itself for a
-    // binder-less `by <Actor>` (`ActorBinder`'s own doc comment already
-    // names `None` as legitimate there) and loses the actor's own *name*
-    // even in the single-actor happy path (`ActorBinder::ty` carries only
-    // the sealed identity type). See `IrHandler::actors`'s own doc comment.
-    let actors: Vec<String> = h
-        .by_clause
-        .as_ref()
-        .map(|by| by.actors.iter().map(|a| a.name.clone()).collect())
-        .unwrap_or_default();
-    let binder = program
-        .program()
-        .actor_binding(h.span)
-        .map(|(name, ty)| ActorBinder {
-            binder: name.clone(),
-            ty: *ty,
-        });
-    let connection = match (&h.kind, protocol) {
-        (
-            HandlerKind::Open | HandlerKind::Message | HandlerKind::Close,
-            ServiceProtocol::WebSocket { out_type, .. },
-        ) => {
-            let conn_ref =
-                bynk_syntax::ast::TypeRef::Connection(Box::new(out_type.clone()), h.span);
-            let ty = cx.resolve_type_ref(&conn_ref).unwrap_or_else(|| {
-                panic!(
-                    "bynk internal error (ADR 0334): a `from websocket` lifecycle handler's \
-                     synthetic `connection: Connection[out]` type does not resolve in this \
-                     pass's own scope, but the checker already accepted this handler"
-                )
-            });
-            Some(ConnectionBinder {
-                ty,
-                borrowed: matches!(h.kind, HandlerKind::Message | HandlerKind::Close),
-            })
-        }
-        _ => None,
-    };
-    let emits = block_uses_emit(&h.body, &program.program().callees);
-    let commit = lower_commit_shape_ir(&h.body, &[], &[], emits, program);
-    let body = lower_service_handler_body_ir(h, binder.as_ref(), connection.as_ref(), program);
-    IrHandler {
-        kind: lower_handler_kind_ir(&h.kind),
-        params,
-        given,
-        actors,
-        binder,
-        connection,
-        body,
-        commit,
-        ret,
-        effectful,
-        method_name: h.method_name.as_ref().map(|i| i.name.clone()),
-    }
-}
-
-/// Slice 1 of `#1542` (`design/tracks/the-ir-cutover.md` §5): the
-/// `TypeShape`-only half of [`lower_type_item_ir`], for callers that already
-/// hold a `TypeDecl` and want its shape directly — [`IrItem::Type`] wraps
-/// exactly this one field, so the round-trip through the full enum
-/// (`emitter.rs`'s own `type_shape_for`, formerly a build-then-`unreachable!`
-/// discard) was pure ceremony.
+/// A `type` declaration's resolved structure as a [`TypeShape`] — the
+/// reader `emitter.rs`'s own `type_shape_for` calls directly. (Slice 1 of
+/// `#1542` split this out of a full `IrItem::Type` constructor whose single
+/// field it was, ending a build-then-`unreachable!`-discard round-trip;
+/// Slice D1 then deleted that constructor, leaving this as the type
+/// reader.)
 ///
 /// Takes a certified `&CheckedProgram`, matching this module's own
 /// categorical discipline (this file's own header doc: "every entry point
@@ -973,68 +294,6 @@ pub fn lower_type_shape_ir(decl: &Arc<TypeDecl>, program: &CheckedProgram) -> Ty
     }
 }
 
-/// P6.6 (#1161): lower a `type` declaration into a real [`IrItem::Type`] —
-/// [`IrItem`]'s own doc comment names which of its seven design-sketch
-/// variants are real as of this slice (`Type`/`Fn` only, Decision D). A thin
-/// wrapper over [`lower_type_shape_ir`] (slice 1 of `#1542`) for a caller
-/// that wants the full `IrItem`, not just its one field.
-pub fn lower_type_item_ir(decl: &Arc<TypeDecl>, program: &CheckedProgram) -> IrItem {
-    IrItem::Type {
-        shape: lower_type_shape_ir(decl, program),
-    }
-}
-
-/// P6.6 (#1161): lower a `fn` declaration into a real [`IrItem::Fn`] —
-/// wraps [`lower_fn_body_ir`] (#1141, unchanged) rather than re-deriving its
-/// own rigid-variable seeding or body lowering; adds only `def`/`receiver`/
-/// `params`/`ret`/`effectful` around its existing return value. Covers both
-/// free functions and methods alike (`FnName::Free`/`FnName::Method`) —
-/// which `IrItem::Fn`s a future printer re-attaches under which
-/// `IrItem::Type`'s own namespace (R8.1) is phase 7's own concern, not
-/// decided here.
-///
-/// Takes `f: &Arc<FnDecl>` for a cheap clone into
-/// [`lower_fn_body_ir`]/`fn_receiver_ty`/`fn_rigid_type_vars`'s own calls
-/// below, not because this constructor itself keeps a copy any more — P6.39
-/// dropped `IrItem::Fn::def` (no production reader ever read it back; this
-/// constructor has no production call site at all today either).
-pub fn lower_fn_item_ir(f: &Arc<FnDecl>, program: &CheckedProgram) -> IrItem {
-    let type_vars = fn_rigid_type_vars(f, program.program());
-    let cx = LowerIrCtx::new(program, type_vars);
-    let receiver = fn_receiver_ty(f, program.program());
-    let params: Vec<(String, TyId)> = f
-        .params
-        .iter()
-        .map(|p| {
-            let ty = cx.resolve_type_ref(&p.type_ref).unwrap_or_else(|| {
-                panic!(
-                    "bynk internal error (ADR 0334): parameter `{}`'s type does not resolve in \
-                     this pass's own rigid-variable scope, but the checker already accepted \
-                     this fn — bynk_lower's type_vars disagrees with bynk-check's \
-                     Ctx::type_vars",
-                    p.name.name
-                )
-            });
-            (p.name.name.clone(), ty)
-        })
-        .collect();
-    let ret = cx.resolve_type_ref(&f.return_type).unwrap_or_else(|| {
-        panic!(
-            "bynk internal error (ADR 0334): the return type of `{}` does not resolve in this \
-             pass's own rigid-variable scope, but the checker already accepted this fn",
-            f.name.display()
-        )
-    });
-    let effectful = matches!(&*program.program().ty_intern.get(ret), Ty::Effect(_));
-    IrItem::Fn {
-        receiver,
-        params,
-        ret,
-        body: lower_fn_body_ir(f, program),
-        effectful,
-    }
-}
-
 /// A store field's own element/key/value type, resolved with no rigid type
 /// variables in scope — `AgentDecl` carries no `type_params` of its own
 /// (its own struct shape, `bynk-syntax/src/ast.rs:908-934`), so
@@ -1081,72 +340,6 @@ fn duration_millis_annotation(
             Some(ExprKind::DurationLit { millis, .. }) => Some(*millis),
             _ => None,
         })
-}
-
-/// P6.7 (#1163): lower an agent `store` field declaration into a real
-/// [`StoreFieldIr`] — dispatches on `f.kind.head.name` into
-/// [`StoreKindIr`]'s five real variants; `Queue` cannot reach a certified
-/// program (`bynk.store.kind_unsupported` gates it before `certify`, R3.10),
-/// so this match is total over what one can actually contain, not a gap
-/// needing its own extension later.
-///
-/// `@ttl`/`@retain` millis and `@indexed(by: …)` field names are read
-/// directly off `f.annotations`, independently of `cache_ttl_millis`/
-/// `store_log_fields`/`store_map_indexes` (`bynk-check`/the shipped
-/// emitter) — the *pattern* is the same one those already established
-/// ([DECISION B]/[DECISION C], #1163), not a call into shared code: this
-/// track's own P6.0 precedent (`design/tracks/the-ir.md` §3.4, Q4) chose to
-/// extend the checker's typed output once (`Callee`) rather than let a
-/// lowering pass re-derive from the AST the way the shipped emitter's own
-/// dispatcher does, and this constructor falls short of that bar — a real,
-/// accepted duplication (three independent copies of the same
-/// `DurationLit`-extraction shape now exist: `context_checks.rs`,
-/// `emitter/emit.rs`, and here), not one this slice is positioned to close,
-/// since none of the three is `pub`/shaped for a shared caller today. Within
-/// this function the `@ttl`/`@retain` cases at least share one call each to
-/// `duration_millis_annotation`, rather than repeating the extraction
-/// inline a second time. `indexed` keeps the annotation's own declaration
-/// order, deduplicated — no sort, unlike the shipped emitter's own
-/// doubly-sorted `HashMap` intermediate ([DECISION E]'s own structural fix,
-/// `ir.rs`'s own `StoreFieldIr::indexed` doc comment), but still guarding
-/// against a duplicate `by:` key the checker admits (`validate_indexed_keys`
-/// validates each `by:` argument independently, so `@indexed(by: k, by: k)`
-/// certifies), mirroring the shipped emitter's own `store_map_indexes`
-/// dedup guard.
-///
-/// `init` is constructed only for a `Cell` field ([DECISION D]) — no
-/// checker pass types a non-`Cell` field's `init` expression (a real,
-/// pre-existing gap this proposal's own grounding pass found:
-/// `context_checks.rs`'s init-checking loop skips anything that isn't
-/// `Cell`, and no other pass fills that gap either), so on a certified
-/// program such an expression, if ever written, has no `expr_types` entry —
-/// lowering it here would hit this pass's own ADR 0334 panic on a value the
-/// checker never verified, not a recoverable state.
-///
-/// Deliberately not unified with `checker::StoreField` (`bynk-check/src/checker.rs`):
-/// that dispatch is ephemeral, per-agent checking-time scratch, rebuilt
-/// fresh inside `check_agent_decls` and discarded once that agent's
-/// handler/invariant checking finishes; this constructor produces
-/// persistent IR data with no consumer yet. Collapsing them would mean
-/// either the checker producing IR-shaped data (crossing the phase-5/
-/// phase-6 boundary `the-ir.md` §3.4 already drew deliberately) or this
-/// pass consuming the checker's own discarded scratch state across a value
-/// that no longer exists once `check_agent_decls` returns — a real, named
-/// duplication (#1163's own Risks), not a gap this slice closes.
-pub fn lower_store_field_ir(f: &StoreField, program: &CheckedProgram) -> StoreFieldIr {
-    let mut cx = LowerIrCtx::new(program, HashSet::new());
-    let (kind, indexed) = store_field_kind_and_indexed(f, &cx);
-    // [DECISION D]: only a `Cell` field's `init` is ever lowered.
-    let init = match &kind {
-        StoreKindIr::Cell(_) => f.init.as_ref().map(|e| lower_expr_ir(e, &mut cx)),
-        _ => None,
-    };
-    StoreFieldIr {
-        field: f.name.name.clone(),
-        kind,
-        init,
-        indexed,
-    }
 }
 
 /// The shape half of [`lower_store_field_ir`] — its `kind`/`indexed`
@@ -1215,23 +408,20 @@ fn store_field_kind_and_indexed(f: &StoreField, cx: &LowerIrCtx) -> (StoreKindIr
     (kind, indexed)
 }
 
-/// #1187's Agent state-field slice: [`lower_store_field_ir`]'s shape-only
-/// sibling — same `kind`/`indexed` (via `store_field_kind_and_indexed`),
+/// A store field's storage *shape* — its `Cell`/`Map`/`Set`/`Cache`/`Log`
+/// kind and `@indexed` keys (via `store_field_kind_and_indexed`), with
 /// `init` always `None`. This is the entry point `emit_agent`'s own state
-/// section actually needs: a field's storage *shape* (its `Cell`/`Map`/
-/// `Set`/`Cache`/`Log` kind and `@indexed` keys), never its `Cell` zero/
-/// initial value expression. Deliberately never lowers `init`, unlike
-/// [`lower_store_field_ir`] — a `Cell` field's initializer can be an
-/// `is`-expression (`= x is SomeVariant`), which still hits `ExprKind::Is`'s
-/// own `todo!()` a few hundred lines below (`1029_agent_static_init_hoist`'s
-/// `store active: Cell[Bool] = if true { 5 is PositiveInt } else { false }`
-/// hits exactly this on `lower_store_field_ir`'s own `init` arm). The
-/// sibling `= None` shape (`223_store_cell_agent`'s own `store paymentRef:
-/// Cell[Option[AuthId]] = None`) no longer needs this workaround as of
-/// #1225's own ADR — `lower_store_field_ir` lowers it directly now
-/// (`store_field_cell_option_init_none_lowers_without_panicking`). This
-/// function's callers never need `init` at all regardless, so neither gap
-/// is a risk for them.
+/// section actually needs; a `Cell` field's zero/initial-value expression is
+/// rendered by the emitter from the AST, never lowered here. (An
+/// `init`-lowering sibling existed until Slice D1 of `#1542`; it lowered the
+/// initialiser through the deleted expression lowerer and had no caller.)
+///
+/// The field's own type reference falls back to `Ty::Unit` on a resolve
+/// miss rather than panicking — no checker pass validates a store field's
+/// type reference, only its shape and annotation legality, so `store x:
+/// Cell[Bogus]` certifies today and this reader must not turn that into an
+/// ICE (`store_field_falls_back_to_unit_on_an_unresolvable_type_like_the_checker_does`
+/// pins it).
 pub fn lower_store_field_shape_ir(f: &StoreField, program: &CheckedProgram) -> StoreFieldIr {
     let cx = LowerIrCtx::new(program, HashSet::new());
     let (kind, indexed) = store_field_kind_and_indexed(f, &cx);
@@ -1243,63 +433,14 @@ pub fn lower_store_field_shape_ir(f: &StoreField, program: &CheckedProgram) -> S
     }
 }
 
-/// P6.8 ([DECISION A]/[DECISION E], #1165): lower an agent invariant into a
-/// real [`IrPredicate`] — seeds the predicate's own scope from `store_cells`
-/// exactly as `checker::check_invariants` does (`bynk-check/src/checker.rs`:
-/// each `store` `Cell` field in scope by bare name, reading as its element
-/// type), then lowers `predicate` through the ordinary [`lower_expr_ir`]
-/// machinery unchanged. Takes `store_cells` as a parameter rather than
-/// re-deriving it from `program` ([DECISION E]) — a certified
-/// `CheckedProgram` carries no persisted "this agent's store cells" table;
-/// that scope is `check_agent_decls`'s own transient scratch, never
-/// persisted to `TypedCommons`. Called once per agent's own invariant list,
-/// by whichever future slice builds `IrItem::Agent` for real — not once per
-/// handler, mirroring `check_invariants`'s own once-per-agent posture.
-pub fn lower_invariant_ir(
-    inv: &Invariant,
-    store_cells: &HashMap<String, TyId>,
-    program: &CheckedProgram,
-) -> IrPredicate {
-    let mut cx = LowerIrCtx::new(program, HashSet::new());
-    for (name, ty) in store_cells {
-        cx.bind(name.clone(), *ty);
-    }
-    IrPredicate {
-        name: inv.name.name.clone(),
-        predicate: lower_expr_ir(&inv.predicate, &mut cx),
-    }
-}
-
-/// P6.8 ([DECISION A]/[DECISION E], #1165): lower a step invariant
-/// (`Transition`) into a real [`IrPredicate`] — seeds `old`/`new`, both
-/// bound to the agent's own synthetic state-record type, exactly as
-/// `checker::check_transitions` does. `state_ty` is a parameter, not
-/// re-derived, for the same reason [`lower_invariant_ir`]'s own
-/// `store_cells` is: no persisted "this agent's state type" table survives
-/// past `check_agent_decls`'s own transient scope. Called once per agent's
-/// own transition list, by the same future caller [`lower_invariant_ir`]
-/// names.
-pub fn lower_transition_ir(
-    tr: &Transition,
-    state_ty: TyId,
-    program: &CheckedProgram,
-) -> IrPredicate {
-    let mut cx = LowerIrCtx::new(program, HashSet::new());
-    cx.bind("old".to_string(), state_ty);
-    cx.bind("new".to_string(), state_ty);
-    IrPredicate {
-        name: tr.name.name.clone(),
-        predicate: lower_expr_ir(&tr.predicate, &mut cx),
-    }
-}
-
 /// [DECISION B]/[DECISION C] (#1165): does `body` reach a mutating
 /// `Callee::Store` write, or an unconditional `Statement::Assign` (`:=`),
-/// anywhere — including inside a nested `if`/`match`/lambda? Drives
-/// [`lower_commit_shape_ir`]'s own `Transactional` decision, and, as of
+/// anywhere — including inside a nested `if`/`match`/lambda? Drives, as of
 /// #1196 (the #1187 emitter-cutover track's own R6.5 stake), `emit_agent`'s
-/// (`bynk-emit/src/emitter/emit.rs`) own real implicit-commit-wrapper
-/// decision too — its previous own name-matching `block_writes_state`
+/// (`bynk-emit/src/emitter/emit.rs`) real implicit-commit-wrapper decision
+/// (it also drove the IR-side `CommitShape::Transactional` decision until
+/// Slice D1 of `#1542` deleted that constructor) — its previous own
+/// name-matching `block_writes_state`
 /// (`emitter.rs`) is deleted, this function is its sole, direct
 /// replacement. The walk's own shape is that deleted function's own
 /// already-correct skeleton reused structurally, not re-derived:
@@ -1368,45 +509,6 @@ pub fn body_writes_state(body: &Block, program: &TypedCommons) -> bool {
     body.statements.iter().any(|s| stmt(s, program)) || expr(&body.tail, program)
 }
 
-/// P6.8 ([DECISION B]/[DECISION D]/[DECISION F], #1165): decide a handler
-/// body's own one-of-three [`CommitShape`] from resolved data —
-/// [`body_writes_state`]'s own write-detection walk, plus `emits` ([DECISION
-/// D]: the caller's own `bynk_emit::emitter::block_uses_emit(body)` call, not
-/// re-derived here — no `Callee` classification exists for `Events.emit` to
-/// consume instead, see that decision's own grounding). Does not lower
-/// `body` into an `IrExpr` tree first ([DECISION B]) — deciding the shape
-/// only needs the two booleans, and lowering the whole body just to throw
-/// the result away would be pure waste; a real `IrHandler.body` lowering is
-/// a separate, not-yet-commissioned step (see [`bynk_ir::IrItem`]'s own
-/// doc comment).
-///
-/// Shape-agnostic between an agent and a service handler ([DECISION F]) — no
-/// `is_store_agent` flag: a service handler's own call site simply passes
-/// empty `invariants`/`transitions` slices (a service has no `store` block
-/// to declare them against), and [`body_writes_state`] naturally finds
-/// neither a mutating `Callee::Store` nor a bare `:=` in a service body (no
-/// store fields to write), so `Transactional` is never constructed for one —
-/// matching the shipped emitter's own `emit_service`, which already only
-/// ever produces the other two shapes.
-pub fn lower_commit_shape_ir(
-    body: &Block,
-    invariants: &[IrPredicate],
-    transitions: &[IrPredicate],
-    emits: bool,
-    program: &CheckedProgram,
-) -> CommitShape {
-    if body_writes_state(body, program.program()) {
-        CommitShape::Transactional {
-            invariants: invariants.to_vec(),
-            transitions: transitions.to_vec(),
-        }
-    } else if emits {
-        CommitShape::FlushEvents
-    } else {
-        CommitShape::ReadOnly
-    }
-}
-
 /// P6.11 ([DECISION C], #1171): reshape a `from Events(E { … })` pattern
 /// into a real [`EventPatternIr`] — pure structural reshaping, no
 /// `&CheckedProgram` parameter and no resolution: every field's own
@@ -1440,34 +542,31 @@ fn lower_event_pattern_ir(pattern: &EventPattern) -> EventPatternIr {
 
 /// P6.11 ([DECISION A], #1171): lower a service's own `from <protocol>`
 /// header into a real [`ProtocolIr`] — standalone, takes the sub-node
-/// rather than the owning `ServiceDecl` (mirrors [`lower_store_field_ir`]),
-/// so a `from websocket`/`from Events` fixture can pin the descriptor by
-/// itself even where [`lower_service_handler_ir`] cannot yet lower every
-/// handler on the same service (the WebSocket lifecycle-body deferral —
-/// see that function's own doc comment).
+/// rather than the owning `ServiceDecl` (mirrors
+/// [`lower_store_field_shape_ir`]), so a `from websocket`/`from Events`
+/// fixture can pin the descriptor by itself.
 ///
 /// `WebSocket`/`Events`'s own type refs resolve through the `Ty::Unit`
-/// fallback, not an ADR 0334 panic — deliberately, and for the same reason
-/// [`lower_agent_item_ir`]'s own `key_ty` does: `resolver.rs` skips
+/// fallback, not an ADR 0334 panic — deliberately: `resolver.rs` skips
 /// `CommonsItem::Service` in every one of its own type-ref-resolution
 /// passes (`resolver.rs:303-304`/`493-494`/`577-578`), and the one checker
 /// site that does resolve a WebSocket frame type itself falls back to
 /// `Ty::Unit` on a miss rather than erroring (`context_checks.rs:775-778`).
-/// Panicking here would make this the second ADR-0334 site in this module
-/// asserting a guarantee the checker doesn't actually give — the first
-/// being `lower_agent_item_ir`'s own `key_ty`, review of #1169.
+/// Panicking here would make this an ADR-0334 site asserting a guarantee
+/// the checker doesn't actually give (the agent `key_ty` site that once did,
+/// review of #1169, went with the item assembly in Slice D1 of `#1542`).
 pub fn lower_protocol_ir(protocol: &ServiceProtocol, program: &CheckedProgram) -> ProtocolIr {
     lower_protocol_ir_from_commons(protocol, program.program())
 }
 
 /// P6.24a: a `TypedCommons`-only sibling of [`lower_protocol_ir`], the same
-/// split `lower_op_sig_ir`/[`lower_op_sig_ir_from_commons`] already
+/// split `lower_op_sig_ir`/`lower_op_sig_ir_from_commons` already
 /// established — for a call site holding only a unit's own `TypedCommons`,
 /// never a `&CheckedProgram` (`emitter.rs`'s `emit_project_imports`, a
 /// header-import-collection pass that runs well outside the per-declaration
 /// emission loop any `CheckedProgram` is threaded through). Sound for the
-/// identical reason: this function never calls `LowerIrCtx::expr_ty`, the
-/// one method whose `.expect()`-panic needs a genuinely certified program.
+/// identical reason: nothing here reads a per-expression type, the one
+/// lookup whose `.expect()`-panic needed a genuinely certified program.
 pub fn lower_protocol_ir_from_commons(
     protocol: &ServiceProtocol,
     commons: &TypedCommons,
@@ -1499,58 +598,6 @@ pub fn lower_protocol_ir_from_commons(
             }),
         },
     }
-}
-
-/// P6.11 ([DECISION D], #1171): interpret a service's own `cors`/
-/// `security`/`limits` blocks into a real [`PolicyIr`] — private and takes
-/// no `&CheckedProgram`, deliberately: this function resolves no type,
-/// reads no `expr_types`, and cannot panic, so threading a `&CheckedProgram`
-/// through it just to satisfy this module's own "every entry point takes a
-/// certified program" header rule would be cargo-culting a rule about
-/// *which failures may panic*, not about which fields are read (the same
-/// distinction [`lower_type_item_ir`]'s own doc comment already draws).
-/// Precedent for a private, non-`&CheckedProgram` helper in this module:
-/// [`body_writes_state`], `duration_millis_annotation`.
-///
-/// `None` whenever `service.protocol` is not `ServiceProtocol::Http` — the
-/// checker itself gates all three blocks to HTTP only
-/// (`bynk.http.cors_not_http`/`security_not_http`/`limits_not_http`,
-/// `context_checks.rs`), so a `cors { }` block on, say, a `from cron`
-/// service parses but never certifies as meaningful; not just when the
-/// source declares none of the three blocks.
-///
-/// Every field here is exactly one already-shipped typed accessor's return
-/// value (`CorsPolicy::origins()`/`credentials()`/`allow_headers()`/
-/// `max_age_secs()`, `SecurityPolicy::nosniff()`/`hsts_max_age_secs()`,
-/// `LimitsPolicy::max_body()`) — see [`bynk_ir::PolicyIr`]'s own doc
-/// comment for why interpreting through these, not passing the raw AST
-/// struct through, is the point of this constructor. The `security: None`
-/// arm materialises `SecurityIr { nosniff: true, hsts_max_age_secs: None }`
-/// — the shipped emitter's own already-established default
-/// (`emitter/workers_entry.rs`), reproduced verbatim, not invented here.
-fn lower_policy_ir(service: &ServiceDecl) -> Option<PolicyIr> {
-    if !matches!(service.protocol, ServiceProtocol::Http) {
-        return None;
-    }
-    Some(PolicyIr {
-        cors: service.cors.as_ref().map(|p| CorsIr {
-            origins: p.origins(),
-            credentials: p.credentials(),
-            allow_headers: p.allow_headers(),
-            max_age_secs: p.max_age_secs(),
-        }),
-        security: match &service.security {
-            Some(p) => SecurityIr {
-                nosniff: p.nosniff(),
-                hsts_max_age_secs: p.hsts_max_age_secs(),
-            },
-            None => SecurityIr {
-                nosniff: true,
-                hsts_max_age_secs: None,
-            },
-        },
-        max_body_bytes: service.limits.as_ref().and_then(|p| p.max_body()),
-    })
 }
 
 /// #1228: a GET handler's own `@cache(maxAge:, scope:)` freshness policy —
@@ -1626,154 +673,6 @@ pub fn lower_route_limit_ir(h: &Handler) -> Option<i64> {
     None
 }
 
-/// P6.10 (#1169): assemble an agent declaration into a real
-/// [`bynk_ir::IrItem::Agent`] — wires every prior slice's own standalone
-/// constructor ([`lower_store_field_ir`] since P6.7, [`lower_invariant_ir`]/
-/// [`lower_transition_ir`]/[`lower_commit_shape_ir`] since P6.8,
-/// [`lower_handler_ir`] since P6.9) rather than re-deriving any of their
-/// logic — the first `IrItem` variant assembled from other already-real IR
-/// data rather than lowered fresh from the AST by itself.
-///
-/// Computes `state`/`store_cells`/`state_ty` once and reuses them for every
-/// downstream call that needs them — the "future `IrItem::Agent` builder"
-/// every one of those constructors' own doc comments already named as the
-/// job that would do this. `store_cells` is derived from `state`'s own
-/// already-lowered [`StoreKindIr::Cell`] entries, not re-resolved
-/// independently a second time from the AST — the one place this function
-/// could have re-derived something it already has, and doesn't.
-/// `invariants`/`transitions` are lowered once, then passed to *every*
-/// handler's own [`lower_handler_ir`] call, not just the store-writing
-/// ones: [`lower_commit_shape_ir`] only ever reads them for a
-/// `Transactional` shape, so a read-only or event-flushing handler simply
-/// carries the slices it was handed without using them, the same "pass
-/// what a callee needs, let it decide whether to use it" posture
-/// [`lower_commit_shape_ir`]'s own `emits` parameter already established.
-pub fn lower_agent_item_ir(agent: &AgentDecl, program: &CheckedProgram) -> IrItem {
-    let cx = LowerIrCtx::new(program, HashSet::new());
-    // Not an ADR 0334 `.expect()`-style panic, deliberately: unlike a
-    // handler param/return type, `agent.key_type` is never actually
-    // resolution-checked by the checker at all — `resolver.rs` skips
-    // `CommonsItem::Agent` in every one of its own `check_type_ref_resolves*`
-    // passes, and `context_checks.rs:2854` itself falls back to `Ty::Unit`
-    // on a miss rather than erroring (`agent Ledger { key id: Bogus … }`
-    // certifies today, silently). Panicking here on a state the checker
-    // itself accepts would make this the first ADR 0334 site in this module
-    // to assert a guarantee that does not actually hold — mirror the
-    // checker's own fallback instead (review of #1169).
-    let key_ty = cx
-        .resolve_type_ref(&agent.key_type)
-        .unwrap_or_else(|| cx.unit_ty());
-    let state: Vec<StoreFieldIr> = agent
-        .store_fields
-        .iter()
-        .map(|f| lower_store_field_ir(f, program))
-        .collect();
-    let store_cells: HashMap<String, TyId> = state
-        .iter()
-        .filter_map(|f| match f.kind {
-            StoreKindIr::Cell(ty) => Some((f.field.clone(), ty)),
-            _ => None,
-        })
-        .collect();
-    // P6.20-pre (review of #1240): only `Map` fields, not `Log`/`Set`/
-    // `Cache`. The shipped emitter's own `is_agent_store_log`
-    // (`emitter/lower.rs:4117`, "v0.95 ADR 0121") suggested `Log` belonged
-    // here alongside `Map` — but `bynk-check` itself never special-cases
-    // `StoreField::Log` in a bare-value or `FieldAccess` dispatch the way it
-    // does `StoreField::Map` (`checker.rs:3477-3481` for the bare-value
-    // case, `checker/expressions.rs:2592` for `.entries`/`.keys`/`.values`,
-    // ADR 0184); grep confirms every other `StoreField::Log` site in
-    // `bynk-check` is an unrelated `:=`-target check, a method dispatch, or
-    // the table build. A bare `store Log` field used as a value is
-    // therefore not checker-legal today (`bynk.resolve.unknown_name` on a
-    // certified program) — the same bucket `Set`/`Cache` are already in,
-    // for the same reason: leaving it out of this table and falling through
-    // to `lower_ident_ir`'s own final assertion is correct, structurally
-    // unreachable rather than merely unhandled. If a future checker slice
-    // makes a bare `Log` value legal, this table (and `ir.rs`'s own
-    // `StoreQuery` doc comment) need revisiting alongside it.
-    let store_queryable: HashSet<String> = state
-        .iter()
-        .filter_map(|f| match f.kind {
-            StoreKindIr::Map(_, _) => Some(f.field.clone()),
-            _ => None,
-        })
-        .collect();
-    let state_ty = program.program().ty_intern.intern(Ty::Named {
-        name: format!("{}State", agent.name.name),
-        kind: checker::NamedKind::Record,
-        args: Vec::new(),
-    });
-    let invariants: Vec<IrPredicate> = agent
-        .invariants
-        .iter()
-        .map(|inv| lower_invariant_ir(inv, &store_cells, program))
-        .collect();
-    let transitions: Vec<IrPredicate> = agent
-        .transitions
-        .iter()
-        .map(|tr| lower_transition_ir(tr, state_ty, program))
-        .collect();
-    let handlers: Vec<IrHandler> = agent
-        .handlers
-        .iter()
-        .map(|h| {
-            lower_handler_ir(
-                h,
-                &store_cells,
-                &store_queryable,
-                state_ty,
-                &invariants,
-                &transitions,
-                program,
-            )
-        })
-        .collect();
-    IrItem::Agent {
-        def: agent.name.name.clone(),
-        key: (agent.key_name.name.clone(), key_ty),
-        state,
-        handlers,
-        invariants,
-        transitions,
-    }
-}
-
-/// P6.11 (#1171): assemble a service declaration into a real
-/// [`bynk_ir::IrItem::Service`] — structural mirror of
-/// [`lower_agent_item_ir`], wiring [`lower_protocol_ir`],
-/// [`lower_service_handler_ir`] and `lower_policy_ir` rather than
-/// re-deriving any of their logic. Unlike the agent case, there is no
-/// shared per-declaration context to compute once: a service has no
-/// `store_cells`/`state_ty`/invariants/transitions (none of those concepts
-/// exist for a service at all), so `&service.protocol`, already on the
-/// declaration, is threaded to each handler call directly — the "compute
-/// once, reuse" step [`lower_agent_item_ir`]'s own doc comment describes
-/// degenerates to a borrow here, not because this function skips a step,
-/// but because a service's own handlers have nothing else to share.
-///
-/// **No default-`by`/default-`given` inheritance logic, deliberately.**
-/// `project_model::inject_service_defaults` (`bynk-check/src/project_model.rs`)
-/// already mutated `handler.by_clause`/`handler.given` in place at pipeline
-/// phase 2b (`bynk-check/src/analysis.rs`), overriding — not merging —
-/// before `check_service_decls`, let alone this pass, ever runs. `h.by_clause`/
-/// `h.given` are already final by the time [`lower_service_handler_ir`] sees
-/// them; this is stated so a future reader who sees `ServiceDecl::default_by`/
-/// `default_given` unread by this function knows that is correct, not an
-/// omission.
-pub fn lower_service_item_ir(service: &ServiceDecl, program: &CheckedProgram) -> IrItem {
-    IrItem::Service {
-        def: service.name.name.clone(),
-        protocol: lower_protocol_ir(&service.protocol, program),
-        handlers: service
-            .handlers
-            .iter()
-            .map(|h| lower_service_handler_ir(h, &service.protocol, program))
-            .collect(),
-        policy: lower_policy_ir(service),
-    }
-}
-
 /// Every `from Events(E)` service in `program`'s own unit, captured as an
 /// [`bynk_ir::EventSubscriberShape`] keyed by service name — see that
 /// struct's own doc comment for why this is captured now rather than
@@ -1834,25 +733,11 @@ pub fn lower_event_subscriber_shapes_ir(
     out
 }
 
-/// P6.12 (#1173): assemble a capability declaration into a real
-/// [`bynk_ir::IrItem::Capability`] — structural mirror of
-/// [`lower_service_item_ir`]/[`lower_agent_item_ir`], but with nothing to
-/// compute once and share: `CapabilityDecl` carries no state/invariants/
-/// transitions/protocol of its own, only `ops`, so each op lowers
-/// independently through `lower_op_sig_ir`.
-pub fn lower_capability_item_ir(cap: &CapabilityDecl, program: &CheckedProgram) -> IrItem {
-    IrItem::Capability {
-        def: cap.name.name.clone(),
-        ops: lower_capability_ops_ir(cap, program),
-    }
-}
-
-/// Slice 1 of `#1542` (`design/tracks/the-ir-cutover.md` §5): the `ops`-only
-/// half of [`lower_capability_item_ir`], for a caller (`emitter.rs`'s own
-/// capability-item loop) that already has the capability's name from the AST
-/// declaration it's holding and only needs the resolved op signatures —
-/// avoids the build-then-discard-`def` round-trip through the full
-/// `IrItem::Capability`.
+/// A capability declaration's resolved op signatures, in declaration order
+/// — what `emitter.rs`'s own capability-item loop reads (the caller already
+/// holds the capability's name from the AST declaration). Slice 1 of
+/// `#1542` split this out of a full `IrItem::Capability` constructor to end
+/// a build-then-discard-`def` round-trip; Slice D1 deleted that constructor.
 pub fn lower_capability_ops_ir(cap: &CapabilityDecl, program: &CheckedProgram) -> Vec<OpSig> {
     cap.ops
         .iter()
@@ -1861,10 +746,10 @@ pub fn lower_capability_ops_ir(cap: &CapabilityDecl, program: &CheckedProgram) -
 }
 
 /// P6.29 (design/tracks/the-ir.md §6a): the `TypedCommons`-only counterpart to
-/// [`lower_capability_item_ir`], for call sites (`emitter/lower.rs`'s
+/// [`lower_capability_ops_ir`], for call sites (`emitter/lower.rs`'s
 /// `cap_op_param_names`) that have a `TypedCommons` in hand but no
 /// `CheckedProgram` — `LowerCtx`/`ModuleCtx` never carry one (see
-/// [`lower_op_sig_ir_from_commons`], this function's own single-op sibling,
+/// `lower_op_sig_ir_from_commons`, this function's own single-op sibling,
 /// for the identical reason it exists as a separate entry point rather than a
 /// thin wrapper over the `CheckedProgram`-driven `lower_op_sig_ir`).
 ///
@@ -1938,13 +823,13 @@ fn lower_op_sig_ir(op: &CapabilityOp, program: &CheckedProgram) -> OpSig {
 /// here would misrepresent an uncertified value as certified
 /// (`CheckedProgram`'s own doc comment, `bynk-check/src/checker.rs`, warns
 /// against exactly this). Splitting this out is sound precisely because
-/// this function never calls `LowerIrCtx::expr_ty` — the one method whose
-/// `.expect()`-panic needs a genuinely certified program, the reason this
-/// module's own file-level doc comment gives for taking `&CheckedProgram`
-/// everywhere else. `resolve_type_ref`/`unit_ty()` (below) both degrade via
+/// this function never reads a per-expression type — the one lookup whose
+/// `.expect()`-panic needed a genuinely certified program, and the reason
+/// this module's own file-level doc comment gives for taking
+/// `&CheckedProgram` by default elsewhere. `resolve_type_ref`/`unit_ty()` (below) both degrade via
 /// `.unwrap_or_else` and read nothing `TypedCommons` doesn't already expose
 /// directly.
-pub fn lower_op_sig_ir_from_commons(op: &CapabilityOp, commons: &TypedCommons) -> OpSig {
+fn lower_op_sig_ir_from_commons(op: &CapabilityOp, commons: &TypedCommons) -> OpSig {
     let type_vars: HashSet<String> = op
         .type_params
         .iter()
@@ -1998,7 +883,7 @@ pub fn lower_op_sig_ir_from_commons(op: &CapabilityOp, commons: &TypedCommons) -
 /// never renders `self`'s own type through this value at all (it takes the
 /// *consumer* context's own rebranded type name directly), so resolving
 /// `fn_receiver_ty` here would be dead work.
-pub fn lower_fn_sig_ir_from_types(
+fn lower_fn_sig_ir_from_types(
     f: &FnDecl,
     types: &HashMap<String, Arc<TypeDecl>>,
     tys: &Types,
@@ -2032,7 +917,7 @@ pub fn lower_fn_sig_ir_from_types(
     }
 }
 
-/// P6.x (#1137): [`lower_fn_sig_ir_from_types`] over an entire
+/// P6.x (#1137): `lower_fn_sig_ir_from_types` over an entire
 /// [`MethodTable`]'s own instance + static entries — the attached-method
 /// gathering [`bynk-emit`'s `build_emit_unit_ctx`] needs for a `uses`-imported
 /// type. Filters to [`FnName::Method`] before lowering: `ResolverMethodTable`
@@ -2085,66 +970,11 @@ fn lower_http_method_ir(m: HttpMethod) -> IrHttpMethod {
     }
 }
 
-/// P6.14 (#1174): assemble a provider declaration into a real
-/// [`bynk_ir::IrItem::Provider`] — reads `ProviderDecl::external`
-/// straight into [`ProviderBody`]'s own `Bynk`/`External` dispatch
-/// ([`bynk_ir::IrItem`]'s own doc comment has the full grounding for why
-/// this, unlike `Actor`, was buildable this slice). `external: true` means
-/// `ops` is empty by the field's own doc comment
-/// (`bynk-syntax/src/ast.rs:592-595`) — nothing to lower. `given` lowers
-/// unconditionally via [`lower_provider_given_ir`] (#1187's Provider
-/// `given`/deps-wiring slice, fixing a real gap the `External` variant's own
-/// bare-unit shape used to leave: `provider.given` is populated the same way
-/// regardless of `external`, and [`ProviderBody::Bynk`]'s own doc comment
-/// names why it, unlike `module`, is not deferrable — that reasoning always
-/// applied to `External` too, just wasn't wired through).
-pub fn lower_provider_item_ir(provider: &ProviderDecl, program: &CheckedProgram) -> IrItem {
-    let given = lower_provider_given_ir(provider);
-    let body = if provider.external {
-        ProviderBody::External { given }
-    } else {
-        ProviderBody::Bynk {
-            given,
-            ops: provider
-                .ops
-                .iter()
-                .map(|op| lower_provider_op_ir(op, program))
-                .collect(),
-        }
-    };
-    IrItem::Provider {
-        def: provider.provider_name.name.clone(),
-        cap: provider.capability.name.clone(),
-        body,
-    }
-}
-
-/// A provider's own `given` clause, resolved independent of
-/// [`ProviderBody`]'s `external`/`Bynk` dispatch and independent of
-/// [`lower_provider_item_ir`]'s own full assembly (#1187's Provider
-/// `given`/deps-wiring slice) — the standalone entry point
-/// `bynk-emit/src/project.rs`'s `instantiate_provider_ts_expr` actually calls.
-/// Building a real `IrItem::Provider` there would still need care for a
-/// `Bynk` provider specifically: `ProviderBody::Bynk::ops` unconditionally
-/// lowers every op's body through `lower_provider_op_ir` → `lower_expr_ir`,
-/// which does not yet handle every expression shape a real op body can
-/// contain. **Correction (P6.25, 2026-08-19): `?` propagation
-/// (`ExprKind::Question`) and an `is`-expression (`ExprKind::Is`) are no
-/// longer among those gaps** — both landed (P6.15/ADR 0337, P6.16/ADR 0338,
-/// following #1225's own `Ok`/`Err`/`Some`/`None` construction fix).
-/// **Second correction (Slice 3.1 of #1542, `design/tracks/the-ir-cutover.md`
-/// §5): `lower_call_ir`'s missing-`Callee` guard and `lower_ident_ir`'s bare
-/// free-fn-as-value case are no longer gaps either** — the former is
-/// asserted unreachable (every call shape once suspected of missing a
-/// `Callee` traced, and empirically confirmed, to have one), the latter now
-/// lowers to `IrExprKind::FnRef`. `lower_expr_ir`'s only remaining `todo!()`s
-/// are the six test-sublanguage constructs (`expect`, `Val[T]`, `Wire`,
-/// `Observation`, `trace`) gated behind `ctx.in_test_body` — never legal
-/// inside a provider op body — so a real op body is now unconditionally safe
-/// to build as far as expression coverage goes. This function never touches
-/// `ops`/bodies, so it carried none of that risk either way;
-/// [`lower_provider_item_ir`] itself now calls it too, rather than
-/// hand-duplicating the one-line `map`.
+/// A provider's own `given` clause, resolved standalone — the entry point
+/// `bynk-emit/src/project.rs`'s `instantiate_provider_ts_expr` actually
+/// calls. This never touches the provider's `ops` or their bodies; the
+/// full-provider assembly that did (and lowered every `Bynk` op body through
+/// the expression lowerer) had no caller and went with Slice D1 of `#1542`.
 pub fn lower_provider_given_ir(provider: &ProviderDecl) -> Vec<CapRefIr> {
     provider.given.iter().map(lower_cap_ref_ir).collect()
 }
@@ -2209,1922 +1039,6 @@ fn lower_cap_ref_ir(cap_ref: &CapRef) -> CapRefIr {
     }
 }
 
-/// P6.14 (#1174): lower one provider operation's own signature *and* body
-/// into a real [`bynk_ir::ProviderOpIr`] — a new sibling of
-/// [`lower_fn_body_ir`], not a widening of it, seeding a scope with just
-/// this op's own `params` (no `self`, no store cells: `check_provider_decls`
-/// checks every op via `checker::check_handler_body` with
-/// `HandlerBodyCheck::new`'s own "everything optional empty" default,
-/// `bynk-check/src/checker.rs:1055` — a provider op's `given` capabilities
-/// need no scope entry of their own, resolved the same already-generic
-/// `Callee`-wrapping `lower_handler_body_ir`'s own doc comment credits for
-/// handler bodies). No rigid type variables: `ProviderOp` carries no
-/// `type_params` of its own ([`bynk_ir::ProviderOpIr`]'s own doc comment
-/// has the full contrast with [`OpSig::type_params`]).
-///
-/// **ADR 0334 panic-on-miss, not `lower_op_sig_ir`'s lenient `Ty::Unit`
-/// fallback** — unlike a bare `CapabilityOp` signature, a `ProviderOp`'s
-/// `params`/`return_type` are resolved for real by `check_handler_body`
-/// (the same machinery a fn body or handler body goes through), so a
-/// resolve miss here is exactly the "checker accepted this, this pass
-/// disagrees" internal-error case [`lower_fn_item_ir`]'s own panics guard
-/// against, not a state the checker is known to accept silently.
-fn lower_provider_op_ir(op: &ProviderOp, program: &CheckedProgram) -> ProviderOpIr {
-    let mut cx = LowerIrCtx::new(program, HashSet::new());
-    // Review of #1238: kept as a graceful degrade, not the panic this
-    // function's own params still use just below (that policy stands for
-    // params — see this function's own doc comment) — set_return_ty's own
-    // `None` case exists specifically so a `?`-adjacent metadata miss never
-    // crashes a body that does not even contain a `?`, and mixing panic/
-    // degrade across the four `set_return_ty` call sites for the same field
-    // is a hazard of its own, not a benefit.
-    cx.set_return_ty(cx.resolve_type_ref(&op.return_type));
-    let params: Vec<(String, TyId)> = op
-        .params
-        .iter()
-        .map(|p| {
-            let ty = cx.resolve_type_ref(&p.type_ref).unwrap_or_else(|| {
-                panic!(
-                    "bynk internal error (ADR 0334): parameter `{}`'s type does not resolve in \
-                     this pass's own scope, but the checker already accepted this provider op's \
-                     body via check_handler_body — bynk_lower's resolution disagrees \
-                     with bynk-check's",
-                    p.name.name
-                )
-            });
-            cx.bind(p.name.name.clone(), ty);
-            (p.name.name.clone(), ty)
-        })
-        .collect();
-    let return_ty = cx.resolve_type_ref(&op.return_type).unwrap_or_else(|| {
-        panic!(
-            "bynk internal error (ADR 0334): the return type of provider op `{}` does not \
-             resolve in this pass's own scope, but the checker already accepted this provider \
-             op's body via check_handler_body",
-            op.name.name
-        )
-    });
-    let body = wrap_body_return(lower_block_ir(&op.body, &mut cx));
-    ProviderOpIr {
-        name: op.name.name.clone(),
-        params,
-        return_ty,
-        body,
-    }
-}
-
-/// Lower a block as a value — no `Return` wrapping (see
-/// [`lower_fn_body_ir`]'s doc comment for the distinction). A block's own
-/// type is always its tail's type.
-pub fn lower_block_ir(block: &Block, cx: &mut LowerIrCtx) -> IrExpr {
-    cx.push_scope();
-    let stmts: Vec<IrStmt> = block
-        .statements
-        .iter()
-        .map(|s| lower_stmt_ir(s, cx))
-        .collect();
-    let tail = lower_expr_ir(&block.tail, cx);
-    cx.pop_scope();
-    let ty = tail.ty;
-    IrExpr {
-        kind: IrExprKind::Block {
-            stmts,
-            tail: Box::new(tail),
-        },
-        ty,
-        span: block.span,
-    }
-}
-
-fn lower_stmt_ir(s: &Statement, cx: &mut LowerIrCtx) -> IrStmt {
-    match s {
-        Statement::Let(l) => {
-            let value = lower_expr_ir(&l.value, cx);
-            // The checker binds the *annotation's* type when one is present
-            // (`type_of_block`'s `Statement::Let` arm, `checker.rs:2829-2853`)
-            // — `compatible()` admits a refined value under its base's
-            // annotation, so the bound type can genuinely differ from the
-            // RHS expression's own recorded type. `value.ty` stays the RHS's
-            // own honest type (R6.1, this expression's real checked type);
-            // only this pass's own scope bookkeeping (read back by a later
-            // shorthand-field lookup) uses the annotation-preferred one, the
-            // same distinction the checker itself draws between an
-            // expression's type and a binding's type.
-            let bound_ty = l.type_annot.as_ref().map_or(value.ty, |a| {
-                cx.resolve_type_ref(a).unwrap_or_else(|| {
-                    panic!(
-                        "bynk internal error (ADR 0334): `let` annotation for `{}` does not \
-                         resolve in this pass's own rigid-variable scope, but the checker \
-                         already accepted this binding",
-                        l.name.name
-                    )
-                })
-            });
-            // Mirrors `checker.rs:2854`: `_` is never bound.
-            if l.name.name != "_" {
-                cx.bind(l.name.name.clone(), bound_ty);
-            }
-            IrStmt::Let {
-                local: l.name.name.clone(),
-                value,
-            }
-        }
-        Statement::EffectLet(l) => {
-            let effect = lower_expr_ir(&l.value, cx);
-            let span = effect.span;
-            let ty = cx.peel_effect(effect.ty);
-            // Same annotation-vs-RHS distinction as `Statement::Let` above,
-            // peeled through `Effect[_]` (`checker.rs:2894-2953`'s own
-            // `EffectLet` arm).
-            let bound_ty = l.type_annot.as_ref().map_or(ty, |a| {
-                cx.resolve_type_ref(a).unwrap_or_else(|| {
-                    panic!(
-                        "bynk internal error (ADR 0334): `let <-` annotation for `{}` does not \
-                         resolve in this pass's own rigid-variable scope, but the checker \
-                         already accepted this binding",
-                        l.name.name
-                    )
-                })
-            });
-            if l.name.name != "_" {
-                cx.bind(l.name.name.clone(), bound_ty);
-            }
-            IrStmt::Let {
-                local: l.name.name.clone(),
-                value: IrExpr {
-                    kind: IrExprKind::Await {
-                        effect: Box::new(effect),
-                    },
-                    ty,
-                    span,
-                },
-            }
-        }
-        Statement::Send(send) => {
-            let effect = lower_expr_ir(&send.value, cx);
-            let span = effect.span;
-            IrStmt::Expr {
-                value: IrExpr {
-                    kind: IrExprKind::Send {
-                        effect: Box::new(effect),
-                    },
-                    ty: cx.unit_ty(),
-                    span,
-                },
-            }
-        }
-        Statement::Do(d) => {
-            let effect = lower_expr_ir(&d.value, cx);
-            let span = effect.span;
-            let ty = cx.peel_effect(effect.ty);
-            IrStmt::Expr {
-                value: IrExpr {
-                    kind: IrExprKind::Await {
-                        effect: Box::new(effect),
-                    },
-                    ty,
-                    span,
-                },
-            }
-        }
-        // Not named by any P6.x rule (design/tracks/the-ir.md §6) — test-only,
-        // no IR target proposed anywhere in this track.
-        Statement::Expect(_) => todo!(
-            "Statement::Expect has no IrStmt target — not named by any rule this track commissions"
-        ),
-        // `cell := expr` — the unconditional `Cell` write ([DECISION B],
-        // P6.9, #1167). `checker.rs`'s own `Statement::Assign` arm resolves
-        // `a.target.name` directly against `ctx.store_fields` by bare name
-        // and never keys a `Callee` at all (only `a.value`, an ordinary
-        // sub-expression, ever gets one) — no `ExprId`-keyed sink was ever
-        // actually necessary, on a premise two prior slices (P6.7/P6.8) held
-        // without re-checking it. `field` is this module's usual "no arena"
-        // substitution; `value` lowers through the ordinary
-        // [`lower_expr_ir`] path unchanged.
-        Statement::Assign(a) => IrStmt::Assign {
-            field: a.target.name.clone(),
-            value: lower_expr_ir(&a.value, cx),
-        },
-    }
-}
-
-/// P6.15 (design/tracks/the-ir.md §6): `?`'s real IR desugar — a genuine
-/// design fork the reference's own sketch (`Question(e)` → `Match{scrutinee:
-/// e, arms: [Ok(v) => v, Err(e) => Return(Err(convert(e)))]}`) gets half
-/// right. Two of the shipped desugar's three shapes (`emitter/lower.rs:
-/// 1014-1061`, ADR 0177/ADR 0178) really are exactly that `Match{Ok, Err}`
-/// shape, `convert` either the identity (bare propagation) or a real
-/// `embeds` conversion — the reference's sketch already covers those. The
-/// third, `Option[T]?`, does not: it is a `Match{Some, None}`, not
-/// `Match{Ok, Err}`, and its early-return value is the synthesized
-/// `HttpResult.NotFound` sentinel (`IrExprKind::HttpResultNotFound`), never
-/// an `Err` construction at all. This function generalises the reference's
-/// own sketch to the real two-scrutinee-shape, `Match`-based desugar,
-/// reusing P6.4/P6.5's already-shipped `IrExprKind::Match`/`IrArm`/
-/// `IrPat::Variant` machinery rather than inventing a bespoke opaque
-/// `Question` node — R6.7's own "desugaring happens exactly once, in phase
-/// 6" mandate reads as a decomposition requirement, not license to defer
-/// the real work to a future printer behind an opaque node the way
-/// [`IrExprKind::HttpResultNotFound`] itself deliberately is not (that one
-/// has no further structure to decompose; a `Match` does).
-///
-/// Dormant as of this slice: no shipped emitter path calls into
-/// `lower_expr_ir`'s `Question` arm yet (P6.2's own emitter-side cutover has
-/// not landed) — verified by unit test only, the same posture #1225's own
-/// `Ok`/`Err`/`Some`/`None` construction landed under.
-fn lower_question_ir(inner: &Expr, ty: TyId, span: Span, cx: &mut LowerIrCtx) -> IrExpr {
-    let scrutinee = Box::new(lower_expr_ir(inner, cx));
-    let operand_ty = scrutinee.ty;
-    let is_option = matches!(&*cx.program.ty_intern.get(operand_ty), Ty::Option(_));
-
-    let value_local = cx.fresh_tmp("__question_value");
-    let (ok_tag, err_tag) = if is_option {
-        ("Some", "None")
-    } else {
-        ("Ok", "Err")
-    };
-    let ok_variant = variant_info_of(operand_ty, ok_tag, cx.program);
-    let ok_field_ty = ok_variant
-        .payload
-        .first()
-        .map(|(_, t)| *t)
-        .unwrap_or_else(|| cx.unit_ty());
-    let ok_arm = IrArm {
-        pat: IrPat::Variant {
-            scrutinee_ty: operand_ty,
-            tag: ok_tag.to_string(),
-            fields: vec![(
-                "value".to_string(),
-                Box::new(IrPat::Bind {
-                    local: value_local.clone(),
-                }),
-            )],
-        },
-        guard: None,
-        body: IrExpr {
-            kind: IrExprKind::Local(value_local.clone()),
-            ty: ok_field_ty,
-            span,
-        },
-        binds: vec![value_local],
-        binding_mode: BindingMode::Direct,
-    };
-
-    let err_local = cx.fresh_tmp("__question_error");
-    let (err_fields, err_binds, err_body) = if is_option {
-        // ADR 0177: `None` early-returns the synthesized `HttpResult.
-        // NotFound` sentinel — never an `Err` construction. Review of
-        // #1238: the sentinel's own `.ty` is the enclosing fn/handler's own
-        // `HttpResult[_]` return type (peeled through `Effect`, the same
-        // check_question itself gates `Option[T]?` on, `bynk-check/src/
-        // checker.rs`'s own `peel_to_http_result`) — never `Unit` — and the
-        // wrapping `Return` node carries that same type, matching
-        // `wrap_body_return`'s own "Return's own ty is the returned value's
-        // ty" convention (the only other `Return` producer in this module).
-        // Falls back to `unit_ty()` only in the defensive, unreachable-in-
-        // practice case where `return_ty` is absent or doesn't peel to one.
-        let http_result_ty = cx
-            .return_ty
-            .map(|rt| peel_effect_ty(rt, cx.program.tys()))
-            .filter(|rt| matches!(&*cx.program.tys().get(*rt), Ty::HttpResult(_)))
-            .unwrap_or_else(|| cx.unit_ty());
-        (
-            Vec::new(),
-            Vec::new(),
-            IrExpr {
-                kind: IrExprKind::Return {
-                    value: Box::new(IrExpr {
-                        kind: IrExprKind::HttpResultNotFound,
-                        ty: http_result_ty,
-                        span,
-                    }),
-                },
-                ty: http_result_ty,
-                span,
-            },
-        )
-    } else {
-        let err_variant = variant_info_of(operand_ty, "Err", cx.program);
-        let err_field_ty = err_variant
-            .payload
-            .first()
-            .map(|(_, t)| *t)
-            .unwrap_or_else(|| cx.unit_ty());
-        let err_value = IrExpr {
-            kind: IrExprKind::Local(err_local.clone()),
-            ty: err_field_ty,
-            span,
-        };
-        // ADR 0178: a declared `embeds` conversion wraps the propagated
-        // error; an exact/compatible match propagates it unchanged.
-        let converted = match embed_conversion_ir(err_field_ty, cx) {
-            Some((embed_ty, variant)) => IrExpr {
-                kind: IrExprKind::Variant {
-                    tag: variant,
-                    payload: vec![err_value],
-                },
-                ty: embed_ty,
-                span,
-            },
-            None => err_value,
-        };
-        // The constructed `Err(..)`'s own type is the enclosing fn/handler/
-        // op's own declared return type (peeled through `Effect`) — the
-        // real `Result[_, _]` this value is actually returned as. Falls
-        // back to the operand's own type on a defensive miss (no
-        // `return_ty` recorded, or it doesn't peel to a `Result`) — this
-        // branch is unreachable at runtime regardless (an early return),
-        // so a best-effort `.ty` here mirrors this module's own established
-        // non-panicking posture for metadata with no runtime consequence.
-        let result_ty = cx
-            .return_ty
-            .map(|rt| peel_effect_ty(rt, cx.program.tys()))
-            .filter(|rt| matches!(&*cx.program.tys().get(*rt), Ty::Result(..)))
-            .unwrap_or(operand_ty);
-        let err_construction = IrExpr {
-            kind: IrExprKind::Variant {
-                tag: "Err".to_string(),
-                payload: vec![converted],
-            },
-            ty: result_ty,
-            span,
-        };
-        (
-            vec![(
-                "error".to_string(),
-                Box::new(IrPat::Bind {
-                    local: err_local.clone(),
-                }),
-            )],
-            vec![err_local],
-            IrExpr {
-                kind: IrExprKind::Return {
-                    // Review of #1238: matches `wrap_body_return`'s own
-                    // "Return's ty is the returned value's ty" convention —
-                    // `result_ty`, not `Unit`.
-                    value: Box::new(err_construction),
-                },
-                ty: result_ty,
-                span,
-            },
-        )
-    };
-    let err_arm = IrArm {
-        pat: IrPat::Variant {
-            scrutinee_ty: operand_ty,
-            tag: err_tag.to_string(),
-            fields: err_fields,
-        },
-        guard: None,
-        body: err_body,
-        binds: err_binds,
-        binding_mode: BindingMode::Direct,
-    };
-
-    IrExpr {
-        kind: IrExprKind::Match {
-            scrutinee,
-            arms: vec![ok_arm, err_arm],
-            exhaustive: Exhaustive::Total,
-            form: MatchForm::Flat,
-        },
-        ty,
-        span,
-    }
-}
-
-/// `lower_question_ir`'s own `Effect`-peeling half — mirrors
-/// `emitter/lower.rs`'s `peel_result_err` shape (peel through `Effect` to
-/// reach the real `Result[_, _]`) but stops one layer earlier, returning
-/// the whole peeled type rather than just its `Err` half, since
-/// `lower_question_ir` needs both (the full type for the constructed
-/// `Err(..)`'s own `.ty`, just the `Err` half for [`embed_conversion_ir`]'s
-/// own `target_err`).
-fn peel_effect_ty(ty: TyId, tys: &Types) -> TyId {
-    match &*tys.get(ty) {
-        Ty::Effect(inner) => peel_effect_ty(*inner, tys),
-        _ => ty,
-    }
-}
-
-/// `lower_question_ir`'s own IR-native sibling of `emitter/lower.rs`'s
-/// `embed_conversion` — same two checker primitives
-/// (`checker::compatible`/`checker::embedding_for`), same reasoning, ported
-/// rather than duplicated: `source_err_ty` (the `?` operand's own `Err`
-/// type) is passed in directly (this pass's caller already resolved it,
-/// unlike the string emitter's own `operand_ty: Option<TyId>` re-derivation
-/// from `expr_types`), and the enclosing return type comes from
-/// [`LowerIrCtx::return_ty`] instead of `LowerCtx::return_ty`. `None` on any
-/// miss along the way (no recorded `return_ty`, it doesn't peel to a
-/// `Result`, or the two error types are already compatible) — bare
-/// propagation, the same fallback the string emitter's own `?`-then-`?`
-/// chain already applies.
-fn embed_conversion_ir(source_err_ty: TyId, cx: &LowerIrCtx) -> Option<(TyId, String)> {
-    let tys = cx.program.tys();
-    let target_ty = peel_effect_ty(cx.return_ty?, tys);
-    let Ty::Result(_, target_err_ty) = &*tys.get(target_ty) else {
-        return None;
-    };
-    // Review of #1238: argument order matters — `compatible(t, u)` means "t
-    // usable where u is expected," and `check_question`'s own call
-    // (`bynk-check/src/checker/expressions.rs`) passes `(operand_err,
-    // fn_err)`, not the reverse.
-    if checker::compatible(source_err_ty, *target_err_ty, tys) {
-        return None;
-    }
-    let (_ty_name, variant) =
-        checker::embedding_for(*target_err_ty, source_err_ty, &cx.program.types, tys)?;
-    Some((*target_err_ty, variant))
-}
-
-/// P6.16 (design/tracks/the-ir.md §6): `is`'s real IR desugar. Scoped
-/// narrower than R5.9/R5.10's own combined framing might suggest — traced
-/// directly against the shipped desugar (`emitter/lower.rs`'s `lower_is`)
-/// rather than assumed from #1157's own Decision D: `lower_is` itself
-/// constructs only a forced receiver temp (R5.10) plus a boolean test, and
-/// never a narrowing *binding* — R5.9's own "narrowing is a scope operation
-/// … recorded in the IR" describes a *separate*, later concern (how `&&`/
-/// `if` apply `is`'s own boolean result to introduce a binding into a
-/// following scope, `gather_is_bindings_for_emit`), not a prerequisite this
-/// function itself needs. So `Is` lowers fully here; R5.9's own cross-site
-/// narrowing-propagation machinery stays a distinct, still-open design
-/// question this function does not settle.
-///
-/// `value is Name` (no bindings) where `Name` is a *declared refined type*
-/// is a different check from `value is Variant(...)` (a sum-tag test) —
-/// mirrors `lower_is`'s own `is_refined_is_check` disambiguation exactly,
-/// since the two syntactically look identical (a bare name after `is`) and
-/// only the checker's own type information (via `Ty::Base`/`Ty::Named{kind:
-/// Refined, ..}`) tells them apart. Every other pattern shape routes through
-/// [`lower_pattern_ir`] (P6.4, #1157 — built for exactly this, never wired
-/// until now) plus [`lower_pattern_test_ir`], this function's own new
-/// boolean-test walk over the resulting `IrPat`.
-fn lower_is_ir(
-    value: &Expr,
-    pattern: &Pattern,
-    ty: TyId,
-    span: Span,
-    cx: &mut LowerIrCtx,
-) -> IrExpr {
-    let scrutinee = lower_expr_ir(value, cx);
-    let scrutinee_ty = scrutinee.ty;
-    let recv_local = cx.fresh_tmp("__is_receiver");
-    let recv = IrExpr {
-        kind: IrExprKind::Local(recv_local.clone()),
-        ty: scrutinee_ty,
-        span,
-    };
-
-    let bool_expr = match pattern {
-        Pattern::Wildcard(_) | Pattern::Binding(_) => IrExpr {
-            kind: IrExprKind::Const(ConstVal::Bool(true)),
-            ty,
-            span,
-        },
-        Pattern::Variant {
-            variant, bindings, ..
-        } if bindings.is_empty() && is_refined_is_check_ir(scrutinee_ty, &variant.name, cx) => {
-            refined_check_ir(&recv, &variant.name, ty, span, cx)
-        }
-        _ => {
-            let ir_pat = lower_pattern_ir(pattern, scrutinee_ty, cx.program);
-            let tests = lower_pattern_test_ir(&recv, scrutinee_ty, &ir_pat, ty, cx.program);
-            fold_and_ir(tests, ty, span)
-        }
-    };
-
-    IrExpr {
-        kind: IrExprKind::Block {
-            stmts: vec![IrStmt::Let {
-                local: recv_local,
-                value: scrutinee,
-            }],
-            tail: Box::new(bool_expr),
-        },
-        ty,
-        span,
-    }
-}
-
-/// `lower_is_ir`'s own refined-type-name disambiguation — a bare `is Name`
-/// tests a *refined type* rather than a sum variant when the operand's own
-/// checked type is base-ish and `Name` names a declared `TypeBody::Refined`.
-/// Mirrors `emitter.rs`'s `LowerCtx::is_refined_is_check` exactly.
-fn is_refined_is_check_ir(operand_ty: TyId, name: &str, cx: &LowerIrCtx) -> bool {
-    let value_baseish = matches!(
-        &*cx.program.ty_intern.get(operand_ty),
-        Ty::Base(_)
-            | Ty::Named {
-                kind: NamedKind::Refined(_),
-                ..
-            }
-    );
-    let name_refined = matches!(
-        cx.program.types.get(name).map(|d| &d.body),
-        Some(TypeBody::Refined { .. })
-    );
-    value_baseish && name_refined
-}
-
-/// `lower_is_ir`'s own refined-type-name check construction — reads the
-/// named refined type's own declared `base`/`refinement` and wraps them in
-/// [`IrExprKind::RefinedCheck`], the same reused-verbatim payload
-/// [`lower_pattern_test_ir`]'s own `IrPat::Refined` arm constructs for an
-/// inline `_ where predicate` clause.
-fn refined_check_ir(
-    recv: &IrExpr,
-    name: &str,
-    bool_ty: TyId,
-    span: Span,
-    cx: &LowerIrCtx,
-) -> IrExpr {
-    let Some(TypeBody::Refined {
-        base, refinement, ..
-    }) = cx.program.types.get(name).map(|d| &d.body)
-    else {
-        panic!(
-            "bynk internal error (ADR 0334): `{name}` does not resolve to a declared refined \
-             type, but is_refined_is_check_ir just confirmed it does"
-        )
-    };
-    IrExpr {
-        kind: IrExprKind::RefinedCheck {
-            value: Box::new(recv.clone()),
-            base: *base,
-            refinement: refinement.clone(),
-        },
-        ty: bool_ty,
-        span,
-    }
-}
-
-/// `lower_is_ir`'s own recursive boolean-test walk over an already-lowered
-/// [`IrPat`] — the IR-native sibling of `emitter/lower.rs`'s own
-/// `pattern_match_tests`, ported rather than duplicated: same recursive
-/// shape (one test per structural constraint, accumulated then AND-joined
-/// by the caller), same skip-irrefutable-payload rule, but reading
-/// `IrPat`'s own already-resolved `fields`/`scrutinee_ty` instead of
-/// re-deriving a positional field's name from `LowerCtx::positional_field_name`
-/// — `lower_pattern_ir` (P6.4, #1157) already did that resolution once, via
-/// the identical `variant_info_of`/`variants_of` this function's own
-/// `IrPat::Variant` arm re-derives payload *types* through (field *names*
-/// are already on the `IrPat` itself, nothing left to look up for those).
-fn lower_pattern_test_ir(
-    path: &IrExpr,
-    path_ty: TyId,
-    pat: &IrPat,
-    bool_ty: TyId,
-    program: &TypedCommons,
-) -> Vec<IrExpr> {
-    match pat {
-        IrPat::Wild | IrPat::Bind { .. } => Vec::new(),
-        IrPat::Const { value } => vec![IrExpr {
-            kind: IrExprKind::BinOp {
-                op: IrBinOp::Eq,
-                lhs: Box::new(path.clone()),
-                rhs: Box::new(IrExpr {
-                    kind: IrExprKind::Const(value.clone()),
-                    ty: path_ty,
-                    span: path.span,
-                }),
-            },
-            ty: bool_ty,
-            span: path.span,
-        }],
-        IrPat::Refined { inner, refinement } => {
-            let mut tests = lower_pattern_test_ir(path, path_ty, inner, bool_ty, program);
-            let base = literal_base_of_ty_ir(path_ty, program.tys()).unwrap_or_else(|| {
-                panic!(
-                    "bynk internal error (ADR 0334): a refined pattern's scrutinee must be \
-                     literal-kind (Int/Float/String/Bool), but the checker already accepted \
-                     this pattern"
-                )
-            });
-            tests.push(IrExpr {
-                kind: IrExprKind::RefinedCheck {
-                    value: Box::new(path.clone()),
-                    base,
-                    refinement: Some(refinement.clone()),
-                },
-                ty: bool_ty,
-                span: path.span,
-            });
-            tests
-        }
-        IrPat::Variant {
-            scrutinee_ty,
-            tag,
-            fields,
-        } => {
-            let string_ty = program.tys().intern(Ty::Base(BaseType::String));
-            let mut tests = vec![IrExpr {
-                kind: IrExprKind::BinOp {
-                    op: IrBinOp::Eq,
-                    lhs: Box::new(IrExpr {
-                        kind: IrExprKind::Field {
-                            base: Box::new(path.clone()),
-                            field: "tag".to_string(),
-                        },
-                        ty: string_ty,
-                        span: path.span,
-                    }),
-                    rhs: Box::new(IrExpr {
-                        kind: IrExprKind::Const(ConstVal::Str(tag.clone())),
-                        ty: string_ty,
-                        span: path.span,
-                    }),
-                },
-                ty: bool_ty,
-                span: path.span,
-            }];
-            let variant_info = variant_info_of(*scrutinee_ty, tag, program);
-            for (field_name, sub_pat) in fields {
-                if is_irrefutable_ir(sub_pat) {
-                    continue;
-                }
-                let field_ty = variant_info
-                    .payload
-                    .iter()
-                    .find(|(n, _)| n == field_name)
-                    .map(|(_, t)| *t)
-                    .unwrap_or(bool_ty);
-                let field_path = IrExpr {
-                    kind: IrExprKind::Field {
-                        base: Box::new(path.clone()),
-                        field: field_name.clone(),
-                    },
-                    ty: field_ty,
-                    span: path.span,
-                };
-                tests.extend(lower_pattern_test_ir(
-                    &field_path,
-                    field_ty,
-                    sub_pat,
-                    bool_ty,
-                    program,
-                ));
-            }
-            tests
-        }
-        IrPat::Or { alts } => {
-            let terms: Vec<IrExpr> = alts
-                .iter()
-                .map(|alt| {
-                    let t = lower_pattern_test_ir(path, path_ty, alt, bool_ty, program);
-                    fold_and_ir(t, bool_ty, path.span)
-                })
-                .collect();
-            vec![fold_or_ir(terms, bool_ty, path.span)]
-        }
-    }
-}
-
-/// [`lower_pattern_test_ir`]'s own `IrPat`-level mirror of
-/// `bynk_syntax::ast::Pattern::is_irrefutable` — `Wild`/`Bind` always match,
-/// an `Or` does iff any alternative does.
-fn is_irrefutable_ir(pat: &IrPat) -> bool {
-    match pat {
-        IrPat::Wild | IrPat::Bind { .. } => true,
-        IrPat::Or { alts } => alts.iter().any(is_irrefutable_ir),
-        _ => false,
-    }
-}
-
-/// `lower_is_ir`'s/[`lower_pattern_test_ir`]'s own IR-native mirror of
-/// `emitter/lower.rs`'s `literal_base_of_ty` — the literal-kind base a
-/// refined pattern's own scrutinee must resolve to.
-fn literal_base_of_ty_ir(ty: TyId, tys: &Types) -> Option<BaseType> {
-    let base = match &*tys.get(ty) {
-        Ty::Base(b) => *b,
-        Ty::Named {
-            kind: NamedKind::Refined(b),
-            ..
-        } => *b,
-        _ => return None,
-    };
-    matches!(base, BaseType::Int | BaseType::String | BaseType::Bool).then_some(base)
-}
-
-/// AND-folds a list of boolean tests — empty (a pattern with no structural
-/// constraints, e.g. a bare `Bind`) is vacuously `true`, matching
-/// `pattern_match_tests`' own `tests.is_empty()` → `"true"` fallback.
-fn fold_and_ir(tests: Vec<IrExpr>, bool_ty: TyId, span: Span) -> IrExpr {
-    let mut iter = tests.into_iter();
-    let Some(first) = iter.next() else {
-        return IrExpr {
-            kind: IrExprKind::Const(ConstVal::Bool(true)),
-            ty: bool_ty,
-            span,
-        };
-    };
-    iter.fold(first, |acc, next| IrExpr {
-        kind: IrExprKind::And {
-            lhs: Box::new(acc),
-            rhs: Box::new(next),
-        },
-        ty: bool_ty,
-        span,
-    })
-}
-
-/// OR-folds an `Or`-pattern's own per-alternative tests — never empty in
-/// practice (`Pattern::Or` always carries at least two alternatives), but
-/// degrades to `false` rather than panicking on the same "metadata with no
-/// runtime consequence" posture this module already applies elsewhere.
-fn fold_or_ir(terms: Vec<IrExpr>, bool_ty: TyId, span: Span) -> IrExpr {
-    let mut iter = terms.into_iter();
-    let Some(first) = iter.next() else {
-        return IrExpr {
-            kind: IrExprKind::Const(ConstVal::Bool(false)),
-            ty: bool_ty,
-            span,
-        };
-    };
-    iter.fold(first, |acc, next| IrExpr {
-        kind: IrExprKind::Or {
-            lhs: Box::new(acc),
-            rhs: Box::new(next),
-        },
-        ty: bool_ty,
-        span,
-    })
-}
-
-pub fn lower_expr_ir(e: &Expr, cx: &mut LowerIrCtx) -> IrExpr {
-    let ty = cx.expr_ty(e.id);
-    let span = e.span;
-    match &e.kind {
-        ExprKind::IntLit { value, .. } => IrExpr {
-            kind: IrExprKind::Const(ConstVal::Int(*value)),
-            ty,
-            span,
-        },
-        ExprKind::FloatLit { value, .. } => IrExpr {
-            kind: IrExprKind::Const(ConstVal::Float(*value)),
-            ty,
-            span,
-        },
-        ExprKind::DurationLit { millis, .. } => IrExpr {
-            kind: IrExprKind::Const(ConstVal::DurationMillis(*millis)),
-            ty,
-            span,
-        },
-        ExprKind::StrLit(s) => IrExpr {
-            kind: IrExprKind::Const(ConstVal::Str(s.clone())),
-            ty,
-            span,
-        },
-        ExprKind::BoolLit(b) => IrExpr {
-            kind: IrExprKind::Const(ConstVal::Bool(*b)),
-            ty,
-            span,
-        },
-        ExprKind::UnitLit => IrExpr {
-            kind: IrExprKind::Const(ConstVal::Unit),
-            ty,
-            span,
-        },
-
-        ExprKind::Ident(id) => IrExpr {
-            kind: lower_ident_ir(&id.name, Some(e.id), cx),
-            ty,
-            span,
-        },
-
-        ExprKind::RecordConstruction { fields, .. } => IrExpr {
-            kind: IrExprKind::Record {
-                fields: fields
-                    .iter()
-                    .map(|f| {
-                        let value = match &f.value {
-                            Some(v) => lower_expr_ir(v, cx),
-                            // Shorthand `{ x }` — no `Expr`/`ExprId` of its
-                            // own (the parser never builds one), so its type
-                            // comes from this pass's own scope, exactly the
-                            // local binding the checker's `ctx.lookup` read
-                            // at `bynk-check/src/checker/expressions.rs:2427`.
-                            None => {
-                                let local_ty = cx.lookup(&f.name.name).unwrap_or_else(|| {
-                                    panic!(
-                                        "bynk internal error (ADR 0334): shorthand field `{}` has \
-                                         no local binding in this pass's own scope — the checker \
-                                         accepted it, so its own `ctx.lookup` must have found one",
-                                        f.name.name
-                                    )
-                                });
-                                IrExpr {
-                                    kind: lower_ident_ir(&f.name.name, None, cx),
-                                    ty: local_ty,
-                                    span: f.name.span,
-                                }
-                            }
-                        };
-                        (f.name.name.clone(), value)
-                    })
-                    .collect(),
-            },
-            ty,
-            span,
-        },
-        ExprKind::FieldAccess { receiver, field } => {
-            // P6.23 root-cause pass (review of #1253): a qualified nullary
-            // sum-variant reference (`Region.Domestic`) parses as an
-            // ordinary `FieldAccess`, but the checker's own
-            // `check_field_access` (`expressions.rs`) intercepts this shape
-            // — `receiver` bare-names a declared sum type owning a variant
-            // tagged `field.name` — *before* ever independently
-            // type-checking `receiver` itself; it returns the variant's own
-            // type directly, so `receiver`'s own `ExprId` never gets a
-            // recorded type. The generic `lower_expr_ir(receiver, cx)`
-            // recursion below then panics on ADR 0334's own "no recorded
-            // type" guard. Mirrors the checker's dispatch (same
-            // `cx.lookup(...).is_none()` shadowing guard) instead of
-            // re-deriving it, rather than lowering `receiver` at all.
-            if let ExprKind::Ident(id) = &receiver.kind
-                && cx.lookup(&id.name).is_none()
-                && let Some(decl) = cx.program.types.get(&id.name)
-                && let TypeBody::Sum(s) = &decl.body
-                && s.variants.iter().any(|v| v.name.name == field.name)
-            {
-                IrExpr {
-                    kind: IrExprKind::Variant {
-                        tag: field.name.clone(),
-                        payload: Vec::new(),
-                    },
-                    ty,
-                    span,
-                }
-            } else {
-                IrExpr {
-                    kind: IrExprKind::Field {
-                        base: Box::new(lower_expr_ir(receiver, cx)),
-                        field: field.name.clone(),
-                    },
-                    ty,
-                    span,
-                }
-            }
-        }
-        ExprKind::ListLit(elems) => IrExpr {
-            kind: IrExprKind::List {
-                elems: elems.iter().map(|el| lower_expr_ir(el, cx)).collect(),
-            },
-            ty,
-            span,
-        },
-        ExprKind::Block(b) => lower_block_ir(b, cx),
-        ExprKind::If {
-            cond,
-            then_block,
-            else_block,
-        } => IrExpr {
-            kind: IrExprKind::If {
-                cond: Box::new(lower_expr_ir(cond, cx)),
-                then_: Box::new(lower_block_ir(then_block, cx)),
-                else_: Box::new(lower_block_ir(else_block, cx)),
-            },
-            ty,
-            span,
-        },
-        ExprKind::BinOp(BinOp::And, lhs, rhs) => IrExpr {
-            kind: IrExprKind::And {
-                lhs: Box::new(lower_expr_ir(lhs, cx)),
-                rhs: Box::new(lower_expr_ir(rhs, cx)),
-            },
-            ty,
-            span,
-        },
-        ExprKind::BinOp(BinOp::Or, lhs, rhs) => IrExpr {
-            kind: IrExprKind::Or {
-                lhs: Box::new(lower_expr_ir(lhs, cx)),
-                rhs: Box::new(lower_expr_ir(rhs, cx)),
-            },
-            ty,
-            span,
-        },
-        ExprKind::UnaryOp(UnaryOp::Not, inner) => IrExpr {
-            kind: IrExprKind::Not {
-                operand: Box::new(lower_expr_ir(inner, cx)),
-            },
-            ty,
-            span,
-        },
-        ExprKind::EffectPure(inner) => IrExpr {
-            kind: IrExprKind::Pure {
-                value: Box::new(lower_expr_ir(inner, cx)),
-            },
-            ty,
-            span,
-        },
-        // Parens carry no semantic weight once parsed — not one of the
-        // reference's own node kinds, unwrapped here so lowering a merely-
-        // parenthesized covered-node subexpression doesn't panic.
-        ExprKind::Paren(inner) => lower_expr_ir(inner, cx),
-
-        // `p implies q` -> `Or { lhs: Not(p), rhs: q }` (P6.3, design/tracks/
-        // the-ir.md §6, R6.7 — the reference's own Part 6.4 table). Peeled off
-        // the comparison/arithmetic `BinOp` arm below (real as of #1189) —
-        // `Implies` desugars away entirely rather than sharing that arm's
-        // `IrBinOp` shape.
-        //
-        // This flat `Or`/`Not` pair has nowhere to carry an `is` binding from
-        // the antecedent into the consequent (`p is Foo(x) implies f(x)`,
-        // the reason the string emitter's own `Implies` handling exists,
-        // `emitter/lower.rs:4332`'s `lower_and_with_is`). Correction (P6.25,
-        // 2026-08-19): `ExprKind::Is` landed (P6.16/ADR 0338) — this gap is
-        // real and reachable now, not hypothetical. ADR 0338 traced `Is`
-        // itself and found the narrowing binding is never `Is`'s own concern
-        // (it's applied by `&&`/`implies`/`if`'s own consuming call sites),
-        // so this arm's own missing binding-carry is R5.9's still-open,
-        // still-unscoped cross-site narrowing-propagation gap (design/tracks/
-        // the-ir.md §7), not a P6.4/`Is`-landing prerequisite as this comment
-        // used to say.
-        ExprKind::BinOp(BinOp::Implies, lhs, rhs) => IrExpr {
-            kind: IrExprKind::Or {
-                // `Not`'s own type is Bool — the same type `Implies` itself
-                // (and therefore `lhs`) already carries, so no new type is
-                // synthesised here, only reused.
-                lhs: Box::new(IrExpr {
-                    kind: IrExprKind::Not {
-                        operand: Box::new(lower_expr_ir(lhs, cx)),
-                    },
-                    ty,
-                    span: lhs.span,
-                }),
-                rhs: Box::new(lower_expr_ir(rhs, cx)),
-            },
-            ty,
-            span,
-        },
-
-        // Comparison/arithmetic (#1189, ir.rs's own Decision-D-extension
-        // note): a shared `IrExprKind::BinOp { op, .. }` node, not ten
-        // near-duplicate variants — see `IrExprKind::BinOp`'s own doc
-        // comment for why that shape (not one variant per operator, unlike
-        // `And`/`Or`/`Not` above) is the right call here. `lhs`/`rhs` lower
-        // independently; no `is`-binding propagation applies (that's
-        // `Implies`/`And`'s own concern, unaffected by this arm).
-        ExprKind::BinOp(
-            op @ (BinOp::Eq
-            | BinOp::NotEq
-            | BinOp::Lt
-            | BinOp::LtEq
-            | BinOp::Gt
-            | BinOp::GtEq
-            | BinOp::Add
-            | BinOp::Sub
-            | BinOp::Mul
-            | BinOp::Div),
-            lhs,
-            rhs,
-        ) => {
-            let ir_op = match op {
-                BinOp::Eq => IrBinOp::Eq,
-                BinOp::NotEq => IrBinOp::NotEq,
-                BinOp::Lt => IrBinOp::Lt,
-                BinOp::LtEq => IrBinOp::LtEq,
-                BinOp::Gt => IrBinOp::Gt,
-                BinOp::GtEq => IrBinOp::GtEq,
-                BinOp::Add => IrBinOp::Add,
-                BinOp::Sub => IrBinOp::Sub,
-                BinOp::Mul => IrBinOp::Mul,
-                BinOp::Div => IrBinOp::Div,
-                BinOp::And | BinOp::Or | BinOp::Implies => {
-                    unreachable!("And/Or/Implies are matched by their own arms above")
-                }
-            };
-            IrExpr {
-                kind: IrExprKind::BinOp {
-                    op: ir_op,
-                    lhs: Box::new(lower_expr_ir(lhs, cx)),
-                    rhs: Box::new(lower_expr_ir(rhs, cx)),
-                },
-                ty,
-                span,
-            }
-        }
-        // `-operand` (#1189) — `Not`'s own arithmetic counterpart, same
-        // shape.
-        ExprKind::UnaryOp(UnaryOp::Neg, inner) => IrExpr {
-            kind: IrExprKind::Neg {
-                operand: Box::new(lower_expr_ir(inner, cx)),
-            },
-            ty,
-            span,
-        },
-        // Interpolated strings (#1189) — each hole lowers through the
-        // ordinary `lower_expr_ir` machinery; chunks carry over verbatim.
-        ExprKind::InterpStr(parts) => IrExpr {
-            kind: IrExprKind::InterpStr {
-                parts: parts.iter().map(|p| lower_interp_part_ir(p, cx)).collect(),
-            },
-            ty,
-            span,
-        },
-        ExprKind::Call {
-            type_args, args, ..
-        } => lower_call_ir(e, None, type_args, args, cx),
-        ExprKind::Lambda(lambda) => lower_lambda_ir(e, lambda, cx),
-        // #1225's own ADR: the four built-in constructors lower to the same
-        // `IrExprKind::Variant` a user-declared sum's own `Callee::Ctor`
-        // does (`lower_call_ir`, above) — `IrExprKind::Variant`'s own doc
-        // comment has the full grounding for why no `Callee` classification
-        // is needed here either: `ty` (already resolved for every `IrExpr`,
-        // R6.1) already carries the constructed sum's own identity, the
-        // same way it does for a real `Callee::Ctor` call.
-        ExprKind::Ok(inner) => IrExpr {
-            kind: IrExprKind::Variant {
-                tag: "Ok".to_string(),
-                payload: vec![lower_expr_ir(inner, cx)],
-            },
-            ty,
-            span,
-        },
-        ExprKind::Err(inner) => IrExpr {
-            kind: IrExprKind::Variant {
-                tag: "Err".to_string(),
-                payload: vec![lower_expr_ir(inner, cx)],
-            },
-            ty,
-            span,
-        },
-        ExprKind::Some(inner) => IrExpr {
-            kind: IrExprKind::Variant {
-                tag: "Some".to_string(),
-                payload: vec![lower_expr_ir(inner, cx)],
-            },
-            ty,
-            span,
-        },
-        ExprKind::None => IrExpr {
-            kind: IrExprKind::Variant {
-                tag: "None".to_string(),
-                payload: Vec::new(),
-            },
-            ty,
-            span,
-        },
-        ExprKind::Question(inner) => lower_question_ir(inner, ty, span, cx),
-        ExprKind::ConstructorCall { args, .. } => lower_call_ir(e, None, &[], args, cx),
-        ExprKind::MethodCall {
-            receiver,
-            type_args,
-            args,
-            ..
-        } => lower_call_ir(e, Some(receiver), type_args, args, cx),
-        ExprKind::Match { discriminant, arms } => {
-            let scrutinee = Box::new(lower_expr_ir(discriminant, cx));
-            // Deliberately the lowered `IrExpr`'s own `ty`, not
-            // `cx.expr_ty(discriminant.id)` (the AST-keyed type P6.4's own
-            // standalone fixtures read instead, `lower_match_fixture` below)
-            // — the two agree everywhere reachable today, but `scrutinee.ty`
-            // stays correct even if a future discriminant ever lowers
-            // through a type-adjusting arm (a `peel_effect` site), where the
-            // recorded AST type and the lowered node's own type can diverge.
-            let scrutinee_ty = scrutinee.ty;
-            let ir_arms: Vec<IrArm> = arms
-                .iter()
-                .map(|a| lower_arm_ir(a, scrutinee_ty, cx))
-                .collect();
-            let exhaustive = lower_exhaustive_ir(arms);
-            let form = if match_needs_if_chain(arms) {
-                MatchForm::IfChain
-            } else {
-                MatchForm::Flat
-            };
-            // Not recorded here: the string emitter also decides, at this
-            // same site, whether the discriminant needs hoisting to a temp
-            // before an if-chain re-evaluates it per arm
-            // (`is_narrowable_path`, `emitter/lower.rs:5068` — re-evaluating
-            // a non-ident/field discriminant could repeat side effects).
-            // Left deliberately derivable from `scrutinee`'s own `Local`/
-            // `Field` shape rather than mirrored onto `IrExprKind::Match` as
-            // a second flag — the same "can never silently disagree"
-            // argument Decision B makes for `form` applies here too, just
-            // resolved by omission instead of reuse.
-            IrExpr {
-                kind: IrExprKind::Match {
-                    scrutinee,
-                    arms: ir_arms,
-                    exhaustive,
-                    form,
-                },
-                ty,
-                span,
-            }
-        }
-        ExprKind::Is { value, pattern } => lower_is_ir(value, pattern, ty, span, cx),
-        ExprKind::RecordSpread {
-            base, overrides, ..
-        } => lower_record_spread_ir(ty, span, base, overrides, cx),
-        ExprKind::Expect(_) => todo!(
-            "`expect` expression — test-body-only, gated by ctx.in_test_body \
-             (bynk-check/src/checker.rs's check_body), unreachable through this pass's own \
-             single-file checked_program/find_fn/lower_fn harness without first building or \
-             routing through bynk-check's heavier project-level test machinery (P6.3, #1145, \
-             Decision C)"
-        ),
-        ExprKind::Val { .. } => todo!(
-            "`Val[T]` — test-body-only, same unreachable-through-this-harness gap as `expect` \
-             above (P6.3, #1145, Decision C)"
-        ),
-        ExprKind::Wire(_) => todo!(
-            "`Wire(...)` — test-body-only, same unreachable-through-this-harness gap as `expect` \
-             above (P6.3, #1145, Decision C)"
-        ),
-        ExprKind::Observation(_) => todo!(
-            "capability-call observation — test-body-only, same unreachable-through-this-harness \
-             gap as `expect` above (P6.3, #1145, Decision C)"
-        ),
-        ExprKind::Trace { .. } => todo!(
-            "`trace(...)` — test-body-only, same unreachable-through-this-harness gap as \
-             `expect` above (P6.3, #1145, Decision C)"
-        ),
-    }
-}
-
-/// [`IrExprKind::InterpStr`]'s own per-part lowering (#1189) — a literal
-/// chunk carries over verbatim; a hole lowers through the ordinary
-/// [`lower_expr_ir`] machinery, same as any other subexpression.
-fn lower_interp_part_ir(part: &InterpPart, cx: &mut LowerIrCtx) -> IrInterpPart {
-    match part {
-        InterpPart::Chunk(s) => IrInterpPart::Chunk(s.clone()),
-        InterpPart::Hole(e) => IrInterpPart::Hole(Box::new(lower_expr_ir(e, cx))),
-    }
-}
-
-/// Shared by `Call`/`MethodCall`/qualified-`ConstructorCall`: read back the
-/// `Callee` P6.0 already recorded for `e.id` and build the matching
-/// `IrExprKind` — never re-derive which dispatch branch fired. `receiver`
-/// is `Some` only for `MethodCall`; `Call`/`ConstructorCall` have none, so
-/// `type_args`/`args` alone determine the call's own arguments.
-///
-/// A `Callee::Ctor` becomes [`IrExprKind::Variant`], not `Call` — sum-variant
-/// construction is a distinct node in Part 6.2's own shape, even though
-/// `check_call`/`check_static_call` dispatch it identically to a real call.
-/// Every other `Callee` becomes [`IrExprKind::Call`]. A method call's own
-/// `receiver` is lowered and prepended to `args` *only* when the `Callee`
-/// says the receiver is a genuine value the call operates on — `Method`
-/// (`self`), `Kernel` (the collection/etc. value), `Agent` (the instance) —
-/// the same way UFCS already treats `self` as an ordinary leading argument
-/// (`check_method_call`'s own doc comment: "UFCS-style call resolution").
-/// Every other `Callee` reached via `MethodCall` (`Static`, `Capability`,
-/// `CrossCap`, `Cross`, `TestService`, `Store`, `Query`) has a receiver that
-/// is a pure namespace/field reference already fully captured by the
-/// `Callee`'s own fields (a type name, a capability name, a store field's
-/// own name) — lowering and prepending it would be redundant at best (its
-/// identity is already recorded) and wrong at worst (a bare type name like
-/// `Point` in `Point.origin()` is not a `Local`, not a `Global`-shaped
-/// nullary variant, and not a free function — lowering it as an ordinary
-/// expression would hit `lower_ident_ir`'s own final assertion for no good
-/// reason). This is a lowering-time convention with no consumer yet to
-/// validate it against (Decision A, #1143) — worth a second look once a
-/// real `Ir → TS` printer is proposed.
-fn lower_call_ir(
-    e: &Expr,
-    receiver: Option<&Expr>,
-    type_args: &[bynk_syntax::ast::TypeRef],
-    args: &[Expr],
-    cx: &mut LowerIrCtx,
-) -> IrExpr {
-    let ty = cx.expr_ty(e.id);
-    let span = e.span;
-    // Slice 3.1 of #1542 (`design/tracks/the-ir-cutover.md` §5): the three
-    // shapes this branch's own history named as Decision C's (#1143)
-    // deliberately Callee-less exclusions are, in the current tree, all
-    // confirmed Callee-recording and none of them reaches here in the first
-    // place — traced directly against `bynk-check/src/checker/calls.rs` and
-    // confirmed against the real per-context checking pipeline (not the bare
-    // single-file harness, which under-populates `callees` for a handler
-    // body and would misreport every miss as real):
-    //   - a bare `HttpResult`/`QueueResult` nullary variant reference
-    //     (`NotFound`, `Ack`) is an `ExprKind::Ident`, never reaches
-    //     `lower_call_ir` at all, and `lower_ident_ir`'s own `Callee::Intrinsic`
-    //     arm already handles it (P6.21/P6.23, review of #1251/#1252).
-    //   - `Events.emit[E](event)` resolves through `check_static_call`'s
-    //     ordinary `ctx.caps.capabilities.get("Events")` branch (`calls.rs`,
-    //     first-party-gated) exactly like any other capability op — it
-    //     records a real `Callee::Capability`, confirmed both by direct
-    //     reading and by an empirical per-context check of a structurally
-    //     identical capability-op call.
-    //   - a test-body `svc.<VERB>("/path", …)` system-http address records a
-    //     real `Callee::TestService` (`check_test_service_address`, 6 sites
-    //     in `calls.rs`) — and test bodies are excluded from this whole pass
-    //     regardless (Decision C, `#1145`), the same gate the six
-    //     test-sublanguage `todo!()`s above answer for.
-    // No other call shape was found reachable through a `fn`/method body —
-    // this entry point's own scope, per `lower_fn_body_ir`'s doc comment —
-    // that resolves without a `Callee`. Asserted, not merely assumed.
-    let Some(callee) = cx.callee(e.id).cloned() else {
-        unreachable!(
-            "no Callee recorded for this call at {span:?} — every shape traced during Slice \
-             3.1's investigation resolves to a real Callee (see this function's own doc comment \
-             just above); this is either a newly-introduced checker regression or a genuinely \
-             new call shape neither the original Decision C survey nor this one considered"
-        )
-    };
-    if let Callee::Ctor { tag, .. } = callee {
-        // `IrExprKind::Variant` has no `targs` slot, unlike `Call` below —
-        // deliberate, not dropped: `type_args` can never be non-empty here.
-        // `check_call`'s own gate rejects any explicit type argument before
-        // it even considers whether `name` is a variant constructor
-        // ("`{name}` is not a generic function — it takes no type
-        // arguments", `calls.rs:484-495`), and `ConstructorCall` (the
-        // qualified form, `Opt.Some(x)`) has no `type_args` slot on the AST
-        // at all — a generic sum's own instantiation is inferred from the
-        // payload's argument types instead (`check_variant_construction`),
-        // never named explicitly at a call site.
-        //
-        // `Callee::Ctor`'s own `sum: Arc<TypeDecl>` field is read no
-        // further than this match's own destructure — #1225's own ADR
-        // (`IrExprKind::Variant`'s own doc comment has the full grounding)
-        // found `ty` (already computed above) already carries the
-        // identical identity as a `TyId`, so `IrExprKind::Variant` itself
-        // carries no separate `sum` field to populate.
-        return IrExpr {
-            kind: IrExprKind::Variant {
-                tag,
-                payload: args.iter().map(|a| lower_expr_ir(a, cx)).collect(),
-            },
-            ty,
-            span,
-        };
-    }
-    let receiver_is_a_value = matches!(
-        callee,
-        Callee::Method(_) | Callee::Kernel { .. } | Callee::Agent { .. }
-    );
-    let mut ir_args: Vec<IrExpr> = Vec::with_capacity(args.len() + receiver_is_a_value as usize);
-    if receiver_is_a_value && let Some(r) = receiver {
-        ir_args.push(lower_expr_ir(r, cx));
-    }
-    ir_args.extend(args.iter().map(|a| lower_expr_ir(a, cx)));
-    let targs = type_args
-        .iter()
-        .map(|t| {
-            cx.resolve_type_ref(t).unwrap_or_else(|| {
-                panic!(
-                    "bynk internal error (ADR 0334): an explicit call-site type argument does \
-                     not resolve in this pass's own rigid-variable scope, but the checker \
-                     already accepted this call"
-                )
-            })
-        })
-        .collect();
-    IrExpr {
-        kind: IrExprKind::Call {
-            callee,
-            targs,
-            args: ir_args,
-        },
-        ty,
-        span,
-    }
-}
-
-/// A lambda's own recorded type is always `Ty::Fn { params, ret }`
-/// (`check_lambda`, `bynk-check/src/checker/expressions.rs:974`) — that
-/// `params` list is this pass's only source for each parameter's type,
-/// since `LambdaParam::type_ref` is optional and, when absent, the
-/// checker infers it from context (an expected function type) rather than
-/// resolving it from an annotation this pass could re-derive.
-fn lower_lambda_ir(e: &Expr, lambda: &LambdaExpr, cx: &mut LowerIrCtx) -> IrExpr {
-    let ty = cx.expr_ty(e.id);
-    let param_tys: Vec<TyId> = match &*cx.program.ty_intern.get(ty) {
-        Ty::Fn { params, .. } => params.clone(),
-        _ => panic!(
-            "bynk internal error (ADR 0334): a Lambda's own recorded type is not Ty::Fn — \
-             check_lambda only ever types one as a function type"
-        ),
-    };
-    assert_eq!(
-        lambda.params.len(),
-        param_tys.len(),
-        "bynk internal error (ADR 0334): a Lambda's own recorded Ty::Fn has a different arity \
-         than its own AST params — bynk_lower and bynk-check disagree about this \
-         lambda's shape"
-    );
-    cx.push_scope();
-    for (p, pty) in lambda.params.iter().zip(&param_tys) {
-        cx.bind(p.name.name.clone(), *pty);
-    }
-    let body = lower_expr_ir(&lambda.body, cx);
-    cx.pop_scope();
-    IrExpr {
-        kind: IrExprKind::Lambda {
-            params: lambda.params.iter().map(|p| p.name.name.clone()).collect(),
-            body: Box::new(body),
-            // Free-variable analysis isn't built here — nothing consumes
-            // Lambda's IR yet (Decision A, #1143); a later slice computes
-            // this once a real need (closure-conversion, a printer) exists
-            // to validate it against.
-            captures: Vec::new(),
-        },
-        ty,
-        span: e.span,
-    }
-}
-
-/// Classify a bare `Ident` as `Local`, `StoreQuery`, `FnRef`, or `Global` —
-/// Decision C's narrow scope (refined during implementation, see
-/// [`GlobalRef`]'s doc comment for why the `HttpResult`/`QueueResult` case
-/// named in the original proposal was dropped).
-///
-/// The `Global` probe is a pure name-shaped lookup with nothing tying it to
-/// "this name is not one of the other, unmigrated forms" — a real
-/// collision risk a review of this slice named directly. Every other form
-/// this pass can actually reach today (a bare free-function name, `ctx.input.
-/// fns` in `check_ident`'s own ladder, `checker/expressions.rs:56-101` —
-/// checked *before* its own nullary-variant fallback) is excluded first,
-/// since this entry point only ever runs over a `fn`/method body
-/// ([`lower_fn_body_ir`]'s own doc comment) where a free function is the one
-/// non-local, non-variant bare ident that legitimately occurs (a fn-value
-/// reference — [`IrExprKind::FnRef`], not `Global`; see its own doc comment).
-/// The remaining forms — `bynk-emit/src/emitter/lower.rs`'s `lower_ident`
-/// still special-cases `old`/`new` transition binders, invariant state-field
-/// reads, agent store-cell/store-map/store-log reads, the multi-actor
-/// `deps.who` binder — are handler-body-only and structurally unreachable
-/// through this entry point (it has no `store_fields`/`agent_state_ty`/
-/// `actor_binding` parameter to carry them), not merely unexcluded; each
-/// needs its own resolved-identity plumbing this slice does not commission
-/// (Decision C) — the function's own final arm asserts this rather than
-/// merely assuming it.
-fn lower_ident_ir(name: &str, expr_id: Option<ExprId>, cx: &LowerIrCtx) -> IrExprKind {
-    if cx.lookup(name).is_some() {
-        return IrExprKind::Local(name.to_string());
-    }
-    // P6.21/P6.23 (review of #1251/#1252): a bare `HttpResult`/`QueueResult`
-    // nullary variant reference (`NotFound`, `Ack`) — Decision C's own
-    // originally-in-scope case (`GlobalRef`'s own doc comment names it),
-    // dropped for lack of a sink until #1251 added `Callee::Intrinsic` for
-    // it. Lowers the same way `lower_call_ir` already lowers the
-    // call-with-args sibling (`Retry(reason)`) — a generic
-    // `IrExprKind::Call` wrapping the `Callee`, empty `args` for the
-    // nullary case — so both forms of the same variant share one shape.
-    // Checked by per-expression `Callee` lookup, not by name: unlike
-    // `store_queryable` above, there is no re-derivation/shadowing question
-    // that could make this check's own *position* in the ladder wrong — the
-    // checker already decided, once, whether *this* expression is this
-    // shape, so a miss here just falls through, correctly, to whichever
-    // check actually matches.
-    if let Some(callee @ Callee::Intrinsic { .. }) = expr_id.and_then(|id| cx.callee(id)) {
-        return IrExprKind::Call {
-            callee: callee.clone(),
-            targs: Vec::new(),
-            args: Vec::new(),
-        };
-    }
-    // P6.20-pre (review of #1240): checked immediately after `cx.lookup`,
-    // matching the checker's own precedence — `checker.rs:3477-3481` runs
-    // `ctx.lookup(...).is_none() && ctx.store_fields.get(...)` and returns
-    // *before* `check_ident` (where a free-fn reference or a nullary variant
-    // resolve) ever sees the name; the shipped emitter's own
-    // `is_agent_store_map`/`is_agent_store_log` (`emitter/lower.rs:4111,4117`)
-    // put the same check ahead of its own variant-construction branch. This
-    // was originally checked *last* here, which only happens to agree with
-    // the checker when no other candidate shares the store field's name — a
-    // store `Map` field colliding with a free fn of the same name hit the
-    // free-fn `todo!()` below instead of `StoreQuery`, and colliding with a
-    // nullary variant silently returned the wrong node (`Global`) instead.
-    // The `cx.lookup(name).is_some()` guard just above already gives this
-    // check the one shadowing property it actually needs (a local or `Cell`
-    // field wins), so moving it here loses nothing.
-    if cx.store_queryable.contains(name) {
-        return IrExprKind::StoreQuery(name.to_string());
-    }
-    // Slice 3.1 of #1542 (`design/tracks/the-ir-cutover.md` §5): a bare free
-    // function referenced as a value (v0.20a, `check_ident`'s own
-    // function-typed-expected-position gate) — see `IrExprKind::FnRef`'s own
-    // doc comment for why this isn't `Global`, `Call`, or `Local`.
-    if cx.program.fns.contains_key(name) {
-        return IrExprKind::FnRef(name.to_string());
-    }
-    if nullary_variant_owner(name, cx).is_some() {
-        return IrExprKind::Global(GlobalRef {
-            tag: name.to_string(),
-        });
-    }
-    unreachable!(
-        "bare ident `{name}` is neither a locally-bound name, a free function, nor a bare \
-         nullary sum-variant reference — one of lower_ident's other special cases (store field, \
-         agent `self`, actor binder, transition `old`/`new`), structurally unreachable through \
-         lower_fn_body_ir (see its own doc comment): it has no store_fields/agent_state_ty/\
-         actor_binding parameter to carry any of them, so no caller of this entry point can ever \
-         construct an ident of that shape"
-    )
-}
-
-/// The unique sum type owning a nullary (empty-payload) variant named
-/// `name`, if exactly one exists. **Not** the same test `check_ident`'s own
-/// fallback arm uses (`bynk-check/src/checker/expressions.rs:102-130`) —
-/// that arm filters candidate owners by name *only*, requires exactly one,
-/// and only then checks the matched variant's payload (a non-empty payload
-/// there is a diagnostic, `bynk.types.variant_missing_payload`, not a
-/// non-match). This filters by name *and* empty payload before the
-/// uniqueness test, so a name matching one sum's nullary variant and a
-/// second sum's non-nullary variant of the same name resolves here
-/// (uniquely nullary) where `check_ident` would reject it (two owners).
-/// Unreachable on a certified program today — the checker's own stricter
-/// ladder already rejected that source — so this is a documented
-/// divergence, not a live bug; re-run here (rather than read back) because
-/// `check_ident`'s own verdict isn't recorded anywhere a later reader can
-/// read.
-fn nullary_variant_owner(name: &str, cx: &LowerIrCtx) -> Option<Arc<bynk_syntax::ast::TypeDecl>> {
-    let mut owners = cx.program.types.values().filter(|t| {
-        matches!(&t.body, TypeBody::Sum(s) if s.variants.iter().any(|v| v.name.name == name && v.payload.is_empty()))
-    });
-    let owner = owners.next()?;
-    if owners.next().is_some() {
-        return None;
-    }
-    Some(Arc::clone(owner))
-}
-
-/// The declaring `TypeDecl` for a `Ty::Named` type — used by `Record`'s own
-/// lowering, where `ty` (this node's already-resolved type) already names
-/// the type the checker resolved `RecordConstruction`'s `type_name` against.
-fn named_decl(ty: TyId, cx: &LowerIrCtx) -> Arc<bynk_syntax::ast::TypeDecl> {
-    let Ty::Named { name, .. } = &*cx.program.ty_intern.get(ty) else {
-        panic!(
-            "bynk internal error (ADR 0334): a RecordConstruction's own resolved type is not \
-             Ty::Named — the checker only ever types one as its declaring record type"
-        )
-    };
-    Arc::clone(cx.program.types.get(name).unwrap_or_else(|| {
-        panic!(
-            "bynk internal error (ADR 0334): `{name}` has no TypedCommons::types entry, but a \
-             RecordConstruction just resolved to it"
-        )
-    }))
-}
-
-/// `TypeName { ...base, field: value, ... }` -> `Block { stmts: [Let(tmp,
-/// base), <discarded shadowed-override effects>], tail: Record {
-/// <complete, resolved field list> } }` (P6.3, design/tracks/the-ir.md §6,
-/// R6.7 — the reference's own Part 6.4 table, Decision E). Every field the
-/// target record declares is present in the tail `Record`, each resolved
-/// from `overrides` when named there, or otherwise from a synthesised
-/// `tmp.<field>` read — the same complete-by-construction shape
-/// `RecordConstruction` already lowers to, not the current string emitter's
-/// own raw `...spread` splice (`emitter/lower.rs`'s `lower_record_spread`).
-///
-/// `fields`' own order is *evaluation* order, not declared-field order (the
-/// convention `RecordConstruction`'s own lowering above already sets, by
-/// simply preserving whatever order its own source `fields` were written
-/// in): every overridden field lands in `fields` in the *source* order its
-/// override was written, ahead of every spread-through field (declared
-/// order, since a bare `tmp.<field>` read has no side effect of its own, so
-/// its exact position among the others is not observable). This matters
-/// because an override's value may be effectful (`body_performs_effects`,
-/// `bynk-check/src/checker/expressions.rs:1303`, walks `overrides` for
-/// exactly that reason) — the current string emitter's own splice already
-/// evaluates overrides in source order, and a future consumer reading
-/// `fields` left-to-right must reproduce that, not silently reorder it to
-/// match field *declaration* order instead.
-fn lower_record_spread_ir(
-    ty: TyId,
-    span: Span,
-    base: &Expr,
-    overrides: &[FieldInit],
-    cx: &mut LowerIrCtx,
-) -> IrExpr {
-    // `ty` is this spread's own resolved type — `check_record_spread`
-    // returns the base's own type unchanged (Some(base_ty)), so the
-    // declaring `TypeDecl` and its applied type arguments both come from
-    // here, the same way `RecordConstruction`'s lowering reads `def` back
-    // from its own resolved type rather than re-resolving `type_name`.
-    let def = named_decl(ty, cx);
-    let base_args = match &*cx.program.ty_intern.get(ty) {
-        Ty::Named { args, .. } => args.clone(),
-        _ => unreachable!("named_decl above already panics on a non-Ty::Named `ty`"),
-    };
-    let TypeBody::Record(record_body) = &def.body else {
-        panic!(
-            "bynk internal error (ADR 0334): `{}` is a RecordSpread's own resolved record type, \
-             but its declaration is not TypeBody::Record",
-            def.name.name
-        )
-    };
-    let declared: HashSet<&str> = record_body
-        .fields
-        .iter()
-        .map(|f| f.name.name.as_str())
-        .collect();
-
-    let base_ir = lower_expr_ir(base, cx);
-    let base_ty = base_ir.ty;
-    let base_span = base_ir.span;
-    let tmp = cx.fresh_spread_tmp();
-    let mut stmts = vec![IrStmt::Let {
-        local: tmp.clone(),
-        value: base_ir,
-    }];
-
-    // Lower every override's value in source order — same order the string
-    // emitter's own splice and `body_performs_effects`'s own walk already
-    // use. `check_record_spread` (`bynk-check/src/checker/expressions.rs:2269`)
-    // has no duplicate-name diagnostic, so a field named more than once
-    // type-checks today; `overridden` keeps every occurrence (not just the
-    // last) so a shadowed occurrence's own effect isn't silently dropped
-    // below.
-    let overridden: Vec<(String, IrExpr)> = overrides
-        .iter()
-        .map(|f| {
-            if !declared.contains(f.name.name.as_str()) {
-                // check_record_spread's own bynk.record_spread.unknown_field
-                // diagnostic already rejects this on any program that
-                // reaches lowering — ADR 0334 discipline: a live mismatch
-                // here is this pass and the checker disagreeing about an
-                // already-certified program, a compiler bug, not a silent
-                // skip.
-                panic!(
-                    "bynk internal error (ADR 0334): record spread override `{}` names a field \
-                     `{}` does not declare, but the checker already accepted this spread",
-                    f.name.name, def.name.name
-                )
-            }
-            let value = match &f.value {
-                // An override's own value is lowered exactly like
-                // `RecordConstruction`'s explicit/shorthand field above —
-                // same two forms, same rules for each.
-                Some(v) => lower_expr_ir(v, cx),
-                None => {
-                    let local_ty = cx.lookup(&f.name.name).unwrap_or_else(|| {
-                        panic!(
-                            "bynk internal error (ADR 0334): shorthand spread override `{}` has \
-                             no local binding in this pass's own scope — the checker accepted \
-                             it, so its own `ctx.lookup` must have found one",
-                            f.name.name
-                        )
-                    });
-                    IrExpr {
-                        kind: lower_ident_ir(&f.name.name, None, cx),
-                        ty: local_ty,
-                        span: f.name.span,
-                    }
-                }
-            };
-            (f.name.name.clone(), value)
-        })
-        .collect();
-
-    // A name's *last* occurrence is the one whose value the checker actually
-    // admits into the resulting record (`check_record_spread` type-checks
-    // every occurrence but the emitted value is always the last-written
-    // one) — every earlier occurrence still ran, so it becomes a discarded
-    // statement here, preserving its own effect without contributing a
-    // field.
-    let mut last_index: HashMap<String, usize> = HashMap::new();
-    for (i, (name, _)) in overridden.iter().enumerate() {
-        last_index.insert(name.clone(), i);
-    }
-    let mut fields: Vec<(String, IrExpr)> = Vec::with_capacity(record_body.fields.len());
-    let mut overridden_names: HashSet<String> = HashSet::new();
-    for (i, (name, value)) in overridden.into_iter().enumerate() {
-        if last_index[&name] == i {
-            overridden_names.insert(name.clone());
-            fields.push((name, value));
-        } else {
-            stmts.push(IrStmt::Expr { value });
-        }
-    }
-
-    // Spread-through fields — every declared field `overrides` didn't name
-    // — appended after, in declared order; a bare `tmp.<field>` read has no
-    // effect of its own, so no ordering among these is observable. The
-    // field's own type is the declared type instantiated at this spread's
-    // own base type arguments (v0.157/ADR 0183's `instantiate_field_ty`,
-    // the same substitution `check_record_spread` already applies to
-    // type-check an override against a generic record).
-    for decl_field in &record_body.fields {
-        if overridden_names.contains(decl_field.name.name.as_str()) {
-            continue;
-        }
-        let field_ty = checker::instantiate_field_ty(
-            &def,
-            &base_args,
-            &decl_field.type_ref,
-            &cx.program.types,
-            &cx.program.ty_intern,
-        )
-        .unwrap_or_else(|| {
-            panic!(
-                "bynk internal error (ADR 0334): declared field `{}` of `{}` does not resolve \
-                 against this spread's own base type arguments, but the checker already \
-                 accepted this record spread",
-                decl_field.name.name, def.name.name
-            )
-        });
-        fields.push((
-            decl_field.name.name.clone(),
-            IrExpr {
-                kind: IrExprKind::Field {
-                    base: Box::new(IrExpr {
-                        kind: IrExprKind::Local(tmp.clone()),
-                        ty: base_ty,
-                        span: base_span,
-                    }),
-                    field: decl_field.name.name.clone(),
-                },
-                ty: field_ty,
-                span: decl_field.span,
-            },
-        ));
-    }
-
-    IrExpr {
-        kind: IrExprKind::Block {
-            stmts,
-            tail: Box::new(IrExpr {
-                kind: IrExprKind::Record { fields },
-                ty,
-                span,
-            }),
-        },
-        ty,
-        span,
-    }
-}
-
-/// P6.4 (design/tracks/the-ir.md §6, #1157): `&Pattern -> IrPat`, tested
-/// standalone against real certified programs. Since P6.5 (#1159), also
-/// reached indirectly through [`lower_expr_ir`]'s `Match` arm (via
-/// [`lower_arm_ir`]). `Question`/`Is` landed separately (P6.15/ADR 0337,
-/// P6.16/ADR 0338, corrected P6.25) — `Question` reuses this same `IrPat`
-/// machinery (its own `IrExprKind::Match` desugar, per its ADR), `Is` does
-/// not (`lower_is_ir` calls [`lower_pattern_ir`] directly, not through
-/// `Match`).
-///
-/// `scrutinee_ty` is the type of whatever value this particular pattern
-/// matches against — the match's own discriminant at the top level, or a
-/// payload field's own type one level down inside a `Variant` pattern.
-/// Every leaf but `Variant` ignores it structurally (a literal/binding/
-/// wildcard pattern's own shape never depends on the scrutinee's type); a
-/// `Variant` pattern uses it to resolve `tag`/`fields` through the
-/// checker's own `variants_of` (Decision A) — the one place `bynk-check`
-/// state is required at all, since `IrPat` otherwise needs nothing beyond
-/// the AST `Pattern` it lowers.
-fn lower_pattern_ir(pattern: &Pattern, scrutinee_ty: TyId, program: &TypedCommons) -> IrPat {
-    match pattern {
-        Pattern::Wildcard(_) => IrPat::Wild,
-        Pattern::Binding(id) => IrPat::Bind {
-            local: id.name.clone(),
-        },
-        Pattern::Literal { value, .. } => IrPat::Const {
-            value: match value {
-                LiteralValue::Int(n) => ConstVal::Int(*n),
-                LiteralValue::Str(s) => ConstVal::Str(s.clone()),
-                LiteralValue::Bool(b) => ConstVal::Bool(*b),
-            },
-        },
-        Pattern::Variant {
-            variant, bindings, ..
-        } => {
-            let variant_info = variant_info_of(scrutinee_ty, &variant.name, program);
-            let fields = bindings
-                .iter()
-                .enumerate()
-                .map(|(idx, b)| match &b.kind {
-                    PatternBindingKind::Named { field, pattern } => {
-                        let field_ty = variant_info
-                            .payload
-                            .iter()
-                            .find(|(name, _)| name == &field.name)
-                            .map(|(_, ty)| *ty)
-                            .unwrap_or_else(|| {
-                                panic!(
-                                    "bynk internal error (ADR 0334): named pattern field `{}` \
-                                     does not resolve against variant `{}`'s own payload, but \
-                                     the checker already accepted this pattern",
-                                    field.name, variant.name
-                                )
-                            });
-                        (
-                            field.name.clone(),
-                            Box::new(lower_pattern_ir(pattern, field_ty, program)),
-                        )
-                    }
-                    PatternBindingKind::Positional { pattern } => {
-                        let (name, field_ty) =
-                            variant_info.payload.get(idx).cloned().unwrap_or_else(|| {
-                                panic!(
-                                    "bynk internal error (ADR 0334): positional pattern binding \
-                                     {idx} has no matching payload field on variant `{}`, but \
-                                     the checker already accepted this pattern's arity",
-                                    variant.name
-                                )
-                            });
-                        (name, Box::new(lower_pattern_ir(pattern, field_ty, program)))
-                    }
-                })
-                .collect();
-            IrPat::Variant {
-                scrutinee_ty,
-                tag: variant.name.clone(),
-                fields,
-            }
-        }
-        Pattern::Refined {
-            inner, predicate, ..
-        } => IrPat::Refined {
-            inner: Box::new(lower_pattern_ir(inner, scrutinee_ty, program)),
-            refinement: predicate.clone(),
-        },
-        Pattern::Or(alts, _) => IrPat::Or {
-            alts: alts
-                .iter()
-                .map(|p| lower_pattern_ir(p, scrutinee_ty, program))
-                .collect(),
-        },
-    }
-}
-
-/// Shared by [`lower_pattern_ir`]'s `Variant` arm and
-/// [`collect_pattern_binding_tys`]'s own mirror walk: resolve `tag` against
-/// `scrutinee_ty` through the checker's `variants_of` (Decision A, R5.11).
-/// `.expect()`-not-fallback (ADR 0334) — both call sites are reached only
-/// from a certified program's own pattern, which `check_pattern`
-/// (`bynk-check/src/checker/expressions.rs:3162`) already required to name
-/// a real variant of a real variant-kind scrutinee.
-fn variant_info_of(scrutinee_ty: TyId, tag: &str, program: &TypedCommons) -> checker::VariantInfo {
-    checker::variants_of(scrutinee_ty, &program.types, program.tys())
-        .unwrap_or_else(|| {
-            panic!(
-                "bynk internal error (ADR 0334): variant pattern `{tag}` matches against a \
-                 non-variant-kind scrutinee, but the checker already accepted this pattern"
-            )
-        })
-        .into_iter()
-        .find(|v| v.name == tag)
-        .unwrap_or_else(|| {
-            panic!(
-                "bynk internal error (ADR 0334): scrutinee has no variant `{tag}`, but the \
-                 checker already accepted this pattern"
-            )
-        })
-}
-
-/// Mirrors [`lower_pattern_ir`]'s own recursive walk but collects `(name,
-/// TyId)` pairs instead of building `IrPat` nodes — [`lower_arm_ir`]'s own
-/// need, not `IrPat`'s: a bound name's type has nowhere to live on `IrPat`
-/// itself (R6.1 is an `IrExpr` rule, not a pattern rule; the reference's own
-/// `IrPat::Bind` carries no type either), yet this pass's `guard`/`body`
-/// lowering needs every bound name in scope to resolve as a `Local` the
-/// same way a `Block`'s own `Let` does. The checker's own equivalent table
-/// (`Ctx::pattern_binding_types`) is transient — never persisted onto
-/// `TypedCommons` — so this pass re-derives it here rather than reading a
-/// checked-output field.
-fn collect_pattern_binding_tys(
-    pattern: &Pattern,
-    ty: TyId,
-    program: &TypedCommons,
-    out: &mut Vec<(String, TyId)>,
-) {
-    match pattern {
-        Pattern::Wildcard(_) | Pattern::Literal { .. } => {}
-        Pattern::Binding(id) => out.push((id.name.clone(), ty)),
-        Pattern::Variant {
-            variant, bindings, ..
-        } => {
-            let variant_info = variant_info_of(ty, &variant.name, program);
-            // `.expect()`-not-fallback (ADR 0334), matching `lower_pattern_ir`'s
-            // identical lookups on the identical condition — this walk runs
-            // over the same certified pattern, so a miss here is the same
-            // checker/lowering disagreement, not a softer case.
-            for (idx, b) in bindings.iter().enumerate() {
-                match &b.kind {
-                    PatternBindingKind::Named { field, pattern } => {
-                        let field_ty = variant_info
-                            .payload
-                            .iter()
-                            .find(|(name, _)| name == &field.name)
-                            .map(|(_, ty)| *ty)
-                            .unwrap_or_else(|| {
-                                panic!(
-                                    "bynk internal error (ADR 0334): named pattern field `{}` \
-                                     does not resolve against variant `{}`'s own payload, but \
-                                     the checker already accepted this pattern",
-                                    field.name, variant.name
-                                )
-                            });
-                        collect_pattern_binding_tys(pattern, field_ty, program, out);
-                    }
-                    PatternBindingKind::Positional { pattern } => {
-                        let (_, field_ty) =
-                            variant_info.payload.get(idx).cloned().unwrap_or_else(|| {
-                                panic!(
-                                    "bynk internal error (ADR 0334): positional pattern binding \
-                                     {idx} has no matching payload field on variant `{}`, but \
-                                     the checker already accepted this pattern's arity",
-                                    variant.name
-                                )
-                            });
-                        collect_pattern_binding_tys(pattern, field_ty, program, out);
-                    }
-                }
-            }
-        }
-        Pattern::Refined { inner, .. } => collect_pattern_binding_tys(inner, ty, program, out),
-        // Every alternative binds the same names at the same types
-        // (`check_or_pattern_bindings`'s own Rule 1/2) — the first
-        // alternative only, matching `Pattern::bound_names`'s own
-        // defensive default.
-        Pattern::Or(alts, _) => {
-            if let Some(first) = alts.first() {
-                collect_pattern_binding_tys(first, ty, program, out);
-            }
-        }
-    }
-}
-
-/// R5.5 (Decision C): `true` iff `pat` contains an `Or` anywhere in its own
-/// tree — the fact [`IrArm::binding_mode`] records once rather than the
-/// emitter re-discovering it at emission time.
-fn ir_pat_contains_or(pat: &IrPat) -> bool {
-    match pat {
-        IrPat::Wild | IrPat::Bind { .. } | IrPat::Const { .. } => false,
-        IrPat::Variant { fields, .. } => fields.iter().any(|(_, p)| ir_pat_contains_or(p)),
-        IrPat::Refined { inner, .. } => ir_pat_contains_or(inner),
-        IrPat::Or { .. } => true,
-    }
-}
-
-/// P6.4 (#1157): the non-form-deciding parts of a `MatchArm` —
-/// `pat`/`guard`/`body`/`binds`/`binding_mode` — everything but the
-/// `MatchForm` policy R5.2 decides, which P6.5 (#1159) builds separately
-/// (`match_needs_if_chain`, reused from the string emitter — Decision B).
-/// Tested standalone the same way [`lower_pattern_ir`] is; since P6.5, also
-/// called per-arm by [`lower_expr_ir`]'s real `Match` arm.
-///
-/// R5.4's ordering (structural test, then refinement, then bindings, then
-/// guard) is why `guard`/`body` are lowered with the pattern's own bound
-/// names already pushed into scope — a guard must be able to read them.
-fn lower_arm_ir(arm: &MatchArm, scrutinee_ty: TyId, cx: &mut LowerIrCtx) -> IrArm {
-    let pat = lower_pattern_ir(&arm.pattern, scrutinee_ty, cx.program);
-    let binds: Vec<String> = arm
-        .pattern
-        .bound_names()
-        .into_iter()
-        .map(|id| id.name.clone())
-        .collect();
-
-    let mut bind_tys = Vec::new();
-    collect_pattern_binding_tys(&arm.pattern, scrutinee_ty, cx.program, &mut bind_tys);
-
-    cx.push_scope();
-    for (name, ty) in bind_tys {
-        cx.bind(name, ty);
-    }
-    let guard = arm.guard.as_ref().map(|g| lower_expr_ir(g, cx));
-    let body = match &arm.body {
-        MatchBody::Expr(e) => lower_expr_ir(e, cx),
-        MatchBody::Block(b) => lower_block_ir(b, cx),
-    };
-    cx.pop_scope();
-
-    let binding_mode = if ir_pat_contains_or(&pat) {
-        BindingMode::OrDispatch
-    } else {
-        BindingMode::Direct
-    };
-
-    IrArm {
-        pat,
-        guard,
-        body,
-        binds,
-        binding_mode,
-    }
-}
-
-/// P6.4 (#1157, Decision B — extends ADR 0334's `.expect()`-not-fallback
-/// discipline to a second rule): a certified `CheckedProgram` can never
-/// contain a structurally non-exhaustive match — every diagnostic path that
-/// would produce one (`bynk.types.non_exhaustive_match`) is error-severity,
-/// and `certify` (R3.10) rejects any unit carrying one. This pass therefore
-/// never re-derives the verdict `bynk-check`'s own `saw_wildcard`/
-/// `missing_patterns` machinery already computed — it trusts it, checking
-/// only the one structural fact that verdict *implies* and this function
-/// can cheaply confirm without rebuilding `missing_patterns`' own witness
-/// machinery: a guarded arm never contributes to coverage
-/// (`bynk-check/src/checker/expressions.rs`'s own `unguarded` filter,
-/// `:3016`/`:3034`), so a certified match always has at least one unguarded
-/// arm. `Exhaustive::Partial` stays real, inhabited code (a future
-/// non-certified producer's own lane) — just never constructed here.
-fn lower_exhaustive_ir(arms: &[MatchArm]) -> Exhaustive {
-    if arms.iter().any(|a| a.guard.is_none()) {
-        Exhaustive::Total
-    } else {
-        unreachable!(
-            "bynk internal error (ADR 0334, extended by Decision B / #1157): a certified \
-             program's match is never empty (the parser itself already requires at least one \
-             arm) and always has at least one unguarded arm — bynk-check's own missing_patterns \
-             gate (bynk.types.non_exhaustive_match, error-severity, rejected by certify per \
-             R3.10) guarantees it"
-        )
-    }
-}
-
 /// Decision E: targeted minimal fixtures, one per node kind this slice
 /// covers, staying strictly inside the subset [`lower_expr_ir`]/
 /// [`lower_stmt_ir`] actually implement — not a walk over the real
@@ -4133,7 +1047,6 @@ fn lower_exhaustive_ir(arms: &[MatchArm]) -> Exhaustive {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bynk_check::builtin_names::types::QUEUE_RESULT;
     use bynk_check::checker::CheckedProgram;
     use bynk_check::hints::HintSink;
     use bynk_check::index::RefSink;
@@ -4141,515 +1054,9 @@ mod tests {
     use bynk_check::requirements::RequirementSink;
     use bynk_check::{checker, context_checks, resolver, symbols};
     use bynk_project::UnitKind;
-    use bynk_syntax::ast::PredKind;
-    use bynk_syntax::ast::{Commons, CommonsItem, FnDecl, SourceUnit};
+    use bynk_syntax::ast::{AgentDecl, Commons, CommonsItem, HandlerKind, ServiceDecl, SourceUnit};
+    use bynk_syntax::span::Span;
     use bynk_syntax::{lexer, parser};
-
-    fn checked_program(source: &str) -> CheckedProgram {
-        let tokens = lexer::tokenize(source).expect("lex");
-        let (commons, warnings) = parser::parse_with_warnings(&tokens, source).expect("parse");
-        let resolved = resolver::resolve(commons).expect("resolve");
-        let typed = checker::check(resolved).expect("check");
-        checker::certify(typed, warnings).expect("certify")
-    }
-
-    fn find_fn<'a>(program: &'a CheckedProgram, name: &str) -> &'a FnDecl {
-        program
-            .program()
-            .commons
-            .items
-            .iter()
-            .find_map(|item| match item {
-                CommonsItem::Fn(f) if f.name.display() == name => Some(f),
-                _ => None,
-            })
-            .unwrap_or_else(|| panic!("no fn named `{name}` in this fixture"))
-    }
-
-    fn lower_fn(program: &CheckedProgram, name: &str) -> IrExpr {
-        let f = find_fn(program, name);
-        lower_fn_body_ir(f, program)
-    }
-
-    fn find_type<'a>(program: &'a CheckedProgram, name: &str) -> &'a Arc<TypeDecl> {
-        program
-            .program()
-            .types
-            .get(name)
-            .unwrap_or_else(|| panic!("no type named `{name}` in this fixture"))
-    }
-
-    /// Like [`find_fn`], but returns the program's own `Arc<FnDecl>` handle
-    /// (from `TypedCommons.fns`/`.methods`, not re-walked from
-    /// `commons.items`) — [`lower_fn_item_ir`] takes `&Arc<FnDecl>`
-    /// specifically so `IrItem::Fn::def` can reuse this same `Arc`.
-    fn find_fn_arc<'a>(program: &'a CheckedProgram, name: &str) -> &'a Arc<FnDecl> {
-        if let Some((type_name, method_name)) = name.split_once('.') {
-            let table = program.program().methods.get(type_name).unwrap_or_else(|| {
-                panic!("no method table for type `{type_name}` in this fixture")
-            });
-            return table
-                .instance
-                .get(method_name)
-                .or_else(|| table.statics.get(method_name))
-                .unwrap_or_else(|| panic!("no method named `{name}` in this fixture"));
-        }
-        program
-            .program()
-            .fns
-            .get(name)
-            .unwrap_or_else(|| panic!("no fn named `{name}` in this fixture"))
-    }
-
-    /// Every fixture's `fn`-body wrapping — asserts the outer shape once so
-    /// each node-kind test below only asserts its own tail, not this too.
-    fn fn_tail(ir: &IrExpr) -> &IrExpr {
-        let IrExprKind::Block { stmts, tail } = &ir.kind else {
-            panic!(
-                "lower_fn_body_ir always returns IrExprKind::Block, got {:?}",
-                ir.kind
-            )
-        };
-        assert!(
-            stmts.is_empty(),
-            "this helper is for single-tail bodies only"
-        );
-        let IrExprKind::Return { value } = &tail.kind else {
-            panic!(
-                "a fn body's own tail is always wrapped in Return, got {:?}",
-                tail.kind
-            )
-        };
-        value
-    }
-
-    #[test]
-    fn const_covers_every_bynk_literal_form() {
-        let program = checked_program(
-            r#"
-commons demo {
-  fn int_lit() -> Int { 1 }
-  fn float_lit() -> Float { 1.5 }
-  fn duration_lit() -> Duration { 5.minutes }
-  fn str_lit() -> String { "hi" }
-  fn bool_lit() -> Bool { true }
-  fn unit_lit() -> () { () }
-}
-"#,
-        );
-        let cases: &[(&str, ConstVal)] = &[
-            ("int_lit", ConstVal::Int(1)),
-            ("float_lit", ConstVal::Float(1.5)),
-            ("duration_lit", ConstVal::DurationMillis(5 * 60 * 1000)),
-            ("str_lit", ConstVal::Str("hi".to_string())),
-            ("bool_lit", ConstVal::Bool(true)),
-            ("unit_lit", ConstVal::Unit),
-        ];
-        for (fn_name, expected) in cases {
-            let ir = lower_fn(&program, fn_name);
-            let tail = fn_tail(&ir);
-            let IrExprKind::Const(actual) = &tail.kind else {
-                panic!("{fn_name}: expected Const, got {:?}", tail.kind)
-            };
-            assert_eq!(actual, expected, "{fn_name}");
-        }
-    }
-
-    #[test]
-    fn local_reads_a_bound_param() {
-        let program = checked_program(
-            r#"
-commons demo {
-  fn identity(n: Int) -> Int { n }
-}
-"#,
-        );
-        let ir = lower_fn(&program, "identity");
-        let tail = fn_tail(&ir);
-        assert!(matches!(&tail.kind, IrExprKind::Local(name) if name == "n"));
-    }
-
-    #[test]
-    fn generic_fn_type_parameters_are_rigid_variables_not_unresolvable_declared_types() {
-        // `resolve_type_ref` (no `vars` set) resolves a fn's own type
-        // parameter `T` as an unknown *declared* type and fails — the same
-        // failure mode `checker.rs`'s own `Ctx::type_vars` +
-        // `resolve_type_ref_in` exists to avoid. Without it, `x`'s own type
-        // never binds, and this test's own body — a bare `Local` — would
-        // wrongly fall through to `lower_ident_ir`'s final assertion.
-        let program = checked_program(
-            r#"
-commons demo {
-  fn identity[T](x: T) -> T { x }
-}
-"#,
-        );
-        let ir = lower_fn(&program, "identity");
-        let tail = fn_tail(&ir);
-        assert!(matches!(&tail.kind, IrExprKind::Local(name) if name == "x"));
-    }
-
-    #[test]
-    fn global_covers_a_bare_nullary_sum_variant() {
-        let program = checked_program(
-            r#"
-commons demo {
-  type Outcome =
-    | Hit(score: Int)
-    | Miss
-
-  fn make() -> Outcome { Miss }
-}
-"#,
-        );
-        let ir = lower_fn(&program, "make");
-        let tail = fn_tail(&ir);
-        let IrExprKind::Global(g) = &tail.kind else {
-            panic!("expected Global, got {:?}", tail.kind)
-        };
-        assert_eq!(g.tag, "Miss");
-    }
-
-    #[test]
-    fn bare_free_function_reference_lowers_to_fn_ref_not_the_global_probe() {
-        // Slice 3.1 of #1542: a bare function-value reference (not a call)
-        // is the one non-local, non-variant ident this pass can actually
-        // reach — `lower_ident_ir` must classify it as `FnRef` before
-        // `nullary_variant_owner` gets a chance to match a same-named
-        // variant by coincidence (a real collision risk a review of this
-        // slice named directly), and must not reuse `Global`, which is
-        // narrowly scoped to nullary sum-variant constructors.
-        let program = checked_program(
-            r#"
-commons demo {
-  fn double(n: Int) -> Int { n * 2 }
-
-  fn get_double() -> (Int) -> Int { double }
-}
-"#,
-        );
-        let ir = lower_fn(&program, "get_double");
-        let tail = fn_tail(&ir);
-        assert!(
-            matches!(&tail.kind, IrExprKind::FnRef(name) if name == "double"),
-            "expected FnRef(\"double\"), got {:?}",
-            tail.kind
-        );
-    }
-
-    #[test]
-    fn record_construction_covers_explicit_and_shorthand_fields() {
-        let program = checked_program(
-            r#"
-commons demo {
-  type Point = { x: Int, y: Int }
-
-  fn explicit() -> Point { Point { x: 1, y: 2 } }
-  fn shorthand(x: Int, y: Int) -> Point { Point { x, y } }
-}
-"#,
-        );
-        let explicit_ir = lower_fn(&program, "explicit");
-        let explicit_tail = fn_tail(&explicit_ir);
-        let IrExprKind::Record {
-            fields: explicit_fields,
-        } = &explicit_tail.kind
-        else {
-            panic!("explicit: expected Record, got {:?}", explicit_tail.kind)
-        };
-        assert_eq!(explicit_fields.len(), 2);
-        assert_eq!(explicit_fields[0].0, "x");
-        assert!(matches!(
-            &explicit_fields[0].1.kind,
-            IrExprKind::Const(ConstVal::Int(1))
-        ));
-        assert_eq!(explicit_fields[1].0, "y");
-        assert!(matches!(
-            &explicit_fields[1].1.kind,
-            IrExprKind::Const(ConstVal::Int(2))
-        ));
-
-        let shorthand_ir = lower_fn(&program, "shorthand");
-        let shorthand_tail = fn_tail(&shorthand_ir);
-        let IrExprKind::Record {
-            fields: shorthand_fields,
-        } = &shorthand_tail.kind
-        else {
-            panic!("shorthand: expected Record, got {:?}", shorthand_tail.kind)
-        };
-        assert_eq!(shorthand_fields.len(), 2);
-        assert_eq!(shorthand_fields[0].0, "x");
-        assert!(matches!(&shorthand_fields[0].1.kind, IrExprKind::Local(n) if n == "x"));
-        assert_eq!(shorthand_fields[1].0, "y");
-        assert!(matches!(&shorthand_fields[1].1.kind, IrExprKind::Local(n) if n == "y"));
-        // The shorthand path is the only reason `LowerIrCtx` tracks a scope
-        // stack at all — assert the thing it uniquely produces (a field's
-        // `ty`, taken from `cx.lookup` since a shorthand field has no
-        // `ExprId` of its own) actually matches the param's real type.
-        assert!(matches!(
-            &*program.program().ty_intern.get(shorthand_fields[0].1.ty),
-            Ty::Base(bynk_syntax::ast::BaseType::Int)
-        ));
-        assert!(matches!(
-            &*program.program().ty_intern.get(shorthand_fields[1].1.ty),
-            Ty::Base(bynk_syntax::ast::BaseType::Int)
-        ));
-    }
-
-    #[test]
-    fn field_access_reads_a_record_field() {
-        let program = checked_program(
-            r#"
-commons demo {
-  type Point = { x: Int, y: Int }
-
-  fn get_x(p: Point) -> Int { p.x }
-}
-"#,
-        );
-        let ir = lower_fn(&program, "get_x");
-        let tail = fn_tail(&ir);
-        let IrExprKind::Field { base, field } = &tail.kind else {
-            panic!("expected Field, got {:?}", tail.kind)
-        };
-        assert_eq!(field, "x");
-        assert!(matches!(&base.kind, IrExprKind::Local(name) if name == "p"));
-    }
-
-    #[test]
-    fn list_literal_lowers_every_element() {
-        let program = checked_program(
-            r#"
-commons demo {
-  fn make() -> List[Int] { [1, 2, 3] }
-}
-"#,
-        );
-        let ir = lower_fn(&program, "make");
-        let tail = fn_tail(&ir);
-        let IrExprKind::List { elems } = &tail.kind else {
-            panic!("expected List, got {:?}", tail.kind)
-        };
-        assert_eq!(elems.len(), 3);
-        assert!(matches!(
-            &elems[0].kind,
-            IrExprKind::Const(ConstVal::Int(1))
-        ));
-    }
-
-    #[test]
-    fn if_lowers_both_branches_as_blocks_not_return_wrapped() {
-        // Also this slice's only real coverage of nested (non-fn-body) Block
-        // lowering: `bynk_syntax::parser` constructs `ExprKind::Block` only
-        // as a lambda body (`parser/statements.rs:421-428`, P6.2 territory) —
-        // an `if`/`else` branch's `Block` is a bare AST field
-        // (`ExprKind::If { then_block: Box<Block>, .. }`), not wrapped in
-        // `ExprKind::Block`, but it is lowered through the exact same
-        // `lower_block_ir` an `ExprKind::Block` would be, so this is the
-        // real, reachable test for "a nested block is not Return-wrapped,
-        // unlike a fn body's own outermost block" (`lower_fn_body_ir`'s own
-        // doc comment).
-        let program = checked_program(
-            r#"
-commons demo {
-  fn choose(b: Bool) -> Int {
-    if b { 1 } else { 2 }
-  }
-}
-"#,
-        );
-        let ir = lower_fn(&program, "choose");
-        let tail = fn_tail(&ir);
-        let IrExprKind::If { cond, then_, else_ } = &tail.kind else {
-            panic!("expected If, got {:?}", tail.kind)
-        };
-        assert!(matches!(&cond.kind, IrExprKind::Local(name) if name == "b"));
-        let IrExprKind::Block {
-            tail: then_tail, ..
-        } = &then_.kind
-        else {
-            panic!("expected then_ to be a Block, got {:?}", then_.kind)
-        };
-        assert!(matches!(
-            &then_tail.kind,
-            IrExprKind::Const(ConstVal::Int(1))
-        ));
-        let IrExprKind::Block {
-            tail: else_tail, ..
-        } = &else_.kind
-        else {
-            panic!("expected else_ to be a Block, got {:?}", else_.kind)
-        };
-        assert!(matches!(
-            &else_tail.kind,
-            IrExprKind::Const(ConstVal::Int(2))
-        ));
-    }
-
-    #[test]
-    fn and_or_not_are_real_tree_nodes() {
-        let program = checked_program(
-            r#"
-commons demo {
-  fn conj(a: Bool, b: Bool) -> Bool { a && b }
-  fn disj(a: Bool, b: Bool) -> Bool { a || b }
-  fn negate(a: Bool) -> Bool { !a }
-}
-"#,
-        );
-        let and_ir = lower_fn(&program, "conj");
-        assert!(matches!(fn_tail(&and_ir).kind, IrExprKind::And { .. }));
-        let or_ir = lower_fn(&program, "disj");
-        assert!(matches!(fn_tail(&or_ir).kind, IrExprKind::Or { .. }));
-        let not_ir = lower_fn(&program, "negate");
-        assert!(matches!(fn_tail(&not_ir).kind, IrExprKind::Not { .. }));
-    }
-
-    #[test]
-    fn pure_wraps_a_synchronous_value_as_effect() {
-        let program = checked_program(
-            r#"
-commons demo {
-  fn make() -> Effect[Int] { Effect.pure(1) }
-}
-"#,
-        );
-        let ir = lower_fn(&program, "make");
-        let tail = fn_tail(&ir);
-        let IrExprKind::Pure { value } = &tail.kind else {
-            panic!("expected Pure, got {:?}", tail.kind)
-        };
-        assert!(matches!(&value.kind, IrExprKind::Const(ConstVal::Int(1))));
-    }
-
-    #[test]
-    fn await_peels_effect_from_an_effect_let_binding() {
-        let program = checked_program(
-            r#"
-commons demo {
-  fn use_it() -> Effect[Int] {
-    let x <- Effect.pure(1)
-    Effect.pure(x)
-  }
-}
-"#,
-        );
-        let f = find_fn(&program, "use_it");
-        let ir = lower_fn_body_ir(f, &program);
-        let IrExprKind::Block { stmts, .. } = &ir.kind else {
-            panic!("expected Block")
-        };
-        assert_eq!(stmts.len(), 1);
-        let IrStmt::Let { local, value } = &stmts[0] else {
-            panic!("expected Let, got {:?}", stmts[0])
-        };
-        assert_eq!(local, "x");
-        assert!(matches!(&value.kind, IrExprKind::Await { .. }));
-    }
-
-    #[test]
-    fn let_annotation_widens_the_bound_scope_type_not_just_the_rhs_expression() {
-        // `compatible()` admits a refined value under its own base's
-        // annotation — `let n: Int = p` with `p: Reps` leaves the checker's
-        // scope holding `Int`, not the narrower `Reps`. The `let` statement's
-        // own `value` keeps the RHS expression's own honest (refined) type
-        // (R6.1); only the *bound* name — read back here by the shorthand
-        // field `{ n }`, which has no `ExprId` of its own to fall back on —
-        // must reflect the annotation's widened type instead.
-        let program = checked_program(
-            r#"
-commons demo {
-  type Reps = Int where InRange(1, 100)
-  type Wrapper = { n: Int }
-
-  fn make(p: Reps) -> Wrapper {
-    let n: Int = p
-    Wrapper { n }
-  }
-}
-"#,
-        );
-        let f = find_fn(&program, "make");
-        let ir = lower_fn_body_ir(f, &program);
-        let IrExprKind::Block { stmts, tail } = &ir.kind else {
-            panic!("expected Block")
-        };
-        let IrStmt::Let { local, value } = &stmts[0] else {
-            panic!("expected Let, got {:?}", stmts[0])
-        };
-        assert_eq!(local, "n");
-        assert!(matches!(
-            &*program.program().ty_intern.get(value.ty),
-            Ty::Named {
-                kind: bynk_check::checker::NamedKind::Refined(_),
-                ..
-            }
-        ));
-        let IrExprKind::Return { value: wrapper } = &tail.kind else {
-            panic!("expected Return, got {:?}", tail.kind)
-        };
-        let IrExprKind::Record { fields, .. } = &wrapper.kind else {
-            panic!("expected Record, got {:?}", wrapper.kind)
-        };
-        assert_eq!(fields[0].0, "n");
-        assert!(matches!(&fields[0].1.kind, IrExprKind::Local(name) if name == "n"));
-        assert!(matches!(
-            &*program.program().ty_intern.get(fields[0].1.ty),
-            Ty::Base(bynk_syntax::ast::BaseType::Int)
-        ));
-    }
-
-    #[test]
-    fn do_statement_lowers_to_a_discarded_await() {
-        let program = checked_program(
-            r#"
-commons demo {
-  fn use_it() -> Effect[()] {
-    do Effect.pure(())
-    Effect.pure(())
-  }
-}
-"#,
-        );
-        let f = find_fn(&program, "use_it");
-        let ir = lower_fn_body_ir(f, &program);
-        let IrExprKind::Block { stmts, .. } = &ir.kind else {
-            panic!("expected Block")
-        };
-        assert_eq!(stmts.len(), 1);
-        let IrStmt::Expr { value } = &stmts[0] else {
-            panic!("expected Expr, got {:?}", stmts[0])
-        };
-        assert!(matches!(&value.kind, IrExprKind::Await { .. }));
-    }
-
-    #[test]
-    fn send_statement_lowers_to_a_fire_and_forget_send_typed_unit() {
-        let program = checked_program(
-            r#"
-commons demo {
-  fn use_it() -> Effect[()] {
-    ~> Effect.pure(())
-    Effect.pure(())
-  }
-}
-"#,
-        );
-        let f = find_fn(&program, "use_it");
-        let ir = lower_fn_body_ir(f, &program);
-        let IrExprKind::Block { stmts, .. } = &ir.kind else {
-            panic!("expected Block")
-        };
-        assert_eq!(stmts.len(), 1);
-        let IrStmt::Expr { value } = &stmts[0] else {
-            panic!("expected Expr, got {:?}", stmts[0])
-        };
-        assert!(matches!(&value.kind, IrExprKind::Send { .. }));
-        assert!(matches!(
-            &*program.program().ty_intern.get(value.ty),
-            bynk_check::checker::Ty::Unit
-        ));
-    }
 
     // P6.2 (#1143): Call/Lambda/Variant, driven entirely by the Callee P6.0
     // already recorded. `Callee::Store`/`Callee::Query` are deliberately
@@ -4663,1174 +1070,13 @@ commons demo {
     // (`bynk-check/tests/callee_classification.rs`) already documented for
     // `Capability`/`CrossCap`/`Cross`/`Agent`.
 
-    #[test]
-    fn call_driven_by_callee_fn_lowers_a_free_function_call() {
-        let program = checked_program(
-            r#"
-commons demo {
-  fn double(n: Int) -> Int { n }
-
-  fn use_it() -> Int { double(1) }
-}
-"#,
-        );
-        let ir = lower_fn(&program, "use_it");
-        let tail = fn_tail(&ir);
-        let IrExprKind::Call {
-            callee,
-            targs,
-            args,
-        } = &tail.kind
-        else {
-            panic!("expected Call, got {:?}", tail.kind)
-        };
-        assert!(matches!(callee, Callee::Fn(f) if f.name.display() == "double"));
-        assert!(targs.is_empty());
-        assert_eq!(args.len(), 1);
-        assert!(matches!(&args[0].kind, IrExprKind::Const(ConstVal::Int(1))));
-    }
-
-    #[test]
-    fn call_with_an_explicit_type_argument_resolves_targs() {
-        let program = checked_program(
-            r#"
-commons demo {
-  fn identity[T](x: T) -> T { x }
-
-  fn use_it() -> Int { identity[Int](1) }
-}
-"#,
-        );
-        let ir = lower_fn(&program, "use_it");
-        let tail = fn_tail(&ir);
-        let IrExprKind::Call { callee, targs, .. } = &tail.kind else {
-            panic!("expected Call, got {:?}", tail.kind)
-        };
-        assert!(matches!(callee, Callee::Fn(f) if f.name.display() == "identity"));
-        assert_eq!(targs.len(), 1);
-        assert!(matches!(
-            &*program.program().ty_intern.get(targs[0]),
-            Ty::Base(bynk_syntax::ast::BaseType::Int)
-        ));
-    }
-
-    #[test]
-    fn call_with_an_explicit_type_argument_naming_the_enclosing_fns_own_rigid_var() {
-        // The case `resolve_type_ref_in`'s own `type_vars` set exists for
-        // (`lower.rs`'s own `LowerIrCtx::resolve_type_ref`) — a wrong
-        // `type_vars` seed for `wrap`'s own body turns into a panic here
-        // (`identity[U]`'s own `U` fails to resolve as a declared type)
-        // rather than a silently wrong result.
-        let program = checked_program(
-            r#"
-commons demo {
-  fn identity[T](x: T) -> T { x }
-
-  fn wrap[U](x: U) -> U { identity[U](x) }
-}
-"#,
-        );
-        let ir = lower_fn(&program, "wrap");
-        let tail = fn_tail(&ir);
-        let IrExprKind::Call { callee, targs, .. } = &tail.kind else {
-            panic!("expected Call, got {:?}", tail.kind)
-        };
-        assert!(matches!(callee, Callee::Fn(f) if f.name.display() == "identity"));
-        assert_eq!(targs.len(), 1);
-        assert!(matches!(
-            &*program.program().ty_intern.get(targs[0]),
-            Ty::Var(name) if name == "U"
-        ));
-    }
-
-    #[test]
-    fn call_driven_by_callee_value_applies_a_function_typed_local() {
-        let program = checked_program(
-            r#"
-commons demo {
-  fn apply(f: (Int) -> Int, x: Int) -> Int { f(x) }
-}
-"#,
-        );
-        let ir = lower_fn(&program, "apply");
-        let tail = fn_tail(&ir);
-        let IrExprKind::Call { callee, args, .. } = &tail.kind else {
-            panic!("expected Call, got {:?}", tail.kind)
-        };
-        assert!(matches!(callee, Callee::Value(name) if name == "f"));
-        assert_eq!(args.len(), 1);
-        assert!(matches!(&args[0].kind, IrExprKind::Local(n) if n == "x"));
-    }
-
-    #[test]
-    fn bare_and_qualified_variant_construction_both_lower_to_variant() {
-        let program = checked_program(
-            r#"
-commons demo {
-  type Shape =
-    | Circle(radius: Int)
-    | Square(side: Int)
-
-  fn bare(n: Int) -> Shape { Circle(n) }
-  fn qualified(n: Int) -> Shape { Shape.Circle(n) }
-}
-"#,
-        );
-        for fn_name in ["bare", "qualified"] {
-            let ir = lower_fn(&program, fn_name);
-            let tail = fn_tail(&ir);
-            let IrExprKind::Variant { tag, payload } = &tail.kind else {
-                panic!("{fn_name}: expected Variant, got {:?}", tail.kind)
-            };
-            // #1225's own ADR: no `sum` field on `Variant` itself — the
-            // constructed sum's own identity is the wrapping `IrExpr::ty`.
-            assert!(
-                matches!(
-                    &*program.program().ty_intern.get(tail.ty),
-                    Ty::Named { name, .. } if name == "Shape"
-                ),
-                "{fn_name}: expected tail.ty to resolve to the Shape sum, got {:?}",
-                program.program().ty_intern.get(tail.ty)
-            );
-            assert_eq!(tag, "Circle");
-            assert_eq!(payload.len(), 1);
-            assert!(matches!(&payload[0].kind, IrExprKind::Local(n) if n == "n"));
-        }
-    }
-
-    /// #1225's own ADR resolution: `Ok`/`Err`/`Some`/`None` each lower to a
-    /// real `IrExprKind::Variant`, the same node shape a user-declared
-    /// sum's own `Callee::Ctor` construction lowers to
-    /// (`bare_and_qualified_variant_construction_both_lower_to_variant`,
-    /// above) — no separate `IrExprKind` needed for the built-in case, and
-    /// no `Callee` classification either (confirmed during scoping: neither
-    /// `check_ok`/`check_err`/`check_some`/`check_none` ever records one).
-    ///
-    /// Review of #1227: `tag`/`payload` alone would pass even if `tail.ty`
-    /// carried the wrong identity (or none at all) — the actual claim the
-    /// ADR rests on is that the *wrapping* `IrExpr::ty` is what a consumer
-    /// reads instead of a `sum` field, so each case also asserts `tail.ty`
-    /// resolves to the built-in sum actually constructed. `ok_http_case`
-    /// pins the fifth, easy-to-miss shape: `Ok` is overloaded between
-    /// `Result` and `HttpResult` (`check_ok`, `bynk-check/src/checker/
-    /// expressions.rs`, peels the surrounding return type to decide), so a
-    /// handler-shaped `Ok(...)` reaches this same arm with `ty =
-    /// Ty::HttpResult(_)`, a third sum identity the claim has to cover —
-    /// `variants_of`'s own `Ty::HttpResult` arm (`checker.rs`, backed by
-    /// `HTTP_VARIANTS`, `bynk-syntax/src/ast.rs`) resolves it the same way.
-    #[test]
-    fn ok_err_some_none_all_lower_to_variant_by_tag_and_carry_their_sum_identity_on_ty() {
-        let program = checked_program(
-            r#"
-commons demo {
-  fn ok_case() -> Result[Int, String] { Ok(1) }
-  fn err_case() -> Result[Int, String] { Err("bad") }
-  fn some_case() -> Option[Int] { Some(1) }
-  fn none_case() -> Option[Int] { None }
-  fn ok_http_case() -> HttpResult[Int] { Ok(1) }
-}
-"#,
-        );
-        for (fn_name, expect_tag, expect_payload_len) in [
-            ("ok_case", "Ok", 1),
-            ("err_case", "Err", 1),
-            ("some_case", "Some", 1),
-            ("none_case", "None", 0),
-            ("ok_http_case", "Ok", 1),
-        ] {
-            let ir = lower_fn(&program, fn_name);
-            let tail = fn_tail(&ir);
-            let IrExprKind::Variant { tag, payload } = &tail.kind else {
-                panic!("{fn_name}: expected Variant, got {:?}", tail.kind)
-            };
-            assert_eq!(tag, expect_tag, "{fn_name}");
-            assert_eq!(payload.len(), expect_payload_len, "{fn_name}");
-            let resolved = &*program.program().ty_intern.get(tail.ty);
-            let sum_matches = match fn_name {
-                "ok_case" | "err_case" => matches!(resolved, Ty::Result(..)),
-                "some_case" | "none_case" => matches!(resolved, Ty::Option(_)),
-                "ok_http_case" => matches!(resolved, Ty::HttpResult(_)),
-                _ => unreachable!(),
-            };
-            assert!(
-                sum_matches,
-                "{fn_name}: expected tail.ty to resolve to the constructed sum, got {resolved:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn question_on_option_lowers_to_a_some_none_match_and_none_returns_http_result_not_found() {
-        let program = checked_program(
-            r#"
-commons demo {
-  fn maybe() -> Option[Int] { Some(1) }
-  fn lift() -> HttpResult[Int] {
-    let v = maybe()?
-    Ok(v)
-  }
-}
-"#,
-        );
-        let ir = lower_fn(&program, "lift");
-        let IrExprKind::Block { stmts, .. } = &ir.kind else {
-            panic!("expected Block, got {:?}", ir.kind)
-        };
-        let IrStmt::Let { value, .. } = &stmts[0] else {
-            panic!(
-                "expected the first statement to be a Let, got {:?}",
-                stmts[0]
-            )
-        };
-        let IrExprKind::Match {
-            scrutinee,
-            arms,
-            exhaustive,
-            form,
-        } = &value.kind
-        else {
-            panic!("expected Match, got {:?}", value.kind)
-        };
-        assert!(matches!(&scrutinee.kind, IrExprKind::Call { .. }));
-        assert!(matches!(
-            &*program.program().ty_intern.get(scrutinee.ty),
-            Ty::Option(_)
-        ));
-        assert_eq!(arms.len(), 2);
-        let IrPat::Variant {
-            tag: some_tag,
-            fields: some_fields,
-            ..
-        } = &arms[0].pat
-        else {
-            panic!("expected arm 0's pat to be Variant, got {:?}", arms[0].pat)
-        };
-        assert_eq!(some_tag, "Some");
-        assert_eq!(some_fields.len(), 1);
-        assert!(matches!(&arms[0].body.kind, IrExprKind::Local(_)));
-        let IrPat::Variant {
-            tag: none_tag,
-            fields: none_fields,
-            ..
-        } = &arms[1].pat
-        else {
-            panic!("expected arm 1's pat to be Variant, got {:?}", arms[1].pat)
-        };
-        assert_eq!(none_tag, "None");
-        assert!(none_fields.is_empty());
-        let IrExprKind::Return { value: returned } = &arms[1].body.kind else {
-            panic!(
-                "expected arm 1's body to be Return, got {:?}",
-                arms[1].body.kind
-            )
-        };
-        assert!(matches!(returned.kind, IrExprKind::HttpResultNotFound));
-        assert!(matches!(exhaustive, Exhaustive::Total));
-        assert_eq!(*form, MatchForm::Flat);
-    }
-
-    #[test]
-    fn question_on_result_with_a_compatible_error_type_propagates_the_scrutinee_unchanged() {
-        let program = checked_program(
-            r#"
-commons demo {
-  fn g() -> Result[Int, String] { Ok(1) }
-  fn bare_case() -> Result[Int, String] {
-    let v = g()?
-    Ok(v)
-  }
-}
-"#,
-        );
-        let ir = lower_fn(&program, "bare_case");
-        let IrExprKind::Block { stmts, .. } = &ir.kind else {
-            panic!("expected Block, got {:?}", ir.kind)
-        };
-        let IrStmt::Let { value, .. } = &stmts[0] else {
-            panic!(
-                "expected the first statement to be a Let, got {:?}",
-                stmts[0]
-            )
-        };
-        let IrExprKind::Match { arms, .. } = &value.kind else {
-            panic!("expected Match, got {:?}", value.kind)
-        };
-        let IrPat::Variant { tag: ok_tag, .. } = &arms[0].pat else {
-            panic!("expected arm 0's pat to be Variant, got {:?}", arms[0].pat)
-        };
-        assert_eq!(ok_tag, "Ok");
-        let IrPat::Variant {
-            tag: err_tag,
-            fields: err_fields,
-            ..
-        } = &arms[1].pat
-        else {
-            panic!("expected arm 1's pat to be Variant, got {:?}", arms[1].pat)
-        };
-        assert_eq!(err_tag, "Err");
-        assert_eq!(err_fields.len(), 1);
-        let IrExprKind::Return { value: returned } = &arms[1].body.kind else {
-            panic!(
-                "expected arm 1's body to be Return, got {:?}",
-                arms[1].body.kind
-            )
-        };
-        let IrExprKind::Variant {
-            tag: returned_tag,
-            payload: returned_payload,
-        } = &returned.kind
-        else {
-            panic!("expected a re-constructed Err, got {:?}", returned.kind)
-        };
-        assert_eq!(returned_tag, "Err");
-        assert_eq!(returned_payload.len(), 1);
-        let IrPat::Bind { local: bound_name } = &*err_fields[0].1 else {
-            panic!(
-                "expected arm 1's own payload pattern to be a Bind, got {:?}",
-                err_fields[0].1
-            )
-        };
-        // No embed conversion needed (both sides are `String`) — the propagated
-        // error is the bound local unchanged, not a wrapped construction.
-        assert!(matches!(&returned_payload[0].kind, IrExprKind::Local(n) if n == bound_name));
-    }
-
-    #[test]
-    fn question_on_result_with_a_declared_embeds_conversion_wraps_the_propagated_error() {
-        let program = checked_program(
-            r#"
-commons demo {
-  type PaymentError = enum { Declined, InsufficientFunds }
-
-  type OrderError =
-    | OutOfStock(sku: String, qty: Int)
-    | Payment(reason: PaymentError)
-    embeds PaymentError as Payment
-
-  fn charge() -> Result[Int, PaymentError] { Ok(1) }
-  fn embed_case() -> Result[Int, OrderError] {
-    let v = charge()?
-    Ok(v)
-  }
-}
-"#,
-        );
-        let ir = lower_fn(&program, "embed_case");
-        let IrExprKind::Block { stmts, .. } = &ir.kind else {
-            panic!("expected Block, got {:?}", ir.kind)
-        };
-        let IrStmt::Let { value, .. } = &stmts[0] else {
-            panic!(
-                "expected the first statement to be a Let, got {:?}",
-                stmts[0]
-            )
-        };
-        let IrExprKind::Match { arms, .. } = &value.kind else {
-            panic!("expected Match, got {:?}", value.kind)
-        };
-        let IrExprKind::Return { value: returned } = &arms[1].body.kind else {
-            panic!(
-                "expected arm 1's body to be Return, got {:?}",
-                arms[1].body.kind
-            )
-        };
-        let IrExprKind::Variant {
-            tag: returned_tag,
-            payload: returned_payload,
-        } = &returned.kind
-        else {
-            panic!("expected a re-constructed Err, got {:?}", returned.kind)
-        };
-        assert_eq!(returned_tag, "Err");
-        assert_eq!(returned_payload.len(), 1);
-        let IrExprKind::Variant {
-            tag: embed_tag,
-            payload: embed_payload,
-        } = &returned_payload[0].kind
-        else {
-            panic!(
-                "expected the propagated error to be wrapped in the declared embed \
-                 construction, got {:?}",
-                returned_payload[0].kind
-            )
-        };
-        assert_eq!(embed_tag, "Payment");
-        assert_eq!(embed_payload.len(), 1);
-        assert!(matches!(&embed_payload[0].kind, IrExprKind::Local(_)));
-        assert!(matches!(
-            &*program.program().ty_intern.get(returned_payload[0].ty),
-            Ty::Named { name, .. } if name == "OrderError"
-        ));
-    }
-
-    #[test]
-    fn question_embeds_conversion_still_resolves_when_the_enclosing_return_is_effect_wrapped() {
-        // Review of #1238: duplicates the test above under `Effect[Result[..]]`
-        // specifically to exercise `peel_effect_ty`'s own recursive arm —
-        // every other test's `return_ty` hits the base case on the first call.
-        let program = checked_program(
-            r#"
-commons demo {
-  type PaymentError = enum { Declined, InsufficientFunds }
-
-  type OrderError =
-    | OutOfStock(sku: String, qty: Int)
-    | Payment(reason: PaymentError)
-    embeds PaymentError as Payment
-
-  fn charge() -> Result[Int, PaymentError] { Ok(1) }
-  fn embed_case() -> Effect[Result[Int, OrderError]] {
-    let v = charge()?
-    Ok(v)
-  }
-}
-"#,
-        );
-        let ir = lower_fn(&program, "embed_case");
-        let IrExprKind::Block { stmts, .. } = &ir.kind else {
-            panic!("expected Block, got {:?}", ir.kind)
-        };
-        let IrStmt::Let { value, .. } = &stmts[0] else {
-            panic!(
-                "expected the first statement to be a Let, got {:?}",
-                stmts[0]
-            )
-        };
-        let IrExprKind::Match { arms, .. } = &value.kind else {
-            panic!("expected Match, got {:?}", value.kind)
-        };
-        let IrExprKind::Return { value: returned } = &arms[1].body.kind else {
-            panic!(
-                "expected arm 1's body to be Return, got {:?}",
-                arms[1].body.kind
-            )
-        };
-        let IrExprKind::Variant {
-            tag: returned_tag,
-            payload: returned_payload,
-        } = &returned.kind
-        else {
-            panic!("expected a re-constructed Err, got {:?}", returned.kind)
-        };
-        assert_eq!(returned_tag, "Err");
-        let IrExprKind::Variant { tag: embed_tag, .. } = &returned_payload[0].kind else {
-            panic!(
-                "expected the propagated error wrapped in the declared embed construction \
-                 even through the Effect wrapper, got {:?}",
-                returned_payload[0].kind
-            )
-        };
-        assert_eq!(
-            embed_tag, "Payment",
-            "peel_effect_ty must peel through Effect[..] to find the Result[_, OrderError] \
-             underneath — an unpeeled Effect[Result[..]] would make target_err_ty resolve to \
-             something other than OrderError and this embed lookup would silently miss"
-        );
-        assert!(matches!(
-            &*program.program().ty_intern.get(returned_payload[0].ty),
-            Ty::Named { name, .. } if name == "OrderError"
-        ));
-    }
-
-    #[test]
-    fn question_reached_from_an_agent_handler_body_sets_return_ty_without_panicking() {
-        // Review of #1238: `lower_fn_body_ir`'s own set_return_ty call site
-        // was already exercised by every `Question`/`Is` test above (they
-        // all lower through `lower_fn`/`lower_fn_body_ir`) — this and the
-        // next two tests specifically reach the other three real
-        // body-lowering entry points (`lower_handler_body_ir`,
-        // `lower_service_handler_body_ir`, `lower_provider_op_ir`) that a
-        // panicking `set_return_ty` would have crashed on the resolve-miss
-        // path the review named, even for a body containing no `?` at all.
-        let program = checked_context_program(
-            r#"
-context demo
-
-agent Counter {
-  key id: String
-  store n: Cell[Int] = 0
-
-  on call bump() -> Effect[Result[Int, String]] {
-    Ok(1)
-  }
-}
-"#,
-        );
-        let agent = program
-            .program()
-            .commons
-            .items
-            .iter()
-            .find_map(|item| match item {
-                CommonsItem::Agent(a) if a.name.name == "Counter" => Some(a),
-                _ => None,
-            })
-            .unwrap_or_else(|| panic!("no agent named Counter in this fixture"));
-        let handler = &agent.handlers[0];
-        // Reaching this at all (rather than panicking on the handler's own
-        // return-type resolution) is the assertion.
-        let _ = lower_handler_ir(
-            handler,
-            &HashMap::new(),
-            &HashSet::new(),
-            program.program().ty_intern.intern(Ty::Unit),
-            &[],
-            &[],
-            &program,
-        );
-    }
-
-    #[test]
-    fn question_reached_from_a_provider_op_body_sets_return_ty_without_panicking() {
-        let program = checked_context_program(
-            r#"
-context demo
-
-capability Charge {
-  fn run() -> Effect[Result[Int, String]]
-}
-
-provides Charge = FakeCharge {
-  fn run() -> Effect[Result[Int, String]] {
-    Ok(1)
-  }
-}
-"#,
-        );
-        let provider = find_provider(&program, "FakeCharge");
-        // Reaching this at all (rather than panicking on the op's own
-        // return-type resolution) is the assertion.
-        let _ = lower_provider_item_ir(provider, &program);
-    }
-
-    #[test]
-    fn is_on_a_declared_refined_type_forces_a_receiver_temp_and_lowers_to_refined_check() {
-        let program = checked_program(
-            r#"
-commons demo {
-  type Quantity = Int where InRange(1, 100)
-
-  fn valid(n: Int) -> Bool {
-    n is Quantity
-  }
-}
-"#,
-        );
-        let ir = lower_fn(&program, "valid");
-        let tail = fn_tail(&ir);
-        let IrExprKind::Block { stmts, tail: inner } = &tail.kind else {
-            panic!("expected Block, got {:?}", tail.kind)
-        };
-        let IrStmt::Let { local, value } = &stmts[0] else {
-            panic!(
-                "expected the first statement to be a Let, got {:?}",
-                stmts[0]
-            )
-        };
-        assert_eq!(local, "__is_receiver_0");
-        assert!(matches!(&value.kind, IrExprKind::Local(n) if n == "n"));
-        let IrExprKind::RefinedCheck {
-            value: checked,
-            base,
-            refinement,
-        } = &inner.kind
-        else {
-            panic!("expected RefinedCheck, got {:?}", inner.kind)
-        };
-        assert!(matches!(&checked.kind, IrExprKind::Local(n) if n == "__is_receiver_0"));
-        assert_eq!(*base, BaseType::Int);
-        let refinement = refinement
-            .as_ref()
-            .unwrap_or_else(|| panic!("expected a real refinement, got None"));
-        assert_eq!(refinement.predicates.len(), 1);
-        assert!(matches!(
-            refinement.predicates[0].kind,
-            PredKind::InRange(..)
-        ));
-    }
-
-    #[test]
-    fn is_on_a_bare_variant_lowers_to_a_single_tag_test() {
-        let program = checked_program(
-            r#"
-commons demo {
-  fn check(r: Result[Int, String]) -> Bool {
-    r is Ok(_)
-  }
-}
-"#,
-        );
-        let ir = lower_fn(&program, "check");
-        let tail = fn_tail(&ir);
-        let IrExprKind::Block { tail: inner, .. } = &tail.kind else {
-            panic!("expected Block, got {:?}", tail.kind)
-        };
-        let IrExprKind::BinOp { op, lhs, rhs } = &inner.kind else {
-            panic!("expected a single BinOp tag test, got {:?}", inner.kind)
-        };
-        assert_eq!(*op, IrBinOp::Eq);
-        assert!(matches!(
-            &lhs.kind,
-            IrExprKind::Field { field, .. } if field == "tag"
-        ));
-        assert!(matches!(&rhs.kind, IrExprKind::Const(ConstVal::Str(s)) if s == "Ok"));
-    }
-
-    #[test]
-    fn is_on_a_nested_variant_ands_the_outer_and_inner_tag_tests() {
-        let program = checked_program(
-            r#"
-commons demo {
-  type Fault =
-    | NotFound
-    | Denied(reason: String)
-
-  fn describe(r: Result[Int, Fault]) -> Bool {
-    r is Err(Denied(_))
-  }
-}
-"#,
-        );
-        let ir = lower_fn(&program, "describe");
-        let tail = fn_tail(&ir);
-        let IrExprKind::Block { tail: inner, .. } = &tail.kind else {
-            panic!("expected Block, got {:?}", tail.kind)
-        };
-        let IrExprKind::And { lhs, rhs } = &inner.kind else {
-            panic!(
-                "expected the outer+inner tag tests And-joined, got {:?}",
-                inner.kind
-            )
-        };
-        let IrExprKind::BinOp {
-            lhs: outer_field,
-            rhs: outer_tag,
-            ..
-        } = &lhs.kind
-        else {
-            panic!("expected the outer test to be a BinOp, got {:?}", lhs.kind)
-        };
-        assert!(
-            matches!(&outer_field.kind, IrExprKind::Field { base, field } if field == "tag" && matches!(&base.kind, IrExprKind::Local(n) if n == "__is_receiver_0"))
-        );
-        assert!(matches!(&outer_tag.kind, IrExprKind::Const(ConstVal::Str(s)) if s == "Err"));
-        let IrExprKind::BinOp {
-            lhs: inner_field,
-            rhs: inner_tag,
-            ..
-        } = &rhs.kind
-        else {
-            panic!("expected the inner test to be a BinOp, got {:?}", rhs.kind)
-        };
-        assert!(matches!(
-            &inner_field.kind,
-            IrExprKind::Field { field, .. } if field == "tag"
-        ));
-        assert!(matches!(&inner_tag.kind, IrExprKind::Const(ConstVal::Str(s)) if s == "Denied"));
-        // The nested field access is rooted at the outer `.error` payload, not
-        // the bare receiver — proves the payload field name/type came from
-        // `IrPat`'s own already-resolved `fields`, not a re-derived guess.
-        let IrExprKind::Field {
-            base: nested_base,
-            field: nested_field,
-        } = &inner_field.kind
-        else {
-            panic!("expected inner_field to be a Field access")
-        };
-        assert_eq!(nested_field, "tag");
-        assert!(matches!(
-            &nested_base.kind,
-            IrExprKind::Field { field, .. } if field == "error"
-        ));
-    }
-
-    #[test]
-    fn is_on_an_or_pattern_or_folds_each_alternatives_and_joined_tests() {
-        let program = checked_program(
-            r#"
-commons demo {
-  fn check(r: Result[Int, String]) -> Bool {
-    r is Ok(_) | Err(_)
-  }
-}
-"#,
-        );
-        let ir = lower_fn(&program, "check");
-        let tail = fn_tail(&ir);
-        let IrExprKind::Block { tail: inner, .. } = &tail.kind else {
-            panic!("expected Block, got {:?}", tail.kind)
-        };
-        let IrExprKind::Or { lhs, rhs } = &inner.kind else {
-            panic!(
-                "expected the two alternatives Or-joined, got {:?}",
-                inner.kind
-            )
-        };
-        assert!(matches!(&lhs.kind, IrExprKind::BinOp { .. }));
-        assert!(matches!(&rhs.kind, IrExprKind::BinOp { .. }));
-    }
-
-    #[test]
-    fn method_call_driven_by_callee_method_prepends_the_receiver() {
-        let program = checked_program(
-            r#"
-commons demo {
-  type Point = { x: Int, y: Int }
-
-  fn Point.shiftX(self, dx: Int) -> Point {
-    Point { x: self.x, y: self.y }
-  }
-
-  fn use_it(p: Point, dx: Int) -> Point { p.shiftX(dx) }
-}
-"#,
-        );
-        let ir = lower_fn(&program, "use_it");
-        let tail = fn_tail(&ir);
-        let IrExprKind::Call { callee, args, .. } = &tail.kind else {
-            panic!("expected Call, got {:?}", tail.kind)
-        };
-        assert!(matches!(callee, Callee::Method(f) if f.name.display().ends_with("shiftX")));
-        assert_eq!(args.len(), 2);
-        assert!(matches!(&args[0].kind, IrExprKind::Local(n) if n == "p"));
-        assert!(matches!(&args[1].kind, IrExprKind::Local(n) if n == "dx"));
-    }
-
-    #[test]
-    fn static_call_driven_by_callee_static_has_no_prepended_receiver() {
-        let program = checked_program(
-            r#"
-commons demo {
-  type Point = { x: Int, y: Int }
-
-  fn Point.origin() -> Point { Point { x: 0, y: 0 } }
-
-  fn use_it() -> Point { Point.origin() }
-}
-"#,
-        );
-        let ir = lower_fn(&program, "use_it");
-        let tail = fn_tail(&ir);
-        let IrExprKind::Call { callee, args, .. } = &tail.kind else {
-            panic!("expected Call, got {:?}", tail.kind)
-        };
-        assert!(matches!(callee, Callee::Static(f) if f.name.display().ends_with("origin")));
-        // `Point` (the receiver) is a type name, not a value — must not be
-        // lowered and prepended, unlike the Method case above.
-        assert!(args.is_empty());
-    }
-
-    #[test]
-    fn kernel_method_call_prepends_the_receiver() {
-        let program = checked_program(
-            r#"
-commons demo {
-  fn identity_all(xs: List[Int]) -> List[Int] { xs.map((y) => y) }
-}
-"#,
-        );
-        let ir = lower_fn(&program, "identity_all");
-        let tail = fn_tail(&ir);
-        let IrExprKind::Call { callee, args, .. } = &tail.kind else {
-            panic!("expected Call, got {:?}", tail.kind)
-        };
-        assert!(matches!(callee, Callee::Kernel { op, .. } if op == "map"));
-        assert_eq!(args.len(), 2);
-        assert!(matches!(&args[0].kind, IrExprKind::Local(n) if n == "xs"));
-        let IrExprKind::Lambda {
-            params,
-            body,
-            captures,
-        } = &args[1].kind
-        else {
-            panic!("expected Lambda, got {:?}", args[1].kind)
-        };
-        assert_eq!(params, &["y".to_string()]);
-        assert!(captures.is_empty());
-        assert!(matches!(&body.kind, IrExprKind::Local(n) if n == "y"));
-    }
-
     // P6.3 (#1145): Implies/RecordSpread desugaring — the only two of the
     // reference's own Part 6.4 desugaring-table rows this slice covers
     // (Decision D); every other row named there stays a `todo!()` citing its
     // own specific blocker (Decisions A–C).
 
-    #[test]
-    fn implies_desugars_to_or_not() {
-        let program = checked_program(
-            r#"
-commons demo {
-  fn imp(p: Bool, q: Bool) -> Bool { p implies q }
-}
-"#,
-        );
-        let ir = lower_fn(&program, "imp");
-        let tail = fn_tail(&ir);
-        let IrExprKind::Or { lhs, rhs } = &tail.kind else {
-            panic!("expected Or, got {:?}", tail.kind)
-        };
-        let IrExprKind::Not { operand } = &lhs.kind else {
-            panic!("expected Or's lhs to be Not, got {:?}", lhs.kind)
-        };
-        assert!(matches!(&operand.kind, IrExprKind::Local(n) if n == "p"));
-        assert!(matches!(&rhs.kind, IrExprKind::Local(n) if n == "q"));
-        assert!(matches!(
-            &*program.program().ty_intern.get(lhs.ty),
-            Ty::Base(bynk_syntax::ast::BaseType::Bool)
-        ));
-    }
-
     // #1189: comparison/arithmetic `BinOp`, `UnaryOp::Neg`, `InterpStr` —
     // the gap P6.2/P6.3 each confirmed and left `todo!()`, closed here.
-
-    #[test]
-    fn comparison_and_arithmetic_binops_lower_to_a_shared_dedicated_node() {
-        let program = checked_program(
-            r#"
-commons demo {
-  fn nonneg(balance: Int) -> Bool { balance >= 0 }
-  fn total(a: Int, b: Int) -> Int { a + b }
-}
-"#,
-        );
-        let cmp_ir = lower_fn(&program, "nonneg");
-        let IrExprKind::BinOp { op, lhs, rhs } = &fn_tail(&cmp_ir).kind else {
-            panic!("expected BinOp, got {:?}", fn_tail(&cmp_ir).kind)
-        };
-        assert_eq!(*op, IrBinOp::GtEq);
-        assert!(matches!(&lhs.kind, IrExprKind::Local(n) if n == "balance"));
-        assert!(matches!(&rhs.kind, IrExprKind::Const(ConstVal::Int(0))));
-        assert!(matches!(
-            &*program.program().ty_intern.get(fn_tail(&cmp_ir).ty),
-            Ty::Base(bynk_syntax::ast::BaseType::Bool)
-        ));
-
-        let arith_ir = lower_fn(&program, "total");
-        let IrExprKind::BinOp { op, lhs, rhs } = &fn_tail(&arith_ir).kind else {
-            panic!("expected BinOp, got {:?}", fn_tail(&arith_ir).kind)
-        };
-        assert_eq!(*op, IrBinOp::Add);
-        assert!(matches!(&lhs.kind, IrExprKind::Local(n) if n == "a"));
-        assert!(matches!(&rhs.kind, IrExprKind::Local(n) if n == "b"));
-        assert!(matches!(
-            &*program.program().ty_intern.get(fn_tail(&arith_ir).ty),
-            Ty::Base(bynk_syntax::ast::BaseType::Int)
-        ));
-    }
-
-    #[test]
-    fn unary_neg_lowers_to_its_own_dedicated_node() {
-        let program = checked_program(
-            r#"
-commons demo {
-  fn negate(x: Int) -> Int { -x }
-}
-"#,
-        );
-        let ir = lower_fn(&program, "negate");
-        let IrExprKind::Neg { operand } = &fn_tail(&ir).kind else {
-            panic!("expected Neg, got {:?}", fn_tail(&ir).kind)
-        };
-        assert!(matches!(&operand.kind, IrExprKind::Local(n) if n == "x"));
-        assert!(matches!(
-            &*program.program().ty_intern.get(fn_tail(&ir).ty),
-            Ty::Base(bynk_syntax::ast::BaseType::Int)
-        ));
-    }
-
-    #[test]
-    fn every_binop_tag_maps_to_its_own_ir_binop_variant() {
-        // The hand-written ten-arm `BinOp -> IrBinOp` mapping is the one
-        // place this change can be silently wrong (a transposition compiles
-        // and clippy-passes) — every tag gets its own assertion here, not
-        // just the two `comparison_and_arithmetic_binops_lower_to_a_shared_
-        // dedicated_node` happens to cover incidentally (review of #1195).
-        let program = checked_program(
-            r#"
-commons demo {
-  fn eq(a: Int, b: Int) -> Bool { a == b }
-  fn neq(a: Int, b: Int) -> Bool { a != b }
-  fn lt(a: Int, b: Int) -> Bool { a < b }
-  fn lteq(a: Int, b: Int) -> Bool { a <= b }
-  fn gt(a: Int, b: Int) -> Bool { a > b }
-  fn gteq(a: Int, b: Int) -> Bool { a >= b }
-  fn add(a: Int, b: Int) -> Int { a + b }
-  fn sub(a: Int, b: Int) -> Int { a - b }
-  fn mul(a: Int, b: Int) -> Int { a * b }
-  fn div(a: Int, b: Int) -> Int { a / b }
-}
-"#,
-        );
-        let cases = [
-            ("eq", IrBinOp::Eq),
-            ("neq", IrBinOp::NotEq),
-            ("lt", IrBinOp::Lt),
-            ("lteq", IrBinOp::LtEq),
-            ("gt", IrBinOp::Gt),
-            ("gteq", IrBinOp::GtEq),
-            ("add", IrBinOp::Add),
-            ("sub", IrBinOp::Sub),
-            ("mul", IrBinOp::Mul),
-            ("div", IrBinOp::Div),
-        ];
-        for (fn_name, expected_op) in cases {
-            let ir = lower_fn(&program, fn_name);
-            let IrExprKind::BinOp { op, .. } = &fn_tail(&ir).kind else {
-                panic!("{fn_name}: expected BinOp, got {:?}", fn_tail(&ir).kind)
-            };
-            assert_eq!(*op, expected_op, "{fn_name}: wrong IrBinOp tag");
-        }
-    }
-
-    #[test]
-    fn interp_str_lowers_chunks_verbatim_and_holes_as_ordinary_expressions() {
-        let program = checked_program(
-            r#"
-commons demo {
-  fn greet(name: String) -> String { "hi \(name)!" }
-}
-"#,
-        );
-        let ir = lower_fn(&program, "greet");
-        let IrExprKind::InterpStr { parts } = &fn_tail(&ir).kind else {
-            panic!("expected InterpStr, got {:?}", fn_tail(&ir).kind)
-        };
-        assert_eq!(parts.len(), 3);
-        assert!(matches!(&parts[0], IrInterpPart::Chunk(s) if s == "hi "));
-        let IrInterpPart::Hole(hole) = &parts[1] else {
-            panic!("expected Hole, got {:?}", parts[1])
-        };
-        assert!(matches!(&hole.kind, IrExprKind::Local(n) if n == "name"));
-        assert!(matches!(&parts[2], IrInterpPart::Chunk(s) if s == "!"));
-        assert!(matches!(
-            &*program.program().ty_intern.get(fn_tail(&ir).ty),
-            Ty::Base(bynk_syntax::ast::BaseType::String)
-        ));
-    }
-
-    #[test]
-    fn interp_str_covers_leading_hole_hole_only_and_adjacent_holes() {
-        // `split_interp` (`bynk-syntax/src/lexer.rs`) never pushes an empty
-        // `Chunk` — a leading/trailing/adjacent hole has no empty-string
-        // sibling segment either side of it. Pins that `lower_interp_part_ir`
-        // sees exactly the segments the lexer produces, not a padded shape.
-        let program = checked_program(
-            r#"
-commons demo {
-  fn lead(name: String) -> String { "\(name) hi" }
-  fn only(name: String) -> String { "\(name)" }
-  fn adjacent(a: String, b: String) -> String { "\(a)\(b)" }
-}
-"#,
-        );
-
-        let lead = lower_fn(&program, "lead");
-        let IrExprKind::InterpStr { parts } = &fn_tail(&lead).kind else {
-            panic!("expected InterpStr, got {:?}", fn_tail(&lead).kind)
-        };
-        assert_eq!(parts.len(), 2, "no leading empty Chunk before the hole");
-        assert!(matches!(&parts[0], IrInterpPart::Hole(h)
-            if matches!(&h.kind, IrExprKind::Local(n) if n == "name")));
-        assert!(matches!(&parts[1], IrInterpPart::Chunk(s) if s == " hi"));
-
-        let only = lower_fn(&program, "only");
-        let IrExprKind::InterpStr { parts } = &fn_tail(&only).kind else {
-            panic!("expected InterpStr, got {:?}", fn_tail(&only).kind)
-        };
-        assert_eq!(
-            parts.len(),
-            1,
-            "a hole-only string is just the one Hole segment"
-        );
-        assert!(matches!(&parts[0], IrInterpPart::Hole(_)));
-
-        let adjacent = lower_fn(&program, "adjacent");
-        let IrExprKind::InterpStr { parts } = &fn_tail(&adjacent).kind else {
-            panic!("expected InterpStr, got {:?}", fn_tail(&adjacent).kind)
-        };
-        assert_eq!(parts.len(), 2, "no empty Chunk between adjacent holes");
-        assert!(matches!(&parts[0], IrInterpPart::Hole(h)
-            if matches!(&h.kind, IrExprKind::Local(n) if n == "a")));
-        assert!(matches!(&parts[1], IrInterpPart::Hole(h)
-            if matches!(&h.kind, IrExprKind::Local(n) if n == "b")));
-    }
-
-    #[test]
-    fn record_spread_resolves_every_declared_field_override_and_spread_through() {
-        let program = checked_program(
-            r#"
-commons demo {
-  type Point = { x: Int, y: Int, z: Int }
-
-  fn shift(p: Point, y: Int) -> Point { Point { ...p, x: 0, y } }
-}
-"#,
-        );
-        let ir = lower_fn(&program, "shift");
-        let tail = fn_tail(&ir);
-        let IrExprKind::Block {
-            stmts,
-            tail: block_tail,
-        } = &tail.kind
-        else {
-            panic!("expected Block, got {:?}", tail.kind)
-        };
-        assert_eq!(stmts.len(), 1);
-        let IrStmt::Let { local, value } = &stmts[0] else {
-            panic!("expected Let, got {:?}", stmts[0])
-        };
-        assert_eq!(local, "__spread_base_0");
-        assert!(matches!(&value.kind, IrExprKind::Local(n) if n == "p"));
-
-        let IrExprKind::Record { fields } = &block_tail.kind else {
-            panic!("expected Record, got {:?}", block_tail.kind)
-        };
-        assert_eq!(fields.len(), 3);
-
-        // `x: 0` — a full-form override.
-        assert_eq!(fields[0].0, "x");
-        assert!(matches!(
-            &fields[0].1.kind,
-            IrExprKind::Const(ConstVal::Int(0))
-        ));
-
-        // `y` — a shorthand override, reading the `y` parameter, not `p.y`.
-        assert_eq!(fields[1].0, "y");
-        assert!(matches!(&fields[1].1.kind, IrExprKind::Local(n) if n == "y"));
-
-        // `z` — not overridden, spread through as a synthesised `tmp.z` read.
-        assert_eq!(fields[2].0, "z");
-        let IrExprKind::Field { base, field } = &fields[2].1.kind else {
-            panic!("expected Field, got {:?}", fields[2].1.kind)
-        };
-        assert_eq!(field, "z");
-        assert!(matches!(&base.kind, IrExprKind::Local(n) if n == "__spread_base_0"));
-        assert!(matches!(
-            &*program.program().ty_intern.get(fields[2].1.ty),
-            Ty::Base(bynk_syntax::ast::BaseType::Int)
-        ));
-    }
-
-    #[test]
-    fn record_spread_orders_fields_by_evaluation_order_not_declaration_order() {
-        // Overrides land in `fields` in *source* order, not the record's own
-        // declared field order — `y`'s override is written before `x`'s, so
-        // it must come first, since an override's value may be effectful
-        // and a future reader walks `fields` left to right to reproduce
-        // that ordering (see `lower_record_spread_ir`'s own doc comment).
-        let program = checked_program(
-            r#"
-commons demo {
-  type Point = { x: Int, y: Int, z: Int }
-
-  fn shift(p: Point) -> Point { Point { ...p, y: 1, x: 2 } }
-}
-"#,
-        );
-        let ir = lower_fn(&program, "shift");
-        let tail = fn_tail(&ir);
-        let IrExprKind::Block {
-            tail: block_tail, ..
-        } = &tail.kind
-        else {
-            panic!("expected Block, got {:?}", tail.kind)
-        };
-        let IrExprKind::Record { fields, .. } = &block_tail.kind else {
-            panic!("expected Record, got {:?}", block_tail.kind)
-        };
-        let names: Vec<&str> = fields.iter().map(|(n, _)| n.as_str()).collect();
-        assert_eq!(names, vec!["y", "x", "z"]);
-    }
-
-    #[test]
-    fn record_spread_duplicate_override_keeps_the_last_value_and_still_runs_the_earlier_one() {
-        // `check_record_spread` has no duplicate-name diagnostic, so `x` is
-        // named twice here and type-checks — the resulting field must take
-        // `x`'s *last* value (2), but `x`'s *first* value (1) must still
-        // run, as a discarded statement, since it may have been effectful.
-        let program = checked_program(
-            r#"
-commons demo {
-  type Point = { x: Int, y: Int }
-
-  fn shift(p: Point) -> Point { Point { ...p, x: 1, x: 2 } }
-}
-"#,
-        );
-        let ir = lower_fn(&program, "shift");
-        let tail = fn_tail(&ir);
-        let IrExprKind::Block {
-            stmts,
-            tail: block_tail,
-        } = &tail.kind
-        else {
-            panic!("expected Block, got {:?}", tail.kind)
-        };
-        assert_eq!(stmts.len(), 2, "the base Let plus one discarded duplicate");
-        let IrStmt::Expr { value: discarded } = &stmts[1] else {
-            panic!(
-                "expected the second stmt to be a discarded Expr, got {:?}",
-                stmts[1]
-            )
-        };
-        assert!(matches!(
-            &discarded.kind,
-            IrExprKind::Const(ConstVal::Int(1))
-        ));
-
-        let IrExprKind::Record { fields, .. } = &block_tail.kind else {
-            panic!("expected Record, got {:?}", block_tail.kind)
-        };
-        assert_eq!(fields.len(), 2);
-        assert_eq!(fields[0].0, "x");
-        assert!(matches!(
-            &fields[0].1.kind,
-            IrExprKind::Const(ConstVal::Int(2))
-        ));
-    }
-
-    #[test]
-    fn record_spread_instantiates_a_generic_records_spread_through_field_type() {
-        // `Point`-shaped fixtures above are all monomorphic, so
-        // `instantiate_field_ty`'s own substitution (ADR 0183/v0.157) is a
-        // no-op there — a generic record's spread-through field is the one
-        // case that actually exercises it, since `item`'s declared type is
-        // the record's own rigid `T`, only resolvable via `base_args`.
-        let program = checked_program(
-            r#"
-commons demo {
-  type Boxed[T] = { item: T, tag: String }
-
-  fn retag(b: Boxed[Int]) -> Boxed[Int] { Boxed { ...b, tag: "x" } }
-}
-"#,
-        );
-        let ir = lower_fn(&program, "retag");
-        let tail = fn_tail(&ir);
-        let IrExprKind::Block {
-            tail: block_tail, ..
-        } = &tail.kind
-        else {
-            panic!("expected Block, got {:?}", tail.kind)
-        };
-        let IrExprKind::Record { fields, .. } = &block_tail.kind else {
-            panic!("expected Record, got {:?}", block_tail.kind)
-        };
-        let (_, item) = fields
-            .iter()
-            .find(|(n, _)| n == "item")
-            .expect("item field present");
-        let IrExprKind::Field { .. } = &item.kind else {
-            panic!(
-                "expected item to spread through as Field, got {:?}",
-                item.kind
-            )
-        };
-        assert!(matches!(
-            &*program.program().ty_intern.get(item.ty),
-            Ty::Base(bynk_syntax::ast::BaseType::Int)
-        ));
-    }
 
     // ==== P6.4 (#1157): IrPat/IrArm/Exhaustive, tested standalone ====
     //
@@ -5842,1007 +1088,12 @@ commons demo {
     // ordinary `lower_expr_ir`/`lower_fn_body_ir` path — see the `match_*`
     // tests below this section for that coverage.
 
-    /// Every fixture below is a single-expression `fn` body whose tail is
-    /// `ExprKind::Match` — no general-purpose statement walk is needed.
-    fn find_match_arms(f: &FnDecl) -> (&Expr, &[MatchArm]) {
-        let ExprKind::Match { discriminant, arms } = &f.body.tail.kind else {
-            panic!(
-                "fixture's fn body tail is not a Match, got {:?}",
-                f.body.tail.kind
-            )
-        };
-        (discriminant, arms)
-    }
-
-    /// Binds the fn's own params into scope first (mirroring
-    /// `lower_fn_body_ir`'s own setup) so a guard/body that reads an outer
-    /// param — not just a pattern binding — resolves too, then lowers every
-    /// arm of the fixture's own top-level `match` plus its `Exhaustive`.
-    fn lower_match_fixture(program: &CheckedProgram, fn_name: &str) -> (Vec<IrArm>, Exhaustive) {
-        let f = find_fn(program, fn_name);
-        let (discriminant, arms) = find_match_arms(f);
-        let disc_ty = program
-            .program()
-            .expr_types
-            .get(&discriminant.id)
-            .unwrap_or_else(|| panic!("{fn_name}: discriminant has no recorded type"))
-            .ty;
-        let mut cx = LowerIrCtx::new(program, HashSet::new());
-        for p in &f.params {
-            let ty = cx.resolve_type_ref(&p.type_ref).unwrap_or_else(|| {
-                panic!("{fn_name}: param `{}`'s type does not resolve", p.name.name)
-            });
-            cx.bind(p.name.name.clone(), ty);
-        }
-        let ir_arms: Vec<IrArm> = arms
-            .iter()
-            .map(|a| lower_arm_ir(a, disc_ty, &mut cx))
-            .collect();
-        let exhaustive = lower_exhaustive_ir(arms);
-        (ir_arms, exhaustive)
-    }
-
-    #[test]
-    fn pattern_ir_covers_wildcard_binding_and_literal_leaves() {
-        let program = checked_program(
-            r#"
-commons demo {
-  fn wildcard_case(n: Int) -> Int {
-    match n {
-      _ => 0
-    }
-  }
-
-  fn binding_case(n: Int) -> Int {
-    match n {
-      m => m
-    }
-  }
-
-  fn literal_case(n: Int) -> String {
-    match n {
-      0 => "zero"
-      other => "other"
-    }
-  }
-}
-"#,
-        );
-
-        let (wild_arms, wild_exhaustive) = lower_match_fixture(&program, "wildcard_case");
-        assert_eq!(wild_arms.len(), 1);
-        assert!(matches!(&wild_arms[0].pat, IrPat::Wild));
-        assert!(wild_arms[0].binds.is_empty());
-        assert_eq!(wild_arms[0].binding_mode, BindingMode::Direct);
-        assert!(matches!(wild_exhaustive, Exhaustive::Total));
-
-        let (binding_arms, _) = lower_match_fixture(&program, "binding_case");
-        assert!(matches!(&binding_arms[0].pat, IrPat::Bind { local } if local == "m"));
-        assert_eq!(binding_arms[0].binds, vec!["m".to_string()]);
-        assert!(matches!(&binding_arms[0].body.kind, IrExprKind::Local(n) if n == "m"));
-
-        let (literal_arms, literal_exhaustive) = lower_match_fixture(&program, "literal_case");
-        assert!(matches!(
-            &literal_arms[0].pat,
-            IrPat::Const {
-                value: ConstVal::Int(0)
-            }
-        ));
-        assert!(matches!(&literal_arms[1].pat, IrPat::Bind { local } if local == "other"));
-        assert!(matches!(literal_exhaustive, Exhaustive::Total));
-    }
-
-    #[test]
-    fn pattern_ir_variant_over_a_user_sum_resolves_tag_and_payload_fields() {
-        let program = checked_program(
-            r#"
-commons demo {
-  type Outcome =
-    | Hit(score: Int)
-    | Miss
-
-  fn variant_user_sum(o: Outcome) -> Int {
-    match o {
-      Hit(score) => score
-      Miss => 0
-    }
-  }
-}
-"#,
-        );
-
-        let (arms, exhaustive) = lower_match_fixture(&program, "variant_user_sum");
-        assert_eq!(arms.len(), 2);
-
-        let IrPat::Variant { tag, fields, .. } = &arms[0].pat else {
-            panic!("expected Variant, got {:?}", arms[0].pat)
-        };
-        assert_eq!(tag, "Hit");
-        assert_eq!(fields.len(), 1);
-        assert_eq!(fields[0].0, "score");
-        assert!(matches!(&*fields[0].1, IrPat::Bind { local } if local == "score"));
-        assert_eq!(arms[0].binds, vec!["score".to_string()]);
-        assert!(matches!(&arms[0].body.kind, IrExprKind::Local(n) if n == "score"));
-
-        let IrPat::Variant { tag, fields, .. } = &arms[1].pat else {
-            panic!("expected Variant, got {:?}", arms[1].pat)
-        };
-        assert_eq!(tag, "Miss");
-        assert!(fields.is_empty());
-        assert!(arms[1].binds.is_empty());
-
-        assert!(matches!(exhaustive, Exhaustive::Total));
-    }
-
-    #[test]
-    fn pattern_ir_variant_over_result_and_option_resolves_via_variants_of() {
-        let program = checked_program(
-            r#"
-commons demo {
-  fn variant_result(r: Result[Int, String]) -> Int {
-    match r {
-      Ok(v) => v
-      Err(_) => 0
-    }
-  }
-
-  fn variant_option(o: Option[Int]) -> Int {
-    match o {
-      Some(v) => v
-      None => 0
-    }
-  }
-}
-"#,
-        );
-
-        let (result_arms, _) = lower_match_fixture(&program, "variant_result");
-        let IrPat::Variant { tag, fields, .. } = &result_arms[0].pat else {
-            panic!("expected Variant, got {:?}", result_arms[0].pat)
-        };
-        assert_eq!(tag, "Ok");
-        assert_eq!(fields[0].0, "value");
-        assert!(matches!(&*fields[0].1, IrPat::Bind { local } if local == "v"));
-        let IrPat::Variant { tag, fields, .. } = &result_arms[1].pat else {
-            panic!("expected Variant, got {:?}", result_arms[1].pat)
-        };
-        assert_eq!(tag, "Err");
-        assert_eq!(fields[0].0, "error");
-        assert!(matches!(&*fields[0].1, IrPat::Wild));
-
-        let (option_arms, _) = lower_match_fixture(&program, "variant_option");
-        let IrPat::Variant { tag, fields, .. } = &option_arms[0].pat else {
-            panic!("expected Variant, got {:?}", option_arms[0].pat)
-        };
-        assert_eq!(tag, "Some");
-        assert_eq!(fields[0].0, "value");
-        let IrPat::Variant { tag, fields, .. } = &option_arms[1].pat else {
-            panic!("expected Variant, got {:?}", option_arms[1].pat)
-        };
-        assert_eq!(tag, "None");
-        assert!(fields.is_empty());
-    }
-
-    #[test]
-    fn pattern_ir_refined_wraps_the_inner_pattern_and_stays_direct_mode() {
-        let program = checked_program(
-            r#"
-commons demo {
-  fn refined_case(n: Int) -> Int {
-    match n {
-      _ where Positive => 1
-      _ => 0
-    }
-  }
-}
-"#,
-        );
-
-        let (arms, exhaustive) = lower_match_fixture(&program, "refined_case");
-        let IrPat::Refined { inner, refinement } = &arms[0].pat else {
-            panic!("expected Refined, got {:?}", arms[0].pat)
-        };
-        assert!(matches!(&**inner, IrPat::Wild));
-        assert_eq!(refinement.predicates.len(), 1);
-        assert_eq!(refinement.predicates[0].kind.name(), "Positive");
-        assert_eq!(arms[0].binding_mode, BindingMode::Direct);
-        assert!(matches!(exhaustive, Exhaustive::Total));
-    }
-
-    #[test]
-    fn pattern_ir_or_pattern_records_or_dispatch_binding_mode_and_shared_binds() {
-        let program = checked_program(
-            r#"
-commons demo {
-  type Outcome =
-    | Hit(score: Int)
-    | Boost(score: Int)
-    | Miss
-
-  fn or_case(o: Outcome) -> Int {
-    match o {
-      Hit(score) | Boost(score) => score
-      Miss => 0
-    }
-  }
-}
-"#,
-        );
-
-        let (arms, exhaustive) = lower_match_fixture(&program, "or_case");
-        let IrPat::Or { alts } = &arms[0].pat else {
-            panic!("expected Or, got {:?}", arms[0].pat)
-        };
-        assert_eq!(alts.len(), 2);
-        assert!(matches!(&alts[0], IrPat::Variant { tag, .. } if tag == "Hit"));
-        assert!(matches!(&alts[1], IrPat::Variant { tag, .. } if tag == "Boost"));
-        // The whole point of R5.5/Decision C — a name shared across
-        // alternatives, at different structural paths, still surfaces as
-        // one `binds` entry and flips the arm's own dispatch mode.
-        assert_eq!(arms[0].binds, vec!["score".to_string()]);
-        assert_eq!(arms[0].binding_mode, BindingMode::OrDispatch);
-        assert!(matches!(&arms[0].body.kind, IrExprKind::Local(n) if n == "score"));
-
-        // `Miss`'s own arm has no `Or` anywhere in its pattern — stays
-        // `Direct`, proving the mode is per-arm, not a whole-match property.
-        assert_eq!(arms[1].binding_mode, BindingMode::Direct);
-
-        assert!(matches!(exhaustive, Exhaustive::Total));
-    }
-
-    #[test]
-    fn pattern_ir_arm_guard_lowers_and_sees_the_patterns_own_bindings() {
-        // R5.4's ordering claim (a guard must be able to read the pattern's
-        // own bound names) needs a guard that is itself an expression this
-        // pass can lower. A `Bool` payload field read straight back as the
-        // guard exercises the exact same scope-ordering property with the
-        // simplest possible guard expression — no need for a comparison
-        // (real as of #1189) to pin this claim.
-        let program = checked_program(
-            r#"
-commons demo {
-  type Outcome =
-    | Hit(flag: Bool)
-    | Miss
-
-  fn guarded(o: Outcome) -> Int {
-    match o {
-      Hit(flag) if flag => 1
-      _ => 0
-    }
-  }
-}
-"#,
-        );
-
-        let (arms, exhaustive) = lower_match_fixture(&program, "guarded");
-        let guard = arms[0]
-            .guard
-            .as_ref()
-            .unwrap_or_else(|| panic!("expected a lowered guard, got {:?}", arms[0].guard));
-        assert!(matches!(&guard.kind, IrExprKind::Local(n) if n == "flag"));
-        assert!(matches!(exhaustive, Exhaustive::Total));
-    }
-
-    #[test]
-    fn pattern_ir_named_bindings_resolve_by_field_name_not_position() {
-        let program = checked_program(
-            r#"
-commons demo {
-  type Pair =
-    | Pair(a: Int, b: String)
-    | Empty
-
-  fn named_reordered(p: Pair) -> String {
-    match p {
-      Pair(b: s, a: n) => s
-      Empty => "none"
-    }
-  }
-
-  fn named_subset(p: Pair) -> Int {
-    match p {
-      Pair(a: n) => n
-      Empty => 0
-    }
-  }
-}
-"#,
-        );
-
-        // Out-of-order named bindings: `b` (String) is written first in
-        // source order, `a` (Int) second — an index-keyed lookup would bind
-        // `s` against `a`'s own `Int` field instead of `b`'s `String` one.
-        let (reordered_arms, _) = lower_match_fixture(&program, "named_reordered");
-        let IrPat::Variant { fields, .. } = &reordered_arms[0].pat else {
-            panic!("expected Variant, got {:?}", reordered_arms[0].pat)
-        };
-        assert_eq!(fields.len(), 2);
-        assert_eq!(fields[0].0, "b");
-        assert!(matches!(&*fields[0].1, IrPat::Bind { local } if local == "s"));
-        assert_eq!(fields[1].0, "a");
-        assert!(matches!(&*fields[1].1, IrPat::Bind { local } if local == "n"));
-
-        // The named form's documented strict-subset case: `Pair(a: n)`
-        // binds only `a`, leaving `b` entirely out of `fields` — not padded
-        // with a synthesised wildcard for the field it doesn't name.
-        let (subset_arms, _) = lower_match_fixture(&program, "named_subset");
-        let IrPat::Variant { fields, .. } = &subset_arms[0].pat else {
-            panic!("expected Variant, got {:?}", subset_arms[0].pat)
-        };
-        assert_eq!(fields.len(), 1);
-        assert_eq!(fields[0].0, "a");
-        assert!(matches!(&*fields[0].1, IrPat::Bind { local } if local == "n"));
-    }
-
-    #[test]
-    fn pattern_ir_nested_variant_pattern_threads_a_derived_field_ty() {
-        // The one shape where the recursive `lower_pattern_ir` call re-enters
-        // `variant_info_of` against a *derived* `field_ty` (`Ok`'s own
-        // `value` field, `Option[Int]`) rather than the top-level scrutinee
-        // — the substance of Decision A, otherwise only exercised to depth 1.
-        let program = checked_program(
-            r#"
-commons demo {
-  fn nested_variant(x: Result[Option[Int], String]) -> Int {
-    match x {
-      Ok(Some(v)) => v
-      Ok(None) => 0
-      Err(_) => 0
-    }
-  }
-}
-"#,
-        );
-
-        let (arms, exhaustive) = lower_match_fixture(&program, "nested_variant");
-        let IrPat::Variant {
-            tag: outer_tag,
-            fields: outer_fields,
-            ..
-        } = &arms[0].pat
-        else {
-            panic!("expected Variant, got {:?}", arms[0].pat)
-        };
-        assert_eq!(outer_tag, "Ok");
-        assert_eq!(outer_fields[0].0, "value");
-        let IrPat::Variant {
-            tag: inner_tag,
-            fields: inner_fields,
-            ..
-        } = &*outer_fields[0].1
-        else {
-            panic!("expected a nested Variant, got {:?}", outer_fields[0].1)
-        };
-        assert_eq!(inner_tag, "Some");
-        assert!(matches!(&*inner_fields[0].1, IrPat::Bind { local } if local == "v"));
-        assert!(matches!(&arms[0].body.kind, IrExprKind::Local(n) if n == "v"));
-
-        assert!(matches!(exhaustive, Exhaustive::Total));
-    }
-
-    #[test]
-    #[should_panic(expected = "always has at least one unguarded arm")]
-    fn exhaustive_ir_panics_if_every_arm_is_guarded() {
-        // Never reachable through a real certified program — the checker's
-        // own `missing_patterns` gate (`bynk.types.non_exhaustive_match`)
-        // already rejects an all-guarded arm list as non-exhaustive before
-        // `certify` ever produces a `CheckedProgram` (finding 3, #1157).
-        // Hand-built here, bypassing `checked_program` entirely, to prove
-        // the ADR 0334-style discipline Decision B commissions is real, not
-        // decorative.
-        let dummy_expr = Expr {
-            id: ExprId(0),
-            kind: ExprKind::BoolLit(true),
-            span: Span::default(),
-        };
-        let arm = MatchArm {
-            pattern: Pattern::Wildcard(Span::default()),
-            guard: Some(dummy_expr.clone()),
-            body: MatchBody::Expr(dummy_expr),
-            span: Span::default(),
-        };
-        let _ = lower_exhaustive_ir(std::slice::from_ref(&arm));
-    }
-
     // ==== P6.5 (#1159): Match wired to a real consumer ====
     //
     // Unlike the P6.4 section above, every fixture below goes through the
     // ordinary `lower_expr_ir`/`lower_fn_body_ir` path — no digging a
     // fixture's own `match` out by hand and calling `lower_arm_ir`/
     // `lower_exhaustive_ir` directly.
-
-    #[test]
-    fn match_through_lower_expr_ir_builds_a_real_match_node_with_flat_form() {
-        // Also this slice's own end-to-end coverage of `Exhaustive::Total`
-        // reachable through `lower_fn_body_ir` — the P6.4 section above only
-        // ever reaches it through the standalone `lower_exhaustive_ir` entry
-        // point, not the real `ExprKind::Match` arm this slice wires up.
-        let program = checked_program(
-            r#"
-commons demo {
-  type Outcome =
-    | Hit(score: Int)
-    | Miss
-
-  fn describe(o: Outcome) -> Int {
-    match o {
-      Hit(score) => score
-      Miss => 0
-    }
-  }
-}
-"#,
-        );
-        let ir = lower_fn(&program, "describe");
-        let tail = fn_tail(&ir);
-        let IrExprKind::Match {
-            scrutinee,
-            arms,
-            exhaustive,
-            form,
-        } = &tail.kind
-        else {
-            panic!("expected Match, got {:?}", tail.kind)
-        };
-        assert!(matches!(&scrutinee.kind, IrExprKind::Local(n) if n == "o"));
-        assert_eq!(arms.len(), 2);
-        assert!(matches!(&arms[0].pat, IrPat::Variant { tag, .. } if tag == "Hit"));
-        assert!(matches!(&arms[0].body.kind, IrExprKind::Local(n) if n == "score"));
-        assert!(matches!(&arms[1].pat, IrPat::Variant { tag, .. } if tag == "Miss"));
-        assert!(matches!(exhaustive, Exhaustive::Total));
-        assert_eq!(*form, MatchForm::Flat);
-    }
-
-    #[test]
-    fn match_with_a_guarded_arm_gets_if_chain_form() {
-        let program = checked_program(
-            r#"
-commons demo {
-  type Outcome =
-    | Hit(flag: Bool)
-    | Miss
-
-  fn describe(o: Outcome) -> Int {
-    match o {
-      Hit(flag) if flag => 1
-      _ => 0
-    }
-  }
-}
-"#,
-        );
-        let ir = lower_fn(&program, "describe");
-        let tail = fn_tail(&ir);
-        let IrExprKind::Match { arms, form, .. } = &tail.kind else {
-            panic!("expected Match, got {:?}", tail.kind)
-        };
-        assert_eq!(*form, MatchForm::IfChain);
-        // Not just `form` — the guard itself must actually lower, and
-        // (R5.4 ordering) must see the pattern's own bound name `flag`
-        // already in scope, resolving as a `Local` rather than falling
-        // through to `lower_ident_ir`'s final assertion. `lower_arm_ir` already
-        // covers this standalone (`pattern_ir_arm_guard_lowers_and_sees_the_
-        // patterns_own_bindings`); this pins the same property reached
-        // through the real `ExprKind::Match` arm instead.
-        let guard = arms[0]
-            .guard
-            .as_ref()
-            .unwrap_or_else(|| panic!("expected a lowered guard, got {:?}", arms[0].guard));
-        assert!(matches!(&guard.kind, IrExprKind::Local(n) if n == "flag"));
-    }
-
-    #[test]
-    fn match_with_a_nested_refutable_payload_pattern_gets_if_chain_form() {
-        let program = checked_program(
-            r#"
-commons demo {
-  fn describe(x: Result[Option[Int], String]) -> Int {
-    match x {
-      Ok(Some(v)) => v
-      Ok(None) => 0
-      Err(_) => 0
-    }
-  }
-}
-"#,
-        );
-        let ir = lower_fn(&program, "describe");
-        let tail = fn_tail(&ir);
-        let IrExprKind::Match { form, .. } = &tail.kind else {
-            panic!("expected Match, got {:?}", tail.kind)
-        };
-        assert_eq!(*form, MatchForm::IfChain);
-    }
-
-    #[test]
-    fn match_with_a_refined_arm_gets_if_chain_form() {
-        // The third of `match_needs_if_chain`'s three disjuncts
-        // (`Pattern::Refined`), untested through `lower_expr_ir` by the two
-        // tests above — also pins the IR counterpart this same slice builds
-        // for a `where`-refined arm (`IrPat::Refined`), so `form` and the
-        // pattern shape are checked together rather than in isolation.
-        let program = checked_program(
-            r#"
-commons demo {
-  fn describe(n: Int) -> Int {
-    match n {
-      _ where Positive => 1
-      _ => 0
-    }
-  }
-}
-"#,
-        );
-        let ir = lower_fn(&program, "describe");
-        let tail = fn_tail(&ir);
-        let IrExprKind::Match { arms, form, .. } = &tail.kind else {
-            panic!("expected Match, got {:?}", tail.kind)
-        };
-        assert!(matches!(&arms[0].pat, IrPat::Refined { .. }));
-        assert_eq!(*form, MatchForm::IfChain);
-    }
-
-    #[test]
-    fn match_with_a_bindingless_or_pattern_stays_flat() {
-        // The counter-intuitive half of `pattern_has_nested_test`'s own
-        // `Pattern::Or` rule: a bindingless or-pattern (`Hit | Boost`) stays
-        // `Flat` — only an or-pattern *with* bindings, or one with a nested
-        // refutable payload, needs the if-chain. A distinct axis from
-        // `IrArm::binding_mode` (`OrDispatch` the moment `IrPat::Or` occurs
-        // anywhere, bindings or not, R5.5 — see `ir_pat_contains_or`'s own
-        // doc comment), so no assertion on `binding_mode` here. The
-        // cheapest way to catch a future "any `Or` => if-chain" regression,
-        // in either the emitter predicate or a re-derivation of it, is
-        // pinning the case that would silently flip first.
-        let program = checked_program(
-            r#"
-commons demo {
-  type Outcome =
-    | Hit
-    | Boost
-    | Miss
-
-  fn describe(o: Outcome) -> Int {
-    match o {
-      Hit | Boost => 1
-      Miss => 0
-    }
-  }
-}
-"#,
-        );
-        let ir = lower_fn(&program, "describe");
-        let tail = fn_tail(&ir);
-        let IrExprKind::Match { arms, form, .. } = &tail.kind else {
-            panic!("expected Match, got {:?}", tail.kind)
-        };
-        assert!(matches!(&arms[0].pat, IrPat::Or { .. }));
-        assert_eq!(*form, MatchForm::Flat);
-    }
-
-    #[test]
-    fn match_construction_is_position_agnostic_tail_vs_nested() {
-        // Mirrors `if_lowers_both_branches_as_blocks_not_return_wrapped`'s
-        // own precedent: `Match`'s own scrutinee/arms/exhaustive/form don't
-        // depend on whether the match sits in a fn body's own tail (wrapped
-        // in `Return` by `lower_fn_body_ir`) or nested inside another
-        // expression (here, a `let`'s own value) — the same source-level
-        // match lowers to the same shape either way, since `MatchForm`
-        // deliberately doesn't record a position axis (Decision A).
-        let program = checked_program(
-            r#"
-commons demo {
-  type Outcome =
-    | Hit(score: Int)
-    | Miss
-
-  fn tail_position(o: Outcome) -> Int {
-    match o {
-      Hit(score) => score
-      Miss => 0
-    }
-  }
-
-  fn nested_position(o: Outcome) -> Int {
-    let result = match o {
-      Hit(score) => score
-      Miss => 0
-    }
-    result
-  }
-}
-"#,
-        );
-
-        let tail_ir = lower_fn(&program, "tail_position");
-        let tail = fn_tail(&tail_ir);
-        let IrExprKind::Match {
-            arms: tail_arms,
-            exhaustive: tail_exhaustive,
-            form: tail_form,
-            ..
-        } = &tail.kind
-        else {
-            panic!("tail_position: expected Match, got {:?}", tail.kind)
-        };
-
-        let nested_ir = lower_fn(&program, "nested_position");
-        let IrExprKind::Block { stmts, .. } = &nested_ir.kind else {
-            panic!(
-                "lower_fn_body_ir always returns IrExprKind::Block, got {:?}",
-                nested_ir.kind
-            )
-        };
-        let IrStmt::Let {
-            value: nested_match,
-            ..
-        } = &stmts[0]
-        else {
-            panic!("nested_position: expected a Let statement, got {stmts:?}")
-        };
-        let IrExprKind::Match {
-            arms: nested_arms,
-            exhaustive: nested_exhaustive,
-            form: nested_form,
-            ..
-        } = &nested_match.kind
-        else {
-            panic!(
-                "nested_position: expected Match, got {:?}",
-                nested_match.kind
-            )
-        };
-
-        fn tags(arms: &[IrArm]) -> Vec<&str> {
-            arms.iter()
-                .map(|a| match &a.pat {
-                    IrPat::Variant { tag, .. } => tag.as_str(),
-                    other => panic!("expected a Variant pattern, got {other:?}"),
-                })
-                .collect()
-        }
-        assert_eq!(tags(tail_arms), tags(nested_arms));
-        assert_eq!(*tail_form, *nested_form);
-        assert!(matches!(tail_exhaustive, Exhaustive::Total));
-        assert!(matches!(nested_exhaustive, Exhaustive::Total));
-    }
-
-    #[test]
-    fn type_item_record_resolves_fields_and_generic_rigid_vars() {
-        let program = checked_program(
-            r#"
-commons demo {
-  type Box[T] = { value: T }
-}
-"#,
-        );
-        let decl = find_type(&program, "Box");
-        let item = lower_type_item_ir(decl, &program);
-        let IrItem::Type { shape } = &item else {
-            panic!("expected IrItem::Type, got {item:?}")
-        };
-        let TypeShape::Record { fields } = shape else {
-            panic!("expected TypeShape::Record, got {shape:?}")
-        };
-        assert_eq!(fields.len(), 1);
-        assert_eq!(fields[0].0, "value");
-        assert!(matches!(
-            &*program.program().ty_intern.get(fields[0].1),
-            Ty::Var(name) if name == "T"
-        ));
-    }
-
-    #[test]
-    fn type_item_sum_resolves_variant_payloads_and_embeds() {
-        let program = checked_program(
-            r#"
-commons demo {
-  type PaymentError = enum { Declined, InsufficientFunds }
-
-  type OrderError =
-    | OutOfStock(sku: String, qty: Int)
-    | Payment(reason: PaymentError)
-    embeds PaymentError as Payment
-}
-"#,
-        );
-        let decl = find_type(&program, "OrderError");
-        let item = lower_type_item_ir(decl, &program);
-        let IrItem::Type { shape, .. } = &item else {
-            panic!("expected IrItem::Type, got {item:?}")
-        };
-        let TypeShape::Sum { variants, embeds } = shape else {
-            panic!("expected TypeShape::Sum, got {shape:?}")
-        };
-        assert_eq!(variants.len(), 2);
-        assert_eq!(variants[0].0, "OutOfStock");
-        assert_eq!(variants[0].1.len(), 2);
-        assert_eq!(variants[0].1[0].0, "sku");
-        assert!(matches!(
-            &*program.program().ty_intern.get(variants[0].1[0].1),
-            Ty::Base(bynk_syntax::ast::BaseType::String)
-        ));
-        assert_eq!(variants[0].1[1].0, "qty");
-        assert!(matches!(
-            &*program.program().ty_intern.get(variants[0].1[1].1),
-            Ty::Base(bynk_syntax::ast::BaseType::Int)
-        ));
-        assert_eq!(variants[1].0, "Payment");
-        assert_eq!(variants[1].1.len(), 1);
-        assert_eq!(variants[1].1[0].0, "reason");
-
-        assert_eq!(embeds.len(), 1);
-        let (source, tag) = &embeds[0];
-        assert_eq!(tag, "Payment");
-        let Ty::Named { name, .. } = &*program.program().ty_intern.get(*source) else {
-            panic!("expected embeds source to resolve to a named type")
-        };
-        assert_eq!(name, "PaymentError");
-    }
-
-    #[test]
-    fn type_item_refined_and_opaque_cover_bare_and_predicated_and_opaque_forms() {
-        let program = checked_program(
-            r#"
-commons demo {
-  type Age = Int where Positive
-  type UserId = opaque Int
-  type Bare = Int
-}
-"#,
-        );
-        let age = find_type(&program, "Age");
-        let IrItem::Type {
-            shape: age_shape, ..
-        } = lower_type_item_ir(age, &program)
-        else {
-            unreachable!()
-        };
-        let TypeShape::Refined {
-            base,
-            refinement,
-            opaque,
-        } = age_shape
-        else {
-            panic!("expected TypeShape::Refined for Age")
-        };
-        assert_eq!(base, bynk_syntax::ast::BaseType::Int);
-        assert!(refinement.is_some());
-        assert!(!opaque);
-
-        let user_id = find_type(&program, "UserId");
-        let IrItem::Type {
-            shape: user_id_shape,
-            ..
-        } = lower_type_item_ir(user_id, &program)
-        else {
-            unreachable!()
-        };
-        let TypeShape::Refined {
-            refinement, opaque, ..
-        } = user_id_shape
-        else {
-            panic!("expected TypeShape::Refined for UserId")
-        };
-        assert!(refinement.is_none());
-        assert!(opaque);
-
-        let bare = find_type(&program, "Bare");
-        let IrItem::Type {
-            shape: bare_shape, ..
-        } = lower_type_item_ir(bare, &program)
-        else {
-            unreachable!()
-        };
-        let TypeShape::Refined {
-            refinement, opaque, ..
-        } = bare_shape
-        else {
-            panic!("expected TypeShape::Refined for Bare")
-        };
-        assert!(refinement.is_none());
-        assert!(!opaque);
-    }
-
-    #[test]
-    fn fn_item_covers_effectful_and_pure_and_generic_and_method() {
-        let program = checked_program(
-            r#"
-commons demo {
-  type Box[A] = { value: A }
-
-  fn Box.get(self) -> A { self.value }
-
-  fn Box.fetch(self) -> Effect[A] { Effect.pure(self.value) }
-
-  fn two_params(a: Int, b: Int) -> Int { a }
-
-  fn identity[T](x: T) -> T { x }
-
-  fn fetch() -> Effect[Int] { Effect.pure(1) }
-}
-"#,
-        );
-
-        let two_params = find_fn_arc(&program, "two_params");
-        let IrItem::Fn {
-            receiver,
-            params,
-            ret,
-            effectful,
-            ..
-        } = lower_fn_item_ir(two_params, &program)
-        else {
-            unreachable!()
-        };
-        assert!(receiver.is_none(), "a free function has no receiver");
-        assert_eq!(params.len(), 2);
-        assert_eq!(params[0].0, "a");
-        assert_eq!(params[1].0, "b");
-        assert!(matches!(
-            &*program.program().ty_intern.get(ret),
-            Ty::Base(bynk_syntax::ast::BaseType::Int)
-        ));
-        assert!(!effectful);
-
-        let fetch = find_fn_arc(&program, "fetch");
-        let IrItem::Fn { effectful, .. } = lower_fn_item_ir(fetch, &program) else {
-            unreachable!()
-        };
-        assert!(effectful);
-
-        let identity = find_fn_arc(&program, "identity");
-        let IrItem::Fn { params, ret, .. } = lower_fn_item_ir(identity, &program) else {
-            unreachable!()
-        };
-        assert!(matches!(
-            &*program.program().ty_intern.get(params[0].1),
-            Ty::Var(n) if n == "T"
-        ));
-        assert!(matches!(
-            &*program.program().ty_intern.get(ret),
-            Ty::Var(n) if n == "T"
-        ));
-
-        let method = find_fn_arc(&program, "Box.get");
-        let IrItem::Fn {
-            receiver,
-            params,
-            ret,
-            effectful,
-            ..
-        } = lower_fn_item_ir(method, &program)
-        else {
-            unreachable!()
-        };
-        assert!(params.is_empty(), "self is not a param — see receiver");
-        let Some(receiver_ty) = receiver else {
-            panic!("expected Box.get to carry a receiver")
-        };
-        let Ty::Named { name, args, .. } = &*program.program().ty_intern.get(receiver_ty) else {
-            panic!("expected the receiver to resolve to a named type")
-        };
-        assert_eq!(name, "Box");
-        assert_eq!(args.len(), 1);
-        assert!(matches!(
-            &*program.program().ty_intern.get(args[0]),
-            Ty::Var(n) if n == "A"
-        ));
-        assert!(matches!(
-            &*program.program().ty_intern.get(ret),
-            Ty::Var(n) if n == "A"
-        ));
-        assert!(!effectful);
-
-        let effectful_method = find_fn_arc(&program, "Box.fetch");
-        let IrItem::Fn {
-            receiver,
-            effectful,
-            ..
-        } = lower_fn_item_ir(effectful_method, &program)
-        else {
-            unreachable!()
-        };
-        assert!(
-            receiver.is_some(),
-            "Box.fetch is also a method with a receiver"
-        );
-        assert!(effectful, "Effect[A] return makes Box.fetch effectful");
-    }
-
-    #[test]
-    fn type_item_sum_covers_a_payload_less_variant() {
-        let program = checked_program(
-            r#"
-commons demo {
-  type PaymentError = enum { Declined, InsufficientFunds }
-}
-"#,
-        );
-        let decl = find_type(&program, "PaymentError");
-        let item = lower_type_item_ir(decl, &program);
-        let IrItem::Type { shape, .. } = &item else {
-            panic!("expected IrItem::Type, got {item:?}")
-        };
-        let TypeShape::Sum { variants, embeds } = shape else {
-            panic!("expected TypeShape::Sum, got {shape:?}")
-        };
-        assert_eq!(variants.len(), 2);
-        assert_eq!(variants[0].0, "Declined");
-        assert!(
-            variants[0].1.is_empty(),
-            "a bare variant carries no payload"
-        );
-        assert_eq!(variants[1].0, "InsufficientFunds");
-        assert!(variants[1].1.is_empty());
-        assert!(embeds.is_empty());
-    }
-
-    #[test]
-    fn type_item_record_drops_a_fields_own_inline_refinement() {
-        // Decision B extension, `ir.rs`'s own `TypeShape::Record` doc
-        // comment: a field's inline `where` clause is a construction-time
-        // constraint the checker already enforces, not part of the emitted
-        // shape — pin that the field still lowers to `(name, ty)` with the
-        // refinement silently absent, not that lowering rejects it.
-        let program = checked_program(
-            r#"
-commons demo {
-  type Account = { balance: Int where NonNegative }
-}
-"#,
-        );
-        let decl = find_type(&program, "Account");
-        let item = lower_type_item_ir(decl, &program);
-        let IrItem::Type { shape, .. } = &item else {
-            panic!("expected IrItem::Type, got {item:?}")
-        };
-        let TypeShape::Record { fields } = shape else {
-            panic!("expected TypeShape::Record, got {shape:?}")
-        };
-        assert_eq!(fields.len(), 1);
-        assert_eq!(fields[0].0, "balance");
-        assert!(matches!(
-            &*program.program().ty_intern.get(fields[0].1),
-            Ty::Base(bynk_syntax::ast::BaseType::Int)
-        ));
-    }
-
-    #[test]
-    fn type_item_record_resolves_a_generic_type_application_field() {
-        // The `TypeRef::App` arm of `resolve_type_ref_in` — the one arm
-        // that returns `None` for an unknown/unapplied name, and so the one
-        // most likely to silently hit this pass's own ADR 0334 panic if the
-        // field's resolution were ever wired up wrong.
-        let program = checked_program(
-            r#"
-commons demo {
-  type Box[T] = { value: T }
-  type Wrapper = { boxed: Box[Int] }
-}
-"#,
-        );
-        let decl = find_type(&program, "Wrapper");
-        let item = lower_type_item_ir(decl, &program);
-        let IrItem::Type { shape, .. } = &item else {
-            panic!("expected IrItem::Type, got {item:?}")
-        };
-        let TypeShape::Record { fields } = shape else {
-            panic!("expected TypeShape::Record, got {shape:?}")
-        };
-        assert_eq!(fields.len(), 1);
-        assert_eq!(fields[0].0, "boxed");
-        let Ty::Named { name, args, .. } = &*program.program().ty_intern.get(fields[0].1) else {
-            panic!("expected `boxed` to resolve to a named type")
-        };
-        assert_eq!(name, "Box");
-        assert_eq!(args.len(), 1);
-        assert!(matches!(
-            &*program.program().ty_intern.get(args[0]),
-            Ty::Base(bynk_syntax::ast::BaseType::Int)
-        ));
-    }
 
     /// Like [`checked_program`], but for source that declares an `agent`
     /// and/or a `service` — both are only legal inside a `context`, not a
@@ -7035,32 +1286,6 @@ commons demo {
             .unwrap_or_else(|| panic!("no service named `{name}` in this fixture"))
     }
 
-    fn find_capability<'a>(program: &'a CheckedProgram, name: &str) -> &'a CapabilityDecl {
-        program
-            .program()
-            .commons
-            .items
-            .iter()
-            .find_map(|item| match item {
-                CommonsItem::Capability(c) if c.name.name == name => Some(c),
-                _ => None,
-            })
-            .unwrap_or_else(|| panic!("no capability named `{name}` in this fixture"))
-    }
-
-    fn find_provider<'a>(program: &'a CheckedProgram, name: &str) -> &'a ProviderDecl {
-        program
-            .program()
-            .commons
-            .items
-            .iter()
-            .find_map(|item| match item {
-                CommonsItem::Provider(p) if p.provider_name.name == name => Some(p),
-                _ => None,
-            })
-            .unwrap_or_else(|| panic!("no provider named `{name}` in this fixture"))
-    }
-
     /// `find_handler` (below) matches on `method_name`, which is always
     /// `None` for a service handler — useless here. Matches on
     /// `HandlerKind` equality instead; not a unique identity on its own (a
@@ -7092,46 +1317,6 @@ commons demo {
                     agent.name.name
                 )
             })
-    }
-
-    #[test]
-    fn store_field_cell_with_initialiser_and_without() {
-        let program = checked_context_program(
-            r#"
-context demo
-
-agent Counter {
-  key id: String
-  store balance: Cell[Int] = 0
-  store hint: Cell[String]
-
-  on call touch() -> Effect[()] {
-    Effect.pure(())
-  }
-}
-"#,
-        );
-        let agent = find_agent(&program, "Counter");
-
-        let balance = find_store_field(agent, "balance");
-        let ir = lower_store_field_ir(balance, &program);
-        assert_eq!(ir.field, "balance");
-        assert!(matches!(ir.kind, StoreKindIr::Cell(_)));
-        assert!(
-            ir.init.is_some(),
-            "a Cell field with an initialiser lowers a real init expression"
-        );
-        assert!(ir.indexed.is_empty());
-
-        let hint = find_store_field(agent, "hint");
-        let ir = lower_store_field_ir(hint, &program);
-        assert_eq!(ir.field, "hint");
-        assert!(matches!(ir.kind, StoreKindIr::Cell(_)));
-        assert!(
-            ir.init.is_none(),
-            "Decision D's own boundary: a Cell field with no initialiser lowers to None, \
-             not merely reached by omission"
-        );
     }
 
     /// #1187's Agent state-field slice: [`lower_store_field_shape_ir`]
@@ -7202,1535 +1387,6 @@ agent Meter {
         assert!(ir.init.is_none());
     }
 
-    #[test]
-    fn store_field_falls_back_to_unit_on_an_unresolvable_type_like_the_checker_does() {
-        // #1187's Agent state-field slice, step 0: no checker pass validates
-        // a store field's own type reference (only its shape — `Cell`/`Map`/
-        // `Set`/`Cache`/`Log` — and `@ttl`/`@indexed` legality), so
-        // `store x: Cell[Bogus] = "hello"` certifies today (exit 0, no
-        // diagnostic, verified empirically against the real `bynkc` binary)
-        // even though `Bogus` is undeclared and the initialiser's own type
-        // doesn't match it. `resolve_store_field_ty` must mirror
-        // `lower_op_sig_ir`'s own `Ty::Unit` fallback rather than panic on a
-        // state that is, in fact, reachable from source — shared by
-        // `lower_store_field_ir` and `lower_store_field_shape_ir` alike.
-        // Only the shape reader is exercised end-to-end here: with the
-        // field's own type unresolved, the checker's init-checking loop
-        // leaves `"hello"` untyped too (a second, separate gap in the
-        // dormant, not-yet-wired `lower_store_field_ir`'s `init` arm — out
-        // of scope for this slice, which never lowers `init` at all).
-        let program = checked_context_program(
-            r#"
-context demo
-
-agent Widget {
-  key id: String
-  store x: Cell[Bogus] = "hello"
-
-  on call touch() -> Effect[()] {
-    Effect.pure(())
-  }
-}
-"#,
-        );
-        let agent = find_agent(&program, "Widget");
-        let x = find_store_field(agent, "x");
-        // Would already have panicked inside `checked_context_program`'s own
-        // `.expect("certify")` if this were rejected upstream — reaching
-        // here at all is part of what this test pins.
-        let shape = lower_store_field_shape_ir(x, &program);
-        let StoreKindIr::Cell(ty) = shape.kind else {
-            panic!("expected StoreKindIr::Cell, got {:?}", shape.kind)
-        };
-        assert!(matches!(&*program.program().ty_intern.get(ty), Ty::Unit));
-    }
-
-    #[test]
-    fn store_field_cell_init_qualified_constructor_call_lowers_without_panicking() {
-        // A `Cell` field's own initialiser is checked via
-        // `checker::check_state_initialiser`, which types call-shaped
-        // sub-expressions (`T.unsafe(lit)`, a qualified sum-variant
-        // constructor) through the same `Ctx` every other body check uses —
-        // including recording a `Callee` for the call. `lower_store_field_ir`
-        // lowers that same init expression through `lower_expr_ir`, which
-        // reads `program.callees` unconditionally for a call-shaped node
-        // (ADR 0334): this pins that `check_static_initialiser` persists its
-        // own `Callee` into the real `typed.callees` sink rather than a
-        // throwaway local, so this doesn't panic on a certified program the
-        // checker legitimately accepted.
-        let program = checked_context_program(
-            r#"
-context demo
-
-type PositiveId = opaque Int where NonNegative
-
-agent Counter {
-  key id: String
-  store n: Cell[PositiveId] = PositiveId.unsafe(1)
-
-  on call touch() -> Effect[()] {
-    Effect.pure(())
-  }
-}
-"#,
-        );
-        let agent = find_agent(&program, "Counter");
-        let n = find_store_field(agent, "n");
-        let ir = lower_store_field_ir(n, &program);
-        assert!(matches!(ir.kind, StoreKindIr::Cell(_)));
-        assert!(ir.init.is_some());
-    }
-
-    /// #1225's own ADR resolution, verified against the real regression it
-    /// closes: `223_store_cell_agent` (`bynkc/tests/fixtures/positive`) has
-    /// `store paymentRef: Cell[Option[AuthId]] = None` — before this ADR,
-    /// `lower_store_field_ir`'s own `init` lowering hit the `ExprKind::None`
-    /// `todo!()` this module used to carry (`lower_store_field_shape_ir`,
-    /// #1187's Agent state-field slice 2a, was built specifically to avoid
-    /// ever lowering `init` at all, precisely because of this gap — see its
-    /// own doc comment). This pins that the *full*, `init`-lowering
-    /// `lower_store_field_ir` no longer panics on the exact shape that
-    /// fixture carries.
-    #[test]
-    fn store_field_cell_option_init_none_lowers_without_panicking() {
-        let program = checked_context_program(
-            r#"
-context demo
-
-type AuthId = String where NonEmpty
-
-agent Order {
-  key id: String
-  store paymentRef: Cell[Option[AuthId]] = None
-
-  on call touch() -> Effect[()] {
-    Effect.pure(())
-  }
-}
-"#,
-        );
-        let agent = find_agent(&program, "Order");
-        let payment_ref = find_store_field(agent, "paymentRef");
-        let ir = lower_store_field_ir(payment_ref, &program);
-        assert!(matches!(ir.kind, StoreKindIr::Cell(_)));
-        let Some(init) = &ir.init else {
-            panic!("expected a lowered `None` initialiser, got None")
-        };
-        assert!(matches!(
-            &init.kind,
-            IrExprKind::Variant { tag, payload } if tag == "None" && payload.is_empty()
-        ));
-    }
-
-    #[test]
-    fn store_field_map_indexed_zero_one_and_multiple() {
-        let program = checked_context_program(
-            r#"
-context demo
-
-type Reservation = {
-  id: String,
-  orderId: String,
-  status: String,
-}
-
-agent Inventory {
-  key sku: String
-  store noIndex: Map[String, Reservation]
-  store oneIndex: Map[String, Reservation] @indexed(by: orderId)
-  store twoIndex: Map[String, Reservation] @indexed(by: orderId, by: status)
-  store dupIndex: Map[String, Reservation] @indexed(by: orderId, by: orderId)
-
-  on call touch() -> Effect[()] {
-    Effect.pure(())
-  }
-}
-"#,
-        );
-        let agent = find_agent(&program, "Inventory");
-
-        let no_index = find_store_field(agent, "noIndex");
-        let ir = lower_store_field_ir(no_index, &program);
-        assert!(matches!(ir.kind, StoreKindIr::Map(_, _)));
-        assert!(ir.indexed.is_empty());
-        assert!(
-            ir.init.is_none(),
-            "Decision D: init is None for a non-Cell kind"
-        );
-
-        let one_index = find_store_field(agent, "oneIndex");
-        let ir = lower_store_field_ir(one_index, &program);
-        assert_eq!(ir.indexed, vec!["orderId".to_string()]);
-
-        let two_index = find_store_field(agent, "twoIndex");
-        let ir = lower_store_field_ir(two_index, &program);
-        assert_eq!(
-            ir.indexed,
-            vec!["orderId".to_string(), "status".to_string()],
-            "Vec<IndexIr>'s own multi-entry case, in the annotation's own by: order"
-        );
-
-        // `validate_indexed_keys` (bynk-check) validates each `by:`
-        // argument independently with no duplicate check, so
-        // `@indexed(by: orderId, by: orderId)` certifies — this pins that
-        // lowering still dedupes, mirroring the shipped emitter's own
-        // `store_map_indexes` guard, rather than emitting the same sibling
-        // index table twice.
-        let dup_index = find_store_field(agent, "dupIndex");
-        let ir = lower_store_field_ir(dup_index, &program);
-        assert_eq!(
-            ir.indexed,
-            vec!["orderId".to_string()],
-            "a duplicate by: key collapses to one sibling-table entry"
-        );
-    }
-
-    #[test]
-    fn store_field_set_element_type() {
-        let program = checked_context_program(
-            r#"
-context demo
-
-agent Tags {
-  key id: String
-  store tags: Set[String]
-
-  on call touch() -> Effect[()] {
-    Effect.pure(())
-  }
-}
-"#,
-        );
-        let agent = find_agent(&program, "Tags");
-        let tags = find_store_field(agent, "tags");
-        let ir = lower_store_field_ir(tags, &program);
-        assert_eq!(ir.field, "tags");
-        assert!(matches!(ir.kind, StoreKindIr::Set(_)));
-        assert!(ir.init.is_none());
-        assert!(ir.indexed.is_empty());
-    }
-
-    #[test]
-    fn store_field_cache_resolves_ttl_millis() {
-        let program = checked_context_program(
-            r#"
-context demo
-
-agent Sessions {
-  key id: String
-  store live: Cache[String, Int] @ttl(5.minutes)
-
-  on call touch() -> Effect[()] {
-    Effect.pure(())
-  }
-}
-"#,
-        );
-        let agent = find_agent(&program, "Sessions");
-        let live = find_store_field(agent, "live");
-        let ir = lower_store_field_ir(live, &program);
-        assert_eq!(ir.field, "live");
-        let StoreKindIr::Cache(_, _, ttl) = ir.kind else {
-            panic!("expected StoreKindIr::Cache, got {:?}", ir.kind)
-        };
-        assert_eq!(
-            ttl,
-            5 * 60 * 1000,
-            "5.minutes' own DurationLit.millis, not re-derived arithmetic"
-        );
-    }
-
-    #[test]
-    fn store_field_log_with_and_without_retain() {
-        let program = checked_context_program(
-            r#"
-context demo
-
-agent Inventory {
-  key id: String
-  store historyWithRetain: Log[String] @retain(30.days)
-  store historyNoRetain: Log[String]
-
-  on call touch() -> Effect[()] {
-    Effect.pure(())
-  }
-}
-"#,
-        );
-        let agent = find_agent(&program, "Inventory");
-
-        let with_retain = find_store_field(agent, "historyWithRetain");
-        let ir = lower_store_field_ir(with_retain, &program);
-        let StoreKindIr::Log(_, retain) = ir.kind else {
-            panic!("expected StoreKindIr::Log, got {:?}", ir.kind)
-        };
-        assert_eq!(retain, Some(30 * 24 * 60 * 60 * 1000));
-
-        let no_retain = find_store_field(agent, "historyNoRetain");
-        let ir = lower_store_field_ir(no_retain, &program);
-        let StoreKindIr::Log(_, retain) = ir.kind else {
-            panic!("expected StoreKindIr::Log, got {:?}", ir.kind)
-        };
-        assert_eq!(retain, None, "@retain is genuinely optional on Log");
-    }
-
-    fn find_handler<'a>(agent: &'a AgentDecl, name: &str) -> &'a Handler {
-        agent
-            .handlers
-            .iter()
-            .find(|h| h.method_name.as_ref().is_some_and(|m| m.name == name))
-            .unwrap_or_else(|| panic!("no handler named `{name}` on agent `{}`", agent.name.name))
-    }
-
-    /// The agent's own synthetic `<Agent>State` record type — re-derives
-    /// `context_checks.rs`'s own `state_ty` construction (`tys.intern(Ty::Named {
-    /// name: "<Agent>State", .. })`) rather than looking it up: the synthetic
-    /// declaration itself lives only in `check_agent_decls`'s own transient
-    /// `types_for_handler` clone, never persisted to `TypedCommons::types`, but
-    /// `Types::intern` is content-addressed, so re-interning the identical `Ty`
-    /// value here returns the exact `TyId` the checker already minted.
-    fn agent_state_ty(program: &CheckedProgram, agent_name: &str) -> TyId {
-        program.program().ty_intern.intern(Ty::Named {
-            name: format!("{agent_name}State"),
-            kind: checker::NamedKind::Record,
-            args: Vec::new(),
-        })
-    }
-
-    /// [`lower_invariant_ir`]'s own `store_cells` parameter, built the same
-    /// way [`lower_invariant_ir`]'s own doc comment says a future `IrItem::Agent`
-    /// caller must: from each `Cell` field's own already-lowered
-    /// [`StoreFieldIr::kind`], not re-resolved independently.
-    fn agent_store_cells(program: &CheckedProgram, agent: &AgentDecl) -> HashMap<String, TyId> {
-        agent
-            .store_fields
-            .iter()
-            .filter(|f| f.kind.head.name == "Cell")
-            .map(|f| {
-                let ir = lower_store_field_ir(f, program);
-                let StoreKindIr::Cell(ty) = ir.kind else {
-                    unreachable!("filtered to Cell fields above")
-                };
-                (ir.field, ty)
-            })
-            .collect()
-    }
-
-    /// [`lower_handler_ir`]'s own `store_queryable` parameter (P6.20-pre) —
-    /// the `Map` sibling of [`agent_store_cells`] above. `Log` is not
-    /// included — see [`lower_agent_item_ir`]'s own `store_queryable`
-    /// construction for why (review of #1240).
-    fn agent_store_queryable(_program: &CheckedProgram, agent: &AgentDecl) -> HashSet<String> {
-        agent
-            .store_fields
-            .iter()
-            .filter(|f| f.kind.head.name == "Map")
-            .map(|f| f.name.name.clone())
-            .collect()
-    }
-
-    #[test]
-    fn invariant_ir_references_a_store_cell_by_bare_name() {
-        let program = checked_context_program(
-            r#"
-context demo
-
-agent Counter {
-  key id: String
-  store active: Cell[Bool] = true
-
-  invariant staysKnown: active
-
-  on call touch() -> Effect[()] {
-    Effect.pure(())
-  }
-}
-"#,
-        );
-        let agent = find_agent(&program, "Counter");
-        let store_cells = agent_store_cells(&program, agent);
-        let inv = agent
-            .invariants
-            .iter()
-            .find(|i| i.name.name == "staysKnown")
-            .expect("invariant `staysKnown` in this fixture");
-        let ir = lower_invariant_ir(inv, &store_cells, &program);
-        assert_eq!(ir.name, "staysKnown");
-        assert!(
-            matches!(&ir.predicate.kind, IrExprKind::Local(n) if n == "active"),
-            "a bare-name read of a store Cell field lowers to Local, got {:?}",
-            ir.predicate.kind
-        );
-    }
-
-    #[test]
-    fn transition_ir_references_both_old_and_new() {
-        let program = checked_context_program(
-            r#"
-context demo
-
-agent Counter {
-  key id: String
-  store active: Cell[Bool] = true
-
-  transition activeImplication: old.active implies new.active
-
-  on call touch() -> Effect[()] {
-    Effect.pure(())
-  }
-}
-"#,
-        );
-        let agent = find_agent(&program, "Counter");
-        let state_ty = agent_state_ty(&program, "Counter");
-        let tr = agent
-            .transitions
-            .iter()
-            .find(|t| t.name.name == "activeImplication")
-            .expect("transition `activeImplication` in this fixture");
-        let ir = lower_transition_ir(tr, state_ty, &program);
-        assert_eq!(ir.name, "activeImplication");
-        // `p implies q` lowers to `Or { lhs: Not(p), rhs: q }` (P6.3) — pin
-        // that both `old`/`new` reach this predicate as `Field` accesses on
-        // a `Local` bound to `state_ty`, not left unresolved.
-        let IrExprKind::Or { lhs, rhs } = &ir.predicate.kind else {
-            panic!(
-                "expected `implies` to lower to Or, got {:?}",
-                ir.predicate.kind
-            )
-        };
-        let IrExprKind::Not { operand } = &lhs.kind else {
-            panic!("expected Or's own lhs to be Not, got {:?}", lhs.kind)
-        };
-        let IrExprKind::Field { base, field } = &operand.kind else {
-            panic!(
-                "expected `old.active` to lower to Field, got {:?}",
-                operand.kind
-            )
-        };
-        assert!(matches!(&base.kind, IrExprKind::Local(n) if n == "old"));
-        assert_eq!(field, "active");
-        let IrExprKind::Field { base, field } = &rhs.kind else {
-            panic!(
-                "expected `new.active` to lower to Field, got {:?}",
-                rhs.kind
-            )
-        };
-        assert!(matches!(&base.kind, IrExprKind::Local(n) if n == "new"));
-        assert_eq!(field, "active");
-    }
-
-    /// Every [`CommitShape`] "Done when" case (#1165) lives on one agent —
-    /// each handler exercises exactly one classification so a failing
-    /// assertion names its own scenario unambiguously.
-    fn commit_shape_fixture() -> CheckedProgram {
-        checked_context_program(
-            r#"
-context demo
-
-type Box = { n: Int }
-
-fn Box.put(self, x: Int) -> Effect[()] {
-  Effect.pure(())
-}
-
-capability Clock {
-  fn now() -> Effect[Int]
-}
-
-provides Clock = FixedClock {
-  fn now() -> Effect[Int] {
-    42
-  }
-}
-
-agent Widget {
-  key id: String
-  store items: Map[String, Int]
-  store active: Cell[Bool] = true
-  store tags: Set[String]
-  store history: Log[String]
-
-  on call readOnlyPlain() -> Effect[()] {
-    Effect.pure(())
-  }
-
-  on call readOnlyQuery() -> Effect[Int] {
-    items.size()
-  }
-
-  on call nestedMutation(xs: List[String], flag: Bool) -> Effect[()] {
-    if flag {
-      match flag {
-        true => xs.forEach((x) => items.put(x, 1))
-        false => Effect.pure(())
-      }
-    } else {
-      Effect.pure(())
-    }
-  }
-
-  on call bareAssign(v: Bool) -> Effect[()] {
-    active := v
-    Effect.pure(())
-  }
-
-  on call shadowedName(items: Box, x: Int) -> Effect[()] {
-    let _ <- items.put(x)
-    Effect.pure(())
-  }
-
-  on call cellUpdate() -> Effect[()] {
-    let _ <- active.update((b) => !b)
-    Effect.pure(())
-  }
-
-  on call setAdd(t: String) -> Effect[()] {
-    let _ <- tags.add(t)
-    Effect.pure(())
-  }
-
-  on call logAppend(t: String) -> Effect[()] given Clock {
-    let _ <- history.append(t)
-    Effect.pure(())
-  }
-}
-"#,
-        )
-    }
-
-    fn commit_shape_of(program: &CheckedProgram, handler_name: &str) -> CommitShape {
-        let agent = find_agent(program, "Widget");
-        let handler = find_handler(agent, handler_name);
-        let emits = block_uses_emit(&handler.body, &program.program().callees);
-        lower_commit_shape_ir(&handler.body, &[], &[], emits, program)
-    }
-
-    #[test]
-    fn commit_shape_read_only_for_a_plain_body() {
-        let program = commit_shape_fixture();
-        assert!(matches!(
-            commit_shape_of(&program, "readOnlyPlain"),
-            CommitShape::ReadOnly
-        ));
-    }
-
-    #[test]
-    fn commit_shape_read_only_for_a_non_mutating_store_read() {
-        // `items.size()` records a `Callee::Store { op: "size", .. }` — not in
-        // any of the shared mutating-verb constants — so this pins that a
-        // real, resolved store read never false-positives into `Transactional`.
-        let program = commit_shape_fixture();
-        assert!(matches!(
-            commit_shape_of(&program, "readOnlyQuery"),
-            CommitShape::ReadOnly
-        ));
-    }
-
-    #[test]
-    fn commit_shape_flush_events_for_an_emit_only_body() {
-        // `emits` is a plain parameter ([DECISION D]) — the shipped
-        // `bynk_emit::emitter::block_uses_emit(body)` is the real caller's own
-        // computation, reused verbatim rather than re-derived here, so this
-        // pins `lower_commit_shape_ir`'s own decision given a non-writing
-        // body and `emits: true` directly, independent of exercising
-        // `block_uses_emit` itself (which has no `Events` capability to
-        // resolve in this reduced test harness — `checked_context_program`'s
-        // own doc comment names the `uses`/`consumes` limitation).
-        let program = commit_shape_fixture();
-        let agent = find_agent(&program, "Widget");
-        let handler = find_handler(agent, "readOnlyPlain");
-        let shape = lower_commit_shape_ir(&handler.body, &[], &[], true, &program);
-        assert!(matches!(shape, CommitShape::FlushEvents));
-    }
-
-    #[test]
-    fn commit_shape_transactional_for_a_write_nested_in_if_match_lambda() {
-        // Reaches `items.put(x, 1)` through If -> Match -> Lambda (forEach's
-        // own closure argument) — pins that this walk's descent matches
-        // `block_writes_state`'s already-correct one, including through a
-        // lambda (R6.5's own `#54` worked example).
-        let program = commit_shape_fixture();
-        assert!(matches!(
-            commit_shape_of(&program, "nestedMutation"),
-            CommitShape::Transactional { .. }
-        ));
-    }
-
-    #[test]
-    fn commit_shape_transactional_for_a_bare_cell_assign() {
-        let program = commit_shape_fixture();
-        assert!(matches!(
-            commit_shape_of(&program, "bareAssign"),
-            CommitShape::Transactional { .. }
-        ));
-    }
-
-    #[test]
-    fn commit_shape_read_only_for_a_locally_shadowed_store_field_name() {
-        // `shadowedName`'s own `items: Box` parameter shadows the agent's
-        // `items` store field for the checker's own store-dispatch guard
-        // (`ctx.lookup(id.name).is_none()`, `checker.rs`) — `items.put(x)`
-        // resolves to `Box`'s own user-declared `put` method, `Callee::Method`,
-        // never `Callee::Store`. Pins Decision B's own named improvement over
-        // `block_writes_state`'s receiver-name matching, which cannot tell
-        // this apart from a real store write and would over-approximate to
-        // `Transactional`.
-        let program = commit_shape_fixture();
-        assert!(matches!(
-            commit_shape_of(&program, "shadowedName"),
-            CommitShape::ReadOnly
-        ));
-    }
-
-    #[test]
-    fn commit_shape_transactional_for_a_cell_update_method_call() {
-        // `active.update(f)` (ADR 0125) is the one `Cell` write that reaches
-        // this walk as a method call rather than `Statement::Assign` — pins
-        // `MUTATING_CELL_OPS`, otherwise unexercised by `bareAssign`'s own
-        // `:=` case.
-        let program = commit_shape_fixture();
-        assert!(matches!(
-            commit_shape_of(&program, "cellUpdate"),
-            CommitShape::Transactional { .. }
-        ));
-    }
-
-    #[test]
-    fn commit_shape_transactional_for_a_set_add_method_call() {
-        // Pins `MUTATING_SET_OPS`, otherwise unexercised — `nestedMutation`'s
-        // own write is a `Map.put`.
-        let program = commit_shape_fixture();
-        assert!(matches!(
-            commit_shape_of(&program, "setAdd"),
-            CommitShape::Transactional { .. }
-        ));
-    }
-
-    #[test]
-    fn commit_shape_transactional_for_a_log_append_method_call() {
-        // Pins `MUTATING_LOG_OPS`, otherwise unexercised.
-        let program = commit_shape_fixture();
-        assert!(matches!(
-            commit_shape_of(&program, "logAppend"),
-            CommitShape::Transactional { .. }
-        ));
-    }
-
-    #[test]
-    fn commit_shape_transactional_carries_its_own_invariants_and_transitions_unswapped() {
-        // The only place this constructor moves data rather than deciding a
-        // boolean: `Transactional { invariants, transitions }` must carry
-        // exactly the slices it was given, in the field they were given
-        // under — not swapped, not dropped.
-        let program = commit_shape_fixture();
-        let agent = find_agent(&program, "Widget");
-        let handler = find_handler(agent, "bareAssign");
-        let bool_ty = program
-            .program()
-            .ty_intern
-            .intern(Ty::Base(bynk_syntax::ast::BaseType::Bool));
-        let mk = |name: &str| IrPredicate {
-            name: name.to_string(),
-            predicate: IrExpr {
-                kind: IrExprKind::Const(ConstVal::Bool(true)),
-                ty: bool_ty,
-                span: Span::new(0, 0),
-            },
-        };
-        let invariants = vec![mk("invOnly")];
-        let transitions = vec![mk("transitionOnly")];
-        let shape =
-            lower_commit_shape_ir(&handler.body, &invariants, &transitions, false, &program);
-        let CommitShape::Transactional {
-            invariants: got_inv,
-            transitions: got_tr,
-        } = shape
-        else {
-            panic!("expected Transactional, got a different CommitShape")
-        };
-        assert_eq!(got_inv.len(), 1);
-        assert_eq!(got_inv[0].name, "invOnly");
-        assert_eq!(got_tr.len(), 1);
-        assert_eq!(got_tr[0].name, "transitionOnly");
-    }
-
-    /// Every [`IrHandler`] "Done when" case (#1167) lives on one agent — a
-    /// read-only handler, a store-writing handler exercising `:=` with a
-    /// declared param, a handler with a `given` capability actually called
-    /// in the body, and (review of #1167) a handler exercising a
-    /// `Callee::Store` method call on a non-`Cell` field — the one
-    /// [DECISION F] claim the other three don't reach, since none of them
-    /// calls a store method at all, and `entries` (a `Map`, never bound into
-    /// `lower_handler_body_ir`'s own scope — only `Cell` fields are) pins
-    /// that the never-bound path really is unreachable rather than merely
-    /// untested.
-    fn handler_ir_fixture() -> CheckedProgram {
-        checked_context_program(
-            r#"
-context demo
-
-capability Clock {
-  fn now() -> Effect[Int]
-}
-
-provides Clock = FixedClock {
-  fn now() -> Effect[Int] {
-    42
-  }
-}
-
-fn passThroughQuery(q: Query[Int]) -> Query[Int] {
-  q
-}
-
--- P6.20-pre (review of #1240): a free fn sharing a name with `Ledger`'s own
--- `entries` store field — pins that the store-field dispatch wins (checked
--- immediately after `cx.lookup`, ahead of the free-fn probe), not the other
--- way around.
-fn entries(n: Int) -> Int {
-  n
-}
-
-agent Ledger {
-  key id: String
-  store balance: Cell[Int] = 0
-  store entries: Map[String, Int]
-
-  on call peek() -> Effect[Int] {
-    Effect.pure(balance)
-  }
-
-  on call deposit(amount: Int) -> Effect[()] {
-    balance := amount
-    Effect.pure(())
-  }
-
-  on call touchClock() -> Effect[Int] given Clock {
-    let t <- Clock.now()
-    Effect.pure(t)
-  }
-
-  on call addEntry(k: String, v: Int) -> Effect[()] {
-    let _ <- entries.put(k, v)
-    Effect.pure(())
-  }
-
-  -- P6.20-pre: `.keys` on a bare store `Map` field — the FieldAccess
-  -- receiver-position shape (ADR 0184) that panicked as `Inventory`/`items`,
-  -- `Ledger`/`balances` in the real fixture corpus.
-  on call entryKeys() -> Effect[Query[String]] {
-    Effect.pure(entries.keys)
-  }
-
-  -- P6.20-pre: a bare store `Map` field passed as a plain argument — the
-  -- argument-position shape (ADR 0120) that panicked as `Sales`/`orders` in
-  -- the real fixture corpus (`lines.joinOn(orders, ...)`).
-  on call passEntries() -> Effect[Query[Int]] {
-    Effect.pure(passThroughQuery(entries))
-  }
-
-  -- P6.20-pre (review of #1240): the store field `entries` and the free fn
-  -- `entries` (declared above, colliding by name) both exist — the checker
-  -- resolves the bare reference to the store field's own `Query[Int]`
-  -- before `check_ident` (where a free-fn reference would resolve) ever
-  -- sees it, so this must lower to StoreQuery, not panic on the free-fn arm.
-  on call bareEntriesCollidesWithAFreeFn() -> Effect[Query[Int]] {
-    Effect.pure(entries)
-  }
-
-  -- P6.20-pre (review of #1240): a handler param named `entries` shadows
-  -- the store field of the same name — must lower to Local, not StoreQuery.
-  on call shadowedEntries(entries: Query[Int]) -> Effect[Query[Int]] {
-    Effect.pure(entries)
-  }
-}
-"#,
-        )
-    }
-
-    fn handler_ir_of(program: &CheckedProgram, handler_name: &str) -> IrHandler {
-        handler_ir_of_with_predicates(program, handler_name, &[], &[])
-    }
-
-    fn handler_ir_of_with_predicates(
-        program: &CheckedProgram,
-        handler_name: &str,
-        invariants: &[IrPredicate],
-        transitions: &[IrPredicate],
-    ) -> IrHandler {
-        let agent = find_agent(program, "Ledger");
-        let handler = find_handler(agent, handler_name);
-        let store_cells = agent_store_cells(program, agent);
-        let store_queryable = agent_store_queryable(program, agent);
-        let state_ty = agent_state_ty(program, "Ledger");
-        lower_handler_ir(
-            handler,
-            &store_cells,
-            &store_queryable,
-            state_ty,
-            invariants,
-            transitions,
-            program,
-        )
-    }
-
-    #[test]
-    fn handler_ir_read_only_handler_has_no_binder_and_read_only_commit() {
-        let program = handler_ir_fixture();
-        let ir = handler_ir_of(&program, "peek");
-        assert!(
-            ir.binder.is_none(),
-            "Decision D: an agent handler's own binder is always None, pinned explicitly rather \
-             than left to omission"
-        );
-        assert_eq!(ir.kind, IrHandlerKind::Call);
-        assert!(matches!(ir.commit, CommitShape::ReadOnly));
-        assert_eq!(ir.method_name.as_deref(), Some("peek"));
-        assert!(ir.effectful, "peek returns Effect[Int]");
-        assert!(ir.params.is_empty());
-        assert!(ir.given.is_empty());
-        let IrExprKind::Block { stmts, tail } = &ir.body.kind else {
-            panic!("expected a Block, got {:?}", ir.body.kind)
-        };
-        assert!(stmts.is_empty());
-        let IrExprKind::Return { value } = &tail.kind else {
-            panic!(
-                "expected the tail to be wrapped in Return, got {:?}",
-                tail.kind
-            )
-        };
-        let IrExprKind::Pure { value } = &value.kind else {
-            panic!(
-                "expected `Effect.pure(balance)` to lower to Pure, got {:?}",
-                value.kind
-            )
-        };
-        assert!(
-            matches!(&value.kind, IrExprKind::Local(n) if n == "balance"),
-            "a bare-name read of a store Cell field lowers to Local, got {:?}",
-            value.kind
-        );
-    }
-
-    #[test]
-    fn handler_ir_store_writing_handler_lowers_assign_and_transactional_commit() {
-        let program = handler_ir_fixture();
-        let ir = handler_ir_of(&program, "deposit");
-        assert!(ir.binder.is_none());
-        let int_ty = program
-            .program()
-            .ty_intern
-            .intern(Ty::Base(bynk_syntax::ast::BaseType::Int));
-        assert_eq!(
-            ir.params,
-            vec![("amount".to_string(), int_ty)],
-            "a declared param's type must resolve and bind into the body's own scope"
-        );
-        assert_eq!(ir.method_name.as_deref(), Some("deposit"));
-        let CommitShape::Transactional {
-            invariants,
-            transitions,
-        } = &ir.commit
-        else {
-            panic!("expected Transactional, got {:?}", ir.commit)
-        };
-        // `handler_ir_of` (unlike `handler_ir_of_with_predicates`) passes no
-        // predicates — empty here reflects this test's own call, not a
-        // limit of `lower_handler_ir` itself; see
-        // `handler_ir_threads_invariants_and_transitions_into_commit_unswapped`
-        // for the threading pin.
-        assert!(invariants.is_empty());
-        assert!(transitions.is_empty());
-        let IrExprKind::Block { stmts, .. } = &ir.body.kind else {
-            panic!("expected a Block, got {:?}", ir.body.kind)
-        };
-        assert_eq!(
-            stmts.len(),
-            1,
-            "the `:=` write is the body's only statement"
-        );
-        let IrStmt::Assign { field, value } = &stmts[0] else {
-            panic!("expected IrStmt::Assign, got {:?}", stmts[0])
-        };
-        assert_eq!(field, "balance");
-        assert!(
-            matches!(&value.kind, IrExprKind::Local(n) if n == "amount"),
-            "the assigned value reads the handler's own `amount` param, got {:?}",
-            value.kind
-        );
-    }
-
-    #[test]
-    fn handler_ir_given_capability_recorded_and_call_lowers_as_ordinary_callee() {
-        let program = handler_ir_fixture();
-        let ir = handler_ir_of(&program, "touchClock");
-        assert!(ir.binder.is_none());
-        assert_eq!(ir.given, vec!["Clock".to_string()]);
-        let IrExprKind::Block { stmts, .. } = &ir.body.kind else {
-            panic!("expected a Block, got {:?}", ir.body.kind)
-        };
-        assert_eq!(stmts.len(), 1);
-        let IrStmt::Let { local, value } = &stmts[0] else {
-            panic!("expected IrStmt::Let, got {:?}", stmts[0])
-        };
-        assert_eq!(local, "t");
-        let IrExprKind::Await { effect } = &value.kind else {
-            panic!(
-                "expected `let t <- Clock.now()` to lower to Await, got {:?}",
-                value.kind
-            )
-        };
-        let IrExprKind::Call { callee, args, .. } = &effect.kind else {
-            panic!(
-                "expected `Clock.now()` to lower as an ordinary Callee-classified Call \
-                 (Decision F — no new call-lowering logic needed), got {:?}",
-                effect.kind
-            )
-        };
-        assert!(
-            matches!(callee, Callee::Capability { cap, op } if cap == "Clock" && op == "now"),
-            "expected Callee::Capability {{ cap: \"Clock\", op: \"now\" }}, got {callee:?}"
-        );
-        assert!(args.is_empty());
-    }
-
-    #[test]
-    fn handler_ir_store_method_call_on_a_non_cell_field_lowers_as_ordinary_callee() {
-        // The one Decision F claim `peek`/`deposit`/`touchClock` don't reach:
-        // a `Callee::Store` method call, on a `Map` field never bound into
-        // `lower_handler_body_ir`'s own scope (only `Cell` fields are) —
-        // pins that `entries` is never looked up as an ident at all, not
-        // merely that it happens not to be, since `receiver_is_a_value`
-        // excludes `Callee::Store` from ever lowering its own receiver.
-        let program = handler_ir_fixture();
-        let ir = handler_ir_of(&program, "addEntry");
-        assert!(ir.binder.is_none());
-        assert!(
-            matches!(ir.commit, CommitShape::Transactional { .. }),
-            "Map.put is a mutating Callee::Store op"
-        );
-        let IrExprKind::Block { stmts, .. } = &ir.body.kind else {
-            panic!("expected a Block, got {:?}", ir.body.kind)
-        };
-        assert_eq!(stmts.len(), 1);
-        let IrStmt::Let { local, value } = &stmts[0] else {
-            panic!("expected IrStmt::Let, got {:?}", stmts[0])
-        };
-        assert_eq!(local, "_");
-        let IrExprKind::Await { effect } = &value.kind else {
-            panic!(
-                "expected `let _ <- entries.put(k, v)` to lower to Await, got {:?}",
-                value.kind
-            )
-        };
-        let IrExprKind::Call { callee, args, .. } = &effect.kind else {
-            panic!(
-                "expected `entries.put(k, v)` to lower as an ordinary Callee-classified Call, \
-                 got {:?}",
-                effect.kind
-            )
-        };
-        assert!(
-            matches!(callee, Callee::Store { field, op } if field == "entries" && op == "put"),
-            "expected Callee::Store {{ field: \"entries\", op: \"put\" }}, got {callee:?}"
-        );
-        assert_eq!(
-            args.len(),
-            2,
-            "the receiver is never prepended for Callee::Store"
-        );
-        assert!(matches!(&args[0].kind, IrExprKind::Local(n) if n == "k"));
-        assert!(matches!(&args[1].kind, IrExprKind::Local(n) if n == "v"));
-    }
-
-    #[test]
-    fn handler_ir_bare_store_map_field_as_field_access_receiver_lowers_to_store_query() {
-        // P6.20-pre: `entries.keys` — `entries` is the *receiver* of a
-        // `FieldAccess`, not a method-call receiver (`Callee`-classified
-        // calls are the only receiver `lower_call_ir` excludes), so before
-        // this slice it fell straight through `lower_expr_ir`'s ordinary
-        // `ExprKind::Ident` arm into `lower_ident_ir`'s unresolved-ident
-        // `todo!()` — reproducing the real panic found empirically against
-        // `353_map_entries_query`'s `Inventory`/`items` and `Ledger`/
-        // `balances` agents.
-        let program = handler_ir_fixture();
-        let ir = handler_ir_of(&program, "entryKeys");
-        let IrExprKind::Block { tail, .. } = &ir.body.kind else {
-            panic!("expected a Block with a tail, got {:?}", ir.body.kind)
-        };
-        let IrExprKind::Return { value } = &tail.kind else {
-            panic!("expected the tail to wrap in Return, got {:?}", tail.kind)
-        };
-        let IrExprKind::Pure { value } = &value.kind else {
-            panic!(
-                "expected Effect.pure(...) to lower to Pure, got {:?}",
-                value.kind
-            )
-        };
-        let IrExprKind::Field { base, field } = &value.kind else {
-            panic!(
-                "expected entries.keys to lower to Field, got {:?}",
-                value.kind
-            )
-        };
-        assert_eq!(field, "keys");
-        assert!(
-            matches!(&base.kind, IrExprKind::StoreQuery(name) if name == "entries"),
-            "expected the receiver `entries` to lower to StoreQuery, got {:?}",
-            base.kind
-        );
-    }
-
-    #[test]
-    fn handler_ir_bare_store_map_field_as_plain_argument_lowers_to_store_query() {
-        // P6.20-pre: `passThroughQuery(entries)` — `entries` at a plain
-        // argument position, the exact shape that panicked as `Sales`/
-        // `orders` (`lines.joinOn(orders, ...)`) in the real fixture corpus.
-        let program = handler_ir_fixture();
-        let ir = handler_ir_of(&program, "passEntries");
-        let IrExprKind::Block { tail, .. } = &ir.body.kind else {
-            panic!("expected a Block with a tail, got {:?}", ir.body.kind)
-        };
-        let IrExprKind::Return { value } = &tail.kind else {
-            panic!("expected the tail to wrap in Return, got {:?}", tail.kind)
-        };
-        let IrExprKind::Pure { value } = &value.kind else {
-            panic!(
-                "expected Effect.pure(...) to lower to Pure, got {:?}",
-                value.kind
-            )
-        };
-        let IrExprKind::Call { args, .. } = &value.kind else {
-            panic!(
-                "expected passThroughQuery(entries) to lower to a Call, got {:?}",
-                value.kind
-            )
-        };
-        assert_eq!(args.len(), 1);
-        assert!(
-            matches!(&args[0].kind, IrExprKind::StoreQuery(name) if name == "entries"),
-            "expected the bare argument `entries` to lower to StoreQuery, got {:?}",
-            args[0].kind
-        );
-    }
-
-    #[test]
-    fn handler_ir_bare_store_map_field_wins_over_a_colliding_free_fn_of_the_same_name() {
-        // Review of #1240 (finding 1): the store-field dispatch must be
-        // checked *before* the free-fn probe in `lower_ident_ir`'s own
-        // ladder, matching the checker's own precedence
-        // (`checker.rs:3477-3481` returns before `check_ident` — where a
-        // free-fn reference resolves — ever sees the name). Before that
-        // fix, `entries` colliding with the free fn `entries` declared in
-        // `handler_ir_fixture` hit the free-fn `todo!()` instead.
-        let program = handler_ir_fixture();
-        let ir = handler_ir_of(&program, "bareEntriesCollidesWithAFreeFn");
-        let IrExprKind::Block { tail, .. } = &ir.body.kind else {
-            panic!("expected a Block with a tail, got {:?}", ir.body.kind)
-        };
-        let IrExprKind::Return { value } = &tail.kind else {
-            panic!("expected the tail to wrap in Return, got {:?}", tail.kind)
-        };
-        let IrExprKind::Pure { value } = &value.kind else {
-            panic!(
-                "expected Effect.pure(...) to lower to Pure, got {:?}",
-                value.kind
-            )
-        };
-        assert!(
-            matches!(&value.kind, IrExprKind::StoreQuery(name) if name == "entries"),
-            "expected the store field to win over the colliding free fn, got {:?}",
-            value.kind
-        );
-    }
-
-    #[test]
-    fn handler_ir_a_local_param_shadowing_a_store_map_field_name_lowers_to_local() {
-        // Review of #1240 (finding 1): the `cx.lookup(name).is_some()` guard
-        // at the very top of `lower_ident_ir` is the one shadowing property
-        // the store-field dispatch actually depends on — pin it directly,
-        // independent of where in the ladder the store-field check sits.
-        let program = handler_ir_fixture();
-        let ir = handler_ir_of(&program, "shadowedEntries");
-        let IrExprKind::Block { tail, .. } = &ir.body.kind else {
-            panic!("expected a Block with a tail, got {:?}", ir.body.kind)
-        };
-        let IrExprKind::Return { value } = &tail.kind else {
-            panic!("expected the tail to wrap in Return, got {:?}", tail.kind)
-        };
-        let IrExprKind::Pure { value } = &value.kind else {
-            panic!(
-                "expected Effect.pure(...) to lower to Pure, got {:?}",
-                value.kind
-            )
-        };
-        assert!(
-            matches!(&value.kind, IrExprKind::Local(name) if name == "entries"),
-            "expected the shadowing param to win over the store field, got {:?}",
-            value.kind
-        );
-    }
-
-    #[test]
-    fn handler_ir_threads_invariants_and_transitions_into_commit_unswapped() {
-        // Review of #1167: `lower_handler_ir` originally passed
-        // `lower_commit_shape_ir` empty `invariants`/`transitions` slices
-        // unconditionally — indistinguishable from an agent that genuinely
-        // declares neither. Now threaded through as ordinary parameters,
-        // mirroring `commit_shape_transactional_carries_its_own_invariants_and_transitions_unswapped`'s
-        // own pin one layer up.
-        let program = handler_ir_fixture();
-        let bool_ty = program
-            .program()
-            .ty_intern
-            .intern(Ty::Base(bynk_syntax::ast::BaseType::Bool));
-        let mk = |name: &str| IrPredicate {
-            name: name.to_string(),
-            predicate: IrExpr {
-                kind: IrExprKind::Const(ConstVal::Bool(true)),
-                ty: bool_ty,
-                span: Span::new(0, 0),
-            },
-        };
-        let invariants = vec![mk("invOnly")];
-        let transitions = vec![mk("transitionOnly")];
-        let ir = handler_ir_of_with_predicates(&program, "deposit", &invariants, &transitions);
-        let CommitShape::Transactional {
-            invariants: got_inv,
-            transitions: got_tr,
-        } = ir.commit
-        else {
-            panic!("expected Transactional, got {:?}", ir.commit)
-        };
-        assert_eq!(got_inv.len(), 1);
-        assert_eq!(got_inv[0].name, "invOnly");
-        assert_eq!(got_tr.len(), 1);
-        assert_eq!(got_tr[0].name, "transitionOnly");
-    }
-
-    /// Every [`IrItem::Agent`] "Done when" case (#1169) lives on one agent —
-    /// a `Cell` field an invariant/transition and a handler all reference by
-    /// bare name, a `Map` field only a handler reaches (via `Callee::Store`),
-    /// one read-only handler, and one store-writing handler whose own
-    /// `commit` must carry the agent's real invariants/transitions, not an
-    /// empty pair.
-    ///
-    /// **Named gap, not silently absorbed (review of #1169):** no handler
-    /// here exercises `CommitShape::FlushEvents` (a non-writing handler that
-    /// emits) — the one arm [`lower_commit_shape_ir`] can produce that this
-    /// fixture never reaches. A real `Events.emit` call needs an `event`
-    /// declaration plus `consumes bynk { Events }`, which
-    /// [`checked_context_program`]'s own doc comment already names as out
-    /// of scope for this reduced harness (`resolver::CrossContextInfo`
-    /// hardcoded to `::default()`) — extending it is a deliberate, separate
-    /// change, not a two-line addition here. The risk this would pin —
-    /// threading real, non-empty `invariants`/`transitions` into every
-    /// handler somehow pushing a non-writing one into `Transactional` — is
-    /// already structurally impossible: [`lower_commit_shape_ir`]'s own
-    /// branch is decided by [`body_writes_state`] alone, never by whether
-    /// `invariants`/`transitions` are empty, and `peek`'s own `ReadOnly`
-    /// assertion below already exercises exactly that (non-empty
-    /// predicates, still `ReadOnly`) for the `body_writes_state == false`
-    /// case `FlushEvents` shares.
-    fn agent_item_fixture() -> CheckedProgram {
-        checked_context_program(
-            r#"
-context demo
-
-agent Ledger {
-  key id: String
-  store active: Cell[Bool] = true
-  store balance: Cell[Int] = 0
-  store entries: Map[String, Int]
-
-  invariant staysKnown: active
-
-  transition activeImplication: old.active implies new.active
-
-  on call peek() -> Effect[Int] {
-    Effect.pure(balance)
-  }
-
-  on call deposit(amount: Int) -> Effect[()] {
-    balance := amount
-    Effect.pure(())
-  }
-
-  on call addEntry(k: String, v: Int) -> Effect[()] {
-    let _ <- entries.put(k, v)
-    Effect.pure(())
-  }
-}
-"#,
-        )
-    }
-
-    #[test]
-    fn agent_item_ir_assembles_key_state_and_threads_invariants_transitions_into_handlers() {
-        let program = agent_item_fixture();
-        let agent = find_agent(&program, "Ledger");
-        let ir = lower_agent_item_ir(agent, &program);
-        let IrItem::Agent {
-            def,
-            key,
-            state,
-            handlers,
-            invariants,
-            transitions,
-        } = &ir
-        else {
-            panic!("expected IrItem::Agent, got {:?}", ir)
-        };
-
-        assert_eq!(def, "Ledger");
-        let string_ty = program
-            .program()
-            .ty_intern
-            .intern(Ty::Base(bynk_syntax::ast::BaseType::String));
-        assert_eq!(key, &("id".to_string(), string_ty));
-
-        assert_eq!(
-            state.len(),
-            3,
-            "active, balance, entries — declaration order"
-        );
-        assert!(matches!(state[0].kind, StoreKindIr::Cell(_)));
-        assert_eq!(state[0].field, "active");
-        assert!(matches!(state[1].kind, StoreKindIr::Cell(_)));
-        assert_eq!(state[1].field, "balance");
-        assert!(matches!(state[2].kind, StoreKindIr::Map(_, _)));
-        assert_eq!(state[2].field, "entries");
-
-        assert_eq!(invariants.len(), 1);
-        assert_eq!(invariants[0].name, "staysKnown");
-        assert_eq!(transitions.len(), 1);
-        assert_eq!(transitions[0].name, "activeImplication");
-
-        assert_eq!(handlers.len(), 3, "peek, deposit, addEntry");
-
-        let peek = handlers
-            .iter()
-            .find(|h| h.method_name.as_deref() == Some("peek"))
-            .expect("peek handler");
-        assert!(matches!(peek.commit, CommitShape::ReadOnly));
-
-        // The load-bearing assertion: `deposit`'s own commit carries the
-        // *agent's real* invariants/transitions, lowered once here and
-        // threaded through — not the empty pair `lower_handler_ir` would
-        // produce on its own if this function forgot to pass them.
-        let deposit = handlers
-            .iter()
-            .find(|h| h.method_name.as_deref() == Some("deposit"))
-            .expect("deposit handler");
-        let CommitShape::Transactional {
-            invariants: got_inv,
-            transitions: got_tr,
-        } = &deposit.commit
-        else {
-            panic!(
-                "expected deposit's own commit to be Transactional, got {:?}",
-                deposit.commit
-            )
-        };
-        assert_eq!(got_inv.len(), 1);
-        assert_eq!(got_inv[0].name, "staysKnown");
-        assert_eq!(got_tr.len(), 1);
-        assert_eq!(got_tr[0].name, "activeImplication");
-
-        // `addEntry` writes through `Callee::Store` (Map.put), not `:=` —
-        // pins that a non-Cell-field write also reaches Transactional and
-        // also carries the same real invariants/transitions, not just the
-        // `:=` case `deposit` already covers.
-        let add_entry = handlers
-            .iter()
-            .find(|h| h.method_name.as_deref() == Some("addEntry"))
-            .expect("addEntry handler");
-        let CommitShape::Transactional {
-            invariants: got_inv,
-            transitions: got_tr,
-        } = &add_entry.commit
-        else {
-            panic!(
-                "expected addEntry's own commit to be Transactional, got {:?}",
-                add_entry.commit
-            )
-        };
-        assert_eq!(got_inv.len(), 1);
-        assert_eq!(got_tr.len(), 1);
-
-        // Every `IrHandler` this slice builds is still agent-only —
-        // pinning Decision D's own guarantee one level up, through the
-        // assembled `IrItem::Agent` rather than only through
-        // `lower_handler_ir` directly.
-        assert!(handlers.iter().all(|h| h.binder.is_none()));
-    }
-
-    /// #1189's own named breakage point: `agent_item_fixture`'s own
-    /// invariant/transition are deliberately comparison-free
-    /// (`active`/`old.active implies new.active`) — hand-picked, per #1189's
-    /// own finding, the same way every P6.4-P6.9 fixture happened to avoid
-    /// the gap. This is the real shape #1189 named as blocked before this
-    /// slice (`balance >= 0`, `bynkc/tests/fixtures/positive/248_history_property`'s
-    /// own `nonneg` invariant) — pins that `lower_agent_item_ir` no longer
-    /// panics on it.
-    #[test]
-    fn agent_invariant_with_a_real_comparison_lowers_without_panicking() {
-        let program = checked_context_program(
-            r#"
-context demo
-
-agent Ledger {
-  key id: String
-  store balance: Cell[Int] = 0
-
-  invariant nonneg: balance >= 0
-
-  on call deposit(amount: Int) -> Effect[()] {
-    balance := amount
-    Effect.pure(())
-  }
-}
-"#,
-        );
-        let agent = find_agent(&program, "Ledger");
-        let ir = lower_agent_item_ir(agent, &program);
-        let IrItem::Agent { invariants, .. } = &ir else {
-            panic!("expected IrItem::Agent, got {:?}", ir)
-        };
-        assert_eq!(invariants.len(), 1);
-        let IrExprKind::BinOp { op, .. } = &invariants[0].predicate.kind else {
-            panic!("expected BinOp, got {:?}", invariants[0].predicate.kind)
-        };
-        assert_eq!(*op, IrBinOp::GtEq);
-    }
-
-    /// P6.11's own `IrItem::Service` "Done when" case (#1171): a plain
-    /// `call`-protocol service, three handlers — one bare, one with a real
-    /// actor binder, one with a `given` capability actually called in the
-    /// body. Every service handler's return type is protocol-mandated to a
-    /// sum for HTTP/queue/cron fixtures elsewhere in this module — `Call`
-    /// is the one protocol that isn't, so this fixture needs none of the
-    /// free-`fn` indirection those do.
-    fn call_service_fixture() -> CheckedProgram {
-        checked_context_program(
-            r#"
-context demo
-
-type UserId = String
-
-actor Buyer { auth = Internal, identity = UserId }
-
-capability Clock {
-  fn now() -> Effect[Int]
-}
-
-provides Clock = FixedClock {
-  fn now() -> Effect[Int] {
-    42
-  }
-}
-
-service Api {
-  on call(ping: String) -> Effect[String] {
-    Effect.pure(ping)
-  }
-  on call(ping: String) -> Effect[String] by u: Buyer {
-    Effect.pure(ping)
-  }
-  on call() -> Effect[Int] given Clock {
-    let t <- Clock.now()
-    Effect.pure(t)
-  }
-}
-"#,
-        )
-    }
-
-    #[test]
-    fn service_item_ir_assembles_a_call_protocol_service() {
-        let program = call_service_fixture();
-        let service = find_service(&program, "Api");
-        let ir = lower_service_item_ir(service, &program);
-        let IrItem::Service {
-            def,
-            protocol,
-            handlers,
-            policy,
-        } = &ir
-        else {
-            panic!("expected IrItem::Service, got {:?}", ir)
-        };
-        assert_eq!(def, "Api");
-        assert!(matches!(protocol, ProtocolIr::Call));
-        assert!(
-            policy.is_none(),
-            "policy is only ever Some for a from http service"
-        );
-        assert_eq!(handlers.len(), 3, "declaration order preserved");
-
-        assert!(handlers[0].binder.is_none());
-        assert!(handlers[0].given.is_empty());
-        assert!(
-            handlers[0].actors.is_empty(),
-            "no `by` clause at all on this handler"
-        );
-        assert!(handlers[1].binder.is_some());
-        assert_eq!(
-            handlers[1].actors,
-            vec!["Buyer".to_string()],
-            "the gate itself, read straight off the `by` clause — see IrHandler::actors' own \
-             doc comment for why this can't be recovered from `binder` alone"
-        );
-        assert_eq!(handlers[2].given, vec!["Clock".to_string()]);
-
-        for h in handlers {
-            assert!(
-                h.method_name.is_none(),
-                "a service's on call handler carries no method_name"
-            );
-            assert!(h.effectful, "every service handler returns Effect[T]");
-            assert!(matches!(h.commit, CommitShape::ReadOnly));
-        }
-    }
-
-    #[test]
-    fn service_handler_binder_is_recorded_and_bound_into_the_body_scope() {
-        // `Caller` (v0.54) is a prelude actor — no local `actor` declaration
-        // needed — whose identity is the calling-context id, `String`.
-        let program = checked_context_program(
-            r#"
-context demo
-
-service Api {
-  on call(ping: String) -> Effect[String] by c: Caller {
-    Effect.pure(c.identity)
-  }
-}
-"#,
-        );
-        let service = find_service(&program, "Api");
-        let handler = find_service_handler(service, &HandlerKind::Call);
-        let ir = lower_service_handler_ir(handler, &service.protocol, &program);
-
-        let binder = ir
-            .binder
-            .as_ref()
-            .unwrap_or_else(|| panic!("expected a persisted actor binding for this handler"));
-        assert_eq!(binder.binder, "c");
-        let tys = &program.program().ty_intern;
-        let Ty::Actor(identity_ty) = &*tys.get(binder.ty) else {
-            panic!("expected Ty::Actor, got {:?}", tys.get(binder.ty))
-        };
-        assert_eq!(identity_ty.display(tys), "String");
-        assert_eq!(ir.actors, vec!["Caller".to_string()]);
-
-        // The load-bearing half: `binder` recorded on the struct is not the
-        // same claim as `binder` actually reaching the body's own scope —
-        // walk the lowered body and confirm a real `Local("c")` read
-        // reached the tree where `c.identity` was written, rather than
-        // `lower_ident_ir`'s own unresolved-ident final assertion.
-        let IrExprKind::Block { tail, .. } = &ir.body.kind else {
-            panic!("expected a Block, got {:?}", ir.body.kind)
-        };
-        let IrExprKind::Return { value } = &tail.kind else {
-            panic!("expected Return, got {:?}", tail.kind)
-        };
-        let IrExprKind::Pure { value } = &value.kind else {
-            panic!("expected Pure, got {:?}", value.kind)
-        };
-        let IrExprKind::Field { base, field } = &value.kind else {
-            panic!(
-                "expected `c.identity` to lower to Field, got {:?}",
-                value.kind
-            )
-        };
-        assert_eq!(field, "identity");
-        assert!(
-            matches!(&base.kind, IrExprKind::Local(n) if n == "c"),
-            "expected the binder to be bound into the body's own scope as Local(\"c\"), got {:?}",
-            base.kind
-        );
-    }
-
-    #[test]
-    fn sum_actor_binder_lowers_an_actor_sum() {
-        // Mirrors `bynk-check`'s own `sum_by_clause_persists_an_actor_sum_binding`
-        // test: a sum needs distinguishable schemes, so it must be
-        // `from http`. The free `fn ok` indirection (see
-        // `http_service_fixture`'s own doc comment) was originally a
-        // workaround for the `Ok`/`Err`/`Some`/`None` construction gap in
-        // `lower_expr_ir`, closed as of #1225's own ADR — kept as the
-        // fixture's own shape regardless. The body's own `match who { … }` was initially
-        // planned as a separate, riskier claim — no existing test drove
-        // pattern lowering over an `ActorSum` scrutinee — but verified
-        // empirically during implementation to lower correctly (`User(_)`'s
-        // own positional payload binding included), so it stays in rather
-        // than being degraded away.
-        let program = checked_context_program(
-            r#"
-context demo
-
-type UserId = String
-
-actor User { auth = Bearer(secret = "AUTH_SECRET"), identity = UserId }
-
-fn ok(s: String) -> HttpResult[String] { Ok(s) }
-
-service Api from http {
-  on GET("/whoami") () -> Effect[HttpResult[String]] by who: User | Visitor {
-    match who {
-      User(_) => Effect.pure(ok("user"))
-      Visitor => Effect.pure(ok("visitor"))
-    }
-  }
-}
-"#,
-        );
-        let service = find_service(&program, "Api");
-        let handler = &service.handlers[0];
-        let ir = lower_service_handler_ir(handler, &service.protocol, &program);
-        let binder = ir
-            .binder
-            .as_ref()
-            .unwrap_or_else(|| panic!("expected a persisted actor binding for this handler"));
-        assert_eq!(binder.binder, "who");
-        let tys = &program.program().ty_intern;
-        let Ty::ActorSum(members) = &*tys.get(binder.ty) else {
-            panic!("expected Ty::ActorSum, got {:?}", tys.get(binder.ty))
-        };
-        assert_eq!(members.len(), 2);
-        assert_eq!(members[0].0, "User");
-        assert_eq!(members[0].1.display(tys), "UserId");
-        assert_eq!(members[1].0, "Visitor");
-        assert_eq!(
-            members[1].1.display(tys),
-            "()",
-            "Visitor is a unit-identity prelude actor"
-        );
-        assert_eq!(
-            ir.actors,
-            vec!["User".to_string(), "Visitor".to_string()],
-            "actors is redundant with Ty::ActorSum's own member names here, but present \
-             uniformly regardless of shape — see IrHandler::actors' own doc comment"
-        );
-
-        // The body itself really did lower — a real `Match` node, not the
-        // simpler single-arm body an earlier draft of this test used
-        // before the `ActorSum`-scrutinee path was verified.
-        let IrExprKind::Block { tail, .. } = &ir.body.kind else {
-            panic!("expected a Block, got {:?}", ir.body.kind)
-        };
-        let IrExprKind::Return { value } = &tail.kind else {
-            panic!("expected Return, got {:?}", tail.kind)
-        };
-        assert!(
-            matches!(&value.kind, IrExprKind::Match { .. }),
-            "expected `match who {{ … }}` to lower to a real Match node, got {:?}",
-            value.kind
-        );
-    }
-
     /// Review of #1209: pins the one load-bearing ordering decision
     /// `ActorSeamIr`'s own doc comment argues for — `sum_members_for`
     /// ahead of `bearer_seam_for` — at `lower_actor_seam_ir` itself, not
@@ -8767,217 +1423,6 @@ service Api from http {
         assert_eq!(members.len(), 2);
         assert_eq!(members[0].actor_name, "User");
         assert_eq!(members[1].actor_name, "Visitor");
-    }
-
-    #[test]
-    fn a_binderless_by_clause_still_records_the_actor_gate() {
-        // Review of #1180's own core scenario: `binder` alone erases a
-        // binder-less `by <Actor>` (verify-and-discard) entirely — nothing
-        // in `kind`/`params`/`given`/`binder` would otherwise distinguish
-        // this actor-gated handler from a public one with no `by` clause
-        // at all. `actors` is what a consumer must read to recover the
-        // gate.
-        let program = checked_context_program(
-            r#"
-context demo
-
-type UserId = String
-
-actor Buyer { auth = Internal, identity = UserId }
-
-service Api {
-  on call(ping: String) -> Effect[String] by Buyer {
-    Effect.pure(ping)
-  }
-}
-"#,
-        );
-        let service = find_service(&program, "Api");
-        let handler = find_service_handler(service, &HandlerKind::Call);
-        let ir = lower_service_handler_ir(handler, &service.protocol, &program);
-        assert!(
-            ir.binder.is_none(),
-            "a binder-less `by <Actor>` verifies-and-discards — no identity is bound"
-        );
-        assert_eq!(
-            ir.actors,
-            vec!["Buyer".to_string()],
-            "the gate itself survives even though no binder does"
-        );
-    }
-
-    /// Every `from http` policy test lives on one service — a full `cors`/
-    /// `security`/`limits` block, asserted against the *interpreted*
-    /// `PolicyIr`, not the raw AST. The handler body goes through a free
-    /// `fn ok` rather than a bare `Ok(s)` construction — a holdover from
-    /// when `Ok`/`Err`/`Some`/`None` construction was still `todo!()` in
-    /// `lower_expr_ir` (closed as of #1225's own ADR; kept as-is here since
-    /// it's still a correct, working fixture shape and every test built on
-    /// it is unaffected either way, not because a bare `Ok(s)` would fail
-    /// now).
-    fn http_service_fixture() -> CheckedProgram {
-        checked_context_program(
-            r#"
-context demo
-
-fn ok(s: String) -> HttpResult[String] { Ok(s) }
-
-service Api from http {
-  cors { origins: ["https://app.example.com"], credentials: true, maxAge: 1.hours }
-  security { hsts: 365.days }
-  limits { maxBody: 1048576 }
-  on GET("/ping") () -> Effect[HttpResult[String]] by v: Visitor {
-    Effect.pure(ok("pong"))
-  }
-}
-"#,
-        )
-    }
-
-    #[test]
-    fn http_policy_lowers_every_accessor_to_interpreted_values() {
-        let program = http_service_fixture();
-        let service = find_service(&program, "Api");
-        let ir = lower_service_item_ir(service, &program);
-        let IrItem::Service {
-            protocol,
-            handlers,
-            policy,
-            ..
-        } = &ir
-        else {
-            panic!("expected IrItem::Service, got {:?}", ir)
-        };
-        assert!(matches!(protocol, ProtocolIr::Http));
-        assert_eq!(
-            handlers[0].kind,
-            IrHandlerKind::Http {
-                method: IrHttpMethod::Get,
-                path: "/ping".to_string(),
-            },
-            "the route binding lives per-handler — this is why ProtocolIr::Http itself \
-             carries no payload"
-        );
-
-        let policy = policy
-            .as_ref()
-            .unwrap_or_else(|| panic!("expected a real PolicyIr for a from http service"));
-        let cors = policy
-            .cors
-            .as_ref()
-            .unwrap_or_else(|| panic!("expected Some(CorsIr) — this fixture declares cors {{ }}"));
-        assert_eq!(cors.origins, vec!["https://app.example.com".to_string()]);
-        assert!(cors.credentials);
-        assert_eq!(
-            cors.allow_headers, None,
-            "no `headers:` field written — the author-override distinction, not the \
-             emitter's own smart default"
-        );
-        assert_eq!(cors.max_age_secs, Some(3600), "1.hours in whole seconds");
-
-        assert!(policy.security.nosniff);
-        assert_eq!(
-            policy.security.hsts_max_age_secs,
-            Some(365 * 24 * 60 * 60),
-            "365.days in whole seconds"
-        );
-        assert_eq!(policy.max_body_bytes, Some(1_048_576));
-    }
-
-    #[test]
-    fn an_http_service_with_no_security_block_still_lowers_the_safe_defaults() {
-        // The single test pinning ADR 0164's own asymmetry: `security: None`
-        // on the AST means *defaults*, not *no headers* — a real, easy
-        // regression if `PolicyIr::security` were ever "simplified" to
-        // `Option<SecurityIr>`.
-        let program = checked_context_program(
-            r#"
-context demo
-
-fn ok(s: String) -> HttpResult[String] { Ok(s) }
-
-service Api from http {
-  on GET("/ping") () -> Effect[HttpResult[String]] by v: Visitor {
-    Effect.pure(ok("pong"))
-  }
-}
-"#,
-        );
-        let service = find_service(&program, "Api");
-        let ir = lower_service_item_ir(service, &program);
-        let IrItem::Service { policy, .. } = &ir else {
-            panic!("expected IrItem::Service, got {:?}", ir)
-        };
-        let policy = policy
-            .as_ref()
-            .unwrap_or_else(|| panic!("expected Some(PolicyIr) for a from http service"));
-        assert!(policy.cors.is_none(), "no cors {{ }} block was declared");
-        assert!(
-            policy.security.nosniff,
-            "the safe default, even with no security {{ }} block"
-        );
-        assert_eq!(policy.security.hsts_max_age_secs, None);
-        assert_eq!(
-            policy.max_body_bytes, None,
-            "no limits {{ }} block was declared"
-        );
-    }
-
-    /// A queue consumer's own body is the one shape this module's own
-    /// pre-existing gaps make genuinely unlowerable today, not just
-    /// awkward to fixture around: `Effect[QueueResult]` is mandatory
-    /// (`bynk.queue.return_not_https`-adjacent gate, `context_checks.rs:
-    /// 3730-3744`), and every `QueueResult` value — `Ack`, `NotFound`,
-    /// `Retry(reason)` — is a bare or qualified built-in-sum variant
-    /// reference, the exact case `GlobalRef`'s own doc comment (`ir.rs`)
-    /// already names as dropped from P6.1's Decision C on purpose
-    /// (contextual, `expected`-type-driven disambiguation this pass has no
-    /// sink to read back). Unlike `HttpResult`'s `Ok`/`Err`, `QueueResult`'s
-    /// own variants also don't resolve inside an ordinary free `fn` body at
-    /// all (confirmed empirically: `bynk.resolve.unknown_name`) — the
-    /// checker's own special-case for them (`checker.rs:3507`) is reached
-    /// only via a real handler body's own `Ctx::return_ty`, which the
-    /// resolver's eager pass over an ordinary `fn` never sets up — so the
-    /// `fn ok(s) -> HttpResult[String] { Ok(s) }` indirection every other
-    /// HTTP/cron fixture in this module uses has no queue-shaped
-    /// equivalent. Two tests, not one, cover what's actually true here.
-    fn queue_service_fixture() -> CheckedProgram {
-        checked_context_program(
-            r#"
-context demo
-
-type EmailJob = { to: String }
-
-service Outbox from queue("orders") {
-  on message(m: EmailJob) -> Effect[QueueResult] {
-    Ack
-  }
-}
-"#,
-        )
-    }
-
-    #[test]
-    fn a_queue_services_protocol_and_handler_signature_lower_correctly() {
-        // Everything that *doesn't* need the handler body lowered: the
-        // protocol descriptor (standalone, mirroring `lower_protocol_ir`'s
-        // own precedent for `from websocket`) and the handler's own
-        // `params`/`given`/`effectful` via `lower_handler_signature_ir`
-        // directly, the same shared helper `lower_service_handler_ir`
-        // itself calls before ever reaching the body.
-        let program = queue_service_fixture();
-        let service = find_service(&program, "Outbox");
-        assert!(matches!(
-            lower_protocol_ir(&service.protocol, &program),
-            ProtocolIr::Queue { name } if name == "orders"
-        ));
-        let handler = find_service_handler(service, &HandlerKind::Message);
-        let cx = LowerIrCtx::new(&program, HashSet::new());
-        let (params, given, _ret, effectful) = lower_handler_signature_ir(handler, &cx);
-        assert_eq!(params.len(), 1);
-        assert_eq!(params[0].0, "m");
-        assert!(given.is_empty());
-        assert!(effectful, "every service handler returns Effect[T]");
     }
 
     /// #1187's slice 5 (the `Service` emitter cutover, review of #1196):
@@ -9032,167 +1477,6 @@ service Api from http {
             &*program.program().ty_intern.get(ret),
             Ty::Effect(_)
         ));
-    }
-
-    #[test]
-    fn a_queue_services_on_message_handler_reaches_ordinary_body_lowering_not_the_websocket_deferral()
-     {
-        // The highest-value protocol test: proves the WebSocket deferral
-        // gate in `lower_service_handler_ir` keys on the `(kind, protocol)`
-        // *pair*, not on `HandlerKind::Message` alone — the same literal
-        // variant is also a WebSocket inbound frame. Originally proved by
-        // this panicking on the bare-nullary-built-in-variant gap (`Ack`,
-        // `lower_ident_ir`'s own final `todo!()`) rather than the
-        // WebSocket-specific "synthetic leading" message — #1251/#1252/
-        // review-of-#1252 closed that gap for real (`Callee::Intrinsic`),
-        // so the body now lowers cleanly; the same property is proved
-        // directly instead: `connection` is `None` (only a `from websocket`
-        // lifecycle handler ever gets one, `lower_handler_ir`'s own doc
-        // comment), and the body actually reaches and lowers the `Ack`
-        // reference — a `Callee::Intrinsic { ns: QUEUE_RESULT, op: "Ack" }`
-        // call with no args, the same shape a `Retry(reason)` call-form
-        // sibling already lowers to.
-        let program = queue_service_fixture();
-        let service = find_service(&program, "Outbox");
-        let handler = find_service_handler(service, &HandlerKind::Message);
-        let ir = lower_service_handler_ir(handler, &service.protocol, &program);
-        assert!(
-            ir.connection.is_none(),
-            "a queue on message handler is not a WebSocket lifecycle handler"
-        );
-        let IrExprKind::Block { tail, .. } = &ir.body.kind else {
-            panic!("expected a Block, got {:?}", ir.body.kind)
-        };
-        let IrExprKind::Return { value } = &tail.kind else {
-            panic!("expected the tail to wrap in Return, got {:?}", tail.kind)
-        };
-        let IrExprKind::Call { callee, args, .. } = &value.kind else {
-            panic!("expected Ack to lower to a Call, got {:?}", value.kind)
-        };
-        assert!(args.is_empty());
-        assert!(
-            matches!(callee, Callee::Intrinsic { ns, op } if *ns == QUEUE_RESULT && op == "Ack"),
-            "expected Callee::Intrinsic {{ ns: QUEUE_RESULT, op: \"Ack\" }}, got {callee:?}"
-        );
-    }
-
-    #[test]
-    fn a_qualified_nullary_sum_variant_reference_lowers_to_variant_not_field_access() {
-        // Review of #1253 (P6.23 root-cause pass): `Region.Domestic` parses
-        // as `ExprKind::FieldAccess`, but the checker's own
-        // `check_field_access` intercepts this shape (a bare-Ident receiver
-        // naming a declared sum type owning a variant tagged `field.name`)
-        // *before* ever independently type-checking the receiver — so
-        // `receiver`'s own ExprId never gets a recorded type, and the naive
-        // "always recurse into `lower_expr_ir(receiver, cx)`" reading
-        // panicked on ADR 0334's own "no recorded type" guard. Pins the
-        // real corpus shape that found this
-        // (`966_event_field_default_cross_context`'s own
-        // `Region.International` inside a record field value).
-        let program = checked_context_program(
-            r#"
-context demo
-
-type Region = enum { Domestic, International }
-
-type Order = { id: String, region: Region }
-
-fn pack(id: String) -> Order {
-  Order { id: id, region: Region.International }
-}
-"#,
-        );
-        let f = program.program().fns.get("pack").unwrap();
-        let mut cx = LowerIrCtx::new(&program, HashSet::new());
-        cx.bind(
-            "id".to_string(),
-            program
-                .program()
-                .ty_intern
-                .intern(Ty::Base(BaseType::String)),
-        );
-        let body = lower_expr_ir(&f.body.tail, &mut cx);
-        let IrExprKind::Record { fields, .. } = &body.kind else {
-            panic!("expected a Record construction, got {:?}", body.kind)
-        };
-        let (_, region_value) = fields
-            .iter()
-            .find(|(name, _)| name == "region")
-            .expect("Order has a `region` field");
-        assert!(
-            matches!(&region_value.kind, IrExprKind::Variant { tag, payload } if tag == "International" && payload.is_empty()),
-            "expected `Region.International` to lower to a nullary Variant, got {:?}",
-            region_value.kind
-        );
-    }
-
-    #[test]
-    fn a_service_handler_param_with_an_unresolvable_type_falls_back_to_unit_not_a_panic() {
-        // Review of #1253 (P6.23 root-cause pass): `lower_service_handler_ir`
-        // called the agent-oriented `lower_handler_signature_ir` (which
-        // rightly panics on a resolve miss — the checker does guarantee an
-        // *agent* handler's own param type resolves) instead of its real
-        // sibling, `lower_service_handler_signature_ir` — already graceful
-        // (`cx.unit_ty()` on a miss) since it was written, but never reached
-        // from this call site. `lower_service_handler_body_ir`'s own param
-        // loop carried the identical panic independently. Both fixed;
-        // pinned directly against `1199_service_handler_unresolvable_
-        // param_type_no_ice`'s own real shape — an HTTP handler param
-        // naming an undeclared type, which the checker accepts
-        // (`check_http_handler` validates a param's name only).
-        let program = checked_context_program(
-            r#"
-context demo
-
-service Api from http {
-  on POST("/x") (body: Nope) -> Effect[HttpResult[String]] by v: Visitor {
-    Effect.pure(Ok("hi"))
-  }
-}
-"#,
-        );
-        let service = find_service(&program, "Api");
-        let handler = &service.handlers[0];
-        let ir = lower_service_handler_ir(handler, &service.protocol, &program);
-        assert_eq!(ir.params.len(), 1);
-        assert_eq!(ir.params[0].0, "body");
-        assert_eq!(
-            ir.params[0].1,
-            program.program().ty_intern.intern(Ty::Unit),
-            "an unresolvable param type falls back to Unit, matching lower_protocol_ir's own posture"
-        );
-    }
-
-    #[test]
-    fn a_cron_service_lowers_its_schedule_from_the_handler_not_the_protocol() {
-        let program = checked_context_program(
-            r#"
-context demo
-
-fn done() -> Result[(), String] { Ok(()) }
-
-service Sweeper from cron {
-  on schedule("*/5 * * * *") () -> Effect[Result[(), String]] {
-    Effect.pure(done())
-  }
-}
-"#,
-        );
-        let service = find_service(&program, "Sweeper");
-        let ir = lower_service_item_ir(service, &program);
-        let IrItem::Service {
-            protocol, handlers, ..
-        } = &ir
-        else {
-            panic!("expected IrItem::Service, got {:?}", ir)
-        };
-        assert!(matches!(protocol, ProtocolIr::Cron));
-        assert_eq!(
-            handlers[0].kind,
-            IrHandlerKind::Cron {
-                expr: "*/5 * * * *".to_string()
-            }
-        );
     }
 
     /// Mirrors `bynkc/tests/fixtures/positive/236_websocket_chatroom` in
@@ -9273,144 +1557,6 @@ agent Room {
     }
 
     #[test]
-    fn websocket_open_handler_lowers_an_owned_connection_binding() {
-        // P6.13 (#1179): the named deferral is gone — `on open` now
-        // assembles a real `IrHandler` whose body's `connection.send(…)`
-        // read resolves through the synthetic binding, and whose own
-        // `connection` field records the owned (non-borrowed) case.
-        let program = websocket_service_fixture();
-        let service = find_service(&program, "ChatGateway");
-        let handler = find_service_handler(service, &HandlerKind::Open);
-        let ir = lower_service_handler_ir(handler, &service.protocol, &program);
-        let conn = ir
-            .connection
-            .as_ref()
-            .expect("on open must carry a ConnectionBinder");
-        assert!(
-            !conn.borrowed,
-            "on open's connection is a fresh owned socket, not borrowed"
-        );
-        let tys = &program.program().ty_intern;
-        assert_eq!(conn.ty.display(tys), "Connection[ServerFrame]");
-        // `connection` is never in the AST-derived params — mirrors the
-        // checker's own `handler.params`/`params_for_check` asymmetry.
-        assert!(ir.params.iter().all(|(name, _)| name != "connection"));
-        let IrExprKind::Block { stmts, .. } = &ir.body.kind else {
-            panic!("expected a Block body, got {:?}", ir.body.kind)
-        };
-        let has_connection_local = stmts
-            .iter()
-            .any(|stmt| format!("{stmt:?}").contains("Local(\"connection\")"));
-        assert!(
-            has_connection_local,
-            "expected the lowered body to resolve `connection` as a Local, got {stmts:?}"
-        );
-    }
-
-    #[test]
-    fn websocket_message_and_close_handlers_lower_a_borrowed_connection_binding() {
-        // P6.13 (#1179): `on message`/`on close` receive the same
-        // `connection` binding as `on open`, but borrowed — no disposal
-        // obligation, mirroring the checker's own `borrowed_held`.
-        let program = websocket_service_fixture();
-        let service = find_service(&program, "ChatGateway");
-        for kind in [HandlerKind::Message, HandlerKind::Close] {
-            let handler = find_service_handler(service, &kind);
-            let ir = lower_service_handler_ir(handler, &service.protocol, &program);
-            let conn = ir
-                .connection
-                .as_ref()
-                .unwrap_or_else(|| panic!("{kind:?} must carry a ConnectionBinder"));
-            assert!(
-                conn.borrowed,
-                "{kind:?}'s connection is the borrowed firing socket"
-            );
-        }
-        // Review of #1185: `on open`'s own test already pins that a
-        // `connection.…` read resolves to `Local("connection")` in the
-        // lowered body — but that alone only proves the *owned* case
-        // reaches scope. `on message`'s own non-consuming
-        // `connection.send(…)` (`borrowed_held`'s whole reason to exist)
-        // pins the borrowed case identically, so a future change that
-        // gated `cx.bind` on `!borrowed` would fail here, not just leave
-        // an unused synthetic binding.
-        let handler = find_service_handler(service, &HandlerKind::Message);
-        let ir = lower_service_handler_ir(handler, &service.protocol, &program);
-        let IrExprKind::Block { stmts, .. } = &ir.body.kind else {
-            panic!("expected a Block body, got {:?}", ir.body.kind)
-        };
-        let has_connection_local = stmts
-            .iter()
-            .any(|stmt| format!("{stmt:?}").contains("Local(\"connection\")"));
-        assert!(
-            has_connection_local,
-            "expected on message's lowered body to resolve `connection` as a Local, got {stmts:?}"
-        );
-    }
-
-    #[test]
-    fn websocket_service_item_assembles_with_every_lifecycle_handler_lowered() {
-        // The named deferral used to make `lower_service_item_ir`
-        // unbuildable for any real websocket service (issue #1179's own
-        // framing) — this is that end-to-end assembly, now real.
-        let program = websocket_service_fixture();
-        let service = find_service(&program, "ChatGateway");
-        let ir = lower_service_item_ir(service, &program);
-        let IrItem::Service { handlers, .. } = &ir else {
-            panic!("expected IrItem::Service, got {:?}", ir)
-        };
-        assert_eq!(handlers.len(), 3);
-        assert!(handlers.iter().all(|h| h.connection.is_some()));
-    }
-
-    #[test]
-    fn service_level_by_and_given_defaults_are_already_injected_before_lowering() {
-        // Pins the *harness* change (the `inject_service_defaults` call in
-        // `checked_context_program`) as much as the lowering itself:
-        // without it, this test would fail, silently pinning the wrong
-        // fact instead of catching a real gap. `lower_service_item_ir`
-        // itself contains no default-inheritance logic at all — see its
-        // own doc comment.
-        let program = checked_context_program(
-            r#"
-context demo
-
-type UserId = String
-
-actor Buyer { auth = Internal, identity = UserId }
-
-capability Clock {
-  fn now() -> Effect[Int]
-}
-
-provides Clock = FixedClock {
-  fn now() -> Effect[Int] {
-    42
-  }
-}
-
-service Api by u: Buyer given Clock {
-  on call(ping: String) -> Effect[String] {
-    Effect.pure(ping)
-  }
-}
-"#,
-        );
-        let service = find_service(&program, "Api");
-        let ir = lower_service_item_ir(service, &program);
-        let IrItem::Service { handlers, .. } = &ir else {
-            panic!("expected IrItem::Service, got {:?}", ir)
-        };
-        assert_eq!(handlers.len(), 1);
-        let binder = handlers[0]
-            .binder
-            .as_ref()
-            .unwrap_or_else(|| panic!("expected the service-level `by u: Buyer` to be inherited"));
-        assert_eq!(binder.binder, "u");
-        assert_eq!(handlers[0].given, vec!["Clock".to_string()]);
-    }
-
-    #[test]
     fn lower_event_pattern_ir_reshapes_literal_and_variant_fields() {
         // Review of #1180: the `Events` protocol path had zero coverage.
         // `lower_protocol_ir`'s own `Events` arm genuinely can't be driven
@@ -9482,55 +1628,6 @@ service Subscriber from Events(OrderPlaced { status: Active, count: 3, .. }) {
         );
     }
 
-    #[test]
-    fn lower_capability_item_ir_assembles_ops_in_declaration_order() {
-        let program = checked_context_program(
-            r#"
-context demo
-
-capability Store {
-  fn get(key: String) -> Effect[Int]
-  fn put(key: String, value: Int) -> Effect[()]
-}
-"#,
-        );
-        let cap = find_capability(&program, "Store");
-        let ir = lower_capability_item_ir(cap, &program);
-        let IrItem::Capability { def, ops } = &ir else {
-            panic!("expected IrItem::Capability, got {:?}", ir)
-        };
-        assert_eq!(def, "Store");
-        assert_eq!(ops.len(), 2, "declaration order preserved");
-
-        assert_eq!(ops[0].name, "get");
-        assert!(ops[0].type_params.is_empty());
-        assert_eq!(ops[0].params.len(), 1);
-        assert_eq!(ops[0].params[0].0, "key");
-        assert!(matches!(
-            &*program.program().ty_intern.get(ops[0].params[0].1),
-            Ty::Base(bynk_syntax::ast::BaseType::String)
-        ));
-        // `return_ty` mirrors `IrItem::Fn::ret`'s own convention (Effect-
-        // wrapped, not peeled) — `get`'s declared `Effect[Int]` resolves
-        // whole, same as a fn's `ret`.
-        assert!(matches!(
-            &*program.program().ty_intern.get(ops[0].return_ty),
-            Ty::Effect(inner) if matches!(
-                &*program.program().ty_intern.get(*inner),
-                Ty::Base(bynk_syntax::ast::BaseType::Int)
-            )
-        ));
-
-        assert_eq!(ops[1].name, "put");
-        assert_eq!(ops[1].params.len(), 2);
-        assert_eq!(ops[1].params[0].0, "key");
-        assert_eq!(ops[1].params[1].0, "value");
-        assert!(matches!(
-            &*program.program().ty_intern.get(ops[1].params[1].1),
-            Ty::Base(bynk_syntax::ast::BaseType::Int)
-        ));
-    }
-
     /// P6.29 (design/tracks/the-ir.md §6a): pins `capability_op_sig_from_commons`
     /// against the same fixture as its `CheckedProgram`-driven sibling above —
     /// same param names/order, found by name alone from `TypedCommons`, no
@@ -9567,357 +1664,6 @@ capability Store {
         // fallthrough-to-empty-`Vec` at the caller.
         assert!(capability_op_sig_from_commons(commons, "NoSuchCap", "get").is_none());
         assert!(capability_op_sig_from_commons(commons, "Store", "no_such_op").is_none());
-    }
-
-    #[test]
-    fn lower_op_sig_ir_resolves_generic_op_type_params_as_rigid_vars() {
-        // Review-relevant: a capability op's own `[T, …]` list is scoped to
-        // the op, not the capability (`CapabilityDecl` has no `type_params`
-        // of its own) — pins that `lower_op_sig_ir` seeds a fresh rigid-var
-        // scope per op rather than sharing one across every op on the same
-        // capability, and that a wrong scope would show up as `Ty::Unit`
-        // (ADR 0334's own silent-wrong-answer failure mode), not a panic.
-        let program = checked_context_program(
-            r#"
-context demo
-
-capability Store {
-  fn get[T](key: String) -> Effect[T]
-  fn now() -> Effect[Int]
-}
-"#,
-        );
-        let cap = find_capability(&program, "Store");
-        let ir = lower_capability_item_ir(cap, &program);
-        let IrItem::Capability { ops, .. } = &ir else {
-            panic!("expected IrItem::Capability, got {:?}", ir)
-        };
-
-        let get = ops.iter().find(|o| o.name == "get").expect("op `get`");
-        assert_eq!(get.type_params, vec!["T".to_string()]);
-        assert!(matches!(
-            &*program.program().ty_intern.get(get.params[0].1),
-            Ty::Base(bynk_syntax::ast::BaseType::String)
-        ));
-        assert!(
-            matches!(
-                &*program.program().ty_intern.get(get.return_ty),
-                Ty::Effect(inner) if matches!(
-                    &*program.program().ty_intern.get(*inner),
-                    Ty::Var(n) if n == "T"
-                )
-            ),
-            "expected the op's own `T` to survive as Ty::Var, not collapse to Ty::Unit"
-        );
-
-        let now = ops.iter().find(|o| o.name == "now").expect("op `now`");
-        assert!(
-            now.type_params.is_empty(),
-            "a sibling non-generic op must not see `get`'s own `T` in scope"
-        );
-    }
-
-    #[test]
-    fn lower_op_sig_ir_resolves_a_generic_op_type_param_inside_a_type_argument() {
-        // Review of #1182: `Effect[T]` alone only exercises `TypeRef::Effect`'s
-        // arm — a bare wrapper around the var. `Box[T]` exercises
-        // `TypeRef::App`'s arm instead, where `T` is a *type argument*, not
-        // the whole ref, and a wrong rigid-var scope fails differently
-        // (`types.get(&name.name)?` on the *bare var itself*, not on the
-        // outer `Box`) — the other half of the resolution surface
-        // `lower_op_sig_ir`'s own doc comment claims to cover.
-        let program = checked_context_program(
-            r#"
-context demo
-
-type Box[A] = { value: A }
-
-capability Store {
-  fn get[T](box: Box[T]) -> Effect[T]
-}
-"#,
-        );
-        let cap = find_capability(&program, "Store");
-        let ir = lower_capability_item_ir(cap, &program);
-        let IrItem::Capability { ops, .. } = &ir else {
-            panic!("expected IrItem::Capability, got {:?}", ir)
-        };
-        let get = &ops[0];
-        assert!(
-            matches!(
-                &*program.program().ty_intern.get(get.params[0].1),
-                Ty::Named { name, args, .. }
-                    if name == "Box"
-                        && args.len() == 1
-                        && matches!(
-                            &*program.program().ty_intern.get(args[0]),
-                            Ty::Var(n) if n == "T"
-                        )
-            ),
-            "expected Box[T] with T resolved as a rigid Ty::Var argument, got {:?}",
-            program.program().ty_intern.get(get.params[0].1)
-        );
-    }
-
-    #[test]
-    fn lower_op_sig_ir_falls_back_to_unit_on_an_unresolvable_type_like_the_checker_does() {
-        // Review of #1182: a capability op's own param/return types are
-        // never actually resolution-checked upstream (the resolver skips
-        // `CommonsItem::Capability`, and `check_capability_decls` only
-        // records refs, never errors on a miss) — so `Bogus` here
-        // certifies today, and `lower_op_sig_ir` must mirror the checker's
-        // own `build_capability_op_info` fallback (`Ty::Unit`) rather than
-        // panic on a state that is, in fact, reachable from source.
-        let program = checked_context_program(
-            r#"
-context demo
-
-capability Store {
-  fn get(key: Bogus) -> Effect[Bogus]
-}
-"#,
-        );
-        let cap = find_capability(&program, "Store");
-        // Would already have panicked inside `checked_context_program`'s own
-        // `.expect("certify")` if this were rejected upstream — reaching
-        // here at all is part of what this test pins.
-        let ir = lower_capability_item_ir(cap, &program);
-        let IrItem::Capability { ops, .. } = &ir else {
-            panic!("expected IrItem::Capability, got {:?}", ir)
-        };
-        assert!(matches!(
-            &*program.program().ty_intern.get(ops[0].params[0].1),
-            Ty::Unit
-        ));
-        assert!(matches!(
-            &*program.program().ty_intern.get(ops[0].return_ty),
-            Ty::Unit
-        ));
-    }
-
-    #[test]
-    fn lower_op_sig_ir_agrees_with_the_checkers_own_capability_op_info() {
-        // Review of #1182: `OpSig`'s own doc comment states this mirrors
-        // `CapabilityOpInfo` — same per-op var seeding, same `types` map,
-        // same non-peeled `return_ty`. Checks the stated invariant directly
-        // against the checker's own constructor rather than leaving it only
-        // asserted in prose, so a later change to either side's rigid-var
-        // seeding fails this test instead of silently drifting.
-        let program = checked_context_program(
-            r#"
-context demo
-
-capability Store {
-  fn get[T](key: String) -> Effect[T]
-}
-"#,
-        );
-        let cap = find_capability(&program, "Store");
-        let ir = lower_capability_item_ir(cap, &program);
-        let IrItem::Capability { ops, .. } = &ir else {
-            panic!("expected IrItem::Capability, got {:?}", ir)
-        };
-        let op = &ops[0];
-
-        let info = context_checks::build_capability_op_info(
-            &cap.ops[0],
-            &program.program().types,
-            &program.program().ty_intern,
-        );
-
-        assert_eq!(op.name, info.name);
-        assert_eq!(op.type_params, info.type_params);
-        assert_eq!(
-            op.params.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>(),
-            info.param_names
-        );
-        assert_eq!(
-            op.params.iter().map(|(_, t)| *t).collect::<Vec<_>>(),
-            info.params
-        );
-        assert_eq!(op.return_ty, info.return_ty);
-    }
-
-    #[test]
-    fn lower_provider_item_ir_assembles_bynk_ops_and_given_in_declaration_order() {
-        // `given Random, Clock` (reverse-alphabetical, deliberately) pins
-        // that `given`'s own declaration order survives — neither op body
-        // below calls either capability, pinning review of #1186's point
-        // that an *unused* `given` entry must still appear (it feeds R8.1's
-        // own `deps` constructor, not anything the op bodies reference).
-        let program = checked_context_program(
-            r#"
-context demo
-
-capability Clock {
-  fn now() -> Effect[Int]
-}
-
-capability Random {
-  fn next() -> Effect[Int]
-}
-
-capability Store {
-  fn get(key: String) -> Effect[Int]
-  fn put(key: String, value: Int) -> Effect[()]
-}
-
-provides Store = MemStore given Random, Clock {
-  fn get(key: String) -> Effect[Int] {
-    Effect.pure(0)
-  }
-  fn put(key: String, value: Int) -> Effect[()] {
-    Effect.pure(())
-  }
-}
-"#,
-        );
-        let provider = find_provider(&program, "MemStore");
-        let ir = lower_provider_item_ir(provider, &program);
-        let IrItem::Provider { def, cap, body } = &ir else {
-            panic!("expected IrItem::Provider, got {:?}", ir)
-        };
-        assert_eq!(def, "MemStore");
-        assert_eq!(cap, "Store");
-        let ProviderBody::Bynk { given, ops } = body else {
-            panic!("expected ProviderBody::Bynk, got {:?}", body)
-        };
-        assert_eq!(
-            given.iter().map(|g| g.name.as_str()).collect::<Vec<_>>(),
-            vec!["Random", "Clock"],
-            "given's own declaration order preserved, unused entries included"
-        );
-        assert!(given.iter().all(|g| g.context.is_none()));
-        assert_eq!(ops.len(), 2, "declaration order preserved");
-
-        assert_eq!(ops[0].name, "get");
-        assert_eq!(ops[0].params.len(), 1);
-        assert_eq!(ops[0].params[0].0, "key");
-        assert!(matches!(
-            &*program.program().ty_intern.get(ops[0].params[0].1),
-            Ty::Base(bynk_syntax::ast::BaseType::String)
-        ));
-        // `return_ty` mirrors `OpSig::return_ty`'s own convention
-        // (Effect-wrapped, not peeled).
-        assert!(matches!(
-            &*program.program().ty_intern.get(ops[0].return_ty),
-            Ty::Effect(inner) if matches!(
-                &*program.program().ty_intern.get(*inner),
-                Ty::Base(bynk_syntax::ast::BaseType::Int)
-            )
-        ));
-
-        assert_eq!(ops[1].name, "put");
-        assert_eq!(ops[1].params.len(), 2);
-        assert_eq!(ops[1].params[0].0, "key");
-        assert_eq!(ops[1].params[1].0, "value");
-    }
-
-    #[test]
-    fn lower_provider_item_ir_external_provider_has_no_ops() {
-        // v0.17: an external (bodiless) provider is only legal inside an
-        // `adapter` unit (`bynk-check/src/symbols.rs:438`), which this test
-        // harness's own `checked_context_program` cannot build (it only
-        // ever parses a `context` — feedback memory "bynk-emit test harness
-        // scope"). `lower_provider_item_ir`'s own `External` branch never
-        // reads `program` at all, so this hand-constructs the `ProviderDecl`
-        // the parser would produce for `provides Store = ExternalStore`
-        // inside an adapter, the same way `project_model.rs`'s own
-        // `provider()` test helper does, rather than growing a second,
-        // adapter-shaped fixture builder for a branch this pass never
-        // touches `program` on.
-        let program = checked_context_program("context demo\n");
-        let provider = ProviderDecl {
-            capability: bynk_syntax::ast::Ident {
-                name: "Store".to_string(),
-                span: Span::default(),
-            },
-            provider_name: bynk_syntax::ast::Ident {
-                name: "ExternalStore".to_string(),
-                span: Span::default(),
-            },
-            // Review of #1187's own Provider given/deps-wiring slice: an
-            // external provider's own `given` is populated the same way a
-            // Bynk one's is (nothing in the grammar or checker gates it on
-            // `external`) — non-empty here specifically to pin that
-            // `ProviderBody::External` now carries it, where it used to be
-            // silently dropped (a bare-unit variant with nowhere to put it).
-            given: vec![CapRef {
-                context: None,
-                name: bynk_syntax::ast::Ident {
-                    name: "Clock".to_string(),
-                    span: Span::default(),
-                },
-                span: Span::default(),
-            }],
-            ops: Vec::new(),
-            external: true,
-            documentation: None,
-            span: Span::default(),
-            trivia: Default::default(),
-        };
-
-        let ir = lower_provider_item_ir(&provider, &program);
-        let IrItem::Provider { def, cap, body } = &ir else {
-            panic!("expected IrItem::Provider, got {:?}", ir)
-        };
-        assert_eq!(def, "ExternalStore");
-        assert_eq!(cap, "Store");
-        let ProviderBody::External { given } = body else {
-            panic!("expected ProviderBody::External, got {:?}", body)
-        };
-        assert_eq!(given.len(), 1);
-        assert_eq!(given[0].context, None);
-        assert_eq!(given[0].name, "Clock");
-    }
-
-    #[test]
-    fn lower_provider_op_ir_lowers_a_given_capability_call_via_the_ordinary_callee_path() {
-        // Pins `IrItem`'s own doc comment: a provider op's `given`
-        // capabilities need no scope entry of their own — a
-        // `Callee::Capability`-classified call already lowers correctly
-        // through the ordinary `lower_block_ir`/`lower_expr_ir` path, the
-        // same claim `lower_handler_body_ir`'s own doc comment makes for
-        // handler bodies.
-        let program = checked_context_program(
-            r#"
-context demo
-
-capability Clock {
-  fn now() -> Effect[Int]
-}
-
-capability Store {
-  fn get(key: String) -> Effect[Int]
-}
-
-provides Store = MemStore given Clock {
-  fn get(key: String) -> Effect[Int] {
-    Clock.now()
-  }
-}
-"#,
-        );
-        let provider = find_provider(&program, "MemStore");
-        let ir = lower_provider_item_ir(provider, &program);
-        let IrItem::Provider { body, .. } = &ir else {
-            panic!("expected IrItem::Provider, got {:?}", ir)
-        };
-        let ProviderBody::Bynk { given, ops } = body else {
-            panic!("expected ProviderBody::Bynk, got {:?}", body)
-        };
-        assert_eq!(given.len(), 1);
-        assert_eq!(given[0].name, "Clock");
-        let get = &ops[0];
-        let tail = fn_tail(&get.body);
-        let IrExprKind::Call { callee, args, .. } = &tail.kind else {
-            panic!("expected Call, got {:?}", tail.kind)
-        };
-        assert!(matches!(
-            callee,
-            Callee::Capability { cap, op } if cap == "Clock" && op == "now"
-        ));
-        assert!(args.is_empty());
     }
 
     #[test]
@@ -9960,59 +1706,6 @@ provides Store = MemStore given Clock {
         let ir = lower_cap_ref_ir(&cap_ref);
         assert_eq!(ir.context.as_deref(), Some("Billing"));
         assert_eq!(ir.name, "Ledger");
-    }
-
-    #[test]
-    fn lower_provider_op_ir_binds_its_own_param_into_scope() {
-        // Review of #1186: every other provider-op test's own body ignores
-        // its params, so `cx.bind` (the one line seeding the scope
-        // `lower_ident_ir` needs — the reason this function is a sibling of
-        // `lower_fn_body_ir` rather than a widening of it) could regress
-        // silently. Pins a param reference resolving to `Local`, not the
-        // unresolved-ident `todo!()` or a same-named-global misclassification.
-        let program = checked_context_program(
-            r#"
-context demo
-
-capability Store {
-  fn get(key: String) -> Effect[String]
-}
-
-provides Store = MemStore {
-  fn get(key: String) -> Effect[String] {
-    Effect.pure(key)
-  }
-}
-"#,
-        );
-        let provider = find_provider(&program, "MemStore");
-        let ir = lower_provider_item_ir(provider, &program);
-        let IrItem::Provider { body, .. } = &ir else {
-            panic!("expected IrItem::Provider, got {:?}", ir)
-        };
-        let ProviderBody::Bynk { ops, .. } = body else {
-            panic!("expected ProviderBody::Bynk, got {:?}", body)
-        };
-        let get = &ops[0];
-        let key_ty = get.params[0].1;
-        let tail = fn_tail(&get.body);
-        // `Effect.pure(key)` desugars to `IrExprKind::Pure`, wrapping `key`
-        // as its own sole value.
-        let IrExprKind::Pure { value } = &tail.kind else {
-            panic!("expected Pure, got {:?}", tail.kind)
-        };
-        assert!(
-            matches!(
-                &value.kind,
-                IrExprKind::Local(name) if name == "key"
-            ),
-            "expected the op's own `key` param to resolve as a bound Local, got {:?}",
-            value.kind
-        );
-        assert_eq!(
-            value.ty, key_ty,
-            "the resolved Local's type must be the same TyId bind() seeded"
-        );
     }
 
     /// Review of #1229 (#1228): `lower_route_cache_ir`/`lower_route_limit_ir`
@@ -10190,6 +1883,672 @@ service Api from http {
         assert!(
             lower_route_limit_ir(parsed_handler(&ctx, "Api", 0)).is_none(),
             "a non-positive maxBody must not construct Some(0)"
+        );
+    }
+
+    /// Every `body_writes_state` classification (#1165's [DECISION B]/
+    /// [DECISION C], the shipped `emit_agent` implicit-commit decision) lives
+    /// on one agent — each handler exercises exactly one case so a failing
+    /// assertion names its own scenario unambiguously. Until Slice D1 of
+    /// `#1542` these pinned the same function through the deleted IR-side
+    /// `CommitShape` constructor; they now pin it directly.
+    fn store_write_fixture() -> CheckedProgram {
+        checked_context_program(
+            r#"
+context demo
+
+type Box = { n: Int }
+
+fn Box.put(self, x: Int) -> Effect[()] {
+  Effect.pure(())
+}
+
+capability Clock {
+  fn now() -> Effect[Int]
+}
+
+provides Clock = FixedClock {
+  fn now() -> Effect[Int] {
+    42
+  }
+}
+
+agent Widget {
+  key id: String
+  store items: Map[String, Int]
+  store active: Cell[Bool] = true
+  store tags: Set[String]
+  store history: Log[String]
+
+  on call readOnlyPlain() -> Effect[()] {
+    Effect.pure(())
+  }
+
+  on call readOnlyQuery() -> Effect[Int] {
+    items.size()
+  }
+
+  on call nestedMutation(xs: List[String], flag: Bool) -> Effect[()] {
+    if flag {
+      match flag {
+        true => xs.forEach((x) => items.put(x, 1))
+        false => Effect.pure(())
+      }
+    } else {
+      Effect.pure(())
+    }
+  }
+
+  on call bareAssign(v: Bool) -> Effect[()] {
+    active := v
+    Effect.pure(())
+  }
+
+  on call shadowedName(items: Box, x: Int) -> Effect[()] {
+    let _ <- items.put(x)
+    Effect.pure(())
+  }
+
+  on call cellUpdate() -> Effect[()] {
+    let _ <- active.update((b) => !b)
+    Effect.pure(())
+  }
+
+  on call setAdd(t: String) -> Effect[()] {
+    let _ <- tags.add(t)
+    Effect.pure(())
+  }
+
+  on call logAppend(t: String) -> Effect[()] given Clock {
+    let _ <- history.append(t)
+    Effect.pure(())
+  }
+}
+"#,
+        )
+    }
+
+    fn find_handler<'a>(agent: &'a AgentDecl, name: &str) -> &'a Handler {
+        agent
+            .handlers
+            .iter()
+            .find(|h| h.method_name.as_ref().is_some_and(|m| m.name == name))
+            .unwrap_or_else(|| panic!("no handler named `{name}` on agent `{}`", agent.name.name))
+    }
+
+    /// A queue consumer's own body is the one shape this module's own
+    /// pre-existing gaps make genuinely unlowerable today, not just
+    /// awkward to fixture around: `Effect[QueueResult]` is mandatory
+    /// (`bynk.queue.return_not_https`-adjacent gate, `context_checks.rs:
+    /// 3730-3744`), and every `QueueResult` value — `Ack`, `NotFound`,
+    /// `Retry(reason)` — is a bare or qualified built-in-sum variant
+    /// reference, the exact case `GlobalRef`'s own doc comment (`ir.rs`)
+    /// already names as dropped from P6.1's Decision C on purpose
+    /// (contextual, `expected`-type-driven disambiguation this pass has no
+    /// sink to read back). Unlike `HttpResult`'s `Ok`/`Err`, `QueueResult`'s
+    /// own variants also don't resolve inside an ordinary free `fn` body at
+    /// all (confirmed empirically: `bynk.resolve.unknown_name`) — the
+    /// checker's own special-case for them (`checker.rs:3507`) is reached
+    /// only via a real handler body's own `Ctx::return_ty`, which the
+    /// resolver's eager pass over an ordinary `fn` never sets up — so the
+    /// `fn ok(s) -> HttpResult[String] { Ok(s) }` indirection every other
+    /// HTTP/cron fixture in this module uses has no queue-shaped
+    /// equivalent. Two tests, not one, cover what's actually true here.
+    fn queue_service_fixture() -> CheckedProgram {
+        checked_context_program(
+            r#"
+context demo
+
+type EmailJob = { to: String }
+
+service Outbox from queue("orders") {
+  on message(m: EmailJob) -> Effect[QueueResult] {
+    Ack
+  }
+}
+"#,
+        )
+    }
+
+    #[test]
+    fn a_queue_services_protocol_and_handler_signature_lower_correctly() {
+        // The protocol descriptor (standalone, mirroring `lower_protocol_ir`'s
+        // own precedent for `from websocket`) and the handler's own
+        // `params`/`given`/`effectful` via `lower_service_handler_signature_ir`
+        // — the two shape readers `bynk-emit` consumes for a queue service.
+        let program = queue_service_fixture();
+        let service = find_service(&program, "Outbox");
+        assert!(matches!(
+            lower_protocol_ir(&service.protocol, &program),
+            ProtocolIr::Queue { name } if name == "orders"
+        ));
+        let handler = find_service_handler(service, &HandlerKind::Message);
+        let (params, given, _ret, effectful) =
+            lower_service_handler_signature_ir(handler, &program);
+        assert_eq!(params.len(), 1);
+        assert_eq!(params[0].0, "m");
+        assert!(given.is_empty());
+        assert!(effectful, "every service handler returns Effect[T]");
+    }
+
+    #[test]
+    fn store_field_falls_back_to_unit_on_an_unresolvable_type_like_the_checker_does() {
+        // #1187's Agent state-field slice, step 0: no checker pass validates
+        // a store field's own type reference (only its shape — `Cell`/`Map`/
+        // `Set`/`Cache`/`Log` — and `@ttl`/`@indexed` legality), so
+        // `store x: Cell[Bogus] = "hello"` certifies today (exit 0, no
+        // diagnostic, verified empirically against the real `bynkc` binary)
+        // even though `Bogus` is undeclared and the initialiser's own type
+        // doesn't match it. `resolve_store_field_ty` must mirror
+        // `lower_op_sig_ir`'s own `Ty::Unit` fallback rather than panic on a
+        // state that is, in fact, reachable from source. The shape reader is
+        // the only reader left (the `init`-lowering sibling went with Slice
+        // D1 of `#1542`); with the field's own type unresolved, the checker's
+        // init-checking loop leaves `"hello"` untyped too, which this reader
+        // never touches.
+        let program = checked_context_program(
+            r#"
+context demo
+
+agent Widget {
+  key id: String
+  store x: Cell[Bogus] = "hello"
+
+  on call touch() -> Effect[()] {
+    Effect.pure(())
+  }
+}
+"#,
+        );
+        let agent = find_agent(&program, "Widget");
+        let x = find_store_field(agent, "x");
+        // Would already have panicked inside `checked_context_program`'s own
+        // `.expect("certify")` if this were rejected upstream — reaching
+        // here at all is part of what this test pins.
+        let shape = lower_store_field_shape_ir(x, &program);
+        let StoreKindIr::Cell(ty) = shape.kind else {
+            panic!("expected StoreKindIr::Cell, got {:?}", shape.kind)
+        };
+        assert!(matches!(&*program.program().ty_intern.get(ty), Ty::Unit));
+    }
+
+    #[test]
+    fn body_writes_state_is_false_for_a_plain_body() {
+        let program = store_write_fixture();
+        let handler = find_handler(find_agent(&program, "Widget"), "readOnlyPlain");
+        assert!(!body_writes_state(&handler.body, program.program()));
+    }
+
+    #[test]
+    fn body_writes_state_is_false_for_a_non_mutating_store_read() {
+        let program = store_write_fixture();
+        let handler = find_handler(find_agent(&program, "Widget"), "readOnlyQuery");
+        assert!(!body_writes_state(&handler.body, program.program()));
+    }
+
+    #[test]
+    fn body_writes_state_is_false_for_a_locally_shadowed_store_field_name() {
+        let program = store_write_fixture();
+        let handler = find_handler(find_agent(&program, "Widget"), "shadowedName");
+        assert!(!body_writes_state(&handler.body, program.program()));
+    }
+
+    #[test]
+    fn body_writes_state_is_true_for_a_write_nested_in_if_match_lambda() {
+        let program = store_write_fixture();
+        let handler = find_handler(find_agent(&program, "Widget"), "nestedMutation");
+        assert!(body_writes_state(&handler.body, program.program()));
+    }
+
+    #[test]
+    fn body_writes_state_is_true_for_a_bare_cell_assign() {
+        let program = store_write_fixture();
+        let handler = find_handler(find_agent(&program, "Widget"), "bareAssign");
+        assert!(body_writes_state(&handler.body, program.program()));
+    }
+
+    #[test]
+    fn body_writes_state_is_true_for_a_cell_update_method_call() {
+        let program = store_write_fixture();
+        let handler = find_handler(find_agent(&program, "Widget"), "cellUpdate");
+        assert!(body_writes_state(&handler.body, program.program()));
+    }
+
+    #[test]
+    fn body_writes_state_is_true_for_a_set_add_method_call() {
+        let program = store_write_fixture();
+        let handler = find_handler(find_agent(&program, "Widget"), "setAdd");
+        assert!(body_writes_state(&handler.body, program.program()));
+    }
+
+    #[test]
+    fn body_writes_state_is_true_for_a_log_append_method_call() {
+        let program = store_write_fixture();
+        let handler = find_handler(find_agent(&program, "Widget"), "logAppend");
+        assert!(body_writes_state(&handler.body, program.program()));
+    }
+
+    fn checked_program(source: &str) -> CheckedProgram {
+        let tokens = lexer::tokenize(source).expect("lex");
+        let (commons, warnings) = parser::parse_with_warnings(&tokens, source).expect("parse");
+        let resolved = resolver::resolve(commons).expect("resolve");
+        let typed = checker::check(resolved).expect("check");
+        checker::certify(typed, warnings).expect("certify")
+    }
+
+    fn find_type<'a>(program: &'a CheckedProgram, name: &str) -> &'a Arc<TypeDecl> {
+        program
+            .program()
+            .types
+            .get(name)
+            .unwrap_or_else(|| panic!("no type named `{name}` in this fixture"))
+    }
+
+    fn find_capability<'a>(program: &'a CheckedProgram, name: &str) -> &'a CapabilityDecl {
+        program
+            .program()
+            .commons
+            .items
+            .iter()
+            .find_map(|item| match item {
+                CommonsItem::Capability(c) if c.name.name == name => Some(c),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no capability named `{name}` in this fixture"))
+    }
+
+    fn find_provider<'a>(program: &'a CheckedProgram, name: &str) -> &'a ProviderDecl {
+        program
+            .program()
+            .commons
+            .items
+            .iter()
+            .find_map(|item| match item {
+                CommonsItem::Provider(p) if p.provider_name.name == name => Some(p),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no provider named `{name}` in this fixture"))
+    }
+
+    // The six `type_shape_*` tests below, the capability/provider/handler-kind
+    // tests after them, and the `body_writes_state_*` tests above were all
+    // re-created by Slice D1 of `#1542`: each pinned a kept helper only
+    // through a deleted item constructor (`IrItem::Type`/`Capability`/
+    // `Provider`/`Service`) and now calls the helper directly, asserting the
+    // same facts minus the constructor's own wrapper field.
+
+    #[test]
+    fn type_shape_record_resolves_fields_and_generic_rigid_vars() {
+        let program = checked_program(
+            r#"
+commons demo {
+  type Box[T] = { value: T }
+}
+"#,
+        );
+        let shape = lower_type_shape_ir(find_type(&program, "Box"), &program);
+        let TypeShape::Record { fields } = &shape else {
+            panic!("expected TypeShape::Record, got {shape:?}")
+        };
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].0, "value");
+        assert!(matches!(
+            &*program.program().ty_intern.get(fields[0].1),
+            Ty::Var(name) if name == "T"
+        ));
+    }
+
+    #[test]
+    fn type_shape_sum_resolves_variant_payloads_and_embeds() {
+        let program = checked_program(
+            r#"
+commons demo {
+  type PaymentError = enum { Declined, InsufficientFunds }
+
+  type OrderError =
+    | OutOfStock(sku: String, qty: Int)
+    | Payment(reason: PaymentError)
+    embeds PaymentError as Payment
+}
+"#,
+        );
+        let shape = lower_type_shape_ir(find_type(&program, "OrderError"), &program);
+        let TypeShape::Sum { variants, embeds } = &shape else {
+            panic!("expected TypeShape::Sum, got {shape:?}")
+        };
+        assert_eq!(variants.len(), 2);
+        assert_eq!(variants[0].0, "OutOfStock");
+        assert_eq!(variants[0].1.len(), 2);
+        assert_eq!(variants[0].1[0].0, "sku");
+        assert!(matches!(
+            &*program.program().ty_intern.get(variants[0].1[0].1),
+            Ty::Base(bynk_syntax::ast::BaseType::String)
+        ));
+        assert_eq!(variants[0].1[1].0, "qty");
+        assert!(matches!(
+            &*program.program().ty_intern.get(variants[0].1[1].1),
+            Ty::Base(bynk_syntax::ast::BaseType::Int)
+        ));
+        assert_eq!(variants[1].0, "Payment");
+        assert_eq!(variants[1].1.len(), 1);
+        assert_eq!(variants[1].1[0].0, "reason");
+
+        assert_eq!(embeds.len(), 1);
+        let (source, tag) = &embeds[0];
+        assert_eq!(tag, "Payment");
+        let Ty::Named { name, .. } = &*program.program().ty_intern.get(*source) else {
+            panic!("expected embeds source to resolve to a named type")
+        };
+        assert_eq!(name, "PaymentError");
+    }
+
+    #[test]
+    fn type_shape_refined_and_opaque_cover_bare_and_predicated_and_opaque_forms() {
+        let program = checked_program(
+            r#"
+commons demo {
+  type Age = Int where Positive
+  type UserId = opaque Int
+  type Bare = Int
+}
+"#,
+        );
+        let TypeShape::Refined {
+            base,
+            refinement,
+            opaque,
+        } = lower_type_shape_ir(find_type(&program, "Age"), &program)
+        else {
+            panic!("expected TypeShape::Refined for Age")
+        };
+        assert_eq!(base, bynk_syntax::ast::BaseType::Int);
+        assert!(refinement.is_some());
+        assert!(!opaque);
+
+        let TypeShape::Refined {
+            refinement, opaque, ..
+        } = lower_type_shape_ir(find_type(&program, "UserId"), &program)
+        else {
+            panic!("expected TypeShape::Refined for UserId")
+        };
+        assert!(refinement.is_none());
+        assert!(opaque);
+
+        let TypeShape::Refined {
+            refinement, opaque, ..
+        } = lower_type_shape_ir(find_type(&program, "Bare"), &program)
+        else {
+            panic!("expected TypeShape::Refined for Bare")
+        };
+        assert!(refinement.is_none());
+        assert!(!opaque);
+    }
+
+    #[test]
+    fn type_shape_sum_covers_a_payload_less_variant() {
+        let program = checked_program(
+            r#"
+commons demo {
+  type PaymentError = enum { Declined, InsufficientFunds }
+}
+"#,
+        );
+        let shape = lower_type_shape_ir(find_type(&program, "PaymentError"), &program);
+        let TypeShape::Sum { variants, embeds } = &shape else {
+            panic!("expected TypeShape::Sum, got {shape:?}")
+        };
+        assert_eq!(variants.len(), 2);
+        assert_eq!(variants[0].0, "Declined");
+        assert!(
+            variants[0].1.is_empty(),
+            "a bare variant carries no payload"
+        );
+        assert_eq!(variants[1].0, "InsufficientFunds");
+        assert!(variants[1].1.is_empty());
+        assert!(embeds.is_empty());
+    }
+
+    #[test]
+    fn type_shape_record_drops_a_fields_own_inline_refinement() {
+        // Decision B extension, `bynk-ir`'s own `TypeShape::Record` doc
+        // comment: a field's inline `where` clause is a construction-time
+        // constraint the checker already enforces, not part of the emitted
+        // shape — pin that the field still lowers to `(name, ty)` with the
+        // refinement silently absent, not that lowering rejects it.
+        let program = checked_program(
+            r#"
+commons demo {
+  type Account = { balance: Int where NonNegative }
+}
+"#,
+        );
+        let shape = lower_type_shape_ir(find_type(&program, "Account"), &program);
+        let TypeShape::Record { fields } = &shape else {
+            panic!("expected TypeShape::Record, got {shape:?}")
+        };
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].0, "balance");
+        assert!(matches!(
+            &*program.program().ty_intern.get(fields[0].1),
+            Ty::Base(bynk_syntax::ast::BaseType::Int)
+        ));
+    }
+
+    #[test]
+    fn type_shape_record_resolves_a_generic_type_application_field() {
+        // The `TypeRef::App` arm of `resolve_type_ref_in` — the one arm
+        // that returns `None` for an unknown/unapplied name, and so the one
+        // most likely to silently hit this pass's own ADR 0334 panic if the
+        // field's resolution were ever wired up wrong.
+        let program = checked_program(
+            r#"
+commons demo {
+  type Box[T] = { value: T }
+  type Wrapper = { boxed: Box[Int] }
+}
+"#,
+        );
+        let shape = lower_type_shape_ir(find_type(&program, "Wrapper"), &program);
+        let TypeShape::Record { fields } = &shape else {
+            panic!("expected TypeShape::Record, got {shape:?}")
+        };
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].0, "boxed");
+        let Ty::Named { name, args, .. } = &*program.program().ty_intern.get(fields[0].1) else {
+            panic!("expected `boxed` to resolve to a named type")
+        };
+        assert_eq!(name, "Box");
+        assert_eq!(args.len(), 1);
+        assert!(matches!(
+            &*program.program().ty_intern.get(args[0]),
+            Ty::Base(bynk_syntax::ast::BaseType::Int)
+        ));
+    }
+
+    #[test]
+    fn lower_capability_ops_ir_assembles_ops_in_declaration_order() {
+        let program = checked_context_program(
+            r#"
+context demo
+
+capability Store {
+  fn get(key: String) -> Effect[Int]
+  fn put(key: String, value: Int) -> Effect[()]
+}
+"#,
+        );
+        let ops = lower_capability_ops_ir(find_capability(&program, "Store"), &program);
+        assert_eq!(ops.len(), 2, "declaration order preserved");
+
+        assert_eq!(ops[0].name, "get");
+        assert!(ops[0].type_params.is_empty());
+        assert_eq!(ops[0].params.len(), 1);
+        assert_eq!(ops[0].params[0].0, "key");
+        assert!(matches!(
+            &*program.program().ty_intern.get(ops[0].params[0].1),
+            Ty::Base(bynk_syntax::ast::BaseType::String)
+        ));
+        // `return_ty` is Effect-wrapped, not peeled — `get`'s declared
+        // `Effect[Int]` resolves whole, the same convention `FnSig::ret`
+        // uses.
+        assert!(matches!(
+            &*program.program().ty_intern.get(ops[0].return_ty),
+            Ty::Effect(inner) if matches!(
+                &*program.program().ty_intern.get(*inner),
+                Ty::Base(bynk_syntax::ast::BaseType::Int)
+            )
+        ));
+
+        assert_eq!(ops[1].name, "put");
+        assert_eq!(ops[1].params.len(), 2);
+        assert_eq!(ops[1].params[0].0, "key");
+        assert_eq!(ops[1].params[1].0, "value");
+        assert!(matches!(
+            &*program.program().ty_intern.get(ops[1].params[1].1),
+            Ty::Base(bynk_syntax::ast::BaseType::Int)
+        ));
+    }
+
+    #[test]
+    fn lower_provider_given_ir_preserves_declaration_order_including_unused_entries() {
+        // `given Random, Clock` (reverse-alphabetical, deliberately) pins
+        // that `given`'s own declaration order survives — neither op body
+        // below calls either capability, pinning review of #1186's point
+        // that an *unused* `given` entry must still appear (it feeds R8.1's
+        // own `deps` constructor, not anything the op bodies reference).
+        let program = checked_context_program(
+            r#"
+context demo
+
+capability Clock {
+  fn now() -> Effect[Int]
+}
+
+capability Random {
+  fn next() -> Effect[Int]
+}
+
+capability Store {
+  fn get(key: String) -> Effect[Int]
+  fn put(key: String, value: Int) -> Effect[()]
+}
+
+provides Store = MemStore given Random, Clock {
+  fn get(key: String) -> Effect[Int] {
+    Effect.pure(0)
+  }
+  fn put(key: String, value: Int) -> Effect[()] {
+    Effect.pure(())
+  }
+}
+"#,
+        );
+        let given = lower_provider_given_ir(find_provider(&program, "MemStore"));
+        assert_eq!(
+            given.iter().map(|g| g.name.as_str()).collect::<Vec<_>>(),
+            vec!["Random", "Clock"],
+            "given's own declaration order preserved, unused entries included"
+        );
+        assert!(given.iter().all(|g| g.context.is_none()));
+    }
+
+    #[test]
+    fn lower_provider_given_ir_reads_an_external_providers_given_too() {
+        // v0.17: an external (bodiless) provider is only legal inside an
+        // `adapter` unit (`bynk-check/src/symbols.rs`), which this test
+        // harness's own `checked_context_program` cannot build (it only
+        // ever parses a `context`). `lower_provider_given_ir` never reads
+        // `program` at all, so this hand-constructs the `ProviderDecl` the
+        // parser would produce for `provides Store = ExternalStore given
+        // Clock` inside an adapter. Nothing in the grammar or checker gates
+        // `given` on `external`, so an external provider's `given` must come
+        // through the same way a Bynk one's does (review of #1187's own
+        // Provider given/deps-wiring slice).
+        let provider = ProviderDecl {
+            capability: bynk_syntax::ast::Ident {
+                name: "Store".to_string(),
+                span: Span::default(),
+            },
+            provider_name: bynk_syntax::ast::Ident {
+                name: "ExternalStore".to_string(),
+                span: Span::default(),
+            },
+            given: vec![CapRef {
+                context: None,
+                name: bynk_syntax::ast::Ident {
+                    name: "Clock".to_string(),
+                    span: Span::default(),
+                },
+                span: Span::default(),
+            }],
+            ops: Vec::new(),
+            external: true,
+            documentation: None,
+            span: Span::default(),
+            trivia: Default::default(),
+        };
+        let given = lower_provider_given_ir(&provider);
+        assert_eq!(given.len(), 1);
+        assert_eq!(given[0].context, None);
+        assert_eq!(given[0].name, "Clock");
+    }
+
+    #[test]
+    fn an_http_service_lowers_its_protocol_and_per_handler_route_kind() {
+        let program = checked_context_program(
+            r#"
+context demo
+
+fn ok(s: String) -> HttpResult[String] { Ok(s) }
+
+service Api from http {
+  on GET("/ping") () -> Effect[HttpResult[String]] by v: Visitor {
+    Effect.pure(ok("pong"))
+  }
+}
+"#,
+        );
+        let service = find_service(&program, "Api");
+        assert!(matches!(
+            lower_protocol_ir(&service.protocol, &program),
+            ProtocolIr::Http
+        ));
+        assert_eq!(
+            lower_handler_kind_ir(&service.handlers[0].kind),
+            IrHandlerKind::Http {
+                method: IrHttpMethod::Get,
+                path: "/ping".to_string(),
+            },
+            "the route binding lives per-handler — this is why ProtocolIr::Http itself \
+             carries no payload"
+        );
+    }
+
+    #[test]
+    fn a_cron_service_lowers_its_schedule_from_the_handler_not_the_protocol() {
+        let program = checked_context_program(
+            r#"
+context demo
+
+fn done() -> Result[(), String] { Ok(()) }
+
+service Sweeper from cron {
+  on schedule("*/5 * * * *") () -> Effect[Result[(), String]] {
+    Effect.pure(done())
+  }
+}
+"#,
+        );
+        let service = find_service(&program, "Sweeper");
+        assert!(matches!(
+            lower_protocol_ir(&service.protocol, &program),
+            ProtocolIr::Cron
+        ));
+        assert_eq!(
+            lower_handler_kind_ir(&service.handlers[0].kind),
+            IrHandlerKind::Cron {
+                expr: "*/5 * * * *".to_string()
+            }
         );
     }
 }

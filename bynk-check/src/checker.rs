@@ -680,11 +680,12 @@ pub struct TypedCommons {
     /// `handler_actor_binding` itself resolves to `None` for: a
     /// binder-less `by <Actor>` clause, or no `by` clause at all —
     /// including every agent handler, which cannot carry one
-    /// (`bynk.actor.by_on_agent`). As of P6.11 (#1171),
-    /// `bynk-emit::ir::lower`'s `lower_service_handler_ir` is the real
-    /// consumer that reads this back to build a real service-handler
-    /// `ActorBinder` — `lower_handler_ir` (agent-only, P6.9, #1167) never
-    /// does, deliberately (`bynk-emit::ir::IrHandler`'s own doc comment).
+    /// (`bynk.actor.by_on_agent`). Read back through [`Self::actor_binding`];
+    /// its one IR-side consumer (P6.11, #1171, the service-handler
+    /// `ActorBinder` constructor in `bynk-lower`) was deleted by Slice D1 of
+    /// #1542, so as of that slice the only readers are this crate's own
+    /// `context_checks` tests — the table is kept because the binding is a
+    /// checked fact about the handler, not because of who reads it.
     ///
     /// **Unit-wide, not per-file** (review of #1170, unlike `callees`/
     /// `expr_types`, which are genuinely per-file — keyed by `ExprId`s this
@@ -764,8 +765,8 @@ impl TypedCommons {
     /// handler at `span`. Mirrors [`Self::callee`]'s shape — the single
     /// documented read point for `actor_bindings`, kept symmetric with
     /// `expr_ty`/`callee` rather than leaving every future consumer to
-    /// reach into the `HashMap` directly. Real reader as of P6.11 (#1171):
-    /// `bynk-emit::ir::lower`'s `lower_service_handler_ir`.
+    /// reach into the `HashMap` directly. Its IR-side reader (P6.11, #1171)
+    /// went with Slice D1 of #1542; see `actor_bindings`'s own doc comment.
     pub fn actor_binding(&self, span: Span) -> Option<&(String, TyId)> {
         self.actor_bindings.get(&span)
     }
