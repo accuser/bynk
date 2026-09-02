@@ -247,14 +247,17 @@ fn workspace_lints(root: &Path) -> Probe {
 ///
 /// #1104 (a content-ownership (#1086) probe-precision follow-on): a flagged *count*
 /// alone can't tell a residual R2.3 violation from a documented, permanent exception —
-/// `bynk-emit`'s 3 have read that way since the track's retirement (`design/archive/
-/// retired-tracks.md`'s closing summary), each named in [`NAMED_FS_EXCEPTIONS`]. So
-/// each flagged file is additionally classified as a **named floor** file — every
+/// `bynk-emit` read 3 that way from the track's retirement (`design/archive/
+/// retired-tracks.md`'s closing summary) until P4.0 moved all three named files out of
+/// `bynk-emit` entirely, leaving [`NAMED_FS_EXCEPTIONS`] empty (#1561) — the mechanism
+/// stays live for whatever named exception is decided next. So each flagged file is
+/// additionally classified as a **named floor** file — every
 /// production-scope touch it has is either inside one of those named functions, or is
 /// a bare import declaration (no fn encloses it — [`enclosing_fn`] returns `None`) that
 /// performs no I/O of its own, existing only so a *descendant* module's bare `fs::`
-/// call can resolve (exactly `project.rs`'s `use std::fs;`, which `discovery.rs` and
-/// `paths.rs` glob-import via `use super::*;`) — or a **residual** file: any other file
+/// call can resolve (the motivating case, #1013: `project.rs`'s own `use std::fs;`,
+/// which `discovery.rs` and `paths.rs` glob-imported via `use super::*;` before P4.0
+/// moved both files out) — or a **residual** file: any other file
 /// touching `std::fs` in production scope, which still reads as a real R2.3 violation
 /// ([`file_is_named_fs_floor`]).
 fn fs_below_driver(root: &Path) -> Probe {
