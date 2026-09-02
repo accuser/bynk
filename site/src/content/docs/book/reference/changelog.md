@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.289.63** | "`bynk-ir`: the 22 IR types that lost their last consumer with the expression lowering (`IrExpr`, `IrItem`, `IrHandler`, `CommitShape`, patterns, policy, …) are deleted; the crate doc now describes the declaration-level vocabulary that remains (IR cutover track, Slice D2)" |
 | **v0.289.62** | "`bynk-lower`: the unconsumed expression/statement/body/item lowering is deleted (48 functions, all six `todo!()`s, 121 tests), leaving the AST-analysis helpers `bynk-emit` consumes (IR cutover track, Slice D1)" |
 | **v0.289.61** | "`bynk-lower`: the events-service subscriber-shape helper reads protocol and handler shape directly instead of lowering and discarding every handler body (IR cutover track, Slice D0)" |
 | **v0.289.60** | Slice 3.1 of the IR cutover (`#1542`) — `bynk-lower`'s two live `todo!()` gaps close: a bare free-function-value reference now lowers to a new `IrExprKind::FnRef`, and the previously-suspected missing-`Callee` case turned out to already be unreachable once traced against the real checker pipeline |
