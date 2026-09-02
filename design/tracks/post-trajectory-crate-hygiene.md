@@ -106,7 +106,7 @@ architecture tracks rather than language-surface ones.
 ## 3. The constraint every slice is checked against: the gated probes
 
 `xtask/src/greenfield_status.rs` computes 19 probes; `design/greenfield-status.md`
-is the committed table. **Fourteen are gated** — `gated_disagreements`
+is the committed table. **Fifteen are gated** — `gated_disagreements`
 (`xtask/src/greenfield_status.rs:2455`) does exact string equality per row
 against that table, and `xtask/tests/greenfield_status.rs` fails CI (both the
 `test` and `drift` jobs) on any disagreement. Three of this track's four

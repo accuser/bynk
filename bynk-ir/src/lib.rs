@@ -27,7 +27,7 @@
 //! that constructed it. The emitter never consumed any of it: its own
 //! string-emitting lowerer kept reading the AST, and the one production
 //! route into the IR constructors lowered every events-service handler body
-//! and discarded the result. The follow-on track (`the-ir-cutover.md`,
+//! and discarded the result. The follow-on track (the IR cutover,
 //! #1542) priced finishing that cutover, found it was a second code
 //! generator rather than a retype, and re-settled on deletion: Slices D0–D2
 //! removed the detour, the constructors and those 23 types. The refusal is
@@ -227,7 +227,7 @@ pub struct EventSubscriberShape {
 pub struct EventPatternIr {
     /// `(field name, matched value)`, in source order — no dedicated
     /// `EventPatternFieldIr` struct: a two-part fact with no further
-    /// structure, the same plain-tuple shape [`EmbedIr`] uses.
+    /// structure, the same plain-tuple shape `TypeShape::Sum::embeds` uses.
     pub fields: Vec<(String, EventPatternValueIr)>,
 }
 
@@ -293,10 +293,12 @@ pub enum TypeShape {
     /// `refinement` from a future store field too.
     Record { fields: Vec<(String, TyId)> },
     /// Every variant the sum declares, each with its own payload field
-    /// list, plus any `embeds` clauses ([DECISION C]: [`EmbedIr`]).
+    /// list, plus any `embeds` clauses ([DECISION C], #1161) — each a
+    /// `(source type, target variant tag)` pair, a two-part fact with no
+    /// further structure and so a plain tuple, not a dedicated struct.
     Sum {
         variants: Vec<(String, Vec<(String, TyId)>)>,
-        embeds: Vec<EmbedIr>,
+        embeds: Vec<(TyId, String)>,
     },
     /// `type X = base where refinement` (`Refined`) or `type X = unsafe
     /// base ...` (`Opaque`, `opaque: true`). `refinement` is `Option`, not
@@ -308,12 +310,6 @@ pub enum TypeShape {
         opaque: bool,
     },
 }
-
-/// The payload of [`TypeShape::Sum`]'s own `embeds` — a resolved `embeds`
-/// clause ([DECISION C], #1161): the source type paired with the target
-/// variant's own tag name. A plain tuple, not a dedicated struct: a
-/// two-part fact with no further structure.
-pub type EmbedIr = (TyId, String);
 
 /// An agent `store` field's storage shape (`design/bynk-greenfield-compiler.md`
 /// §6.6, R6.14, #1163) — `bynk_lower::lower_store_field_shape_ir`'s return
@@ -371,11 +367,12 @@ pub enum StoreKindIr {
 /// identified by the indexed value-field's own name ([DECISION C], #1163):
 /// referenced by the reference's own `StoreFieldIr.indexed: Vec<IndexIr>`
 /// but never defined anywhere in the document, the same "referenced, not
-/// specified" gap #1161's own Decision C named for [`EmbedIr`]. No
+/// specified" gap #1161's own Decision C named for `Sum::embeds`. No
 /// dedicated struct: the sibling table's own emitted shape
 /// (`Record<string, string[]>`) is fixed by the *map's own key type*, not
 /// the indexed field's, so the indexed field's resolved type is not needed
-/// downstream — mirrors `EmbedIr`'s own "no further structure" precedent.
+/// downstream — the same "no further structure" plain-value shape
+/// `TypeShape::Sum::embeds` uses.
 pub type IndexIr = String;
 
 /// #1187's slice 3: a handler's resolved actor-verification seam, wrapping

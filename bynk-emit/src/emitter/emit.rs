@@ -1251,7 +1251,7 @@ fn compute() -> Effect[Int] {
 /// segments (`:name`) become `Param_name` to remain distinct from literal
 /// segments. (v0.9 §5.3)
 ///
-/// Slice 1 of `#1542` (`design/tracks/the-ir-cutover.md` §5): this used to
+/// Slice 1 of `#1542` (the IR cutover, `design/archive/retired-tracks.md`): this used to
 /// have an AST-typed `HttpMethod` twin, `http_handler_method_name` — deleted
 /// once its last production caller converted to this `IrHttpMethod` version,
 /// which every call site now holds already-resolved (`IrHandlerKind::Http`'s

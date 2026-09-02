@@ -1104,3 +1104,73 @@ imposed; entries keep the order they were retired in.
   `bynk-driver` consolidation, rowan's lossless-CST question, and an emit-side signature concept for
   `Artefacts` — each a real, later decision with its own trigger, not inherited from any phase that
   came before it.
+
+- **`the-ir-cutover.md`** — the follow-on to phase 6 of
+  [`../bynk-compiler-trajectory.md`](../bynk-compiler-trajectory.md), spine
+  [#1542](https://github.com/accuser/bynk/issues/1542): opened 30 August 2026 (settling PR
+  [#1543](https://github.com/accuser/bynk/pull/1543)) to execute the "cutover" `the-ir.md` settled as
+  its own Q7/#1175 but never sliced — routing `bynk-emit/src/emitter/lower.rs`'s dispatch *reads*
+  through `bynk-lower`'s fifteen then-unconsumed entry points and `bynk-ir`'s twenty-one unconsumed
+  types, after the 30 August post-restructuring review
+  ([`../reviews/2026-08-30-post-restructuring-review.md`](../reviews/2026-08-30-post-restructuring-review.md))
+  found phase 6 had built an IR the emitter never consumed. **Retired 2 September 2026 on the opposite
+  decision to the one it opened with: the cutover stops, and the unconsumed lowering is deleted.**
+
+  What shipped as planned: **Slice 1** ([#1556](https://github.com/accuser/bynk/issues/1556)/
+  [#1558](https://github.com/accuser/bynk/pull/1558), [ADR 0418](../decisions/0418-un-defer-http-method-rendering.md))
+  closed the four build-then-discard detours the review named and the `HttpMethod` rendering surface
+  ADR 0355 had deferred; **Slice 2** was found already satisfied (both "unconsumed" signature helpers
+  had a same-crate production wrapper); **Slice 3.1** ([#1564](https://github.com/accuser/bynk/issues/1564)/
+  [#1565](https://github.com/accuser/bynk/pull/1565)) closed `bynk-lower`'s two live `todo!()` gaps.
+
+  What did not: **Slice 3.2**, the expr/stmt-core cutover, was accepted on two premises — a mechanical,
+  byte-identical retype, landing as one slice so the lowering family never existed in two copies —
+  and its own branch (`archive/slice3-2-expr-stmt-core`, 19 commits, never merged) falsified both.
+  Against `main`: `emitter/lower.rs` 6,321 → 10,117 lines; 56 `_v2` sibling functions duplicating
+  AST-typed ones, none of which was retyped or deleted; a per-body static gate choosing between the two
+  paths at each of the 3 of 7 flipped entry points; 6 production `todo!()`s; `ts_writes` 809 → 1,079;
+  two goldens accepted as "structurally unrecoverable" diffs; seven follow-on issues for parity gaps.
+  Every flip found a real behavioural difference between the paths, each a bug in the IR path, and the
+  residual diffs needed `bynk-ir` widened. That is a second code generator being brought to parity with
+  the first, gated per body — `bynk-compiler-trajectory.md` §6's question 3 and P5, reproduced by the
+  track opened to close them. The re-settling
+  ([#1573](https://github.com/accuser/bynk/pull/1573), the track doc's own §10) priced finishing to
+  parity (not less than the cost already paid, open-ended, for an end state that still emits strings)
+  against deletion, and chose deletion per the trajectory's own §8: "a phase's estimate is wrong by a
+  large factor … the phase boundary is the stopping point."
+
+  **A finding the review missed, found while pricing:** the expression lowerer *was* reachable in
+  production on `main` — through `lower_event_subscriber_shapes_ir → lower_service_item_ir →
+  lower_service_handler_ir → lower_block_ir → lower_expr_ir`, for every `from Events(E)` service,
+  lowering every handler body and keeping two booleans. The review's "zero callers" counted direct
+  callers only. `lower_ident_ir`'s terminal `unreachable!()` was live on that path with a safety
+  argument scoped to a different caller.
+
+  The four D-slices then executed the decision, `rustc` as the worklist rather than the inventory:
+  **D0** ([#1574](https://github.com/accuser/bynk/issues/1574)/[#1575](https://github.com/accuser/bynk/pull/1575))
+  repointed the detour at the two shape-only helpers it actually needed, zero-diff by construction;
+  **D1** ([#1576](https://github.com/accuser/bynk/issues/1576)/[#1577](https://github.com/accuser/bynk/pull/1577))
+  deleted 48 `bynk-lower` functions, four `LowerIrCtx` fields and their methods, and every `todo!()` the
+  crate carried — `bynk-lower/src/lib.rs` 10,195 → 2,123 lines — finding 121 of 134 tests went (not the
+  ≤73 estimated: 51 reached the lowerer through a shared helper) and re-creating the twenty-one that had
+  pinned a *kept* helper only through a deleted constructor; **D2**
+  ([#1578](https://github.com/accuser/bynk/issues/1578)/[#1579](https://github.com/accuser/bynk/pull/1579))
+  deleted 22 `bynk-ir` items — `bynk-ir/src/lib.rs` 1,923 → 634 lines — finding `EmbedIr` had an
+  in-crate consumer and `StoreFieldIr::init` was `IrExpr`'s last use (the field went instead), and
+  rewrote the crate doc and every surviving doc comment that narrated a deleted item; **D3**
+  ([#1580](https://github.com/accuser/bynk/issues/1580), this retirement) recorded the refusal in
+  `bynk-greenfield-compiler.md` Part 15.1's four-field form, added the gated `unconsumed_ir_items`
+  adoption probe the review's Part 5 §8 asked for — which on its first run found two more `pub` items
+  with no reader outside their crate (`EmbedIr`, `LowerIrCtx`), both demoted, so the final accounting
+  is 47 `bynk-ir` items = 23 gone + 24 kept — and closed the spine.
+
+  **What stays declined, named rather than left implicit:** ADR 0381's six conversions and ADR 0366's
+  `TypeShape::Refined` AST embedding (unchanged from the track's own §2); `emit_worker_compose`'s
+  `Message`-arm protocol check (ADR 0355, reconfirmed for a stronger reason — the per-unit
+  `CheckedProgram` drop); R5.9's is-binding scopes (ADR 0338), moot with the lowering that needed them;
+  the seven Slice 3.2 satellite issues ([#1566](https://github.com/accuser/bynk/issues/1566)–[#1572](https://github.com/accuser/bynk/issues/1572)),
+  closed as superseded. Phase 6's own retirement floor (`ast_importers` = 5) and the trajectory's §1
+  endpoint are not reopened. Phase 8's twin decision — the unadopted query layer,
+  [#1537](https://github.com/accuser/bynk/issues/1537) — is the same question on different evidence
+  and is not decided here. Two ADRs carry the decisions: ADR 0418 (Slice 1) and the retirement ADR this
+  slice adds, superseding `the-ir.md`'s Q7 and ADR 0338.

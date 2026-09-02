@@ -7,7 +7,7 @@
 //! and returns a `bynk_ir` value; none lowers an expression body.
 //!
 //! **Reachability, corrected twice and now settled (Slice D0 of `#1542`,
-//! `design/tracks/the-ir-cutover.md` §10).** Through the crate carve (Arc D,
+//! the IR cutover, closing summary in `design/archive/retired-tracks.md`).** Through the crate carve (Arc D,
 //! P7.12) this paragraph claimed nothing here was reached from `bynk-emit`'s
 //! emission path; that was false — `lower_event_subscriber_shapes_ir`
 //! (called from `bynk-emit/src/project.rs`) went through
@@ -80,13 +80,13 @@ use bynk_ir::{
 /// would otherwise resolve a rigid `T` as an unknown declared type and
 /// silently fail.
 ///
-/// Slice D1 of `#1542` (`design/tracks/the-ir-cutover.md` §10.3) slimmed
+/// Slice D1 of `#1542` (the IR cutover, `design/archive/retired-tracks.md`) slimmed
 /// this from the expression lowerer's full context — the lexical scope
 /// stack, the synthetic-temp counter, the enclosing return type and the
 /// agent handler's store-queryable field set all went with the body
 /// lowering that was their only reader. What remains is exactly what a
 /// signature/shape reader needs.
-pub struct LowerIrCtx<'a> {
+pub(crate) struct LowerIrCtx<'a> {
     program: &'a TypedCommons,
     type_vars: HashSet<String>,
 }
@@ -676,7 +676,7 @@ pub fn lower_route_limit_ir(h: &Handler) -> Option<i64> {
 /// struct's own doc comment for why this is captured now rather than
 /// re-derived cross-unit at compose time (P6.47, `#1254`).
 ///
-/// Slice D0 of `#1542` (`design/tracks/the-ir-cutover.md` §10.5, `#1574`):
+/// Slice D0 of `#1542` (the IR cutover, `design/archive/retired-tracks.md`; `#1574`):
 /// reads the two facts it returns from the shape-only helpers that own them —
 /// [`lower_protocol_ir`] for `schema_dispatch`, and [`lower_handler_kind_ir`]
 /// plus [`lower_service_handler_signature_ir`] for the `Event` handler's
