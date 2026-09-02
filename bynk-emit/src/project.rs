@@ -2855,9 +2855,9 @@ pub(crate) fn instantiate_provider_ts_expr(
         return new_call_ts_expr(&bodied_ns, cap, vec![]);
     };
     // Build the by-name deps object from the provider's `given`, if any.
-    // #1187's Provider given/deps-wiring slice: reads bynk-emit::ir's own
-    // CapRefIr (lower_provider_given_ir — a standalone reader, never a full
-    // IrItem::Provider; see that function's own doc comment for why) instead
+    // #1187's Provider given/deps-wiring slice: reads bynk_ir's own CapRefIr
+    // (lower_provider_given_ir — a standalone reader of the `given` clause,
+    // never a full provider IR; see that function's own doc comment) instead
     // of walking the raw AST CapRef directly.
     let given: Vec<CapRefIr> = lower_provider_given_ir(provider);
     let deps_obj: Option<bynk_ts::TsExpr> = if given.is_empty() {

@@ -493,12 +493,11 @@ pub(crate) fn emit_project(
                 // #1187's slice 5: `emit_service` reads the protocol's own
                 // resolved data (`ProtocolIr`) and each handler's resolved
                 // signature (params/ret/effectful) instead of `s`'s own raw
-                // `ServiceProtocol`/`TypeRef`s — not a full `IrItem::Service`
-                // (see `lower_service_handler_signature_ir`'s own doc
-                // comment for why: a real `IrHandler` would unconditionally
-                // lower every handler's body, panicking on an ordinary
-                // `Ok`/`Err`-returning Http handler). No separate helper,
-                // this is `emit_service`'s one and only call site.
+                // `ServiceProtocol`/`TypeRef`s — shape readers only, never
+                // a handler body (the full service/handler IR constructors
+                // that lowered bodies were deleted by Slices D1/D2 of
+                // #1542). No separate helper, this is `emit_service`'s one
+                // and only call site.
                 let protocol = lower_protocol_ir(&s.protocol, program);
                 let signatures: Vec<_> = s
                     .handlers
@@ -5112,12 +5111,16 @@ mod ts_ty_tests {
     }
 }
 
-/// P6.56 (design/tracks/the-ir.md §6b): mirrors `IrBinOp` (`ir.rs`)
-/// field-for-field, but converting this function to take `IrBinOp` was
-/// investigated and declined — its sole caller (`emitter/lower.rs`) holds
-/// an AST `BinOp` from `ExprKind::BinOp` and separately compares `op ==
-/// BinOp::Eq` a few lines away; converting here would only relocate the
-/// AST read into that still-AST-walking caller, net zero.
+/// Takes the AST `BinOp` directly, on purpose. Phase 6 (P6.56, ADR 0381)
+/// investigated converting this to an IR-side operator enum and declined:
+/// its sole caller (`emitter/lower.rs`) holds an AST `BinOp` from
+/// `ExprKind::BinOp` and separately compares `op == BinOp::Eq` a few lines
+/// away, so converting here would only relocate the AST read into that
+/// still-AST-walking caller, net zero. The IR cutover track (#1542, §10)
+/// later confirmed the general form of that finding — retyping the
+/// lowerer's reads one function at a time produces a second lowerer, not a
+/// retype — and deleted the IR-side operator enum with the rest of the
+/// expression IR (Slice D2).
 fn ts_binop(op: BinOp) -> &'static str {
     match op {
         // `implies` has no single TS operator — `lower_bin_op` rewrites it to

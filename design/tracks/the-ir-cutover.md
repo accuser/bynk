@@ -280,7 +280,7 @@ entirely into the new item-assembly slice (its own real home, per its functions'
   by §10.5's D-slices.
 - [x] Slice D0 — repoint `lower_event_subscriber_shapes_ir` off the body-lowering detour (§10.5; `#1574`)
 - [x] Slice D1 — delete `bynk-lower`'s unconsumed lowering and its tests (§10.3; `#1576`)
-- [ ] Slice D2 — delete `bynk-ir`'s orphaned IR types; rewrite the crate doc (§10.3)
+- [x] Slice D2 — delete `bynk-ir`'s orphaned IR types; rewrite the crate doc (§10.3; `#1578`)
 - [ ] Slice D3 — the R15.1 register entry, the ADR, the adoption probe, and this track's retirement
   (§10.4, §10.5)
 
@@ -461,14 +461,17 @@ items and would otherwise read 2, not 0; and the genuinely private support (`low
 test lines: the crate its own description already claims to be, "the small set of shared
 AST-analysis helpers both `bynk-emit` and `bynk-lower` need."
 
-**`bynk-ir/src/lib.rs` — 23 of 47 public items, ~830 of 1,923 lines, plus the crate doc.** Every
-item below has no consumer in any production source outside `bynk-ir` once the `bynk-lower` set
-above is gone (`IrItem` is included because its only surviving reference is the D0 detour's
-destructuring, which D0 removes):
+**`bynk-ir/src/lib.rs` — 22 of 47 public items (D2 found, not 23), ~1,290 of 1,923 lines with
+the crate doc, leaving 634.** Every item below has no consumer in any production source outside
+`bynk-ir` once the `bynk-lower` set above is gone (`IrItem` is included because its only surviving
+reference is the D0 detour's destructuring, which D0 removes). **D2's correction:** `EmbedIr` is
+*not* orphaned — it is the payload of the kept `TypeShape::Sum::embeds`, an in-crate consumer the
+out-of-crate grep could not see — and stays; and `IrExpr` had one in-crate consumer too, the kept
+`StoreFieldIr::init` slot, which was always `None` after D1 and was removed with it:
 
 | Group | Items |
 |---|---|
-| The expression IR | `IrExpr` `IrExprKind` (~235 lines) `IrStmt` `IrBinOp` `IrInterpPart` `GlobalRef` `EmbedIr` |
+| The expression IR | `IrExpr` `IrExprKind` (~235 lines) `IrStmt` `IrBinOp` `IrInterpPart` `GlobalRef` (~~`EmbedIr`~~ — kept, see above) |
 | Patterns and match compilation | `IrPat` `IrArm` `BindingMode` `Exhaustive` `MatchForm` |
 | Declarations and handlers | `IrItem` `IrHandler` `ProviderBody` `ProviderOpIr` `ActorBinder` `ConnectionBinder` `CommitShape` `IrPredicate` |
 | Policy | `PolicyIr` `CorsIr` `SecurityIr` |
@@ -480,7 +483,8 @@ destructuring, which D0 removes):
 `EventPatternValueIr`, `ConstVal` (the event-pattern renderer at `emitter/lower.rs:5712`), the four
 AST-walk helpers `block_uses_emit`, `walk_block_exprs`, `walk_exprs`, `match_needs_if_chain`, and
 the four `pub const MUTATING_{MAP_CACHE,SET,LOG,CELL}_OPS` tables (`lib.rs:1840–1849`), consumed by
-the kept `body_writes_state` (`bynk-lower/src/lib.rs:1316–1319`). 47 = 23 deleted + 24 kept.
+the kept `body_writes_state` (`bynk-lower/src/lib.rs:1316–1319`), and `EmbedIr` (per D2's
+correction). 47 = 22 deleted + 25 kept.
 `TypeShape::Refined`'s `BaseType`/`Refinement` embedding (ADR 0366) stays exactly as §2 already
 argued.
 
