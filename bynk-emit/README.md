@@ -12,8 +12,10 @@ turns a checked program into output:
 
 - `project` — the build driver: project discovery, the dependency graph,
   consistency and validation, symbols, paths, and the `compile_project` /
-  `analyse_project` entry points. (Read it as "build orchestration" — it conducts
-  the whole build.)
+  `check_project` entry points (whole-project analysis without building lives
+  in [`bynk-check`](https://crates.io/crates/bynk-check)'s own
+  `analysis::analyse_project`). (Read it as "build orchestration" — it
+  conducts the whole build.)
 - `emitter` — lowers a type-checked program to TypeScript targeting Cloudflare
   Workers (or a single bundle), complete with the router, dependency wiring, the
   shared runtime, and a `wrangler.toml`.

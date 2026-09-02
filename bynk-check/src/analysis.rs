@@ -3,14 +3,13 @@
 //! analogue of `bynk-emit`'s `ProjectAnalysis` — without ever emitting.
 //!
 //! `bynk-ide` is repointed at [`analyse_project`] as of P4.2 (#1122) —
-//! `bynk_emit::project::analyse_project_with` is no longer reachable from
-//! `bynk-ide` at all (it has no `bynk-emit` dependency left). This entry
-//! point is what every real caller uses today; the differential fixture
-//! (`bynk-check/tests/differential_analysis.rs`) still pins it against
-//! `analyse_project_with` directly (both remain real, exercised paths —
-//! `bynk-emit`'s own CLI build still drives `run_checks`), so a future
-//! divergence between the two is still caught even though only one of them
-//! feeds the editor now.
+//! `bynk_emit::project::analyse_project_with` was no longer reachable from
+//! `bynk-ide` from that point on (it had no `bynk-emit` dependency left).
+//! This entry point is what every real caller uses; #1541 deleted
+//! `analyse_project_with` and its single-tree wrapper `analyse_project`
+//! outright once nothing but `bynk-check/tests/differential_analysis.rs`'s
+//! own comparison still called them — that fixture is now a golden test of
+//! this entry point alone, not a differential against the retired one.
 //!
 //! ## The residual gap
 //!
@@ -88,12 +87,16 @@
 //! emits, by construction (it has no `BuildTarget`/`ImportExt`/`contracts`
 //! concept at all), so there is no diagnostic-agreement question to ask of it.
 //!
-//! A fixture that exercises none of the seven categories above sees identical
-//! diagnostics from this entry point and from `analyse_project_with` — that
-//! is what the differential fixture's two clean/broken cases assert. A third
-//! case (`new_entry_point_omits_test_body_diagnostics`) pinned category 7's
-//! divergence directly; now that P5.4 closed it, that test asserts parity
-//! instead (see its own doc comment).
+//! A fixture that exercises none of the seven categories above saw identical
+//! diagnostics from this entry point and from `analyse_project_with` while
+//! both existed — that is why `bynk-check/tests/differential_analysis.rs`'s
+//! clean/broken golden cases still avoid all seven (#1541 retired the
+//! comparison, not the fixture shape). A third case
+//! (`new_entry_point_reports_a_test_bodys_own_type_error`, renamed from
+//! `new_entry_point_omits_test_body_diagnostics` at #1541) pinned category
+//! 7's divergence directly; now that P5.4 closed it, that test pins parity
+//! with what `analyse_project_with` used to report instead (see its own doc
+//! comment).
 //!
 //! ## Two sites outside the seven-category accounting
 //!
@@ -251,14 +254,14 @@ fn bailed(
 }
 
 /// The `bynk-check`-native discovery→parse→resolve→check entry point (P4.1,
-/// #1115) — see this module's own doc comment for the documented residual
-/// gap against `bynk-emit`'s `analyse_project_with`. Mirrors
-/// `analyse_project_with`'s own call shape exactly where the two overlap:
+/// #1115) — see this module's own doc comment for the residual-gap
+/// accounting against `bynk-emit`'s now-deleted (#1541) `analyse_project_with`.
+/// Mirrored its call shape exactly where the two overlapped:
 /// `BuildTarget::Bundle`-equivalent (this entry point has no build target at
 /// all — it never emits), `Platform::default()`, no schema-registry lock.
 ///
 /// Identity is project-relative (ADR 0198): a file's `source_path` here is
-/// unique across `include` roots, same as `analyse_project_with`.
+/// unique across `include` roots, same as `analyse_project_with` used to be.
 pub fn analyse_project(roots: &Roots, overlay: &HashMap<PathBuf, String>) -> ProjectAnalysis {
     let tys = &Arc::new(Types::new());
     let trees = roots.trees();
@@ -335,8 +338,9 @@ pub fn analyse_project(roots: &Roots, overlay: &HashMap<PathBuf, String>) -> Pro
     //          as unresolved risk rather than a scoped relocation. Mirrors
     //          `run_checks`'s own call at the same relative point. Gated on
     //          the Workers target, same as `run_checks`; this entry point
-    //          hardcodes `BuildTarget::Bundle` (mirrors `analyse_project_with`'s
-    //          own hardcoding, see this function's doc comment), so the call
+    //          hardcodes `BuildTarget::Bundle` (inherited from the
+    //          now-deleted `analyse_project_with`'s own hardcoding, see this
+    //          function's doc comment), so the call
     //          closes the category structurally (R3.5 — the diagnostic now
     //          originates in `bynk-check`), not observably, the same as
     //          categories 1 and 5. --
@@ -422,8 +426,9 @@ pub fn analyse_project(roots: &Roots, overlay: &HashMap<PathBuf, String>) -> Pro
     //        P5.3: closes category 1 of this module's own residual-gap
     //        accounting — `crate::schema_registry::reconcile` now runs here
     //        too, at the same point `run_checks` calls it. This entry point
-    //        carries no on-disk schema lock (mirrors `analyse_project_with`'s
-    //        own hardcoded `SchemaLock::Off`), so every event baselines
+    //        carries no on-disk schema lock (inherited from the now-deleted
+    //        `analyse_project_with`'s own hardcoded `SchemaLock::Off`), so
+    //        every event baselines
     //        silently against an empty registry — no diagnostic is reachable
     //        through this call, same as before the relocation.
     //
@@ -584,9 +589,10 @@ pub fn analyse_project(roots: &Roots, overlay: &HashMap<PathBuf, String>) -> Pro
     errors.extend_for(None, integration_errors);
 
     // v0.19 (decisions 0017/0024), P5.3: platform-lock enforcement — closes
-    // category 5 of this module's own residual-gap accounting. Mirrors
-    // `analyse_project_with`'s own hardcoded `Platform::default()`
-    // (Cloudflare) and `BuildTarget::Bundle`: `bynk.cloudflare` is the only
+    // category 5 of this module's own residual-gap accounting. Inherited from
+    // the now-deleted `analyse_project_with`'s own hardcoded
+    // `Platform::default()` (Cloudflare) and `BuildTarget::Bundle`:
+    // `bynk.cloudflare` is the only
     // platform-native unit that exists, and it matches the default
     // selection, so `lock_violation` can never fire here, for any project
     // (see `bynk-lsp/tests/analysis_residual_gap.rs`'s
@@ -615,8 +621,8 @@ pub fn analyse_project(roots: &Roots, overlay: &HashMap<PathBuf, String>) -> Pro
         );
     }
 
-    // -- Assemble the `ProjectAnalysis`. Mirrors `analyse_project_with`'s own
-    //    `RunChecks::Checked` arm exactly. --
+    // -- Assemble the `ProjectAnalysis`. Mirrored the now-deleted
+    //    `analyse_project_with`'s own `RunChecks::Checked` arm exactly. --
     let index = assemble_index(
         &parsed,
         &unit_uses,

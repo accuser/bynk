@@ -12,9 +12,11 @@
 //! guess at one. This crate cannot depend on `bynk-emit` at all (R10.2,
 //! enforced on `bynk-ide` at the manifest level, and mirrored here by
 //! convention — see `bynk-lsp/Cargo.toml`'s own dependency comment), so
-//! unlike `bynk-check/tests/differential_analysis.rs`'s
-//! `new_entry_point_omits_test_body_diagnostics` these fixtures cannot
-//! re-run the pre-repoint path for a live "before" comparison; each pin is
+//! unlike `bynk-check/tests/differential_analysis.rs`'s test for this same
+//! category (`new_entry_point_omits_test_body_diagnostics`, since renamed to
+//! `new_entry_point_reports_a_test_bodys_own_type_error` at #1541) these
+//! fixtures cannot re-run the pre-repoint path for a live "before" comparison
+//! (#1541 deleted that path entirely); each pin is
 //! instead a direct assertion that today's `bynk_ide::diagnose_project`
 //! output lacks the category a real violation would carry — "pin the gap as
 //! an assertion, not an absence", per the tracking issue's own framing.
@@ -39,10 +41,10 @@
 //! "not yet reachable end-to-end while only one platform ships native
 //! capabilities" (the function's own doc comment) and its `Required` arm
 //! fires only when the native platform disagrees with the *selected* one —
-//! but `analyse_project_with` (the pre-repoint LSP path) always calls
-//! `run_checks` with `Platform::default()` (Cloudflare) and
-//! `BuildTarget::Bundle` hardcoded (`project.rs:743-744`), and
-//! `bynk.cloudflare` is the *only* platform-native unit that exists
+//! but `analyse_project_with` (the pre-repoint LSP path, deleted at #1541)
+//! always called `run_checks` with `Platform::default()` (Cloudflare) and
+//! `BuildTarget::Bundle` hardcoded, and `bynk.cloudflare` is the *only*
+//! platform-native unit that exists
 //! (`bynk_check::firstparty::platform_of`). So `first != selected` can never
 //! hold under the LSP's own hardcoded call, for any project, both before and
 //! after this slice — `check_platform_lock` was already a gap in name only,
@@ -202,8 +204,8 @@ fn locale_bundle_ambiguity_diagnostic_present() {
 /// `bynkc/tests/fixtures/negative/505_events_unknown_subscription`
 /// (target-independent: the check takes no `BuildTarget`, so the source
 /// fixture's `target.txt = workers` is not needed here —
-/// `analyse_project_with`'s hardcoded `BuildTarget::Bundle` already ran this
-/// check unconditionally pre-repoint).
+/// `analyse_project_with` (deleted at #1541) hardcoded `BuildTarget::Bundle`
+/// and already ran this check unconditionally pre-repoint).
 #[test]
 fn event_subscription_diagnostic_present() {
     const ORDER: &str = "context commerce.order\n\nexports transparent { PaymentConfirmed }\nconsumes bynk { Events }\n\nevent PaymentConfirmed = {\n  orderId: String,\n}\n\nservice markPaid {\n  on call(orderId: String) -> Effect[()] given Events {\n    Events.emit[PaymentConfirmed](PaymentConfirmed { orderId: orderId })\n  }\n}\n";
