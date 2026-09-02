@@ -41,10 +41,9 @@ pub const KV_NAMESPACE_ID_PLACEHOLDER: &str = "<KV_NAMESPACE_ID>";
 /// `table` already only needs `agents`/`unit_table_uses_emit` (neither
 /// syntax-typed from this file's perspective), so relocating just these two
 /// matches removes `wrangler.rs` from the `ast_importers` probe outright — no
-/// `bynk-emit::ir` equivalent exists to route through instead (#1191's
-/// Framing: no project-wide `IrItem::Service` is built at the call site, and
-/// `IrHandler::kind` reuses the syntax-tree handler kind unchanged even where
-/// one is).
+/// `bynk_ir` equivalent exists to route through instead: nothing builds a
+/// project-wide service IR at the call site (#1191's Framing), and after
+/// #1542's Slice D2 nothing builds one anywhere.
 ///
 /// P7.3 (#1303): builds a [`TomlDocument`] rather than writing text directly
 /// — the caller (`project.rs`) prints it via `emitter::toml_doc::

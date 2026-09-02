@@ -428,7 +428,6 @@ pub fn lower_store_field_shape_ir(f: &StoreField, program: &CheckedProgram) -> S
     StoreFieldIr {
         field: f.name.name.clone(),
         kind,
-        init: None,
         indexed,
     }
 }
@@ -602,7 +601,7 @@ pub fn lower_protocol_ir_from_commons(
 
 /// #1228: a GET handler's own `@cache(maxAge:, scope:)` freshness policy —
 /// [`bynk_ir::CacheIr`]'s own doc comment has the full grounding for why
-/// this is a standalone reader rather than a `PolicyIr` field. Field-for-
+/// this is a standalone per-route reader. Field-for-
 /// field the same extraction `emitter/workers_entry.rs`'s own (now
 /// superseded) `cache_policy_for` did: only a `GET` yields a policy;
 /// project validation (`bynk.http.cache_*`) has already rejected a
@@ -651,9 +650,8 @@ pub fn lower_route_cache_ir(h: &Handler) -> Option<CacheIr> {
 /// #1228: a route's own `@limit(maxBody:)` annotation, if present — the
 /// override half of `emitter/workers_entry.rs`'s own (now superseded)
 /// `effective_max_body`; the service-wide `limits { maxBody }` fallback
-/// stays that function's own concern (already IR-native via
-/// `PolicyIr::max_body_bytes`, but read from a *service*, not a per-route
-/// `Handler`, so it does not move here). Project validation
+/// stays that function's own concern (read from a *service*'s `limits {}`
+/// block, not a per-route `Handler`, so it does not move here). Project validation
 /// (`bynk.http.limit_*`/`limits_*`) has already rejected a malformed or
 /// misplaced `@limit`, so an absent/ill-formed annotation here simply
 /// yields `None` — the caller's own service-default fallback still
@@ -779,7 +777,7 @@ pub fn capability_op_sig_from_commons(
 }
 
 /// P6.12 (#1173): lower one capability operation's own signature into a real
-/// [`bynk_ir::OpSig`] — the reference's own `IrItem::Capability` sketch
+/// [`bynk_ir::OpSig`] — the reference's own capability-item sketch
 /// names this type (`ops: Vec<OpSig>`) but never defines it. Resolves
 /// `params`/`return_ty` in the scope `op.type_params` names, the same
 /// per-op rigid-variable seeding `context_checks::build_capability_op_info`
@@ -980,8 +978,7 @@ pub fn lower_provider_given_ir(provider: &ProviderDecl) -> Vec<CapRefIr> {
 }
 
 /// #1187's slice 6 plumbing (sibling of [`lower_provider_given_ir`]): a
-/// handler's own `given` clause, resolved independent of any full
-/// `IrHandler`/`IrItem` assembly — the standalone entry point for
+/// handler's own `given` clause, resolved standalone — the entry point for
 /// `project.rs`'s `plan_agent_given_deps`, `EmitProjectCtx::
 /// agent_method_givens`, and `emitter/workers.rs`'s own `given` collection.
 /// Reuses `lower_cap_ref_ir` verbatim; a handler's `given` is syntactically
@@ -995,7 +992,7 @@ pub fn lower_handler_given_ir(h: &Handler) -> Vec<CapRefIr> {
 /// "narrow, standalone reader of already-resolved data" precedent
 /// [`body_writes_state`]/[`lower_service_handler_signature_ir`] established,
 /// applied to `bynk-check`'s own five actor-seam resolvers
-/// (`bynk-check/src/actors.rs`) instead of a full `IrHandler` assembly.
+/// (`bynk-check/src/actors.rs`) instead of a full handler assembly.
 /// [`ActorSeamIr`]'s own doc comment has the full grounding for the
 /// priority order and for the deliberately-missing `Signature` variant.
 ///
@@ -1057,43 +1054,6 @@ mod tests {
     use bynk_syntax::ast::{AgentDecl, Commons, CommonsItem, HandlerKind, ServiceDecl, SourceUnit};
     use bynk_syntax::span::Span;
     use bynk_syntax::{lexer, parser};
-
-    // P6.2 (#1143): Call/Lambda/Variant, driven entirely by the Callee P6.0
-    // already recorded. `Callee::Store`/`Callee::Query` are deliberately
-    // untested here — both dispatch only inside an agent handler body,
-    // which needs the full context/project pipeline
-    // (`context_checks::check_context_declarations`, a `UnitTable`,
-    // `CrossContextInfo`) to check at all; `checked_program`'s own
-    // single-file `resolver::resolve`/`checker::check` pipeline never
-    // walks a `CommonsItem::Agent` (only `CommonsItem::Fn`), the same
-    // "needs the full pipeline" limitation P6.0's own differential test
-    // (`bynk-check/tests/callee_classification.rs`) already documented for
-    // `Capability`/`CrossCap`/`Cross`/`Agent`.
-
-    // P6.3 (#1145): Implies/RecordSpread desugaring — the only two of the
-    // reference's own Part 6.4 desugaring-table rows this slice covers
-    // (Decision D); every other row named there stays a `todo!()` citing its
-    // own specific blocker (Decisions A–C).
-
-    // #1189: comparison/arithmetic `BinOp`, `UnaryOp::Neg`, `InterpStr` —
-    // the gap P6.2/P6.3 each confirmed and left `todo!()`, closed here.
-
-    // ==== P6.4 (#1157): IrPat/IrArm/Exhaustive, tested standalone ====
-    //
-    // `lower_pattern_ir`/`lower_arm_ir`/`lower_exhaustive_ir` are exercised
-    // here at their own standalone granularity — each fixture below digs its
-    // own `match` straight out of a fixture fn's body tail and lowers it
-    // through these three entry points directly, bypassing `lower_expr_ir`.
-    // Since P6.5 (#1159), the same three are also reached through the
-    // ordinary `lower_expr_ir`/`lower_fn_body_ir` path — see the `match_*`
-    // tests below this section for that coverage.
-
-    // ==== P6.5 (#1159): Match wired to a real consumer ====
-    //
-    // Unlike the P6.4 section above, every fixture below goes through the
-    // ordinary `lower_expr_ir`/`lower_fn_body_ir` path — no digging a
-    // fixture's own `match` out by hand and calling `lower_arm_ir`/
-    // `lower_exhaustive_ir` directly.
 
     /// Like [`checked_program`], but for source that declares an `agent`
     /// and/or a `service` — both are only legal inside a `context`, not a
@@ -1319,22 +1279,14 @@ mod tests {
             })
     }
 
-    /// #1187's Agent state-field slice: [`lower_store_field_shape_ir`]
-    /// exists precisely because [`lower_store_field_ir`] could not lower
-    /// these two shapes without hitting an `IrExprKind` gap — `= None`
-    /// (`ExprKind::None`) hit the `Ok`/`Err`/`Some`/`None` gap, closed as of
-    /// #1225's own ADR; an `is`-expression initialiser (`ExprKind::Is`)
-    /// still hits its own separate, still-open `todo!()` a few hundred
-    /// lines below. Both are real, certified fixtures, not hypothetical:
-    /// `223_store_cell_agent` (`store paymentRef: Cell[Option[AuthId]] =
-    /// None`, now lowered directly by `lower_store_field_ir` too — see
-    /// `store_field_cell_option_init_none_lowers_without_panicking`) and
-    /// `1029_agent_static_init_hoist` (`store active: Cell[Bool] = if true
-    /// { 5 is PositiveInt } else { false }`, still `is`-blocked). This pins
-    /// that the shape-only reader never touches `init` at all regardless —
-    /// unconditionally true, not contingent on either gap's own status — so
-    /// it lowers both fields cleanly whether or not `lower_store_field_ir`
-    /// itself still would panic on them.
+    /// [`lower_store_field_shape_ir`] reads a store field's shape and never
+    /// its initialiser — pinned against the two initialiser forms that once
+    /// tripped the (since deleted) `init`-lowering sibling: `= None`
+    /// (`223_store_cell_agent`'s `store paymentRef: Cell[Option[AuthId]] =
+    /// None`) and an `is`-expression (`1029_agent_static_init_hoist`'s
+    /// `store active: Cell[Bool] = if true { 5 is PositiveInt } else {
+    /// false }`). Both are real, certified fixtures; the shape reader lowers
+    /// both fields cleanly because it does not touch `init` at all.
     #[test]
     fn store_field_shape_ir_does_not_panic_on_none_or_is_initialisers() {
         let program = checked_context_program(
@@ -1358,10 +1310,6 @@ agent Order {
         let ir = lower_store_field_shape_ir(payment_ref, &program);
         assert_eq!(ir.field, "paymentRef");
         assert!(matches!(ir.kind, StoreKindIr::Cell(_)));
-        assert!(
-            ir.init.is_none(),
-            "the shape-only reader never lowers init, regardless of the source field"
-        );
 
         let program = checked_context_program(
             r#"
@@ -1384,7 +1332,6 @@ agent Meter {
         let ir = lower_store_field_shape_ir(active, &program);
         assert_eq!(ir.field, "active");
         assert!(matches!(ir.kind, StoreKindIr::Cell(_)));
-        assert!(ir.init.is_none());
     }
 
     /// Review of #1209: pins the one load-bearing ordering decision
@@ -1425,29 +1372,15 @@ service Api from http {
         assert_eq!(members[1].actor_name, "Visitor");
     }
 
-    /// #1187's slice 5 (the `Service` emitter cutover, review of #1196):
-    /// `lower_service_handler_signature_ir` is `emit_service`'s own real
-    /// call site's entry point, not `lower_handler_signature_ir` directly —
-    /// this pins it against the exact shape that motivated it: an ordinary
-    /// `from http` handler body constructing `Ok(...)` directly (not routed
-    /// through the `fn ok(s) -> HttpResult[String] { Ok(s) }` indirection
-    /// every other fixture in this module uses). Originally chosen because
-    /// building a real `IrHandler` here (`lower_service_handler_ir`) would
-    /// panic on this exact body, on P6.2/P6.3's own `Ok`/`Err`/`Some`/`None`
-    /// gap (#1143/#1145) — closed as of #1225's own ADR, so this specific
-    /// body no longer panics `lower_service_handler_ir` either. The general
-    /// claim this test's own name makes still holds regardless (a real
-    /// `IrHandler` is still unsafe to build unconditionally at
-    /// `emit_service`'s call site — correction, P6.25, 2026-08-19:
-    /// `ExprKind::Question`/`ExprKind::Is` no longer among the reasons why,
-    /// both landed as P6.15/ADR 0337 and P6.16/ADR 0338; second correction,
-    /// Slice 3.1 of #1542: the `Callee`/free-fn gaps that were the remaining
-    /// reason are closed too, so `lower_expr_ir` has no known
-    /// production-reachable `todo!()` left at all), so the fixture stays
-    /// as-is on its own terms — this test's own claim (pinning
-    /// `lower_service_handler_signature_ir` as the real entry point,
-    /// independent of whether a full `IrHandler` build would also succeed
-    /// now) is unaffected either way.
+    /// [`lower_service_handler_signature_ir`] is `emit_service`'s entry
+    /// point for a handler's resolved signature (#1187's slice 5, review of
+    /// #1196) and never reads the body. Pinned against the shape that
+    /// motivated it: an ordinary `from http` handler body constructing
+    /// `Ok(...)` directly, not routed through the `fn ok(s) ->
+    /// HttpResult[String] { Ok(s) }` indirection other fixtures in this
+    /// module use — historically the body shape a full handler lowering
+    /// panicked on, and still the clearest demonstration that this reader is
+    /// signature-only.
     #[test]
     fn service_handler_signature_lowers_without_touching_a_body_that_constructs_ok() {
         let program = checked_context_program(
@@ -1564,8 +1497,7 @@ agent Room {
         // subscription needs `consumes bynk { Events }`, which this
         // reduced harness's `CrossContextInfo::default()` doesn't support
         // (the same limitation named in `checked_context_program`'s own
-        // doc comment, and in #1169's own Risks for `CommitShape::
-        // FlushEvents`). `lower_event_pattern_ir` itself has no such
+        // doc comment). `lower_event_pattern_ir` itself has no such
         // excuse: it takes no `&CheckedProgram`, resolves nothing, and
         // cannot panic — pure AST reshaping — so it's pinned directly
         // against a parsed (not checked or certified) `EventPattern`.
@@ -1982,10 +1914,8 @@ agent Widget {
     /// (`bynk.queue.return_not_https`-adjacent gate, `context_checks.rs:
     /// 3730-3744`), and every `QueueResult` value — `Ack`, `NotFound`,
     /// `Retry(reason)` — is a bare or qualified built-in-sum variant
-    /// reference, the exact case `GlobalRef`'s own doc comment (`ir.rs`)
-    /// already names as dropped from P6.1's Decision C on purpose
-    /// (contextual, `expected`-type-driven disambiguation this pass has no
-    /// sink to read back). Unlike `HttpResult`'s `Ok`/`Err`, `QueueResult`'s
+    /// reference (a contextual, `expected`-type-driven disambiguation).
+    /// Unlike `HttpResult`'s `Ok`/`Err`, `QueueResult`'s
     /// own variants also don't resolve inside an ordinary free `fn` body at
     /// all (confirmed empirically: `bynk.resolve.unknown_name`) — the
     /// checker's own special-case for them (`checker.rs:3507`) is reached

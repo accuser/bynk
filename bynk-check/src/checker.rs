@@ -682,7 +682,7 @@ pub struct TypedCommons {
     /// including every agent handler, which cannot carry one
     /// (`bynk.actor.by_on_agent`). Read back through [`Self::actor_binding`];
     /// its one IR-side consumer (P6.11, #1171, the service-handler
-    /// `ActorBinder` constructor in `bynk-lower`) was deleted by Slice D1 of
+    /// actor-binder constructor in `bynk-lower`) was deleted by Slice D1 of
     /// #1542, so as of that slice the only readers are this crate's own
     /// `context_checks` tests — the table is kept because the binding is a
     /// checked fact about the handler, not because of who reads it.
@@ -3537,9 +3537,10 @@ pub(crate) fn type_of(expr: &Expr, expected: Option<TyId>, ctx: &mut Ctx) -> Opt
                     || peel_to_http_result(ctx.return_ty, tys).is_some();
                 if http_implied || !user_owns {
                     // P6.21/P6.23 (review of #1244/#1247): `Callee::Intrinsic`
-                    // recorded here — Decision C's own known-excluded shape
-                    // (`ir.rs`'s `GlobalRef` doc comment names it) now has the
-                    // sink that comment said a future slice would need to add.
+                    // recorded here — a namespace-qualified built-in-sum
+                    // variant reference, the shape P6.1's Decision C had
+                    // excluded from bare-global resolution until a sink like
+                    // this existed for it.
                     ctx.callees.insert(
                         expr.id,
                         Callee::Intrinsic {

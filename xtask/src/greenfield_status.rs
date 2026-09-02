@@ -1355,16 +1355,15 @@ fn ide_emit_edge(root: &Path) -> Probe {
 /// `ir/`'s legitimate ones, silently undercounting real remaining work — see
 /// [`is_named_ast_importer`].
 ///
-/// #1184 review: this exclusion is necessary but not sufficient for R6.13. `ir.rs`
-/// itself still holds several AST types directly in `IrItem`-adjacent struct fields
-/// (`Arc<TypeDecl>`, `Arc<FnDecl>`, `HandlerKind`, `Refinement`, `SchemaVersionPattern`)
-/// rather than IR-native equivalents — an emitter reading e.g. `IrHandler::kind`, which
-/// *is* `ast::HandlerKind`, touches the AST without ever spelling `bynk_syntax::ast`
+/// #1184 review: this exclusion is necessary but not sufficient for R6.13. `bynk-ir`
+/// still embeds AST types directly in IR struct fields (`TypeShape::Refined`'s
+/// `BaseType`/`Refinement`, ADR 0366) rather than IR-native equivalents — an emitter
+/// reading such a field touches the AST without ever spelling `bynk_syntax::ast`
 /// itself, so it is invisible to this probe by construction. `ast_importers` reading
 /// its retired floor (5 — `design/archive/retired-tracks.md`'s own closing summary
 /// has the per-file argument) proves no *remaining* file outside these two and the
 /// five-file rendering subtree imports the AST module directly; it does not by
-/// itself prove every `IrItem` field is AST-free.
+/// itself prove every `bynk-ir` field is AST-free.
 ///
 /// #1187's own closing scoping pass adds one more, on different grounds than the
 /// `ir.rs`/`ir/lower.rs` pair above: `project/tests_emit.rs` was deliberately *not*

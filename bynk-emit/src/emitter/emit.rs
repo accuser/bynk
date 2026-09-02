@@ -2081,17 +2081,16 @@ pub(crate) fn emit_messages_bundle(
 
 // -- v0.5 emission --
 
-/// P6.x (#1193, slice 3 of #1187, narrowed — `Provider` deferred, see this
-/// issue's own Framing): reads each op's resolved `params`/`return_ty` off
-/// `ops` (`bynk-emit::ir::OpSig`, `lower_capability_item_ir`'s own return
-/// value) through `ts_ty`, instead of walking `CapabilityOp::params`/
-/// `return_type` `TypeRef`s through `ts_type_ref` directly. `c` is still
-/// needed alongside `ops` — `IrItem::Capability::def` is a bare `String`,
-/// carrying neither `c.documentation`/`op.documentation` nor the `Arc` back
+/// P6.x (#1193, slice 3 of #1187): reads each op's resolved
+/// `params`/`return_ty` off `ops` ([`bynk_ir::OpSig`], from
+/// `bynk_lower::lower_capability_ops_ir`) through `ts_ty`, instead of
+/// walking `CapabilityOp::params`/`return_type` `TypeRef`s through
+/// `ts_type_ref` directly. `c` is still needed alongside `ops` — an `OpSig`
+/// carries neither `c.documentation`/`op.documentation` nor the `Arc` back
 /// to the declaration #1188 could rely on for `Type` ([DECISION A]).
 /// `ops`/`c.ops` are zipped by index: both are built in declaration order
-/// (`IrItem::Capability::ops`'s own doc comment), never reordered by either
-/// side.
+/// (`lower_capability_ops_ir` maps `cap.ops` in place), never reordered by
+/// either side.
 ///
 /// Accepted divergence (review of #1194, widening #1193's own disclosure):
 /// `resolve_type_ref` returns `None` — falling back to `Unit`/`void` here —
