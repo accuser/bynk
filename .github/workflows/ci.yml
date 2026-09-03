@@ -596,7 +596,7 @@ jobs:
       # The pinned VS Code build the suite runs against — `runTest.ts` reads this
       # and the cache below keys on it (one source of truth). Pinned to the recent
       # stable the suite was already testing against; bump here to test a newer one.
-      VSCODE_TEST_VERSION: "1.124.2"
+      VSCODE_TEST_VERSION: "1.134.0"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
