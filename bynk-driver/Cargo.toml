@@ -1,6 +1,8 @@
 [package]
 name = "bynk-driver"
 description = "Shared front-end command bodies for the bynkc and bynk CLIs"
+keywords = ["compiler", "dsl", "cli", "language"]
+categories = ["compilers", "command-line-interface"]
 edition.workspace = true
 version.workspace = true
 rust-version.workspace = true

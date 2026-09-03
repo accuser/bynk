@@ -32,10 +32,17 @@ allow = [
 
 [bans]
 # Duplicate versions stay a warning: the workspace deliberately pins some deps
-# and Dependabot grooms duplicates. Wildcard requirements are denied — none
-# exist today, so this is a free ratchet that keeps unpinned `*` deps out.
+# and Dependabot grooms duplicates. Wildcard requirements are denied — the
+# ratchet against unpinned `*` deps on crates.io stays live; the one
+# deliberate exception is bynk-testkit's own path-only dev-dependency (#1560:
+# a version there would break `cargo publish` for bynk/bynkc/bynk-lsp
+# unconditionally, since bynk-testkit is `publish = false` and can never
+# resolve against the registry). allow-wildcard-paths scopes that exception
+# to path dependencies specifically — every workspace.dependencies entry
+# without one still carries a version, so nothing else is exempted.
 multiple-versions = "warn"
 wildcards = "deny"
+allow-wildcard-paths = true
 
 [sources]
 # Only crates.io (and explicitly-allowed git sources) may be pulled.
