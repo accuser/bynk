@@ -359,6 +359,7 @@ dependencies = [
  "bynk-strip",
  "bynk-syntax",
  "bynk-testkit",
+ "bynk-ts",
  "clap",
  "regex",
  "serde",
