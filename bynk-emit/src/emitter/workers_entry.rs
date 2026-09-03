@@ -13,12 +13,10 @@
 
 use std::sync::Arc;
 
-use crate::emitter::http_handler_method_name;
+use crate::emitter::http_handler_method_name_ir;
 use crate::emitter::ts_ident;
 use crate::project::UnitTable;
-use bynk_syntax::ast::{
-    BaseType, Handler, HandlerKind, HttpMethod, LimitsPolicy, ServiceProtocol, TypeDecl, TypeRef,
-};
+use bynk_syntax::ast::{BaseType, Handler, LimitsPolicy, ServiceProtocol, TypeDecl, TypeRef};
 
 use crate::emitter::RuntimeUse;
 use bynk_ts::{
@@ -372,20 +370,19 @@ pub(crate) fn emit_worker_entry(
     for sname in &service_names {
         let service = table.services.get(*sname).unwrap();
         for h in &service.handlers {
-            // P6.31 (design/tracks/the-ir.md §6a): dispatches on `IrHandlerKind`
-            // (P6.24a's own pure, unconditional mirror), re-deriving `method`/
-            // `path` from the original `h.kind` for `HttpRoute`'s own still-
-            // AST-typed fields (Q7-settled — `HttpRoute::method`/`handler`
-            // stay AST until phase 7's printer).
-            if let bynk_ir::IrHandlerKind::Http { .. } = bynk_lower::lower_handler_kind_ir(&h.kind)
+            // Slice 1 of `#1542` (the IR cutover, `design/archive/retired-tracks.md` §5): reads
+            // `IrHandlerKind::Http`'s own `method`/`path` directly — the IR
+            // payload P6.24a already computes here, no longer re-derived from
+            // `h.kind` a second time. `HttpRoute::method` is `IrHttpMethod`
+            // (un-deferred from Q7's original "stays AST until phase 7's
+            // printer" — phase 7 shipped, see the front-loading ADR).
+            if let bynk_ir::IrHandlerKind::Http { method, path } =
+                bynk_lower::lower_handler_kind_ir(&h.kind)
             {
-                let HandlerKind::Http { method, path } = &h.kind else {
-                    unreachable!("lower_handler_kind_ir is a pure structural mirror")
-                };
                 http_routes.push(HttpRoute {
                     service: (*sname).clone(),
-                    method: *method,
-                    path: path.clone(),
+                    method,
+                    path,
                     handler: h.clone(),
                     // v0.47: a Bearer handler's surface wrapper runs the
                     // verification seam and needs the request passed in.
@@ -444,7 +441,9 @@ pub(crate) fn emit_worker_entry(
         build_path_method_table(&http_routes, &cors_services, &security_services);
     // A context with a `GET` route synthesises `HEAD` answers, which strip the
     // built `Response` body through the runtime's `headResponse`.
-    let has_get_route = http_routes.iter().any(|r| r.method == HttpMethod::Get);
+    let has_get_route = http_routes
+        .iter()
+        .any(|r| r.method == bynk_ir::IrHttpMethod::Get);
 
     // v0.10a: collect cron handlers across all services, carrying the per-service
     // declaration index (the method-name key) and sorting by schedule expression
@@ -1459,7 +1458,7 @@ struct CorsService {
 /// plus `OPTIONS` always. The `BTreeSet` yields a stable alphabetical order
 /// (`DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT`) — so `Allow: GET, HEAD,
 /// OPTIONS` and `Allow: OPTIONS, POST` read as the proposal specifies.
-fn derive_allowed_methods(methods: impl Iterator<Item = HttpMethod>) -> Vec<String> {
+fn derive_allowed_methods(methods: impl Iterator<Item = bynk_ir::IrHttpMethod>) -> Vec<String> {
     let mut set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     let mut has_get = false;
     for m in methods {
@@ -1676,7 +1675,7 @@ fn build_security_services(
 #[derive(Debug, Clone)]
 struct HttpRoute {
     service: String,
-    method: HttpMethod,
+    method: bynk_ir::IrHttpMethod,
     path: String,
     handler: Handler,
     /// v0.47: the handler's `by` clause names a Bearer actor, so its surface
@@ -1795,12 +1794,12 @@ fn emit_http_route_dispatch(
     ru: &RuntimeUse,
 ) -> TsStmt {
     let h = &route.handler;
-    let method_key = http_handler_method_name(route.method, &route.path);
+    let method_key = http_handler_method_name_ir(route.method, &route.path);
     let has_path_params = param_count(&route.path) > 0;
     // v0.139 (ADR 0162 D3): a `GET` route also answers `HEAD` — the guard widens
     // so the `GET` handler runs, then the built response's body is stripped
     // below. Other methods match exactly.
-    let method_guard = if route.method == HttpMethod::Get {
+    let method_guard = if route.method == bynk_ir::IrHttpMethod::Get {
         or_expr(
             strict_eq(ident("method"), str_lit("GET")),
             strict_eq(ident("method"), str_lit("HEAD")),
@@ -2111,7 +2110,7 @@ fn emit_http_route_dispatch(
     // (`notModifiedIfMatch`) — composed innermost-first so CORS still stamps the
     // `304`. Non-`GET`/unsafe methods are byte-for-byte unchanged: no validator, no
     // conditional, no freshness (DECISION B).
-    let response_expr = if route.method == HttpMethod::Get {
+    let response_expr = if route.method == bynk_ir::IrHttpMethod::Get {
         let base = call(
             ident("httpResultToResponse"),
             vec![
@@ -2165,7 +2164,7 @@ fn emit_http_route_dispatch(
     // and headers with an empty body — the handler ran, so the headers are the
     // real ones a `GET` would produce; `headResponse` discards the body without
     // reading it (a `Streaming` body is never drained).
-    if route.method == HttpMethod::Get {
+    if route.method == bynk_ir::IrHttpMethod::Get {
         guarded.push(const_("__response", build_expr));
         guarded.push(return_(Some(cond_expr(
             strict_eq(ident("method"), str_lit("HEAD")),

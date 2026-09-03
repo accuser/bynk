@@ -2191,13 +2191,44 @@ costly, or the formatter needs to preserve regions it cannot parse.
 *Evidence:* per-file reparse timings on the largest real `.bynk` file. The invalidation unit is the
 file (R3.13), so this is currently far from the line.
 *Note:* refusing rowan is not refusing a CST — the project publishes one (R2.9, R2.13).
+*Tracked:* [#1524](https://github.com/accuser/bynk/issues/1524) — not left to memory.
 
 **A demand-driven query framework (salsa or equivalent).**
-*Status:* the **architecture is adopted** (§3.4); the **framework is deferred**.
+*Status:* the **architecture is adopted** (§3.4) at the file and unit levels — the shared
+`Tokens`/`Ast` cache and `UnitSignature` with its R3.14 stability proof; the definition and project
+levels (`Body(DefId)`/`TypeOf(DefId)`, `ProjectGraph`) were built by phase 8 and **deleted** on
+2 September 2026 ([#1537](https://github.com/accuser/bynk/issues/1537)) after the 30 August review
+found nothing called them and no scheduler existed to — the same P5 posture the IR cutover took for
+phase 6's expression IR. They are a few hundred lines to rebuild against the checker's own
+per-definition entry points when the trigger below fires; R3.13's table stays the specification. The
+**framework is deferred**.
 *Cost avoided:* a dependency with a live API surface against an MSRV policy and a `deny.toml`; plus
 the batch path paying for the incremental path on the deploy-critical route.
 *Trigger:* a hand-rolled memo table over R3.13's four query levels is measurably the bottleneck.
 *Evidence:* keystroke-to-diagnostic latency on a multi-context project, attributed by level.
+
+**A typed expression IR between the checker and the string-emitting lowerer.**
+*Status:* the **declaration-level IR is adopted** (`bynk-ir`'s shapes, read through `bynk-lower`'s
+helpers — R6.13 at the level phase 6 retired it); the **expression-level IR is refused**.
+*Claim:* `bynk-emit/src/emitter/lower.rs` reads `bynk_syntax::ast` directly for expression,
+statement and body dispatch, and stays the single lowering path.
+*Cost avoided:* a second expression code generator brought to feature parity with the first — measured
+at ~4,400 lines and seven follow-on issues for three of seven entry points, with the remaining four
+flagged as higher risk — plus the gate that keeps both reachable meanwhile, plus three `bynk-ir`
+representation widenings that would exist only to let the new path reproduce the old one's bytes.
+*Trigger:* an emit-side change that needs expression-level facts the checker already resolved and
+`emitter/lower.rs` cannot get from `TypedCommons` without re-deriving them — **and** which the
+tree-native route (lowering to `bynk_ts` nodes, retiring `ts_writes`) would not serve better. A second
+miscompile of the kind T2.1 closed (hoisting, short-circuit) originating in AST re-classification would
+fire this; a desire for R6.13 purity alone does not.
+*Evidence:* the gated `unconsumed_ir_items` probe (`cargo xtask greenfield-status`), reading 0 and
+ratcheted so it can only fall; `emit_diagnostics`/`ts_writes` unchanged by the deletion.
+*Note:* refusing the expression IR is not refusing the IR — 19 `bynk-ir` items and 17 `bynk-lower`
+entry points stay, each with a reader outside both crates. It is not a refusal of tree-native emission either, which is
+the other way to reach the same end state and was never the cutover's scope.
+*Tracked:* [#1542](https://github.com/accuser/bynk/issues/1542) (the IR cutover track, retired) —
+the measurements, the priced alternative and the deletion inventory are in its closing summary in
+`design/archive/retired-tracks.md`.
 
 **An optimising IR, CFG or SSA form.**
 *Cost avoided:* the whole apparatus, for a target that has a JIT.
@@ -2220,14 +2251,16 @@ re-checks on every keystroke inside any function. Declared capabilities are a pr
 incrementality.
 *Trigger:* none identified; both reasons would have to fail.
 *Evidence:* n/a — but the §15 versus §2.8.4 contradiction should still be resolved deliberately.
+*Tracked:* [#1529](https://github.com/accuser/bynk/issues/1529) — not left to memory.
 
 **A diagnostic error enum.**
 *Cost avoided:* 434 variants in one enum, and `miette`'s renderer displacing an ariadne setup already
 tuned for byte indexing.
 *Trigger:* the registry-as-data approach (R9.1–R9.3) fails to carry severity, templates or `explain`
 bodies without hand-duplication.
-*Evidence:* the count of message templates not generated from the registry. It is 42 for one code
-today (#45).
+*Evidence:* the count of message templates not generated from the registry. It was 42 for one code
+as of the July review (#45).
+*Tracked:* [#1531](https://github.com/accuser/bynk/issues/1531) — not left to memory.
 
 **Tuples.**
 *Cost avoided:* a second product type beside records, and a second codec story.
@@ -2236,6 +2269,7 @@ nominal records without combinatorial growth.
 *Evidence:* the corpus already contradicts itself here — ADR 0120 says no tuples, type-system spec
 §2.7.6 lists them as built-in, and design notes §11 types `join` as returning `Query[(T, U)]`. Resolve
 before it becomes evidence.
+*Tracked:* [#1530](https://github.com/accuser/bynk/issues/1530) — not left to memory.
 
 ### 15.2 What this design costs
 

@@ -66,3 +66,7 @@ bynk-ide.workspace = true
 # Content-ownership track (#1086) slice 3: the CompileOptions::single/::split
 # bare-call replacement for this crate's own integration-test fixtures.
 bynk-testkit.workspace = true
+# #1538: `verbatim_violations` — tests/tsc_verify.rs runs it over every
+# positive fixture's compiled TypeScript, now that real `Verbatim` content
+# exists to check.
+bynk-ts.workspace = true

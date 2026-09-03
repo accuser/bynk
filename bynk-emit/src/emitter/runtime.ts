@@ -218,8 +218,10 @@ export interface ContractMismatch {
 export type CallError = BoundaryError | ContractMismatch;
 
 export function boundaryError(error: CallError): Error {
-  const e = new Error(`BoundaryError: ${error.kind}`);
-  (e as any).boundaryError = error;
+  const e = new Error(`BoundaryError: ${error.kind}`) as Error & {
+    boundaryError?: CallError;
+  };
+  e.boundaryError = error;
   return e;
 }
 
