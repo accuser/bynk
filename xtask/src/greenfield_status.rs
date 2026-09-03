@@ -3825,6 +3825,25 @@ commons app.demo {
         assert!(!classify("bynk-emit", &files, 0, &[]));
     }
 
+    /// #1587: [`NAMED_FS_EXCEPTIONS`] is empty today (#1561 cleared the three entries
+    /// that outlived their files' P4.0 move out of `bynk-emit` for weeks, unnoticed,
+    /// while `fs_below_driver`'s `0 named floor` reading stayed vacuously "healthy"),
+    /// so this loop is vacuous now — but guards whatever named exception is decided
+    /// next the same way [`ts_writes_excluded_files_still_exist`] and
+    /// [`ast_importer_exceptions_still_exist_and_still_import_the_ast`] guard their own
+    /// lists: a future entry going stale must fail loud here, not silently surface as
+    /// a falsely-healthy `fs_below_driver` count.
+    #[test]
+    fn named_fs_exceptions_still_exist() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
+        for (krate, rel, _fn_name) in NAMED_FS_EXCEPTIONS {
+            let path = root.join(krate).join("src").join(rel);
+            path.metadata().unwrap_or_else(|e| {
+                panic!("NAMED_FS_EXCEPTIONS entry {krate:?}/{rel:?} does not exist: {e}")
+            });
+        }
+    }
+
     // --- emit_abi_shapes (#999 Decision E) ----------------------------------
 
     /// A binding's ordinary capability-interface imports, and the emit-ABI tag-layout
@@ -3989,6 +4008,25 @@ commons app.demo {
         assert!(!is_ts_writes_excluded_file(Path::new(
             "project/tests_emit.rs"
         )));
+    }
+
+    /// #1587: the exact failure #1561 fixed for [`NAMED_FS_EXCEPTIONS`] (an entry
+    /// outliving its file by weeks while the gated probe kept reading a vacuous,
+    /// falsely-healthy number) applies just as well to [`TS_WRITES_EXCLUDED_FILES`] —
+    /// nothing previously caught a stale entry here either. Must fail loud, not surface
+    /// as a silent `ts_writes`/`ts_any` regression in `greenfield_status_table_is_current`
+    /// — mirrors [`ast_importer_exceptions_still_exist_and_still_import_the_ast`]'s own
+    /// discipline for the sibling list.
+    #[test]
+    fn ts_writes_excluded_files_still_exist() {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("bynk-emit/src");
+        for rel in TS_WRITES_EXCLUDED_FILES {
+            dir.join(rel).metadata().unwrap_or_else(|e| {
+                panic!("TS_WRITES_EXCLUDED_FILES entry {rel:?} does not exist: {e}")
+            });
+        }
     }
 
     /// Regression for a real mistake this slice's own grounding found: an earlier
