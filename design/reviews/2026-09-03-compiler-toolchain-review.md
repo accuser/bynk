@@ -26,8 +26,9 @@ The tree was built, linted and tested first, on the pinned toolchain (`rustc 1.9
 - `cargo clippy --workspace --all-targets -- -D warnings` — clean.
 - `RUSTDOCFLAGS=-D warnings cargo doc --workspace --no-deps` — clean.
 - `BYNK_REQUIRE_TSC=1 cargo test --workspace --locked` — **1,906 passed, 0 failed, 0 ignored**
-  across 174 test binaries (5m45s). The three workerd smokes booted and passed; the Node
-  strip-types checks ran (they need Node ≥ 22.13 — see §2, this matters).
+  across 174 test binaries (5m45s). The three workerd smokes booted and passed; both Node
+  strip-types tests ran rather than skipped (one needs Node ≥ 22.6, the other ≥ 22.13 — see §2,
+  this matters).
 - `cargo xtask greenfield-status` — *table current*, all fifteen gated probes at their recorded
   values.
 - The last completed CI run on `main` before this review (`62e988c`, run 4499) is green across all
@@ -71,26 +72,33 @@ and never checked against what users actually get.
 same major (`test_runner.rs:372`, `tsc_verify.rs:58`). The runtime package, the VS Code extension
 and the playground pin **7.0.2** (`bynk-emit/runtime/package.json:15`, `vscode-bynk/package.json:536`,
 `playground/package.json:16`). And the remedy `bynk doctor` prints when neither `tsc` nor `tsx` is
-found — `npm install -g typescript` (`doctor.rs:317`) — installs whatever npm's `latest` tag points
-at, which is **7.0.2**. So a user who follows the toolchain's own instructions runs the emitted
-TypeScript through a compiler major that no gate has ever run it through. `doctor` cannot notice:
-its `tsc | tsx` row checks presence and provenance and never reads a version (`doctor.rs:298-333`),
-though the same file gives `node` a floor. Today this is a coverage gap, not a defect — experiments 1
-and 2 above say the output is clean under 7 — but it is a gap in exactly the place the `ci.yml:285`
-comment says the pin exists to protect: *"an unpinned `typescript` could turn CI red on a new TS
-major with no repo change"*. Two TS majors have shipped since that comment was written. The pin has
-protected CI from noticing.
+found — `npm install -g tsx (or: npm install -g typescript)` (`doctor.rs:317`) — offers two paths,
+neither gated: `typescript` resolves to whatever npm's `latest` tag points at, which is **7.0.2**;
+`tsx`, the primary suggestion, is an esbuild-based stripper that does no type-checking at all and
+is pinned nowhere in the tree. So a user who follows the toolchain's own instructions runs the
+emitted TypeScript through a compiler major that no gate has ever run it through, or through no
+type-checker at all. `doctor` cannot notice: its `tsc | tsx` row checks presence and provenance
+and never reads a version (`doctor.rs:298-333`), though the same file gives `node` a floor. Today
+this is a coverage gap, not a defect — experiments 1 and 2 above say the output is clean under 7 —
+but it is a gap in exactly the place the `ci.yml:285` comment says the pin exists to protect: *"an
+unpinned `typescript` could turn CI red on a new TS major with no repo change"*. Two TS majors have
+shipped since that comment was written. The pin has protected CI from noticing.
 
 **Finding 2 — the Node floor is 18, CI runs 20, and the gate that needs 22 has been skipping in CI
 for as long as it has existed.** `NODE_MAJOR_FLOOR` is 18 (`bynk-emit/src/lib.rs:94`), a major that
 reached end-of-life in April 2025. Nine of the sixteen `setup-node` sites across the workflows —
 including both `test` legs, in `ci.yml:283` and `release.yml:150` — run Node **20**, end-of-life
-since April 2026. The two strip-types tests in `bynkc/tests/tsc_verify.rs`
-(`embedded_runtime_strips_types_under_node` at `:508`, `all_emitted_typescript_strips_under_node` at
-`:578`, the latter with a second staging pass at `:662`) call `node:module`'s
-`stripTypeScriptTypes`, which exists from Node 22.13; on Node 20 the harness exits 2 and each site
-*"skips loudly"* (`:531`, `:581`, `:662`) — into the captured stderr of a passing test, which
-nextest's `status-level = "fail"` never prints. Experiment 3 confirms the API is absent on 20. So the
+since April 2026. The two strip-types tests in `bynkc/tests/tsc_verify.rs` both skip on Node 20,
+for two different reasons. `embedded_runtime_strips_types_under_node` (`:508`) parses `node
+--version` against a **≥ 22.6** floor and, if it passes, runs `node --experimental-strip-types
+--check` over the runtime (`:511-546`); on 20 the floor fails and the test returns after a banner
+(`:531`). `all_emitted_typescript_strips_under_node` (`:578`) stages every fixture's output and hands
+the tree to `strip_check.mjs`, which calls `node:module`'s `stripTypeScriptTypes` — an API that
+exists from Node **22.13** — and exits 2 when it is missing, which the test treats as another banner
+and a pass (`:662`; the earlier banner at `:581` fires only when `node` is absent altogether). Either
+way the banner lands in the captured stderr of a passing test, which neither harness prints: nextest's
+`success-output` defaults to `never` and `.config/nextest.toml` does not override it, and plain
+`cargo test` captures passing output too. Experiment 3 confirms the API is absent on 20. So the
 invariant those tests protect — ADR 0136's *"every emitted `.ts` is erasable by pure
 type-stripping"*, the property `bynkc test --inspect` and the in-browser eval path both depend on —
 has never been checked over the fixture corpus by a CI run. The tree knows: the comment at
@@ -165,7 +173,7 @@ working.
 | `bynk-driver/src/test_runner.rs:372` (`bynkc test`'s own fallback) | `npx --yes -p typescript@5 tsc` | 5.9.3 |
 | `bynk-emit/runtime/package.json:15` (the runtime's own typecheck) | `7.0.2` | 7.0.2 |
 | `vscode-bynk/package.json:536`, `playground/package.json:16` | `^7.0.2` | 7.0.2 |
-| `bynk/src/doctor.rs:317`, `test_runner.rs:506` (the remedies users are told) | `npm install -g typescript` | `latest` = **7.0.2** |
+| `bynk/src/doctor.rs:317`, `test_runner.rs:506` (the remedies users are told) | `npm install -g tsx (or: npm install -g typescript)` | `tsx` unpinned, no type-check; `typescript` `latest` = **7.0.2** |
 | `site/.../contributing/testing.md:62` | documents the `@5` fallback | — |
 
 The runtime package is type-checked by TypeScript 7 in the `runtime` job and then bundled into
@@ -201,22 +209,37 @@ it appears rather than `ok`.
 | What | Node major | Source |
 |---|---|---|
 | `NODE_MAJOR_FLOOR` (doctor's floor; "the emitted code targets it") | **18** (EOL April 2025) | `bynk-emit/src/lib.rs:94` |
-| CI `test` legs, release `test` legs, `grammar`, `npm-audit`, `playground` | **20** (EOL April 2026) | `ci.yml:283,499,567,648,813`; `release.yml:83,150` |
+| CI `test` legs, release `test` legs, `grammar`, `npm-audit`, `playground`, both `release-bootstrap` jobs | **20** (EOL April 2026) | `ci.yml:283,499,567,648,813`; `release.yml:83,150`; `release-bootstrap.yml:68,147` — nine sites |
 | `stamp`, `site`, `extension-tests`, `runtime`, npm publish | 22 | the other seven `setup-node` sites |
 | `bynkc test --inspect` (`--experimental-strip-types`) | ≥ 22.6 | `test_runner.rs:701` |
 | `--inspect` with source-map-resolved breakpoints | ≥ 22.18 | `test_runner.rs:82` |
-| `stripTypeScriptTypes` (the three strip-check tests) | ≥ 22.13 | `bynkc/tests/support/strip_check.mjs` |
+| `embedded_runtime_strips_types_under_node` (`--experimental-strip-types --check`) | ≥ 22.6 | `tsc_verify.rs:511-523` |
+| `all_emitted_typescript_strips_under_node` (`stripTypeScriptTypes`) | ≥ 22.13 | `bynkc/tests/support/strip_check.mjs` |
 | `@types/node` the runtime is typed against | 26.2.0 | `bynk-emit/runtime/package.json:16` |
 
 ### 2.2 The gate that always skips
 
-`bynkc/tests/tsc_verify.rs` carries two tests that stage emitted TypeScript and ask Node itself
-whether it strips: the embedded runtime alone (`:508`) and every fixture's output (`:578`, staged
-twice, `:581` and `:662`). Each site handles the harness's exit 2 the same way — print a banner and
-pass. On the Node 20 both `test` legs run, the harness *always* exits 2 (experiment 3). Under
-nextest's `ci` profile the banner goes into a passing test's captured output and is never shown
-(`.config/nextest.toml`: `status-level = "fail"`). So the strip-only invariant has been certified
-green on every CI run without the corpus ever being stripped in CI, since the day the tests landed.
+`bynkc/tests/tsc_verify.rs` carries two tests that ask Node itself whether emitted TypeScript
+strips, and they use two different oracles with two different floors:
+
+- `embedded_runtime_strips_types_under_node` (`:508`) checks the runtime alone with `node
+  --experimental-strip-types --check`, behind its own inline `node --version` parse against
+  **≥ 22.6** (`:511-523`). Below the floor it prints a banner and returns (`:531`).
+- `all_emitted_typescript_strips_under_node` (`:578`) stages every fixture's output and runs
+  `strip_check.mjs`, whose oracle is `node:module`'s `stripTypeScriptTypes` (**≥ 22.13**). The
+  harness exits 2 when the API is missing and the test prints a banner and passes (`:662`). Its
+  other banner (`:581`) is a plain `node`-absent guard and is not taken on the Node 20 legs.
+
+`strip_check.mjs:13-15` explains why the two oracles are not interchangeable: `--check` false-fails
+on a leading `type`/`declare` statement, so it is a weaker oracle than the API call — which means
+the test that skips for the higher floor is the more trustworthy of the two. On the Node 20 both
+`test` legs run, both predicates fail (experiment 3), and both banners land in a passing test's
+captured output. Nothing prints that: nextest's `success-output` defaults to `never`, and
+`.config/nextest.toml` sets only `failure-output` and `status-level` (which selects the statuses
+listed, not what is captured — flipping it to `pass` would list the tests and still hide the
+banner); `cargo test` captures passing output too, absent `--nocapture`. So the strip-only
+invariant has been certified green on every CI run, under both harnesses, without the corpus ever
+being stripped in CI, since the day the tests landed.
 
 The runtime test's own comment (`:526-529`) is candid about this: *"this skips silently on an older
 Node regardless of `BYNK_REQUIRE_TSC` (CI's `Test suite` runs Node 20 …). The strip-types coverage
@@ -235,8 +258,9 @@ three external gates and not the third.
 
 One change closes it: `node-version: "22"` on the `test` legs (and the release's), and a
 `BYNK_REQUIRE_STRIP=1` (or folding it under `BYNK_REQUIRE_TSC`, which is what the comment at
-`tsc_verify.rs:658` already likens it to) so the two tests fail rather than skip when the API is
-missing. Then raise `NODE_MAJOR_FLOOR` to 22: it is what the debug path already requires, it is the
+`tsc_verify.rs:658` already likens it to) applied at all three skip predicates — the runtime test's
+version floor (`:524`), the corpus test's `node`-absent guard (`:579`), and its exit-2 arm
+(`:660`) — so the two tests fail rather than skip. Then raise `NODE_MAJOR_FLOOR` to 22: it is what the debug path already requires, it is the
 oldest major still in support, and `doctor` stops reporting `ok` for a Node on which
 `bynkc test --inspect` cannot run.
 
@@ -314,6 +338,11 @@ written in one place rather than a side-effect of which command each workflow ha
 - **`fuzz.yml`** resolves `toolchain: nightly` unpinned (`:36`). It is nightly-only, scheduled, and
   off the PR gate, so a nightly regression costs a red scheduled run and nothing else. Acceptable;
   the one workflow that floats should say it floats on purpose.
+- **`.config/nextest.toml:25`** parenthesises *"status-level = fail keeps failures loud"* beside
+  the claim that retried-then-passed tests are reported as FLAKY. `status-level` chooses which
+  statuses are listed; the setting that decides whether a passing test's output is ever seen is
+  `success-output`, which the file leaves at its `never` default. The comment is adjacent to the
+  truth in the way §2.2 turned out to matter.
 
 ---
 
@@ -379,13 +408,15 @@ Because a review that only lists gaps misdescribes this toolchain:
 Ordered by value over cost.
 
 1. **Run the strip-types gate for real.** `node-version: "22"` on the `test` legs in `ci.yml` and
-   `release.yml`, plus a `BYNK_REQUIRE_STRIP` (or `BYNK_REQUIRE_TSC` covering it) so the two tests
-   fail instead of skip. Two lines and one `require::is_required` call; it turns an invariant that
-   has never been checked over the corpus in CI into one that is.
+   `release.yml`, plus a `BYNK_REQUIRE_STRIP` (or `BYNK_REQUIRE_TSC` covering it) at each of the
+   three skip predicates in `tsc_verify.rs` so the two tests fail instead of skip. Two workflow
+   lines and three `require::is_required` calls; it turns an invariant that has never been checked
+   over the corpus in CI into one that is.
 2. **Verify emitted output on the TypeScript users get.** A second `tsc_verify` pass under
-   `typescript@7` on the Linux leg; align the two `@5` fallbacks and the `npm install -g typescript`
-   remedies with whatever the gate says; give `doctor`'s `tsc | tsx` row a version floor and an
-   "untested major" ceiling.
+   `typescript@7` on the Linux leg; align the two `@5` fallbacks and the `npm install -g …`
+   remedies with whatever the gate says (and decide whether recommending `tsx`, which type-checks
+   nothing, is what `doctor` should lead with); give `doctor`'s `tsc | tsx` row a version floor and
+   an "untested major" ceiling.
 3. **Make the extension's server pin true by construction.** Either decouple `bynkServerVersion`
    from the workspace version (bumped at release time) or add a CI check that the pinned release
    exists. Then decide, in writing, whether the monthly-milestone cadence still stands.
@@ -416,9 +447,9 @@ cargo build --workspace --all-targets --locked
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps
-BYNK_REQUIRE_TSC=1 cargo test --workspace --locked   # 1,906 passed, 174 binaries
+BYNK_REQUIRE_TSC=1 cargo test --workspace --locked 2>&1 | tee test.log   # 1,906 passed, 174 binaries
 cargo run -q -p xtask -- greenfield-status           # 15 gated probes; "table current"
-grep -E '^test result' test.log | awk '{p+=$4; f+=$6} END {print NR, p, f}'
+grep -E '^test result' test.log | awk '{p+=$4; f+=$6} END {print NR, p, f}'   # 174 1906 0
 ```
 
 **The three TypeScripts.**
@@ -453,7 +484,8 @@ npx -y node@20.19.5 -p "typeof require('node:module').stripTypeScriptTypes"   # 
 npx -y node@22.22.2 -p "typeof require('node:module').stripTypeScriptTypes"   # function
 grep -n 'node-version' .github/workflows/*.yml | sed 's/.*node-version: //' | sort | uniq -c   # 9 × "20", 7 × "22"
 grep -n 'SKIPPED' bynkc/tests/tsc_verify.rs                                      # :531 :581 :662
-grep -n 'status-level' .config/nextest.toml
+sed -n 511,523p bynkc/tests/tsc_verify.rs                                        # the runtime test's >= 22.6 floor
+grep -n 'success-output\|status-level\|failure-output' .config/nextest.toml      # no success-output override
 ```
 
 **Release drought and the extension pin.**
