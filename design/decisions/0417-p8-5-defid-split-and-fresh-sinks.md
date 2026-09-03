@@ -1,6 +1,11 @@
 # 0417 — P8.5's `DefId` — a split Fn/Handler enum, plain-`DefId` query signatures, and fresh per-call sinks
 
-- **Status:** Accepted (v0.289.55)
+- **Status:** Accepted (v0.289.55). **Superseded by [ADR 0420](0420-phase-8-unadopted-query-layer-deleted.md)**
+  (v0.289.65): the `DefId`-keyed `body`/`type_of` queries this decision shaped were deleted on
+  2 September 2026 (#1537) — nothing outside their own test module ever called them, and no
+  scheduler existed to. Decisions A–D here stand as the record a rebuild adapts to if R3.15's
+  trigger (#1523) fires (the `HandlerKind` `Hash` derive Decision A motivated is kept for that
+  reason); `incremental_query_types` now gates that a `DefId`-keyed query stays absent until then.
 
 **Context.** #1516 proposed `Body(DefId)`/`TypeOf(DefId)` as real, callable query functions
 wrapping `checker::check_body`/`checker::check_handler_body`, built but not wired into

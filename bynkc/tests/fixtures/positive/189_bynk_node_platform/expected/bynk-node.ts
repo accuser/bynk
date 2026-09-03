@@ -73,7 +73,8 @@ export class SecretsProvider implements Secrets {
     if (typeof fromEnv === "string") {
       return Some(fromEnv);
     }
-    const v = (globalThis as any).process?.env?.[name];
+    const v = (globalThis as { process?: { env?: Record<string, string | undefined> } })
+      .process?.env?.[name];
     return typeof v === "string" ? Some(v) : None;
   }
 }

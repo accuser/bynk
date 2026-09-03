@@ -12,7 +12,7 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-use crate::emitter::http_handler_method_name;
+use crate::emitter::http_handler_method_name_ir;
 use crate::emitter::ts_ident;
 use crate::emitter::wrangler::{
     EVENTS_FANOUT_CLASS_NAME, agent_binding_name, consumed_binding_name,
@@ -22,9 +22,7 @@ use crate::emitter::{
 };
 use crate::project::{ImportExt, LocaleNegotiationArgs, UnitTable};
 use bynk_check::symbols::MessageBundleInfo;
-use bynk_syntax::ast::{
-    ActorDecl, ExprKind, Handler, HandlerKind, HttpMethod, ServiceProtocol, TypeRef,
-};
+use bynk_syntax::ast::{ActorDecl, ExprKind, Handler, ServiceProtocol, TypeRef};
 use bynk_ts::{
     TsArrowBody, TsBindingName, TsDecl, TsExpr, TsLit, TsObjectEntry, TsParam, TsProgram, TsStmt,
     TsType, TsTypeMember,
@@ -593,24 +591,18 @@ pub(crate) fn emit_worker_compose(
         for h in &service.handlers {
             // P6.30 (design/tracks/the-ir.md §6a): dispatches on the checker-
             // classified `IrHandlerKind` (P6.24a's own pure, unconditional
-            // mirror) rather than the raw AST `HandlerKind` directly — the
-            // *decision* of which wrapper to call is now IR-driven, even
-            // though each wrapper's own body-rendering signature stays
-            // AST-parameter-driven (Q7-settled, §3.7). `emit_worker_compose`
-            // has no `TypedCommons`/`CheckedProgram` in scope (only a
-            // `table: &UnitTable`), so the `Http` arm re-derives `method`/
-            // `path` from the original `h.kind` for the wrapper calls below
-            // rather than threading `IrHttpMethod`/`String` through every
-            // wrapper's own still-AST-typed signature — the same
-            // dispatch-vs-render split, applied here.
+            // mirror) rather than the raw AST `HandlerKind` directly. Slice 1
+            // of `#1542` (the IR cutover, `design/archive/retired-tracks.md`): the `Http`
+            // arm now reads `method`/`path` straight off that same
+            // `IrHandlerKind::Http` payload instead of re-deriving them from
+            // `h.kind` — un-deferred from Q7's original "wrapper signatures
+            // stay AST-typed until phase 7's printer" (phase 7 shipped; see
+            // the front-loading ADR).
             match bynk_lower::lower_handler_kind_ir(&h.kind) {
                 bynk_ir::IrHandlerKind::Call => {
                     return_entries.push(emit_call_wrapper(sname, h, &table.actors));
                 }
-                bynk_ir::IrHandlerKind::Http { .. } => {
-                    let HandlerKind::Http { method, path } = &h.kind else {
-                        unreachable!("lower_handler_kind_ir is a pure structural mirror")
-                    };
+                bynk_ir::IrHandlerKind::Http { method, path } => {
                     // v0.151: a single-actor `Oidc` handler gets the JWKS
                     // verification wrapper. v0.52: a multi-actor sum handler gets
                     // the first-wins resolution wrapper; otherwise the
@@ -632,14 +624,14 @@ pub(crate) fn emit_worker_compose(
                     match bynk_lower::lower_actor_seam_ir(h, &table.actors) {
                         bynk_ir::ActorSeamIr::Oidc(oidc) => {
                             return_entries
-                                .push(emit_http_oidc_wrapper(sname, h, *method, path, &oidc));
+                                .push(emit_http_oidc_wrapper(sname, h, method, &path, &oidc));
                         }
                         bynk_ir::ActorSeamIr::Sum(members) => {
                             return_entries.push(emit_http_sum_wrapper(
                                 sname,
                                 h,
-                                *method,
-                                path,
+                                method,
+                                &path,
                                 &members,
                                 &table.types,
                                 &runtime_use,
@@ -649,13 +641,13 @@ pub(crate) fn emit_worker_compose(
                             return_entries.push(emit_http_wrapper(
                                 sname,
                                 h,
-                                *method,
-                                path,
+                                method,
+                                &path,
                                 Some(&seam),
                             ));
                         }
                         bynk_ir::ActorSeamIr::Caller(_) | bynk_ir::ActorSeamIr::None => {
-                            return_entries.push(emit_http_wrapper(sname, h, *method, path, None));
+                            return_entries.push(emit_http_wrapper(sname, h, method, &path, None));
                         }
                     }
                 }
@@ -1527,11 +1519,11 @@ fn emit_websocket_upgrade(
 fn emit_http_wrapper(
     sname: &str,
     h: &Handler,
-    method: HttpMethod,
+    method: bynk_ir::IrHttpMethod,
     path: &str,
     seam: Option<&bynk_check::actors::BearerSeam>,
 ) -> TsObjectEntry {
-    let method_key = http_handler_method_name(method, path);
+    let method_key = http_handler_method_name_ir(method, path);
     // Route params (and the `body`) forward positionally; `ts_ident` keeps a
     // reserved-word param name from emitting an invalid binder (#723).
     let param_args: Vec<TsExpr> = h
@@ -1699,11 +1691,11 @@ fn emit_http_wrapper(
 fn emit_http_oidc_wrapper(
     sname: &str,
     h: &Handler,
-    method: HttpMethod,
+    method: bynk_ir::IrHttpMethod,
     path: &str,
     seam: &bynk_check::actors::OidcSeam,
 ) -> TsObjectEntry {
-    let method_key = http_handler_method_name(method, path);
+    let method_key = http_handler_method_name_ir(method, path);
     let param_args: Vec<TsExpr> = h
         .params
         .iter()
@@ -1820,14 +1812,14 @@ fn emit_secret_lookup(var: &str, secret: &str) -> TsStmt {
 fn emit_http_sum_wrapper(
     sname: &str,
     h: &Handler,
-    method: HttpMethod,
+    method: bynk_ir::IrHttpMethod,
     path: &str,
     members: &[bynk_check::actors::SumMember],
     local_types: &std::collections::HashMap<String, std::sync::Arc<bynk_syntax::ast::TypeDecl>>,
     runtime_use: &RuntimeUse,
 ) -> TsObjectEntry {
     use bynk_check::actors::SumMemberSeam;
-    let method_key = http_handler_method_name(method, path);
+    let method_key = http_handler_method_name_ir(method, path);
     // The wrapper takes the request first (it reads the body / headers), then
     // the path params (parsed in the entry and passed through); the `body`
     // param is parsed here, not passed in.

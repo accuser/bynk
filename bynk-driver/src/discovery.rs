@@ -24,10 +24,11 @@
 //!
 //! `bynk-emit`'s own on-disk discovery (`project::discover_bynk_files`) and
 //! `read_source`'s overlay-miss fallback are **not** removed, and can't be
-//! yet: `analyse_project_with` (the LSP's own analysis path,
-//! `bynk-emit/src/project.rs`) hardcodes `discovered: None` and passes an
-//! overlay that deliberately covers only open editor buffers — it depends on
-//! that exact fallback to see every other project file, including its own
+//! yet: `analyse_project_with` (the LSP's own analysis path — deleted at
+//! #1541; the equivalent hardcoding now lives in
+//! `bynk_check::analysis::analyse_project`) hardcodes `discovered: None` and
+//! passes an overlay that deliberately covers only open editor buffers — it
+//! depends on that exact fallback to see every other project file, including its own
 //! `bynk.toml` read (`AnalysisRoots::lower`, `bynk-ide/src/lib.rs`, has the
 //! same gap this module just closed for the CLI, unclosed). `#1079`'s issue
 //! text scopes only `bynk-ide`'s `completion.rs`/`symbols.rs` — it does not

@@ -1,6 +1,12 @@
 # 0415 — P8.3's `ProjectGraph` — deferred `contract`, hand-rolled maps, dual `Provides` edges, and why it lives in `bynk-check`
 
-- **Status:** Accepted (v0.289.53)
+- **Status:** Accepted (v0.289.53). **Superseded by [ADR 0420](0420-phase-8-unadopted-query-layer-deleted.md)**
+  (v0.289.65): the `ProjectGraph` this decision shaped and placed was deleted on 2 September 2026
+  (#1537) — nothing outside its own fidelity test ever read it, and the cycle detection and
+  compose-root generation it would notionally serve already run over the `project_model.rs` maps it
+  re-packaged. The shape and placement decided here stand as the record a rebuild adapts to if
+  R3.15's trigger (#1523) fires; `incremental_query_types` now gates that the type stays absent
+  until then.
 
 **Context.** ADR 0326 (phase 4) deferred the reference's typed `ProjectGraph` (`design/bynk-greenfield-compiler.md`
 §3.2 — `units: IndexVec<UnitId, Unit>`, `files: IndexVec<FileId, UnitId>`, `edges: Vec<(UnitId, UnitId,

@@ -5,8 +5,9 @@
 //! naming an undeclared capability), every later diagnostic — including a
 //! test body's own type error, which only surfaces in the per-unit checking
 //! pass that runs *after* the bail gate — was silently dropped, even though
-//! the editor (`analyse_project_with`, which already used `Mode::Analyse`)
-//! still reported it. `bynkc check` now routes through `check_project`
+//! the editor (`bynk_check::analysis::analyse_project`, which already used
+//! this same non-bailing shape) still reported it. `bynkc check` now routes
+//! through `check_project`
 //! (`Mode::Analyse`, never bails) instead, so both diagnostics are reported
 //! and the exit code is decided by "does any error-severity diagnostic
 //! exist," not "did the pipeline reach the end without bailing."
