@@ -809,7 +809,38 @@ pub enum TsBindingName {
 /// slice's own real, grounded needs.
 #[derive(Debug, Clone)]
 pub enum TsExpr {
+    /// A real identifier — the only content this variant is for. #1539
+    /// (review of `design/reviews/2026-08-30-post-restructuring-review.md`
+    /// Part 3/Part 5 §1): before this doc existed, `bynk-emit` also smuggled
+    /// non-identifier text through it at 15 call sites in `emit.rs` alone —
+    /// a quoted string literal, `this.<method>` member access, a complete
+    /// `!(<pred>)` unary expression — an untagged `Verbatim`-shaped escape
+    /// hatch [`TsStmt::verbatim`]'s own doc already named the concern for
+    /// (Q2's "makes the ratchet a compile-time construct, not a grep"), just
+    /// with no tag and no probe watching it. Every one of those call sites
+    /// now either builds the matching real node (`Lit(TsLit::Str)`, `Member`,
+    /// `Unary`) or routes through [`TsExpr::VerbatimExpr`] instead — this
+    /// variant no longer holds anything but a genuine identifier.
     Ident(String),
+    /// A residual, not-yet-converted expression carrying a [`VerbatimOrigin`]
+    /// tag — [`TsStmt::verbatim`]'s own discipline, closed for expressions
+    /// too (#1539). Printed exactly as [`TsExpr::Ident`] always was (raw
+    /// text, no escaping of its own — the caller is responsible for
+    /// producing valid, already-escaped TypeScript, the same contract
+    /// `TsStmt::verbatim`'s own text carries), but now visible to
+    /// [`crate::verbatim_violations`] and `xtask`'s own `verbatim_origins`/
+    /// `verbatim_sites` gated probes, which had nothing to watch at the
+    /// expression level before this variant existed. What ends up here after
+    /// #1539's own conversion pass: a generic-typed method/constructor
+    /// callee (`Call`/`New` have no `type_args` field), a nested
+    /// `As`-under-`As` cast chain the printer's own operand-parenthesisation
+    /// rule would otherwise mis-wrap (review of #1390), a block-bodied IIFE
+    /// with no matching `TsArrowBody` shape, and a `pred_condition_and_
+    /// message`-style message that is already pre-escaped or unescaped by
+    /// contract (a second escaping pass through `TsLit::Str` would corrupt
+    /// it) — none of these has a real node to convert to without expanding
+    /// this crate's own type algebra well past what #1539 asks for.
+    VerbatimExpr(String, VerbatimOrigin),
     /// `object.property`.
     Member {
         object: Box<TsExpr>,
@@ -1898,6 +1929,15 @@ pub enum VerbatimOrigin {
     /// document's own construction site stops calling `TsStmt::verbatim` at
     /// all, not by this variant being deleted first.
     NotYetConverted,
+    /// `bynk-emit/src/emitter/emit.rs`'s own residual [`TsExpr::VerbatimExpr`]
+    /// leaves (#1539) — a generic-typed callee, a printer-unsafe nested `As`
+    /// chain, a block-bodied ICU IIFE, and a pre-escaped/unescaped predicate
+    /// message, none reducible to a real node without expanding this crate's
+    /// own type algebra past what #1539 asks for. Expression-level, not
+    /// statement-level like the three file-specific variants above (this is
+    /// the first `VerbatimOrigin` a `TsExpr` carries, not a `TsStmt`), but
+    /// named the same file-by-file way.
+    Emit,
 }
 
 #[cfg(test)]
