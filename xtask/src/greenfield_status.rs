@@ -3832,15 +3832,24 @@ commons app.demo {
     /// next the same way [`ts_writes_excluded_files_still_exist`] and
     /// [`ast_importer_exceptions_still_exist_and_still_import_the_ast`] guard their own
     /// lists: a future entry going stale must fail loud here, not silently surface as
-    /// a falsely-healthy `fs_below_driver` count.
+    /// a falsely-healthy `fs_below_driver` count. The tuple's third field is checked
+    /// too (review of #1591), not just discarded — [`file_is_named_fs_floor`] matches
+    /// on the full `(crate, file, fn)` key, so a refactor that keeps the file but
+    /// renames or deletes the named function would otherwise leave a silently dead
+    /// entry, the same recurrence shape #1561's three entries took.
     #[test]
     fn named_fs_exceptions_still_exist() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
-        for (krate, rel, _fn_name) in NAMED_FS_EXCEPTIONS {
+        for (krate, rel, fn_name) in NAMED_FS_EXCEPTIONS {
             let path = root.join(krate).join("src").join(rel);
-            path.metadata().unwrap_or_else(|e| {
+            let contents = std::fs::read_to_string(&path).unwrap_or_else(|e| {
                 panic!("NAMED_FS_EXCEPTIONS entry {krate:?}/{rel:?} does not exist: {e}")
             });
+            assert!(
+                contents.contains(fn_name),
+                "NAMED_FS_EXCEPTIONS entry {krate:?}/{rel:?}/{fn_name:?} no longer names \
+                 a function in that file — it excludes nothing and should be removed"
+            );
         }
     }
 
@@ -4016,16 +4025,28 @@ commons app.demo {
     /// nothing previously caught a stale entry here either. Must fail loud, not surface
     /// as a silent `ts_writes`/`ts_any` regression in `greenfield_status_table_is_current`
     /// — mirrors [`ast_importer_exceptions_still_exist_and_still_import_the_ast`]'s own
-    /// discipline for the sibling list.
+    /// discipline for the sibling list: existence alone isn't enough (review of #1591)
+    /// — a file that survives but stops containing any `write!`/`writeln!`/`format!`
+    /// site would excludes nothing, and removing it would change no probe count, so
+    /// [`ts_writes_violations`] must actually see a nonzero count over each entry's real
+    /// content. Scored under a dummy, non-excluded path so the exclusion filter itself
+    /// doesn't short-circuit the check.
     #[test]
     fn ts_writes_excluded_files_still_exist() {
         let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("..")
             .join("bynk-emit/src");
         for rel in TS_WRITES_EXCLUDED_FILES {
-            dir.join(rel).metadata().unwrap_or_else(|e| {
+            let contents = std::fs::read_to_string(dir.join(rel)).unwrap_or_else(|e| {
                 panic!("TS_WRITES_EXCLUDED_FILES entry {rel:?} does not exist: {e}")
             });
+            let dummy = [(PathBuf::from("__not_excluded__.rs"), contents)];
+            assert!(
+                ts_writes_violations(&dummy) > 0,
+                "TS_WRITES_EXCLUDED_FILES entry {rel:?} no longer contains a \
+                 write!/writeln!/format! call outside a test module — it excludes \
+                 nothing and should be removed"
+            );
         }
     }
 
