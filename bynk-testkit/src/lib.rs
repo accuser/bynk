@@ -12,9 +12,12 @@
 //! silently miss a file because this crate's notion of "the project's files"
 //! diverged from the compiler's own.
 //!
-//! Dev-only: this crate ships no production code and is invisible to
-//! `fs_below_driver`'s probe (`design/greenfield-status.md`), which only
-//! walks each crate's own `src/`, not its dev-dependencies.
+//! Dev-only: invisible to `fs_below_driver`'s probe
+//! (`design/greenfield-status.md`), which is scoped to the crates below the
+//! driver (`bynk-emit`, `bynk-ide`, `bynk-fmt`) — not to dev-only crates like
+//! this one, which is why this file's own real `std::fs` reads (`read_all`,
+//! the `bynk.toml` read below) never register, not because the probe walks
+//! only production code.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
