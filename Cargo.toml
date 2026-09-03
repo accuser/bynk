@@ -64,7 +64,8 @@ wildcard_enum_match_arm = "warn"
 
 [workspace.dependencies]
 # version is required alongside path so the published crates carry a crates.io
-# dependency requirement; path is used for in-workspace builds.
+# dependency requirement; path is used for in-workspace builds. The one
+# exception is bynk-testkit at the bottom of this table — see its own entry.
 bynk-syntax = { path = "bynk-syntax", version = "0.289.70" }
 bynk-ts = { path = "bynk-ts", version = "0.289.70" }
 bynk-render = { path = "bynk-render", version = "0.289.70" }
