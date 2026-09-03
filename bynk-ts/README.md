@@ -1,0 +1,64 @@
+# bynk-ts
+
+[![crates.io](https://img.shields.io/crates/v/bynk-ts.svg)](https://crates.io/crates/bynk-ts)
+[![docs.rs](https://img.shields.io/docsrs/bynk-ts)](https://docs.rs/bynk-ts)
+[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
+
+The **TypeScript tree and printer for the [Bynk](https://github.com/accuser/bynk)
+compiler**.
+
+Emission builds a typed tree — `TsProgram` / `TsStmt` / `TsExpr` / `TsType` /
+`TsDecl` — instead of writing TypeScript text by hand; this crate's printer is
+the **only** code in the compiler that writes a character of emitted output.
+A `Verbatim`/`VerbatimExpr` escape hatch, tagged by `VerbatimOrigin`, carries
+content the tree doesn't yet represent structurally (a not-yet-converted
+emitter fragment, a vendored `.ts` file staged verbatim) without losing track
+of it: `verbatim_violations` scans that tagged content for constructs the
+tree's own erasure guarantee depends on never containing (`enum`, `namespace`,
+a decorator, a constructor parameter property, `any`).
+
+It holds:
+
+- `program` — the tree types themselves, and `TsProgram::verbatim_content`, a
+  walker collecting every `Verbatim`/`VerbatimExpr` leaf's text.
+- `printer` — the single writer; produces final TypeScript text plus a source
+  map.
+- `lint` — `verbatim_violations`, the textual scan over escape-hatch content.
+- `source_map` — the source-map builder the printer threads through.
+
+## Where it sits
+
+This crate depends on [`bynk-syntax`](https://crates.io/crates/bynk-syntax)
+only — for `Span`, reused unchanged rather than redefined. It has no
+visibility into the checker, the IR, or any emitter-internal type; a function
+taking one wouldn't compile. [`bynk-emit`](https://crates.io/crates/bynk-emit)
+builds the tree this crate defines; `bynk-driver` and
+[`bynk-strip`](https://crates.io/crates/bynk-strip) are the two places that
+call the printer over `bynk-emit`'s output — one to write it to disk, the
+other to turn it into a stripped JS artefact.
+
+## Use
+
+```toml
+[dependencies]
+bynk-ts = "0.289"
+```
+
+```rust
+let mut program = bynk_ts::TsProgram::new();
+program.push(bynk_ts::TsStmt::const_stmt(
+    bynk_ts::TsBindingName::Ident("answer".to_string()),
+    None,
+    bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Num("42".to_string())),
+    None,
+));
+let printed = bynk_ts::print(&program, "", "", "");
+assert_eq!(printed.text, "const answer = 42;\n");
+```
+
+See the [API docs](https://docs.rs/bynk-ts) for the full surface.
+
+## License
+
+Licensed under either of [Apache-2.0](https://github.com/accuser/bynk/blob/main/LICENSE-APACHE) or
+[MIT](https://github.com/accuser/bynk/blob/main/LICENSE-MIT) at your option.
