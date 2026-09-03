@@ -32,10 +32,12 @@ This crate depends on [`bynk-syntax`](https://crates.io/crates/bynk-syntax)
 only — for `Span`, reused unchanged rather than redefined. It has no
 visibility into the checker, the IR, or any emitter-internal type; a function
 taking one wouldn't compile. [`bynk-emit`](https://crates.io/crates/bynk-emit)
-builds the tree this crate defines; `bynk-driver` and
-[`bynk-strip`](https://crates.io/crates/bynk-strip) are the two places that
-call the printer over `bynk-emit`'s output — one to write it to disk, the
-other to turn it into a stripped JS artefact.
+builds the tree this crate defines, and reaches the printer three ways:
+`bynk-driver` calls it at the real filesystem write boundary,
+[`bynk-strip`](https://crates.io/crates/bynk-strip) calls it to feed a
+`TsProgram` through `strip_types` on the way to a JS artefact, and
+`Document::text()` calls it in-process for every other reader that just
+needs bytes (golden fixtures, `bynk-wasm`'s JS-facing API).
 
 ## Use
 

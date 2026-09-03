@@ -27,8 +27,9 @@ let output = bynkc::compile_project(&opts)?;
 ```
 
 This crate ships no production code, and is invisible to
-`design/greenfield-status.md`'s `fs_below_driver` probe, which only walks each
-crate's own `src/`, not its dev-dependencies.
+`design/greenfield-status.md`'s `fs_below_driver` probe, which is scoped to the
+crates below the driver (`bynk-emit`, `bynk-ide`, `bynk-fmt`) — not to
+dev-only crates like this one.
 
 ## License
 
