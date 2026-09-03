@@ -78,6 +78,7 @@ each track's spine issue; this table is deliberately just the map.
 |---|---|---|---|
 | [`documentation.md`](documentation.md) | [#557](https://github.com/accuser/bynk/issues/557) | Slicing (slice 0 shipped) | Documentation & web presence: the Astro + Starlight migration, a CI snippet-verification harness, playground integration seams |
 | [`idempotency-capability.md`](idempotency-capability.md) | [#921](https://github.com/accuser/bynk/issues/921) | Slicing (slice 0 shipped, #929; call-site key scoping follow-up shipped, #934) | The `Idempotency` capability: mechanical dedup for at-least-once delivery, per design notes §4, §12 |
+| [`post-trajectory-crate-hygiene.md`](post-trajectory-crate-hygiene.md) | [#1533](https://github.com/accuser/bynk/issues/1533) | Settling | READMEs, crate-local unit tests, comment rewrite, and module decomposition left open after the compiler-trajectory's eight phases closed — internal-architecture theme, not language surface, continuing the posture `compiler-architecture.md`/`crate-decomposition.md`/`content-ownership.md` took |
 
 (`documentation.md` pre-dates the GitHub-native flow, so its doc was
 committed by an ordinary PR rather than a settling draft PR; the spine issue
@@ -220,6 +221,16 @@ A retired track's closing summary — what shipped, which ADRs carry its
 decisions, the named follow-ons — is kept for the record in
 [`../archive/retired-tracks.md`](../archive/retired-tracks.md):
 
+- **`the-ir-cutover.md`** — the follow-on to phase 6 of
+  [`../bynk-compiler-trajectory.md`](../bynk-compiler-trajectory.md), spine
+  [#1542](https://github.com/accuser/bynk/issues/1542): opened to wire `bynk-lower`'s unconsumed
+  expression lowering into `bynk-emit`, and retired on the opposite decision once its own Slice 3.2
+  measured the cutover as a second code generator, not a retype. Slices 1 and 3.1 shipped as planned;
+  the re-settling (§10, [#1573](https://github.com/accuser/bynk/pull/1573)) chose deletion over
+  parity, and D0–D3 executed it: the one production detour into the lowerer repointed, 48
+  `bynk-lower` functions and 23 `bynk-ir` items deleted (10,195 → 2,123 and 1,923 → 634 lines), the
+  refusal recorded in `bynk-greenfield-compiler.md` Part 15.1 with a trigger, and the gated
+  `unconsumed_ir_items` adoption probe added. Retired 2 September 2026.
 - **`incrementality.md`** — phase 8 of
   [`../bynk-compiler-trajectory.md`](../bynk-compiler-trajectory.md), spine
   [#1507](https://github.com/accuser/bynk/issues/1507), **the trajectory's last phase**: every

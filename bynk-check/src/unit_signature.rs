@@ -56,10 +56,17 @@
 //! Expr/pattern-canonicalisation reason — narrower than ideal, but strictly
 //! better than the pre-fix state where the whole protocol was invisible.
 //!
-//! Nothing in the tree calls [`unit_signature_for`] yet, per this slice's own
-//! "Gated on: —" row in `design/tracks/incrementality.md` §6: P8.2 (the
-//! stability fixture) is the first caller, P8.3/P8.5 the first structural
-//! consumers.
+//! [`unit_signature_for`]'s only caller is `tests/unit_signature_stability.rs`
+//! (P8.2), and that is deliberate: this module is R3.14's own *proof* — the
+//! firewall stated as a type and checked by a test — not a production path.
+//! Phase 8's two structural consumers-to-be (`ProjectGraph`, P8.3, and the
+//! `DefId`-keyed `Body`/`TypeOf` queries, P8.5) were built beside it and
+//! deleted on 2 September 2026 (#1537, ADR in that PR's pending file): nothing
+//! called them and no scheduler existed to. This module stays because
+//! R3.15's trigger (#1523 — keystroke-to-diagnostic latency *attributed by
+//! level*) presupposes a unit level to attribute to; the gated
+//! `incremental_query_types` probe certifies it is present and its
+//! stability test exists.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
@@ -74,10 +81,11 @@ use crate::symbols::UnitTable;
 /// no `index_vec` crate (or hand-rolled equivalent) exists anywhere in this
 /// codebase, confirmed by grep. `UnitSignature` only needs `UnitId` to be a
 /// stable, hashable, comparable identity for R3.14's own proof; it does not
-/// need to be dense or `IndexVec`-compatible. P8.3 is the slice that decides
-/// whether this widens to a dense integer index once `ProjectGraph`'s own
-/// `units: IndexVec<UnitId, Unit>` shape is built, or whether `ProjectGraph`
-/// adapts to a string-keyed `UnitId` instead — left open here on purpose.
+/// need to be dense or `IndexVec`-compatible. P8.3 resolved the fork this
+/// left open by adapting `ProjectGraph` to the string-keyed `UnitId` (ADR
+/// 0415); that graph was deleted by #1537, so if R3.15's trigger ever fires,
+/// ADR 0415's recorded shape is what a rebuild adapts to — this type stays
+/// a string newtype either way.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct UnitId(pub String);
 

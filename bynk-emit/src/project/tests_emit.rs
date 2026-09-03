@@ -715,7 +715,13 @@ fn emit_system_http_support(
                 continue;
             };
             declared.insert((sname.clone(), method.as_str().to_string(), path.clone()));
-            let key = crate::emitter::http_handler_method_name(*method, path);
+            let bynk_ir::IrHandlerKind::Http {
+                method: ir_method, ..
+            } = bynk_lower::lower_handler_kind_ir(&h.kind)
+            else {
+                unreachable!("h.kind already matched HandlerKind::Http above")
+            };
+            let key = crate::emitter::http_handler_method_name_ir(ir_method, path);
             // Split the handler's params into path params (matching `:name` in
             // the pattern, in order) and the optional body (the remaining param).
             let path_params: Vec<&str> = path

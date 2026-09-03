@@ -12,11 +12,17 @@
 /// specifically about a `Span` compared or rendered *across* files, and
 /// those all originate at the lexer, the one place `FileId::UNKNOWN` is
 /// never used.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct FileId(pub u32);
 
 impl FileId {
     pub const UNKNOWN: FileId = FileId(u32::MAX);
+}
+
+impl Default for FileId {
+    fn default() -> Self {
+        Self::UNKNOWN
+    }
 }
 
 /// A byte range in the source. Half-open: `[start, end)`.
@@ -75,6 +81,20 @@ impl Span {
             start: self.start.min(other.start),
             end: self.end.max(other.end),
         }
+    }
+}
+
+#[cfg(test)]
+mod default_tests {
+    use super::{FileId, Span};
+
+    /// R2.2: a `Span` built with no file identity (`Span::default()`, not
+    /// `new_in`) must carry `FileId::UNKNOWN`, never `FileId(0)` — the id
+    /// `parse_cache.rs` assigns to the first real file it interns.
+    #[test]
+    fn a_default_span_carries_no_file_identity() {
+        assert_eq!(FileId::default(), FileId::UNKNOWN);
+        assert_eq!(Span::default().file, FileId::UNKNOWN);
     }
 }
 

@@ -1212,8 +1212,10 @@ pub struct Handler {
 }
 
 /// `Hash` (P8.5, #1516): a `HandlerKind` value is a body-free, span-free
-/// discriminant — exactly what `bynk-check::queries::HandlerDefId` needs as
-/// part of a handler's own stable identity. Purely additive; no existing
+/// discriminant, added so a `DefId`-keyed handler identity could carry it
+/// (`bynk-check`'s former `queries::HandlerDefId`, deleted by #1537 — kept
+/// here because the derive is harmless, and a rebuild against ADR 0417's
+/// shape would need it again). Purely additive; no existing
 /// caller matches on hashing behaviour.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum HandlerKind {

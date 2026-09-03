@@ -11,8 +11,9 @@ use bynk_syntax::error::CompileError;
 // caller, including `bynk-ide`'s `bynk_emit::project::ProjectAnalysis`
 // import — keeps resolving unchanged. `Mode`/`ErrorSink`/`ProjectFailure`
 // below are unaffected: `Mode` and `ProjectFailure` are pipeline-driving
-// facts specific to `bynk-emit`'s two callers (`compile_project`/
-// `analyse_project_with`), not project-model or checker output.
+// facts specific to `bynk-emit`'s own `run_checks` callers
+// (`compile_project`/`compile_in_memory`/`check_project`/
+// `analyse_in_memory_with_types`), not project-model or checker output.
 pub use bynk_check::analysis::{ContextBoundaryInfo, ContextSequenceInfo, ProjectAnalysis};
 // `ErrorSink` relocated to `bynk-check::project_model` too — every
 // `phase_*` function it moved alongside takes `&mut ErrorSink`, so the type
