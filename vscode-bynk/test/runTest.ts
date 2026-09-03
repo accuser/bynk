@@ -8,7 +8,7 @@ import { runTests } from "@vscode/test-electron";
 // concrete version makes that resolve local and the download cacheable. Pinned
 // to a recent stable (what "stable" was already resolving to); CI overrides via
 // `VSCODE_TEST_VERSION` and caches the matching download. Bump deliberately.
-const VSCODE_VERSION = process.env.VSCODE_TEST_VERSION ?? "1.124.2";
+const VSCODE_VERSION = process.env.VSCODE_TEST_VERSION ?? "1.134.0";
 
 // Bootstraps a real VS Code instance with the extension under
 // `--extensionDevelopmentPath` plus the fixture workspace, then runs the Mocha
