@@ -32,7 +32,7 @@ use bynk_check::checker::{ExprId, TyId, Types};
 use bynk_check::expr_types::ExprTypeSink;
 use bynk_check::firstparty::{self, Platform};
 use bynk_check::hints::HintSink;
-use bynk_check::index::{ProjectIndex, RefSink};
+use bynk_check::index::RefSink;
 use bynk_check::locals::LocalsSink;
 use bynk_check::project_model::{
     self, AdapterBinding, FnDecl, TypeDecl, UnitInfo, Visibility, handler_cross_caps,
@@ -291,9 +291,10 @@ pub struct CompileOptions {
     /// project file themselves and hand the result here, so `bynk-emit`
     /// itself no longer discovers or reads anything on disk for the CLI
     /// path. `bynkc`/the LSP still don't: `bynkc` routes through
-    /// `bynk-driver`, and the LSP (`analyse_project_with`) has its own
-    /// open-buffer overlay and depends on the on-disk fallback for the rest
-    /// (#1079). `bynk-emit`'s own tests also set this, to exercise the full
+    /// `bynk-driver`, and the LSP (`bynk_check::analysis::analyse_project`
+    /// since P4.2) never goes through `CompileOptions` at all — it has its
+    /// own, separate discovery path (#1079). `bynk-emit`'s own tests also
+    /// set this, to exercise the full
     /// project pipeline (cross-context `uses`, multi-file layouts,
     /// workers-mode emission, …) without an on-disk fixture tree.
     pub sources: Option<HashMap<PathBuf, String>>,
@@ -497,8 +498,9 @@ impl ProjectCheck {
     /// without bailing", which is what `compile_project`'s `Result` encoded
     /// and why a `bynk.toml`-wide structural error anywhere silently hid every
     /// later diagnostic (including a test body's own type errors) from
-    /// `bynk check`, even though the editor (via `analyse_project_with`, the
-    /// same `Mode::Analyse` this runs) still reported them.
+    /// `bynk check`, even though the editor (via
+    /// `bynk_check::analysis::analyse_project`, which shares this same
+    /// non-bailing shape) still reported them.
     pub fn has_errors(&self) -> bool {
         self.errors
             .iter()
@@ -507,8 +509,8 @@ impl ProjectCheck {
 }
 
 /// Check a project without building (finding #64) — never bails after
-/// discovery (`Mode::Analyse`, the same mode `analyse_project_with` already
-/// uses for the editor), so a diagnostic anywhere in the project does not
+/// discovery (`Mode::Analyse`, the same mode `bynk_check::analysis::analyse_project`
+/// runs for the editor), so a diagnostic anywhere in the project does not
 /// suppress diagnostics elsewhere. `compile_project`'s `Mode::Build` bails at
 /// the first structural error and returns only what it collected up to that
 /// point — correct for `build`/`test`, which must not emit past a real
@@ -628,7 +630,7 @@ pub struct InMemoryAnalysis {
 
 /// Like [`analyse_in_memory`], but also exposes the expression-type map the
 /// checker captured (ADR 0063's `expr_types` sink) — the same one
-/// [`analyse_project_with`] drains — instead of discarding it. Per ADR 0094,
+/// `bynk_check::analysis::analyse_project` drains — instead of discarding it. Per ADR 0094,
 /// this is a best-effort **partial** map in `Analyse` mode: a function that
 /// type-checked cleanly contributes its types even if a *different* function
 /// in the same file has an error, so `expr_types` is empty only when the
@@ -773,194 +775,6 @@ fn finish_build(run: RunChecks, import_ext: ImportExt) -> Result<ProjectOutput, 
             // bynk-emit computes it, the caller persists it.
             out.schema_lock = schema_registry.map(|reg| schema_registry::serialize(&reg));
             Ok(out)
-        }
-    }
-}
-
-/// v0.24: analyse a project without building — non-bailing, overlay-aware,
-/// file-attributed (ADR 0052). `overlay` maps canonicalised absolute paths
-/// to buffer text layered over disk reads (unsaved editor buffers).
-///
-/// Slice A: the single-tree convenience over [`analyse_project_with`]
-/// (`Roots::Single`), preserving the pre-slice-A behaviour for callers that
-/// hand in one fixture root and want one tree walked.
-pub fn analyse_project(root: &Path, overlay: &HashMap<PathBuf, String>) -> ProjectAnalysis {
-    analyse_project_with(&Roots::Single(root.to_path_buf()), overlay)
-}
-
-/// Slice A: analyse a project whose roots are resolved from its manifest — the
-/// same [`Roots`] `compile_project` consumes, resolved the same way, so the LSP
-/// discovers exactly the files `bynkc` compiles.
-///
-/// Identity is project-relative (ADR 0198): a file's `source_path` here is
-/// unique across `include` roots.
-pub fn analyse_project_with(roots: &Roots, overlay: &HashMap<PathBuf, String>) -> ProjectAnalysis {
-    // T3.6b (R4.1): see `analyse_in_memory_with_types` — one table per
-    // analysis, shared by every unit, carried out on the result.
-    let tys = &Arc::new(Types::new());
-    // Resolved exactly as `compile_project` does — one project model, not two.
-    let trees = roots.trees();
-    let excludes = roots.excludes();
-    match run_checks(
-        &trees,
-        BuildTarget::Bundle,
-        Platform::default(),
-        ImportExt::Js,
-        Mode::Analyse,
-        overlay,
-        &excludes,
-        None,
-        false,
-        // The LSP never reconciles the schema registry (#1079's open scope
-        // covers the editor becoming a real file-content owner generally;
-        // this specific flag was already, and stays, hardcoded off).
-        &SchemaLock::Off,
-        roots.project_root(),
-        tys,
-    ) {
-        RunChecks::Bailed {
-            errors,
-            snapshots,
-            mut hints,
-            mut locals,
-            mut exprs,
-            mut requirements,
-        } => ProjectAnalysis {
-            snapshots,
-            // ADR 0117: the LSP renders warnings alongside errors (severity is
-            // applied downstream), so analyse surfaces the full diagnostic list.
-            errors: errors.into_all(),
-            index: ProjectIndex::default(),
-            hints: hints.take_files(),
-            locals: locals.take_files(),
-            expr_types: exprs.take_files(),
-            ty_intern: Arc::clone(tys),
-            requirements: requirements.take_files(),
-            // No parsed tree on the bail path — the map stays empty (ADR 0095).
-            unit_sources: HashMap::new(),
-            // #846: same bail rule as `unit_sources` — nothing was resolved.
-            sequence_info: HashMap::new(),
-            // #855: same bail rule — nothing was resolved.
-            boundary_info: HashMap::new(),
-            // #848: no parsed tree on the bail path either.
-            doc_scope: HashMap::new(),
-        },
-        RunChecks::Checked {
-            errors,
-            snapshots,
-            mut refs,
-            mut hints,
-            mut locals,
-            mut exprs,
-            mut requirements,
-            parsed,
-            unit_uses,
-            unit_consumes,
-            unit_consumes_aliases,
-            unit_tables,
-            unit_flattened,
-            kinds,
-            ..
-        } => {
-            let index = assemble_index(
-                &parsed,
-                &unit_uses,
-                &unit_consumes,
-                std::mem::take(&mut refs),
-            );
-            // ADR 0095: qualified unit name → its project source file(s), in
-            // discovery order. Synthetic (toolchain-injected `bynk` surface)
-            // units have no openable file and are excluded.
-            let mut unit_sources: HashMap<String, Vec<PathBuf>> = HashMap::new();
-            for pf in &parsed {
-                if pf.is_synthetic() {
-                    continue;
-                }
-                unit_sources
-                    .entry(pf.unit().name().joined())
-                    .or_default()
-                    .push(pf.identity_path());
-            }
-            // #846: qualified context/adapter unit name → the cross-context +
-            // agent tables the sequence-diagram classifier needs. Rebuilt from
-            // the same retained per-project tables the per-file checking pass
-            // used to build its own transient `cross_context_for_file` (see
-            // the call site of `build_cross_context_info` above, in the
-            // per-file loop) — that transient value is never itself kept
-            // around, so this re-derives it once per unit instead of once per
-            // file, from data `run_checks` already retains.
-            let mut sequence_info: HashMap<String, ContextSequenceInfo> = HashMap::new();
-            // #855: qualified context/adapter unit name → the combined type
-            // table plus service/agent tables the wire-contract peek needs —
-            // built alongside `sequence_info` in the same loop iteration so
-            // `table`/`unit_tables`/`unit_uses` are already in scope. Uses
-            // `combined_types_for`, the same table `own_contract_hashes`
-            // hashes through, so the peek's hash and the emitted
-            // `X-Bynk-Contract` constant cannot disagree.
-            let mut boundary_info: HashMap<String, ContextBoundaryInfo> = HashMap::new();
-            for (name, kind) in &kinds {
-                if !matches!(kind, UnitKind::Context | UnitKind::Adapter) {
-                    continue;
-                }
-                let Some(table) = unit_tables.get(name) else {
-                    continue;
-                };
-                let mut cross_context = build_cross_context_info(
-                    name,
-                    &unit_consumes,
-                    &unit_consumes_aliases,
-                    &unit_uses,
-                    &unit_tables,
-                );
-                cross_context.flattened_caps =
-                    unit_flattened.get(name).cloned().unwrap_or_default();
-                sequence_info.insert(
-                    name.clone(),
-                    ContextSequenceInfo {
-                        cross_context,
-                        agents: table.agents.clone(),
-                    },
-                );
-                boundary_info.insert(
-                    name.clone(),
-                    ContextBoundaryInfo {
-                        types: bynk_check::symbols::combined_types_for(
-                            name,
-                            &unit_tables,
-                            &unit_uses,
-                        ),
-                        services: table.services.clone(),
-                        agents: table.agents.clone(),
-                    },
-                );
-            }
-            // #848: doc_scope reuses unit_sources' key set (production units —
-            // the only files a doc comment can live in) and the
-            // unit_uses/unit_consumes already destructured above for
-            // assemble_index — itself first, then its `uses` targets, then
-            // its `consumes` targets, mirroring IndexBuilder::qualify_with's
-            // bare-name search order.
-            let mut doc_scope: HashMap<String, Vec<String>> = HashMap::new();
-            for name in unit_sources.keys() {
-                let mut scope = vec![name.clone()];
-                scope.extend(unit_uses.get(name).cloned().unwrap_or_default());
-                scope.extend(unit_consumes.get(name).cloned().unwrap_or_default());
-                doc_scope.insert(name.clone(), scope);
-            }
-            ProjectAnalysis {
-                snapshots,
-                errors: errors.into_all(),
-                index,
-                hints: hints.take_files(),
-                locals: locals.take_files(),
-                expr_types: exprs.take_files(),
-                ty_intern: Arc::clone(tys),
-                requirements: requirements.take_files(),
-                unit_sources,
-                sequence_info,
-                boundary_info,
-                doc_scope,
-            }
         }
     }
 }
@@ -1466,9 +1280,15 @@ fn check_unit_files(
 }
 
 /// The outcome of the shared check pipeline (regions 1+2's shared work),
-/// before either entry point applies its own divergent exit. The two typed
-/// entry points (`compile_project`, `analyse_project`) project this into a
-/// `Result<ProjectOutput, ProjectFailure>` or a `ProjectAnalysis`.
+/// before whichever caller applies its own divergent exit — `compile_project`/
+/// `compile_in_memory` project it into a `Result<ProjectOutput, ProjectFailure>`
+/// via `finish_build`; `check_project`/`analyse_in_memory_with_types` read
+/// straight off it instead. #1541 deleted the fifth of these five callers
+/// (`analyse_project_with`, which alone read `hints`/`requirements`/`refs`
+/// back out) along with those three fields — they're still populated during
+/// checking (the shared `bynk_check` phase functions this file calls need the
+/// sinks regardless of who reads them after), just no longer carried out on
+/// this enum.
 #[allow(clippy::large_enum_variant)]
 enum RunChecks {
     /// Discovery/parse failed, or (build mode) the structural gate bailed:
@@ -1476,20 +1296,15 @@ enum RunChecks {
     Bailed {
         errors: ErrorSink,
         snapshots: Vec<(PathBuf, String)>,
-        hints: HintSink,
         locals: LocalsSink,
         exprs: ExprTypeSink,
-        requirements: RequirementSink,
     },
     /// All phases ran (per-unit checks + tests + platform-lock done).
     Checked {
         errors: ErrorSink,
         snapshots: Vec<(PathBuf, String)>,
-        refs: RefSink,
-        hints: HintSink,
         locals: LocalsSink,
         exprs: ExprTypeSink,
-        requirements: RequirementSink,
         parsed: Vec<ParsedFile>,
         compiled: Vec<StagedFile>,
         runnable_tests: Vec<RunnableTest>,
@@ -1571,16 +1386,24 @@ fn run_checks(
     tys: &Arc<Types>,
 ) -> RunChecks {
     let mut errors = ErrorSink::new();
-    // v0.25 (ADR 0053): binding edges, recorded at the resolution sites and
-    // assembled into the project index at the analyse exit.
+    // v0.25 (ADR 0053): binding edges, recorded at the resolution sites — by
+    // `check_file_core` and several `project_model::phase_*` resolution
+    // calls below, all of which require this sink unconditionally.
+    // `bynk_check::analysis::analyse_project` threads the same sinks through
+    // its own call to those functions and does read its copy back out (into
+    // `ProjectAnalysis.index`, via `assemble_index`). Here, #1541 deleted the
+    // one caller (`analyse_project_with`) that drained this copy back out via
+    // `RunChecks`, so it's populated and discarded — never surfaced by this
+    // enum anymore.
     let mut refs = RefSink::new();
     // v0.27 (ADR 0056): inferred-type inlay hints, recorded at the checker's
     // binding sites. A sink (not part of the checker's Ok payload) so hints
-    // survive the per-file error-`continue`s.
+    // survive the per-file error-`continue`s. Same #1541 residue as `refs`:
+    // populated, never read back out of `RunChecks`.
     let mut hints = HintSink::new();
     let mut locals = LocalsSink::new();
     // v0.99: the capability-requirement ledger — recorded at the checker's
-    // capability-consuming sites, drained at the analyse exit for the LSP.
+    // capability-consuming sites. Same #1541 residue as `refs`/`hints`.
     let mut requirements = RequirementSink::new();
     // v0.30.2 (ADR 0063): per-file expression types, captured on the Ok path so
     // `.`-member completion can type a receiver. Carried like `hints`.
@@ -1596,10 +1419,8 @@ fn run_checks(
                 return RunChecks::Bailed {
                     errors,
                     snapshots,
-                    hints,
                     locals,
                     exprs,
-                    requirements,
                 };
             }
         },
@@ -1611,10 +1432,8 @@ fn run_checks(
         return RunChecks::Bailed {
             errors,
             snapshots,
-            hints,
             locals,
             exprs,
-            requirements,
         };
     }
 
@@ -1631,10 +1450,8 @@ fn run_checks(
             return RunChecks::Bailed {
                 errors,
                 snapshots,
-                hints,
                 locals,
                 exprs,
-                requirements,
             };
         }
     };
@@ -1829,10 +1646,8 @@ fn run_checks(
         return RunChecks::Bailed {
             errors,
             snapshots,
-            hints,
             locals,
             exprs,
-            requirements,
         };
     }
 
@@ -2060,11 +1875,8 @@ fn run_checks(
     RunChecks::Checked {
         errors,
         snapshots,
-        refs,
-        hints,
         locals,
         exprs,
-        requirements,
         parsed,
         compiled,
         runnable_tests,
@@ -2855,9 +2667,9 @@ pub(crate) fn instantiate_provider_ts_expr(
         return new_call_ts_expr(&bodied_ns, cap, vec![]);
     };
     // Build the by-name deps object from the provider's `given`, if any.
-    // #1187's Provider given/deps-wiring slice: reads bynk-emit::ir's own
-    // CapRefIr (lower_provider_given_ir — a standalone reader, never a full
-    // IrItem::Provider; see that function's own doc comment for why) instead
+    // #1187's Provider given/deps-wiring slice: reads bynk_ir's own CapRefIr
+    // (lower_provider_given_ir — a standalone reader of the `given` clause,
+    // never a full provider IR; see that function's own doc comment) instead
     // of walking the raw AST CapRef directly.
     let given: Vec<CapRefIr> = lower_provider_given_ir(provider);
     let deps_obj: Option<bynk_ts::TsExpr> = if given.is_empty() {

@@ -287,6 +287,21 @@ mod tests {
         assert_ne!(a, b);
     }
 
+    /// The R2.2 collision #1540 was about: `next_file_id` starts at `0`
+    /// (`ParseCacheState`'s `Default`), so the very first file this counter
+    /// ever interns gets `FileId(0)` — indistinguishable from
+    /// `FileId::default()` unless `FileId`'s own `Default` is `UNKNOWN`. A
+    /// fresh, locally-owned state (not the process-global `CACHE`, which
+    /// other tests may have already advanced) is what makes "first file
+    /// interned" reproducible here.
+    #[test]
+    fn the_first_file_a_fresh_counter_interns_is_not_the_default_file_id() {
+        let mut state = ParseCacheState::default();
+        let id = file_id_for_locked(&mut state, &unique_path("first"));
+        assert_eq!(id, FileId(0));
+        assert_ne!(id, FileId::default());
+    }
+
     #[test]
     fn cached_parse_returns_the_same_units_on_a_repeat_call_with_identical_content() {
         let p = unique_path("repeat");

@@ -1,3 +1,10 @@
+//! Moved here from `bynk-check/tests/` at #1541: a cross-crate agreement
+//! check between `bynk-check`'s classification and `bynk-emit`'s emission
+//! belongs in the downstream crate (`bynk-emit` already depends on
+//! `bynk-check`), not behind a `bynk-check`-on-`bynk-emit` dev-dependency
+//! that existed only for `differential_analysis.rs`'s now-deleted
+//! comparison — this file was `bynk-check`'s only other reason to keep it.
+//!
 //! P6.0 (#1139), the "Done when" differential check: for a representative
 //! call shape per [`Callee`] variant reachable from a plain `fn` body,
 //! assert that the classification `bynk-check`'s own dispatch

@@ -16,8 +16,8 @@ use bynk_check::actors::ActorDecl;
 use bynk_check::checker::{TyId, TypedCommons, Types};
 use bynk_syntax::ast::{
     AgentDecl, BaseType, CapabilityDecl, CommonsItem, Expr, ExprKind, FnDecl, FnName, Handler,
-    HttpMethod, Ident, MessageEntry, MessagesDecl, Param, PredKind, ProviderDecl, RecordField,
-    Refinement, ServiceDecl, StoreField, TypeBody, TypeDecl, TypeParam, TypeRef,
+    Ident, MessageEntry, MessagesDecl, Param, PredKind, ProviderDecl, RecordField, Refinement,
+    ServiceDecl, StoreField, TypeBody, TypeDecl, TypeParam, TypeRef,
 };
 
 use bynk_ir::{
@@ -385,11 +385,17 @@ fn emit_pred_check(out: &mut String, type_name: &str, pred: &PredKind) {
     // opaque text) — the explicit `Paren` stays regardless, matching this
     // function's own pre-#1471 output byte-for-byte: it was already always
     // applied unconditionally (never derived from `cond`'s own shape), and
-    // still is, just wrapping a real node instead of an `Ident`. `msg` is
-    // unchanged: still opaque, pre-quoted text, not `TsLit::Str` — see
-    // `pred_condition_and_message`'s own doc for why (the `Matches` arm's
-    // message embeds already-`escape_ts_string`-escaped pattern text that a
-    // second `TsLit::Str` escaping pass would double-escape).
+    // still is, just wrapping a real node instead of an `Ident`. `msg` stays
+    // opaque, pre-quoted text — see `pred_condition_and_message`'s own doc
+    // for why (the `Matches` arm's message embeds already-`escape_ts_string`-
+    // escaped pattern text that a second `TsLit::Str` escaping pass would
+    // double-escape) — but is now tagged `VerbatimExpr`, not `Ident` (#1539:
+    // review of `design/reviews/2026-08-30-post-restructuring-review.md`
+    // named this exact site as a quoted string literal smuggled through
+    // `Ident`; `TsLit::Str` is the real node for that shape everywhere else,
+    // but would double-escape `msg` here specifically, so this site routes
+    // through the tagged escape hatch instead, per the same review's own
+    // fallback).
     let cond_expr = bynk_ts::TsExpr::Unary {
         op: bynk_ts::TsUnaryOp::Not,
         expr: Box::new(bynk_ts::TsExpr::Paren(Box::new(cond))),
@@ -397,7 +403,7 @@ fn emit_pred_check(out: &mut String, type_name: &str, pred: &PredKind) {
     out.push_str(&print_guard_if_stmt(
         cond_expr,
         bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(type_name.to_string())),
-        bynk_ts::TsExpr::Ident(format!("\"{msg}\"")),
+        bynk_ts::TsExpr::VerbatimExpr(format!("\"{msg}\""), bynk_ts::VerbatimOrigin::Emit),
     ));
 }
 
@@ -1250,16 +1256,12 @@ fn compute() -> Effect[Int] {
 /// as the identifier the Worker fetch handler invokes. Path parameter
 /// segments (`:name`) become `Param_name` to remain distinct from literal
 /// segments. (v0.9 §5.3)
-pub(crate) fn http_handler_method_name(method: HttpMethod, path: &str) -> String {
-    http_handler_method_name_from_str(method.as_str(), path)
-}
-
-/// P6.51 (design/tracks/the-ir.md §6b): [`http_handler_method_name`]'s own
-/// `IrHttpMethod` sibling, for the call sites that already hold an
-/// `IrHandlerKind::Http`'s own resolved method rather than the raw AST
-/// `HandlerKind::Http`'s. Both share [`http_handler_method_name_from_str`],
-/// since the two `HttpMethod`/`IrHttpMethod` enums render to identical
-/// strings via their own respective `as_str()`.
+///
+/// Slice 1 of `#1542` (the IR cutover, `design/archive/retired-tracks.md`): this used to
+/// have an AST-typed `HttpMethod` twin, `http_handler_method_name` — deleted
+/// once its last production caller converted to this `IrHttpMethod` version,
+/// which every call site now holds already-resolved (`IrHandlerKind::Http`'s
+/// own payload) rather than re-deriving from `HandlerKind::Http`.
 pub(crate) fn http_handler_method_name_ir(method: IrHttpMethod, path: &str) -> String {
     http_handler_method_name_from_str(method.as_str(), path)
 }
@@ -1703,14 +1705,18 @@ fn emit_icu_placeholder(
             // dispatch's real question is own-property presence. `Object.hasOwn`
             // is ES2022, which `emit_tsconfig` already targets.
             //
-            // Stays one opaque `TsExpr::Ident` — the only one of this
-            // cluster's 4 real shapes with a BLOCK-bodied IIFE (see this
-            // function's own doc: `TsArrowBody::Block` exists since #1435,
-            // but this arm was not reconverted along with it).
-            bynk_ts::TsExpr::Ident(format!(
-                "((__arg) => {{ if (__arg === undefined || __arg.tag !== \"Text\") {{ return {fallback_text}; }} const __arms: Record<string, string> = {{ {} }}; return Object.hasOwn(__arms, __arg.value) ? __arms[__arg.value] : __arms[\"other\"]; }})({arg})",
-                arms_obj.join(", "),
-            ))
+            // Stays one opaque leaf — the only one of this cluster's 4 real
+            // shapes with a BLOCK-bodied IIFE (see this function's own doc:
+            // `TsArrowBody::Block` exists since #1435, but this arm was not
+            // reconverted along with it) — now tagged `VerbatimExpr`, not
+            // `Ident` (#1539).
+            bynk_ts::TsExpr::VerbatimExpr(
+                format!(
+                    "((__arg) => {{ if (__arg === undefined || __arg.tag !== \"Text\") {{ return {fallback_text}; }} const __arms: Record<string, string> = {{ {} }}; return Object.hasOwn(__arms, __arg.value) ? __arms[__arg.value] : __arms[\"other\"]; }})({arg})",
+                    arms_obj.join(", "),
+                ),
+                bynk_ts::VerbatimOrigin::Emit,
+            )
         }
         icu::PlaceholderKind::Number { style } => {
             runtime_use.note_icu();
@@ -2085,17 +2091,16 @@ pub(crate) fn emit_messages_bundle(
 
 // -- v0.5 emission --
 
-/// P6.x (#1193, slice 3 of #1187, narrowed — `Provider` deferred, see this
-/// issue's own Framing): reads each op's resolved `params`/`return_ty` off
-/// `ops` (`bynk-emit::ir::OpSig`, `lower_capability_item_ir`'s own return
-/// value) through `ts_ty`, instead of walking `CapabilityOp::params`/
-/// `return_type` `TypeRef`s through `ts_type_ref` directly. `c` is still
-/// needed alongside `ops` — `IrItem::Capability::def` is a bare `String`,
-/// carrying neither `c.documentation`/`op.documentation` nor the `Arc` back
+/// P6.x (#1193, slice 3 of #1187): reads each op's resolved
+/// `params`/`return_ty` off `ops` ([`bynk_ir::OpSig`], from
+/// `bynk_lower::lower_capability_ops_ir`) through `ts_ty`, instead of
+/// walking `CapabilityOp::params`/`return_type` `TypeRef`s through
+/// `ts_type_ref` directly. `c` is still needed alongside `ops` — an `OpSig`
+/// carries neither `c.documentation`/`op.documentation` nor the `Arc` back
 /// to the declaration #1188 could rely on for `Type` ([DECISION A]).
 /// `ops`/`c.ops` are zipped by index: both are built in declaration order
-/// (`IrItem::Capability::ops`'s own doc comment), never reordered by either
-/// side.
+/// (`lower_capability_ops_ir` maps `cap.ops` in place), never reordered by
+/// either side.
 ///
 /// Accepted divergence (review of #1194, widening #1193's own disclosure):
 /// `resolve_type_ref` returns `None` — falling back to `Unit`/`void` here —
@@ -3950,12 +3955,16 @@ pub(crate) fn param_cast(
         // already found the printer's own operand-parenthesisation rule
         // would wrongly wrap in an extra pair (`(arg as unknown) as T`
         // instead of the real, parenless `arg as unknown as T`) — so the
-        // whole double cast stays one opaque `TsExpr::Ident`, wrapped in a
-        // real `TsExpr::Paren` for the real outer parens, printed through
-        // `bynk_ts::print_expr` (#1388).
-        return bynk_ts::print_expr(&bynk_ts::TsExpr::Paren(Box::new(bynk_ts::TsExpr::Ident(
-            format!("{arg} as unknown as {ns}.{name}"),
-        ))));
+        // whole double cast stays one opaque leaf, wrapped in a real
+        // `TsExpr::Paren` for the real outer parens, printed through
+        // `bynk_ts::print_expr` (#1388) — now tagged `VerbatimExpr`, not
+        // `Ident` (#1539).
+        return bynk_ts::print_expr(&bynk_ts::TsExpr::Paren(Box::new(
+            bynk_ts::TsExpr::VerbatimExpr(
+                format!("{arg} as unknown as {ns}.{name}"),
+                bynk_ts::VerbatimOrigin::Emit,
+            ),
+        )));
     }
     arg
 }
@@ -5109,9 +5118,10 @@ pub(crate) fn emit_agent(
     // call has no representation in `TsExpr::Call` (`type_args` was never
     // added — 41 real construction sites across the workspace, far more
     // than a single narrow need like this one justifies touching) — carried
-    // as one opaque `TsExpr::Ident` callee text, the same "an odd, one-off
-    // shape stays opaque text" precedent P7.9's own `Query[T]` and #1357's
-    // own `unique symbol` already established, not a new pattern.
+    // as one opaque callee leaf, the same "an odd, one-off shape stays
+    // opaque text" precedent P7.9's own `Query[T]` and #1357's own `unique
+    // symbol` already established, not a new pattern; now tagged
+    // `VerbatimExpr`, not `Ident` (#1539).
     // `TsClassMethod.private` is a real, new, small gap the grounding pass
     // itself predicted (#1366) — `loadState`/`commitState` are the first
     // `private` method sites this whole track has hit (`emit_provider`'s
@@ -5122,9 +5132,10 @@ pub(crate) fn emit_agent(
                 bynk_ts::TsBindingName::Ident("stored".to_string()),
                 None,
                 bynk_ts::TsExpr::Await(Box::new(bynk_ts::TsExpr::Call {
-                    callee: Box::new(bynk_ts::TsExpr::Ident(format!(
-                        "this.state.storage.get<{state_ty}>"
-                    ))),
+                    callee: Box::new(bynk_ts::TsExpr::VerbatimExpr(
+                        format!("this.state.storage.get<{state_ty}>"),
+                        bynk_ts::VerbatimOrigin::Emit,
+                    )),
                     args: vec![bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(
                         "state".to_string(),
                     ))],
@@ -5217,10 +5228,15 @@ pub(crate) fn emit_agent(
     // `TsStmt::Raw` (indent baked in manually, since `Raw` prints verbatim
     // with none of its own — depth 2 for an invariant's own top-level
     // check, depth 3 for a transition's own check nested inside the
-    // `if (__prior !== undefined)` block), the predicate as one opaque
-    // `TsExpr::Ident(format!("!({pred})"))` condition. Everything else —
-    // the `if`/`console.error`/`throw` wrapper, the transition prologue —
-    // is real: nothing here needs the general expression lowerer at all.
+    // `if (__prior !== undefined)` block), the predicate wrapped in a real
+    // `Unary`/`Paren` condition — `!({pred})`, `pred` itself still one
+    // opaque `Ident` leaf (#1539: the same `Unary{Not, Paren(Ident(pred))}`
+    // shape `contract_guard_if_stmt`, above, already builds for its own
+    // opaque predicate; this site used to spell the whole thing as one
+    // `TsExpr::Ident(format!("!({pred})"))` string instead of the equivalent
+    // real node). Everything else — the `if`/`console.error`/`throw`
+    // wrapper, the transition prologue — is real: nothing here needs the
+    // general expression lowerer at all.
     let commit_state_body = {
         // Review of #1374: the hoisted-statement `Raw` indent is derived
         // from `class_depth` rather than hardcoded — a hoisting predicate
@@ -5239,7 +5255,12 @@ pub(crate) fn emit_agent(
                 .map(|s| bynk_ts::TsStmt::raw(format!("{hoist_indent}{s}\n"), None))
                 .collect();
             stmts.push(bynk_ts::TsStmt::if_stmt(
-                bynk_ts::TsExpr::Ident(format!("!({pred})")),
+                bynk_ts::TsExpr::Unary {
+                    op: bynk_ts::TsUnaryOp::Not,
+                    expr: Box::new(bynk_ts::TsExpr::Paren(Box::new(bynk_ts::TsExpr::Ident(
+                        pred,
+                    )))),
+                },
                 bynk_ts::TsStmt::block(
                     vec![
                         bynk_ts::TsStmt::expr_stmt(
@@ -5373,9 +5394,10 @@ pub(crate) fn emit_agent(
                 bynk_ts::TsBindingName::Ident("__prior".to_string()),
                 None,
                 bynk_ts::TsExpr::Await(Box::new(bynk_ts::TsExpr::Call {
-                    callee: Box::new(bynk_ts::TsExpr::Ident(format!(
-                        "this.state.storage.get<{state_ty}>"
-                    ))),
+                    callee: Box::new(bynk_ts::TsExpr::VerbatimExpr(
+                        format!("this.state.storage.get<{state_ty}>"),
+                        bynk_ts::VerbatimOrigin::Emit,
+                    )),
                     args: vec![bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(
                         "state".to_string(),
                     ))],
@@ -6627,20 +6649,28 @@ fn ws_open_fetch_branch_stmt(host: &WsOpenHost<'_>, tys: &Arc<Types>) -> bynk_ts
         bynk_ts::TsBindingName::Ident("connection".to_string()),
         None,
         bynk_ts::TsExpr::Call {
-            callee: Box::new(bynk_ts::TsExpr::Ident(format!(
-                "acceptHibernatableConnection<{}>",
-                ts_ty(host.out_ty, tys)
-            ))),
+            // Generic call, no `type_args` field on `Call` — same "an odd,
+            // one-off shape stays opaque text" precedent as `loadState`'s own
+            // `this.state.storage.get<T>` above; tagged `VerbatimExpr`, not
+            // `Ident` (#1539).
+            callee: Box::new(bynk_ts::TsExpr::VerbatimExpr(
+                format!("acceptHibernatableConnection<{}>", ts_ty(host.out_ty, tys)),
+                bynk_ts::VerbatimOrigin::Emit,
+            )),
             args: accept_args,
         },
         None,
     ));
     let mut call_args = vec![bynk_ts::TsExpr::Ident("connection".to_string())];
     for (i, p) in h.params.iter().enumerate() {
-        call_args.push(bynk_ts::TsExpr::Ident(format!(
-            "__payload.args[{i}] as {}",
-            ts_type_ref(&p.type_ref)
-        )));
+        // `__payload.args[i] as <type>` — an `Index`-under-`As` cast; tagged
+        // `VerbatimExpr`, not `Ident` (#1539), the same "small and local"
+        // boundary the rest of this slice draws rather than modeling every
+        // remaining opaque shape as real nodes.
+        call_args.push(bynk_ts::TsExpr::VerbatimExpr(
+            format!("__payload.args[{i}] as {}", ts_type_ref(&p.type_ref)),
+            bynk_ts::VerbatimOrigin::Emit,
+        ));
     }
     let deps_arg = match host.seam.as_ref().filter(|s| s.binder.is_some()) {
         Some(seam) => format!(
@@ -6649,9 +6679,17 @@ fn ws_open_fetch_branch_stmt(host: &WsOpenHost<'_>, tys: &Arc<Types>) -> bynk_ts
         ),
         None => "{}".to_string(),
     };
-    call_args.push(bynk_ts::TsExpr::Ident(deps_arg));
+    // An object-literal expression — tagged `VerbatimExpr`, not `Ident`
+    // (#1539).
+    call_args.push(bynk_ts::TsExpr::VerbatimExpr(
+        deps_arg,
+        bynk_ts::VerbatimOrigin::Emit,
+    ));
     let call_expr = bynk_ts::TsExpr::Call {
-        callee: Box::new(bynk_ts::TsExpr::Ident(format!("this.{method}"))),
+        callee: Box::new(bynk_ts::TsExpr::Member {
+            object: Box::new(bynk_ts::TsExpr::Ident("this".to_string())),
+            property: method,
+        }),
         args: call_args,
     };
     stmts.push(bynk_ts::TsStmt::expr_stmt(
@@ -6791,9 +6829,14 @@ fn emit_ws_dispatch_handlers(
             bynk_ts::TsBindingName::Ident("connection".to_string()),
             None,
             bynk_ts::TsExpr::New {
-                callee: Box::new(bynk_ts::TsExpr::Ident(format!(
-                    "WorkersConnection<{out_ts}>"
-                ))),
+                // Generic constructor, no `type_args` field on `New` — same
+                // "an odd, one-off shape stays opaque text" precedent as the
+                // generic-method-call sites above; tagged `VerbatimExpr`, not
+                // `Ident` (#1539).
+                callee: Box::new(bynk_ts::TsExpr::VerbatimExpr(
+                    format!("WorkersConnection<{out_ts}>"),
+                    bynk_ts::VerbatimOrigin::Emit,
+                )),
                 args: vec![
                     bynk_ts::TsExpr::Ident("ws".to_string()),
                     bynk_ts::TsExpr::Member {
@@ -6914,7 +6957,10 @@ fn emit_ws_dispatch_handlers(
         call_args.push(deps_arg.clone());
         stmts.push(bynk_ts::TsStmt::expr_stmt(
             bynk_ts::TsExpr::Await(Box::new(bynk_ts::TsExpr::Call {
-                callee: Box::new(bynk_ts::TsExpr::Ident(format!("this.{method}"))),
+                callee: Box::new(bynk_ts::TsExpr::Member {
+                    object: Box::new(bynk_ts::TsExpr::Ident("this".to_string())),
+                    property: method,
+                }),
                 args: call_args.into_iter().map(bynk_ts::TsExpr::Ident).collect(),
             })),
             None,
@@ -6963,7 +7009,10 @@ fn emit_ws_dispatch_handlers(
         call_args.push(deps_arg);
         stmts.push(bynk_ts::TsStmt::expr_stmt(
             bynk_ts::TsExpr::Await(Box::new(bynk_ts::TsExpr::Call {
-                callee: Box::new(bynk_ts::TsExpr::Ident(format!("this.{method}"))),
+                callee: Box::new(bynk_ts::TsExpr::Member {
+                    object: Box::new(bynk_ts::TsExpr::Ident("this".to_string())),
+                    property: method,
+                }),
                 args: call_args.into_iter().map(bynk_ts::TsExpr::Ident).collect(),
             })),
             None,

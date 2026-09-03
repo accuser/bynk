@@ -54,9 +54,21 @@ left to memory, as [#1523](https://github.com/accuser/bynk/issues/1523) (R3.15),
 [#1524](https://github.com/accuser/bynk/issues/1524) (rowan),
 [#1525](https://github.com/accuser/bynk/issues/1525) (R10.5) and
 [#1526](https://github.com/accuser/bynk/issues/1526) (`Artefacts`) — each marked deferred with no
-trigger yet, not ready to build. This document stays in place as the historical record of the path
-walked, per the LSP theme's own precedent above — `bynk-greenfield-compiler.md` continues to hold
-the place.
+trigger yet, not ready to build. **One more thing "reached" did not mean, found the same day and
+settled two days later:** the 30 August review (`reviews/2026-08-30-post-restructuring-review.md`)
+showed phase 6's expression IR had no consumer, and the track opened to wire it in
+(`the-ir-cutover.md`, [#1542](https://github.com/accuser/bynk/issues/1542)) measured the cutover as a
+second code generator rather than a retype and retired on 2 September 2026 by deleting the unconsumed
+lowering instead — §8's "stop at a boundary," applied after the endpoint rather than before it. The
+refusal is in `bynk-greenfield-compiler.md` Part 15.1 with a trigger; the closing summary in
+[`archive/retired-tracks.md`](archive/retired-tracks.md) has the measurements. Phase 6's own retirement
+floor and this endpoint are unchanged by it. The same review found phase 8's definition- and
+project-level queries had no caller either; [#1537](https://github.com/accuser/bynk/issues/1537)
+(2 September 2026) deleted those two levels and kept the file level's shared cache and the unit
+level's `UnitSignature` with its R3.14 proof — `incremental_query_types` now gates that the deleted
+levels stay deleted until R3.15's trigger fires. This document stays in place as the historical
+record of the path walked, per the LSP theme's own precedent above — `bynk-greenfield-compiler.md`
+continues to hold the place.
 
 ---
 
