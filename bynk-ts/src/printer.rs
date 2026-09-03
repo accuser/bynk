@@ -1448,6 +1448,11 @@ fn render_object_entry_inline(out: &mut String, entry: &TsObjectEntry) {
 fn render_expr(out: &mut String, expr: &TsExpr) {
     match expr {
         TsExpr::Ident(name) => out.push_str(name),
+        // #1539: printed exactly as `Ident` always was — raw text, no
+        // escaping of its own. The origin exists for `verbatim_origins`/
+        // `verbatim_sites` (xtask's gated probes) to line-scan, not for the
+        // printer to branch on.
+        TsExpr::VerbatimExpr(text, _origin) => out.push_str(text),
         TsExpr::Member { object, property } => {
             render_operand(out, object);
             out.push('.');

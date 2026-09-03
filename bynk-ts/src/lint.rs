@@ -9,13 +9,19 @@
 //!
 //! Pattern match over text, not a real TS parser — same posture `xtask`'s
 //! own `ts_any` probe (`xtask/src/greenfield_status.rs`) already takes for
-//! the identical `any` patterns, reused here rather than re-derived.
+//! the identical `any` patterns, reused here rather than re-derived. A `//`
+//! or `/* */` comment line, and the contents of a `"..."`/`'...'`/
+//! `` `...` `` string literal, are blanked before matching — #1538's own
+//! real gap, found wiring this over real compiled output: a message string
+//! naming `namespace` in prose (`"...requires a KV namespace binding..."`)
+//! is not a `namespace` declaration.
 //!
-//! `bynk-emit` builds no `Verbatim` content in this slice (#1307's Decision
-//! C), so nothing calls this over real output yet — it exists, tested
-//! against one positive and one negative case per construct, ready for Arc C
-//! (Decision F: wiring it into a real CI-visible check over compiled output
-//! is meaningful only once real `Verbatim` content exists to check).
+//! #1538 wires this into `bynkc/tests/tsc_verify.rs`, over every
+//! `Verbatim`/`VerbatimExpr` leaf `TsProgram::verbatim_content` finds by
+//! walking a compiled fixture's tree — real, CI-visible `Verbatim` content
+//! to check, closing Decision F's own deferral ("wiring it into a real
+//! CI-visible check over compiled output is meaningful only once real
+//! `Verbatim` content exists to check").
 
 /// One construct [`verbatim_violations`] found, and the line it was on.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,8 +38,44 @@ pub struct Violation {
 /// checked further.
 pub fn verbatim_violations(text: &str) -> Vec<Violation> {
     let mut out = Vec::new();
+    let mut in_block_comment = false;
     for line in text.lines() {
-        if let Some(construct) = detect(line) {
+        if in_block_comment {
+            if let Some(end) = line.find("*/") {
+                in_block_comment = false;
+                // Only the text after the closing `*/` is real code — but no
+                // real emitted line today has code following a block
+                // comment's close on the same line, so, matching this
+                // module's own "no inline trailing comment" simplicity for
+                // `//`, the rest of the line is skipped rather than
+                // re-scanned from `end + 2`.
+                let _ = end;
+            }
+            continue;
+        }
+        if is_line_comment(line) {
+            continue;
+        }
+        if let Some(start) = line.find("/*") {
+            if let Some(end) = line[start..].find("*/") {
+                // A block comment that opens and closes on the same line —
+                // blank it out and scan what's left, the same treatment a
+                // string literal gets below.
+                let mut blanked = line.to_string();
+                blank_range(&mut blanked, start, start + end + 2);
+                if let Some(construct) = detect(&blank_strings(&blanked)) {
+                    out.push(Violation {
+                        construct,
+                        line: line.to_string(),
+                    });
+                }
+                continue;
+            }
+            in_block_comment = true;
+            continue;
+        }
+        let scanned = blank_strings(line);
+        if let Some(construct) = detect(&scanned) {
             out.push(Violation {
                 construct,
                 line: line.to_string(),
@@ -41,6 +83,79 @@ pub fn verbatim_violations(text: &str) -> Vec<Violation> {
         }
     }
     out
+}
+
+/// True if `line`, trimmed, is a `//` line comment — the same check `xtask`'s
+/// own `ts_any` probe (`is_line_comment`, `xtask/src/greenfield_status.rs`)
+/// already applies to the identical `any`/keyword patterns over Rust source;
+/// this module's own doc claims parity with that probe's posture, but never
+/// actually had this exclusion until the first real invocation over compiled
+/// output (#1538) found it missing — a standalone comment line naming
+/// `namespace` in prose (`// A minimal structural view of the Cloudflare
+/// Durable Object namespace/stub`) is not a `namespace` declaration. Doesn't
+/// attempt an inline `//` after real code on the same line — the same
+/// simplicity `xtask`'s own version accepts, and no real emitted line does
+/// either today.
+fn is_line_comment(line: &str) -> bool {
+    line.trim_start().starts_with("//")
+}
+
+/// Replace `text[start..end]` with spaces, byte-for-byte (so every later
+/// column offset stays valid) — every replaced byte becomes a single-byte
+/// ASCII space, so the result is valid UTF-8 regardless of what multi-byte
+/// characters `text` held there.
+fn blank_range(text: &mut String, start: usize, end: usize) {
+    let mut bytes = std::mem::take(text).into_bytes();
+    for b in &mut bytes[start..end] {
+        *b = b' ';
+    }
+    *text = String::from_utf8(bytes).expect("blanking ASCII bytes keeps the string valid UTF-8");
+}
+
+/// Blank out the contents of every `"..."`/`'...'`/`` `...` `` string literal
+/// on `line` (delimiters kept, so column positions and the surrounding
+/// `detect` patterns' own delimiter-adjacent matches are unaffected) —
+/// #1538's own real gap found wiring this lint over real compiled output:
+/// `"bynk.cloudflare.Kv requires a KV namespace binding …"` is a message
+/// string, not a `namespace` declaration, and nothing before this scan
+/// distinguished the two. A single-pass state machine over one delimiter at
+/// a time (not nested — TypeScript string literals can't nest unescaped),
+/// tracking `\`-escapes so an escaped quote doesn't end the literal early.
+/// Template-literal `${...}` interpolation is not specially handled (a
+/// `namespace`/`any` keyword inside one would still be blanked as literal
+/// text) — no real emitted `Verbatim`/`VerbatimExpr` content uses one today.
+fn blank_strings(line: &str) -> String {
+    let mut out: Vec<u8> = line.as_bytes().to_vec();
+    let mut i = 0;
+    while i < out.len() {
+        let c = out[i];
+        if c == b'"' || c == b'\'' || c == b'`' {
+            let delim = c;
+            let mut j = i + 1;
+            while j < out.len() {
+                if out[j] == b'\\' && j + 1 < out.len() {
+                    j += 2;
+                    continue;
+                }
+                if out[j] == delim {
+                    break;
+                }
+                j += 1;
+            }
+            let end = j.min(out.len());
+            for b in &mut out[i + 1..end] {
+                *b = b' ';
+            }
+            i = j + 1;
+        } else {
+            i += 1;
+        }
+    }
+    // Safe: every byte written above is ASCII (a space), and the rest of
+    // `out` is copied unchanged from `line`'s own valid UTF-8 bytes — a
+    // multi-byte character's continuation bytes are never a `\`/quote/
+    // backtick (all ASCII-range), so this never splits one.
+    String::from_utf8(out).unwrap_or_else(|_| line.to_string())
 }
 
 fn detect(line: &str) -> Option<&'static str> {
@@ -303,5 +418,50 @@ mod tests {
         assert_eq!(violations.len(), 2);
         assert_eq!(violations[0].construct, "enum");
         assert_eq!(violations[1].construct, "TsType::Any");
+    }
+
+    /// #1538's own real gap: a message string naming a banned construct in
+    /// prose is not the construct itself.
+    #[test]
+    fn does_not_false_positive_on_a_string_literal_naming_a_construct() {
+        assert!(
+            verbatim_violations(
+                "throw new Error(\"bynk.cloudflare.Kv requires a KV namespace binding\");"
+            )
+            .is_empty()
+        );
+        assert!(verbatim_violations("const msg = 'cast as any if unsure';").is_empty());
+    }
+
+    /// A string literal's own delimiters are blanked-around, not removed —
+    /// a real violation immediately after a string on the same line must
+    /// still be caught.
+    #[test]
+    fn still_catches_a_real_violation_after_a_string_literal_on_the_same_line() {
+        assert_eq!(
+            verbatim_violations("const s: any = \"a namespace-like string\";")[0].construct,
+            "TsType::Any"
+        );
+    }
+
+    /// #1538's own real gap: a `/** ... */` JSDoc block naming a construct
+    /// in prose is not the construct itself, whether the block is single- or
+    /// multi-line.
+    #[test]
+    fn does_not_false_positive_on_a_block_comment() {
+        assert!(verbatim_violations("/** A Durable Object namespace stub. */").is_empty());
+        let multiline =
+            "/**\n * Cast through `any` when the shape is unknown.\n */\nconst x = 1;\n";
+        assert!(verbatim_violations(multiline).is_empty());
+    }
+
+    /// A same-line block comment doesn't swallow a real violation that
+    /// follows it on the same line.
+    #[test]
+    fn still_catches_a_real_violation_after_a_same_line_block_comment() {
+        assert_eq!(
+            verbatim_violations("/* namespace-like prose */ const x: any = 1;")[0].construct,
+            "TsType::Any"
+        );
     }
 }

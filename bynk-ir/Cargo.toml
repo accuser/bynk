@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "Bynk's typed intermediate representation: IrExpr/IrItem/IrHandler and the small set of shared AST-analysis helpers both bynk-emit and bynk-lower need. Carved out of bynk-emit (ADR 0332's deferred split) once bynk-ts became a genuine second IR consumer (ADR 0385)."
+description = "Bynk's resolved declaration-level IR — ProtocolIr/IrHandlerKind/TypeShape/OpSig and their siblings — plus the small set of shared AST-analysis helpers both bynk-emit and bynk-lower need. Carved out of bynk-emit (ADR 0332's deferred split) once bynk-ts became a genuine second IR consumer (ADR 0385)."
 keywords = ["compiler", "dsl", "ir", "language"]
 categories = ["compilers"]
 
