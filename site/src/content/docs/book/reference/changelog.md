@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.289.72** | bynk-ts's `TsExpr::Ident` is a real identifier now, not an untagged `Verbatim`-shaped escape hatch — 4 `bynk-emit` call sites that smuggled a `this.<method>` member access or a `!(<pred>)` unary through it build the matching real node instead, and 9 more route through a new tagged `TsExpr::VerbatimExpr`, visible to `verbatim_origins`/`verbatim_sites` (#1539) |
 | **v0.289.71** | `bynk-testkit` (a `publish = false` dev-dependency of `bynk`/`bynkc`/`bynk-lsp`) no longer carries a fake `version` in the workspace dependency table — that combination made `cargo publish` fail unconditionally for all three, since a versioned dependency must resolve against crates.io even with `--no-verify` (#1560) |
 | **v0.289.70** | "`bynk-project` (a real dependency of `bynk-check`/`bynk-emit`/`bynk-ide`/`bynk-lower` since its 30 July 2026 extraction) is now published by both release workflows — it was missing from both hardcoded crate lists, which would have broken the next real release (#1559)" |
 | **v0.289.69** | "xtask's `fs_below_driver`/`ts_writes` gated probes now fail loud in CI if a `NAMED_FS_EXCEPTIONS`/`TS_WRITES_EXCLUDED_FILES` entry outlives the file it names, instead of silently reading a vacuous, falsely-healthy count (#1587)" |
