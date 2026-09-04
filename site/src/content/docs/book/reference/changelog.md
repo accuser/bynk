@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.289**.
+written against **v0.290**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.290.0** | The eight-phase compiler trajectory to the greenfield architecture (`bynk-greenfield-compiler.md`) is complete — every construct that compiled at v0.245.0 still compiles, rebuilt on the new architecture with no dropped capability. |
 | **v0.289.74** | Adds the eight missing crate READMEs (`bynk-ts`, `bynk-ir`, `bynk-lower`, `bynk-project`, `bynk-driver`, `bynk-testkit`, `tree-sitter-bynk`, `xtask`), following the established published/unpublished templates; `bynk-driver`'s `Cargo.toml` gains `keywords`/`categories`, the one publishable crate that was missing them (post-trajectory crate hygiene track, S1 of #1533) |
 | **v0.289.73** | `bynk_ts::verbatim_violations` is wired into the e2e/emit test harness (`bynkc/tests/tsc_verify.rs`), run over every `Verbatim`/`VerbatimExpr` leaf a new `TsProgram::verbatim_content` walker finds by walking each compiled fixture's tree — not trusted by construction. The lint itself gained block-comment and string-literal awareness (it was matching `namespace` inside a message string). Wiring the check up front surfaced two real `(... as any)` violations previously hidden inside opaque `Verbatim` text — fixed at their source: `bynk-emit/runtime/src/boundary.ts` (re-bundled into `runtime.ts`) and `bynk-check/src/firstparty/bindings/bynk-{node,cloudflare}.ts` (#1538) |
 | **v0.289.72** | bynk-ts's `TsExpr::Ident` is a real identifier now, not an untagged `Verbatim`-shaped escape hatch — 4 `bynk-emit` call sites that smuggled a `this.<method>` member access or a `!(<pred>)` unary through it build the matching real node instead, and 9 more route through a new tagged `TsExpr::VerbatimExpr`, visible to `verbatim_origins`/`verbatim_sites` (#1539) |

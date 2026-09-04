@@ -39,7 +39,7 @@ Every `pub` item here is required to have a reader outside both `bynk-ir` and
 
 ```toml
 [dependencies]
-bynk-ir = "0.289"
+bynk-ir = "0.290"
 ```
 
 `bynk-ir` values are constructed by `bynk-lower`'s own helpers, not built by
