@@ -796,7 +796,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.extension == 'true' || needs.changes.outputs.grammar == 'true' || needs.changes.outputs.runtime == 'true' || needs.changes.outputs.playground == 'true' || needs.changes.outputs.site == 'true' || needs.changes.outputs.all == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -815,14 +815,29 @@ jobs:
       # now-retired `/audits/quick` endpoint when the bulk advisory request
       # doesn't go through, producing a confusing "this endpoint is being
       # retired" failure instead of a real audit result. npm 11 dropped that
-      # fallback and audits via the bulk endpoint only. Exactly version-pinned
-      # (matching release.yml's npm bump) since a global CLI install has no
-      # lockfile/commit-hash to pin against — Scorecard Pinned-Dependencies
-      # accepted risk, #828.
+      # fallback and audits via the bulk endpoint only. This does NOT fix
+      # registry-side unreliability — the bulk endpoint itself 503s/hangs
+      # intermittently under load — it just makes the resulting failure a
+      # real audit error instead of a misleading retired-endpoint message;
+      # the retry loop below is what actually rides out that unreliability.
+      # Exactly version-pinned (matching release.yml's npm bump) since a
+      # global CLI install has no lockfile/commit-hash to pin against —
+      # Scorecard Pinned-Dependencies accepted risk, #828.
       - name: Update npm
         run: npm install -g npm@11.18.0
       - name: Audit
-        run: npm audit --audit-level=high
+        # The bulk advisory endpoint intermittently 503s or hangs under
+        # registry load; retry with a short per-attempt timeout instead of
+        # burning the 5-minute default fetch-timeout on every failed try.
+        run: |
+          for attempt in 1 2 3; do
+            if npm audit --audit-level=high --fetch-timeout=120000; then
+              exit 0
+            fi
+            echo "npm audit attempt $attempt failed, retrying..." >&2
+            sleep $((attempt * 15))
+          done
+          exit 1
 
   dependency-review:
     # On PRs, flag newly-introduced dependencies that carry known advisories or
