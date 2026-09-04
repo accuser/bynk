@@ -8069,7 +8069,15 @@
             "named": false
           },
           {
+            "type": "..",
+            "named": false
+          },
+          {
             "type": "number_literal",
+            "named": true
+          },
+          {
+            "type": "wildcard_pattern",
             "named": true
           }
         ]

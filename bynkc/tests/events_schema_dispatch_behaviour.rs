@@ -1,6 +1,10 @@
 //! Events track, slice 4 (#985) — behavioural (runtime) proof that
 //! `via schema(N)` actually filters delivery by the envelope's
 //! `schemaVersion`, not just that the annotation parses and type-checks.
+//! Slice 4b (#990) extends this with a second scenario proving the range/
+//! wildcard shapes (`v..`, `v1..v2`, `_`) dispatch correctly and that a
+//! `via schema(_)` subscriber fires unconditionally alongside whichever
+//! other clause also matches (deliver-and-filter, no ambiguity check).
 //!
 //! A `schemaVersion` is a compile-time constant per event type (baked into
 //! the emitted mint site from `@schema(N)` or the schema registry) — one
@@ -122,6 +126,44 @@ service OnV2 from Events(PaymentConfirmed) via schema(2) {
 }
 "#;
 
+// Slice 4b (#990): four sibling subscribers exercising every new shape —
+// `via schema(1)` (literal, unchanged from slice 4), `via schema(2..4)`
+// (closed), `via schema(5..)` (open-above), and `via schema(_)`
+// (wildcard). `OnAny` deliberately declares no `env` either, proving the
+// synthetic-envelope-parameter plumbing still applies under `Wildcard`
+// even though it emits no runtime guard at all — if the envelope weren't
+// threaded through positionally, this would fail to compile/run, not just
+// mis-dispatch.
+const SOURCE_NOTIFICATIONS_RANGES: &str = r#"context commerce.notifications
+
+consumes commerce.order
+consumes bynk { Logger }
+
+service OnV1 from Events(PaymentConfirmed) via schema(1) {
+  on event(e: PaymentConfirmed) -> Effect[()] given Logger {
+    Logger.info("v1-fired")
+  }
+}
+
+service OnMid from Events(PaymentConfirmed) via schema(2..4) {
+  on event(e: PaymentConfirmed, env: EventEnvelope) -> Effect[()] given Logger {
+    Logger.info("mid-fired:\(env.schemaVersion)")
+  }
+}
+
+service OnLater from Events(PaymentConfirmed) via schema(5..) {
+  on event(e: PaymentConfirmed, env: EventEnvelope) -> Effect[()] given Logger {
+    Logger.info("later-fired:\(env.schemaVersion)")
+  }
+}
+
+service OnAny from Events(PaymentConfirmed) via schema(_) {
+  on event(e: PaymentConfirmed) -> Effect[()] given Logger {
+    Logger.info("any-fired")
+  }
+}
+"#;
+
 fn source_order(schema_annotation: &str) -> String {
     format!(
         r#"context commerce.order
@@ -152,8 +194,17 @@ console.log("ALL OK");
 "#;
 
 /// Compile + run one variant (`schema_annotation` is `""` for version 1, or
-/// `" @schema(2)"` for version 2), returning the captured stdout/stderr.
-fn compile_and_run(runner: &(String, Vec<String>), schema_annotation: &str, tag: &str) -> String {
+/// `" @schema(N)"` for version `N`), returning the captured stdout/stderr.
+/// `notifications_source` selects which set of sibling subscribers to
+/// compile against the same event ([`SOURCE_NOTIFICATIONS`] for the
+/// literal-only slice-4 scenario, [`SOURCE_NOTIFICATIONS_RANGES`] for
+/// slice 4b's range/wildcard scenario).
+fn compile_and_run(
+    runner: &(String, Vec<String>),
+    schema_annotation: &str,
+    tag: &str,
+    notifications_source: &str,
+) -> String {
     let tmp = std::env::temp_dir().join(format!(
         "bynk-events-schema-dispatch-behaviour-{tag}-{}",
         std::process::id()
@@ -162,7 +213,7 @@ fn compile_and_run(runner: &(String, Vec<String>), schema_annotation: &str, tag:
     let proj = tmp.join("proj/commerce");
     fs::create_dir_all(&proj).unwrap();
     fs::write(proj.join("order.bynk"), source_order(schema_annotation)).unwrap();
-    fs::write(proj.join("notifications.bynk"), SOURCE_NOTIFICATIONS).unwrap();
+    fs::write(proj.join("notifications.bynk"), notifications_source).unwrap();
 
     let out = match bynkc::compile_project(
         &bynk_testkit::compile_options_single(tmp.join("proj")).target(BuildTarget::Bundle),
@@ -232,7 +283,7 @@ fn bundle_via_schema_dispatches_only_to_the_matching_version() {
 
     // Compile A: no `@schema` annotation — version 1. Only `OnV1` (the
     // handler with NO declared `env`) should fire.
-    let msg_v1 = compile_and_run(&runner, "", "v1");
+    let msg_v1 = compile_and_run(&runner, "", "v1", SOURCE_NOTIFICATIONS);
     assert!(
         msg_v1.contains("v1-fired"),
         "a version-1 emission must reach the `via schema(1)` subscriber, \
@@ -246,7 +297,7 @@ fn bundle_via_schema_dispatches_only_to_the_matching_version() {
 
     // Compile B: `@schema(2)` — version 2. Only `OnV2` should fire, with
     // its own declared `env.schemaVersion` reading back 2.
-    let msg_v2 = compile_and_run(&runner, " @schema(2)", "v2");
+    let msg_v2 = compile_and_run(&runner, " @schema(2)", "v2", SOURCE_NOTIFICATIONS);
     assert!(
         msg_v2.contains("v2-fired:2"),
         "a version-2 emission must reach the `via schema(2)` subscriber, \
@@ -255,5 +306,96 @@ fn bundle_via_schema_dispatches_only_to_the_matching_version() {
     assert!(
         !msg_v2.contains("v1-fired"),
         "a version-2 emission must NOT reach the `via schema(1)` subscriber:\n{msg_v2}"
+    );
+}
+
+#[test]
+fn bundle_via_schema_range_dispatches_to_matching_and_wildcard_subscribers() {
+    let runner = match discover_tsc() {
+        Some(r) => r,
+        None => {
+            eprintln!(
+                "\n!!! EVENTS SCHEMA-RANGE-DISPATCH BEHAVIOUR VERIFICATION SKIPPED !!!\nno tsc runner.\n"
+            );
+            if std::env::var(REQUIRE_ENV).is_ok() {
+                panic!("{REQUIRE_ENV} is set but no tsc runner was found");
+            }
+            return;
+        }
+    };
+    if !tool_exists("node") {
+        eprintln!(
+            "\n!!! EVENTS SCHEMA-RANGE-DISPATCH BEHAVIOUR VERIFICATION SKIPPED !!!\n`node` not on PATH.\n"
+        );
+        if std::env::var(REQUIRE_ENV).is_ok() {
+            panic!("{REQUIRE_ENV} is set but `node` was not found");
+        }
+        return;
+    }
+
+    // Version 1: only `OnV1` (`via schema(1)`) and `OnAny` (`via
+    // schema(_)`, unconditional) should fire.
+    let msg_v1 = compile_and_run(&runner, "", "range-v1", SOURCE_NOTIFICATIONS_RANGES);
+    assert!(
+        msg_v1.contains("v1-fired"),
+        "a version-1 emission must reach the `via schema(1)` subscriber:\n{msg_v1}"
+    );
+    assert!(
+        msg_v1.contains("any-fired"),
+        "a version-1 emission must reach the `via schema(_)` wildcard \
+         subscriber — it fires unconditionally, same as no `via` clause:\n{msg_v1}"
+    );
+    assert!(
+        !msg_v1.contains("mid-fired") && !msg_v1.contains("later-fired"),
+        "a version-1 emission must NOT reach `via schema(2..4)` or \
+         `via schema(5..)`:\n{msg_v1}"
+    );
+
+    // Version 3: only `OnMid` (`via schema(2..4)`, closed range) and
+    // `OnAny` should fire.
+    let msg_v3 = compile_and_run(
+        &runner,
+        " @schema(3)",
+        "range-v3",
+        SOURCE_NOTIFICATIONS_RANGES,
+    );
+    assert!(
+        msg_v3.contains("mid-fired:3"),
+        "a version-3 emission must reach the `via schema(2..4)` subscriber, \
+         with env.schemaVersion reading back 3:\n{msg_v3}"
+    );
+    assert!(
+        msg_v3.contains("any-fired"),
+        "a version-3 emission must also reach the `via schema(_)` wildcard \
+         subscriber:\n{msg_v3}"
+    );
+    assert!(
+        !msg_v3.contains("v1-fired") && !msg_v3.contains("later-fired"),
+        "a version-3 emission must NOT reach `via schema(1)` or \
+         `via schema(5..)`:\n{msg_v3}"
+    );
+
+    // Version 7: only `OnLater` (`via schema(5..)`, open-above) and
+    // `OnAny` should fire.
+    let msg_v7 = compile_and_run(
+        &runner,
+        " @schema(7)",
+        "range-v7",
+        SOURCE_NOTIFICATIONS_RANGES,
+    );
+    assert!(
+        msg_v7.contains("later-fired:7"),
+        "a version-7 emission must reach the `via schema(5..)` subscriber, \
+         with env.schemaVersion reading back 7:\n{msg_v7}"
+    );
+    assert!(
+        msg_v7.contains("any-fired"),
+        "a version-7 emission must also reach the `via schema(_)` wildcard \
+         subscriber:\n{msg_v7}"
+    );
+    assert!(
+        !msg_v7.contains("v1-fired") && !msg_v7.contains("mid-fired"),
+        "a version-7 emission must NOT reach `via schema(1)` or \
+         `via schema(2..4)`:\n{msg_v7}"
     );
 }

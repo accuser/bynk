@@ -2531,14 +2531,20 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// Parse an optional `via schema(N)` clause (Events track, slice 4,
-    /// spine #936), following the `from Events(...)` header's closing `)`.
-    /// `via`/`schema` are matched as plain `Ident` text, the same way
-    /// `websocket`/`Events` are — no lexer reservation. `N` admits an
-    /// optional leading `-` (mirroring `parse_literal_value`'s own
-    /// int-literal handling) so a non-positive value is a *checker* error
-    /// (`bynk.event.bad_schema_dispatch`), not a parse error — the same
-    /// permissive-parse-then-checker-validate split `@schema(N)` uses.
+    /// Parse an optional `via schema(...)` clause (Events track, slice 4,
+    /// spine #936; slice 4b, #990, adds the range/wildcard shapes),
+    /// following the `from Events(...)` header's closing `)`. `via`/`schema`
+    /// are matched as plain `Ident` text, the same way `websocket`/`Events`
+    /// are — no lexer reservation. The argument admits five shapes: `N`
+    /// (literal), `v..` (open-above), `..v` (open-below), `v1..v2` (closed),
+    /// or `_` (wildcard). `..`/`_` reuse the pre-existing `DotDot`/
+    /// `Underscore` tokens (record-pattern rest marker, match/binding
+    /// wildcards) — no new lexer tokens. Each bound admits an optional
+    /// leading `-` (mirroring `parse_literal_value`'s own int-literal
+    /// handling) so a non-positive bound, or an inverted closed range, is a
+    /// *checker* error (`bynk.event.bad_schema_dispatch`), not a parse
+    /// error — the same permissive-parse-then-checker-validate split
+    /// `@schema(N)` uses.
     fn parse_schema_dispatch_clause(&mut self) -> Result<Option<SchemaDispatch>, CompileError> {
         let Some(via_tok) = self.peek() else {
             return Ok(None);
@@ -2559,14 +2565,71 @@ impl<'a> Parser<'a> {
             )
             .with_note("`via` clauses are a closed set; only `via schema(...)` exists today"));
         }
-        self.expect(TokenKind::LParen, "expected `(N)` after `via schema`")?;
+        self.expect(TokenKind::LParen, "expected `(...)` after `via schema`")?;
+
+        // `_` wildcard — a single token, checked before attempting a number.
+        if self.peek().is_some_and(|t| t.kind == TokenKind::Underscore) {
+            self.bump();
+            let close = self.expect(TokenKind::RParen, "to close `via schema(...)`")?;
+            let span = via_tok.span.merge(close.span);
+            return Ok(Some(SchemaDispatch {
+                pattern: SchemaVersionPattern::Wildcard,
+                span,
+            }));
+        }
+
+        // `..v` — open-below, no leading bound.
+        if self.peek().is_some_and(|t| t.kind == TokenKind::DotDot) {
+            self.bump();
+            let hi = self.parse_schema_dispatch_int()?;
+            let close = self.expect(TokenKind::RParen, "to close `via schema(...)`")?;
+            let span = via_tok.span.merge(close.span);
+            return Ok(Some(SchemaDispatch {
+                pattern: SchemaVersionPattern::OpenBelow(hi),
+                span,
+            }));
+        }
+
+        // Otherwise a leading bound: literal (`N`), open-above (`v..`), or
+        // closed (`v1..v2`).
+        let lo = self.parse_schema_dispatch_int()?;
+        if self.eat(TokenKind::DotDot).is_some() {
+            if self.peek().is_some_and(|t| t.kind == TokenKind::RParen) {
+                let close = self.bump().expect("peeked RParen");
+                let span = via_tok.span.merge(close.span);
+                return Ok(Some(SchemaDispatch {
+                    pattern: SchemaVersionPattern::OpenAbove(lo),
+                    span,
+                }));
+            }
+            let hi = self.parse_schema_dispatch_int()?;
+            let close = self.expect(TokenKind::RParen, "to close `via schema(...)`")?;
+            let span = via_tok.span.merge(close.span);
+            return Ok(Some(SchemaDispatch {
+                pattern: SchemaVersionPattern::Closed(lo, hi),
+                span,
+            }));
+        }
+        let close = self.expect(TokenKind::RParen, "to close `via schema(...)`")?;
+        let span = via_tok.span.merge(close.span);
+        Ok(Some(SchemaDispatch {
+            pattern: SchemaVersionPattern::Literal(lo),
+            span,
+        }))
+    }
+
+    /// Parse one `via schema(...)` bound: an optional leading `-` followed
+    /// by an `Int` literal. Shared by every arm of
+    /// [`Self::parse_schema_dispatch_clause`] so the overflow-diagnostic
+    /// logic isn't duplicated per shape.
+    fn parse_schema_dispatch_int(&mut self) -> Result<i64, CompileError> {
         let neg = self.eat(TokenKind::Minus);
         let num_tok = self.expect(
             TokenKind::IntLit,
-            "expected an `Int` literal as the `via schema(...)` version",
+            "expected an `Int` literal as a `via schema(...)` bound",
         )?;
         let slice = self.slice(num_tok.span);
-        let mut version: i64 = crate::lexer::strip_digit_separators(slice)
+        let mut value: i64 = crate::lexer::strip_digit_separators(slice)
             .parse()
             .map_err(|_| {
                 CompileError::new(
@@ -2576,14 +2639,9 @@ impl<'a> Parser<'a> {
                 )
             })?;
         if neg.is_some() {
-            version = -version;
+            value = -value;
         }
-        let close = self.expect(TokenKind::RParen, "to close `via schema(...)`")?;
-        let span = via_tok.span.merge(close.span);
-        Ok(Some(SchemaDispatch {
-            pattern: SchemaVersionPattern::Literal(version),
-            span,
-        }))
+        Ok(value)
     }
 
     fn parse_agent_decl(&mut self) -> Result<AgentDecl, CompileError> {

@@ -1715,15 +1715,27 @@ pub struct SchemaDispatch {
 }
 
 /// The pattern a `via schema(...)` clause matches `env.schemaVersion`
-/// against. A closed set of one variant today — literal only, mirroring
-/// `@schema(N)`'s own permissive-parse-then-checker-validate split (a
-/// non-positive value is a checker error, not a parse error, for the same
-/// diagnostic style). A future slice's range patterns (`via schema(2..)`)
-/// are additive to this enum, not a breaking rename of every match site
-/// this slice creates.
+/// against, mirroring `@schema(N)`'s own permissive-parse-then-checker-
+/// validate split (a non-positive bound is a checker error, not a parse
+/// error, for the same diagnostic style). Slice 4 (#985) shipped `Literal`
+/// only; slice 4b (#990) adds the range/wildcard variants, additive to this
+/// enum rather than a breaking rename of any existing match site. Bounds
+/// are inclusive on both ends, matching the `InRange(lo, hi)` refinement
+/// predicate's own convention.
 #[derive(Debug, Clone)]
 pub enum SchemaVersionPattern {
+    /// `via schema(N)` — exact match.
     Literal(i64),
+    /// `via schema(v..)` — `schemaVersion >= v`.
+    OpenAbove(i64),
+    /// `via schema(..v)` — `schemaVersion <= v`.
+    OpenBelow(i64),
+    /// `via schema(v1..v2)` — `v1 <= schemaVersion <= v2`, inclusive both ends.
+    Closed(i64, i64),
+    /// `via schema(_)` — matches any version; identical in effect to
+    /// omitting the clause, written for symmetry when a service lists
+    /// several sibling `via schema(...)` clauses.
+    Wildcard,
 }
 
 /// The right-hand side of a `type` declaration. In v0/v0.1 only the
