@@ -811,6 +811,16 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
           node-version: "20"
+      # `npm audit` on Node 20's bundled npm (10.x) still falls back to npm's
+      # now-retired `/audits/quick` endpoint when the bulk advisory request
+      # doesn't go through, producing a confusing "this endpoint is being
+      # retired" failure instead of a real audit result. npm 11 dropped that
+      # fallback and audits via the bulk endpoint only. Exactly version-pinned
+      # (matching release.yml's npm bump) since a global CLI install has no
+      # lockfile/commit-hash to pin against — Scorecard Pinned-Dependencies
+      # accepted risk, #828.
+      - name: Update npm
+        run: npm install -g npm@11.18.0
       - name: Audit
         run: npm audit --audit-level=high
 
