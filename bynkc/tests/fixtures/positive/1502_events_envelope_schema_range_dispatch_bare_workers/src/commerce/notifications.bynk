@@ -1,0 +1,27 @@
+context commerce.notifications
+
+consumes commerce.order
+consumes bynk { Logger }
+
+-- Events track slice 4b (#990), Cloudflare Workers target: both handlers
+-- stay bare (`on event(e: E)`, no declared `env: EventEnvelope`), pinning
+-- the workers-path `emit_event_wrapper`'s `wants_envelope` widened
+-- condition (`bynk-emit/src/emitter/workers.rs`) for the two new IR shapes
+-- that most exercise it — `Closed` (still emits a runtime guard) and
+-- `Wildcard` (emits none at all, but still needs the envelope forwarded
+-- positionally, since a bare handler's synthetic `env` parameter is
+-- unconditional on *any* `via schema(...)` clause being present). Slice 4's
+-- own #1232 fixture only pins the Bundle-target dispatch path for
+-- `Literal`; this fixture is that one's workers-target, range/wildcard
+-- analogue.
+service OnMid from Events(PaymentConfirmed) via schema(2..4) {
+  on event(e: PaymentConfirmed) -> Effect[()] given Logger {
+    Logger.info(e.orderId)
+  }
+}
+
+service OnAny from Events(PaymentConfirmed) via schema(_) {
+  on event(e: PaymentConfirmed) -> Effect[()] given Logger {
+    Logger.info(e.orderId)
+  }
+}

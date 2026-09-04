@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "provides": {
+    "markPaid": "f754ed184415d345"
+  },
+  "expects": {}
+}
