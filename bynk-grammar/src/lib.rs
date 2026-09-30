@@ -423,6 +423,10 @@ mod tests {
         // Events track slice 4 (spine #936) added: schema_dispatch_clause
         // (the `via schema(N)` envelope-version dispatch clause; nested
         // inside `service_protocol`'s Events arm, extended in place). Net +1.
+        // Events track slice 4b (#990) widened schema_dispatch_clause's own
+        // `version` field in place (literal-only -> literal/open-above/
+        // open-below/closed/wildcard), reusing the existing `..` token and
+        // `wildcard_pattern` rule — no new named rule. Net +0.
         assert_eq!(rules.len(), 151);
         assert!(rules.iter().any(|r| r == "http_handler"));
         assert!(rules.iter().any(|r| r == "_type_ref"));

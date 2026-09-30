@@ -206,3 +206,193 @@ context commerce.order {
           body: (block
             tail: (effect_pure_expr
               (unit_literal))))))))
+
+
+==========================
+via schema(v..) open-above dispatch clause (slice 4b, #990)
+==========================
+
+context commerce.order {
+  event PaymentConfirmed = {
+    orderId: String,
+  }
+
+  service OnLater from Events(PaymentConfirmed) via schema(2..) {
+    on event(e: PaymentConfirmed) -> Effect[()] {
+      Effect.pure(())
+    }
+  }
+}
+
+--------------------------
+
+(source_file
+  (context_decl
+    name: (qualified_name
+      (identifier)
+      (identifier))
+    (event_decl
+      name: (identifier)
+      body: (record_type
+        (record_field
+          name: (identifier)
+          type: (base_type))))
+    (service_decl
+      name: (identifier)
+      protocol: (service_protocol
+        event_type: (identifier)
+        schema_dispatch: (schema_dispatch_clause
+          version: (number_literal)))
+      (handler
+        (event_handler
+          (param
+            name: (identifier)
+            type: (identifier))
+          return_type: (generic_type_ref
+            name: (builtin_type)
+            arg: (unit_type))
+          body: (block
+            tail: (effect_pure_expr
+              (unit_literal))))))))
+
+==========================
+via schema(..v) open-below dispatch clause (slice 4b, #990)
+==========================
+
+context commerce.order {
+  event PaymentConfirmed = {
+    orderId: String,
+  }
+
+  service OnEarlier from Events(PaymentConfirmed) via schema(..4) {
+    on event(e: PaymentConfirmed) -> Effect[()] {
+      Effect.pure(())
+    }
+  }
+}
+
+--------------------------
+
+(source_file
+  (context_decl
+    name: (qualified_name
+      (identifier)
+      (identifier))
+    (event_decl
+      name: (identifier)
+      body: (record_type
+        (record_field
+          name: (identifier)
+          type: (base_type))))
+    (service_decl
+      name: (identifier)
+      protocol: (service_protocol
+        event_type: (identifier)
+        schema_dispatch: (schema_dispatch_clause
+          version: (number_literal)))
+      (handler
+        (event_handler
+          (param
+            name: (identifier)
+            type: (identifier))
+          return_type: (generic_type_ref
+            name: (builtin_type)
+            arg: (unit_type))
+          body: (block
+            tail: (effect_pure_expr
+              (unit_literal))))))))
+
+==========================
+via schema(v1..v2) closed dispatch clause (slice 4b, #990)
+==========================
+
+context commerce.order {
+  event PaymentConfirmed = {
+    orderId: String,
+  }
+
+  service OnMiddle from Events(PaymentConfirmed) via schema(2..4) {
+    on event(e: PaymentConfirmed) -> Effect[()] {
+      Effect.pure(())
+    }
+  }
+}
+
+--------------------------
+
+(source_file
+  (context_decl
+    name: (qualified_name
+      (identifier)
+      (identifier))
+    (event_decl
+      name: (identifier)
+      body: (record_type
+        (record_field
+          name: (identifier)
+          type: (base_type))))
+    (service_decl
+      name: (identifier)
+      protocol: (service_protocol
+        event_type: (identifier)
+        schema_dispatch: (schema_dispatch_clause
+          version: (number_literal)
+          version: (number_literal)))
+      (handler
+        (event_handler
+          (param
+            name: (identifier)
+            type: (identifier))
+          return_type: (generic_type_ref
+            name: (builtin_type)
+            arg: (unit_type))
+          body: (block
+            tail: (effect_pure_expr
+              (unit_literal))))))))
+
+==========================
+via schema(_) wildcard dispatch clause (slice 4b, #990)
+==========================
+
+context commerce.order {
+  event PaymentConfirmed = {
+    orderId: String,
+  }
+
+  service OnAnyVersion from Events(PaymentConfirmed) via schema(_) {
+    on event(e: PaymentConfirmed) -> Effect[()] {
+      Effect.pure(())
+    }
+  }
+}
+
+--------------------------
+
+(source_file
+  (context_decl
+    name: (qualified_name
+      (identifier)
+      (identifier))
+    (event_decl
+      name: (identifier)
+      body: (record_type
+        (record_field
+          name: (identifier)
+          type: (base_type))))
+    (service_decl
+      name: (identifier)
+      protocol: (service_protocol
+        event_type: (identifier)
+        schema_dispatch: (schema_dispatch_clause
+          version: (wildcard_pattern)))
+      (handler
+        (event_handler
+          (param
+            name: (identifier)
+            type: (identifier))
+          return_type: (generic_type_ref
+            name: (builtin_type)
+            arg: (unit_type))
+          body: (block
+            tail: (effect_pure_expr
+              (unit_literal))))))))

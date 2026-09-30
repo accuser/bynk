@@ -448,6 +448,24 @@ MVP-first. Each slice is an ordinary increment proposal, a sub-issue of the spin
   exactly like slice 1's payload pattern already does — the design notes'
   clean V1/V2-or-later worked example *reads* mutually exclusive but was
   never statically enforced as such, before or after this slice.
+- **Slice 4b — `via schema(...)` range dispatch — SHIPPED (#990).** The
+  range half slice 4 split out: `via schema(v..)` (open-above), `via
+  schema(..v)` (open-below), `via schema(v1..v2)` (closed, inclusive both
+  ends — matching `InRange(lo, hi)`'s own `[lo, hi]` convention), and an
+  explicit `via schema(_)` wildcard (equivalent to omitting the clause,
+  useful for symmetry across sibling clauses). Reuses the pre-existing `..`
+  (`DotDot`) and `_` (`Underscore`) tokens/rules — no new lexer tokens, no
+  new tree-sitter rule (`schema_dispatch_clause`'s own `version` field
+  widened in place). Each bound independently must be a positive `Int`
+  literal (the same `bynk.event.bad_schema_dispatch` code slice 4 already
+  registered); a `Closed(lo, hi)` with `lo > hi` is additionally rejected
+  as an always-empty range. `Wildcard` still triggers the synthetic-
+  envelope-parameter plumbing slice 4 introduced (a bare `on event(e: E)`
+  handler under `via schema(_)` still gets `env.schemaVersion` reachable),
+  even though it emits no runtime guard at all. No new cross-subscriber
+  ambiguity check — same policy as slice 4 and slice 1's payload pattern.
+  The generalised `via <field>(pattern)` grammar remains split to a future,
+  still-unfiled slice.
 
 **Not slices of this track** (moved to the future replay track, §3.6): replay /
 backfill-from-log, the durable event log substrate, and the inherited actors Q8
@@ -642,6 +660,30 @@ receives *exactly* the emissions its pattern admits.
   (#985). Nested inside the `Events` protocol's grammar arm; no cross-
   subscriber ambiguity check (same policy as slice 1's payload pattern);
   range patterns split to unfiled slice 4b (see §4).
+- [x] Slice 4b — `via schema(...)` range dispatch (#990). `v..`/`..v`/
+  `v1..v2` (inclusive both ends) and an explicit `_` wildcard; reuses the
+  pre-existing `..`/`_` tokens, no new grammar rule; same no-ambiguity-check
+  policy (see §4).
+- [x] **Defect, present since slice 4 (#985), found and fixed during slice 4b
+  (#990), Workers target only:** `handlers.ts` never imported `EventEnvelope`
+  for a bare `on event(e: E)` handler under *any* `via schema(...)` clause —
+  the synthetic envelope parameter `emit_service` inserts at emission time
+  never appears in the handler's own `h.params`, so
+  `collect_external_references` (`bynk-emit/src/emitter.rs`) — which walks
+  raw AST params/body to decide what a module needs to import — never saw
+  it. A `tsc --strict` `Cannot find name 'EventEnvelope'`, invisible until
+  now because no Workers-target `via schema(...)` fixture with an
+  all-bare-handler subscriber family existed (slice 4's own #1232 fixture is
+  Bundle-target; its one bare handler shares a module with a sibling that
+  *does* declare `env` explicitly, incidentally satisfying the import for
+  both). Fixed by hand-registering the reference in
+  `collect_external_references`'s `CommonsItem::Service` arm, mirroring how
+  its own `CommonsItem::Messages` arm already registers `LocaleTag`/
+  `Message`/`MessageArg` — a reference the generated code needs even though
+  no expression in the file's *source* names it. Proven by
+  `bynkc/tests/fixtures/positive/1502_events_envelope_schema_range_dispatch_
+  bare_workers` (Workers target, two all-bare-handler subscribers) under
+  `BYNK_REQUIRE_TSC=1 cargo test -p bynkc --test tsc_verify`.
 - [ ] (Not a slice of this track) Replay / backfill + actors Q8 — future track (§3.6)
 
 ## 8. Done when
@@ -728,8 +770,27 @@ receives *exactly* the emissions its pattern admits.
   each version's single emission reaching only its matching `via`
   clause — with the matching subscriber for version 1 declaring no `env`
   at all, the only way to prove the synthetic-parameter plumbing actually
-  threads the value through. Range patterns (`via schema(2..)`) are an
-  unfiled future slice 4b.
+  threads the value through. Range patterns shipped in slice 4b (#990),
+  proven the same way.
+- [x] `via schema(...)` range/wildcard dispatch ships. **Slice 4b done**
+  (#990): `via schema(v..)`/`via schema(..v)`/`via schema(v1..v2)`
+  (inclusive both ends, matching `InRange(lo, hi)`'s own convention) and an
+  explicit `via schema(_)` wildcard, reusing the pre-existing `..`/`_`
+  tokens — no new lexer tokens, no new tree-sitter rule. Each bound
+  independently must be a positive `Int` literal (the same
+  `bynk.event.bad_schema_dispatch` code); a `Closed(lo, hi)` with `lo > hi`
+  is additionally rejected as an always-empty range. `Wildcard` still gets
+  the synthetic-envelope-parameter plumbing slice 4 introduced (so a bare
+  `on event(e: E)` handler under `via schema(_)` still has
+  `env.schemaVersion` reachable) but emits no runtime guard at all —
+  identical codegen to no `via` clause. No new cross-subscriber ambiguity
+  check. Proven behaviourally, extending slice 4's own test: four sibling
+  subscribers (`schema(1)`, `schema(2..4)`, `schema(5..)`, `schema(_)`),
+  compiled at three or more schema versions, asserting each version's
+  emission reaches its version-specific subscriber *and* the wildcard
+  subscriber (which fires unconditionally, not "one of four" — deliver-
+  and-filter with no ambiguity check means both fire independently).
+  Negative fixture proves the inverted-closed-range rejection.
 - [ ] The doc is explicit that **replay/backfill and the actors Q8**
   ([#260](https://github.com/accuser/bynk/issues/260)) are **not** delivered by
   this track — named as a future track with its durable-`Idempotency` dependency,

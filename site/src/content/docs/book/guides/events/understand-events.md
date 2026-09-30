@@ -11,9 +11,9 @@ This page is the mental model for the emit/subscribe core (slice 0),
 subscription pattern filtering (slice 1), the runtime envelope (slice 2),
 event field defaults (slice 3a), `@schema(N)` event versioning (slice 3b),
 the cross-build schema registry that verifies it (slice 3c), and
-version-aware dispatch with `via schema(N)` (slice 4). For the track's
-remaining scope (replay, range-valued `via schema(...)` patterns), see
-[Versioning & roadmap](/book/about/versioning-and-roadmap/).
+version-aware dispatch with `via schema(...)` (slice 4, and its range/
+wildcard shapes in slice 4b). For the track's remaining scope (replay),
+see [Versioning & roadmap](/book/about/versioning-and-roadmap/).
 
 ## The three pieces
 
@@ -274,7 +274,7 @@ you, silently, embedding whatever it computes into `env.schemaVersion`.
 `@schema` is the only annotation an event accepts today — any other name is
 rejected, and `@schema` itself may appear at most once per event.
 
-## Dispatching by version with `via schema(N)`
+## Dispatching by version with `via schema(...)`
 
 A subscriber can filter delivery by the envelope's `schemaVersion`, using a
 `via` clause after the `from Events(...)` header's closing `)`:
@@ -286,25 +286,37 @@ service OnPaymentV1 from Events(PaymentConfirmed) via schema(1) {
   }
 }
 
-service OnPaymentV2 from Events(PaymentConfirmed) via schema(2) {
+service OnPaymentLater from Events(PaymentConfirmed) via schema(2..) {
   on event(e: PaymentConfirmed) -> Effect[()] {
-    -- handles the shape after the schema bumped to 2
+    -- handles version 2 or later
   }
 }
 ```
 
-`N` must be a positive `Int` literal, matched against `env.schemaVersion` by
-exact equality. A subscriber with no `via` clause receives every version,
-same as before this slice. `via schema(...)` is independent of the payload
-pattern from [Filtering delivery with a
+Five argument shapes are accepted, every bound inclusive:
+
+- `via schema(N)` — exact match, `schemaVersion == N`.
+- `via schema(v..)` — open-above, `schemaVersion >= v`.
+- `via schema(..v)` — open-below, `schemaVersion <= v`.
+- `via schema(v1..v2)` — closed, `v1 <= schemaVersion <= v2`.
+- `via schema(_)` — wildcard, matches any version — the same effect as
+  omitting the clause entirely, useful for symmetry when a service lists
+  several sibling `via schema(...)` clauses and you want every case written
+  explicitly rather than leaving one implicit.
+
+Each bound must be a positive `Int` literal, and a closed range's low bound
+must not exceed its high bound (`via schema(5..2)` is rejected — an
+always-empty range). A subscriber with no `via` clause receives every
+version, same as `via schema(_)`. `via schema(...)` is independent of the
+payload pattern from [Filtering delivery with a
 pattern](#filtering-delivery-with-a-pattern) — a service may carry either,
 both, or neither, in any combination.
 
 You never need to declare `env: EventEnvelope` yourself just to use `via
 schema(...)` — the compiler threads the envelope's version into the guard
-whether or not your handler's own parameter list mentions it. Declare `env`
-anyway if your handler body also needs another envelope field (`eventId`,
-`publisherId`, `emittedAt`).
+whether or not your handler's own parameter list mentions it, for every
+shape including `_`. Declare `env` anyway if your handler body also needs
+another envelope field (`eventId`, `publisherId`, `emittedAt`).
 
 **Delivery is still deliver-and-filter, unchanged.** The fan-out mechanism
 delivers every emission to every subscriber of the event type regardless of
@@ -315,11 +327,9 @@ are not flagged as ambiguous** — `via schema(1)` on two different services
 both fire for a version-1 emission, and there is no compiler check pushing
 you toward mutually-exclusive ranges. Keep sibling `via schema(...)` clauses
 disjoint by convention if you want exactly-one-handler-per-version
-semantics; the compiler does not enforce it for you.
-
-Only a positive integer literal is accepted today — range patterns like
-`via schema(2..)` (`schemaVersion` 2 or later) are a future addition, not
-yet built.
+semantics; the compiler does not enforce it for you. In particular, `via
+schema(_)` fires on *every* version alongside whichever other clause also
+matches — it is not "one of the sibling clauses picked," it is unconditional.
 
 ## Only the declaring context may emit
 

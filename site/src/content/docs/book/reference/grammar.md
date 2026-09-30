@@ -886,20 +886,27 @@ by the checker — no nested sub-patterns in this slice.
 
 {{#grammar schema_dispatch_clause}}
 
-`via schema(N)` on a `from Events(...)` subscription header (Events track
-slice 4, spine #936), after the closing `)` — dispatch by the envelope's
-`schemaVersion` rather than the payload, parallel to
-[`event_pattern`](#rule-event_pattern) but independent of it (a service may
-carry either, both, or neither). Nested inside the `Events` protocol arm, so
-`via` on `http`/`cron`/`queue`/`websocket` is a syntax error, not a checker
-diagnostic. Delivery is deliver-and-filter, unchanged: every emission still
-reaches every subscriber of the event type, and this is one more
-independently-evaluated guard inside the subscriber's own generated
-handler — sibling subscribers with the same or overlapping `N` are not
-diagnosed as ambiguous. `N`'s legality (a positive `Int` literal) is a
-checker concern (`bynk.event.bad_schema_dispatch`), not a grammar one.
-Literal only in this slice; a range pattern (`via schema(2..)`) is a future
-slice's unbuilt grammar.
+`via schema(...)` on a `from Events(...)` subscription header (Events track
+slice 4, spine #936; slice 4b, #990, adds the range/wildcard shapes), after
+the closing `)` — dispatch by the envelope's `schemaVersion` rather than
+the payload, parallel to [`event_pattern`](#rule-event_pattern) but
+independent of it (a service may carry either, both, or neither). Nested
+inside the `Events` protocol arm, so `via` on `http`/`cron`/`queue`/
+`websocket` is a syntax error, not a checker diagnostic. Delivery is
+deliver-and-filter, unchanged: every emission still reaches every
+subscriber of the event type, and this is one more independently-evaluated
+guard inside the subscriber's own generated handler — sibling subscribers
+with the same or overlapping coverage are not diagnosed as ambiguous.
+
+Five argument shapes are accepted: `N` (exact match), `v..` (open-above,
+`schemaVersion >= v`), `..v` (open-below, `schemaVersion <= v`), `v1..v2`
+(closed, inclusive both ends — `v1 <= schemaVersion <= v2`), and `_`
+(wildcard, matching any version — equivalent to omitting the clause
+entirely, useful when a service lists several sibling `via schema(...)`
+clauses and wants every case written explicitly). Each bound's legality (a
+positive `Int` literal, and for a closed range, a low bound not exceeding
+the high bound) is a checker concern (`bynk.event.bad_schema_dispatch`),
+not a grammar one.
 
 **See also.** [Understand events](/book/guides/events/understand-events/).
 

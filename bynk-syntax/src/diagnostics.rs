@@ -564,7 +564,7 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     ),
     d(
         "bynk.event.bad_schema_dispatch",
-        "A `via schema(...)` dispatch clause's argument is malformed — it must be a single, positive, positional `Int` literal.",
+        "A `via schema(...)` dispatch clause's argument is malformed — each bound must be a positive `Int` literal, and a closed range's low bound must not exceed its high bound.",
     ),
     d(
         "bynk.event.bad_schema_version",

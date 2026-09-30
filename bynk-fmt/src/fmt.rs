@@ -2633,11 +2633,16 @@ fn event_pattern_value_src(v: &EventPatternValue) -> String {
     }
 }
 
-/// Render a `via schema(N)` dispatch clause (Events track slice 4, spine
-/// #936), written after the `from Events(...)` header's closing `)`.
+/// Render a `via schema(...)` dispatch clause (Events track slice 4, spine
+/// #936; slice 4b, #990, adds the range/wildcard shapes), written after the
+/// `from Events(...)` header's closing `)`.
 fn schema_dispatch_src(d: &SchemaDispatch) -> String {
     match &d.pattern {
         SchemaVersionPattern::Literal(n) => format!("via schema({n})"),
+        SchemaVersionPattern::OpenAbove(n) => format!("via schema({n}..)"),
+        SchemaVersionPattern::OpenBelow(n) => format!("via schema(..{n})"),
+        SchemaVersionPattern::Closed(lo, hi) => format!("via schema({lo}..{hi})"),
+        SchemaVersionPattern::Wildcard => "via schema(_)".to_string(),
     }
 }
 
@@ -3804,6 +3809,53 @@ mod tests {
         let out = fmt(src);
         assert!(
             out.contains("from Events(PaymentConfirmed { region: Domestic, .. }) via schema(2)"),
+            "{out}"
+        );
+        assert_eq!(out, fmt(&out), "not idempotent: {out}");
+    }
+
+    // Events slice 4b (#990): each new `via schema(...)` shape round-trips
+    // after the `from Events(...)` header's closing `)`, one test per shape
+    // matching this file's per-fact granularity elsewhere.
+    #[test]
+    fn via_schema_open_above_formats_and_is_idempotent() {
+        let src = "context commerce.order {\nservice OnPayment from Events(PaymentConfirmed) via schema(2..) {\non event(e: PaymentConfirmed) -> Effect[()] {\nEffect.pure(())\n}\n}\n}";
+        let out = fmt(src);
+        assert!(
+            out.contains("from Events(PaymentConfirmed) via schema(2..)"),
+            "{out}"
+        );
+        assert_eq!(out, fmt(&out), "not idempotent: {out}");
+    }
+
+    #[test]
+    fn via_schema_open_below_formats_and_is_idempotent() {
+        let src = "context commerce.order {\nservice OnPayment from Events(PaymentConfirmed) via schema(..4) {\non event(e: PaymentConfirmed) -> Effect[()] {\nEffect.pure(())\n}\n}\n}";
+        let out = fmt(src);
+        assert!(
+            out.contains("from Events(PaymentConfirmed) via schema(..4)"),
+            "{out}"
+        );
+        assert_eq!(out, fmt(&out), "not idempotent: {out}");
+    }
+
+    #[test]
+    fn via_schema_closed_formats_and_is_idempotent() {
+        let src = "context commerce.order {\nservice OnPayment from Events(PaymentConfirmed) via schema(2..4) {\non event(e: PaymentConfirmed) -> Effect[()] {\nEffect.pure(())\n}\n}\n}";
+        let out = fmt(src);
+        assert!(
+            out.contains("from Events(PaymentConfirmed) via schema(2..4)"),
+            "{out}"
+        );
+        assert_eq!(out, fmt(&out), "not idempotent: {out}");
+    }
+
+    #[test]
+    fn via_schema_wildcard_formats_and_is_idempotent() {
+        let src = "context commerce.order {\nservice OnPayment from Events(PaymentConfirmed) via schema(_) {\non event(e: PaymentConfirmed) -> Effect[()] {\nEffect.pure(())\n}\n}\n}";
+        let out = fmt(src);
+        assert!(
+            out.contains("from Events(PaymentConfirmed) via schema(_)"),
             "{out}"
         );
         assert_eq!(out, fmt(&out), "not idempotent: {out}");

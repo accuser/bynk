@@ -42,9 +42,9 @@ use bynk_lower::{
     lower_store_field_shape_ir, lower_type_shape_ir,
 };
 use bynk_syntax::ast::{
-    AgentDecl, BaseType, BinOp, Block, CommonsItem, Expr, ExprKind, FnDecl, FnName, Ident,
-    InterpPart, MatchBody, MessagesDecl, ObservationMatcher, Param, Pattern, PredKind, ServiceDecl,
-    Statement, TypeBody, TypeDecl, TypeRef, expr_children,
+    AgentDecl, BaseType, BinOp, Block, CommonsItem, Expr, ExprKind, FnDecl, FnName, HandlerKind,
+    Ident, InterpPart, MatchBody, MessagesDecl, ObservationMatcher, Param, Pattern, PredKind,
+    ServiceDecl, ServiceProtocol, Statement, TypeBody, TypeDecl, TypeRef, expr_children,
 };
 
 pub mod contracts;
@@ -1934,6 +1934,32 @@ fn collect_external_references(commons: &TypedCommons, ctx: &EmitProjectCtx) -> 
                     }
                     collect_refs_in_typeref(&h.return_type, &local_to_file, ctx, &mut refs);
                     collect_refs_in_block(&h.body, &local_to_file, commons, ctx, &mut refs);
+                }
+                // Events track, slice 4 (spine #936, #985): a bare
+                // `on event(e: E)` handler under a `via schema(...)` clause
+                // gets a *synthetic* `EventEnvelope` parameter inserted at
+                // emission time (`bynk-emit/src/emitter/emit.rs`'s
+                // `emit_service`) — it never appears in `h.params` above, so
+                // the walk over real params/body just above never sees it.
+                // Hand-registered here the same way `CommonsItem::Messages`
+                // registers `LocaleTag`/`Message`/`MessageArg` above: a
+                // reference the generated code needs even though no
+                // expression in this file's *source* names it. Missing this
+                // meant the Workers target's `handlers.ts` never imported
+                // `EventEnvelope` for a subscriber that declares no `env`
+                // itself — a `tsc --strict` `Cannot find name 'EventEnvelope'`
+                // that only slice 4b's own Workers-target fixture (#990)
+                // first exercised (Bundle target's own import mechanism
+                // takes a different path that happened not to need this).
+                if let ServiceProtocol::Events {
+                    schema_dispatch: Some(_),
+                    ..
+                } = &s.protocol
+                    && s.handlers
+                        .iter()
+                        .any(|h| matches!(h.kind, HandlerKind::Event) && h.params.len() != 2)
+                {
+                    record_name_ref("EventEnvelope", &local_to_file, ctx, &mut refs);
                 }
             }
             CommonsItem::Agent(a) => {

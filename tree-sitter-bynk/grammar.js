@@ -799,14 +799,39 @@ module.exports = grammar({
     // than nested inside it. Nested inside the `Events` choice arm, not a
     // free-standing clause any protocol could carry — `via` on `http`/
     // `cron`/`queue`/`websocket` is a syntax error, not a checker
-    // diagnostic. Literal only (v1 of this clause); a range pattern
-    // (`via schema(2..)`) is unbuilt grammar, left to a future slice.
+    // diagnostic.
+    //
+    // Slice 4b (#990) widens the argument position from literal-only to
+    // five shapes: `N` (literal), `v..` (open-above), `..v` (open-below),
+    // `v1..v2` (closed), `_` (wildcard). Reuses the `..` token slice 1
+    // already added (previously only a record-pattern's rest marker) and
+    // `$.wildcard_pattern` (already used by match-arm/refinement patterns)
+    // — no new lexer tokens or rules. All five stay inline in one `field`
+    // rather than a new named sub-rule, so this is still one rule for
+    // `bynk-grammar`'s coverage-count purposes. The two-bound closed arm is
+    // ordered before the one-bound open-above arm so the generator prefers
+    // the longer alternative on their shared `number_literal ".."` prefix.
     schema_dispatch_clause: ($) =>
       seq(
         "via",
         "schema",
         "(",
-        field("version", seq(optional("-"), $.number_literal)),
+        field(
+          "version",
+          choice(
+            seq(
+              optional("-"),
+              $.number_literal,
+              "..",
+              optional("-"),
+              $.number_literal,
+            ),
+            seq(optional("-"), $.number_literal, ".."),
+            seq("..", optional("-"), $.number_literal),
+            $.wildcard_pattern,
+            seq(optional("-"), $.number_literal),
+          ),
+        ),
         ")",
       ),
     event_pattern_field: ($) =>

@@ -39,24 +39,25 @@ the planning backlogs (`bynk-tooling-proposal-queue.md`,
   standard-library surface — one single-purpose increment at a time.
   Language/stdlib work and platform-adapter work never share an increment
   (decision record 0023 in `design/decisions/`).
-- **Events.** Slices 0–2, 3a–3c, and 4 have shipped — `event` declarations,
-  `given Events` emission with owner-only enforcement, `from Events(E)`
-  subscription across contexts on every platform, structural pattern
-  filtering on the subscription header (`from Events(E { field: value, .. })`,
-  delivery filtering only — no static narrowing of the handler's parameter),
-  a runtime envelope (`on event(e: E, env: EventEnvelope)`) enabling the
-  `Idempotency`-based dedup idiom for effectful subscribers, field defaults
-  on an event's own fields so an older wire event missing a newer key still
-  deserialises, an optional `@schema(N)` annotation, the cross-build
-  schema registry (`bynk.schema.lock`) that computes each event's version
-  from its build history — auto-bumping on a purely additive shape change,
-  failing the build on anything else, and verifying a declared `@schema(N)`
-  against the computed value rather than trusting it outright — and
-  `via schema(N)` version-aware dispatch, filtering delivery by the
-  envelope's version. See
+- **Events.** Slices 0–2, 3a–3c, 4, and 4b have shipped — `event`
+  declarations, `given Events` emission with owner-only enforcement, `from
+  Events(E)` subscription across contexts on every platform, structural
+  pattern filtering on the subscription header (`from Events(E { field:
+  value, .. })`, delivery filtering only — no static narrowing of the
+  handler's parameter), a runtime envelope (`on event(e: E, env:
+  EventEnvelope)`) enabling the `Idempotency`-based dedup idiom for
+  effectful subscribers, field defaults on an event's own fields so an
+  older wire event missing a newer key still deserialises, an optional
+  `@schema(N)` annotation, the cross-build schema registry
+  (`bynk.schema.lock`) that computes each event's version from its build
+  history — auto-bumping on a purely additive shape change, failing the
+  build on anything else, and verifying a declared `@schema(N)` against the
+  computed value rather than trusting it outright — and `via schema(...)`
+  version-aware dispatch, filtering delivery by the envelope's version,
+  literal, range (`v..`, `..v`, `v1..v2`, inclusive both ends), or an
+  explicit `_` wildcard. See
   [Understand events](/book/guides/events/understand-events/).
-  Range-valued `via schema(...)` patterns (a future slice 4b) and
-  replay/backfill (split to a separate future track) are the track's only
+  Replay/backfill (split to a separate future track) is the track's only
   remaining open work.
 - **Editor tooling.** Deepening the `bynkc-lsp` experience — completion,
   navigation, and diagnostics — and the VS Code extension that surfaces it.

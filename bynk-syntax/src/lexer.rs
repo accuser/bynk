@@ -1206,6 +1206,20 @@ mod tests {
     }
 
     #[test]
+    fn digit_adjacent_dot_dot_lexes_as_int_dotdot_int() {
+        // Events track slice 4b (#990): `via schema(v1..v2)` relies on
+        // `2..4` lexing as `IntLit("2") DotDot IntLit("4")`, not a
+        // `FloatLit` swallowing the leading digit and dot — `FloatLit`
+        // requires a digit on *both* sides of exactly one `.`, so a second
+        // `.` immediately after the first blocks it. Same reasoning covers
+        // the open-above/open-below shapes (`2..`, `..4`).
+        use TokenKind::*;
+        assert_eq!(kinds("2..4"), vec![IntLit, DotDot, IntLit]);
+        assert_eq!(kinds("2.."), vec![IntLit, DotDot]);
+        assert_eq!(kinds("..4"), vec![DotDot, IntLit]);
+    }
+
+    #[test]
     fn line_comments_emitted_as_trivia() {
         // v1.1: line comments are preserved as Comment tokens so the
         // formatter can attach and re-emit them.

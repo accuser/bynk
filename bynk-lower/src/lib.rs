@@ -66,8 +66,8 @@ use bynk_syntax::ast::{
 
 use bynk_ir::{
     ActorSeamIr, CacheIr, CapRefIr, ConstVal, EventPatternIr, EventPatternValueIr,
-    EventSubscriberShape, FnSig, IrHandlerKind, IrHttpMethod, OpSig, ProtocolIr, StoreFieldIr,
-    StoreKindIr, TypeShape,
+    EventSubscriberShape, FnSig, IrHandlerKind, IrHttpMethod, OpSig, ProtocolIr, SchemaDispatchIr,
+    StoreFieldIr, StoreKindIr, TypeShape,
 };
 
 /// The resolution context the AST-analysis helpers below share: the checked
@@ -613,9 +613,18 @@ pub fn lower_protocol_ir_from_commons(
                 .resolve_type_ref(event_type)
                 .unwrap_or_else(|| cx.unit_ty()),
             pattern: pattern.as_ref().map(lower_event_pattern_ir),
-            schema_dispatch: schema_dispatch.as_ref().map(|d| {
-                let bynk_syntax::ast::SchemaVersionPattern::Literal(version) = d.pattern;
-                version
+            schema_dispatch: schema_dispatch.as_ref().map(|d| match d.pattern {
+                bynk_syntax::ast::SchemaVersionPattern::Literal(v) => SchemaDispatchIr::Literal(v),
+                bynk_syntax::ast::SchemaVersionPattern::OpenAbove(v) => {
+                    SchemaDispatchIr::OpenAbove(v)
+                }
+                bynk_syntax::ast::SchemaVersionPattern::OpenBelow(v) => {
+                    SchemaDispatchIr::OpenBelow(v)
+                }
+                bynk_syntax::ast::SchemaVersionPattern::Closed(lo, hi) => {
+                    SchemaDispatchIr::Closed(lo, hi)
+                }
+                bynk_syntax::ast::SchemaVersionPattern::Wildcard => SchemaDispatchIr::Wildcard,
             }),
         },
     }

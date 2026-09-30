@@ -1974,26 +1974,52 @@ fn check_event_pattern(
     }
 }
 
-/// Events track, slice 4 (spine #936): `via schema(N)`'s `N` must be a
-/// positive `Int` literal — the identical rule `@schema(N)` already
-/// enforces (`bynk.event.bad_schema_version`), reused under its own code
-/// since the two are unrelated syntax positions (an annotation on the
-/// event's own declaration vs. a clause on a subscriber's header).
+/// Events track, slice 4 (spine #936; slice 4b, #990, adds range/wildcard
+/// variants): each `via schema(...)` bound must be a positive `Int`
+/// literal — the identical rule `@schema(N)` already enforces
+/// (`bynk.event.bad_schema_version`), reused under its own code since the
+/// two are unrelated syntax positions (an annotation on the event's own
+/// declaration vs. a clause on a subscriber's header). A `Closed(lo, hi)`
+/// with `lo > hi` is additionally rejected as an always-empty range.
 fn check_schema_dispatch(
     dispatch: &SchemaDispatch,
     identity_path: &std::path::Path,
     errors: &mut ErrorSink,
 ) {
-    let SchemaVersionPattern::Literal(n) = &dispatch.pattern;
-    if *n <= 0 {
+    let malformed = |errors: &mut ErrorSink, message: String| {
         errors.push_for(
             Some(identity_path),
-            CompileError::new(
-                "bynk.event.bad_schema_dispatch",
-                dispatch.span,
-                "`via schema(...)`'s argument must be a positive `Int` literal",
-            ),
+            CompileError::new("bynk.event.bad_schema_dispatch", dispatch.span, message),
         );
+    };
+    match &dispatch.pattern {
+        SchemaVersionPattern::Literal(n)
+        | SchemaVersionPattern::OpenAbove(n)
+        | SchemaVersionPattern::OpenBelow(n) => {
+            if *n <= 0 {
+                malformed(
+                    errors,
+                    "`via schema(...)`'s argument must be a positive `Int` literal".to_string(),
+                );
+            }
+        }
+        SchemaVersionPattern::Closed(lo, hi) => {
+            if *lo <= 0 || *hi <= 0 {
+                malformed(
+                    errors,
+                    "`via schema(...)`'s argument must be a positive `Int` literal".to_string(),
+                );
+            } else if lo > hi {
+                malformed(
+                    errors,
+                    format!(
+                        "`via schema({lo}..{hi})` has its bounds inverted \
+                         (`{lo}` must be \u{2264} `{hi}`) — this range can never match"
+                    ),
+                );
+            }
+        }
+        SchemaVersionPattern::Wildcard => {}
     }
 }
 

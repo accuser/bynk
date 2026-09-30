@@ -2860,28 +2860,50 @@ pub(crate) fn emit_service(
             // early.
             body_smb.borrow_mut().shift_checkpoints(prologue.len());
         }
-        // Events track, slice 4 (spine #936): a `via schema(N)` guard,
+        // Events track, slice 4 (spine #936; slice 4b, #990, widens the
+        // comparison to range/wildcard shapes): a `via schema(...)` guard,
         // independent of and in addition to the payload-pattern guard above
         // — a service may carry either, both, or neither. Same
         // prologue technique, same three-delivery-path coverage. The
         // envelope binder is either the user's own declared `env` name or
-        // the synthetic one inserted above.
+        // the synthetic one inserted above. `Wildcard` emits no guard at
+        // all — identical codegen to the no-clause case — even though the
+        // synthetic envelope parameter above is still inserted, in case a
+        // sibling subscriber in the same family relies on it being present
+        // for a different variant.
         if let ProtocolIr::Events {
-            schema_dispatch: Some(version),
+            schema_dispatch: Some(dispatch),
             ..
         } = protocol
             && let Some(env_binder) = &schema_dispatch_env_binder
         {
-            let prologue = format!(
-                "{}if (!({env_binder}.schemaVersion === {version})) return undefined;\n",
-                " ".repeat(INDENT_STEP * 2)
-            );
-            body_out.insert_str(0, &prologue);
-            // #1363: same rebase as the subscriber-filter prologue above —
-            // a handler with both prologues shifts `body_smb`'s checkpoints
-            // twice, once per insert, matching the two lines actually
-            // prepended to `body_out`.
-            body_smb.borrow_mut().shift_checkpoints(prologue.len());
+            let cond = match dispatch {
+                bynk_ir::SchemaDispatchIr::Literal(v) => {
+                    Some(format!("{env_binder}.schemaVersion === {v}"))
+                }
+                bynk_ir::SchemaDispatchIr::OpenAbove(v) => {
+                    Some(format!("{env_binder}.schemaVersion >= {v}"))
+                }
+                bynk_ir::SchemaDispatchIr::OpenBelow(v) => {
+                    Some(format!("{env_binder}.schemaVersion <= {v}"))
+                }
+                bynk_ir::SchemaDispatchIr::Closed(lo, hi) => Some(format!(
+                    "{env_binder}.schemaVersion >= {lo} && {env_binder}.schemaVersion <= {hi}"
+                )),
+                bynk_ir::SchemaDispatchIr::Wildcard => None,
+            };
+            if let Some(cond) = cond {
+                let prologue = format!(
+                    "{}if (!({cond})) return undefined;\n",
+                    " ".repeat(INDENT_STEP * 2)
+                );
+                body_out.insert_str(0, &prologue);
+                // #1363: same rebase as the subscriber-filter prologue above —
+                // a handler with both prologues shifts `body_smb`'s checkpoints
+                // twice, once per insert, matching the two lines actually
+                // prepended to `body_out`.
+                body_smb.borrow_mut().shift_checkpoints(prologue.len());
+            }
         }
         // Append the deps parameter (may include surface field if the body
         // made cross-context calls). v0.47: a Bearer handler's deps also carries

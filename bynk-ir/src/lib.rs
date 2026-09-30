@@ -193,18 +193,34 @@ pub enum ProtocolIr {
     Events {
         event: TyId,
         pattern: Option<EventPatternIr>,
-        /// P6.40 (design/tracks/the-ir.md §6a): flattened to `Option<i64>` —
-        /// `SchemaVersionPattern` has exactly one variant (`Literal(i64)`),
-        /// so once a real consumer needed to match on it
-        /// (`emitter/emit.rs`'s `via schema(N)` guard prologue), mirroring
-        /// the single-payload `i64` directly was simpler than introducing a
-        /// one-variant IR-native enum purely to re-wrap it. A future range
-        /// pattern (`via schema(2..)`) widens this field's own shape when it
-        /// lands, not before. The `SchemaDispatch` wrapper itself stays
-        /// dropped — it carried only this `pattern` plus a parse-only
-        /// `span`.
-        schema_dispatch: Option<i64>,
+        /// P6.40 (design/tracks/the-ir.md §6a) flattened slice 4's
+        /// literal-only pattern to `Option<i64>`. Slice 4b (#990) widens
+        /// this to [`SchemaDispatchIr`], carrying every
+        /// [`bynk_syntax::ast::SchemaVersionPattern`] shape — `Wildcard`
+        /// still needs to be `Some(_)` here (not folded to `None`), because
+        /// presence, not comparison shape, drives the synthetic-envelope-
+        /// parameter plumbing in `emitter/emit.rs`: a bare `on event`
+        /// handler under `via schema(_)` still needs `env.schemaVersion`
+        /// reachable in case a sibling subscriber in the same family needs
+        /// it for a different variant sharing generated scaffolding. The
+        /// `SchemaDispatch` wrapper itself stays dropped — it carried only
+        /// this `pattern` plus a parse-only `span`.
+        schema_dispatch: Option<SchemaDispatchIr>,
     },
+}
+
+/// The resolved payload of `ProtocolIr::Events::schema_dispatch` (Events
+/// track, slice 4b, spine #936, #990) — field-for-field the same shapes as
+/// [`bynk_syntax::ast::SchemaVersionPattern`], minus its `Span` (no `Span`
+/// survives to the IR layer, matching every other field on
+/// [`ProtocolIr::Events`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SchemaDispatchIr {
+    Literal(i64),
+    OpenAbove(i64),
+    OpenBelow(i64),
+    Closed(i64, i64),
+    Wildcard,
 }
 
 /// #1226/#1187 slice 6: the two facts a service's own event-subscriber
