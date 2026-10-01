@@ -19,3 +19,4 @@ export const Money = {
     return Money.of(n);
   },
 };
+

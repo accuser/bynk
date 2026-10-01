@@ -16,3 +16,4 @@ export const Percent = {
     return Ok(value as Percent);
   },
 };
+

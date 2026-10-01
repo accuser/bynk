@@ -1834,7 +1834,7 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     ),
     dg(
         "bynk.types.catastrophic_regex",
-        "A `Matches` pattern can match the same text in exponentially many ways (nested or ambiguous repetition), or cannot be analysed, risking catastrophic backtracking (ReDoS).",
+        "A `Matches` pattern can match the same text in exponentially many ways (nested or ambiguous repetition, bounded or not), or cannot be analysed, risking catastrophic backtracking (ReDoS).",
         &["refinement"],
     ),
     dg(
@@ -2085,12 +2085,12 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     ),
     dg(
         "bynk.types.polynomial_regex",
-        "A `Matches` pattern can split the same text between two repetitions, so matching time grows polynomially with input length, and no `MaxLength` bounds the input.",
+        "A `Matches` pattern can split the same text between repetitions, so matching time grows polynomially with input length, and no length predicate bounds the input small enough for its degree.",
         &["refinement"],
     ),
     warn(dg(
         "bynk.types.polynomial_regex_capped",
-        "A `Matches` pattern's matching time grows polynomially with input length, but a `MaxLength` or `Length` predicate bounds the input (warning).",
+        "A `Matches` pattern's matching time grows polynomially with input length, but a `MaxLength` or `Length` predicate bounds the input small enough for its degree (warning).",
         &["refinement"],
     )),
     dg(

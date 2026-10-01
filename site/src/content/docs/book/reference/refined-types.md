@@ -44,12 +44,15 @@ denial-of-service risk):
 
 - `bynk.types.catastrophic_regex`: exponential ambiguity, such as nested
   repetition (`(a+)+`), overlapping alternatives (`(a|a)+`, `(\d|\d\d)+`) or a
-  bounded repeat inside a loop (`(a{2,3})+`). It also covers a regex the
+  bounded repeat inside a loop or of an ambiguous body (`(a{2,3})+`,
+  `(?:a|a){0,24}`). It also covers a regex the
   compiler cannot analyse, such as a backreference inside an unbounded repeat.
 - `bynk.types.polynomial_regex`: two repetitions that can split the same text
-  (`\d*\d*`). With a `MaxLength` or `Length` predicate in the same refinement it
-  is only a warning, `bynk.types.polynomial_regex_capped`, because length
-  predicates are always checked before `Matches`.
+  (`\d*\d*`). With a `MaxLength` or `Length` predicate in the same refinement
+  small enough for the pattern's degree (at most 3,162 characters for two
+  overlapping repetitions, 215 for three) it is only a warning,
+  `bynk.types.polynomial_regex_capped`, because length predicates are always
+  checked before `Matches`.
 
 `(foo|foobar)+` is accepted: its alternatives overlap, but each text splits into
 them only one way.

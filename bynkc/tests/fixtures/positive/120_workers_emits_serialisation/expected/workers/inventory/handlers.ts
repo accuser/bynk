@@ -128,3 +128,4 @@ export function deserialise_Result_StockItem_StockError(json: JsonValue, path: s
   }
   return Err({ kind: "StructuralMismatch", path, expected: "Ok | Err", actual: String(obj["kind"]) });
 }
+

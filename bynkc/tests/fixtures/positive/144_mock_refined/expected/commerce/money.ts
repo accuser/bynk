@@ -16,3 +16,4 @@ export const Quantity = {
     return Ok(value as Quantity);
   },
 };
+

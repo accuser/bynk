@@ -6,3 +6,4 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError } f
 export function formula(a: number, b: number): number {
   return Math.trunc((a + b) * (a - b) / 2);
 }
+

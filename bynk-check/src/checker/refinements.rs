@@ -884,9 +884,11 @@ fn regex_matches_empty(pattern: &str) -> bool {
 ///
 /// Exponential ambiguity, and a pattern the analysis cannot bound, are errors.
 /// Polynomial ambiguity is an error unless the refinement also bounds the
-/// input's length (`MaxLength` or `Length`): the emitter checks length
-/// predicates before `Matches` (`bynk_syntax::ast::in_check_order`), so the
-/// bound caps the polynomial, and it is a warning.
+/// input's length (`MaxLength` or `Length`) tightly enough for the
+/// polynomial's degree (`bound^degree` within [`POLYNOMIAL_STEP_CAP`]): the
+/// emitter checks length predicates before `Matches`
+/// (`bynk_syntax::ast::in_check_order`), so such a bound caps the cost, and it
+/// is a warning.
 fn ambiguity_diagnostic(pat: &str, span: Span, refinement: &Refinement) -> Option<CompileError> {
     use super::regex_ambiguity::{Verdict, analyse};
     Some(match analyse(pat) {
@@ -917,32 +919,52 @@ fn ambiguity_diagnostic(pat: &str, span: Span, refinement: &Refinement) -> Optio
             "the boundary check runs this pattern on request input under a backtracking \
              engine, so a pattern that cannot be analysed is rejected; simplify it",
         ),
-        Verdict::Polynomial(a, b) => {
-            let capped = refinement
+        Verdict::Polynomial(degree, a, b) => {
+            // The tightest length bound the refinement states. Length
+            // predicates run before `Matches` (`in_check_order`), so it caps
+            // the input the pattern ever sees.
+            let bound = refinement
                 .predicates
                 .iter()
-                .any(|p| matches!(p.kind, PredKind::MaxLength(_) | PredKind::Length(_)));
-            let (code, advice) = if capped {
-                (
+                .filter_map(|p| match p.kind {
+                    PredKind::MaxLength(n) | PredKind::Length(n) => Some(n),
+                    _ => None,
+                })
+                .min();
+            let largest = largest_safe_bound(degree);
+            let (code, advice) = match bound {
+                Some(n) if n <= largest => (
                     "bynk.types.polynomial_regex_capped",
-                    "the refinement bounds the input's length, which caps the cost, so \
-                     this is a warning; rewrite the pattern so the repetitions cannot \
-                     overlap to silence it",
-                )
-            } else {
-                (
+                    format!(
+                        "the refinement bounds the input at {n} characters, which keeps \
+                         the cost small, so this is a warning; rewrite the pattern so the \
+                         repetitions cannot overlap to silence it"
+                    ),
+                ),
+                Some(n) => (
                     "bynk.types.polynomial_regex",
-                    "add a `MaxLength(n)` predicate to bound the input, or rewrite the \
-                     pattern so the repetitions cannot overlap",
-                )
+                    format!(
+                        "the refinement bounds the input at {n} characters, but at degree \
+                         {degree} that still allows about {n}^{degree} steps; lower the \
+                         bound to at most {largest}, or rewrite the pattern so the \
+                         repetitions cannot overlap"
+                    ),
+                ),
+                None => (
+                    "bynk.types.polynomial_regex",
+                    format!(
+                        "add a `MaxLength(n)` predicate with `n` at most {largest} to bound \
+                         the input, or rewrite the pattern so the repetitions cannot overlap"
+                    ),
+                ),
             };
             CompileError::new(
                 code,
                 span,
                 format!(
                     "the pattern in `Matches(\"{pat}\")` can split the same text between \
-                     two repetitions in many ways, so matching time grows polynomially \
-                     with input length (ReDoS)"
+                     repetitions in many ways, so matching time grows with the input's \
+                     length to the power {degree} (ReDoS)"
                 ),
             )
             .with_note(format!(
@@ -951,6 +973,24 @@ fn ambiguity_diagnostic(pat: &str, span: Span, refinement: &Refinement) -> Optio
             ))
         }
     })
+}
+
+/// #1651: how many steps a polynomially ambiguous pattern may take on its
+/// longest admitted input and still only warn. At `10⁷` V8 matches in tens of
+/// milliseconds: `\d*\d*\d*` takes about 23 ms at 256 characters.
+const POLYNOMIAL_STEP_CAP: u128 = 10_000_000;
+
+/// The largest length bound `n` with `n^degree` within [`POLYNOMIAL_STEP_CAP`]:
+/// 3162 at degree 2, 215 at degree 3, 56 at degree 4.
+fn largest_safe_bound(degree: u32) -> i64 {
+    let mut n: i64 = 1;
+    while (n as u128 + 1)
+        .checked_pow(degree)
+        .is_some_and(|s| s <= POLYNOMIAL_STEP_CAP)
+    {
+        n += 1;
+    }
+    n
 }
 
 /// #724 — detect one catastrophic-backtracking (ReDoS) signature: an unbounded

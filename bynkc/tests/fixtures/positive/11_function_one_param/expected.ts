@@ -6,3 +6,4 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError } f
 export function negate(x: number): number {
   return -x;
 }
+

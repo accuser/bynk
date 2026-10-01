@@ -36,3 +36,4 @@ export const LongUrl = {
     return LongUrl.of(s);
   },
 };
+

@@ -28,3 +28,4 @@ export function deserialise_Result_Unit_Unit(json: JsonValue, path: string = "$"
   }
   return Err({ kind: "StructuralMismatch", path, expected: "Ok | Err", actual: String(obj["kind"]) });
 }
+

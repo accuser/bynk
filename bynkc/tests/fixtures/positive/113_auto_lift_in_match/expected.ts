@@ -28,3 +28,4 @@ export async function channel(c: Color): Promise<number> {
   }
   throw new Error("non-exhaustive match");
 }
+

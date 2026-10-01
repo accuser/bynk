@@ -519,7 +519,7 @@ There are **460** codes in total.
 | `bynk.types.call_arity` | A function value was applied with the wrong number of arguments. | [`call`](/book/reference/grammar/#rule-call) | — |
 | `bynk.types.cannot_infer_option_type_param` | The value type of `None` could not be inferred. | [`none_expr`](/book/reference/grammar/#rule-none_expr) | — |
 | `bynk.types.cannot_infer_result_type_params` | The type parameters of a `Result` could not be inferred. |  | — |
-| `bynk.types.catastrophic_regex` | A `Matches` pattern can match the same text in exponentially many ways (nested or ambiguous repetition), or cannot be analysed, risking catastrophic backtracking (ReDoS). | [`refinement`](/book/reference/grammar/#rule-refinement) | — |
+| `bynk.types.catastrophic_regex` | A `Matches` pattern can match the same text in exponentially many ways (nested or ambiguous repetition, bounded or not), or cannot be analysed, risking catastrophic backtracking (ReDoS). | [`refinement`](/book/reference/grammar/#rule-refinement) | — |
 | `bynk.types.combinator_return_mismatch` | A callback passed to a combinator (`map`/`andThen`/`flatMap`/`traverseAll`/…) returns the wrong type. | [`call`](/book/reference/grammar/#rule-call) | — |
 | `bynk.types.constructor_arity` | A variant constructor got the wrong number of arguments. |  | — |
 | `bynk.types.constructor_base_mismatch` | A `.of` constructor was given an argument of the wrong base type. |  | — |
@@ -571,8 +571,8 @@ There are **460** codes in total.
 | `bynk.types.or_pattern_type_mismatch` | An or-pattern's alternatives give a shared binding different types (or refinements). | [`match_arm`](/book/reference/grammar/#rule-match_arm), [`is_expr`](/book/reference/grammar/#rule-is_expr) | — |
 | `bynk.types.pattern_arity` | A pattern binds the wrong number of payload fields. | [`variant_pattern`](/book/reference/grammar/#rule-variant_pattern) | — |
 | `bynk.types.pattern_type_mismatch` | A pattern's type does not match the matched value. | [`variant_pattern`](/book/reference/grammar/#rule-variant_pattern) | — |
-| `bynk.types.polynomial_regex` | A `Matches` pattern can split the same text between two repetitions, so matching time grows polynomially with input length, and no `MaxLength` bounds the input. | [`refinement`](/book/reference/grammar/#rule-refinement) | — |
-| `bynk.types.polynomial_regex_capped` | A `Matches` pattern's matching time grows polynomially with input length, but a `MaxLength` or `Length` predicate bounds the input (warning). | [`refinement`](/book/reference/grammar/#rule-refinement) | Warning |
+| `bynk.types.polynomial_regex` | A `Matches` pattern can split the same text between repetitions, so matching time grows polynomially with input length, and no length predicate bounds the input small enough for its degree. | [`refinement`](/book/reference/grammar/#rule-refinement) | — |
+| `bynk.types.polynomial_regex_capped` | A `Matches` pattern's matching time grows polynomially with input length, but a `MaxLength` or `Length` predicate bounds the input small enough for its degree (warning). | [`refinement`](/book/reference/grammar/#rule-refinement) | Warning |
 | `bynk.types.predicate_base_mismatch` | A predicate does not apply to the type's base (e.g. a string predicate on an `Int`). | [`refinement`](/book/reference/grammar/#rule-refinement) | — |
 | `bynk.types.query_at_boundary` | A `Query` type appears in a storable or boundary-crossing position — a query is built and executed in place, never persisted or sent (ADR 0115). |  | — |
 | `bynk.types.question_error_mismatch` | `?` propagates an error type incompatible with the function's. | [`question_expr`](/book/reference/grammar/#rule-question_expr) | — |

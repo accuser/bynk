@@ -32,3 +32,4 @@ export function as_interp(c: boolean): Result<string, string> {
   const s = __r1;
   return Ok(s);
 }
+

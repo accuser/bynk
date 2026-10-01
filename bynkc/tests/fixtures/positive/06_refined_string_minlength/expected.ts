@@ -13,3 +13,4 @@ export const Password = {
     return Ok(value as Password);
   },
 };
+

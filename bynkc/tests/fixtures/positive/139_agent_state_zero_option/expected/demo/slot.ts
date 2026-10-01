@@ -135,3 +135,4 @@ export function deserialise_Option_Int(json: JsonValue, path: string = "$"): Res
   }
   return Err({ kind: "StructuralMismatch", path, expected: "Some | None", actual: String(obj["kind"]) });
 }
+

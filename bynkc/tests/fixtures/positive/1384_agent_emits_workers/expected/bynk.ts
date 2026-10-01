@@ -389,3 +389,4 @@ export function deserialise_Option_String(json: JsonValue, path: string = "$"): 
   }
   return Err({ kind: "StructuralMismatch", path, expected: "Some | None", actual: String(obj["kind"]) });
 }
+

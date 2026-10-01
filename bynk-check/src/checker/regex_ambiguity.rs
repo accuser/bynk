@@ -32,7 +32,8 @@
 //!    `q`, some word labels a path `p → p`, a path `p → q` and a path `q → q`.
 //!    That is a path `(p, p, q) ⇝ (p, q, q)` in A³. It means two loops can split
 //!    the same run of text between them in a number of ways that grows with its
-//!    length: `\d*\d*` is quadratic.
+//!    length: `\d*\d*` is quadratic. The **degree** is the longest chain of
+//!    loops linked this way: `\d*\d*\d*` is cubic.
 //!
 //! **Soundness.** Every approximation errs toward *more* ambiguity, so a pattern
 //! this accepts is safe, and a few safe patterns are rejected:
@@ -48,8 +49,8 @@
 //! - an unbounded quantifier over a body that can match the empty string is
 //!   rejected outright, because each iteration may consume nothing;
 //! - a pattern with more than [`MAX_POSITIONS`] positions after expansion, or
-//!   whose polynomial search exceeds [`TRIPLE_BUDGET`], is rejected as too
-//!   complex to analyse.
+//!   whose analysis exceeds [`WORK_BUDGET`], is rejected as too complex to
+//!   analyse.
 //!
 //! The analysis is over the anchored, flag-free pattern the emitter builds
 //! (`^(?:pat)$`), so it assumes the pattern must match the whole input.
@@ -65,9 +66,11 @@ const MAX_POSITIONS: usize = 2_000;
 /// only add strings to the language.
 const REPEAT_CAP: u32 = 64;
 
-/// How many A³ triples the polynomial search may visit before giving up and
-/// rejecting the pattern as too complex.
-const TRIPLE_BUDGET: usize = 2_000_000;
+/// How many units of work the analysis may do (successor combinations in A×A
+/// and A³, and edges walked by reachability) before giving up and rejecting
+/// the pattern as too complex. It bounds the analysis's time on any pattern,
+/// independent of [`MAX_POSITIONS`].
+const WORK_BUDGET: usize = 2_000_000;
 
 /// The analysis verdict for one pattern.
 #[derive(Debug, PartialEq, Eq)]
@@ -77,9 +80,11 @@ pub(crate) enum Verdict {
     /// Exponential ambiguity. The two strings are the source text of two atoms
     /// that can match the same character on different paths through a loop.
     Exponential(String, String),
-    /// Polynomial ambiguity: two loops can divide the same text between them.
-    /// The strings are the source text of an atom in each loop.
-    Polynomial(String, String),
+    /// Polynomial ambiguity: loops can divide the same text between them. The
+    /// number is the degree, the longest chain of loops linked this way, so
+    /// matching takes on the order of `nᵈᵉᵍʳᵉᵉ` steps. The strings are the
+    /// source text of an atom in two linked loops.
+    Polynomial(u32, String, String),
     /// The pattern uses a construct the analysis cannot bound. The string says
     /// which, for the diagnostic.
     Unanalysable(&'static str),
@@ -114,12 +119,39 @@ pub(crate) fn analyse(pattern: &str) -> Verdict {
             open_groups: Vec::new(),
             following: Vec::new(),
             lookarounds: Vec::new(),
-            seen_lookarounds: Vec::new(),
+            seen_nodes: Vec::new(),
+            bounded_bodies: Vec::new(),
         };
-        let verdict = match ex.expand(&body, false) {
+        let mut verdict = match ex.expand(&body, false) {
             Err(why) => Verdict::Unanalysable(why),
-            Ok(rx) => decide(&ex.positions, &rx, &units),
+            Ok(rx) => decide(&ex.positions, &rx, &units, false),
         };
+        // A bounded repeat `B{n,m}` with `m ≥ 2` has no cycle in the exact
+        // expansion, yet multiplies its paths per repetition just as a loop
+        // does, up to its count: `(?:a|a){0,24}` has 2²³ paths on 23 `a`s.
+        // It is exponential in the count iff `B*` is exponentially ambiguous,
+        // so each such body gets that test on its own.
+        for b in ex.bounded_bodies {
+            if verdict != Verdict::Linear && !matches!(verdict, Verdict::Polynomial(..)) {
+                break;
+            }
+            let mut local = Expander {
+                positions: Vec::new(),
+                groups: &group_nodes,
+                open_groups: Vec::new(),
+                following: Vec::new(),
+                lookarounds: Vec::new(),
+                seen_nodes: Vec::new(),
+                bounded_bodies: Vec::new(),
+            };
+            if let Ok(rx) = local.expand(&b, false) {
+                let looped = Rx::Star(Box::new(rx));
+                let v = decide(&local.positions, &looped, &units, true);
+                if rank(&v) > rank(&verdict) {
+                    verdict = v;
+                }
+            }
+        }
         bodies.extend(ex.lookarounds);
         if rank(&verdict) > rank(&worst) {
             worst = verdict;
@@ -784,7 +816,12 @@ struct Expander<'a> {
     /// came from: a lookaround inside a repeat is expanded once per copy but
     /// analysed once.
     lookarounds: Vec<Node>,
-    seen_lookarounds: Vec<*const Node>,
+    /// Lookaround and bounded-repeat nodes already recorded, by identity in
+    /// the parsed pattern.
+    seen_nodes: Vec<*const Node>,
+    /// The bodies of bounded repeats with a maximum of two or more, each
+    /// checked on its own as a loop (see `analyse`).
+    bounded_bodies: Vec<Node>,
 }
 
 impl Expander<'_> {
@@ -825,8 +862,8 @@ impl Expander<'_> {
             }
             Node::Lookaround(body) => {
                 let key: *const Node = &**body;
-                if !self.seen_lookarounds.contains(&key) {
-                    self.seen_lookarounds.push(key);
+                if !self.seen_nodes.contains(&key) {
+                    self.seen_nodes.push(key);
                     self.lookarounds.push((**body).clone());
                 }
                 Rx::Eps
@@ -867,6 +904,11 @@ impl Expander<'_> {
                         Rx::Cat(parts)
                     }
                     Some(max) => {
+                        let key: *const Node = &**node;
+                        if max >= 2 && !self.seen_nodes.contains(&key) {
+                            self.seen_nodes.push(key);
+                            self.bounded_bodies.push((**node).clone());
+                        }
                         let mut parts = Vec::new();
                         for _ in 0..min.min(max) {
                             parts.push(self.expand(node, in_loop)?);
@@ -893,7 +935,7 @@ impl Expander<'_> {
 
 /// Build the Glushkov automaton for `rx` over `positions` and decide its
 /// ambiguity.
-fn decide(positions: &[Position], rx: &Rx, units: &[u16]) -> Verdict {
+fn decide(positions: &[Position], rx: &Rx, units: &[u16], exponential_only: bool) -> Verdict {
     let n = positions.len();
     let mut follow: Vec<Vec<usize>> = vec![Vec::new(); n];
     let (_, first, _) = glushkov(rx, &mut follow);
@@ -929,6 +971,14 @@ fn decide(positions: &[Position], rx: &Rx, units: &[u16]) -> Verdict {
         }
     }
 
+    // Every phase below draws on one work budget, so the analysis is bounded by
+    // it, not only by the position count: a wide same-character alternation
+    // under a loop has quadratically many pairs, each with quadratically many
+    // successor combinations.
+    let mut budget = WORK_BUDGET;
+    let too_complex =
+        || Verdict::Unanalysable("it is too complex to analyse for catastrophic backtracking");
+
     // The pairs of A×A reachable from (start, start).
     let mut index: HashMap<(usize, usize), usize> = HashMap::new();
     let mut pairs: Vec<(usize, usize)> = Vec::new();
@@ -941,6 +991,9 @@ fn decide(positions: &[Position], rx: &Rx, units: &[u16]) -> Verdict {
         let (p, q) = pairs[k];
         for &p2 in &succ[p] {
             for &q2 in &succ[q] {
+                if !spend(&mut budget) {
+                    return too_complex();
+                }
                 if !set(p2).intersects(set(q2)) {
                     continue;
                 }
@@ -973,46 +1026,126 @@ fn decide(positions: &[Position], rx: &Rx, units: &[u16]) -> Verdict {
         }
     }
 
+    if exponential_only {
+        return Verdict::Linear;
+    }
+
     // IDA: (p, p, q) ⇝ (p, q, q) in A³ for p ≠ q. A candidate (p, q) must lie
     // on a path (p, p) ⇝ (p, q) ⇝ (q, q) in A×A, which prunes the search to
-    // the few pairs where it can succeed.
-    let reach = |from: usize| -> Vec<bool> {
-        let mut seen = vec![false; pairs.len()];
-        let mut stack = vec![from];
-        while let Some(x) = stack.pop() {
-            for &y in &edges[x] {
-                if !seen[y] {
-                    seen[y] = true;
-                    stack.push(y);
-                }
-            }
+    // the few pairs where it can succeed. Both reachability sets are cached per
+    // diagonal pair, forward from (p, p) and backward to (q, q).
+    let mut reverse: Vec<Vec<usize>> = vec![Vec::new(); pairs.len()];
+    for (x, out) in edges.iter().enumerate() {
+        for &y in out {
+            reverse[y].push(x);
         }
-        seen
-    };
-    let mut budget = TRIPLE_BUDGET;
-    let mut from_diagonal: HashMap<usize, Vec<bool>> = HashMap::new();
+    }
+    let mut forward_from: HashMap<usize, Vec<bool>> = HashMap::new();
+    let mut backward_to: HashMap<usize, Vec<bool>> = HashMap::new();
+    // Each IDA witness links the loop holding `p` to the loop holding `q`;
+    // `q`'s loop is downstream of `p`'s, so the links form a DAG. Its longest
+    // chain of loops is the polynomial's degree.
+    let mut links: HashMap<usize, Vec<usize>> = HashMap::new();
+    let mut witness = None;
     for (i, &(p, q)) in pairs.iter().enumerate() {
-        if p == q || p == 0 {
+        // Without EDA, an IDA witness never has both states in one loop.
+        if p == q || cycles[p] == cycles[q] {
+            continue;
+        }
+        if links
+            .get(&cycles[p])
+            .is_some_and(|l| l.contains(&cycles[q]))
+        {
             continue;
         }
         let (Some(&pp), Some(&qq)) = (index.get(&(p, p)), index.get(&(q, q))) else {
             continue;
         };
-        let from_pp = from_diagonal.entry(pp).or_insert_with(|| reach(pp));
-        if !from_pp[i] || !reach(i)[qq] {
+        if let std::collections::hash_map::Entry::Vacant(slot) = forward_from.entry(pp) {
+            let Some(seen) = reach(&edges, pp, &mut budget) else {
+                return too_complex();
+            };
+            slot.insert(seen);
+        }
+        if let std::collections::hash_map::Entry::Vacant(slot) = backward_to.entry(qq) {
+            let Some(seen) = reach(&reverse, qq, &mut budget) else {
+                return too_complex();
+            };
+            slot.insert(seen);
+        }
+        if !forward_from[&pp][i] || !backward_to[&qq][i] {
             continue;
         }
         match triple_path(&succ, &set, (p, p, q), (p, q, q), &mut budget) {
-            Some(true) => return Verdict::Polynomial(src(p), src(q)),
+            Some(true) => {
+                links.entry(cycles[p]).or_default().push(cycles[q]);
+                witness.get_or_insert((p, q));
+            }
             Some(false) => {}
-            None => {
-                return Verdict::Unanalysable(
-                    "it is too complex to analyse for catastrophic backtracking",
-                );
+            None => return too_complex(),
+        }
+    }
+    let Some((p, q)) = witness else {
+        return Verdict::Linear;
+    };
+    let mut memo = HashMap::new();
+    let degree = links
+        .keys()
+        .map(|&c| chain_length(c, &links, &mut memo))
+        .max()
+        .unwrap_or(2);
+    Verdict::Polynomial(degree, src(p), src(q))
+}
+
+/// Charge one unit of work; `false` once the budget is spent.
+fn spend(budget: &mut usize) -> bool {
+    match budget.checked_sub(1) {
+        Some(b) => {
+            *budget = b;
+            true
+        }
+        None => false,
+    }
+}
+
+/// The nodes reachable from `from` by a non-empty path over `edges`, or
+/// `None` when the budget runs out.
+fn reach(edges: &[Vec<usize>], from: usize, budget: &mut usize) -> Option<Vec<bool>> {
+    let mut seen = vec![false; edges.len()];
+    let mut stack = vec![from];
+    while let Some(x) = stack.pop() {
+        for &y in &edges[x] {
+            if !spend(budget) {
+                return None;
+            }
+            if !seen[y] {
+                seen[y] = true;
+                stack.push(y);
             }
         }
     }
-    Verdict::Linear
+    Some(seen)
+}
+
+/// How many loops the longest chain of IDA links starting at loop `c` holds.
+fn chain_length(
+    c: usize,
+    links: &HashMap<usize, Vec<usize>>,
+    memo: &mut HashMap<usize, u32>,
+) -> u32 {
+    if let Some(&n) = memo.get(&c) {
+        return n;
+    }
+    let below = links
+        .get(&c)
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|d| chain_length(d, links, memo))
+        .max()
+        .unwrap_or(0);
+    memo.insert(c, below + 1);
+    below + 1
 }
 
 /// Is there a non-empty path from `from` to `to` in A³ whose three
@@ -1029,11 +1162,17 @@ fn triple_path<'a>(
     while let Some((a, b, c)) = queue.pop_front() {
         for &a2 in &succ[a] {
             for &b2 in &succ[b] {
+                if !spend(budget) {
+                    return None;
+                }
                 let ab = set(a2).intersect(set(b2));
                 if ab.is_empty() {
                     continue;
                 }
                 for &c2 in &succ[c] {
+                    if !spend(budget) {
+                        return None;
+                    }
                     if !ab.intersects(set(c2)) {
                         continue;
                     }
@@ -1042,7 +1181,6 @@ fn triple_path<'a>(
                         return Some(true);
                     }
                     if seen.insert(next, ()).is_none() {
-                        *budget = budget.checked_sub(1)?;
                         queue.push_back(next);
                     }
                 }
@@ -1295,6 +1433,57 @@ mod tests {
         assert!(linear("(\\d|[^\\d])+"));
         assert!(exponential("(\\s|\\u00a0)+"));
         assert!(linear("(.|\\n)+"));
+    }
+
+    #[test]
+    fn the_degree_is_the_longest_chain_of_linked_loops() {
+        let degree = |p: &str| match analyse(p) {
+            Verdict::Polynomial(d, ..) => d,
+            other => panic!("`{p}` should be polynomial: {other:?}"),
+        };
+        assert_eq!(degree("\\d*\\d*"), 2);
+        assert_eq!(degree("\\d*\\d*\\d*"), 3);
+        assert_eq!(degree("\\d*\\d*\\d*\\d*"), 4);
+        // Two independent quadratic pairs, separated by a literal, are still
+        // quadratic.
+        assert_eq!(degree("\\d*\\d*-\\d*\\d*"), 2);
+    }
+
+    #[test]
+    fn the_work_budget_bounds_wide_alternations() {
+        // Each of these would do ~10¹⁰ work in A×A without the budget. The
+        // test is that they return at all; either verdict rejects or proves.
+        let same = format!("(?:{})+", vec!["a"; 500].join("|"));
+        assert_ne!(analyse(&same), Verdict::Linear);
+        let words: Vec<String> = (0..200).map(|i| format!("w{i:03}x")).collect();
+        let distinct = format!("(?:{})+", words.join("|"));
+        assert!(matches!(
+            analyse(&distinct),
+            Verdict::Linear | Verdict::Unanalysable(_)
+        ));
+    }
+
+    #[test]
+    fn a_bounded_repeat_of_an_ambiguous_body_is_exponential() {
+        // Exponential in the count, not the input: V8 takes 653 ms on
+        // `(?:a|a){0,24}` with 23 `a`s, and the count can reach 64.
+        assert!(exponential("(?:a|a){0,24}"));
+        assert!(exponential("(?:a{1,2}){0,20}"));
+        assert!(exponential("(?:a|a){2,3}"));
+        // A bounded repeat of an unambiguous body stays linear.
+        assert!(linear("(?:ab?){0,8}"));
+        assert!(linear("(?:-[a-z0-9]{2,8}){1,8}"));
+        // 64 identical optional copies are too many paths to analyse within
+        // the budget, so the pattern is rejected, conservatively: V8 itself is
+        // fast here only because the spec fails empty iterations.
+        assert!(matches!(analyse("(?:a?){0,64}"), Verdict::Unanalysable(_)));
+    }
+
+    #[test]
+    fn a_repeat_count_above_the_cap_is_read_as_unbounded() {
+        // In the exact expansion, `{0,100}` is over-approximated as `*`, which
+        // then trips the nullable-body rule. Conservative, and pinned.
+        assert!(matches!(analyse("(?:a?){0,100}"), Verdict::Unanalysable(_)));
     }
 
     #[test]

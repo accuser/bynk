@@ -365,19 +365,23 @@ automaton:
 - **Exponential ambiguity is rejected** (`bynk.types.catastrophic_regex`): a
   repetition whose body can match the same text in two ways, so each repetition
   doubles the paths. This covers nested repetition (`(a+)+`), overlapping
-  alternatives (`(a|a)+`, `(\d|\d\d)+`, `(a|aa)*`) and a bounded repeat inside a
-  loop (`(a{1,2})+`, `(a{2,3})+`). Alternatives that overlap but are uniquely
+  alternatives (`(a|a)+`, `(\d|\d\d)+`, `(a|aa)*`), a bounded repeat inside a
+  loop (`(a{1,2})+`, `(a{2,3})+`), and a bounded repeat of an ambiguous body
+  (`(?:a|a){0,24}`), which is exponential in its count. Alternatives that overlap but are uniquely
   decodable are linear and accepted: `(foo|foobar)+`.
 - **Polynomial ambiguity is rejected** (`bynk.types.polynomial_regex`): two
   repetitions that can divide the same text between them (`\d*\d*`), so matching
-  time grows polynomially with the input's length. When the refinement also has
-  a `MaxLength` or `Length` predicate, it is a **warning**
-  (`bynk.types.polynomial_regex_capped`) instead: length predicates are checked
-  before every `Matches`, wherever they are written, so the bound caps the cost.
+  time grows with the input's length to a power, the **degree** (the longest
+  chain of repetitions that can split text this way: `\d*\d*\d*` is 3). When
+  the refinement also has a `MaxLength` or `Length` bound `L` with
+  `L^degree ≤ 10⁷` (3,162 characters at degree 2, 215 at degree 3), it is a
+  **warning** (`bynk.types.polynomial_regex_capped`) instead: length predicates
+  are checked before every `Matches`, wherever they are written, so the bound
+  caps the cost. A larger bound is still an error.
 - **A pattern the analysis cannot bound is rejected**
   (`bynk.types.catastrophic_regex`): a backreference under an unbounded
   quantifier, an unbounded quantifier over a body that can match the empty
-  string (`(a?b?)*`), or a pattern too large to analyse.
+  string (`(a?b?)*`), or a pattern too large or too complex to analyse.
 
 The analysis over-approximates in the safe direction: it reads assertions and
 lookarounds as matching anything (analysing each lookaround body as a pattern of

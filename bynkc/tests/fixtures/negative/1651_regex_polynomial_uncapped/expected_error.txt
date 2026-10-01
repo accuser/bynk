@@ -1,1 +1,1 @@
-bynk.types.polynomial_regex the pattern in `Matches("\d*\d*")` can split the same text between two repetitions
+bynk.types.polynomial_regex the pattern in `Matches("\d*\d*")` can split the same text between repetitions in many ways, so matching time grows with the input's length to the power 2

@@ -42,3 +42,4 @@ export function direct(): Result<number, AppError> {
   const v = __r0.value;
   return Ok(v);
 }
+

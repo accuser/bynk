@@ -13,3 +13,4 @@ export const Slug = {
     return Ok(value as Slug);
   },
 };
+

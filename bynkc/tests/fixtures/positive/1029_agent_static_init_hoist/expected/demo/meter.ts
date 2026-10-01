@@ -151,3 +151,4 @@ export function deserialise_Totals(json: JsonValue, path: string = "$"): Result<
   return Ok({ hits: __hits, bytes: __bytes } as Totals);
 }
 
+

@@ -11,3 +11,4 @@ export const T = {
   Base: (n: number): T => ({ tag: "Base", n }),
   Cons: (tail: T): T => ({ tag: "Cons", tail }),
 };
+

@@ -33,3 +33,4 @@ export function check(o: Outcome): Result<number, string> {
     return Ok(0);
   }
 }
+

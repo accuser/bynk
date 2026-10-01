@@ -22,3 +22,4 @@ export const Label = {
     return Ok(value as Label);
   },
 };
+

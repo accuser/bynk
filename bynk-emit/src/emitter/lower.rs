@@ -3851,7 +3851,9 @@ fn lower_string_kernel(
             // #1650: a *string* replacement is `$`-expanded by JS (`$&`, `$1`,
             // `` $` ``, `$'`, `$$`); a function replacer's return value never is,
             // so the replacement is inserted literally. `to` is a pure
-            // expression, so evaluating it once per match is unobservable.
+            // expression, so its result is the same either way, but it is
+            // evaluated once per match (and not at all with no match), so a
+            // costly replacement is recomputed.
             Some(format!("{recv}.replaceAll({from}, () => {to})"))
         }
         ("slice", [lo, hi]) => {
