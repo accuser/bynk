@@ -1,10 +1,7 @@
 # #1660: the runtime-semantics baseline (track #1648). Every `fail` line is a
 # known defect. The slice that fixes it must delete its line, because this
 # marker is strict: a listed case that starts passing fails the gate.
-passed=7 failed=3
-
-# #1650 (S1): String.replace expands `$&` in the replacement.
-fail String.replace inserts its replacement literally
+passed=8 failed=2
 
 # #1685 (S14): store collections are plain objects, so `__proto__` writes are
 # dropped and inherited names such as `constructor` read as present.

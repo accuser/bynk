@@ -48,4 +48,3 @@ export function clamp(q: Quantity): Quantity {
 export function useClamp(): Quantity {
   return clamp((10 as Quantity));
 }
-

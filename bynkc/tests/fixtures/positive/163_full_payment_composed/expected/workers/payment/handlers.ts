@@ -145,4 +145,3 @@ export function deserialise_Result_AuthId_PaymentError(json: JsonValue, path: st
   }
   return Err({ kind: "StructuralMismatch", path, expected: "Ok | Err", actual: String(obj["kind"]) });
 }
-

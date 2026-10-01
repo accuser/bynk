@@ -115,4 +115,3 @@ export function makeSurface(deps: DemoCounterDeps) {
     },
   };
 }
-

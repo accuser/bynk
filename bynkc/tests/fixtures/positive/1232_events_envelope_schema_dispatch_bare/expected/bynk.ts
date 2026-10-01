@@ -192,4 +192,3 @@ export interface Events {
 }
 
 export const EventsToken: unique symbol = Symbol("Events");
-

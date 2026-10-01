@@ -159,7 +159,8 @@ character access — so its operations are built-in value methods:
 `s.replace(a, b)`, `s.slice(lo, hi)`, `s.indexOf(sub) -> Option[Int]`,
 and `s.chars() -> List[String]`. **Semantics are UTF-16 code units**,
 normatively, with two pinned exceptions: `replace` replaces **every**
-occurrence (not TS's first-only string form), and `chars()` splits by
+occurrence (not TS's first-only string form) and inserts `b` **literally**
+(no `$&`, `$1`, `` $` ``, `$'` or `$$` expansion, #1650), and `chars()` splits by
 **code points** (so `s.length() != s.chars().length()` when `s` contains
 astral characters). `slice` clamps negative indices to `0` — there is no
 wrap-around. `indexOf` returns `None` for a missing substring, never a

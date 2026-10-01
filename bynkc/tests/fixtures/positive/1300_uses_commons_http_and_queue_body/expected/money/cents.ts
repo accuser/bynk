@@ -34,4 +34,3 @@ export function deserialise_Cents(json: JsonValue, path: string = "$"): Result<C
   return Ok(validated.value as Cents);
 }
 
-

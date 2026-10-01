@@ -8,4 +8,3 @@ export interface Empty {
 
 export const Empty = {
 };
-

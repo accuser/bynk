@@ -3792,7 +3792,8 @@ fn lower_bytes_kernel(
 }
 
 /// v0.22a: lower a built-in `String` kernel method (ADR 0046). Pinned
-/// semantics: `replace` is replace-**all** (`replaceAll`); `chars()` is
+/// semantics: `replace` is replace-**all** (`replaceAll`) and inserts its
+/// replacement literally (#1650); `chars()` is
 /// code **points** (`[...s]`), not code units; `slice` clamps negative
 /// indices to `0` (no TS wrap-around); `indexOf` turns `-1` into `None`.
 fn lower_string_kernel(
@@ -3847,7 +3848,11 @@ fn lower_string_kernel(
             let recv = pre.lower(receiver, cx);
             let from = pre.lower(from, cx);
             let to = pre.lower(to, cx);
-            Some(format!("{recv}.replaceAll({from}, {to})"))
+            // #1650: a *string* replacement is `$`-expanded by JS (`$&`, `$1`,
+            // `` $` ``, `$'`, `$$`); a function replacer's return value never is,
+            // so the replacement is inserted literally. `to` is a pure
+            // expression, so evaluating it once per match is unobservable.
+            Some(format!("{recv}.replaceAll({from}, () => {to})"))
         }
         ("slice", [lo, hi]) => {
             let recv = pre.lower(receiver, cx);

@@ -36,7 +36,7 @@ export function sameReading(a: Option<number>, b: Option<number>): boolean {
 }
 
 export function literalReplace(): string {
-  return "aaa".replaceAll("a", "$&b");
+  return "aaa".replaceAll("a", () => "$&b");
 }
 
 export function survivesJson(l: Light): boolean {

@@ -49,4 +49,3 @@ export function deserialise_Notification(json: JsonValue, path: string = "$"): R
   return Ok({ body: __body } as Notification);
 }
 
-

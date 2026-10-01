@@ -32,4 +32,3 @@ export function makeSurface(deps: CommerceNotificationsDeps) {
   return {
   };
 }
-

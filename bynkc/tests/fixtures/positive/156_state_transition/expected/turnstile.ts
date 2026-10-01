@@ -90,4 +90,3 @@ export function deserialise_Gate(json: JsonValue, path: string = "$"): Result<Ga
   }
 }
 
-

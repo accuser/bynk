@@ -163,4 +163,3 @@ export function deserialise_RoomId(json: JsonValue, path: string = "$"): Result<
   return Ok(validated.value as RoomId);
 }
 
-

@@ -1,0 +1,32 @@
+---
+#1650: literal replacement, proved at runtime.
+---
+suite demo.text
+
+case "$& is not the matched text" {
+  expect rep("aaa", "a", "$&b") == "$&b$&b$&b"
+  expect "aaa".replace("a", "$&b") == "$&b$&b$&b"
+}
+
+case "$1 and $<name> are not group references" {
+  expect rep("abc", "b", "$1") == "a$1c"
+  expect rep("abc", "b", "$<x>") == "a$<x>c"
+}
+
+case "$$ is not an escaped dollar" {
+  expect rep("abc", "b", "$$") == "a$$c"
+}
+
+case "$` and $' are not the surrounding text" {
+  expect rep("abc", "b", "$`") == "a$`c"
+  expect rep("abc", "b", "$'") == "a$'c"
+}
+
+case "a computed replacement is literal too" {
+  expect rep("x-y", "-", "$".concat("&")) == "x$&y"
+}
+
+case "replace still replaces every occurrence" {
+  expect rep("a-b-c", "-", "+") == "a+b+c"
+  expect rep("ab", "", "-") == "-a-b-"
+}

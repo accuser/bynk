@@ -13,4 +13,3 @@ export const CountryCode = {
     return Ok(value as CountryCode);
   },
 };
-

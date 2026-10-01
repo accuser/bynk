@@ -83,4 +83,3 @@ export function __makeBox(key: Counter, env?: { BOX?: DurableObjectNamespace }):
 export function __resetAgents(): void {
   __BoxRegistry.reset();
 }
-

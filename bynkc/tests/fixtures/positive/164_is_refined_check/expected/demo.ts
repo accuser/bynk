@@ -21,4 +21,3 @@ export function valid(n: number): boolean {
   const __r0 = n;
   return (Number.isInteger(__r0) && (__r0 >= 1 && __r0 <= 100));
 }
-

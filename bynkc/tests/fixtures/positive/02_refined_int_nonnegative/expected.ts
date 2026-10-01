@@ -16,4 +16,3 @@ export const Metres = {
     return Ok(value as Metres);
   },
 };
-

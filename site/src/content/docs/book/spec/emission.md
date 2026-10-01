@@ -612,7 +612,7 @@ module already has:
 | Construct | Emits |
 |---|---|
 | string ops | the TS string method (`trim`, `split`, `includes`, `startsWith`, …); `s.length()` → `.length`; `toUpper`/`toLower` → `toUpperCase`/`toLowerCase` |
-| `s.replace(a, b)` | `replaceAll(a, b)` — replace-**all**, normatively |
+| `s.replace(a, b)` | `replaceAll(a, () => b)` — replace-**all**, normatively; the function replacer inserts `b` literally (#1650) |
 | `s.chars()` | `[...s]` — code points, normatively |
 | `s.slice(lo, hi)` | `slice(Math.max(0, lo), Math.max(0, hi))` — negatives clamp, no wrap |
 | `s.indexOf(sub)` | a typed IIFE turning `-1` into `None`, else `Some(i)` |

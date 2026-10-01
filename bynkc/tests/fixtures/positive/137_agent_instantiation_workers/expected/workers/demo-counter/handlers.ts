@@ -179,4 +179,3 @@ export function deserialise_Result_Int_CounterError(json: JsonValue, path: strin
   }
   return Err({ kind: "StructuralMismatch", path, expected: "Ok | Err", actual: String(obj["kind"]) });
 }
-
