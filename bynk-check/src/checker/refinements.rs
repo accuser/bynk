@@ -253,12 +253,12 @@ pub(crate) fn first_failed_predicate<'a>(
     refinement: &'a Refinement,
     lit: &ConstLit,
 ) -> Option<&'a PredKind> {
-    for p in &refinement.predicates {
-        if !eval_predicate(&p.kind, lit) {
-            return Some(&p.kind);
-        }
-    }
-    None
+    // #1651: the runtime checks' order, so a literal rejected here names the
+    // predicate the boundary would.
+    bynk_syntax::ast::in_check_order(&refinement.predicates, |p| &p.kind)
+        .into_iter()
+        .find(|p| !eval_predicate(&p.kind, lit))
+        .map(|p| &p.kind)
 }
 
 /// `LocaleTag`'s refinement, read once from the firstparty `bynk.locale.types`
@@ -467,7 +467,8 @@ pub(crate) fn check_refinement(
                     // input — a refined `String` on an HTTP boundary would let
                     // an unauthenticated client stall the Worker (ReDoS, #724).
                     // Reject the pattern at compile time rather than ship the
-                    // hazard.
+                    // hazard. This cheap first pass keeps its own, clearer
+                    // message; the ambiguity analysis below covers the rest.
                     errors.push(
                         CompileError::new(
                             "bynk.types.catastrophic_regex",
@@ -483,6 +484,8 @@ pub(crate) fn check_refinement(
                              pattern so no unbounded quantifier is nested inside another",
                         ),
                     );
+                } else if let Some(e) = ambiguity_diagnostic(pat, pred.span, refinement) {
+                    errors.push(e);
                 }
             }
             PredKind::InRange(lo, hi) => {
@@ -876,6 +879,80 @@ fn regex_matches_empty(pattern: &str) -> bool {
     }
 }
 
+/// #1651: the diagnostic for a `Matches` pattern the automaton ambiguity
+/// analysis (`regex_ambiguity`) does not prove linear, or `None` when it does.
+///
+/// Exponential ambiguity, and a pattern the analysis cannot bound, are errors.
+/// Polynomial ambiguity is an error unless the refinement also bounds the
+/// input's length (`MaxLength` or `Length`): the emitter checks length
+/// predicates before `Matches` (`bynk_syntax::ast::in_check_order`), so the
+/// bound caps the polynomial, and it is a warning.
+fn ambiguity_diagnostic(pat: &str, span: Span, refinement: &Refinement) -> Option<CompileError> {
+    use super::regex_ambiguity::{Verdict, analyse};
+    Some(match analyse(pat) {
+        Verdict::Linear => return None,
+        Verdict::Exponential(a, b) => CompileError::new(
+            "bynk.types.catastrophic_regex",
+            span,
+            format!(
+                "the pattern in `Matches(\"{pat}\")` can match the same text in \
+                 exponentially many ways, which can cause catastrophic backtracking (ReDoS)"
+            ),
+        )
+        .with_note(format!(
+            "inside a repetition, `{a}` and `{b}` can match the same character on \
+             different paths, so each repetition doubles the ways a near-miss input \
+             is tried; make the alternatives (or repeat counts) inside the loop \
+             unambiguous, e.g. `(a|aa)+` as `a+`"
+        )),
+        Verdict::Unanalysable(why) => CompileError::new(
+            "bynk.types.catastrophic_regex",
+            span,
+            format!(
+                "the pattern in `Matches(\"{pat}\")` cannot be shown free of catastrophic \
+                 backtracking (ReDoS): {why}"
+            ),
+        )
+        .with_note(
+            "the boundary check runs this pattern on request input under a backtracking \
+             engine, so a pattern that cannot be analysed is rejected; simplify it",
+        ),
+        Verdict::Polynomial(a, b) => {
+            let capped = refinement
+                .predicates
+                .iter()
+                .any(|p| matches!(p.kind, PredKind::MaxLength(_) | PredKind::Length(_)));
+            let (code, advice) = if capped {
+                (
+                    "bynk.types.polynomial_regex_capped",
+                    "the refinement bounds the input's length, which caps the cost, so \
+                     this is a warning; rewrite the pattern so the repetitions cannot \
+                     overlap to silence it",
+                )
+            } else {
+                (
+                    "bynk.types.polynomial_regex",
+                    "add a `MaxLength(n)` predicate to bound the input, or rewrite the \
+                     pattern so the repetitions cannot overlap",
+                )
+            };
+            CompileError::new(
+                code,
+                span,
+                format!(
+                    "the pattern in `Matches(\"{pat}\")` can split the same text between \
+                     two repetitions in many ways, so matching time grows polynomially \
+                     with input length (ReDoS)"
+                ),
+            )
+            .with_note(format!(
+                "`{a}` and `{b}` repeat in sequence and can match the same characters, as \
+                 in `\\d*\\d*`; {advice}"
+            ))
+        }
+    })
+}
+
 /// #724 — detect one catastrophic-backtracking (ReDoS) signature: an unbounded
 /// quantifier applied to a group that itself contains an unbounded quantifier
 /// ("star height ≥ 2", e.g. `(a+)+`, `(a*)*b`, `((ab)+)+`). Under the JS
@@ -883,8 +960,9 @@ fn regex_matches_empty(pattern: &str) -> bool {
 /// exponential time on a crafted near-miss input; the conservative structural
 /// rule rejects it at compile time.
 ///
-/// "Unbounded" means `*`, `+`, or `{n,}` (open upper bound); `?` and `{n,m}`
-/// (finite) cannot explode. The scan is purely structural — the pattern is
+/// "Unbounded" means `*`, `+`, or `{n,}` (open upper bound). A bounded
+/// quantifier is not flagged here, though one inside a loop can explode too
+/// (`(a{2,3})+`); that is the ambiguity analysis's case. The scan is purely structural — the pattern is
 /// already known valid (`regress` accepted it) — so it need not model match
 /// semantics, only quantifier nesting through groups. Inner unbounded
 /// quantifiers propagate up through *bounded* quantifiers too, so `((a+)?)+`
@@ -892,14 +970,12 @@ fn regex_matches_empty(pattern: &str) -> bool {
 /// reject a star-height-2 pattern whose sub-expressions provably never overlap,
 /// but every *nested-quantifier* blowup is flagged.
 ///
-/// This does **not** cover the whole exponential class. Ambiguous alternation
-/// under a single quantifier — `(a|a)+`, `(\d|\d\d)+`, `(foo|foobar)+` — is
-/// exponential too (two distinct paths spell the same string, so a backtracker
-/// explores `2ⁿ` labelings of `aⁿ`), yet it is star height 1 and is *not*
-/// flagged here. Detecting it needs branch-overlap analysis and is a deferred
-/// follow-up (#724). Nor does this target the polynomial class (`\d*\d*`,
-/// quadratic). The guard closes the common nested-quantifier subclass, not
-/// catastrophic backtracking in general.
+/// This is a cheap first pass, not the whole exponential class. Ambiguous
+/// alternation under a single quantifier (`(a|a)+`, `(\d|\d\d)+`), a bounded
+/// quantifier inside a loop (`(a{2,3})+`) and the polynomial class
+/// (`\d*\d*`) are star height 1 and pass here. `regex_ambiguity` (#1651)
+/// decides them on the pattern's automaton, and runs only on patterns this
+/// pass accepts, so this pass's clearer message wins where both apply.
 fn has_nested_unbounded_quantifier(pat: &str) -> bool {
     // Precondition: `pat` is a valid regex (`regress` accepted it), so its
     // parentheses are balanced. The `stack.last_mut().unwrap()` arms below rely
@@ -1114,21 +1190,34 @@ mod redos_tests {
         assert!(!redos("(ab)+")); // repeated group with no inner quantifier
         assert!(!redos("(a+)?")); // bounded outer quantifier
         assert!(!redos("(a+){2,3}")); // finite outer bound
-        assert!(!redos("(a{2,3})+")); // finite *inner* bound cannot explode
+        // Not flagged *here*, though exponential: a bounded quantifier inside a
+        // loop is the ambiguity analysis's case (#1651), pinned below.
+        assert!(!redos("(a{2,3})+"));
         assert!(!redos("[a-z]+")); // `+` binds the class, not a group
         assert!(!redos("a{2,}b{2,}")); // two unbounded, neither nested
     }
 
     #[test]
-    fn does_not_flag_known_deferred_exponential_cases() {
-        // Ambiguous alternation under a single quantifier is exponential (EDA)
-        // but star height 1, so the nested-quantifier detector does *not* flag
-        // it — a knowingly-deferred follow-up (branch-overlap analysis, #724).
-        // Pinned here so the scope boundary is explicit and nobody later assumes
-        // these are covered.
-        assert!(!redos("(a|a)+"));
-        assert!(!redos("(\\d|\\d\\d)+"));
-        assert!(!redos("(foo|foobar)+"));
+    fn the_ambiguity_analysis_covers_what_the_first_pass_does_not() {
+        // #1651: star-height-1 shapes the first pass passes, and the ambiguity
+        // analysis decides. `(foo|foobar)+` is unambiguous ({foo, foobar} is
+        // uniquely decodable), so it is linear and accepted.
+        use super::super::regex_ambiguity::{Verdict, analyse};
+        for pat in [
+            "(a|a)+",
+            "(\\d|\\d\\d)+",
+            "(a|aa)*",
+            "(a{1,2})+",
+            "(a{2,3})+",
+        ] {
+            assert!(!redos(pat), "the first pass is not meant to flag `{pat}`");
+            assert!(
+                matches!(analyse(pat), Verdict::Exponential(..)),
+                "`{pat}` is exponential"
+            );
+        }
+        assert!(matches!(analyse("\\d*\\d*"), Verdict::Polynomial(..)));
+        assert_eq!(analyse("(foo|foobar)+"), Verdict::Linear);
     }
 
     #[test]
@@ -1158,8 +1247,18 @@ mod redos_tests {
             "ORD-[0-9]+",
             "SHP-[0-9]{8}",
             "T-[0-9]+",
+            "[A-Z0-9]{8}",
+            "[A-Z]{2}[0-9]{2}",
+            "^[a-z]+$",
+            "\\d{4}",
+            "\\d+",
         ] {
             assert!(!redos(pat), "false positive on safe pattern `{pat}`");
+            assert_eq!(
+                super::super::regex_ambiguity::analyse(pat),
+                super::super::regex_ambiguity::Verdict::Linear,
+                "the ambiguity analysis rejects safe pattern `{pat}`"
+            );
         }
         // `LocaleTag`'s pattern is read from the firstparty source rather than
         // duplicated here (its own single-source-of-truth rule, ADR 0279), so
@@ -1168,6 +1267,11 @@ mod redos_tests {
         assert!(
             !redos(locale_pat),
             "false positive on safe pattern `{locale_pat}`"
+        );
+        assert_eq!(
+            super::super::regex_ambiguity::analyse(locale_pat),
+            super::super::regex_ambiguity::Verdict::Linear,
+            "the ambiguity analysis rejects `LocaleTag`"
         );
     }
 }

@@ -44,6 +44,7 @@ mod expressions;
 mod kernels;
 mod linearity;
 mod refinements;
+mod regex_ambiguity;
 
 use calls::*;
 use expressions::*;

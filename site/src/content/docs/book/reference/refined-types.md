@@ -37,11 +37,22 @@ A predicate must apply to the base type (`bynk.types.predicate_base_mismatch`).
 An `InRange` with `lo > hi` is rejected (`bynk.types.inverted_range`), as is a set
 of predicates that admit no value (`bynk.types.empty_refinement`) or a negative
 length (`bynk.types.negative_length`). An invalid regex is
-`bynk.types.invalid_regex`. A `Matches` regex that nests unbounded quantifiers
-(a repeated group that itself contains `*`, `+`, or `{n,}`, such as `(a+)+`) is
-rejected as `bynk.types.catastrophic_regex`: the emitted boundary check runs
-under the platform's backtracking `RegExp`, where that shape takes exponential
-time on crafted input (a denial-of-service risk on an untrusted boundary).
+`bynk.types.invalid_regex`. The emitted boundary check runs a `Matches` regex
+under the platform's backtracking `RegExp`, on untrusted input, so the compiler
+rejects a regex that can match the same text along many paths (a
+denial-of-service risk):
+
+- `bynk.types.catastrophic_regex`: exponential ambiguity, such as nested
+  repetition (`(a+)+`), overlapping alternatives (`(a|a)+`, `(\d|\d\d)+`) or a
+  bounded repeat inside a loop (`(a{2,3})+`). It also covers a regex the
+  compiler cannot analyse, such as a backreference inside an unbounded repeat.
+- `bynk.types.polynomial_regex`: two repetitions that can split the same text
+  (`\d*\d*`). With a `MaxLength` or `Length` predicate in the same refinement it
+  is only a warning, `bynk.types.polynomial_regex_capped`, because length
+  predicates are always checked before `Matches`.
+
+`(foo|foobar)+` is accepted: its alternatives overlap, but each text splits into
+them only one way.
 
 ## `.of` — checked construction
 

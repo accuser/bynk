@@ -881,7 +881,7 @@
     },
     {
       "code": "bynk.types.catastrophic_regex",
-      "summary": "A `Matches` predicate nests unbounded quantifiers, risking catastrophic backtracking (ReDoS)."
+      "summary": "A `Matches` pattern can match the same text in exponentially many ways (nested or ambiguous repetition), or cannot be analysed, risking catastrophic backtracking (ReDoS)."
     },
     {
       "code": "bynk.types.empty_refinement",
@@ -902,6 +902,14 @@
     {
       "code": "bynk.types.no_numeric_coercion",
       "summary": "`Int` and `Float` were mixed without an explicit conversion — in an operation or in refinement bounds."
+    },
+    {
+      "code": "bynk.types.polynomial_regex",
+      "summary": "A `Matches` pattern can split the same text between two repetitions, so matching time grows polynomially with input length, and no `MaxLength` bounds the input."
+    },
+    {
+      "code": "bynk.types.polynomial_regex_capped",
+      "summary": "A `Matches` pattern's matching time grows polynomially with input length, but a `MaxLength` or `Length` predicate bounds the input (warning)."
     },
     {
       "code": "bynk.types.predicate_base_mismatch",

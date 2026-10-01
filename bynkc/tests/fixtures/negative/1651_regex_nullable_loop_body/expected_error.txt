@@ -1,0 +1,1 @@
+bynk.types.catastrophic_regex the pattern in `Matches("(a?b?)*")` cannot be shown free of catastrophic backtracking (ReDoS): it repeats, without bound, a part that can match nothing

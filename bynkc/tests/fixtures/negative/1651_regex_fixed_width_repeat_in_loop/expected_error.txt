@@ -1,0 +1,1 @@
+bynk.types.catastrophic_regex the pattern in `Matches("(a{2,3})+")` can match the same text in exponentially many ways

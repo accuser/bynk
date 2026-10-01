@@ -6160,7 +6160,7 @@ fn refined_check_as_bool(recv: &str, base: BaseType, refinement: Option<&Refinem
         terms.push(format!("Number.isFinite({recv})"));
     }
     if let Some(r) = refinement {
-        for p in &r.predicates {
+        for p in bynk_syntax::ast::in_check_order(&r.predicates, |p| &p.kind) {
             terms.push(match &p.kind {
                 PredKind::NonNegative => format!("{recv} >= 0"),
                 PredKind::Positive => format!("{recv} > 0"),

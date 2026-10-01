@@ -1,0 +1,19 @@
+---
+#1651: the capped pattern still validates as written.
+---
+suite demo.codes
+
+case "a value within the bound and the pattern is accepted" {
+  expect accepts("12-34")
+  expect admits("12-34")
+}
+
+case "a value outside the pattern is rejected" {
+  expect !accepts("12-ab")
+  expect !admits("12-ab")
+}
+
+case "a value over the length bound is rejected" {
+  expect !accepts("12345678901234567")
+  expect !admits("12345678901234567")
+}
