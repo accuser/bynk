@@ -20,18 +20,46 @@ It holds:
   (re-exporting `Platform`).
 - `actors` — actor-contract analysis (auth schemes, identities).
 - `requirements` — the capability/requirement analysis the checker draws on.
+- `analysis` / `project_model` / `check_pipeline` — whole-project analysis
+  without emitting (`analysis::analyse_project`): discovery → parse → group →
+  resolve → check, shared by the build and the IDE.
+- `schema_registry` — reconciles event schemas against `bynk.schema.lock`.
+- `wire` / `contract` — the wire-contract shape of a type crossing a context
+  boundary, and the canonical form of a cross-context contract.
 - `index` / `hints` / `expr_types` / `locals` — the **captured analysis tables**
   written during checking (the binding index, inlay hints, expression types,
   scoped locals) that the IDE layer queries.
 
 ## Where it sits
 
+`bynk-check` is the layer between the syntax leaf and everything that emits or
+analyses; besides [`bynk-syntax`](https://crates.io/crates/bynk-syntax) it
+depends only on [`bynk-project`](https://crates.io/crates/bynk-project) (the
+project model):
+
 ```text
-bynk-syntax ◀── bynk-check ◀── bynk-emit ◀── bynk-ide
+bynk-syntax                lexer, parser, AST, CompileError, diagnostic codes
+├── bynk-project           project model: discovery, unit graph, paths
+├── bynk-ts                the TypeScript tree and its printer
+├── bynk-render            diagnostic rendering
+├── bynk-fmt               the formatter
+└── bynk-check             name resolution and type checking   + project
+    ├── bynk-ir            declaration-level IR
+    │   └── bynk-lower     AST → IR helpers
+    ├── bynk-emit          build sequencing, TS emission       + ts, ir, lower, project
+    │   ├── bynk-strip     TS → JS type-stripping              + ts
+    │   └── bynk-driver    shared CLI command bodies           + fmt, render, ts
+    └── bynk-ide           non-bailing editor analysis         + project, fmt
 ```
 
+Each crate depends on its parent in the tree, plus any crates listed after
+its `+`. The front-ends sit on top: the `bynkc` and `bynk` CLIs over
+`bynk-driver`, the `bynkc-lsp` language server (`bynk-lsp`) over `bynk-ide`, and
+the unpublished `bynk-wasm` playground module over `bynk-emit`, `bynk-strip`,
+and `bynk-ide`.
+
 The captured tables live here, with their producers; the IDE *queries* over them
-live up in [`bynk-ide`](https://crates.io/crates/bynk-ide). Most users compile
+live in [`bynk-ide`](https://crates.io/crates/bynk-ide). Most users compile
 Bynk through the [`bynkc`](https://crates.io/crates/bynkc) /
 [`bynk`](https://crates.io/crates/bynk) CLIs rather than depending on this crate
 directly.

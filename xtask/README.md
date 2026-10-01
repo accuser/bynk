@@ -18,10 +18,10 @@ run as `cargo xtask <command>`.
 - `stamp` — assigns the version(s) and ADR number(s) for the pending files
   and materialises them. Dry-run by default; `--apply` to write.
 - `greenfield-status` — runs the compiler-architecture probes
-  (`design/greenfield-status.md`) against the tree and prints the report; the
-  gated probes are what the committed table is diffed against in CI
-  (`greenfield_status_table_is_current`). `--apply` writes the committed
-  table.
+  (`design/greenfield-status.md`) against the tree and prints the report,
+  exiting non-zero if a gated probe disagrees with the committed table — the
+  same diff CI runs (`greenfield_status_table_is_current`). `--apply` writes the
+  committed table.
 - `ci` — runs the same gates CI runs, locally, in CI's own cheapest-first
   order; `--fast` stops after the two gates that need no compile-and-link.
 

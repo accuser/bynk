@@ -1,6 +1,6 @@
 [package]
 name = "bynk-driver"
-description = "Shared front-end command bodies for the bynkc and bynk CLIs"
+description = "The command bodies shared by the Bynk CLIs (bynkc and bynk): project rooting, check, fmt, test, and output writing."
 keywords = ["compiler", "dsl", "cli", "language"]
 categories = ["compilers", "command-line-interface"]
 edition.workspace = true

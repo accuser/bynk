@@ -19,7 +19,30 @@ here once and was deleted once it proved unreachable from production (see
 ## Where it sits
 
 This crate depends on [`bynk-syntax`](https://crates.io/crates/bynk-syntax),
-[`bynk-check`](https://crates.io/crates/bynk-check), and `bynk-ir`.
+[`bynk-check`](https://crates.io/crates/bynk-check), and
+[`bynk-ir`](https://crates.io/crates/bynk-ir):
+
+```text
+bynk-syntax                lexer, parser, AST, CompileError, diagnostic codes
+├── bynk-project           project model: discovery, unit graph, paths
+├── bynk-ts                the TypeScript tree and its printer
+├── bynk-render            diagnostic rendering
+├── bynk-fmt               the formatter
+└── bynk-check             name resolution and type checking   + project
+    ├── bynk-ir            declaration-level IR
+    │   └── bynk-lower     AST → IR helpers
+    ├── bynk-emit          build sequencing, TS emission       + ts, ir, lower, project
+    │   ├── bynk-strip     TS → JS type-stripping              + ts
+    │   └── bynk-driver    shared CLI command bodies           + fmt, render, ts
+    └── bynk-ide           non-bailing editor analysis         + project, fmt
+```
+
+Each crate depends on its parent in the tree, plus any crates listed after
+its `+`. The front-ends sit on top: the `bynkc` and `bynk` CLIs over
+`bynk-driver`, the `bynkc-lsp` language server (`bynk-lsp`) over `bynk-ide`, and
+the unpublished `bynk-wasm` playground module over `bynk-emit`, `bynk-strip`,
+and `bynk-ide`.
+
 [`bynk-emit`](https://crates.io/crates/bynk-emit) is the one production
 consumer of every helper here — each has a real call site in the emitter, not
 just a test. The `bynk-project` dev-dependency is test-fixture plumbing only

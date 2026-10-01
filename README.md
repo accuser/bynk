@@ -10,7 +10,7 @@ layered on top. Bynk compiles to **typed TypeScript** and targets **Cloudflare
 Workers**.
 
 > ⚠️ Bynk is **pre-1.0 and under active development.** The language evolves in
-> small, spec-first increments. The [Bynk Book](docs/) documents *what compiles
+> small, spec-first increments. The [Bynk Book](https://bynk-lang.org/book/) documents *what compiles
 > today*; planned features are marked as planned.
 
 ## The idea in one example
@@ -54,13 +54,13 @@ source with a recent Rust toolchain (stable, 2024 edition — see
 git clone https://github.com/accuser/bynk.git
 cd bynk
 cargo install --path bynkc      # the `bynkc` compiler
-cargo install --path bynk       # the `bynk` driver (doctor / dev / deploy / new / check / fmt / test)
+cargo install --path bynk       # the `bynk` driver (doctor / new / dev / deploy, and more)
 cargo install --path bynk-lsp   # optional: the `bynkc-lsp` language server
 ```
 
 `bynkc --help` lists the four compiler commands (`compile`, `check`, `fmt`,
 `test`); `bynk --help` lists the driver's (`doctor`, `dev`, `deploy`, `new`,
-`check`, `fmt`, `test`).
+`check`, `fmt`, `test`, `explain`).
 
 ## Quick start
 
@@ -83,21 +83,27 @@ or [Compile your first program](https://bynk-lang.org/book/tutorials/01-first-pr
 
 ## Repository layout
 
-This is a Cargo workspace. The published crates are `bynkc`, `bynk`, `bynk-fmt`,
-`bynk-grammar`, and `bynk-lsp`.
+This is a Cargo workspace. The three user-facing tools — `bynkc`, `bynk`, and
+`bynk-lsp` — are front-ends over a layered set of library crates; every crate
+except `bynk-wasm`, `bynk-testkit`, `tree-sitter-bynk`'s Rust binding, and
+`xtask` is published to crates.io at the workspace version. Each crate's README
+says where it sits in the layering.
 
 | Path | What it is | Published as |
 | ---- | ---------- | ------------ |
-| [`bynkc/`](bynkc/) | The compiler library and `bynkc` CLI (lex → parse → resolve → check → emit). | [crates.io](https://crates.io/crates/bynkc) |
-| [`bynk/`](bynk/) | The `bynk` driver — a thin orchestrator over `bynkc` and the Node toolchain (`doctor` / `new` / `dev`). | [crates.io](https://crates.io/crates/bynk) |
-| [`bynk-fmt/`](bynk-fmt/) | The Bynk formatter, behind a small public surface. | [crates.io](https://crates.io/crates/bynk-fmt) |
-| [`bynk-grammar/`](bynk-grammar/) | Renders the tree-sitter grammar to EBNF for the book's grammar reference. | [crates.io](https://crates.io/crates/bynk-grammar) |
+| [`bynkc/`](bynkc/) | The `bynkc` compiler CLI (`compile` / `check` / `fmt` / `test`) — a thin front-end over the library crates. | [crates.io](https://crates.io/crates/bynkc) |
+| [`bynk/`](bynk/) | The `bynk` driver — links the compiler in-process and orchestrates the Node toolchain (`doctor` / `new` / `dev` / `deploy`, plus `check` / `fmt` / `test` / `explain`). | [crates.io](https://crates.io/crates/bynk) |
 | [`bynk-lsp/`](bynk-lsp/) | The `bynkc-lsp` Language Server (diagnostics, hover, go-to-definition, …). | [crates.io](https://crates.io/crates/bynk-lsp) |
+| [`bynk-syntax/`](bynk-syntax/), [`bynk-project/`](bynk-project/), [`bynk-check/`](bynk-check/), [`bynk-ir/`](bynk-ir/), [`bynk-lower/`](bynk-lower/), [`bynk-ts/`](bynk-ts/), [`bynk-emit/`](bynk-emit/), [`bynk-strip/`](bynk-strip/), [`bynk-render/`](bynk-render/), [`bynk-fmt/`](bynk-fmt/), [`bynk-ide/`](bynk-ide/), [`bynk-driver/`](bynk-driver/) | The compiler's library crates: syntax, the project model, checking, the declaration IR, TypeScript emission and stripping, diagnostic rendering, formatting, editor analysis, and the command bodies the CLIs share. | crates.io |
+| [`bynk-grammar/`](bynk-grammar/) | Renders the tree-sitter grammar to EBNF for the book's grammar reference. | [crates.io](https://crates.io/crates/bynk-grammar) |
+| [`bynk-wasm/`](bynk-wasm/) | The compiler as a wasm module, backing the playground. | — |
 | [`tree-sitter-bynk/`](tree-sitter-bynk/) | The tree-sitter grammar — the source of truth for syntax highlighting. | npm |
-| [`vscode-bynk/`](vscode-bynk/) | The VS Code extension (bundles the language server). | — |
+| [`vscode-bynk/`](vscode-bynk/) | The VS Code extension (launches the language server). | — |
+| [`playground/`](playground/) | The in-browser playground. | — |
 | [`site/`](site/) | The Bynk Book (Astro + Starlight): tutorials, how-to guides, reference, and the normative spec. Published at [bynk-lang.org](https://bynk-lang.org/book/). | — |
 | [`design/`](design/) | Internal design notes and decision records (ADRs). | — |
 | [`examples/`](examples/) | Example projects. | — |
+| [`bynk-testkit/`](bynk-testkit/), [`xtask/`](xtask/), [`fuzz/`](fuzz/) | Internal: cross-crate test fixtures, repo automation (`cargo xtask`), and fuzz targets. | — |
 
 ## Developing
 

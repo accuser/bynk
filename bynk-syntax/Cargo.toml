@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "Bynk's syntax foundation: lexer, parser, AST, spans, the CompileError type, and the diagnostic-code registry — the lowest leaf of the compiler crate set."
+description = "The syntax foundation of the Bynk compiler: lexer, parser, AST, spans, the CompileError type, and the diagnostic-code registry."
 keywords = ["compiler", "dsl", "parser", "lexer", "language"]
 categories = ["compilers", "parser-implementations"]
 

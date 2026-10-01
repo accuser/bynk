@@ -1,6 +1,6 @@
 [package]
 name = "bynk-ts"
-description = "The TypeScript tree and printer (phase 7 of the compiler trajectory). Emission produces nodes; this crate's printer is the only code that writes a character."
+description = "The TypeScript tree and printer of the Bynk compiler: emission builds nodes, and this printer is the only code that writes emitted text."
 keywords = ["compiler", "dsl", "typescript", "language"]
 categories = ["compilers", "development-tools"]
 version.workspace = true

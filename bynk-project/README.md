@@ -22,16 +22,38 @@ It holds:
 - `parse_cache` / `json` — supporting caches and JSON helpers the above use.
 
 What deliberately stays **out** of this crate: schema-registry
-*reconciliation* (`bynk-check`-coupled, stays in `bynk-emit`), diagnostic
+*reconciliation* (checker-coupled, lives in `bynk-check`), diagnostic
 modes and project-analysis result types (facts about how the pipeline is
 driven, not about the project itself), and test codegen — all downstream
 concerns, not project modelling.
 
 ## Where it sits
 
-This crate depends on [`bynk-syntax`](https://crates.io/crates/bynk-syntax)
-only (plus `toml`/`serde` for the manifest and lock-file formats) — it has no
-dependency on the checker or the emitter.
+`bynk-project` sits directly on the `bynk-syntax` leaf (plus `toml`/`serde` for
+the manifest and lock-file formats) — it has no dependency on the checker or the
+emitter:
+
+```text
+bynk-syntax                lexer, parser, AST, CompileError, diagnostic codes
+├── bynk-project           project model: discovery, unit graph, paths
+├── bynk-ts                the TypeScript tree and its printer
+├── bynk-render            diagnostic rendering
+├── bynk-fmt               the formatter
+└── bynk-check             name resolution and type checking   + project
+    ├── bynk-ir            declaration-level IR
+    │   └── bynk-lower     AST → IR helpers
+    ├── bynk-emit          build sequencing, TS emission       + ts, ir, lower, project
+    │   ├── bynk-strip     TS → JS type-stripping              + ts
+    │   └── bynk-driver    shared CLI command bodies           + fmt, render, ts
+    └── bynk-ide           non-bailing editor analysis         + project, fmt
+```
+
+Each crate depends on its parent in the tree, plus any crates listed after
+its `+`. The front-ends sit on top: the `bynkc` and `bynk` CLIs over
+`bynk-driver`, the `bynkc-lsp` language server (`bynk-lsp`) over `bynk-ide`, and
+the unpublished `bynk-wasm` playground module over `bynk-emit`, `bynk-strip`,
+and `bynk-ide`.
+
 [`bynk-check`](https://crates.io/crates/bynk-check),
 [`bynk-emit`](https://crates.io/crates/bynk-emit), and
 [`bynk-ide`](https://crates.io/crates/bynk-ide) each depend on it directly for

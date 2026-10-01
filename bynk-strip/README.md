@@ -30,16 +30,33 @@ unused, and only `import type` / `type` specifiers are elided.
 
 ## Where it sits
 
+`bynk-strip` sits above [`bynk-emit`](https://crates.io/crates/bynk-emit),
+turning its `ProjectOutput` into a JS artefact:
+
 ```text
-bynk-syntax  ◀── bynk-render · bynk-fmt · bynk-check ◀── bynk-emit ◀── bynk-ide
-                                                             ◀── bynk-strip
+bynk-syntax                lexer, parser, AST, CompileError, diagnostic codes
+├── bynk-project           project model: discovery, unit graph, paths
+├── bynk-ts                the TypeScript tree and its printer
+├── bynk-render            diagnostic rendering
+├── bynk-fmt               the formatter
+└── bynk-check             name resolution and type checking   + project
+    ├── bynk-ir            declaration-level IR
+    │   └── bynk-lower     AST → IR helpers
+    ├── bynk-emit          build sequencing, TS emission       + ts, ir, lower, project
+    │   ├── bynk-strip     TS → JS type-stripping              + ts
+    │   └── bynk-driver    shared CLI command bodies           + fmt, render, ts
+    └── bynk-ide           non-bailing editor analysis         + project, fmt
 ```
 
-`bynk-strip` sits above `bynk-emit`, turning its `ProjectOutput` into a JS
-artefact. The dependency runs one way only — `bynk-emit` does not depend on
-`bynk-strip` — so the language server (via `bynk-ide` → `bynk-emit`) never pulls
-in `oxc`. The `bynkc`, `bynk`, and `bynk-lsp` binaries are front-ends over the
-compiler set.
+Each crate depends on its parent in the tree, plus any crates listed after
+its `+`. The front-ends sit on top: the `bynkc` and `bynk` CLIs over
+`bynk-driver`, the `bynkc-lsp` language server (`bynk-lsp`) over `bynk-ide`, and
+the unpublished `bynk-wasm` playground module over `bynk-emit`, `bynk-strip`,
+and `bynk-ide`.
+
+The dependency runs one way only — `bynk-emit` does not depend on `bynk-strip`,
+and the language server's analysis layer (`bynk-ide`) depends on neither — so
+`bynkc-lsp` never pulls in `oxc`.
 
 ## Use
 

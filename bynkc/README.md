@@ -10,7 +10,7 @@ type-checks it, and emits typed TypeScript targeting Cloudflare Workers.
 
 Bynk is a statically typed, architecture-first language: contexts, services,
 agents, refined types, and capabilities are part of the language. See the
-[Bynk Book](https://github.com/accuser/bynk/tree/main/docs) for the full guide
+[Bynk Book](https://bynk-lang.org/book/) for the full guide
 and reference.
 
 ## Pipeline
@@ -27,14 +27,25 @@ resolve — but not a crate's whole module tree, e.g. `bynk_syntax::ast` stays
 
 - [`bynk-syntax`](https://crates.io/crates/bynk-syntax) — lexer, parser, AST,
   spans, the `CompileError` type, and the `bynk.*` diagnostic-code registry.
+- [`bynk-project`](https://crates.io/crates/bynk-project) — the project model:
+  discovery, the unit dependency graph, and path resolution.
 - [`bynk-check`](https://crates.io/crates/bynk-check) — name resolution, type
   checking, the kernel/builtin registries, first-party sources, and actors.
+- [`bynk-ir`](https://crates.io/crates/bynk-ir) /
+  [`bynk-lower`](https://crates.io/crates/bynk-lower) — the declaration-level
+  facts the emitter reads, and the helpers that build them.
+- [`bynk-ts`](https://crates.io/crates/bynk-ts) — the TypeScript tree and its
+  printer.
 - [`bynk-emit`](https://crates.io/crates/bynk-emit) — build orchestration
   (`project`) and the TypeScript emitter.
+- [`bynk-strip`](https://crates.io/crates/bynk-strip) — TypeScript →
+  JavaScript type-stripping, behind `--emit js`.
 - [`bynk-render`](https://crates.io/crates/bynk-render) — the shared diagnostic
-  renderer ([`ariadne`](https://crates.io/crates/ariadne) human + `short`/`json`).
+  renderer ([`ariadne`](https://crates.io/crates/ariadne) human + `short`).
 - [`bynk-fmt`](https://crates.io/crates/bynk-fmt) — the formatter, behind
   `bynkc fmt`.
+- [`bynk-driver`](https://crates.io/crates/bynk-driver) — the command bodies
+  `bynkc` shares with the `bynk` driver (`check`, `fmt`, `test`, output writing).
 
 Every error carries a dotted category (`bynk.parse.expected_token`,
 `bynk.types.invalid_regex`, …), a source span, and a primary message; many carry
@@ -57,18 +68,24 @@ Requires a stable Rust toolchain, 2024 edition (MSRV 1.95).
 ## CLI
 
 ```sh
-bynkc check   <input>                         # type-check without emitting
-bynkc compile <input> -o <output> [--target bundle|workers]
+bynkc check   <input> [--format rich|short]   # type-check without emitting
+bynkc compile <input> -o <output>             # emit TypeScript (or JavaScript)
+              [--target bundle|workers] [--platform cloudflare|node|browser]
+              [--emit ts|js]
 bynkc fmt     [inputs...] [--check]           # format in place (or `-` for stdin)
               [--indent tab|spaces] [--indent-width N] [--max-line-width COLUMNS]
-              [--no-trailing-comma]            # override the canonical style for this run
-bynkc test    [project] [--no-run]            # compile and run `test` blocks
+              [--trailing-comma | --no-trailing-comma] [--no-config]
+bynkc test    [project] [--format rich|json]  # compile and run `suite`/`case` tests
+              [--no-run] [--case NAME] [--seed HEX] [--coverage] [--inspect]
 ```
 
 `<input>` is either a single-file commons (`foo.bynk`) or a project directory
 containing a `bynk.toml`. The `workers` target emits one Cloudflare Worker per
 context, complete with router, dependency wiring, the shared runtime, and a
-`wrangler.toml`. `bynkc test` needs `node` and `tsc` on `PATH`.
+`wrangler.toml`. `--emit js` writes the same modules with their types stripped,
+so the output runs with no `tsc` in the loop. `bynkc fmt` reads a project's
+`[fmt]` section from `bynk.toml` unless `--no-config` is passed. `bynkc test`
+needs `node` and `tsc` on `PATH`.
 
 Run `bynkc <command> --help` for every flag, and see the
 [CLI reference](https://bynk-lang.org/docs/cli/).
@@ -76,18 +93,26 @@ Run `bynkc <command> --help` for every flag, and see the
 ## Library
 
 ```rust
-use bynkc::compile_project;
+use bynkc::{BuildTarget, CompileOptions, compile_project};
 
-// Compile a project root (a directory containing `bynk.toml`) into an
-// in-memory tree of TypeScript files.
-let output = compile_project(std::path::Path::new("path/to/project"))?;
+// The build never touches disk: `sources` maps every `.bynk` file under the
+// root (by canonical path) to its text. The result is an in-memory tree of
+// TypeScript files.
+let options = CompileOptions::single("path/to/src")
+    .sources(sources)
+    .target(BuildTarget::Workers);
+let output = compile_project(&options)?;
 ```
 
-The crate re-exports `bynk-syntax`'s modules whole (`ast`, `lexer`, `parser`,
-`diagnostics`, …) plus a small set of items from the checker and emitter layers
-(`Platform`, `CompileOptions`, `compile_project`, …) — not those layers'
-modules; `bynkc::resolver`, `bynkc::checker`, `bynkc::emitter`, and
-`bynkc::project` are not part of the published API. The single-string
+To compile a project from disk the way the CLI does — reading `bynk.toml` and
+every source — build the options with
+[`bynk-driver`](https://crates.io/crates/bynk-driver)'s `project_options`.
+
+The crate re-exports a small set of items from the layers below — `CompileError`
+and `Severity` from `bynk-syntax`, `Platform`, `CompileOptions`,
+`compile_project`, the renderers, and the strip entry points — not those
+layers' modules; `bynkc::ast`, `bynkc::resolver`, `bynkc::checker`,
+`bynkc::emitter`, and `bynkc::project` are not part of the published API. The single-string
 `compile` entrypoint handles a self-contained commons; the `compile_project`
 family handles multi-file projects, build targets, and platforms. To depend on
 just one layer, use the individual crate (e.g.

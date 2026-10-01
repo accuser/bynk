@@ -1,10 +1,11 @@
 # @bynk/runtime
 
 The bynk runtime: the shared types and helpers that every emitted bynk module
-imports from `./runtime.js`. `Result`/`Option`, the validation/JSON error
-records, the Durable Object storage surface, the cross-Worker boundary protocol,
-`HttpResult`, `QueueResult`, the agent lifecycle, and the JWT / webhook crypto
-seams.
+imports from `./runtime.js`. `Result`/`Option`, `Bytes`, the validation/JSON
+error records, the Durable Object storage surface, the cross-Worker boundary
+protocol, `HttpResult`, `QueueResult`, the agent lifecycle, the JWT / webhook
+crypto seams, held `Connection`s, and the ICU message-formatting and
+`Accept-Language` locale-negotiation helpers.
 
 ## Why this is a package
 
@@ -31,8 +32,9 @@ imports, preserves every comment, and writes the single
 
 ## Modules
 
-`result` · `errors` · `storage` · `boundary` · `http` · `queue` · `agent` ·
-`auth` — re-exported in dependency order by `src/index.ts`.
+`result` · `bytes` · `errors` · `storage` · `boundary` · `http` · `queue` ·
+`agent` · `auth` · `connection` · `messages` · `locale` — re-exported in
+dependency order by `src/index.ts`.
 
 ## Workflow
 

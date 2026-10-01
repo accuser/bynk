@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "The Bynk developer front-end — links the compiler pipeline in-process and orchestrates the Node toolchain (doctor / new / dev)."
+description = "The Bynk developer driver: links the compiler in-process and orchestrates the Node toolchain (doctor, new, dev, deploy, check, fmt, test, explain)."
 keywords = ["bynk", "cli", "toolchain", "driver"]
 categories = ["command-line-utilities", "development-tools"]
 
