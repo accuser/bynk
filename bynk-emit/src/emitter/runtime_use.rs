@@ -6,6 +6,8 @@
 //!
 //! - the `Bytes` helpers (`__bynkBytesEqual` and friends, v0.110 / ADR 0142),
 //!   emitted by the `Bytes` kernel, `==` on `Bytes`, and the boundary codecs;
+//! - the structural-equality walker (`__bynkEq`, #1652), emitted by `==`/`!=`
+//!   on any operand that is neither a primitive nor `Bytes`;
 //! - the ICU formatters (`selectPluralArm`, `formatIcuNumber`, `formatIcuDate`,
 //!   #878), emitted by a `messages` bundle's `render`;
 //! - the boundary-codec group (`Ok`, `Err`, `Result`, `BoundaryError`, #914),
@@ -88,6 +90,8 @@ use bynk_check::checker::TyId;
 #[derive(Default)]
 pub(crate) struct RuntimeUse {
     bytes: Cell<bool>,
+    /// #1652: the module references `__bynkEq` (structural `==`).
+    eq: Cell<bool>,
     icu: Cell<bool>,
     boundary_codec: Cell<bool>,
     json_codec: Cell<bool>,
@@ -116,6 +120,12 @@ impl RuntimeUse {
     /// Record that the module references the `Bytes` runtime helpers.
     pub fn note_bytes(&self) {
         self.bytes.set(true);
+    }
+
+    /// Record that the module references `__bynkEq`, the structural-equality
+    /// walker behind `==`/`!=` on a non-primitive operand (#1652).
+    pub fn note_eq(&self) {
+        self.eq.set(true);
     }
 
     /// Record that the module references the ICU formatting helpers.
@@ -166,6 +176,11 @@ impl RuntimeUse {
     /// Whether the `Bytes` helpers must be imported.
     pub fn bytes(&self) -> bool {
         self.bytes.get()
+    }
+
+    /// Whether `__bynkEq` must be imported (#1652).
+    pub fn eq(&self) -> bool {
+        self.eq.get()
     }
 
     /// Whether the `Ok` / `Err` / `Result` / `BoundaryError` group must be

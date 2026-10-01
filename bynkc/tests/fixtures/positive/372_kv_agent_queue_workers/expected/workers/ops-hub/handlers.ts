@@ -31,8 +31,12 @@ export interface JobLedgerState {
 const __JobLedgerRegistry = new StateRegistry();
 function __zeroOfJobLedgerState(): JobLedgerState { return { seen: 0 }; }
 
-function __rehydrateJobLedgerState(s: JobLedgerState): void {
-  { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "seen", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "seen", expected: "integer", actual: String(__v) } as BoundaryError))((s.seen as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("JobLedger", __r.error); }
+function __rehydrateJobLedgerState(s: JobLedgerState, stored: JobLedgerState): void {
+  if (Object.prototype.hasOwnProperty.call(stored, "seen")) { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "seen", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "seen", expected: "integer", actual: String(__v) } as BoundaryError))((s.seen as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("JobLedger", __r.error); (s as { -readonly [K in keyof typeof s]: (typeof s)[K] }).seen = __r.value as unknown as (typeof s)["seen"]; }
+}
+
+function __encodeJobLedgerState(s: JobLedgerState): Record<string, unknown> {
+  return { ...s, seen: s.seen as JsonValue };
 }
 
 export class JobLedger {
@@ -45,12 +49,12 @@ export class JobLedger {
     const stored = await this.state.storage.get<JobLedgerState>("state");
     if (stored === undefined) return __zeroOfJobLedgerState();
     const __merged = { ...__zeroOfJobLedgerState(), ...stored };
-    __rehydrateJobLedgerState(__merged);
+    __rehydrateJobLedgerState(__merged, stored);
     return __merged;
   }
 
   private async commitState(s: JobLedgerState): Promise<void> {
-    await this.state.storage.put("state", s);
+    await this.state.storage.put("state", __encodeJobLedgerState(s));
   }
 
   async total(deps: {}): Promise<number> {

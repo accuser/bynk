@@ -17,3 +17,17 @@ case "a fresh Slot key resolves to Empty" {
 		}
 	}
 }
+
+case "a written Slot key reads back after a reload" {
+	match Label.of("written") {
+		Err(_) => expect false
+		Ok(id) => {
+			do Slot(id).assign(42)
+			let outcome <- resolve.call(id)
+			match outcome {
+				Ok(v) => expect v == 42
+				Err(_) => expect false
+			}
+		}
+	}
+}

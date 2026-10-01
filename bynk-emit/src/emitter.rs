@@ -256,6 +256,7 @@ pub(crate) fn emit(program: &CheckedProgram) -> String {
         &mut out,
         commons,
         dummy_ctx.runtime_use.bytes(),
+        dummy_ctx.runtime_use.eq(),
         uses_http,
         uses_queue,
     );
@@ -2924,6 +2925,9 @@ fn write_header(commons: &TypedCommons, ctx: &EmitProjectCtx) -> Vec<bynk_ts::Ts
         if ctx.runtime_use.bytes() {
             parts.extend(BYTES_RUNTIME_IMPORTS.trim_start_matches(", ").split(", "));
         }
+        if ctx.runtime_use.eq() {
+            parts.extend(EQ_RUNTIME_IMPORTS.trim_start_matches(", ").split(", "));
+        }
         if ctx.runtime_use.icu() {
             parts.extend(
                 MESSAGES_RUNTIME_IMPORTS
@@ -2952,6 +2956,7 @@ fn write_header_single(
     out: &mut String,
     commons: &TypedCommons,
     uses_bytes: bool,
+    uses_eq: bool,
     uses_http: bool,
     uses_queue: bool,
 ) {
@@ -2983,6 +2988,9 @@ fn write_header_single(
         } else {
             ""
         };
+        // #1652: the structural-equality walker, imported only when a
+        // non-primitive `==`/`!=` lowered to it.
+        let eq_imports = if uses_eq { EQ_RUNTIME_IMPORTS } else { "" };
         // v0.153 (ADR 0177): `HttpResult` is a value (its variant namespace) and
         // a type, so it imports without a `type` prefix — one binding serves
         // both `HttpResult.NotFound` and the `HttpResult<T>` annotation.
@@ -2997,7 +3005,7 @@ fn write_header_single(
         // group's own name list a second time (the string-building above,
         // unchanged, already gets this exactly right).
         let inside = format!(
-            "Ok, Err, Some, None, type Result, type Option, type ValidationError{codec_imports}{bytes_imports}{http_imports}{queue_imports}"
+            "Ok, Err, Some, None, type Result, type Option, type ValidationError{codec_imports}{bytes_imports}{eq_imports}{http_imports}{queue_imports}"
         );
         out.push_str(&bynk_ts::print_stmt(
             &bynk_ts::TsStmt::decl(
@@ -3019,6 +3027,11 @@ fn write_header_single(
 /// the base64/UTF-8 helpers back the kernel and codec.
 pub(crate) const BYTES_RUNTIME_IMPORTS: &str =
     ", __bynkBytesEqual, __bynkBytesToBase64, __bynkBytesFromBase64, __bynkBytesDecodeUtf8";
+
+/// #1652 (runtime-semantics track §3.1): the structural-equality walker,
+/// appended to a module's import list when `==`/`!=` on a non-primitive,
+/// non-`Bytes` operand lowered to it (`lower_bin_op`).
+pub(crate) const EQ_RUNTIME_IMPORTS: &str = ", __bynkEq";
 
 /// message-bundles slice 3 (#878, Decision G): the ICU-formatting runtime
 /// helpers, appended to a module's import list when an emitted `messages`
@@ -4020,6 +4033,12 @@ impl<'a> LowerCtx<'a> {
     /// helpers, so the module imports them.
     fn note_bytes(&self) {
         self.runtime_use().note_bytes();
+    }
+
+    /// Record that this lowering emitted a reference to `__bynkEq` (#1652), so
+    /// the module imports it.
+    fn note_eq(&self) {
+        self.runtime_use().note_eq();
     }
 
     /// Record a checkpoint: generated text from `out_len` onward originates at

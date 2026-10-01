@@ -193,10 +193,12 @@ observes.
 
 ## Rehydration validation
 
-An agent's persisted state is **validated when it is loaded** (v0.97). Each value
-position — a `Cell`'s `T`, a `Map`/`Cache`'s `V`, a `Log`'s `T`, and textual `Set`
-elements / `Map` keys — is run through the same boundary deserialiser the HTTP and
-queue seams use, against the **current** type definition. A failure is an internal
+An agent's persisted state is **stored in the wire shape and validated when it is
+loaded** (v0.97; wire-shaped storage since #1649). A commit serialises each value
+position — a `Cell`'s `T`, a `Map`/`Cache`'s `V`, a `Log`'s `T` — with the same
+boundary codec the HTTP and queue seams use. A load runs each stored value, and
+textual `Set` elements / `Map` keys, back through the boundary deserialiser, against
+the **current** type definition. A failure is an internal
 fault, **`RehydrationViolation`** — the load-time twin of an `InvariantViolation`
 (it logs the agent and field, never the key/value) — *not* a caller-facing `400`:
 the supplier of stored state is trusted past-self, not an untrusted caller.
@@ -207,8 +209,10 @@ Two consequences follow:
   indistinguishable from corruption — so breaking migrations stay by convention
   (no coercion, no silent drop).
 - **Additive evolution is automatic:** a `store` field added in a later deploy
-  takes its zero/initialiser instead of reading as absent (load merges
-  `{ ...zero(), ...stored }`).
+  takes its zero/initialiser instead of reading as absent. A stored field the
+  current definition no longer declares is carried along unchanged, not dropped.
+- A value with no wire form (a non-finite `Float`) cannot be stored: the commit
+  faults and nothing persists.
 
 See the normative rule in
 [§5.4.3 of the specification](/book/spec/static-semantics/#543-rehydration-validation-v097).

@@ -1,0 +1,59 @@
+---
+#1652: `==` is structural (type-system §2.3.5). The suite proves it at runtime
+for every shape the emitter dispatches to the structural walker, and that the
+primitive and `Bytes` paths keep their own semantics.
+---
+commons demo.eq
+
+type Pt = { x: Int, y: Int }
+
+type Shape =
+  | Circle(r: Int)
+  | Square(side: Int)
+
+type Light = enum { Red, Green }
+
+type Blob = { name: String, data: Bytes }
+
+type Token = opaque Bytes
+
+fn same[T](a: T, b: T) -> Bool {
+  a == b
+}
+
+fn decodedGreen() -> Light {
+  match Json.decode[Light](Json.encode(Green)) {
+    Ok(l) => l
+    Err(_) => Red
+  }
+}
+
+fn blob(s: String) -> Blob {
+  Blob { name: "b", data: Bytes.fromUtf8(s) }
+}
+
+fn token(s: String) -> Option[Token] {
+  match Token.of(Bytes.fromUtf8(s)) {
+    Ok(t) => Some(t)
+    Err(_) => None
+  }
+}
+
+fn sameToken(a: String, b: String) -> Bool {
+  match token(a) {
+    Some(x) => match token(b) {
+      Some(y) => x == y
+      None => false
+    }
+    None => false
+  }
+}
+
+fn scores(k: String, n: Int) -> Map[String, Int] {
+  let m: Map[String, Int] = Map.empty()
+  m.insert(k, n)
+}
+
+fn nan() -> Float {
+  0.0 / 0.0
+}

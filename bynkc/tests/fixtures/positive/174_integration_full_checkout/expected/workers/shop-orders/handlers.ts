@@ -19,8 +19,12 @@ export interface LedgerState {
 const __LedgerRegistry = new StateRegistry();
 function __zeroOfLedgerState(): LedgerState { return { placed: 0 }; }
 
-function __rehydrateLedgerState(s: LedgerState): void {
-  { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "placed", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "placed", expected: "integer", actual: String(__v) } as BoundaryError))((s.placed as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Ledger", __r.error); }
+function __rehydrateLedgerState(s: LedgerState, stored: LedgerState): void {
+  if (Object.prototype.hasOwnProperty.call(stored, "placed")) { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "placed", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "placed", expected: "integer", actual: String(__v) } as BoundaryError))((s.placed as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Ledger", __r.error); (s as { -readonly [K in keyof typeof s]: (typeof s)[K] }).placed = __r.value as unknown as (typeof s)["placed"]; }
+}
+
+function __encodeLedgerState(s: LedgerState): Record<string, unknown> {
+  return { ...s, placed: s.placed as JsonValue };
 }
 
 export class Ledger {
@@ -33,12 +37,12 @@ export class Ledger {
     const stored = await this.state.storage.get<LedgerState>("state");
     if (stored === undefined) return __zeroOfLedgerState();
     const __merged = { ...__zeroOfLedgerState(), ...stored };
-    __rehydrateLedgerState(__merged);
+    __rehydrateLedgerState(__merged, stored);
     return __merged;
   }
 
   private async commitState(s: LedgerState): Promise<void> {
-    await this.state.storage.put("state", s);
+    await this.state.storage.put("state", __encodeLedgerState(s));
   }
 
   async tally(deps: {}): Promise<Result<number, OrderError>> {

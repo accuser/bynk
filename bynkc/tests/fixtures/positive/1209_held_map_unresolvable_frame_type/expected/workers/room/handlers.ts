@@ -21,8 +21,12 @@ export interface RoomState {
 const __RoomRegistry = new StateRegistry();
 function __zeroOfRoomState(): RoomState { return { conns: {} }; }
 
-function __rehydrateRoomState(s: RoomState): void {
+function __rehydrateRoomState(s: RoomState, stored: RoomState): void {
   for (const __k of Object.keys(s.conns)) { const __r = deserialise_UserId((__k as unknown as JsonValue), "conns"); if (__r.tag === "Err") throw rehydrationViolation("Room", __r.error); }
+}
+
+function __encodeRoomState(s: RoomState): Record<string, unknown> {
+  return { ...s };
 }
 
 export class Room {
@@ -35,12 +39,12 @@ export class Room {
     const stored = await this.state.storage.get<RoomState>("state");
     if (stored === undefined) return __zeroOfRoomState();
     const __merged = { ...__zeroOfRoomState(), ...stored };
-    __rehydrateRoomState(__merged);
+    __rehydrateRoomState(__merged, stored);
     return __merged;
   }
 
   private async commitState(s: RoomState): Promise<void> {
-    await this.state.storage.put("state", s);
+    await this.state.storage.put("state", __encodeRoomState(s));
   }
 
   async touch(deps: {}): Promise<void> {

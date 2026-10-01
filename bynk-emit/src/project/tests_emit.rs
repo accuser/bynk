@@ -571,6 +571,9 @@ fn emit_integration_module(
     if runtime_use.bytes() {
         append_missing_bindings(&mut runtime_names, emitter::BYTES_RUNTIME_IMPORTS);
     }
+    if runtime_use.eq() {
+        append_missing_bindings(&mut runtime_names, emitter::EQ_RUNTIME_IMPORTS);
+    }
     stmts.insert(
         import_idx,
         TsStmt::decl(
@@ -1915,21 +1918,14 @@ fn emit_test_module(
     }
 
     // v0.118: emit one `__Stub_<Cap>` stub class per overridden capability
-    // seam, plus the deep-equality helper its arg-pattern matching relies on.
-    // Sorted by capability so emission is deterministic regardless of the map's
-    // hash iteration order.
-    if !stubs.is_empty() {
-        let mut stmt = TsStmt::raw(stub_runtime_helpers(), None);
-        if suppress_next_blank {
-            stmt.no_blank_before = true;
-            suppress_next_blank = false;
-        }
-        stmts.push(stmt);
-    }
+    // seam. Sorted by capability so emission is deterministic regardless of the
+    // map's hash iteration order. #1652: argument patterns match with the
+    // runtime's structural `__bynkEq` (the same equality as `==`), so the
+    // separate `__bynkDeepEqual` helper this block used to inject is gone.
     let mut sorted_stubs: Vec<(&String, &ResolvedStub)> = stubs.iter().collect();
     sorted_stubs.sort_by(|a, b| a.0.cmp(b.0));
     for (_, rp) in sorted_stubs {
-        stmts.push(emit_stub_class(
+        let mut stmt = emit_stub_class(
             rp,
             target_name,
             unit_tables,
@@ -1938,7 +1934,12 @@ fn emit_test_module(
             unit_consumes_aliases,
             &runtime_use,
             tys,
-        ));
+        );
+        if suppress_next_blank {
+            stmt.no_blank_before = true;
+            suppress_next_blank = false;
+        }
+        stmts.push(stmt);
     }
 
     // Emit the deps factory.
@@ -2239,6 +2240,9 @@ fn emit_test_module(
     if runtime_use.bytes() {
         append_missing_bindings(&mut runtime_names, emitter::BYTES_RUNTIME_IMPORTS);
     }
+    if runtime_use.eq() {
+        append_missing_bindings(&mut runtime_names, emitter::EQ_RUNTIME_IMPORTS);
+    }
     stmts.insert(
         import_idx,
         TsStmt::decl(
@@ -2366,14 +2370,6 @@ fn relative_import_for_test(target_dir: &Path) -> String {
 /// (slice 2, ADR 0104). The explicit form is equivalent and strip-clean.
 fn expectation_runtime_helpers() -> String {
     include_str!("../emitter/test_runtime/expectation.ts").to_string()
-}
-
-/// v0.118: the runtime helper the `__Stub_<Cap>` stubs rely on — a
-/// structural deep-equality over lowered argument patterns (bigint-safe, since
-/// `Int` erases to `bigint` and `JSON.stringify` rejects it raw). Finding
-/// #17: source lives at `emitter/test_runtime/stub.ts`.
-fn stub_runtime_helpers() -> String {
-    include_str!("../emitter/test_runtime/stub.ts").to_string()
 }
 
 /// #1485: the test-only HS256 JWT signer `emit_system_http_support`'s own
@@ -2557,7 +2553,8 @@ fn emit_stub_class(
                         body_text.push('\n');
                     }
                     body_text.push_str("    })();\n");
-                    cond_parts.push(format!("__bynkDeepEqual({}, {vname})", param.name.name));
+                    runtime_use.note_eq();
+                    cond_parts.push(format!("__bynkEq({}, {vname})", param.name.name));
                 }
             }
             let cond = if cond_parts.is_empty() {

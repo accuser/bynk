@@ -21,9 +21,13 @@ export interface InventoryState {
 const __InventoryRegistry = new StateRegistry();
 function __zeroOfInventoryState(): InventoryState { return { reservations: {}, reservations__idx_orderId: {} }; }
 
-function __rehydrateInventoryState(s: InventoryState): void {
-  for (const __v of Object.values(s.reservations)) { const __r = deserialise_Reservation((__v as unknown as JsonValue), "reservations"); if (__r.tag === "Err") throw rehydrationViolation("Inventory", __r.error); }
+function __rehydrateInventoryState(s: InventoryState, stored: InventoryState): void {
+  if (Object.prototype.hasOwnProperty.call(stored, "reservations")) for (const __k of Object.keys(s.reservations)) { const __r = deserialise_Reservation((s.reservations[__k] as unknown as JsonValue), "reservations"); if (__r.tag === "Err") throw rehydrationViolation("Inventory", __r.error); s.reservations[__k] = __r.value as unknown as (typeof s.reservations)[string]; }
   for (const __k of Object.keys(s.reservations)) { const __r = ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "reservations", expected: "string", actual: typeof __v } as BoundaryError))((__k as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Inventory", __r.error); }
+}
+
+function __encodeInventoryState(s: InventoryState): Record<string, unknown> {
+  return { ...s, reservations: Object.fromEntries(Object.entries(s.reservations).map(([__k, __v]) => [__k, serialise_Reservation(__v)])) };
 }
 
 export class Inventory {
@@ -36,12 +40,12 @@ export class Inventory {
     const stored = await this.state.storage.get<InventoryState>("state");
     if (stored === undefined) return __zeroOfInventoryState();
     const __merged = { ...__zeroOfInventoryState(), ...stored };
-    __rehydrateInventoryState(__merged);
+    __rehydrateInventoryState(__merged, stored);
     return __merged;
   }
 
   private async commitState(s: InventoryState): Promise<void> {
-    await this.state.storage.put("state", s);
+    await this.state.storage.put("state", __encodeInventoryState(s));
   }
 
   async inRegion(rg: string, deps: {}): Promise<number> {

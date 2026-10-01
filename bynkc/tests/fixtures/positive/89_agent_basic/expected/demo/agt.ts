@@ -27,8 +27,12 @@ export interface BoxState {
 const __BoxRegistry = new StateRegistry();
 function __zeroOfBoxState(): BoxState { return { n: 0 }; }
 
-function __rehydrateBoxState(s: BoxState): void {
-  { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "n", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "n", expected: "integer", actual: String(__v) } as BoundaryError))((s.n as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Box", __r.error); }
+function __rehydrateBoxState(s: BoxState, stored: BoxState): void {
+  if (Object.prototype.hasOwnProperty.call(stored, "n")) { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "n", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "n", expected: "integer", actual: String(__v) } as BoundaryError))((s.n as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Box", __r.error); (s as { -readonly [K in keyof typeof s]: (typeof s)[K] }).n = __r.value as unknown as (typeof s)["n"]; }
+}
+
+function __encodeBoxState(s: BoxState): Record<string, unknown> {
+  return { ...s, n: s.n as JsonValue };
 }
 
 export class Box {
@@ -41,12 +45,12 @@ export class Box {
     const stored = await this.state.storage.get<BoxState>("state");
     if (stored === undefined) return __zeroOfBoxState();
     const __merged = { ...__zeroOfBoxState(), ...stored };
-    __rehydrateBoxState(__merged);
+    __rehydrateBoxState(__merged, stored);
     return __merged;
   }
 
   private async commitState(s: BoxState): Promise<void> {
-    await this.state.storage.put("state", s);
+    await this.state.storage.put("state", __encodeBoxState(s));
   }
 
   async read(deps: {}): Promise<number> {

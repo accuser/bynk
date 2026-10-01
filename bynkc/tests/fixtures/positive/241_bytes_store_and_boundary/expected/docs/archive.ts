@@ -22,8 +22,12 @@ export interface VaultState {
 const __VaultRegistry = new StateRegistry();
 function __zeroOfVaultState(): VaultState { return { latest: { label: "", bytes: new Uint8Array() } }; }
 
-function __rehydrateVaultState(s: VaultState): void {
-  { const __r = deserialise_Blob((s.latest as unknown as JsonValue), "latest"); if (__r.tag === "Err") throw rehydrationViolation("Vault", __r.error); }
+function __rehydrateVaultState(s: VaultState, stored: VaultState): void {
+  if (Object.prototype.hasOwnProperty.call(stored, "latest")) { const __r = deserialise_Blob((s.latest as unknown as JsonValue), "latest"); if (__r.tag === "Err") throw rehydrationViolation("Vault", __r.error); (s as { -readonly [K in keyof typeof s]: (typeof s)[K] }).latest = __r.value as unknown as (typeof s)["latest"]; }
+}
+
+function __encodeVaultState(s: VaultState): Record<string, unknown> {
+  return { ...s, latest: serialise_Blob(s.latest) };
 }
 
 export class Vault {
@@ -36,12 +40,12 @@ export class Vault {
     const stored = await this.state.storage.get<VaultState>("state");
     if (stored === undefined) return __zeroOfVaultState();
     const __merged = { ...__zeroOfVaultState(), ...stored };
-    __rehydrateVaultState(__merged);
+    __rehydrateVaultState(__merged, stored);
     return __merged;
   }
 
   private async commitState(s: VaultState): Promise<void> {
-    await this.state.storage.put("state", s);
+    await this.state.storage.put("state", __encodeVaultState(s));
   }
 
   async save(b: Blob, deps: {}): Promise<Result<number, void>> {

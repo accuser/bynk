@@ -1,0 +1,6 @@
+[project]
+name = "agent-state-round-trip"
+version = "0.1.0"
+
+[paths]
+include = ["src", "tests"]

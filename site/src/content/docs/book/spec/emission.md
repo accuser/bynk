@@ -160,12 +160,12 @@ caller as a 500-class fault, not an outcome:
 
 ```typescript
 private async commitState(s: OrderState): Promise<void> {
-  if (!((!(s.status === OrderStatus.Paid) || (s.paymentRef.tag === "Some")))) {
+  if (!((!(__bynkEq(s.status, OrderStatus.Paid)) || (s.paymentRef.tag === "Some")))) {
     console.error("InvariantViolation Order.paid_has_payment_ref",
       { agent: "Order", invariant: "paid_has_payment_ref" });
     throw invariantViolation("Order", "paid_has_payment_ref");
   }
-  await this.state.storage.put("state", s);
+  await this.state.storage.put("state", __encodeOrderState(s));
 }
 ```
 

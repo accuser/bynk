@@ -1,0 +1,80 @@
+---
+#1649: every value reads back after a reload of the same key.
+---
+suite demo.state
+
+case "an enum Cell" {
+  do Lamp("k").set(Green)
+  let v <- Lamp("k").get()
+  expect v == Green
+}
+
+case "an Option Cell" {
+  do Reading("k").set(3)
+  let v <- Reading("k").get()
+  expect v == Some(3)
+}
+
+case "a sum Cell with a payload" {
+  do Figure("k").set(Circle(4))
+  let v <- Figure("k").get()
+  expect v == Circle(4)
+}
+
+case "a Result Cell" {
+  do Outcome("k").set(7)
+  let v <- Outcome("k").get()
+  -- Annotated: `Ok(7)` inline in an `expect` infers the wrong type (#1659).
+  let want: Result[Int, String] = Ok(7)
+  expect v == want
+}
+
+case "a record Cell holding an Option" {
+  do Note("k").set(Labelled { label: "a", n: Some(1) })
+  let v <- Note("k").get()
+  expect v == Labelled { label: "a", n: Some(1) }
+}
+
+case "a record Cell holding Bytes" {
+  do Store("k").set("hi")
+  let v <- Store("k").get()
+  expect v.data == Bytes.fromUtf8("hi")
+}
+
+case "a List of enums" {
+  do Lights("k").set([Green, Red, Green])
+  let v <- Lights("k").get()
+  expect v == [Green, Red, Green]
+}
+
+case "a store Map of enums" {
+  do Board("k").set("a", Green)
+  let v <- Board("k").get("a")
+  expect v == Some(Green)
+}
+
+case "a Cache of Options" {
+  do Memo("k").set("a", 5)
+  let v <- Memo("k").get("a")
+  expect v == Some(Some(5))
+}
+
+case "a Log of sums" {
+  do History("k").add(Circle(1))
+  do History("k").add(Square(2))
+  let n <- History("k").count()
+  expect n == 2
+}
+
+case "a scalar beside an enum" {
+  do Panel("k").setLevel(9)
+  let v <- Panel("k").getLevel()
+  expect v == 9
+}
+
+case "a transition reads the decoded prior state" {
+  do Gate("k").set(Green)
+  do Gate("k").set(Red)
+  let v <- Gate("k").get()
+  expect v == Red
+}

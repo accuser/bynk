@@ -4809,30 +4809,100 @@ fn lower_bin_op(op: BinOp, lhs: &Expr, rhs: &Expr, cx: &mut LowerCtx) -> Lowered
         } else {
             format!("Math.trunc({l} / {r})")
         }
-    } else if matches!(op, BinOp::Eq | BinOp::NotEq)
-        && cx
-            .commons()
-            .expr_types
-            .get(&lhs.id)
-            .and_then(|te| te.ty.base(tys))
-            == Some(BaseType::Bytes)
+    } else if let Some(helper) = matches!(op, BinOp::Eq | BinOp::NotEq)
+        .then(|| cx.commons().expr_types.get(&lhs.id).map(|te| te.ty))
+        .and_then(|operand| equality_helper(operand, tys, cx))
     {
-        // v0.110 (ADR 0142 D4): `Bytes` is the one base type whose `==` is not
-        // host `===`. It erases to `Uint8Array`, so `===` is reference equality
-        // (`Bytes.fromUtf8("a") === Bytes.fromUtf8("a")` is `false`). Equality
-        // must compare by content — operand-typed dispatch, exactly like `Div`.
-        // The checker rejects mixed operands, so the left operand decides.
-        cx.note_bytes();
-        let eq = format!("__bynkBytesEqual({l}, {r})");
+        // #1652 (runtime-semantics track §3.1): `==` is structural, dispatched by
+        // the operand's type, the same operand-typed shape as `Div` above (and
+        // `Bytes`, ADR 0142 D4). The checker rejects mixed operands, so the left
+        // operand decides. A primitive operand returns `None` here and falls
+        // through to host `===`/`!==` below.
+        let call = format!("{helper}({l}, {r})");
         if op == BinOp::Eq {
-            eq
+            call
         } else {
-            format!("!{eq}")
+            format!("!{call}")
         }
     } else {
         format!("{l} {} {r}", ts_binop(op))
     };
     pre.finish(text)
+}
+
+/// How `==`/`!=` lowers for an operand of a given type. #1652 (runtime-semantics
+/// track §3.1).
+#[derive(Debug, PartialEq)]
+enum EqualityLowering {
+    /// Host `===`: every base type except `Bytes` erases to a JS primitive
+    /// (`number`/`string`/`boolean`), as does a refined or opaque type over one,
+    /// and `()` erases to `undefined`.
+    Host,
+    /// `__bynkBytesEqual`: `Bytes`, including an opaque type over it, erases to
+    /// a `Uint8Array`, which `===` compares by reference (ADR 0142 D4).
+    Bytes,
+    /// `__bynkEq`, the runtime's structural walker: records, sums, `Option`,
+    /// `Result`, `List`, value-level `Map`, the built-in error records, and type
+    /// variables (a generic `T` is not monomorphised, so its runtime shape is
+    /// only known to the walker).
+    Structural,
+}
+
+/// The runtime helper `==`/`!=` calls for an operand type, noting its import, or
+/// `None` for a host-`===` operand. A missing type entry takes the walker, which
+/// is also correct for primitives.
+fn equality_helper(operand: Option<TyId>, tys: &Types, cx: &LowerCtx) -> Option<&'static str> {
+    match operand.map(|t| equality_lowering(t, tys)) {
+        Some(EqualityLowering::Host) => None,
+        Some(EqualityLowering::Bytes) => {
+            cx.note_bytes();
+            Some("__bynkBytesEqual")
+        }
+        Some(EqualityLowering::Structural) | None => {
+            cx.note_eq();
+            Some("__bynkEq")
+        }
+    }
+}
+
+fn equality_lowering(ty: TyId, tys: &Types) -> EqualityLowering {
+    match &*tys.get(ty) {
+        Ty::Base(BaseType::Bytes)
+        | Ty::Named {
+            kind: NamedKind::Refined(BaseType::Bytes) | NamedKind::Opaque(BaseType::Bytes),
+            ..
+        } => EqualityLowering::Bytes,
+        Ty::Base(_)
+        | Ty::Unit
+        | Ty::Named {
+            kind: NamedKind::Refined(_) | NamedKind::Opaque(_),
+            ..
+        } => EqualityLowering::Host,
+        Ty::Named {
+            kind: NamedKind::Record | NamedKind::Sum,
+            ..
+        }
+        | Ty::Option(_)
+        | Ty::Result(..)
+        | Ty::List(_)
+        | Ty::Map(..)
+        | Ty::HttpResult(_)
+        | Ty::QueueResult
+        | Ty::ValidationError
+        | Ty::JsonError
+        | Ty::Actor(_)
+        | Ty::ActorSum(_)
+        | Ty::Var(_) => EqualityLowering::Structural,
+        // Not equality-supporting: the checker rejects `==` on these
+        // (`checker/equality.rs`), so no certified program reaches here. The
+        // walker is the safe answer if one ever did.
+        Ty::Error
+        | Ty::Fn { .. }
+        | Ty::Effect(_)
+        | Ty::Query(_)
+        | Ty::Stream(_)
+        | Ty::Connection(_) => EqualityLowering::Structural,
+    }
 }
 
 fn lower_constructor_call(

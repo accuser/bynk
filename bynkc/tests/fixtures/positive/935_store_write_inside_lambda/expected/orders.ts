@@ -18,9 +18,13 @@ export interface OrdersState {
 const __OrdersRegistry = new StateRegistry();
 function __zeroOfOrdersState(): OrdersState { return { orders: {} }; }
 
-function __rehydrateOrdersState(s: OrdersState): void {
-  for (const __v of Object.values(s.orders)) { const __r = deserialise_Order((__v as unknown as JsonValue), "orders"); if (__r.tag === "Err") throw rehydrationViolation("Orders", __r.error); }
+function __rehydrateOrdersState(s: OrdersState, stored: OrdersState): void {
+  if (Object.prototype.hasOwnProperty.call(stored, "orders")) for (const __k of Object.keys(s.orders)) { const __r = deserialise_Order((s.orders[__k] as unknown as JsonValue), "orders"); if (__r.tag === "Err") throw rehydrationViolation("Orders", __r.error); s.orders[__k] = __r.value as unknown as (typeof s.orders)[string]; }
   for (const __k of Object.keys(s.orders)) { const __r = ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "orders", expected: "string", actual: typeof __v } as BoundaryError))((__k as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Orders", __r.error); }
+}
+
+function __encodeOrdersState(s: OrdersState): Record<string, unknown> {
+  return { ...s, orders: Object.fromEntries(Object.entries(s.orders).map(([__k, __v]) => [__k, serialise_Order(__v)])) };
 }
 
 export class Orders {
@@ -33,12 +37,12 @@ export class Orders {
     const stored = await this.state.storage.get<OrdersState>("state");
     if (stored === undefined) return __zeroOfOrdersState();
     const __merged = { ...__zeroOfOrdersState(), ...stored };
-    __rehydrateOrdersState(__merged);
+    __rehydrateOrdersState(__merged, stored);
     return __merged;
   }
 
   private async commitState(s: OrdersState): Promise<void> {
-    await this.state.storage.put("state", s);
+    await this.state.storage.put("state", __encodeOrdersState(s));
   }
 
   async bulkAdd(items: readonly Order[], deps: {}): Promise<void> {

@@ -64,9 +64,8 @@ partial and surfaced as `Option`, never hidden.
 
 `==`/`!=` compare **by content**, byte for byte — so two independently-built
 `Bytes` with the same octets are equal (unlike the number-erased base types, a
-`Bytes` is not compared by host reference). A record carrying a `Bytes` field
-gets correct equality by comparing that field with `==` in a hand-written
-comparator. `Bytes` is **not orderable** (no `<` / `sortBy` key) and **not
+`Bytes` is not compared by host reference). Equality is structural throughout,
+so a record carrying a `Bytes` field compares that field by content too. `Bytes` is **not orderable** (no `<` / `sortBy` key) and **not
 `Map`-keyable** — key on `b.toBase64()` (a `String`) instead. It has no
 arithmetic, concatenation, or slicing in v1.
 

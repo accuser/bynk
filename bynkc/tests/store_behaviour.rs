@@ -1059,3 +1059,113 @@ fn store_rehydration_gate_runtime_semantics() {
 fn refused_commit_does_not_leak_an_in_place_store_write() {
     verify("refused_leak", REFUSED_LEAK_SOURCE, REFUSED_LEAK_DRIVER_TS);
 }
+
+// #1649 (ADR agent-state-wire-shape, D2/D3): stored state is in the wire shape,
+// and the load-time decode runs per field, only for fields present in the stored
+// record. Every fixture commits through `__encode<Agent>State`, which writes
+// every declared field, so no fixture ever loads a record with a field missing,
+// or with a key the definition no longer declares. This test builds both by
+// editing a committed record:
+//
+//   - a declared field absent from the stored record (an additive deploy) keeps
+//     its zero and is not decoded. Decoding the in-memory zero as if it were wire
+//     data would fault with `RehydrationViolation`;
+//   - a stored key the definition does not declare (a renamed or removed field)
+//     survives the load and the next commit, for #539's migrations to find.
+//
+// The fake storage clones on `get` and `put`, as workerd's storage does and as
+// the bundle target's in-memory stand-in does since #1660. The decode writes
+// through the stored record's nested objects (ADR consequences), so a backend
+// that handed back the stored object itself would double-decode.
+const STATE_SHAPE_SOURCE: &str = "context shop\n\
+\n\
+type Light = enum { Red, Green }\n\
+\n\
+agent Lamp {\n\
+\x20 key id: String\n\
+\n\
+\x20 store light: Cell[Light] = Red\n\
+\x20 store reading: Cell[Option[Int]]\n\
+\x20 store board: Map[String, Light]\n\
+\n\
+\x20 on call setAll() -> Effect[()] {\n\
+\x20   light := Green\n\
+\x20   reading := Some(3)\n\
+\x20   let _ <- board.put(\"a\", Green)\n\
+\x20   Effect.pure(())\n\
+\x20 }\n\
+\x20 on call touch() -> Effect[()] {\n\
+\x20   light := Green\n\
+\x20   Effect.pure(())\n\
+\x20 }\n\
+\x20 on call isGreen() -> Effect[Bool] {\n\
+\x20   light == Green\n\
+\x20 }\n\
+\x20 on call lastReading() -> Effect[Int] {\n\
+\x20   match reading {\n\
+\x20     Some(n) => n\n\
+\x20     None => 0\n\
+\x20   }\n\
+\x20 }\n\
+\x20 on call boardSize() -> Effect[Int] {\n\
+\x20   let n <- board.size()\n\
+\x20   Effect.pure(n)\n\
+\x20 }\n\
+}\n";
+
+const STATE_SHAPE_DRIVER_TS: &str = r#"
+import { Lamp } from "./shop.js";
+
+function assert(cond: boolean, msg: string): void {
+  if (!cond) {
+    throw new Error(`assertion failed: ${msg}`);
+  }
+}
+
+function fakeState() {
+  const m = new Map<string, unknown>();
+  return {
+    storage: {
+      async get(key: string): Promise<unknown> { return structuredClone(m.get(key)); },
+      async put(key: string, value: unknown): Promise<void> { m.set(key, structuredClone(value)); },
+    },
+  };
+}
+
+// Commit a full record, then rewrite it as an older/renamed deployment would
+// have left it: `reading` and `board` absent, an undeclared `legacy` present.
+// The committed shape is reused, not spelled out, so this test does not pin the
+// wire encoding.
+const st = fakeState();
+await new Lamp(st as never).setAll({});
+const raw = (await st.storage.get("state")) as Record<string, unknown>;
+assert("reading" in raw && "board" in raw, "a commit stores every declared field");
+delete raw.reading;
+delete raw.board;
+raw.legacy = 42;
+await st.storage.put("state", raw);
+
+// 1) The present field decodes; the absent ones keep their zero without
+//    faulting.
+const lamp = new Lamp(st as never);
+assert(await lamp.isGreen({}), "a present field decodes from the wire shape");
+assert((await lamp.lastReading({})) === 0, "an absent Option field keeps its zero (None)");
+assert((await lamp.boardSize({})) === 0, "an absent Map field keeps its zero (empty)");
+
+// 2) A commit writes the absent fields back and carries the undeclared key.
+await lamp.touch({});
+const after = (await st.storage.get("state")) as Record<string, unknown>;
+assert(after.legacy === 42, "an undeclared stored key survives a load and a commit");
+assert("reading" in after && "board" in after, "the commit writes the defaulted fields");
+
+// 3) The rewritten record loads again.
+assert(await lamp.isGreen({}), "the record reloads after the commit");
+assert((await lamp.lastReading({})) === 0, "the defaulted field reloads as its zero");
+
+console.log("ALL OK");
+"#;
+
+#[test]
+fn agent_state_keeps_unknown_keys_and_defaults_missing_fields() {
+    verify("state_shape", STATE_SHAPE_SOURCE, STATE_SHAPE_DRIVER_TS);
+}

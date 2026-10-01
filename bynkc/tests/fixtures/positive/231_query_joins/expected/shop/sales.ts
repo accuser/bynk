@@ -43,11 +43,15 @@ export interface SalesState {
 const __SalesRegistry = new StateRegistry();
 function __zeroOfSalesState(): SalesState { return { orders: {}, lines: {} }; }
 
-function __rehydrateSalesState(s: SalesState): void {
-  for (const __v of Object.values(s.orders)) { const __r = deserialise_Order((__v as unknown as JsonValue), "orders"); if (__r.tag === "Err") throw rehydrationViolation("Sales", __r.error); }
+function __rehydrateSalesState(s: SalesState, stored: SalesState): void {
+  if (Object.prototype.hasOwnProperty.call(stored, "orders")) for (const __k of Object.keys(s.orders)) { const __r = deserialise_Order((s.orders[__k] as unknown as JsonValue), "orders"); if (__r.tag === "Err") throw rehydrationViolation("Sales", __r.error); s.orders[__k] = __r.value as unknown as (typeof s.orders)[string]; }
   for (const __k of Object.keys(s.orders)) { const __r = ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "orders", expected: "string", actual: typeof __v } as BoundaryError))((__k as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Sales", __r.error); }
-  for (const __v of Object.values(s.lines)) { const __r = deserialise_Line((__v as unknown as JsonValue), "lines"); if (__r.tag === "Err") throw rehydrationViolation("Sales", __r.error); }
+  if (Object.prototype.hasOwnProperty.call(stored, "lines")) for (const __k of Object.keys(s.lines)) { const __r = deserialise_Line((s.lines[__k] as unknown as JsonValue), "lines"); if (__r.tag === "Err") throw rehydrationViolation("Sales", __r.error); s.lines[__k] = __r.value as unknown as (typeof s.lines)[string]; }
   for (const __k of Object.keys(s.lines)) { const __r = ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "lines", expected: "string", actual: typeof __v } as BoundaryError))((__k as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Sales", __r.error); }
+}
+
+function __encodeSalesState(s: SalesState): Record<string, unknown> {
+  return { ...s, orders: Object.fromEntries(Object.entries(s.orders).map(([__k, __v]) => [__k, serialise_Order(__v)])), lines: Object.fromEntries(Object.entries(s.lines).map(([__k, __v]) => [__k, serialise_Line(__v)])) };
 }
 
 export class Sales {
@@ -60,12 +64,12 @@ export class Sales {
     const stored = await this.state.storage.get<SalesState>("state");
     if (stored === undefined) return __zeroOfSalesState();
     const __merged = { ...__zeroOfSalesState(), ...stored };
-    __rehydrateSalesState(__merged);
+    __rehydrateSalesState(__merged, stored);
     return __merged;
   }
 
   private async commitState(s: SalesState): Promise<void> {
-    await this.state.storage.put("state", s);
+    await this.state.storage.put("state", __encodeSalesState(s));
   }
 
   async report(deps: {}): Promise<readonly Joined[]> {

@@ -24,8 +24,12 @@ export interface GaugeState {
 const __GaugeRegistry = new StateRegistry();
 function __zeroOfGaugeState(): GaugeState { return { level: (1 as Level) }; }
 
-function __rehydrateGaugeState(s: GaugeState): void {
-  { const __r = deserialise_Level((s.level as unknown as JsonValue), "level"); if (__r.tag === "Err") throw rehydrationViolation("Gauge", __r.error); }
+function __rehydrateGaugeState(s: GaugeState, stored: GaugeState): void {
+  if (Object.prototype.hasOwnProperty.call(stored, "level")) { const __r = deserialise_Level((s.level as unknown as JsonValue), "level"); if (__r.tag === "Err") throw rehydrationViolation("Gauge", __r.error); (s as { -readonly [K in keyof typeof s]: (typeof s)[K] }).level = __r.value as unknown as (typeof s)["level"]; }
+}
+
+function __encodeGaugeState(s: GaugeState): Record<string, unknown> {
+  return { ...s, level: serialise_Level(s.level) };
 }
 
 export class Gauge {
@@ -38,12 +42,12 @@ export class Gauge {
     const stored = await this.state.storage.get<GaugeState>("state");
     if (stored === undefined) return __zeroOfGaugeState();
     const __merged = { ...__zeroOfGaugeState(), ...stored };
-    __rehydrateGaugeState(__merged);
+    __rehydrateGaugeState(__merged, stored);
     return __merged;
   }
 
   private async commitState(s: GaugeState): Promise<void> {
-    await this.state.storage.put("state", s);
+    await this.state.storage.put("state", __encodeGaugeState(s));
   }
 
   async peek(deps: {}): Promise<Result<void, string>> {

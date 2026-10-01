@@ -10,8 +10,12 @@ export interface AudienceState {
 const __AudienceRegistry = new StateRegistry();
 function __zeroOfAudienceState(): AudienceState { return { members: {} }; }
 
-function __rehydrateAudienceState(s: AudienceState): void {
+function __rehydrateAudienceState(s: AudienceState, stored: AudienceState): void {
   for (const __k of Object.keys(s.members)) { const __r = ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "members", expected: "string", actual: typeof __v } as BoundaryError))((__k as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Audience", __r.error); }
+}
+
+function __encodeAudienceState(s: AudienceState): Record<string, unknown> {
+  return { ...s };
 }
 
 export class Audience {
@@ -24,12 +28,12 @@ export class Audience {
     const stored = await this.state.storage.get<AudienceState>("state");
     if (stored === undefined) return __zeroOfAudienceState();
     const __merged = { ...__zeroOfAudienceState(), ...stored };
-    __rehydrateAudienceState(__merged);
+    __rehydrateAudienceState(__merged, stored);
     return __merged;
   }
 
   private async commitState(s: AudienceState): Promise<void> {
-    await this.state.storage.put("state", s);
+    await this.state.storage.put("state", __encodeAudienceState(s));
   }
 
   async join(who: string, deps: {}): Promise<void> {

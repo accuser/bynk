@@ -32,8 +32,12 @@ export interface InventoryState {
 const __InventoryRegistry = new StateRegistry();
 function __zeroOfInventoryState(): InventoryState { return { history: [] }; }
 
-function __rehydrateInventoryState(s: InventoryState): void {
-  for (const __e of s.history) { const __r = deserialise_ReserveEvent((__e.v as unknown as JsonValue), "history"); if (__r.tag === "Err") throw rehydrationViolation("Inventory", __r.error); }
+function __rehydrateInventoryState(s: InventoryState, stored: InventoryState): void {
+  if (Object.prototype.hasOwnProperty.call(stored, "history")) for (const __e of s.history) { const __r = deserialise_ReserveEvent((__e.v as unknown as JsonValue), "history"); if (__r.tag === "Err") throw rehydrationViolation("Inventory", __r.error); __e.v = __r.value as unknown as typeof __e.v; }
+}
+
+function __encodeInventoryState(s: InventoryState): Record<string, unknown> {
+  return { ...s, history: s.history.map((__e) => ({ ...__e, v: serialise_ReserveEvent(__e.v) })) };
 }
 
 export class Inventory {
@@ -46,12 +50,12 @@ export class Inventory {
     const stored = await this.state.storage.get<InventoryState>("state");
     if (stored === undefined) return __zeroOfInventoryState();
     const __merged = { ...__zeroOfInventoryState(), ...stored };
-    __rehydrateInventoryState(__merged);
+    __rehydrateInventoryState(__merged, stored);
     return __merged;
   }
 
   private async commitState(s: InventoryState): Promise<void> {
-    await this.state.storage.put("state", s);
+    await this.state.storage.put("state", __encodeInventoryState(s));
   }
 
   async reserve(sku: string, qty: number, deps: { Clock: Clock }): Promise<void> {

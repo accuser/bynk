@@ -19,8 +19,12 @@ export interface LedgerState {
 const __LedgerRegistry = new StateRegistry();
 function __zeroOfLedgerState(): LedgerState { return { total: 0 }; }
 
-function __rehydrateLedgerState(s: LedgerState): void {
-  { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "total", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "total", expected: "integer", actual: String(__v) } as BoundaryError))((s.total as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Ledger", __r.error); }
+function __rehydrateLedgerState(s: LedgerState, stored: LedgerState): void {
+  if (Object.prototype.hasOwnProperty.call(stored, "total")) { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "total", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "total", expected: "integer", actual: String(__v) } as BoundaryError))((s.total as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Ledger", __r.error); (s as { -readonly [K in keyof typeof s]: (typeof s)[K] }).total = __r.value as unknown as (typeof s)["total"]; }
+}
+
+function __encodeLedgerState(s: LedgerState): Record<string, unknown> {
+  return { ...s, total: s.total as JsonValue };
 }
 
 export class Ledger {
@@ -35,12 +39,12 @@ export class Ledger {
     const stored = await this.state.storage.get<LedgerState>("state");
     if (stored === undefined) return __zeroOfLedgerState();
     const __merged = { ...__zeroOfLedgerState(), ...stored };
-    __rehydrateLedgerState(__merged);
+    __rehydrateLedgerState(__merged, stored);
     return __merged;
   }
 
   private async commitState(s: LedgerState): Promise<void> {
-    await this.state.storage.put("state", s);
+    await this.state.storage.put("state", __encodeLedgerState(s));
   }
 
   async bump(amount: number, deps: { __eventsDispatch: (events: Array<{ type: string; payload: unknown; envelope: { eventId: string; publisherId: string; emittedAt: number; schemaVersion: number } }>) => Promise<void> }): Promise<number> {
