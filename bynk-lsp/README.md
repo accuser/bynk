@@ -22,14 +22,19 @@ report, without linking the CLI it doesn't need.
 - **Diagnostics** — re-runs the compiler on change and publishes errors and
   warnings with their dotted categories.
 - **Hover** — type signatures and doc blocks.
-- **Go-to-definition** and **find references** for types, functions,
-  capabilities, services, and agents.
+- **Go-to-definition**, **go-to-type-definition**, **go-to-implementation**, and
+  **find references** for types, functions, capabilities, services, and agents.
+- **Call hierarchy**.
 - **Rename** (workspace-wide, validated).
 - **Formatting** and **range formatting** (via `bynk-fmt`).
-- **Document & workspace symbols**, **document highlights**.
-- **Completion**, **inlay hints** (inferred types), **semantic tokens**
-  (type-aware highlighting), and **code actions** (quick fixes for suggested
-  diagnostics).
+- **Document & workspace symbols**, **document highlights**, **document links**,
+  **folding ranges**, and **selection ranges**.
+- **Completion**, **signature help**, **inlay hints** (inferred types and
+  parameter names), **semantic tokens** (type-aware highlighting), **code
+  lenses**, and **code actions** (quick fixes for suggested diagnostics).
+- **Project views** — custom `bynk/architectureModel`, `bynk/sequenceModel`,
+  `bynk/documentationModel`, and `bynk/wireContract` requests behind the VS Code
+  extension's diagrams and peeks.
 - **File watching** across the project.
 
 The full capability list is specified in

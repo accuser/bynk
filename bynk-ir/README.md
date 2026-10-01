@@ -30,10 +30,33 @@ probe holds this at 0). What's left is the declaration-level facts
 
 This crate depends on [`bynk-syntax`](https://crates.io/crates/bynk-syntax)
 and [`bynk-check`](https://crates.io/crates/bynk-check) (for `TypedCommons`
-and the resolver's own types). `bynk-lower` builds `bynk-ir` values from a
-checked program; `bynk-emit` is the consumer both crates exist to serve.
-Every `pub` item here is required to have a reader outside both `bynk-ir` and
-`bynk-lower` — a gated CI probe fails the build otherwise.
+and the resolver's own types):
+
+```text
+bynk-syntax                lexer, parser, AST, CompileError, diagnostic codes
+├── bynk-project           project model: discovery, unit graph, paths
+├── bynk-ts                the TypeScript tree and its printer
+├── bynk-render            diagnostic rendering
+├── bynk-fmt               the formatter
+└── bynk-check             name resolution and type checking   + project
+    ├── bynk-ir            declaration-level IR
+    │   └── bynk-lower     AST → IR helpers
+    ├── bynk-emit          build sequencing, TS emission       + ts, ir, lower, project
+    │   ├── bynk-strip     TS → JS type-stripping              + ts
+    │   └── bynk-driver    shared CLI command bodies           + fmt, render, ts
+    └── bynk-ide           non-bailing editor analysis         + project, fmt
+```
+
+Each crate depends on its parent in the tree, plus any crates listed after
+its `+`. The front-ends sit on top: the `bynkc` and `bynk` CLIs over
+`bynk-driver`, the `bynkc-lsp` language server (`bynk-lsp`) over `bynk-ide`, and
+the unpublished `bynk-wasm` playground module over `bynk-emit`, `bynk-strip`,
+and `bynk-ide`.
+
+`bynk-lower` builds `bynk-ir` values from a checked program; `bynk-emit` is the
+consumer both crates exist to serve. Every `pub` item here is required to have a
+reader outside both `bynk-ir` and `bynk-lower` — a gated CI probe fails the
+build otherwise.
 
 ## Use
 

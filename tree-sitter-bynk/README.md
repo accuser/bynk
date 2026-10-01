@@ -3,17 +3,18 @@
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
 The [tree-sitter](https://tree-sitter.github.io/tree-sitter/) grammar for the
-[Bynk](https://github.com/accuser/bynk) DSL — the source of truth for editor
-syntax highlighting (`queries/highlights.scm`, `injections.scm`) and the
-structural shape [`vscode-bynk`](https://github.com/accuser/bynk/tree/main/vscode-bynk)
-builds on.
+[Bynk](https://github.com/accuser/bynk) language — the source of truth for
+tree-sitter syntax highlighting (`queries/highlights.scm`), the playground's
+editor, and the Book's grammar reference (rendered from `src/grammar.json` by
+[`bynk-grammar`](https://crates.io/crates/bynk-grammar)).
 
 This directory is **two things**:
 
 - **The grammar** (`grammar.js`), published to npm as
   [`tree-sitter-bynk`](https://www.npmjs.com/package/tree-sitter-bynk), with
-  generated Node and Rust bindings (`bindings/`). This is what editors and
-  `vscode-bynk` actually consume.
+  its generated Node binding (`bindings/node/`). This is what tree-sitter
+  editors consume. (`vscode-bynk` ships its own TextMate grammar and does not
+  use this one.)
 - **A Rust crate** (this `Cargo.toml`, wrapping `bindings/rust/`) that exists
   for exactly one purpose: the cross-parser conformance test
   (`tests/conformance.rs`), which parses Bynk source with this grammar and

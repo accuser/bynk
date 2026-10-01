@@ -18,11 +18,12 @@ A fully static, client-side app. It deploys to two origins:
 | `src/examples.ts` | The examples gallery — curated, **runnable** in-process snippets (each verified to compile + run); the header picker loads them. |
 | `src/sandbox.ts` | The execution document: links the JS graph to blob-URL modules, runs it in a Worker under a wall-clock timeout, posts results back. |
 | live diagnostics | A CodeMirror linter (in `src/app.ts`) calls `bynk_analyze` (debounced, on-type) → inline squiggles + gutter. Non-bailing — type errors in a context show live, not only on Run. |
+| hover + completion | `src/app.ts` calls `bynk_hover` (the inferred type at the cursor) and `bynk_complete` (context-aware candidates). |
 | `src/deeplink.ts` | The shared snippet format: `#base64url(deflate-raw(utf8(source)))`. |
 | `src/highlight.ts` | CodeMirror Bynk highlighting (stream-based; see *Highlighting* below). |
 | `src/shared.ts` | Origin config + the postMessage protocol. |
 | `scripts/build-wasm.sh` | `cargo build --target wasm32 -p bynk-wasm` + `wasm-bindgen` → `src/vendor/`. |
-| `scripts/build-grammar.sh` | `tree-sitter build --wasm` → the web-tree-sitter grammar (needs emcc/docker). |
+| `scripts/build-grammar.sh` | `tree-sitter build --wasm` → the web-tree-sitter grammar (needs emcc/docker, and `npm install` in `tree-sitter-bynk/` for its CLI). |
 | `build.mjs` / `serve.mjs` | esbuild build into `dist/` / a two-port local static server. |
 
 ## Build
@@ -56,7 +57,7 @@ Open `http://localhost:8080`, then check:
 1. The starter program is shown; **Run** (or ⌘/Ctrl-Enter) logs a line and prints a value.
 2. Break the program → an error diagnostic appears with a line:col, and it does not run.
 3. A `consumes bynk.cloudflare { … }` program shows *not runnable in-browser* (the platform lock).
-4. **Share** puts a `#…` link in the address bar; reloading that URL restores the source.
+4. **Share** puts a link in the address bar — a short `?s=<id>` link from the share service, or a self-contained `#…` link if the service is unavailable; reloading that URL restores the source.
 5. An infinite loop (`fn` that never returns) is terminated after the wall-clock budget.
 
 > The core logic (wasm compile, the emitted graph running, the blob-URL linker, the
@@ -93,7 +94,7 @@ curl -X POST :8080/api/snippets -d '{"source":"context x.y\n"}'   # → {"id":"�
 
 ## Deploy (Cloudflare Pages — maintainer ops)
 
-The deploy is CI-automated by `.github/workflows/deploy-playground.yml` — it builds `dist/` (release wasm + grammar + esbuild, with the production origins as the default) and uploads it to two Cloudflare Pages projects with `wrangler pages deploy`. It runs on push to `main` (when `playground/**`, `bynk-wasm/**`, or `tree-sitter-bynk/**` change) and on manual `workflow_dispatch` (Actions tab → "Deploy the playground" → Run workflow). The only thing a maintainer does is the one-time account-side setup below — that part cannot be automated from the repo.
+The deploy is CI-automated by `.github/workflows/deploy-playground.yml` — it builds `dist/` (release wasm + grammar + esbuild, with the production origins as the default) and uploads it to two Cloudflare Pages projects with `wrangler pages deploy`. It runs after a **green CI run** on `main` (via `workflow_run`, deploying only when `playground/**`, `bynk-wasm/**`, `tree-sitter-bynk/**`, or the workflow itself changed) and on manual `workflow_dispatch` (Actions tab → "Deploy the playground (Cloudflare Pages)" → Run workflow). The only thing a maintainer does is the one-time account-side setup below — that part cannot be automated from the repo.
 
 **Security note — the app and the sandbox MUST be two distinct origins.** The sandbox origin is the safety boundary defined by [`ADR 0140`](../design/decisions/0140-repl-execution-and-sandbox.md): untrusted snippet code executes only on the opaque sandbox origin and can never reach the app origin's storage. Never collapse them to one project or one domain — doing so dissolves the boundary.
 
@@ -102,7 +103,7 @@ The deploy is CI-automated by `.github/workflows/deploy-playground.yml` — it b
 1. Create two Cloudflare **Pages** projects of type **Direct Upload**: `bynk-playground` (the app) and `bynk-playground-sandbox` (the sandbox). These names are exactly what the workflow's `--project-name` flags target — keep them in sync if you rename either.
 2. Attach custom domains: `playground.bynk-lang.org` → `bynk-playground`; `sandbox.bynk-lang.org` → `bynk-playground-sandbox`. Cloudflare's custom-domain flow creates the DNS records for you when the zone is Cloudflare-managed.
 3. Create a Cloudflare API token scoped to **Account → Cloudflare Pages → Edit** — nothing broader. Add it as the GitHub repo secret `CLOUDFLARE_API_TOKEN`, and add your account id as `CLOUDFLARE_ACCOUNT_ID`.
-4. Trigger the first deploy — push to `main`, or run the workflow manually.
+4. Trigger the first deploy — push to `main` (the deploy follows its green CI run), or run the workflow manually.
 
 ### Green-skip before the secrets exist
 

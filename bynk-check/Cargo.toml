@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "Bynk's semantic-analysis layer: name resolution, type checking, the kernel-method and builtin registries, first-party sources, actors, and the captured index/hints tables — the layer between bynk-syntax and the emitter."
+description = "The semantic-analysis layer of the Bynk compiler: name resolution, type checking, the kernel and builtin registries, first-party sources, and the analysis tables the IDE queries."
 keywords = ["compiler", "dsl", "type-checker", "language"]
 categories = ["compilers"]
 

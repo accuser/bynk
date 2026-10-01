@@ -13,8 +13,8 @@ grammar JSON (`tree-sitter-bynk/src/grammar.json`) as input and is otherwise
 location-agnostic, so the same renderer feeds both:
 
 - the full grammar **appendix** page (`render_appendix`), and
-- the per-rule **includes** embedded in the curated reference page
-  (`render_production` / `render_rule`).
+- the per-rule **includes** embedded in the curated reference pages
+  (`render_production`, collected for the site by `render_site_json`).
 
 Because both come from one implementation, an embedded production cannot drift
 from the appendix.
@@ -35,8 +35,10 @@ purpose in a Bynk program. Its consumers are:
 
 - `bynkc/tests/grammar_reference.rs` — generates the appendix page, blessed
   against the committed `site/src/content/docs/book/reference/grammar.md`.
+- `bynk-grammar/tests/generated_grammar_json.rs` — generates
+  `site/src/generated/grammar.json` (`render_site_json`), blessed the same way.
 - `site/src/plugins/remark-bynk-directives.mjs` — the `{{#grammar <rule>}}`
-  include directive the Book renders with.
+  include directive the Book renders with, reading that generated JSON.
 
 ## Use
 
@@ -48,12 +50,14 @@ let grammar_json = std::fs::read_to_string("tree-sitter-bynk/src/grammar.json")?
 // The full appendix, infallible over a well-formed grammar.
 let ebnf = render_appendix(&grammar_json);
 
-// A single rule, by readable name — `Err(GrammarError)` if it is unknown.
-let one = render_rule(&grammar_json, "expression")?;
+// A single rule, by its grammar name (`_expression` renders as `expression`)
+// — `Err(GrammarError)` if it is unknown.
+let one = render_rule(&grammar_json, "_expression")?;
 ```
 
-`render_rule`, `render_production`, and `display_name` return
-`Result<_, GrammarError>` (unparseable JSON, or an unknown rule name). See the
+`render_rule`, `render_production`, and `display_name` take the rule's grammar
+name, not its readable one, and return `Result<_, GrammarError>` (unparseable
+JSON, or an unknown rule name). See the
 [API docs](https://docs.rs/bynk-grammar).
 
 ## License

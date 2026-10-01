@@ -11,14 +11,16 @@ Given a slice of `bynk_syntax::CompileError` plus the source and a filename, it
 produces the human and machine forms of a Bynk diagnostic:
 
 - **human** — rich, source-pointing [`ariadne`](https://crates.io/crates/ariadne)
-  output (with a colourless variant for byte-stable transcripts),
+  output (with a colourless variant for byte-stable transcripts), and
 - **`short`** — one terse `path:line:col: severity[category]: message` line per
-  error, the format the editor problem-matcher parses, and
-- **`json`** — the structured line form the same span/severity data feeds for
-  machine consumers.
+  error, the format the editor problem-matcher parses.
 
-Every Bynk front-end renders through this one crate, so the CLI, the project
-builder, and the editor all display the same error identically. The crate is a
+The per-line pieces (`short_line`, `severity_word`) are public too, so a
+front-end composing its own line output stays byte-identical to `short`.
+
+Both CLI front-ends render through this one crate, so `bynkc` and `bynk`
+display the same error identically — and the `short` form is what the VS Code
+problem-matcher parses. The crate is a
 pure presentation layer: it depends on
 [`bynk-syntax`](https://crates.io/crates/bynk-syntax) **only** (plus `ariadne`)
 and never sees the checker or emitter — structured diagnostics flow *down* into
@@ -26,14 +28,33 @@ it, never the other way.
 
 ## Where it sits
 
+`bynk-render` sits directly on the `bynk-syntax` leaf:
+
 ```text
-bynk-syntax  ◀── bynk-render · bynk-fmt · bynk-check ◀── bynk-emit ◀── bynk-ide
+bynk-syntax                lexer, parser, AST, CompileError, diagnostic codes
+├── bynk-project           project model: discovery, unit graph, paths
+├── bynk-ts                the TypeScript tree and its printer
+├── bynk-render            diagnostic rendering
+├── bynk-fmt               the formatter
+└── bynk-check             name resolution and type checking   + project
+    ├── bynk-ir            declaration-level IR
+    │   └── bynk-lower     AST → IR helpers
+    ├── bynk-emit          build sequencing, TS emission       + ts, ir, lower, project
+    │   ├── bynk-strip     TS → JS type-stripping              + ts
+    │   └── bynk-driver    shared CLI command bodies           + fmt, render, ts
+    └── bynk-ide           non-bailing editor analysis         + project, fmt
 ```
 
-The `bynkc`, `bynk`, and `bynk-lsp` binaries are front-ends over this set. Most
-users see this crate's output through the
+Each crate depends on its parent in the tree, plus any crates listed after
+its `+`. The front-ends sit on top: the `bynkc` and `bynk` CLIs over
+`bynk-driver`, the `bynkc-lsp` language server (`bynk-lsp`) over `bynk-ide`, and
+the unpublished `bynk-wasm` playground module over `bynk-emit`, `bynk-strip`,
+and `bynk-ide`.
+
+Most users see this crate's output through the
 [`bynkc`](https://crates.io/crates/bynkc) / [`bynk`](https://crates.io/crates/bynk)
-CLIs rather than depending on it directly.
+CLIs (via [`bynk-driver`](https://crates.io/crates/bynk-driver)) rather than
+depending on it directly.
 
 ## Use
 

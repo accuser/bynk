@@ -26,11 +26,27 @@ in the compiler without an upward dependency.
 `bynk-syntax` is the leaf of the layered compiler:
 
 ```text
-bynk-syntax  ◀── bynk-render · bynk-fmt · bynk-check ◀── bynk-emit ◀── bynk-ide
+bynk-syntax                lexer, parser, AST, CompileError, diagnostic codes
+├── bynk-project           project model: discovery, unit graph, paths
+├── bynk-ts                the TypeScript tree and its printer
+├── bynk-render            diagnostic rendering
+├── bynk-fmt               the formatter
+└── bynk-check             name resolution and type checking   + project
+    ├── bynk-ir            declaration-level IR
+    │   └── bynk-lower     AST → IR helpers
+    ├── bynk-emit          build sequencing, TS emission       + ts, ir, lower, project
+    │   ├── bynk-strip     TS → JS type-stripping              + ts
+    │   └── bynk-driver    shared CLI command bodies           + fmt, render, ts
+    └── bynk-ide           non-bailing editor analysis         + project, fmt
 ```
 
-The `bynkc`, `bynk`, and `bynk-lsp` binaries are front-ends over this set. Most
-users compile Bynk through the [`bynkc`](https://crates.io/crates/bynkc) or
+Each crate depends on its parent in the tree, plus any crates listed after
+its `+`. The front-ends sit on top: the `bynkc` and `bynk` CLIs over
+`bynk-driver`, the `bynkc-lsp` language server (`bynk-lsp`) over `bynk-ide`, and
+the unpublished `bynk-wasm` playground module over `bynk-emit`, `bynk-strip`,
+and `bynk-ide`.
+
+Most users compile Bynk through the [`bynkc`](https://crates.io/crates/bynkc) or
 [`bynk`](https://crates.io/crates/bynk) CLIs rather than depending on this crate
 directly; it is published so tooling that needs only to lex or parse Bynk can do
 so without linking the whole compiler.

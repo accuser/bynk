@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Shared grammar definitions for the Bynk DSL."
+description = "Renders the Bynk tree-sitter grammar to EBNF for the language reference."
 keywords = ["compiler", "dsl", "grammar", "ebnf", "language"]
 categories = ["compilers", "parser-implementations"]
 

@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "The Bynk compiler — a typed function-then-context DSL that compiles to TypeScript."
+description = "The Bynk compiler CLI: type-checks Bynk source and compiles it to typed TypeScript for Cloudflare Workers."
 keywords = ["compiler", "dsl", "typescript", "language"]
 categories = ["compilers"]
 

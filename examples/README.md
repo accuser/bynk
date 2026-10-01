@@ -46,16 +46,17 @@ bynk dev          # compile + serve on http://localhost:8787 (local mode)
 
 That's the compile-and-run recipe in one step — it runs `wrangler dev` in local
 mode, so KV / Durable Objects / queues are simulated and there's nothing to
-provision. The manual equivalent it runs under the hood:
+provision. It compiles in-process; the manual equivalent with `bynkc` is:
 
 ```sh
-bynkc check src                                   # type-check, no output
-bynkc compile src --output out --target workers   # emit a Worker
+bynkc check .                                     # type-check, no output
+bynkc compile . --output out --target workers     # emit a Worker per context
 cd out/workers/<name> && npx wrangler dev         # run it locally
 ```
 
-`bynkc` lives at `target/release/bynkc` after `cargo build --release -p bynkc`
-(see the [install page](https://bynk-lang.org/book/introduction/install/)). The generated
+`bynk` and `bynkc` live at `target/release/` after
+`cargo build --release -p bynk -p bynkc` (see the
+[install page](https://bynk-lang.org/book/introduction/install/)). The generated
 `wrangler.toml` carries the bindings each example needs — a `[[kv_namespaces]]`
 stanza, `[[durable_objects.bindings]]`, or `crons` — with placeholder ids to fill
 in at deploy time.
@@ -66,7 +67,7 @@ To run an example's tests:
 bynkc test .      # from the example directory
 ```
 
-Seven of the ten examples ship tests. Each factors its testable logic — a refined
+Eight of the eleven examples ship tests. Each factors its testable logic — a refined
 type's boundary, a key helper, a windowing or health policy, or a
 capability-free agent — into a unit that runs without any platform binding (see
 *Notes* below for where the line is drawn).
