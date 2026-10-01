@@ -17,6 +17,16 @@
 //! `Option[Connection[F]]`, `List[(Int) -> Int]`, a record with an `Effect`
 //! field, and `Box[(Int) -> Int]` were all accepted.
 //!
+//! Two gaps remain, both permissive (the runtime walker then compares the
+//! offending part by identity):
+//!
+//! - a type variable is equality-supporting, so `==` on `T` inside a generic
+//!   function is accepted, and nothing re-checks the type argument a caller
+//!   instantiates `T` with (`same(f, h)` on two functions compiles). Closing it
+//!   needs equality bounds inferred per generic function, transitively;
+//! - a record imported from another unit is absent from `ctx.input.types`, so
+//!   `walk_decl` cannot see its fields.
+//!
 //! Records and sums are walked through their declared field types
 //! (`TypeRef`s), because the interned `Ty::Named` carries only the name and the
 //! applied arguments. A declared field that names one of the type's own

@@ -5050,7 +5050,7 @@ pub(crate) fn emit_agent(
                 d = bynk_ts::print_expr(&serialisation::deserialise_expr(v, "(__e.v as unknown as JsonValue)", &name.name, &ctx.runtime_use)),
             ));
             encode_entries.push(format!(
-                "{n}: Object.fromEntries(Object.entries(s.{n}).map(([__k, __e]) => [__k, {{ v: {e}, exp: __e.exp }}]))",
+                "{n}: Object.fromEntries(Object.entries(s.{n}).map(([__k, __e]) => [__k, {{ ...__e, v: {e} }}]))",
                 n = name.name,
                 e = ser(v, "__e.v"),
             ));
@@ -5066,7 +5066,7 @@ pub(crate) fn emit_agent(
                 d = bynk_ts::print_expr(&serialisation::deserialise_expr(t, "(__e.v as unknown as JsonValue)", &name.name, &ctx.runtime_use)),
             ));
             encode_entries.push(format!(
-                "{n}: s.{n}.map((__e) => ({{ t: __e.t, v: {e} }}))",
+                "{n}: s.{n}.map((__e) => ({{ ...__e, v: {e} }}))",
                 n = name.name,
                 e = ser(t, "__e.v"),
             ));

@@ -29,7 +29,7 @@ function __rehydrateSessionsState(s: SessionsState, stored: SessionsState): void
 }
 
 function __encodeSessionsState(s: SessionsState): Record<string, unknown> {
-  return { ...s, live: Object.fromEntries(Object.entries(s.live).map(([__k, __e]) => [__k, { v: __e.v as JsonValue, exp: __e.exp }])) };
+  return { ...s, live: Object.fromEntries(Object.entries(s.live).map(([__k, __e]) => [__k, { ...__e, v: __e.v as JsonValue }])) };
 }
 
 export class Sessions {

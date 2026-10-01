@@ -503,7 +503,7 @@ function __rehydrateMemoState(s: MemoState, stored: MemoState): void {
 }
 
 function __encodeMemoState(s: MemoState): Record<string, unknown> {
-  return { ...s, c: Object.fromEntries(Object.entries(s.c).map(([__k, __e]) => [__k, { v: serialise_Option_Int(__e.v), exp: __e.exp }])) };
+  return { ...s, c: Object.fromEntries(Object.entries(s.c).map(([__k, __e]) => [__k, { ...__e, v: serialise_Option_Int(__e.v) }])) };
 }
 
 export class Memo {
@@ -558,7 +558,7 @@ function __rehydrateHistoryState(s: HistoryState, stored: HistoryState): void {
 }
 
 function __encodeHistoryState(s: HistoryState): Record<string, unknown> {
-  return { ...s, l: s.l.map((__e) => ({ t: __e.t, v: serialise_Shape(__e.v) })) };
+  return { ...s, l: s.l.map((__e) => ({ ...__e, v: serialise_Shape(__e.v) })) };
 }
 
 export class History {

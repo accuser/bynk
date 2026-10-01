@@ -867,27 +867,45 @@ pub(crate) fn check_binop(op: BinOp, lhs: &Expr, rhs: &Expr, ctx: &mut Ctx) -> O
                     continue;
                 };
                 let shown = tys.display(operand);
+                // The operand may itself be the offending part (`s == s` on a
+                // `Stream`), not merely contain it.
+                let top = matches!(
+                    &*tys.get(operand),
+                    Ty::Stream(_)
+                        | Ty::Connection(_)
+                        | Ty::Fn { .. }
+                        | Ty::Effect(_)
+                        | Ty::Query(_)
+                );
+                let it = if top { "it is" } else { "it contains" };
                 let (code, message) = match blocker {
                     super::equality::NotComparable::Stream => (
                         "bynk.types.stream_not_comparable",
                         format!(
-                            "operator `{}` cannot compare `{shown}` — it contains a `Stream`, a live value-over-time source, not a comparable value",
+                            "operator `{}` cannot compare `{shown}` — {it} a `Stream`, a live value-over-time source, not a comparable value",
                             op.name()
                         ),
                     ),
                     super::equality::NotComparable::Held(held) => (
                         "bynk.types.held_not_comparable",
                         format!(
-                            "operator `{}` cannot compare `{shown}` — it contains a held `{held}`, which has identity, not value-equality",
+                            "operator `{}` cannot compare `{shown}` — {it} a held `{held}`, which has identity, not value-equality",
                             op.name()
                         ),
                     ),
                     super::equality::NotComparable::Computation(part) => (
                         "bynk.types.not_comparable",
-                        format!(
-                            "operator `{}` cannot compare `{shown}` — it contains `{part}`, which has no value equality",
-                            op.name()
-                        ),
+                        if top {
+                            format!(
+                                "operator `{}` cannot compare `{shown}` — a function, `Effect` or `Query` is a computation, which has no value equality",
+                                op.name()
+                            )
+                        } else {
+                            format!(
+                                "operator `{}` cannot compare `{shown}` — it contains `{part}`, which has no value equality",
+                                op.name()
+                            )
+                        },
                     ),
                 };
                 ctx.errors.push(CompileError::new(code, span, message));

@@ -37,7 +37,7 @@ function __rehydrateInventoryState(s: InventoryState, stored: InventoryState): v
 }
 
 function __encodeInventoryState(s: InventoryState): Record<string, unknown> {
-  return { ...s, history: s.history.map((__e) => ({ t: __e.t, v: serialise_ReserveEvent(__e.v) })) };
+  return { ...s, history: s.history.map((__e) => ({ ...__e, v: serialise_ReserveEvent(__e.v) })) };
 }
 
 export class Inventory {

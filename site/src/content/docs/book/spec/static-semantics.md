@@ -108,9 +108,14 @@ values element by element; two `Bytes` byte by byte. This holds at any depth, an
 for an opaque type it compares the representation. `==` is defined only on an
 **equality-supporting** type: a type that contains a function, `Effect`, `Query`,
 `Stream` or held `Connection` **anywhere** inside it (in a field, a payload, a
-container element, or a generic argument) is not equality-supporting, and `==` on
-it is rejected (`bynk.types.not_comparable`, `bynk.types.stream_not_comparable`,
-`bynk.types.held_not_comparable`). A nullary variant read from storage or decoded
+container element, or a generic argument written in the type, such as
+`Box[(Int) -> Int]`) is not equality-supporting, and `==` on it is rejected
+(`bynk.types.not_comparable`, `bynk.types.stream_not_comparable`,
+`bynk.types.held_not_comparable`). Two cases are not yet checked, and fall back to
+comparing such values by identity: `==` on a type parameter inside a generic
+function (`fn same[T](a: T, b: T) -> Bool { a == b }`) accepts whatever type the
+caller instantiates `T` with (#1688), and a record imported from another unit is not
+walked through its fields. A nullary variant read from storage or decoded
 from JSON equals the same variant written in source.
 
 **`Float` equality** (v0.21). `==`/`!=` on `Float` follow the host's IEEE

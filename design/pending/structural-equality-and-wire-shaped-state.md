@@ -53,6 +53,17 @@ would reject the spec's own Settled examples and the invariant idiom, lose
 `Some(x) == y` and record `expect`s, and still leave stub matching needing
 structural equality.
 
+**Known limits.** Both fail permissively, as every case did before this ADR: the
+walker compares the offending part by identity.
+- A type argument inferred at a call to a generic function is not checked. `==`
+  on a type parameter `T` is accepted in the generic body, so
+  `fn same[T](a: T, b: T) -> Bool { a == b }` called as `same(f, h)` on two
+  functions compiles. Closing it needs equality bounds inferred per generic
+  function (transitively through the functions it calls) and checked at each
+  instantiation, which is a checker feature of its own (#1688).
+- A record imported from another unit is not walked through its fields, because
+  the checker's type map holds only the current unit's declarations.
+
 **Consequences.** Supersedes ADR 0142's note that whole-record `==` "remains
 reference equality". Programs comparing structured values now get the answer the
 spec states; no correct program depended on reference results. `is_keyable`
@@ -123,4 +134,11 @@ already performs. Proved at runtime on both stores: on the bundle target by
 `bynkc/tests/fixtures/positive/1649_agent_state_round_trip` (behavioural,
 11 shapes plus a `transition` that reads the decoded prior state) and reload cases added to fixtures 139 and 155; on real Durable Object
 storage by `workers_runtime_smoke.rs::agent_state_round_trips_on_workerd`. #539
-can build its fingerprint and `migrate` transform on this format.
+can build its fingerprint and `migrate` transform on this format. The load-time
+decode writes through `stored`'s nested objects (a store `Map`, `Cache` entries,
+`Log` entries), which `__merged` shares. That is sound because both backends
+return a fresh copy from every `get` (workerd deserialises; the bundle target's
+in-memory storage clones since #1660). A backend that returned the stored object
+itself would decode an already-decoded value on the next load. Per-field absence
+and unknown-key carry-through are pinned by
+`bynkc/tests/store_behaviour.rs::agent_state_keeps_unknown_keys_and_defaults_missing_fields`.
