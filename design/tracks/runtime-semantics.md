@@ -1,6 +1,9 @@
 # Runtime semantics — emitted programs do what the spec says
 
-- **Status:** Draft (settling). Direction not yet merged; no slice authorised.
+- **Status:** Slicing. Direction was settled by the merge of
+  [#1681](https://github.com/accuser/bynk/pull/1681) (`bec61020`). No slice is accepted yet;
+  each is an ordinary increment proposal on the spine, and the four front-loaded ADRs (§5)
+  land with their first slice.
 - **Realises:**
   - the book's normative spec (`site/src/content/docs/book/spec/static-semantics.md`,
     `emission.md`, `type-system.md`);
@@ -71,13 +74,14 @@ Settling research (§3) added more defects of the same kind, each reproduced:
   durable data and the atomic-commit guarantee. §3.1 decides whether agent invariants written
   in the spec's own idiom (`status == Paid implies …`) can fire once state is decoded (§3.1).
 
-## 3. Open design questions
+## 3. Design questions (settled)
 
-Each question below was investigated during settling. The recommendation is argued from
-evidence in the tree, cited to file:line, and every behavioural claim was reproduced. Marking
-the settling PR ready for review asserts these are closed. Until then they are recommendations.
+Each question below was investigated during settling. The answer is argued from evidence in the
+tree, cited to file:line, and every behavioural claim was reproduced. All five were settled by
+the merge of #1681. Two sub-points were deliberately left to the slice that implements them, and
+are marked as such.
 
-### 3.1 — What does `==` mean on a record, a sum, a `List`, an `Option`? — RECOMMENDED: structural
+### 3.1 — What does `==` mean on a record, a sum, a `List`, an `Option`? — SETTLED: structural
 
 **Today.** `lower_bin_op` (`bynk-emit/src/emitter/lower.rs:4812-4834`) special-cases `Bytes`
 (`__bynkBytesEqual`, [ADR 0142](../decisions/0142-bytes-primitive.md) D4) and lowers every
@@ -166,7 +170,7 @@ limited to `==` sites on non-primitive operands (fixtures 222/223/245 and `spec/
 reference aliasing that currently masks this question. Every `status == Paid` invariant in a
 test would then start failing. **#1652 must land with or before #1649.**
 
-### 3.2 — What shape does agent state take on disk? — RECOMMENDED: the wire shape
+### 3.2 — What shape does agent state take on disk? — SETTLED: the wire shape
 
 **Today.** There is exactly one storage key per Durable Object, `"state"`, holding the whole
 state record as the emitter's in-memory TS representation (`commitState`, `emit.rs:5417-5425`:
@@ -268,11 +272,11 @@ On-disk layout under A (still one `"state"` key):
 | `Log` | `[{ t, v: wire(T) }]` |
 | `Set`, held maps, `@indexed` posting lists | unchanged (already string-shaped) |
 
-Open sub-point for review: a non-finite `Float` now fails **at commit**, so nothing persists
+Carried into S0's proposal (#1649), to decide there: a non-finite `Float` now fails **at commit**, so nothing persists
 and the agent is not bricked. But it surfaces as an untyped `Error("non-finite Float at
 boundary")` (`serialisation.rs:2066-2110`). Should it be an `InvariantViolation`-class fault?
 
-### 3.3 — Which regexes may a `Matches` refinement use? — RECOMMENDED: an automaton ambiguity check
+### 3.3 — Which regexes may a `Matches` refinement use? — SETTLED: an automaton ambiguity check
 
 **Today.** The `catastrophic_regex` guard (`bynk-check/src/checker/refinements.rs:903-1051`,
 `has_nested_unbounded_quantifier`) is a hand-rolled scan that rejects an unbounded quantifier
@@ -347,7 +351,7 @@ A Python prototype is about 200 lines, so the Rust is an estimated 400–500 lin
 - `allows_safe_patterns` drops the `(a{2,3})+` pin, and `does_not_flag_known_deferred_*`
   becomes positive assertions minus `(foo|foobar)+`.
 
-### 3.4 — What is an `Int`? — RECOMMENDED: the JS safe-integer domain, enforced at every entry
+### 3.4 — What is an `Int`? — SETTLED: the JS safe-integer domain, enforced at every entry
 
 **Today, no document defines the domain, and the three entry points disagree:**
 - **The lexer** accepts any `i64` (`bynk-syntax/src/lexer.rs:603`). `9223372036854775807` is
@@ -401,11 +405,11 @@ Settling found the type **unsound**, not just imprecise:
   "arithmetic host-defined, boundaries guarded". The boundaries are then the guarantee: an
   out-of-range value can never be accepted from outside, or written out, undetected.
 
-Open sub-point for review: Float→`Int` conversions of a non-finite or >2⁵³ value. Either
+Carried into S8's proposal (#1657), to decide there: Float→`Int` conversions of a non-finite or >2⁵³ value. Either
 (a) return `Option[Int]`, which is a signature change to four kernel methods, or (b) trap, the
 same as `/0`. Leaning (b), for consistency with division.
 
-### 3.5 — How do the gates assert runtime behaviour? — RECOMMENDED: opt-in run markers on positive fixtures
+### 3.5 — How do the gates assert runtime behaviour? — SETTLED: opt-in run markers on positive fixtures
 
 **Today:**
 - 71 positive fixtures already contain `suite`s. `tsc_verify.rs:211-340` type-checks them in
