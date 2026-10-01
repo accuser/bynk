@@ -92,7 +92,7 @@ accepts `==` on these types without a word, and the book's static semantics (§5
 still be `false` after storage round-trips the object.
 
 **Finding 3: the CI gates cover the corpus well, and the corpus has gaps.**
-- 20 confirmed soundness defects, every one reproduced by a probe of one to ten lines.
+- 19 confirmed defects in Part 1, every one reproduced by a probe of one to ten lines.
 - 99 of 457 diagnostic codes (21.7%) are never produced by any test. 26 of a 29-code sample fire
   correctly from a one-line program.
 - The documentation gate compiles 93 of the site's 291 `bynk` blocks.
@@ -133,8 +133,16 @@ but it means every September finding still stands, and item 3 has now demonstrat
 
 ## Part 1 — Programs the compiler accepts and gets wrong
 
-Of the 20 confirmed findings, Findings 1 and 2 are in the headline. The rest group into three
-classes.
+Part 1 records 19 confirmed defects:
+- Findings 1 and 2 (the headline);
+- three accepted-and-wrong-at-runtime (§1.1);
+- nine accepted-then-`tsc`-fails (§1.2);
+- the ReDoS (§1.3);
+- four rejected-but-valid (§1.4).
+
+§1.3 is a cross-cut rather than a class: it picks out the two defects with a security dimension,
+one of which is §1.1a. The formatter's orphaned-doc-block deletion (Part 5) is counted there, not
+here.
 
 ### 1.1 Accepted, and wrong at runtime
 
@@ -183,6 +191,11 @@ compiles `src/` only and says test modules are "`bynkc test`'s concern". 99 of 4
 fixtures are workers-target, and none has an `Option` service parameter.
 
 ### 1.3 Two that matter for security
+
+Both are tracked: #1651 (ReDoS) and #1650 (`String.replace`). The ReDoS primitive was already
+public before this review, since the guard's own doc comment names `(a|a)+` and a committed test
+pins that it is unflagged. What this review adds is the end-to-end amplification through a route
+parameter. Triggering it still requires the program's author to write the ambiguous regex.
 
 - **ReDoS through an accepted refinement.** The `catastrophic_regex` guard
   (`bynk-check/src/checker/refinements.rs:895-903`) catches nested quantifiers only. The code
@@ -300,7 +313,9 @@ read about in a design doc gets silence.
 ### 3.3 Documented to users, rejected by the compiler
 
 The doc gate (`bynkc/tests/doc_examples.rs:9-16`) compiles only blocks that begin with `commons`
-or `context`: **93 of 291** site blocks. Of the 192 it does not see:
+or `context`: **93 of 291** site blocks (212 bare ` ```bynk `, 6 ` ```bynk,fail ` and 73
+` ```bynk,ignore ` under `site/src/content/docs`). The 6 `,fail` blocks are also seen, as
+must-fail. That leaves 192 it does not see, among them:
 - `store level: Cell[Int where Positive]` (inline refinement in a store type) is a parse error. It
   appears in `troubleshooting/agents-non-zeroable-state-field.md:18-22` and :31 (both the
   trigger *and the fix*), `guides/agents-and-state/stateful-agent.md:95` and
@@ -376,7 +391,9 @@ still says "v0.1 has no other generic types", and the unknown-type note omits `F
 ## Part 5 — Robustness and the formatter
 
 **The front end does not crash.** The corpus was 1,586 inputs: 1,292 tracked `.bynk` files plus
-294 `bynk` blocks extracted from the site. Four seeded mutation rounds over it produced **91,736
+294 extractions from the site. Those are the 291 fenced `bynk` blocks of §3.3, plus 3 spurious
+matches, because the extractor's regex was not anchored to the start of a line and also caught
+inline mentions of the fence in prose. Four seeded mutation rounds over it produced **91,736
 mutants**, run through `bynkc check`, `bynk fmt -`, `bynkc compile` (subset) and a stable-Rust
 mirror of the two `fuzz/` targets' invariants (no panic; every span in bounds and on a char
 boundary). That is about 293k invocations.
@@ -521,7 +538,11 @@ where identifier hygiene and shape agreement between writer and reader go unchec
 
 ## Part 8 — What to do
 
-Ordered by value over cost.
+Ordered by value over cost. These are filed as two tracks:
+- **#1648 (runtime semantics):** items 1–3, 5 and 6, plus #291;
+- **#1670 (toolchain pins):** item 10, the September list.
+
+Item 4 is #1664, item 8 is #1665, and item 9 is #1669. Item 11 is #539.
 
 1. **Fix agent-state persistence (Finding 1) and add the test that would have caught it.**
    Either serialise on commit (`storage.put("state", serialise(s))`, then deserialise *into*
@@ -536,8 +557,9 @@ Ordered by value over cost.
    decision".
 3. **Close the two security-shaped defects.** `replaceAll(a, () => b)` (one line). For ReDoS,
    either extend the guard to branch overlap, or reject alternation under an unbounded quantifier
-   unless the branches are provably disjoint (conservative, like the existing check). Either way,
-   file an open issue: the code's "deferred (#724)" points at a closed one.
+   unless the branches are provably disjoint (conservative, like the existing check). Filed as
+   #1650 (`replace`) and #1651 (ReDoS), which replaces the code's "deferred (#724)" citation to a
+   closed issue.
 4. **Stop the formatter deleting orphaned doc blocks.** Count `---` blocks in the comment-loss
    guard (a one-line widening), so the failure is a refusal rather than silent deletion. Then
    decide whether to preserve orphans or attach them.
