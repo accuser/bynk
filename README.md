@@ -85,8 +85,8 @@ or [Compile your first program](https://bynk-lang.org/book/tutorials/01-first-pr
 
 This is a Cargo workspace. The three user-facing tools — `bynkc`, `bynk`, and
 `bynk-lsp` — are front-ends over a layered set of library crates; every crate
-except `bynk-wasm`, `bynk-testkit`, `tree-sitter-bynk`'s Rust binding, and
-`xtask` is published to crates.io at the workspace version. Each crate's README
+except `bynk-wasm`, `bynk-testkit`, `tree-sitter-bynk`'s Rust binding, `xtask`,
+and `fuzz` is published to crates.io at the workspace version. Each crate's README
 says where it sits in the layering.
 
 | Path | What it is | Published as |
