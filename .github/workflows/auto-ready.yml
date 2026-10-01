@@ -14,10 +14,11 @@
 #     promote job there would need an EXEMPT entry and would tangle promotion
 #     into the required check's job graph.
 #   - the promotion needs `pull-requests: write`, `contents: write` and
-#     `actions: write` (see the `promote` job's permissions block); ci.yml is least-privilege `contents: read` at
-#     the top and PR jobs there run on untrusted-input paths. This workflow
-#     checks out nothing and runs no project code, so the write scopes never
-#     coexist with anything a PR author controls.
+#     `actions: write` (see the `promote` job's permissions block); ci.yml is
+#     least-privilege `contents: read` at the top and PR jobs there run on
+#     untrusted-input paths. This workflow checks out nothing and runs no
+#     project code, so the write scopes never coexist with anything a PR
+#     author controls.
 #   - run-level `conclusion == 'success'` is exactly "the whole CI run passed"
 #     (it subsumes `ci-green`; it is marginally stricter — a red report-only
 #     `coverage` job also holds the draft, which is a safe default).
