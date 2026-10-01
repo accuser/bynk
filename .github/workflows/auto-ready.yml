@@ -13,8 +13,8 @@
 #   - ci.yml's `ci-green` audit step hand-verifies its own gate; a downstream
 #     promote job there would need an EXEMPT entry and would tangle promotion
 #     into the required check's job graph.
-#   - the promotion needs `pull-requests: write` and `contents: write` (see
-#     the permissions block); ci.yml is least-privilege `contents: read` at
+#   - the promotion needs `pull-requests: write`, `contents: write` and
+#     `actions: write` (see the `promote` job's permissions block); ci.yml is least-privilege `contents: read` at
 #     the top and PR jobs there run on untrusted-input paths. This workflow
 #     checks out nothing and runs no project code, so the write scopes never
 #     coexist with anything a PR author controls.
