@@ -21,6 +21,9 @@ export const Sku = {
     if (!(value.length > 0)) {
       return Err({ field: "Sku", message: "must be non-empty", value });
     }
+    if (!(value.length <= 8)) {
+      return Err({ field: "Sku", message: "length must be at most 8", value });
+    }
     return Ok(value as Sku);
   },
 };

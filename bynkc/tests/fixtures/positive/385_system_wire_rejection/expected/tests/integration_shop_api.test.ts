@@ -275,8 +275,22 @@ async function test_a_raw_path_segment_with_a_typed_body_passes_both_through_the
 async function test_a_raw_path_segment_failing_refinement_is_rejected_even_with_a_typed_body() {
   try {
     const deps = makeHarness();
+    const r = await __sysdrive_raw_api_http_PUT_cart_Param_sku("far-too-long-sku", JSON.stringify(shop_api.serialise_Item(({ sku: "widget" } as any))), "alice");
+    if (!(r.tag === "Rejected" && r.value.tag === "RefinementViolation")) { throw __bynkExpectFailure("shop/tests/api.test.bynk:49:12", 2360, 2397, "expect r is Rejected(RefinementViolation(_))"); }
+    return { pass: true };
+  } catch (e) {
+    if (e instanceof ExpectationError) {
+      return { pass: false, error: { message: e.message, location: e.location } };
+    }
+    return { pass: false, error: { message: String(e), location: "unknown" } };
+  }
+}
+
+async function test_an_empty_raw_path_segment_does_not_route_and_falls_through() {
+  try {
+    const deps = makeHarness();
     const r = await __sysdrive_raw_api_http_PUT_cart_Param_sku("", JSON.stringify(shop_api.serialise_Item(({ sku: "widget" } as any))), "alice");
-    if (!(r.tag === "Rejected" && r.value.tag === "RefinementViolation")) { throw __bynkExpectFailure("shop/tests/api.test.bynk:44:12", 1993, 2030, "expect r is Rejected(RefinementViolation(_))"); }
+    if (!(r.tag === "Handled")) { throw __bynkExpectFailure("shop/tests/api.test.bynk:58:12", 2952, 2967, "expect r is Handled(_)"); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -290,7 +304,7 @@ async function test_a_typed_path_segment_with_a_raw_body_passes_both_through_the
   try {
     const deps = makeHarness();
     const r = await __sysdrive_raw_api_http_PUT_cart_Param_sku(String("widget"), "{\"sku\": \"widget\"}", "alice");
-    if (!(r.tag === "Handled")) { throw __bynkExpectFailure("shop/tests/api.test.bynk:48:12", 2220, 2235, "expect r is Handled(_)"); }
+    if (!(r.tag === "Handled")) { throw __bynkExpectFailure("shop/tests/api.test.bynk:62:12", 3157, 3172, "expect r is Handled(_)"); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -314,6 +328,7 @@ export async function run(only?: string) {
   if (want("a handler-returned 400 is Handled, not a boundary rejection")) results.push({ name: "a handler-returned 400 is Handled, not a boundary rejection", ...(await test_a_handler_returned_400_is_Handled__not_a_boundary_rejection()) });
   if (want("a raw path segment with a typed body passes both through the boundary")) results.push({ name: "a raw path segment with a typed body passes both through the boundary", ...(await test_a_raw_path_segment_with_a_typed_body_passes_both_through_the_boundary()) });
   if (want("a raw path segment failing refinement is rejected even with a typed body")) results.push({ name: "a raw path segment failing refinement is rejected even with a typed body", ...(await test_a_raw_path_segment_failing_refinement_is_rejected_even_with_a_typed_body()) });
+  if (want("an empty raw path segment does not route and falls through")) results.push({ name: "an empty raw path segment does not route and falls through", ...(await test_an_empty_raw_path_segment_does_not_route_and_falls_through()) });
   if (want("a typed path segment with a raw body passes both through the boundary")) results.push({ name: "a typed path segment with a raw body passes both through the boundary", ...(await test_a_typed_path_segment_with_a_raw_body_passes_both_through_the_boundary()) });
   return results;
 }

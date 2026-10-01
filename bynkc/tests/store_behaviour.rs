@@ -781,6 +781,72 @@ eq(await c.dump({}), [4], "retention prunes entries past the window on append");
 console.log("ALL OK");
 "#;
 
+/// #1660 (runtime-semantics track §3.2/§3.5): a commit refused by an invariant
+/// must leave **every** store untouched, including a collection written *in
+/// place*.
+///
+/// The `Cell` case in `DRIVER_TS` (step 3) never exposed the gap. A handler starts
+/// from a *shallow* copy of the loaded state, and `:=` replaces a top-level field
+/// of that copy, so it never reaches storage. A store-`Map` `put` instead writes
+/// *into* the nested record (`__state.items[k] = v`). When the storage handed back
+/// its own reference, as the runtime's `InMemoryStorage` did before #1660, that
+/// write landed in storage before the commit decision, and a refused commit had
+/// already happened.
+///
+/// This drives the bundle's own `__makeCart` factory, and with it the runtime's
+/// `StateRegistry`/`InMemoryStorage` rather than a fake, so it pins the storage
+/// `bynkc test` and bundle deployments actually use.
+const REFUSED_LEAK_SOURCE: &str = "context shop\n\
+\n\
+agent Cart {\n\
+\x20 key id: String\n\
+\x20 store items: Map[String, Int]\n\
+\x20 store total: Cell[Int] = 0\n\
+\n\
+\x20 invariant small: total <= 1\n\
+\n\
+\x20 on call add(k: String) -> Effect[()] {\n\
+\x20   do items.put(k, 1)\n\
+\x20   do total.update((t) => t + 1)\n\
+\x20   ()\n\
+\x20 }\n\
+\x20 on call count() -> Effect[Int] {\n\
+\x20   let n <- items.size()\n\
+\x20   n\n\
+\x20 }\n\
+}\n";
+
+const REFUSED_LEAK_DRIVER_TS: &str = r#"
+import { __makeCart } from "./shop.js";
+
+function assert(cond: boolean, msg: string): void {
+  if (!cond) {
+    throw new Error(`assertion failed: ${msg}`);
+  }
+}
+
+// The emitted agent logs the violation it refuses; keep the run's output clean.
+console.error = () => {};
+
+const cart = __makeCart("k");
+await cart.add("a", {});
+assert((await cart.count({})) === 1, "the first add commits");
+
+let threw = false;
+try {
+  await cart.add("b", {});
+} catch (e) {
+  threw = String((e as { message?: string }).message ?? e).includes("InvariantViolation");
+}
+assert(threw, "the second add is refused by `invariant small`");
+assert(
+  (await cart.count({})) === 1,
+  "a refused commit's in-place store-Map write must not persist",
+);
+
+console.log("ALL OK");
+"#;
+
 const TSCONFIG_JSON: &str = r#"{
   "compilerOptions": {
     "module": "Node16",
@@ -987,4 +1053,9 @@ console.log("ALL OK");
 #[test]
 fn store_rehydration_gate_runtime_semantics() {
     verify("rehydration", REHYDRATE_SOURCE, REHYDRATE_DRIVER_TS);
+}
+
+#[test]
+fn refused_commit_does_not_leak_an_in_place_store_write() {
+    verify("refused_leak", REFUSED_LEAK_SOURCE, REFUSED_LEAK_DRIVER_TS);
 }

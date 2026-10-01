@@ -3,7 +3,7 @@ context shop.api
 type UserId = String where NonEmpty
 actor User { auth = Bearer(secret = "AUTH_SECRET"), identity = UserId }
 
-type Sku = String where NonEmpty
+type Sku = String where NonEmpty && MaxLength(8)
 type Item = { sku: Sku }
 
 agent Cart {

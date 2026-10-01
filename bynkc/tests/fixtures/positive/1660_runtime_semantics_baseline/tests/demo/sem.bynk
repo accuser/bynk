@@ -1,0 +1,56 @@
+---
+#1660: runtime proofs for the runtime-semantics track. Each known-failing
+case is named in `expected_run.txt` with the slice that fixes it.
+---
+suite demo.sem
+
+case "a scalar Cell reads back after a reload" {
+  do Gauge("scalar").setLevel(7)
+  let n <- Gauge("scalar").getLevel()
+  expect n == 7
+}
+
+case "a scalar Cell beside an enum Cell reads back after a reload" {
+  do Panel("beside").setLevel(7)
+  let n <- Panel("beside").getLevel()
+  expect n == 7
+}
+
+case "an enum Cell reads back after a reload" {
+  do Lamp("enum").turnGreen()
+  let green <- Lamp("enum").isGreen()
+  expect green
+}
+
+case "an Option Cell reads back after a reload" {
+  do Meter("option").note(3)
+  let r <- Meter("option").lastReading()
+  expect r == 3
+}
+
+case "an enum survives a JSON round trip" {
+  expect survivesJson(Green)
+}
+
+case "a record equals an identical record" {
+  expect samePoint(Pt { x: 1, y: 2 }, Pt { x: 1, y: 2 })
+}
+
+case "Some(1) equals Some(1)" {
+  expect sameReading(Some(1), Some(1))
+}
+
+case "String.replace inserts its replacement literally" {
+  expect literalReplace() == "$&b$&b$&b"
+}
+
+case "a store Map keeps a __proto__ key like any other" {
+  do Bag("proto").add("__proto__")
+  let n <- Bag("proto").count()
+  expect n == 1
+}
+
+case "a store Map has no inherited keys" {
+  let h <- Bag("inherited").has("constructor")
+  expect h == false
+}

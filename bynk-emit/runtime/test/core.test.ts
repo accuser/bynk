@@ -28,6 +28,68 @@ test("InMemoryStorage: get/put/delete and prefix list", async () => {
   assert.equal(await s.get("user:1"), undefined);
 });
 
+// #1660: storage clones on the way in and out, as workerd's V8-serialised
+// storage does. Mutating a value after `put`, or a value returned by `get`,
+// must never reach what is stored.
+test("InMemoryStorage: put and get clone, so stored state is never aliased", async () => {
+  const s = new InMemoryStorage();
+  const written = { items: { a: 1 }, bytes: new Uint8Array([1, 2]) };
+  await s.put("state", written);
+  written.items.a = 99;
+
+  const read = await s.get<typeof written>("state");
+  assert.ok(read !== undefined);
+  assert.notEqual(read, written);
+  assert.equal(read.items.a, 1);
+  // The copy keeps the shapes workerd's storage keeps.
+  assert.ok(read.bytes instanceof Uint8Array);
+
+  read.items.a = 42;
+  assert.equal((await s.get<typeof written>("state"))?.items.a, 1);
+
+  const listed = await s.list<typeof written>();
+  listed.get("state")!.items.a = 7;
+  assert.equal((await s.get<typeof written>("state"))?.items.a, 1);
+});
+
+// #1660: a live handle (a held `TestConnection` on the bundle target) is shared,
+// not copied. Workers re-resolve the same live socket from its stored connId, and
+// copying would strip `send`. A value-level `Map` inside state is still copied.
+test("InMemoryStorage: live handles are shared, data around them is copied", async () => {
+  class Handle {
+    sent: string[] = [];
+    send(m: string): void { this.sent.push(m); }
+  }
+  const s = new InMemoryStorage();
+  const conn = new Handle();
+  await s.put("state", { conns: { alice: conn }, tags: new Map([["k", [1]]]) });
+
+  const read = await s.get<{ conns: { alice: Handle }; tags: Map<string, number[]> }>("state");
+  assert.ok(read !== undefined);
+  assert.equal(read.conns.alice, conn);
+  read.conns.alice.send("hi");
+  assert.deepEqual(conn.sent, ["hi"]);
+
+  read.tags.get("k")!.push(2);
+  assert.deepEqual((await s.get<typeof read>("state"))?.tags.get("k"), [1]);
+});
+
+// #1660 review: a record decoded from JSON can carry an *own* `__proto__` key
+// (`JSON.parse` defines it). The copy must keep it as an ordinary entry, not
+// reassign the copy's prototype or drop it.
+test("InMemoryStorage: an own __proto__ key is copied as an entry", async () => {
+  const s = new InMemoryStorage();
+  const items = JSON.parse('{"__proto__": {"polluted": true}, "a": 1}') as Record<string, unknown>;
+  await s.put("state", { items });
+
+  const read = await s.get<{ items: Record<string, unknown> }>("state");
+  assert.ok(read !== undefined);
+  assert.deepEqual(Object.keys(read.items).sort(), ["__proto__", "a"]);
+  assert.equal(Object.getPrototypeOf(read.items), Object.prototype);
+  assert.equal((read.items as { polluted?: boolean }).polluted, undefined);
+  assert.deepEqual(Object.getOwnPropertyDescriptor(read.items, "__proto__")?.value, { polluted: true });
+});
+
 test("makeTestState: names the state and gives it fresh storage", async () => {
   const st = makeTestState("agent-7");
   assert.equal(st.id.name, "agent-7");

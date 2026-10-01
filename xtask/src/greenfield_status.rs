@@ -2618,17 +2618,26 @@ fn test_density(root: &Path) -> Probe {
 /// R11.2. Fixture directories under `bynkc/tests` using each assertion granularity —
 /// `expected_contains.txt` / `expected_absent.txt` / `expected_diagnostics.txt` — set
 /// against the older, coarser `expected_error.txt` (category-string) convention.
+///
+/// #1660 (runtime-semantics track §3.5) added two counts:
+/// - `warnings` (`expected_warnings.txt`, a positive fixture's pinned warnings), which
+///   this probe had never counted;
+/// - `run` (`expected_run.txt`), the positive fixtures whose `suite`s
+///   `bynkc/tests/behaviour_fixtures.rs` actually *runs*, the one granularity that
+///   asserts runtime behaviour rather than emitted text or diagnostics.
 fn fixture_kinds(root: &Path) -> Probe {
     let tests_dir = root.join("bynkc/tests");
     let contains = count_files_named(&tests_dir, "expected_contains.txt");
     let absent = count_files_named(&tests_dir, "expected_absent.txt");
     let diagnostics = count_files_named(&tests_dir, "expected_diagnostics.txt");
     let error = count_files_named(&tests_dir, "expected_error.txt");
+    let warnings = count_files_named(&tests_dir, "expected_warnings.txt");
+    let run = count_files_named(&tests_dir, "expected_run.txt");
     Probe {
         name: "fixture_kinds",
         gated: false,
         reads: format!(
-            "contains={contains}, absent={absent}, diagnostics={diagnostics}, error={error}"
+            "contains={contains}, absent={absent}, diagnostics={diagnostics}, error={error}, warnings={warnings}, run={run}"
         ),
     }
 }
