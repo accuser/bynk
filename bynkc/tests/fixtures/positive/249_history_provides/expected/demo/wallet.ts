@@ -38,8 +38,12 @@ export interface WalletState {
 const __WalletRegistry = new StateRegistry();
 function __zeroOfWalletState(): WalletState { return { balance: 0 }; }
 
-function __rehydrateWalletState(s: WalletState): void {
-  { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "balance", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "balance", expected: "integer", actual: String(__v) } as BoundaryError))((s.balance as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Wallet", __r.error); }
+function __rehydrateWalletState(s: WalletState, stored: WalletState): void {
+  if (Object.prototype.hasOwnProperty.call(stored, "balance")) { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "balance", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "balance", expected: "integer", actual: String(__v) } as BoundaryError))((s.balance as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Wallet", __r.error); (s as { -readonly [K in keyof typeof s]: (typeof s)[K] }).balance = __r.value as unknown as (typeof s)["balance"]; }
+}
+
+function __encodeWalletState(s: WalletState): Record<string, unknown> {
+  return { ...s, balance: s.balance as JsonValue };
 }
 
 export class Wallet {
@@ -52,7 +56,7 @@ export class Wallet {
     const stored = await this.state.storage.get<WalletState>("state");
     if (stored === undefined) return __zeroOfWalletState();
     const __merged = { ...__zeroOfWalletState(), ...stored };
-    __rehydrateWalletState(__merged);
+    __rehydrateWalletState(__merged, stored);
     return __merged;
   }
 
@@ -61,7 +65,7 @@ export class Wallet {
       console.error("InvariantViolation Wallet.nonneg", { agent: "Wallet", invariant: "nonneg" });
       throw invariantViolation("Wallet", "nonneg");
     }
-    await this.state.storage.put("state", s);
+    await this.state.storage.put("state", __encodeWalletState(s));
   }
 
   async topUp(amount: Amount, deps: { Ledger: Ledger }): Promise<void> {
@@ -92,7 +96,7 @@ export function __makeWallet(key: string, env?: { WALLET?: DurableObjectNamespac
 export async function __bynkDriveHistory_Wallet(seq: Array<{ h: number, args: unknown[] }>, deps: any): Promise<Array<{ call: any, accepted: boolean, old: WalletState, new: WalletState }>> {
   __WalletRegistry.reset();
   const __inst = __makeWallet("") as any;
-  const __load = async (): Promise<WalletState> => { const __s = await __inst.state.storage.get("state"); return __s === undefined ? __zeroOfWalletState() : { ...__zeroOfWalletState(), ...__s }; };
+  const __load = async (): Promise<WalletState> => { const __s = await __inst.state.storage.get("state"); if (__s === undefined) return __zeroOfWalletState(); const __m = { ...__zeroOfWalletState(), ...__s }; __rehydrateWalletState(__m, __s); return __m; };
   const __rej = (e: unknown) => !!e && (e as { invariantViolation?: unknown }).invariantViolation !== undefined;
   const __steps: Array<{ call: any, accepted: boolean, old: WalletState, new: WalletState }> = [];
   const __ce = console.error;

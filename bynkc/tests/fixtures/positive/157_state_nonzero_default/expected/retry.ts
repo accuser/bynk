@@ -11,9 +11,13 @@ export interface TaskState {
 const __TaskRegistry = new StateRegistry();
 function __zeroOfTaskState(): TaskState { return { retries: 3, done: false }; }
 
-function __rehydrateTaskState(s: TaskState): void {
-  { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "retries", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "retries", expected: "integer", actual: String(__v) } as BoundaryError))((s.retries as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Task", __r.error); }
-  { const __r = ((__v) => typeof __v === "boolean" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "done", expected: "boolean", actual: typeof __v } as BoundaryError))((s.done as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Task", __r.error); }
+function __rehydrateTaskState(s: TaskState, stored: TaskState): void {
+  if (Object.prototype.hasOwnProperty.call(stored, "retries")) { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "retries", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "retries", expected: "integer", actual: String(__v) } as BoundaryError))((s.retries as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Task", __r.error); (s as { -readonly [K in keyof typeof s]: (typeof s)[K] }).retries = __r.value as unknown as (typeof s)["retries"]; }
+  if (Object.prototype.hasOwnProperty.call(stored, "done")) { const __r = ((__v) => typeof __v === "boolean" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "done", expected: "boolean", actual: typeof __v } as BoundaryError))((s.done as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Task", __r.error); (s as { -readonly [K in keyof typeof s]: (typeof s)[K] }).done = __r.value as unknown as (typeof s)["done"]; }
+}
+
+function __encodeTaskState(s: TaskState): Record<string, unknown> {
+  return { ...s, retries: s.retries as JsonValue, done: s.done as JsonValue };
 }
 
 export class Task {
@@ -26,12 +30,12 @@ export class Task {
     const stored = await this.state.storage.get<TaskState>("state");
     if (stored === undefined) return __zeroOfTaskState();
     const __merged = { ...__zeroOfTaskState(), ...stored };
-    __rehydrateTaskState(__merged);
+    __rehydrateTaskState(__merged, stored);
     return __merged;
   }
 
   private async commitState(s: TaskState): Promise<void> {
-    await this.state.storage.put("state", s);
+    await this.state.storage.put("state", __encodeTaskState(s));
   }
 
   async peek(deps: {}): Promise<Result<void, string>> {

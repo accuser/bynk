@@ -1,0 +1,56 @@
+---
+#1652: structural equality, proved at runtime.
+---
+suite demo.eq
+
+case "records compare by field" {
+  expect Pt { x: 1, y: 2 } == Pt { x: 1, y: 2 }
+  expect Pt { x: 1, y: 2 } != Pt { x: 1, y: 3 }
+}
+
+case "sums compare by variant and payload" {
+  expect Circle(1) == Circle(1)
+  expect Circle(1) != Circle(2)
+  expect Circle(1) != Square(1)
+}
+
+case "a nullary variant decoded from JSON equals the constant" {
+  expect decodedGreen() == Green
+}
+
+case "Option and Result compare structurally" {
+  expect Some(1) == Some(1)
+  expect Some(1) != Some(2)
+  expect Some(Pt { x: 1, y: 1 }) == Some(Pt { x: 1, y: 1 })
+  let ok: Result[Int, String] = Ok(1)
+  let err: Result[Int, String] = Err("e")
+  expect ok != err
+}
+
+case "lists compare element-wise" {
+  expect [1, 2, 3] == [1, 2, 3]
+  expect [[1], [2]] == [[1], [2]]
+  expect [1, 2] != [1, 2, 3]
+}
+
+case "maps compare by key and value" {
+  expect scores("a", 1) == scores("a", 1)
+  expect scores("a", 1) != scores("a", 2)
+  expect scores("a", 1) != scores("b", 1)
+}
+
+case "Bytes compare by content, inside records and behind opaque types" {
+  expect blob("a") == blob("a")
+  expect blob("a") != blob("b")
+  expect sameToken("a", "a")
+  expect sameToken("a", "b") == false
+}
+
+case "a generic type parameter compares structurally" {
+  expect same(Pt { x: 1, y: 2 }, Pt { x: 1, y: 2 })
+  expect same(Some("a"), Some("a"))
+}
+
+case "Float keeps IEEE semantics" {
+  expect nan() != nan()
+}

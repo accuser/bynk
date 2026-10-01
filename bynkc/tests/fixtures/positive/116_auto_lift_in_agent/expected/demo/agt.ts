@@ -34,8 +34,12 @@ export interface BoxState {
 const __BoxRegistry = new StateRegistry();
 function __zeroOfBoxState(): BoxState { return { placed: false }; }
 
-function __rehydrateBoxState(s: BoxState): void {
-  { const __r = ((__v) => typeof __v === "boolean" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "placed", expected: "boolean", actual: typeof __v } as BoundaryError))((s.placed as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Box", __r.error); }
+function __rehydrateBoxState(s: BoxState, stored: BoxState): void {
+  if (Object.prototype.hasOwnProperty.call(stored, "placed")) { const __r = ((__v) => typeof __v === "boolean" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "placed", expected: "boolean", actual: typeof __v } as BoundaryError))((s.placed as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Box", __r.error); (s as { -readonly [K in keyof typeof s]: (typeof s)[K] }).placed = __r.value as unknown as (typeof s)["placed"]; }
+}
+
+function __encodeBoxState(s: BoxState): Record<string, unknown> {
+  return { ...s, placed: s.placed as JsonValue };
 }
 
 export class Box {
@@ -48,12 +52,12 @@ export class Box {
     const stored = await this.state.storage.get<BoxState>("state");
     if (stored === undefined) return __zeroOfBoxState();
     const __merged = { ...__zeroOfBoxState(), ...stored };
-    __rehydrateBoxState(__merged);
+    __rehydrateBoxState(__merged, stored);
     return __merged;
   }
 
   private async commitState(s: BoxState): Promise<void> {
-    await this.state.storage.put("state", s);
+    await this.state.storage.put("state", __encodeBoxState(s));
   }
 
   async place(amount: number, deps: {}): Promise<Result<void, OrderError>> {

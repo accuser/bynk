@@ -50,8 +50,12 @@ function __zeroOfMeterState(): MeterState {
   })(true) };
 }
 
-function __rehydrateMeterState(s: MeterState): void {
-  { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "active", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "active", expected: "integer", actual: String(__v) } as BoundaryError))((s.active as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Meter", __r.error); }
+function __rehydrateMeterState(s: MeterState, stored: MeterState): void {
+  if (Object.prototype.hasOwnProperty.call(stored, "active")) { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "active", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "active", expected: "integer", actual: String(__v) } as BoundaryError))((s.active as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Meter", __r.error); (s as { -readonly [K in keyof typeof s]: (typeof s)[K] }).active = __r.value as unknown as (typeof s)["active"]; }
+}
+
+function __encodeMeterState(s: MeterState): Record<string, unknown> {
+  return { ...s, active: s.active as JsonValue };
 }
 
 export class Meter {
@@ -64,12 +68,12 @@ export class Meter {
     const stored = await this.state.storage.get<MeterState>("state");
     if (stored === undefined) return __zeroOfMeterState();
     const __merged = { ...__zeroOfMeterState(), ...stored };
-    __rehydrateMeterState(__merged);
+    __rehydrateMeterState(__merged, stored);
     return __merged;
   }
 
   private async commitState(s: MeterState): Promise<void> {
-    await this.state.storage.put("state", s);
+    await this.state.storage.put("state", __encodeMeterState(s));
   }
 
   async hits(deps: {}): Promise<Result<number, MeterError>> {

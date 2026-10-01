@@ -4911,11 +4911,31 @@ pub(crate) fn emit_agent(
     // (Non-textual `Map`/`Set` keys persist as structural string keys — refined-
     // key rehydration validation is a named follow-on, ADR 0124 D5.)
     let rehydrate_fn = format!("__rehydrate{}State", a.name.name);
+    // #1649 (runtime-semantics track §3.2): agent state is stored in the **wire
+    // shape**. `commitState` writes `__encode<Agent>State(s)`, which runs each
+    // codec-able value through the boundary serialiser (`kind`-tagged sums,
+    // base64 `Bytes`, entries-array value `Map`s). `loadState` merges
+    // zero-then-stored and calls `__rehydrate<Agent>State(merged, stored)`,
+    // which now *decodes* each value present in `stored` back into the in-memory
+    // shape, instead of validating it and discarding the result. Before #1649,
+    // `commitState` stored the in-memory shape while the gate validated against
+    // the wire shape, so every reload of an enum/`Option`/`Result`/`Bytes`/
+    // value-`Map` state faulted (`RehydrationViolation … StructuralMismatch`).
+    //
+    // A field absent from `stored` keeps its in-memory zero (ADR 0124 D4), and is
+    // not decoded. An unknown stored key (a renamed or removed field) rides along
+    // untouched and is written back, so #539's migrations still find it.
+    let encode_fn = format!("__encode{}State", a.name.name);
+    let mut encode_entries: Vec<String> = Vec::new();
     let agent_name = &a.name.name;
     let mut rehydrate_checks: Vec<String> = Vec::new();
     // The loaded record is statically typed (its fields are the agent's types),
     // but at runtime its bytes are untrusted, so each value is laundered to
-    // `JsonValue` before the boundary deserialiser re-validates it.
+    // `JsonValue` before the boundary deserialiser decodes it.
+    let present = |name: &str| format!("Object.prototype.hasOwnProperty.call(stored, \"{name}\")");
+    let ser = |ty: &TypeRef, value: &str| {
+        bynk_ts::print_expr(&serialisation::serialise_expr(ty, value, &ctx.runtime_use))
+    };
     let push_value_check = |checks: &mut Vec<String>,
                             ty: &TypeRef,
                             value_expr: &str,
@@ -4938,10 +4958,17 @@ pub(crate) fn emit_agent(
             &ctx.runtime_use,
         ));
         checks.push(format!(
-            "  {{ const __r = {d}; if (__r.tag === \"Err\") throw rehydrationViolation(\"{agent_name}\", __r.error); }}"
+            // The state interface's fields are `readonly`; the decode writes
+            // through a mutable view of the freshly merged record. The cast to
+            // the field's own type matters on the workers target, where the
+            // state interface re-declares a commons type locally and
+            // TypeScript's brands make the two nominally distinct, though
+            // they share one runtime shape.
+            "  if ({p}) {{ const __r = {d}; if (__r.tag === \"Err\") throw rehydrationViolation(\"{agent_name}\", __r.error); (s as {{ -readonly [K in keyof typeof s]: (typeof s)[K] }}).{path} = __r.value as unknown as (typeof s)[\"{path}\"]; }}",
+            p = present(path),
         ));
     };
-    // `Cell[T]` — validate the field value against `T`.
+    // `Cell[T]` — decode the field value as `T`.
     for f in &effective_fields {
         push_value_check(
             &mut rehydrate_checks,
@@ -4949,20 +4976,33 @@ pub(crate) fn emit_agent(
             &format!("s.{}", f.name.name),
             &f.name.name,
         );
+        if is_codecable(&f.type_ref) {
+            encode_entries.push(format!(
+                "{n}: {e}",
+                n = f.name.name,
+                e = ser(&f.type_ref, &format!("s.{}", f.name.name)),
+            ));
+        }
     }
     // `Map[K, V]` — validate each entry value against `V`, and each key against
     // `K` when `K` is textual (the key persists as a `String(k)` Record key).
     for (name, v) in &store_map_fields {
         if is_codecable(v) {
             rehydrate_checks.push(format!(
-                "  for (const __v of Object.values(s.{n})) {{ const __r = {d}; if (__r.tag === \"Err\") throw rehydrationViolation(\"{agent_name}\", __r.error); }}",
+                "  if ({p}) for (const __k of Object.keys(s.{n})) {{ const __r = {d}; if (__r.tag === \"Err\") throw rehydrationViolation(\"{agent_name}\", __r.error); s.{n}[__k] = __r.value as unknown as (typeof s.{n})[string]; }}",
+                p = present(&name.name),
                 n = name.name,
                 d = bynk_ts::print_expr(&serialisation::deserialise_expr(
                     v,
-                    "(__v as unknown as JsonValue)",
+                    &format!("(s.{}[__k] as unknown as JsonValue)", name.name),
                     &name.name,
                     &ctx.runtime_use,
                 )),
+            ));
+            encode_entries.push(format!(
+                "{n}: Object.fromEntries(Object.entries(s.{n}).map(([__k, __v]) => [__k, {e}]))",
+                n = name.name,
+                e = ser(v, "__v"),
             ));
         }
         if let Some(k) = store_field_key_type(a, &name.name)
@@ -5004,9 +5044,15 @@ pub(crate) fn emit_agent(
     for (name, v, _) in &store_cache_fields {
         if is_codecable(v) {
             rehydrate_checks.push(format!(
-                "  for (const __e of Object.values(s.{n})) {{ const __r = {d}; if (__r.tag === \"Err\") throw rehydrationViolation(\"{agent_name}\", __r.error); }}",
+                "  if ({p}) for (const __e of Object.values(s.{n})) {{ const __r = {d}; if (__r.tag === \"Err\") throw rehydrationViolation(\"{agent_name}\", __r.error); __e.v = __r.value as unknown as typeof __e.v; }}",
+                p = present(&name.name),
                 n = name.name,
                 d = bynk_ts::print_expr(&serialisation::deserialise_expr(v, "(__e.v as unknown as JsonValue)", &name.name, &ctx.runtime_use)),
+            ));
+            encode_entries.push(format!(
+                "{n}: Object.fromEntries(Object.entries(s.{n}).map(([__k, __e]) => [__k, {{ v: {e}, exp: __e.exp }}]))",
+                n = name.name,
+                e = ser(v, "__e.v"),
             ));
         }
     }
@@ -5014,9 +5060,15 @@ pub(crate) fn emit_agent(
     for (name, t, _) in &store_log_fields {
         if is_codecable(t) {
             rehydrate_checks.push(format!(
-                "  for (const __e of s.{n}) {{ const __r = {d}; if (__r.tag === \"Err\") throw rehydrationViolation(\"{agent_name}\", __r.error); }}",
+                "  if ({p}) for (const __e of s.{n}) {{ const __r = {d}; if (__r.tag === \"Err\") throw rehydrationViolation(\"{agent_name}\", __r.error); __e.v = __r.value as unknown as typeof __e.v; }}",
+                p = present(&name.name),
                 n = name.name,
                 d = bynk_ts::print_expr(&serialisation::deserialise_expr(t, "(__e.v as unknown as JsonValue)", &name.name, &ctx.runtime_use)),
+            ));
+            encode_entries.push(format!(
+                "{n}: s.{n}.map((__e) => ({{ t: __e.t, v: {e} }}))",
+                n = name.name,
+                e = ser(t, "__e.v"),
             ));
         }
     }
@@ -5034,11 +5086,20 @@ pub(crate) fn emit_agent(
             bynk_ts::TsDecl::Function {
                 name: rehydrate_fn.clone(),
                 generics: Vec::new(),
-                params: vec![bynk_ts::TsParam {
-                    name: "s".to_string(),
-                    ty: Some(bynk_ts::TsType::named(state_ty.clone())),
-                    optional: false,
-                }],
+                params: vec![
+                    bynk_ts::TsParam {
+                        name: "s".to_string(),
+                        ty: Some(bynk_ts::TsType::named(state_ty.clone())),
+                        optional: false,
+                    },
+                    // #1649: the stored record, so a field absent from it keeps
+                    // its in-memory zero instead of being decoded (ADR 0124 D4).
+                    bynk_ts::TsParam {
+                        name: "stored".to_string(),
+                        ty: Some(bynk_ts::TsType::named(state_ty.clone())),
+                        optional: false,
+                    },
+                ],
                 return_type: Some(bynk_ts::TsType::named("void")),
                 body: rehydrate_checks
                     .iter()
@@ -5052,6 +5113,32 @@ pub(crate) fn emit_agent(
         // #1486: no more explicit trailing `TsStmt::blank(None)` — see
         // `emit_refined_type`'s own identical note.
         stmts.push(rehydrate_fn_decl);
+        // #1649: the wire-shape encoder `commitState` writes through. Every
+        // codec-able value position is serialised; the rest of the record (held
+        // maps, `Set`s, `@indexed` posting lists, unknown stored keys) is
+        // already wire-shaped and spreads through unchanged.
+        let mut encode_body = String::from("  return { ...s");
+        for e in &encode_entries {
+            encode_body.push_str(", ");
+            encode_body.push_str(e);
+        }
+        encode_body.push_str(" };\n");
+        stmts.push(bynk_ts::TsStmt::decl(
+            bynk_ts::TsDecl::Function {
+                name: encode_fn.clone(),
+                generics: Vec::new(),
+                params: vec![bynk_ts::TsParam {
+                    name: "s".to_string(),
+                    ty: Some(bynk_ts::TsType::named(state_ty.clone())),
+                    optional: false,
+                }],
+                return_type: Some(bynk_ts::TsType::named("Record<string, unknown>")),
+                body: vec![bynk_ts::TsStmt::raw(encode_body, None)],
+                is_async: false,
+                inline: false,
+            },
+            None,
+        ));
     }
     // 2) Durable Object class.
     //
@@ -5180,7 +5267,10 @@ pub(crate) fn emit_agent(
             stmts.push(bynk_ts::TsStmt::expr_stmt(
                 bynk_ts::TsExpr::Call {
                     callee: Box::new(bynk_ts::TsExpr::Ident(rehydrate_fn.clone())),
-                    args: vec![bynk_ts::TsExpr::Ident("__merged".to_string())],
+                    args: vec![
+                        bynk_ts::TsExpr::Ident("__merged".to_string()),
+                        bynk_ts::TsExpr::Ident("stored".to_string()),
+                    ],
                 },
                 None,
             ));
@@ -5373,6 +5463,24 @@ pub(crate) fn emit_agent(
                     None,
                 ),
             ];
+            // #1649: the prior state is stored in the wire shape, so decode it
+            // the way `loadState` does before a predicate reads `old`. Before
+            // #1649 this read was raw and unvalidated.
+            if has_rehydrate {
+                transition_body.insert(
+                    1,
+                    bynk_ts::TsStmt::expr_stmt(
+                        bynk_ts::TsExpr::Call {
+                            callee: Box::new(bynk_ts::TsExpr::Ident(rehydrate_fn.clone())),
+                            args: vec![
+                                bynk_ts::TsExpr::Ident("__old".to_string()),
+                                bynk_ts::TsExpr::Ident("__prior".to_string()),
+                            ],
+                        },
+                        None,
+                    ),
+                );
+            }
             for tr in &a.transitions {
                 let mut cx = LowerCtx::new(
                     ModuleCtx::new(commons, &ctx.cross_context, &ctx.runtime_use),
@@ -5419,7 +5527,15 @@ pub(crate) fn emit_agent(
                 callee: Box::new(bynk_ts::TsExpr::Ident("this.state.storage.put".to_string())),
                 args: vec![
                     bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str("state".to_string())),
-                    bynk_ts::TsExpr::Ident("s".to_string()),
+                    // #1649: the wire shape, the same shape `loadState` decodes.
+                    if has_rehydrate {
+                        bynk_ts::TsExpr::Call {
+                            callee: Box::new(bynk_ts::TsExpr::Ident(encode_fn.clone())),
+                            args: vec![bynk_ts::TsExpr::Ident("s".to_string())],
+                        }
+                    } else {
+                        bynk_ts::TsExpr::Ident("s".to_string())
+                    },
                 ],
             })),
             None,
@@ -6212,9 +6328,15 @@ pub(crate) fn emit_agent(
         // `history_arg_ts`'s own output to brand its values correctly is the
         // real fix, not a same-line change here.
         writeln!(out, "  const __inst = {factory}({key_val}) as any;").unwrap();
+        // #1649: decode the stored (wire-shape) state exactly as `loadState` does.
+        let decode = if has_rehydrate {
+            format!(" {rehydrate_fn}(__m, __s);")
+        } else {
+            String::new()
+        };
         writeln!(
             out,
-            "  const __load = async (): Promise<{state_ty}> => {{ const __s = await __inst.state.storage.get(\"state\"); return __s === undefined ? {zero_fn}() : {{ ...{zero_fn}(), ...__s }}; }};"
+            "  const __load = async (): Promise<{state_ty}> => {{ const __s = await __inst.state.storage.get(\"state\"); if (__s === undefined) return {zero_fn}(); const __m = {{ ...{zero_fn}(), ...__s }};{decode} return __m; }};"
         )
         .unwrap();
         // P7.2: `e` is a caught throw of unknown shape by construction — a

@@ -32,8 +32,12 @@ export interface TallyState {
 const __TallyRegistry = new StateRegistry();
 function __zeroOfTallyState(): TallyState { return { count: 0 }; }
 
-function __rehydrateTallyState(s: TallyState): void {
-  { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "count", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "count", expected: "integer", actual: String(__v) } as BoundaryError))((s.count as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Tally", __r.error); }
+function __rehydrateTallyState(s: TallyState, stored: TallyState): void {
+  if (Object.prototype.hasOwnProperty.call(stored, "count")) { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "count", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "count", expected: "integer", actual: String(__v) } as BoundaryError))((s.count as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Tally", __r.error); (s as { -readonly [K in keyof typeof s]: (typeof s)[K] }).count = __r.value as unknown as (typeof s)["count"]; }
+}
+
+function __encodeTallyState(s: TallyState): Record<string, unknown> {
+  return { ...s, count: s.count as JsonValue };
 }
 
 export class Tally {
@@ -46,12 +50,12 @@ export class Tally {
     const stored = await this.state.storage.get<TallyState>("state");
     if (stored === undefined) return __zeroOfTallyState();
     const __merged = { ...__zeroOfTallyState(), ...stored };
-    __rehydrateTallyState(__merged);
+    __rehydrateTallyState(__merged, stored);
     return __merged;
   }
 
   private async commitState(s: TallyState): Promise<void> {
-    await this.state.storage.put("state", s);
+    await this.state.storage.put("state", __encodeTallyState(s));
   }
 
   async current(deps: {}): Promise<Result<number, TallyError>> {

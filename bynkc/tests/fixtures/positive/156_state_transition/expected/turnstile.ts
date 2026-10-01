@@ -19,8 +19,12 @@ export interface TurnstileState {
 const __TurnstileRegistry = new StateRegistry();
 function __zeroOfTurnstileState(): TurnstileState { return { gate: Gate.Locked }; }
 
-function __rehydrateTurnstileState(s: TurnstileState): void {
-  { const __r = deserialise_Gate((s.gate as unknown as JsonValue), "gate"); if (__r.tag === "Err") throw rehydrationViolation("Turnstile", __r.error); }
+function __rehydrateTurnstileState(s: TurnstileState, stored: TurnstileState): void {
+  if (Object.prototype.hasOwnProperty.call(stored, "gate")) { const __r = deserialise_Gate((s.gate as unknown as JsonValue), "gate"); if (__r.tag === "Err") throw rehydrationViolation("Turnstile", __r.error); (s as { -readonly [K in keyof typeof s]: (typeof s)[K] }).gate = __r.value as unknown as (typeof s)["gate"]; }
+}
+
+function __encodeTurnstileState(s: TurnstileState): Record<string, unknown> {
+  return { ...s, gate: serialise_Gate(s.gate) };
 }
 
 export class Turnstile {
@@ -33,12 +37,12 @@ export class Turnstile {
     const stored = await this.state.storage.get<TurnstileState>("state");
     if (stored === undefined) return __zeroOfTurnstileState();
     const __merged = { ...__zeroOfTurnstileState(), ...stored };
-    __rehydrateTurnstileState(__merged);
+    __rehydrateTurnstileState(__merged, stored);
     return __merged;
   }
 
   private async commitState(s: TurnstileState): Promise<void> {
-    await this.state.storage.put("state", s);
+    await this.state.storage.put("state", __encodeTurnstileState(s));
   }
 
   async unlock(deps: {}): Promise<Result<void, string>> {

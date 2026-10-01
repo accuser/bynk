@@ -1,0 +1,135 @@
+---
+#1649: agent state is stored in the wire shape and decoded on load. Each agent
+writes a value whose in-memory and wire shapes differ, then the suite reloads the
+same key and reads the value back whole.
+---
+context demo.state
+
+type Light = enum { Red, Green }
+
+type Shape =
+  | Circle(r: Int)
+  | Square(side: Int)
+
+type Labelled = { label: String, n: Option[Int] }
+
+type Blob = { label: String, data: Bytes }
+
+capability Clock {
+  fn now() -> Effect[Instant]
+}
+
+provides Clock = FixedClock {
+  fn now() -> Effect[Instant] {
+    Instant.fromEpochMillis(0)
+  }
+}
+
+agent Lamp {
+  key id: String
+  store light: Cell[Light] = Red
+  on call set(l: Light) -> Effect[()] { light := l }
+  on call get() -> Effect[Light] { light }
+}
+
+agent Reading {
+  key id: String
+  store n: Cell[Option[Int]]
+  on call set(v: Int) -> Effect[()] { n := Some(v) }
+  on call get() -> Effect[Option[Int]] { n }
+}
+
+agent Figure {
+  key id: String
+  store shape: Cell[Shape] = Square(1)
+  on call set(s: Shape) -> Effect[()] { shape := s }
+  on call get() -> Effect[Shape] { shape }
+}
+
+agent Outcome {
+  key id: String
+  store r: Cell[Result[Int, String]] = Err("unset")
+  on call set(v: Int) -> Effect[()] { r := Ok(v) }
+  on call get() -> Effect[Result[Int, String]] { r }
+}
+
+agent Note {
+  key id: String
+  store rec: Cell[Labelled] = Labelled { label: "zero", n: None }
+  on call set(l: Labelled) -> Effect[()] { rec := l }
+  on call get() -> Effect[Labelled] { rec }
+}
+
+agent Store {
+  key id: String
+  store blob: Cell[Blob] = Blob { label: "zero", data: Bytes.empty() }
+  on call set(s: String) -> Effect[()] { blob := Blob { label: "set", data: Bytes.fromUtf8(s) } }
+  on call get() -> Effect[Blob] { blob }
+}
+
+agent Lights {
+  key id: String
+  store seq: Cell[List[Light]] = []
+  on call set(ls: List[Light]) -> Effect[()] { seq := ls }
+  on call get() -> Effect[List[Light]] { seq }
+}
+
+agent Board {
+  key id: String
+  store lights: Map[String, Light]
+  on call set(k: String, l: Light) -> Effect[()] {
+    do lights.put(k, l)
+    ()
+  }
+  on call get(k: String) -> Effect[Option[Light]] {
+    let l <- lights.get(k)
+    l
+  }
+}
+
+agent Memo {
+  key id: String
+  store c: Cache[String, Option[Int]] @ttl(5.minutes)
+  on call set(k: String, v: Int) -> Effect[()] given Clock {
+    let _ <- c.put(k, Some(v))
+    ()
+  }
+  on call get(k: String) -> Effect[Option[Option[Int]]] given Clock {
+    let v <- c.get(k)
+    v
+  }
+}
+
+agent History {
+  key id: String
+  store l: Log[Shape] @retain(30.days)
+  on call add(s: Shape) -> Effect[()] given Clock {
+    let _ <- l.append(s)
+    ()
+  }
+  on call count() -> Effect[Int] { l.recent(5).count() }
+}
+
+-- A scalar beside an enum: the commit stores the enum too, so this read
+-- faulted on the untouched field before #1649.
+agent Panel {
+  key id: String
+  store level: Cell[Int] = 0
+  store light: Cell[Light] = Red
+  on call setLevel(n: Int) -> Effect[()] { level := n }
+  on call getLevel() -> Effect[Int] { level }
+}
+
+-- A `transition` reads the prior state from storage. If that read were not
+-- decoded, `old.light` would be the raw wire shape, match neither variant, and
+-- the second write would be refused.
+agent Gate {
+  key id: String
+  store light: Cell[Light] = Red
+
+  transition old_is_a_light:
+    old.light == Red || old.light == Green
+
+  on call set(l: Light) -> Effect[()] { light := l }
+  on call get() -> Effect[Light] { light }
+}

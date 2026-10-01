@@ -7,7 +7,7 @@ title: Operators & built-ins
 |---|---|---|---|---|
 | `+` `-` `*` `/` | binary | `Int` | `Int` | arithmetic; no `%` |
 | `-` | unary | `Int` | `Int` | negation |
-| `==` `!=` | binary | same type | `Bool` | non-associative |
+| `==` `!=` | binary | same equality-supporting type (compared structurally) | `Bool` | non-associative |
 | `<` `<=` `>` `>=` | binary | `Int` | `Bool` | comparison |
 | `&&` `\|\|` | binary | `Bool` | `Bool` | logical |
 | `!` | unary | `Bool` | `Bool` | logical not |

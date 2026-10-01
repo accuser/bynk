@@ -25,11 +25,6 @@ function __bynkShow(v: unknown): string {
   try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
-function __bynkDeepEqual(a: unknown, b: unknown): boolean {
-  const s = (v: unknown) => JSON.stringify(v, (_k, val) => typeof val === "bigint" ? "__bigint__" + String(val) : val);
-  try { return s(a) === s(b); } catch { return a === b; }
-}
-
 class __Stub_Logger {
   async log(msg: string): Promise<void> {
     const { AuthId, PaymentError } = commerce_payment;

@@ -16,6 +16,12 @@ agent Slot {
 
 	store value: Cell[Option[Int]]
 
+	-- #1649: a write the suite then reloads. Before #1649, the stored `Option`
+	-- faulted on the next load.
+	on call assign(v: Int) -> Effect[()] {
+		value := Some(v)
+	}
+
 	on call resolve() -> Effect[Result[Int, SlotError]] {
 		match value {
 			Some(v) => Ok(v)

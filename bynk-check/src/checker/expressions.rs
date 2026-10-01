@@ -855,34 +855,42 @@ pub(crate) fn check_binop(op: BinOp, lhs: &Expr, rhs: &Expr, ctx: &mut Ctx) -> O
             Some(tys.intern(Ty::Base(BaseType::Bool)))
         }
         BinOp::Eq | BinOp::NotEq => {
-            // v0.100: a `Stream[T]` is a live value-over-time source, not a
-            // value — it is not equatable. (Assignability makes `Stream`
-            // structurally `compatible`, which `==` would otherwise accept;
-            // this guard keeps the non-comparable promise the type carries.)
-            if matches!(&*tys.get(lt), Ty::Stream(_)) || matches!(&*tys.get(rt), Ty::Stream(_)) {
-                ctx.errors.push(CompileError::new(
-                    "bynk.types.stream_not_comparable",
-                    span,
-                    format!(
-                        "operator `{}` cannot compare `Stream` values — a stream is a live value-over-time source, not a comparable value",
-                        op.name()
+            // #1652 (runtime-semantics track §3.1): `==` is structural, so it is
+            // only defined on equality-supporting types, recursively
+            // (type-system §2.3.5). A `Stream` (v0.100), a held `Connection`
+            // (v0.102, §2.9.3), or a function/`Effect`/`Query` anywhere inside
+            // the operand's type makes it non-comparable. Before #1652 only the
+            // top-level type was checked, so `Option[Connection[F]]` and
+            // `List[(Int) -> Int]` slipped through to a reference `===`.
+            for operand in [lt, rt] {
+                let Some(blocker) = super::equality::not_comparable(operand, ctx) else {
+                    continue;
+                };
+                let shown = tys.display(operand);
+                let (code, message) = match blocker {
+                    super::equality::NotComparable::Stream => (
+                        "bynk.types.stream_not_comparable",
+                        format!(
+                            "operator `{}` cannot compare `{shown}` — it contains a `Stream`, a live value-over-time source, not a comparable value",
+                            op.name()
+                        ),
                     ),
-                ));
-                return None;
-            }
-            // v0.102: a held value (`Connection[F]`) has identity, not
-            // value-equality (§2.9.3), so it is not `==`-comparable — the same
-            // guard as `Stream` (assignability would otherwise let `==` accept it).
-            if lt.is_held(tys) || rt.is_held(tys) {
-                ctx.errors.push(CompileError::new(
-                    "bynk.types.held_not_comparable",
-                    span,
-                    format!(
-                        "operator `{}` cannot compare held values — a `{}` has identity, not value-equality",
-                        op.name(),
-                        if lt.is_held(tys) { lt.display(tys) } else { rt.display(tys) },
+                    super::equality::NotComparable::Held(held) => (
+                        "bynk.types.held_not_comparable",
+                        format!(
+                            "operator `{}` cannot compare `{shown}` — it contains a held `{held}`, which has identity, not value-equality",
+                            op.name()
+                        ),
                     ),
-                ));
+                    super::equality::NotComparable::Computation(part) => (
+                        "bynk.types.not_comparable",
+                        format!(
+                            "operator `{}` cannot compare `{shown}` — it contains `{part}`, which has no value equality",
+                            op.name()
+                        ),
+                    ),
+                };
+                ctx.errors.push(CompileError::new(code, span, message));
                 return None;
             }
             if lt_base.is_some() && rt_base.is_some() {

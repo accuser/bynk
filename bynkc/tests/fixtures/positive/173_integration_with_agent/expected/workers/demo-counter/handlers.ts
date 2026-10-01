@@ -17,8 +17,12 @@ export interface CounterState {
 const __CounterRegistry = new StateRegistry();
 function __zeroOfCounterState(): CounterState { return { count: 0 }; }
 
-function __rehydrateCounterState(s: CounterState): void {
-  { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "count", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "count", expected: "integer", actual: String(__v) } as BoundaryError))((s.count as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Counter", __r.error); }
+function __rehydrateCounterState(s: CounterState, stored: CounterState): void {
+  if (Object.prototype.hasOwnProperty.call(stored, "count")) { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "count", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "count", expected: "integer", actual: String(__v) } as BoundaryError))((s.count as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Counter", __r.error); (s as { -readonly [K in keyof typeof s]: (typeof s)[K] }).count = __r.value as unknown as (typeof s)["count"]; }
+}
+
+function __encodeCounterState(s: CounterState): Record<string, unknown> {
+  return { ...s, count: s.count as JsonValue };
 }
 
 export class Counter {
@@ -31,12 +35,12 @@ export class Counter {
     const stored = await this.state.storage.get<CounterState>("state");
     if (stored === undefined) return __zeroOfCounterState();
     const __merged = { ...__zeroOfCounterState(), ...stored };
-    __rehydrateCounterState(__merged);
+    __rehydrateCounterState(__merged, stored);
     return __merged;
   }
 
   private async commitState(s: CounterState): Promise<void> {
-    await this.state.storage.put("state", s);
+    await this.state.storage.put("state", __encodeCounterState(s));
   }
 
   async increment(deps: {}): Promise<Result<number, CounterError>> {

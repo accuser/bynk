@@ -2039,6 +2039,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A `match` does not cover every variant.",
         &["match_expr"],
     ),
+    d(
+        "bynk.types.not_comparable",
+        "A value compared with `==`/`!=` contains a function, `Effect`, or `Query` somewhere inside it — those have no value equality, so the type is not equality-supporting (type-system §2.3.5, #1652).",
+    ),
     dg(
         "bynk.types.ok_value_mismatch",
         "An `Ok` payload has the wrong type.",

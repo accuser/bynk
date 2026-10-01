@@ -45,11 +45,6 @@ function __bynkRecordDeps(deps: any, spec: Record<string, string[]>, obs: { log:
 type __Logger_log_Call = { msg: string };
 type __Logger_warn_Call = { msg: string };
 
-function __bynkDeepEqual(a: unknown, b: unknown): boolean {
-  const s = (v: unknown) => JSON.stringify(v, (_k, val) => typeof val === "bigint" ? "__bigint__" + String(val) : val);
-  try { return s(a) === s(b); } catch { return a === b; }
-}
-
 class __Stub_Logger {
   async log(msg: string): Promise<void> {
     const { AuthId } = commerce_payment;

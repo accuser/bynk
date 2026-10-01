@@ -25,9 +25,13 @@ export interface InventoryState {
 const __InventoryRegistry = new StateRegistry();
 function __zeroOfInventoryState(): InventoryState { return { items: {} }; }
 
-function __rehydrateInventoryState(s: InventoryState): void {
-  for (const __v of Object.values(s.items)) { const __r = deserialise_Item((__v as unknown as JsonValue), "items"); if (__r.tag === "Err") throw rehydrationViolation("Inventory", __r.error); }
+function __rehydrateInventoryState(s: InventoryState, stored: InventoryState): void {
+  if (Object.prototype.hasOwnProperty.call(stored, "items")) for (const __k of Object.keys(s.items)) { const __r = deserialise_Item((s.items[__k] as unknown as JsonValue), "items"); if (__r.tag === "Err") throw rehydrationViolation("Inventory", __r.error); s.items[__k] = __r.value as unknown as (typeof s.items)[string]; }
   for (const __k of Object.keys(s.items)) { const __r = ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "items", expected: "string", actual: typeof __v } as BoundaryError))((__k as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Inventory", __r.error); }
+}
+
+function __encodeInventoryState(s: InventoryState): Record<string, unknown> {
+  return { ...s, items: Object.fromEntries(Object.entries(s.items).map(([__k, __v]) => [__k, serialise_Item(__v)])) };
 }
 
 export class Inventory {
@@ -40,12 +44,12 @@ export class Inventory {
     const stored = await this.state.storage.get<InventoryState>("state");
     if (stored === undefined) return __zeroOfInventoryState();
     const __merged = { ...__zeroOfInventoryState(), ...stored };
-    __rehydrateInventoryState(__merged);
+    __rehydrateInventoryState(__merged, stored);
     return __merged;
   }
 
   private async commitState(s: InventoryState): Promise<void> {
-    await this.state.storage.put("state", s);
+    await this.state.storage.put("state", __encodeInventoryState(s));
   }
 
   async rows(deps: {}): Promise<readonly Row[]> {
@@ -92,8 +96,12 @@ export interface LedgerState {
 const __LedgerRegistry = new StateRegistry();
 function __zeroOfLedgerState(): LedgerState { return { balances: {} }; }
 
-function __rehydrateLedgerState(s: LedgerState): void {
-  for (const __v of Object.values(s.balances)) { const __r = deserialise_Item((__v as unknown as JsonValue), "balances"); if (__r.tag === "Err") throw rehydrationViolation("Ledger", __r.error); }
+function __rehydrateLedgerState(s: LedgerState, stored: LedgerState): void {
+  if (Object.prototype.hasOwnProperty.call(stored, "balances")) for (const __k of Object.keys(s.balances)) { const __r = deserialise_Item((s.balances[__k] as unknown as JsonValue), "balances"); if (__r.tag === "Err") throw rehydrationViolation("Ledger", __r.error); s.balances[__k] = __r.value as unknown as (typeof s.balances)[string]; }
+}
+
+function __encodeLedgerState(s: LedgerState): Record<string, unknown> {
+  return { ...s, balances: Object.fromEntries(Object.entries(s.balances).map(([__k, __v]) => [__k, serialise_Item(__v)])) };
 }
 
 export class Ledger {
@@ -106,12 +114,12 @@ export class Ledger {
     const stored = await this.state.storage.get<LedgerState>("state");
     if (stored === undefined) return __zeroOfLedgerState();
     const __merged = { ...__zeroOfLedgerState(), ...stored };
-    __rehydrateLedgerState(__merged);
+    __rehydrateLedgerState(__merged, stored);
     return __merged;
   }
 
   private async commitState(s: LedgerState): Promise<void> {
-    await this.state.storage.put("state", s);
+    await this.state.storage.put("state", __encodeLedgerState(s));
   }
 
   async accounts(deps: {}): Promise<readonly number[]> {

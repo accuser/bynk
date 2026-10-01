@@ -24,8 +24,12 @@ export interface SessionsState {
 const __SessionsRegistry = new StateRegistry();
 function __zeroOfSessionsState(): SessionsState { return { live: {} }; }
 
-function __rehydrateSessionsState(s: SessionsState): void {
-  for (const __e of Object.values(s.live)) { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "live", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "live", expected: "integer", actual: String(__v) } as BoundaryError))((__e.v as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Sessions", __r.error); }
+function __rehydrateSessionsState(s: SessionsState, stored: SessionsState): void {
+  if (Object.prototype.hasOwnProperty.call(stored, "live")) for (const __e of Object.values(s.live)) { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "live", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "live", expected: "integer", actual: String(__v) } as BoundaryError))((__e.v as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Sessions", __r.error); __e.v = __r.value as unknown as typeof __e.v; }
+}
+
+function __encodeSessionsState(s: SessionsState): Record<string, unknown> {
+  return { ...s, live: Object.fromEntries(Object.entries(s.live).map(([__k, __e]) => [__k, { v: __e.v as JsonValue, exp: __e.exp }])) };
 }
 
 export class Sessions {
@@ -38,12 +42,12 @@ export class Sessions {
     const stored = await this.state.storage.get<SessionsState>("state");
     if (stored === undefined) return __zeroOfSessionsState();
     const __merged = { ...__zeroOfSessionsState(), ...stored };
-    __rehydrateSessionsState(__merged);
+    __rehydrateSessionsState(__merged, stored);
     return __merged;
   }
 
   private async commitState(s: SessionsState): Promise<void> {
-    await this.state.storage.put("state", s);
+    await this.state.storage.put("state", __encodeSessionsState(s));
   }
 
   async put(token: string, userId: number, deps: { Clock: Clock }): Promise<void> {

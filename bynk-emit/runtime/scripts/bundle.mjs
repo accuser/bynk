@@ -32,6 +32,7 @@ const TARGET = join(pkgRoot, "..", "src", "emitter", "runtime.ts");
 const MODULES = [
   "result",
   "bytes",
+  "equality",
   "errors",
   "storage",
   "boundary",

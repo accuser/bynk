@@ -1170,6 +1170,9 @@ pub(crate) fn emit_worker_entry(
     if runtime_use.bytes() {
         append_missing_bindings(&mut imports, crate::emitter::BYTES_RUNTIME_IMPORTS);
     }
+    if runtime_use.eq() {
+        append_missing_bindings(&mut imports, crate::emitter::EQ_RUNTIME_IMPORTS);
+    }
     program.push(TsStmt::decl(
         TsDecl::Import {
             type_only: false,

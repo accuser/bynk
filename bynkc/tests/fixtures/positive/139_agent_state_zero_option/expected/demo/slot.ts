@@ -32,8 +32,12 @@ export interface SlotState {
 const __SlotRegistry = new StateRegistry();
 function __zeroOfSlotState(): SlotState { return { value: None }; }
 
-function __rehydrateSlotState(s: SlotState): void {
-  { const __r = deserialise_Option_Int((s.value as unknown as JsonValue), "value"); if (__r.tag === "Err") throw rehydrationViolation("Slot", __r.error); }
+function __rehydrateSlotState(s: SlotState, stored: SlotState): void {
+  if (Object.prototype.hasOwnProperty.call(stored, "value")) { const __r = deserialise_Option_Int((s.value as unknown as JsonValue), "value"); if (__r.tag === "Err") throw rehydrationViolation("Slot", __r.error); (s as { -readonly [K in keyof typeof s]: (typeof s)[K] }).value = __r.value as unknown as (typeof s)["value"]; }
+}
+
+function __encodeSlotState(s: SlotState): Record<string, unknown> {
+  return { ...s, value: serialise_Option_Int(s.value) };
 }
 
 export class Slot {
@@ -46,12 +50,22 @@ export class Slot {
     const stored = await this.state.storage.get<SlotState>("state");
     if (stored === undefined) return __zeroOfSlotState();
     const __merged = { ...__zeroOfSlotState(), ...stored };
-    __rehydrateSlotState(__merged);
+    __rehydrateSlotState(__merged, stored);
     return __merged;
   }
 
   private async commitState(s: SlotState): Promise<void> {
-    await this.state.storage.put("state", s);
+    await this.state.storage.put("state", __encodeSlotState(s));
+  }
+
+  async assign(v: number, deps: {}): Promise<void> {
+    const __state = { ...(await this.loadState()) };
+    const __result = await (async () => {
+      __state.value = Some(v);
+      return undefined;
+    })();
+    await this.commitState(__state);
+    return __result;
   }
 
   async resolve(deps: {}): Promise<Result<number, SlotError>> {

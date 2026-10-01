@@ -39,6 +39,7 @@ use bynk_syntax::span::Span;
 pub use bynk_syntax::ast::ExprId;
 
 mod calls;
+mod equality;
 mod expressions;
 mod kernels;
 mod linearity;

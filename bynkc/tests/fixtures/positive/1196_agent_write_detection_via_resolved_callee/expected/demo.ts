@@ -20,9 +20,13 @@ export interface WidgetState {
 const __WidgetRegistry = new StateRegistry();
 function __zeroOfWidgetState(): WidgetState { return { items: {} }; }
 
-function __rehydrateWidgetState(s: WidgetState): void {
-  for (const __v of Object.values(s.items)) { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "items", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "items", expected: "integer", actual: String(__v) } as BoundaryError))((__v as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Widget", __r.error); }
+function __rehydrateWidgetState(s: WidgetState, stored: WidgetState): void {
+  if (Object.prototype.hasOwnProperty.call(stored, "items")) for (const __k of Object.keys(s.items)) { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "items", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "items", expected: "integer", actual: String(__v) } as BoundaryError))((s.items[__k] as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Widget", __r.error); s.items[__k] = __r.value as unknown as (typeof s.items)[string]; }
   for (const __k of Object.keys(s.items)) { const __r = ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "items", expected: "string", actual: typeof __v } as BoundaryError))((__k as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Widget", __r.error); }
+}
+
+function __encodeWidgetState(s: WidgetState): Record<string, unknown> {
+  return { ...s, items: Object.fromEntries(Object.entries(s.items).map(([__k, __v]) => [__k, __v as JsonValue])) };
 }
 
 export class Widget {
@@ -35,12 +39,12 @@ export class Widget {
     const stored = await this.state.storage.get<WidgetState>("state");
     if (stored === undefined) return __zeroOfWidgetState();
     const __merged = { ...__zeroOfWidgetState(), ...stored };
-    __rehydrateWidgetState(__merged);
+    __rehydrateWidgetState(__merged, stored);
     return __merged;
   }
 
   private async commitState(s: WidgetState): Promise<void> {
-    await this.state.storage.put("state", s);
+    await this.state.storage.put("state", __encodeWidgetState(s));
   }
 
   async shadowedName(items: Box, x: number, deps: {}): Promise<void> {

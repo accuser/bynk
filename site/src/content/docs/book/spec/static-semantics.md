@@ -101,10 +101,23 @@ applies to the comparison operators `< <= > >=` (defined on `Int`,
 `Float`, and `String`, same-typed) and to `==`/`!=`. Refined numeric
 types widen to their base in operator positions, as before.
 
+**Equality is structural** (#1652). `==`/`!=` compare **values**, not
+references. Two records are equal when every field is equal; two sum values when
+they are the same variant with equal payloads; two `Option`/`Result`/`List`/`Map`
+values element by element; two `Bytes` byte by byte. This holds at any depth, and
+for an opaque type it compares the representation. `==` is defined only on an
+**equality-supporting** type: a type that contains a function, `Effect`, `Query`,
+`Stream` or held `Connection` **anywhere** inside it (in a field, a payload, a
+container element, or a generic argument) is not equality-supporting, and `==` on
+it is rejected (`bynk.types.not_comparable`, `bynk.types.stream_not_comparable`,
+`bynk.types.held_not_comparable`). A nullary variant read from storage or decoded
+from JSON equals the same variant written in source.
+
 **`Float` equality** (v0.21). `==`/`!=` on `Float` follow the host's IEEE
 754 semantics, and both classic surprises apply: `0.1 + 0.2 != 0.3`
 (decimal fractions are not exact doubles), and a `NaN` produced by
-arithmetic is **unequal to itself**. Exact `Float` equality is rarely the
+arithmetic is **unequal to itself**, including inside a record or a list
+(structural equality compares each `Float` with these same semantics). Exact `Float` equality is rarely the
 test a program needs — compare with an explicit tolerance, or work in
 `Int` units. Division by zero and overflow in `Float` arithmetic follow
 the host (`Infinity`/`NaN`); no Bynk-level guard applies **in arithmetic**
@@ -495,20 +508,26 @@ one rolls back with agent state (ADR 0130 Q5). Held resources are produced by th
 
 ### §5.4.3 Rehydration validation (v0.97)
 
-An agent's persisted state is **validated when it is loaded** (ADR 0124). When
-stored state exists, each value position — a `Cell`'s `T`, a `Map`/`Cache`'s `V`, a
-`Log`'s `T`, and textual `Set` elements / `Map` keys — is run through the **same
-boundary deserialiser** the HTTP/queue seams use, against the **current** type
-definition. A failure is an internal **fault**, `RehydrationViolation` — the
+An agent's persisted state is **stored in the wire shape and decoded when it is
+loaded** (ADR 0124, #1649). A commit writes each value position — a `Cell`'s `T`, a
+`Map`/`Cache`'s `V`, a `Log`'s `T` — through the **same boundary serialiser** the
+HTTP/queue seams use, so stored state has the documented wire form of §7.2. A load
+runs each stored value position, and textual `Set` elements / `Map` keys, through
+the **same boundary deserialiser**, against the **current** type definition, and
+the handler reads the decoded values. A failure is an internal **fault**, `RehydrationViolation` — the
 load-time twin of `InvariantViolation` (§5.4.1) — **not** a caller-facing `400`:
 the supplier of stored state is trusted past-self, not an untrusted caller. A
 refinement that **tightens** across a deploy therefore faults on load (orphaned
 data is indistinguishable from corruption); breaking migrations remain
 by-convention (no coercion, no silent drop).
 
-**Additive evolution is automatic:** loading merges `{ ...zero(), ...stored }`, so
-a `store` field added in a later deploy takes its zero/initialiser
-([§5.4](/book/spec/static-semantics/#54-agents--state)) instead of reading as absent.
+**Additive evolution is automatic:** a `store` field absent from the stored record
+(added in a later deploy) takes its zero/initialiser
+([§5.4](/book/spec/static-semantics/#54-agents--state)) instead of reading as absent,
+and is not decoded. A stored key the current definition does not declare (a renamed
+or removed field) is carried through unchanged and written back, never silently
+dropped. A value that has no wire form, such as a non-finite `Float`, cannot be
+stored: the commit faults and nothing persists.
 
 ## §5.5 Effects, capabilities & providers
 

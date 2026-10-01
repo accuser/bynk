@@ -493,6 +493,7 @@ Each slice is an increment-proposal sub-issue of #1648. **Order matters in two p
 | **S11** | #1678 | Workers-target Durable Object calls bypass the boundary codec. The agent's `fetch` uses `request.json()` / `JSON.stringify(result)`, and `callDurableObjectMethod` uses `JSON.stringify({ args, deps })` / `response.json()` (`runtime.ts:1118-1130`), so `Bytes`, value-level `Map` and non-finite `Float` arguments and returns are mangled across intra-Worker agent calls | — |
 | **S12** | #1679 | Unknown type names in service/agent handler signatures are not diagnosed (`on call(v: Bogus) -> Effect[Bogus]` checks with exit 0; `fn f() -> Bogus` is rejected), and the emitter writes a `/* unknown */` placeholder | — |
 | **S13** | #1680 | `store Set[T]` has no keyability rule. `store Set[Pt]` checks, then fails `tsc` (TS2538); without `tsc`, every record keys as `"[object Object]"` | — |
+| **S14** | #1685 | Store `Map`/`Set`/`Cache` keys collide with `Object.prototype`: a `__proto__` write is dropped and inherited names (`constructor`) read as present. Found in #1683's review | — |
 | — | #291 | Platform capabilities under `bynkc test` | — |
 
 **Gates**
