@@ -315,8 +315,11 @@ fn fetch(url: &str, path: &str) -> Result<String, String> {
         Duration::from_secs(2),
     )
     .map_err(|e| e.to_string())?;
+    // A route that reaches a Durable Object instantiates it on first use,
+    // which takes several seconds on a cold Windows runner; 20s matches the
+    // events workerd smokes.
     stream
-        .set_read_timeout(Some(Duration::from_secs(5)))
+        .set_read_timeout(Some(Duration::from_secs(20)))
         .map_err(|e| e.to_string())?;
     write!(
         stream,
