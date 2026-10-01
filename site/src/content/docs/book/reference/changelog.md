@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.290**.
+written against **v0.291**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.291.0** | "`==` is **structural**: records, sums, `Option`, `Result`, `List`, value `Map` and `Bytes` (including opaque) compare by value, and `==` on a type containing a function, `Effect`, `Query`, `Stream` or held `Connection` anywhere inside is rejected (`bynk.types.not_comparable`). Agent state is **stored in the wire shape** and decoded on load, so a `store` holding an enum, `Option`, `Result`, `Bytes` or value `Map` no longer faults with `RehydrationViolation` on every reload after its first write. An agent already bricked by that fault holds the old in-memory shape and must have its storage cleared once." |
 | **v0.290.2** | "Behavioural fixtures: a positive fixture's `suite`s now *run* when it carries an `expected_run.txt` (`bynkc/tests/behaviour_fixtures.rs`; 71 fixtures marked). A strict marker pins known defects as expected failures. The bundle runtime's `InMemoryStorage` now copies stored data on `put`/`get` (sharing live connection handles), so `bynkc test` sees workerd's copy semantics and a commit refused by an invariant no longer leaks an in-place store write (ADR 0109)." |
 | **v0.290.1** | Brings the project and package READMEs and the published crates' `Cargo.toml` descriptions up to date with the implementation — one shared, dependency-accurate crate-layering diagram across every library README; the `bynk` driver's full command set; corrected `bynkc`/`bynk-emit`/`bynk-grammar` Rust examples; and fixes to the `vscode-bynk`, `tree-sitter-bynk`, playground, runtime, and examples READMEs |
 | **v0.290.0** | The eight-phase compiler trajectory to the greenfield architecture (`bynk-greenfield-compiler.md`) is complete — every construct that compiled at v0.245.0 still compiles, rebuilt on the new architecture with no dropped capability. |
