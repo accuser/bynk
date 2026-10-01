@@ -264,11 +264,70 @@ export function __makePanel(key: string, env?: { PANEL?: DurableObjectNamespace 
   return makeAgent(__PanelRegistry, env?.PANEL, key, (state) => new Panel(state));
 }
 
+export interface BagState {
+  readonly items: Record<string, number>;
+}
+
+const __BagRegistry = new StateRegistry();
+function __zeroOfBagState(): BagState { return { items: {} }; }
+
+function __rehydrateBagState(s: BagState): void {
+  for (const __v of Object.values(s.items)) { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "items", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "items", expected: "integer", actual: String(__v) } as BoundaryError))((__v as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Bag", __r.error); }
+  for (const __k of Object.keys(s.items)) { const __r = ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "items", expected: "string", actual: typeof __v } as BoundaryError))((__k as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Bag", __r.error); }
+}
+
+export class Bag {
+  state: DurableObjectState;
+  constructor(state: DurableObjectState) {
+    this.state = state;
+  }
+
+  private async loadState(): Promise<BagState> {
+    const stored = await this.state.storage.get<BagState>("state");
+    if (stored === undefined) return __zeroOfBagState();
+    const __merged = { ...__zeroOfBagState(), ...stored };
+    __rehydrateBagState(__merged);
+    return __merged;
+  }
+
+  private async commitState(s: BagState): Promise<void> {
+    await this.state.storage.put("state", s);
+  }
+
+  async add(k: string, deps: {}): Promise<void> {
+    const __state = { ...(await this.loadState()) };
+    const __result = await (async () => {
+      await ((__state.items[k] = 1), undefined);
+      return undefined;
+    })();
+    await this.commitState(__state);
+    return __result;
+  }
+
+  async count(deps: {}): Promise<number> {
+    const __state = await this.loadState();
+    const n = await Object.keys(__state.items).length;
+    return n;
+  }
+
+  async has(k: string, deps: {}): Promise<boolean> {
+    const __state = await this.loadState();
+    const r = await (() => { const __k = k; return (__k in __state.items) ? Some(__state.items[__k]) : None; })();
+    return (r.tag === "Some");
+  }
+
+}
+
+export function __makeBag(key: string, env?: { BAG?: DurableObjectNamespace }): Bag {
+  return makeAgent(__BagRegistry, env?.BAG, key, (state) => new Bag(state));
+}
+
 export function __resetAgents(): void {
   __GaugeRegistry.reset();
   __LampRegistry.reset();
   __MeterRegistry.reset();
   __PanelRegistry.reset();
+  __BagRegistry.reset();
 }
 
 export function serialise_Light(value: Light): JsonValue {

@@ -41,7 +41,7 @@ test("InMemoryStorage: put and get clone, so stored state is never aliased", asy
   assert.ok(read !== undefined);
   assert.notEqual(read, written);
   assert.equal(read.items.a, 1);
-  // structuredClone keeps the shapes workerd keeps.
+  // The copy keeps the shapes workerd's storage keeps.
   assert.ok(read.bytes instanceof Uint8Array);
 
   read.items.a = 42;
@@ -72,6 +72,22 @@ test("InMemoryStorage: live handles are shared, data around them is copied", asy
 
   read.tags.get("k")!.push(2);
   assert.deepEqual((await s.get<typeof read>("state"))?.tags.get("k"), [1]);
+});
+
+// #1660 review: a record decoded from JSON can carry an *own* `__proto__` key
+// (`JSON.parse` defines it). The copy must keep it as an ordinary entry, not
+// reassign the copy's prototype or drop it.
+test("InMemoryStorage: an own __proto__ key is copied as an entry", async () => {
+  const s = new InMemoryStorage();
+  const items = JSON.parse('{"__proto__": {"polluted": true}, "a": 1}') as Record<string, unknown>;
+  await s.put("state", { items });
+
+  const read = await s.get<{ items: Record<string, unknown> }>("state");
+  assert.ok(read !== undefined);
+  assert.deepEqual(Object.keys(read.items).sort(), ["__proto__", "a"]);
+  assert.equal(Object.getPrototypeOf(read.items), Object.prototype);
+  assert.equal((read.items as { polluted?: boolean }).polluted, undefined);
+  assert.deepEqual(Object.getOwnPropertyDescriptor(read.items, "__proto__")?.value, { polluted: true });
 });
 
 test("makeTestState: names the state and gives it fresh storage", async () => {

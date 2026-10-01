@@ -23,6 +23,9 @@
 //! - Each `fail <case name>` line names a case that must **fail**. Every other
 //!   case must pass.
 //!
+//! Case names must be unique across a fixture's suites, because a `fail` line
+//! names a case by name alone.
+//!
 //! The check is strict in both directions, like a strict `xfail`. A listed case
 //! that starts passing fails this test too, so the slice that fixes a known
 //! defect must also delete its `fail` line. Cite the tracking issue in a comment
@@ -163,6 +166,24 @@ fn compare(doc: &serde_json::Value, expected: &Expected) -> Vec<String> {
         );
         return problems;
     }
+    // A `fail <case>` line names a case by name alone, so names must be unique
+    // across the run's suites. Otherwise a passing `A / x` and a failing
+    // `B / x` collapse into one, and a listed failure can mask an unlisted one
+    // whenever the totals happen to agree. (#1683 review.)
+    let mut seen: Vec<&CaseOutcome> = Vec::new();
+    for c in &cases {
+        if let Some(first) = seen.iter().find(|s| s.name == c.name) {
+            problems.push(format!(
+                "case `{}` appears in suites `{}` and `{}`; behavioural fixtures need unique case names",
+                c.name, first.suite, c.suite
+            ));
+        } else {
+            seen.push(c);
+        }
+    }
+    if !problems.is_empty() {
+        return problems;
+    }
     let passed = doc["passed"].as_u64().unwrap_or(0);
     let failed = doc["failed"].as_u64().unwrap_or(0);
     if (passed, failed) != (expected.passed, expected.failed) {
@@ -225,8 +246,9 @@ fn marked_fixtures() -> Vec<PathBuf> {
     out
 }
 
-/// Copy a fixture's sources (everything except its `expected/` goldens and the
-/// marker files) into `dest`, so the run never writes into the source tree.
+/// Copy a fixture (everything except its `expected/` goldens) into `dest`, so the
+/// run never writes into the source tree. Marker files such as `expected_run.txt`
+/// and `target.txt` come along too; `bynkc test` ignores them.
 fn copy_fixture(src: &Path, dest: &Path) {
     fs::create_dir_all(dest).expect("create scratch fixture dir");
     for entry in fs::read_dir(src).expect("read fixture dir").flatten() {
@@ -424,6 +446,24 @@ mod marker {
         let problems = compare(&doc(&[("a", "pass"), ("b", "fail")]), &e);
         assert!(
             problems.iter().any(|p| p.contains("failed unexpectedly")),
+            "{problems:?}"
+        );
+    }
+
+    #[test]
+    fn duplicate_case_names_across_suites_are_rejected() {
+        let e = parse_marker("passed=1 failed=1\nfail x\n").unwrap();
+        let doc = serde_json::json!({
+            "passed": 1,
+            "failed": 1,
+            "suites": [
+                {"name": "A", "kind": "suite", "cases": [{"name": "x", "outcome": "pass"}]},
+                {"name": "B", "kind": "suite", "cases": [{"name": "x", "outcome": "fail"}]},
+            ],
+        });
+        let problems = compare(&doc, &e);
+        assert!(
+            problems.iter().any(|p| p.contains("unique case names")),
             "{problems:?}"
         );
     }

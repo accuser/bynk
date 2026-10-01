@@ -73,6 +73,28 @@ agent Panel {
   }
 }
 
+-- Store-collection keys are arbitrary strings, often from request input.
+agent Bag {
+  key id: String
+
+  store items: Map[String, Int]
+
+  on call add(k: String) -> Effect[()] {
+    do items.put(k, 1)
+    ()
+  }
+
+  on call count() -> Effect[Int] {
+    let n <- items.size()
+    n
+  }
+
+  on call has(k: String) -> Effect[Bool] {
+    let r <- items.get(k)
+    r.isSome()
+  }
+}
+
 fn samePoint(a: Pt, b: Pt) -> Bool {
   a == b
 }

@@ -43,3 +43,14 @@ case "Some(1) equals Some(1)" {
 case "String.replace inserts its replacement literally" {
   expect literalReplace() == "$&b$&b$&b"
 }
+
+case "a store Map keeps a __proto__ key like any other" {
+  do Bag("proto").add("__proto__")
+  let n <- Bag("proto").count()
+  expect n == 1
+}
+
+case "a store Map has no inherited keys" {
+  let h <- Bag("inherited").has("constructor")
+  expect h == false
+}

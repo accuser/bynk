@@ -34,7 +34,7 @@ async function test_a_scalar_Cell_reads_back_after_a_reload() {
   try {
     demo_sem.__resetAgents();
     const deps = makeTestDeps();
-    const { Gauge, Lamp, Light, Meter, Panel, Pt, __makeGauge, __makeLamp, __makeMeter, __makePanel, literalReplace, samePoint, sameReading, survivesJson } = demo_sem;
+    const { Bag, Gauge, Lamp, Light, Meter, Panel, Pt, __makeBag, __makeGauge, __makeLamp, __makeMeter, __makePanel, literalReplace, samePoint, sameReading, survivesJson } = demo_sem;
     type Light = demo_sem.Light;
     type Pt = demo_sem.Pt;
     await __makeGauge("scalar").setLevel(7, deps);
@@ -54,7 +54,7 @@ async function test_a_scalar_Cell_beside_an_enum_Cell_reads_back_after_a_reload(
   try {
     demo_sem.__resetAgents();
     const deps = makeTestDeps();
-    const { Gauge, Lamp, Light, Meter, Panel, Pt, __makeGauge, __makeLamp, __makeMeter, __makePanel, literalReplace, samePoint, sameReading, survivesJson } = demo_sem;
+    const { Bag, Gauge, Lamp, Light, Meter, Panel, Pt, __makeBag, __makeGauge, __makeLamp, __makeMeter, __makePanel, literalReplace, samePoint, sameReading, survivesJson } = demo_sem;
     type Light = demo_sem.Light;
     type Pt = demo_sem.Pt;
     await __makePanel("beside").setLevel(7, deps);
@@ -74,7 +74,7 @@ async function test_an_enum_Cell_reads_back_after_a_reload() {
   try {
     demo_sem.__resetAgents();
     const deps = makeTestDeps();
-    const { Gauge, Lamp, Light, Meter, Panel, Pt, __makeGauge, __makeLamp, __makeMeter, __makePanel, literalReplace, samePoint, sameReading, survivesJson } = demo_sem;
+    const { Bag, Gauge, Lamp, Light, Meter, Panel, Pt, __makeBag, __makeGauge, __makeLamp, __makeMeter, __makePanel, literalReplace, samePoint, sameReading, survivesJson } = demo_sem;
     type Light = demo_sem.Light;
     type Pt = demo_sem.Pt;
     await __makeLamp("enum").turnGreen(deps);
@@ -94,7 +94,7 @@ async function test_an_Option_Cell_reads_back_after_a_reload() {
   try {
     demo_sem.__resetAgents();
     const deps = makeTestDeps();
-    const { Gauge, Lamp, Light, Meter, Panel, Pt, __makeGauge, __makeLamp, __makeMeter, __makePanel, literalReplace, samePoint, sameReading, survivesJson } = demo_sem;
+    const { Bag, Gauge, Lamp, Light, Meter, Panel, Pt, __makeBag, __makeGauge, __makeLamp, __makeMeter, __makePanel, literalReplace, samePoint, sameReading, survivesJson } = demo_sem;
     type Light = demo_sem.Light;
     type Pt = demo_sem.Pt;
     await __makeMeter("option").note(3, deps);
@@ -114,7 +114,7 @@ async function test_an_enum_survives_a_JSON_round_trip() {
   try {
     demo_sem.__resetAgents();
     const deps = makeTestDeps();
-    const { Gauge, Lamp, Light, Meter, Panel, Pt, __makeGauge, __makeLamp, __makeMeter, __makePanel, literalReplace, samePoint, sameReading, survivesJson } = demo_sem;
+    const { Bag, Gauge, Lamp, Light, Meter, Panel, Pt, __makeBag, __makeGauge, __makeLamp, __makeMeter, __makePanel, literalReplace, samePoint, sameReading, survivesJson } = demo_sem;
     type Light = demo_sem.Light;
     type Pt = demo_sem.Pt;
     if (!(survivesJson(Light.Green))) { throw __bynkExpectFailure("tests/demo/sem.bynk:32:10", 788, 807, "expect survivesJson(Green)"); }
@@ -132,7 +132,7 @@ async function test_a_record_equals_an_identical_record() {
   try {
     demo_sem.__resetAgents();
     const deps = makeTestDeps();
-    const { Gauge, Lamp, Light, Meter, Panel, Pt, __makeGauge, __makeLamp, __makeMeter, __makePanel, literalReplace, samePoint, sameReading, survivesJson } = demo_sem;
+    const { Bag, Gauge, Lamp, Light, Meter, Panel, Pt, __makeBag, __makeGauge, __makeLamp, __makeMeter, __makePanel, literalReplace, samePoint, sameReading, survivesJson } = demo_sem;
     type Light = demo_sem.Light;
     type Pt = demo_sem.Pt;
     if (!(samePoint({ x: 1, y: 2 }, { x: 1, y: 2 }))) { throw __bynkExpectFailure("tests/demo/sem.bynk:36:10", 865, 912, "expect samePoint(Pt { x: 1, y: 2 }, Pt { x: 1, y: 2 })"); }
@@ -150,7 +150,7 @@ async function test_Some_1__equals_Some_1_() {
   try {
     demo_sem.__resetAgents();
     const deps = makeTestDeps();
-    const { Gauge, Lamp, Light, Meter, Panel, Pt, __makeGauge, __makeLamp, __makeMeter, __makePanel, literalReplace, samePoint, sameReading, survivesJson } = demo_sem;
+    const { Bag, Gauge, Lamp, Light, Meter, Panel, Pt, __makeBag, __makeGauge, __makeLamp, __makeMeter, __makePanel, literalReplace, samePoint, sameReading, survivesJson } = demo_sem;
     type Light = demo_sem.Light;
     type Pt = demo_sem.Pt;
     if (!(sameReading(Some(1), Some(1)))) { throw __bynkExpectFailure("tests/demo/sem.bynk:40:10", 957, 986, "expect sameReading(Some(1), Some(1))"); }
@@ -168,10 +168,49 @@ async function test_String_replace_inserts_its_replacement_literally() {
   try {
     demo_sem.__resetAgents();
     const deps = makeTestDeps();
-    const { Gauge, Lamp, Light, Meter, Panel, Pt, __makeGauge, __makeLamp, __makeMeter, __makePanel, literalReplace, samePoint, sameReading, survivesJson } = demo_sem;
+    const { Bag, Gauge, Lamp, Light, Meter, Panel, Pt, __makeBag, __makeGauge, __makeLamp, __makeMeter, __makePanel, literalReplace, samePoint, sameReading, survivesJson } = demo_sem;
     type Light = demo_sem.Light;
     type Pt = demo_sem.Pt;
     if (!(literalReplace() === "$&b$&b$&b")) { throw __bynkExpectFailure("tests/demo/sem.bynk:44:10", 1057, 1088, "expect literalReplace() == \"$&b$&b$&b\"\n  expected: literalReplace() == \"$&b$&b$&b\"\n  actual:   " + __bynkShow((literalReplace())) + " == " + __bynkShow(("$&b$&b$&b"))); }
+    return { pass: true };
+  } catch (e) {
+    if (e instanceof ExpectationError) {
+      return { pass: false, error: { message: e.message, location: e.location } };
+    }
+    return { pass: false, error: { message: String(e), location: "unknown" } };
+  }
+}
+
+// case tier: unit
+async function test_a_store_Map_keeps_a___proto___key_like_any_other() {
+  try {
+    demo_sem.__resetAgents();
+    const deps = makeTestDeps();
+    const { Bag, Gauge, Lamp, Light, Meter, Panel, Pt, __makeBag, __makeGauge, __makeLamp, __makeMeter, __makePanel, literalReplace, samePoint, sameReading, survivesJson } = demo_sem;
+    type Light = demo_sem.Light;
+    type Pt = demo_sem.Pt;
+    await __makeBag("proto").add("__proto__", deps);
+    const n = await __makeBag("proto").count(deps);
+    if (!(n === 1)) { throw __bynkExpectFailure("tests/demo/sem.bynk:50:10", 1226, 1232, "expect n == 1\n  expected: n == 1\n  actual:   " + __bynkShow((n)) + " == " + __bynkShow((1))); }
+    return { pass: true };
+  } catch (e) {
+    if (e instanceof ExpectationError) {
+      return { pass: false, error: { message: e.message, location: e.location } };
+    }
+    return { pass: false, error: { message: String(e), location: "unknown" } };
+  }
+}
+
+// case tier: unit
+async function test_a_store_Map_has_no_inherited_keys() {
+  try {
+    demo_sem.__resetAgents();
+    const deps = makeTestDeps();
+    const { Bag, Gauge, Lamp, Light, Meter, Panel, Pt, __makeBag, __makeGauge, __makeLamp, __makeMeter, __makePanel, literalReplace, samePoint, sameReading, survivesJson } = demo_sem;
+    type Light = demo_sem.Light;
+    type Pt = demo_sem.Pt;
+    const h = await __makeBag("inherited").has("constructor", deps);
+    if (!(h === false)) { throw __bynkExpectFailure("tests/demo/sem.bynk:55:10", 1335, 1345, "expect h == false\n  expected: h == false\n  actual:   " + __bynkShow((h)) + " == " + __bynkShow((false))); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -192,5 +231,7 @@ export async function run(only?: string) {
   if (want("a record equals an identical record")) results.push({ name: "a record equals an identical record", ...(await test_a_record_equals_an_identical_record()) });
   if (want("Some(1) equals Some(1)")) results.push({ name: "Some(1) equals Some(1)", ...(await test_Some_1__equals_Some_1_()) });
   if (want("String.replace inserts its replacement literally")) results.push({ name: "String.replace inserts its replacement literally", ...(await test_String_replace_inserts_its_replacement_literally()) });
+  if (want("a store Map keeps a __proto__ key like any other")) results.push({ name: "a store Map keeps a __proto__ key like any other", ...(await test_a_store_Map_keeps_a___proto___key_like_any_other()) });
+  if (want("a store Map has no inherited keys")) results.push({ name: "a store Map has no inherited keys", ...(await test_a_store_Map_has_no_inherited_keys()) });
   return results;
 }

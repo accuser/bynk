@@ -35,9 +35,11 @@ function cloneStored<T>(value: T): T {
   if (Array.isArray(value)) return value.map(cloneStored) as T;
   const proto = Object.getPrototypeOf(value);
   if (proto !== Object.prototype && proto !== null) return value;
-  const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(value)) out[k] = cloneStored(v);
-  return out as T;
+  // `Object.fromEntries` *defines* each key, where `out[k] = v` would *set* it.
+  // For an own `__proto__` key (which `JSON.parse` creates, so a decoded record
+  // stored as a `Map[String, _]` can carry one), a set would reassign the copy's
+  // prototype, or silently drop a primitive, instead of copying the entry.
+  return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, cloneStored(v)])) as T;
 }
 
 /**
