@@ -57,17 +57,8 @@ concurrency:
   group: auto-ready-${{ github.event.workflow_run.head_branch }}
   cancel-in-progress: true
 
-# `pull-requests: write` marks the PR ready (a GraphQL mutation, via `gh pr
-# ready`) — but the `markPullRequestReadyForReview` mutation also demands
-# `contents: write` from integration tokens (cli/cli#6924); without it the
-# call fails with "Resource not accessible by integration" even though nothing
-# here reads or writes repo contents. `actions: write` dispatches the review
-# workflow. Nothing is checked out and no project code runs, so neither write
-# scope ever coexists with anything a PR author controls.
-permissions:
-  contents: write
-  pull-requests: write
-  actions: write
+# No scopes by default; the one job requests exactly what it needs below.
+permissions: {}
 
 jobs:
   promote:
@@ -78,6 +69,17 @@ jobs:
       github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # `pull-requests: write` marks the PR ready (a GraphQL mutation, via `gh pr
+    # ready`) — but the `markPullRequestReadyForReview` mutation also demands
+    # `contents: write` from integration tokens (cli/cli#6924); without it the
+    # call fails with "Resource not accessible by integration" even though
+    # nothing here reads or writes repo contents. `actions: write` dispatches
+    # the review workflow. Nothing is checked out and no project code runs, so
+    # neither write scope ever coexists with anything a PR author controls.
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
     steps:
       # `workflow_run.pull_requests` is unreliable (empty for some payloads), so
       # resolve the PR ourselves: open PRs whose head is the run's branch, then
