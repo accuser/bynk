@@ -66,6 +66,44 @@ when neither is available:
   you);
 - in CI — set **`BYNK_REQUIRE_TSC=1`** to make a missing `tsc` a hard failure.
 
+## The behavioural gate
+
+The golden comparison and the `tsc` gate prove what the compiler **emits**.
+Neither runs it. A golden blesses whatever was emitted, so an emitted program
+that type-checks but does the wrong thing passes both.
+
+`tests/behaviour_fixtures.rs` closes that gap. A project-form positive fixture
+whose `suite`s should **run** carries an `expected_run.txt`:
+
+```text
+# comments and blank lines are ignored
+passed=3 failed=1
+# #1649: enum state faults on reload
+fail an enum Cell reads back after a reload
+```
+
+The gate copies each marked fixture to a scratch directory and runs
+`bynkc test --format json` over it. It then checks:
+
+- the case counts match `passed=`/`failed=`;
+- every `fail <case name>` case **fails**;
+- every other case **passes**;
+- at least one case ran.
+
+The check is strict in both directions. A listed case that starts passing fails
+the gate, so the change that fixes a known defect must also delete its `fail`
+line. Cite the tracking issue in a comment above each `fail`.
+
+A suite-bearing fixture without the marker is type-checked by the `tsc` gate
+but never run. Mark a fixture unless it exists only to pin emitted *shape*
+rather than behaviour (for example `1402_stub_fails_and_single_outcome_sequence`,
+whose cases can never pass by design).
+
+The run uses the bundle target, because `bynkc test` has no `--target` flag.
+Like the `tsc` gate, it skips locally without a TypeScript toolchain, and
+`BYNK_REQUIRE_TSC=1` makes that a failure. The `fixture_kinds` row of
+`design/greenfield-status.md` counts marked fixtures as `run=`.
+
 ## Adding a feature: the definition of done
 
 A grammar increment is not complete until:
@@ -73,5 +111,7 @@ A grammar increment is not complete until:
 1. positive **and** negative fixtures cover it (and pass);
 2. emitted output type-checks under the `tsc` gate;
 3. any new diagnostic code is added to the registry in `diagnostics.rs`;
-4. the **docs** are updated in the same change — see
+4. a change to what a program **does** at runtime is proved by a behavioural
+   fixture (an `expected_run.txt` suite), not only by a golden;
+5. the **docs** are updated in the same change — see
    [Working on the docs](/book/contributing/documentation/).

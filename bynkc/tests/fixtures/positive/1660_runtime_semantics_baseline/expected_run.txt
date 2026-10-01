@@ -1,0 +1,17 @@
+# #1660: the runtime-semantics baseline (track #1648). Every `fail` line is a
+# known defect. The slice that fixes it must delete its line, because this
+# marker is strict: a listed case that starts passing fails the gate.
+passed=2 failed=6
+
+# #1649 (S0): agent state with an enum or Option faults on every reload, even
+# when the handler wrote only a scalar beside it.
+fail a scalar Cell beside an enum Cell reads back after a reload
+fail an enum Cell reads back after a reload
+fail an Option Cell reads back after a reload
+
+# #1652 (S3): `==` on records and Option is reference equality.
+fail a record equals an identical record
+fail Some(1) equals Some(1)
+
+# #1650 (S1): String.replace expands `$&` in the replacement.
+fail String.replace inserts its replacement literally

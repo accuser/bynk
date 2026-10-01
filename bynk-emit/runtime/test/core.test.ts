@@ -28,6 +28,52 @@ test("InMemoryStorage: get/put/delete and prefix list", async () => {
   assert.equal(await s.get("user:1"), undefined);
 });
 
+// #1660: storage clones on the way in and out, as workerd's V8-serialised
+// storage does. Mutating a value after `put`, or a value returned by `get`,
+// must never reach what is stored.
+test("InMemoryStorage: put and get clone, so stored state is never aliased", async () => {
+  const s = new InMemoryStorage();
+  const written = { items: { a: 1 }, bytes: new Uint8Array([1, 2]) };
+  await s.put("state", written);
+  written.items.a = 99;
+
+  const read = await s.get<typeof written>("state");
+  assert.ok(read !== undefined);
+  assert.notEqual(read, written);
+  assert.equal(read.items.a, 1);
+  // structuredClone keeps the shapes workerd keeps.
+  assert.ok(read.bytes instanceof Uint8Array);
+
+  read.items.a = 42;
+  assert.equal((await s.get<typeof written>("state"))?.items.a, 1);
+
+  const listed = await s.list<typeof written>();
+  listed.get("state")!.items.a = 7;
+  assert.equal((await s.get<typeof written>("state"))?.items.a, 1);
+});
+
+// #1660: a live handle (a held `TestConnection` on the bundle target) is shared,
+// not copied. Workers re-resolve the same live socket from its stored connId, and
+// copying would strip `send`. A value-level `Map` inside state is still copied.
+test("InMemoryStorage: live handles are shared, data around them is copied", async () => {
+  class Handle {
+    sent: string[] = [];
+    send(m: string): void { this.sent.push(m); }
+  }
+  const s = new InMemoryStorage();
+  const conn = new Handle();
+  await s.put("state", { conns: { alice: conn }, tags: new Map([["k", [1]]]) });
+
+  const read = await s.get<{ conns: { alice: Handle }; tags: Map<string, number[]> }>("state");
+  assert.ok(read !== undefined);
+  assert.equal(read.conns.alice, conn);
+  read.conns.alice.send("hi");
+  assert.deepEqual(conn.sent, ["hi"]);
+
+  read.tags.get("k")!.push(2);
+  assert.deepEqual((await s.get<typeof read>("state"))?.tags.get("k"), [1]);
+});
+
 test("makeTestState: names the state and gives it fresh storage", async () => {
   const st = makeTestState("agent-7");
   assert.equal(st.id.name, "agent-7");

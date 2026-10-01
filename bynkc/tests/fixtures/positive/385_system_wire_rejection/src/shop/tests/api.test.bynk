@@ -39,8 +39,13 @@ suite shop.api as system {
     let r <- api.PUT("/cart/:sku", Wire("widget"), Item { sku: "widget" }) by User("alice")
     expect r is Handled(_)
   }
+  -- #1660: this case sent `Wire("")`, which can never reach `Sku.of`. The
+  -- router drops empty path segments, so `PUT /cart/` matches no route and
+  -- falls through to a 404. Once behavioural fixtures ran the suite, it was
+  -- shown to have never passed. `Sku` gained `MaxLength(8)`, so a segment that
+  -- routes can still fail the refinement.
   case "a raw path segment failing refinement is rejected even with a typed body" {
-    let r <- api.PUT("/cart/:sku", Wire(""), Item { sku: "widget" }) by User("alice")
+    let r <- api.PUT("/cart/:sku", Wire("far-too-long-sku"), Item { sku: "widget" }) by User("alice")
     expect r is Rejected(RefinementViolation(_))
   }
   case "a typed path segment with a raw body passes both through the boundary" {

@@ -275,8 +275,8 @@ async function test_a_raw_path_segment_with_a_typed_body_passes_both_through_the
 async function test_a_raw_path_segment_failing_refinement_is_rejected_even_with_a_typed_body() {
   try {
     const deps = makeHarness();
-    const r = await __sysdrive_raw_api_http_PUT_cart_Param_sku("", JSON.stringify(shop_api.serialise_Item(({ sku: "widget" } as any))), "alice");
-    if (!(r.tag === "Rejected" && r.value.tag === "RefinementViolation")) { throw __bynkExpectFailure("shop/tests/api.test.bynk:44:12", 1993, 2030, "expect r is Rejected(RefinementViolation(_))"); }
+    const r = await __sysdrive_raw_api_http_PUT_cart_Param_sku("far-too-long-sku", JSON.stringify(shop_api.serialise_Item(({ sku: "widget" } as any))), "alice");
+    if (!(r.tag === "Rejected" && r.value.tag === "RefinementViolation")) { throw __bynkExpectFailure("shop/tests/api.test.bynk:49:12", 2360, 2397, "expect r is Rejected(RefinementViolation(_))"); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -290,7 +290,7 @@ async function test_a_typed_path_segment_with_a_raw_body_passes_both_through_the
   try {
     const deps = makeHarness();
     const r = await __sysdrive_raw_api_http_PUT_cart_Param_sku(String("widget"), "{\"sku\": \"widget\"}", "alice");
-    if (!(r.tag === "Handled")) { throw __bynkExpectFailure("shop/tests/api.test.bynk:48:12", 2220, 2235, "expect r is Handled(_)"); }
+    if (!(r.tag === "Handled")) { throw __bynkExpectFailure("shop/tests/api.test.bynk:53:12", 2587, 2602, "expect r is Handled(_)"); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {

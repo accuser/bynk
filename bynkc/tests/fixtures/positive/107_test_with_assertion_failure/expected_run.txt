@@ -1,0 +1,4 @@
+# #1660: run by bynkc/tests/behaviour_fixtures.rs; see that file for the format.
+passed=0 failed=1
+# Deliberate: this fixture exists to pin a failing case's report.
+fail deliberate failure

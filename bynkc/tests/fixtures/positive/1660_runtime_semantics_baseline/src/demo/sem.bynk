@@ -1,0 +1,93 @@
+---
+#1660: the runtime-semantics baseline. Each behaviour below is one the
+spec defines and the runtime-semantics track (#1648) proves at runtime.
+Some do not hold yet; `expected_run.txt` names those, each citing the slice
+that fixes it.
+---
+context demo.sem
+
+type Light = enum { Red, Green }
+
+type Pt = { x: Int, y: Int }
+
+-- Scalar-only state: the control for the reload cases below.
+agent Gauge {
+  key id: String
+
+  store level: Cell[Int] = 0
+
+  on call setLevel(n: Int) -> Effect[()] {
+    level := n
+  }
+
+  on call getLevel() -> Effect[Int] {
+    level
+  }
+}
+
+agent Lamp {
+  key id: String
+
+  store light: Cell[Light] = Red
+
+  on call turnGreen() -> Effect[()] {
+    light := Green
+  }
+
+  on call isGreen() -> Effect[Bool] {
+    light is Green
+  }
+}
+
+agent Meter {
+  key id: String
+
+  store reading: Cell[Option[Int]]
+
+  on call note(n: Int) -> Effect[()] {
+    reading := Some(n)
+  }
+
+  on call lastReading() -> Effect[Int] {
+    match reading {
+      Some(n) => n
+      None => 0
+    }
+  }
+}
+
+-- A scalar write beside an enum field: the commit stores the enum's zero
+-- value too, so the reload faults on a field the handler never touched.
+agent Panel {
+  key id: String
+
+  store level: Cell[Int] = 0
+  store light: Cell[Light] = Red
+
+  on call setLevel(n: Int) -> Effect[()] {
+    level := n
+  }
+
+  on call getLevel() -> Effect[Int] {
+    level
+  }
+}
+
+fn samePoint(a: Pt, b: Pt) -> Bool {
+  a == b
+}
+
+fn sameReading(a: Option[Int], b: Option[Int]) -> Bool {
+  a == b
+}
+
+fn literalReplace() -> String {
+  "aaa".replace("a", "$&b")
+}
+
+fn survivesJson(l: Light) -> Bool {
+  match Json.decode[Light](Json.encode(l)) {
+    Ok(decoded) => decoded is Green
+    Err(_) => false
+  }
+}
