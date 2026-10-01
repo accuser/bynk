@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "Bynk's IDE/LSP analysis surface: non-bailing single-file and project diagnostics over the captured bynk-check tables — the surface the language server consumes."
+description = "The IDE analysis surface of the Bynk compiler: non-bailing single-file and project diagnostics, and the editor queries a language server consumes."
 keywords = ["compiler", "dsl", "lsp", "ide", "language"]
 categories = ["compilers", "development-tools"]
 

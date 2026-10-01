@@ -16,20 +16,46 @@ diagnostic plus the captured analysis tables for the editor to query:
 - `diagnose_project` — overlay-aware, file-attributed whole-project analysis: the
   per-file diagnostics, the binding index, inlay hints, expression types, scoped
   locals, and the unit→source map.
+- `discover_files` / `AnalysisRoots` — the project's file set, resolved exactly
+  as the compiler resolves it (overlay-aware).
+
+Over those results sit the editor queries: `completion`, `signature_help`,
+`symbols` (hover and go-to-definition lookups), `locals_nav`, and the
+whole-project models behind the editor's views — `architecture`, `sequence`,
+`documentation`, and `wire_contract`.
 
 ## Where it sits
 
+`bynk-ide` sits *beside* the emitter, not above it: it depends on
+[`bynk-syntax`](https://crates.io/crates/bynk-syntax),
+[`bynk-check`](https://crates.io/crates/bynk-check),
+[`bynk-project`](https://crates.io/crates/bynk-project), and
+[`bynk-fmt`](https://crates.io/crates/bynk-fmt), and never links `bynk-emit`:
+
 ```text
-bynk-syntax  ◀── bynk-render · bynk-fmt · bynk-check ◀── bynk-emit ◀── bynk-ide
+bynk-syntax                lexer, parser, AST, CompileError, diagnostic codes
+├── bynk-project           project model: discovery, unit graph, paths
+├── bynk-ts                the TypeScript tree and its printer
+├── bynk-render            diagnostic rendering
+├── bynk-fmt               the formatter
+└── bynk-check             name resolution and type checking   + project
+    ├── bynk-ir            declaration-level IR
+    │   └── bynk-lower     AST → IR helpers
+    ├── bynk-emit          build sequencing, TS emission       + ts, ir, lower, project
+    │   ├── bynk-strip     TS → JS type-stripping              + ts
+    │   └── bynk-driver    shared CLI command bodies           + fmt, render, ts
+    └── bynk-ide           non-bailing editor analysis         + project, fmt
 ```
 
-`bynk-ide` is the top of the library set, over
-[`bynk-syntax`](https://crates.io/crates/bynk-syntax) +
-[`bynk-check`](https://crates.io/crates/bynk-check) +
-[`bynk-emit`](https://crates.io/crates/bynk-emit). The
-[`bynk-lsp`](https://crates.io/crates/bynk-lsp) language server is built on it, so
-it links the analysis libraries — not the whole compiler binary. The `bynkc`,
-`bynk`, and `bynk-lsp` binaries are front-ends over the compiler set.
+Each crate depends on its parent in the tree, plus any crates listed after
+its `+`. The front-ends sit on top: the `bynkc` and `bynk` CLIs over
+`bynk-driver`, the `bynkc-lsp` language server (`bynk-lsp`) over `bynk-ide`, and
+the unpublished `bynk-wasm` playground module over `bynk-emit`, `bynk-strip`,
+and `bynk-ide`.
+
+The [`bynk-lsp`](https://crates.io/crates/bynk-lsp) language server is built on
+it, so the editor links the analysis libraries — not the emitter or a CLI. The
+playground's `bynk-wasm` module uses it too, for completion.
 
 ## Use
 

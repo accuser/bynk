@@ -34,7 +34,7 @@ pub use bynk_syntax::CompileError;
 pub use bynk_syntax::error::Severity;
 
 // The diagnostic renderers moved down into the `bynk-render` crate (slice 6):
-// ariadne human + the short/json line forms over `CompileError`. Re-export them
+// ariadne human + the `short` line form over `CompileError`. Re-export them
 // so `bynkc`'s binary, the diagnostic transcripts, and the tests resolve
 // unchanged. The `ProjectFailure` flatteners (below) stay here and delegate.
 pub use bynk_render::{

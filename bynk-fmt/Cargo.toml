@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Formatter for the Bynk DSL (used by bynkc-lsp)."
+description = "The formatter for the Bynk language."
 keywords = ["compiler", "dsl", "formatter", "language"]
 categories = ["development-tools", "compilers"]
 

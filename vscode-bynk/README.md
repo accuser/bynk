@@ -4,9 +4,9 @@
 
 Language support for the **[Bynk](https://github.com/accuser/bynk) language**
 (`.bynk` files) in Visual Studio Code: syntax highlighting plus full language
-features backed by the bundled
+features backed by the
 [`bynkc-lsp`](https://github.com/accuser/bynk/tree/main/bynk-lsp) language
-server.
+server, which the extension finds or downloads for you.
 
 The extension activates on any `.bynk` file, or on any workspace containing a
 `bynk.toml`.
@@ -85,7 +85,13 @@ Available from the Command Palette under **Bynk**:
 | **Bynk: Download Language Server** | Force a fresh download of the pinned server. |
 | **Bynk: Show Language Server Output** | Open the "Bynk LSP" output channel. |
 | **Bynk: Open Project Config (bynk.toml)** | Open the workspace's `bynk.toml`. |
+| **Bynk: New Project** / **Bynk: New Context** | Scaffold a project or a context file. Works without the server, and never overwrites an existing file. |
 | **Bynk: Run Tests** | Run the project's tests via `bynk test --format json` and report them in the Testing view. |
+| **Bynk: Debug Tests** | Run the tests under the inspector, so breakpoints in `.bynk` sources pause. |
+| **Bynk: Show Sequence Diagram** | A sequence diagram of the handler at the cursor: its capability, context, and agent calls. |
+| **Bynk: Show Documentation** | The active file's declarations, rendered as a reference page. |
+| **Bynk: Show Architecture Map** | A whole-project map of contexts and adapters, their `consumes` edges, and what each one binds. |
+| **Bynk: Show Wire Contract** | The JSON wire shape of the service handler at the cursor. |
 
 ## Settings
 
@@ -95,12 +101,17 @@ Available from the Command Palette under **Bynk**:
 | `bynk.bynkPath` | `""` (`bynk` on `PATH`) | Path to the `bynk` driver used by the `bynkc: check` task, the Test Explorer, and debugging. When empty, `bynk` is taken from `PATH`. |
 | `bynk.compilerPath` | `""` (driver resolves `bynkc`) | Pin an exact `bynkc`, passed through as `BYNK_BYNKC` to `bynk`. When empty, `bynk` resolves `bynkc` itself (`PATH`, then a sibling of `bynk`) — richer than a bare `PATH` lookup, so a driver-first install (`bynkc` reachable only via `BYNK_BYNKC` or as a `bynk` sibling) still works. |
 | `bynk.trace.server` | `off` | Trace LSP protocol traffic (`off` / `messages` / `verbose`) in the "Bynk LSP" output channel. |
-| `bynk.inlayHints.enable` | `true` | Show Bynk inferred-type inlay hints. A persistent, Bynk-only preference; takes effect on the next edit or scroll. |
+| `bynk.inlayHints.enable` | `true` | Show Bynk inlay hints (both kinds below). A persistent, Bynk-only preference; takes effect on the next edit or scroll. |
+| `bynk.inlayHints.types` | `true` | Inferred-type hints on `let` bindings and lambda parameters. |
+| `bynk.inlayHints.parameterNames` | `true` | Parameter-name hints at call arguments. |
+| `bynk.testCodeLens` | `true` | Show a `Run Test \| Debug Test` CodeLens above each test. The native gutter icons appear regardless. |
+| `bynk.debug.semanticValues` | `true` | Show values in the debugger in Bynk's vocabulary (`Ok(42)`, not `{tag: "Ok", value: 42}`). |
+| `bynk.inlineDocRendering.enable` | `true` | Render `--- … ---` doc comments in place with light Markdown styling while reading the source. |
 
 Two built-in VS Code settings also apply:
 
 - **`editor.inlayHints.enabled`** — the instant, editor-wide on/off for inlay hints (toggles immediately). Use `bynk.inlayHints.enable` when you want hints off for Bynk specifically and left alone elsewhere.
-- **`editor.semanticHighlighting.enabled`** — turns semantic tokens (the type-aware highlighting) on or off. The extension ships theme fallbacks for Bynk's `capability` / `service` / `agent` / `provider` token types, so they colour out of the box.
+- **`editor.semanticHighlighting.enabled`** — turns semantic tokens (the type-aware highlighting) on or off. The extension ships theme fallbacks for Bynk's `capability` / `service` / `agent` / `provider` / `actor` token types, so they colour out of the box.
 
 ## Build & install from source
 
@@ -114,8 +125,10 @@ code --install-extension bynk-vscode-*.vsix
 
 `npm run package` bundles the extension with [esbuild](https://esbuild.github.io/)
 and packages it with [`@vscode/vsce`](https://github.com/microsoft/vscode-vsce)
-(both pinned as dev dependencies). Use `npm run build` alone for a plain bundle,
-or `npm run watch` while developing.
+(both dev dependencies). Use `npm run build` alone for a plain bundle, or
+`npm run watch` while developing — it rebuilds `src/extension.ts` only, so
+re-run `npm run build` after changing a webview under `src/webview/`.
+`npm run check` type-checks and `npm test` runs the extension tests.
 
 See also
 [Set up editor support](https://bynk-lang.org/docs/editor-and-tooling/editor-support/)

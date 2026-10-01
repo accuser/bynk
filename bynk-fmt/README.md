@@ -22,13 +22,34 @@ editor, rather than depending on this crate directly. See
 
 ## Where it sits
 
+`bynk-fmt` sits directly on the `bynk-syntax` leaf, alongside the other
+first-layer libraries:
+
 ```text
-bynk-syntax  ◀── bynk-render · bynk-fmt · bynk-check ◀── bynk-emit ◀── bynk-ide
+bynk-syntax                lexer, parser, AST, CompileError, diagnostic codes
+├── bynk-project           project model: discovery, unit graph, paths
+├── bynk-ts                the TypeScript tree and its printer
+├── bynk-render            diagnostic rendering
+├── bynk-fmt               the formatter
+└── bynk-check             name resolution and type checking   + project
+    ├── bynk-ir            declaration-level IR
+    │   └── bynk-lower     AST → IR helpers
+    ├── bynk-emit          build sequencing, TS emission       + ts, ir, lower, project
+    │   ├── bynk-strip     TS → JS type-stripping              + ts
+    │   └── bynk-driver    shared CLI command bodies           + fmt, render, ts
+    └── bynk-ide           non-bailing editor analysis         + project, fmt
 ```
 
-`bynk-fmt` sits directly on the `bynk-syntax` leaf, alongside the other
-first-layer libraries. The `bynkc`, `bynk`, and `bynk-lsp` binaries are
-front-ends over the compiler set.
+Each crate depends on its parent in the tree, plus any crates listed after
+its `+`. The front-ends sit on top: the `bynkc` and `bynk` CLIs over
+`bynk-driver`, the `bynkc-lsp` language server (`bynk-lsp`) over `bynk-ide`, and
+the unpublished `bynk-wasm` playground module over `bynk-emit`, `bynk-strip`,
+and `bynk-ide`.
+
+[`bynk-driver`](https://crates.io/crates/bynk-driver) (behind `bynkc fmt` /
+`bynk fmt`) and [`bynk-lsp`](https://crates.io/crates/bynk-lsp) format through
+it; [`bynk-ide`](https://crates.io/crates/bynk-ide) uses its expression and
+annotation printers to render types and signatures for hover.
 
 ## Use
 
@@ -49,11 +70,14 @@ The public API is small:
 - `FormatOptions` / `IndentStyle` — formatting configuration.
 - `FormatError` — a parse error in the input (you cannot format what does not
   parse).
+- `FmtConfig` / `find_manifest` / `ConfigError` — a project's `[fmt]` section in
+  `bynk.toml`, applied over a base `FormatOptions`.
 
-`FormatOptions`'s three fields are reachable from the command line too —
-`bynkc fmt` / `bynk fmt` take `--indent tab|spaces`, `--indent-width N`,
-`--max-line-width COLUMNS`, and `--trailing-comma` / `--no-trailing-comma`,
-overriding the canonical style for one run.
+`FormatOptions`'s three fields are reachable from a project's `bynk.toml` and
+from the command line — `bynkc fmt` / `bynk fmt` take `--indent tab|spaces`,
+`--indent-width N`, `--max-line-width COLUMNS`, and `--trailing-comma` /
+`--no-trailing-comma`, overriding the project's `[fmt]` section for one run
+(`--no-config` ignores that section entirely).
 
 See the [API docs](https://docs.rs/bynk-fmt) for details.
 

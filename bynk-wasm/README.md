@@ -22,9 +22,11 @@ source ─▶ bynk_emit::compile_in_memory  ─▶ ProjectOutput (TypeScript)
 ```
 
 The returned graph is the complete set the browser links: the user module,
-`runtime.js`, the `bynk-browser.js` binding, and `compose.js`. A companion
-`bynk_analyze` entry returns diagnostics only, for live on-type checking in the
-editor.
+`runtime.js`, the `bynk-browser.js` binding, and `compose.js`. Three companion
+entries back the playground's editor: `bynk_analyze` returns diagnostics only,
+for live on-type checking; `bynk_hover` returns the inferred type at an offset;
+and `bynk_complete` returns completion candidates at an offset. Every entry
+compiles for the `browser` platform.
 
 The pipeline reuses the on-disk compile path wholesale (first-party injection,
 the per-platform binding, the strip-only emitter), so the in-browser result

@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "bynkc-lsp — the Language Server for the Bynk DSL."
+description = "bynkc-lsp, the Language Server for the Bynk language."
 keywords = ["compiler", "dsl", "lsp", "language-server", "language"]
 categories = ["development-tools", "compilers"]
 # These guards read a sibling directory — ../vscode-bynk, ../examples,

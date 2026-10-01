@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "Bynk's project model: discovery, the unit dependency graph, path resolution, cross-unit consistency checks, and the schema-registry document (read/write)."
+description = "The project model of the Bynk compiler: discovery, the unit dependency graph, path resolution, cross-unit consistency checks, and the schema-registry document."
 keywords = ["compiler", "dsl", "language"]
 categories = ["compilers"]
 

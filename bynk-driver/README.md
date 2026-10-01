@@ -30,8 +30,30 @@ It holds:
 This crate depends on [`bynk-emit`](https://crates.io/crates/bynk-emit),
 [`bynk-fmt`](https://crates.io/crates/bynk-fmt),
 [`bynk-render`](https://crates.io/crates/bynk-render), and
-[`bynk-ts`](https://crates.io/crates/bynk-ts) — the `bynkc` and `bynk`
-binaries are the two front-ends built on top of it.
+[`bynk-ts`](https://crates.io/crates/bynk-ts):
+
+```text
+bynk-syntax                lexer, parser, AST, CompileError, diagnostic codes
+├── bynk-project           project model: discovery, unit graph, paths
+├── bynk-ts                the TypeScript tree and its printer
+├── bynk-render            diagnostic rendering
+├── bynk-fmt               the formatter
+└── bynk-check             name resolution and type checking   + project
+    ├── bynk-ir            declaration-level IR
+    │   └── bynk-lower     AST → IR helpers
+    ├── bynk-emit          build sequencing, TS emission       + ts, ir, lower, project
+    │   ├── bynk-strip     TS → JS type-stripping              + ts
+    │   └── bynk-driver    shared CLI command bodies           + fmt, render, ts
+    └── bynk-ide           non-bailing editor analysis         + project, fmt
+```
+
+Each crate depends on its parent in the tree, plus any crates listed after
+its `+`. The front-ends sit on top: the `bynkc` and `bynk` CLIs over
+`bynk-driver`, the `bynkc-lsp` language server (`bynk-lsp`) over `bynk-ide`, and
+the unpublished `bynk-wasm` playground module over `bynk-emit`, `bynk-strip`,
+and `bynk-ide`.
+
+The `bynkc` and `bynk` binaries are the two front-ends built on top of it.
 
 ## Use
 

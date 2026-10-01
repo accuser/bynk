@@ -10,12 +10,13 @@
 It is the layer above [`bynk-check`](https://crates.io/crates/bynk-check) that
 turns a checked program into output:
 
-- `project` — the build driver: project discovery, the dependency graph,
-  consistency and validation, symbols, paths, and the `compile_project` /
-  `check_project` entry points (whole-project analysis without building lives
-  in [`bynk-check`](https://crates.io/crates/bynk-check)'s own
-  `analysis::analyse_project`). (Read it as "build orchestration" — it
-  conducts the whole build.)
+- `project` — build orchestration: the `compile_project` / `check_project`
+  entry points, per-unit build sequencing, and `compile_in_memory` (the
+  filesystem-free path behind the playground). Discovery, the dependency graph,
+  and path resolution live in [`bynk-project`](https://crates.io/crates/bynk-project)
+  and are re-exported here; whole-project analysis without building lives in
+  [`bynk-check`](https://crates.io/crates/bynk-check)'s own
+  `analysis::analyse_project`.
 - `emitter` — lowers a type-checked program to TypeScript targeting Cloudflare
   Workers (or a single bundle), complete with the router, dependency wiring, the
   shared runtime, and a `wrangler.toml`.
@@ -26,12 +27,35 @@ job (`bynk-driver::write_output`), not this crate's.
 
 ## Where it sits
 
+`bynk-emit` turns a checked program into output, over
+[`bynk-check`](https://crates.io/crates/bynk-check),
+[`bynk-project`](https://crates.io/crates/bynk-project), the
+[`bynk-ir`](https://crates.io/crates/bynk-ir) /
+[`bynk-lower`](https://crates.io/crates/bynk-lower) pair, and
+[`bynk-ts`](https://crates.io/crates/bynk-ts)'s tree:
+
 ```text
-bynk-syntax  ◀── bynk-render · bynk-fmt · bynk-check ◀── bynk-emit ◀── bynk-ide
+bynk-syntax                lexer, parser, AST, CompileError, diagnostic codes
+├── bynk-project           project model: discovery, unit graph, paths
+├── bynk-ts                the TypeScript tree and its printer
+├── bynk-render            diagnostic rendering
+├── bynk-fmt               the formatter
+└── bynk-check             name resolution and type checking   + project
+    ├── bynk-ir            declaration-level IR
+    │   └── bynk-lower     AST → IR helpers
+    ├── bynk-emit          build sequencing, TS emission       + ts, ir, lower, project
+    │   ├── bynk-strip     TS → JS type-stripping              + ts
+    │   └── bynk-driver    shared CLI command bodies           + fmt, render, ts
+    └── bynk-ide           non-bailing editor analysis         + project, fmt
 ```
 
-The `bynkc`, `bynk`, and `bynk-lsp` binaries are front-ends over this set. Most
-users compile Bynk through the [`bynkc`](https://crates.io/crates/bynkc) /
+Each crate depends on its parent in the tree, plus any crates listed after
+its `+`. The front-ends sit on top: the `bynkc` and `bynk` CLIs over
+`bynk-driver`, the `bynkc-lsp` language server (`bynk-lsp`) over `bynk-ide`, and
+the unpublished `bynk-wasm` playground module over `bynk-emit`, `bynk-strip`,
+and `bynk-ide`.
+
+Most users compile Bynk through the [`bynkc`](https://crates.io/crates/bynkc) /
 [`bynk`](https://crates.io/crates/bynk) CLIs rather than depending on this crate
 directly.
 
@@ -45,9 +69,14 @@ bynk-emit = "0.290"
 ```rust
 use bynk_emit::project::{compile_project, CompileOptions, BuildTarget};
 
-let options = CompileOptions::single(root).target(BuildTarget::Workers);
+// `sources` maps every `.bynk` file under `root` (by canonical path) to its text.
+let options = CompileOptions::single(root).sources(sources).target(BuildTarget::Workers);
 let output = compile_project(&options)?; // in-memory TypeScript tree — bynk-emit never touches disk
 ```
+
+Sources are supplied in memory because this crate never reads them from disk;
+[`bynk-driver`](https://crates.io/crates/bynk-driver)'s `project_options` reads
+a project from disk and returns options ready to compile.
 
 See the [API docs](https://docs.rs/bynk-emit) for the full surface.
 
