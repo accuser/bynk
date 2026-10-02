@@ -1866,6 +1866,16 @@ fn check_expr_references(expr: &Expr, cx: &mut RefCheckCtx) {
                 check_expr_references(a, cx);
             }
         }
+        // #1654: the right operand of `&&`/`implies` is evaluated only when the
+        // left holds, so the left's `is` bindings are in scope there.
+        ExprKind::BinOp(BinOp::And | BinOp::Implies, lhs, rhs) => {
+            check_expr_references(lhs, cx);
+            let mut extra: HashMap<String, ()> = HashMap::new();
+            collect_is_binding_names(lhs, true, &mut extra);
+            cx.scopes.push(extra);
+            check_expr_references(rhs, cx);
+            cx.scopes.pop();
+        }
         ExprKind::BinOp(_, lhs, rhs) => {
             check_expr_references(lhs, cx);
             check_expr_references(rhs, cx);
@@ -1879,14 +1889,20 @@ fn check_expr_references(expr: &Expr, cx: &mut RefCheckCtx) {
             else_block,
         } => {
             check_expr_references(cond, cx);
-            // `is`-pattern bindings inside the condition flow into the
-            // then-branch's scope (v0.2 §3.9).
+            // `is`-pattern bindings the condition proves flow into the
+            // then-branch's scope (v0.2 §3.9), and those its *falsity* proves
+            // into the else-branch's (#1654: `if !(o is Some(v)) { … } else
+            // { v }`).
             let mut then_extra: HashMap<String, ()> = HashMap::new();
-            collect_is_binding_names(cond, &mut then_extra);
+            collect_is_binding_names(cond, true, &mut then_extra);
             cx.scopes.push(then_extra);
             check_block_references(then_block, cx);
             cx.scopes.pop();
+            let mut else_extra: HashMap<String, ()> = HashMap::new();
+            collect_is_binding_names(cond, false, &mut else_extra);
+            cx.scopes.push(else_extra);
             check_block_references(else_block, cx);
+            cx.scopes.pop();
         }
         ExprKind::Ok(inner) | ExprKind::Err(inner) | ExprKind::Question(inner) => {
             check_expr_references(inner, cx);
@@ -2204,19 +2220,14 @@ fn check_expr_references(expr: &Expr, cx: &mut RefCheckCtx) {
     }
 }
 
-/// Walk an expression collecting names introduced by `is` patterns inside
-/// it, when applied as a Boolean test. Mirrors the binding-flow rule from
-/// v0.2 §3.9 — bindings from `expr is Pat`, `lhs && (expr is Pat)`, or
-/// `(expr is Pat)` flow into the surrounding truthy branch.
-fn collect_is_binding_names(expr: &Expr, into: &mut HashMap<String, ()>) {
-    match &expr.kind {
-        ExprKind::Is { pattern, .. } => collect_is_pattern_binding_names(pattern, into),
-        ExprKind::BinOp(BinOp::And, l, r) => {
-            collect_is_binding_names(l, into);
-            collect_is_binding_names(r, into);
+/// The names introduced by the `is` tests `expr` proves matched when it
+/// evaluates to `when_true` (v0.2 §3.9). Which tests those are is the shared
+/// rule in [`crate::narrowing`] (#1654), the one the checker and emitter use.
+fn collect_is_binding_names(expr: &Expr, when_true: bool, into: &mut HashMap<String, ()>) {
+    for test in crate::narrowing::matched_is_tests(expr, when_true) {
+        if let ExprKind::Is { pattern, .. } = &test.kind {
+            collect_is_pattern_binding_names(pattern, into);
         }
-        ExprKind::Paren(inner) => collect_is_binding_names(inner, into),
-        _ => {}
     }
 }
 

@@ -2135,7 +2135,7 @@ pub(crate) struct Ctx<'a> {
     /// pure read over `expr_types` (already populated by the time it runs) and
     /// spans are unique per body, caching each node's result collapses the walk
     /// to a single pass.
-    pub is_binding_cache: HashMap<ExprId, Vec<(String, TyId)>>,
+    pub is_binding_cache: HashMap<(ExprId, bool), Vec<(String, TyId)>>,
     /// T3.4: a pattern-bound name's resolved type, keyed by the binding
     /// `Ident`'s own span. Deliberately **not** `ExprId`-keyed and not
     /// folded into `expr_types` — a `Pattern::Binding` is not an `Expr` and

@@ -35,6 +35,11 @@ out/workers/notes/
 └── wrangler.toml    # Cloudflare config
 ```
 
+A workers build is the deployable, so it doesn't write your unit test modules
+(`bynkc test` compiles and stages those itself). If the project has integration
+suites, which stand their contexts up as real Workers, it writes those, with a
+`tests/main.ts` that runs just them (#1655).
+
 The emitted directory is a standard Worker. Run it locally with
 [Wrangler](https://developers.cloudflare.com/workers/wrangler/):
 

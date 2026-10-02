@@ -37,6 +37,24 @@ commons test {
 }
 ```
 
+Bindings also reach the right operand of `&&` (and of `implies`), which runs
+only when the left matched, and the `else` of a negated test:
+
+```bynk
+commons test {
+  fn positive(o: Option[Int]) -> Bool {
+    o is Some(v) && v > 0
+  }
+
+  fn orZero(o: Option[Int]) -> Int {
+    if !(o is Some(v)) { 0 } else { v }
+  }
+}
+```
+
+They don't reach the right operand of `||`, which runs when the left *didn't*
+match, or anything after the `if`.
+
 ## Narrow to a refined type
 
 `is` also works on **refined types**: `value is Quantity` runs the refinement's

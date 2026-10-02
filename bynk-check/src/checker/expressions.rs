@@ -1636,7 +1636,15 @@ pub(crate) fn check_if(
             _ => None,
         };
     }
+    // #1654: the bindings the condition's *falsity* proves are in scope in the
+    // else-branch (`if !(o is Some(v)) { 0 } else { v }`, type-system §2.3.6).
+    let else_bindings = collect_is_bindings_when(cond, false, ctx);
+    ctx.push_scope();
+    for (name, ty) in else_bindings {
+        ctx.bind(name, ty);
+    }
     let else_ty = type_of_block(else_block, expected, ctx);
+    ctx.pop_scope();
     match (then_ty, else_ty) {
         (Some(t), Some(e)) => match join_ty(t, e, tys) {
             Some(joined) => Some(joined),
@@ -3870,75 +3878,78 @@ fn validate_is_nested_payloads(
     }
 }
 
-/// Collect the bindings introduced by `is` patterns inside a condition
-/// expression. Currently we recognise:
-///  - `expr is Pat`
-///  - `lhs && rhs`        (recursive into both sides; later wins on collision)
-///  - `(expr)` parens
+/// The bindings the `is` tests in a condition introduce when it is true: the
+/// tests [`crate::narrowing::matched_is_tests`] proves matched (#1654, the rule
+/// the resolver and the emitter share). Later wins on a name collision.
 fn collect_is_bindings(expr: &Expr, ctx: &mut Ctx) -> Vec<(String, TyId)> {
-    // Memoised per condition sub-expression span (see `Ctx::is_binding_cache`).
-    // Without this, a left-nested `&&` chain re-walks each lhs subtree once per
-    // enclosing node — O(N²) for an N-term chain. The collector is a pure read
-    // of `expr_types` (populated before it runs) and `ctx.input.types`, so a
-    // per-span cache is sound and collapses the chain to a single pass. The
-    // `&&`/paren recursion below goes through this memoised entry, so inner
-    // nodes are cached as they are visited.
-    if let Some(cached) = ctx.is_binding_cache.get(&expr.id) {
+    collect_is_bindings_when(expr, true, ctx)
+}
+
+/// [`collect_is_bindings`] for either outcome of the condition: `when_true ==
+/// false` is the else-branch's scope (`if !(o is Some(v)) { … } else { v }`).
+pub(crate) fn collect_is_bindings_when(
+    expr: &Expr,
+    when_true: bool,
+    ctx: &mut Ctx,
+) -> Vec<(String, TyId)> {
+    // Memoised per (condition sub-expression, outcome) (see
+    // `Ctx::is_binding_cache`). A left-nested `&&` chain asks for each lhs
+    // subtree once per enclosing node; the cache keeps the binding work (the
+    // pattern walk over `expr_types`) to one pass per test. The collector is a
+    // pure read of `expr_types` (populated before it runs) and
+    // `ctx.input.types`, so a per-key cache is sound.
+    if let Some(cached) = ctx.is_binding_cache.get(&(expr.id, when_true)) {
         return cached.clone();
     }
     let mut out = Vec::new();
-    collect_is_bindings_into(expr, ctx, &mut out);
-    ctx.is_binding_cache.insert(expr.id, out.clone());
+    for test in crate::narrowing::matched_is_tests(expr, when_true) {
+        bindings_of_is_test(test, ctx, &mut out);
+    }
+    ctx.is_binding_cache
+        .insert((expr.id, when_true), out.clone());
     out
 }
 
-fn collect_is_bindings_into(expr: &Expr, ctx: &mut Ctx, out: &mut Vec<(String, TyId)>) {
+/// The bindings one `is` test introduces when it has matched.
+fn bindings_of_is_test(expr: &Expr, ctx: &mut Ctx, out: &mut Vec<(String, TyId)>) {
     let tys = ctx.tys;
-    match &expr.kind {
-        ExprKind::Is { value, pattern } => {
-            // Recompute value type from the expr_types side-table; this avoids
-            // mutating type-checking state. If we don't have it, fall back to
-            // recomputing.
-            let value_ty = ctx.expr_types.get(&value.id).map(|te| te.ty);
-            if let Some(value_ty) = value_ty {
-                // v0.13 refinement narrowing: `ident is RefinedType` re-binds the
-                // identifier to the refined type in the narrowed branch.
-                if let (
-                    ExprKind::Ident(id),
-                    Pattern::Variant {
-                        variant,
-                        bindings,
-                        type_name: None,
-                        ..
-                    },
-                ) = (&value.kind, pattern.as_ref())
-                    && bindings.is_empty()
-                    && variants_of(value_ty, &ctx.input.types, tys)
-                        .is_none_or(|vs| !vs.iter().any(|v| v.name == variant.name))
-                    && let Some(decl) = ctx.input.types.get(&variant.name)
-                    && let TypeBody::Refined { base, .. } = &decl.body
-                    && compatible(value_ty, tys.intern(Ty::Base(*base)), tys)
-                {
-                    out.push((
-                        id.name.clone(),
-                        tys.intern(Ty::Named {
-                            name: variant.name.clone(),
-                            kind: NamedKind::Refined(*base),
-                            args: Vec::new(),
-                        }),
-                    ));
-                    return;
-                }
-                gather_pattern_bindings(value_ty, pattern, &ctx.input.types, out, tys);
-            }
-        }
-        ExprKind::BinOp(BinOp::And, lhs, rhs) => {
-            out.extend(collect_is_bindings(lhs, ctx));
-            out.extend(collect_is_bindings(rhs, ctx));
-        }
-        ExprKind::Paren(inner) => out.extend(collect_is_bindings(inner, ctx)),
-        _ => {}
+    let ExprKind::Is { value, pattern } = &expr.kind else {
+        return;
+    };
+    // Recompute value type from the expr_types side-table; this avoids
+    // mutating type-checking state.
+    let Some(value_ty) = ctx.expr_types.get(&value.id).map(|te| te.ty) else {
+        return;
+    };
+    // v0.13 refinement narrowing: `ident is RefinedType` re-binds the
+    // identifier to the refined type in the narrowed branch.
+    if let (
+        ExprKind::Ident(id),
+        Pattern::Variant {
+            variant,
+            bindings,
+            type_name: None,
+            ..
+        },
+    ) = (&value.kind, pattern.as_ref())
+        && bindings.is_empty()
+        && variants_of(value_ty, &ctx.input.types, tys)
+            .is_none_or(|vs| !vs.iter().any(|v| v.name == variant.name))
+        && let Some(decl) = ctx.input.types.get(&variant.name)
+        && let TypeBody::Refined { base, .. } = &decl.body
+        && compatible(value_ty, tys.intern(Ty::Base(*base)), tys)
+    {
+        out.push((
+            id.name.clone(),
+            tys.intern(Ty::Named {
+                name: variant.name.clone(),
+                kind: NamedKind::Refined(*base),
+                args: Vec::new(),
+            }),
+        ));
+        return;
     }
+    gather_pattern_bindings(value_ty, pattern, &ctx.input.types, out, tys);
 }
 
 fn gather_pattern_bindings(
