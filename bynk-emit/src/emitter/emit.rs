@@ -325,7 +325,7 @@ fn emit_refined_checks(
         ));
     }
     if let Some(r) = refinement {
-        for pred in &r.predicates {
+        for pred in bynk_syntax::ast::in_check_order(&r.predicates, |p| &p.kind) {
             emit_pred_check(out, name, &pred.kind);
         }
     }

@@ -1038,7 +1038,7 @@ fn emit_inline_refinement_checks(
             )),
         }
     }
-    for pred in predicates {
+    for pred in bynk_syntax::ast::in_check_order(predicates, |p| p) {
         stmts.extend(emit_inline_pred_check(pred, &violation));
     }
     stmts

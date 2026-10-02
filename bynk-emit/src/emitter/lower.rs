@@ -3792,7 +3792,8 @@ fn lower_bytes_kernel(
 }
 
 /// v0.22a: lower a built-in `String` kernel method (ADR 0046). Pinned
-/// semantics: `replace` is replace-**all** (`replaceAll`); `chars()` is
+/// semantics: `replace` is replace-**all** (`replaceAll`) and inserts its
+/// replacement literally (#1650); `chars()` is
 /// code **points** (`[...s]`), not code units; `slice` clamps negative
 /// indices to `0` (no TS wrap-around); `indexOf` turns `-1` into `None`.
 fn lower_string_kernel(
@@ -3847,7 +3848,13 @@ fn lower_string_kernel(
             let recv = pre.lower(receiver, cx);
             let from = pre.lower(from, cx);
             let to = pre.lower(to, cx);
-            Some(format!("{recv}.replaceAll({from}, {to})"))
+            // #1650: a *string* replacement is `$`-expanded by JS (`$&`, `$1`,
+            // `` $` ``, `$'`, `$$`); a function replacer's return value never is,
+            // so the replacement is inserted literally. `to` is a pure
+            // expression, so its result is the same either way, but it is
+            // evaluated once per match (and not at all with no match), so a
+            // costly replacement is recomputed.
+            Some(format!("{recv}.replaceAll({from}, () => {to})"))
         }
         ("slice", [lo, hi]) => {
             let recv = pre.lower(receiver, cx);
@@ -6155,7 +6162,7 @@ fn refined_check_as_bool(recv: &str, base: BaseType, refinement: Option<&Refinem
         terms.push(format!("Number.isFinite({recv})"));
     }
     if let Some(r) = refinement {
-        for p in &r.predicates {
+        for p in bynk_syntax::ast::in_check_order(&r.predicates, |p| &p.kind) {
             terms.push(match &p.kind {
                 PredKind::NonNegative => format!("{recv} >= 0"),
                 PredKind::Positive => format!("{recv} > 0"),

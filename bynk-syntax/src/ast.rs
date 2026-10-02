@@ -1964,6 +1964,24 @@ impl PredKind {
     }
 }
 
+/// #1651: the order a refinement's predicates are **checked** in at runtime:
+/// every `Matches` after every other predicate, and otherwise source order.
+///
+/// A `Matches` pattern may take time polynomial in the input's length, and a
+/// `MaxLength`/`Length` bound is what caps it (`bynk.types.polynomial_regex_capped`),
+/// so the length checks must run first wherever the author wrote them. The order
+/// is observable only in which failure a value failing several predicates
+/// reports. Every runtime check site (`.of`, the boundary codec, `is`) and the
+/// checker's compile-time literal check use this order, so they agree. The
+/// canonical form a contract fingerprint hashes sorts its own copy and is
+/// unaffected.
+pub fn in_check_order<T>(preds: &[T], kind: impl Fn(&T) -> &PredKind) -> Vec<&T> {
+    let (regex, rest): (Vec<&T>, Vec<&T>) = preds
+        .iter()
+        .partition(|p| matches!(kind(p), PredKind::Matches(_)));
+    rest.into_iter().chain(regex).collect()
+}
+
 /// A function type parameter (v0.20a, `fn name[A, B](…)`). A struct rather
 /// than a bare Ident so the ADR-0028 "bound-capable" promise is a later field
 /// addition, not a representation change.

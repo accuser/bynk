@@ -1,0 +1,22 @@
+---
+#1651: a `Matches` pattern with polynomial ambiguity (`\d*\d*` splits a run of
+digits between its two loops in quadratically many ways) is an error unless a
+length predicate bounds the input. Here `MaxLength` does, so it is a warning.
+The `MaxLength` is written *after* the `Matches`: the emitter checks length
+predicates first wherever they are written, so the bound caps the regex either
+way.
+---
+commons demo.codes
+
+type Code = String where Matches("\\d*-?\\d*") && MaxLength(16)
+
+fn accepts(s: String) -> Bool {
+  match Code.of(s) {
+    Ok(_) => true
+    Err(_) => false
+  }
+}
+
+fn admits(s: String) -> Bool {
+  s is Code
+}

@@ -13,7 +13,7 @@ Track slice T0.0 (#999); `ts_writes`/`ts_any` added by P7.0 (#1296); `verbatim_o
 | `options_sources` | yes | present |
 | `hoist_sinks` | yes | 0 |
 | `span_keyed_maps` | yes | 4 |
-| `emit_diagnostics` | yes | bynk-emit=4/6, bynk-check=390/398 (true/naive) |
+| `emit_diagnostics` | yes | bynk-emit=4/6, bynk-check=392/400 (true/naive) |
 | `ide_emit_edge` | yes | absent |
 | `ast_importers` | yes | 5 |
 | `emit_abi_shapes` | yes | 1 (bynk-cloudflare.ts:negotiateLocale) |
@@ -24,9 +24,9 @@ Track slice T0.0 (#999); `ts_writes`/`ts_any` added by P7.0 (#1296); `verbatim_o
 | `incremental_query_types` | yes | unit_signature present; shared_cache migrated; stability_test present; definition/project levels absent (deleted by #1537) |
 | `unconsumed_ir_items` | yes | 0 |
 | `wildcard_arms` | no (trend) | 310 |
-| `keep_in_sync` | no (trend) | 202 |
-| `test_density` | no (trend) | bynk=13.6%, bynk-check=9.7%, bynk-driver=22.3%, bynk-emit=11.8%, bynk-fmt=15.6%, bynk-grammar=33.2%, bynk-ide=41.0%, bynk-ir=0.0%, bynk-lower=65.9%, bynk-lsp=35.7%, bynk-project=37.6%, bynk-render=41.8%, bynk-strip=53.5%, bynk-syntax=10.7%, bynk-testkit=0.0%, bynk-ts=57.2%, bynk-wasm=45.1%, bynkc=0.0%, xtask=41.2% |
-| `fixture_kinds` | no (trend) | contains=3, absent=2, diagnostics=5, error=428, warnings=5, run=74 |
+| `keep_in_sync` | no (trend) | 203 |
+| `test_density` | no (trend) | bynk=13.6%, bynk-check=9.8%, bynk-driver=22.3%, bynk-emit=11.8%, bynk-fmt=15.6%, bynk-grammar=33.2%, bynk-ide=41.0%, bynk-ir=0.0%, bynk-lower=65.9%, bynk-lsp=35.7%, bynk-project=37.6%, bynk-render=41.8%, bynk-strip=53.5%, bynk-syntax=10.7%, bynk-testkit=0.0%, bynk-ts=57.2%, bynk-wasm=45.1%, bynkc=0.0%, xtask=41.2% |
+| `fixture_kinds` | no (trend) | contains=3, absent=2, diagnostics=5, error=437, warnings=6, run=76 |
 | `keystroke_latency` | no (trend) | not measured — no scheduler exists yet (R3.15, deferred whole this phase) |
 
 ## Rules closed

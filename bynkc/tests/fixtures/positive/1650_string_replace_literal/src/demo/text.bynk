@@ -1,0 +1,10 @@
+---
+#1650: `String.replace` inserts its replacement literally. JS expands `$&`, `$1`,
+`` $` ``, `$'` and `$$` in a string replacement; the emitted function replacer
+means none of them is special.
+---
+commons demo.text
+
+fn rep(s: String, target: String, with: String) -> String {
+  s.replace(target, with)
+}

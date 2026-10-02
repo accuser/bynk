@@ -1,0 +1,1 @@
+bynk.types.catastrophic_regex the pattern in `Matches("(?:a|a){0,24}")` can match the same text in exponentially many ways

@@ -12,7 +12,7 @@ export function shout(s: string): string {
 }
 
 export function redact(s: string, secret: string): string {
-  return s.replaceAll(secret, "***");
+  return s.replaceAll(secret, () => "***");
 }
 
 export function initials(s: string): readonly string[] {

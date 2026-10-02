@@ -1834,7 +1834,7 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     ),
     dg(
         "bynk.types.catastrophic_regex",
-        "A `Matches` predicate nests unbounded quantifiers, risking catastrophic backtracking (ReDoS).",
+        "A `Matches` pattern can match the same text in exponentially many ways (nested or ambiguous repetition, bounded or not), or cannot be analysed, risking catastrophic backtracking (ReDoS).",
         &["refinement"],
     ),
     dg(
@@ -2084,6 +2084,16 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         &["variant_pattern"],
     ),
     dg(
+        "bynk.types.polynomial_regex",
+        "A `Matches` pattern can split the same text between repetitions, so matching time grows polynomially with input length, and no length predicate bounds the input small enough for its degree.",
+        &["refinement"],
+    ),
+    warn(dg(
+        "bynk.types.polynomial_regex_capped",
+        "A `Matches` pattern's matching time grows polynomially with input length, but a `MaxLength` or `Length` predicate bounds the input small enough for its degree (warning).",
+        &["refinement"],
+    )),
+    dg(
         "bynk.types.predicate_base_mismatch",
         "A predicate does not apply to the type's base (e.g. a string predicate on an `Int`).",
         &["refinement"],
@@ -2293,7 +2303,7 @@ const fn dg(
 }
 
 /// Downgrades a [`d`]/[`dg`]-built entry to `Warning` severity (ADR 0117) —
-/// non-failing, surfaced alongside a clean build. The six call sites here are
+/// non-failing, surfaced alongside a clean build. The seven call sites here are
 /// the single source of truth [`crate::error::Severity::for_error`] reads.
 const fn warn(mut info: DiagnosticInfo) -> DiagnosticInfo {
     info.severity = Severity::Warning;

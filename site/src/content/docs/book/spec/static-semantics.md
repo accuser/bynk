@@ -159,7 +159,8 @@ character access — so its operations are built-in value methods:
 `s.replace(a, b)`, `s.slice(lo, hi)`, `s.indexOf(sub) -> Option[Int]`,
 and `s.chars() -> List[String]`. **Semantics are UTF-16 code units**,
 normatively, with two pinned exceptions: `replace` replaces **every**
-occurrence (not TS's first-only string form), and `chars()` splits by
+occurrence (not TS's first-only string form) and inserts `b` **literally**
+(no `$&`, `$1`, `` $` ``, `$'` or `$$` expansion, #1650), and `chars()` splits by
 **code points** (so `s.length() != s.chars().length()` when `s` contains
 astral characters). `slice` clamps negative indices to `0` — there is no
 wrap-around. `indexOf` returns `None` for a missing substring, never a
@@ -350,13 +351,42 @@ an `Int` is rejected (`bynk.types.predicate_base_mismatch`) — and MUST be
 internally consistent: an `InRange` MUST NOT be inverted
 (`bynk.types.inverted_range`), a length MUST NOT be negative
 (`bynk.types.negative_length`), a `Matches` regex MUST be valid
-(`bynk.types.invalid_regex`) and MUST NOT nest unbounded quantifiers — a repeated
-group that itself contains `*`, `+`, or `{n,}`, such as `(a+)+`, is rejected
-(`bynk.types.catastrophic_regex`) because the emitted boundary check runs under a
-backtracking `RegExp` where that shape is exponential on crafted input — and the
+(`bynk.types.invalid_regex`) and MUST be safe to backtrack (below), and the
 predicates together MUST admit at least one value (`bynk.types.empty_refinement`
 — on `Float`, `Positive` excludes the lower endpoint `0.0`, so
 `InRange(-1.0, 0.0) && Positive` is empty).
+
+**A `Matches` pattern MUST be unambiguous enough to backtrack in linear time**
+(#1651). The emitted boundary check runs the pattern under a backtracking
+`RegExp` on untrusted input, so a pattern that can match the same text along many
+paths is a denial-of-service risk. The compiler decides this on the pattern's
+automaton:
+
+- **Exponential ambiguity is rejected** (`bynk.types.catastrophic_regex`): a
+  repetition whose body can match the same text in two ways, so each repetition
+  doubles the paths. This covers nested repetition (`(a+)+`), overlapping
+  alternatives (`(a|a)+`, `(\d|\d\d)+`, `(a|aa)*`), a bounded repeat inside a
+  loop (`(a{1,2})+`, `(a{2,3})+`), and a bounded repeat of an ambiguous body
+  (`(?:a|a){0,24}`), which is exponential in its count. Alternatives that overlap but are uniquely
+  decodable are linear and accepted: `(foo|foobar)+`.
+- **Polynomial ambiguity is rejected** (`bynk.types.polynomial_regex`): two
+  repetitions that can divide the same text between them (`\d*\d*`), so matching
+  time grows with the input's length to a power, the **degree** (the longest
+  chain of repetitions that can split text this way: `\d*\d*\d*` is 3). When
+  the refinement also has a `MaxLength` or `Length` bound `L` with
+  `L^degree ≤ 10⁷` (3,162 characters at degree 2, 215 at degree 3), it is a
+  **warning** (`bynk.types.polynomial_regex_capped`) instead: length predicates
+  are checked before every `Matches`, wherever they are written, so the bound
+  caps the cost. A larger bound is still an error.
+- **A pattern the analysis cannot bound is rejected**
+  (`bynk.types.catastrophic_regex`): a backreference under an unbounded
+  quantifier, an unbounded quantifier over a body that can match the empty
+  string (`(a?b?)*`), or a pattern too large or too complex to analyse.
+
+The analysis over-approximates in the safe direction: it reads assertions and
+lookarounds as matching anything (analysing each lookaround body as a pattern of
+its own), and a backreference as an optional copy of its group. So it can reject
+a pattern that is in fact safe, never accept one that is not.
 
 `InRange` bounds MUST match the numeric base (v0.21): integer bounds on
 `Int`, float bounds on `Float`. A bound of the other numeric type, or a
