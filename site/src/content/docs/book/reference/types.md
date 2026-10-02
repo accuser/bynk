@@ -5,7 +5,7 @@ title: Type system
 
 | Type | Values | Emits |
 |---|---|---|
-| `Int` | integer literals (`0`, `-42`) | `number` |
+| `Int` | integer literals (`0`, `-42`); a JS safe integer, ±(2^53 − 1) | `number` |
 | `Float` | float literals (`1.5`, `0.0`, `-3.14`) | `number` |
 | `String` | string literals (`"…"`) | `string` |
 | `Bool` | `true`, `false` | `boolean` |
@@ -16,8 +16,12 @@ title: Type system
 The unit type is written `()`. `Int` and `Float` are **distinct and
 incompatible** — there is no implicit coercion (`bynk.types.no_numeric_coercion`).
 Convert explicitly: `i.toFloat()` (Int → Float, total) or `f.round()` /
-`f.floor()` / `f.ceil()` / `f.truncate()` (Float → Int); parse a string with
-`Int.parse(s)` / `Float.parse(s)`, each returning `Option`.
+`f.floor()` / `f.ceil()` / `f.truncate()` (Float → Int, a runtime fault when the
+result is not a safe integer); parse a string with `Int.parse(s)` /
+`Float.parse(s)`, each returning `Option` and accepting a strict full-string
+decimal only (`" 7 "`, `"0x10"` and, for `Int`, `"1e3"` are `None`). An `Int`
+is a JS safe integer at every entry point: a larger literal, a wire value, a
+parse result or a conversion is rejected, and `Int` division by zero faults.
 
 ### Duration
 

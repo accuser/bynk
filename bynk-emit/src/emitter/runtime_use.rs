@@ -92,6 +92,9 @@ pub(crate) struct RuntimeUse {
     bytes: Cell<bool>,
     /// #1652: the module references `__bynkEq` (structural `==`).
     eq: Cell<bool>,
+    /// #1657: the module references the `Int` domain traps (`__bynkIntDiv`,
+    /// `__bynkToInt`).
+    int: Cell<bool>,
     icu: Cell<bool>,
     boundary_codec: Cell<bool>,
     json_codec: Cell<bool>,
@@ -126,6 +129,12 @@ impl RuntimeUse {
     /// walker behind `==`/`!=` on a non-primitive operand (#1652).
     pub fn note_eq(&self) {
         self.eq.set(true);
+    }
+
+    /// Record that the module references the `Int` domain traps: `Int` division
+    /// (`__bynkIntDiv`) or a Float→`Int` conversion (`__bynkToInt`), #1657.
+    pub fn note_int(&self) {
+        self.int.set(true);
     }
 
     /// Record that the module references the ICU formatting helpers.
@@ -181,6 +190,11 @@ impl RuntimeUse {
     /// Whether `__bynkEq` must be imported (#1652).
     pub fn eq(&self) -> bool {
         self.eq.get()
+    }
+
+    /// Whether the `Int` domain traps must be imported (#1657).
+    pub fn int(&self) -> bool {
+        self.int.get()
     }
 
     /// Whether the `Ok` / `Err` / `Result` / `BoundaryError` group must be

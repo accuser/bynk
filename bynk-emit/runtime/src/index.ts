@@ -4,6 +4,7 @@
 export * from "./result.ts";
 export * from "./bytes.ts";
 export * from "./equality.ts";
+export * from "./int.ts";
 export * from "./errors.ts";
 export * from "./storage.ts";
 export * from "./boundary.ts";
