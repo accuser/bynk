@@ -1,0 +1,20 @@
+context a
+
+agent Counter {
+  key id: String
+  store n: Cell[Int] = 0
+  on call get() -> Effect[Int] { n }
+}
+
+type ApiResult[T] =
+  | Loaded(v: T)
+  | Failed
+
+-- #1658: the qualified spelling `ApiResult.Loaded(…)` is the same construction (review of #1694).
+service s {
+  on call() -> Effect[Int] {
+    let r = ApiResult.Loaded(Counter("k").get())
+    let v <- Counter("k").get()
+    Effect.pure(v)
+  }
+}

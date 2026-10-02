@@ -4059,7 +4059,13 @@ fn check_unbound_effects(e: &Expr, allowed: bool, ctx: &mut Ctx) {
                 check_unbound_effects(a, false, ctx);
             }
         }
+        // A variant constructor in every spelling: `Loaded(x)` is a `Call`;
+        // the qualified `ApiResult.Loaded(x)` parses as a `MethodCall` on the
+        // type name, or a `ConstructorCall`. All resolve to `Callee::Ctor` on
+        // their own expression (review of #1694).
         ExprKind::Call { args, .. }
+        | ExprKind::MethodCall { args, .. }
+        | ExprKind::ConstructorCall { args, .. }
             if matches!(ctx.callees.get(&e.id), Some(Callee::Ctor { .. })) =>
         {
             for a in args {

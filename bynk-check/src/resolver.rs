@@ -602,16 +602,19 @@ pub fn resolve(commons: Commons) -> Result<ResolvedCommons, Vec<CompileError>> {
             CommonsItem::Fn(f) => {
                 check_fn_refs(f, &types, &fns, &methods, &mut sinks);
             }
-            CommonsItem::Capability(_) | CommonsItem::Service(_) | CommonsItem::Agent(_) => {
+            // v0.5 items' bodies are resolved via a separate context-level
+            // pass; their signatures here (#1679).
+            CommonsItem::Capability(_)
+            | CommonsItem::Service(_)
+            | CommonsItem::Agent(_)
+            | CommonsItem::Provider(_)
+            | CommonsItem::Actor(_) => {
                 check_signature_refs(item, &types, &mut sinks);
             }
-            // v0.5 items' bodies are resolved via a separate context-level pass.
-            CommonsItem::Provider(_)
-            | CommonsItem::Actor(_)
             // `messages` entries are plain string literals with no type refs
             // to resolve here; commons-only legality and the reference/
             // duplicate-code checks live in bynk-emit's project validation.
-            | CommonsItem::Messages(_) => {}
+            CommonsItem::Messages(_) => {}
         }
     }
 
@@ -687,15 +690,17 @@ pub fn resolve_file_record(
                     &mut sinks,
                 );
             }
-            CommonsItem::Capability(_) | CommonsItem::Service(_) | CommonsItem::Agent(_) => {
+            CommonsItem::Capability(_)
+            | CommonsItem::Service(_)
+            | CommonsItem::Agent(_)
+            | CommonsItem::Provider(_)
+            | CommonsItem::Actor(_) => {
                 check_signature_refs(item, &resolved.types, &mut sinks);
             }
-            CommonsItem::Provider(_)
-            | CommonsItem::Actor(_)
             // `messages` entries are plain string literals with no type refs
             // to resolve here; commons-only legality and the reference/
             // duplicate-code checks live in bynk-emit's project validation.
-            | CommonsItem::Messages(_) => {}
+            CommonsItem::Messages(_) => {}
         }
         sinks.refs.clear_owner();
     }
@@ -716,7 +721,11 @@ pub fn resolve_file_record(
 /// - an agent's key type and its `store` fields' kind arguments
 ///   (`Cell[T]`, `Map[K, V]`, …);
 /// - capability operation parameters and return types, with the operation's
-///   own type parameters in scope.
+///   own type parameters in scope;
+/// - a service header's types: a `from websocket(in: …, out: …)` frame pair
+///   and a `from events(…)` event type;
+/// - provider operation parameters and return types;
+/// - an actor's `identity` type.
 fn check_signature_refs(
     item: &CommonsItem,
     types: &HashMap<String, Arc<TypeDecl>>,
@@ -730,8 +739,34 @@ fn check_signature_refs(
     };
     match item {
         CommonsItem::Service(s) => {
+            match &s.protocol {
+                ServiceProtocol::WebSocket { in_type, out_type } => {
+                    check_type_ref_resolves(in_type, types, sinks);
+                    check_type_ref_resolves(out_type, types, sinks);
+                }
+                ServiceProtocol::Events { event_type, .. } => {
+                    check_type_ref_resolves(event_type, types, sinks);
+                }
+                ServiceProtocol::Call
+                | ServiceProtocol::Http
+                | ServiceProtocol::Cron
+                | ServiceProtocol::Queue { .. } => {}
+            }
             for h in &s.handlers {
                 handler(h, sinks);
+            }
+        }
+        CommonsItem::Provider(p) => {
+            for op in &p.ops {
+                for param in &op.params {
+                    check_type_ref_resolves(&param.type_ref, types, sinks);
+                }
+                check_type_ref_resolves(&op.return_type, types, sinks);
+            }
+        }
+        CommonsItem::Actor(a) => {
+            if let Some(identity) = &a.identity {
+                check_type_ref_resolves(identity, types, sinks);
             }
         }
         CommonsItem::Agent(a) => {
@@ -761,8 +796,6 @@ fn check_signature_refs(
         CommonsItem::Type(_)
         | CommonsItem::Event(_)
         | CommonsItem::Fn(_)
-        | CommonsItem::Provider(_)
-        | CommonsItem::Actor(_)
         | CommonsItem::Messages(_) => {}
     }
 }

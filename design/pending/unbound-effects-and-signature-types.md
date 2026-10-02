@@ -1,6 +1,6 @@
 ---
 level: minor
-changelog: "An `Effect` value in an effectful body must now be awaited in order: bound with `<-`, sequenced with `do`, returned, or passed to a parameter that takes it (#1658). Building one in a value position is the new error `bynk.effect.unbound_effect`. That covers a plain `let` (`let e = Counter(\"k\").bump()`, `let _ = …`, an `Effect`-annotated `let`), a list element, and the payload of `Some`/`Ok`/`Err`, a variant or a record field. Effectful calls translate to eager promises, so such a call still ran, unawaited and racing the statements after it, with no diagnostic. Separately, a type named in a service or agent handler signature, an agent's key or `store` field type, or a capability operation signature must now resolve, as in a `fn` signature (#1679). `on call(v: Bogus)` and `Effect[Unit]` (Bynk's unit is `()`) were accepted, and the emitter wrote a `/* unknown */` placeholder; they are now `bynk.resolve.unknown_type`."
+changelog: "An `Effect` value in an effectful body must now be awaited in order: bound with `<-`, sequenced with `do`, returned, or passed to a parameter that takes it (#1658). Building one in a value position is the new error `bynk.effect.unbound_effect`. That covers a plain `let` (`let e = Counter(\"k\").bump()`, `let _ = …`, an `Effect`-annotated `let`), a list element, and the payload of `Some`/`Ok`/`Err`, a variant or a record field. Effectful calls translate to eager promises, so such a call still ran, unawaited and racing the statements after it, with no diagnostic. Separately, a type named in a service or agent handler signature, a `from websocket`/`from events` service header, an agent's key or `store` field type, a capability or provider operation signature, or an actor's `identity` must now resolve, as in a `fn` signature (#1679). `on call(v: Bogus)` and `Effect[Unit]` (Bynk's unit is `()`) were accepted, and the emitter wrote a `/* unknown */` placeholder; they are now `bynk.resolve.unknown_type`."
 ---
 
 ## ADR: unbound-effect-is-an-error
@@ -28,7 +28,8 @@ found no legitimate unbound use (track doc, S9).
      `Effect`-annotated `let`;
    - a list literal's element. No API takes `List[Effect[T]]`, and a list's
      element type is inferred from its elements, so it cannot vouch for them;
-   - the payload of `Some`/`Ok`/`Err`, a sum-variant constructor, or a record
+   - the payload of `Some`/`Ok`/`Err`, a sum-variant constructor in either
+     spelling (`Loaded(x)` or the qualified `ApiResult.Loaded(x)`), or a record
      field (construction or spread override).
 3. **Where it doesn't.** The legal uses:
    - the right-hand side of `<-`, the operand of `do`, and a block's tail;
@@ -47,8 +48,8 @@ source order, except a `~>` send, which is deliberately fire-and-forget. Newly
 rejected programs were already racing. The positive corpus compiles unchanged.
 
 Proved by:
-- six negative fixtures: plain `let`, `let _ =`, annotated `let`, list,
-  `Some`, record field;
+- eight negative fixtures: plain `let`, `let _ =`, annotated `let`, list,
+  `Some`, record field, and a variant payload in both spellings;
 - the positive fixture `1658_effect_values_bound`, covering `<-`, `do`, the
   tail, and an `Effect` passed to a parameter typed `Effect[Int]` that binds
   it.
