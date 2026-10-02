@@ -761,6 +761,34 @@ fn check_service_protocols(table: &UnitTable, errors: &mut Vec<CompileError>, ty
                     ),
                 ));
             }
+            // #1657 (runtime-semantics track §3.4): an `on open` parameter
+            // arrives as a query-string value (`url.searchParams.get`), which the
+            // upgrade passes on unparsed. A `room: Int` was a string cast `as
+            // number`, so `room + 1` gave `"51"` and `?room=05` reached a
+            // different agent than `Room(5)`. Like an HTTP path parameter
+            // (`bynk.http.path_param_not_stringy`), it must be constructible from
+            // `String`. `on message`/`on close` route values are a prefix of
+            // these, so they inherit the rule.
+            for open in &opens {
+                for p in &open.params {
+                    if !is_string_constructible(&p.type_ref, &table.types) {
+                        errors.push(
+                            CompileError::new(
+                                "bynk.service.websocket_param_not_stringy",
+                                p.type_ref.span(),
+                                format!(
+                                    "the `on open` parameter `{}` must have a type constructible from `String` (got `{}`)",
+                                    p.name.name,
+                                    ts_type_ref_display(&p.type_ref),
+                                ),
+                            )
+                            .with_note(
+                                "it arrives as a query-string value; use `String`, a refined `String`, or an opaque type whose base is `String`, and parse an `Int` with `Int.parse` in the body",
+                            ),
+                        );
+                    }
+                }
+            }
             // v0.106 (slice 3b-iii): the inbound `on message` and `on close` are
             // optional but at most one each; an `on message` carries the decoded
             // inbound frame as the single param typed as the service's `in` type.

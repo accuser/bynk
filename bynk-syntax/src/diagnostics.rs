@@ -1629,6 +1629,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A `from websocket` service must hold exactly one `on open` handler (the edge upgrade), and at most one `on message` (inbound) and one `on close` (real-time track slice 3/3b-iii).",
     ),
     d(
+        "bynk.service.websocket_param_not_stringy",
+        "A `from websocket` service's `on open` parameter has a type not constructible from `String`; it arrives as a query-string value (#1657).",
+    ),
+    d(
         "bynk.store.annotation_kind_mismatch",
         "A storage annotation is used on a kind it does not apply to (e.g. `@ttl` on a `Map`).",
     ),

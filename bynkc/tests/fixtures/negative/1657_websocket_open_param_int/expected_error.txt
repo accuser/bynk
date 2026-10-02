@@ -1,0 +1,1 @@
+bynk.service.websocket_param_not_stringy the `on open` parameter `room` must have a type constructible from `String` (got `Int`)
