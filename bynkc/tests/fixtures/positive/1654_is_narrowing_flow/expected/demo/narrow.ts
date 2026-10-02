@@ -78,3 +78,20 @@ export function sumOrZero(a: Option<number>, b: Option<number>): number {
     return x + y;
   }
 }
+
+export function either(a: Option<number>, b: Option<number>): number {
+  return (a.tag === "Some" || b.tag === "Some" ? 1 : 0);
+}
+
+export function eitherOr(a: Option<number>, b: Option<number>, r: Result<number, string>): Result<number, string> {
+  let __r1: number;
+  if (a.tag === "Some" || b.tag === "Some") {
+    const __r0 = r;
+    if (__r0.tag === "Err") return __r0;
+    __r1 = __r0.value;
+  } else {
+    __r1 = 0;
+  }
+  const n = __r1;
+  return Ok(n);
+}

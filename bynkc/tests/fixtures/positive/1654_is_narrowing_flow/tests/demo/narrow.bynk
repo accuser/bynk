@@ -37,3 +37,15 @@ case "a negated disjunction binds both into the else-branch" {
   expect sumOrZero(Some(2), None) == 0
   expect sumOrZero(None, Some(3)) == 0
 }
+
+case "a non-negated || narrows nothing but still tests" {
+  expect either(Some(1), None) == 1
+  expect either(None, Some(1)) == 1
+  expect either(None, None) == 0
+  let five: Result[Int, String] = Ok(5)
+  let zero: Result[Int, String] = Ok(0)
+  let bad: Result[Int, String] = Err("x")
+  expect eitherOr(Some(1), None, five) == five
+  expect eitherOr(None, None, five) == zero
+  expect eitherOr(Some(1), None, bad) == bad
+}

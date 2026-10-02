@@ -3892,18 +3892,34 @@ pub(crate) fn collect_is_bindings_when(
     when_true: bool,
     ctx: &mut Ctx,
 ) -> Vec<(String, TyId)> {
-    // Memoised per (condition sub-expression, outcome) (see
-    // `Ctx::is_binding_cache`). A left-nested `&&` chain asks for each lhs
-    // subtree once per enclosing node; the cache keeps the binding work (the
-    // pattern walk over `expr_types`) to one pass per test. The collector is a
-    // pure read of `expr_types` (populated before it runs) and
-    // `ctx.input.types`, so a per-key cache is sound.
+    // Memoised per (expression, outcome) in `Ctx::is_binding_cache`, at two
+    // grains (review of #1695):
+    // - each matched `is` test's own bindings, under `(test, true)`. A
+    //   left-nested `&&` chain `t1 && … && tN` asks for each lhs subtree once
+    //   per enclosing node, so each test is reached O(N) times, but its pattern
+    //   walk over `expr_types` (the real work) runs once;
+    // - the whole list for the asked `(expr, outcome)`, so a repeated ask (the
+    //   two `check_if` calls, a re-visit) returns at once.
+    // The structural walk `matched_is_tests` itself is not memoised: over a
+    // chain it is O(N²) node visits in total, pointer-chasing only, which keeps
+    // the scoping rule in one place (`crate::narrowing`) rather than restating
+    // its table here. The collector is a pure read of `expr_types` (populated
+    // before it runs) and `ctx.input.types`, so the cache is sound.
     if let Some(cached) = ctx.is_binding_cache.get(&(expr.id, when_true)) {
         return cached.clone();
     }
     let mut out = Vec::new();
     for test in crate::narrowing::matched_is_tests(expr, when_true) {
-        bindings_of_is_test(test, ctx, &mut out);
+        // A test's own bindings are the same as asking for the `is` node itself
+        // when true, so they share that key.
+        if let Some(cached) = ctx.is_binding_cache.get(&(test.id, true)) {
+            out.extend(cached.iter().cloned());
+            continue;
+        }
+        let mut own = Vec::new();
+        bindings_of_is_test(test, ctx, &mut own);
+        ctx.is_binding_cache.insert((test.id, true), own.clone());
+        out.extend(own);
     }
     ctx.is_binding_cache
         .insert((expr.id, when_true), out.clone());

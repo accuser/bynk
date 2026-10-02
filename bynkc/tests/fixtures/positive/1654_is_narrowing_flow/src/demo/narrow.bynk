@@ -44,3 +44,16 @@ fn orZero(o: Option[Int]) -> Int {
 fn sumOrZero(a: Option[Int], b: Option[Int]) -> Int {
   if !(a is Some(x)) || !(b is Some(y)) { 0 } else { x + y }
 }
+
+-- A non-negated `||` proves nothing in either branch, so it binds nothing and
+-- lowers as a plain ternary (review of #1695).
+fn either(a: Option[Int], b: Option[Int]) -> Int {
+  if a is Some(_) || b is Some(_) { 1 } else { 0 }
+}
+
+-- The same condition with a hoisting branch (`?`), which lowers through the
+-- hoisted-`if` statement form.
+fn eitherOr(a: Option[Int], b: Option[Int], r: Result[Int, String]) -> Result[Int, String] {
+  let n = if a is Some(_) || b is Some(_) { r? } else { 0 }
+  Ok(n)
+}

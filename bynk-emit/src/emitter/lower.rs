@@ -4394,10 +4394,11 @@ fn lower_if(
     }
 }
 
-/// True if `e` contains an `is` test reachable through `&&` and parentheses —
-/// matching exactly the shapes `gather_is_bindings_for_emit` walks (note: it
-/// does *not* descend into `||`). Used by `lower_and_with_is` to decide whether
-/// the `is`-binding flow applies before doing any lowering.
+/// True if `e` proves at least one `is` test when true — the tests
+/// `gather_is_bindings_for_emit` declares, by the shared rule
+/// [`bynk_check::narrowing::matched_is_tests`] (#1654), which descends `!`,
+/// `&&`, `||` and `implies` with polarity. Used by `lower_and_with_is` to decide
+/// whether the `is`-binding flow applies before doing any lowering.
 fn cond_contains_is(e: &Expr) -> bool {
     !bynk_check::narrowing::matched_is_tests(e, true).is_empty()
 }

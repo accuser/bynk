@@ -1956,7 +1956,15 @@ fn build_output(
     // v0.67: the discovery manifest — built from the combined runnable set before
     // anything consumes it, so `--no-run --format json` lists suites/cases without
     // running. Ordered by the runner's sort key to match a run's suite order.
-    let discovered = discovery_manifest(&runnable_tests);
+    // On `workers` it lists only what this build writes and `tests/main.ts` runs
+    // (#1655, review of #1695): the integration suites. `bynkc test` reads the
+    // manifest from its bundle compile, so the unit suites are still listed
+    // there.
+    let discovered = if workers {
+        discovery_manifest(&runnable_tests[unit_count..])
+    } else {
+        discovery_manifest(&runnable_tests)
+    };
 
     // v0.16: emit the combined top-level test runner once both passes are done,
     // so `tests/main.ts` aggregates unit and integration suites together (on
