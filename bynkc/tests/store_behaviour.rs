@@ -1289,6 +1289,15 @@ agent Calc {\n\
 \x20 on call encodeTimes(n: Int, k: Int) -> Effect[String] {\n\
 \x20   Json.encode(n * k)\n\
 \x20 }\n\
+\x20 on call encodeNested(n: Int, k: Int) -> Effect[String] {\n\
+\x20   let o: Option[Int] = Some(n * k)\n\
+\x20   let xs: List[Int] = [1, n * k]\n\
+\x20   Json.encode(o).concat(Json.encode(xs))\n\
+\x20 }\n\
+\x20 on call encodeList(n: Int, k: Int) -> Effect[String] {\n\
+\x20   let xs: List[Int] = [1, n * k]\n\
+\x20   Json.encode(xs)\n\
+\x20 }\n\
 \x20 on call store(n: Int, k: Int) -> Effect[()] {\n\
 \x20   last := n * k\n\
 \x20 }\n\
@@ -1350,6 +1359,12 @@ for (const how of ["round", "floor", "ceil", "truncate"]) {
 // Encode: in range is fine, out of range faults rather than writing null.
 assert((await c.encodeTimes(3, 4, {})) === "12", "Json.encode of a safe Int");
 await faults("Json.encode(2^53 * 4)", () => c.encodeTimes(9007199254740991, 4, {}), "safe-integer range");
+
+// Nested: an Int inside an Option or a List goes through the same guard,
+// via the generated instantiation codecs.
+assert((await c.encodeNested(3, 4, {})) === '{"kind":"Some","value":12}[1,12]', "nested safe Ints encode");
+await faults("Json.encode(Some(2^53 * 4))", () => c.encodeNested(9007199254740991, 4, {}), "safe-integer range");
+await faults("Json.encode([1, 2^53 * 4])", () => c.encodeList(9007199254740991, 4, {}), "safe-integer range");
 
 // Commit: an out-of-range Int is refused at encode, and nothing persists.
 await c.store(5, 2, {});
