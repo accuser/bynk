@@ -1877,12 +1877,12 @@ fn lower_method_call(
         return pre.finish(s);
     }
     // v0.22a: the numeric parse statics — `Int.parse(s)` /
-    // `Float.parse(s)` (ADR 0048). Full-string parse via `Number(…)`
-    // (which, unlike `parseFloat`, rejects trailing garbage); an
-    // empty/whitespace-only string would coerce to `0`, so it is
-    // rejected first. `Int` requires a safe integer (the honest
-    // runtime "overflow → None"); `Float` requires finite (the 0040
-    // posture).
+    // `Float.parse(s)` (ADR 0048). #1657 (runtime-semantics track §3.4): the
+    // whole string must match a strict decimal grammar before `Number(…)` sees
+    // it. `Number` alone accepts surrounding whitespace, `0x`/`0b`/`0o` prefixes
+    // and (for `Int`) exponents, so `" 7 "`, `"0x10"` and `"1e3"` parsed. `Int`
+    // is `[+-]?digits`, then a safe integer (`+ 0` turns `-0` into `0`); `Float`
+    // is a decimal with an optional exponent, then finite (the 0040 posture).
     // P6.21 (partial, continued): reads `Callee::Intrinsic` instead of
     // `id.name == INT || id.name == FLOAT` — see the `List`/`Map` branch
     // above. `Int`/`Float` are lexically reserved (the parser only admits
@@ -1897,13 +1897,17 @@ fn lower_method_call(
         && args.len() == 1
     {
         let s = pre.lower(&args[0], cx);
-        let guard = if id.name == INT {
-            "Number.isSafeInteger(__n)"
+        let (grammar, value, guard) = if id.name == INT {
+            ("/^[+-]?[0-9]+$/", "Number(__s) + 0", "Number.isSafeInteger(__n)")
         } else {
-            "Number.isFinite(__n)"
+            (
+                "/^[+-]?([0-9]+(\\.[0-9]*)?|\\.[0-9]+)([eE][+-]?[0-9]+)?$/",
+                "Number(__s)",
+                "Number.isFinite(__n)",
+            )
         };
         return pre.finish(format!(
-            "((__s: string) => {{ const __n = __s.trim() === \"\" ? Number.NaN : Number(__s); return {guard} ? Some(__n) : None; }})({s})"
+            "((__s: string) => {{ if (!{grammar}.test(__s)) return None; const __n = {value}; return {guard} ? Some(__n) : None; }})({s})"
         ));
     }
     // v0.86 (ADR 0112): `Duration.millis(n)` — the runtime `Int`→`Duration`

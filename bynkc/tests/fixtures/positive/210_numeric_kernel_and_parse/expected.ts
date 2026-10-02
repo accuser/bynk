@@ -25,10 +25,10 @@ export function neverNaN(x: number): boolean {
 }
 
 export function parseOrZero(s: string): number {
-  return ((__o: Option<number>, __d: number) => __o.tag === "Some" ? __o.value : __d)(((__s: string) => { const __n = __s.trim() === "" ? Number.NaN : Number(__s); return Number.isSafeInteger(__n) ? Some(__n) : None; })(s), 0);
+  return ((__o: Option<number>, __d: number) => __o.tag === "Some" ? __o.value : __d)(((__s: string) => { if (!/^[+-]?[0-9]+$/.test(__s)) return None; const __n = Number(__s) + 0; return Number.isSafeInteger(__n) ? Some(__n) : None; })(s), 0);
 }
 
 export function parsePrice(s: string): Option<number> {
-  return ((__s: string) => { const __n = __s.trim() === "" ? Number.NaN : Number(__s); return Number.isFinite(__n) ? Some(__n) : None; })(s);
+  return ((__s: string) => { if (!/^[+-]?([0-9]+(\.[0-9]*)?|\.[0-9]+)([eE][+-]?[0-9]+)?$/.test(__s)) return None; const __n = Number(__s); return Number.isFinite(__n) ? Some(__n) : None; })(s);
 }
 

@@ -1,0 +1,21 @@
+---
+#1657: an `Int` is a JS safe integer, ±(2^53 − 1), at every entry point.
+`Int.parse` and `Float.parse` accept the whole string only in a strict decimal
+grammar, and the JSON boundary rejects an integer outside the safe range.
+---
+commons demo.nums
+
+fn int(s: String) -> Option[Int] {
+  Int.parse(s)
+}
+
+fn float(s: String) -> Option[Float] {
+  Float.parse(s)
+}
+
+fn decodesInt(s: String) -> Bool {
+  match Json.decode[Int](s) {
+    Ok(_) => true
+    Err(_) => false
+  }
+}

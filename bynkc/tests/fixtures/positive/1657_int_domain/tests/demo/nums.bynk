@@ -1,0 +1,59 @@
+---
+#1657: the `Int` domain, proved at runtime.
+---
+suite demo.nums
+
+case "Int.parse accepts a signed decimal" {
+  expect int("42") == Some(42)
+  expect int("+7") == Some(7)
+  expect int("-13") == Some(-13)
+  expect int("-0") == Some(0)
+  expect int("007") == Some(7)
+}
+
+case "Int.parse rejects hex, exponents, whitespace and fractions" {
+  expect !int("0x10").isSome()
+  expect !int("0b11").isSome()
+  expect !int("0o7").isSome()
+  expect !int("1e3").isSome()
+  expect !int(" 7 ").isSome()
+  expect !int("7 ").isSome()
+  expect !int("5.").isSome()
+  expect !int("5.0").isSome()
+  expect !int("").isSome()
+  expect !int("-").isSome()
+}
+
+case "Int.parse rejects a value outside the safe range" {
+  expect int("9007199254740991") == Some(9007199254740991)
+  expect int("-9007199254740991") == Some(-9007199254740991)
+  expect !int("9007199254740992").isSome()
+  expect !int("99999999999999999999").isSome()
+}
+
+case "Float.parse accepts a decimal with an optional exponent" {
+  expect float("2.5") == Some(2.5)
+  expect float("-2.5") == Some(0.0 - 2.5)
+  expect float("5.") == Some(5.0)
+  expect float(".5") == Some(0.5)
+  expect float("1e3") == Some(1000.0)
+  expect float("7") == Some(7.0)
+}
+
+case "Float.parse rejects whitespace, prefixes and non-finite values" {
+  expect !float(" 7 ").isSome()
+  expect !float("0x10").isSome()
+  expect !float("0b11").isSome()
+  expect !float("").isSome()
+  expect !float(".").isSome()
+  expect !float("1e999").isSome()
+  expect !float("Infinity").isSome()
+}
+
+case "the JSON boundary accepts exactly the safe integers" {
+  expect decodesInt("9007199254740991")
+  expect decodesInt("-9007199254740991")
+  expect !decodesInt("9007199254740992")
+  expect !decodesInt("1e300")
+  expect !decodesInt("3.5")
+}
