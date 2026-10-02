@@ -645,6 +645,23 @@ Calling an **effectful function value** — one whose type's return is
 door (the eager-`Promise` translation makes an un-bound effectful call
 observable, so the confinement is load-bearing).
 
+**An `Effect` value in an effectful body MUST be awaited in order** (#1658).
+The eager-`Promise` translation starts an effectful call as soon as it is
+built, so a call that is built and not bound runs unawaited, racing everything
+after it. An `Effect[T]` value MUST therefore be:
+- bound with `<-`;
+- sequenced with `do`;
+- returned as the body's value; or
+- passed as an argument, whose parameter decides what happens to it (a
+  parameter typed `Effect[T]` binds it).
+
+Building one in a value position is `bynk.effect.unbound_effect`. That covers:
+- the right-hand side of a plain `let` (including `let _ = …` and an
+  `Effect`-annotated `let`);
+- a list literal's element;
+- the payload of `Some`/`Ok`/`Err`, a sum-variant constructor, or a record
+  field.
+
 **Provider placement follows the unit kind.** A provider in a *context* MUST
 have a Bynk body (`bynk.context.external_provider`); a provider in an *adapter*
 MUST be external — bodiless, its implementation supplied by the binding

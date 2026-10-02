@@ -304,14 +304,12 @@ pub fn lower_type_shape_ir(decl: &Arc<TypeDecl>, program: &CheckedProgram) -> Ty
 /// — the same posture `lower_op_sig_ir`'s own doc comment already argues
 /// for a capability op's `params`/`return_type`, confirmed empirically for
 /// store fields specifically (#1187's Agent state-field slice, step 0):
-/// `store x: Cell[Bogus] = "hello"` certifies today (exit 0, no diagnostic),
-/// so a `Bogus` store-field type — undeclared, and of the wrong kind for the
-/// `= "hello"` initializer besides — reaches this pass with no `expr_types`/
-/// `types` entry at all. Nothing in `context_checks.rs`'s store-field
-/// checking validates the *type reference* itself (only its shape, e.g.
-/// `Cell`/`Map`/`Set`/`Cache`/`Log`, and `@ttl`/`@indexed` legality). Mirror
-/// the checker's own silent-fallback posture instead of asserting a
-/// guarantee that does not hold.
+/// `store x: Cell[Bogus] = "hello"` certified then (exit 0, no diagnostic),
+/// so a `Bogus` store-field type reached this pass with no `expr_types`/
+/// `types` entry at all. Since #1679 the resolver rejects an unknown store
+/// field type (`bynk.resolve.unknown_type`), so this fallback is defensive:
+/// it keeps lowering total rather than asserting a guarantee it does not
+/// itself check.
 fn resolve_store_field_ty(cx: &LowerIrCtx, r: &bynk_syntax::ast::TypeRef) -> TyId {
     cx.resolve_type_ref(r).unwrap_or_else(|| cx.unit_ty())
 }
@@ -1984,22 +1982,15 @@ service Outbox from queue("orders") {
     }
 
     #[test]
-    fn store_field_falls_back_to_unit_on_an_unresolvable_type_like_the_checker_does() {
-        // #1187's Agent state-field slice, step 0: no checker pass validates
-        // a store field's own type reference (only its shape — `Cell`/`Map`/
-        // `Set`/`Cache`/`Log` — and `@ttl`/`@indexed` legality), so
-        // `store x: Cell[Bogus] = "hello"` certifies today (exit 0, no
-        // diagnostic, verified empirically against the real `bynkc` binary)
-        // even though `Bogus` is undeclared and the initialiser's own type
-        // doesn't match it. `resolve_store_field_ty` must mirror
-        // `lower_op_sig_ir`'s own `Ty::Unit` fallback rather than panic on a
-        // state that is, in fact, reachable from source. The shape reader is
-        // the only reader left (the `init`-lowering sibling went with Slice
-        // D1 of `#1542`); with the field's own type unresolved, the checker's
-        // init-checking loop leaves `"hello"` untyped too, which this reader
-        // never touches.
-        let program = checked_context_program(
-            r#"
+    fn store_field_with_an_unresolvable_type_is_rejected_before_lowering() {
+        // #1187's Agent state-field slice, step 0, found that no checker pass
+        // validated a store field's own type reference, so `store x:
+        // Cell[Bogus]` certified and reached `resolve_store_field_ty`, whose
+        // `Ty::Unit` fallback this test used to pin. #1679 closed that gap: the
+        // resolver now walks agent store field types, so the program is
+        // rejected with `bynk.resolve.unknown_type` before lowering, and the
+        // fallback is defensive only.
+        let source = r#"
 context demo
 
 agent Widget {
@@ -2010,18 +2001,31 @@ agent Widget {
     Effect.pure(())
   }
 }
-"#,
-        );
-        let agent = find_agent(&program, "Widget");
-        let x = find_store_field(agent, "x");
-        // Would already have panicked inside `checked_context_program`'s own
-        // `.expect("certify")` if this were rejected upstream — reaching
-        // here at all is part of what this test pins.
-        let shape = lower_store_field_shape_ir(x, &program);
-        let StoreKindIr::Cell(ty) = shape.kind else {
-            panic!("expected StoreKindIr::Cell, got {:?}", shape.kind)
+"#;
+        let tokens = lexer::tokenize(source).expect("lex");
+        let unit = parser::parse_unit(&tokens, source).expect("parse");
+        let SourceUnit::Context(ctx) = unit else {
+            panic!("expected a context unit, got {unit:?}")
         };
-        assert!(matches!(&*program.program().ty_intern.get(ty), Ty::Unit));
+        let commons = Commons {
+            name: ctx.name,
+            items: ctx.items,
+            uses: ctx.uses,
+            documentation: ctx.documentation,
+            form: ctx.form,
+            span: ctx.span,
+            trivia: ctx.trivia,
+            trailing_comments: ctx.trailing_comments,
+        };
+        let Err(errors) = resolver::resolve(commons) else {
+            panic!("an unknown store type must be rejected by the resolver")
+        };
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.category == "bynk.resolve.unknown_type" && e.message.contains("Bogus")),
+            "{errors:?}"
+        );
     }
 
     #[test]

@@ -555,6 +555,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         &["call"],
     ),
     d(
+        "bynk.effect.unbound_effect",
+        "An `Effect` value in an effectful body was built but not bound with `<-`, sequenced with `do` or returned — in a plain `let`, a list element or a constructor payload — so it runs eagerly and unawaited (#1658).",
+    ),
+    d(
         "bynk.event.bad_field_default",
         "An event field's default expression (`field: T = expr`) is not a static, wire-representable value of the field's declared type — a literal (including one admitted to a refined type), a sum variant, `Some`/`None`/`Ok`/`Err`, a record, or `T.unsafe(lit)` for an opaque type whose literal also satisfies the refinement.",
     ),

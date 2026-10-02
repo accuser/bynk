@@ -41,6 +41,13 @@ discard the value, rather than silently dropping data.)
 This mirrors UML's message arrows: a filled arrowhead with a dashed return for a
 synchronous call, an open arrowhead with no return for an asynchronous message.
 
+There is no fourth spelling. A plain `let e = op(a)`, without the `<-`, does not
+build a value you can await later: the call starts as soon as it is built, so it
+would run unawaited, out of order with everything after it. Bynk rejects it
+([`bynk.effect.unbound_effect`](/book/reference/diagnostics/)), as it does an
+effect put into a list, an `Option` or a record. Bind it, sequence it with `do`,
+send it with `~>`, or return it.
+
 ## The error gate
 
 `~>` throws away the reply, so Bynk only lets you use it when there is nothing

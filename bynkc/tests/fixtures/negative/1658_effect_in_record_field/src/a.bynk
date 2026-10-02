@@ -1,0 +1,19 @@
+context a
+
+agent Counter {
+  key id: String
+  store n: Cell[Int] = 0
+  on call bump() -> Effect[()] { n.update((x) => x + 1) }
+  on call get() -> Effect[Int] { n }
+}
+
+type Box[T] = { item: T }
+
+-- #1658: an effect stored in a record field is started, unawaited.
+service s {
+  on call() -> Effect[Int] {
+    let b = Box { item: Counter("k").get() }
+    let v <- Counter("k").get()
+    Effect.pure(v)
+  }
+}
