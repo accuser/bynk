@@ -283,9 +283,9 @@ pub fn wire_contract_for_service(
         HashMap::from([(service_name.to_string(), synthetic)]);
     let agents: HashMap<String, AgentDecl> = HashMap::new();
 
-    let boundary_names = wire::collect_boundary_types(&info.types, &services, &agents);
+    let boundary_names = wire::collect_boundary_types(&info.types, &services, &agents, &[]);
     let insts =
-        wire::collect_generic_instantiations(&services, &agents, &boundary_names, &info.types);
+        wire::collect_generic_instantiations(&services, &agents, &boundary_names, &info.types, &[]);
     // Every name reachable through `info.types` is this unit's own view of
     // its boundary — see the module doc's Provenance note.
     let boundary = wire::boundary_model(&boundary_names, &info.types, insts, |_| {

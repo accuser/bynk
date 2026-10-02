@@ -6,8 +6,14 @@ import {
   makeAgent,
   makeIntegrationDoNamespace,
   makeWorkersAgent,
+  decodeAgentArgs,
+  encodeAgentResult,
+  AGENT_WIRE_PASS,
+  type AgentWire,
   type DurableObjectNamespace,
 } from "../src/agent.ts";
+import type { BoundaryError, JsonValue } from "../src/boundary.ts";
+import { Ok, Err } from "../src/result.ts";
 import type { DurableObjectState } from "../src/storage.ts";
 
 test("serialiseAgentKey: strings are identity, primitives are JSON", () => {
@@ -103,4 +109,82 @@ test("integration namespace + workers proxy: round-trips method calls and splits
   // a different key is isolated
   const other = makeWorkersAgent<Acc>(ns, "acc-2");
   assert.equal((await other.add(1, {})).total, 1);
+});
+
+// #1678: a wire table whose single method takes and returns bytes, encoded as a
+// hex string so the test can see that both ends ran.
+const hexWire: AgentWire = {
+  echo: {
+    args: [
+      {
+        enc: ((v: Uint8Array) => Buffer.from(v).toString("hex")) as (v: never) => JsonValue,
+        dec: (j: JsonValue) =>
+          typeof j === "string"
+            ? Ok(new Uint8Array(Buffer.from(j, "hex")))
+            : Err({ kind: "StructuralMismatch", path: "$", expected: "hex", actual: typeof j } as BoundaryError),
+      },
+    ],
+    result: {
+      enc: ((v: Uint8Array) => Buffer.from(v).toString("hex")) as (v: never) => JsonValue,
+      dec: (j: JsonValue) =>
+        typeof j === "string"
+          ? Ok(new Uint8Array(Buffer.from(j, "hex")))
+          : Err({ kind: "StructuralMismatch", path: "$", expected: "hex", actual: typeof j } as BoundaryError),
+    },
+  },
+};
+
+// An emitted-style DO that decodes and encodes through the same table.
+function hexEchoNamespace(): DurableObjectNamespace {
+  return makeIntegrationDoNamespace(() => ({
+    async fetch(request: Request): Promise<Response> {
+      const method = new URL(request.url).pathname.slice("/_bynk/agent/".length);
+      const { args } = (await request.json()) as { args: unknown[]; deps: unknown };
+      const decoded = decodeAgentArgs(hexWire, method, args);
+      return Response.json(encodeAgentResult(hexWire, method, decoded[0]));
+    },
+  }));
+}
+
+test("#1678 workers proxy: arguments and result go through the wire table", async () => {
+  interface Echo {
+    echo(b: Uint8Array, deps: unknown): Promise<Uint8Array>;
+  }
+  const agent = makeWorkersAgent<Echo>(hexEchoNamespace(), "k", hexWire);
+  const out = await agent.echo(new Uint8Array([1, 2, 255]), {});
+  assert.ok(out instanceof Uint8Array, "the result is decoded back to bytes");
+  assert.deepEqual([...out], [1, 2, 255]);
+});
+
+test("#1678 workers proxy: a result that fails to decode throws a boundary error", async () => {
+  const ns: DurableObjectNamespace = {
+    idFromName: (n) => n,
+    get: () => ({ fetch: async () => Response.json(42) }),
+  };
+  interface Echo {
+    echo(b: Uint8Array, deps: unknown): Promise<Uint8Array>;
+  }
+  const agent = makeWorkersAgent<Echo>(ns, "k", hexWire);
+  await assert.rejects(agent.echo(new Uint8Array([1]), {}), /BoundaryError: StructuralMismatch/);
+});
+
+test("#1678 a method absent from the wire table throws, including an inherited name", async () => {
+  assert.throws(() => decodeAgentArgs(hexWire, "missing", []), /has no wire codec/);
+  assert.throws(() => decodeAgentArgs(hexWire, "constructor", []), /has no wire codec/);
+  assert.throws(() => encodeAgentResult(hexWire, "toString", 1), /has no wire codec/);
+  interface Odd {
+    missing(deps: unknown): Promise<unknown>;
+  }
+  const agent = makeWorkersAgent<Odd>(hexEchoNamespace(), "k", hexWire);
+  await assert.rejects(agent.missing({}), /has no wire codec/);
+});
+
+test("#1678 the DO side rejects an argument that fails to decode", () => {
+  assert.throws(() => decodeAgentArgs(hexWire, "echo", [7]), /BoundaryError: StructuralMismatch/);
+});
+
+test("#1678 a pass-through position is carried as is", () => {
+  const wire: AgentWire = { m: { args: [AGENT_WIRE_PASS], result: AGENT_WIRE_PASS } };
+  assert.deepEqual(decodeAgentArgs(wire, "m", [{ id: "c1" }]), [{ id: "c1" }]);
+  assert.deepEqual(encodeAgentResult(wire, "m", { id: "c1" }), { id: "c1" });
 });

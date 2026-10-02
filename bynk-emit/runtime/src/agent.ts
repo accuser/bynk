@@ -1,5 +1,9 @@
 import type { DurableObjectState } from "./storage.ts";
 import { makeTestState } from "./storage.ts";
+import type { BoundaryError, JsonValue } from "./boundary.ts";
+import { boundaryError } from "./boundary.ts";
+import type { Result } from "./result.ts";
+import { Ok } from "./result.ts";
 
 // v0.9.2: agent instantiation + per-key state lifecycle.
 //
@@ -62,21 +66,78 @@ export class StateRegistry<K> {
   }
 }
 
+// #1678 (runtime-semantics track S11): on the workers target an agent call
+// crosses a Durable Object `fetch`, so its arguments and result are on a wire.
+// They go through the boundary codec, the same `serialise_*`/`deserialise_*`
+// helpers a cross-context call uses, so a value whose in-memory shape is not
+// JSON-faithful (`Bytes`, a value `Map`, a non-finite `Float`) survives the
+// trip. The emitter generates one `AgentWire` table per agent: for each handler,
+// a codec per parameter and one for the result. Both ends read the same table:
+// the caller's proxy encodes arguments and decodes the result, and the DO's
+// `fetch` decodes arguments and encodes the result.
+
+// One wire position's codec. `enc` takes the position's in-memory value; it is
+// typed `never` so any concrete serialiser (`(value: Blob) => JsonValue`) fits.
+export interface WireCodec {
+  readonly enc: (value: never) => JsonValue;
+  readonly dec: (json: JsonValue, path?: string) => Result<unknown, BoundaryError>;
+}
+
+export interface AgentWireMethod {
+  readonly args: readonly WireCodec[];
+  readonly result: WireCodec;
+}
+
+export type AgentWire = Readonly<Record<string, AgentWireMethod>>;
+
+// A position whose type has no wire form (a held `Connection`, a function, a
+// `Stream`, a `Query`) passes through as it did before #1678.
+export const AGENT_WIRE_PASS: WireCodec = {
+  enc: (value: never) => value as JsonValue,
+  dec: (json: JsonValue) => Ok(json),
+};
+
+function agentWireMethod(wire: AgentWire, method: string): AgentWireMethod {
+  // `hasOwn`: a method name comes off the request path.
+  if (!Object.hasOwn(wire, method)) {
+    throw new Error(`agent method \`${method}\` has no wire codec`);
+  }
+  return wire[method];
+}
+
+// The DO side: decode a call's arguments. A decode failure is an internal
+// fault (the caller is the program itself, not an untrusted client), so it
+// throws, and the DO's `fetch` fails with a 500 the caller rethrows.
+export function decodeAgentArgs(wire: AgentWire, method: string, args: unknown[]): unknown[] {
+  const m = agentWireMethod(wire, method);
+  return args.map((a, i) => {
+    const r = (m.args[i] ?? AGENT_WIRE_PASS).dec(a as JsonValue, `$.args[${i}]`);
+    if (r.tag === "Err") throw boundaryError(r.error);
+    return r.value;
+  });
+}
+
+// The DO side: encode a call's result.
+export function encodeAgentResult(wire: AgentWire, method: string, result: unknown): JsonValue {
+  return agentWireMethod(wire, method).result.enc(result as never);
+}
+
 // Workers-mode agent method call: route through the DO stub's `fetch` under
-// the `/_bynk/agent/<method>` wire protocol.
-export async function callDurableObjectMethod<R>(
+// the `/_bynk/agent/<method>` wire protocol. `args` are already encoded, and
+// the result comes back as raw JSON for the caller to decode.
+export async function callDurableObjectMethod(
   stub: DurableObjectStub,
   method: string,
   args: unknown[],
   deps: unknown,
-): Promise<R> {
+): Promise<JsonValue> {
   const response = await stub.fetch(`https://_bynk/_bynk/agent/${method}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ args, deps }),
   });
   if (!response.ok) throw new Error(await response.text());
-  return (await response.json()) as R;
+  return (await response.json()) as JsonValue;
 }
 
 // Workers-mode agent: a typed proxy over the DO stub. Each method access
@@ -84,17 +145,27 @@ export async function callDurableObjectMethod<R>(
 // the rest as method args through `callDurableObjectMethod`. The `as C` cast
 // gives call sites the agent's real method signatures, so user code reads
 // identically to bundle mode.
-export function makeWorkersAgent<C>(binding: DurableObjectNamespace, key: unknown): C {
+export function makeWorkersAgent<C>(
+  binding: DurableObjectNamespace,
+  key: unknown,
+  wire?: AgentWire,
+): C {
   const stub = binding.get(binding.idFromName(serialiseAgentKey(key)));
   const proxy = new Proxy(
     {},
     {
       get(_target, prop: string | symbol) {
         if (typeof prop !== "string") return undefined;
-        return (...callArgs: unknown[]) => {
+        return async (...callArgs: unknown[]) => {
           const deps = callArgs.length > 0 ? callArgs[callArgs.length - 1] : {};
           const args = callArgs.length > 0 ? callArgs.slice(0, -1) : [];
-          return callDurableObjectMethod(stub, prop, args, deps);
+          if (wire === undefined) return callDurableObjectMethod(stub, prop, args, deps);
+          const m = agentWireMethod(wire, prop);
+          const encoded = args.map((a, i) => (m.args[i] ?? AGENT_WIRE_PASS).enc(a as never));
+          const json = await callDurableObjectMethod(stub, prop, encoded, deps);
+          const r = m.result.dec(json);
+          if (r.tag === "Err") throw boundaryError(r.error);
+          return r.value;
         };
       },
     },
@@ -110,9 +181,10 @@ export function makeAgent<C>(
   binding: DurableObjectNamespace | undefined,
   key: unknown,
   constructBundle: (state: DurableObjectState) => C,
+  wire?: AgentWire,
 ): C {
   if (binding !== undefined) {
-    return makeWorkersAgent<C>(binding, key);
+    return makeWorkersAgent<C>(binding, key, wire);
   }
   const state = registry.getOrCreate(key);
   return constructBundle(state);

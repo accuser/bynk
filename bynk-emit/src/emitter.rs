@@ -1111,6 +1111,28 @@ fn emit_json_codec_helpers(
 /// `bynk_ts::print_stmt` call, so each becomes a `stmts.extend`/`stmts.push`
 /// into the same local `stmts`, threaded through `emit_consumed_context_
 /// helpers`'s own identical conversion.
+/// #1678: the type positions an agent call puts on the wire on the `workers`
+/// target — every handler's parameters and its return type — in agent then
+/// handler order. Positions with no codec (`agent_wire_passes_through`) carry
+/// no named types to collect, so they are left out.
+pub(crate) fn agent_call_boundary_roots(agents: &HashMap<String, AgentDecl>) -> Vec<TypeRef> {
+    let mut names: Vec<&String> = agents.keys().collect();
+    names.sort();
+    let mut roots = Vec::new();
+    for name in names {
+        for h in &agents[name].handlers {
+            for p in &h.params {
+                roots.push(p.type_ref.clone());
+            }
+            roots.push(h.return_type.clone());
+        }
+    }
+    roots
+        .into_iter()
+        .filter(|t| !serialisation::agent_wire_passes_through(t))
+        .collect()
+}
+
 fn emit_boundary_helpers(
     program: &CheckedProgram,
     ctx: &EmitProjectCtx,
@@ -1167,7 +1189,16 @@ fn emit_boundary_helpers(
     let locally_declared: HashSet<String> = ctx.file_decl_index.types.keys().cloned().collect();
     if ctx.unit_kind == UnitKind::Context {
         let mut stmts: Vec<bynk_ts::TsStmt> = Vec::new();
-        let boundary_types_all = collect_boundary_types(&commons.types, &services, &agents);
+        // #1678: on `workers` an agent call crosses a Durable Object `fetch`, so
+        // every agent handler's parameter and return types are boundary types
+        // too. On `bundle` the call is in-process and needs no codec.
+        let agent_call_roots: Vec<TypeRef> = if workers {
+            agent_call_boundary_roots(&agents)
+        } else {
+            Vec::new()
+        };
+        let boundary_types_all =
+            collect_boundary_types(&commons.types, &services, &agents, &agent_call_roots);
         // Locally-declared boundary types get full helpers in this module. On
         // `bundle` (v0.96, ADR 0124) the commons modules emit no boundary helpers,
         // so a cross-commons *agent-state* type's deserialiser — needed by the
@@ -1289,8 +1320,13 @@ fn emit_boundary_helpers(
         // name 'Region'`. Handler signatures still walk in full: a *local*
         // handler naming `Option[ConsumedRegion]` directly is this module's own
         // boundary either way.
-        let insts =
-            collect_generic_instantiations(&services, &agents, &local_boundary, &commons.types);
+        let insts = collect_generic_instantiations(
+            &services,
+            &agents,
+            &local_boundary,
+            &commons.types,
+            &agent_call_roots,
+        );
         stmts.extend(serialisation::decls_as_stmts(emit_generic_helpers(
             &insts,
             &commons.types,
@@ -1365,6 +1401,7 @@ fn emit_boundary_helpers(
             &HashMap::new(),
             &locally,
             &commons.types,
+            &[],
         );
         stmts.extend(serialisation::decls_as_stmts(emit_generic_helpers(
             &insts,
@@ -2801,6 +2838,25 @@ fn write_header(commons: &TypedCommons, ctx: &EmitProjectCtx) -> Vec<bynk_ts::Ts
         }
         if has_agent_invariants {
             parts.push("invariantViolation");
+        }
+        // #1678: on `workers` an agent's calls cross its Durable Object's
+        // `fetch` through a wire table read by both ends.
+        if workers && has_agent {
+            parts.push("type AgentWire");
+            parts.push("decodeAgentArgs");
+            parts.push("encodeAgentResult");
+            let passes_through = commons.commons.items.iter().any(|i| match i {
+                CommonsItem::Agent(a) => a.handlers.iter().any(|h| {
+                    serialisation::agent_wire_passes_through(&h.return_type)
+                        || h.params
+                            .iter()
+                            .any(|p| serialisation::agent_wire_passes_through(&p.type_ref))
+                }),
+                _ => false,
+            });
+            if passes_through {
+                parts.push("AGENT_WIRE_PASS");
+            }
         }
         // Events track, slice 0 (spine #936): an agent whose own handler body
         // emits directly needs its Workers-mode DO fetch dispatcher to

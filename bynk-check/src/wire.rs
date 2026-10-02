@@ -334,12 +334,19 @@ pub fn collect_boundary_types(
     // emitted. Register every store field's kind-argument types (the element /
     // key / value types of `Cell`/`Map`/`Set`/`Cache`/`Log`).
     agents: &HashMap<String, AgentDecl>,
+    // #1678: further boundary positions to root the walk at. On the `workers`
+    // target an agent call crosses a Durable Object `fetch`, so the emitter
+    // passes every agent handler's parameter and return types here.
+    extra_roots: &[TypeRef],
 ) -> Vec<String> {
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut out: Vec<String> = Vec::new();
     let mut stack: Vec<String> = Vec::new();
     let recursive_set = recursive_generic_names(types);
     let recursive = &recursive_set;
+    for r in extra_roots {
+        collect_type_names(r, &mut stack, types, recursive);
+    }
 
     let mut svc_names: Vec<&String> = services.keys().collect();
     svc_names.sort();
@@ -730,6 +737,9 @@ pub fn collect_generic_instantiations(
     agents: &HashMap<String, AgentDecl>,
     boundary_type_names: &[String],
     types: &HashMap<String, Arc<TypeDecl>>,
+    // #1678: further boundary positions, as for `collect_boundary_types`. Walked
+    // after the services and agent stores, so existing emission order is kept.
+    extra_roots: &[TypeRef],
 ) -> Vec<WireInst> {
     let mut out: Vec<WireInst> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -759,6 +769,9 @@ pub fn collect_generic_instantiations(
                 walk_generic_inst(arg, &mut out, &mut seen, types, recursive);
             }
         }
+    }
+    for r in extra_roots {
+        walk_generic_inst(r, &mut out, &mut seen, types, recursive);
     }
     for name in boundary_type_names {
         let Some(decl) = types.get(name) else {
@@ -1301,7 +1314,7 @@ service Api {
 "#;
         let (types, services) = context_of(src);
         let agents: HashMap<String, AgentDecl> = HashMap::new();
-        let names = collect_boundary_types(&types, &services, &agents);
+        let names = collect_boundary_types(&types, &services, &agents, &[]);
         assert_eq!(names, vec!["ClientId".to_string(), "Rate".to_string()]);
     }
 
@@ -1321,7 +1334,7 @@ service Api {
 "#;
         let (types, services) = context_of(src);
         let agents: HashMap<String, AgentDecl> = HashMap::new();
-        let names = collect_boundary_types(&types, &services, &agents);
+        let names = collect_boundary_types(&types, &services, &agents, &[]);
         assert_eq!(names, vec!["Used".to_string()]);
     }
 
@@ -1471,7 +1484,7 @@ service Api {
             HashMap::from([("Api".to_string(), narrowed)]);
         let agents: HashMap<String, AgentDecl> = HashMap::new();
         let boundary_names: std::collections::HashSet<String> =
-            collect_boundary_types(&types, &narrowed_services, &agents)
+            collect_boundary_types(&types, &narrowed_services, &agents, &[])
                 .into_iter()
                 .collect();
 

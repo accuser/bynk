@@ -148,6 +148,21 @@ Object addressed by the agent key. A single `makeAgent` helper selects the path
 from whether a Durable Object binding is present, so call sites are identical
 across targets ([§7.4](/book/spec/runtime-library/)).
 
+**The workers agent call is a boundary (#1678).** On `workers` a call
+`Agent(key).m(args)` crosses the Durable Object's `fetch` under
+`/_bynk/agent/<m>`, so its arguments and result are on a wire. They go through
+the boundary codec, the same `serialise_*`/`deserialise_*` helpers a
+cross-context call uses ([§7.4.5](/book/spec/runtime-library/#745-the-cross-worker-boundary-protocol)).
+Each agent emits a wire table, `const __<Agent>Wire: AgentWire`, with a codec
+pair for each handler's parameters and result, and `__make<Agent>` passes it to
+`makeAgent`. The proxy over the stub encodes the arguments and decodes the
+result, and the class's `fetch` decodes the arguments (`decodeAgentArgs`) and
+encodes the result (`encodeAgentResult`). A decode failure on either side is an
+internal fault, not a `400`: the caller is the program itself. A position whose
+type has no wire form (a held `Connection`, a function, a `Stream`, a `Query`)
+passes through unencoded (`AGENT_WIRE_PASS`). On `bundle` the call is
+in-process and no table is emitted.
+
 **Invariants (v0.80).** When an agent declares invariants
 ([§5.4.1](/book/spec/static-semantics/#541-invariants-v080)), `commitState(s)` gates on
 each predicate (lowered as a pure expression over the proposed state `s`, with
