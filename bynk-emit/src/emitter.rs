@@ -3596,6 +3596,13 @@ pub(crate) struct LowerCtx<'a> {
     /// evaluation. Simple receivers (idents / field chains) are never cached
     /// and continue to be rendered inline as before.
     is_receiver_temps: HashMap<bynk_syntax::span::Span, String>,
+    /// #1654: while the right operand of an `is`-binding `&&`/`implies` is
+    /// lowered (inside the IIFE that keeps it lazy), an `is` receiver temp is
+    /// *declared* here (`let __rN!: T;`) and only *assigned* in place. The
+    /// caller emits these declarations before the whole condition, so an `if`
+    /// then-branch's binding that reads the temp (`const m = __r1 as Q;`)
+    /// finds it in scope. `None` outside such a right operand.
+    pub(crate) is_temp_hoist: Option<Vec<String>>,
     /// Variable bindings that point at agent instances. Updated by the
     /// statement emitter when it sees `let x = AgentName(key)`. Used by
     /// the method-call lowering so `x.method(args)` resolves through
@@ -3667,6 +3674,7 @@ impl<'a> LowerCtx<'a> {
             next_tmp: 0,
             shadow_scopes: vec![HashMap::new()],
             is_receiver_temps: HashMap::new(),
+            is_temp_hoist: None,
             local_agent_vars: HashMap::new(),
             call_site_identity: None,
             call_site_no_credential: false,
@@ -4275,9 +4283,29 @@ impl<'a> LowerCtx<'a> {
             return pre.finish(lowered);
         }
         let tmp = self.fresh();
-        pre.push(format!("const {tmp} = {lowered};"));
+        self.declare_is_temp(value, &tmp, &lowered, &mut pre);
         self.is_receiver_temps.insert(value.span, tmp.clone());
         pre.finish(tmp)
+    }
+
+    /// Declare an `is` receiver temp holding `lowered`: a `const` in place, or,
+    /// inside a hoisting right operand (`is_temp_hoist`), a hoisted
+    /// definite-assignment declaration plus an in-place assignment. The
+    /// assignment stays where the receiver was evaluated, so the right operand
+    /// is still evaluated only when the left operand holds.
+    fn declare_is_temp(&mut self, value: &Expr, tmp: &str, lowered: &str, pre: &mut Pre) {
+        let ty = self
+            .commons()
+            .expr_types
+            .get(&value.id)
+            .map(|te| ts_ty(te.ty, self.commons().tys()));
+        match (self.is_temp_hoist.as_mut(), ty) {
+            (Some(hoist), Some(ty)) => {
+                hoist.push(format!("let {tmp}!: {ty};"));
+                pre.push(format!("{tmp} = {lowered};"));
+            }
+            _ => pre.push(format!("const {tmp} = {lowered};")),
+        }
     }
 
     /// v0.13: like `is_receiver_ref` but always lifts to a temp, even for a
@@ -4292,7 +4320,7 @@ impl<'a> LowerCtx<'a> {
         let mut pre = Pre::new();
         let lowered = pre.lower(value, self);
         let tmp = self.fresh();
-        pre.push(format!("const {tmp} = {lowered};"));
+        self.declare_is_temp(value, &tmp, &lowered, &mut pre);
         self.is_receiver_temps.insert(value.span, tmp.clone());
         pre.finish(tmp)
     }

@@ -1,0 +1,51 @@
+---
+#1654: `is` narrowing through `&&`, `implies` and a negated else-branch.
+---
+suite demo.narrow
+
+case "both operands of && narrow a refined Int" {
+  expect both(2, 3) == 10
+  expect both(2, 0) == 0
+  expect both(0, 3) == 0
+}
+
+case "the right operand of && sees the left's binding" {
+  expect positive(Some(4))
+  expect !positive(Some(0))
+  expect !positive(None)
+}
+
+case "a variant payload binds into the right operand" {
+  expect bigRoom(Held("ann", 101))
+  expect !bigRoom(Held("ann", 7))
+  expect !bigRoom(Released)
+}
+
+case "implies binds into its consequent" {
+  expect nonNegativeIfSome(Some(1))
+  expect !nonNegativeIfSome(Some(-1))
+  expect nonNegativeIfSome(None)
+}
+
+case "a negated test binds into the else-branch" {
+  expect orZero(Some(7)) == 7
+  expect orZero(None) == 0
+}
+
+case "a negated disjunction binds both into the else-branch" {
+  expect sumOrZero(Some(2), Some(3)) == 5
+  expect sumOrZero(Some(2), None) == 0
+  expect sumOrZero(None, Some(3)) == 0
+}
+
+case "a non-negated || narrows nothing but still tests" {
+  expect either(Some(1), None) == 1
+  expect either(None, Some(1)) == 1
+  expect either(None, None) == 0
+  let five: Result[Int, String] = Ok(5)
+  let zero: Result[Int, String] = Ok(0)
+  let bad: Result[Int, String] = Err("x")
+  expect eitherOr(Some(1), None, five) == five
+  expect eitherOr(None, None, five) == zero
+  expect eitherOr(Some(1), None, bad) == bad
+}

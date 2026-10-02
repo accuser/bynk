@@ -2786,11 +2786,21 @@ fn lower_val(type_ref: &TypeRef, args: &[Expr], cx: &mut LowerCtx) -> Lowered {
 /// in parens or nested `&&`) and if so collect the bindings to inject into
 /// rhs. Returns `(binding_const_decls, lowered_lhs, lowered_rhs)` if
 /// special handling is appropriate; otherwise returns None.
-fn lower_and_with_is(
-    lhs: &Expr,
-    rhs: &Expr,
-    cx: &mut LowerCtx,
-) -> Option<(Vec<String>, Lowered, String, bool)> {
+/// What [`lower_and_with_is`] produces for its caller to assemble.
+struct AndWithIs {
+    /// The left operand's `is` bindings, then the right operand's own hoisted
+    /// statements: both run, in order, inside the right operand's IIFE.
+    bindings: Vec<String>,
+    lhs: Lowered,
+    rhs: String,
+    /// The right operand hoisted a `?`'s propagating early return.
+    rhs_returns: bool,
+    /// #1654: declarations of the `is` receiver temps the right operand
+    /// introduced, for the caller to emit before the whole condition.
+    hoisted: Vec<String>,
+}
+
+fn lower_and_with_is(lhs: &Expr, rhs: &Expr, cx: &mut LowerCtx) -> Option<AndWithIs> {
     // Probe structurally (no lowering) so a `&&` without an `is` falls through
     // to the caller's ordinary lowering untouched. This mirrors exactly the
     // shapes `gather_is_bindings_for_emit` walks (`&&` and parens), preserving
@@ -2811,7 +2821,7 @@ fn lower_and_with_is(
     cx.shadow_scopes.push(HashMap::new());
     let mut bindings = Vec::new();
     let mut found = false;
-    gather_is_bindings_for_emit(lhs, cx, &mut bindings, &mut found);
+    gather_is_bindings_for_emit(lhs, true, cx, &mut bindings, &mut found);
     let _ = found; // guaranteed true by the `cond_contains_is` guard above
     // #1/#3 review: `rhs`'s own hoisted statements used to be joined into one
     // string and spliced back in as if they were part of the expression text
@@ -2828,12 +2838,31 @@ fn lower_and_with_is(
     // caller's own statement position, not this arrow — see `lower_bin_op`)
     // doesn't falsely report a propagating return coming from `bindings`.
     let saved_early_return = std::mem::take(&mut cx.emitted_early_return);
+    // #1654: `rhs` is lowered inside an IIFE (below, in the caller), so an `is`
+    // receiver temp it introduces would be scoped away from a then-branch that
+    // reads it. Hoist the temps' declarations to the outermost such `&&`; a
+    // nested one adds to the same list.
+    let outermost = cx.is_temp_hoist.is_none();
+    if outermost {
+        cx.is_temp_hoist = Some(Vec::new());
+    }
     let rhs_lowered = lower_expr(rhs, cx);
+    let hoisted = if outermost {
+        cx.is_temp_hoist.take().unwrap_or_default()
+    } else {
+        Vec::new()
+    };
     let rhs_returns = cx.emitted_early_return;
     cx.emitted_early_return = saved_early_return || rhs_returns;
     bindings.extend(rhs_lowered.pre);
     cx.shadow_scopes.pop();
-    Some((bindings, lhs_lowered, rhs_lowered.expr, rhs_returns))
+    Some(AndWithIs {
+        bindings,
+        lhs: lhs_lowered,
+        rhs: rhs_lowered.expr,
+        rhs_returns,
+        hoisted,
+    })
 }
 
 /// Walk an expression collecting `const name = expr.field;` strings for
@@ -2841,126 +2870,131 @@ fn lower_and_with_is(
 /// at least one `is` was seen.
 fn gather_is_bindings_for_emit(
     e: &Expr,
+    when_true: bool,
     cx: &mut LowerCtx,
     out: &mut Vec<String>,
     found: &mut bool,
 ) {
+    // #1654: which `is` tests `e` proves is the shared rule the resolver and
+    // the checker scope bindings by (`bynk_check::narrowing`).
+    for test in bynk_check::narrowing::matched_is_tests(e, when_true) {
+        emit_is_test_bindings(test, cx, out, found);
+    }
+}
+
+/// The `const name = …;` declarations for one matched `is` test.
+fn emit_is_test_bindings(e: &Expr, cx: &mut LowerCtx, out: &mut Vec<String>, found: &mut bool) {
     let tys = cx.commons().tys();
-    match &e.kind {
-        ExprKind::Is { value, pattern } => {
-            *found = true;
-            let value_text = cx.is_receiver_text(value);
-            let disc_ty = cx.commons().expr_types.get(&value.id).map(|te| te.ty);
-            if let Pattern::Variant {
-                variant, bindings, ..
-            } = pattern.as_ref()
+    let ExprKind::Is { value, pattern } = &e.kind else {
+        return;
+    };
+    {
+        *found = true;
+        let value_text = cx.is_receiver_text(value);
+        let disc_ty = cx.commons().expr_types.get(&value.id).map(|te| te.ty);
+        if let Pattern::Variant {
+            variant, bindings, ..
+        } = pattern.as_ref()
+        {
+            // v0.13: refinement narrowing re-binds the value's name to the
+            // branded refined type, read from the forced receiver temp.
+            if bindings.is_empty()
+                && cx.is_refined_is_check(value, &variant.name)
+                && let ExprKind::Ident(id) = &value.kind
             {
-                // v0.13: refinement narrowing re-binds the value's name to the
-                // branded refined type, read from the forced receiver temp.
-                if bindings.is_empty()
-                    && cx.is_refined_is_check(value, &variant.name)
-                    && let ExprKind::Ident(id) = &value.kind
-                {
-                    out.push(format!(
-                        "const {name} = {value_text} as {refined};",
-                        name = ts_ident(&id.name),
-                        refined = variant.name,
-                    ));
-                    cx.declare_binder(&id.name);
-                    return;
-                }
-                for (i, b) in bindings.iter().enumerate() {
-                    // `is` emits only flat, depth-1 name bindings (ADR 0169 keeps
-                    // nesting/guards match-only); `_` and nested patterns bind nothing.
-                    let Pattern::Binding(name) = b.pattern() else {
-                        continue;
-                    };
-                    match &b.kind {
-                        PatternBindingKind::Named { field, .. } => {
-                            out.push(format!(
-                                "const {name} = {value}.{field};",
-                                name = ts_ident(&name.name),
-                                value = value_text,
-                                field = field.name
-                            ));
-                        }
-                        PatternBindingKind::Positional { .. } => {
-                            let field = cx.positional_field_name(disc_ty, &variant.name, i, tys);
-                            out.push(format!(
-                                "const {name} = {value}.{field};",
-                                name = ts_ident(&name.name),
-                                value = value_text,
-                                field = field
-                            ));
-                        }
-                    }
-                    cx.declare_binder(&name.name);
-                }
+                out.push(format!(
+                    "const {name} = {value_text} as {refined};",
+                    name = ts_ident(&id.name),
+                    refined = variant.name,
+                ));
+                cx.declare_binder(&id.name);
+                return;
             }
-            // #474 §2.3.6: an or-pattern's shared names can live at different
-            // structural paths per alternative (`Held`'s field 2 vs
-            // `Confirmed`'s field 4), so — like the `match` if-chain's
-            // `emit_pattern_bindings` — declare each name once with `let`,
-            // then dispatch per alternative. Still depth-1 only (the same
-            // existing `is` limitation as the `Variant` case above): an
-            // alternative that isn't itself a flat `Variant` contributes no
-            // bindings, only its tag test.
-            if let Pattern::Or(alts, _) = pattern.as_ref() {
-                let names = pattern.bound_names();
-                if names.is_empty() {
-                    return;
-                }
-                let decl: Vec<String> = names.iter().map(|id| ts_ident(&id.name)).collect();
-                out.push(format!("let {};", decl.join(", ")));
-                for id in &names {
-                    cx.declare_binder(&id.name);
-                }
-                let last = alts.len() - 1;
-                for (i, alt) in alts.iter().enumerate() {
-                    let (tag, pairs) = match alt {
-                        Pattern::Variant {
-                            variant, bindings, ..
-                        } => {
-                            let mut pairs = Vec::new();
-                            for (j, b) in bindings.iter().enumerate() {
-                                let Pattern::Binding(name) = b.pattern() else {
-                                    continue;
-                                };
-                                let field = match &b.kind {
-                                    PatternBindingKind::Named { field, .. } => field.name.clone(),
-                                    PatternBindingKind::Positional { .. } => {
-                                        cx.positional_field_name(disc_ty, &variant.name, j, tys)
-                                    }
-                                };
-                                pairs.push((ts_ident(&name.name), format!("{value_text}.{field}")));
-                            }
-                            (Some(variant.name.clone()), pairs)
-                        }
-                        _ => (None, Vec::new()),
-                    };
-                    if i == last {
-                        out.push("} else {".to_string());
-                    } else {
-                        let cond = tag
-                            .as_ref()
-                            .map(|t| format!("{value_text}.tag === \"{t}\""))
-                            .unwrap_or_else(|| "true".to_string());
-                        let kw = if i == 0 { "if" } else { "} else if" };
-                        out.push(format!("{kw} ({cond}) {{"));
+            for (i, b) in bindings.iter().enumerate() {
+                // `is` emits only flat, depth-1 name bindings (ADR 0169 keeps
+                // nesting/guards match-only); `_` and nested patterns bind nothing.
+                let Pattern::Binding(name) = b.pattern() else {
+                    continue;
+                };
+                match &b.kind {
+                    PatternBindingKind::Named { field, .. } => {
+                        out.push(format!(
+                            "const {name} = {value}.{field};",
+                            name = ts_ident(&name.name),
+                            value = value_text,
+                            field = field.name
+                        ));
                     }
-                    for (name, path) in &pairs {
-                        out.push(format!("  {name} = {path};"));
+                    PatternBindingKind::Positional { .. } => {
+                        let field = cx.positional_field_name(disc_ty, &variant.name, i, tys);
+                        out.push(format!(
+                            "const {name} = {value}.{field};",
+                            name = ts_ident(&name.name),
+                            value = value_text,
+                            field = field
+                        ));
                     }
                 }
-                out.push("}".to_string());
+                cx.declare_binder(&name.name);
             }
         }
-        ExprKind::BinOp(BinOp::And, l, r) => {
-            gather_is_bindings_for_emit(l, cx, out, found);
-            gather_is_bindings_for_emit(r, cx, out, found);
+        // #474 §2.3.6: an or-pattern's shared names can live at different
+        // structural paths per alternative (`Held`'s field 2 vs
+        // `Confirmed`'s field 4), so — like the `match` if-chain's
+        // `emit_pattern_bindings` — declare each name once with `let`,
+        // then dispatch per alternative. Still depth-1 only (the same
+        // existing `is` limitation as the `Variant` case above): an
+        // alternative that isn't itself a flat `Variant` contributes no
+        // bindings, only its tag test.
+        if let Pattern::Or(alts, _) = pattern.as_ref() {
+            let names = pattern.bound_names();
+            if names.is_empty() {
+                return;
+            }
+            let decl: Vec<String> = names.iter().map(|id| ts_ident(&id.name)).collect();
+            out.push(format!("let {};", decl.join(", ")));
+            for id in &names {
+                cx.declare_binder(&id.name);
+            }
+            let last = alts.len() - 1;
+            for (i, alt) in alts.iter().enumerate() {
+                let (tag, pairs) = match alt {
+                    Pattern::Variant {
+                        variant, bindings, ..
+                    } => {
+                        let mut pairs = Vec::new();
+                        for (j, b) in bindings.iter().enumerate() {
+                            let Pattern::Binding(name) = b.pattern() else {
+                                continue;
+                            };
+                            let field = match &b.kind {
+                                PatternBindingKind::Named { field, .. } => field.name.clone(),
+                                PatternBindingKind::Positional { .. } => {
+                                    cx.positional_field_name(disc_ty, &variant.name, j, tys)
+                                }
+                            };
+                            pairs.push((ts_ident(&name.name), format!("{value_text}.{field}")));
+                        }
+                        (Some(variant.name.clone()), pairs)
+                    }
+                    _ => (None, Vec::new()),
+                };
+                if i == last {
+                    out.push("} else {".to_string());
+                } else {
+                    let cond = tag
+                        .as_ref()
+                        .map(|t| format!("{value_text}.tag === \"{t}\""))
+                        .unwrap_or_else(|| "true".to_string());
+                    let kw = if i == 0 { "if" } else { "} else if" };
+                    out.push(format!("{kw} ({cond}) {{"));
+                }
+                for (name, path) in &pairs {
+                    out.push(format!("  {name} = {path};"));
+                }
+            }
+            out.push("}".to_string());
         }
-        ExprKind::Paren(inner) => gather_is_bindings_for_emit(inner, cx, out, found),
-        _ => {}
     }
 }
 
@@ -4300,7 +4334,7 @@ fn lower_if(
         cx.shadow_scopes.push(HashMap::new());
         let mut is_bindings = Vec::new();
         let mut found = false;
-        gather_is_bindings_for_emit(cond, cx, &mut is_bindings, &mut found);
+        gather_is_bindings_for_emit(cond, true, cx, &mut is_bindings, &mut found);
         for b in &is_bindings {
             for _ in 0..(INDENT_STEP * 3) {
                 iife.push(' ');
@@ -4324,9 +4358,22 @@ fn lower_if(
             iife.push(' ');
         }
         iife.push_str("} else {\n");
+        // #1654: the bindings the condition's falsity proves, scoped to the
+        // else-branch the same way.
+        cx.shadow_scopes.push(HashMap::new());
+        let mut else_bindings = Vec::new();
+        gather_is_bindings_for_emit(cond, false, cx, &mut else_bindings, &mut found);
+        for b in &else_bindings {
+            for _ in 0..(INDENT_STEP * 3) {
+                iife.push(' ');
+            }
+            iife.push_str(b);
+            iife.push('\n');
+        }
         cx.without_source_map(|cx| {
             emit_block_as_function_body(&mut iife, else_block, cx, INDENT_STEP * 3, false)
         });
+        cx.shadow_scopes.pop();
         cx.return_ty = saved;
         for _ in 0..(INDENT_STEP * 2) {
             iife.push(' ');
@@ -4347,30 +4394,29 @@ fn lower_if(
     }
 }
 
-/// True if `e` contains an `is` test reachable through `&&` and parentheses —
-/// matching exactly the shapes `gather_is_bindings_for_emit` walks (note: it
-/// does *not* descend into `||`). Used by `lower_and_with_is` to decide whether
-/// the `is`-binding flow applies before doing any lowering.
+/// True if `e` proves at least one `is` test when true — the tests
+/// `gather_is_bindings_for_emit` declares, by the shared rule
+/// [`bynk_check::narrowing::matched_is_tests`] (#1654), which descends `!`,
+/// `&&`, `||` and `implies` with polarity. Used by `lower_and_with_is` to decide
+/// whether the `is`-binding flow applies before doing any lowering.
 fn cond_contains_is(e: &Expr) -> bool {
-    match &e.kind {
-        ExprKind::Is { .. } => true,
-        ExprKind::BinOp(BinOp::And, l, r) => cond_contains_is(l) || cond_contains_is(r),
-        ExprKind::Paren(inner) => cond_contains_is(inner),
-        _ => false,
-    }
+    !bynk_check::narrowing::matched_is_tests(e, true).is_empty()
 }
 
 /// True if the expression contains an `is` test with at least one
 /// non-wildcard binding. Walks through `&&`, `||`, and parens.
 fn cond_has_is_bindings(e: &Expr, cx: &LowerCtx) -> bool {
-    match &e.kind {
-        ExprKind::Is { value, pattern } => pattern_is_has_bindings(pattern, value, cx),
-        ExprKind::BinOp(BinOp::And, l, r) | ExprKind::BinOp(BinOp::Or, l, r) => {
-            cond_has_is_bindings(l, cx) || cond_has_is_bindings(r, cx)
-        }
-        ExprKind::Paren(inner) => cond_has_is_bindings(inner, cx),
-        _ => false,
-    }
+    // #1654: either branch may need a place for declarations — the then-branch
+    // for the tests the condition proves when true, the else-branch for those
+    // it proves when false (`if !(o is Some(v)) { … } else { v }`).
+    [true, false].into_iter().any(|when_true| {
+        bynk_check::narrowing::matched_is_tests(e, when_true)
+            .into_iter()
+            .any(|t| match &t.kind {
+                ExprKind::Is { value, pattern } => pattern_is_has_bindings(pattern, value, cx),
+                _ => false,
+            })
+    })
 }
 
 /// The per-pattern-kind check `cond_has_is_bindings` delegates to (#474: split
@@ -4414,14 +4460,22 @@ fn emit_if_tail(
     cx.shadow_scopes.push(HashMap::new());
     let mut is_bindings = Vec::new();
     let mut found = false;
-    gather_is_bindings_for_emit(cond, cx, &mut is_bindings, &mut found);
+    gather_is_bindings_for_emit(cond, true, cx, &mut is_bindings, &mut found);
     for b in &is_bindings {
         write_line(out, indent + INDENT_STEP, b);
     }
     emit_block_as_function_body(out, then_block, cx, indent + INDENT_STEP, async_tail);
     cx.shadow_scopes.pop();
     write_line(out, indent, "} else {");
+    // #1654: the else-branch's bindings, those the condition's falsity proves.
+    cx.shadow_scopes.push(HashMap::new());
+    let mut else_bindings = Vec::new();
+    gather_is_bindings_for_emit(cond, false, cx, &mut else_bindings, &mut found);
+    for b in &else_bindings {
+        write_line(out, indent + INDENT_STEP, b);
+    }
     emit_block_as_function_body(out, else_block, cx, indent + INDENT_STEP, async_tail);
+    cx.shadow_scopes.pop();
     write_line(out, indent, "}");
 }
 
@@ -4674,9 +4728,15 @@ fn lower_bin_op(op: BinOp, lhs: &Expr, rhs: &Expr, cx: &mut LowerCtx) -> Lowered
     // we lower the rhs assuming the binding `n = x.value` was
     // captured. We use a parenthesised IIFE to scope the binding.
     if op == BinOp::And
-        && let Some((bindings, lhs_lowered, rhs_expr, rhs_returns)) =
-            lower_and_with_is(lhs, rhs, cx)
+        && let Some(AndWithIs {
+            bindings,
+            lhs: lhs_lowered,
+            rhs: rhs_expr,
+            rhs_returns,
+            hoisted,
+        }) = lower_and_with_is(lhs, rhs, cx)
     {
+        pre.extend(hoisted);
         let lhs_expr = pre.absorb(lhs_lowered);
         if bindings.is_empty() {
             return pre.finish(format!("{lhs_expr} && {rhs_expr}"));
@@ -4733,9 +4793,15 @@ fn lower_bin_op(op: BinOp, lhs: &Expr, rhs: &Expr, cx: &mut LowerCtx) -> Lowered
     // the antecedent binds into the consequent (the consequent is only reached
     // when the antecedent holds), so reuse the same is-binding IIFE flow.
     if op == BinOp::Implies
-        && let Some((bindings, lhs_lowered, rhs_expr, rhs_returns)) =
-            lower_and_with_is(lhs, rhs, cx)
+        && let Some(AndWithIs {
+            bindings,
+            lhs: lhs_lowered,
+            rhs: rhs_expr,
+            rhs_returns,
+            hoisted,
+        }) = lower_and_with_is(lhs, rhs, cx)
     {
+        pre.extend(hoisted);
         let lhs_expr = pre.absorb(lhs_lowered);
         if bindings.is_empty() {
             return pre.finish(format!("(!({lhs_expr}) || {rhs_expr})"));

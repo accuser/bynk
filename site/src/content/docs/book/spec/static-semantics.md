@@ -707,6 +707,27 @@ bindings (`bynk.types.mixed_pattern_bindings`). An `is` check MUST be applied to
 value of the matching base or sum (`bynk.types.is_base_mismatch`,
 `bynk.types.is_non_sum`, `bynk.types.is_unknown_variant`).
 
+**Where an `is` binding is in scope** (#1654, type-system §2.3.6). The names an
+`e is P` test binds are in scope wherever the test is known to have matched.
+Which tests a Boolean expression proves follows its structure:
+- `e is P` proves itself when true;
+- `a && b` proves both operands' tests when true;
+- `a || b` proves both operands' negated tests when false;
+- `!e` swaps true and false;
+- `a implies b` (`!a || b`) proves `a`'s tests and `b`'s negated tests when
+  false.
+
+So the bindings are in scope in:
+- an `if`'s then-branch, for what its condition proves when true;
+- its else-branch, for what the condition proves when false
+  (`if !(o is Some(v)) { 0 } else { v }`);
+- the right operand of `&&` and `implies`, for what the left operand proves
+  when true, since the right is evaluated only then
+  (`o is Some(v) && v > 0`, `(state is Held(g, r)) && useGuestRoom(g, r)`).
+
+They are never in scope in the right operand of `||` or past the `if`
+(`bynk.resolve.unknown_name`).
+
 {{#grammar-semantics match_expr}}
 
 ## §5.7 Handlers
