@@ -55,6 +55,10 @@ agent Bag {
     let _ <- items.upsert(k, 0, (n) => n + 1)
     ()
   }
+  on call add10(k: String) -> Effect[()] {
+    let _ <- items.update(k, (n) => n + 10)
+    ()
+  }
 }
 
 agent Points {
@@ -121,6 +125,10 @@ agent Memo {
     let _ <- c.remove(k)
     ()
   }
+  on call add10(k: String) -> Effect[()] given Clock {
+    let _ <- c.update(k, (n) => n + 10)
+    ()
+  }
 }
 
 agent Ledger {
@@ -133,6 +141,10 @@ agent Ledger {
   }
   on call drop(id: String) -> Effect[()] {
     let _ <- entries.remove(id)
+    ()
+  }
+  on call retag(id: String, tag: String) -> Effect[()] {
+    let _ <- entries.update(id, (e) => Entry { ...e, tag: tag })
     ()
   }
   on call countTag(tag: String) -> Effect[Int] {

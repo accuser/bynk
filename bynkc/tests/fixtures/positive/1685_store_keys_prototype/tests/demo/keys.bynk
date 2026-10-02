@@ -101,3 +101,29 @@ case "groupBy and joinOn group by prototype-named keys" {
   let j <- Sales("q").joined()
   expect j == 2
 }
+
+-- `update` writes with a plain set after its own-key check; once `__proto__` is
+-- an own data property, the set updates it rather than hitting the accessor.
+case "update rewrites an existing __proto__ entry in place" {
+  do Bag("up").put("__proto__", 1)
+  do Bag("up").add10("__proto__")
+  let p <- Bag("up").get("__proto__")
+  expect p == Some(11)
+  let n <- Bag("up").count()
+  expect n == 1
+  do Memo("up").put("__proto__", 1)
+  do Memo("up").add10("__proto__")
+  let m <- Memo("up").get("__proto__")
+  expect m == Some(11)
+  let mn <- Memo("up").count()
+  expect mn == 1
+}
+
+case "an @indexed update re-indexes a __proto__ entry" {
+  do Ledger("up").add("__proto__", "constructor")
+  do Ledger("up").retag("__proto__", "__proto__")
+  let c <- Ledger("up").countTag("constructor")
+  expect c == 0
+  let p <- Ledger("up").countTag("__proto__")
+  expect p == 1
+}

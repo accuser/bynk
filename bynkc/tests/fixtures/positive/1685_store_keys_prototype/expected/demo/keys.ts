@@ -147,6 +147,16 @@ export class Bag {
     return __result;
   }
 
+  async add10(k: string, deps: {}): Promise<void> {
+    const __state = { ...(await this.loadState()) };
+    const __result = await (async () => {
+      const __r0 = await (() => { const __k = k; if (!Object.hasOwn(__state.items, __k)) { throw new Error("Map.update: key absent"); } __state.items[__k] = ((n) => n + 10)(__state.items[__k]); return undefined; })();
+      return undefined;
+    })();
+    await this.commitState(__state);
+    return __result;
+  }
+
 }
 
 export function __makeBag(key: string, env?: { BAG?: DurableObjectNamespace }): Bag {
@@ -357,6 +367,16 @@ export class Memo {
     return __result;
   }
 
+  async add10(k: string, deps: { Clock: Clock }): Promise<void> {
+    const __state = { ...(await this.loadState()) };
+    const __result = await (async () => {
+      const __r0 = await (async () => { const __now = await deps.Clock.now(); const __k = k; if (!(Object.hasOwn(__state.c, __k) && __state.c[__k].exp > __now)) { throw new Error("Cache.update: key absent"); } __state.c[__k] = { v: ((n) => n + 10)(__state.c[__k].v), exp: __now + 300000 }; return undefined; })();
+      return undefined;
+    })();
+    await this.commitState(__state);
+    return __result;
+  }
+
 }
 
 export function __makeMemo(key: string, env?: { MEMO?: DurableObjectNamespace }): Memo {
@@ -412,6 +432,16 @@ export class Ledger {
     const __state = { ...(await this.loadState()) };
     const __result = await (async () => {
       const __r0 = await (() => { const __k = String(id); const __o = Object.hasOwn(__state.entries, __k) ? __state.entries[__k] : undefined; if (__o !== undefined) { { const __ik = String((__o).tag); const __ia = Object.hasOwn(__state.entries__idx_tag, __ik) ? __state.entries__idx_tag[__ik] : undefined; if (__ia) { const __ii = __ia.indexOf(__k); if (__ii >= 0) __ia.splice(__ii, 1); if (__ia.length === 0) delete __state.entries__idx_tag[__ik]; } } delete __state.entries[__k]; } return undefined; })();
+      return undefined;
+    })();
+    await this.commitState(__state);
+    return __result;
+  }
+
+  async retag(id: string, tag: string, deps: {}): Promise<void> {
+    const __state = { ...(await this.loadState()) };
+    const __result = await (async () => {
+      const __r0 = await (() => { const __k = String(id); if (!Object.hasOwn(__state.entries, __k)) { throw new Error("Map.update: key absent"); } const __o = __state.entries[__k]; { const __ik = String((__o).tag); const __ia = Object.hasOwn(__state.entries__idx_tag, __ik) ? __state.entries__idx_tag[__ik] : undefined; if (__ia) { const __ii = __ia.indexOf(__k); if (__ii >= 0) __ia.splice(__ii, 1); if (__ia.length === 0) delete __state.entries__idx_tag[__ik]; } } const __v = ((e) => ({ ...e, tag: tag }))(__o); __state.entries[__k] = __v; { const __ik = String((__v).tag); if (!Object.hasOwn(__state.entries__idx_tag, __ik)) Object.defineProperty(__state.entries__idx_tag, __ik, { value: [], writable: true, enumerable: true, configurable: true }); __state.entries__idx_tag[__ik].push(__k); } return undefined; })();
       return undefined;
     })();
     await this.commitState(__state);

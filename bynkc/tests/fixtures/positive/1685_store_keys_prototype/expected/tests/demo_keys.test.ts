@@ -264,6 +264,64 @@ async function test_groupBy_and_joinOn_group_by_prototype_named_keys() {
   }
 }
 
+// case tier: unit
+async function test_update_rewrites_an_existing___proto___entry_in_place() {
+  try {
+    demo_keys.__resetAgents();
+    const deps = makeTestDeps();
+    const { Bag, Entry, Ledger, Line, Memo, Order, Points, Pt, Sales, Tags, Total, __makeBag, __makeLedger, __makeMemo, __makePoints, __makeSales, __makeTags } = demo_keys;
+    type Entry = demo_keys.Entry;
+    type Line = demo_keys.Line;
+    type Order = demo_keys.Order;
+    type Pt = demo_keys.Pt;
+    type Total = demo_keys.Total;
+    await __makeBag("up").put("__proto__", 1, deps);
+    await __makeBag("up").add10("__proto__", deps);
+    const p = await __makeBag("up").get("__proto__", deps);
+    if (!(__bynkEq(p, Some(11)))) { throw __bynkExpectFailure("tests/demo/keys.bynk:111:10", 3264, 3277, "expect p == Some(11)\n  expected: p == Some(11)\n  actual:   " + __bynkShow((p)) + " == " + __bynkShow((Some(11)))); }
+    const n = await __makeBag("up").count(deps);
+    if (!(n === 1)) { throw __bynkExpectFailure("tests/demo/keys.bynk:113:10", 3316, 3322, "expect n == 1\n  expected: n == 1\n  actual:   " + __bynkShow((n)) + " == " + __bynkShow((1))); }
+    await __makeMemo("up").put("__proto__", 1, deps);
+    await __makeMemo("up").add10("__proto__", deps);
+    const m = await __makeMemo("up").get("__proto__", deps);
+    if (!(__bynkEq(m, Some(11)))) { throw __bynkExpectFailure("tests/demo/keys.bynk:117:10", 3442, 3455, "expect m == Some(11)\n  expected: m == Some(11)\n  actual:   " + __bynkShow((m)) + " == " + __bynkShow((Some(11)))); }
+    const mn = await __makeMemo("up").count(deps);
+    if (!(mn === 1)) { throw __bynkExpectFailure("tests/demo/keys.bynk:119:10", 3496, 3503, "expect mn == 1\n  expected: mn == 1\n  actual:   " + __bynkShow((mn)) + " == " + __bynkShow((1))); }
+    return { pass: true };
+  } catch (e) {
+    if (e instanceof ExpectationError) {
+      return { pass: false, error: { message: e.message, location: e.location } };
+    }
+    return { pass: false, error: { message: String(e), location: "unknown" } };
+  }
+}
+
+// case tier: unit
+async function test_an__indexed_update_re_indexes_a___proto___entry() {
+  try {
+    demo_keys.__resetAgents();
+    const deps = makeTestDeps();
+    const { Bag, Entry, Ledger, Line, Memo, Order, Points, Pt, Sales, Tags, Total, __makeBag, __makeLedger, __makeMemo, __makePoints, __makeSales, __makeTags } = demo_keys;
+    type Entry = demo_keys.Entry;
+    type Line = demo_keys.Line;
+    type Order = demo_keys.Order;
+    type Pt = demo_keys.Pt;
+    type Total = demo_keys.Total;
+    await __makeLedger("up").add("__proto__", "constructor", deps);
+    await __makeLedger("up").retag("__proto__", "__proto__", deps);
+    const c = await __makeLedger("up").countTag("constructor", deps);
+    if (!(c === 0)) { throw __bynkExpectFailure("tests/demo/keys.bynk:126:10", 3721, 3727, "expect c == 0\n  expected: c == 0\n  actual:   " + __bynkShow((c)) + " == " + __bynkShow((0))); }
+    const p = await __makeLedger("up").countTag("__proto__", deps);
+    if (!(p === 1)) { throw __bynkExpectFailure("tests/demo/keys.bynk:128:10", 3783, 3789, "expect p == 1\n  expected: p == 1\n  actual:   " + __bynkShow((p)) + " == " + __bynkShow((1))); }
+    return { pass: true };
+  } catch (e) {
+    if (e instanceof ExpectationError) {
+      return { pass: false, error: { message: e.message, location: e.location } };
+    }
+    return { pass: false, error: { message: String(e), location: "unknown" } };
+  }
+}
+
 export async function run(only?: string) {
   const results = [];
   const want = (n: string): boolean => only === undefined || only === n;
@@ -275,5 +333,7 @@ export async function run(only?: string) {
   if (want("a store Cache handles prototype-named keys")) results.push({ name: "a store Cache handles prototype-named keys", ...(await test_a_store_Cache_handles_prototype_named_keys()) });
   if (want("an @indexed map indexes prototype-named field values")) results.push({ name: "an @indexed map indexes prototype-named field values", ...(await test_an__indexed_map_indexes_prototype_named_field_values()) });
   if (want("groupBy and joinOn group by prototype-named keys")) results.push({ name: "groupBy and joinOn group by prototype-named keys", ...(await test_groupBy_and_joinOn_group_by_prototype_named_keys()) });
+  if (want("update rewrites an existing __proto__ entry in place")) results.push({ name: "update rewrites an existing __proto__ entry in place", ...(await test_update_rewrites_an_existing___proto___entry_in_place()) });
+  if (want("an @indexed update re-indexes a __proto__ entry")) results.push({ name: "an @indexed update re-indexes a __proto__ entry", ...(await test_an__indexed_update_re_indexes_a___proto___entry()) });
   return results;
 }
