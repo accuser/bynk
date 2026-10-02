@@ -8,7 +8,7 @@ export function half(x: number): number {
 }
 
 export function intDiv(a: number, b: number): number {
-  return Math.trunc(a / b);
+  return ((__l: number, __r: number) => { if (__r === 0) throw new Error("Int division by zero"); return Math.trunc(__l / __r); })(a, b);
 }
 
 export function area(w: number, h: number): number {
@@ -21,7 +21,7 @@ export function isHalf(x: number): boolean {
 
 export function demo(): boolean {
   const x = 5.0 / 2.0;
-  const n = Math.trunc(5 / 2);
+  const n = ((__l: number, __r: number) => { if (__r === 0) throw new Error("Int division by zero"); return Math.trunc(__l / __r); })(5, 2);
   const e = 1.5e-3;
   const big = 1e10;
   return isHalf(x - 2.0) && n === 2 && e > 0.0 && big >= 1.0 && area(2.0, 3.5) !== 7.5;

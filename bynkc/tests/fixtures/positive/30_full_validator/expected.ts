@@ -54,7 +54,7 @@ export function applyDiscount(qty: number, discount: number): Result<number, Val
   if (__r1.tag === "Err") return __r1;
   const d = __r1.value;
   const amount = q * 100;
-  const reduction = Math.trunc(amount * d / 100);
+  const reduction = ((__l: number, __r: number) => { if (__r === 0) throw new Error("Int division by zero"); return Math.trunc(__l / __r); })(amount * d, 100);
   return Ok(amount - reduction);
 }
 

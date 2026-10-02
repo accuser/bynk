@@ -1898,7 +1898,11 @@ fn lower_method_call(
     {
         let s = pre.lower(&args[0], cx);
         let (grammar, value, guard) = if id.name == INT {
-            ("/^[+-]?[0-9]+$/", "Number(__s) + 0", "Number.isSafeInteger(__n)")
+            (
+                "/^[+-]?[0-9]+$/",
+                "Number(__s) + 0",
+                "Number.isSafeInteger(__n)",
+            )
         } else {
             (
                 "/^[+-]?([0-9]+(\\.[0-9]*)?|\\.[0-9]+)([eE][+-]?[0-9]+)?$/",
@@ -3714,13 +3718,27 @@ fn lower_numeric_kernel(
     let mut pre = Pre::new();
     let text: Option<String> = match (method.name.as_str(), args) {
         ("toFloat", []) => Some(pre.lower(receiver, cx)),
-        ("round" | "floor" | "ceil" | "abs", []) => {
+        ("abs", []) => {
             let recv = pre.lower(receiver, cx);
-            Some(format!("Math.{}({recv})", method.name))
+            Some(format!("Math.abs({recv})"))
         }
-        ("truncate", []) => {
+        // #1657 (runtime-semantics track §3.4, decided in S8): a Float→`Int`
+        // conversion traps when the result is not a safe integer — a
+        // non-finite `Float`, or one past ±2^53 — rather than producing an
+        // `Int` outside the domain. The same posture as `Int` division by zero.
+        // Returning `Option[Int]` was rejected: a signature change to four
+        // kernel methods.
+        ("round" | "floor" | "ceil" | "truncate", []) => {
             let recv = pre.lower(receiver, cx);
-            Some(format!("Math.trunc({recv})"))
+            let f = if method.name == "truncate" {
+                "trunc"
+            } else {
+                method.name.as_str()
+            };
+            Some(format!(
+                "((__v: number) => {{ const __i = Math.{f}(__v); if (!Number.isSafeInteger(__i)) throw new Error(\"Float.{m}: result is not a safe Int\"); return __i; }})({recv})",
+                m = method.name
+            ))
         }
         ("min" | "max", [other]) => {
             let recv = pre.lower(receiver, cx);
@@ -4844,7 +4862,12 @@ fn lower_bin_op(op: BinOp, lhs: &Expr, rhs: &Expr, cx: &mut LowerCtx) -> Lowered
         if lhs_is_float {
             format!("{l} / {r}")
         } else {
-            format!("Math.trunc({l} / {r})")
+            // #1657: `Int` division by zero traps, a runtime fault, rather than
+            // producing `Infinity`/`NaN` as an `Int`. The operands are passed in,
+            // so they are still evaluated left to right.
+            format!(
+                "((__l: number, __r: number) => {{ if (__r === 0) throw new Error(\"Int division by zero\"); return Math.trunc(__l / __r); }})({l}, {r})"
+            )
         }
     } else if let Some(helper) = matches!(op, BinOp::Eq | BinOp::NotEq)
         .then(|| cx.commons().expr_types.get(&lhs.id).map(|te| te.ty))

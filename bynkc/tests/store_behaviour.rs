@@ -1265,3 +1265,107 @@ fn update_on_a_prototype_named_absent_key_faults() {
         UPDATE_ABSENT_DRIVER_TS,
     );
 }
+
+// #1657 (runtime-semantics track §3.4): an `Int` stays a JS safe integer at
+// runtime. A suite cannot assert a fault, so the driver catches each one:
+//   - `Int` division by zero traps instead of producing `Infinity`/`NaN`;
+//   - `round`/`floor`/`ceil`/`truncate` trap on a non-finite `Float` or one past
+//     ±2^53 instead of producing an `Int` outside the domain;
+//   - encoding an out-of-range `Int` (`Json.encode`, or the state commit)
+//     faults instead of writing `null`, and a refused commit persists nothing;
+//   - a stored `Int` outside the range faults on load with `RehydrationViolation`.
+const INT_DOMAIN_SOURCE: &str = "context shop\n\
+\n\
+agent Calc {\n\
+\x20 key id: String\n\
+\x20 store last: Cell[Int] = 0\n\
+\n\
+\x20 on call div(a: Int, b: Int) -> Effect[Int] {\n\
+\x20   a / b\n\
+\x20 }\n\
+\x20 on call conv(f: Float, how: String) -> Effect[Int] {\n\
+\x20   if how == \"round\" { f.round() } else if how == \"floor\" { f.floor() } else if how == \"ceil\" { f.ceil() } else { f.truncate() }\n\
+\x20 }\n\
+\x20 on call encodeTimes(n: Int, k: Int) -> Effect[String] {\n\
+\x20   Json.encode(n * k)\n\
+\x20 }\n\
+\x20 on call store(n: Int, k: Int) -> Effect[()] {\n\
+\x20   last := n * k\n\
+\x20 }\n\
+\x20 on call read() -> Effect[Int] {\n\
+\x20   last\n\
+\x20 }\n\
+}\n";
+
+const INT_DOMAIN_DRIVER_TS: &str = r#"
+import { Calc } from "./shop.js";
+
+function assert(cond: boolean, msg: string): void {
+  if (!cond) {
+    throw new Error(`assertion failed: ${msg}`);
+  }
+}
+
+function fakeState() {
+  const m = new Map<string, unknown>();
+  return {
+    storage: {
+      async get(key: string): Promise<unknown> { return structuredClone(m.get(key)); },
+      async put(key: string, value: unknown): Promise<void> { m.set(key, structuredClone(value)); },
+    },
+  };
+}
+
+async function faults(label: string, run: () => Promise<unknown>, needle: string): Promise<void> {
+  let message = "";
+  try {
+    const v = await run();
+    message = `no fault (got ${String(v)})`;
+  } catch (e) {
+    message = String((e as { message?: string }).message ?? e);
+  }
+  assert(message.includes(needle), `${label} faults with "${needle}", got: ${message}`);
+}
+
+const st = fakeState();
+const c = new Calc(st as never);
+
+// Division: ordinary values truncate, zero traps.
+assert((await c.div(7, 2, {})) === 3, "7 / 2 truncates to 3");
+assert((await c.div(-7, 2, {})) === -3, "-7 / 2 truncates toward zero");
+await faults("5 / 0", () => c.div(5, 0, {}), "Int division by zero");
+await faults("0 / 0", () => c.div(0, 0, {}), "Int division by zero");
+
+// Float → Int conversions.
+assert((await c.conv(2.5, "round", {})) === 3, "round");
+assert((await c.conv(2.5, "floor", {})) === 2, "floor");
+assert((await c.conv(2.1, "ceil", {})) === 3, "ceil");
+assert((await c.conv(-2.7, "truncate", {})) === -2, "truncate");
+for (const how of ["round", "floor", "ceil", "truncate"]) {
+  await faults(`${how}(Infinity)`, () => c.conv(Infinity, how, {}), "is not a safe Int");
+  await faults(`${how}(NaN)`, () => c.conv(NaN, how, {}), "is not a safe Int");
+  await faults(`${how}(1e300)`, () => c.conv(1e300, how, {}), "is not a safe Int");
+}
+
+// Encode: in range is fine, out of range faults rather than writing null.
+assert((await c.encodeTimes(3, 4, {})) === "12", "Json.encode of a safe Int");
+await faults("Json.encode(2^53 * 4)", () => c.encodeTimes(9007199254740991, 4, {}), "safe-integer range");
+
+// Commit: an out-of-range Int is refused at encode, and nothing persists.
+await c.store(5, 2, {});
+assert((await c.read({})) === 10, "an in-range Int commits");
+await faults("commit of 2^53 * 4", () => c.store(9007199254740991, 4, {}), "safe-integer range");
+assert((await c.read({})) === 10, "the refused commit persisted nothing");
+
+// Load: a stored Int outside the range faults on rehydration.
+const bad = fakeState();
+await bad.storage.put("state", { last: 1e300 });
+await faults("load of a stored 1e300", () => new Calc(bad as never).read({}), "RehydrationViolation");
+
+console.log("ALL OK");
+"#;
+
+#[test]
+fn int_stays_a_safe_integer_at_runtime() {
+    verify("int_domain", INT_DOMAIN_SOURCE, INT_DOMAIN_DRIVER_TS);
+}

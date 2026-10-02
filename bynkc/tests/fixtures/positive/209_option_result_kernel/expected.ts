@@ -8,7 +8,7 @@ export function doubledOr(o: Option<number>, fallback: number): number {
 }
 
 export function halve(n: number): Option<number> {
-  return (n === 0 ? None : Some(Math.trunc(n / 2)));
+  return (n === 0 ? None : Some(((__l: number, __r: number) => { if (__r === 0) throw new Error("Int division by zero"); return Math.trunc(__l / __r); })(n, 2)));
 }
 
 export function quartered(o: Option<number>): Option<number> {

@@ -4,6 +4,6 @@
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "./runtime.js";
 
 export function formula(a: number, b: number): number {
-  return Math.trunc((a + b) * (a - b) / 2);
+  return ((__l: number, __r: number) => { if (__r === 0) throw new Error("Int division by zero"); return Math.trunc(__l / __r); })((a + b) * (a - b), 2);
 }
 

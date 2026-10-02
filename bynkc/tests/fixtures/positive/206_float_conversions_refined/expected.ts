@@ -32,7 +32,7 @@ export const Ratio = {
 };
 
 export function toCents(p: number): number {
-  return Math.round((p * 100.0));
+  return ((__v: number) => { const __i = Math.round(__v); if (!Number.isSafeInteger(__i)) throw new Error("Float.round: result is not a safe Int"); return __i; })((p * 100.0));
 }
 
 export function fromCents(c: number): number {
@@ -40,7 +40,7 @@ export function fromCents(c: number): number {
 }
 
 export function roundings(f: number): number {
-  return Math.round(f) + Math.floor(f) + Math.ceil(f) + Math.trunc(f);
+  return ((__v: number) => { const __i = Math.round(__v); if (!Number.isSafeInteger(__i)) throw new Error("Float.round: result is not a safe Int"); return __i; })(f) + ((__v: number) => { const __i = Math.floor(__v); if (!Number.isSafeInteger(__i)) throw new Error("Float.floor: result is not a safe Int"); return __i; })(f) + ((__v: number) => { const __i = Math.ceil(__v); if (!Number.isSafeInteger(__i)) throw new Error("Float.ceil: result is not a safe Int"); return __i; })(f) + ((__v: number) => { const __i = Math.trunc(__v); if (!Number.isSafeInteger(__i)) throw new Error("Float.truncate: result is not a safe Int"); return __i; })(f);
 }
 
 export function mkPrice(raw: number): Result<Price, ValidationError> {

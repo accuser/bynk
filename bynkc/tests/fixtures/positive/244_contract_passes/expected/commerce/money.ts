@@ -4,6 +4,6 @@
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
 
 export function discount(p: number, pct: number): number {
-  return p - Math.trunc((p * pct) / 100);
+  return p - ((__l: number, __r: number) => { if (__r === 0) throw new Error("Int division by zero"); return Math.trunc(__l / __r); })((p * pct), 100);
 }
 
