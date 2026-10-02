@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0426](0426-unbound-effect-is-an-error.md) | **An `Effect` value built in an effectful body and not awaited is an error** (v0.296) — A plain let, list element or constructor payload of Effect type is bynk.effect.unbound_effect; bind, do, return or pass it instead | Accepted (v0.296) |
 | [0425](0425-int-safe-integer-domain.md) | **`Int` is the JS safe-integer domain, enforced at every entry** (v0.295) — Literals, the wire (both directions), Int.parse, division by zero and Float→Int conversions all hold an Int to ±(2^53 − 1) | Accepted (v0.295) |
 | [0424](0424-agent-call-boundary-codec.md) | **A workers agent call encodes its arguments and result with the boundary codec** (v0.294) — Each agent emits a wire table of serialise/deserialise pairs; the DO stub's proxy and the DO's fetch both use it | Accepted (v0.294) |
 | [0423](0423-regex-ambiguity-check.md) | **`Matches` patterns are admitted by an automaton ambiguity check** (v0.292) — Exponential and unbounded-polynomial ambiguity are compile errors; a length bound downgrades polynomial to a warning, and length predicates are checked first | Accepted (v0.292) |

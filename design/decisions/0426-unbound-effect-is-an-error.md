@@ -1,11 +1,6 @@
----
-level: minor
-changelog: "An `Effect` value in an effectful body must now be awaited in order: bound with `<-`, sequenced with `do`, returned, or passed to a parameter that takes it (#1658). Building one in a value position is the new error `bynk.effect.unbound_effect`. That covers a plain `let` (`let e = Counter(\"k\").bump()`, `let _ = …`, an `Effect`-annotated `let`), a list element, and the payload of `Some`/`Ok`/`Err`, a variant or a record field. Effectful calls translate to eager promises, so such a call still ran, unawaited and racing the statements after it, with no diagnostic. Separately, a type named in a service or agent handler signature, a `from websocket`/`from events` service header, an agent's key or `store` field type, a capability or provider operation signature, or an actor's `identity` must now resolve, as in a `fn` signature (#1679). `on call(v: Bogus)` and `Effect[Unit]` (Bynk's unit is `()`) were accepted, and the emitter wrote a `/* unknown */` placeholder; they are now `bynk.resolve.unknown_type`."
----
+# 0426 — An `Effect` value built in an effectful body and not awaited is an error
 
-## ADR: unbound-effect-is-an-error
-title: An `Effect` value built in an effectful body and not awaited is an error
-summary: A plain let, list element or constructor payload of Effect type is bynk.effect.unbound_effect; bind, do, return or pass it instead
+- **Status:** Accepted (v0.296)
 
 **Context.** The emitter translates an effectful call to an eager `Promise`: the
 call starts when the expression is evaluated, not when it is awaited. In an
