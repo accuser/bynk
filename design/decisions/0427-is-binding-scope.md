@@ -1,11 +1,6 @@
----
-level: minor
-changelog: "`is` bindings now flow where their test is known to have matched (#1654, type-system §2.3.6): into the right operand of `&&` and `implies` (`o is Some(v) && v > 0`), and into the `else` of a negated test (`if !(o is Some(v)) { 0 } else { v }`). Both shapes were rejected with `unknown name`. `if n is Q && m is Q { … m … }` (refined `Q`) was accepted and then failed `tsc` (`__r1` used out of scope); it now compiles. One rule decides where a binding is in scope, and the resolver, the checker and the emitter all read it. Separately, a `--target workers` build is now `tsc`-clean in two cases that failed before (#1655): `compose.ts` imports the runtime types a service parameter names (`Option`, `Result`, …), and the build no longer writes unit test modules that imported the bundle layout. Integration suites, which target the workers layout, are still written."
----
+# 0427 — An `is` binding is in scope wherever its test is known to have matched
 
-## ADR: is-binding-scope
-title: An `is` binding is in scope wherever its test is known to have matched
-summary: One structural rule (which `is` tests an expression proves, by outcome) decides is-binding scope for the resolver, checker and emitter alike
+- **Status:** Accepted (v0.297)
 
 **Context.** `is` bindings flowed only into an `if`'s then-branch, through
 `&&` and parentheses. Three walks decided this independently:

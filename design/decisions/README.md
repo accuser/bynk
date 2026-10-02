@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0427](0427-is-binding-scope.md) | **An `is` binding is in scope wherever its test is known to have matched** (v0.297) — One structural rule (which `is` tests an expression proves, by outcome) decides is-binding scope for the resolver, checker and emitter alike | Accepted (v0.297) |
 | [0426](0426-unbound-effect-is-an-error.md) | **An `Effect` value built in an effectful body and not awaited is an error** (v0.296) — A plain let, list element or constructor payload of Effect type is bynk.effect.unbound_effect; bind, do, return or pass it instead | Accepted (v0.296) |
 | [0425](0425-int-safe-integer-domain.md) | **`Int` is the JS safe-integer domain, enforced at every entry** (v0.295) — Literals, the wire (both directions), Int.parse, division by zero and Float→Int conversions all hold an Int to ±(2^53 − 1) | Accepted (v0.295) |
 | [0424](0424-agent-call-boundary-codec.md) | **A workers agent call encodes its arguments and result with the boundary codec** (v0.294) — Each agent emits a wire table of serialise/deserialise pairs; the DO stub's proxy and the DO's fetch both use it | Accepted (v0.294) |
