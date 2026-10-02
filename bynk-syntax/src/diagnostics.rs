@@ -1665,6 +1665,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A handler calls `Log.append` (which stamps the current time) without declaring `given Clock`.",
     ),
     d(
+        "bynk.store.unkeyable_key",
+        "A store `Set` element or `Map`/`Cache` key is not value-keyable — it must be `String`, `Int`, or a refined/opaque type over them (#1680).",
+    ),
+    d(
         "bynk.store.unknown_annotation",
         "A `store` field carries an annotation outside the closed `@indexed`/`@ttl`/`@retain`/`@bounded` set.",
     ),

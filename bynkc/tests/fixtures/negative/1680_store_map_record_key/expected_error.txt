@@ -1,0 +1,2 @@
+bynk.store.unkeyable_key
+a `Map` key must be value-keyable

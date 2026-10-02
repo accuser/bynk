@@ -1,0 +1,10 @@
+context b
+
+type Pt = { x: Int }
+
+-- #1680: a store `Cache` keys by its key's string form; a record has none.
+agent A {
+  key id: String
+  store c: Cache[Pt, Int] @ttl(5.minutes)
+  on call get() -> Effect[Int] { 1 }
+}

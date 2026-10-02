@@ -140,6 +140,11 @@ as a plain value keeps its pure-collection methods).
 | `Cache[K, V]` | the `Map` op set, with per-entry TTL expiry | requires `@ttl`; eviction is lazy, check-on-read, and needs `given Clock` |
 | `Log[T]` | `append`; lazy `Query` reads via `since`/`before`/`between`/`recent`/`reversed` | `append` stamps the time (`given Clock`); the window roots take explicit `Instant`s, so reads need no clock |
 
+A `Map`'s or `Cache`'s key and a `Set`'s element must be **value-keyable**: `String`,
+`Int`, or a refined or opaque type over them, as for a value `Map` key
+(`bynk.store.unkeyable_key`, #1680). A store collection is keyed by the key's
+string form, so a record has no stable key: key by one of its id fields instead.
+
 Reads over a `store Map`/`Log` are a lazy [`Query`](/book/reference/types/#query) — the same
 combinator vocabulary the eager `List` carries, dispatched by provenance.
 

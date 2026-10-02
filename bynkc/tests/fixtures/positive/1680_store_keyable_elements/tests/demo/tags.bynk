@@ -1,0 +1,24 @@
+---
+#1680: keyable store elements behave as sets and maps over their values.
+---
+suite demo.tags
+
+case "a Set of a refined String" {
+  let t: Tag = "urgent"
+  let u: Tag = "later"
+  do Board("b").tag(t)
+  let yes <- Board("b").hasTag(t)
+  expect yes
+  let no <- Board("b").hasTag(u)
+  expect !no
+}
+
+case "a Map keyed by an opaque String" {
+  let alice = UserId.unsafe("alice")
+  let bob = UserId.unsafe("bob")
+  do Board("m").own(alice, 3)
+  let a <- Board("m").owned(alice)
+  expect a == 3
+  let b <- Board("m").owned(bob)
+  expect b == 0
+}

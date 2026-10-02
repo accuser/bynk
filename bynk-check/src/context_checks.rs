@@ -2365,6 +2365,40 @@ fn validate_indexed_keys(
     }
 }
 
+/// #1680 (runtime-semantics track S13): a store `Set`'s element and a store
+/// `Map`'s or `Cache`'s key must be value-keyable, the rule value `Map` keys,
+/// `distinct`/`groupBy` keys and `@indexed` fields already follow. A store
+/// collection is a plain object keyed by its key's string form
+/// (`rec[item] = true`), so a record key failed `tsc` (TS2538), and without
+/// `tsc` every record would have keyed as `"[object Object]"`. A name that
+/// doesn't resolve is reported by the resolver, so it is skipped here.
+fn check_store_keyable(
+    t: &TypeRef,
+    what: &str,
+    types: &HashMap<String, Arc<TypeDecl>>,
+    errors: &mut Vec<CompileError>,
+) {
+    if let TypeRef::Named(id) = t
+        && !types.contains_key(&id.name)
+    {
+        return;
+    }
+    if !type_ref_is_keyable(t, types) {
+        errors.push(
+            CompileError::new(
+                "bynk.store.unkeyable_key",
+                t.span(),
+                format!(
+                    "{what} must be value-keyable — `String`, `Int`, or a refined/opaque type over them"
+                ),
+            )
+            .with_note(
+                "a store collection is keyed by its key's string form, so record, sum, collection and function keys have no stable key; key by an id field instead",
+            ),
+        );
+    }
+}
+
 /// Whether a `TypeRef` is value-keyable (the Map-key / index-key rule, ADR 0110
 /// D5): `Int`/`String`, including a refined/opaque named type over them.
 fn type_ref_is_keyable(t: &TypeRef, types: &HashMap<String, Arc<TypeDecl>>) -> bool {
@@ -2641,6 +2675,7 @@ fn store_field_scopes(
                 }
                 checker::record_type_refs(&f.kind.args[0], types, no_vars, refs);
                 checker::record_type_refs(&f.kind.args[1], types, no_vars, refs);
+                check_store_keyable(&f.kind.args[0], "a `Map` key", types, errors);
                 if let (Some(k), Some(v)) = (
                     checker::resolve_type_ref(&f.kind.args[0], types, tys),
                     checker::resolve_type_ref(&f.kind.args[1], types, tys),
@@ -2655,6 +2690,7 @@ fn store_field_scopes(
                 }
                 let elem = &f.kind.args[0];
                 checker::record_type_refs(elem, types, no_vars, refs);
+                check_store_keyable(elem, "a `Set` element", types, errors);
                 if let Some(ty) = checker::resolve_type_ref(elem, types, tys) {
                     sets.insert(f.name.name.clone(), ty);
                 }
@@ -2667,6 +2703,7 @@ fn store_field_scopes(
                 }
                 checker::record_type_refs(&f.kind.args[0], types, no_vars, refs);
                 checker::record_type_refs(&f.kind.args[1], types, no_vars, refs);
+                check_store_keyable(&f.kind.args[0], "a `Cache` key", types, errors);
                 // A `Cache` requires `@ttl(<Duration>)`; its millisecond value is
                 // the entry lifetime. Absent → steer the author to a `Map`.
                 let ttl = cache_ttl_millis(f, errors);
