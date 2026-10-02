@@ -1,0 +1,22 @@
+---
+#1655: on the workers target, `compose.ts` re-declares each service handler's
+parameters, naming the runtime's own types (`Option`, `Result`) bare. They are
+now imported, so this context passes `tsc --strict` on workers as it always did
+on bundle.
+---
+context b
+
+service lookup {
+  on call(o: Option[Int]) -> Effect[Result[Int, String]] {
+    Ok(o.getOrElse(0))
+  }
+}
+
+service settle {
+  on call(r: Result[Int, String]) -> Effect[Option[Int]] {
+    match r {
+      Ok(n) => Some(n)
+      Err(_) => None
+    }
+  }
+}

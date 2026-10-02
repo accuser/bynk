@@ -118,12 +118,16 @@ fn every_example_output_passes_tsc_strict() {
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     for name in EXAMPLES.iter().filter(|n| !KNOWN_TSC_RED.contains(n)) {
-        // Single-tree over `src/` — the deployable Worker artefact, the same
-        // shape `bynkc compile <example>/src --target workers` produces. The
-        // split-paths form additionally emits test-runner modules, whose
-        // staging layout is `bynkc test`'s concern, not this gate's.
+        // #1655: the example's *project form* (`bynk.toml`, `src/` and
+        // `tests/`), exactly what `bynkc compile <example> --target workers`
+        // produces. This gate compiled `src/` alone, so it missed a workers
+        // build writing test modules that imported the bundle layout; a workers
+        // build now emits none, and this pins that the whole output is
+        // tsc-clean.
+        let root_dir = example_root(name);
+        let paths = bynkc::try_read_project_paths(&root_dir).expect("well-formed example manifest");
         let out = bynkc::compile_project(
-            &bynk_testkit::compile_options_single(example_root(name).join("src"))
+            &bynk_testkit::compile_options_split(root_dir, paths)
                 .target(bynkc::BuildTarget::Workers),
         )
         .unwrap_or_else(|_| panic!("examples/{name} failed to compile"));

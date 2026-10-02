@@ -1936,7 +1936,21 @@ fn build_output(
     target: BuildTarget,
     import_ext: ImportExt,
 ) -> ProjectOutput {
+    // #1655 (runtime-semantics track S6): a `--target workers` build writes the
+    // workers layout (`workers/<ctx>/…`), but a *unit* test module imports the
+    // bundle layout (`./../<ctx>.js`), so `tsc` over the output failed
+    // (TS2307). Those modules had no consumer either: `bynkc test` compiles the
+    // bundle target for them and overlays a workers compile *excluding*
+    // `tests/`. A workers build therefore drops the unit modules. Integration
+    // modules stand their participants up as real Workers and import this
+    // layout, so they stay, and `tests/main.ts` runs just them.
+    let workers = target == BuildTarget::Workers;
+    if workers {
+        compiled.retain(|f| !f.output_path.starts_with("tests"));
+    }
     compiled.extend(integration_outputs);
+    // The integration runnables follow the unit ones.
+    let unit_count = runnable_tests.len();
     runnable_tests.extend(integration_runnables);
 
     // v0.67: the discovery manifest — built from the combined runnable set before
@@ -1945,9 +1959,15 @@ fn build_output(
     let discovered = discovery_manifest(&runnable_tests);
 
     // v0.16: emit the combined top-level test runner once both passes are done,
-    // so `tests/main.ts` aggregates unit and integration suites together.
-    if !runnable_tests.is_empty() {
-        let main_program = emit_test_main(&runnable_tests, import_ext);
+    // so `tests/main.ts` aggregates unit and integration suites together (on
+    // `workers`, the integration suites only: #1655, above).
+    let main_tests = if workers {
+        &runnable_tests[unit_count..]
+    } else {
+        &runnable_tests[..]
+    };
+    if !main_tests.is_empty() {
+        let main_program = emit_test_main(main_tests, import_ext);
         compiled.push(StagedFile {
             output_path: PathBuf::from("tests/main.ts"),
             document: Document::Ts(main_program),

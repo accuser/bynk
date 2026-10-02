@@ -454,6 +454,29 @@ pub(crate) fn emit_worker_compose(
     if uses_emit {
         runtime_imports.push("dispatchToEventsFanout".to_string());
     }
+    // #1655 (runtime-semantics track S6): `compose.ts` re-declares each
+    // handler's parameters (not its return type), qualifying user types with
+    // `handlers.` but naming the runtime's own generic and error types bare.
+    // Before, nothing imported them, so an `Option[…]`/`Result[…]` parameter
+    // failed `tsc` on this target (TS2749/TS2304) while bundle was clean.
+    // Import every runtime type a parameter mentions, as a type; a name already
+    // imported as a value (`HttpResult`) covers its type too.
+    let mut signature_types: std::collections::BTreeSet<&'static str> = Default::default();
+    for service in table.services.values() {
+        for h in &service.handlers {
+            for p in &h.params {
+                collect_runtime_type_names(&p.type_ref, &mut signature_types);
+            }
+        }
+    }
+    for name in signature_types {
+        if !runtime_imports
+            .iter()
+            .any(|i| i.trim_start_matches("type ") == name)
+        {
+            runtime_imports.push(format!("type {name}"));
+        }
+    }
 
     // Only consumed *contexts* become Service Bindings — a consumed adapter is
     // not a Worker (its capability is provided in-process via the binding).
@@ -2120,6 +2143,61 @@ fn named_types_in(r: &TypeRef) -> Vec<String> {
     }
     walk(r, &mut out);
     out
+}
+
+/// #1655: the runtime types a type reference names unqualified when rendered
+/// by [`qualified_ts_type_ref`] (every user type is `handlers.`-qualified; these
+/// are the runtime's own). `Stream`/`Query`/`History` render without a runtime
+/// name, and `Effect` is peeled.
+fn collect_runtime_type_names(r: &TypeRef, out: &mut std::collections::BTreeSet<&'static str>) {
+    match r {
+        TypeRef::Result(t, e, _) => {
+            out.insert("Result");
+            collect_runtime_type_names(t, out);
+            collect_runtime_type_names(e, out);
+        }
+        TypeRef::Option(t, _) => {
+            out.insert("Option");
+            collect_runtime_type_names(t, out);
+        }
+        TypeRef::HttpResult(t, _) => {
+            out.insert("HttpResult");
+            collect_runtime_type_names(t, out);
+        }
+        TypeRef::Connection(t, _) => {
+            out.insert("Connection");
+            collect_runtime_type_names(t, out);
+        }
+        TypeRef::QueueResult(_) => {
+            out.insert("QueueResult");
+        }
+        TypeRef::ValidationError(_) => {
+            out.insert("ValidationError");
+        }
+        TypeRef::JsonError(_) => {
+            out.insert("JsonError");
+        }
+        TypeRef::Effect(t, _)
+        | TypeRef::List(t, _)
+        | TypeRef::Query(t, _)
+        | TypeRef::Stream(t, _) => collect_runtime_type_names(t, out),
+        TypeRef::Map(k, v, _) => {
+            collect_runtime_type_names(k, out);
+            collect_runtime_type_names(v, out);
+        }
+        TypeRef::Fn(params, ret, _) => {
+            for p in params {
+                collect_runtime_type_names(p, out);
+            }
+            collect_runtime_type_names(ret, out);
+        }
+        TypeRef::App { args, .. } => {
+            for a in args {
+                collect_runtime_type_names(a, out);
+            }
+        }
+        TypeRef::Base(..) | TypeRef::Named(_) | TypeRef::History(..) | TypeRef::Unit(_) => {}
+    }
 }
 
 /// P7.2: [`crate::emitter::ts_type_ref_qualified_ts_type`] over `r`, scoped
