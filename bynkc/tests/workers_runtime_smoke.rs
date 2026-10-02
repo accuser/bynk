@@ -223,24 +223,128 @@ service api from http {
 
 #[test]
 fn agent_state_round_trips_on_workerd() {
-    if !tool_exists("npx") && skip("`npx` is not on PATH") {
+    let Some(served) = serve_smoke(AGENT_STATE_SOURCE, "state", 30000) else {
         return;
+    };
+    let url = &served.url;
+    let before = fetch(url, "/get").expect("GET /get before any write");
+    assert!(
+        before.contains("green=false reading=0 tags=0 proto=false ctor=false"),
+        "a fresh key reads its zero values: {before}"
+    );
+    let set = fetch(url, "/set").expect("GET /set writes the agent's state");
+    assert!(set.contains("set"), "unexpected /set body: {set}");
+    let after = fetch(url, "/get").expect("GET /get reloads the written state");
+    assert!(
+        after.contains("green=true reading=7 tags=1 proto=true ctor=false"),
+        "the enum, Option and `__proto__` map entry written by /set must read back \
+         after a reload: {after}"
+    );
+}
+
+/// #1678 (runtime-semantics track S11): on the workers target an agent call
+/// crosses a Durable Object `fetch`, so its arguments and result are on a wire.
+/// Each handler here echoes a value whose in-memory shape is not JSON-faithful,
+/// or is only by accident. The route compares what comes back with what went
+/// out. Before #1678 the call used raw `JSON.stringify` both ways, so `Bytes`
+/// arrived as `{"0":104,"1":105}` and a value `Map` as `{}`.
+const AGENT_CODEC_SOURCE: &str = r#"context smoke
+
+type Light = enum { Red, Green }
+
+type Blob = { label: String, data: Bytes }
+
+type Box[T] = { item: T }
+
+agent Echo {
+  key id: String
+  store calls: Cell[Int] = 0
+
+  on call echoBytes(b: Bytes) -> Effect[Bytes] { b }
+  on call echoLight(l: Light) -> Effect[Light] { l }
+  on call echoOpt(o: Option[Int]) -> Effect[Option[Int]] { o }
+  on call echoMap(m: Map[String, Int]) -> Effect[Map[String, Int]] { m }
+  on call echoBlob(b: Blob) -> Effect[Blob] { b }
+  on call echoList(xs: List[Bytes]) -> Effect[List[Bytes]] { xs }
+  on call echoBox(b: Box[Bytes]) -> Effect[Box[Bytes]] { b }
+  on call twice(n: Int, b: Bytes) -> Effect[Int] { n + b.length() }
+}
+
+service api from http {
+  on GET("/") () -> Effect[HttpResult[String]] by v: Visitor {
+    Ok("up")
+  }
+
+  on GET("/rt") () -> Effect[HttpResult[String]] by v: Visitor {
+    let hi = Bytes.fromUtf8("hi")
+    let m0: Map[String, Int] = Map.empty()
+    let m1 = m0.insert("a", 1)
+    let b <- Echo("k").echoBytes(hi)
+    let l <- Echo("k").echoLight(Green)
+    let o <- Echo("k").echoOpt(Some(3))
+    let m <- Echo("k").echoMap(m1)
+    let bl <- Echo("k").echoBlob(Blob { label: "x", data: hi })
+    let xs <- Echo("k").echoList([hi, hi])
+    let bx <- Echo("k").echoBox(Box { item: hi })
+    let t <- Echo("k").twice(1, hi)
+    Ok("bytes=\(b == hi) light=\(l == Green) opt=\(o == Some(3)) map=\(m == m1) blob=\(bl.data == hi) list=\(xs == [hi, hi]) box=\(bx.item == hi) twice=\(t)")
+  }
+}
+"#;
+
+#[test]
+fn agent_calls_use_the_boundary_codec_on_workerd() {
+    let Some(served) = serve_smoke(AGENT_CODEC_SOURCE, "codec", 40000) else {
+        return;
+    };
+    let body = fetch(&served.url, "/rt").expect("GET /rt round-trips values through an agent");
+    assert!(
+        body.contains(
+            "bytes=true light=true opt=true map=true blob=true list=true box=true twice=3"
+        ),
+        "every value must come back from the agent equal to what was sent: {body}"
+    );
+}
+
+/// A compiled smoke worker served by `wrangler dev`. Dropping it stops wrangler
+/// (and its workerd) and removes the scratch directory.
+struct Served {
+    url: String,
+    _child: KillOnDrop,
+    tmp: std::path::PathBuf,
+}
+
+impl Drop for Served {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.tmp);
+    }
+}
+
+/// Compile `source` (a single-file `smoke` context) for Workers, strip it to JS
+/// and serve it with `wrangler dev` on a pid-derived port above `port_base`,
+/// with its own inspector port (wrangler's default 9229 is shared otherwise),
+/// so the tests in this binary can run concurrently. `None` when the test is
+/// skipped: no `npx`/`node`, or wrangler did not boot (`skip` panics instead
+/// when `BYNK_REQUIRE_WORKERD` is set).
+fn serve_smoke(source: &str, tag: &str, port_base: u16) -> Option<Served> {
+    if !tool_exists("npx") && skip("`npx` is not on PATH") {
+        return None;
     }
     if !tool_exists("node") && skip("`node` is not on PATH") {
-        return;
+        return None;
     }
 
-    let tmp = std::env::temp_dir().join(format!("bynk-workerd-state-{}", std::process::id()));
+    let tmp = std::env::temp_dir().join(format!("bynk-workerd-{tag}-{}", std::process::id()));
     let _ = fs::remove_dir_all(&tmp);
     let src = tmp.join("src");
     fs::create_dir_all(&src).unwrap();
-    fs::write(src.join("smoke.bynk"), AGENT_STATE_SOURCE).unwrap();
+    fs::write(src.join("smoke.bynk"), source).unwrap();
     let out = bynkc::compile_project(
         &bynk_testkit::compile_options_single(src).target(bynkc::BuildTarget::Workers),
     )
     .map_err(bynkc::ProjectFailure::flatten)
-    .expect("the agent-state smoke compiles for Workers");
-    let out = bynkc::strip_project_to_js(out).expect("the agent-state smoke strips to JS");
+    .unwrap_or_else(|e| panic!("the {tag} smoke compiles for Workers: {e:?}"));
+    let out = bynkc::strip_project_to_js(out).expect("the smoke strips to JS");
     let out_dir = tmp.join("out");
     bynkc::write_output(&out, &out_dir).unwrap();
     let worker_dir = out_dir.join("workers/smoke");
@@ -249,10 +353,7 @@ fn agent_state_round_trips_on_workerd() {
         "smoke layout changed — update this test's worker path"
     );
 
-    // Offset from `hello_world_serves_on_workerd`'s port, with its own
-    // inspector port (wrangler's default 9229 is shared otherwise), so the two
-    // tests in this binary can run concurrently, as the events smokes do.
-    let port = 30000 + (std::process::id() % 10000) as u16;
+    let port = port_base + (std::process::id() % 10000) as u16;
     let inspector_port = port + 1;
     let child = base_command("npx")
         .args([
@@ -272,7 +373,7 @@ fn agent_state_round_trips_on_workerd() {
         Ok(c) => KillOnDrop(c),
         Err(e) => {
             if skip(&format!("could not launch npx: {e}")) {
-                return;
+                return None;
             }
             unreachable!()
         }
@@ -293,7 +394,7 @@ fn agent_state_round_trips_on_workerd() {
                 "wrangler dev did not serve within the boot window (likely no \
                  network to provision {WRANGLER}); last error: {last_err}\n{logs}"
             )) {
-                return;
+                return None;
             }
             unreachable!()
         }
@@ -303,23 +404,11 @@ fn agent_state_round_trips_on_workerd() {
             Err(e) => last_err = e,
         }
     }
-
-    let before = fetch(&url, "/get").expect("GET /get before any write");
-    assert!(
-        before.contains("green=false reading=0 tags=0 proto=false ctor=false"),
-        "a fresh key reads its zero values: {before}"
-    );
-    let set = fetch(&url, "/set").expect("GET /set writes the agent's state");
-    assert!(set.contains("set"), "unexpected /set body: {set}");
-    let after = fetch(&url, "/get").expect("GET /get reloads the written state");
-    assert!(
-        after.contains("green=true reading=7 tags=1 proto=true ctor=false"),
-        "the enum, Option and `__proto__` map entry written by /set must read back \
-         after a reload: {after}"
-    );
-
-    drop(child);
-    let _ = fs::remove_dir_all(&tmp);
+    Some(Served {
+        url,
+        _child: child,
+        tmp,
+    })
 }
 
 /// A dependency-free HTTP GET of `path` (the test crate has no HTTP client):

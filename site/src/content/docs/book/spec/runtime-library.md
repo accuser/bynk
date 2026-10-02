@@ -157,9 +157,11 @@ Durable Object ([§7.3.3](/book/spec/emission/#733-agents)).
 | `serialiseAgentKey(value)` | serialises an agent key to a stable string — semantically-equal keys (records compared by sorted fields) MUST serialise identically |
 | `StateRegistry<K>` | a serialised-key-to-state map with `getOrCreate(key)` and `reset()`; `reset()` clears all state so a fresh test sees a clean slate |
 | `DurableObjectStub`, `DurableObjectNamespace` | a minimal structural view of the Cloudflare Durable Object surface |
-| `callDurableObjectMethod(stub, method, args, deps)` | routes a `workers`-mode agent method call through the stub under the `/_bynk/agent/<method>` protocol |
-| `makeWorkersAgent(binding, key)` | a typed proxy over a Durable Object stub |
-| `makeAgent(registry, binding, key, constructBundle)` | the single construction helper: a present binding selects the `workers` path, an absent one the `bundle` registry path, so call sites are identical across targets |
+| `callDurableObjectMethod(stub, method, args, deps)` | routes a `workers`-mode agent method call through the stub under the `/_bynk/agent/<method>` protocol; `args` arrive encoded and the result returns as raw JSON |
+| `AgentWire`, `WireCodec`, `AGENT_WIRE_PASS` | an agent's wire table: a boundary codec pair (`enc`/`dec`) per handler parameter and result, and the pass-through codec for a position with no wire form (#1678) |
+| `decodeAgentArgs(wire, method, args)`, `encodeAgentResult(wire, method, result)` | the Durable Object side of the wire: decode a call's arguments (throwing a boundary error on failure, an internal fault) and encode its result |
+| `makeWorkersAgent(binding, key, wire?)` | a typed proxy over a Durable Object stub; with a wire table it encodes each call's arguments and decodes its result |
+| `makeAgent(registry, binding, key, constructBundle, wire?)` | the single construction helper: a present binding selects the `workers` path (passing `wire` to the proxy), an absent one the `bundle` registry path, so call sites are identical across targets |
 | `makeIntegrationDoNamespace(construct)` | an in-process Durable-Object namespace for cross-context `system`-tier tests |
 
 ## §7.4.5 The cross-Worker boundary protocol

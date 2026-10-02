@@ -4252,6 +4252,72 @@ fn history_variant_tag(handler: &str) -> String {
 /// The caller (`emitter.rs`) merges every returned node into its own real
 /// module map via `print_stmt_and_merge`, the same composition
 /// `emit_free_fn`/`emit_provider`/`emit_service` already use.
+/// #1678: the name of an agent's wire table, `__<Agent>Wire`.
+fn agent_wire_name(agent: &str) -> String {
+    format!("__{agent}Wire")
+}
+
+/// #1678 (runtime-semantics track S11): an agent's wire table on the `workers`
+/// target, `const __<Agent>Wire: AgentWire = { <method>: { args, result } }`.
+/// Each position's codec is the boundary codec's serialise/deserialise pair for
+/// its type, the same helpers a cross-context call uses; the codec closure
+/// (`agent_call_boundary_roots`) emits them in this module. A position with no
+/// wire form passes through (`AGENT_WIRE_PASS`). The DO stub's proxy and the
+/// DO's `fetch` both read it.
+fn agent_wire_table(
+    a: &AgentDecl,
+    ru: &crate::emitter::runtime_use::RuntimeUse,
+) -> bynk_ts::TsStmt {
+    let codec = |t: &TypeRef| {
+        if serialisation::agent_wire_passes_through(t) {
+            bynk_ts::TsExpr::Ident("AGENT_WIRE_PASS".to_string())
+        } else {
+            bynk_ts::TsExpr::object(vec![
+                (
+                    "enc".to_string(),
+                    serialisation::serialise_ref_via(t, "", ru),
+                ),
+                (
+                    "dec".to_string(),
+                    serialisation::deserialise_ref_via(t, "", ru),
+                ),
+            ])
+        }
+    };
+    let methods = a
+        .handlers
+        .iter()
+        .map(|h| {
+            let name = h
+                .method_name
+                .as_ref()
+                .map(|m| m.name.clone())
+                .unwrap_or_else(|| "call".to_string());
+            let args =
+                bynk_ts::TsExpr::array(h.params.iter().map(|p| codec(&p.type_ref)).collect());
+            (
+                name,
+                bynk_ts::TsExpr::object(vec![
+                    ("args".to_string(), args),
+                    ("result".to_string(), codec(&h.return_type)),
+                ]),
+            )
+        })
+        .collect();
+    let mut table = bynk_ts::TsExpr::object(methods);
+    if let bynk_ts::TsExpr::Object { multiline, .. } = &mut table {
+        *multiline = true;
+    }
+    bynk_ts::TsStmt::decl(
+        bynk_ts::TsDecl::ConstDecl {
+            name: agent_wire_name(&a.name.name),
+            ty: Some(bynk_ts::TsType::named("AgentWire")),
+            init: table,
+        },
+        None,
+    )
+}
+
 pub(crate) fn emit_agent(
     a: &AgentDecl,
     state: &[StoreFieldIr],
@@ -5961,6 +6027,13 @@ pub(crate) fn emit_agent(
                 None,
             ),
         ];
+        // #1678: the wire arguments are decoded through this agent's table
+        // before the handler sees them (`decodeAgentArgs` throws on a decode
+        // failure, an internal fault), and the result is encoded on the way out.
+        let decoded_args = bynk_ts::TsExpr::Ident(format!(
+            "...decodeAgentArgs({}, methodName, args)",
+            agent_wire_name(&a.name.name)
+        ));
         let result_expr = if given_deps_expr.is_some() || agent_uses_emit {
             // #527: the wire deps are JSON — any capability provider in them
             // is a dead plain object (its methods did not survive
@@ -6076,17 +6149,14 @@ pub(crate) fn emit_agent(
             bynk_ts::TsExpr::Await(Box::new(bynk_ts::TsExpr::Call {
                 callee: Box::new(dispatch_callee),
                 args: vec![
-                    bynk_ts::TsExpr::Ident("...args".to_string()),
+                    decoded_args.clone(),
                     bynk_ts::TsExpr::object_entries(entries),
                 ],
             }))
         } else {
             bynk_ts::TsExpr::Await(Box::new(bynk_ts::TsExpr::Call {
                 callee: Box::new(dispatch_callee),
-                args: vec![
-                    bynk_ts::TsExpr::Ident("...args".to_string()),
-                    bynk_ts::TsExpr::Ident("deps".to_string()),
-                ],
+                args: vec![decoded_args, bynk_ts::TsExpr::Ident("deps".to_string())],
             }))
         };
         agent_dispatch_stmts.push(bynk_ts::TsStmt::const_stmt(
@@ -6095,9 +6165,10 @@ pub(crate) fn emit_agent(
             result_expr,
             None,
         ));
-        // `?? null`: a void method resolves to `undefined`, and
-        // `JSON.stringify(undefined)` is the *string* `undefined` — not JSON —
-        // which the calling proxy's `response.json()` rejects (#527).
+        // #1678: the result is encoded through the wire table. A void method's
+        // `()` codec encodes `null`; before #1678 `?? null` did that here,
+        // since `JSON.stringify(undefined)` is the *string* `undefined` — not
+        // JSON — which the calling proxy's `response.json()` rejects (#527).
         agent_dispatch_stmts.push(bynk_ts::TsStmt::return_stmt(
             Some(bynk_ts::TsExpr::New {
                 callee: Box::new(bynk_ts::TsExpr::Ident("Response".to_string())),
@@ -6107,10 +6178,15 @@ pub(crate) fn emit_agent(
                             object: Box::new(bynk_ts::TsExpr::Ident("JSON".to_string())),
                             property: "stringify".to_string(),
                         }),
-                        args: vec![bynk_ts::TsExpr::Binary {
-                            op: bynk_ts::TsBinaryOp::NullishCoalescing,
-                            left: Box::new(bynk_ts::TsExpr::Ident("result".to_string())),
-                            right: Box::new(bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Null)),
+                        args: vec![bynk_ts::TsExpr::Call {
+                            callee: Box::new(bynk_ts::TsExpr::Ident(
+                                "encodeAgentResult".to_string(),
+                            )),
+                            args: vec![
+                                bynk_ts::TsExpr::Ident(agent_wire_name(&a.name.name)),
+                                bynk_ts::TsExpr::Ident("methodName".to_string()),
+                                bynk_ts::TsExpr::Ident("result".to_string()),
+                            ],
                         }],
                     },
                     bynk_ts::TsExpr::object(vec![(
@@ -6209,8 +6285,39 @@ pub(crate) fn emit_agent(
     // `design/tracks/the-typescript-tree.md` §6 for the current state,
     // since a comment landed at one slice's own commit is a snapshot, not
     // a live pointer.
+    let workers = matches!(ctx.target, BuildTarget::Workers);
+    if workers {
+        stmts.push(agent_wire_table(a, &ctx.runtime_use));
+    }
     let key_ts = ts_type_ref_to_ts_type(&a.key_type, None);
     let bind = crate::emitter::wrangler::agent_binding_name(&a.name.name);
+    let mut make_agent_args = vec![
+        bynk_ts::TsExpr::Ident(registry.clone()),
+        bynk_ts::TsExpr::OptionalMember {
+            object: Box::new(bynk_ts::TsExpr::Ident("env".to_string())),
+            property: bind.clone(),
+        },
+        bynk_ts::TsExpr::Ident("key".to_string()),
+        bynk_ts::TsExpr::Arrow {
+            params: vec![bynk_ts::TsParam {
+                name: "state".to_string(),
+                ty: None,
+                optional: false,
+            }],
+            is_async: false,
+            generics: Vec::new(),
+            return_type: None,
+            body: Box::new(bynk_ts::TsArrowBody::Expr(Box::new(bynk_ts::TsExpr::New {
+                callee: Box::new(bynk_ts::TsExpr::Ident(a.name.name.clone())),
+                args: vec![bynk_ts::TsExpr::Ident("state".to_string())],
+            }))),
+        },
+    ];
+    // #1678: on `workers` the proxy over the DO stub encodes arguments and
+    // decodes the result through this agent's wire table.
+    if workers {
+        make_agent_args.push(bynk_ts::TsExpr::Ident(agent_wire_name(&a.name.name)));
+    }
     let factory_decl = bynk_ts::TsStmt::decl(
         bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::Function {
             name: agent_factory_name(&a.name.name),
@@ -6236,30 +6343,7 @@ pub(crate) fn emit_agent(
             body: vec![bynk_ts::TsStmt::return_stmt(
                 Some(bynk_ts::TsExpr::Call {
                     callee: Box::new(bynk_ts::TsExpr::Ident("makeAgent".to_string())),
-                    args: vec![
-                        bynk_ts::TsExpr::Ident(registry.clone()),
-                        bynk_ts::TsExpr::OptionalMember {
-                            object: Box::new(bynk_ts::TsExpr::Ident("env".to_string())),
-                            property: bind,
-                        },
-                        bynk_ts::TsExpr::Ident("key".to_string()),
-                        bynk_ts::TsExpr::Arrow {
-                            params: vec![bynk_ts::TsParam {
-                                name: "state".to_string(),
-                                ty: None,
-                                optional: false,
-                            }],
-                            is_async: false,
-                            generics: Vec::new(),
-                            return_type: None,
-                            body: Box::new(bynk_ts::TsArrowBody::Expr(Box::new(
-                                bynk_ts::TsExpr::New {
-                                    callee: Box::new(bynk_ts::TsExpr::Ident(a.name.name.clone())),
-                                    args: vec![bynk_ts::TsExpr::Ident("state".to_string())],
-                                },
-                            ))),
-                        },
-                    ],
+                    args: make_agent_args,
                 }),
                 None,
             )],

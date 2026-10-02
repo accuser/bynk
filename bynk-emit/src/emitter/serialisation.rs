@@ -2243,6 +2243,36 @@ pub(crate) fn serialise_ref_via(t: &TypeRef, ns: &str, ru: &RuntimeUse) -> TsExp
     }
 }
 
+/// #1678: does an agent-call position carry a value with no wire form, so the
+/// workers Durable Object call passes it through unencoded, as it did before
+/// #1678? True when the type holds a `Connection`, a function, a `Stream`, a
+/// `Query` or a `History` anywhere in its structure (an `Effect` wrapper is
+/// peeled, as the codec peels it). Every other type has a codec, including a
+/// generic application (`Box[Bytes]`), whose helper the codec closure emits.
+pub(crate) fn agent_wire_passes_through(t: &TypeRef) -> bool {
+    match t {
+        TypeRef::Connection(..)
+        | TypeRef::Fn(..)
+        | TypeRef::Stream(..)
+        | TypeRef::Query(..)
+        | TypeRef::History(..) => true,
+        TypeRef::Effect(inner, _)
+        | TypeRef::Option(inner, _)
+        | TypeRef::List(inner, _)
+        | TypeRef::HttpResult(inner, _) => agent_wire_passes_through(inner),
+        TypeRef::Result(a, b, _) | TypeRef::Map(a, b, _) => {
+            agent_wire_passes_through(a) || agent_wire_passes_through(b)
+        }
+        TypeRef::App { args, .. } => args.iter().any(agent_wire_passes_through),
+        TypeRef::Base(..)
+        | TypeRef::Named(_)
+        | TypeRef::QueueResult(_)
+        | TypeRef::ValidationError(_)
+        | TypeRef::JsonError(_)
+        | TypeRef::Unit(_) => false,
+    }
+}
+
 /// An `Effect[T]` in a handler signature wraps the *handler*, not the wire
 /// payload — the caller awaits the Promise, so the codec is `T`'s.
 fn strip_effect(t: &TypeRef) -> &TypeRef {
