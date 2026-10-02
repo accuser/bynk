@@ -1,0 +1,8 @@
+context a
+
+-- #1679: a service handler return type resolves, as in a `fn`.
+service s {
+  on call(v: Int) -> Effect[Bogus] {
+    Effect.pure(v)
+  }
+}

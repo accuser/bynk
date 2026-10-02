@@ -10,6 +10,10 @@ type UserId = opaque String
 -- returns `None` for this on a certified program, not an internal
 -- inconsistency; `held_maps_ts`'s construction must fall back to the
 -- AST-level frame type instead of panicking.
+--
+-- #1679 closed the checker gap: the resolver now walks agent store field
+-- types, so `Bogus` is `bynk.resolve.unknown_type` before emission. The
+-- fixture moved from positive to negative and still pins "no internal error".
 agent Room {
   key id: UserId
   store conns: Map[UserId, Connection[Bogus]]

@@ -602,11 +602,11 @@ pub fn resolve(commons: Commons) -> Result<ResolvedCommons, Vec<CompileError>> {
             CommonsItem::Fn(f) => {
                 check_fn_refs(f, &types, &fns, &methods, &mut sinks);
             }
-            // v0.5 items are resolved via a separate context-level pass.
-            CommonsItem::Capability(_)
-            | CommonsItem::Provider(_)
-            | CommonsItem::Service(_)
-            | CommonsItem::Agent(_)
+            CommonsItem::Capability(_) | CommonsItem::Service(_) | CommonsItem::Agent(_) => {
+                check_signature_refs(item, &types, &mut sinks);
+            }
+            // v0.5 items' bodies are resolved via a separate context-level pass.
+            CommonsItem::Provider(_)
             | CommonsItem::Actor(_)
             // `messages` entries are plain string literals with no type refs
             // to resolve here; commons-only legality and the reference/
@@ -687,10 +687,10 @@ pub fn resolve_file_record(
                     &mut sinks,
                 );
             }
-            CommonsItem::Capability(_)
-            | CommonsItem::Provider(_)
-            | CommonsItem::Service(_)
-            | CommonsItem::Agent(_)
+            CommonsItem::Capability(_) | CommonsItem::Service(_) | CommonsItem::Agent(_) => {
+                check_signature_refs(item, &resolved.types, &mut sinks);
+            }
+            CommonsItem::Provider(_)
             | CommonsItem::Actor(_)
             // `messages` entries are plain string literals with no type refs
             // to resolve here; commons-only legality and the reference/
@@ -703,6 +703,67 @@ pub fn resolve_file_record(
         Ok(())
     } else {
         Err(errors)
+    }
+}
+
+/// #1679 (runtime-semantics track S12): every type named in a handler or
+/// capability **signature** must resolve, exactly as in a `fn` signature
+/// (`bynk.resolve.unknown_type`). Their bodies are resolved by the
+/// context-level pass, but nothing walked the signatures, so `on call(v:
+/// Bogus)` and `Effect[Unit]` (Bynk's unit is `()`) were accepted and the
+/// emitter wrote a `/* unknown */` placeholder. Covered:
+/// - service and agent handler parameters and return types;
+/// - an agent's key type and its `store` fields' kind arguments
+///   (`Cell[T]`, `Map[K, V]`, …);
+/// - capability operation parameters and return types, with the operation's
+///   own type parameters in scope.
+fn check_signature_refs(
+    item: &CommonsItem,
+    types: &HashMap<String, Arc<TypeDecl>>,
+    sinks: &mut Sinks,
+) {
+    let handler = |h: &Handler, sinks: &mut Sinks| {
+        for p in &h.params {
+            check_type_ref_resolves(&p.type_ref, types, sinks);
+        }
+        check_type_ref_resolves(&h.return_type, types, sinks);
+    };
+    match item {
+        CommonsItem::Service(s) => {
+            for h in &s.handlers {
+                handler(h, sinks);
+            }
+        }
+        CommonsItem::Agent(a) => {
+            check_type_ref_resolves(&a.key_type, types, sinks);
+            for f in &a.store_fields {
+                for arg in &f.kind.args {
+                    check_type_ref_resolves(arg, types, sinks);
+                }
+            }
+            for h in &a.handlers {
+                handler(h, sinks);
+            }
+        }
+        CommonsItem::Capability(c) => {
+            for op in &c.ops {
+                let type_params: HashSet<String> = op
+                    .type_params
+                    .iter()
+                    .map(|tp| tp.name.name.clone())
+                    .collect();
+                for p in &op.params {
+                    check_type_ref_resolves_in(&p.type_ref, types, &type_params, sinks);
+                }
+                check_type_ref_resolves_in(&op.return_type, types, &type_params, sinks);
+            }
+        }
+        CommonsItem::Type(_)
+        | CommonsItem::Event(_)
+        | CommonsItem::Fn(_)
+        | CommonsItem::Provider(_)
+        | CommonsItem::Actor(_)
+        | CommonsItem::Messages(_) => {}
     }
 }
 

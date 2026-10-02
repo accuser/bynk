@@ -12,6 +12,10 @@ context demo
 -- that it no longer crashes the compiler: `Nope` (undeclared) falls back to
 -- `void`, matching `lower_protocol_ir`'s own established Ty::Unit-on-miss
 -- posture for the identical underlying checker gap.
+--
+-- #1679 closed that gap: the resolver now walks handler signatures, so this
+-- program is rejected with `bynk.resolve.unknown_type` before emission. It
+-- moved from positive to negative and still pins "no internal error".
 service Api from http {
   on POST("/x") (body: Nope) -> Effect[HttpResult[String]] by v: Visitor {
     Effect.pure(Ok("hi"))
