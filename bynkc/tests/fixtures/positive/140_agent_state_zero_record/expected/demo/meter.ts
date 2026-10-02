@@ -105,8 +105,8 @@ export function makeSurface(deps: DemoMeterDeps) {
 
 export function serialise_Totals(value: Totals): JsonValue {
   return {
-    hits: value.hits as JsonValue,
-    bytes: value.bytes as JsonValue,
+    hits: ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error("Int outside the safe-integer range at boundary"); return v as JsonValue; })(value.hits),
+    bytes: ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error("Int outside the safe-integer range at boundary"); return v as JsonValue; })(value.bytes),
   };
 }
 
@@ -118,15 +118,15 @@ export function deserialise_Totals(json: JsonValue, path: string = "$"): Result<
   if (typeof obj["hits"] !== "number") {
     return Err({ kind: "StructuralMismatch", path: `${path}.hits`, expected: "number", actual: typeof obj["hits"] });
   }
-  if (!Number.isInteger(obj["hits"])) {
-    return Err({ kind: "StructuralMismatch", path: `${path}.hits`, expected: "integer", actual: String(obj["hits"]) });
+  if (!Number.isSafeInteger(obj["hits"])) {
+    return Err({ kind: "StructuralMismatch", path: `${path}.hits`, expected: "safe integer", actual: String(obj["hits"]) });
   }
   const __hits = obj["hits"];
   if (typeof obj["bytes"] !== "number") {
     return Err({ kind: "StructuralMismatch", path: `${path}.bytes`, expected: "number", actual: typeof obj["bytes"] });
   }
-  if (!Number.isInteger(obj["bytes"])) {
-    return Err({ kind: "StructuralMismatch", path: `${path}.bytes`, expected: "integer", actual: String(obj["bytes"]) });
+  if (!Number.isSafeInteger(obj["bytes"])) {
+    return Err({ kind: "StructuralMismatch", path: `${path}.bytes`, expected: "safe integer", actual: String(obj["bytes"]) });
   }
   const __bytes = obj["bytes"];
   return Ok({ hits: __hits, bytes: __bytes } as Totals);

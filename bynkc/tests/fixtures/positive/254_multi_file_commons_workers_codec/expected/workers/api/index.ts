@@ -23,7 +23,7 @@ export default {
             if (__r_c.tag === "Err") return new Response(JSON.stringify(__r_c.error), { status: 400, headers: { "content-type": "application/json" } });
             const c = __r_c.value as unknown as handlers.Cents;
             const result = await surface.check(c);
-            const body = result as JsonValue;
+            const body = ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error("Int outside the safe-integer range at boundary"); return v as JsonValue; })(result);
             return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
           }
           default:

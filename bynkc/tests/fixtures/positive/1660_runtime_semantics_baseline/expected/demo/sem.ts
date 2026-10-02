@@ -61,11 +61,11 @@ const __GaugeRegistry = new StateRegistry();
 function __zeroOfGaugeState(): GaugeState { return { level: 0 }; }
 
 function __rehydrateGaugeState(s: GaugeState, stored: GaugeState): void {
-  if (Object.prototype.hasOwnProperty.call(stored, "level")) { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "level", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "level", expected: "integer", actual: String(__v) } as BoundaryError))((s.level as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Gauge", __r.error); (s as { -readonly [K in keyof typeof s]: (typeof s)[K] }).level = __r.value as unknown as (typeof s)["level"]; }
+  if (Object.prototype.hasOwnProperty.call(stored, "level")) { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "level", expected: "safe integer", actual: typeof __v } as BoundaryError) : Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "level", expected: "safe integer", actual: String(__v) } as BoundaryError))((s.level as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Gauge", __r.error); (s as { -readonly [K in keyof typeof s]: (typeof s)[K] }).level = __r.value as unknown as (typeof s)["level"]; }
 }
 
 function __encodeGaugeState(s: GaugeState): Record<string, unknown> {
-  return { ...s, level: s.level as JsonValue };
+  return { ...s, level: ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error("Int outside the safe-integer range at boundary"); return v as JsonValue; })(s.level) };
 }
 
 export class Gauge {
@@ -233,12 +233,12 @@ const __PanelRegistry = new StateRegistry();
 function __zeroOfPanelState(): PanelState { return { level: 0, light: Light.Red }; }
 
 function __rehydratePanelState(s: PanelState, stored: PanelState): void {
-  if (Object.prototype.hasOwnProperty.call(stored, "level")) { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "level", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "level", expected: "integer", actual: String(__v) } as BoundaryError))((s.level as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Panel", __r.error); (s as { -readonly [K in keyof typeof s]: (typeof s)[K] }).level = __r.value as unknown as (typeof s)["level"]; }
+  if (Object.prototype.hasOwnProperty.call(stored, "level")) { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "level", expected: "safe integer", actual: typeof __v } as BoundaryError) : Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "level", expected: "safe integer", actual: String(__v) } as BoundaryError))((s.level as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Panel", __r.error); (s as { -readonly [K in keyof typeof s]: (typeof s)[K] }).level = __r.value as unknown as (typeof s)["level"]; }
   if (Object.prototype.hasOwnProperty.call(stored, "light")) { const __r = deserialise_Light((s.light as unknown as JsonValue), "light"); if (__r.tag === "Err") throw rehydrationViolation("Panel", __r.error); (s as { -readonly [K in keyof typeof s]: (typeof s)[K] }).light = __r.value as unknown as (typeof s)["light"]; }
 }
 
 function __encodePanelState(s: PanelState): Record<string, unknown> {
-  return { ...s, level: s.level as JsonValue, light: serialise_Light(s.light) };
+  return { ...s, level: ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error("Int outside the safe-integer range at boundary"); return v as JsonValue; })(s.level), light: serialise_Light(s.light) };
 }
 
 export class Panel {
@@ -288,12 +288,12 @@ const __BagRegistry = new StateRegistry();
 function __zeroOfBagState(): BagState { return { items: {} }; }
 
 function __rehydrateBagState(s: BagState, stored: BagState): void {
-  if (Object.prototype.hasOwnProperty.call(stored, "items")) for (const __k of Object.keys(s.items)) { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "items", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "items", expected: "integer", actual: String(__v) } as BoundaryError))((s.items[__k] as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Bag", __r.error); s.items[__k] = __r.value as unknown as (typeof s.items)[string]; }
+  if (Object.prototype.hasOwnProperty.call(stored, "items")) for (const __k of Object.keys(s.items)) { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "items", expected: "safe integer", actual: typeof __v } as BoundaryError) : Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "items", expected: "safe integer", actual: String(__v) } as BoundaryError))((s.items[__k] as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Bag", __r.error); s.items[__k] = __r.value as unknown as (typeof s.items)[string]; }
   for (const __k of Object.keys(s.items)) { const __r = ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "items", expected: "string", actual: typeof __v } as BoundaryError))((__k as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Bag", __r.error); }
 }
 
 function __encodeBagState(s: BagState): Record<string, unknown> {
-  return { ...s, items: Object.fromEntries(Object.entries(s.items).map(([__k, __v]) => [__k, __v as JsonValue])) };
+  return { ...s, items: Object.fromEntries(Object.entries(s.items).map(([__k, __v]) => [__k, ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error("Int outside the safe-integer range at boundary"); return v as JsonValue; })(__v)])) };
 }
 
 export class Bag {
@@ -377,7 +377,7 @@ export function deserialise_Light(json: JsonValue, path: string = "$"): Result<L
 
 
 export function serialise_Option_Int(value: Option<number>): JsonValue {
-  if (value.tag === "Some") return { kind: "Some", value: value.value as JsonValue };
+  if (value.tag === "Some") return { kind: "Some", value: ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error("Int outside the safe-integer range at boundary"); return v as JsonValue; })(value.value) };
   return { kind: "None" };
 }
 
@@ -390,8 +390,8 @@ export function deserialise_Option_Int(json: JsonValue, path: string = "$"): Res
   if (typeof obj["value"] !== "number") {
     return Err({ kind: "StructuralMismatch", path: `${path}.value`, expected: "number", actual: typeof obj["value"] });
   }
-  if (!Number.isInteger(obj["value"])) {
-    return Err({ kind: "StructuralMismatch", path: `${path}.value`, expected: "integer", actual: String(obj["value"]) });
+  if (!Number.isSafeInteger(obj["value"])) {
+    return Err({ kind: "StructuralMismatch", path: `${path}.value`, expected: "safe integer", actual: String(obj["value"]) });
   }
   const __v = obj["value"];
     return Ok(Some(__v) as Option<number>);

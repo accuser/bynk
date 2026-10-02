@@ -7,8 +7,8 @@ export type Id = number & { readonly __brand: "demo.agt.Id" };
 
 export const Id = {
   of(value: number): Result<Id, ValidationError> {
-    if (!Number.isInteger(value)) {
-      return Err({ field: "Id", message: "must be an integer", value });
+    if (!Number.isSafeInteger(value)) {
+      return Err({ field: "Id", message: "must be a safe integer", value });
     }
     if (!(value >= 0)) {
       return Err({ field: "Id", message: "must be non-negative", value });
@@ -29,12 +29,12 @@ const __CounterRegistry = new StateRegistry();
 function __zeroOfCounterState(): CounterState { return { count: 0, label: "" }; }
 
 function __rehydrateCounterState(s: CounterState, stored: CounterState): void {
-  if (Object.prototype.hasOwnProperty.call(stored, "count")) { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "count", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "count", expected: "integer", actual: String(__v) } as BoundaryError))((s.count as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Counter", __r.error); (s as { -readonly [K in keyof typeof s]: (typeof s)[K] }).count = __r.value as unknown as (typeof s)["count"]; }
+  if (Object.prototype.hasOwnProperty.call(stored, "count")) { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "count", expected: "safe integer", actual: typeof __v } as BoundaryError) : Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "count", expected: "safe integer", actual: String(__v) } as BoundaryError))((s.count as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Counter", __r.error); (s as { -readonly [K in keyof typeof s]: (typeof s)[K] }).count = __r.value as unknown as (typeof s)["count"]; }
   if (Object.prototype.hasOwnProperty.call(stored, "label")) { const __r = ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "label", expected: "string", actual: typeof __v } as BoundaryError))((s.label as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Counter", __r.error); (s as { -readonly [K in keyof typeof s]: (typeof s)[K] }).label = __r.value as unknown as (typeof s)["label"]; }
 }
 
 function __encodeCounterState(s: CounterState): Record<string, unknown> {
-  return { ...s, count: s.count as JsonValue, label: s.label as JsonValue };
+  return { ...s, count: ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error("Int outside the safe-integer range at boundary"); return v as JsonValue; })(s.count), label: s.label as JsonValue };
 }
 
 export class Counter {

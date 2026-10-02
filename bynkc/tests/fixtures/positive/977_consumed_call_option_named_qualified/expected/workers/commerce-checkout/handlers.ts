@@ -15,7 +15,7 @@ export const pay = {
 
 export function serialise_Result_Receipt_Int(value: Result<Receipt, number>): JsonValue {
   if (value.tag === "Ok") return { kind: "Ok", value: serialise_Receipt(value.value) };
-  return { kind: "Err", error: value.error as JsonValue };
+  return { kind: "Err", error: ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error("Int outside the safe-integer range at boundary"); return v as JsonValue; })(value.error) };
 }
 
 export function deserialise_Result_Receipt_Int(json: JsonValue, path: string = "$"): Result<Result<Receipt, number>, BoundaryError> {
@@ -32,8 +32,8 @@ export function deserialise_Result_Receipt_Int(json: JsonValue, path: string = "
   if (typeof obj["error"] !== "number") {
     return Err({ kind: "StructuralMismatch", path: `${path}.error`, expected: "number", actual: typeof obj["error"] });
   }
-  if (!Number.isInteger(obj["error"])) {
-    return Err({ kind: "StructuralMismatch", path: `${path}.error`, expected: "integer", actual: String(obj["error"]) });
+  if (!Number.isSafeInteger(obj["error"])) {
+    return Err({ kind: "StructuralMismatch", path: `${path}.error`, expected: "safe integer", actual: String(obj["error"]) });
   }
   const __e = obj["error"];
     return Ok(Err(__e) as Result<Receipt, number>);

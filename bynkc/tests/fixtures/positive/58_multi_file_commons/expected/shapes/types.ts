@@ -7,8 +7,8 @@ export type Width = number & { readonly __brand: "Width" };
 
 export const Width = {
   of(value: number): Result<Width, ValidationError> {
-    if (!Number.isInteger(value)) {
-      return Err({ field: "Width", message: "must be an integer", value });
+    if (!Number.isSafeInteger(value)) {
+      return Err({ field: "Width", message: "must be a safe integer", value });
     }
     if (!(value > 0)) {
       return Err({ field: "Width", message: "must be positive", value });
@@ -21,8 +21,8 @@ export type Height = number & { readonly __brand: "Height" };
 
 export const Height = {
   of(value: number): Result<Height, ValidationError> {
-    if (!Number.isInteger(value)) {
-      return Err({ field: "Height", message: "must be an integer", value });
+    if (!Number.isSafeInteger(value)) {
+      return Err({ field: "Height", message: "must be a safe integer", value });
     }
     if (!(value > 0)) {
       return Err({ field: "Height", message: "must be positive", value });

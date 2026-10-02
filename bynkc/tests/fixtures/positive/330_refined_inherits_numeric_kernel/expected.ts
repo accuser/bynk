@@ -7,8 +7,8 @@ export type Score = number & { readonly __brand: "Score" };
 
 export const Score = {
   of(value: number): Result<Score, ValidationError> {
-    if (!Number.isInteger(value)) {
-      return Err({ field: "Score", message: "must be an integer", value });
+    if (!Number.isSafeInteger(value)) {
+      return Err({ field: "Score", message: "must be a safe integer", value });
     }
     if (!(value >= 0 && value <= 100)) {
       return Err({ field: "Score", message: "must be in range [0, 100]", value });

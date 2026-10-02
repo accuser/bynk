@@ -16,7 +16,7 @@ export const refund = {
 };
 
 export function serialise_Result_Int_String(value: Result<number, string>): JsonValue {
-  if (value.tag === "Ok") return { kind: "Ok", value: value.value as JsonValue };
+  if (value.tag === "Ok") return { kind: "Ok", value: ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error("Int outside the safe-integer range at boundary"); return v as JsonValue; })(value.value) };
   return { kind: "Err", error: value.error as JsonValue };
 }
 
@@ -29,8 +29,8 @@ export function deserialise_Result_Int_String(json: JsonValue, path: string = "$
   if (typeof obj["value"] !== "number") {
     return Err({ kind: "StructuralMismatch", path: `${path}.value`, expected: "number", actual: typeof obj["value"] });
   }
-  if (!Number.isInteger(obj["value"])) {
-    return Err({ kind: "StructuralMismatch", path: `${path}.value`, expected: "integer", actual: String(obj["value"]) });
+  if (!Number.isSafeInteger(obj["value"])) {
+    return Err({ kind: "StructuralMismatch", path: `${path}.value`, expected: "safe integer", actual: String(obj["value"]) });
   }
   const __v = obj["value"];
     return Ok(Ok(__v) as Result<number, string>);

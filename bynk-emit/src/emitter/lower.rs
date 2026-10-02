@@ -6181,7 +6181,8 @@ fn lower_is(value: &Expr, pattern: &Pattern, cx: &mut LowerCtx) -> Lowered {
 fn refined_check_as_bool(recv: &str, base: BaseType, refinement: Option<&Refinement>) -> String {
     let mut terms: Vec<String> = Vec::new();
     if base == BaseType::Int {
-        terms.push(format!("Number.isInteger({recv})"));
+        // #1657: an `Int` is a JS safe integer.
+        terms.push(format!("Number.isSafeInteger({recv})"));
     }
     // v0.21: validated `Float` values are finite (ADR 0040).
     if base == BaseType::Float {

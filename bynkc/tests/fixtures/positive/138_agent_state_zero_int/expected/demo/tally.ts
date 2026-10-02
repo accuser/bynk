@@ -33,11 +33,11 @@ const __TallyRegistry = new StateRegistry();
 function __zeroOfTallyState(): TallyState { return { count: 0 }; }
 
 function __rehydrateTallyState(s: TallyState, stored: TallyState): void {
-  if (Object.prototype.hasOwnProperty.call(stored, "count")) { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "count", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "count", expected: "integer", actual: String(__v) } as BoundaryError))((s.count as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Tally", __r.error); (s as { -readonly [K in keyof typeof s]: (typeof s)[K] }).count = __r.value as unknown as (typeof s)["count"]; }
+  if (Object.prototype.hasOwnProperty.call(stored, "count")) { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "count", expected: "safe integer", actual: typeof __v } as BoundaryError) : Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "count", expected: "safe integer", actual: String(__v) } as BoundaryError))((s.count as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Tally", __r.error); (s as { -readonly [K in keyof typeof s]: (typeof s)[K] }).count = __r.value as unknown as (typeof s)["count"]; }
 }
 
 function __encodeTallyState(s: TallyState): Record<string, unknown> {
-  return { ...s, count: s.count as JsonValue };
+  return { ...s, count: ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error("Int outside the safe-integer range at boundary"); return v as JsonValue; })(s.count) };
 }
 
 export class Tally {

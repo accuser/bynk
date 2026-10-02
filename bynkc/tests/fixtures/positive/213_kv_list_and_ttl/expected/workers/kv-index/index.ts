@@ -19,7 +19,7 @@ export default {
             const __contract = request.headers.get("X-Bynk-Contract");
             if (__contract !== "4ca5743dc330a4ac") return new Response(JSON.stringify({ kind: "ContractMismatch", service: "allKeys", expected: "4ca5743dc330a4ac", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
             const args = await request.json() as JsonValue;
-            const __r_unused = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "integer", actual: String(__v) } as BoundaryError))(args);
+            const __r_unused = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as BoundaryError) : Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as BoundaryError))(args);
             if (__r_unused.tag === "Err") return new Response(JSON.stringify(__r_unused.error), { status: 400, headers: { "content-type": "application/json" } });
             const unused = __r_unused.value;
             const result = await surface.allKeys(unused);

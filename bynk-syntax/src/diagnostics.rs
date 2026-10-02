@@ -961,7 +961,7 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     ),
     dg(
         "bynk.lex.integer_overflow",
-        "An integer literal is out of range.",
+        "An integer literal is outside the `Int` range, the JS safe integers ±(2^53 − 1).",
         &["number_literal"],
     ),
     dg(

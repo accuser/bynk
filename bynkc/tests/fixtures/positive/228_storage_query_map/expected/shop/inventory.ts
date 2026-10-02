@@ -99,7 +99,7 @@ export function __resetAgents(): void {
 export function serialise_Reservation(value: Reservation): JsonValue {
   return {
     id: value.id as JsonValue,
-    qty: value.qty as JsonValue,
+    qty: ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error("Int outside the safe-integer range at boundary"); return v as JsonValue; })(value.qty),
   };
 }
 
@@ -115,8 +115,8 @@ export function deserialise_Reservation(json: JsonValue, path: string = "$"): Re
   if (typeof obj["qty"] !== "number") {
     return Err({ kind: "StructuralMismatch", path: `${path}.qty`, expected: "number", actual: typeof obj["qty"] });
   }
-  if (!Number.isInteger(obj["qty"])) {
-    return Err({ kind: "StructuralMismatch", path: `${path}.qty`, expected: "integer", actual: String(obj["qty"]) });
+  if (!Number.isSafeInteger(obj["qty"])) {
+    return Err({ kind: "StructuralMismatch", path: `${path}.qty`, expected: "safe integer", actual: String(obj["qty"]) });
   }
   const __qty = obj["qty"];
   return Ok({ id: __id, qty: __qty } as Reservation);

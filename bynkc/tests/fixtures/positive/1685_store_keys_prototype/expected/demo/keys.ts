@@ -73,12 +73,12 @@ const __BagRegistry = new StateRegistry();
 function __zeroOfBagState(): BagState { return { items: {} }; }
 
 function __rehydrateBagState(s: BagState, stored: BagState): void {
-  if (Object.prototype.hasOwnProperty.call(stored, "items")) for (const __k of Object.keys(s.items)) { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "items", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "items", expected: "integer", actual: String(__v) } as BoundaryError))((s.items[__k] as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Bag", __r.error); s.items[__k] = __r.value as unknown as (typeof s.items)[string]; }
+  if (Object.prototype.hasOwnProperty.call(stored, "items")) for (const __k of Object.keys(s.items)) { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "items", expected: "safe integer", actual: typeof __v } as BoundaryError) : Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "items", expected: "safe integer", actual: String(__v) } as BoundaryError))((s.items[__k] as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Bag", __r.error); s.items[__k] = __r.value as unknown as (typeof s.items)[string]; }
   for (const __k of Object.keys(s.items)) { const __r = ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "items", expected: "string", actual: typeof __v } as BoundaryError))((__k as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Bag", __r.error); }
 }
 
 function __encodeBagState(s: BagState): Record<string, unknown> {
-  return { ...s, items: Object.fromEntries(Object.entries(s.items).map(([__k, __v]) => [__k, __v as JsonValue])) };
+  return { ...s, items: Object.fromEntries(Object.entries(s.items).map(([__k, __v]) => [__k, ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error("Int outside the safe-integer range at boundary"); return v as JsonValue; })(__v)])) };
 }
 
 export class Bag {
@@ -304,11 +304,11 @@ const __MemoRegistry = new StateRegistry();
 function __zeroOfMemoState(): MemoState { return { c: {} }; }
 
 function __rehydrateMemoState(s: MemoState, stored: MemoState): void {
-  if (Object.prototype.hasOwnProperty.call(stored, "c")) for (const __e of Object.values(s.c)) { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "c", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "c", expected: "integer", actual: String(__v) } as BoundaryError))((__e.v as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Memo", __r.error); __e.v = __r.value as unknown as typeof __e.v; }
+  if (Object.prototype.hasOwnProperty.call(stored, "c")) for (const __e of Object.values(s.c)) { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "c", expected: "safe integer", actual: typeof __v } as BoundaryError) : Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "c", expected: "safe integer", actual: String(__v) } as BoundaryError))((__e.v as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Memo", __r.error); __e.v = __r.value as unknown as typeof __e.v; }
 }
 
 function __encodeMemoState(s: MemoState): Record<string, unknown> {
-  return { ...s, c: Object.fromEntries(Object.entries(s.c).map(([__k, __e]) => [__k, { ...__e, v: __e.v as JsonValue }])) };
+  return { ...s, c: Object.fromEntries(Object.entries(s.c).map(([__k, __e]) => [__k, { ...__e, v: ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error("Int outside the safe-integer range at boundary"); return v as JsonValue; })(__e.v) }])) };
 }
 
 export class Memo {
@@ -567,7 +567,7 @@ export function deserialise_Entry(json: JsonValue, path: string = "$"): Result<E
 export function serialise_Line(value: Line): JsonValue {
   return {
     orderId: value.orderId as JsonValue,
-    qty: value.qty as JsonValue,
+    qty: ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error("Int outside the safe-integer range at boundary"); return v as JsonValue; })(value.qty),
   };
 }
 
@@ -583,8 +583,8 @@ export function deserialise_Line(json: JsonValue, path: string = "$"): Result<Li
   if (typeof obj["qty"] !== "number") {
     return Err({ kind: "StructuralMismatch", path: `${path}.qty`, expected: "number", actual: typeof obj["qty"] });
   }
-  if (!Number.isInteger(obj["qty"])) {
-    return Err({ kind: "StructuralMismatch", path: `${path}.qty`, expected: "integer", actual: String(obj["qty"]) });
+  if (!Number.isSafeInteger(obj["qty"])) {
+    return Err({ kind: "StructuralMismatch", path: `${path}.qty`, expected: "safe integer", actual: String(obj["qty"]) });
   }
   const __qty = obj["qty"];
   return Ok({ orderId: __orderId, qty: __qty } as Line);
@@ -615,8 +615,8 @@ export function deserialise_Order(json: JsonValue, path: string = "$"): Result<O
 
 export function serialise_Pt(value: Pt): JsonValue {
   return {
-    x: value.x as JsonValue,
-    y: value.y as JsonValue,
+    x: ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error("Int outside the safe-integer range at boundary"); return v as JsonValue; })(value.x),
+    y: ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error("Int outside the safe-integer range at boundary"); return v as JsonValue; })(value.y),
   };
 }
 
@@ -628,15 +628,15 @@ export function deserialise_Pt(json: JsonValue, path: string = "$"): Result<Pt, 
   if (typeof obj["x"] !== "number") {
     return Err({ kind: "StructuralMismatch", path: `${path}.x`, expected: "number", actual: typeof obj["x"] });
   }
-  if (!Number.isInteger(obj["x"])) {
-    return Err({ kind: "StructuralMismatch", path: `${path}.x`, expected: "integer", actual: String(obj["x"]) });
+  if (!Number.isSafeInteger(obj["x"])) {
+    return Err({ kind: "StructuralMismatch", path: `${path}.x`, expected: "safe integer", actual: String(obj["x"]) });
   }
   const __x = obj["x"];
   if (typeof obj["y"] !== "number") {
     return Err({ kind: "StructuralMismatch", path: `${path}.y`, expected: "number", actual: typeof obj["y"] });
   }
-  if (!Number.isInteger(obj["y"])) {
-    return Err({ kind: "StructuralMismatch", path: `${path}.y`, expected: "integer", actual: String(obj["y"]) });
+  if (!Number.isSafeInteger(obj["y"])) {
+    return Err({ kind: "StructuralMismatch", path: `${path}.y`, expected: "safe integer", actual: String(obj["y"]) });
   }
   const __y = obj["y"];
   return Ok({ x: __x, y: __y } as Pt);

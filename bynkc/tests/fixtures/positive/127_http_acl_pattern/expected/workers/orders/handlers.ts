@@ -65,7 +65,7 @@ export const api = {
 
 export function serialise_CreateOrder(value: CreateOrder): JsonValue {
   return {
-    itemCount: value.itemCount as JsonValue,
+    itemCount: ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error("Int outside the safe-integer range at boundary"); return v as JsonValue; })(value.itemCount),
   };
 }
 
@@ -77,8 +77,8 @@ export function deserialise_CreateOrder(json: JsonValue, path: string = "$"): Re
   if (typeof obj["itemCount"] !== "number") {
     return Err({ kind: "StructuralMismatch", path: `${path}.itemCount`, expected: "number", actual: typeof obj["itemCount"] });
   }
-  if (!Number.isInteger(obj["itemCount"])) {
-    return Err({ kind: "StructuralMismatch", path: `${path}.itemCount`, expected: "integer", actual: String(obj["itemCount"]) });
+  if (!Number.isSafeInteger(obj["itemCount"])) {
+    return Err({ kind: "StructuralMismatch", path: `${path}.itemCount`, expected: "safe integer", actual: String(obj["itemCount"]) });
   }
   const __itemCount = obj["itemCount"];
   return Ok({ itemCount: __itemCount } as CreateOrder);

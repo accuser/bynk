@@ -24,7 +24,7 @@ export default {
       {
         if (method === "POST" && path === "/blobs") {
           const result = await surface.http_POST_blobs(request);
-          return applySecurityHeaders(httpResultToResponse(result, (__v: number) => __v as JsonValue), __security_api);
+          return applySecurityHeaders(httpResultToResponse(result, (__v: number) => ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error("Int outside the safe-integer range at boundary"); return v as JsonValue; })(__v)), __security_api);
         }
       }
       if (path === "/blobs") {

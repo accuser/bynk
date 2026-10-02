@@ -33,8 +33,8 @@ constants.
 
 A run of decimal digits. A number literal is unsigned; a leading `-` is the unary
 negation operator ([§4.6](/book/spec/syntactic-grammar/)), not part of the token. An
-integer literal that does not fit a 64-bit signed integer is
-`bynk.lex.integer_overflow`.
+integer literal whose magnitude exceeds 2^53 − 1 (9007199254740991), the largest
+safe integer and so the `Int` range (#1657), is `bynk.lex.integer_overflow`.
 
 ### §3.2.1a float_literal
 

@@ -11,6 +11,10 @@ use logos::Logos;
 use crate::error::CompileError;
 use crate::span::{FileId, Span};
 
+/// #1657: the largest `Int`, `Number.MAX_SAFE_INTEGER` (2^53 − 1). An `Int`
+/// is a JS safe integer; the range is symmetric.
+pub const MAX_SAFE_INT: i64 = 9_007_199_254_740_991;
+
 /// v0.142 (ADR 0166): strip `_` digit separators from a numeric literal's lexeme
 /// before it is parsed into a value. The lexer's `IntLit`/`FloatLit` regexes only
 /// admit an `_` between two digit groups, so removing every `_` yields a plain
@@ -598,17 +602,27 @@ pub fn tokenize_in(source: &str, file: FileId) -> Result<Vec<Token>, CompileErro
         let span: Span = Span::new_in(file, pos + local.start, pos + local.end);
         match result {
             Ok(kind) => {
+                // #1657 (runtime-semantics track §3.4): an `Int` is a JS safe
+                // integer, ±(2^53 − 1), the range the runtime represents
+                // exactly. A larger literal would round silently
+                // (`9007199254740993 == 9007199254740992`). The sign is a
+                // separate operator, and the bound is symmetric, so the
+                // magnitude decides.
                 if kind == TokenKind::IntLit {
                     let slice = &source[span.range()];
-                    if strip_digit_separators(slice).parse::<i64>().is_err() {
+                    if !strip_digit_separators(slice)
+                        .parse::<i64>()
+                        .is_ok_and(|n| n <= MAX_SAFE_INT)
+                    {
                         return Err(CompileError::new(
                             "bynk.lex.integer_overflow",
                             span,
-                            format!(
-                                "integer literal `{slice}` is out of range for a 64-bit signed integer"
-                            ),
+                            format!("integer literal `{slice}` is out of range for an `Int`"),
                         )
-                        .with_note("the range is -2^63 to 2^63 - 1"));
+                        .with_note(
+                            "an `Int` is a safe integer, -(2^53 - 1) to 2^53 - 1 \
+                             (±9007199254740991); use a `Float` or a `String` for a larger value",
+                        ));
                     }
                 }
                 if kind == TokenKind::FloatLit {
@@ -1273,6 +1287,22 @@ mod tests {
     }
 
     #[test]
+    fn an_int_literal_must_be_a_safe_integer() {
+        // #1657: the `Int` range is ±(2^53 − 1). The largest safe integer lexes;
+        // one more, and i64-range values above it, do not.
+        assert!(tokenize("9007199254740991").is_ok());
+        assert!(tokenize("9_007_199_254_740_991").is_ok());
+        for over in [
+            "9007199254740992",
+            "9007199254740993",
+            "9223372036854775807",
+        ] {
+            let err = tokenize(over).unwrap_err();
+            assert_eq!(err.category, "bynk.lex.integer_overflow", "{over}");
+        }
+    }
+
+    #[test]
     fn digit_separators_lex_as_one_number() {
         use TokenKind::*;
         // v0.142 (ADR 0166): `_` between digit groups keeps the literal a single
@@ -1282,7 +1312,7 @@ mod tests {
         assert_eq!(kinds("1_000e1_0"), vec![FloatLit]);
         // A separator-carrying literal that is in range still lexes (the value is
         // validated after stripping the separators).
-        assert!(tokenize("9_223_372_036_854_775_807").is_ok());
+        assert!(tokenize("9_007_199_254_740_991").is_ok());
         // Overflow is still caught on the separator-free value.
         let err = tokenize("9_999_999_999_999_999_999_9").unwrap_err();
         assert_eq!(err.category, "bynk.lex.integer_overflow");

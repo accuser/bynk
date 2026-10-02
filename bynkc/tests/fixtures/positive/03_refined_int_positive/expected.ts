@@ -7,8 +7,8 @@ export type Count = number & { readonly __brand: "Count" };
 
 export const Count = {
   of(value: number): Result<Count, ValidationError> {
-    if (!Number.isInteger(value)) {
-      return Err({ field: "Count", message: "must be an integer", value });
+    if (!Number.isSafeInteger(value)) {
+      return Err({ field: "Count", message: "must be a safe integer", value });
     }
     if (!(value > 0)) {
       return Err({ field: "Count", message: "must be positive", value });

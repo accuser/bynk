@@ -7,8 +7,8 @@ export type Cents = number & { readonly __brand: "Cents" };
 
 export const Cents = {
   of(value: number): Result<Cents, ValidationError> {
-    if (!Number.isInteger(value)) {
-      return Err({ field: "Cents", message: "must be an integer", value });
+    if (!Number.isSafeInteger(value)) {
+      return Err({ field: "Cents", message: "must be a safe integer", value });
     }
     if (!(value >= 0)) {
       return Err({ field: "Cents", message: "must be non-negative", value });

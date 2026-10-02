@@ -86,7 +86,7 @@ export class Cart {
 
 const __CartWire: AgentWire = {
   add: { args: [{ enc: (__v: string) => __v as JsonValue, dec: (__j: JsonValue) => ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "string", actual: typeof __v } as BoundaryError))(__j) }], result: { enc: serialise_Item, dec: deserialise_Item } },
-  size: { args: [], result: { enc: (__v: number) => __v as JsonValue, dec: (__j: JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "integer", actual: String(__v) } as BoundaryError))(__j) } },
+  size: { args: [], result: { enc: (__v: number) => ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error("Int outside the safe-integer range at boundary"); return v as JsonValue; })(__v), dec: (__j: JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as BoundaryError) : Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as BoundaryError))(__j) } },
 };
 
 export function __makeCart(key: UserId, env?: { CART?: DurableObjectNamespace }): Cart {

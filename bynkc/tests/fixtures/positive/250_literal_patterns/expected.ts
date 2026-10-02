@@ -7,8 +7,8 @@ export type LanguageCode = number & { readonly __brand: "LanguageCode" };
 
 export const LanguageCode = {
   of(value: number): Result<LanguageCode, ValidationError> {
-    if (!Number.isInteger(value)) {
-      return Err({ field: "LanguageCode", message: "must be an integer", value });
+    if (!Number.isSafeInteger(value)) {
+      return Err({ field: "LanguageCode", message: "must be a safe integer", value });
     }
     if (!(value >= 1 && value <= 99)) {
       return Err({ field: "LanguageCode", message: "must be in range [1, 99]", value });

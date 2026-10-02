@@ -77,13 +77,13 @@ async function __sysdrive_api_http_GET_cart_size(__sub: string) {
   const __h = makeHarness();
   const __req = new Request(`https://test/cart/size`, { method: "GET", headers: { "authorization": `Bearer ${await __bynkSignHs256({ sub: __sub, exp: __bynkNow() + 3600 }, ((globalThis as { process?: { env?: Record<string, string> } }).process?.env?.["AUTH_SECRET"] ?? ""))}`, }, });
   const __res = await __h.env.SHOP_API.fetch(__req);
-  return responseToHttpResult(__res, (__j: JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "integer", actual: String(__v) } as BoundaryError))(__j));
+  return responseToHttpResult(__res, (__j: JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as BoundaryError) : Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as BoundaryError))(__j));
 }
 async function __sysdrive_noauth_api_http_GET_cart_size(__sub: string) {
   const __h = makeHarness();
   const __req = new Request(`https://test/cart/size`, { method: "GET", headers: { }, });
   const __res = await __h.env.SHOP_API.fetch(__req);
-  return responseToUnauthOutcome(__res, (__j: JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "integer", actual: String(__v) } as BoundaryError))(__j));
+  return responseToUnauthOutcome(__res, (__j: JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as BoundaryError) : Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as BoundaryError))(__j));
 }
 async function __sysdrive_wrongmethod_api(method: string, path: string) {
   const __h = makeHarness();

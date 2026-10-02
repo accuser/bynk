@@ -7,8 +7,8 @@ export type Level = number & { readonly __brand: "gauge.Level" };
 
 export const Level = {
   of(value: number): Result<Level, ValidationError> {
-    if (!Number.isInteger(value)) {
-      return Err({ field: "Level", message: "must be an integer", value });
+    if (!Number.isSafeInteger(value)) {
+      return Err({ field: "Level", message: "must be a safe integer", value });
     }
     if (!(value > 0)) {
       return Err({ field: "Level", message: "must be positive", value });

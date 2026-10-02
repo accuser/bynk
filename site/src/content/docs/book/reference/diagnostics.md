@@ -160,7 +160,7 @@ There are **460** codes in total.
 |---|---|---|---|
 | `bynk.lex.bad_escape` | An invalid escape sequence in a string literal. | [`string_literal`](/book/reference/grammar/#rule-string_literal) | — |
 | `bynk.lex.float_literal_overflow` | A float literal does not fit a finite 64-bit float. | [`float_literal`](/book/reference/grammar/#rule-float_literal) | — |
-| `bynk.lex.integer_overflow` | An integer literal is out of range. | [`number_literal`](/book/reference/grammar/#rule-number_literal) | — |
+| `bynk.lex.integer_overflow` | An integer literal is outside the `Int` range, the JS safe integers ±(2^53 − 1). | [`number_literal`](/book/reference/grammar/#rule-number_literal) | — |
 | `bynk.lex.interpolation_too_deep` | A string interpolation `\(…)` nests deeper than the lexer's fixed limit. | [`string_literal`](/book/reference/grammar/#rule-string_literal) | — |
 | `bynk.lex.unclosed_doc_block` | A documentation block is not closed. |  | — |
 | `bynk.lex.unexpected_character` | An unexpected character in the source. |  | — |

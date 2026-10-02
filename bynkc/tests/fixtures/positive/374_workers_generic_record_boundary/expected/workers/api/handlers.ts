@@ -27,7 +27,7 @@ export const users = {
 
 export function serialise_User(value: User): JsonValue {
   return {
-    id: value.id as JsonValue,
+    id: ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error("Int outside the safe-integer range at boundary"); return v as JsonValue; })(value.id),
     name: value.name as JsonValue,
   };
 }
@@ -40,8 +40,8 @@ export function deserialise_User(json: JsonValue, path: string = "$"): Result<Us
   if (typeof obj["id"] !== "number") {
     return Err({ kind: "StructuralMismatch", path: `${path}.id`, expected: "number", actual: typeof obj["id"] });
   }
-  if (!Number.isInteger(obj["id"])) {
-    return Err({ kind: "StructuralMismatch", path: `${path}.id`, expected: "integer", actual: String(obj["id"]) });
+  if (!Number.isSafeInteger(obj["id"])) {
+    return Err({ kind: "StructuralMismatch", path: `${path}.id`, expected: "safe integer", actual: String(obj["id"]) });
   }
   const __id = obj["id"];
   if (typeof obj["name"] !== "string") {

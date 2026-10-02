@@ -7,8 +7,8 @@ export type Id = number & { readonly __brand: "demo.agt.Id" };
 
 export const Id = {
   of(value: number): Result<Id, ValidationError> {
-    if (!Number.isInteger(value)) {
-      return Err({ field: "Id", message: "must be an integer", value });
+    if (!Number.isSafeInteger(value)) {
+      return Err({ field: "Id", message: "must be a safe integer", value });
     }
     if (!(value >= 0)) {
       return Err({ field: "Id", message: "must be non-negative", value });
@@ -29,12 +29,12 @@ const __WalletRegistry = new StateRegistry();
 function __zeroOfWalletState(): WalletState { return { balance: 0, pending: 0 }; }
 
 function __rehydrateWalletState(s: WalletState, stored: WalletState): void {
-  if (Object.prototype.hasOwnProperty.call(stored, "balance")) { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "balance", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "balance", expected: "integer", actual: String(__v) } as BoundaryError))((s.balance as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Wallet", __r.error); (s as { -readonly [K in keyof typeof s]: (typeof s)[K] }).balance = __r.value as unknown as (typeof s)["balance"]; }
-  if (Object.prototype.hasOwnProperty.call(stored, "pending")) { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "pending", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "pending", expected: "integer", actual: String(__v) } as BoundaryError))((s.pending as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Wallet", __r.error); (s as { -readonly [K in keyof typeof s]: (typeof s)[K] }).pending = __r.value as unknown as (typeof s)["pending"]; }
+  if (Object.prototype.hasOwnProperty.call(stored, "balance")) { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "balance", expected: "safe integer", actual: typeof __v } as BoundaryError) : Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "balance", expected: "safe integer", actual: String(__v) } as BoundaryError))((s.balance as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Wallet", __r.error); (s as { -readonly [K in keyof typeof s]: (typeof s)[K] }).balance = __r.value as unknown as (typeof s)["balance"]; }
+  if (Object.prototype.hasOwnProperty.call(stored, "pending")) { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "pending", expected: "safe integer", actual: typeof __v } as BoundaryError) : Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "pending", expected: "safe integer", actual: String(__v) } as BoundaryError))((s.pending as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Wallet", __r.error); (s as { -readonly [K in keyof typeof s]: (typeof s)[K] }).pending = __r.value as unknown as (typeof s)["pending"]; }
 }
 
 function __encodeWalletState(s: WalletState): Record<string, unknown> {
-  return { ...s, balance: s.balance as JsonValue, pending: s.pending as JsonValue };
+  return { ...s, balance: ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error("Int outside the safe-integer range at boundary"); return v as JsonValue; })(s.balance), pending: ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error("Int outside the safe-integer range at boundary"); return v as JsonValue; })(s.pending) };
 }
 
 export class Wallet {

@@ -7,8 +7,8 @@ export type Pct = number & { readonly __brand: "Pct" };
 
 export const Pct = {
   of(value: number): Result<Pct, ValidationError> {
-    if (!Number.isInteger(value)) {
-      return Err({ field: "Pct", message: "must be an integer", value });
+    if (!Number.isSafeInteger(value)) {
+      return Err({ field: "Pct", message: "must be a safe integer", value });
     }
     if (!(value >= 0 && value <= 100)) {
       return Err({ field: "Pct", message: "must be in range [0, 100]", value });

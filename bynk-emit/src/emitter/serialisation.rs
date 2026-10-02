@@ -1022,12 +1022,13 @@ fn emit_inline_refinement_checks(
     let mut stmts = Vec::new();
     for guard in base_guards {
         match guard {
+            // #1657: an `Int` is a JS safe integer, so `1e300` is rejected too.
             BaseGuard::Integral => stmts.push(if_(
                 not_expr(call(
-                    member(ident("Number"), "isInteger"),
+                    member(ident("Number"), "isSafeInteger"),
                     vec![ident("json")],
                 )),
-                block(vec![violation("must be an integer")]),
+                block(vec![violation("must be a safe integer")]),
             )),
             BaseGuard::Finite => stmts.push(if_(
                 not_expr(call(
@@ -1674,7 +1675,7 @@ mod emit_sum_codec_tests {
         let decls = emit_sum_codec("Parcel", "Parcel", &sum, &ru);
         assert_eq!(
             render_decls(decls),
-            "export function serialise_Parcel(value: Parcel): JsonValue {\n  switch (value.tag) {\n    case \"Pending\":\n      return { kind: \"Pending\" };\n    case \"Shipped\": {\n      return { kind: \"Shipped\", tracking: value.tracking as JsonValue, weight: value.weight as JsonValue };\n    }\n  }\n}\n\nexport function deserialise_Parcel(json: JsonValue, path: string = \"$\"): Result<Parcel, BoundaryError> {\n  if (typeof json !== \"object\" || json === null || Array.isArray(json)) {\n    return Err({ kind: \"StructuralMismatch\", path, expected: \"object\", actual: typeof json });\n  }\n  const obj = json as { [k: string]: JsonValue };\n  const kind = obj[\"kind\"];\n  switch (kind) {\n    case \"Pending\":\n      return Ok({ tag: \"Pending\" } as Parcel);\n    case \"Shipped\": {\n  if (typeof obj[\"tracking\"] !== \"string\") {\n    return Err({ kind: \"StructuralMismatch\", path: `${path}.tracking`, expected: \"string\", actual: typeof obj[\"tracking\"] });\n  }\n  const __tracking = obj[\"tracking\"];\n  if (typeof obj[\"weight\"] !== \"number\") {\n    return Err({ kind: \"StructuralMismatch\", path: `${path}.weight`, expected: \"number\", actual: typeof obj[\"weight\"] });\n  }\n  if (!Number.isInteger(obj[\"weight\"])) {\n    return Err({ kind: \"StructuralMismatch\", path: `${path}.weight`, expected: \"integer\", actual: String(obj[\"weight\"]) });\n  }\n  const __weight = obj[\"weight\"];\n      return Ok({ tag: \"Shipped\", tracking: __tracking, weight: __weight } as Parcel);\n    }\n    default:\n      return Err({ kind: \"StructuralMismatch\", path, expected: \"sum variant kind\", actual: String(kind) });\n  }\n}\n"
+            "export function serialise_Parcel(value: Parcel): JsonValue {\n  switch (value.tag) {\n    case \"Pending\":\n      return { kind: \"Pending\" };\n    case \"Shipped\": {\n      return { kind: \"Shipped\", tracking: value.tracking as JsonValue, weight: ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error(\"Int outside the safe-integer range at boundary\"); return v as JsonValue; })(value.weight) };\n    }\n  }\n}\n\nexport function deserialise_Parcel(json: JsonValue, path: string = \"$\"): Result<Parcel, BoundaryError> {\n  if (typeof json !== \"object\" || json === null || Array.isArray(json)) {\n    return Err({ kind: \"StructuralMismatch\", path, expected: \"object\", actual: typeof json });\n  }\n  const obj = json as { [k: string]: JsonValue };\n  const kind = obj[\"kind\"];\n  switch (kind) {\n    case \"Pending\":\n      return Ok({ tag: \"Pending\" } as Parcel);\n    case \"Shipped\": {\n  if (typeof obj[\"tracking\"] !== \"string\") {\n    return Err({ kind: \"StructuralMismatch\", path: `${path}.tracking`, expected: \"string\", actual: typeof obj[\"tracking\"] });\n  }\n  const __tracking = obj[\"tracking\"];\n  if (typeof obj[\"weight\"] !== \"number\") {\n    return Err({ kind: \"StructuralMismatch\", path: `${path}.weight`, expected: \"number\", actual: typeof obj[\"weight\"] });\n  }\n  if (!Number.isSafeInteger(obj[\"weight\"])) {\n    return Err({ kind: \"StructuralMismatch\", path: `${path}.weight`, expected: \"safe integer\", actual: String(obj[\"weight\"]) });\n  }\n  const __weight = obj[\"weight\"];\n      return Ok({ tag: \"Shipped\", tracking: __tracking, weight: __weight } as Parcel);\n    }\n    default:\n      return Err({ kind: \"StructuralMismatch\", path, expected: \"sum variant kind\", actual: String(kind) });\n  }\n}\n"
         );
     }
 }
@@ -1789,7 +1790,8 @@ fn emit_field_deserialise_wire(
             // admitted from the wire.
             for guard in guards {
                 let (method, expected) = match guard {
-                    BaseGuard::Integral => ("isInteger", "integer"),
+                    // #1657: whole *and* within ±(2^53 − 1).
+                    BaseGuard::Integral => ("isSafeInteger", "safe integer"),
                     BaseGuard::Finite => ("isFinite", "finite number"),
                 };
                 stmts.push(if_(
@@ -2015,7 +2017,7 @@ mod emit_field_deserialise_wire_tests {
         let stmts = emit_field_deserialise_wire("name", &wire, "json", "path", &ru);
         assert_eq!(
             render(stmts),
-            "  if (typeof json !== \"number\") {\n    return Err({ kind: \"StructuralMismatch\", path: path, expected: \"number\", actual: typeof json });\n  }\n  if (!Number.isInteger(json)) {\n    return Err({ kind: \"StructuralMismatch\", path: path, expected: \"integer\", actual: String(json) });\n  }\n  if (!Number.isFinite(json)) {\n    return Err({ kind: \"StructuralMismatch\", path: path, expected: \"finite number\", actual: String(json) });\n  }\n  const __name = json;\n"
+            "  if (typeof json !== \"number\") {\n    return Err({ kind: \"StructuralMismatch\", path: path, expected: \"number\", actual: typeof json });\n  }\n  if (!Number.isSafeInteger(json)) {\n    return Err({ kind: \"StructuralMismatch\", path: path, expected: \"safe integer\", actual: String(json) });\n  }\n  if (!Number.isFinite(json)) {\n    return Err({ kind: \"StructuralMismatch\", path: path, expected: \"finite number\", actual: String(json) });\n  }\n  const __name = json;\n"
         );
     }
 }
@@ -2047,6 +2049,48 @@ fn serialise_field_expr_via(t: &TypeRef, value: &str, ns: &str, ru: &RuntimeUse)
     serialise_field_expr_wire(&wire_ref_of(t), value, ns, ru)
 }
 
+/// A number crossing the boundary, checked with `Number.<check>` first: a
+/// self-contained IIFE that throws `message` on failure, so the module needs no
+/// extra runtime import.
+///
+/// #1435 (Arc E slice 1): the first real [`TsArrowBody::Block`] site in this
+/// tree — a statement body (`if`/`throw`, then `return`), not reducible to one
+/// expression the way every other arm here is. See that type's own doc
+/// (`bynk-ts/src/program.rs`) for why this widens the existing `Arrow.body`
+/// field rather than adding a new `TsExpr` variant.
+fn guarded_number(value: &str, check: &str, message: &str) -> TsExpr {
+    call(
+        TsExpr::Arrow {
+            params: vec![TsParam {
+                name: "v".to_string(),
+                ty: Some(TsType::named("number")),
+                optional: false,
+            }],
+            is_async: false,
+            generics: Vec::new(),
+            return_type: None,
+            body: Box::new(TsArrowBody::Block(vec![
+                TsStmt::if_stmt(
+                    TsExpr::Unary {
+                        op: TsUnaryOp::Not,
+                        expr: Box::new(call(member(ident("Number"), check), vec![ident("v")])),
+                    },
+                    TsStmt::throw_stmt(
+                        TsExpr::New {
+                            callee: Box::new(ident("Error")),
+                            args: vec![str_lit(message)],
+                        },
+                        None,
+                    ),
+                    None,
+                ),
+                TsStmt::return_stmt(Some(as_expr(ident("v"), TsType::named("JsonValue"))), None),
+            ])),
+        },
+        vec![ident(value)],
+    )
+}
+
 /// The [`WireRef`]-driven body [`serialise_field_expr_via`] delegates to
 /// (after its manual `Effect` peel — see that function's doc), exposed
 /// directly for a caller that already holds a [`WireRef`] (a [`WireField`]'s
@@ -2065,52 +2109,23 @@ fn serialise_field_expr_wire(wire: &WireRef, value: &str, ns: &str, ru: &Runtime
         WireRef::Inst { key } => call(ident(format!("{ns}serialise_{key}")), vec![ident(value)]),
         // v0.21: serialising a non-finite `Float` is a contract violation
         // (`JSON.stringify(NaN)` would silently produce `null`); the guard is
-        // a self-contained IIFE so the module needs no extra runtime import.
-        //
-        // #1435 (Arc E slice 1): the first real [`TsArrowBody::Block`] site
-        // in this tree — a statement body (`if`/`throw`, then `return`), not
-        // reducible to one expression the way every other arm here is. See
-        // that type's own doc (`bynk-ts/src/program.rs`) for why this widens
-        // the existing `Arrow.body` field rather than adding a new `TsExpr`
-        // variant.
+        // a self-contained IIFE (`guarded_number`).
         WireRef::Base {
             base: BaseType::Float,
             ..
-        } => call(
-            TsExpr::Arrow {
-                params: vec![TsParam {
-                    name: "v".to_string(),
-                    ty: Some(TsType::named("number")),
-                    optional: false,
-                }],
-                is_async: false,
-                generics: Vec::new(),
-                return_type: None,
-                body: Box::new(TsArrowBody::Block(vec![
-                    TsStmt::if_stmt(
-                        TsExpr::Unary {
-                            op: TsUnaryOp::Not,
-                            expr: Box::new(call(
-                                member(ident("Number"), "isFinite"),
-                                vec![ident("v")],
-                            )),
-                        },
-                        TsStmt::throw_stmt(
-                            TsExpr::New {
-                                callee: Box::new(ident("Error")),
-                                args: vec![str_lit("non-finite Float at boundary")],
-                            },
-                            None,
-                        ),
-                        None,
-                    ),
-                    TsStmt::return_stmt(
-                        Some(as_expr(ident("v"), TsType::named("JsonValue"))),
-                        None,
-                    ),
-                ])),
-            },
-            vec![ident(value)],
+        } => guarded_number(value, "isFinite", "non-finite Float at boundary"),
+        // #1657 (Decision C): an `Int` outside the safe-integer range (`Infinity`
+        // from `5 / 0` before the division trap, or a value past 2^53 from
+        // arithmetic) would write `null` or an imprecise number, a silent
+        // wire-contract violation the consumer's decoder then rejects. Fault
+        // here instead, as a non-finite `Float` does.
+        WireRef::Base {
+            base: BaseType::Int,
+            ..
+        } => guarded_number(
+            value,
+            "isSafeInteger",
+            "Int outside the safe-integer range at boundary",
         ),
         // v0.110 (ADR 0142 D5): a `Bytes` is base64-encoded on the wire — the
         // one base type whose serialise is an encode, not a bare cast.
@@ -2507,9 +2522,11 @@ pub(crate) fn deserialise_expr_via(
                 BaseType::Float => Some(call(member(ident("Number"), "isFinite"), vec![ident("__v")])),
                 // v0.86 (ADR 0112 D6): a `Duration` is whole milliseconds —
                 // reject a non-integer from the wire, as a refined `Int` does.
-                BaseType::Int | BaseType::Duration | BaseType::Instant => {
-                    Some(call(member(ident("Number"), "isInteger"), vec![ident("__v")]))
-                }
+                // #1657: whole *and* within ±(2^53 − 1), the `Int` domain.
+                BaseType::Int | BaseType::Duration | BaseType::Instant => Some(call(
+                    member(ident("Number"), "isSafeInteger"),
+                    vec![ident("__v")],
+                )),
                 _ => None,
             };
             // v0.176 (#642): report what was *required*, not just the `typeof`
@@ -2518,7 +2535,7 @@ pub(crate) fn deserialise_expr_via(
             // exactly the case the predicate exists to catch: a `3.5` for an `Int`
             // would read `expected: "number", actual: "number"`.
             let expected = match b {
-                BaseType::Int | BaseType::Duration | BaseType::Instant => "integer",
+                BaseType::Int | BaseType::Duration | BaseType::Instant => "safe integer",
                 BaseType::Float => "finite number",
                 _ => typeof_str,
             };

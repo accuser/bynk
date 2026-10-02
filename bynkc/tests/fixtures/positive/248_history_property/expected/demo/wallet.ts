@@ -7,8 +7,8 @@ export type Amount = number & { readonly __brand: "demo.wallet.Amount" };
 
 export const Amount = {
   of(value: number): Result<Amount, ValidationError> {
-    if (!Number.isInteger(value)) {
-      return Err({ field: "Amount", message: "must be an integer", value });
+    if (!Number.isSafeInteger(value)) {
+      return Err({ field: "Amount", message: "must be a safe integer", value });
     }
     if (!(value > 0)) {
       return Err({ field: "Amount", message: "must be positive", value });
@@ -25,11 +25,11 @@ const __WalletRegistry = new StateRegistry();
 function __zeroOfWalletState(): WalletState { return { balance: 0 }; }
 
 function __rehydrateWalletState(s: WalletState, stored: WalletState): void {
-  if (Object.prototype.hasOwnProperty.call(stored, "balance")) { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "balance", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "balance", expected: "integer", actual: String(__v) } as BoundaryError))((s.balance as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Wallet", __r.error); (s as { -readonly [K in keyof typeof s]: (typeof s)[K] }).balance = __r.value as unknown as (typeof s)["balance"]; }
+  if (Object.prototype.hasOwnProperty.call(stored, "balance")) { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "balance", expected: "safe integer", actual: typeof __v } as BoundaryError) : Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "balance", expected: "safe integer", actual: String(__v) } as BoundaryError))((s.balance as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Wallet", __r.error); (s as { -readonly [K in keyof typeof s]: (typeof s)[K] }).balance = __r.value as unknown as (typeof s)["balance"]; }
 }
 
 function __encodeWalletState(s: WalletState): Record<string, unknown> {
-  return { ...s, balance: s.balance as JsonValue };
+  return { ...s, balance: ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error("Int outside the safe-integer range at boundary"); return v as JsonValue; })(s.balance) };
 }
 
 export class Wallet {

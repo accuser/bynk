@@ -18,8 +18,8 @@ export type Quantity = number & { readonly __brand: "Quantity" };
 
 export const Quantity = {
   of(value: number): Result<Quantity, ValidationError> {
-    if (!Number.isInteger(value)) {
-      return Err({ field: "Quantity", message: "must be an integer", value });
+    if (!Number.isSafeInteger(value)) {
+      return Err({ field: "Quantity", message: "must be a safe integer", value });
     }
     if (!(value >= 1 && value <= 9999)) {
       return Err({ field: "Quantity", message: "must be in range [1, 9999]", value });
@@ -32,8 +32,8 @@ export type Discount = number & { readonly __brand: "Discount" };
 
 export const Discount = {
   of(value: number): Result<Discount, ValidationError> {
-    if (!Number.isInteger(value)) {
-      return Err({ field: "Discount", message: "must be an integer", value });
+    if (!Number.isSafeInteger(value)) {
+      return Err({ field: "Discount", message: "must be a safe integer", value });
     }
     if (!(value >= 0 && value <= 100)) {
       return Err({ field: "Discount", message: "must be in range [0, 100]", value });

@@ -28,7 +28,7 @@ export const api = {
 export function serialise_CreateItem(value: CreateItem): JsonValue {
   return {
     name: value.name as JsonValue,
-    quantity: value.quantity as JsonValue,
+    quantity: ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error("Int outside the safe-integer range at boundary"); return v as JsonValue; })(value.quantity),
   };
 }
 
@@ -44,8 +44,8 @@ export function deserialise_CreateItem(json: JsonValue, path: string = "$"): Res
   if (typeof obj["quantity"] !== "number") {
     return Err({ kind: "StructuralMismatch", path: `${path}.quantity`, expected: "number", actual: typeof obj["quantity"] });
   }
-  if (!Number.isInteger(obj["quantity"])) {
-    return Err({ kind: "StructuralMismatch", path: `${path}.quantity`, expected: "integer", actual: String(obj["quantity"]) });
+  if (!Number.isSafeInteger(obj["quantity"])) {
+    return Err({ kind: "StructuralMismatch", path: `${path}.quantity`, expected: "safe integer", actual: String(obj["quantity"]) });
   }
   const __quantity = obj["quantity"];
   return Ok({ name: __name, quantity: __quantity } as CreateItem);

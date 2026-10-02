@@ -309,10 +309,11 @@ fn emit_refined_checks(
 ) {
     let name = &t.name.name;
     if base == BaseType::Int {
+        // #1657: an `Int` is a JS safe integer.
         out.push_str(&print_numeric_guard_stmt(
             name,
-            "isInteger",
-            "must be an integer",
+            "isSafeInteger",
+            "must be a safe integer",
         ));
     }
     // v0.21: validated `Float` values are finite — `.of` and the boundary
@@ -7727,8 +7728,8 @@ commons envelope {
         assert!(
             ts.contains(
                 "export const Age = {\n  of(value: number): Result<Age, ValidationError> {\n    \
-                 if (!Number.isInteger(value)) {\n      \
-                 return Err({ field: \"Age\", message: \"must be an integer\", value });\n    }\n    \
+                 if (!Number.isSafeInteger(value)) {\n      \
+                 return Err({ field: \"Age\", message: \"must be a safe integer\", value });\n    }\n    \
                  if (!(value > 0)) {\n      \
                  return Err({ field: \"Age\", message: \"must be positive\", value });\n    }\n    \
                  return Ok(value as Age);\n  },\n};\n"
