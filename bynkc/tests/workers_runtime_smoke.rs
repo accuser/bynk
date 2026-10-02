@@ -247,7 +247,9 @@ fn agent_state_round_trips_on_workerd() {
 /// Each handler here echoes a value whose in-memory shape is not JSON-faithful,
 /// or is only by accident. The route compares what comes back with what went
 /// out. Before #1678 the call used raw `JSON.stringify` both ways, so `Bytes`
-/// arrived as `{"0":104,"1":105}` and a value `Map` as `{}`.
+/// arrived as `{"0":104,"1":105}` and a value `Map` as `{}`. `touch` returns
+/// `()`, whose codec must put JSON `null` on the wire (`JSON.stringify` of
+/// `undefined` is not JSON, #527).
 const AGENT_CODEC_SOURCE: &str = r#"context smoke
 
 type Light = enum { Red, Green }
@@ -268,6 +270,8 @@ agent Echo {
   on call echoList(xs: List[Bytes]) -> Effect[List[Bytes]] { xs }
   on call echoBox(b: Box[Bytes]) -> Effect[Box[Bytes]] { b }
   on call twice(n: Int, b: Bytes) -> Effect[Int] { n + b.length() }
+  on call touch() -> Effect[()] { calls.update((n) => n + 1) }
+  on call touches() -> Effect[Int] { calls }
 }
 
 service api from http {
@@ -287,7 +291,9 @@ service api from http {
     let xs <- Echo("k").echoList([hi, hi])
     let bx <- Echo("k").echoBox(Box { item: hi })
     let t <- Echo("k").twice(1, hi)
-    Ok("bytes=\(b == hi) light=\(l == Green) opt=\(o == Some(3)) map=\(m == m1) blob=\(bl.data == hi) list=\(xs == [hi, hi]) box=\(bx.item == hi) twice=\(t)")
+    do Echo("k").touch()
+    let c <- Echo("k").touches()
+    Ok("bytes=\(b == hi) light=\(l == Green) opt=\(o == Some(3)) map=\(m == m1) blob=\(bl.data == hi) list=\(xs == [hi, hi]) box=\(bx.item == hi) twice=\(t) touched=\(c)")
   }
 }
 "#;
@@ -300,7 +306,7 @@ fn agent_calls_use_the_boundary_codec_on_workerd() {
     let body = fetch(&served.url, "/rt").expect("GET /rt round-trips values through an agent");
     assert!(
         body.contains(
-            "bytes=true light=true opt=true map=true blob=true list=true box=true twice=3"
+            "bytes=true light=true opt=true map=true blob=true list=true box=true twice=3 touched=1"
         ),
         "every value must come back from the agent equal to what was sent: {body}"
     );
@@ -310,12 +316,16 @@ fn agent_calls_use_the_boundary_codec_on_workerd() {
 /// (and its workerd) and removes the scratch directory.
 struct Served {
     url: String,
-    _child: KillOnDrop,
+    child: Option<KillOnDrop>,
     tmp: std::path::PathBuf,
 }
 
 impl Drop for Served {
     fn drop(&mut self) {
+        // Stop wrangler before removing its directory: a `Drop` body runs
+        // before the fields drop, and a live wrangler would recreate its
+        // `.wrangler` state under the path after the removal.
+        drop(self.child.take());
         let _ = fs::remove_dir_all(&self.tmp);
     }
 }
@@ -406,7 +416,7 @@ fn serve_smoke(source: &str, tag: &str, port_base: u16) -> Option<Served> {
     }
     Some(Served {
         url,
-        _child: child,
+        child: Some(child),
         tmp,
     })
 }
