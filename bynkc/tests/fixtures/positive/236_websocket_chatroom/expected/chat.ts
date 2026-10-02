@@ -93,8 +93,8 @@ export class Room {
   async join(u: UserId, conn: Connection<ServerFrame>, deps: {}): Promise<void> {
     const __state = { ...(await this.loadState()) };
     const __result = await (async () => {
-      const __r0 = await ((__state.members[u] = true), undefined);
-      const __r1 = await ((__state.conns[u] = conn), undefined);
+      const __r0 = await (Object.defineProperty(__state.members, u, { value: true, writable: true, enumerable: true, configurable: true }), undefined);
+      const __r1 = await (Object.defineProperty(__state.conns, u, { value: conn, writable: true, enumerable: true, configurable: true }), undefined);
       return undefined;
     })();
     await this.commitState(__state);

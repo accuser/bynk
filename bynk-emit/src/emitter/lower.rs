@@ -1484,15 +1484,18 @@ fn lower_method_call(
         let m = format!("{var}.{}", id.name);
         let a: Vec<String> = args.iter().map(|x| pre.lower(x, cx)).collect();
         return pre.finish(match method.name.as_str() {
-            "put" => format!("(({m}[String({})] = connIdOf({})), undefined)", a[0], a[1]),
+            "put" => format!(
+                "({}, undefined)",
+                own_set(&m, &format!("String({})", a[0]), &format!("connIdOf({})", a[1]))
+            ),
             "remove" => format!(
-                "(async () => {{ const __k = String({0}); const __cid = {m}[__k]; if (__cid !== undefined) {{ const __c = resolveConnection<{f_ts}>(this.state, __cid); if (__c.tag === \"Some\") {{ await __c.value.close(); }} delete {m}[__k]; }} return undefined; }})()",
+                "(async () => {{ const __k = String({0}); const __cid = Object.hasOwn({m}, __k) ? {m}[__k] : undefined; if (__cid !== undefined) {{ const __c = resolveConnection<{f_ts}>(this.state, __cid); if (__c.tag === \"Some\") {{ await __c.value.close(); }} delete {m}[__k]; }} return undefined; }})()",
                 a[0]
             ),
-            "contains" => format!("(String({}) in {m})", a[0]),
+            "contains" => format!("Object.hasOwn({m}, String({}))", a[0]),
             "size" => format!("Object.keys({m}).length"),
             "get" => format!(
-                "(() => {{ const __k = String({0}); return (__k in {m}) ? resolveConnection<{f_ts}>(this.state, {m}[__k]) : None; }})()",
+                "(() => {{ const __k = String({0}); return Object.hasOwn({m}, __k) ? resolveConnection<{f_ts}>(this.state, {m}[__k]) : None; }})()",
                 a[0]
             ),
             // Any non-entry op is a lazy query lifting the map into a scan over its
@@ -1580,21 +1583,26 @@ fn lower_method_call(
             "upsert" if !idx_fields.is_empty() => {
                 idx_map_upsert(&m, &var, &id.name, &idx_fields, &a)
             }
-            "put" => format!("(({m}[{}] = {}), undefined)", a[0], a[1]),
+            "put" => format!("({}, undefined)", own_set(&m, &a[0], &a[1])),
             "remove" => format!("((delete {m}[{}]), undefined)", a[0]),
-            "contains" => format!("(({}) in {m})", a[0]),
+            "contains" => format!("Object.hasOwn({m}, {})", a[0]),
             "size" => format!("Object.keys({m}).length"),
             "get" => format!(
-                "(() => {{ const __k = {0}; return (__k in {m}) ? Some({m}[__k]) : None; }})()",
+                "(() => {{ const __k = {0}; return Object.hasOwn({m}, __k) ? Some({m}[__k]) : None; }})()",
                 a[0]
             ),
             "update" => format!(
-                "(() => {{ const __k = {0}; if (!(__k in {m})) {{ throw new Error(\"Map.update: key absent\"); }} {m}[__k] = ({1})({m}[__k]); return undefined; }})()",
+                "(() => {{ const __k = {0}; if (!Object.hasOwn({m}, __k)) {{ throw new Error(\"Map.update: key absent\"); }} {m}[__k] = ({1})({m}[__k]); return undefined; }})()",
                 a[0], a[1]
             ),
             "upsert" => format!(
-                "(() => {{ const __k = {0}; {m}[__k] = ({2})((__k in {m}) ? {m}[__k] : ({1})); return undefined; }})()",
-                a[0], a[1], a[2]
+                "(() => {{ const __k = {0}; {set}; return undefined; }})()",
+                a[0],
+                set = own_set(
+                    &m,
+                    "__k",
+                    &format!("({})(Object.hasOwn({m}, __k) ? {m}[__k] : ({}))", a[2], a[1])
+                ),
             ),
             // v0.91 (ADR 0119): any non-entry op is a lazy query that lifts the
             // map into a scan over its values (`Object.values`).
@@ -1645,9 +1653,9 @@ fn lower_method_call(
         let s = format!("{var}.{}", id.name);
         let a: Vec<String> = args.iter().map(|x| pre.lower(x, cx)).collect();
         return pre.finish(match method.name.as_str() {
-            "add" => format!("(({s}[{}] = true), undefined)", a[0]),
+            "add" => format!("({}, undefined)", own_set(&s, &a[0], "true")),
             "remove" => format!("((delete {s}[{}]), undefined)", a[0]),
-            "contains" => format!("(({}) in {s})", a[0]),
+            "contains" => format!("Object.hasOwn({s}, {})", a[0]),
             "size" => format!("Object.keys({s}).length"),
             other => format!("(/* unsupported Set op {other} */ undefined)"),
         });
@@ -1673,27 +1681,29 @@ fn lower_method_call(
         return pre.finish(match method.name.as_str() {
             "remove" => format!("((delete {c}[{}]), undefined)", a[0]),
             "put" => format!(
-                "(async () => {{ const __now = {now}; {c}[{0}] = {{ v: {1}, exp: __now + {ttl} }}; return undefined; }})()",
-                a[0], a[1]
+                "(async () => {{ const __now = {now}; {set}; return undefined; }})()",
+                set = own_set(&c, &a[0], &format!("{{ v: {}, exp: __now + {ttl} }}", a[1])),
             ),
             "get" => format!(
-                "(async () => {{ const __now = {now}; const __k = {0}; return ((__k in {c}) && {c}[__k].exp > __now) ? Some({c}[__k].v) : None; }})()",
+                "(async () => {{ const __now = {now}; const __k = {0}; return (Object.hasOwn({c}, __k) && {c}[__k].exp > __now) ? Some({c}[__k].v) : None; }})()",
                 a[0]
             ),
             "contains" => format!(
-                "(async () => {{ const __now = {now}; const __k = {0}; return (__k in {c}) && {c}[__k].exp > __now; }})()",
+                "(async () => {{ const __now = {now}; const __k = {0}; return Object.hasOwn({c}, __k) && {c}[__k].exp > __now; }})()",
                 a[0]
             ),
             "size" => format!(
                 "(async () => {{ const __now = {now}; return Object.values({c}).filter((__e) => __e.exp > __now).length; }})()"
             ),
             "update" => format!(
-                "(async () => {{ const __now = {now}; const __k = {0}; if (!((__k in {c}) && {c}[__k].exp > __now)) {{ throw new Error(\"Cache.update: key absent\"); }} {c}[__k] = {{ v: ({1})({c}[__k].v), exp: __now + {ttl} }}; return undefined; }})()",
+                "(async () => {{ const __now = {now}; const __k = {0}; if (!(Object.hasOwn({c}, __k) && {c}[__k].exp > __now)) {{ throw new Error(\"Cache.update: key absent\"); }} {c}[__k] = {{ v: ({1})({c}[__k].v), exp: __now + {ttl} }}; return undefined; }})()",
                 a[0], a[1]
             ),
             "upsert" => format!(
-                "(async () => {{ const __now = {now}; const __k = {0}; const __cur = ((__k in {c}) && {c}[__k].exp > __now) ? {c}[__k].v : ({1}); {c}[__k] = {{ v: ({2})(__cur), exp: __now + {ttl} }}; return undefined; }})()",
-                a[0], a[1], a[2]
+                "(async () => {{ const __now = {now}; const __k = {0}; const __cur = (Object.hasOwn({c}, __k) && {c}[__k].exp > __now) ? {c}[__k].v : ({1}); {set}; return undefined; }})()",
+                a[0],
+                a[1],
+                set = own_set(&c, "__k", &format!("{{ v: ({})(__cur), exp: __now + {ttl} }}", a[2])),
             ),
             other => format!("(/* unsupported Cache op {other} */ undefined)"),
         });
@@ -3273,7 +3283,7 @@ fn lower_list_kernel(
             let right = pre.lower(right, cx);
             let into = pre.lower(into, cx);
             Some(format!(
-                "(() => {{ const __h: Record<string, {u_ts}[]> = {{}}; for (const __u of {other}) {{ const __k = String(({right})(__u)); (__h[__k] = __h[__k] ?? []).push(__u); }} return ({recv}).flatMap((__t: {elem_ts}) => {{ const __m = __h[String(({left})(__t))] ?? []; return __m.map((__u: {u_ts}) => ({into})(__t, __u)); }}); }})()"
+                "(() => {{ const __h: Record<string, {u_ts}[]> = Object.create(null); for (const __u of {other}) {{ const __k = String(({right})(__u)); (__h[__k] = __h[__k] ?? []).push(__u); }} return ({recv}).flatMap((__t: {elem_ts}) => {{ const __m = __h[String(({left})(__t))] ?? []; return __m.map((__u: {u_ts}) => ({into})(__t, __u)); }}); }})()"
             ))
         }
         ("leftJoin", [other, left, right, into]) => {
@@ -3284,7 +3294,7 @@ fn lower_list_kernel(
             let right = pre.lower(right, cx);
             let into = pre.lower(into, cx);
             Some(format!(
-                "(() => {{ const __h: Record<string, {u_ts}[]> = {{}}; for (const __u of {other}) {{ const __k = String(({right})(__u)); (__h[__k] = __h[__k] ?? []).push(__u); }} return ({recv}).flatMap((__t: {elem_ts}) => {{ const __m = __h[String(({left})(__t))] ?? []; return __m.length > 0 ? __m.map((__u: {u_ts}) => ({into})(__t, Some(__u))) : [({into})(__t, None)]; }}); }})()"
+                "(() => {{ const __h: Record<string, {u_ts}[]> = Object.create(null); for (const __u of {other}) {{ const __k = String(({right})(__u)); (__h[__k] = __h[__k] ?? []).push(__u); }} return ({recv}).flatMap((__t: {elem_ts}) => {{ const __m = __h[String(({left})(__t))] ?? []; return __m.length > 0 ? __m.map((__u: {u_ts}) => ({into})(__t, Some(__u))) : [({into})(__t, None)]; }}); }})()"
             ))
         }
         ("join", [other, on, into]) => {
@@ -3302,7 +3312,7 @@ fn lower_list_kernel(
             let key = pre.lower(key, cx);
             let into = pre.lower(into, cx);
             Some(format!(
-                "(() => {{ const __h: Record<string, {elem_ts}[]> = {{}}; const __order: string[] = []; for (const __t of {recv}) {{ const __k = String(({key})(__t)); if (!(__k in __h)) {{ __h[__k] = []; __order.push(__k); }} __h[__k].push(__t); }} return __order.map((__k) => {{ const __rows = __h[__k]; return ({into})(({key})(__rows[0]), __rows); }}); }})()"
+                "(() => {{ const __h: Record<string, {elem_ts}[]> = Object.create(null); const __order: string[] = []; for (const __t of {recv}) {{ const __k = String(({key})(__t)); if (!(__k in __h)) {{ __h[__k] = []; __order.push(__k); }} __h[__k].push(__t); }} return __order.map((__k) => {{ const __rows = __h[__k]; return ({into})(({key})(__rows[0]), __rows); }}); }})()"
             ))
         }
         _ => None,
@@ -3428,10 +3438,10 @@ fn lower_query_method(
         // re-derived, and threaded as a param rather than called here to
         // keep this function's own argument count under clippy's lint.
         ("joinOn", [other, left, right, into]) => thunk(format!(
-            "{{ const __h: Record<string, {other_elem_ts}[]> = {{}}; for (const __u of ({other})()) {{ const __k = String(({right})(__u)); (__h[__k] = __h[__k] ?? []).push(__u); }} return {source}.flatMap((__t: {elem_ts}) => {{ const __m = __h[String(({left})(__t))] ?? []; return __m.map((__u: {other_elem_ts}) => ({into})(__t, __u)); }}); }}"
+            "{{ const __h: Record<string, {other_elem_ts}[]> = Object.create(null); for (const __u of ({other})()) {{ const __k = String(({right})(__u)); (__h[__k] = __h[__k] ?? []).push(__u); }} return {source}.flatMap((__t: {elem_ts}) => {{ const __m = __h[String(({left})(__t))] ?? []; return __m.map((__u: {other_elem_ts}) => ({into})(__t, __u)); }}); }}"
         )),
         ("leftJoin", [other, left, right, into]) => thunk(format!(
-            "{{ const __h: Record<string, {other_elem_ts}[]> = {{}}; for (const __u of ({other})()) {{ const __k = String(({right})(__u)); (__h[__k] = __h[__k] ?? []).push(__u); }} return {source}.flatMap((__t: {elem_ts}) => {{ const __m = __h[String(({left})(__t))] ?? []; return __m.length > 0 ? __m.map((__u: {other_elem_ts}) => ({into})(__t, Some(__u))) : [({into})(__t, None)]; }}); }}"
+            "{{ const __h: Record<string, {other_elem_ts}[]> = Object.create(null); for (const __u of ({other})()) {{ const __k = String(({right})(__u)); (__h[__k] = __h[__k] ?? []).push(__u); }} return {source}.flatMap((__t: {elem_ts}) => {{ const __m = __h[String(({left})(__t))] ?? []; return __m.length > 0 ? __m.map((__u: {other_elem_ts}) => ({into})(__t, Some(__u))) : [({into})(__t, None)]; }}); }}"
         )),
         ("join", [other, on, into]) => thunk(format!(
             "{{ const __b = ({other})(); return {source}.flatMap((__t) => __b.filter((__u) => ({on})(__t, __u)).map((__u) => ({into})(__t, __u))); }}"
@@ -3440,7 +3450,7 @@ fn lower_query_method(
         // (`elem_ts`), the receiver's element type — same as `distinctBy`
         // above, not `other`-derived (`groupBy` has no `other` argument).
         ("groupBy", [key, into]) => thunk(format!(
-            "{{ const __h: Record<string, {elem_ts}[]> = {{}}; const __order: string[] = []; for (const __t of {source}) {{ const __k = String(({key})(__t)); if (!(__k in __h)) {{ __h[__k] = []; __order.push(__k); }} __h[__k].push(__t); }} return __order.map((__k) => {{ const __rows = __h[__k]; return ({into})(({key})(__rows[0]), __rows); }}); }}"
+            "{{ const __h: Record<string, {elem_ts}[]> = Object.create(null); const __order: string[] = []; for (const __t of {source}) {{ const __k = String(({key})(__t)); if (!(__k in __h)) {{ __h[__k] = []; __order.push(__k); }} __h[__k].push(__t); }} return __order.map((__k) => {{ const __rows = __h[__k]; return ({into})(({key})(__rows[0]), __rows); }}); }}"
         )),
         // -- terminals → read the source array (awaited at the `<-`) --
         ("collect", []) => source,
@@ -3524,6 +3534,19 @@ fn lower_query_method(
     })
 }
 
+/// #1685: a store collection is a plain object, and its keys come from user
+/// data. A property *set* of `__proto__` hits `Object.prototype`'s accessor (a
+/// primitive value is dropped, an object value reassigns the prototype), so
+/// every write that may create a key *defines* it instead. Reads of a key that
+/// may be absent go through `Object.hasOwn`, never `in` or a bare index, so an
+/// inherited name (`constructor`, `toString`) is not read as present. A write to
+/// a key already known to be own (after an `Object.hasOwn` check) may stay a set.
+fn own_set(obj: &str, key: &str, value: &str) -> String {
+    format!(
+        "Object.defineProperty({obj}, {key}, {{ value: {value}, writable: true, enumerable: true, configurable: true }})"
+    )
+}
+
 // ---- v0.93 (ADR 0118): `@indexed` secondary-index emission ----------------
 //
 // For a `store Map[K, V] @indexed(by: f)` field `m`, a sibling state record
@@ -3539,7 +3562,7 @@ fn idx_unindex(var: &str, map: &str, fields: &[String], val_local: &str, pk: &st
         .map(|f| {
             let idx = format!("{var}.{map}__idx_{f}");
             format!(
-                "{{ const __ik = String(({val_local}).{f}); const __ia = {idx}[__ik]; if (__ia) {{ const __ii = __ia.indexOf({pk}); if (__ii >= 0) __ia.splice(__ii, 1); if (__ia.length === 0) delete {idx}[__ik]; }} }}"
+                "{{ const __ik = String(({val_local}).{f}); const __ia = Object.hasOwn({idx}, __ik) ? {idx}[__ik] : undefined; if (__ia) {{ const __ii = __ia.indexOf({pk}); if (__ii >= 0) __ia.splice(__ii, 1); if (__ia.length === 0) delete {idx}[__ik]; }} }}"
             )
         })
         .collect::<Vec<_>>()
@@ -3554,7 +3577,8 @@ fn idx_reindex(var: &str, map: &str, fields: &[String], val_local: &str, pk: &st
         .map(|f| {
             let idx = format!("{var}.{map}__idx_{f}");
             format!(
-                "{{ const __ik = String(({val_local}).{f}); ({idx}[__ik] = {idx}[__ik] ?? []).push({pk}); }}"
+                "{{ const __ik = String(({val_local}).{f}); if (!Object.hasOwn({idx}, __ik)) {}; {idx}[__ik].push({pk}); }}",
+                own_set(&idx, "__ik", "[]")
             )
         })
         .collect::<Vec<_>>()
@@ -3567,9 +3591,10 @@ fn idx_map_put(m: &str, var: &str, map: &str, fields: &[String], a: &[String]) -
     let un = idx_unindex(var, map, fields, "__o", "__k");
     let re = idx_reindex(var, map, fields, "__v", "__k");
     format!(
-        "(() => {{ const __k = String({k}); const __v = {v}; const __o = {m}[__k]; if (__o !== undefined) {{ {un} }} {m}[__k] = __v; {re} return undefined; }})()",
+        "(() => {{ const __k = String({k}); const __v = {v}; const __o = Object.hasOwn({m}, __k) ? {m}[__k] : undefined; if (__o !== undefined) {{ {un} }} {set}; {re} return undefined; }})()",
         k = a[0],
         v = a[1],
+        set = own_set(m, "__k", "__v"),
     )
 }
 
@@ -3577,7 +3602,7 @@ fn idx_map_put(m: &str, var: &str, map: &str, fields: &[String], a: &[String]) -
 fn idx_map_remove(m: &str, var: &str, map: &str, fields: &[String], a: &[String]) -> String {
     let un = idx_unindex(var, map, fields, "__o", "__k");
     format!(
-        "(() => {{ const __k = String({k}); const __o = {m}[__k]; if (__o !== undefined) {{ {un} delete {m}[__k]; }} return undefined; }})()",
+        "(() => {{ const __k = String({k}); const __o = Object.hasOwn({m}, __k) ? {m}[__k] : undefined; if (__o !== undefined) {{ {un} delete {m}[__k]; }} return undefined; }})()",
         k = a[0],
     )
 }
@@ -3588,7 +3613,7 @@ fn idx_map_update(m: &str, var: &str, map: &str, fields: &[String], a: &[String]
     let un = idx_unindex(var, map, fields, "__o", "__k");
     let re = idx_reindex(var, map, fields, "__v", "__k");
     format!(
-        "(() => {{ const __k = String({k}); if (!(__k in {m})) {{ throw new Error(\"Map.update: key absent\"); }} const __o = {m}[__k]; {un} const __v = ({f})(__o); {m}[__k] = __v; {re} return undefined; }})()",
+        "(() => {{ const __k = String({k}); if (!Object.hasOwn({m}, __k)) {{ throw new Error(\"Map.update: key absent\"); }} const __o = {m}[__k]; {un} const __v = ({f})(__o); {m}[__k] = __v; {re} return undefined; }})()",
         k = a[0],
         f = a[1],
     )
@@ -3600,10 +3625,11 @@ fn idx_map_upsert(m: &str, var: &str, map: &str, fields: &[String], a: &[String]
     let un = idx_unindex(var, map, fields, "__o", "__k");
     let re = idx_reindex(var, map, fields, "__v", "__k");
     format!(
-        "(() => {{ const __k = String({k}); const __e = __k in {m}; const __o = __e ? {m}[__k] : undefined; if (__e) {{ {un} }} const __v = ({f})(__e ? __o : ({d})); {m}[__k] = __v; {re} return undefined; }})()",
+        "(() => {{ const __k = String({k}); const __e = Object.hasOwn({m}, __k); const __o = __e ? {m}[__k] : undefined; if (__e) {{ {un} }} const __v = ({f})(__e ? __o : ({d})); {set}; {re} return undefined; }})()",
         k = a[0],
         d = a[1],
         f = a[2],
+        set = own_set(m, "__k", "__v"),
     )
 }
 
@@ -3639,7 +3665,7 @@ fn route_indexed_filter(
     }
     let v = pre.lower(value, cx);
     let text: Option<String> = Some(format!(
-        "(() => ({var}.{map}__idx_{field}[String({v})] ?? []).map((__pk) => {m}[__pk]))"
+        "(() => {{ const __s = String({v}); const __ia = {var}.{map}__idx_{field}; return (Object.hasOwn(__ia, __s) ? __ia[__s] : []).map((__pk) => {m}[__pk]); }})"
     ));
     text.map(|expr| pre.finish(expr))
 }

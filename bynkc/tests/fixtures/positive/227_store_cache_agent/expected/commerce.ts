@@ -53,7 +53,7 @@ export class Sessions {
   async put(token: string, userId: number, deps: { Clock: Clock }): Promise<void> {
     const __state = { ...(await this.loadState()) };
     const __result = await (async () => {
-      const __r0 = await (async () => { const __now = await deps.Clock.now(); __state.live[token] = { v: userId, exp: __now + 300000 }; return undefined; })();
+      const __r0 = await (async () => { const __now = await deps.Clock.now(); Object.defineProperty(__state.live, token, { value: { v: userId, exp: __now + 300000 }, writable: true, enumerable: true, configurable: true }); return undefined; })();
       return undefined;
     })();
     await this.commitState(__state);
@@ -62,7 +62,7 @@ export class Sessions {
 
   async lookup(token: string, deps: { Clock: Clock }): Promise<Option<number>> {
     const __state = await this.loadState();
-    const found = await (async () => { const __now = await deps.Clock.now(); const __k = token; return ((__k in __state.live) && __state.live[__k].exp > __now) ? Some(__state.live[__k].v) : None; })();
+    const found = await (async () => { const __now = await deps.Clock.now(); const __k = token; return (Object.hasOwn(__state.live, __k) && __state.live[__k].exp > __now) ? Some(__state.live[__k].v) : None; })();
     return found;
   }
 

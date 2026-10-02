@@ -71,7 +71,7 @@ export class Room {
   async join(rid: RoomId, conn: Connection<Frame>, deps: {}): Promise<void> {
     const __state = { ...(await this.loadState()) };
     const __result = await (async () => {
-      const __r0 = await ((__state.conns[String(rid)] = connIdOf(conn)), undefined);
+      const __r0 = await (Object.defineProperty(__state.conns, String(rid), { value: connIdOf(conn), writable: true, enumerable: true, configurable: true }), undefined);
       return undefined;
     })();
     await this.commitState(__state);
