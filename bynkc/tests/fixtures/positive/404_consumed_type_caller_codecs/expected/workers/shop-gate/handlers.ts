@@ -113,8 +113,8 @@ export function deserialise_Score(json: JsonValue, path: string = "$"): Result<s
   if (typeof json !== "number") {
     return Err({ kind: "StructuralMismatch", path, expected: "number", actual: typeof json });
   }
-  if (!Number.isInteger(json)) {
-    return Err({ kind: "RefinementViolation", path, violation: { field: "Score", message: "must be an integer", value: json } });
+  if (!Number.isSafeInteger(json)) {
+    return Err({ kind: "RefinementViolation", path, violation: { field: "Score", message: "must be a safe integer", value: json } });
   }
   if (!(json >= 0 && json <= 100)) {
     return Err({ kind: "RefinementViolation", path, violation: { field: "Score", message: "must be in range [0, 100]", value: json } });

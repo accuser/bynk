@@ -33,7 +33,7 @@ export default {
           if (__r_body.tag === "Err") return applySecurityHeaders(new Response(JSON.stringify(__r_body.error), { status: 400, headers: { "content-type": "application/json" } }), __security_intake);
           const body = __r_body.value as unknown as handlers.Cents;
           const result = await surface.http_POST_cents(body);
-          return applySecurityHeaders(httpResultToResponse(result, (__v: number) => __v as JsonValue), __security_intake);
+          return applySecurityHeaders(httpResultToResponse(result, (__v: number) => ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error("Int outside the safe-integer range at boundary"); return v as JsonValue; })(__v)), __security_intake);
         }
       }
       if (path === "/cents") {

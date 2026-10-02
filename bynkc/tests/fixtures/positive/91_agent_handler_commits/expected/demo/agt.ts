@@ -7,8 +7,8 @@ export type Id = number & { readonly __brand: "demo.agt.Id" };
 
 export const Id = {
   of(value: number): Result<Id, ValidationError> {
-    if (!Number.isInteger(value)) {
-      return Err({ field: "Id", message: "must be an integer", value });
+    if (!Number.isSafeInteger(value)) {
+      return Err({ field: "Id", message: "must be a safe integer", value });
     }
     if (!(value >= 0)) {
       return Err({ field: "Id", message: "must be non-negative", value });
@@ -28,11 +28,11 @@ const __CounterRegistry = new StateRegistry();
 function __zeroOfCounterState(): CounterState { return { n: 0 }; }
 
 function __rehydrateCounterState(s: CounterState, stored: CounterState): void {
-  if (Object.prototype.hasOwnProperty.call(stored, "n")) { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "n", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "n", expected: "integer", actual: String(__v) } as BoundaryError))((s.n as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Counter", __r.error); (s as { -readonly [K in keyof typeof s]: (typeof s)[K] }).n = __r.value as unknown as (typeof s)["n"]; }
+  if (Object.prototype.hasOwnProperty.call(stored, "n")) { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "n", expected: "safe integer", actual: typeof __v } as BoundaryError) : Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "n", expected: "safe integer", actual: String(__v) } as BoundaryError))((s.n as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Counter", __r.error); (s as { -readonly [K in keyof typeof s]: (typeof s)[K] }).n = __r.value as unknown as (typeof s)["n"]; }
 }
 
 function __encodeCounterState(s: CounterState): Record<string, unknown> {
-  return { ...s, n: s.n as JsonValue };
+  return { ...s, n: ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error("Int outside the safe-integer range at boundary"); return v as JsonValue; })(s.n) };
 }
 
 export class Counter {

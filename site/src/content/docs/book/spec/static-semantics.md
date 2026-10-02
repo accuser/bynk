@@ -128,6 +128,24 @@ test a program needs — compare with an explicit tolerance, or work in
 the host (`Infinity`/`NaN`); no Bynk-level guard applies **in arithmetic**
 (boundaries are guarded: [§7.2](/book/spec/emission/#72-targets)).
 
+**The `Int` domain** (#1657). An `Int` is a JS **safe integer**, from
+−(2^53 − 1) to 2^53 − 1 (±9007199254740991), the range the runtime represents
+exactly. Every entry point enforces it:
+- **literals:** an integer literal with a larger magnitude is
+  `bynk.lex.integer_overflow`;
+- **the JSON boundary:** decoding rejects a number that is not a safe integer
+  (`1e300`, `3.5`), and encoding an `Int` that is not one faults rather than
+  writing `null`;
+- **`Int.parse`:** see below;
+- **`Int` division by zero:** a runtime fault, not `Infinity`/`NaN`;
+- **`round`/`floor`/`ceil`/`truncate`:** a runtime fault when the result is not a
+  safe integer (a non-finite `Float`, or one past ±2^53).
+
+Overflow in `Int` `+`, `-` and `*` is not checked: past 2^53 the result is
+imprecise, as host arithmetic is (ADR 0042, "arithmetic host-defined,
+boundaries guarded"). Such a value can still not leave through a boundary
+undetected.
+
 **The numeric kernel** (v0.21, extended v0.22a). Conversion between the
 numeric types is explicit, via built-in value methods on the bare base
 types: `i.toFloat() -> Float` (total) on `Int`; `f.round()`, `f.floor()`,
@@ -145,11 +163,14 @@ is `bynk.types.method_arity`; an unknown method on a numeric receiver is
 
 **The numeric parse statics** (v0.22a). `Int.parse(s) -> Option[Int]` and
 `Float.parse(s) -> Option[Float]` — statics, per 0041's rule (ways to
-*obtain* a value). Parsing is **full-string**: leading/trailing garbage is
-`None` (not `parseFloat`'s prefix laxity); the empty or whitespace-only
-string is `None`; a value outside the safe-integer range (`Int`) or
-non-finite (`Float`) is `None`. `parse` is the only static on the numeric
-types (`bynk.resolve.unknown_static_member`).
+*obtain* a value). Parsing is **full-string** in a strict decimal grammar
+(#1657): `Int.parse` accepts `[+-]?[0-9]+` only, and `Float.parse` accepts
+`[+-]?` then digits with an optional fraction (`5.`, `.5`), then an optional
+exponent (`1e3`). Anything else is `None`: surrounding whitespace, a
+`0x`/`0b`/`0o` prefix, an exponent or fraction in an `Int`, the empty string.
+A value outside the safe-integer range (`Int`) or non-finite (`Float`) is `None`,
+and `Int.parse("-0")` is `0`. `parse` is the only static on the numeric types
+(`bynk.resolve.unknown_static_member`).
 
 **The string kernel** (v0.22a, ADR 0046). `String` is opaque — no direct
 character access — so its operations are built-in value methods:

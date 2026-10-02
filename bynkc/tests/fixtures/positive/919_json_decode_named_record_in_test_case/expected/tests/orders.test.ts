@@ -75,7 +75,7 @@ async function test_encodes_a_named_type() {
 export function serialise_Order(value: orders.Order): JsonValue {
   return {
     id: value.id as JsonValue,
-    qty: value.qty as JsonValue,
+    qty: ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error("Int outside the safe-integer range at boundary"); return v as JsonValue; })(value.qty),
   };
 }
 
@@ -91,8 +91,8 @@ export function deserialise_Order(json: JsonValue, path: string = "$"): Result<o
   if (typeof obj["qty"] !== "number") {
     return Err({ kind: "StructuralMismatch", path: `${path}.qty`, expected: "number", actual: typeof obj["qty"] });
   }
-  if (!Number.isInteger(obj["qty"])) {
-    return Err({ kind: "StructuralMismatch", path: `${path}.qty`, expected: "integer", actual: String(obj["qty"]) });
+  if (!Number.isSafeInteger(obj["qty"])) {
+    return Err({ kind: "StructuralMismatch", path: `${path}.qty`, expected: "safe integer", actual: String(obj["qty"]) });
   }
   const __qty = obj["qty"];
   return Ok({ id: __id, qty: __qty } as orders.Order);

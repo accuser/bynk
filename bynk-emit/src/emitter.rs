@@ -257,6 +257,7 @@ pub(crate) fn emit(program: &CheckedProgram) -> String {
         commons,
         dummy_ctx.runtime_use.bytes(),
         dummy_ctx.runtime_use.eq(),
+        dummy_ctx.runtime_use.int(),
         uses_http,
         uses_queue,
     );
@@ -2984,6 +2985,9 @@ fn write_header(commons: &TypedCommons, ctx: &EmitProjectCtx) -> Vec<bynk_ts::Ts
         if ctx.runtime_use.eq() {
             parts.extend(EQ_RUNTIME_IMPORTS.trim_start_matches(", ").split(", "));
         }
+        if ctx.runtime_use.int() {
+            parts.extend(INT_RUNTIME_IMPORTS.trim_start_matches(", ").split(", "));
+        }
         if ctx.runtime_use.icu() {
             parts.extend(
                 MESSAGES_RUNTIME_IMPORTS
@@ -3013,6 +3017,7 @@ fn write_header_single(
     commons: &TypedCommons,
     uses_bytes: bool,
     uses_eq: bool,
+    uses_int: bool,
     uses_http: bool,
     uses_queue: bool,
 ) {
@@ -3047,6 +3052,9 @@ fn write_header_single(
         // #1652: the structural-equality walker, imported only when a
         // non-primitive `==`/`!=` lowered to it.
         let eq_imports = if uses_eq { EQ_RUNTIME_IMPORTS } else { "" };
+        // #1657: the `Int` domain traps, imported only when a division or a
+        // Float→`Int` conversion lowered to them.
+        let int_imports = if uses_int { INT_RUNTIME_IMPORTS } else { "" };
         // v0.153 (ADR 0177): `HttpResult` is a value (its variant namespace) and
         // a type, so it imports without a `type` prefix — one binding serves
         // both `HttpResult.NotFound` and the `HttpResult<T>` annotation.
@@ -3061,7 +3069,7 @@ fn write_header_single(
         // group's own name list a second time (the string-building above,
         // unchanged, already gets this exactly right).
         let inside = format!(
-            "Ok, Err, Some, None, type Result, type Option, type ValidationError{codec_imports}{bytes_imports}{eq_imports}{http_imports}{queue_imports}"
+            "Ok, Err, Some, None, type Result, type Option, type ValidationError{codec_imports}{bytes_imports}{eq_imports}{int_imports}{http_imports}{queue_imports}"
         );
         out.push_str(&bynk_ts::print_stmt(
             &bynk_ts::TsStmt::decl(
@@ -3088,6 +3096,9 @@ pub(crate) const BYTES_RUNTIME_IMPORTS: &str =
 /// appended to a module's import list when `==`/`!=` on a non-primitive,
 /// non-`Bytes` operand lowered to it (`lower_bin_op`).
 pub(crate) const EQ_RUNTIME_IMPORTS: &str = ", __bynkEq";
+
+/// #1657: the `Int` domain traps (`bynk-emit/runtime/src/int.ts`).
+pub(crate) const INT_RUNTIME_IMPORTS: &str = ", __bynkIntDiv, __bynkToInt";
 
 /// message-bundles slice 3 (#878, Decision G): the ICU-formatting runtime
 /// helpers, appended to a module's import list when an emitted `messages`
@@ -4095,6 +4106,12 @@ impl<'a> LowerCtx<'a> {
     /// the module imports it.
     fn note_eq(&self) {
         self.runtime_use().note_eq();
+    }
+
+    /// Record that this lowering emitted an `Int` domain trap (#1657), so the
+    /// module imports the helpers.
+    fn note_int(&self) {
+        self.runtime_use().note_int();
     }
 
     /// Record a checkpoint: generated text from `out_len` onward originates at

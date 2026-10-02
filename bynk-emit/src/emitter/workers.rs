@@ -717,6 +717,9 @@ pub(crate) fn emit_worker_compose(
     if runtime_use.eq() {
         append_missing_bindings(&mut runtime_imports, crate::emitter::EQ_RUNTIME_IMPORTS);
     }
+    if runtime_use.int() {
+        append_missing_bindings(&mut runtime_imports, crate::emitter::INT_RUNTIME_IMPORTS);
+    }
 
     let mut compose_params = vec![TsParam {
         name: "env".to_string(),

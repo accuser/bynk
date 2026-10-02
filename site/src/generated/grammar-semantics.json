@@ -701,7 +701,7 @@
   "number_literal": [
     {
       "code": "bynk.lex.integer_overflow",
-      "summary": "An integer literal is out of range."
+      "summary": "An integer literal is outside the `Int` range, the JS safe integers ±(2^53 − 1)."
     }
   ],
   "ok_expr": [

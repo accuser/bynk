@@ -319,7 +319,9 @@ fn system_suite_case_maps_to_its_own_bynk_source() {
     // Case a's own body — the call-site `let`, distinguished from case b's by
     // its literal argument, and the `expect`'s own lowered `Ok` tag check.
     assert_eq!(
-        at(gen_line_of(&ts, "100 as JsonValue")),
+        // #1657: an `Int` argument is serialised through the safe-integer
+        // guard, so the literal is the IIFE's argument.
+        at(gen_line_of(&ts, "})(100)")),
         (a_id, 2),
         "case a's own call -> a.bynk:3, source a"
     );
@@ -331,7 +333,7 @@ fn system_suite_case_maps_to_its_own_bynk_source() {
     // Case b's own body, same two lines in its own file — must resolve to
     // source b, not a (the real risk this test exists to catch).
     assert_eq!(
-        at(gen_line_of(&ts, "50000 as JsonValue")),
+        at(gen_line_of(&ts, "})(50000)")),
         (b_id, 2),
         "case b's own call -> b.bynk:3, source b"
     );

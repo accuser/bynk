@@ -21,12 +21,12 @@ const __WidgetRegistry = new StateRegistry();
 function __zeroOfWidgetState(): WidgetState { return { items: {} }; }
 
 function __rehydrateWidgetState(s: WidgetState, stored: WidgetState): void {
-  if (Object.prototype.hasOwnProperty.call(stored, "items")) for (const __k of Object.keys(s.items)) { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "items", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "items", expected: "integer", actual: String(__v) } as BoundaryError))((s.items[__k] as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Widget", __r.error); s.items[__k] = __r.value as unknown as (typeof s.items)[string]; }
+  if (Object.prototype.hasOwnProperty.call(stored, "items")) for (const __k of Object.keys(s.items)) { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "items", expected: "safe integer", actual: typeof __v } as BoundaryError) : Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "items", expected: "safe integer", actual: String(__v) } as BoundaryError))((s.items[__k] as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Widget", __r.error); s.items[__k] = __r.value as unknown as (typeof s.items)[string]; }
   for (const __k of Object.keys(s.items)) { const __r = ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "items", expected: "string", actual: typeof __v } as BoundaryError))((__k as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Widget", __r.error); }
 }
 
 function __encodeWidgetState(s: WidgetState): Record<string, unknown> {
-  return { ...s, items: Object.fromEntries(Object.entries(s.items).map(([__k, __v]) => [__k, __v as JsonValue])) };
+  return { ...s, items: Object.fromEntries(Object.entries(s.items).map(([__k, __v]) => [__k, ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error("Int outside the safe-integer range at boundary"); return v as JsonValue; })(__v)])) };
 }
 
 export class Widget {

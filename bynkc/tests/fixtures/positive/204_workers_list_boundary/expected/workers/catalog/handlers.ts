@@ -22,7 +22,7 @@ export const orders = {
 export function serialise_Order(value: Order): JsonValue {
   return {
     id: value.id as JsonValue,
-    total: value.total as JsonValue,
+    total: ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error("Int outside the safe-integer range at boundary"); return v as JsonValue; })(value.total),
     tags: serialise_Map_String_Int(value.tags),
   };
 }
@@ -39,8 +39,8 @@ export function deserialise_Order(json: JsonValue, path: string = "$"): Result<O
   if (typeof obj["total"] !== "number") {
     return Err({ kind: "StructuralMismatch", path: `${path}.total`, expected: "number", actual: typeof obj["total"] });
   }
-  if (!Number.isInteger(obj["total"])) {
-    return Err({ kind: "StructuralMismatch", path: `${path}.total`, expected: "integer", actual: String(obj["total"]) });
+  if (!Number.isSafeInteger(obj["total"])) {
+    return Err({ kind: "StructuralMismatch", path: `${path}.total`, expected: "safe integer", actual: String(obj["total"]) });
   }
   const __total = obj["total"];
   const __r_tags = deserialise_Map_String_Int(obj["tags"], `${path}.tags`);
@@ -114,7 +114,7 @@ export function deserialise_List_Order(json: JsonValue, path: string = "$"): Res
 export function serialise_Map_String_Int(value: ReadonlyMap<string, number>): JsonValue {
   const entries: JsonValue[] = [];
   for (const [k, v] of value) {
-    entries.push([k as JsonValue, v as JsonValue]);
+    entries.push([k as JsonValue, ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error("Int outside the safe-integer range at boundary"); return v as JsonValue; })(v)]);
   }
   return entries;
 }
@@ -138,8 +138,8 @@ export function deserialise_Map_String_Int(json: JsonValue, path: string = "$"):
   if (typeof entryV !== "number") {
     return Err({ kind: "StructuralMismatch", path: `${path}[${i}][1]`, expected: "number", actual: typeof entryV });
   }
-  if (!Number.isInteger(entryV)) {
-    return Err({ kind: "StructuralMismatch", path: `${path}[${i}][1]`, expected: "integer", actual: String(entryV) });
+  if (!Number.isSafeInteger(entryV)) {
+    return Err({ kind: "StructuralMismatch", path: `${path}[${i}][1]`, expected: "safe integer", actual: String(entryV) });
   }
   const __v = entryV;
   out.set(__k as string, __v as number);

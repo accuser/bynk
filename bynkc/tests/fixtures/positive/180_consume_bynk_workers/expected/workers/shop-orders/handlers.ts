@@ -40,8 +40,8 @@ export function deserialise_Order(json: JsonValue, path: string = "$"): Result<O
   if (typeof obj["placedAt"] !== "number") {
     return Err({ kind: "StructuralMismatch", path: `${path}.placedAt`, expected: "number", actual: typeof obj["placedAt"] });
   }
-  if (!Number.isInteger(obj["placedAt"])) {
-    return Err({ kind: "StructuralMismatch", path: `${path}.placedAt`, expected: "integer", actual: String(obj["placedAt"]) });
+  if (!Number.isSafeInteger(obj["placedAt"])) {
+    return Err({ kind: "StructuralMismatch", path: `${path}.placedAt`, expected: "safe integer", actual: String(obj["placedAt"]) });
   }
   const __placedAt = obj["placedAt"];
   return Ok({ sku: __sku, placedAt: __placedAt } as Order);

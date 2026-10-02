@@ -7,8 +7,8 @@ export type Yv = number & { readonly __brand: "Yv" };
 
 export const Yv = {
   of(value: number): Result<Yv, ValidationError> {
-    if (!Number.isInteger(value)) {
-      return Err({ field: "Yv", message: "must be an integer", value });
+    if (!Number.isSafeInteger(value)) {
+      return Err({ field: "Yv", message: "must be a safe integer", value });
     }
     if (!(value > 0)) {
       return Err({ field: "Yv", message: "must be positive", value });

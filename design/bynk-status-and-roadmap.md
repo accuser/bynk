@@ -148,9 +148,10 @@ increments.
   `()`. Only `Decimal` (the spec name for the built `Float`, ADR 0040) and
   `Timestamp` (shipped as `Instant`) remain as spec-name divergences; no spec
   primitive is now wholly unbuilt.
-- **`Int` precision.** `Int` literals validate as `i64` at lex time but emit to a
-  JS `number`, so values beyond 2^53 lose precision at runtime. Decide: narrow
-  to safe-integer range, or emit `bigint`.
+- **`Int` precision** — *closed by #1657*. `Int` is the JS safe-integer domain,
+  ±(2^53 − 1), enforced at every entry: the lexer, the JSON boundary (both
+  directions), `Int.parse`, `Int` division by zero and the Float→`Int`
+  conversions. `+ - *` overflow stays documented imprecision (ADR 0042).
 - **Workers-edge type safety** — *closed in v0.176 (#642)*. The `workers` boundary
   carried its own codec dispatch, separate from the one the `bundle` and `Json`
   paths use, and it leaned on `as JsonValue` casts and an unvalidated identity
@@ -273,8 +274,9 @@ The forward plan lives in dedicated, domain-scoped docs:
 
 1. Add the implementation-status banner to `bynk-type-system.md` (Float vs
    Decimal; which primitives ship).
-2. Resolve the `Int`-precision issue before Bynk handles large integers. (The
-   workers-edge `any` half of this item closed in v0.176, #642.)
+2. ~~Resolve the `Int`-precision issue before Bynk handles large integers.~~
+   Closed by #1657 (the safe-integer domain); the workers-edge `any` half closed
+   in v0.176, #642.
 3. Bring `tree-sitter-bynk` up to the current surface (see engineering roadmap).
 4. Close or re-scope the one **Open** ADR (0020, adapter dependency trust).
 

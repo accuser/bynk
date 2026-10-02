@@ -122,7 +122,7 @@ export const orders = {
 
 export function serialise_CreateOrderRequest(value: CreateOrderRequest): JsonValue {
   return {
-    amountMinor: value.amountMinor as JsonValue,
+    amountMinor: ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error("Int outside the safe-integer range at boundary"); return v as JsonValue; })(value.amountMinor),
     currency: serialise_CurrencyCode(value.currency),
   };
 }
@@ -135,8 +135,8 @@ export function deserialise_CreateOrderRequest(json: JsonValue, path: string = "
   if (typeof obj["amountMinor"] !== "number") {
     return Err({ kind: "StructuralMismatch", path: `${path}.amountMinor`, expected: "number", actual: typeof obj["amountMinor"] });
   }
-  if (!Number.isInteger(obj["amountMinor"])) {
-    return Err({ kind: "StructuralMismatch", path: `${path}.amountMinor`, expected: "integer", actual: String(obj["amountMinor"]) });
+  if (!Number.isSafeInteger(obj["amountMinor"])) {
+    return Err({ kind: "StructuralMismatch", path: `${path}.amountMinor`, expected: "safe integer", actual: String(obj["amountMinor"]) });
   }
   const __amountMinor = obj["amountMinor"];
   const __r_currency = deserialise_CurrencyCode(obj["currency"], `${path}.currency`);
@@ -177,7 +177,7 @@ export function deserialise_OrderError(json: JsonValue, path: string = "$"): Res
 export function serialise_OrderView(value: OrderView): JsonValue {
   return {
     status: value.status as JsonValue,
-    totalMinor: value.totalMinor as JsonValue,
+    totalMinor: ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error("Int outside the safe-integer range at boundary"); return v as JsonValue; })(value.totalMinor),
   };
 }
 
@@ -193,8 +193,8 @@ export function deserialise_OrderView(json: JsonValue, path: string = "$"): Resu
   if (typeof obj["totalMinor"] !== "number") {
     return Err({ kind: "StructuralMismatch", path: `${path}.totalMinor`, expected: "number", actual: typeof obj["totalMinor"] });
   }
-  if (!Number.isInteger(obj["totalMinor"])) {
-    return Err({ kind: "StructuralMismatch", path: `${path}.totalMinor`, expected: "integer", actual: String(obj["totalMinor"]) });
+  if (!Number.isSafeInteger(obj["totalMinor"])) {
+    return Err({ kind: "StructuralMismatch", path: `${path}.totalMinor`, expected: "safe integer", actual: String(obj["totalMinor"]) });
   }
   const __totalMinor = obj["totalMinor"];
   return Ok({ status: __status, totalMinor: __totalMinor } as OrderView);

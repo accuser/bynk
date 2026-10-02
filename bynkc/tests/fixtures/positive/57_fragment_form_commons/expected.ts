@@ -7,8 +7,8 @@ export type Metres = number & { readonly __brand: "Metres" };
 
 export const Metres = {
   of(value: number): Result<Metres, ValidationError> {
-    if (!Number.isInteger(value)) {
-      return Err({ field: "Metres", message: "must be an integer", value });
+    if (!Number.isSafeInteger(value)) {
+      return Err({ field: "Metres", message: "must be a safe integer", value });
     }
     if (!(value >= 0)) {
       return Err({ field: "Metres", message: "must be non-negative", value });

@@ -705,7 +705,16 @@ fn check_provider_decls(
 /// v0.44: a service is one protocol adapter — every handler's form must match
 /// the `from <protocol>` header. A `from`-less service (`Call`) admits only
 /// `on call`; mismatches are `bynk.service.{missing_from,mixed_protocols}`.
-fn check_service_protocols(table: &UnitTable, errors: &mut Vec<CompileError>, tys: &Arc<Types>) {
+/// `visible_types` is the merged type map (this unit's declarations plus its
+/// `uses`/`consumes` targets, `typed.types`); `table.types` holds only this
+/// unit's own, so a check that fails closed on an unknown name must use the
+/// former, as the HTTP path-param rule does.
+fn check_service_protocols(
+    table: &UnitTable,
+    visible_types: &HashMap<String, Arc<TypeDecl>>,
+    errors: &mut Vec<CompileError>,
+    tys: &Arc<Types>,
+) {
     // v0.104 (slice 3b, D5): at v1 the Workers upgrade routes by the `Upgrade:
     // websocket` header alone (no path/query discriminator), so a context may hold
     // at most one `from websocket` service. Report every WS service past the first
@@ -760,6 +769,36 @@ fn check_service_protocols(table: &UnitTable, errors: &mut Vec<CompileError>, ty
                         service.name.name
                     ),
                 ));
+            }
+            // #1657 (runtime-semantics track §3.4): an `on open` parameter
+            // arrives as a query-string value (`url.searchParams.get`), which the
+            // upgrade passes on unparsed. A `room: Int` was a string cast `as
+            // number`, so `room + 1` gave `"51"` and `?room=05` reached a
+            // different agent than `Room(5)`. Like an HTTP path parameter
+            // (`bynk.http.path_param_not_stringy`), it must be constructible from
+            // `String`. `on message`/`on close` route values are a prefix of
+            // these, so they inherit the rule.
+            for open in &opens {
+                for p in &open.params {
+                    // The merged map: an opaque `String` imported through `uses`
+                    // is constructible too (review of #1693).
+                    if !is_string_constructible(&p.type_ref, visible_types) {
+                        errors.push(
+                            CompileError::new(
+                                "bynk.service.websocket_param_not_stringy",
+                                p.type_ref.span(),
+                                format!(
+                                    "the `on open` parameter `{}` must have a type constructible from `String` (got `{}`)",
+                                    p.name.name,
+                                    ts_type_ref_display(&p.type_ref),
+                                ),
+                            )
+                            .with_note(
+                                "it arrives as a query-string value; use `String`, a refined `String`, or an opaque type whose base is `String`, and parse an `Int` with `Int.parse` in the body",
+                            ),
+                        );
+                    }
+                }
             }
             // v0.106 (slice 3b-iii): the inbound `on message` and `on close` are
             // optional but at most one each; an `on message` carries the decoded
@@ -1754,7 +1793,7 @@ fn check_service_decls(
 ) {
     // v0.44: a service is one protocol adapter — every handler's form must
     // match the service's `from <protocol>` header.
-    check_service_protocols(table, errors, tys);
+    check_service_protocols(table, &typed.types, errors, tys);
 
     // v0.45: actor-contract well-formedness and the handler `by`-clause checks.
     check_actor_contracts(table, resolved, refs, errors);

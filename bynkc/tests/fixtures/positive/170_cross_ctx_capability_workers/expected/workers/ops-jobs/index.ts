@@ -22,7 +22,7 @@ export default {
             if (typeof args !== "object" || args === null || Array.isArray(args)) return new Response(JSON.stringify({ kind: "StructuralMismatch", path: "$", expected: "object", actual: typeof args }), { status: 400, headers: { "content-type": "application/json" } });
             const argsObj = args as { [k: string]: JsonValue };
             const result = await surface.tick();
-            const body = result as JsonValue;
+            const body = ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error("Int outside the safe-integer range at boundary"); return v as JsonValue; })(result);
             return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
           }
           default:

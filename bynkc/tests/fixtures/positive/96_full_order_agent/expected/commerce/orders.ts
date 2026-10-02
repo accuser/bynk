@@ -64,11 +64,11 @@ function __zeroOfOrderState(): OrderState { return { status: None, items: 0 }; }
 
 function __rehydrateOrderState(s: OrderState, stored: OrderState): void {
   if (Object.prototype.hasOwnProperty.call(stored, "status")) { const __r = deserialise_Option_OrderStatus((s.status as unknown as JsonValue), "status"); if (__r.tag === "Err") throw rehydrationViolation("Order", __r.error); (s as { -readonly [K in keyof typeof s]: (typeof s)[K] }).status = __r.value as unknown as (typeof s)["status"]; }
-  if (Object.prototype.hasOwnProperty.call(stored, "items")) { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "items", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "items", expected: "integer", actual: String(__v) } as BoundaryError))((s.items as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Order", __r.error); (s as { -readonly [K in keyof typeof s]: (typeof s)[K] }).items = __r.value as unknown as (typeof s)["items"]; }
+  if (Object.prototype.hasOwnProperty.call(stored, "items")) { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "items", expected: "safe integer", actual: typeof __v } as BoundaryError) : Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "items", expected: "safe integer", actual: String(__v) } as BoundaryError))((s.items as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Order", __r.error); (s as { -readonly [K in keyof typeof s]: (typeof s)[K] }).items = __r.value as unknown as (typeof s)["items"]; }
 }
 
 function __encodeOrderState(s: OrderState): Record<string, unknown> {
-  return { ...s, status: serialise_Option_OrderStatus(s.status), items: s.items as JsonValue };
+  return { ...s, status: serialise_Option_OrderStatus(s.status), items: ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error("Int outside the safe-integer range at boundary"); return v as JsonValue; })(s.items) };
 }
 
 export class Order {

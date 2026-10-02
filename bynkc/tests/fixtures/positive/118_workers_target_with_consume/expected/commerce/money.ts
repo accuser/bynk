@@ -41,7 +41,7 @@ export function deserialise_CurrencyCode(json: JsonValue, path: string = "$"): R
 
 export function serialise_Money(value: Money): JsonValue {
   return {
-    minorUnits: value.minorUnits as JsonValue,
+    minorUnits: ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error("Int outside the safe-integer range at boundary"); return v as JsonValue; })(value.minorUnits),
     currency: serialise_CurrencyCode(value.currency),
   };
 }
@@ -54,8 +54,8 @@ export function deserialise_Money(json: JsonValue, path: string = "$"): Result<M
   if (typeof obj["minorUnits"] !== "number") {
     return Err({ kind: "StructuralMismatch", path: `${path}.minorUnits`, expected: "number", actual: typeof obj["minorUnits"] });
   }
-  if (!Number.isInteger(obj["minorUnits"])) {
-    return Err({ kind: "StructuralMismatch", path: `${path}.minorUnits`, expected: "integer", actual: String(obj["minorUnits"]) });
+  if (!Number.isSafeInteger(obj["minorUnits"])) {
+    return Err({ kind: "StructuralMismatch", path: `${path}.minorUnits`, expected: "safe integer", actual: String(obj["minorUnits"]) });
   }
   const __minorUnits = obj["minorUnits"];
   const __r_currency = deserialise_CurrencyCode(obj["currency"], `${path}.currency`);

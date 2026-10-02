@@ -7,7 +7,7 @@ title: Diagnostic index
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](/book/troubleshooting/).
 
-There are **460** codes in total.
+There are **461** codes in total.
 
 ## Agents
 
@@ -160,7 +160,7 @@ There are **460** codes in total.
 |---|---|---|---|
 | `bynk.lex.bad_escape` | An invalid escape sequence in a string literal. | [`string_literal`](/book/reference/grammar/#rule-string_literal) | — |
 | `bynk.lex.float_literal_overflow` | A float literal does not fit a finite 64-bit float. | [`float_literal`](/book/reference/grammar/#rule-float_literal) | — |
-| `bynk.lex.integer_overflow` | An integer literal is out of range. | [`number_literal`](/book/reference/grammar/#rule-number_literal) | — |
+| `bynk.lex.integer_overflow` | An integer literal is outside the `Int` range, the JS safe integers ±(2^53 − 1). | [`number_literal`](/book/reference/grammar/#rule-number_literal) | — |
 | `bynk.lex.interpolation_too_deep` | A string interpolation `\(…)` nests deeper than the lexer's fixed limit. | [`string_literal`](/book/reference/grammar/#rule-string_literal) | — |
 | `bynk.lex.unclosed_doc_block` | A documentation block is not closed. |  | — |
 | `bynk.lex.unexpected_character` | An unexpected character in the source. |  | — |
@@ -492,6 +492,7 @@ There are **460** codes in total.
 | `bynk.service.websocket_header` | The `from websocket` header is malformed — it binds frame types as `websocket(in: <type>, out: <type>)` (real-time track slice 3). |  | — |
 | `bynk.service.websocket_multiple` | A context holds more than one `from websocket` service — at v1 the Workers upgrade routes by the `Upgrade: websocket` header alone, so one WebSocket service per context (real-time track slice 3b). |  | — |
 | `bynk.service.websocket_open_arity` | A `from websocket` service must hold exactly one `on open` handler (the edge upgrade), and at most one `on message` (inbound) and one `on close` (real-time track slice 3/3b-iii). |  | — |
+| `bynk.service.websocket_param_not_stringy` | A `from websocket` service's `on open` parameter has a type not constructible from `String`; it arrives as a query-string value (#1657). |  | — |
 
 ## Suites and cases
 

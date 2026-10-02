@@ -22,11 +22,11 @@ const __CartEntityRegistry = new StateRegistry();
 function __zeroOfCartEntityState(): CartEntityState { return { items: 0 }; }
 
 function __rehydrateCartEntityState(s: CartEntityState, stored: CartEntityState): void {
-  if (Object.prototype.hasOwnProperty.call(stored, "items")) { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "items", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "items", expected: "integer", actual: String(__v) } as BoundaryError))((s.items as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("CartEntity", __r.error); (s as { -readonly [K in keyof typeof s]: (typeof s)[K] }).items = __r.value as unknown as (typeof s)["items"]; }
+  if (Object.prototype.hasOwnProperty.call(stored, "items")) { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "items", expected: "safe integer", actual: typeof __v } as BoundaryError) : Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "items", expected: "safe integer", actual: String(__v) } as BoundaryError))((s.items as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("CartEntity", __r.error); (s as { -readonly [K in keyof typeof s]: (typeof s)[K] }).items = __r.value as unknown as (typeof s)["items"]; }
 }
 
 function __encodeCartEntityState(s: CartEntityState): Record<string, unknown> {
-  return { ...s, items: s.items as JsonValue };
+  return { ...s, items: ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error("Int outside the safe-integer range at boundary"); return v as JsonValue; })(s.items) };
 }
 
 export class CartEntity {
@@ -66,7 +66,7 @@ export class CartEntity {
 }
 
 const __CartEntityWire: AgentWire = {
-  total: { args: [], result: { enc: (__v: number) => __v as JsonValue, dec: (__j: JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "integer", actual: String(__v) } as BoundaryError))(__j) } },
+  total: { args: [], result: { enc: (__v: number) => ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error("Int outside the safe-integer range at boundary"); return v as JsonValue; })(__v), dec: (__j: JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as BoundaryError) : Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as BoundaryError))(__j) } },
 };
 
 export function __makeCartEntity(key: CartId, env?: { CART_ENTITY?: DurableObjectNamespace }): CartEntity {

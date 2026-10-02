@@ -1,0 +1,34 @@
+---
+#1657 (review of #1693): a WebSocket `on open` parameter must be constructible
+from `String`, and an opaque `String` imported through `uses` is. The check
+resolves names in the merged type map (this unit plus its `uses`), as the HTTP
+path-param rule does; it first shipped against the unit's own map and rejected
+this.
+---
+context chat
+
+uses ids
+
+type UserId = opaque String
+type ServerFrame = { text: String }
+type ClientFrame = { text: String }
+
+actor Participant { auth = Bearer(secret = "AUTH_SECRET"), identity = UserId }
+
+service ChatGateway from websocket(in: ClientFrame, out: ServerFrame) {
+  on open (roomId: RoomId) -> Effect[()] by user: Participant {
+    let _ <- connection.send(ServerFrame { text: "welcome" })
+    let _ <- Room(roomId).track(user.identity, connection)
+    ()
+  }
+}
+
+agent Room {
+  key id: RoomId
+  store conns: Map[UserId, Connection[ServerFrame]]
+
+  on call track(u: UserId, conn: Connection[ServerFrame]) -> Effect[()] {
+    let _ <- conns.put(u, conn)
+    ()
+  }
+}

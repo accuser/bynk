@@ -67,7 +67,7 @@ export function __resetAgents(): void {
 export function serialise_Order(value: Order): JsonValue {
   return {
     id: value.id as JsonValue,
-    total: value.total as JsonValue,
+    total: ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error("Int outside the safe-integer range at boundary"); return v as JsonValue; })(value.total),
   };
 }
 
@@ -83,8 +83,8 @@ export function deserialise_Order(json: JsonValue, path: string = "$"): Result<O
   if (typeof obj["total"] !== "number") {
     return Err({ kind: "StructuralMismatch", path: `${path}.total`, expected: "number", actual: typeof obj["total"] });
   }
-  if (!Number.isInteger(obj["total"])) {
-    return Err({ kind: "StructuralMismatch", path: `${path}.total`, expected: "integer", actual: String(obj["total"]) });
+  if (!Number.isSafeInteger(obj["total"])) {
+    return Err({ kind: "StructuralMismatch", path: `${path}.total`, expected: "safe integer", actual: String(obj["total"]) });
   }
   const __total = obj["total"];
   return Ok({ id: __id, total: __total } as Order);

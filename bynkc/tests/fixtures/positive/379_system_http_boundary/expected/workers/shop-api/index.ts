@@ -26,7 +26,7 @@ export default {
       {
         if ((method === "GET" || method === "HEAD") && path === "/cart/size") {
           const result = await surface.http_GET_cart_size(request);
-          const __response = applySecurityHeaders(notModifiedIfMatch(httpResultToResponse(result, (__v: number) => __v as JsonValue, { weakEtag: true }), request), __security_api);
+          const __response = applySecurityHeaders(notModifiedIfMatch(httpResultToResponse(result, (__v: number) => ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error("Int outside the safe-integer range at boundary"); return v as JsonValue; })(__v), { weakEtag: true }), request), __security_api);
           return method === "HEAD" ? headResponse(__response) : __response;
         }
       }

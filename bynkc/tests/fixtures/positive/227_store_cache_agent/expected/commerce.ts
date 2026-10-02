@@ -25,11 +25,11 @@ const __SessionsRegistry = new StateRegistry();
 function __zeroOfSessionsState(): SessionsState { return { live: {} }; }
 
 function __rehydrateSessionsState(s: SessionsState, stored: SessionsState): void {
-  if (Object.prototype.hasOwnProperty.call(stored, "live")) for (const __e of Object.values(s.live)) { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "live", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "live", expected: "integer", actual: String(__v) } as BoundaryError))((__e.v as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Sessions", __r.error); __e.v = __r.value as unknown as typeof __e.v; }
+  if (Object.prototype.hasOwnProperty.call(stored, "live")) for (const __e of Object.values(s.live)) { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "live", expected: "safe integer", actual: typeof __v } as BoundaryError) : Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "live", expected: "safe integer", actual: String(__v) } as BoundaryError))((__e.v as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Sessions", __r.error); __e.v = __r.value as unknown as typeof __e.v; }
 }
 
 function __encodeSessionsState(s: SessionsState): Record<string, unknown> {
-  return { ...s, live: Object.fromEntries(Object.entries(s.live).map(([__k, __e]) => [__k, { ...__e, v: __e.v as JsonValue }])) };
+  return { ...s, live: Object.fromEntries(Object.entries(s.live).map(([__k, __e]) => [__k, { ...__e, v: ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error("Int outside the safe-integer range at boundary"); return v as JsonValue; })(__e.v) }])) };
 }
 
 export class Sessions {

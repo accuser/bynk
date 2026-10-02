@@ -7,8 +7,8 @@ export type Reps = number & { readonly __brand: "Reps" };
 
 export const Reps = {
   of(value: number): Result<Reps, ValidationError> {
-    if (!Number.isInteger(value)) {
-      return Err({ field: "Reps", message: "must be an integer", value });
+    if (!Number.isSafeInteger(value)) {
+      return Err({ field: "Reps", message: "must be a safe integer", value });
     }
     if (!(value >= 1 && value <= 100)) {
       return Err({ field: "Reps", message: "must be in range [1, 100]", value });
@@ -21,8 +21,8 @@ export type Sets = number & { readonly __brand: "Sets" };
 
 export const Sets = {
   of(value: number): Result<Sets, ValidationError> {
-    if (!Number.isInteger(value)) {
-      return Err({ field: "Sets", message: "must be an integer", value });
+    if (!Number.isSafeInteger(value)) {
+      return Err({ field: "Sets", message: "must be a safe integer", value });
     }
     if (!(value >= 1 && value <= 20)) {
       return Err({ field: "Sets", message: "must be in range [1, 20]", value });

@@ -366,6 +366,11 @@ fn is_parse_time_category(category: &str) -> bool {
 ///   legitimate follow-on slices, not permanent gaps.
 const EXCLUDED_PARSE_TIME_CATEGORIES: &[(&str, &str)] = &[
     (
+        "bynk.lex.integer_overflow",
+        "inexpressible: a magnitude check on the literal's parsed value (#1657: \
+         the `Int` safe-integer range), not a grammar shape",
+    ),
+    (
         "bynk.lex.float_literal_overflow",
         "inexpressible: an arithmetic-magnitude check on the literal's parsed \
          value, not a grammar shape",

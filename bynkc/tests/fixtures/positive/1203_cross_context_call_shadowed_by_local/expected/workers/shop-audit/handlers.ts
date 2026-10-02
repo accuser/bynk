@@ -18,13 +18,13 @@ export const LocalLedger = {
 export const log = {
   async call(amount: number, deps: { env: { SHOP_LEDGER: ServiceBinding } }): Promise<Result<number, string>> {
     const Ledger = { balance: 0 };
-    const r = await callService(deps.env.SHOP_LEDGER, "authorise", amount as JsonValue, deserialise_Result_Int_String, "shop.audit", "3042f1b7519e621d");
+    const r = await callService(deps.env.SHOP_LEDGER, "authorise", ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error("Int outside the safe-integer range at boundary"); return v as JsonValue; })(amount), deserialise_Result_Int_String, "shop.audit", "3042f1b7519e621d");
     return r;
   },
 };
 
 export function serialise_Result_Int_String(value: Result<number, string>): JsonValue {
-  if (value.tag === "Ok") return { kind: "Ok", value: value.value as JsonValue };
+  if (value.tag === "Ok") return { kind: "Ok", value: ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error("Int outside the safe-integer range at boundary"); return v as JsonValue; })(value.value) };
   return { kind: "Err", error: value.error as JsonValue };
 }
 
@@ -37,8 +37,8 @@ export function deserialise_Result_Int_String(json: JsonValue, path: string = "$
   if (typeof obj["value"] !== "number") {
     return Err({ kind: "StructuralMismatch", path: `${path}.value`, expected: "number", actual: typeof obj["value"] });
   }
-  if (!Number.isInteger(obj["value"])) {
-    return Err({ kind: "StructuralMismatch", path: `${path}.value`, expected: "integer", actual: String(obj["value"]) });
+  if (!Number.isSafeInteger(obj["value"])) {
+    return Err({ kind: "StructuralMismatch", path: `${path}.value`, expected: "safe integer", actual: String(obj["value"]) });
   }
   const __v = obj["value"];
     return Ok(Ok(__v) as Result<number, string>);

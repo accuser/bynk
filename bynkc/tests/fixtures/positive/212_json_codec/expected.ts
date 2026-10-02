@@ -58,7 +58,7 @@ export function serialise_Order(value: Order): JsonValue {
   return {
     id: value.id as JsonValue,
     price: ((v: number) => { if (!Number.isFinite(v)) throw new Error("non-finite Float at boundary"); return v as JsonValue; })(value.price),
-    qty: value.qty as JsonValue,
+    qty: ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error("Int outside the safe-integer range at boundary"); return v as JsonValue; })(value.qty),
     status: serialise_Status(value.status),
     tags: serialise_List_String(value.tags),
   };
@@ -83,8 +83,8 @@ export function deserialise_Order(json: JsonValue, path: string = "$"): Result<O
   if (typeof obj["qty"] !== "number") {
     return Err({ kind: "StructuralMismatch", path: `${path}.qty`, expected: "number", actual: typeof obj["qty"] });
   }
-  if (!Number.isInteger(obj["qty"])) {
-    return Err({ kind: "StructuralMismatch", path: `${path}.qty`, expected: "integer", actual: String(obj["qty"]) });
+  if (!Number.isSafeInteger(obj["qty"])) {
+    return Err({ kind: "StructuralMismatch", path: `${path}.qty`, expected: "safe integer", actual: String(obj["qty"]) });
   }
   const __qty = obj["qty"];
   const __r_status = deserialise_Status(obj["status"], `${path}.status`);

@@ -961,7 +961,7 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     ),
     dg(
         "bynk.lex.integer_overflow",
-        "An integer literal is out of range.",
+        "An integer literal is outside the `Int` range, the JS safe integers ±(2^53 − 1).",
         &["number_literal"],
     ),
     dg(
@@ -1627,6 +1627,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     d(
         "bynk.service.websocket_open_arity",
         "A `from websocket` service must hold exactly one `on open` handler (the edge upgrade), and at most one `on message` (inbound) and one `on close` (real-time track slice 3/3b-iii).",
+    ),
+    d(
+        "bynk.service.websocket_param_not_stringy",
+        "A `from websocket` service's `on open` parameter has a type not constructible from `String`; it arrives as a query-string value (#1657).",
     ),
     d(
         "bynk.store.annotation_kind_mismatch",

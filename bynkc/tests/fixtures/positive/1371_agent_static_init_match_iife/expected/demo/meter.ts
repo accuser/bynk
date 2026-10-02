@@ -51,11 +51,11 @@ function __zeroOfMeterState(): MeterState {
 }
 
 function __rehydrateMeterState(s: MeterState, stored: MeterState): void {
-  if (Object.prototype.hasOwnProperty.call(stored, "active")) { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "active", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "active", expected: "integer", actual: String(__v) } as BoundaryError))((s.active as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Meter", __r.error); (s as { -readonly [K in keyof typeof s]: (typeof s)[K] }).active = __r.value as unknown as (typeof s)["active"]; }
+  if (Object.prototype.hasOwnProperty.call(stored, "active")) { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "active", expected: "safe integer", actual: typeof __v } as BoundaryError) : Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "active", expected: "safe integer", actual: String(__v) } as BoundaryError))((s.active as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Meter", __r.error); (s as { -readonly [K in keyof typeof s]: (typeof s)[K] }).active = __r.value as unknown as (typeof s)["active"]; }
 }
 
 function __encodeMeterState(s: MeterState): Record<string, unknown> {
-  return { ...s, active: s.active as JsonValue };
+  return { ...s, active: ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error("Int outside the safe-integer range at boundary"); return v as JsonValue; })(s.active) };
 }
 
 export class Meter {

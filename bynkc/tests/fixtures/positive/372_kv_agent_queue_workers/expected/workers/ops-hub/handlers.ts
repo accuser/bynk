@@ -32,11 +32,11 @@ const __JobLedgerRegistry = new StateRegistry();
 function __zeroOfJobLedgerState(): JobLedgerState { return { seen: 0 }; }
 
 function __rehydrateJobLedgerState(s: JobLedgerState, stored: JobLedgerState): void {
-  if (Object.prototype.hasOwnProperty.call(stored, "seen")) { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "seen", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "seen", expected: "integer", actual: String(__v) } as BoundaryError))((s.seen as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("JobLedger", __r.error); (s as { -readonly [K in keyof typeof s]: (typeof s)[K] }).seen = __r.value as unknown as (typeof s)["seen"]; }
+  if (Object.prototype.hasOwnProperty.call(stored, "seen")) { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "seen", expected: "safe integer", actual: typeof __v } as BoundaryError) : Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "seen", expected: "safe integer", actual: String(__v) } as BoundaryError))((s.seen as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("JobLedger", __r.error); (s as { -readonly [K in keyof typeof s]: (typeof s)[K] }).seen = __r.value as unknown as (typeof s)["seen"]; }
 }
 
 function __encodeJobLedgerState(s: JobLedgerState): Record<string, unknown> {
-  return { ...s, seen: s.seen as JsonValue };
+  return { ...s, seen: ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error("Int outside the safe-integer range at boundary"); return v as JsonValue; })(s.seen) };
 }
 
 export class JobLedger {
@@ -76,7 +76,7 @@ export class JobLedger {
 }
 
 const __JobLedgerWire: AgentWire = {
-  total: { args: [], result: { enc: (__v: number) => __v as JsonValue, dec: (__j: JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "integer", actual: String(__v) } as BoundaryError))(__j) } },
+  total: { args: [], result: { enc: (__v: number) => ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error("Int outside the safe-integer range at boundary"); return v as JsonValue; })(__v), dec: (__j: JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as BoundaryError) : Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as BoundaryError))(__j) } },
 };
 
 export function __makeJobLedger(key: JobId, env?: { JOB_LEDGER?: DurableObjectNamespace }): JobLedger {

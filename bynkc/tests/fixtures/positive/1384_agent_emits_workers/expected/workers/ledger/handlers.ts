@@ -20,11 +20,11 @@ const __LedgerRegistry = new StateRegistry();
 function __zeroOfLedgerState(): LedgerState { return { total: 0 }; }
 
 function __rehydrateLedgerState(s: LedgerState, stored: LedgerState): void {
-  if (Object.prototype.hasOwnProperty.call(stored, "total")) { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "total", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "total", expected: "integer", actual: String(__v) } as BoundaryError))((s.total as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Ledger", __r.error); (s as { -readonly [K in keyof typeof s]: (typeof s)[K] }).total = __r.value as unknown as (typeof s)["total"]; }
+  if (Object.prototype.hasOwnProperty.call(stored, "total")) { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "total", expected: "safe integer", actual: typeof __v } as BoundaryError) : Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "total", expected: "safe integer", actual: String(__v) } as BoundaryError))((s.total as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Ledger", __r.error); (s as { -readonly [K in keyof typeof s]: (typeof s)[K] }).total = __r.value as unknown as (typeof s)["total"]; }
 }
 
 function __encodeLedgerState(s: LedgerState): Record<string, unknown> {
-  return { ...s, total: s.total as JsonValue };
+  return { ...s, total: ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error("Int outside the safe-integer range at boundary"); return v as JsonValue; })(s.total) };
 }
 
 export class Ledger {
@@ -77,7 +77,7 @@ export class Ledger {
 }
 
 const __LedgerWire: AgentWire = {
-  bump: { args: [{ enc: (__v: number) => __v as JsonValue, dec: (__j: JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "integer", actual: String(__v) } as BoundaryError))(__j) }], result: { enc: (__v: number) => __v as JsonValue, dec: (__j: JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "integer", actual: String(__v) } as BoundaryError))(__j) } },
+  bump: { args: [{ enc: (__v: number) => ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error("Int outside the safe-integer range at boundary"); return v as JsonValue; })(__v), dec: (__j: JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as BoundaryError) : Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as BoundaryError))(__j) }], result: { enc: (__v: number) => ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error("Int outside the safe-integer range at boundary"); return v as JsonValue; })(__v), dec: (__j: JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as BoundaryError) : Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as BoundaryError))(__j) } },
 };
 
 export function __makeLedger(key: string, env?: { LEDGER?: DurableObjectNamespace }): Ledger {

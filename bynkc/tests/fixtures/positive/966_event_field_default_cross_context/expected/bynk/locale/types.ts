@@ -99,7 +99,7 @@ export function serialise_MessageArg(value: MessageArg): JsonValue {
       return { kind: "Text", value: value.value as JsonValue };
     }
     case "Whole": {
-      return { kind: "Whole", value: value.value as JsonValue };
+      return { kind: "Whole", value: ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error("Int outside the safe-integer range at boundary"); return v as JsonValue; })(value.value) };
     }
     case "Num": {
       return { kind: "Num", value: ((v: number) => { if (!Number.isFinite(v)) throw new Error("non-finite Float at boundary"); return v as JsonValue; })(value.value) };
@@ -128,8 +128,8 @@ export function deserialise_MessageArg(json: JsonValue, path: string = "$"): Res
   if (typeof obj["value"] !== "number") {
     return Err({ kind: "StructuralMismatch", path: `${path}.value`, expected: "number", actual: typeof obj["value"] });
   }
-  if (!Number.isInteger(obj["value"])) {
-    return Err({ kind: "StructuralMismatch", path: `${path}.value`, expected: "integer", actual: String(obj["value"]) });
+  if (!Number.isSafeInteger(obj["value"])) {
+    return Err({ kind: "StructuralMismatch", path: `${path}.value`, expected: "safe integer", actual: String(obj["value"]) });
   }
   const __value = obj["value"];
       return Ok({ tag: "Whole", value: __value } as MessageArg);
@@ -148,8 +148,8 @@ export function deserialise_MessageArg(json: JsonValue, path: string = "$"): Res
   if (typeof obj["value"] !== "number") {
     return Err({ kind: "StructuralMismatch", path: `${path}.value`, expected: "number", actual: typeof obj["value"] });
   }
-  if (!Number.isInteger(obj["value"])) {
-    return Err({ kind: "StructuralMismatch", path: `${path}.value`, expected: "integer", actual: String(obj["value"]) });
+  if (!Number.isSafeInteger(obj["value"])) {
+    return Err({ kind: "StructuralMismatch", path: `${path}.value`, expected: "safe integer", actual: String(obj["value"]) });
   }
   const __value = obj["value"];
       return Ok({ tag: "Moment", value: __value } as MessageArg);

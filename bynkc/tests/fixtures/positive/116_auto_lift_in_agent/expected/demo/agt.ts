@@ -7,8 +7,8 @@ export type Counter = number & { readonly __brand: "demo.agt.Counter" };
 
 export const Counter = {
   of(value: number): Result<Counter, ValidationError> {
-    if (!Number.isInteger(value)) {
-      return Err({ field: "Counter", message: "must be an integer", value });
+    if (!Number.isSafeInteger(value)) {
+      return Err({ field: "Counter", message: "must be a safe integer", value });
     }
     if (!(value >= 0)) {
       return Err({ field: "Counter", message: "must be non-negative", value });

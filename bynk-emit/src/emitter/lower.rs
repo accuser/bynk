@@ -1877,12 +1877,12 @@ fn lower_method_call(
         return pre.finish(s);
     }
     // v0.22a: the numeric parse statics — `Int.parse(s)` /
-    // `Float.parse(s)` (ADR 0048). Full-string parse via `Number(…)`
-    // (which, unlike `parseFloat`, rejects trailing garbage); an
-    // empty/whitespace-only string would coerce to `0`, so it is
-    // rejected first. `Int` requires a safe integer (the honest
-    // runtime "overflow → None"); `Float` requires finite (the 0040
-    // posture).
+    // `Float.parse(s)` (ADR 0048). #1657 (runtime-semantics track §3.4): the
+    // whole string must match a strict decimal grammar before `Number(…)` sees
+    // it. `Number` alone accepts surrounding whitespace, `0x`/`0b`/`0o` prefixes
+    // and (for `Int`) exponents, so `" 7 "`, `"0x10"` and `"1e3"` parsed. `Int`
+    // is `[+-]?digits`, then a safe integer (`+ 0` turns `-0` into `0`); `Float`
+    // is a decimal with an optional exponent, then finite (the 0040 posture).
     // P6.21 (partial, continued): reads `Callee::Intrinsic` instead of
     // `id.name == INT || id.name == FLOAT` — see the `List`/`Map` branch
     // above. `Int`/`Float` are lexically reserved (the parser only admits
@@ -1897,13 +1897,21 @@ fn lower_method_call(
         && args.len() == 1
     {
         let s = pre.lower(&args[0], cx);
-        let guard = if id.name == INT {
-            "Number.isSafeInteger(__n)"
+        let (grammar, value, guard) = if id.name == INT {
+            (
+                "/^[+-]?[0-9]+$/",
+                "Number(__s) + 0",
+                "Number.isSafeInteger(__n)",
+            )
         } else {
-            "Number.isFinite(__n)"
+            (
+                "/^[+-]?([0-9]+(\\.[0-9]*)?|\\.[0-9]+)([eE][+-]?[0-9]+)?$/",
+                "Number(__s)",
+                "Number.isFinite(__n)",
+            )
         };
         return pre.finish(format!(
-            "((__s: string) => {{ const __n = __s.trim() === \"\" ? Number.NaN : Number(__s); return {guard} ? Some(__n) : None; }})({s})"
+            "((__s: string) => {{ if (!{grammar}.test(__s)) return None; const __n = {value}; return {guard} ? Some(__n) : None; }})({s})"
         ));
     }
     // v0.86 (ADR 0112): `Duration.millis(n)` — the runtime `Int`→`Duration`
@@ -3710,13 +3718,29 @@ fn lower_numeric_kernel(
     let mut pre = Pre::new();
     let text: Option<String> = match (method.name.as_str(), args) {
         ("toFloat", []) => Some(pre.lower(receiver, cx)),
-        ("round" | "floor" | "ceil" | "abs", []) => {
+        ("abs", []) => {
             let recv = pre.lower(receiver, cx);
-            Some(format!("Math.{}({recv})", method.name))
+            Some(format!("Math.abs({recv})"))
         }
-        ("truncate", []) => {
+        // #1657 (runtime-semantics track §3.4, decided in S8): a Float→`Int`
+        // conversion traps when the result is not a safe integer — a
+        // non-finite `Float`, or one past ±2^53 — rather than producing an
+        // `Int` outside the domain (`__bynkToInt`). The same posture as `Int`
+        // division by zero.
+        // Returning `Option[Int]` was rejected: a signature change to four
+        // kernel methods.
+        ("round" | "floor" | "ceil" | "truncate", []) => {
             let recv = pre.lower(receiver, cx);
-            Some(format!("Math.trunc({recv})"))
+            let f = if method.name == "truncate" {
+                "trunc"
+            } else {
+                method.name.as_str()
+            };
+            cx.note_int();
+            Some(format!(
+                "__bynkToInt(Math.{f}({recv}), \"{}\")",
+                method.name
+            ))
         }
         ("min" | "max", [other]) => {
             let recv = pre.lower(receiver, cx);
@@ -4840,7 +4864,11 @@ fn lower_bin_op(op: BinOp, lhs: &Expr, rhs: &Expr, cx: &mut LowerCtx) -> Lowered
         if lhs_is_float {
             format!("{l} / {r}")
         } else {
-            format!("Math.trunc({l} / {r})")
+            // #1657: `Int` division by zero traps, a runtime fault, rather than
+            // producing `Infinity`/`NaN` as an `Int`. A runtime helper rather than
+            // an inline guard, so coverage never reports its fault branch.
+            cx.note_int();
+            format!("__bynkIntDiv({l}, {r})")
         }
     } else if let Some(helper) = matches!(op, BinOp::Eq | BinOp::NotEq)
         .then(|| cx.commons().expr_types.get(&lhs.id).map(|te| te.ty))
@@ -6181,7 +6209,8 @@ fn lower_is(value: &Expr, pattern: &Pattern, cx: &mut LowerCtx) -> Lowered {
 fn refined_check_as_bool(recv: &str, base: BaseType, refinement: Option<&Refinement>) -> String {
     let mut terms: Vec<String> = Vec::new();
     if base == BaseType::Int {
-        terms.push(format!("Number.isInteger({recv})"));
+        // #1657: an `Int` is a JS safe integer.
+        terms.push(format!("Number.isSafeInteger({recv})"));
     }
     // v0.21: validated `Float` values are finite (ADR 0040).
     if base == BaseType::Float {

@@ -15,8 +15,8 @@ export type Foo = number & { readonly __brand: "Foo" };
 
 export const Foo = {
   of(value: number): Result<Foo, ValidationError> {
-    if (!Number.isInteger(value)) {
-      return Err({ field: "Foo", message: "must be an integer", value });
+    if (!Number.isSafeInteger(value)) {
+      return Err({ field: "Foo", message: "must be a safe integer", value });
     }
     return Ok(value as Foo);
   },

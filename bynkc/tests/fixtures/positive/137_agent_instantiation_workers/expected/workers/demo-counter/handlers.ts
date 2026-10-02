@@ -35,11 +35,11 @@ const __CounterRegistry = new StateRegistry();
 function __zeroOfCounterState(): CounterState { return { count: 0 }; }
 
 function __rehydrateCounterState(s: CounterState, stored: CounterState): void {
-  if (Object.prototype.hasOwnProperty.call(stored, "count")) { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "count", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "count", expected: "integer", actual: String(__v) } as BoundaryError))((s.count as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Counter", __r.error); (s as { -readonly [K in keyof typeof s]: (typeof s)[K] }).count = __r.value as unknown as (typeof s)["count"]; }
+  if (Object.prototype.hasOwnProperty.call(stored, "count")) { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "count", expected: "safe integer", actual: typeof __v } as BoundaryError) : Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "count", expected: "safe integer", actual: String(__v) } as BoundaryError))((s.count as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Counter", __r.error); (s as { -readonly [K in keyof typeof s]: (typeof s)[K] }).count = __r.value as unknown as (typeof s)["count"]; }
 }
 
 function __encodeCounterState(s: CounterState): Record<string, unknown> {
-  return { ...s, count: s.count as JsonValue };
+  return { ...s, count: ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error("Int outside the safe-integer range at boundary"); return v as JsonValue; })(s.count) };
 }
 
 export class Counter {
@@ -158,7 +158,7 @@ export function deserialise_CounterId(json: JsonValue, path: string = "$"): Resu
 
 
 export function serialise_Result_Int_CounterError(value: Result<number, CounterError>): JsonValue {
-  if (value.tag === "Ok") return { kind: "Ok", value: value.value as JsonValue };
+  if (value.tag === "Ok") return { kind: "Ok", value: ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error("Int outside the safe-integer range at boundary"); return v as JsonValue; })(value.value) };
   return { kind: "Err", error: serialise_CounterError(value.error) };
 }
 
@@ -171,8 +171,8 @@ export function deserialise_Result_Int_CounterError(json: JsonValue, path: strin
   if (typeof obj["value"] !== "number") {
     return Err({ kind: "StructuralMismatch", path: `${path}.value`, expected: "number", actual: typeof obj["value"] });
   }
-  if (!Number.isInteger(obj["value"])) {
-    return Err({ kind: "StructuralMismatch", path: `${path}.value`, expected: "integer", actual: String(obj["value"]) });
+  if (!Number.isSafeInteger(obj["value"])) {
+    return Err({ kind: "StructuralMismatch", path: `${path}.value`, expected: "safe integer", actual: String(obj["value"]) });
   }
   const __v = obj["value"];
     return Ok(Ok(__v) as Result<number, CounterError>);

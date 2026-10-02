@@ -7,8 +7,8 @@ export type Timestamp = number & { readonly __brand: "Timestamp" };
 
 export const Timestamp = {
   of(value: number): Result<Timestamp, ValidationError> {
-    if (!Number.isInteger(value)) {
-      return Err({ field: "Timestamp", message: "must be an integer", value });
+    if (!Number.isSafeInteger(value)) {
+      return Err({ field: "Timestamp", message: "must be a safe integer", value });
     }
     if (!(value >= 0)) {
       return Err({ field: "Timestamp", message: "must be non-negative", value });

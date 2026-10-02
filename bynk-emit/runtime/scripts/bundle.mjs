@@ -33,6 +33,7 @@ const MODULES = [
   "result",
   "bytes",
   "equality",
+  "int",
   "errors",
   "storage",
   "boundary",

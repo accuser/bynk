@@ -198,7 +198,7 @@ export function serialise_EventEnvelope(value: EventEnvelope): JsonValue {
     eventId: value.eventId as JsonValue,
     publisherId: value.publisherId as JsonValue,
     emittedAt: value.emittedAt as JsonValue,
-    schemaVersion: value.schemaVersion as JsonValue,
+    schemaVersion: ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error("Int outside the safe-integer range at boundary"); return v as JsonValue; })(value.schemaVersion),
   };
 }
 
@@ -218,15 +218,15 @@ export function deserialise_EventEnvelope(json: JsonValue, path: string = "$"): 
   if (typeof obj["emittedAt"] !== "number") {
     return Err({ kind: "StructuralMismatch", path: `${path}.emittedAt`, expected: "number", actual: typeof obj["emittedAt"] });
   }
-  if (!Number.isInteger(obj["emittedAt"])) {
-    return Err({ kind: "StructuralMismatch", path: `${path}.emittedAt`, expected: "integer", actual: String(obj["emittedAt"]) });
+  if (!Number.isSafeInteger(obj["emittedAt"])) {
+    return Err({ kind: "StructuralMismatch", path: `${path}.emittedAt`, expected: "safe integer", actual: String(obj["emittedAt"]) });
   }
   const __emittedAt = obj["emittedAt"];
   if (typeof obj["schemaVersion"] !== "number") {
     return Err({ kind: "StructuralMismatch", path: `${path}.schemaVersion`, expected: "number", actual: typeof obj["schemaVersion"] });
   }
-  if (!Number.isInteger(obj["schemaVersion"])) {
-    return Err({ kind: "StructuralMismatch", path: `${path}.schemaVersion`, expected: "integer", actual: String(obj["schemaVersion"]) });
+  if (!Number.isSafeInteger(obj["schemaVersion"])) {
+    return Err({ kind: "StructuralMismatch", path: `${path}.schemaVersion`, expected: "safe integer", actual: String(obj["schemaVersion"]) });
   }
   const __schemaVersion = obj["schemaVersion"];
   return Ok({ eventId: __eventId, publisherId: __publisherId, emittedAt: __emittedAt, schemaVersion: __schemaVersion } as EventEnvelope);
@@ -326,7 +326,7 @@ export function deserialise_Request(json: JsonValue, path: string = "$"): Result
 
 export function serialise_Response(value: Response): JsonValue {
   return {
-    status: value.status as JsonValue,
+    status: ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error("Int outside the safe-integer range at boundary"); return v as JsonValue; })(value.status),
     body: value.body as JsonValue,
   };
 }
@@ -339,8 +339,8 @@ export function deserialise_Response(json: JsonValue, path: string = "$"): Resul
   if (typeof obj["status"] !== "number") {
     return Err({ kind: "StructuralMismatch", path: `${path}.status`, expected: "number", actual: typeof obj["status"] });
   }
-  if (!Number.isInteger(obj["status"])) {
-    return Err({ kind: "StructuralMismatch", path: `${path}.status`, expected: "integer", actual: String(obj["status"]) });
+  if (!Number.isSafeInteger(obj["status"])) {
+    return Err({ kind: "StructuralMismatch", path: `${path}.status`, expected: "safe integer", actual: String(obj["status"]) });
   }
   const __status = obj["status"];
   if (typeof obj["body"] !== "string") {

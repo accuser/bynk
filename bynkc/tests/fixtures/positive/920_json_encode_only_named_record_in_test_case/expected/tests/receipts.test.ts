@@ -48,7 +48,7 @@ async function test_encodes_a_named_type() {
 export function serialise_Receipt(value: receipts.Receipt): JsonValue {
   return {
     code: value.code as JsonValue,
-    total: value.total as JsonValue,
+    total: ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error("Int outside the safe-integer range at boundary"); return v as JsonValue; })(value.total),
   };
 }
 
@@ -64,8 +64,8 @@ export function deserialise_Receipt(json: JsonValue, path: string = "$"): Result
   if (typeof obj["total"] !== "number") {
     return Err({ kind: "StructuralMismatch", path: `${path}.total`, expected: "number", actual: typeof obj["total"] });
   }
-  if (!Number.isInteger(obj["total"])) {
-    return Err({ kind: "StructuralMismatch", path: `${path}.total`, expected: "integer", actual: String(obj["total"]) });
+  if (!Number.isSafeInteger(obj["total"])) {
+    return Err({ kind: "StructuralMismatch", path: `${path}.total`, expected: "safe integer", actual: String(obj["total"]) });
   }
   const __total = obj["total"];
   return Ok({ code: __code, total: __total } as receipts.Receipt);

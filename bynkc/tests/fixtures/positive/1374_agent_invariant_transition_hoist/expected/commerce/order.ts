@@ -18,8 +18,8 @@ export type PositiveInt = number & { readonly __brand: "commerce.order.PositiveI
 
 export const PositiveInt = {
   of(value: number): Result<PositiveInt, ValidationError> {
-    if (!Number.isInteger(value)) {
-      return Err({ field: "PositiveInt", message: "must be an integer", value });
+    if (!Number.isSafeInteger(value)) {
+      return Err({ field: "PositiveInt", message: "must be a safe integer", value });
     }
     if (!(value > 0)) {
       return Err({ field: "PositiveInt", message: "must be positive", value });
@@ -72,7 +72,7 @@ export class Order {
     let __r1: boolean;
     if (true) {
       const __r0 = 5;
-      __r1 = (Number.isInteger(__r0) && __r0 > 0);
+      __r1 = (Number.isSafeInteger(__r0) && __r0 > 0);
     } else {
       __r1 = false;
     }
@@ -88,7 +88,7 @@ export class Order {
       let __r1: boolean;
       if (__bynkEq(__old.status, __old.status)) {
         const __r0 = 5;
-        __r1 = (Number.isInteger(__r0) && __r0 > 0);
+        __r1 = (Number.isSafeInteger(__r0) && __r0 > 0);
       } else {
         __r1 = false;
       }

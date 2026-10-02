@@ -7,8 +7,8 @@ export type PositiveInt = number & { readonly __brand: "PositiveInt" };
 
 export const PositiveInt = {
   of(value: number): Result<PositiveInt, ValidationError> {
-    if (!Number.isInteger(value)) {
-      return Err({ field: "PositiveInt", message: "must be an integer", value });
+    if (!Number.isSafeInteger(value)) {
+      return Err({ field: "PositiveInt", message: "must be a safe integer", value });
     }
     if (!(value > 0)) {
       return Err({ field: "PositiveInt", message: "must be positive", value });
@@ -20,10 +20,10 @@ export const PositiveInt = {
 export function classify(n: number): boolean {
   if (n > 0) {
     const __r0 = n;
-    return (Number.isInteger(__r0) && __r0 > 0);
+    return (Number.isSafeInteger(__r0) && __r0 > 0);
   } else {
     const __r1 = n;
-    return (Number.isInteger(__r1) && __r1 > 0);
+    return (Number.isSafeInteger(__r1) && __r1 > 0);
   }
 }
 
