@@ -1821,10 +1821,6 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.transition.not_bool",
         "A transition predicate does not have type `Bool`.",
     ),
-    d(
-        "bynk.types.ambiguous_constructor",
-        "`Ok`/`Err` is ambiguous between `Result` and `HttpResult`; qualify it.",
-    ),
     dg(
         "bynk.types.argument_mismatch",
         "A call, method, capability, or constructor argument has the wrong type.",

@@ -22,3 +22,10 @@ case "a suite compares against a bare constructor" {
   expect seven() == Ok(7)
   expect seven() != Err("x")
 }
+
+case "either order, and a literal against a refined value" {
+  expect !noneVsSome()
+  expect !emptyVsList()
+  let q: Qty = 3
+  expect !isZero(q)
+}

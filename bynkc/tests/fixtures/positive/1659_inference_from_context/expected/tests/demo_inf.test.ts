@@ -33,7 +33,8 @@ function makeTestDeps() {
 async function test_o____None_and_None____o() {
   try {
     const deps = {};
-    const { isNone, isNoneFlipped, isSeven, none, notBad, seven } = demo_inf;
+    const { Qty, emptyVsList, isNone, isNoneFlipped, isSeven, isZero, none, noneVsSome, notBad, seven } = demo_inf;
+    type Qty = demo_inf.Qty;
     if (!(isNone(None))) { throw __bynkExpectFailure("tests/demo/inf.bynk:7:10", 146, 158, "expect isNone(None)"); }
     if (!(!isNone(Some(1)))) { throw __bynkExpectFailure("tests/demo/inf.bynk:8:10", 168, 184, "expect !isNone(Some(1))"); }
     if (!(isNoneFlipped(None))) { throw __bynkExpectFailure("tests/demo/inf.bynk:9:10", 194, 213, "expect isNoneFlipped(None)"); }
@@ -51,7 +52,8 @@ async function test_o____None_and_None____o() {
 async function test_r____Ok____and_r____Err___() {
   try {
     const deps = {};
-    const { isNone, isNoneFlipped, isSeven, none, notBad, seven } = demo_inf;
+    const { Qty, emptyVsList, isNone, isNoneFlipped, isSeven, isZero, none, noneVsSome, notBad, seven } = demo_inf;
+    type Qty = demo_inf.Qty;
     if (!(isSeven(Ok(7)))) { throw __bynkExpectFailure("tests/demo/inf.bynk:14:10", 299, 313, "expect isSeven(Ok(7))"); }
     if (!(!isSeven(Ok(8)))) { throw __bynkExpectFailure("tests/demo/inf.bynk:15:10", 323, 338, "expect !isSeven(Ok(8))"); }
     if (!(notBad(Ok(1)))) { throw __bynkExpectFailure("tests/demo/inf.bynk:16:10", 348, 361, "expect notBad(Ok(1))"); }
@@ -69,10 +71,30 @@ async function test_r____Ok____and_r____Err___() {
 async function test_a_suite_compares_against_a_bare_constructor() {
   try {
     const deps = {};
-    const { isNone, isNoneFlipped, isSeven, none, notBad, seven } = demo_inf;
+    const { Qty, emptyVsList, isNone, isNoneFlipped, isSeven, isZero, none, noneVsSome, notBad, seven } = demo_inf;
+    type Qty = demo_inf.Qty;
     if (!(__bynkEq(none(), None))) { throw __bynkExpectFailure("tests/demo/inf.bynk:21:10", 456, 470, "expect none() == None\n  expected: none() == None\n  actual:   " + __bynkShow((none())) + " == " + __bynkShow((None))); }
     if (!(__bynkEq(seven(), Ok(7)))) { throw __bynkExpectFailure("tests/demo/inf.bynk:22:10", 480, 496, "expect seven() == Ok(7)\n  expected: seven() == Ok(7)\n  actual:   " + __bynkShow((seven())) + " == " + __bynkShow((Ok(7)))); }
     if (!(!__bynkEq(seven(), Err("x")))) { throw __bynkExpectFailure("tests/demo/inf.bynk:23:10", 506, 525, "expect seven() != Err(\"x\")\n  expected: seven() != Err(\"x\")\n  actual:   " + __bynkShow((seven())) + " != " + __bynkShow((Err("x")))); }
+    return { pass: true };
+  } catch (e) {
+    if (e instanceof ExpectationError) {
+      return { pass: false, error: { message: e.message, location: e.location } };
+    }
+    return { pass: false, error: { message: String(e), location: "unknown" } };
+  }
+}
+
+// case tier: unit
+async function test_either_order__and_a_literal_against_a_refined_value() {
+  try {
+    const deps = {};
+    const { Qty, emptyVsList, isNone, isNoneFlipped, isSeven, isZero, none, noneVsSome, notBad, seven } = demo_inf;
+    type Qty = demo_inf.Qty;
+    if (!(!noneVsSome())) { throw __bynkExpectFailure("tests/demo/inf.bynk:27:10", 599, 612, "expect !noneVsSome()"); }
+    if (!(!emptyVsList())) { throw __bynkExpectFailure("tests/demo/inf.bynk:28:10", 622, 636, "expect !emptyVsList()"); }
+    const q: Qty = (3 as any);
+    if (!(!isZero(q))) { throw __bynkExpectFailure("tests/demo/inf.bynk:30:10", 663, 673, "expect !isZero(q)"); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -88,5 +110,6 @@ export async function run(only?: string) {
   if (want("o == None and None == o")) results.push({ name: "o == None and None == o", ...(await test_o____None_and_None____o()) });
   if (want("r == Ok(…) and r != Err(…)")) results.push({ name: "r == Ok(…) and r != Err(…)", ...(await test_r____Ok____and_r____Err___()) });
   if (want("a suite compares against a bare constructor")) results.push({ name: "a suite compares against a bare constructor", ...(await test_a_suite_compares_against_a_bare_constructor()) });
+  if (want("either order, and a literal against a refined value")) results.push({ name: "either order, and a literal against a refined value", ...(await test_either_order__and_a_literal_against_a_refined_value()) });
   return results;
 }

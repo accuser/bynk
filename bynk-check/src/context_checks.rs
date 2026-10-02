@@ -2393,7 +2393,7 @@ fn check_store_keyable(
                 ),
             )
             .with_note(
-                "a store collection is keyed by its key's string form, so record, sum, collection and function keys have no stable key; key by an id field instead",
+                "only `String` and `Int` keys (or a refined or opaque type over them) are supported, matching value `Map` keys and `@indexed` fields; key a record by one of its id fields, and an enum by its name as a `String`",
             ),
         );
     }

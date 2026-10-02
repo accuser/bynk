@@ -8,6 +8,20 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError, __
  * annotation decides an `Ok`/`Err` over the enclosing return type.
  */
 
+export type Qty = number & { readonly __brand: "Qty" };
+
+export const Qty = {
+  of(value: number): Result<Qty, ValidationError> {
+    if (!Number.isSafeInteger(value)) {
+      return Err({ field: "Qty", message: "must be a safe integer", value });
+    }
+    if (!(value > 0)) {
+      return Err({ field: "Qty", message: "must be positive", value });
+    }
+    return Ok(value as Qty);
+  },
+};
+
 export function isNone(o: Option<number>): boolean {
   return __bynkEq(o, None);
 }
@@ -30,4 +44,16 @@ export function none(): Option<number> {
 
 export function seven(): Result<number, string> {
   return Ok(7);
+}
+
+export function noneVsSome(): boolean {
+  return __bynkEq(None, Some(1));
+}
+
+export function emptyVsList(): boolean {
+  return __bynkEq([], [1]);
+}
+
+export function isZero(q: Qty): boolean {
+  return q === 0;
 }

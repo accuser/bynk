@@ -73,8 +73,9 @@ type — their least upper bound, so a refined type and its base (or two refined
 types over one base) agree at the base, but unrelated types do not
 (`bynk.types.if_non_bool_cond`, `bynk.types.if_branch_mismatch`). The payloads of
 `Ok`, `Err`, `Some`, and the like MUST match the expected component type (the
-`bynk.types.*_value_mismatch` codes). Where a constructor is ambiguous between
-`Result` and `HttpResult`, it MUST be qualified (`bynk.types.ambiguous_constructor`).
+`bynk.types.*_value_mismatch` codes). A bare `Ok` takes `Result` or `HttpResult`
+from its expected type when that type is either, and otherwise from the enclosing
+return type, so it is never ambiguous (#1659).
 
 **Lambdas** (v0.20a). Against an expected function type, a lambda's
 parameters take the expected types (an annotation MUST agree), its body is

@@ -1,0 +1,11 @@
+context b
+
+type Status = enum { Open, Closed }
+
+-- #1680 (review of #1696): the rule is the value-`Map`/index-key one, `String`/`Int`
+-- or refined/opaque over them, so a nullary enum element is rejected too.
+agent A {
+  key id: String
+  store seen: Set[Status]
+  on call get() -> Effect[Int] { 1 }
+}
