@@ -1,0 +1,24 @@
+---
+#1659: the other operand types `None`/`Ok`/`Err`, in a function and in a suite.
+---
+suite demo.inf
+
+case "o == None and None == o" {
+  expect isNone(None)
+  expect !isNone(Some(1))
+  expect isNoneFlipped(None)
+  expect !isNoneFlipped(Some(1))
+}
+
+case "r == Ok(…) and r != Err(…)" {
+  expect isSeven(Ok(7))
+  expect !isSeven(Ok(8))
+  expect notBad(Ok(1))
+  expect !notBad(Err("bad"))
+}
+
+case "a suite compares against a bare constructor" {
+  expect none() == None
+  expect seven() == Ok(7)
+  expect seven() != Err("x")
+}

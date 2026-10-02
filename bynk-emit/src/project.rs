@@ -1810,10 +1810,10 @@ fn run_checks(
         &mut refs,
         tys,
     );
-    // #696: test-suite diagnostics do have owning files, but attributing them
-    // means threading a file through `process_tests`'s many internal push sites —
-    // a separable follow-up. They render in the plain `[category]` form for now.
-    errors.extend_for(None, test_errors);
+    // #696/#1659: test-suite diagnostics are attributed to their owning file by
+    // each error's span (`ErrorSink::extend_attributed_by_span`), so they render
+    // with a file, line and span like every other diagnostic.
+    errors.extend_attributed_by_span(&parsed, test_errors);
 
     compiled.extend(test_outputs);
 
@@ -1837,9 +1837,8 @@ fn run_checks(
         &mut refs,
         tys,
     );
-    // #696: integration-suite diagnostics, like the unit-test ones above, stay
-    // unattributed pending the same `process_integration_tests` threading.
-    errors.extend_for(None, integration_errors);
+    // #696/#1659: integration-suite diagnostics, attributed the same way.
+    errors.extend_attributed_by_span(&parsed, integration_errors);
 
     // v0.19 (decisions 0017/0024): platform-lock enforcement. A deployment
     // unit whose in-process closure reaches a platform-native capability is

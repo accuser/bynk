@@ -118,6 +118,34 @@ impl ErrorSink {
             self.push_for(file, e);
         }
     }
+    /// #1659 (closes #696's gap): attribute each error to the parsed file its
+    /// span is in, by `FileId`. Every parsed file's spans carry the durable
+    /// `FileId` its absolute path interns to (`parse_cache::file_id_for`), so
+    /// the owning file is recoverable from the span alone. Suite and
+    /// integration diagnostics were pushed unattributed, because threading a
+    /// file through their many internal push sites was deferred, and rendered
+    /// with no file, line or span. An error whose span matches no parsed file
+    /// stays unattributed, as before.
+    pub fn extend_attributed_by_span(
+        &mut self,
+        parsed: &[ParsedFile],
+        errs: impl IntoIterator<Item = CompileError>,
+    ) {
+        let by_id: HashMap<bynk_syntax::span::FileId, PathBuf> = parsed
+            .iter()
+            .filter_map(|pf| {
+                let abs = pf.abs_path()?;
+                Some((
+                    bynk_project::parse_cache::file_id_for(&abs),
+                    pf.identity_path(),
+                ))
+            })
+            .collect();
+        for e in errs {
+            let file = by_id.get(&e.span.file).cloned();
+            self.push_for(file.as_deref(), e);
+        }
+    }
     /// True when no **error-severity** diagnostic has been collected — the
     /// build-failure gate. Warnings do not count (ADR 0117).
     pub fn is_empty(&self) -> bool {

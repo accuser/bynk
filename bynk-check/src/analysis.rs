@@ -572,7 +572,7 @@ pub fn analyse_project(roots: &Roots, overlay: &HashMap<PathBuf, String>) -> Pro
         &mut refs,
         tys,
     );
-    errors.extend_for(None, test_errors);
+    errors.extend_attributed_by_span(&parsed, test_errors);
 
     let mut integration_errors: Vec<bynk_syntax::error::CompileError> = Vec::new();
     let _ready_integration = crate::test_suites::phase_integration_bodies(
@@ -586,7 +586,7 @@ pub fn analyse_project(roots: &Roots, overlay: &HashMap<PathBuf, String>) -> Pro
         &mut refs,
         tys,
     );
-    errors.extend_for(None, integration_errors);
+    errors.extend_attributed_by_span(&parsed, integration_errors);
 
     // v0.19 (decisions 0017/0024), P5.3: platform-lock enforcement — closes
     // category 5 of this module's own residual-gap accounting. Inherited from
