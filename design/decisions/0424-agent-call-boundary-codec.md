@@ -1,11 +1,6 @@
----
-level: minor
-changelog: "On the `workers` target an agent call now carries its arguments and result through the **boundary codec** (#1678). A call `Agent(key).m(args)` crosses the Durable Object's `fetch`, and it used raw `JSON.stringify` both ways. So `Bytes` arrived as `{\"0\":104,\"1\":105}`, a value `Map` as `{}`, a record or list holding `Bytes` corrupted, and `b.length()` on a received `Bytes` gave `NaN`. Each agent now emits a wire table of `serialise_*`/`deserialise_*` pairs for its handlers' parameters and results, the same codec a cross-context call uses. The stub's proxy and the DO's `fetch` both encode and decode through it, and the codec closure now includes agent handler types on `workers`. A decode failure is an internal fault. A held `Connection`, function, `Stream` or `Query` passes through unencoded, as before. `bundle` is unchanged. Proved on real workerd by `workers_runtime_smoke.rs::agent_calls_use_the_boundary_codec_on_workerd`."
----
+# 0424 — A workers agent call encodes its arguments and result with the boundary codec
 
-## ADR: agent-call-boundary-codec
-title: A workers agent call encodes its arguments and result with the boundary codec
-summary: Each agent emits a wire table of serialise/deserialise pairs; the DO stub's proxy and the DO's fetch both use it
+- **Status:** Accepted (v0.294)
 
 **Context.** On the `workers` target an agent is a Durable Object, and a call
 `Agent(key).m(args)` goes through `makeWorkersAgent`'s proxy, which POSTs

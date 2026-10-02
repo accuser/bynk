@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0424](0424-agent-call-boundary-codec.md) | **A workers agent call encodes its arguments and result with the boundary codec** (v0.294) — Each agent emits a wire table of serialise/deserialise pairs; the DO stub's proxy and the DO's fetch both use it | Accepted (v0.294) |
 | [0423](0423-regex-ambiguity-check.md) | **`Matches` patterns are admitted by an automaton ambiguity check** (v0.292) — Exponential and unbounded-polynomial ambiguity are compile errors; a length bound downgrades polynomial to a warning, and length predicates are checked first | Accepted (v0.292) |
 | [0422](0422-agent-state-wire-shape.md) | **Agent state is stored in the wire shape and decoded on load** (v0.291) — commitState serialises through the boundary codec and loadState decodes into state; no tolerant loader for the old in-memory shape | Accepted (v0.291) |
 | [0421](0421-structural-equality.md) | **`==` is structural, and defined only on equality-supporting types** (v0.291) — Equality compares values by shape through a runtime walker; a type containing a computation, stream or held value anywhere is not comparable | Accepted (v0.291) |
