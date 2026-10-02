@@ -51,7 +51,7 @@ export class Inventory {
   async reserve(rid: string, r: Reservation, deps: {}): Promise<void> {
     const __state = { ...(await this.loadState()) };
     const __result = await (async () => {
-      const __r0 = await (() => { const __k = String(rid); const __v = r; const __o = __state.reservations[__k]; if (__o !== undefined) { { const __ik = String((__o).orderId); const __ia = __state.reservations__idx_orderId[__ik]; if (__ia) { const __ii = __ia.indexOf(__k); if (__ii >= 0) __ia.splice(__ii, 1); if (__ia.length === 0) delete __state.reservations__idx_orderId[__ik]; } } { const __ik = String((__o).id); const __ia = __state.reservations__idx_id[__ik]; if (__ia) { const __ii = __ia.indexOf(__k); if (__ii >= 0) __ia.splice(__ii, 1); if (__ia.length === 0) delete __state.reservations__idx_id[__ik]; } } } __state.reservations[__k] = __v; { const __ik = String((__v).orderId); (__state.reservations__idx_orderId[__ik] = __state.reservations__idx_orderId[__ik] ?? []).push(__k); } { const __ik = String((__v).id); (__state.reservations__idx_id[__ik] = __state.reservations__idx_id[__ik] ?? []).push(__k); } return undefined; })();
+      const __r0 = await (() => { const __k = String(rid); const __v = r; const __o = Object.hasOwn(__state.reservations, __k) ? __state.reservations[__k] : undefined; if (__o !== undefined) { { const __ik = String((__o).orderId); const __ia = Object.hasOwn(__state.reservations__idx_orderId, __ik) ? __state.reservations__idx_orderId[__ik] : undefined; if (__ia) { const __ii = __ia.indexOf(__k); if (__ii >= 0) __ia.splice(__ii, 1); if (__ia.length === 0) delete __state.reservations__idx_orderId[__ik]; } } { const __ik = String((__o).id); const __ia = Object.hasOwn(__state.reservations__idx_id, __ik) ? __state.reservations__idx_id[__ik] : undefined; if (__ia) { const __ii = __ia.indexOf(__k); if (__ii >= 0) __ia.splice(__ii, 1); if (__ia.length === 0) delete __state.reservations__idx_id[__ik]; } } } Object.defineProperty(__state.reservations, __k, { value: __v, writable: true, enumerable: true, configurable: true }); { const __ik = String((__v).orderId); if (!Object.hasOwn(__state.reservations__idx_orderId, __ik)) Object.defineProperty(__state.reservations__idx_orderId, __ik, { value: [], writable: true, enumerable: true, configurable: true }); __state.reservations__idx_orderId[__ik].push(__k); } { const __ik = String((__v).id); if (!Object.hasOwn(__state.reservations__idx_id, __ik)) Object.defineProperty(__state.reservations__idx_id, __ik, { value: [], writable: true, enumerable: true, configurable: true }); __state.reservations__idx_id[__ik].push(__k); } return undefined; })();
       return undefined;
     })();
     await this.commitState(__state);
@@ -61,7 +61,7 @@ export class Inventory {
   async retag(rid: string, oid: string, deps: {}): Promise<void> {
     const __state = { ...(await this.loadState()) };
     const __result = await (async () => {
-      const __r0 = await (() => { const __k = String(rid); if (!(__k in __state.reservations)) { throw new Error("Map.update: key absent"); } const __o = __state.reservations[__k]; { const __ik = String((__o).orderId); const __ia = __state.reservations__idx_orderId[__ik]; if (__ia) { const __ii = __ia.indexOf(__k); if (__ii >= 0) __ia.splice(__ii, 1); if (__ia.length === 0) delete __state.reservations__idx_orderId[__ik]; } } { const __ik = String((__o).id); const __ia = __state.reservations__idx_id[__ik]; if (__ia) { const __ii = __ia.indexOf(__k); if (__ii >= 0) __ia.splice(__ii, 1); if (__ia.length === 0) delete __state.reservations__idx_id[__ik]; } } const __v = ((r) => ({ ...r, orderId: oid }))(__o); __state.reservations[__k] = __v; { const __ik = String((__v).orderId); (__state.reservations__idx_orderId[__ik] = __state.reservations__idx_orderId[__ik] ?? []).push(__k); } { const __ik = String((__v).id); (__state.reservations__idx_id[__ik] = __state.reservations__idx_id[__ik] ?? []).push(__k); } return undefined; })();
+      const __r0 = await (() => { const __k = String(rid); if (!Object.hasOwn(__state.reservations, __k)) { throw new Error("Map.update: key absent"); } const __o = __state.reservations[__k]; { const __ik = String((__o).orderId); const __ia = Object.hasOwn(__state.reservations__idx_orderId, __ik) ? __state.reservations__idx_orderId[__ik] : undefined; if (__ia) { const __ii = __ia.indexOf(__k); if (__ii >= 0) __ia.splice(__ii, 1); if (__ia.length === 0) delete __state.reservations__idx_orderId[__ik]; } } { const __ik = String((__o).id); const __ia = Object.hasOwn(__state.reservations__idx_id, __ik) ? __state.reservations__idx_id[__ik] : undefined; if (__ia) { const __ii = __ia.indexOf(__k); if (__ii >= 0) __ia.splice(__ii, 1); if (__ia.length === 0) delete __state.reservations__idx_id[__ik]; } } const __v = ((r) => ({ ...r, orderId: oid }))(__o); __state.reservations[__k] = __v; { const __ik = String((__v).orderId); if (!Object.hasOwn(__state.reservations__idx_orderId, __ik)) Object.defineProperty(__state.reservations__idx_orderId, __ik, { value: [], writable: true, enumerable: true, configurable: true }); __state.reservations__idx_orderId[__ik].push(__k); } { const __ik = String((__v).id); if (!Object.hasOwn(__state.reservations__idx_id, __ik)) Object.defineProperty(__state.reservations__idx_id, __ik, { value: [], writable: true, enumerable: true, configurable: true }); __state.reservations__idx_id[__ik].push(__k); } return undefined; })();
       return undefined;
     })();
     await this.commitState(__state);
@@ -71,7 +71,7 @@ export class Inventory {
   async drop(rid: string, deps: {}): Promise<void> {
     const __state = { ...(await this.loadState()) };
     const __result = await (async () => {
-      const __r0 = await (() => { const __k = String(rid); const __o = __state.reservations[__k]; if (__o !== undefined) { { const __ik = String((__o).orderId); const __ia = __state.reservations__idx_orderId[__ik]; if (__ia) { const __ii = __ia.indexOf(__k); if (__ii >= 0) __ia.splice(__ii, 1); if (__ia.length === 0) delete __state.reservations__idx_orderId[__ik]; } } { const __ik = String((__o).id); const __ia = __state.reservations__idx_id[__ik]; if (__ia) { const __ii = __ia.indexOf(__k); if (__ii >= 0) __ia.splice(__ii, 1); if (__ia.length === 0) delete __state.reservations__idx_id[__ik]; } } delete __state.reservations[__k]; } return undefined; })();
+      const __r0 = await (() => { const __k = String(rid); const __o = Object.hasOwn(__state.reservations, __k) ? __state.reservations[__k] : undefined; if (__o !== undefined) { { const __ik = String((__o).orderId); const __ia = Object.hasOwn(__state.reservations__idx_orderId, __ik) ? __state.reservations__idx_orderId[__ik] : undefined; if (__ia) { const __ii = __ia.indexOf(__k); if (__ii >= 0) __ia.splice(__ii, 1); if (__ia.length === 0) delete __state.reservations__idx_orderId[__ik]; } } { const __ik = String((__o).id); const __ia = Object.hasOwn(__state.reservations__idx_id, __ik) ? __state.reservations__idx_id[__ik] : undefined; if (__ia) { const __ii = __ia.indexOf(__k); if (__ii >= 0) __ia.splice(__ii, 1); if (__ia.length === 0) delete __state.reservations__idx_id[__ik]; } } delete __state.reservations[__k]; } return undefined; })();
       return undefined;
     })();
     await this.commitState(__state);
@@ -80,17 +80,17 @@ export class Inventory {
 
   async countForOrder(oid: string, deps: {}): Promise<number> {
     const __state = await this.loadState();
-    return ((() => (__state.reservations__idx_orderId[String(oid)] ?? []).map((__pk) => __state.reservations[__pk])))().length;
+    return ((() => { const __s = String(oid); const __ia = __state.reservations__idx_orderId; return (Object.hasOwn(__ia, __s) ? __ia[__s] : []).map((__pk) => __state.reservations[__pk]); }))().length;
   }
 
   async qtyForOrder(oid: string, deps: {}): Promise<number> {
     const __state = await this.loadState();
-    return ((() => (__state.reservations__idx_orderId[String(oid)] ?? []).map((__pk) => __state.reservations[__pk])))().reduce((__s: number, __x) => __s + ((r) => r.qty)(__x), 0);
+    return ((() => { const __s = String(oid); const __ia = __state.reservations__idx_orderId; return (Object.hasOwn(__ia, __s) ? __ia[__s] : []).map((__pk) => __state.reservations[__pk]); }))().reduce((__s: number, __x) => __s + ((r) => r.qty)(__x), 0);
   }
 
   async countById(rid: string, deps: {}): Promise<number> {
     const __state = await this.loadState();
-    return ((() => (__state.reservations__idx_id[String(rid)] ?? []).map((__pk) => __state.reservations[__pk])))().length;
+    return ((() => { const __s = String(rid); const __ia = __state.reservations__idx_id; return (Object.hasOwn(__ia, __s) ? __ia[__s] : []).map((__pk) => __state.reservations[__pk]); }))().length;
   }
 
 }

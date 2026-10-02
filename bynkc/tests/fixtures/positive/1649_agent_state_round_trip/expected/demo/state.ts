@@ -472,7 +472,7 @@ export class Board {
   async set(k: string, l: Light, deps: {}): Promise<void> {
     const __state = { ...(await this.loadState()) };
     const __result = await (async () => {
-      await ((__state.lights[k] = l), undefined);
+      await (Object.defineProperty(__state.lights, k, { value: l, writable: true, enumerable: true, configurable: true }), undefined);
       return undefined;
     })();
     await this.commitState(__state);
@@ -481,7 +481,7 @@ export class Board {
 
   async get(k: string, deps: {}): Promise<Option<Light>> {
     const __state = await this.loadState();
-    const l = await (() => { const __k = k; return (__k in __state.lights) ? Some(__state.lights[__k]) : None; })();
+    const l = await (() => { const __k = k; return Object.hasOwn(__state.lights, __k) ? Some(__state.lights[__k]) : None; })();
     return l;
   }
 
@@ -527,7 +527,7 @@ export class Memo {
   async set(k: string, v: number, deps: { Clock: Clock }): Promise<void> {
     const __state = { ...(await this.loadState()) };
     const __result = await (async () => {
-      const __r0 = await (async () => { const __now = await deps.Clock.now(); __state.c[k] = { v: Some(v), exp: __now + 300000 }; return undefined; })();
+      const __r0 = await (async () => { const __now = await deps.Clock.now(); Object.defineProperty(__state.c, k, { value: { v: Some(v), exp: __now + 300000 }, writable: true, enumerable: true, configurable: true }); return undefined; })();
       return undefined;
     })();
     await this.commitState(__state);
@@ -536,7 +536,7 @@ export class Memo {
 
   async get(k: string, deps: { Clock: Clock }): Promise<Option<Option<number>>> {
     const __state = await this.loadState();
-    const v = await (async () => { const __now = await deps.Clock.now(); const __k = k; return ((__k in __state.c) && __state.c[__k].exp > __now) ? Some(__state.c[__k].v) : None; })();
+    const v = await (async () => { const __now = await deps.Clock.now(); const __k = k; return (Object.hasOwn(__state.c, __k) && __state.c[__k].exp > __now) ? Some(__state.c[__k].v) : None; })();
     return v;
   }
 

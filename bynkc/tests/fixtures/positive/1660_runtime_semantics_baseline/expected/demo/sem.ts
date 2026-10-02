@@ -317,7 +317,7 @@ export class Bag {
   async add(k: string, deps: {}): Promise<void> {
     const __state = { ...(await this.loadState()) };
     const __result = await (async () => {
-      await ((__state.items[k] = 1), undefined);
+      await (Object.defineProperty(__state.items, k, { value: 1, writable: true, enumerable: true, configurable: true }), undefined);
       return undefined;
     })();
     await this.commitState(__state);
@@ -332,7 +332,7 @@ export class Bag {
 
   async has(k: string, deps: {}): Promise<boolean> {
     const __state = await this.loadState();
-    const r = await (() => { const __k = k; return (__k in __state.items) ? Some(__state.items[__k]) : None; })();
+    const r = await (() => { const __k = k; return Object.hasOwn(__state.items, __k) ? Some(__state.items[__k]) : None; })();
     return (r.tag === "Some");
   }
 

@@ -1,0 +1,174 @@
+---
+#1685: a store collection is a map over arbitrary `String` keys, and its keys
+often come from request input. Its runtime form is a plain object, so before
+#1685 a `__proto__` write was dropped (or reassigned the prototype) and an
+inherited name such as `constructor` read as present. Each agent here is driven
+with those keys by the suite.
+---
+context demo.keys
+
+type Pt = { x: Int, y: Int }
+
+type Entry = { id: String, tag: String }
+
+type Line = { orderId: String, qty: Int }
+
+type Order = { id: String, customer: String }
+
+type Total = { orderId: String, total: Int }
+
+capability Clock {
+  fn now() -> Effect[Instant]
+}
+
+provides Clock = FixedClock {
+  fn now() -> Effect[Instant] {
+    Instant.fromEpochMillis(0)
+  }
+}
+
+agent Bag {
+  key id: String
+  store items: Map[String, Int]
+
+  on call put(k: String, v: Int) -> Effect[()] {
+    let _ <- items.put(k, v)
+    ()
+  }
+  on call get(k: String) -> Effect[Option[Int]] {
+    let r <- items.get(k)
+    r
+  }
+  on call has(k: String) -> Effect[Bool] {
+    let r <- items.contains(k)
+    r
+  }
+  on call count() -> Effect[Int] {
+    let n <- items.size()
+    n
+  }
+  on call drop(k: String) -> Effect[()] {
+    let _ <- items.remove(k)
+    ()
+  }
+  on call bump(k: String) -> Effect[()] {
+    let _ <- items.upsert(k, 0, (n) => n + 1)
+    ()
+  }
+  on call add10(k: String) -> Effect[()] {
+    let _ <- items.update(k, (n) => n + 10)
+    ()
+  }
+}
+
+agent Points {
+  key id: String
+  store pts: Map[String, Pt]
+
+  on call put(k: String, x: Int) -> Effect[()] {
+    let _ <- pts.put(k, Pt { x: x, y: 0 })
+    ()
+  }
+  on call count() -> Effect[Int] {
+    let n <- pts.size()
+    n
+  }
+  on call has(k: String) -> Effect[Bool] {
+    let r <- pts.contains(k)
+    r
+  }
+}
+
+agent Tags {
+  key id: String
+  store tags: Set[String]
+
+  on call add(k: String) -> Effect[()] {
+    let _ <- tags.add(k)
+    ()
+  }
+  on call has(k: String) -> Effect[Bool] {
+    let r <- tags.contains(k)
+    r
+  }
+  on call count() -> Effect[Int] {
+    let n <- tags.size()
+    n
+  }
+  on call drop(k: String) -> Effect[()] {
+    let _ <- tags.remove(k)
+    ()
+  }
+}
+
+agent Memo {
+  key id: String
+  store c: Cache[String, Int] @ttl(5.minutes)
+
+  on call put(k: String, v: Int) -> Effect[()] given Clock {
+    let _ <- c.put(k, v)
+    ()
+  }
+  on call get(k: String) -> Effect[Option[Int]] given Clock {
+    let r <- c.get(k)
+    r
+  }
+  on call has(k: String) -> Effect[Bool] given Clock {
+    let r <- c.contains(k)
+    r
+  }
+  on call count() -> Effect[Int] given Clock {
+    let n <- c.size()
+    n
+  }
+  on call drop(k: String) -> Effect[()] {
+    let _ <- c.remove(k)
+    ()
+  }
+  on call add10(k: String) -> Effect[()] given Clock {
+    let _ <- c.update(k, (n) => n + 10)
+    ()
+  }
+}
+
+agent Ledger {
+  key id: String
+  store entries: Map[String, Entry] @indexed(by: tag)
+
+  on call add(id: String, tag: String) -> Effect[()] {
+    let _ <- entries.put(id, Entry { id: id, tag: tag })
+    ()
+  }
+  on call drop(id: String) -> Effect[()] {
+    let _ <- entries.remove(id)
+    ()
+  }
+  on call retag(id: String, tag: String) -> Effect[()] {
+    let _ <- entries.update(id, (e) => Entry { ...e, tag: tag })
+    ()
+  }
+  on call countTag(tag: String) -> Effect[Int] {
+    entries.filter((e) => e.tag == tag).count()
+  }
+}
+
+agent Sales {
+  key id: String
+  store orders: Map[String, Order]
+  store lines: Map[String, Line]
+
+  on call order(id: String, customer: String) -> Effect[()] {
+    let _ <- orders.put(id, Order { id: id, customer: customer })
+    ()
+  }
+  on call line(k: String, orderId: String, qty: Int) -> Effect[()] {
+    let _ <- lines.put(k, Line { orderId: orderId, qty: qty })
+    ()
+  }
+  on call totals() -> Effect[List[Total]] {
+    lines.groupBy((l) => l.orderId, (oid, rows) => Total { orderId: oid, total: rows.sum((r) => r.qty) }).collect()
+  }
+  on call joined() -> Effect[Int] {
+    lines.joinOn(orders, (l) => l.orderId, (o) => o.id, (l, o) => l.qty).count()
+  }
+}

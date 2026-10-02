@@ -1169,3 +1169,99 @@ console.log("ALL OK");
 fn agent_state_keeps_unknown_keys_and_defaults_missing_fields() {
     verify("state_shape", STATE_SHAPE_SOURCE, STATE_SHAPE_DRIVER_TS);
 }
+
+// #1685: `update` on a key the collection does not hold faults, including a key
+// named after an `Object.prototype` member. Before #1685 the `in` check read
+// `constructor` as present, so `update("constructor", f)` ran `f` over the
+// inherited `Object` function and stored the result. A suite cannot assert a
+// fault, so the driver catches it here. All three `update` lowerings (store
+// `Map`, `Cache`, `@indexed` map) are covered, since each writes with a plain
+// set that is sound only behind its own-key check.
+const UPDATE_ABSENT_SOURCE: &str = "context shop\n\
+\n\
+capability Clock {\n\
+\x20 fn now() -> Effect[Int]\n\
+}\n\
+\n\
+provides Clock = SystemClock {\n\
+\x20 fn now() -> Effect[Int] {\n\
+\x20   0\n\
+\x20 }\n\
+}\n\
+\n\
+type Entry = { id: String, tag: String }\n\
+\n\
+agent Keys {\n\
+\x20 key id: String\n\
+\x20 store items: Map[String, Int]\n\
+\x20 store live: Cache[String, Int] @ttl(1.minutes)\n\
+\x20 store entries: Map[String, Entry] @indexed(by: tag)\n\
+\n\
+\x20 on call bumpItem(k: String) -> Effect[()] {\n\
+\x20   let _ <- items.update(k, (n) => n + 1)\n\
+\x20   Effect.pure(())\n\
+\x20 }\n\
+\x20 on call bumpLive(k: String) -> Effect[()] given Clock {\n\
+\x20   let _ <- live.update(k, (n) => n + 1)\n\
+\x20   Effect.pure(())\n\
+\x20 }\n\
+\x20 on call retag(k: String, t: String) -> Effect[()] {\n\
+\x20   let _ <- entries.update(k, (e) => Entry { ...e, tag: t })\n\
+\x20   Effect.pure(())\n\
+\x20 }\n\
+\x20 on call itemCount() -> Effect[Int] {\n\
+\x20   let n <- items.size()\n\
+\x20   Effect.pure(n)\n\
+\x20 }\n\
+}\n";
+
+const UPDATE_ABSENT_DRIVER_TS: &str = r#"
+import { Keys } from "./shop.js";
+
+function assert(cond: boolean, msg: string): void {
+  if (!cond) {
+    throw new Error(`assertion failed: ${msg}`);
+  }
+}
+
+function fakeState() {
+  const m = new Map<string, unknown>();
+  return {
+    storage: {
+      async get(key: string): Promise<unknown> { return structuredClone(m.get(key)); },
+      async put(key: string, value: unknown): Promise<void> { m.set(key, structuredClone(value)); },
+    },
+  };
+}
+
+const deps = { Clock: { now: async (): Promise<number> => 1_000_000 } };
+
+async function faultsAbsent(label: string, run: () => Promise<unknown>): Promise<void> {
+  let message = "";
+  try {
+    await run();
+  } catch (e) {
+    message = String((e as { message?: string }).message ?? e);
+  }
+  assert(message.includes("key absent"), `${label} faults as key-absent, got: ${message || "no fault"}`);
+}
+
+const k = new Keys(fakeState() as never);
+for (const name of ["constructor", "toString", "__proto__"]) {
+  await faultsAbsent(`Map.update("${name}")`, () => k.bumpItem(name, {}));
+  await faultsAbsent(`Cache.update("${name}")`, () => k.bumpLive(name, deps));
+  await faultsAbsent(`indexed update("${name}")`, () => k.retag(name, "t", {}));
+}
+assert((await k.itemCount({})) === 0, "a faulted update stores nothing");
+
+console.log("ALL OK");
+"#;
+
+#[test]
+fn update_on_a_prototype_named_absent_key_faults() {
+    verify(
+        "update_absent",
+        UPDATE_ABSENT_SOURCE,
+        UPDATE_ABSENT_DRIVER_TS,
+    );
+}

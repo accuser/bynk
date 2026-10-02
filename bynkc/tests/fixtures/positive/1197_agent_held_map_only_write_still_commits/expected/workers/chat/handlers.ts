@@ -78,7 +78,7 @@ export class Room {
   async track(u: UserId, conn: Connection<ServerFrame>, deps: {}): Promise<void> {
     const __state = { ...(await this.loadState()) };
     const __result = await (async () => {
-      const __r0 = await ((__state.conns[String(u)] = connIdOf(conn)), undefined);
+      const __r0 = await (Object.defineProperty(__state.conns, String(u), { value: connIdOf(conn), writable: true, enumerable: true, configurable: true }), undefined);
       return undefined;
     })();
     await this.commitState(__state);

@@ -39,7 +39,7 @@ export class Audience {
   async join(who: string, deps: {}): Promise<void> {
     const __state = { ...(await this.loadState()) };
     const __result = await (async () => {
-      const __r0 = await ((__state.members[who] = true), undefined);
+      const __r0 = await (Object.defineProperty(__state.members, who, { value: true, writable: true, enumerable: true, configurable: true }), undefined);
       return undefined;
     })();
     await this.commitState(__state);
@@ -58,7 +58,7 @@ export class Audience {
 
   async isMember(who: string, deps: {}): Promise<boolean> {
     const __state = await this.loadState();
-    const here = await ((who) in __state.members);
+    const here = await Object.hasOwn(__state.members, who);
     return here;
   }
 

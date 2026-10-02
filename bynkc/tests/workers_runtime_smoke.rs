@@ -162,7 +162,9 @@ fn hello_world_serves_on_workerd() {
 /// serialisation, a fresh copy on every `get`) proves the wire-shape encode and
 /// decode end to end. One request writes an enum and an `Option`; a later
 /// request, which reloads state from storage, reads both back. Before #1649 that
-/// read faulted with `RehydrationViolation`.
+/// read faulted with `RehydrationViolation`. #1685: the same requests write a
+/// store `Map` entry under the key `__proto__`, which must come back as an own
+/// entry through workerd's V8 serialisation.
 const AGENT_STATE_SOURCE: &str = r#"context smoke
 
 type Light = enum { Red, Green }
@@ -171,10 +173,23 @@ agent Lamp {
   key id: String
   store light: Cell[Light] = Red
   store reading: Cell[Option[Int]]
+  store tags: Map[String, Int]
 
   on call turnGreen() -> Effect[()] { light := Green }
   on call isGreen() -> Effect[Bool] { light == Green }
   on call note(n: Int) -> Effect[()] { reading := Some(n) }
+  on call tag(k: String) -> Effect[()] {
+    let _ <- tags.put(k, 1)
+    ()
+  }
+  on call tagCount() -> Effect[Int] {
+    let n <- tags.size()
+    n
+  }
+  on call hasTag(k: String) -> Effect[Bool] {
+    let r <- tags.contains(k)
+    r
+  }
   on call lastReading() -> Effect[Int] {
     match reading {
       Some(n) => n
@@ -191,13 +206,17 @@ service api from http {
   on GET("/set") () -> Effect[HttpResult[String]] by v: Visitor {
     do Lamp("k").turnGreen()
     do Lamp("k").note(7)
+    do Lamp("k").tag("__proto__")
     Ok("set")
   }
 
   on GET("/get") () -> Effect[HttpResult[String]] by v: Visitor {
     let green <- Lamp("k").isGreen()
     let n <- Lamp("k").lastReading()
-    Ok("green=\(green) reading=\(n)")
+    let t <- Lamp("k").tagCount()
+    let p <- Lamp("k").hasTag("__proto__")
+    let c <- Lamp("k").hasTag("constructor")
+    Ok("green=\(green) reading=\(n) tags=\(t) proto=\(p) ctor=\(c)")
   }
 }
 "#;
@@ -287,15 +306,16 @@ fn agent_state_round_trips_on_workerd() {
 
     let before = fetch(&url, "/get").expect("GET /get before any write");
     assert!(
-        before.contains("green=false reading=0"),
+        before.contains("green=false reading=0 tags=0 proto=false ctor=false"),
         "a fresh key reads its zero values: {before}"
     );
     let set = fetch(&url, "/set").expect("GET /set writes the agent's state");
     assert!(set.contains("set"), "unexpected /set body: {set}");
     let after = fetch(&url, "/get").expect("GET /get reloads the written state");
     assert!(
-        after.contains("green=true reading=7"),
-        "the enum and Option written by /set must read back after a reload: {after}"
+        after.contains("green=true reading=7 tags=1 proto=true ctor=false"),
+        "the enum, Option and `__proto__` map entry written by /set must read back \
+         after a reload: {after}"
     );
 
     drop(child);

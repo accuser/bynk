@@ -48,7 +48,7 @@ export class Cart {
   async add(sku: string, it: Item, deps: {}): Promise<void> {
     const __state = { ...(await this.loadState()) };
     const __result = await (async () => {
-      const __r0 = await ((__state.items[sku] = it), undefined);
+      const __r0 = await (Object.defineProperty(__state.items, sku, { value: it, writable: true, enumerable: true, configurable: true }), undefined);
       return undefined;
     })();
     await this.commitState(__state);
@@ -57,14 +57,14 @@ export class Cart {
 
   async lookup(sku: string, deps: {}): Promise<Option<Item>> {
     const __state = await this.loadState();
-    const found = await (() => { const __k = sku; return (__k in __state.items) ? Some(__state.items[__k]) : None; })();
+    const found = await (() => { const __k = sku; return Object.hasOwn(__state.items, __k) ? Some(__state.items[__k]) : None; })();
     return found;
   }
 
   async bump(sku: string, deps: {}): Promise<void> {
     const __state = { ...(await this.loadState()) };
     const __result = await (async () => {
-      const __r0 = await (() => { const __k = sku; if (!(__k in __state.items)) { throw new Error("Map.update: key absent"); } __state.items[__k] = ((i) => ({ ...i, qty: i.qty + 1 }))(__state.items[__k]); return undefined; })();
+      const __r0 = await (() => { const __k = sku; if (!Object.hasOwn(__state.items, __k)) { throw new Error("Map.update: key absent"); } __state.items[__k] = ((i) => ({ ...i, qty: i.qty + 1 }))(__state.items[__k]); return undefined; })();
       return undefined;
     })();
     await this.commitState(__state);

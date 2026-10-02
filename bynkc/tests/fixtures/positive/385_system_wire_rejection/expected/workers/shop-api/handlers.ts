@@ -72,7 +72,7 @@ export class Cart {
   async add(item: Item, deps: {}): Promise<Item> {
     const __state = { ...(await this.loadState()) };
     const __result = await (async () => {
-      const __r0 = await ((__state.items[item.sku] = item), undefined);
+      const __r0 = await (Object.defineProperty(__state.items, item.sku, { value: item, writable: true, enumerable: true, configurable: true }), undefined);
       return item;
     })();
     await this.commitState(__state);

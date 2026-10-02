@@ -46,7 +46,7 @@ export class Room {
   async join(u: string, conn: Connection<ServerFrame>, deps: {}): Promise<void> {
     const __state = { ...(await this.loadState()) };
     const __result = await (async () => {
-      const __r0 = await ((__state.conns[String(u)] = connIdOf(conn)), undefined);
+      const __r0 = await (Object.defineProperty(__state.conns, String(u), { value: connIdOf(conn), writable: true, enumerable: true, configurable: true }), undefined);
       return undefined;
     })();
     await this.commitState(__state);
@@ -63,7 +63,7 @@ export class Room {
   async leave(u: string, deps: {}): Promise<void> {
     const __state = { ...(await this.loadState()) };
     const __result = await (async () => {
-      const __r0 = await (async () => { const __k = String(u); const __cid = __state.conns[__k]; if (__cid !== undefined) { const __c = resolveConnection<ServerFrame>(this.state, __cid); if (__c.tag === "Some") { await __c.value.close(); } delete __state.conns[__k]; } return undefined; })();
+      const __r0 = await (async () => { const __k = String(u); const __cid = Object.hasOwn(__state.conns, __k) ? __state.conns[__k] : undefined; if (__cid !== undefined) { const __c = resolveConnection<ServerFrame>(this.state, __cid); if (__c.tag === "Some") { await __c.value.close(); } delete __state.conns[__k]; } return undefined; })();
       return undefined;
     })();
     await this.commitState(__state);

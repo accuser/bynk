@@ -1,0 +1,129 @@
+---
+#1685: prototype-named keys behave like any other key.
+---
+suite demo.keys
+
+case "a store Map stores, reads, counts and removes prototype-named keys" {
+  do Bag("m").put("__proto__", 1)
+  do Bag("m").put("constructor", 2)
+  do Bag("m").put("toString", 3)
+  let n <- Bag("m").count()
+  expect n == 3
+  let p <- Bag("m").get("__proto__")
+  expect p == Some(1)
+  let c <- Bag("m").get("constructor")
+  expect c == Some(2)
+  do Bag("m").drop("__proto__")
+  let n2 <- Bag("m").count()
+  expect n2 == 2
+  let gone <- Bag("m").has("__proto__")
+  expect gone == false
+}
+
+case "a store Map has no inherited keys" {
+  let c <- Bag("empty").has("constructor")
+  expect c == false
+  let t <- Bag("empty").get("toString")
+  expect !t.isSome()
+  let p <- Bag("empty").has("__proto__")
+  expect p == false
+  let n <- Bag("empty").count()
+  expect n == 0
+}
+
+case "upsert on an inherited name starts from the default" {
+  do Bag("u").bump("constructor")
+  do Bag("u").bump("__proto__")
+  let c <- Bag("u").get("constructor")
+  expect c == Some(1)
+  let p <- Bag("u").get("__proto__")
+  expect p == Some(1)
+}
+
+case "an object value under __proto__ adds no phantom keys" {
+  do Points("o").put("__proto__", 7)
+  let n <- Points("o").count()
+  expect n == 1
+  let x <- Points("o").has("x")
+  expect x == false
+}
+
+case "a store Set handles prototype-named members" {
+  let before <- Tags("s").has("constructor")
+  expect before == false
+  do Tags("s").add("__proto__")
+  do Tags("s").add("constructor")
+  let n <- Tags("s").count()
+  expect n == 2
+  let p <- Tags("s").has("__proto__")
+  expect p
+  do Tags("s").drop("constructor")
+  let n2 <- Tags("s").count()
+  expect n2 == 1
+}
+
+case "a store Cache handles prototype-named keys" {
+  let before <- Memo("c").has("toString")
+  expect before == false
+  do Memo("c").put("__proto__", 4)
+  do Memo("c").put("toString", 5)
+  let n <- Memo("c").count()
+  expect n == 2
+  let p <- Memo("c").get("__proto__")
+  expect p == Some(4)
+  do Memo("c").drop("__proto__")
+  let n2 <- Memo("c").count()
+  expect n2 == 1
+}
+
+case "an @indexed map indexes prototype-named field values" {
+  let none <- Ledger("i").countTag("constructor")
+  expect none == 0
+  do Ledger("i").add("a", "constructor")
+  do Ledger("i").add("b", "__proto__")
+  do Ledger("i").add("c", "__proto__")
+  let c <- Ledger("i").countTag("constructor")
+  expect c == 1
+  let p <- Ledger("i").countTag("__proto__")
+  expect p == 2
+  do Ledger("i").drop("b")
+  let p2 <- Ledger("i").countTag("__proto__")
+  expect p2 == 1
+}
+
+case "groupBy and joinOn group by prototype-named keys" {
+  do Sales("q").order("constructor", "ann")
+  do Sales("q").line("l1", "constructor", 2)
+  do Sales("q").line("l2", "constructor", 3)
+  do Sales("q").line("l3", "__proto__", 4)
+  let ts <- Sales("q").totals()
+  expect ts == [Total { orderId: "constructor", total: 5 }, Total { orderId: "__proto__", total: 4 }]
+  let j <- Sales("q").joined()
+  expect j == 2
+}
+
+-- `update` writes with a plain set after its own-key check; once `__proto__` is
+-- an own data property, the set updates it rather than hitting the accessor.
+case "update rewrites an existing __proto__ entry in place" {
+  do Bag("up").put("__proto__", 1)
+  do Bag("up").add10("__proto__")
+  let p <- Bag("up").get("__proto__")
+  expect p == Some(11)
+  let n <- Bag("up").count()
+  expect n == 1
+  do Memo("up").put("__proto__", 1)
+  do Memo("up").add10("__proto__")
+  let m <- Memo("up").get("__proto__")
+  expect m == Some(11)
+  let mn <- Memo("up").count()
+  expect mn == 1
+}
+
+case "an @indexed update re-indexes a __proto__ entry" {
+  do Ledger("up").add("__proto__", "constructor")
+  do Ledger("up").retag("__proto__", "__proto__")
+  let c <- Ledger("up").countTag("constructor")
+  expect c == 0
+  let p <- Ledger("up").countTag("__proto__")
+  expect p == 1
+}
