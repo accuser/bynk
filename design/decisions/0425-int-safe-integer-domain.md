@@ -1,11 +1,6 @@
----
-level: minor
-changelog: "An `Int` is a JS **safe integer**, ±(2^53 − 1), at every entry point (#1657). An integer literal past 2^53 − 1 is `bynk.lex.integer_overflow`; it was accepted up to the 64-bit range and rounded, so `9007199254740993 == 9007199254740992`. The JSON boundary rejects a number that isn't a safe integer (`1e300`) on decode, and faults instead of writing `null` when encoding an `Int` that isn't one, so a state commit of such a value is refused with nothing persisted. `Int.parse` and `Float.parse` take a strict full-string decimal grammar: `\" 7 \"`, `\"0x10\"` and `\"0b11\"` are `None`, and for `Int` so are `\"1e3\"` and `\"5.\"`; a leading `+` is accepted, and `\"-0\"` parses as `0`. `Int` division by zero is a runtime fault instead of `Infinity`/`NaN`, and `round`/`floor`/`ceil`/`truncate` fault when the result isn't a safe integer. A WebSocket `on open` parameter must be constructible from `String` (`bynk.service.websocket_param_not_stringy`); an `Int` there was a query-string value cast `as number`, so `room + 1` gave `\"51\"`. Overflow in `+ - *` stays documented imprecision. An agent whose stored state holds an `Int` outside the range now faults with `RehydrationViolation` on load, and must have that value corrected or its storage cleared once."
----
+# 0425 — `Int` is the JS safe-integer domain, enforced at every entry
 
-## ADR: int-safe-integer-domain
-title: `Int` is the JS safe-integer domain, enforced at every entry
-summary: Literals, the wire (both directions), Int.parse, division by zero and Float→Int conversions all hold an Int to ±(2^53 − 1)
+- **Status:** Accepted (v0.295)
 
 **Context.** No document defined what an `Int` is, and the language's entry points
 disagreed:
