@@ -1,0 +1,19 @@
+context a
+
+agent Counter {
+  key id: String
+  store n: Cell[Int] = 0
+  on call bump() -> Effect[()] { n.update((x) => x + 1) }
+  on call get() -> Effect[Int] { n }
+}
+
+type Box[T] = { item: T }
+
+-- #1658: a plain `let` builds the effect; it runs eagerly and unawaited.
+service s {
+  on call() -> Effect[Int] {
+    let e = Counter("k").bump()
+    let v <- Counter("k").get()
+    Effect.pure(v)
+  }
+}

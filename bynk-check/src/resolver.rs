@@ -602,16 +602,19 @@ pub fn resolve(commons: Commons) -> Result<ResolvedCommons, Vec<CompileError>> {
             CommonsItem::Fn(f) => {
                 check_fn_refs(f, &types, &fns, &methods, &mut sinks);
             }
-            // v0.5 items are resolved via a separate context-level pass.
+            // v0.5 items' bodies are resolved via a separate context-level
+            // pass; their signatures here (#1679).
             CommonsItem::Capability(_)
-            | CommonsItem::Provider(_)
             | CommonsItem::Service(_)
             | CommonsItem::Agent(_)
-            | CommonsItem::Actor(_)
+            | CommonsItem::Provider(_)
+            | CommonsItem::Actor(_) => {
+                check_signature_refs(item, &types, &mut sinks);
+            }
             // `messages` entries are plain string literals with no type refs
             // to resolve here; commons-only legality and the reference/
             // duplicate-code checks live in bynk-emit's project validation.
-            | CommonsItem::Messages(_) => {}
+            CommonsItem::Messages(_) => {}
         }
     }
 
@@ -688,14 +691,16 @@ pub fn resolve_file_record(
                 );
             }
             CommonsItem::Capability(_)
-            | CommonsItem::Provider(_)
             | CommonsItem::Service(_)
             | CommonsItem::Agent(_)
-            | CommonsItem::Actor(_)
+            | CommonsItem::Provider(_)
+            | CommonsItem::Actor(_) => {
+                check_signature_refs(item, &resolved.types, &mut sinks);
+            }
             // `messages` entries are plain string literals with no type refs
             // to resolve here; commons-only legality and the reference/
             // duplicate-code checks live in bynk-emit's project validation.
-            | CommonsItem::Messages(_) => {}
+            CommonsItem::Messages(_) => {}
         }
         sinks.refs.clear_owner();
     }
@@ -703,6 +708,95 @@ pub fn resolve_file_record(
         Ok(())
     } else {
         Err(errors)
+    }
+}
+
+/// #1679 (runtime-semantics track S12): every type named in a handler or
+/// capability **signature** must resolve, exactly as in a `fn` signature
+/// (`bynk.resolve.unknown_type`). Their bodies are resolved by the
+/// context-level pass, but nothing walked the signatures, so `on call(v:
+/// Bogus)` and `Effect[Unit]` (Bynk's unit is `()`) were accepted and the
+/// emitter wrote a `/* unknown */` placeholder. Covered:
+/// - service and agent handler parameters and return types;
+/// - an agent's key type and its `store` fields' kind arguments
+///   (`Cell[T]`, `Map[K, V]`, …);
+/// - capability operation parameters and return types, with the operation's
+///   own type parameters in scope;
+/// - a service header's types: a `from websocket(in: …, out: …)` frame pair
+///   and a `from events(…)` event type;
+/// - provider operation parameters and return types;
+/// - an actor's `identity` type.
+fn check_signature_refs(
+    item: &CommonsItem,
+    types: &HashMap<String, Arc<TypeDecl>>,
+    sinks: &mut Sinks,
+) {
+    let handler = |h: &Handler, sinks: &mut Sinks| {
+        for p in &h.params {
+            check_type_ref_resolves(&p.type_ref, types, sinks);
+        }
+        check_type_ref_resolves(&h.return_type, types, sinks);
+    };
+    match item {
+        CommonsItem::Service(s) => {
+            match &s.protocol {
+                ServiceProtocol::WebSocket { in_type, out_type } => {
+                    check_type_ref_resolves(in_type, types, sinks);
+                    check_type_ref_resolves(out_type, types, sinks);
+                }
+                ServiceProtocol::Events { event_type, .. } => {
+                    check_type_ref_resolves(event_type, types, sinks);
+                }
+                ServiceProtocol::Call
+                | ServiceProtocol::Http
+                | ServiceProtocol::Cron
+                | ServiceProtocol::Queue { .. } => {}
+            }
+            for h in &s.handlers {
+                handler(h, sinks);
+            }
+        }
+        CommonsItem::Provider(p) => {
+            for op in &p.ops {
+                for param in &op.params {
+                    check_type_ref_resolves(&param.type_ref, types, sinks);
+                }
+                check_type_ref_resolves(&op.return_type, types, sinks);
+            }
+        }
+        CommonsItem::Actor(a) => {
+            if let Some(identity) = &a.identity {
+                check_type_ref_resolves(identity, types, sinks);
+            }
+        }
+        CommonsItem::Agent(a) => {
+            check_type_ref_resolves(&a.key_type, types, sinks);
+            for f in &a.store_fields {
+                for arg in &f.kind.args {
+                    check_type_ref_resolves(arg, types, sinks);
+                }
+            }
+            for h in &a.handlers {
+                handler(h, sinks);
+            }
+        }
+        CommonsItem::Capability(c) => {
+            for op in &c.ops {
+                let type_params: HashSet<String> = op
+                    .type_params
+                    .iter()
+                    .map(|tp| tp.name.name.clone())
+                    .collect();
+                for p in &op.params {
+                    check_type_ref_resolves_in(&p.type_ref, types, &type_params, sinks);
+                }
+                check_type_ref_resolves_in(&op.return_type, types, &type_params, sinks);
+            }
+        }
+        CommonsItem::Type(_)
+        | CommonsItem::Event(_)
+        | CommonsItem::Fn(_)
+        | CommonsItem::Messages(_) => {}
     }
 }
 

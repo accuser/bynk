@@ -1,0 +1,8 @@
+context a
+
+-- #1679: an agent store field's kind argument resolves.
+agent Box {
+  key id: String
+  store n: Cell[Nostore] = 0
+  on call get() -> Effect[Int] { 1 }
+}

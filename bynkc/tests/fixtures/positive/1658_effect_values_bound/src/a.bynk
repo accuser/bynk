@@ -1,0 +1,31 @@
+---
+#1658: the legal ways to use an `Effect` value in an effectful body. Each one
+is awaited in order: bound with `<-`, sequenced with `do`, returned as the
+body's value, or passed to a parameter typed `Effect[T]` (whose body binds
+it). Only a value built and abandoned (`let e = …`, a list element, a
+constructor payload) is `bynk.effect.unbound_effect`.
+---
+context a
+
+agent Counter {
+  key id: String
+  store n: Cell[Int] = 0
+  on call bump() -> Effect[()] { n.update((x) => x + 1) }
+  on call get() -> Effect[Int] { n }
+}
+
+fn twice(e: Effect[Int]) -> Effect[Int] {
+  let v <- e
+  Effect.pure(v * 2)
+}
+
+service s {
+  on call() -> Effect[Int] {
+    do Counter("k").bump()
+    let a <- Counter("k").get()
+    let b <- twice(Counter("k").get())
+    let xs = [a, b]
+    let o = Some(a)
+    Counter("k").get()
+  }
+}

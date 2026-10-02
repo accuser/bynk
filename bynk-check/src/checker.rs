@@ -2998,6 +2998,7 @@ pub(crate) fn type_of_block(block: &Block, expected: Option<TyId>, ctx: &mut Ctx
                     r
                 });
                 let rhs_ty = type_of(&l.value, annot_ty, ctx);
+                check_unbound_effects(&l.value, false, ctx);
                 let final_ty = match (annot_ty, rhs_ty) {
                     (Some(annot), Some(rhs)) => {
                         if !compatible(rhs, annot, tys) {
@@ -3081,6 +3082,7 @@ pub(crate) fn type_of_block(block: &Block, expected: Option<TyId>, ctx: &mut Ctx
                 // The expected type for the RHS is `Effect[annot]` if annot present.
                 let rhs_expected = annot_ty.map(|t| tys.intern(Ty::Effect(t)));
                 let rhs_ty = type_of(&l.value, rhs_expected, ctx);
+                check_unbound_effects(&l.value, true, ctx);
                 // v0.182 (#664): validate the call-site principal against the
                 // addressed handler — including the *absent* case, where an
                 // identity-carrying handler driven with no `by` would silently
@@ -3258,6 +3260,7 @@ pub(crate) fn type_of_block(block: &Block, expected: Option<TyId>, ctx: &mut Ctx
                 let unit = tys.intern(Ty::Unit);
                 let expected = tys.intern(Ty::Effect(unit));
                 let rhs_ty = type_of(&d.value, Some(expected), ctx);
+                check_unbound_effects(&d.value, true, ctx);
                 match rhs_ty.map(|t| tys.get(t)).as_deref() {
                     Some(Ty::Effect(inner)) if *inner == unit => {}
                     Some(Ty::Effect(inner)) => {
@@ -3362,6 +3365,7 @@ pub(crate) fn type_of_block(block: &Block, expected: Option<TyId>, ctx: &mut Ctx
         }
     }
     let ty = type_of(&block.tail, expected, ctx);
+    check_unbound_effects(&block.tail, true, ctx);
     let ty = maybe_auto_lift(ty, expected, tys);
     // T3.4: this block previously wrote its own auto-lifted type into
     // `expr_types` at `block.span` (bug #844's era — recording it only when
@@ -4005,6 +4009,81 @@ pub(crate) fn type_of(expr: &Expr, expected: Option<TyId>, ctx: &mut Ctx) -> Opt
         },
     );
     ty
+}
+
+/// #1658 (runtime-semantics track S9): an `Effect[T]` value in an effectful
+/// body must be bound (`<-`), sequenced (`do`), returned (the block's tail),
+/// or handed to something that takes an `Effect`. The emitter translates an
+/// effectful call to an eager `Promise`, so a call that is *built* but not
+/// bound still runs, unawaited, racing everything after it: `let e =
+/// Counter("k").bump()` performed the write with no diagnostic. This flags the
+/// value positions where an `Effect` can only be built and abandoned:
+/// - the right-hand side of a plain `let` (`allowed == false` at the root),
+///   including `let _ = …`;
+/// - a list literal's element. No API takes a `List[Effect[T]]`, and a list's
+///   element type is inferred from its elements, so it cannot vouch for them;
+/// - the payload of `Some`/`Ok`/`Err`, a sum-variant constructor, or a record
+///   field.
+///
+/// It does not descend into call arguments, receivers, lambdas or nested
+/// blocks: an argument is the higher-order use the language keeps (its
+/// parameter decides), and nested blocks are checked as blocks. Pure bodies
+/// are untouched: effectful calls are already rejected there.
+fn check_unbound_effects(e: &Expr, allowed: bool, ctx: &mut Ctx) {
+    if !ctx.effectful {
+        return;
+    }
+    let tys = ctx.tys;
+    let ty_of = |e: &Expr, ctx: &Ctx| ctx.expr_types.get(&e.id).map(|t| t.ty);
+    let is_effect = |t: Option<TyId>| t.is_some_and(|t| matches!(&*tys.get(t), Ty::Effect(_)));
+    if !allowed && is_effect(ty_of(e, ctx)) {
+        ctx.errors.push(
+            CompileError::new(
+                "bynk.effect.unbound_effect",
+                e.span,
+                "this `Effect` is started here and never awaited — it runs eagerly, out of order with everything after it",
+            )
+            .with_note(
+                "bind its result with `let x <- …`, run it for its effect with `do …`, or return it as the body's value",
+            ),
+        );
+        return;
+    }
+    match &e.kind {
+        ExprKind::Paren(inner) => check_unbound_effects(inner, allowed, ctx),
+        ExprKind::Some(x) | ExprKind::Ok(x) | ExprKind::Err(x) => {
+            check_unbound_effects(x, false, ctx);
+        }
+        ExprKind::ListLit(args) => {
+            for a in args {
+                check_unbound_effects(a, false, ctx);
+            }
+        }
+        // A variant constructor in every spelling: `Loaded(x)` is a `Call`;
+        // the qualified `ApiResult.Loaded(x)` parses as a `MethodCall` on the
+        // type name, or a `ConstructorCall`. All resolve to `Callee::Ctor` on
+        // their own expression (review of #1694).
+        ExprKind::Call { args, .. }
+        | ExprKind::MethodCall { args, .. }
+        | ExprKind::ConstructorCall { args, .. }
+            if matches!(ctx.callees.get(&e.id), Some(Callee::Ctor { .. })) =>
+        {
+            for a in args {
+                check_unbound_effects(a, false, ctx);
+            }
+        }
+        ExprKind::RecordConstruction { fields, .. }
+        | ExprKind::RecordSpread {
+            overrides: fields, ..
+        } => {
+            for f in fields {
+                if let Some(v) = &f.value {
+                    check_unbound_effects(v, false, ctx);
+                }
+            }
+        }
+        _ => {}
+    }
 }
 
 // ==== Peel helpers (unwrap Effect / Result / Option / List / Map) ====
