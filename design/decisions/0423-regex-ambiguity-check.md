@@ -1,11 +1,6 @@
----
-level: minor
-changelog: "A `Matches` pattern must now be **safe to backtrack** (#1651). The `catastrophic_regex` guard caught only nested quantifiers (`(a+)+`). Ambiguous alternation (`(a|a)+`, `(\\d|\\d\\d)+`, `(a|aa)*`) a bounded repeat inside a loop (`(a{1,2})+`, `(a{2,3})+`) and a bounded repeat of an ambiguous body (`(?:a|a){0,24}`) passed, though each is exponential on request input: `(a|a)+` took 25.6 s on a 29-character path segment. The compiler now decides ambiguity on the pattern's automaton. Exponential ambiguity, and a pattern it cannot bound (a backreference inside an unbounded repeat, an unbounded repeat over a body that can match nothing, or a pattern too large to analyse), are `bynk.types.catastrophic_regex` errors. Polynomial ambiguity (`\\d*\\d*`) is the new `bynk.types.polynomial_regex` error, or the new `bynk.types.polynomial_regex_capped` **warning** when the refinement also has a `MaxLength` or `Length` predicate small enough for the polynomial's degree (`bound^degree` at most 10⁷: 3,162 characters at degree 2, 215 at degree 3). Length predicates are now checked **before** `Matches` at runtime wherever they are written, so such a bound caps the cost. That changes which failure a value failing both reports: the length one. `(foo|foobar)+` is unambiguous and still accepted. Of every `Matches` pattern in the repo, docs and examples, including the first-party `LocaleTag`, the only one newly rejected is the review document's own `(a|a)+`. Separately, `String.replace` inserts its replacement **literally** (#1650). It lowered to `replaceAll(from, to)` with a string replacement, which JS `$`-expands, so `\"aaa\".replace(\"a\", \"$&b\")` returned `\"ababab\"` rather than `\"$&b$&b$&b\"`, and `$1`, `` $` ``, `$'` and `$$` were rewritten too. When the replacement came from request data, the output depended on `$` sequences its author never wrote. It now lowers to a function replacer, `replaceAll(from, () => to)`, whose return value JS never expands. Programs that relied on the expansion lose it: Bynk's documented surface has no regex replace, so no `$1` group reference ever had a group to refer to. Proved at runtime by the behavioural fixture `1650_string_replace_literal`."
----
+# 0423 — `Matches` patterns are admitted by an automaton ambiguity check
 
-## ADR: regex-ambiguity-check
-title: `Matches` patterns are admitted by an automaton ambiguity check
-summary: Exponential and unbounded-polynomial ambiguity are compile errors; a length bound downgrades polynomial to a warning, and length predicates are checked first
+- **Status:** Accepted (v0.292)
 
 **Context.** A refined `String`'s `.of`, its `is` test and its boundary codec run
 the `Matches` pattern as `new RegExp("^(?:" + pat + ")$")`, with no flags, on

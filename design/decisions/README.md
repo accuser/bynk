@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0423](0423-regex-ambiguity-check.md) | **`Matches` patterns are admitted by an automaton ambiguity check** (v0.292) — Exponential and unbounded-polynomial ambiguity are compile errors; a length bound downgrades polynomial to a warning, and length predicates are checked first | Accepted (v0.292) |
 | [0422](0422-agent-state-wire-shape.md) | **Agent state is stored in the wire shape and decoded on load** (v0.291) — commitState serialises through the boundary codec and loadState decodes into state; no tolerant loader for the old in-memory shape | Accepted (v0.291) |
 | [0421](0421-structural-equality.md) | **`==` is structural, and defined only on equality-supporting types** (v0.291) — Equality compares values by shape through a runtime walker; a type containing a computation, stream or held value anywhere is not comparable | Accepted (v0.291) |
 | [0420](0420-phase-8-unadopted-query-layer-deleted.md) | **Phase 8's definition- and project-level queries are deleted, not adopted — the unit-level firewall proof stays** (v0.289.65) — Supersedes ADR 0415 (`ProjectGraph`) and ADR 0417 (the `DefId`-keyed queries), which stand as the shapes a rebuild adapts to; resolves #1537 on the same terms as the IR cutover: no consumer and no scheduler means P5 applies; UnitSignature stays as R3.14's proof and #1523's precondition; the probe now gates the decision | Accepted (v0.289.65) |
