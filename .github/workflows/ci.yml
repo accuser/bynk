@@ -803,6 +803,13 @@ jobs:
     # advisory gates; low/moderate are signal, not a blocker. Covers all five
     # trees with committed lockfiles, including playground/site whose deploy jobs
     # hold the Cloudflare token.
+    #
+    # The gate is `scripts/npm-audit-gate.mjs`: `npm audit --json`, failing on any
+    # high/critical advisory except one listed for that tree in
+    # `scripts/npm-audit-allowlist.json`. The allowlist is only for advisories
+    # with no patched release; each entry carries a `review_by` date past which
+    # it stops exempting. `vscode-bynk` audits its shipped (non-dev) tree: its dev
+    # dependencies are packaging tools that never reach the published extension.
     name: Security audit (npm)
     needs: changes
     if: needs.changes.outputs.extension == 'true' || needs.changes.outputs.grammar == 'true' || needs.changes.outputs.runtime == 'true' || needs.changes.outputs.playground == 'true' || needs.changes.outputs.site == 'true' || needs.changes.outputs.all == 'true'
@@ -812,9 +819,9 @@ jobs:
       fail-fast: false
       matrix:
         package: [vscode-bynk, tree-sitter-bynk, bynk-emit/runtime, playground, site]
-    defaults:
-      run:
-        working-directory: ${{ matrix.package }}
+        include:
+          - package: vscode-bynk
+            audit_args: "--omit=dev"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -823,7 +830,11 @@ jobs:
         with:
           node-version: "20"
       - name: Audit
-        run: npm audit --audit-level=high
+        env:
+          TREE: ${{ matrix.package }}
+          AUDIT_ARGS: ${{ matrix.audit_args }}
+        # AUDIT_ARGS is deliberately unquoted: empty for most trees, one flag for vscode-bynk.
+        run: node scripts/npm-audit-gate.mjs "$TREE" -- $AUDIT_ARGS
 
   dependency-review:
     # On PRs, flag newly-introduced dependencies that carry known advisories or
