@@ -124,7 +124,7 @@ export function describe(error: LinkError): string {
       return "invalid code";
     }
   }
-  throw new Error("non-exhaustive match");
+  throw new globalThis.Error("non-exhaustive match");
 }
 ```
 

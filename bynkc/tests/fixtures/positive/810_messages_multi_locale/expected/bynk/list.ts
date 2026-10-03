@@ -42,7 +42,7 @@ export function find<A>(xs: readonly A[], p: (a0: A) => boolean): Option<A> {
         return (p(x) ? Some(x) : None);
       }
     }
-    throw new Error("non-exhaustive match");
+    throw new globalThis.Error("non-exhaustive match");
   })(acc));
 }
 
@@ -60,7 +60,7 @@ export function any<A>(xs: readonly A[], p: (a0: A) => boolean): boolean {
       return false;
     }
   }
-  throw new Error("non-exhaustive match");
+  throw new globalThis.Error("non-exhaustive match");
 }
 
 /**
@@ -78,7 +78,7 @@ export function all<A>(xs: readonly A[], p: (a0: A) => boolean): boolean {
         return (p(x) ? None : Some(x));
       }
     }
-    throw new Error("non-exhaustive match");
+    throw new globalThis.Error("non-exhaustive match");
   })(acc));
   switch (failed.tag) {
     case "Some": {
@@ -89,16 +89,16 @@ export function all<A>(xs: readonly A[], p: (a0: A) => boolean): boolean {
       return true;
     }
   }
-  throw new Error("non-exhaustive match");
+  throw new globalThis.Error("non-exhaustive match");
 }
 
 /**
  * Runs the effectful `f` over each element of `xs` in order, collecting the
  * results into a single `Effect` that yields the list of outputs.
  */
-export async function traverse<A, B>(xs: readonly A[], f: (a0: A) => Promise<B>): Promise<readonly B[]> {
+export async function traverse<A, B>(xs: readonly A[], f: (a0: A) => globalThis.Promise<B>): globalThis.Promise<readonly B[]> {
   const init: readonly B[] = ([] as readonly B[]);
-  const rev = await (async (__xs: readonly A[], __acc: readonly B[], __f: (acc: readonly B[], x: A) => Promise<readonly B[]>) => { for (const __x of __xs) __acc = await __f(__acc, __x); return __acc; })(xs, init, async (acc, x) => {
+  const rev = await (async (__xs: readonly A[], __acc: readonly B[], __f: (acc: readonly B[], x: A) => globalThis.Promise<readonly B[]>) => { for (const __x of __xs) __acc = await __f(__acc, __x); return __acc; })(xs, init, async (acc, x) => {
     const y = await f(x);
     return [y, ...acc];
   });

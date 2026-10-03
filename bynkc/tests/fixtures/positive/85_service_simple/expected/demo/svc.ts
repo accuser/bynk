@@ -4,7 +4,7 @@
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
 
 export const echo = {
-  async call(message: string, deps: {}): Promise<string> {
+  async call(message: string, deps: {}): globalThis.Promise<string> {
     return message;
   },
 };
@@ -14,7 +14,7 @@ export interface DemoSvcDeps {
 
 export function makeSurface(deps: DemoSvcDeps) {
   return {
-    async echo(message: string): Promise<string> {
+    async echo(message: string): globalThis.Promise<string> {
       return echo.call(message, deps);
     },
   };

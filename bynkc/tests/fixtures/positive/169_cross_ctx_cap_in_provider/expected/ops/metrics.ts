@@ -6,15 +6,15 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError } f
 import * as platform_time from "../platform/time.js";
 
 export interface Stamp {
-  make(): Promise<number>;
+  make(): globalThis.Promise<number>;
 }
 
-export const StampToken: unique symbol = Symbol("Stamp");
+export const StampToken: symbol = globalThis.Symbol("Stamp");
 
 export class ClockStamp implements Stamp {
   private deps: { Clock: platform_time.Clock };
   constructor(deps: { Clock: platform_time.Clock }) { this.deps = deps; }
-  async make(): Promise<number> {
+  async make(): globalThis.Promise<number> {
     const t = await this.deps.Clock.now();
     return t;
   }
@@ -23,7 +23,7 @@ export class ClockStamp implements Stamp {
 export const ClockStampProvider = { token: StampToken, factory: (deps: { Clock: platform_time.Clock }) => new ClockStamp(deps) };
 
 export const report = {
-  async call(deps: { Stamp: Stamp }): Promise<number> {
+  async call(deps: { Stamp: Stamp }): globalThis.Promise<number> {
     const s = await deps.Stamp.make();
     return s;
   },
@@ -35,7 +35,7 @@ export interface OpsMetricsDeps {
 
 export function makeSurface(deps: OpsMetricsDeps) {
   return {
-    async report(): Promise<number> {
+    async report(): globalThis.Promise<number> {
       return report.call(deps);
     },
   };

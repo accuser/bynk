@@ -41,7 +41,7 @@ flowchart TD
   b --> bt["flat .ts tree mirroring source; StateRegistry for agents"]
   w --> wf["per context: index.ts (router + validation), handlers.ts, compose.ts, wrangler.toml"]
   w --> wa["agent → Durable Object: loadState / commitState"]
-  w --> wr["record → serialise_ / deserialise_ boundary helpers"]
+  w --> wr["record → __serialise_ / __deserialise_ boundary helpers"]
 ```
 
 *One construct, deterministic output — and what that output is depends on the
@@ -52,7 +52,7 @@ target. On **bundle**, the output is a flat `.ts` tree mirroring the source, wit
 `StateRegistry` backing agents. On **workers**, each context emits `index.ts`
 (router and boundary validation), `handlers.ts` (logic), `compose.ts` (wiring), and
 `wrangler.toml`; each agent emits a Durable Object class with `loadState` /
-`commitState`; and records crossing a boundary gain `serialise_*` / `deserialise_*`
+`commitState`; and records crossing a boundary gain `__serialise_*` / `__deserialise_*`
 helpers.
 
 ## Project shape on disk
@@ -211,7 +211,7 @@ Each context's `index.ts` exports the Cloudflare Worker shape:
 
 ```ts
 export default {
-  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  async fetch(request: globalThis.Request, env: Env): globalThis.Promise<globalThis.Response> {
     // dispatch …
   },
 };
@@ -264,8 +264,8 @@ payload before it reaches any handler. The full protocol is normative in
 
 ### Serialisation validators
 
-Any record that crosses a boundary gets generated `serialise_<Type>` /
-`deserialise_<Type>` helpers. `deserialise_*` returns a `Result<T, BoundaryError>`
+Any record that crosses a boundary gets generated `__serialise_<Type>` /
+`__deserialise_<Type>` helpers. `__deserialise_*` returns a `Result<T, BoundaryError>`
 and validates structurally *and* by refinement — so a payload that is shaped
 correctly but violates a refined field is rejected, not silently admitted. The
 generated `Result`, `Option`, `List`, and `Map` deserialisers compose the same way,

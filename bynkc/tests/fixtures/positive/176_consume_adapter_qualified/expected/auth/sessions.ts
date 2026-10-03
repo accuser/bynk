@@ -6,7 +6,7 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError } f
 import * as tokens from "../tokens.js";
 
 export const login = {
-  async call(secret: string, deps: { Jwt: tokens.Jwt }): Promise<string> {
+  async call(secret: string, deps: { Jwt: tokens.Jwt }): globalThis.Promise<string> {
     const token = await deps.Jwt.sign("u1", secret);
     return token;
   },
@@ -18,7 +18,7 @@ export interface AuthSessionsDeps {
 
 export function makeSurface(deps: AuthSessionsDeps) {
   return {
-    async login(secret: string): Promise<string> {
+    async login(secret: string): globalThis.Promise<string> {
       return login.call(secret, deps);
     },
   };

@@ -46,21 +46,21 @@ type __Logger_log_Call = { msg: string };
 type __Logger_warn_Call = { msg: string };
 
 class __Stub_Logger {
-  async log(msg: string): Promise<void> {
+  async log(msg: string): globalThis.Promise<void> {
     const { AuthId } = commerce_payment;
     type AuthId = commerce_payment.AuthId;
     if (true) {
       return undefined;
     }
-    throw new Error("bynk: no stub clause matched for Logger.log");
+    throw new globalThis.Error("bynk: no stub clause matched for Logger.log");
   }
-  async warn(msg: string): Promise<void> {
+  async warn(msg: string): globalThis.Promise<void> {
     const { AuthId } = commerce_payment;
     type AuthId = commerce_payment.AuthId;
     if (true) {
       return undefined;
     }
-    throw new Error("bynk: no stub clause matched for Logger.warn");
+    throw new globalThis.Error("bynk: no stub clause matched for Logger.warn");
   }
 }
 
@@ -71,7 +71,7 @@ function makeTestDeps() {
 // case tier: unit
 async function test_records_the_observed_calls() {
   try {
-    const __obs = { log: {} as Record<string, { args: unknown[]; order: number }[]>, n: 0 };
+    const __obs = { log: {} as globalThis.Record<string, { args: unknown[]; order: number }[]>, n: 0 };
     const deps = __bynkRecordDeps(makeTestDeps(), { Logger: ["log", "warn"] }, __obs);
     const { AuthId, authorise } = commerce_payment;
     type AuthId = commerce_payment.AuthId;
@@ -97,7 +97,7 @@ async function test_records_the_observed_calls() {
 // case tier: unit
 async function test_no_observation_when_the_seam_is_idle() {
   try {
-    const __obs = { log: {} as Record<string, { args: unknown[]; order: number }[]>, n: 0 };
+    const __obs = { log: {} as globalThis.Record<string, { args: unknown[]; order: number }[]>, n: 0 };
     const deps = __bynkRecordDeps(makeTestDeps(), { Logger: ["log", "warn"] }, __obs);
     const { AuthId, authorise } = commerce_payment;
     type AuthId = commerce_payment.AuthId;

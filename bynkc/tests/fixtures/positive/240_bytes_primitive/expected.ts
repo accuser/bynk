@@ -5,7 +5,7 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError, __
 
 export interface Blob {
   readonly name: string;
-  readonly data: Uint8Array;
+  readonly data: globalThis.Uint8Array;
 }
 
 export const Blob = {
@@ -14,39 +14,39 @@ export const Blob = {
   },
 };
 
-export function greeting(): Uint8Array {
-  return new TextEncoder().encode("hello");
+export function greeting(): globalThis.Uint8Array {
+  return new globalThis.TextEncoder().encode("hello");
 }
 
-export function nothing(): Uint8Array {
-  return new Uint8Array();
+export function nothing(): globalThis.Uint8Array {
+  return new globalThis.Uint8Array();
 }
 
-export function decode(s: string): Option<Uint8Array> {
+export function decode(s: string): Option<globalThis.Uint8Array> {
   return __bynkBytesFromBase64(s);
 }
 
-export function size(b: Uint8Array): number {
+export function size(b: globalThis.Uint8Array): number {
   return (b).length;
 }
 
-export function encode(b: Uint8Array): string {
+export function encode(b: globalThis.Uint8Array): string {
   return __bynkBytesToBase64(b);
 }
 
-export function asText(b: Uint8Array): Option<string> {
+export function asText(b: globalThis.Uint8Array): Option<string> {
   return __bynkBytesDecodeUtf8(b);
 }
 
-export function sameContent(a: Uint8Array, b: Uint8Array): boolean {
+export function sameContent(a: globalThis.Uint8Array, b: globalThis.Uint8Array): boolean {
   return __bynkBytesEqual(a, b);
 }
 
-export function differs(a: Uint8Array, b: Uint8Array): boolean {
+export function differs(a: globalThis.Uint8Array, b: globalThis.Uint8Array): boolean {
   return !__bynkBytesEqual(a, b);
 }
 
 export function roundTrips(): boolean {
-  return __bynkBytesEqual(new TextEncoder().encode("hi"), new TextEncoder().encode("hi"));
+  return __bynkBytesEqual(new globalThis.TextEncoder().encode("hi"), new globalThis.TextEncoder().encode("hi"));
 }
 

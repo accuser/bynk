@@ -27,7 +27,7 @@ function __bynkShow(v: unknown): string {
 
 class __Stub_Clock {
   __seq_0 = 0;
-  async now(): Promise<number> {
+  async now(): globalThis.Promise<number> {
     if (true) {
       const __k = this.__seq_0;
       if (this.__seq_0 < 1) this.__seq_0++;
@@ -40,12 +40,12 @@ class __Stub_Clock {
         }
       }
     }
-    throw new Error("bynk: no stub clause matched for Clock.now");
+    throw new globalThis.Error("bynk: no stub clause matched for Clock.now");
   }
 }
 
 class __Stub_Rates {
-  async lookup(code: string): Promise<number> {
+  async lookup(code: string): globalThis.Promise<number> {
     const __pv_0_0 = await (async () => {
       return "GBP";
     })();
@@ -55,7 +55,7 @@ class __Stub_Rates {
     if (true) {
       return 100;
     }
-    throw new Error("bynk: no stub clause matched for Rates.lookup");
+    throw new globalThis.Error("bynk: no stub clause matched for Rates.lookup");
   }
 }
 

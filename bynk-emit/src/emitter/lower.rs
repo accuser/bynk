@@ -417,7 +417,7 @@ fn async_tail_slot_ty(e: &Expr, cx: &LowerCtx) -> Option<String> {
                 Ty::Unit => "void".to_string(),
                 _ => ts_ty(*inner, tys),
             };
-            Some(format!("{inner_ts} | Promise<{inner_ts}>"))
+            Some(format!("{inner_ts} | globalThis.Promise<{inner_ts}>"))
         }
         _ => checked_ty_ts(e, cx),
     }
@@ -1088,7 +1088,7 @@ pub(crate) fn lower_expr(e: &Expr, cx: &mut LowerCtx) -> Lowered {
         ExprKind::UnitLit => "undefined".to_string(),
         ExprKind::EffectPure(inner) => {
             let inner_expr = pre.lower(inner, cx);
-            format!("Promise.resolve({inner_expr})")
+            format!("globalThis.Promise.resolve({inner_expr})")
         }
         ExprKind::RecordSpread {
             type_name: _,
@@ -1285,7 +1285,7 @@ fn refined_default(decl: &TypeDecl) -> Option<String> {
         BaseType::Duration | BaseType::Instant => Some("0".to_string()),
         // v0.110: `Bytes` carries no refinement; the empty octet sequence is
         // its default.
-        BaseType::Bytes => Some("new Uint8Array()".to_string()),
+        BaseType::Bytes => Some("new globalThis.Uint8Array()".to_string()),
     }
 }
 
@@ -1306,7 +1306,7 @@ fn base_default_ts(base: BaseType) -> String {
         BaseType::Bool => "true".to_string(),
         BaseType::Float => "0".to_string(),
         BaseType::Duration | BaseType::Instant => "0".to_string(),
-        BaseType::Bytes => "new Uint8Array()".to_string(),
+        BaseType::Bytes => "new globalThis.Uint8Array()".to_string(),
     }
 }
 
@@ -1486,16 +1486,16 @@ fn lower_method_call(
         return pre.finish(match method.name.as_str() {
             "put" => format!(
                 "({}, undefined)",
-                own_set(&m, &format!("String({})", a[0]), &format!("connIdOf({})", a[1]))
+                own_set(&m, &format!("String({})", a[0]), &format!("__connIdOf({})", a[1]))
             ),
             "remove" => format!(
-                "(async () => {{ const __k = String({0}); const __cid = Object.hasOwn({m}, __k) ? {m}[__k] : undefined; if (__cid !== undefined) {{ const __c = resolveConnection<{f_ts}>(this.state, __cid); if (__c.tag === \"Some\") {{ await __c.value.close(); }} delete {m}[__k]; }} return undefined; }})()",
+                "(async () => {{ const __k = String({0}); const __cid = globalThis.Object.hasOwn({m}, __k) ? {m}[__k] : undefined; if (__cid !== undefined) {{ const __c = __resolveConnection<{f_ts}>(this.state, __cid); if (__c.tag === \"Some\") {{ await __c.value.close(); }} delete {m}[__k]; }} return undefined; }})()",
                 a[0]
             ),
-            "contains" => format!("Object.hasOwn({m}, String({}))", a[0]),
-            "size" => format!("Object.keys({m}).length"),
+            "contains" => format!("globalThis.Object.hasOwn({m}, String({}))", a[0]),
+            "size" => format!("globalThis.Object.keys({m}).length"),
             "get" => format!(
-                "(() => {{ const __k = String({0}); return Object.hasOwn({m}, __k) ? resolveConnection<{f_ts}>(this.state, {m}[__k]) : None; }})()",
+                "(() => {{ const __k = String({0}); return globalThis.Object.hasOwn({m}, __k) ? __resolveConnection<{f_ts}>(this.state, {m}[__k]) : None; }})()",
                 a[0]
             ),
             // Any non-entry op is a lazy query lifting the map into a scan over its
@@ -1508,7 +1508,7 @@ fn lower_method_call(
                     .unwrap_or_default();
                 lower_query_method(
                     format!(
-                        "Object.values({m}).flatMap((__cid) => {{ const __c = resolveConnection<{f_ts}>(this.state, __cid); return __c.tag === \"Some\" ? [__c.value] : []; }})"
+                        "globalThis.Object.values({m}).flatMap((__cid) => {{ const __c = __resolveConnection<{f_ts}>(this.state, __cid); return __c.tag === \"Some\" ? [__c.value] : []; }})"
                     ),
                     method,
                     &a,
@@ -1585,14 +1585,14 @@ fn lower_method_call(
             }
             "put" => format!("({}, undefined)", own_set(&m, &a[0], &a[1])),
             "remove" => format!("((delete {m}[{}]), undefined)", a[0]),
-            "contains" => format!("Object.hasOwn({m}, {})", a[0]),
-            "size" => format!("Object.keys({m}).length"),
+            "contains" => format!("globalThis.Object.hasOwn({m}, {})", a[0]),
+            "size" => format!("globalThis.Object.keys({m}).length"),
             "get" => format!(
-                "(() => {{ const __k = {0}; return Object.hasOwn({m}, __k) ? Some({m}[__k]) : None; }})()",
+                "(() => {{ const __k = {0}; return globalThis.Object.hasOwn({m}, __k) ? Some({m}[__k]) : None; }})()",
                 a[0]
             ),
             "update" => format!(
-                "(() => {{ const __k = {0}; if (!Object.hasOwn({m}, __k)) {{ throw new Error(\"Map.update: key absent\"); }} {m}[__k] = ({1})({m}[__k]); return undefined; }})()",
+                "(() => {{ const __k = {0}; if (!globalThis.Object.hasOwn({m}, __k)) {{ throw new globalThis.Error(\"Map.update: key absent\"); }} {m}[__k] = ({1})({m}[__k]); return undefined; }})()",
                 a[0], a[1]
             ),
             "upsert" => format!(
@@ -1601,7 +1601,7 @@ fn lower_method_call(
                 set = own_set(
                     &m,
                     "__k",
-                    &format!("({})(Object.hasOwn({m}, __k) ? {m}[__k] : ({}))", a[2], a[1])
+                    &format!("({})(globalThis.Object.hasOwn({m}, __k) ? {m}[__k] : ({}))", a[2], a[1])
                 ),
             ),
             // v0.91 (ADR 0119): any non-entry op is a lazy query that lifts the
@@ -1625,7 +1625,7 @@ fn lower_method_call(
                     .map(|_| join_other_elem_ts(args, cx))
                     .unwrap_or_default();
                 lower_query_method(
-                    format!("Object.values({m})"),
+                    format!("globalThis.Object.values({m})"),
                     method,
                     &a,
                     cx.commons().expr_types.get(&e.id).map(|te| te.ty),
@@ -1655,8 +1655,8 @@ fn lower_method_call(
         return pre.finish(match method.name.as_str() {
             "add" => format!("({}, undefined)", own_set(&s, &a[0], "true")),
             "remove" => format!("((delete {s}[{}]), undefined)", a[0]),
-            "contains" => format!("Object.hasOwn({s}, {})", a[0]),
-            "size" => format!("Object.keys({s}).length"),
+            "contains" => format!("globalThis.Object.hasOwn({s}, {})", a[0]),
+            "size" => format!("globalThis.Object.keys({s}).length"),
             other => format!("(/* unsupported Set op {other} */ undefined)"),
         });
     }
@@ -1685,22 +1685,22 @@ fn lower_method_call(
                 set = own_set(&c, &a[0], &format!("{{ v: {}, exp: __now + {ttl} }}", a[1])),
             ),
             "get" => format!(
-                "(async () => {{ const __now = {now}; const __k = {0}; return (Object.hasOwn({c}, __k) && {c}[__k].exp > __now) ? Some({c}[__k].v) : None; }})()",
+                "(async () => {{ const __now = {now}; const __k = {0}; return (globalThis.Object.hasOwn({c}, __k) && {c}[__k].exp > __now) ? Some({c}[__k].v) : None; }})()",
                 a[0]
             ),
             "contains" => format!(
-                "(async () => {{ const __now = {now}; const __k = {0}; return Object.hasOwn({c}, __k) && {c}[__k].exp > __now; }})()",
+                "(async () => {{ const __now = {now}; const __k = {0}; return globalThis.Object.hasOwn({c}, __k) && {c}[__k].exp > __now; }})()",
                 a[0]
             ),
             "size" => format!(
-                "(async () => {{ const __now = {now}; return Object.values({c}).filter((__e) => __e.exp > __now).length; }})()"
+                "(async () => {{ const __now = {now}; return globalThis.Object.values({c}).filter((__e) => __e.exp > __now).length; }})()"
             ),
             "update" => format!(
-                "(async () => {{ const __now = {now}; const __k = {0}; if (!(Object.hasOwn({c}, __k) && {c}[__k].exp > __now)) {{ throw new Error(\"Cache.update: key absent\"); }} {c}[__k] = {{ v: ({1})({c}[__k].v), exp: __now + {ttl} }}; return undefined; }})()",
+                "(async () => {{ const __now = {now}; const __k = {0}; if (!(globalThis.Object.hasOwn({c}, __k) && {c}[__k].exp > __now)) {{ throw new globalThis.Error(\"Cache.update: key absent\"); }} {c}[__k] = {{ v: ({1})({c}[__k].v), exp: __now + {ttl} }}; return undefined; }})()",
                 a[0], a[1]
             ),
             "upsert" => format!(
-                "(async () => {{ const __now = {now}; const __k = {0}; const __cur = (Object.hasOwn({c}, __k) && {c}[__k].exp > __now) ? {c}[__k].v : ({1}); {set}; return undefined; }})()",
+                "(async () => {{ const __now = {now}; const __k = {0}; const __cur = (globalThis.Object.hasOwn({c}, __k) && {c}[__k].exp > __now) ? {c}[__k].v : ({1}); {set}; return undefined; }})()",
                 a[0],
                 a[1],
                 set = own_set(&c, "__k", &format!("{{ v: ({})(__cur), exp: __now + {ttl} }}", a[2])),
@@ -1759,7 +1759,7 @@ fn lower_method_call(
                 a[0], a[1]
             )),
             "recent" => thunk(format!(
-                "{g}.slice(Math.max(0, {g}.length - Math.max(0, {0}))).reverse().map((__e) => __e.v)",
+                "{g}.slice(globalThis.Math.max(0, {g}.length - globalThis.Math.max(0, {0}))).reverse().map((__e) => __e.v)",
                 a[0]
             )),
             "reversed" => thunk(format!("[...{g}].reverse().map((__e) => __e.v)")),
@@ -1900,14 +1900,14 @@ fn lower_method_call(
         let (grammar, value, guard) = if id.name == INT {
             (
                 "/^[+-]?[0-9]+$/",
-                "Number(__s) + 0",
-                "Number.isSafeInteger(__n)",
+                "globalThis.Number(__s) + 0",
+                "globalThis.Number.isSafeInteger(__n)",
             )
         } else {
             (
                 "/^[+-]?([0-9]+(\\.[0-9]*)?|\\.[0-9]+)([eE][+-]?[0-9]+)?$/",
-                "Number(__s)",
-                "Number.isFinite(__n)",
+                "globalThis.Number(__s)",
+                "globalThis.Number.isFinite(__n)",
             )
         };
         return pre.finish(format!(
@@ -1955,7 +1955,7 @@ fn lower_method_call(
         match (method.name.as_str(), args.len()) {
             ("fromUtf8", 1) => {
                 let s = pre.lower(&args[0], cx);
-                return pre.finish(format!("new TextEncoder().encode({s})"));
+                return pre.finish(format!("new globalThis.TextEncoder().encode({s})"));
             }
             ("fromBase64", 1) => {
                 let s = pre.lower(&args[0], cx);
@@ -1963,7 +1963,7 @@ fn lower_method_call(
                 return pre.finish(format!("__bynkBytesFromBase64({s})"));
             }
             ("empty", 0) => {
-                return pre.finish("new Uint8Array()".to_string());
+                return pre.finish("new globalThis.Uint8Array()".to_string());
             }
             _ => {}
         }
@@ -2071,7 +2071,7 @@ fn lower_method_call(
         let schema_version = cx.event_schema_version(&event_name);
         let publisher_id = escape_ts_string(cx.owning_context().unwrap_or_default());
         return pre.finish(format!(
-            "(async () => {{ __events.push({{ type: \"{event_name}\", payload: {payload}, envelope: {{ eventId: crypto.randomUUID(), publisherId: \"{publisher_id}\", emittedAt: Date.now(), schemaVersion: {schema_version} }} }}); }})()"
+            "(async () => {{ __events.push({{ type: \"{event_name}\", payload: {payload}, envelope: {{ eventId: globalThis.crypto.randomUUID(), publisherId: \"{publisher_id}\", emittedAt: globalThis.Date.now(), schemaVersion: {schema_version} }} }}); }})()"
         ));
     }
     // Capability call: receiver is a bare ident naming a declared
@@ -2218,7 +2218,7 @@ fn lower_method_call(
                     // treatment cluster 4's own `lower.rs:2552` call site
                     // already established.
                     Some((body_idx, ty)) if *body_idx == i => format!(
-                        "JSON.stringify({})",
+                        "globalThis.JSON.stringify({})",
                         bynk_ts::print_expr(&crate::emitter::serialisation::serialise_expr_via(
                             ty,
                             &format!("({lowered} as any)"),
@@ -2639,7 +2639,7 @@ fn lower_json_codec_call(
             // file's own `serialise_expr_via` call site above.
             let ser =
                 bynk_ts::print_expr(&serialisation::serialise_expr(&tref, &v, cx.runtime_use()));
-            return Some(pre.finish(format!("JSON.stringify({ser})")));
+            return Some(pre.finish(format!("globalThis.JSON.stringify({ser})")));
         }
         if method.name == "decode"
             && let Some(Ty::Result(t, _)) = cx.commons().expr_ty(e.id).as_deref().cloned()
@@ -2688,8 +2688,8 @@ fn lower_json_codec_call(
             let arg = pre.lower(&args[0], cx);
             return Some(pre.finish(format!(
                 "((__s: string): Result<{ts}, JsonError> => {{ \
-                 let __j: JsonValue; \
-                 try {{ __j = JSON.parse(__s) as JsonValue; }} \
+                 let __j: __JsonValue; \
+                 try {{ __j = globalThis.JSON.parse(__s) as __JsonValue; }} \
                  catch (__e) {{ return Err({{ kind: \"Malformed\", path: \"$\", message: String(__e) }}); }} \
                  const __r = {des}; \
                  if (__r.tag === \"Ok\") return Ok(__r.value as {ts}); \
@@ -2916,26 +2916,16 @@ fn emit_is_test_bindings(e: &Expr, cx: &mut LowerCtx, out: &mut Vec<String>, fou
                 let Pattern::Binding(name) = b.pattern() else {
                     continue;
                 };
-                match &b.kind {
-                    PatternBindingKind::Named { field, .. } => {
-                        out.push(format!(
-                            "const {name} = {value}.{field};",
-                            name = ts_ident(&name.name),
-                            value = value_text,
-                            field = field.name
-                        ));
-                    }
+                let field = match &b.kind {
+                    PatternBindingKind::Named { field, .. } => payload_prop(&field.name),
                     PatternBindingKind::Positional { .. } => {
-                        let field = cx.positional_field_name(disc_ty, &variant.name, i, tys);
-                        out.push(format!(
-                            "const {name} = {value}.{field};",
-                            name = ts_ident(&name.name),
-                            value = value_text,
-                            field = field
-                        ));
+                        cx.positional_field_name(disc_ty, &variant.name, i, tys)
                     }
-                }
-                cx.declare_binder(&name.name);
+                };
+                // #1653: renamed when it shadows (`o is Some(o)`), so the
+                // declaration can't read itself in its temporal dead zone.
+                let local = cx.bind_local_name(&name.name);
+                out.push(format!("const {local} = {value_text}.{field};"));
             }
         }
         // #474 §2.3.6: an or-pattern's shared names can live at different
@@ -2951,11 +2941,11 @@ fn emit_is_test_bindings(e: &Expr, cx: &mut LowerCtx, out: &mut Vec<String>, fou
             if names.is_empty() {
                 return;
             }
-            let decl: Vec<String> = names.iter().map(|id| ts_ident(&id.name)).collect();
+            let decl: Vec<String> = names
+                .iter()
+                .map(|id| cx.bind_local_name(&id.name))
+                .collect();
             out.push(format!("let {};", decl.join(", ")));
-            for id in &names {
-                cx.declare_binder(&id.name);
-            }
             let last = alts.len() - 1;
             for (i, alt) in alts.iter().enumerate() {
                 let (tag, pairs) = match alt {
@@ -2968,12 +2958,17 @@ fn emit_is_test_bindings(e: &Expr, cx: &mut LowerCtx, out: &mut Vec<String>, fou
                                 continue;
                             };
                             let field = match &b.kind {
-                                PatternBindingKind::Named { field, .. } => field.name.clone(),
+                                PatternBindingKind::Named { field, .. } => {
+                                    payload_prop(&field.name)
+                                }
                                 PatternBindingKind::Positional { .. } => {
                                     cx.positional_field_name(disc_ty, &variant.name, j, tys)
                                 }
                             };
-                            pairs.push((ts_ident(&name.name), format!("{value_text}.{field}")));
+                            let local = cx
+                                .resolved_local_name(&name.name)
+                                .unwrap_or_else(|| ts_ident(&name.name));
+                            pairs.push((local, format!("{value_text}.{field}")));
                         }
                         (Some(variant.name.clone()), pairs)
                     }
@@ -3114,7 +3109,7 @@ fn lower_list_kernel(
             let init = pre.lower(init, cx);
             let f = pre.lower(f, cx);
             Some(format!(
-                "(async (__xs: readonly {elem_ts}[], __acc: {acc_ts}, __f: (acc: {acc_ts}, x: {elem_ts}) => Promise<{acc_ts}>) => {{ for (const __x of __xs) __acc = await __f(__acc, __x); return __acc; }})({recv}, {init}, {f})"
+                "(async (__xs: readonly {elem_ts}[], __acc: {acc_ts}, __f: (acc: {acc_ts}, x: {elem_ts}) => globalThis.Promise<{acc_ts}>) => {{ for (const __x of __xs) __acc = await __f(__acc, __x); return __acc; }})({recv}, {init}, {f})"
             ))
         }
         // v0.146 (ADR 0170): `forEach` — run an effectful step per element in
@@ -3135,7 +3130,7 @@ fn lower_list_kernel(
             let recv = pre.lower(receiver, cx);
             let f = pre.lower(f, cx);
             Some(format!(
-                "(async (__xs: readonly {elem_ts}[]) => {{ await Promise.all(__xs.map((__x: {elem_ts}) => ({f})(__x))); }})({recv})"
+                "(async (__xs: readonly {elem_ts}[]) => {{ await globalThis.Promise.all(__xs.map((__x: {elem_ts}) => ({f})(__x))); }})({recv})"
             ))
         }
         // v0.148 (ADR 0172): the collect-all iterators — every element's
@@ -3168,7 +3163,7 @@ fn lower_list_kernel(
             let recv = pre.lower(receiver, cx);
             let f = pre.lower(f, cx);
             Some(format!(
-                "(async (__xs: readonly {elem_ts}[]) => await Promise.all(__xs.map((__x: {elem_ts}) => ({f})(__x))))({recv})"
+                "(async (__xs: readonly {elem_ts}[]) => await globalThis.Promise.all(__xs.map((__x: {elem_ts}) => ({f})(__x))))({recv})"
             ))
         }
         // v0.150 (ADR 0174): the short-circuit collect iterators — stop at the
@@ -3188,7 +3183,7 @@ fn lower_list_kernel(
             let recv = pre.lower(receiver, cx);
             let f = pre.lower(f, cx);
             Some(format!(
-                "(async (__xs: readonly {elem_ts}[]) => {{ const __rs = await Promise.all(__xs.map((__x: {elem_ts}) => ({f})(__x))); const __out: {u_ts}[] = []; for (const __r of __rs) {{ if (__r.tag === \"Err\") {{ return Err(__r.error); }} __out.push(__r.value); }} return Ok(__out); }})({recv})"
+                "(async (__xs: readonly {elem_ts}[]) => {{ const __rs = await globalThis.Promise.all(__xs.map((__x: {elem_ts}) => ({f})(__x))); const __out: {u_ts}[] = []; for (const __r of __rs) {{ if (__r.tag === \"Err\") {{ return Err(__r.error); }} __out.push(__r.value); }} return Ok(__out); }})({recv})"
             ))
         }
         // v0.88 (ADR 0116): the eager builder/terminal vocabulary. Most lower
@@ -3212,12 +3207,12 @@ fn lower_list_kernel(
         ("take", [n]) => {
             let recv = pre.lower(receiver, cx);
             let n = pre.lower(n, cx);
-            Some(format!("({recv}).slice(0, Math.max(0, {n}))"))
+            Some(format!("({recv}).slice(0, globalThis.Math.max(0, {n}))"))
         }
         ("skip", [n]) => {
             let recv = pre.lower(receiver, cx);
             let n = pre.lower(n, cx);
-            Some(format!("({recv}).slice(Math.max(0, {n}))"))
+            Some(format!("({recv}).slice(globalThis.Math.max(0, {n}))"))
         }
         ("count", []) => {
             let recv = pre.lower(receiver, cx);
@@ -3300,7 +3295,7 @@ fn lower_list_kernel(
                 Some(Ty::Option(inner)) if matches!(&*tys.get(*inner), Ty::Base(BaseType::Duration))
             );
             let mean = if round {
-                "Math.round(__s / __xs.length)"
+                "globalThis.Math.round(__s / __xs.length)"
             } else {
                 "__s / __xs.length"
             };
@@ -3325,7 +3320,7 @@ fn lower_list_kernel(
             let right = pre.lower(right, cx);
             let into = pre.lower(into, cx);
             Some(format!(
-                "(() => {{ const __h: Record<string, {u_ts}[]> = Object.create(null); for (const __u of {other}) {{ const __k = String(({right})(__u)); (__h[__k] = __h[__k] ?? []).push(__u); }} return ({recv}).flatMap((__t: {elem_ts}) => {{ const __m = __h[String(({left})(__t))] ?? []; return __m.map((__u: {u_ts}) => ({into})(__t, __u)); }}); }})()"
+                "(() => {{ const __h: globalThis.Record<string, {u_ts}[]> = globalThis.Object.create(null); for (const __u of {other}) {{ const __k = String(({right})(__u)); (__h[__k] = __h[__k] ?? []).push(__u); }} return ({recv}).flatMap((__t: {elem_ts}) => {{ const __m = __h[String(({left})(__t))] ?? []; return __m.map((__u: {u_ts}) => ({into})(__t, __u)); }}); }})()"
             ))
         }
         ("leftJoin", [other, left, right, into]) => {
@@ -3336,7 +3331,7 @@ fn lower_list_kernel(
             let right = pre.lower(right, cx);
             let into = pre.lower(into, cx);
             Some(format!(
-                "(() => {{ const __h: Record<string, {u_ts}[]> = Object.create(null); for (const __u of {other}) {{ const __k = String(({right})(__u)); (__h[__k] = __h[__k] ?? []).push(__u); }} return ({recv}).flatMap((__t: {elem_ts}) => {{ const __m = __h[String(({left})(__t))] ?? []; return __m.length > 0 ? __m.map((__u: {u_ts}) => ({into})(__t, Some(__u))) : [({into})(__t, None)]; }}); }})()"
+                "(() => {{ const __h: globalThis.Record<string, {u_ts}[]> = globalThis.Object.create(null); for (const __u of {other}) {{ const __k = String(({right})(__u)); (__h[__k] = __h[__k] ?? []).push(__u); }} return ({recv}).flatMap((__t: {elem_ts}) => {{ const __m = __h[String(({left})(__t))] ?? []; return __m.length > 0 ? __m.map((__u: {u_ts}) => ({into})(__t, Some(__u))) : [({into})(__t, None)]; }}); }})()"
             ))
         }
         ("join", [other, on, into]) => {
@@ -3354,7 +3349,7 @@ fn lower_list_kernel(
             let key = pre.lower(key, cx);
             let into = pre.lower(into, cx);
             Some(format!(
-                "(() => {{ const __h: Record<string, {elem_ts}[]> = Object.create(null); const __order: string[] = []; for (const __t of {recv}) {{ const __k = String(({key})(__t)); if (!(__k in __h)) {{ __h[__k] = []; __order.push(__k); }} __h[__k].push(__t); }} return __order.map((__k) => {{ const __rows = __h[__k]; return ({into})(({key})(__rows[0]), __rows); }}); }})()"
+                "(() => {{ const __h: globalThis.Record<string, {elem_ts}[]> = globalThis.Object.create(null); const __order: string[] = []; for (const __t of {recv}) {{ const __k = String(({key})(__t)); if (!(__k in __h)) {{ __h[__k] = []; __order.push(__k); }} __h[__k].push(__t); }} return __order.map((__k) => {{ const __rows = __h[__k]; return ({into})(({key})(__rows[0]), __rows); }}); }})()"
             ))
         }
         _ => None,
@@ -3450,8 +3445,8 @@ fn lower_query_method(
         ("sortBy", [key]) => thunk(format!(
             "[...{source}].sort((__a, __b) => {{ const __ka = ({key})(__a), __kb = ({key})(__b); return __ka < __kb ? -1 : __ka > __kb ? 1 : 0; }})"
         )),
-        ("take", [n]) => thunk(format!("{source}.slice(0, Math.max(0, {n}))")),
-        ("skip", [n]) => thunk(format!("{source}.slice(Math.max(0, {n}))")),
+        ("take", [n]) => thunk(format!("{source}.slice(0, globalThis.Math.max(0, {n}))")),
+        ("skip", [n]) => thunk(format!("{source}.slice(globalThis.Math.max(0, {n}))")),
         ("distinct", []) => thunk(format!("[...new Set({source})]")),
         // Review of #1460: narrowed, not deferred. A first attempt used
         // `unknown[]` here and broke real `tsc --strict` fixtures (228/231) —
@@ -3480,10 +3475,10 @@ fn lower_query_method(
         // re-derived, and threaded as a param rather than called here to
         // keep this function's own argument count under clippy's lint.
         ("joinOn", [other, left, right, into]) => thunk(format!(
-            "{{ const __h: Record<string, {other_elem_ts}[]> = Object.create(null); for (const __u of ({other})()) {{ const __k = String(({right})(__u)); (__h[__k] = __h[__k] ?? []).push(__u); }} return {source}.flatMap((__t: {elem_ts}) => {{ const __m = __h[String(({left})(__t))] ?? []; return __m.map((__u: {other_elem_ts}) => ({into})(__t, __u)); }}); }}"
+            "{{ const __h: globalThis.Record<string, {other_elem_ts}[]> = globalThis.Object.create(null); for (const __u of ({other})()) {{ const __k = String(({right})(__u)); (__h[__k] = __h[__k] ?? []).push(__u); }} return {source}.flatMap((__t: {elem_ts}) => {{ const __m = __h[String(({left})(__t))] ?? []; return __m.map((__u: {other_elem_ts}) => ({into})(__t, __u)); }}); }}"
         )),
         ("leftJoin", [other, left, right, into]) => thunk(format!(
-            "{{ const __h: Record<string, {other_elem_ts}[]> = Object.create(null); for (const __u of ({other})()) {{ const __k = String(({right})(__u)); (__h[__k] = __h[__k] ?? []).push(__u); }} return {source}.flatMap((__t: {elem_ts}) => {{ const __m = __h[String(({left})(__t))] ?? []; return __m.length > 0 ? __m.map((__u: {other_elem_ts}) => ({into})(__t, Some(__u))) : [({into})(__t, None)]; }}); }}"
+            "{{ const __h: globalThis.Record<string, {other_elem_ts}[]> = globalThis.Object.create(null); for (const __u of ({other})()) {{ const __k = String(({right})(__u)); (__h[__k] = __h[__k] ?? []).push(__u); }} return {source}.flatMap((__t: {elem_ts}) => {{ const __m = __h[String(({left})(__t))] ?? []; return __m.length > 0 ? __m.map((__u: {other_elem_ts}) => ({into})(__t, Some(__u))) : [({into})(__t, None)]; }}); }}"
         )),
         ("join", [other, on, into]) => thunk(format!(
             "{{ const __b = ({other})(); return {source}.flatMap((__t) => __b.filter((__u) => ({on})(__t, __u)).map((__u) => ({into})(__t, __u))); }}"
@@ -3492,7 +3487,7 @@ fn lower_query_method(
         // (`elem_ts`), the receiver's element type — same as `distinctBy`
         // above, not `other`-derived (`groupBy` has no `other` argument).
         ("groupBy", [key, into]) => thunk(format!(
-            "{{ const __h: Record<string, {elem_ts}[]> = Object.create(null); const __order: string[] = []; for (const __t of {source}) {{ const __k = String(({key})(__t)); if (!(__k in __h)) {{ __h[__k] = []; __order.push(__k); }} __h[__k].push(__t); }} return __order.map((__k) => {{ const __rows = __h[__k]; return ({into})(({key})(__rows[0]), __rows); }}); }}"
+            "{{ const __h: globalThis.Record<string, {elem_ts}[]> = globalThis.Object.create(null); const __order: string[] = []; for (const __t of {source}) {{ const __k = String(({key})(__t)); if (!(__k in __h)) {{ __h[__k] = []; __order.push(__k); }} __h[__k].push(__t); }} return __order.map((__k) => {{ const __rows = __h[__k]; return ({into})(({key})(__rows[0]), __rows); }}); }}"
         )),
         // -- terminals → read the source array (awaited at the `<-`) --
         ("collect", []) => source,
@@ -3524,7 +3519,7 @@ fn lower_query_method(
                         if matches!(&*tys.get(*o), Ty::Base(BaseType::Duration)))
             );
             let mean = if round {
-                "Math.round(__s / __a.length)"
+                "globalThis.Math.round(__s / __a.length)"
             } else {
                 "__s / __a.length"
             };
@@ -3539,7 +3534,9 @@ fn lower_query_method(
         // every element concurrently and await them together, so one slow element
         // does not head-of-line-block the rest.
         ("parTraverse", [f]) => {
-            format!("(async () => {{ await Promise.all({source}.map((__x) => ({f})(__x))); }})()")
+            format!(
+                "(async () => {{ await globalThis.Promise.all({source}.map((__x) => ({f})(__x))); }})()"
+            )
         }
         // v0.149 (ADR 0173): the collect-all terminals over a query/broadcast —
         // gather every `Result` outcome (an `Err` is a value, so nothing rejects).
@@ -3556,7 +3553,9 @@ fn lower_query_method(
             )
         }
         ("parTraverseAll", [f]) => {
-            format!("(async () => await Promise.all({source}.map((__x) => ({f})(__x))))()")
+            format!(
+                "(async () => await globalThis.Promise.all({source}.map((__x) => ({f})(__x))))()"
+            )
         }
         // v0.150 (ADR 0174): the short-circuit collect terminals — stop at the
         // first `Err`, returning `Result[List[U], E]`.
@@ -3569,7 +3568,7 @@ fn lower_query_method(
         ("parTraverseTry", [f]) => {
             let u_ts = list_ok_elem_ts(result_ty, tys);
             format!(
-                "(async () => {{ const __rs = await Promise.all({source}.map((__x) => ({f})(__x))); const __out: {u_ts}[] = []; for (const __r of __rs) {{ if (__r.tag === \"Err\") {{ return Err(__r.error); }} __out.push(__r.value); }} return Ok(__out); }})()"
+                "(async () => {{ const __rs = await globalThis.Promise.all({source}.map((__x) => ({f})(__x))); const __out: {u_ts}[] = []; for (const __r of __rs) {{ if (__r.tag === \"Err\") {{ return Err(__r.error); }} __out.push(__r.value); }} return Ok(__out); }})()"
             )
         }
         _ => return None,
@@ -3585,7 +3584,7 @@ fn lower_query_method(
 /// a key already known to be own (after an `Object.hasOwn` check) may stay a set.
 fn own_set(obj: &str, key: &str, value: &str) -> String {
     format!(
-        "Object.defineProperty({obj}, {key}, {{ value: {value}, writable: true, enumerable: true, configurable: true }})"
+        "globalThis.Object.defineProperty({obj}, {key}, {{ value: {value}, writable: true, enumerable: true, configurable: true }})"
     )
 }
 
@@ -3604,7 +3603,7 @@ fn idx_unindex(var: &str, map: &str, fields: &[String], val_local: &str, pk: &st
         .map(|f| {
             let idx = format!("{var}.{map}__idx_{f}");
             format!(
-                "{{ const __ik = String(({val_local}).{f}); const __ia = Object.hasOwn({idx}, __ik) ? {idx}[__ik] : undefined; if (__ia) {{ const __ii = __ia.indexOf({pk}); if (__ii >= 0) __ia.splice(__ii, 1); if (__ia.length === 0) delete {idx}[__ik]; }} }}"
+                "{{ const __ik = String(({val_local}).{f}); const __ia = globalThis.Object.hasOwn({idx}, __ik) ? {idx}[__ik] : undefined; if (__ia) {{ const __ii = __ia.indexOf({pk}); if (__ii >= 0) __ia.splice(__ii, 1); if (__ia.length === 0) delete {idx}[__ik]; }} }}"
             )
         })
         .collect::<Vec<_>>()
@@ -3619,7 +3618,7 @@ fn idx_reindex(var: &str, map: &str, fields: &[String], val_local: &str, pk: &st
         .map(|f| {
             let idx = format!("{var}.{map}__idx_{f}");
             format!(
-                "{{ const __ik = String(({val_local}).{f}); if (!Object.hasOwn({idx}, __ik)) {}; {idx}[__ik].push({pk}); }}",
+                "{{ const __ik = String(({val_local}).{f}); if (!globalThis.Object.hasOwn({idx}, __ik)) {}; {idx}[__ik].push({pk}); }}",
                 own_set(&idx, "__ik", "[]")
             )
         })
@@ -3633,7 +3632,7 @@ fn idx_map_put(m: &str, var: &str, map: &str, fields: &[String], a: &[String]) -
     let un = idx_unindex(var, map, fields, "__o", "__k");
     let re = idx_reindex(var, map, fields, "__v", "__k");
     format!(
-        "(() => {{ const __k = String({k}); const __v = {v}; const __o = Object.hasOwn({m}, __k) ? {m}[__k] : undefined; if (__o !== undefined) {{ {un} }} {set}; {re} return undefined; }})()",
+        "(() => {{ const __k = String({k}); const __v = {v}; const __o = globalThis.Object.hasOwn({m}, __k) ? {m}[__k] : undefined; if (__o !== undefined) {{ {un} }} {set}; {re} return undefined; }})()",
         k = a[0],
         v = a[1],
         set = own_set(m, "__k", "__v"),
@@ -3644,7 +3643,7 @@ fn idx_map_put(m: &str, var: &str, map: &str, fields: &[String], a: &[String]) -
 fn idx_map_remove(m: &str, var: &str, map: &str, fields: &[String], a: &[String]) -> String {
     let un = idx_unindex(var, map, fields, "__o", "__k");
     format!(
-        "(() => {{ const __k = String({k}); const __o = Object.hasOwn({m}, __k) ? {m}[__k] : undefined; if (__o !== undefined) {{ {un} delete {m}[__k]; }} return undefined; }})()",
+        "(() => {{ const __k = String({k}); const __o = globalThis.Object.hasOwn({m}, __k) ? {m}[__k] : undefined; if (__o !== undefined) {{ {un} delete {m}[__k]; }} return undefined; }})()",
         k = a[0],
     )
 }
@@ -3655,7 +3654,7 @@ fn idx_map_update(m: &str, var: &str, map: &str, fields: &[String], a: &[String]
     let un = idx_unindex(var, map, fields, "__o", "__k");
     let re = idx_reindex(var, map, fields, "__v", "__k");
     format!(
-        "(() => {{ const __k = String({k}); if (!Object.hasOwn({m}, __k)) {{ throw new Error(\"Map.update: key absent\"); }} const __o = {m}[__k]; {un} const __v = ({f})(__o); {m}[__k] = __v; {re} return undefined; }})()",
+        "(() => {{ const __k = String({k}); if (!globalThis.Object.hasOwn({m}, __k)) {{ throw new globalThis.Error(\"Map.update: key absent\"); }} const __o = {m}[__k]; {un} const __v = ({f})(__o); {m}[__k] = __v; {re} return undefined; }})()",
         k = a[0],
         f = a[1],
     )
@@ -3667,7 +3666,7 @@ fn idx_map_upsert(m: &str, var: &str, map: &str, fields: &[String], a: &[String]
     let un = idx_unindex(var, map, fields, "__o", "__k");
     let re = idx_reindex(var, map, fields, "__v", "__k");
     format!(
-        "(() => {{ const __k = String({k}); const __e = Object.hasOwn({m}, __k); const __o = __e ? {m}[__k] : undefined; if (__e) {{ {un} }} const __v = ({f})(__e ? __o : ({d})); {set}; {re} return undefined; }})()",
+        "(() => {{ const __k = String({k}); const __e = globalThis.Object.hasOwn({m}, __k); const __o = __e ? {m}[__k] : undefined; if (__e) {{ {un} }} const __v = ({f})(__e ? __o : ({d})); {set}; {re} return undefined; }})()",
         k = a[0],
         d = a[1],
         f = a[2],
@@ -3707,7 +3706,7 @@ fn route_indexed_filter(
     }
     let v = pre.lower(value, cx);
     let text: Option<String> = Some(format!(
-        "(() => {{ const __s = String({v}); const __ia = {var}.{map}__idx_{field}; return (Object.hasOwn(__ia, __s) ? __ia[__s] : []).map((__pk) => {m}[__pk]); }})"
+        "(() => {{ const __s = String({v}); const __ia = {var}.{map}__idx_{field}; return (globalThis.Object.hasOwn(__ia, __s) ? __ia[__s] : []).map((__pk) => {m}[__pk]); }})"
     ));
     text.map(|expr| pre.finish(expr))
 }
@@ -3754,7 +3753,7 @@ fn lower_numeric_kernel(
         ("toFloat", []) => Some(pre.lower(receiver, cx)),
         ("abs", []) => {
             let recv = pre.lower(receiver, cx);
-            Some(format!("Math.abs({recv})"))
+            Some(format!("globalThis.Math.abs({recv})"))
         }
         // #1657 (runtime-semantics track §3.4, decided in S8): a Float→`Int`
         // conversion traps when the result is not a safe integer — a
@@ -3772,24 +3771,26 @@ fn lower_numeric_kernel(
             };
             cx.note_int();
             Some(format!(
-                "__bynkToInt(Math.{f}({recv}), \"{}\")",
+                "__bynkToInt(globalThis.Math.{f}({recv}), \"{}\")",
                 method.name
             ))
         }
         ("min" | "max", [other]) => {
             let recv = pre.lower(receiver, cx);
             let other = pre.lower(other, cx);
-            Some(format!("Math.{}({recv}, {other})", method.name))
+            Some(format!("globalThis.Math.{}({recv}, {other})", method.name))
         }
         ("clamp", [lo, hi]) => {
             let recv = pre.lower(receiver, cx);
             let lo = pre.lower(lo, cx);
             let hi = pre.lower(hi, cx);
-            Some(format!("Math.min(Math.max({recv}, {lo}), {hi})"))
+            Some(format!(
+                "globalThis.Math.min(globalThis.Math.max({recv}, {lo}), {hi})"
+            ))
         }
         ("isNaN" | "isFinite", []) => {
             let recv = pre.lower(receiver, cx);
-            Some(format!("Number.{}({recv})", method.name))
+            Some(format!("globalThis.Number.{}({recv})", method.name))
         }
         // v0.42 (ADR 0074): host number→string — `String(n)` is ECMAScript's
         // Number::toString (shortest round-trip; `1e21`/`Infinity`/`NaN` as the
@@ -3945,7 +3946,7 @@ fn lower_string_kernel(
             let lo = pre.lower(lo, cx);
             let hi = pre.lower(hi, cx);
             Some(format!(
-                "{recv}.slice(Math.max(0, {lo}), Math.max(0, {hi}))"
+                "{recv}.slice(globalThis.Math.max(0, {lo}), globalThis.Math.max(0, {hi}))"
             ))
         }
         ("indexOf", [sub]) => {
@@ -4172,7 +4173,7 @@ fn lower_effect_result_kernel(
             let recv = pre.lower(receiver, cx);
             let f = pre.lower(f, cx);
             Some(format!(
-                "(async (__e: Promise<Result<{t}, {et}>>, __f: (x: {t}) => {a_ts}) => {{ const __r = await __e; return __r.tag === \"Ok\" ? Ok(__f(__r.value)) : __r; }})({recv}, {f})"
+                "(async (__e: globalThis.Promise<Result<{t}, {et}>>, __f: (x: {t}) => {a_ts}) => {{ const __r = await __e; return __r.tag === \"Ok\" ? Ok(__f(__r.value)) : __r; }})({recv}, {f})"
             ))
         }
         ("mapErr", [f]) => {
@@ -4180,7 +4181,7 @@ fn lower_effect_result_kernel(
             let recv = pre.lower(receiver, cx);
             let f = pre.lower(f, cx);
             Some(format!(
-                "(async (__e: Promise<Result<{t}, {et}>>, __f: (e: {et}) => {b_ts}) => {{ const __r = await __e; return __r.tag === \"Err\" ? Err(__f(__r.error)) : __r; }})({recv}, {f})"
+                "(async (__e: globalThis.Promise<Result<{t}, {et}>>, __f: (e: {et}) => {b_ts}) => {{ const __r = await __e; return __r.tag === \"Err\" ? Err(__f(__r.error)) : __r; }})({recv}, {f})"
             ))
         }
         ("flatMapOk", [f]) => {
@@ -4188,7 +4189,7 @@ fn lower_effect_result_kernel(
             let recv = pre.lower(receiver, cx);
             let f = pre.lower(f, cx);
             Some(format!(
-                "(async (__e: Promise<Result<{t}, {et}>>, __f: (x: {t}) => Promise<Result<{a_ts}, {et}>>) => {{ const __r = await __e; return __r.tag === \"Ok\" ? await __f(__r.value) : __r; }})({recv}, {f})"
+                "(async (__e: globalThis.Promise<Result<{t}, {et}>>, __f: (x: {t}) => globalThis.Promise<Result<{a_ts}, {et}>>) => {{ const __r = await __e; return __r.tag === \"Ok\" ? await __f(__r.value) : __r; }})({recv}, {f})"
             ))
         }
         ("flatMapErr", [f]) => {
@@ -4196,7 +4197,7 @@ fn lower_effect_result_kernel(
             let recv = pre.lower(receiver, cx);
             let f = pre.lower(f, cx);
             Some(format!(
-                "(async (__e: Promise<Result<{t}, {et}>>, __f: (e: {et}) => Promise<Result<{t}, {b_ts}>>) => {{ const __r = await __e; return __r.tag === \"Err\" ? await __f(__r.error) : __r; }})({recv}, {f})"
+                "(async (__e: globalThis.Promise<Result<{t}, {et}>>, __f: (e: {et}) => globalThis.Promise<Result<{t}, {b_ts}>>) => {{ const __r = await __e; return __r.tag === \"Err\" ? await __f(__r.error) : __r; }})({recv}, {f})"
             ))
         }
         _ => None,
@@ -4518,7 +4519,7 @@ fn lower_ident(e: &Expr, id: &Ident, cx: &mut LowerCtx) -> String {
     {
         let var = cx.agent_store_var();
         return format!(
-            "(() => Object.values({var}.{name}).flatMap((__cid) => {{ const __c = resolveConnection<{f_ts}>(this.state, __cid); return __c.tag === \"Some\" ? [__c.value] : []; }}))",
+            "(() => globalThis.Object.values({var}.{name}).flatMap((__cid) => {{ const __c = __resolveConnection<{f_ts}>(this.state, __cid); return __c.tag === \"Some\" ? [__c.value] : []; }}))",
             name = id.name
         );
     }
@@ -4528,7 +4529,7 @@ fn lower_ident(e: &Expr, id: &Ident, cx: &mut LowerCtx) -> String {
     // the same deferred thunk a query builder yields: `() => Object.values(map)`.
     if !cx.is_local(&id.name) && cx.is_agent_store_map(&id.name) {
         let var = cx.agent_store_var();
-        return format!("(() => Object.values({var}.{}))", id.name);
+        return format!("(() => globalThis.Object.values({var}.{}))", id.name);
     }
     // v0.95 (ADR 0121): a bare `store Log` ident used as a value is a lazy
     // `Query` over its entry values — `() => log.map((__e) => __e.v)`.
@@ -5098,20 +5099,20 @@ fn lower_field_access(e: &Expr, receiver: &Expr, field: &Ident, cx: &mut LowerCt
         let var = cx.agent_store_var().to_string();
         let m = format!("{var}.{}", id.name);
         return pre.finish(match field.name.as_str() {
-            map_query::VALUES => format!("(() => Object.values({m}))"),
+            map_query::VALUES => format!("(() => globalThis.Object.values({m}))"),
             map_query::KEYS => {
                 let decoded = decode_map_key(map_key_ty(e, cx), "__k", tys);
                 if decoded == "__k" {
-                    format!("(() => Object.keys({m}))")
+                    format!("(() => globalThis.Object.keys({m}))")
                 } else {
-                    format!("(() => Object.keys({m}).map((__k) => {decoded}))")
+                    format!("(() => globalThis.Object.keys({m}).map((__k) => {decoded}))")
                 }
             }
             // entries
             _ => {
                 let decoded = decode_map_key(map_key_ty(e, cx), "__k", tys);
                 format!(
-                    "(() => Object.entries({m}).map(([__k, __v]) => ({{ key: {decoded}, value: __v }})))"
+                    "(() => globalThis.Object.entries({m}).map(([__k, __v]) => ({{ key: {decoded}, value: __v }})))"
                 )
             }
         });
@@ -5221,7 +5222,7 @@ fn decode_map_key(k: Option<TyId>, raw: &str, tys: &Arc<Types>) -> String {
         _ => None,
     };
     match base {
-        Some(BaseType::Int) => format!("Number({raw})"),
+        Some(BaseType::Int) => format!("globalThis.Number({raw})"),
         Some(BaseType::String) => raw.to_string(),
         // #70/#71 review: `resolver.rs`'s `check_map_key_keyable` and
         // `validate.rs`'s `@indexed`-field check both gate value-keyability
@@ -5251,7 +5252,7 @@ mod decode_map_key_tests {
     #[test]
     fn int_key_is_parsed_with_number() {
         let int = TYS.intern(Ty::Base(BaseType::Int));
-        assert_eq!(decode_map_key(Some(int), "k", &TYS), "Number(k)");
+        assert_eq!(decode_map_key(Some(int), "k", &TYS), "globalThis.Number(k)");
     }
 
     #[test]
@@ -5267,7 +5268,10 @@ mod decode_map_key_tests {
             kind: NamedKind::Refined(BaseType::Int),
             args: Vec::new(),
         });
-        assert_eq!(decode_map_key(Some(refined), "k", &TYS), "Number(k)");
+        assert_eq!(
+            decode_map_key(Some(refined), "k", &TYS),
+            "globalThis.Number(k)"
+        );
     }
 
     #[test]
@@ -5526,7 +5530,7 @@ fn build_match_iife(
         for _ in 0..(INDENT_STEP * 2) {
             out.push(' ');
         }
-        out.push_str("throw new Error(\"non-exhaustive match\");\n");
+        out.push_str("throw new globalThis.Error(\"non-exhaustive match\");\n");
     }
     for _ in 0..INDENT_STEP {
         out.push(' ');
@@ -5645,7 +5649,11 @@ fn emit_match_tail(
         );
     }
     write_line(out, indent, "}");
-    write_line(out, indent, "throw new Error(\"non-exhaustive match\");");
+    write_line(
+        out,
+        indent,
+        "throw new globalThis.Error(\"non-exhaustive match\");",
+    );
 }
 
 fn emit_match_case(
@@ -5675,12 +5683,12 @@ fn emit_match_case(
         // A bare name binding is a catch-all that binds the scrutinee (ADR 0169).
         Pattern::Binding(id) => {
             write_line(out, indent, "default: {");
+            let local = cx.bind_local_name(&id.name);
             write_line(
                 out,
                 indent + INDENT_STEP,
-                &format!("const {} = {disc_var};", ts_ident(&id.name)),
+                &format!("const {local} = {disc_var};"),
             );
-            cx.declare_binder(&id.name);
             emit_match_body(out, &arm.body, cx, indent + INDENT_STEP, async_tail);
             write_line(out, indent, "}");
         }
@@ -5718,18 +5726,17 @@ fn emit_match_case(
                     continue;
                 };
                 let field = match &b.kind {
-                    PatternBindingKind::Named { field, .. } => field.name.clone(),
+                    PatternBindingKind::Named { field, .. } => payload_prop(&field.name),
                     PatternBindingKind::Positional { .. } => {
                         cx.positional_field_name(*disc_ty, &variant.name, i, tys)
                     }
                 };
-                let local = ts_ident(&name.name);
+                let local = cx.bind_local_name(&name.name);
                 write_line(
                     out,
                     indent + INDENT_STEP,
                     &format!("const {local} = {disc_var}.{field};"),
                 );
-                cx.declare_binder(&name.name);
             }
             emit_match_body(out, &arm.body, cx, indent + INDENT_STEP, async_tail);
             write_line(out, indent, "}");
@@ -5850,7 +5857,7 @@ fn pattern_match_tests(
                     continue;
                 }
                 let field = match &b.kind {
-                    PatternBindingKind::Named { field, .. } => field.name.clone(),
+                    PatternBindingKind::Named { field, .. } => payload_prop(&field.name),
                     PatternBindingKind::Positional { .. } => {
                         cx.positional_field_name(path_ty, &variant.name, i, tys)
                     }
@@ -5988,12 +5995,8 @@ fn emit_pattern_bindings(
     match pattern {
         Pattern::Wildcard(_) | Pattern::Literal { .. } => {}
         Pattern::Binding(id) => {
-            write_line(
-                out,
-                indent,
-                &format!("const {} = {path};", ts_ident(&id.name)),
-            );
-            cx.declare_binder(&id.name);
+            let local = cx.bind_local_name(&id.name);
+            write_line(out, indent, &format!("const {local} = {path};"));
         }
         // #472: a refined pattern binds only what its inner pattern binds
         // (`_ where P` binds nothing today).
@@ -6005,7 +6008,7 @@ fn emit_pattern_bindings(
         } => {
             for (i, b) in bindings.iter().enumerate() {
                 let field = match &b.kind {
-                    PatternBindingKind::Named { field, .. } => field.name.clone(),
+                    PatternBindingKind::Named { field, .. } => payload_prop(&field.name),
                     PatternBindingKind::Positional { .. } => {
                         cx.positional_field_name(path_ty, &variant.name, i, tys)
                     }
@@ -6035,11 +6038,11 @@ fn emit_pattern_bindings(
             if names.is_empty() {
                 return;
             }
-            let decl: Vec<String> = names.iter().map(|id| ts_ident(&id.name)).collect();
+            let decl: Vec<String> = names
+                .iter()
+                .map(|id| cx.bind_local_name(&id.name))
+                .collect();
             write_line(out, indent, &format!("let {};", decl.join(", ")));
-            for id in &names {
-                cx.declare_binder(&id.name);
-            }
             let last = alts.len() - 1;
             for (i, alt) in alts.iter().enumerate() {
                 if i == last {
@@ -6058,11 +6061,10 @@ fn emit_pattern_bindings(
                 let mut pairs = Vec::new();
                 pattern_binding_paths(path, path_ty, alt, cx, &mut pairs);
                 for (name, p) in &pairs {
-                    write_line(
-                        out,
-                        indent + INDENT_STEP,
-                        &format!("{} = {p};", ts_ident(name)),
-                    );
+                    let local = cx
+                        .resolved_local_name(name)
+                        .unwrap_or_else(|| ts_ident(name));
+                    write_line(out, indent + INDENT_STEP, &format!("{local} = {p};"));
                 }
             }
             write_line(out, indent, "}");
@@ -6091,7 +6093,7 @@ fn pattern_binding_paths(
         } => {
             for (i, b) in bindings.iter().enumerate() {
                 let field = match &b.kind {
-                    PatternBindingKind::Named { field, .. } => field.name.clone(),
+                    PatternBindingKind::Named { field, .. } => payload_prop(&field.name),
                     PatternBindingKind::Positional { .. } => {
                         cx.positional_field_name(path_ty, &variant.name, i, tys)
                     }
@@ -6174,7 +6176,11 @@ fn emit_match_if_chain(
         cx.shadow_scopes.pop();
     }
     if !has_catchall {
-        write_line(out, indent, "throw new Error(\"non-exhaustive match\");");
+        write_line(
+            out,
+            indent,
+            "throw new globalThis.Error(\"non-exhaustive match\");",
+        );
     }
 }
 
@@ -6276,11 +6282,11 @@ fn refined_check_as_bool(recv: &str, base: BaseType, refinement: Option<&Refinem
     let mut terms: Vec<String> = Vec::new();
     if base == BaseType::Int {
         // #1657: an `Int` is a JS safe integer.
-        terms.push(format!("Number.isSafeInteger({recv})"));
+        terms.push(format!("globalThis.Number.isSafeInteger({recv})"));
     }
     // v0.21: validated `Float` values are finite (ADR 0040).
     if base == BaseType::Float {
-        terms.push(format!("Number.isFinite({recv})"));
+        terms.push(format!("globalThis.Number.isFinite({recv})"));
     }
     if let Some(r) = refinement {
         for p in bynk_syntax::ast::in_check_order(&r.predicates, |p| &p.kind) {
@@ -6299,7 +6305,7 @@ fn refined_check_as_bool(recv: &str, base: BaseType, refinement: Option<&Refinem
                 PredKind::Length(n) => format!("{recv}.length === {n}"),
                 PredKind::Matches(pat) => {
                     let escaped = escape_ts_string(pat);
-                    format!("new RegExp(\"^(?:\" + \"{escaped}\" + \")$\").test({recv})")
+                    format!("new globalThis.RegExp(\"^(?:\" + \"{escaped}\" + \")$\").test({recv})")
                 }
             });
         }

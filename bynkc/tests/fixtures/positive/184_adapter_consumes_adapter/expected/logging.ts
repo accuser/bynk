@@ -4,8 +4,8 @@
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "./runtime.js";
 
 export interface Log {
-  info(msg: string): Promise<void>;
+  info(msg: string): globalThis.Promise<void>;
 }
 
-export const LogToken: unique symbol = Symbol("Log");
+export const LogToken: symbol = globalThis.Symbol("Log");
 

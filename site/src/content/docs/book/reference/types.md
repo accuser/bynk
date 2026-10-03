@@ -365,19 +365,19 @@ A generic-record instantiation is **serialisable** — it may appear in a field 
 another record, a sum payload, a service or agent handler signature, agent
 state, or a `Json.encode`/`Json.decode` target — exactly when its type arguments
 are. The compiler generates a **monomorphised codec** per instantiation: a
-`Paginated[User]` boundary emits `serialise_Paginated_User` /
-`deserialise_Paginated_User`, specialised to the concrete arguments and
-delegating to their codecs (`serialise_List_User`, `serialise_Option_String`).
+`Paginated[User]` boundary emits `__serialise_Paginated_User` /
+`__deserialise_Paginated_User`, specialised to the concrete arguments and
+delegating to their codecs (`__serialise_List_User`, `__serialise_Option_String`).
 The emitted TypeScript interface stays the erased `Paginated<T>`; only the codec
 is per-instantiation, matching how `List`/`Map`/`Result` already specialise.
 
 ```bynk
 fn save(page: Paginated[User]) -> String {
-  Json.encode(page)                          -- serialise_Paginated_User
+  Json.encode(page)                          -- __serialise_Paginated_User
 }
 
 fn load(s: String) -> Result[Paginated[User], JsonError] {
-  Json.decode[Paginated[User]](s)            -- deserialise_Paginated_User
+  Json.decode[Paginated[User]](s)            -- __deserialise_Paginated_User
 }
 ```
 
@@ -438,7 +438,11 @@ Reach for the pipe form only when a variant needs a payload.
 - **Construct** by naming a variant: `Pending`, `Shipped("1Z…")`.
 - **Consume** with [`match`](#matching) or [`is`](/book/reference/operators/).
 
-Sum types emit a discriminated union keyed on a `tag` field.
+Sum types emit a discriminated union keyed on a `tag` field. As JSON, a variant
+is a flat object whose `kind` key names the variant (`{"kind": "Shipped",
+"tracking": "1Z…"}`), so a payload field cannot be named `kind`
+(`bynk.resolve.reserved_payload_field`). A payload field named `tag` is fine:
+it keeps that name on the wire.
 
 ### Error embeddings (v0.154)
 
@@ -489,7 +493,7 @@ generic arrow (`Loaded: <T>(value: T): ApiResult<T> => …`).
 
 Like a generic record, a generic-sum instantiation is **serialisable** exactly
 when its type arguments are, through a monomorphised codec per instantiation
-(`serialise_ApiResult_User` / `deserialise_ApiResult_User`); a recursive generic
+(`__serialise_ApiResult_User` / `__deserialise_ApiResult_User`); a recursive generic
 sum has no finite codec set and is rejected at a boundary with
 `bynk.generics.recursive_generic_at_boundary`. A generic sum may not carry an
 `embeds` clause (`bynk.generics.generic_sum_embeds`).

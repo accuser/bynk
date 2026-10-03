@@ -7,7 +7,7 @@ export type PositiveInt = number & { readonly __brand: "PositiveInt" };
 
 export const PositiveInt = {
   of(value: number): Result<PositiveInt, ValidationError> {
-    if (!Number.isSafeInteger(value)) {
+    if (!globalThis.Number.isSafeInteger(value)) {
       return Err({ field: "PositiveInt", message: "must be a safe integer", value });
     }
     if (!(value > 0)) {
@@ -17,12 +17,12 @@ export const PositiveInt = {
   },
 };
 
-export async function classify(c: boolean, n: number): Promise<boolean> {
+export async function classify(c: boolean, n: number): globalThis.Promise<boolean> {
   if (c) {
-    let __r1: boolean | Promise<boolean>;
+    let __r1: boolean | globalThis.Promise<boolean>;
     if (n > 0) {
       const __r0 = n;
-      __r1 = (Number.isSafeInteger(__r0) && __r0 > 0);
+      __r1 = (globalThis.Number.isSafeInteger(__r0) && __r0 > 0);
     } else {
       __r1 = false;
     }

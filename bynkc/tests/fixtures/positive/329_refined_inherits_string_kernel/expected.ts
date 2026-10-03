@@ -23,7 +23,7 @@ export function size(n: Name): number {
 }
 
 export function head(n: Name): string {
-  return n.slice(Math.max(0, 0), Math.max(0, 3));
+  return n.slice(globalThis.Math.max(0, 0), globalThis.Math.max(0, 3));
 }
 
 export function tag(n: Name): string {

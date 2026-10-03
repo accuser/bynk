@@ -15,7 +15,7 @@ export type AuthId = string & { readonly __brand: "commerce.payment.AuthId" };
 
 export const AuthId = {
   of(value: string): Result<AuthId, ValidationError> {
-    if (!(new RegExp("^(?:" + "AUTH-[0-9]{8}" + ")$").test(value))) {
+    if (!(new globalThis.RegExp("^(?:" + "AUTH-[0-9]{8}" + ")$").test(value))) {
       return Err({ field: "AuthId", message: "must match /AUTH-[0-9]{8}/", value });
     }
     return Ok(value as AuthId);
@@ -37,19 +37,19 @@ export const PaymentError = {
 };
 
 export interface Payments {
-  authorise(amount: Money): Promise<Result<AuthId, PaymentError>>;
+  authorise(amount: Money): globalThis.Promise<Result<AuthId, PaymentError>>;
 }
 
-export const PaymentsToken: unique symbol = Symbol("Payments");
+export const PaymentsToken: symbol = globalThis.Symbol("Payments");
 
 export interface Logger {
-  log(message: string): Promise<void>;
+  log(message: string): globalThis.Promise<void>;
 }
 
-export const LoggerToken: unique symbol = Symbol("Logger");
+export const LoggerToken: symbol = globalThis.Symbol("Logger");
 
 export class StubPayments implements Payments {
-  async authorise(amount: Money): Promise<Result<AuthId, PaymentError>> {
+  async authorise(amount: Money): globalThis.Promise<Result<AuthId, PaymentError>> {
     return Err(PaymentError.Declined);
   }
 }
@@ -57,7 +57,7 @@ export class StubPayments implements Payments {
 export const StubPaymentsProvider = { token: PaymentsToken, factory: () => new StubPayments() };
 
 export class ConsoleLogger implements Logger {
-  async log(message: string): Promise<void> {
+  async log(message: string): globalThis.Promise<void> {
     return undefined;
   }
 }
@@ -65,7 +65,7 @@ export class ConsoleLogger implements Logger {
 export const ConsoleLoggerProvider = { token: LoggerToken, factory: () => new ConsoleLogger() };
 
 export const authorise = {
-  async call(amount: Money, deps: { Payments: Payments; Logger: Logger }): Promise<Result<AuthId, PaymentError>> {
+  async call(amount: Money, deps: { Payments: Payments; Logger: Logger }): globalThis.Promise<Result<AuthId, PaymentError>> {
     const __r0 = await deps.Logger.log("Authorising payment");
     const result = await deps.Payments.authorise(amount);
     return result;
@@ -79,7 +79,7 @@ export interface CommercePaymentDeps {
 
 export function makeSurface(deps: CommercePaymentDeps) {
   return {
-    async authorise(amount: Money): Promise<Result<AuthId, PaymentError>> {
+    async authorise(amount: Money): globalThis.Promise<Result<AuthId, PaymentError>> {
       return authorise.call(amount, deps);
     },
   };

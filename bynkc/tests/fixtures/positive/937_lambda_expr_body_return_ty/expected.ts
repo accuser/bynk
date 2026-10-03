@@ -45,6 +45,6 @@ if (__r0.tag === "Err") return __r0;
       return Err(OrderError.Payment(e));
     }
   }
-  throw new Error("non-exhaustive match");
+  throw new globalThis.Error("non-exhaustive match");
 }
 

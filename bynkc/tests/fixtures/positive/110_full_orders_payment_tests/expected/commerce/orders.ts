@@ -17,7 +17,7 @@ export const OrderError = {
 };
 
 export const place = {
-  async call(amount: number, deps: { surface: { Payment: ReturnType<typeof commerce_payment.makeSurface> } }): Promise<Result<AuthId, OrderError>> {
+  async call(amount: number, deps: { surface: { Payment: globalThis.ReturnType<typeof commerce_payment.makeSurface> } }): globalThis.Promise<Result<AuthId, OrderError>> {
     const auth = await deps.surface.Payment.authorise(amount);
     switch (auth.tag) {
       case "Ok": {
@@ -35,21 +35,21 @@ export const place = {
         return Err(OrderError.PaymentInsufficient);
       }
     }
-    throw new Error("non-exhaustive match");
+    throw new globalThis.Error("non-exhaustive match");
   })(error);
       }
     }
-    throw new Error("non-exhaustive match");
+    throw new globalThis.Error("non-exhaustive match");
   },
 };
 
 export interface CommerceOrdersDeps {
-  readonly surface: { Payment: ReturnType<typeof commerce_payment.makeSurface> };
+  readonly surface: { Payment: globalThis.ReturnType<typeof commerce_payment.makeSurface> };
 }
 
 export function makeSurface(deps: CommerceOrdersDeps) {
   return {
-    async place(amount: number): Promise<Result<AuthId, OrderError>> {
+    async place(amount: number): globalThis.Promise<Result<AuthId, OrderError>> {
       return place.call(amount, deps);
     },
   };

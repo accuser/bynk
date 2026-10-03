@@ -9,7 +9,7 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError, Ht
  */
 
 export const api = {
-  async http_GET(deps: {}): Promise<HttpResult<string>> {
+  async http_GET(deps: {}): globalThis.Promise<HttpResult<string>> {
     const r: Result<number, string> = Ok(1);
     switch (r.tag) {
       case "Ok": {
@@ -21,7 +21,7 @@ export const api = {
         return HttpResult.Ok(e);
       }
     }
-    throw new Error("non-exhaustive match");
+    throw new globalThis.Error("non-exhaustive match");
   },
 };
 

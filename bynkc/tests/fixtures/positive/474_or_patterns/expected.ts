@@ -62,7 +62,7 @@ export function roomOf(s: BookingState): number {
   if (s.tag === "Cancelled") {
     return 0;
   }
-  throw new Error("non-exhaustive match");
+  throw new globalThis.Error("non-exhaustive match");
 }
 
 export function small(n: number): string {
@@ -81,7 +81,7 @@ export function small(n: number): string {
       return "large";
     }
   }
-  throw new Error("non-exhaustive match");
+  throw new globalThis.Error("non-exhaustive match");
 }
 
 export function route(c: Command): string {
@@ -102,7 +102,7 @@ export function route(c: Command): string {
   if (c.tag === "Logout") {
     return "bye";
   }
-  throw new Error("non-exhaustive match");
+  throw new globalThis.Error("non-exhaustive match");
 }
 
 export function smallOption(o: Option<number>): string {
@@ -115,7 +115,7 @@ export function smallOption(o: Option<number>): string {
   if (o.tag === "None") {
     return "none";
   }
-  throw new Error("non-exhaustive match");
+  throw new globalThis.Error("non-exhaustive match");
 }
 
 export function describe(s: BookingState): string {
@@ -147,6 +147,6 @@ export function classify(s: Status): string {
       return "not done";
     }
   }
-  throw new Error("non-exhaustive match");
+  throw new globalThis.Error("non-exhaustive match");
 }
 

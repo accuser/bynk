@@ -13,7 +13,7 @@ export const ReserveOutcome = {
 };
 
 export const reserve = {
-  async call(deps: { Idempotency: idempotency.Idempotency }): Promise<Option<ReserveOutcome>> {
+  async call(deps: { Idempotency: idempotency.Idempotency }): globalThis.Promise<Option<ReserveOutcome>> {
     const cached = await deps.Idempotency.dedup<ReserveOutcome>("order-key-1");
     return cached;
   },
@@ -25,7 +25,7 @@ export interface DemoOrdersDeps {
 
 export function makeSurface(deps: DemoOrdersDeps) {
   return {
-    async reserve(): Promise<Option<ReserveOutcome>> {
+    async reserve(): globalThis.Promise<Option<ReserveOutcome>> {
       return reserve.call(deps);
     },
   };

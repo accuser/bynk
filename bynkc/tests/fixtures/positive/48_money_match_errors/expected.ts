@@ -26,6 +26,6 @@ export function describe(e: MoneyError): string {
       return "overflow";
     }
   }
-  throw new Error("non-exhaustive match");
+  throw new globalThis.Error("non-exhaustive match");
 }
 

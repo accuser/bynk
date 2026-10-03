@@ -342,7 +342,7 @@ fn print_numeric_guard_stmt(name: &str, method: &str, message: &str) -> String {
         op: bynk_ts::TsUnaryOp::Not,
         expr: Box::new(bynk_ts::TsExpr::Call {
             callee: Box::new(bynk_ts::TsExpr::Member {
-                object: Box::new(bynk_ts::TsExpr::Ident("Number".to_string())),
+                object: Box::new(bynk_ts::TsExpr::Ident("globalThis.Number".to_string())),
                 property: method.to_string(),
             }),
             args: vec![bynk_ts::TsExpr::Ident("value".to_string())],
@@ -548,7 +548,7 @@ fn emit_sum_type(
             )];
             members.extend(payload.iter().map(|(field, ty)| {
                 bynk_ts::TsTypeMember::readonly_prop(
-                    field.clone(),
+                    payload_prop(field),
                     ts_ty_to_ts_type(*ty, &commons.ty_intern),
                 )
             }));
@@ -583,7 +583,7 @@ fn emit_sum_type(
             let ctor_params: Vec<bynk_ts::TsParam> = payload
                 .iter()
                 .map(|(field, ty)| bynk_ts::TsParam {
-                    name: field.clone(),
+                    name: payload_prop(field),
                     ty: Some(ts_ty_to_ts_type(*ty, &commons.ty_intern)),
                     optional: false,
                 })
@@ -595,7 +595,7 @@ fn emit_sum_type(
             obj_entries.extend(
                 payload
                     .iter()
-                    .map(|(field, _)| bynk_ts::TsObjectEntry::Shorthand(field.clone())),
+                    .map(|(field, _)| bynk_ts::TsObjectEntry::Shorthand(payload_prop(field))),
             );
             let ctor_body =
                 bynk_ts::TsExpr::Paren(Box::new(bynk_ts::TsExpr::object_entries(obj_entries)));
@@ -855,6 +855,11 @@ fn emit_method(
     // `Promise.resolve(...)` because there's no surrounding `async` to absorb
     // it. (Methods aren't expected to return `Effect[T]` in v0–v0.7.1.)
     let mut body_text = String::new();
+    // #1653: parameters are bindings of the body's own scope, so a `let` that
+    // re-binds one gets a fresh name instead of redeclaring it.
+    for p in &f.params {
+        cx.declare_binder(&p.name.name);
+    }
     emit_block_as_function_body_with_return(
         &mut body_text,
         &f.body,
@@ -956,6 +961,11 @@ pub(crate) fn emit_free_fn(
     .with_source_map(Some(&body_smb));
     let async_tail = is_effectful_return(&f.return_type);
     let guarded = contracts && (!f.requires.is_empty() || !f.ensures.is_empty());
+    // #1653: parameters are bindings of the body's own scope, so a `let` that
+    // re-binds one gets a fresh name instead of redeclaring it.
+    for p in &f.params {
+        cx.declare_binder(&p.name.name);
+    }
     let mut body_text = String::new();
     if guarded {
         emit_contract_guarded_body(&mut body_text, f, &mut cx, async_tail);
@@ -1160,7 +1170,7 @@ fn contract_guard_if_stmt(pred: &str, msg: &str) -> bynk_ts::TsStmt {
         )))),
     };
     let new_error = bynk_ts::TsExpr::New {
-        callee: Box::new(bynk_ts::TsExpr::Ident("Error".to_string())),
+        callee: Box::new(bynk_ts::TsExpr::Ident("globalThis.Error".to_string())),
         args: vec![bynk_ts::TsExpr::template_lit(
             vec![msg.to_string()],
             Vec::new(),
@@ -1246,7 +1256,7 @@ fn compute() -> Effect[Int] {
 "#,
         );
         assert!(
-            ts.contains("export async function compute(): Promise<number> {\n"),
+            ts.contains("export async function compute(): globalThis.Promise<number> {\n"),
             "{ts}"
         );
     }
@@ -1670,7 +1680,7 @@ fn emit_icu_placeholder(
                 }))),
             };
             let call = bynk_ts::TsExpr::Call {
-                callee: Box::new(bynk_ts::TsExpr::Ident("selectPluralArm".to_string())),
+                callee: Box::new(bynk_ts::TsExpr::Ident("__selectPluralArm".to_string())),
                 args: vec![
                     tag_lit_str(),
                     arg_tag("value"),
@@ -1713,7 +1723,7 @@ fn emit_icu_placeholder(
             // `Ident` (#1539).
             bynk_ts::TsExpr::VerbatimExpr(
                 format!(
-                    "((__arg) => {{ if (__arg === undefined || __arg.tag !== \"Text\") {{ return {fallback_text}; }} const __arms: Record<string, string> = {{ {} }}; return Object.hasOwn(__arms, __arg.value) ? __arms[__arg.value] : __arms[\"other\"]; }})({arg})",
+                    "((__arg) => {{ if (__arg === undefined || __arg.tag !== \"Text\") {{ return {fallback_text}; }} const __arms: globalThis.Record<string, string> = {{ {} }}; return globalThis.Object.hasOwn(__arms, __arg.value) ? __arms[__arg.value] : __arms[\"other\"]; }})({arg})",
                     arms_obj.join(", "),
                 ),
                 bynk_ts::VerbatimOrigin::Emit,
@@ -1754,7 +1764,7 @@ fn emit_icu_placeholder(
                     }))),
                 }),
                 consequent: Box::new(bynk_ts::TsExpr::Call {
-                    callee: Box::new(bynk_ts::TsExpr::Ident("formatIcuNumber".to_string())),
+                    callee: Box::new(bynk_ts::TsExpr::Ident("__formatIcuNumber".to_string())),
                     args,
                 }),
                 alternate: Box::new(fallback()),
@@ -1785,7 +1795,7 @@ fn emit_icu_placeholder(
                     }),
                 }),
                 consequent: Box::new(bynk_ts::TsExpr::Call {
-                    callee: Box::new(bynk_ts::TsExpr::Ident("formatIcuDate".to_string())),
+                    callee: Box::new(bynk_ts::TsExpr::Ident("__formatIcuDate".to_string())),
                     args,
                 }),
                 alternate: Box::new(fallback()),
@@ -1825,7 +1835,7 @@ fn emit_sub_message(
             icu::SubSegment::Hash => {
                 runtime_use.note_icu();
                 bynk_ts::TsExpr::Call {
-                    callee: Box::new(bynk_ts::TsExpr::Ident("formatIcuNumber".to_string())),
+                    callee: Box::new(bynk_ts::TsExpr::Ident("__formatIcuNumber".to_string())),
                     args: vec![
                         bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(locale_tag.to_string())),
                         bynk_ts::TsExpr::Member {
@@ -1910,7 +1920,7 @@ pub(crate) fn emit_messages_bundle(
     let mut table = String::new();
     writeln!(
         table,
-        "const messagesByLocale: Record<string, Record<string, (params: ReadonlyMap<string, MessageArg>) => string>> = {{"
+        "const messagesByLocale: globalThis.Record<string, globalThis.Record<string, (params: ReadonlyMap<string, MessageArg>) => string>> = {{"
     )
     .unwrap();
     for m in blocks {
@@ -2120,12 +2130,9 @@ pub(crate) fn emit_messages_bundle(
 /// [`bynk_ts::TsObjectEntry::Method.doc`]'s own identical field, #1337) —
 /// params route through the already-real [`ts_ty_to_ts_type`] (P7.9,
 /// #1315) instead of the opaque pre-printed `String` `ts_ty` returns. The
-/// injection token (`export const {Name}Token: unique symbol =
-/// Symbol("{Name}");`) is a real [`bynk_ts::TsDecl::ConstDecl`] — `unique
-/// symbol` stays one opaque `TsType::named` string, the same "an odd,
-/// one-off type shape stays opaque text" precedent P7.9 already used for
-/// `Query[T]`'s own extra-paren-wrapped shape (nothing else in this crate
-/// builds a `unique symbol` type). This function's own exact signature is
+/// injection token (`export const {Name}Token: symbol =
+/// globalThis.Symbol("{Name}");`, #1653) is a real
+/// [`bynk_ts::TsDecl::ConstDecl`]. This function's own exact signature is
 /// unchanged, the P7.9/step-1 pattern — it never owned a `Verbatim`
 /// construction site.
 /// #1478: real-node-internally already — returns its two real declarations
@@ -2199,13 +2206,16 @@ pub(crate) fn emit_capability(
     interface.no_blank_before = c.documentation.is_some();
     stmts.push(interface);
 
-    // Injection token (symbol carrying the interface type).
+    // Injection token (symbol carrying the interface type). #1653: typed
+    // `symbol`, not `unique symbol` — TypeScript only gives a bare `Symbol(…)`
+    // call a unique-symbol type, and the call is qualified as
+    // `globalThis.Symbol` so a user type named `Symbol` cannot hide it.
     let token_decl = bynk_ts::TsStmt::decl(
         bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::ConstDecl {
             name: format!("{}Token", c.name.name),
-            ty: Some(bynk_ts::TsType::named("unique symbol")),
+            ty: Some(bynk_ts::TsType::named("symbol")),
             init: bynk_ts::TsExpr::Call {
-                callee: Box::new(bynk_ts::TsExpr::Ident("Symbol".to_string())),
+                callee: Box::new(bynk_ts::TsExpr::Ident("globalThis.Symbol".to_string())),
                 args: vec![bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(
                     c.name.name.clone(),
                 ))],
@@ -2510,6 +2520,11 @@ pub(crate) fn emit_provider(
         )
         .with_source_map(Some(&body_smb));
         cx.local_agents = ctx.local_agents.clone();
+        // #1653: parameters are bindings of the body's own scope, so a `let` that
+        // re-binds one gets a fresh name instead of redeclaring it.
+        for p in &op.params {
+            cx.declare_binder(&p.name.name);
+        }
         let mut body_text = String::new();
         emit_block_as_function_body_with_return(
             &mut body_text,
@@ -2818,6 +2833,11 @@ pub(crate) fn emit_service(
         )
         .with_source_map(Some(&body_smb));
         cx.local_agents = ctx.local_agents.clone();
+        // #1653: parameters are bindings of the body's own scope, so a `let` that
+        // re-binds one gets a fresh name instead of redeclaring it.
+        for p in &handler.params {
+            cx.declare_binder(&p.name.name);
+        }
         let async_tail = *ir_effectful;
         emit_block_as_function_body_with_return(
             &mut body_out,
@@ -2968,7 +2988,7 @@ pub(crate) fn emit_service(
                     vec![bynk_ts::TsParam {
                         name: "promise".to_string(),
                         ty: Some(bynk_ts::TsType::named_with_args(
-                            "Promise",
+                            "globalThis.Promise",
                             vec![bynk_ts::TsType::named("unknown")],
                         )),
                         optional: false,
@@ -3009,7 +3029,7 @@ pub(crate) fn emit_service(
                 &mut deps_members,
                 "__eventsDispatch",
                 bynk_ts::TsType::named(format!(
-                    "(events: Array<{}>) => Promise<void>",
+                    "(events: globalThis.Array<{}>) => globalThis.Promise<void>",
                     crate::emitter::EVENTS_WIRE_EVENT_TS_TYPE
                 )),
             );
@@ -3049,7 +3069,7 @@ pub(crate) fn emit_service(
         if body_emits_directly {
             writeln!(
                 raw_body,
-                "    const __events: Array<{}> = [];",
+                "    const __events: globalThis.Array<{}> = [];",
                 crate::emitter::EVENTS_WIRE_EVENT_TS_TYPE
             )
             .unwrap();
@@ -3366,14 +3386,14 @@ fn workers_env_ty(
         })
         .map(|q| {
             let bind = crate::emitter::wrangler::consumed_binding_name(q);
-            bynk_ts::TsTypeMember::prop(bind, bynk_ts::TsType::named("ServiceBinding"))
+            bynk_ts::TsTypeMember::prop(bind, bynk_ts::TsType::named("__ServiceBinding"))
         })
         .collect();
     for agent in agents {
         let bind = crate::emitter::wrangler::agent_binding_name(agent);
         members.push(bynk_ts::TsTypeMember::prop(
             bind,
-            bynk_ts::TsType::named("DurableObjectNamespace"),
+            bynk_ts::TsType::named("__DurableObjectNamespace"),
         ));
     }
     bynk_ts::TsType::Object(members)
@@ -3430,7 +3450,10 @@ fn surface_ty(cross_context: &bynk_check::resolver::CrossContextInfo) -> bynk_ts
             .map(|(k, v)| {
                 bynk_ts::TsTypeMember::prop(
                     k,
-                    bynk_ts::TsType::named_with_args("ReturnType", vec![bynk_ts::TsType::named(v)]),
+                    bynk_ts::TsType::named_with_args(
+                        "globalThis.ReturnType",
+                        vec![bynk_ts::TsType::named(v)],
+                    ),
                 )
             })
             .collect(),
@@ -3530,7 +3553,7 @@ fn emit_context_deps_interface(
         members.push(bynk_ts::TsTypeMember::readonly_prop(
             "__eventsDispatch",
             bynk_ts::TsType::named(format!(
-                "(events: Array<{}>) => Promise<void>",
+                "(events: globalThis.Array<{}>) => globalThis.Promise<void>",
                 crate::emitter::EVENTS_WIRE_EVENT_TS_TYPE
             )),
         ));
@@ -3857,7 +3880,7 @@ pub(crate) fn lower_workers_cross_context_call(
     };
 
     let call_expr = bynk_ts::TsExpr::Call {
-        callee: Box::new(bynk_ts::TsExpr::Ident("callService".to_string())),
+        callee: Box::new(bynk_ts::TsExpr::Ident("__callService".to_string())),
         args: vec![
             bynk_ts::TsExpr::Member {
                 object: Box::new(bynk_ts::TsExpr::Member {
@@ -4202,7 +4225,7 @@ fn type_base_is_int(t: &TypeRef, types: &HashMap<String, Arc<TypeDecl>>) -> bool
 /// `String`/refined-`String`, `Bool` — passes through.
 fn history_arg_ts(p: &Param, i: usize, types: &HashMap<String, Arc<TypeDecl>>) -> String {
     if type_base_is_int(&p.type_ref, types) {
-        format!("Number(__st.args[{i}])")
+        format!("globalThis.Number(__st.args[{i}])")
     } else {
         format!("__st.args[{i}]")
     }
@@ -4271,7 +4294,7 @@ fn agent_wire_table(
 ) -> bynk_ts::TsStmt {
     let codec = |t: &TypeRef| {
         if serialisation::agent_wire_passes_through(t) {
-            bynk_ts::TsExpr::Ident("AGENT_WIRE_PASS".to_string())
+            bynk_ts::TsExpr::Ident("__AGENT_WIRE_PASS".to_string())
         } else {
             bynk_ts::TsExpr::object(vec![
                 (
@@ -4312,7 +4335,7 @@ fn agent_wire_table(
     bynk_ts::TsStmt::decl(
         bynk_ts::TsDecl::ConstDecl {
             name: agent_wire_name(&a.name.name),
-            ty: Some(bynk_ts::TsType::named("AgentWire")),
+            ty: Some(bynk_ts::TsType::named("__AgentWire")),
             init: table,
         },
         None,
@@ -4661,7 +4684,7 @@ pub(crate) fn emit_agent(
         members.push(bynk_ts::TsTypeMember::Prop {
             name: name.name.clone(),
             ty: bynk_ts::TsType::named_with_args(
-                "Record",
+                "globalThis.Record",
                 vec![
                     bynk_ts::TsType::named("string"),
                     ts_ty_to_ts_type(value_ty, tys),
@@ -4676,7 +4699,7 @@ pub(crate) fn emit_agent(
         members.push(bynk_ts::TsTypeMember::Prop {
             name: name.name.clone(),
             ty: bynk_ts::TsType::named_with_args(
-                "Record",
+                "globalThis.Record",
                 vec![
                     bynk_ts::TsType::named("string"),
                     bynk_ts::TsType::named("string"),
@@ -4690,7 +4713,7 @@ pub(crate) fn emit_agent(
         members.push(bynk_ts::TsTypeMember::Prop {
             name: name.to_string(),
             ty: bynk_ts::TsType::named_with_args(
-                "Record",
+                "globalThis.Record",
                 vec![
                     bynk_ts::TsType::named("string"),
                     bynk_ts::TsType::named("boolean"),
@@ -4708,7 +4731,7 @@ pub(crate) fn emit_agent(
             members.push(bynk_ts::TsTypeMember::Prop {
                 name: format!("{map}__idx_{f}"),
                 ty: bynk_ts::TsType::named_with_args(
-                    "Record",
+                    "globalThis.Record",
                     vec![
                         bynk_ts::TsType::named("string"),
                         // Postfix `string[]`, not `named_with_args("Array",
@@ -4741,7 +4764,7 @@ pub(crate) fn emit_agent(
         members.push(bynk_ts::TsTypeMember::Prop {
             name: name.name.clone(),
             ty: bynk_ts::TsType::named_with_args(
-                "Record",
+                "globalThis.Record",
                 vec![
                     bynk_ts::TsType::named("string"),
                     bynk_ts::TsType::Object(vec![
@@ -4776,7 +4799,7 @@ pub(crate) fn emit_agent(
         members.push(bynk_ts::TsTypeMember::Prop {
             name: name.name.clone(),
             ty: bynk_ts::TsType::named_with_args(
-                "Array",
+                "globalThis.Array",
                 vec![bynk_ts::TsType::Object(vec![
                     bynk_ts::TsTypeMember::Prop {
                         name: "t".to_string(),
@@ -4832,7 +4855,7 @@ pub(crate) fn emit_agent(
             name: registry.clone(),
             ty: None,
             init: bynk_ts::TsExpr::New {
-                callee: Box::new(bynk_ts::TsExpr::Ident("StateRegistry".to_string())),
+                callee: Box::new(bynk_ts::TsExpr::Ident("__StateRegistry".to_string())),
                 args: Vec::new(),
             },
         },
@@ -4999,7 +5022,8 @@ pub(crate) fn emit_agent(
     // The loaded record is statically typed (its fields are the agent's types),
     // but at runtime its bytes are untrusted, so each value is laundered to
     // `JsonValue` before the boundary deserialiser decodes it.
-    let present = |name: &str| format!("Object.prototype.hasOwnProperty.call(stored, \"{name}\")");
+    let present =
+        |name: &str| format!("globalThis.Object.prototype.hasOwnProperty.call(stored, \"{name}\")");
     let ser = |ty: &TypeRef, value: &str| {
         bynk_ts::print_expr(&serialisation::serialise_expr(ty, value, &ctx.runtime_use))
     };
@@ -5012,7 +5036,7 @@ pub(crate) fn emit_agent(
         if !is_codecable(ty) {
             return;
         }
-        let json = format!("({value_expr} as unknown as JsonValue)");
+        let json = format!("({value_expr} as unknown as __JsonValue)");
         // #1435 (Arc E slice 1): `deserialise_expr` now returns a real
         // `bynk_ts::TsExpr` — this closure stays `format!`-based (splicing
         // into one `TsStmt::Raw` check line below), so it prints at the
@@ -5031,7 +5055,7 @@ pub(crate) fn emit_agent(
             // state interface re-declares a commons type locally and
             // TypeScript's brands make the two nominally distinct, though
             // they share one runtime shape.
-            "  if ({p}) {{ const __r = {d}; if (__r.tag === \"Err\") throw rehydrationViolation(\"{agent_name}\", __r.error); (s as {{ -readonly [K in keyof typeof s]: (typeof s)[K] }}).{path} = __r.value as unknown as (typeof s)[\"{path}\"]; }}",
+            "  if ({p}) {{ const __r = {d}; if (__r.tag === \"Err\") throw __rehydrationViolation(\"{agent_name}\", __r.error); (s as {{ -readonly [K in keyof typeof s]: (typeof s)[K] }}).{path} = __r.value as unknown as (typeof s)[\"{path}\"]; }}",
             p = present(path),
         ));
     };
@@ -5056,18 +5080,18 @@ pub(crate) fn emit_agent(
     for (name, v) in &store_map_fields {
         if is_codecable(v) {
             rehydrate_checks.push(format!(
-                "  if ({p}) for (const __k of Object.keys(s.{n})) {{ const __r = {d}; if (__r.tag === \"Err\") throw rehydrationViolation(\"{agent_name}\", __r.error); s.{n}[__k] = __r.value as unknown as (typeof s.{n})[string]; }}",
+                "  if ({p}) for (const __k of globalThis.Object.keys(s.{n})) {{ const __r = {d}; if (__r.tag === \"Err\") throw __rehydrationViolation(\"{agent_name}\", __r.error); s.{n}[__k] = __r.value as unknown as (typeof s.{n})[string]; }}",
                 p = present(&name.name),
                 n = name.name,
                 d = bynk_ts::print_expr(&serialisation::deserialise_expr(
                     v,
-                    &format!("(s.{}[__k] as unknown as JsonValue)", name.name),
+                    &format!("(s.{}[__k] as unknown as __JsonValue)", name.name),
                     &name.name,
                     &ctx.runtime_use,
                 )),
             ));
             encode_entries.push(format!(
-                "{n}: Object.fromEntries(Object.entries(s.{n}).map(([__k, __v]) => [__k, {e}]))",
+                "{n}: globalThis.Object.fromEntries(globalThis.Object.entries(s.{n}).map(([__k, __v]) => [__k, {e}]))",
                 n = name.name,
                 e = ser(v, "__v"),
             ));
@@ -5076,9 +5100,9 @@ pub(crate) fn emit_agent(
             && type_base_is_string(k, &commons.types)
         {
             rehydrate_checks.push(format!(
-                "  for (const __k of Object.keys(s.{n})) {{ const __r = {d}; if (__r.tag === \"Err\") throw rehydrationViolation(\"{agent_name}\", __r.error); }}",
+                "  for (const __k of globalThis.Object.keys(s.{n})) {{ const __r = {d}; if (__r.tag === \"Err\") throw __rehydrationViolation(\"{agent_name}\", __r.error); }}",
                 n = name.name,
-                d = bynk_ts::print_expr(&serialisation::deserialise_expr(k, "(__k as unknown as JsonValue)", &name.name, &ctx.runtime_use)),
+                d = bynk_ts::print_expr(&serialisation::deserialise_expr(k, "(__k as unknown as __JsonValue)", &name.name, &ctx.runtime_use)),
             ));
         }
     }
@@ -5090,9 +5114,9 @@ pub(crate) fn emit_agent(
             && type_base_is_string(k, &commons.types)
         {
             rehydrate_checks.push(format!(
-                "  for (const __k of Object.keys(s.{n})) {{ const __r = {d}; if (__r.tag === \"Err\") throw rehydrationViolation(\"{agent_name}\", __r.error); }}",
+                "  for (const __k of globalThis.Object.keys(s.{n})) {{ const __r = {d}; if (__r.tag === \"Err\") throw __rehydrationViolation(\"{agent_name}\", __r.error); }}",
                 n = name.name,
-                d = bynk_ts::print_expr(&serialisation::deserialise_expr(k, "(__k as unknown as JsonValue)", &name.name, &ctx.runtime_use)),
+                d = bynk_ts::print_expr(&serialisation::deserialise_expr(k, "(__k as unknown as __JsonValue)", &name.name, &ctx.runtime_use)),
             ));
         }
     }
@@ -5101,9 +5125,9 @@ pub(crate) fn emit_agent(
     for (name, t) in &store_set_fields {
         if type_base_is_string(t, &commons.types) {
             rehydrate_checks.push(format!(
-                "  for (const __k of Object.keys(s.{n})) {{ const __r = {d}; if (__r.tag === \"Err\") throw rehydrationViolation(\"{agent_name}\", __r.error); }}",
+                "  for (const __k of globalThis.Object.keys(s.{n})) {{ const __r = {d}; if (__r.tag === \"Err\") throw __rehydrationViolation(\"{agent_name}\", __r.error); }}",
                 n = name.name,
-                d = bynk_ts::print_expr(&serialisation::deserialise_expr(t, "(__k as unknown as JsonValue)", &name.name, &ctx.runtime_use)),
+                d = bynk_ts::print_expr(&serialisation::deserialise_expr(t, "(__k as unknown as __JsonValue)", &name.name, &ctx.runtime_use)),
             ));
         }
     }
@@ -5111,13 +5135,13 @@ pub(crate) fn emit_agent(
     for (name, v, _) in &store_cache_fields {
         if is_codecable(v) {
             rehydrate_checks.push(format!(
-                "  if ({p}) for (const __e of Object.values(s.{n})) {{ const __r = {d}; if (__r.tag === \"Err\") throw rehydrationViolation(\"{agent_name}\", __r.error); __e.v = __r.value as unknown as typeof __e.v; }}",
+                "  if ({p}) for (const __e of globalThis.Object.values(s.{n})) {{ const __r = {d}; if (__r.tag === \"Err\") throw __rehydrationViolation(\"{agent_name}\", __r.error); __e.v = __r.value as unknown as typeof __e.v; }}",
                 p = present(&name.name),
                 n = name.name,
-                d = bynk_ts::print_expr(&serialisation::deserialise_expr(v, "(__e.v as unknown as JsonValue)", &name.name, &ctx.runtime_use)),
+                d = bynk_ts::print_expr(&serialisation::deserialise_expr(v, "(__e.v as unknown as __JsonValue)", &name.name, &ctx.runtime_use)),
             ));
             encode_entries.push(format!(
-                "{n}: Object.fromEntries(Object.entries(s.{n}).map(([__k, __e]) => [__k, {{ ...__e, v: {e} }}]))",
+                "{n}: globalThis.Object.fromEntries(globalThis.Object.entries(s.{n}).map(([__k, __e]) => [__k, {{ ...__e, v: {e} }}]))",
                 n = name.name,
                 e = ser(v, "__e.v"),
             ));
@@ -5127,10 +5151,10 @@ pub(crate) fn emit_agent(
     for (name, t, _) in &store_log_fields {
         if is_codecable(t) {
             rehydrate_checks.push(format!(
-                "  if ({p}) for (const __e of s.{n}) {{ const __r = {d}; if (__r.tag === \"Err\") throw rehydrationViolation(\"{agent_name}\", __r.error); __e.v = __r.value as unknown as typeof __e.v; }}",
+                "  if ({p}) for (const __e of s.{n}) {{ const __r = {d}; if (__r.tag === \"Err\") throw __rehydrationViolation(\"{agent_name}\", __r.error); __e.v = __r.value as unknown as typeof __e.v; }}",
                 p = present(&name.name),
                 n = name.name,
-                d = bynk_ts::print_expr(&serialisation::deserialise_expr(t, "(__e.v as unknown as JsonValue)", &name.name, &ctx.runtime_use)),
+                d = bynk_ts::print_expr(&serialisation::deserialise_expr(t, "(__e.v as unknown as __JsonValue)", &name.name, &ctx.runtime_use)),
             ));
             encode_entries.push(format!(
                 "{n}: s.{n}.map((__e) => ({{ ...__e, v: {e} }}))",
@@ -5199,7 +5223,7 @@ pub(crate) fn emit_agent(
                     ty: Some(bynk_ts::TsType::named(state_ty.clone())),
                     optional: false,
                 }],
-                return_type: Some(bynk_ts::TsType::named("Record<string, unknown>")),
+                return_type: Some(bynk_ts::TsType::named("globalThis.Record<string, unknown>")),
                 body: vec![bynk_ts::TsStmt::raw(encode_body, None)],
                 is_async: false,
                 inline: false,
@@ -5219,7 +5243,7 @@ pub(crate) fn emit_agent(
     let class_smb = RefCell::new(SourceMapBuilder::new());
     let source_map = Some(&class_smb);
     writeln!(out, "export class {name} {{", name = a.name.name).unwrap();
-    writeln!(out, "  state: DurableObjectState;").unwrap();
+    writeln!(out, "  state: __DurableObjectState;").unwrap();
     // #527: an agent whose methods take `given` capabilities rebuilds those
     // deps *inside* the DO (providers cannot cross the JSON wire), and some
     // providers take the Worker `env` — workerd passes it as the DO
@@ -5243,14 +5267,14 @@ pub(crate) fn emit_agent(
         writeln!(out, "  private __env: unknown;").unwrap();
         writeln!(
             out,
-            "  constructor(state: DurableObjectState, env?: unknown) {{"
+            "  constructor(state: __DurableObjectState, env?: unknown) {{"
         )
         .unwrap();
         writeln!(out, "    this.state = state;").unwrap();
         writeln!(out, "    this.__env = env;").unwrap();
         writeln!(out, "  }}").unwrap();
     } else {
-        writeln!(out, "  constructor(state: DurableObjectState) {{").unwrap();
+        writeln!(out, "  constructor(state: __DurableObjectState) {{").unwrap();
         writeln!(out, "    this.state = state;").unwrap();
         writeln!(out, "  }}").unwrap();
     }
@@ -5354,7 +5378,7 @@ pub(crate) fn emit_agent(
         is_async: true,
         params: Vec::new(),
         return_type: Some(bynk_ts::TsType::named_with_args(
-            "Promise",
+            "globalThis.Promise",
             vec![bynk_ts::TsType::named(state_ty.clone())],
         )),
         doc: None,
@@ -5423,7 +5447,7 @@ pub(crate) fn emit_agent(
                         bynk_ts::TsStmt::expr_stmt(
                             bynk_ts::TsExpr::Call {
                                 callee: Box::new(bynk_ts::TsExpr::Ident(
-                                    "console.error".to_string(),
+                                    "globalThis.console.error".to_string(),
                                 )),
                                 args: vec![
                                     bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(format!(
@@ -5451,7 +5475,7 @@ pub(crate) fn emit_agent(
                         bynk_ts::TsStmt::throw_stmt(
                             bynk_ts::TsExpr::Call {
                                 callee: Box::new(bynk_ts::TsExpr::Ident(
-                                    "invariantViolation".to_string(),
+                                    "__invariantViolation".to_string(),
                                 )),
                                 args: vec![
                                     bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(a.name.name.clone())),
@@ -5619,7 +5643,7 @@ pub(crate) fn emit_agent(
             optional: false,
         }],
         return_type: Some(bynk_ts::TsType::named_with_args(
-            "Promise",
+            "globalThis.Promise",
             vec![bynk_ts::TsType::named("void")],
         )),
         doc: None,
@@ -5778,7 +5802,7 @@ pub(crate) fn emit_agent(
                 &mut deps_members,
                 "__eventsDispatch",
                 bynk_ts::TsType::named(format!(
-                    "(events: Array<{}>) => Promise<void>",
+                    "(events: globalThis.Array<{}>) => globalThis.Promise<void>",
                     crate::emitter::EVENTS_WIRE_EVENT_TS_TYPE
                 )),
             );
@@ -5822,7 +5846,7 @@ pub(crate) fn emit_agent(
         // pre-conversion code was.
         let body_emits_directly = bynk_ir::block_uses_emit(&h.body, &commons.callees);
         let events_decl = format!(
-            "    const __events: Array<{}> = [];",
+            "    const __events: globalThis.Array<{}> = [];",
             crate::emitter::EVENTS_WIRE_EVENT_TS_TYPE
         );
         let flush = "    if (__events.length > 0) { await deps.__eventsDispatch(__events); }";
@@ -5960,7 +5984,7 @@ pub(crate) fn emit_agent(
             bynk_ts::TsBindingName::Ident("url".to_string()),
             None,
             bynk_ts::TsExpr::New {
-                callee: Box::new(bynk_ts::TsExpr::Ident("URL".to_string())),
+                callee: Box::new(bynk_ts::TsExpr::Ident("globalThis.URL".to_string())),
                 args: vec![bynk_ts::TsExpr::Member {
                     object: Box::new(bynk_ts::TsExpr::Ident("request".to_string())),
                     property: "url".to_string(),
@@ -5978,7 +6002,7 @@ pub(crate) fn emit_agent(
         }
         let dispatch_callee = bynk_ts::TsExpr::Index {
             object: Box::new(bynk_ts::TsExpr::Ident(
-                "(this as unknown as Record<string, (...bynkArgs: unknown[]) => unknown>)"
+                "(this as unknown as globalThis.Record<string, (...bynkArgs: unknown[]) => unknown>)"
                     .to_string(),
             )),
             index: Box::new(bynk_ts::TsExpr::Ident("methodName".to_string())),
@@ -6032,7 +6056,7 @@ pub(crate) fn emit_agent(
         // before the handler sees them (`decodeAgentArgs` throws on a decode
         // failure, an internal fault), and the result is encoded on the way out.
         let decoded_args = bynk_ts::TsExpr::Ident(format!(
-            "...decodeAgentArgs({}, methodName, args)",
+            "...__decodeAgentArgs({}, methodName, args)",
             agent_wire_name(&a.name.name)
         ));
         let result_expr = if given_deps_expr.is_some() || agent_uses_emit {
@@ -6059,7 +6083,7 @@ pub(crate) fn emit_agent(
                 bynk_ts::TsBindingName::Ident("env".to_string()),
                 None,
                 bynk_ts::TsExpr::Ident(
-                    "this.__env as unknown as Record<string, unknown>".to_string(),
+                    "this.__env as unknown as globalThis.Record<string, unknown>".to_string(),
                 ),
                 None,
             ));
@@ -6071,7 +6095,7 @@ pub(crate) fn emit_agent(
                         right: Box::new(bynk_ts::TsExpr::object(Vec::new())),
                     }),
                     ty: bynk_ts::TsType::named_with_args(
-                        "Record",
+                        "globalThis.Record",
                         vec![
                             bynk_ts::TsType::named("string"),
                             bynk_ts::TsType::named("unknown"),
@@ -6106,7 +6130,7 @@ pub(crate) fn emit_agent(
                             params: vec![bynk_ts::TsParam {
                                 name: "events".to_string(),
                                 ty: Some(bynk_ts::TsType::named_with_args(
-                                    "Array",
+                                    "globalThis.Array",
                                     vec![bynk_ts::TsType::named(
                                         crate::emitter::EVENTS_WIRE_EVENT_TS_TYPE,
                                     )],
@@ -6119,7 +6143,7 @@ pub(crate) fn emit_agent(
                             body: Box::new(bynk_ts::TsArrowBody::Expr(Box::new(
                                 bynk_ts::TsExpr::Call {
                                     callee: Box::new(bynk_ts::TsExpr::Ident(
-                                        "dispatchToEventsFanout".to_string(),
+                                        "__dispatchToEventsFanout".to_string(),
                                     )),
                                     args: vec![
                                         bynk_ts::TsExpr::As {
@@ -6129,7 +6153,7 @@ pub(crate) fn emit_agent(
                                                 )),
                                                 property: bind,
                                             }),
-                                            ty: bynk_ts::TsType::named("DurableObjectNamespace"),
+                                            ty: bynk_ts::TsType::named("__DurableObjectNamespace"),
                                         },
                                         bynk_ts::TsExpr::Ident("events".to_string()),
                                     ],
@@ -6172,16 +6196,16 @@ pub(crate) fn emit_agent(
         // JSON — which the calling proxy's `response.json()` rejects (#527).
         agent_dispatch_stmts.push(bynk_ts::TsStmt::return_stmt(
             Some(bynk_ts::TsExpr::New {
-                callee: Box::new(bynk_ts::TsExpr::Ident("Response".to_string())),
+                callee: Box::new(bynk_ts::TsExpr::Ident("globalThis.Response".to_string())),
                 args: vec![
                     bynk_ts::TsExpr::Call {
                         callee: Box::new(bynk_ts::TsExpr::Member {
-                            object: Box::new(bynk_ts::TsExpr::Ident("JSON".to_string())),
+                            object: Box::new(bynk_ts::TsExpr::Ident("globalThis.JSON".to_string())),
                             property: "stringify".to_string(),
                         }),
                         args: vec![bynk_ts::TsExpr::Call {
                             callee: Box::new(bynk_ts::TsExpr::Ident(
-                                "encodeAgentResult".to_string(),
+                                "__encodeAgentResult".to_string(),
                             )),
                             args: vec![
                                 bynk_ts::TsExpr::Ident(agent_wire_name(&a.name.name)),
@@ -6221,7 +6245,7 @@ pub(crate) fn emit_agent(
         ));
         fetch_stmts.push(bynk_ts::TsStmt::return_stmt(
             Some(bynk_ts::TsExpr::New {
-                callee: Box::new(bynk_ts::TsExpr::Ident("Response".to_string())),
+                callee: Box::new(bynk_ts::TsExpr::Ident("globalThis.Response".to_string())),
                 args: vec![
                     bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str("Not Found".to_string())),
                     bynk_ts::TsExpr::object(vec![(
@@ -6238,12 +6262,12 @@ pub(crate) fn emit_agent(
             is_async: true,
             params: vec![bynk_ts::TsParam {
                 name: "request".to_string(),
-                ty: Some(bynk_ts::TsType::named("Request")),
+                ty: Some(bynk_ts::TsType::named("globalThis.Request")),
                 optional: false,
             }],
             return_type: Some(bynk_ts::TsType::named_with_args(
-                "Promise",
-                vec![bynk_ts::TsType::named("Response")],
+                "globalThis.Promise",
+                vec![bynk_ts::TsType::named("globalThis.Response")],
             )),
             doc: None,
             body: fetch_stmts,
@@ -6333,7 +6357,7 @@ pub(crate) fn emit_agent(
                     name: "env".to_string(),
                     ty: Some(bynk_ts::TsType::Object(vec![bynk_ts::TsTypeMember::Prop {
                         name: bind.clone(),
-                        ty: bynk_ts::TsType::named("DurableObjectNamespace"),
+                        ty: bynk_ts::TsType::named("__DurableObjectNamespace"),
                         optional: true,
                         readonly: false,
                     }])),
@@ -6343,7 +6367,7 @@ pub(crate) fn emit_agent(
             return_type: Some(bynk_ts::TsType::named(a.name.name.clone())),
             body: vec![bynk_ts::TsStmt::return_stmt(
                 Some(bynk_ts::TsExpr::Call {
-                    callee: Box::new(bynk_ts::TsExpr::Ident("makeAgent".to_string())),
+                    callee: Box::new(bynk_ts::TsExpr::Ident("__makeAgent".to_string())),
                     args: make_agent_args,
                 }),
                 None,
@@ -6399,7 +6423,7 @@ pub(crate) fn emit_agent(
             format!("{{ call: any, accepted: boolean, old: {state_ty}, new: {state_ty} }}");
         writeln!(
             out,
-            "export async function {driver}(seq: Array<{{ h: number, args: unknown[] }}>, deps: any): Promise<Array<{step_ty}>> {{"
+            "export async function {driver}(seq: globalThis.Array<{{ h: number, args: unknown[] }}>, deps: any): globalThis.Promise<globalThis.Array<{step_ty}>> {{"
         )
         .unwrap();
         writeln!(out, "  {registry}.reset();").unwrap();
@@ -6421,7 +6445,7 @@ pub(crate) fn emit_agent(
         };
         writeln!(
             out,
-            "  const __load = async (): Promise<{state_ty}> => {{ const __s = await __inst.state.storage.get(\"state\"); if (__s === undefined) return {zero_fn}(); const __m = {{ ...{zero_fn}(), ...__s }};{decode} return __m; }};"
+            "  const __load = async (): globalThis.Promise<{state_ty}> => {{ const __s = await __inst.state.storage.get(\"state\"); if (__s === undefined) return {zero_fn}(); const __m = {{ ...{zero_fn}(), ...__s }};{decode} return __m; }};"
         )
         .unwrap();
         // P7.2: `e` is a caught throw of unknown shape by construction — a
@@ -6432,7 +6456,7 @@ pub(crate) fn emit_agent(
             "  const __rej = (e: unknown) => !!e && (e as {{ invariantViolation?: unknown }}).invariantViolation !== undefined;"
         )
         .unwrap();
-        writeln!(out, "  const __steps: Array<{step_ty}> = [];").unwrap();
+        writeln!(out, "  const __steps: globalThis.Array<{step_ty}> = [];").unwrap();
         // A driven run deliberately provokes rejected steps (an invariant/
         // `transition` refusal), each of which `console.error`s an
         // `InvariantViolation` line from `commitState` before throwing. Mute just
@@ -6442,10 +6466,10 @@ pub(crate) fn emit_agent(
         // P7.2: `console.error`'s own real type, `(...data: unknown[]) => void`
         // — `__ce` is already that type by inference, and the replacement
         // matches it exactly, so neither cast was ever load-bearing.
-        writeln!(out, "  const __ce = console.error;").unwrap();
+        writeln!(out, "  const __ce = globalThis.console.error;").unwrap();
         writeln!(
             out,
-            "  console.error = (...__a: unknown[]) => {{ if (typeof __a[0] === \"string\" && __a[0].startsWith(\"InvariantViolation\")) return; __ce(...__a); }};"
+            "  globalThis.console.error = (...__a: unknown[]) => {{ if (typeof __a[0] === \"string\" && __a[0].startsWith(\"InvariantViolation\")) return; __ce(...__a); }};"
         )
         .unwrap();
         writeln!(out, "  try {{").unwrap();
@@ -6514,7 +6538,7 @@ pub(crate) fn emit_agent(
         .unwrap();
         writeln!(out, "  }}").unwrap();
         writeln!(out, "  return __steps;").unwrap();
-        writeln!(out, "  }} finally {{ console.error = __ce; }}").unwrap();
+        writeln!(out, "  }} finally {{ globalThis.console.error = __ce; }}").unwrap();
         writeln!(out, "}}").unwrap();
         // #1486: no trailing blank baked in here — the printer's automatic
         // top-level spacing policy supplies the single blank before whatever
@@ -6698,6 +6722,11 @@ fn emit_ws_do_method(
     )
     .with_source_map(Some(&body_smb));
     cx.local_agents = ctx.local_agents.clone();
+    // #1653: parameters are bindings of the body's own scope, so a `let` that
+    // re-binds one gets a fresh name instead of redeclaring it.
+    for p in &h.params {
+        cx.declare_binder(&p.name.name);
+    }
     let async_tail = is_effectful_return(&h.return_type);
     let mut body_out = String::new();
     emit_block_as_function_body_with_return(
@@ -6778,7 +6807,7 @@ fn ws_open_fetch_branch_stmt(host: &WsOpenHost<'_>, tys: &Arc<Types>) -> bynk_ts
             bynk_ts::TsBindingName::Ident("__pair".to_string()),
             None,
             bynk_ts::TsExpr::Call {
-                callee: Box::new(bynk_ts::TsExpr::Ident("newWebSocketPair".to_string())),
+                callee: Box::new(bynk_ts::TsExpr::Ident("__newWebSocketPair".to_string())),
                 args: Vec::new(),
             },
             None,
@@ -6789,7 +6818,7 @@ fn ws_open_fetch_branch_stmt(host: &WsOpenHost<'_>, tys: &Arc<Types>) -> bynk_ts
             bynk_ts::TsExpr::As {
                 expr: Box::new(bynk_ts::TsExpr::Call {
                     callee: Box::new(bynk_ts::TsExpr::Member {
-                        object: Box::new(bynk_ts::TsExpr::Ident("JSON".to_string())),
+                        object: Box::new(bynk_ts::TsExpr::Ident("globalThis.JSON".to_string())),
                         property: "parse".to_string(),
                     }),
                     args: vec![bynk_ts::TsExpr::Binary {
@@ -6861,7 +6890,10 @@ fn ws_open_fetch_branch_stmt(host: &WsOpenHost<'_>, tys: &Arc<Types>) -> bynk_ts
             // `this.state.storage.get<T>` above; tagged `VerbatimExpr`, not
             // `Ident` (#1539).
             callee: Box::new(bynk_ts::TsExpr::VerbatimExpr(
-                format!("acceptHibernatableConnection<{}>", ts_ty(host.out_ty, tys)),
+                format!(
+                    "__acceptHibernatableConnection<{}>",
+                    ts_ty(host.out_ty, tys)
+                ),
                 bynk_ts::VerbatimOrigin::Emit,
             )),
             args: accept_args,
@@ -6910,7 +6942,7 @@ fn ws_open_fetch_branch_stmt(host: &WsOpenHost<'_>, tys: &Arc<Types>) -> bynk_ts
     stmts.push(bynk_ts::TsStmt::return_stmt(
         Some(bynk_ts::TsExpr::Call {
             callee: Box::new(bynk_ts::TsExpr::Ident(
-                "webSocketUpgradeResponse".to_string(),
+                "__webSocketUpgradeResponse".to_string(),
             )),
             args: vec![bynk_ts::TsExpr::Member {
                 object: Box::new(bynk_ts::TsExpr::Ident("__pair".to_string())),
@@ -7041,7 +7073,7 @@ fn emit_ws_dispatch_handlers(
                 // generic-method-call sites above; tagged `VerbatimExpr`, not
                 // `Ident` (#1539).
                 callee: Box::new(bynk_ts::TsExpr::VerbatimExpr(
-                    format!("WorkersConnection<{out_ts}>"),
+                    format!("__WorkersConnection<{out_ts}>"),
                     bynk_ts::VerbatimOrigin::Emit,
                 )),
                 args: vec![
@@ -7083,17 +7115,17 @@ fn emit_ws_dispatch_handlers(
             None,
         ));
         stmts.push(bynk_ts::TsStmt::raw(
-            "    try { __raw = typeof message === \"string\" ? message : new TextDecoder().decode(message); } catch { ws.close(1003, \"unreadable frame\"); return; }\n",
+            "    try { __raw = typeof message === \"string\" ? message : new globalThis.TextDecoder().decode(message); } catch { ws.close(1003, \"unreadable frame\"); return; }\n",
             None,
         ));
         stmts.push(bynk_ts::TsStmt::let_stmt(
             bynk_ts::TsBindingName::Ident("__json".to_string()),
-            Some(bynk_ts::TsType::named("JsonValue")),
+            Some(bynk_ts::TsType::named("__JsonValue")),
             None,
             None,
         ));
         stmts.push(bynk_ts::TsStmt::raw(
-            "    try { __json = JSON.parse(__raw) as JsonValue; } catch { ws.close(1003, \"malformed frame\"); return; }\n",
+            "    try { __json = globalThis.JSON.parse(__raw) as __JsonValue; } catch { ws.close(1003, \"malformed frame\"); return; }\n",
             None,
         ));
         stmts.push(bynk_ts::TsStmt::const_stmt(
@@ -7186,13 +7218,13 @@ fn emit_ws_dispatch_handlers(
                     name: "message".to_string(),
                     ty: Some(bynk_ts::TsType::union(vec![
                         bynk_ts::TsType::named("string"),
-                        bynk_ts::TsType::named("ArrayBuffer"),
+                        bynk_ts::TsType::named("globalThis.ArrayBuffer"),
                     ])),
                     optional: false,
                 },
             ],
             return_type: Some(bynk_ts::TsType::named_with_args(
-                "Promise",
+                "globalThis.Promise",
                 vec![bynk_ts::TsType::named("void")],
             )),
             doc: None,
@@ -7251,7 +7283,7 @@ fn emit_ws_dispatch_handlers(
                 },
             ],
             return_type: Some(bynk_ts::TsType::named_with_args(
-                "Promise",
+                "globalThis.Promise",
                 vec![bynk_ts::TsType::named("void")],
             )),
             doc: None,
@@ -7392,7 +7424,7 @@ mod refined_checks_tests {
     fn numeric_guard_matches_the_real_fixtures_own_int_guard_byte_for_byte() {
         assert_eq!(
             print_numeric_guard_stmt("Cents", "isInteger", "must be an integer"),
-            "    if (!Number.isInteger(value)) {\n      \
+            "    if (!globalThis.Number.isInteger(value)) {\n      \
              return Err({ field: \"Cents\", message: \"must be an integer\", value });\n    \
              }\n"
         );
@@ -7610,7 +7642,7 @@ commons demo {
             ts.contains(
                 "export interface Extras {\n  \
                  readonly tags: readonly string[];\n  \
-                 readonly blob: Uint8Array;\n  \
+                 readonly blob: globalThis.Uint8Array;\n  \
                  readonly note: Option<string>;\n  \
                  readonly boxed: Box<number>;\n  \
                  readonly age: Age;\n}\n"
@@ -7728,7 +7760,7 @@ commons envelope {
         assert!(
             ts.contains(
                 "export const Age = {\n  of(value: number): Result<Age, ValidationError> {\n    \
-                 if (!Number.isSafeInteger(value)) {\n      \
+                 if (!globalThis.Number.isSafeInteger(value)) {\n      \
                  return Err({ field: \"Age\", message: \"must be a safe integer\", value });\n    }\n    \
                  if (!(value > 0)) {\n      \
                  return Err({ field: \"Age\", message: \"must be positive\", value });\n    }\n    \
@@ -7894,10 +7926,13 @@ context demo {
     fn named_and_base_return_types_render_through_ts_ty() {
         let ts = emit_store_context(STORE_FIXTURE);
         assert!(
-            ts.contains("put(key: string, value: Order): Promise<void>;\n"),
+            ts.contains("put(key: string, value: Order): globalThis.Promise<void>;\n"),
             "{ts}"
         );
-        assert!(ts.contains("count(): Promise<number>;\n"), "{ts}");
+        assert!(
+            ts.contains("count(): globalThis.Promise<number>;\n"),
+            "{ts}"
+        );
     }
 
     /// The generic op: `get[T]`'s own rigid type variable renders bare
@@ -7909,7 +7944,7 @@ context demo {
     fn generic_op_renders_its_rigid_type_var_and_type_param_list() {
         let ts = emit_store_context(STORE_FIXTURE);
         assert!(
-            ts.contains("get<T>(key: string): Promise<Option<T>>;\n"),
+            ts.contains("get<T>(key: string): globalThis.Promise<Option<T>>;\n"),
             "{ts}"
         );
     }
@@ -7919,7 +7954,7 @@ context demo {
         let ts = emit_store_context(STORE_FIXTURE);
         assert!(ts.contains("export interface Store {\n"), "{ts}");
         assert!(
-            ts.contains("export const StoreToken: unique symbol = Symbol(\"Store\");\n"),
+            ts.contains("export const StoreToken: symbol = globalThis.Symbol(\"Store\");\n"),
             "{ts}"
         );
     }

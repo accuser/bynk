@@ -4,5 +4,5 @@
 # `Option_Region` codec for `Receipt.region` and must qualify `Region` through
 # the `import type * as commerce_payment` alias, since `Region` is declared only
 # in `commerce.payment`.
-export function serialise_Option_Region(value: Option<commerce_payment.Region>): JsonValue {
-export function deserialise_Option_Region(json: JsonValue, path: string = "$"): Result<Option<commerce_payment.Region>, BoundaryError> {
+export function __serialise_Option_Region(value: Option<commerce_payment.Region>): __JsonValue {
+export function __deserialise_Option_Region(json: __JsonValue, path: string = "$"): Result<Option<commerce_payment.Region>, __BoundaryError> {

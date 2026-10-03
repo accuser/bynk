@@ -6,8 +6,8 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError } f
 import * as logging from "./logging.js";
 
 export interface Jwt {
-  sign(sub: string): Promise<string>;
+  sign(sub: string): globalThis.Promise<string>;
 }
 
-export const JwtToken: unique symbol = Symbol("Jwt");
+export const JwtToken: symbol = globalThis.Symbol("Jwt");
 

@@ -160,7 +160,7 @@ async function __prop_test_sum_with_int_payload_generates() {
     const { Outcome } = demo_gen;
     type Outcome = demo_gen.Outcome;
     const __gens = [
-      { name: "o", boundaries: [Outcome.Hit(Number(0n))], gen: (rng: any) => rng.pick([() => Outcome.Hit(Number(rng.int(-1000n, 1000n))), () => Outcome.Miss]), shrink: (v: any) => [Outcome.Hit(Number(0n))], show: (v: any) => __bynkShow(v) },
+      { name: "o", boundaries: [Outcome.Hit(globalThis.Number(0n))], gen: (rng: any) => rng.pick([() => Outcome.Hit(globalThis.Number(rng.int(-1000n, 1000n))), () => Outcome.Miss]), shrink: (v: any) => [Outcome.Hit(globalThis.Number(0n))], show: (v: any) => __bynkShow(v) },
     ];
     const __where = null;
     const __body = async (__vals: any[]) => {

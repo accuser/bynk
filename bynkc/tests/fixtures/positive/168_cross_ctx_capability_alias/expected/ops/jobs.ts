@@ -6,7 +6,7 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError } f
 import * as platform_time from "../platform/time.js";
 
 export const tick = {
-  async call(deps: { Clock: platform_time.Clock }): Promise<number> {
+  async call(deps: { Clock: platform_time.Clock }): globalThis.Promise<number> {
     const t = await deps.Clock.now();
     return t;
   },
@@ -18,7 +18,7 @@ export interface OpsJobsDeps {
 
 export function makeSurface(deps: OpsJobsDeps) {
   return {
-    async tick(): Promise<number> {
+    async tick(): globalThis.Promise<number> {
       return tick.call(deps);
     },
   };

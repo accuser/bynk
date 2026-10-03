@@ -3,7 +3,7 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "./runtime.js";
 
-export function size(b: Uint8Array): number {
+export function size(b: globalThis.Uint8Array): number {
   return (b).length;
 }
 

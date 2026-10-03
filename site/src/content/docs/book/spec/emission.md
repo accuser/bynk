@@ -37,19 +37,19 @@ Bindings under `workers`.
 On the `workers` target a context with handlers additionally emits a router and
 boundary plumbing (`index.ts`), the handler logic (`handlers.ts`), the
 composition root (`compose.ts`), and a `wrangler.toml`; records that cross a
-boundary gain `serialise_*` / `deserialise_*` helpers. Cross-context data MUST be
+boundary gain `__serialise_*` / `__deserialise_*` helpers. Cross-context data MUST be
 structurally validated as it crosses ([§6.5](/book/spec/type-system/#65-type-compatibility--boundaries)).
 
 **`Float` at boundaries** (v0.21, ADR 0040). Boundary `Float` values are
 **finite**, even though in-language arithmetic is host-defined
 ([§5.2](/book/spec/static-semantics/#52-well-typedness)):
 
-- `deserialise_` of a `Float` field requires
+- `__deserialise_` of a `Float` field requires
   `typeof v === "number" && Number.isFinite(v)`, with **no** integer
   check (decimals are the point). `JSON.parse("1e999")` yields
   `Infinity`, which is rejected as a `StructuralMismatch` expecting a
   `finite number` — never admitted from the wire.
-- `serialise_` of a `Float` field **throws** on a non-finite value (a
+- `__serialise_` of a `Float` field **throws** on a non-finite value (a
   contract violation): `JSON.stringify(NaN)` would otherwise silently
   produce `null` and break the round-trip.
 - **v0.22b (ADR 0049): a bare `Int` field additionally requires
@@ -98,6 +98,33 @@ emit `number` (v0.21 — the distinction is checker-side only and erased),
 `String` emits `string`, `Bool` emits `boolean`. A refined `Int`'s `.of`
 includes a `Number.isInteger` check; a refined `Float`'s `.of` includes
 `Number.isFinite` instead — validated `Float` values are finite (0040).
+
+#### Names in the emitted TypeScript (#1653)
+
+A Bynk name is emitted as written, so every name the emitter adds is chosen so
+that no Bynk name can collide with it. The emitted code MUST compile under
+`tsc --strict` whatever names the program declares:
+
+- **Host globals** are reached through `globalThis` (`globalThis.JSON.stringify`,
+  `new globalThis.Error(…)`, `globalThis.Promise<T>`), so a user type or
+  function named `Error`, `JSON`, `Record` or `console` cannot hide them. A
+  value binding named `globalThis` is emitted as `__id_globalThis`, and a type
+  named `globalThis` is rejected (`bynk.resolve.reserved_host_name`). A
+  capability's injection token is therefore typed `symbol`, not
+  `unique symbol`: TypeScript only gives a bare `Symbol(…)` call a unique type.
+- **Runtime names** are imported under a `__` alias (`__JsonValue`,
+  `__BoundaryError`, `__matchPath`), and the generated codec helpers are
+  `__serialise_<T>` / `__deserialise_<T>`. A Bynk identifier cannot begin with
+  `_`, so none of these can be spelled by a program.
+- **Shadowing.** A `let`, a parameter and a pattern binding (`match` arm or
+  `is`) each get their own emitted identifier when they re-bind a name already
+  in scope, so `if o is Some(o)` reads the outer `o` and `let x = x + 1` after a
+  parameter `x` does not redeclare it.
+- **Sum payload fields.** A variant object carries the in-memory discriminant
+  `tag`, so a payload field named `tag` (or `globalThis`) is emitted as the
+  property `$tag` (`$globalThis`); its wire key is unchanged. On the wire a
+  variant is a flat `{ "kind": "<Variant>", … }` object, so a payload field
+  named `kind` is rejected (`bynk.resolve.reserved_payload_field`).
 
 ### §7.3.2 Expressions
 
@@ -151,7 +178,7 @@ across targets ([§7.4](/book/spec/runtime-library/)).
 **The workers agent call is a boundary (#1678).** On `workers` a call
 `Agent(key).m(args)` crosses the Durable Object's `fetch` under
 `/_bynk/agent/<m>`, so its arguments and result are on a wire. They go through
-the boundary codec, the same `serialise_*`/`deserialise_*` helpers a
+the boundary codec, the same `__serialise_*`/`__deserialise_*` helpers a
 cross-context call uses ([§7.4.5](/book/spec/runtime-library/#745-the-cross-worker-boundary-protocol)).
 Each agent emits a wire table, `const __<Agent>Wire: AgentWire`, with a codec
 pair for each handler's parameters and result, and `__make<Agent>` passes it to
@@ -174,7 +201,7 @@ written. The fault rides the existing uncaught-fault channel and surfaces to the
 caller as a 500-class fault, not an outcome:
 
 ```typescript
-private async commitState(s: OrderState): Promise<void> {
+private async commitState(s: OrderState): globalThis.Promise<void> {
   if (!((!(__bynkEq(s.status, OrderStatus.Paid)) || (s.paymentRef.tag === "Some")))) {
     console.error("InvariantViolation Order.paid_has_payment_ref",
       { agent: "Order", invariant: "paid_has_payment_ref" });
@@ -213,7 +240,7 @@ On the `workers` target, each context with HTTP handlers emits
 validation), `compose.ts` (the wiring), and a `wrangler.toml`. A handler's
 `HttpResult[T]` ([§5.7](/book/spec/static-semantics/#57-handlers)) determines the HTTP
 status and body of the `Response`; records crossing the boundary are serialised
-and deserialised through the generated `serialise_*` / `deserialise_*` helpers.
+and deserialised through the generated `__serialise_*` / `__deserialise_*` helpers.
 
 The router MUST answer the method contract derived from the declared routes. For
 each path, the **allowed-method set** is the union of the methods declared on it,
@@ -331,7 +358,7 @@ byte-unchanged.
 ### §7.3.4b The cross-context boundary codec (v0.176)
 
 Every value crossing a `workers` cross-context boundary is encoded and decoded by
-a **generated codec** — the same `serialise_*` / `deserialise_*` helpers
+a **generated codec** — the same `__serialise_*` / `__deserialise_*` helpers
 [§7.2](#72-targets) requires, monomorphised per instantiation. No wire position
 asserts a value with an `as JsonValue` cast, and no return type decodes through an
 unvalidated identity function.
@@ -348,7 +375,7 @@ emitted (ADR 0142 D8). With one dispatch, the asymmetry — and so the restricti
 Each Worker is **self-contained**: a context generates its *own* codecs for the
 contracts it participates in and imports no sibling context's module as a value
 (#661, discharging ADR 0199 Decision G). A caller reaches its callee's codecs
-through local `serialise_*` / `deserialise_*` helpers it emits itself; the callee
+through local `__serialise_*` / `__deserialise_*` helpers it emits itself; the callee
 module is imported for **types only** (`import type * as <ns>`), which is erased
 outright, so the caller's bundle never carries the callee's provider
 implementation. Only the callee's own exported types reachable from the services
@@ -613,7 +640,7 @@ At boundaries, a `List[T]` serialises **element-wise as a JSON array**; a
 `Map[K, V]` serialises as an **entries array** `[[k, v], …]` — uniform
 across `String` and `Int` keys (a JSON object could not carry `Int` keys),
 and **insertion-ordered**, normatively. Per-instantiation helpers
-(`serialise_List_<T>`, `deserialise_Map_<K>_<V>`) follow the existing
+(`__serialise_List_<T>`, `__deserialise_Map_<K>_<V>`) follow the existing
 `Result`/`Option` pattern: element and entry deserialisation validates
 structurally, re-validates refined types, and reports
 `StructuralMismatch` with an indexed path (`$.orders[3].tags[0][1]`).
@@ -640,16 +667,16 @@ module already has:
 
 ### §7.3.9 The typed JSON codec (v0.22b)
 
-`Json.encode(v)` lowers to `JSON.stringify(serialise_<T>(v))` for the
+`Json.encode(v)` lowers to `globalThis.JSON.stringify(__serialise_<T>(v))` for the
 value's checked type; `Json.decode[T](s)` to a typed IIFE that
 `JSON.parse`s (a throw becomes a `Malformed` `JsonError`), dispatches to
-`deserialise_<T>`, and maps a `BoundaryError` into the uniform
+`__deserialise_<T>`, and maps a `BoundaryError` into the uniform
 `kind`/`path`/`message` record (ADR 0047). The per-type
-`serialise_`/`deserialise_` helpers and any generic instantiations
-(`deserialise_List_Order`, …) are emitted **module-locally** into each
+`__serialise_`/`__deserialise_` helpers and any generic instantiations
+(`__deserialise_List_Order`, …) are emitted **module-locally** into each
 module whose code calls the codec — the same closure machinery as the
 workers boundary path, deduped against helpers that path already emitted.
-The codec runtime types (`JsonError`, `JsonValue`, `BoundaryError`) are
+The codec runtime types (`JsonError`, `__JsonValue`, `__BoundaryError`) are
 imported only by modules that use the codec, so non-codec modules emit
 byte-identically to v0.22a.
 

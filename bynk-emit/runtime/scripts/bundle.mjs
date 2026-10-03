@@ -44,6 +44,7 @@ const MODULES = [
   "connection",
   "messages",
   "locale",
+  "aliases",
 ];
 
 const HEADER = [

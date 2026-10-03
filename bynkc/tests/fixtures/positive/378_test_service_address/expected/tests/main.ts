@@ -14,7 +14,7 @@ async function main() {
   let failed = 0;
   const PREFIX = "integration \u00b7 ";
   if (process.env.BYNK_TEST_FORMAT === "ndjson") {
-    const emit = (o: unknown) => console.log(JSON.stringify(o));
+    const emit = (o: unknown) => globalThis.console.log(globalThis.JSON.stringify(o));
     emit({ type: "run-begin", suites: modules.length });
     for (const m of modules) {
       const integration = m.name.startsWith(PREFIX);
@@ -35,16 +35,16 @@ async function main() {
     }
     emit({ type: "run-end", passed, failed });
   } else {
-    console.log("Running tests...\n");
+    globalThis.console.log("Running tests...\n");
     for (const m of modules) {
-      console.log(`${m.name}:`);
+      globalThis.console.log(`${m.name}:`);
       const results = await m.run(only);
       for (const r of results) {
-        if (r.pass) { passed++; console.log(`  \u2713 ${r.name}`); } else { failed++; console.log(`  \u2717 ${r.name}`); if (r.error) console.log(`    ${r.error.message}`); }
+        if (r.pass) { passed++; globalThis.console.log(`  \u2713 ${r.name}`); } else { failed++; globalThis.console.log(`  \u2717 ${r.name}`); if (r.error) globalThis.console.log(`    ${r.error.message}`); }
       }
-      console.log("");
+      globalThis.console.log("");
     }
-    console.log(`${passed} passed, ${failed} failed.`);
+    globalThis.console.log(`${passed} passed, ${failed} failed.`);
   }
   if (failed > 0) process.exit(1);
 }

@@ -4,13 +4,13 @@
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
 
 export interface Clock {
-  now(): Promise<number>;
+  now(): globalThis.Promise<number>;
 }
 
-export const ClockToken: unique symbol = Symbol("Clock");
+export const ClockToken: symbol = globalThis.Symbol("Clock");
 
 export class SystemClock implements Clock {
-  async now(): Promise<number> {
+  async now(): globalThis.Promise<number> {
     return 0;
   }
 }
@@ -18,7 +18,7 @@ export class SystemClock implements Clock {
 export const SystemClockProvider = { token: ClockToken, factory: () => new SystemClock() };
 
 export const tick = {
-  async call(deps: { Clock: Clock }): Promise<number> {
+  async call(deps: { Clock: Clock }): globalThis.Promise<number> {
     const t = await deps.Clock.now();
     return t;
   },
@@ -30,7 +30,7 @@ export interface DemoObsDeps {
 
 export function makeSurface(deps: DemoObsDeps) {
   return {
-    async tick(): Promise<number> {
+    async tick(): globalThis.Promise<number> {
       return tick.call(deps);
     },
   };

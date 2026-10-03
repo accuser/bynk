@@ -20,7 +20,7 @@ export function values<K, V>(m: ReadonlyMap<K, V>): readonly V[] {
         return acc;
       }
     }
-    throw new Error("non-exhaustive match");
+    throw new globalThis.Error("non-exhaustive match");
   })(((__m: ReadonlyMap<K, V>, __k: K) => __m.has(__k) ? Some(__m.get(__k) as V) : None)(m, k))));
 }
 
@@ -38,7 +38,7 @@ export function contains<K, V>(m: ReadonlyMap<K, V>, key: K): boolean {
       return false;
     }
   }
-  throw new Error("non-exhaustive match");
+  throw new globalThis.Error("non-exhaustive match");
 }
 
 /**
@@ -55,6 +55,6 @@ export function getOr<K, V>(m: ReadonlyMap<K, V>, key: K, fallback: V): V {
       return fallback;
     }
   }
-  throw new Error("non-exhaustive match");
+  throw new globalThis.Error("non-exhaustive match");
 }
 

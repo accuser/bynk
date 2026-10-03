@@ -12,7 +12,7 @@ export function fanOut(xs: readonly number[]): readonly number[] {
 }
 
 export function window(xs: readonly number[]): readonly number[] {
-  return ((xs).slice(Math.max(0, 1))).slice(0, Math.max(0, 2));
+  return ((xs).slice(globalThis.Math.max(0, 1))).slice(0, globalThis.Math.max(0, 2));
 }
 
 export function howMany(xs: readonly number[]): number {

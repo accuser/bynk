@@ -888,6 +888,19 @@ fn check_type_decl_refs(t: &TypeDecl, types: &HashMap<String, Arc<TypeDecl>>, er
             .with_note("rename the type — built-in type names are reserved in type position"),
         );
     }
+    // #1653: the generated TypeScript reaches host globals as
+    // `globalThis.<name>`, so a type of that name would hide every one of them
+    // in its module. (Value names are renamed by the emitter instead.)
+    if t.name.name == "globalThis" {
+        errors.push(
+            CompileError::new(
+                "bynk.resolve.reserved_host_name",
+                t.name.span,
+                "`globalThis` cannot be used as a type name",
+            )
+            .with_note("the generated TypeScript uses `globalThis` to reach the host's built-in objects; rename the type"),
+        );
+    }
     // v0.157 (ADR 0183): a record body may be generic. #593: a sum body may too
     // — its variant payloads resolve the parameters as rigid vars, exactly as
     // record fields do. Type parameters on a refined / opaque body are still
@@ -1039,6 +1052,24 @@ fn check_type_decl_refs(t: &TypeDecl, types: &HashMap<String, Arc<TypeDecl>>, er
                         );
                     } else {
                         payload_seen.insert(f.name.name.clone(), f.name.span);
+                    }
+                    // #1653: a variant is a flat `{ "kind": "<Variant>", ... }`
+                    // object on the wire, so a payload field named `kind` would
+                    // collide with the discriminant itself.
+                    if f.name.name == "kind" {
+                        errors.push(
+                            CompileError::new(
+                                "bynk.resolve.reserved_payload_field",
+                                f.name.span,
+                                format!(
+                                    "variant `{}` cannot have a payload field named `kind`",
+                                    v.name.name
+                                ),
+                            )
+                            .with_note(
+                                "`kind` carries the variant's name when a sum is encoded as JSON; rename the field (e.g. `category`)",
+                            ),
+                        );
                     }
                     // #593: a generic sum's declared type parameters are in scope
                     // in its variant payloads, resolving as rigid vars (empty set

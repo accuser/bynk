@@ -8,7 +8,7 @@ import { greet } from "./bundle.js";
 import * as bynk from "../bynk.js";
 
 export const greeting = {
-  async call(deps: { Locale: bynk.Locale }): Promise<string> {
+  async call(deps: { Locale: bynk.Locale }): globalThis.Promise<string> {
     const tag = await deps.Locale.current();
     return greet(tag);
   },
@@ -20,7 +20,7 @@ export interface AppWebDeps {
 
 export function makeSurface(deps: AppWebDeps) {
   return {
-    async greeting(): Promise<string> {
+    async greeting(): globalThis.Promise<string> {
       return greeting.call(deps);
     },
   };

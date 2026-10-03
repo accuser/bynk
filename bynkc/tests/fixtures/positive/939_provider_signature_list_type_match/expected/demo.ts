@@ -4,13 +4,13 @@
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "./runtime.js";
 
 export interface Repo {
-  query(filter: string): Promise<readonly string[]>;
+  query(filter: string): globalThis.Promise<readonly string[]>;
 }
 
-export const RepoToken: unique symbol = Symbol("Repo");
+export const RepoToken: symbol = globalThis.Symbol("Repo");
 
 export class MemRepo implements Repo {
-  async query(filter: string): Promise<readonly string[]> {
+  async query(filter: string): globalThis.Promise<readonly string[]> {
     return [];
   }
 }

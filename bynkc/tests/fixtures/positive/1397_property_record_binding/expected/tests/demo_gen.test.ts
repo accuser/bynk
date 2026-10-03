@@ -160,7 +160,7 @@ async function __prop_test_record_binding_s_own_fields_resolve_and_compare() {
     const { Point } = demo_gen;
     type Point = demo_gen.Point;
     const __gens = [
-      { name: "p", boundaries: [{ x: Number(0n), y: Number(0n) }], gen: (rng: any) => ({ x: Number(rng.int(-1000n, 1000n)), y: Number(rng.int(-1000n, 1000n)) }), shrink: (v: any) => [], show: (v: any) => __bynkShow(v) },
+      { name: "p", boundaries: [{ x: globalThis.Number(0n), y: globalThis.Number(0n) }], gen: (rng: any) => ({ x: globalThis.Number(rng.int(-1000n, 1000n)), y: globalThis.Number(rng.int(-1000n, 1000n)) }), shrink: (v: any) => [], show: (v: any) => __bynkShow(v) },
     ];
     const __where = null;
     const __body = async (__vals: any[]) => {

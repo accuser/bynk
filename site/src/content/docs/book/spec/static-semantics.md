@@ -286,8 +286,8 @@ nor an embedding applies, it is `bynk.types.question_error_mismatch`.
 **The typed JSON codec** (v0.22b, ADR 0045). `Json.encode(v) -> String` and
 `Json.decode[T](s) -> Result[T, JsonError]` are compiler-backed statics on
 the built-in `Json` module: `encode` dispatches to the generated
-`serialise_<T>` for the value's checked type; `decode` to `JSON.parse` +
-`deserialise_<T>`. The **domain of `T`** (and of `encode`'s argument) is any
+`__serialise_<T>` for the value's checked type; `decode` to `JSON.parse` +
+`__deserialise_<T>`. The **domain of `T`** (and of `encode`'s argument) is any
 boundary-legal shape — base types, named types, and the built-in containers
 over them; functions, effects, `HttpResult`, the error builtins, and type
 variables are `bynk.types.json_uncodable`. `decode`'s target is given

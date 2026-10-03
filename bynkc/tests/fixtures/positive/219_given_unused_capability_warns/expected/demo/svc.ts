@@ -4,13 +4,13 @@
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
 
 export interface Logger {
-  log(message: string): Promise<void>;
+  log(message: string): globalThis.Promise<void>;
 }
 
-export const LoggerToken: unique symbol = Symbol("Logger");
+export const LoggerToken: symbol = globalThis.Symbol("Logger");
 
 export const silent = {
-  async call(deps: { Logger: Logger }): Promise<void> {
+  async call(deps: { Logger: Logger }): globalThis.Promise<void> {
     return undefined;
   },
 };
@@ -21,7 +21,7 @@ export interface DemoSvcDeps {
 
 export function makeSurface(deps: DemoSvcDeps) {
   return {
-    async silent(): Promise<void> {
+    async silent(): globalThis.Promise<void> {
       return silent.call(deps);
     },
   };

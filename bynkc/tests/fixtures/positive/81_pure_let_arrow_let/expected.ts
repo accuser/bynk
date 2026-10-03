@@ -3,9 +3,9 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "./runtime.js";
 
-export async function doWork(n: number): Promise<number> {
+export async function doWork(n: number): globalThis.Promise<number> {
   const inc = n + 1;
-  const result = await Promise.resolve(inc * 2);
+  const result = await globalThis.Promise.resolve(inc * 2);
   return result;
 }
 

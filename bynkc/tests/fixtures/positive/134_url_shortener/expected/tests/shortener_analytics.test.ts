@@ -46,7 +46,7 @@ async function test_short_code_rejects_too_short_input() {
             return __bynkExpect((true), "tests/shortener/analytics.bynk:6:24", 188, 192, "expect true");
           }
         }
-        throw new Error("non-exhaustive match");
+        throw new globalThis.Error("non-exhaustive match");
       })(result));
     return { pass: true };
   } catch (e) {
@@ -74,7 +74,7 @@ async function test_short_code_accepts_valid_input() {
             return __bynkExpect((false), "tests/shortener/analytics.bynk:14:24", 363, 368, "expect false");
           }
         }
-        throw new Error("non-exhaustive match");
+        throw new globalThis.Error("non-exhaustive match");
       })(result));
     return { pass: true };
   } catch (e) {

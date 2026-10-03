@@ -183,7 +183,7 @@ fn status_object(code: &str) -> TsExpr {
 }
 
 fn new_response(args: Vec<TsExpr>) -> TsExpr {
-    new_expr("Response", args)
+    new_expr("globalThis.Response", args)
 }
 
 /// `{ ...deps, <key>: <value> }` — the three real "spread `deps`, override
@@ -207,7 +207,7 @@ fn deps_spread_with(key: &str, value: TsExpr) -> TsExpr {
 /// tree, matching every other helper here.
 fn secret_probe_expr(secret: &str) -> TsExpr {
     let env_record_ty = TsType::named_with_args(
-        "Record",
+        "globalThis.Record",
         vec![TsType::named("string"), TsType::named("unknown")],
     );
     let explicit = TsExpr::Index {
@@ -412,23 +412,23 @@ pub(crate) fn emit_worker_compose(
     let runtime_use = RuntimeUse::default();
     let mut runtime_imports: Vec<String> = Vec::new();
     if needs_kv {
-        runtime_imports.push("type KVNamespace".to_string());
+        runtime_imports.push("type __KVNamespace".to_string());
     }
-    runtime_imports.push("type ServiceBinding".to_string());
+    runtime_imports.push("type __ServiceBinding".to_string());
     if has_bearer || has_sum || has_oidc {
         runtime_imports.push("HttpResult".to_string());
     }
     if has_bearer {
-        runtime_imports.push("verifyBearerJwtHs256".to_string());
+        runtime_imports.push("__verifyBearerJwtHs256".to_string());
     }
     if has_oidc {
-        runtime_imports.push("verifyOidcJwt".to_string());
+        runtime_imports.push("__verifyOidcJwt".to_string());
     }
     if has_sum_signature {
-        runtime_imports.push("verifySignatureHmacSha256".to_string());
+        runtime_imports.push("__verifySignatureHmacSha256".to_string());
     }
     if sum_parses_body {
-        runtime_imports.push("type JsonValue".to_string());
+        runtime_imports.push("type __JsonValue".to_string());
     }
     // v0.104 (real-time track slice 3b): a `from websocket` upgrade route resolves
     // the hosting Durable Object by serialising the transfer key, exactly as agent
@@ -444,7 +444,7 @@ pub(crate) fn emit_worker_compose(
         })
     });
     if has_ws_open {
-        runtime_imports.push("serialiseAgentKey".to_string());
+        runtime_imports.push("__serialiseAgentKey".to_string());
     }
     // Events track, slice 0 (spine #936, ADR 0284): a context whose handlers
     // emit gets its own fan-out DO binding (`emitter::events_fanout`) and a
@@ -452,7 +452,7 @@ pub(crate) fn emit_worker_compose(
     // emit`'s Bundle-mode gate on `composeApp`'s `__eventsDispatch` closure,
     // so the two targets agree on when the field exists.
     if uses_emit {
-        runtime_imports.push("dispatchToEventsFanout".to_string());
+        runtime_imports.push("__dispatchToEventsFanout".to_string());
     }
     // #1655 (runtime-semantics track S6): `compose.ts` re-declares each
     // handler's parameters (not its return type), qualifying user types with
@@ -565,7 +565,7 @@ pub(crate) fn emit_worker_compose(
             params: vec![TsParam {
                 name: "events".to_string(),
                 ty: Some(TsType::named_with_args(
-                    "Array",
+                    "globalThis.Array",
                     vec![TsType::named(crate::emitter::EVENTS_WIRE_EVENT_TS_TYPE)],
                 )),
                 optional: false,
@@ -574,7 +574,7 @@ pub(crate) fn emit_worker_compose(
             generics: Vec::new(),
             return_type: None,
             body: Box::new(TsArrowBody::Expr(Box::new(call(
-                ident("dispatchToEventsFanout"),
+                ident("__dispatchToEventsFanout"),
                 vec![member(ident("env"), bind), ident("events")],
             )))),
         };
@@ -757,7 +757,7 @@ pub(crate) fn emit_worker_compose(
     if needs_request {
         compose_params.push(TsParam {
             name: "request".to_string(),
-            ty: Some(TsType::named("Request")),
+            ty: Some(TsType::named("globalThis.Request")),
             optional: true,
         });
     }
@@ -771,7 +771,7 @@ pub(crate) fn emit_worker_compose(
             // unvarying shape" precedent `ts_type_ref_to_ts_type`'s own
             // `TypeRef::Query` arm already established (`emitter.rs`).
             ty: Some(TsType::named(
-                "{ waitUntil(promise: Promise<unknown>): void }",
+                "{ waitUntil(promise: globalThis.Promise<unknown>): void }",
             )),
             optional: false,
         });
@@ -840,25 +840,25 @@ pub(crate) fn emit_worker_compose(
     for t in &sorted_consumes {
         env_members.push(TsTypeMember::prop(
             consumed_binding_name(t),
-            TsType::named("ServiceBinding"),
+            TsType::named("__ServiceBinding"),
         ));
     }
     if needs_kv {
         env_members.push(TsTypeMember::prop(
             bynk_check::firstparty::KV_BINDING_NAME.to_string(),
-            TsType::named("KVNamespace"),
+            TsType::named("__KVNamespace"),
         ));
     }
     for a in &agent_names {
         env_members.push(TsTypeMember::prop(
             agent_binding_name(a),
-            TsType::named("DurableObjectNamespace"),
+            TsType::named("__DurableObjectNamespace"),
         ));
     }
     if uses_emit {
         env_members.push(TsTypeMember::prop(
             agent_binding_name(EVENTS_FANOUT_CLASS_NAME),
-            TsType::named("DurableObjectNamespace"),
+            TsType::named("__DurableObjectNamespace"),
         ));
     }
     program.push(TsStmt::decl(
@@ -881,7 +881,7 @@ pub(crate) fn emit_worker_compose(
         // or renaming the local fallback), not a guessed structural type.
         program.push(TsStmt::decl(
             TsDecl::TypeAlias {
-                name: "DurableObjectNamespace".to_string(),
+                name: "__DurableObjectNamespace".to_string(),
                 type_params: Vec::new(),
                 ty: TsType::named(
                     "{ idFromName(name: string): { toString(): string }; get(id: any): any }",
@@ -1222,7 +1222,7 @@ fn emit_websocket_upgrade(
     // constructor parameter.
     let mut params: Vec<TsParam> = vec![TsParam {
         name: "request".to_string(),
-        ty: Some(TsType::named("Request")),
+        ty: Some(TsType::named("globalThis.Request")),
         optional: false,
     }];
     params.extend(h.params.iter().map(|p| TsParam {
@@ -1297,7 +1297,7 @@ fn emit_websocket_upgrade(
         stmts.push(const_(
             "__claims",
             await_expr(call(
-                ident("verifyBearerJwtHs256"),
+                ident("__verifyBearerJwtHs256"),
                 vec![ident("__token"), ident("__secret")],
             )),
         ));
@@ -1424,7 +1424,7 @@ fn emit_websocket_upgrade(
                     strict_eq(member(ident(r_name.clone()), "tag"), str_lit("Err")),
                     return_(Some(new_response(vec![
                         method_call(
-                            ident("JSON"),
+                            ident("globalThis.JSON"),
                             "stringify",
                             vec![TsExpr::object(vec![
                                 ("kind".to_string(), str_lit("RefinementViolation")),
@@ -1490,13 +1490,16 @@ fn emit_websocket_upgrade(
             vec![method_call(
                 ident("__ns"),
                 "idFromName",
-                vec![call(ident("serialiseAgentKey"), vec![key_ref])],
+                vec![call(ident("__serialiseAgentKey"), vec![key_ref])],
             )],
         ),
     ));
     stmts.push(const_(
         "__fwd",
-        new_expr("Headers", vec![member(ident("request"), "headers")]),
+        new_expr(
+            "globalThis.Headers",
+            vec![member(ident("request"), "headers")],
+        ),
     ));
     let mut fwd_entries = vec![("args".to_string(), TsExpr::array(args_json))];
     if has_identity {
@@ -1508,7 +1511,7 @@ fn emit_websocket_upgrade(
         vec![
             str_lit("X-Bynk-Ws-Open"),
             method_call(
-                ident("JSON"),
+                ident("globalThis.JSON"),
                 "stringify",
                 vec![TsExpr::object(fwd_entries)],
             ),
@@ -1518,7 +1521,7 @@ fn emit_websocket_upgrade(
         ident("__stub"),
         "fetch",
         vec![new_expr(
-            "Request",
+            "globalThis.Request",
             vec![
                 str_lit(format!("https://_bynk/_bynk/ws/open/{sname}")),
                 TsExpr::object(vec![
@@ -1576,7 +1579,7 @@ fn emit_http_wrapper(
         // known here.
         let mut params: Vec<TsParam> = vec![TsParam {
             name: "request".to_string(),
-            ty: Some(TsType::named("Request")),
+            ty: Some(TsType::named("globalThis.Request")),
             optional: false,
         }];
         params.extend(h.params.iter().map(|p| TsParam {
@@ -1615,7 +1618,7 @@ fn emit_http_wrapper(
         stmts.push(const_(
             "__claims",
             await_expr(call(
-                ident("verifyBearerJwtHs256"),
+                ident("__verifyBearerJwtHs256"),
                 vec![
                     method_call(ident("__authz"), "slice", vec![num_lit("7")]),
                     ident("__secret"),
@@ -1737,7 +1740,7 @@ fn emit_http_oidc_wrapper(
     // P7.2: real declared types — same correction as `emit_http_wrapper`'s own.
     let mut params: Vec<TsParam> = vec![TsParam {
         name: "request".to_string(),
-        ty: Some(TsType::named("Request")),
+        ty: Some(TsType::named("globalThis.Request")),
         optional: false,
     }];
     params.extend(h.params.iter().map(|p| TsParam {
@@ -1768,7 +1771,7 @@ fn emit_http_oidc_wrapper(
     stmts.push(const_(
         "__claims",
         await_expr(call(
-            ident("verifyOidcJwt"),
+            ident("__verifyOidcJwt"),
             vec![
                 method_call(ident("__authz"), "slice", vec![num_lit("7")]),
                 str_lit(issuer),
@@ -1867,7 +1870,7 @@ fn emit_http_sum_wrapper(
         .collect();
     let mut params: Vec<TsParam> = vec![TsParam {
         name: "request".to_string(),
-        ty: Some(TsType::named("Request")),
+        ty: Some(TsType::named("globalThis.Request")),
         optional: false,
     }];
     params.extend(path_params.iter().map(|(n, ty)| TsParam {
@@ -1944,7 +1947,7 @@ fn emit_http_sum_wrapper(
                 secret_body.push(const_(
                     "__claims",
                     await_expr(call(
-                        ident("verifyBearerJwtHs256"),
+                        ident("__verifyBearerJwtHs256"),
                         vec![
                             method_call(ident("__authz"), "slice", vec![num_lit("7")]),
                             ident("__secret"),
@@ -2013,7 +2016,7 @@ fn emit_http_sum_wrapper(
                 secret_body.push(const_(
                     "__sig_ok",
                     await_expr(call(
-                        ident("verifySignatureHmacSha256"),
+                        ident("__verifySignatureHmacSha256"),
                         vec![
                             ident("__raw"),
                             ident("__secret"),
@@ -2054,13 +2057,13 @@ fn emit_http_sum_wrapper(
     // Parse the body param from the raw bytes already read (fail-closed → 400).
     let mut call_args: Vec<TsExpr> = path_params.iter().map(|(n, _)| ident(n.clone())).collect();
     if let Some(body_param) = h.params.iter().find(|p| p.name.name == "body") {
-        stmts.push(let_("__body_json", TsType::named("JsonValue")));
+        stmts.push(let_("__body_json", TsType::named("__JsonValue")));
         stmts.push(TsStmt::try_catch(
             block(vec![TsStmt::assign(
                 ident("__body_json"),
                 as_expr(
-                    method_call(ident("JSON"), "parse", vec![ident("__raw")]),
-                    TsType::named("JsonValue"),
+                    method_call(ident("globalThis.JSON"), "parse", vec![ident("__raw")]),
+                    TsType::named("__JsonValue"),
                 ),
                 None,
             )]),

@@ -34,7 +34,7 @@ export function authorise(amount: number): Result<number, PaymentError> {
   return (amount > 0 ? Ok(amount) : Err(PaymentError.Declined));
 }
 
-export async function schedule(day: number): Promise<Result<number, ScheduleError>> {
+export async function schedule(day: number): globalThis.Promise<Result<number, ScheduleError>> {
   return (day > 0 ? Ok(day) : Err(ScheduleError.NoSlot));
 }
 
@@ -45,7 +45,7 @@ export function place(amount: number): Result<number, OrderError> {
   return Ok(authId);
 }
 
-export async function placeEff(day: number): Promise<Result<number, OrderError>> {
+export async function placeEff(day: number): globalThis.Promise<Result<number, OrderError>> {
   const slot = await schedule(day);
   const __r0 = slot;
   if (__r0.tag === "Err") return Err(OrderError.Fulfilment(__r0.error));
@@ -64,7 +64,7 @@ export function placeIf(amount: number, flag: boolean): Result<number, OrderErro
   }
 }
 
-export async function placeMatch(day: number, mode: number): Promise<Result<number, OrderError>> {
+export async function placeMatch(day: number, mode: number): globalThis.Promise<Result<number, OrderError>> {
   switch (mode) {
     case 0: {
       const slot = await schedule(day);
@@ -77,6 +77,6 @@ export async function placeMatch(day: number, mode: number): Promise<Result<numb
       return Ok(0);
     }
   }
-  throw new Error("non-exhaustive match");
+  throw new globalThis.Error("non-exhaustive match");
 }
 

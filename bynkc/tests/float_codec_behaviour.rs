@@ -77,7 +77,7 @@ fn run(program: &str, prefix: &[String], args: &[&str], cwd: &Path) -> (bool, St
 }
 
 const DRIVER_TS: &str = r#"
-import { serialise_Quote, deserialise_Quote, type Quote } from "./workers/quote/handlers.js";
+import { __serialise_Quote, __deserialise_Quote, type Quote } from "./workers/quote/handlers.js";
 
 function assert(cond: boolean, msg: string): void {
   if (!cond) {
@@ -87,8 +87,8 @@ function assert(cond: boolean, msg: string): void {
 
 // 1) A decimal round-trips through the codec exactly.
 const q: Quote = { sku: "widget", price: 19.99, qty: 2 };
-const wire = JSON.stringify(serialise_Quote(q));
-const back = deserialise_Quote(JSON.parse(wire));
+const wire = JSON.stringify(__serialise_Quote(q));
+const back = __deserialise_Quote(JSON.parse(wire));
 assert(back.tag === "Ok", "decimal round-trip deserialises");
 if (back.tag === "Ok") {
   assert(back.value.price === 19.99, "price survives the round-trip exactly");
@@ -98,13 +98,13 @@ if (back.tag === "Ok") {
 //    JSON.parse admits Infinity via an overflowing literal.
 const overflowed = JSON.parse('{"sku":"widget","price":1e999,"qty":2}');
 assert(overflowed.price === Infinity, "JSON.parse yields Infinity for 1e999");
-const rejected = deserialise_Quote(overflowed);
+const rejected = __deserialise_Quote(overflowed);
 assert(rejected.tag === "Err", "non-finite Float from the wire is rejected");
 
 // 3) Serialising a non-finite Float is a contract violation (throws).
 let threw = false;
 try {
-  serialise_Quote({ sku: "widget", price: Number.NaN, qty: 2 } as Quote);
+  __serialise_Quote({ sku: "widget", price: Number.NaN, qty: 2 } as Quote);
 } catch {
   threw = true;
 }

@@ -4,31 +4,31 @@
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "./runtime.js";
 
 export function distance(a: number, b: number): number {
-  return Math.abs((a - b));
+  return globalThis.Math.abs((a - b));
 }
 
 export function bounded(x: number, lo: number, hi: number): number {
-  return Math.min(Math.max(x, lo), hi);
+  return globalThis.Math.min(globalThis.Math.max(x, lo), hi);
 }
 
 export function extremes(a: number, b: number): number {
-  return Math.min(a, b) + Math.max(a, b);
+  return globalThis.Math.min(a, b) + globalThis.Math.max(a, b);
 }
 
 export function safeRatio(a: number, b: number): Option<number> {
   const r = a / b;
-  return (Number.isFinite(r) ? Some(r) : None);
+  return (globalThis.Number.isFinite(r) ? Some(r) : None);
 }
 
 export function neverNaN(x: number): boolean {
-  return Number.isNaN(x) === false;
+  return globalThis.Number.isNaN(x) === false;
 }
 
 export function parseOrZero(s: string): number {
-  return ((__o: Option<number>, __d: number) => __o.tag === "Some" ? __o.value : __d)(((__s: string) => { if (!/^[+-]?[0-9]+$/.test(__s)) return None; const __n = Number(__s) + 0; return Number.isSafeInteger(__n) ? Some(__n) : None; })(s), 0);
+  return ((__o: Option<number>, __d: number) => __o.tag === "Some" ? __o.value : __d)(((__s: string) => { if (!/^[+-]?[0-9]+$/.test(__s)) return None; const __n = globalThis.Number(__s) + 0; return globalThis.Number.isSafeInteger(__n) ? Some(__n) : None; })(s), 0);
 }
 
 export function parsePrice(s: string): Option<number> {
-  return ((__s: string) => { if (!/^[+-]?([0-9]+(\.[0-9]*)?|\.[0-9]+)([eE][+-]?[0-9]+)?$/.test(__s)) return None; const __n = Number(__s); return Number.isFinite(__n) ? Some(__n) : None; })(s);
+  return ((__s: string) => { if (!/^[+-]?([0-9]+(\.[0-9]*)?|\.[0-9]+)([eE][+-]?[0-9]+)?$/.test(__s)) return None; const __n = globalThis.Number(__s); return globalThis.Number.isFinite(__n) ? Some(__n) : None; })(s);
 }
 

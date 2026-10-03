@@ -1531,6 +1531,16 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         &["type_decl"],
     ),
     dg(
+        "bynk.resolve.reserved_host_name",
+        "A type is named `globalThis`, which the generated TypeScript uses to reach host globals.",
+        &["type_decl"],
+    ),
+    dg(
+        "bynk.resolve.reserved_payload_field",
+        "A sum variant declares a payload field named `kind`, the variant's wire discriminant.",
+        &["sum_type"],
+    ),
+    dg(
         "bynk.resolve.self_outside_method",
         "`self` referenced outside a method or handler.",
         &["self_expr"],

@@ -1,0 +1,48 @@
+---
+#1653: each colliding name and shadowing binding behaves as written.
+---
+suite demo.hygiene
+
+case "functions named after host and runtime names" {
+  expect console(1) == 2
+  expect crypto(3) == 6
+  expect encodeURIComponent("a b") == "a b"
+  expect matchPath("/x") == "/x"
+  expect callService(4) == 4
+  expect serialise_Labelled(Tagged("t", 7)) == 7
+  expect mkError(5).code == 5
+}
+
+case "Int division beside a user type named Math" {
+  expect half(7, 2) == 3
+  expect half(-7, 2) == -3
+}
+
+case "a binding that shadows the value it is read from" {
+  expect unwrapIs(Some(4)) == 4
+  expect unwrapIs(None) == 0
+  expect unwrapMatch(Some(9)) == 9
+  expect rebind(1) == 6
+}
+
+case "a payload field named tag" {
+  expect labelOf(Tagged("red", 1)) == "red"
+  expect labelIs(Tagged("blue", 2)) == "blue"
+  expect labelOf(Plain(3)) == ""
+  expect encodeLabel(Tagged("red", 1)) == "{\"kind\":\"Tagged\",\"tag\":\"red\",\"n\":1}"
+  expect roundTrip(Tagged("red", 1))
+  expect roundTrip(Plain(2))
+}
+
+case "Bytes beside a user type named Uint8Array" {
+  expect size(Bytes.fromUtf8("hi")) == 2
+}
+
+case "an agent's store collections beside user types named Record and Set" {
+  do Bag("b").put("x", 1)
+  do Bag("b").put("y", 2)
+  let n <- Bag("b").count()
+  expect n == 2
+  let v <- Bag("b").get("y")
+  expect v == Some(2)
+}

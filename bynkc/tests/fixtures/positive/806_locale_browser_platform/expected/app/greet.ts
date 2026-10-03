@@ -11,7 +11,7 @@ import * as bynk from "../bynk.js";
 export type Message = __CommonsMessage & { readonly __ctxBrand: "app.greet" };
 
 export const greeting = {
-  async call(deps: { Locale: bynk.Locale }): Promise<string> {
+  async call(deps: { Locale: bynk.Locale }): globalThis.Promise<string> {
     const tag = await deps.Locale.current();
     return render(tag, (message("hello") as Message));
   },
@@ -23,7 +23,7 @@ export interface AppGreetDeps {
 
 export function makeSurface(deps: AppGreetDeps) {
   return {
-    async greeting(): Promise<string> {
+    async greeting(): globalThis.Promise<string> {
       return greeting.call(deps);
     },
   };

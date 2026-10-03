@@ -53,7 +53,7 @@ export function size(o: Option<number>): string {
   if (o.tag === "None") {
     return "none";
   }
-  throw new Error("non-exhaustive match");
+  throw new globalThis.Error("non-exhaustive match");
 }
 
 export function shade(o: Option<Color>): number {
@@ -66,7 +66,7 @@ export function shade(o: Option<Color>): number {
   if (o.tag === "None") {
     return 0;
   }
-  throw new Error("non-exhaustive match");
+  throw new globalThis.Error("non-exhaustive match");
 }
 
 export function score(p: Pair): number {
@@ -82,5 +82,5 @@ export function score(p: Pair): number {
   if (p.tag === "Q") {
     return -1;
   }
-  throw new Error("non-exhaustive match");
+  throw new globalThis.Error("non-exhaustive match");
 }

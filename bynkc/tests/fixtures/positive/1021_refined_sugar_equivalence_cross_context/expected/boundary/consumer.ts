@@ -27,19 +27,19 @@ export const LocalToken = {
 };
 
 export const submit = {
-  async call(value: LocalToken, deps: { surface: { Provider: ReturnType<typeof boundary_provider.makeSurface> } }): Promise<Result<number, number>> {
+  async call(value: LocalToken, deps: { surface: { Provider: globalThis.ReturnType<typeof boundary_provider.makeSurface> } }): globalThis.Promise<Result<number, number>> {
     const __r0 = await deps.surface.Provider.verify((value as unknown as boundary_provider.Token));
     return Ok(0);
   },
 };
 
 export interface BoundaryConsumerDeps {
-  readonly surface: { Provider: ReturnType<typeof boundary_provider.makeSurface> };
+  readonly surface: { Provider: globalThis.ReturnType<typeof boundary_provider.makeSurface> };
 }
 
 export function makeSurface(deps: BoundaryConsumerDeps) {
   return {
-    async submit(value: LocalToken): Promise<Result<number, number>> {
+    async submit(value: LocalToken): globalThis.Promise<Result<number, number>> {
       return submit.call(value, deps);
     },
   };

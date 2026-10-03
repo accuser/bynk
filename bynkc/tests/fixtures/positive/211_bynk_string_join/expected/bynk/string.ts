@@ -19,7 +19,7 @@ export function join(parts: readonly string[], sep: string): string {
         return Some(p);
       }
     }
-    throw new Error("non-exhaustive match");
+    throw new globalThis.Error("non-exhaustive match");
   })(acc)), "");
 }
 

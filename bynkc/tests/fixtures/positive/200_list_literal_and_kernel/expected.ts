@@ -18,7 +18,7 @@ export function firstOrZero(xs: readonly number[]): number {
       return 0;
     }
   }
-  throw new Error("non-exhaustive match");
+  throw new globalThis.Error("non-exhaustive match");
 }
 
 export function demo(): number {
@@ -35,7 +35,7 @@ export function demo(): number {
       return firstOrZero(ys);
     }
   }
-  throw new Error("non-exhaustive match");
+  throw new globalThis.Error("non-exhaustive match");
 }
 
 export function keyList(m: ReadonlyMap<string, number>): readonly string[] {

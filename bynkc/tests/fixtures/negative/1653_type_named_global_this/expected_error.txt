@@ -1,0 +1,2 @@
+bynk.resolve.reserved_host_name
+`globalThis` cannot be used as a type name

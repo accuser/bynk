@@ -14,7 +14,7 @@ export const Order = {
 };
 
 export const ordering = {
-  async call(sku: string, deps: { Clock: bynk.Clock; Logger: bynk.Logger }): Promise<Order> {
+  async call(sku: string, deps: { Clock: bynk.Clock; Logger: bynk.Logger }): globalThis.Promise<Order> {
     const __r0 = await deps.Logger.info("placing order");
     const now = await deps.Clock.now();
     return { sku: sku, placedAt: now };
@@ -28,7 +28,7 @@ export interface ShopOrdersDeps {
 
 export function makeSurface(deps: ShopOrdersDeps) {
   return {
-    async ordering(sku: string): Promise<Order> {
+    async ordering(sku: string): globalThis.Promise<Order> {
       return ordering.call(sku, deps);
     },
   };

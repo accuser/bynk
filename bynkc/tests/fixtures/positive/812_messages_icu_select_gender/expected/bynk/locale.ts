@@ -28,7 +28,7 @@ export function render(tag: LocaleTag, msg: Message): string {
         return acc;
       }
     }
-    throw new Error("non-exhaustive match");
+    throw new globalThis.Error("non-exhaustive match");
   })(((__m: ReadonlyMap<string, MessageArg>, __k: string) => __m.has(__k) ? Some(__m.get(__k) as MessageArg) : None)(msg.params, k))));
     return msg.code.concat(" {").concat(join(parts, ", ")).concat("}");
   }
@@ -53,7 +53,7 @@ export function renderArg(arg: MessageArg): string {
       return String(v);
     }
   }
-  throw new Error("non-exhaustive match");
+  throw new globalThis.Error("non-exhaustive match");
 }
 
 /**

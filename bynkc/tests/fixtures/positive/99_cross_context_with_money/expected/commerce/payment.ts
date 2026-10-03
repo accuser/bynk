@@ -11,7 +11,7 @@ export type Token = string & { readonly __brand: "commerce.payment.Token" };
 
 export const Token = {
   of(value: string): Result<Token, ValidationError> {
-    if (!(new RegExp("^(?:" + "T-[0-9]+" + ")$").test(value))) {
+    if (!(new globalThis.RegExp("^(?:" + "T-[0-9]+" + ")$").test(value))) {
       return Err({ field: "Token", message: "must match /T-[0-9]+/", value });
     }
     return Ok(value as Token);
@@ -22,7 +22,7 @@ export const Token = {
 };
 
 export const authorise = {
-  async call(amount: Money, deps: {}): Promise<Result<Token, number>> {
+  async call(amount: Money, deps: {}): globalThis.Promise<Result<Token, number>> {
     return Ok(Token.unsafe("T-1"));
   },
 };
@@ -32,7 +32,7 @@ export interface CommercePaymentDeps {
 
 export function makeSurface(deps: CommercePaymentDeps) {
   return {
-    async authorise(amount: Money): Promise<Result<Token, number>> {
+    async authorise(amount: Money): globalThis.Promise<Result<Token, number>> {
       return authorise.call(amount, deps);
     },
   };

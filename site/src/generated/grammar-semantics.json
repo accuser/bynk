@@ -1016,6 +1016,10 @@
     {
       "code": "bynk.resolve.duplicate_variant",
       "summary": "A sum type declares a variant twice."
+    },
+    {
+      "code": "bynk.resolve.reserved_payload_field",
+      "summary": "A sum variant declares a payload field named `kind`, the variant's wire discriminant."
     }
   ],
   "sum_variant": [
@@ -1040,6 +1044,10 @@
     {
       "code": "bynk.resolve.reserved_builtin_type",
       "summary": "A type declaration reuses a compiler-known built-in type name."
+    },
+    {
+      "code": "bynk.resolve.reserved_host_name",
+      "summary": "A type is named `globalThis`, which the generated TypeScript uses to reach host globals."
     }
   ],
   "uses_decl": [

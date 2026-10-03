@@ -4,9 +4,9 @@
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
 
 export interface Logger {
-  log(message: string): Promise<void>;
-  error(message: string): Promise<void>;
+  log(message: string): globalThis.Promise<void>;
+  error(message: string): globalThis.Promise<void>;
 }
 
-export const LoggerToken: unique symbol = Symbol("Logger");
+export const LoggerToken: symbol = globalThis.Symbol("Logger");
 

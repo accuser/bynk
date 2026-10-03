@@ -9,13 +9,13 @@ import { PaymentConfirmed } from "./order.js";
 import * as commerce_order from "./order.js";
 
 export const OnPayment = {
-  async event(e: PaymentConfirmed, env: EventEnvelope, deps: {}): Promise<void> {
+  async event(e: PaymentConfirmed, env: EventEnvelope, deps: {}): globalThis.Promise<void> {
     return undefined;
   },
 };
 
 export interface CommerceNotificationsDeps {
-  readonly surface: { order: ReturnType<typeof commerce_order.makeSurface> };
+  readonly surface: { order: globalThis.ReturnType<typeof commerce_order.makeSurface> };
 }
 
 export function makeSurface(deps: CommerceNotificationsDeps) {

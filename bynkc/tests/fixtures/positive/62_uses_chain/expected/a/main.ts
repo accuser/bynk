@@ -7,7 +7,7 @@ export type Root = number & { readonly __brand: "Root" };
 
 export const Root = {
   of(value: number): Result<Root, ValidationError> {
-    if (!Number.isSafeInteger(value)) {
+    if (!globalThis.Number.isSafeInteger(value)) {
       return Err({ field: "Root", message: "must be a safe integer", value });
     }
     if (!(value > 0)) {

@@ -3,7 +3,7 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, __bynkBytesEqual, __bynkBytesToBase64, __bynkBytesFromBase64, __bynkBytesDecodeUtf8 } from "./runtime.js";
 
-export function decode(s: string): Option<Uint8Array> {
+export function decode(s: string): Option<globalThis.Uint8Array> {
   return __bynkBytesFromBase64(s);
 }
 

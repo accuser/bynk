@@ -202,9 +202,9 @@ fn workers_events_fanout_do_and_wrangler_wiring() {
     // #973: the payload and envelope are validated at this route before
     // dispatch — a malformed one must never reach the handler unchecked.
     assert!(
-        notif_index.contains("deserialiseEventEnvelope(envelope, \"$.envelope\")")
+        notif_index.contains("__deserialiseEventEnvelope(envelope, \"$.envelope\")")
             && notif_index
-                .contains("handlers.deserialise_PaymentConfirmed(payload, \"$.payload\")")
+                .contains("handlers.__deserialise_PaymentConfirmed(payload, \"$.payload\")")
             && notif_index.contains("status: 400"),
         "the event route must validate both the envelope and the payload, \
          rejecting a malformed one with 400 before ever dispatching:\n{notif_index}"
@@ -216,7 +216,7 @@ fn workers_events_fanout_do_and_wrangler_wiring() {
     // for it at all. This is the assertion that would have caught that gap.
     let notif_handlers = find("workers/commerce-notifications/handlers.ts");
     assert!(
-        notif_handlers.contains("export function deserialise_PaymentConfirmed"),
+        notif_handlers.contains("export function __deserialise_PaymentConfirmed"),
         "a subscriber must get its own codec for the event payload type it \
          receives, even though it calls no method on the publisher:\n{notif_handlers}"
     );
@@ -490,9 +490,9 @@ fn workers_events_envelope_param_type_checks_and_leaves_fanout_unchanged() {
     let notif_index = find("workers/commerce-notifications/index.ts");
     assert!(
         notif_index.contains("const { payload, envelope }")
-            && notif_index.contains("deserialiseEventEnvelope(envelope, \"$.envelope\")")
+            && notif_index.contains("__deserialiseEventEnvelope(envelope, \"$.envelope\")")
             && notif_index
-                .contains("handlers.deserialise_PaymentConfirmed(payload, \"$.payload\")")
+                .contains("handlers.__deserialise_PaymentConfirmed(payload, \"$.payload\")")
             && notif_index.contains("surface.OnPayment(__r_payload.value, __r_envelope.value)"),
         "the entry route must validate both payload and envelope and forward \
          the validated values uniformly:\n{notif_index}"
@@ -613,13 +613,13 @@ fn workers_events_nested_payload_field_gets_a_transitive_codec() {
     // The subscriber's own module must gain codecs for BOTH the root event
     // payload type and the nested record it transitively reaches — a closure
     // that only collected the root would leave `deserialise_Meta` missing,
-    // and the compile-time `handlers.deserialise_PaymentConfirmed` call the
+    // and the compile-time `handlers.__deserialise_PaymentConfirmed` call the
     // route emits would then reference a function whose own body calls an
     // undefined `deserialise_Meta`, caught by the `tsc --strict` gate below.
     let notif_handlers = find("workers/commerce-notifications/handlers.ts");
     assert!(
-        notif_handlers.contains("export function deserialise_PaymentConfirmed")
-            && notif_handlers.contains("export function deserialise_Meta"),
+        notif_handlers.contains("export function __deserialise_PaymentConfirmed")
+            && notif_handlers.contains("export function __deserialise_Meta"),
         "a subscriber must get codecs for the event payload's full transitive \
          closure, not just its root type:\n{notif_handlers}"
     );

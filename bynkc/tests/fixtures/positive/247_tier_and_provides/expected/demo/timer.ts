@@ -4,19 +4,19 @@
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
 
 export interface Clock {
-  now(): Promise<number>;
+  now(): globalThis.Promise<number>;
 }
 
-export const ClockToken: unique symbol = Symbol("Clock");
+export const ClockToken: symbol = globalThis.Symbol("Clock");
 
 export interface Rates {
-  lookup(code: string): Promise<number>;
+  lookup(code: string): globalThis.Promise<number>;
 }
 
-export const RatesToken: unique symbol = Symbol("Rates");
+export const RatesToken: symbol = globalThis.Symbol("Rates");
 
 export class SystemClock implements Clock {
-  async now(): Promise<number> {
+  async now(): globalThis.Promise<number> {
     return 0;
   }
 }
@@ -24,7 +24,7 @@ export class SystemClock implements Clock {
 export const SystemClockProvider = { token: ClockToken, factory: () => new SystemClock() };
 
 export class LiveRates implements Rates {
-  async lookup(code: string): Promise<number> {
+  async lookup(code: string): globalThis.Promise<number> {
     return 1;
   }
 }
@@ -32,7 +32,7 @@ export class LiveRates implements Rates {
 export const LiveRatesProvider = { token: RatesToken, factory: () => new LiveRates() };
 
 export const elapsed = {
-  async call(deps: { Clock: Clock }): Promise<number> {
+  async call(deps: { Clock: Clock }): globalThis.Promise<number> {
     const a = await deps.Clock.now();
     const b = await deps.Clock.now();
     return b - a;
@@ -40,7 +40,7 @@ export const elapsed = {
 };
 
 export const rate = {
-  async call(code: string, deps: { Rates: Rates }): Promise<number> {
+  async call(code: string, deps: { Rates: Rates }): globalThis.Promise<number> {
     const r = await deps.Rates.lookup(code);
     return r;
   },
@@ -53,10 +53,10 @@ export interface DemoTimerDeps {
 
 export function makeSurface(deps: DemoTimerDeps) {
   return {
-    async elapsed(): Promise<number> {
+    async elapsed(): globalThis.Promise<number> {
       return elapsed.call(deps);
     },
-    async rate(code: string): Promise<number> {
+    async rate(code: string): globalThis.Promise<number> {
       return rate.call(code, deps);
     },
   };

@@ -7,7 +7,7 @@ export type Score = number & { readonly __brand: "Score" };
 
 export const Score = {
   of(value: number): Result<Score, ValidationError> {
-    if (!Number.isSafeInteger(value)) {
+    if (!globalThis.Number.isSafeInteger(value)) {
       return Err({ field: "Score", message: "must be a safe integer", value });
     }
     if (!(value >= 0 && value <= 100)) {
@@ -18,11 +18,11 @@ export const Score = {
 };
 
 export function magnitude(s: Score): number {
-  return Math.abs(s);
+  return globalThis.Math.abs(s);
 }
 
 export function bounded(s: Score): number {
-  return Math.min(Math.max(s, 10), 90);
+  return globalThis.Math.min(globalThis.Math.max(s, 10), 90);
 }
 
 export function show(s: Score): string {

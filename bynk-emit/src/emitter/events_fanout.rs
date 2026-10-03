@@ -51,8 +51,8 @@ pub(crate) fn emit_events_fanout_do(
         TsDecl::Import {
             type_only: true,
             names: vec![
-                "DurableObjectState".to_string(),
-                "ServiceBinding".to_string(),
+                "__DurableObjectState".to_string(),
+                "__ServiceBinding".to_string(),
             ],
             from: EVENTS_FANOUT_RUNTIME_SPECIFIER.to_string(),
         },
@@ -61,7 +61,7 @@ pub(crate) fn emit_events_fanout_do(
     program.push(TsStmt::decl(
         TsDecl::Import {
             type_only: false,
-            names: vec!["deliverEvent".to_string()],
+            names: vec!["__deliverEvent".to_string()],
             from: EVENTS_FANOUT_RUNTIME_SPECIFIER.to_string(),
         },
         None,
@@ -96,11 +96,11 @@ pub(crate) fn emit_events_fanout_do(
         TsDecl::ConstDecl {
             name: "__eventRoutes".to_string(),
             ty: Some(TsType::named_with_args(
-                "Record",
+                "globalThis.Record",
                 vec![
                     TsType::named("string"),
                     TsType::named_with_args(
-                        "Array",
+                        "globalThis.Array",
                         vec![TsType::Object(vec![
                             TsTypeMember::prop("binding", TsType::named("string")),
                             TsTypeMember::prop("service", TsType::named("string")),
@@ -118,8 +118,8 @@ pub(crate) fn emit_events_fanout_do(
             fields: vec![TsClassField {
                 name: "env".to_string(),
                 ty: TsType::named_with_args(
-                    "Record",
-                    vec![TsType::named("string"), TsType::named("ServiceBinding")],
+                    "globalThis.Record",
+                    vec![TsType::named("string"), TsType::named("__ServiceBinding")],
                 ),
                 private: true,
             }],
@@ -171,7 +171,7 @@ fn events_fanout_ctor() -> TsClassCtor {
         params: vec![
             TsParam {
                 name: "_state".to_string(),
-                ty: Some(TsType::named("DurableObjectState")),
+                ty: Some(TsType::named("__DurableObjectState")),
                 optional: false,
             },
             TsParam {
@@ -192,8 +192,8 @@ fn events_fanout_ctor() -> TsClassCtor {
                     right: Box::new(TsExpr::object(vec![])),
                 }),
                 ty: TsType::named_with_args(
-                    "Record",
-                    vec![TsType::named("string"), TsType::named("ServiceBinding")],
+                    "globalThis.Record",
+                    vec![TsType::named("string"), TsType::named("__ServiceBinding")],
                 ),
             },
             None,
@@ -208,12 +208,12 @@ fn events_fanout_fetch() -> TsClassMethod {
         is_async: true,
         params: vec![TsParam {
             name: "request".to_string(),
-            ty: Some(TsType::named("Request")),
+            ty: Some(TsType::named("globalThis.Request")),
             optional: false,
         }],
         return_type: Some(TsType::named_with_args(
-            "Promise",
-            vec![TsType::named("Response")],
+            "globalThis.Promise",
+            vec![TsType::named("globalThis.Response")],
         )),
         doc: None,
         body: vec![
@@ -275,7 +275,9 @@ fn events_fanout_fetch() -> TsClassMethod {
                                 op: TsUnaryOp::Not,
                                 expr: Box::new(TsExpr::Call {
                                     callee: Box::new(TsExpr::Member {
-                                        object: Box::new(TsExpr::Ident("Array".to_string())),
+                                        object: Box::new(TsExpr::Ident(
+                                            "globalThis.Array".to_string(),
+                                        )),
                                         property: "isArray".to_string(),
                                     }),
                                     args: vec![TsExpr::Ident("subs".to_string())],
@@ -323,7 +325,7 @@ fn events_fanout_fetch() -> TsClassMethod {
                                             vec![TsStmt::expr_stmt(
                                                 TsExpr::Await(Box::new(TsExpr::Call {
                                                     callee: Box::new(TsExpr::Ident(
-                                                        "deliverEvent".to_string(),
+                                                        "__deliverEvent".to_string(),
                                                     )),
                                                     args: vec![
                                                         TsExpr::Ident("binding".to_string()),
@@ -357,7 +359,7 @@ fn events_fanout_fetch() -> TsClassMethod {
                                                 TsExpr::Call {
                                                     callee: Box::new(TsExpr::Member {
                                                         object: Box::new(TsExpr::Ident(
-                                                            "console".to_string(),
+                                                            "globalThis.console".to_string(),
                                                         )),
                                                         property: "error".to_string(),
                                                     }),
@@ -423,7 +425,7 @@ fn events_fanout_fetch() -> TsClassMethod {
             ),
             TsStmt::return_stmt(
                 Some(TsExpr::New {
-                    callee: Box::new(TsExpr::Ident("Response".to_string())),
+                    callee: Box::new(TsExpr::Ident("globalThis.Response".to_string())),
                     args: vec![
                         TsExpr::Lit(TsLit::Null),
                         TsExpr::object(vec![(
@@ -486,7 +488,7 @@ mod tests {
         let printed = bynk_ts::print(&program, "", "", "");
         assert!(
             printed.text.contains(
-                "const __eventRoutes: Record<string, Array<{ binding: string; service: string }>> = {\n};\n"
+                "const __eventRoutes: globalThis.Record<string, globalThis.Array<{ binding: string; service: string }>> = {\n};\n"
             ),
             "expected the empty-table shape, got:\n{}",
             printed.text

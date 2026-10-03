@@ -28,6 +28,6 @@ export function describe(o: Outcome): string {
       return "draw";
     }
   }
-  throw new Error("non-exhaustive match");
+  throw new globalThis.Error("non-exhaustive match");
 }
 

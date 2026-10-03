@@ -105,17 +105,17 @@ The agent becomes a class that loads its state on entry and persists once at the
 end. The zero value is baked in as `__zeroOfLinkState`:
 
 ```typescript
-const __LinkRegistry = new StateRegistry();
+const __LinkRegistry = new __StateRegistry();
 function __zeroOfLinkState(): LinkState { return { target: None, hits: 0 }; }
 
 export class Link {
   // ...
-  private async loadState(): Promise<LinkState> {
+  private async loadState(): globalThis.Promise<LinkState> {
     const stored = await this.state.storage.get<LinkState>("state");
     return stored ?? __zeroOfLinkState();   // a fresh code starts from zero
   }
 
-  async register(url: Url, deps: {}): Promise<Result<void, LinkError>> {
+  async register(url: Url, deps: {}): globalThis.Promise<Result<void, LinkError>> {
     const __state = { ...(await this.loadState()) };   // a mutable working copy
     const __result = await (async () => {
       switch (__state.target.tag) {
@@ -127,7 +127,7 @@ export class Link {
           return Ok(undefined);
         }
       }
-      throw new Error("non-exhaustive match");
+      throw new globalThis.Error("non-exhaustive match");
     })();
     await this.commitState(__state);                    // one commit at the end
     return __result;

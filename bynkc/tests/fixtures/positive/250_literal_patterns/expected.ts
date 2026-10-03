@@ -7,7 +7,7 @@ export type LanguageCode = number & { readonly __brand: "LanguageCode" };
 
 export const LanguageCode = {
   of(value: number): Result<LanguageCode, ValidationError> {
-    if (!Number.isSafeInteger(value)) {
+    if (!globalThis.Number.isSafeInteger(value)) {
       return Err({ field: "LanguageCode", message: "must be a safe integer", value });
     }
     if (!(value >= 1 && value <= 99)) {
@@ -29,7 +29,7 @@ export function classify(code: number): string {
       return "other";
     }
   }
-  throw new Error("non-exhaustive match");
+  throw new globalThis.Error("non-exhaustive match");
 }
 
 export function label(flag: boolean): string {
@@ -41,7 +41,7 @@ export function label(flag: boolean): string {
       return "off";
     }
   }
-  throw new Error("non-exhaustive match");
+  throw new globalThis.Error("non-exhaustive match");
 }
 
 export function rank(s: string): number {
@@ -56,7 +56,7 @@ export function rank(s: string): number {
       return 0;
     }
   }
-  throw new Error("non-exhaustive match");
+  throw new globalThis.Error("non-exhaustive match");
 }
 
 export function named(code: LanguageCode): string {
@@ -68,6 +68,6 @@ export function named(code: LanguageCode): string {
       return "rest";
     }
   }
-  throw new Error("non-exhaustive match");
+  throw new globalThis.Error("non-exhaustive match");
 }
 

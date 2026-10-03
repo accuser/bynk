@@ -49,14 +49,14 @@ async function test_nested_match_expect() {
             return __bynkExpect((true), "tests/money.test.bynk:8:26", 238, 242, "expect true");
           }
         }
-        throw new Error("non-exhaustive match");
+        throw new globalThis.Error("non-exhaustive match");
       })(inner);
           }
           case "Err": {
             return __bynkExpect((false), "tests/money.test.bynk:10:24", 274, 279, "expect false");
           }
         }
-        throw new Error("non-exhaustive match");
+        throw new globalThis.Error("non-exhaustive match");
       })(outer));
     return { pass: true };
   } catch (e) {

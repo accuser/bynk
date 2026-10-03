@@ -1,0 +1,151 @@
+---
+#1653: user names that match a host global, a runtime export or a generated
+helper, and bindings that shadow, all compile to TypeScript that passes
+`tsc --strict` and behaves as written.
+---
+context demo.hygiene
+
+-- Host globals the generated TypeScript uses, declared as user types.
+type Error = { code: Int }
+type Promise = { due: Int }
+type Record = { id: String }
+type Object = { n: Int }
+type Array = { n: Int }
+type Symbol = { s: String }
+type Number = { n: Int }
+type JSON = { raw: String }
+type Math = { n: Int }
+type Uint8Array = { n: Int }
+type Set = { n: Int }
+type Date = { day: Int }
+type RegExp = { src: String }
+type Request = { path: String }
+type Response = { status: Int }
+type URL = { href: String }
+type Headers = { n: Int }
+type Blob = { n: Int }
+type Intl = { n: Int }
+type TextEncoder = { n: Int }
+type TextDecoder = { n: Int }
+type BigInt = { n: Int }
+type Boolean = { n: Int }
+type ArrayBuffer = { n: Int }
+type ReturnType = { n: Int }
+type Parameters = { n: Int }
+
+-- Runtime exports, declared as user types.
+type JsonValue = { v: Int }
+type BoundaryError = { why: String }
+type DurableObjectState = { n: Int }
+type StateRegistry = { n: Int }
+
+-- A payload field named like the in-memory discriminant.
+type Labelled = | Tagged(tag: String, n: Int) | Plain(n: Int)
+
+-- Host and runtime value names, and a generated codec name, as functions.
+fn console(x: Int) -> Int {
+  x + 1
+}
+
+fn crypto(x: Int) -> Int {
+  x * 2
+}
+
+fn encodeURIComponent(s: String) -> String {
+  s
+}
+
+fn matchPath(s: String) -> String {
+  s
+}
+
+fn callService(x: Int) -> Int {
+  x
+}
+
+fn serialise_Labelled(l: Labelled) -> Int {
+  match l {
+    Tagged(_, n) => n
+    Plain(n) => n
+  }
+}
+
+fn mkError(c: Int) -> Error {
+  Error { code: c }
+}
+
+fn half(a: Int, b: Int) -> Int {
+  a / b
+}
+
+fn unwrapIs(o: Option[Int]) -> Int {
+  if o is Some(o) { o } else { 0 }
+}
+
+fn unwrapMatch(o: Option[Int]) -> Int {
+  match o {
+    Some(o) => o
+    None => 0
+  }
+}
+
+fn rebind(x: Int) -> Int {
+  let x = x + 5
+  x
+}
+
+fn labelOf(l: Labelled) -> String {
+  match l {
+    Tagged(tag: t, n: _) => t
+    Plain(_) => ""
+  }
+}
+
+fn labelIs(l: Labelled) -> String {
+  if l is Tagged(t, _) { t } else { "" }
+}
+
+fn encodeLabel(l: Labelled) -> String {
+  Json.encode(l)
+}
+
+fn roundTrip(l: Labelled) -> Bool {
+  match Json.decode[Labelled](Json.encode(l)) {
+    Ok(back) => back == l
+    Err(_) => false
+  }
+}
+
+fn size(b: Bytes) -> Int {
+  b.length()
+}
+
+capability Clock {
+  fn now() -> Effect[Instant]
+}
+
+provides Clock = FixedClock {
+  fn now() -> Effect[Instant] {
+    Instant.fromEpochMillis(0)
+  }
+}
+
+agent Bag {
+  key id: String
+  store items: Map[String, Int]
+  store seen: Set[String]
+
+  on call put(k: String, v: Int) -> Effect[()] {
+    let _ <- items.put(k, v)
+    let _ <- seen.add(k)
+    ()
+  }
+  on call get(k: String) -> Effect[Option[Int]] {
+    let r <- items.get(k)
+    r
+  }
+  on call count() -> Effect[Int] {
+    let n <- seen.size()
+    n
+  }
+}

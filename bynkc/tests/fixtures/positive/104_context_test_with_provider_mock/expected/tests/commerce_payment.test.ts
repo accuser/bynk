@@ -26,14 +26,14 @@ function __bynkShow(v: unknown): string {
 }
 
 class __Stub_Logger {
-  async log(msg: string): Promise<void> {
+  async log(msg: string): globalThis.Promise<void> {
     const { AuthId, PaymentError } = commerce_payment;
     type AuthId = commerce_payment.AuthId;
     type PaymentError = commerce_payment.PaymentError;
     if (true) {
       return undefined;
     }
-    throw new Error("bynk: no stub clause matched for Logger.log");
+    throw new globalThis.Error("bynk: no stub clause matched for Logger.log");
   }
 }
 

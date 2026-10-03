@@ -4,7 +4,7 @@
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
 
 export const whoami = {
-  async call(ping: string, deps: { identity: string }): Promise<Result<string, string>> {
+  async call(ping: string, deps: { identity: string }): globalThis.Promise<Result<string, string>> {
     return Ok(deps.identity);
   },
 };
@@ -14,7 +14,7 @@ export interface AppBDeps {
 
 export function makeSurface(deps: AppBDeps, __caller: string) {
   return {
-    async whoami(ping: string): Promise<Result<string, string>> {
+    async whoami(ping: string): globalThis.Promise<Result<string, string>> {
       return whoami.call(ping, { ...deps, identity: __caller });
     },
   };

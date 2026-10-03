@@ -7,7 +7,7 @@ export function doubled(xs: readonly number[]): AsyncIterable<number> {
   return (async function* (__s) { for await (const __e of __s) { yield ((x) => x * 2)(__e); } })((async function* () { for (const __e of xs) { yield __e; } })());
 }
 
-export async function firstTwoDoubled(xs: readonly number[]): Promise<readonly number[]> {
+export async function firstTwoDoubled(xs: readonly number[]): globalThis.Promise<readonly number[]> {
   return (async (__s) => { const __r = []; for await (const __e of __s) { __r.push(__e); } return __r; })((async function* (__s) { const __n = 2; if (__n <= 0) { return; } let __i = 0; for await (const __e of __s) { yield __e; if (++__i >= __n) { return; } } })((async function* (__s) { for await (const __e of __s) { yield ((x) => x * 2)(__e); } })((async function* () { for (const __e of xs) { yield __e; } })())));
 }
 
@@ -15,7 +15,7 @@ export function passthrough(rs: readonly Result<number, string>[]): AsyncIterabl
   return (async function* () { for (const __e of rs) { yield __e; } })();
 }
 
-export async function run(): Promise<number> {
+export async function run(): globalThis.Promise<number> {
   const got = await firstTwoDoubled([1, 2, 3, 4]);
   return ((__xs: readonly number[], __d: number) => __xs.length > 0 ? __xs[0] : __d)(got, 0);
 }

@@ -13,7 +13,7 @@ export type Q = number & { readonly __brand: "Q" };
 
 export const Q = {
   of(value: number): Result<Q, ValidationError> {
-    if (!Number.isSafeInteger(value)) {
+    if (!globalThis.Number.isSafeInteger(value)) {
       return Err({ field: "Q", message: "must be a safe integer", value });
     }
     if (!(value > 0)) {
@@ -39,7 +39,7 @@ export function dbl(q: Q): number {
 export function both(n: number, m: number): number {
   let __r1!: number;
   const __r0 = n;
-  if ((Number.isSafeInteger(__r0) && __r0 > 0) && ((() => { const n = __r0 as Q; __r1 = m; return (Number.isSafeInteger(__r1) && __r1 > 0); })())) {
+  if ((globalThis.Number.isSafeInteger(__r0) && __r0 > 0) && ((() => { const n = __r0 as Q; __r1 = m; return (globalThis.Number.isSafeInteger(__r1) && __r1 > 0); })())) {
     const n = __r0 as Q;
     const m = __r1 as Q;
     return dbl(n) + dbl(m);

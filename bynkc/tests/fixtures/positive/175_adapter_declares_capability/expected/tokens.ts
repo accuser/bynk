@@ -21,9 +21,9 @@ export const JwtError = {
 };
 
 export interface Jwt {
-  sign(claims: Claims, secret: string): Promise<string>;
-  verify(token: string, secret: string): Promise<Result<Claims, JwtError>>;
+  sign(claims: Claims, secret: string): globalThis.Promise<string>;
+  verify(token: string, secret: string): globalThis.Promise<Result<Claims, JwtError>>;
 }
 
-export const JwtToken: unique symbol = Symbol("Jwt");
+export const JwtToken: symbol = globalThis.Symbol("Jwt");
 

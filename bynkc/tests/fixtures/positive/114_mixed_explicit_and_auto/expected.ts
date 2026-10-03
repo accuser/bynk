@@ -3,7 +3,7 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "./runtime.js";
 
-export async function classify(n: number): Promise<number> {
+export async function classify(n: number): globalThis.Promise<number> {
   return (n === 0 ? 0 : n);
 }
 

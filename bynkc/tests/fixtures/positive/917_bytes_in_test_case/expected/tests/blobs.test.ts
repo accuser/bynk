@@ -44,7 +44,7 @@ async function test_decodes_base64() {
             return __bynkExpect((false), "tests/blobs.test.bynk:9:22", 387, 392, "expect false");
           }
         }
-        throw new Error("non-exhaustive match");
+        throw new globalThis.Error("non-exhaustive match");
       })(__bynkBytesFromBase64("aGk=")));
     return { pass: true };
   } catch (e) {
@@ -60,7 +60,7 @@ async function test_compares_by_content() {
   try {
     const deps = {};
     const { size } = blobs;
-    if (!(__bynkBytesEqual(new TextEncoder().encode("hi"), new TextEncoder().encode("hi")))) { throw __bynkExpectFailure("tests/blobs.test.bynk:14:12", 446, 490, "expect Bytes.fromUtf8(\"hi\") == Bytes.fromUtf8(\"hi\")\n  expected: Bytes.fromUtf8(\"hi\") == Bytes.fromUtf8(\"hi\")\n  actual:   " + __bynkShow((new TextEncoder().encode("hi"))) + " == " + __bynkShow((new TextEncoder().encode("hi")))); }
+    if (!(__bynkBytesEqual(new globalThis.TextEncoder().encode("hi"), new globalThis.TextEncoder().encode("hi")))) { throw __bynkExpectFailure("tests/blobs.test.bynk:14:12", 446, 490, "expect Bytes.fromUtf8(\"hi\") == Bytes.fromUtf8(\"hi\")\n  expected: Bytes.fromUtf8(\"hi\") == Bytes.fromUtf8(\"hi\")\n  actual:   " + __bynkShow((new globalThis.TextEncoder().encode("hi"))) + " == " + __bynkShow((new globalThis.TextEncoder().encode("hi")))); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {

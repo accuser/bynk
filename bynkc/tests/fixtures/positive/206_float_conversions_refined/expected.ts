@@ -7,7 +7,7 @@ export type Price = number & { readonly __brand: "Price" };
 
 export const Price = {
   of(value: number): Result<Price, ValidationError> {
-    if (!Number.isFinite(value)) {
+    if (!globalThis.Number.isFinite(value)) {
       return Err({ field: "Price", message: "must be a finite number", value });
     }
     if (!(value > 0)) {
@@ -21,7 +21,7 @@ export type Ratio = number & { readonly __brand: "Ratio" };
 
 export const Ratio = {
   of(value: number): Result<Ratio, ValidationError> {
-    if (!Number.isFinite(value)) {
+    if (!globalThis.Number.isFinite(value)) {
       return Err({ field: "Ratio", message: "must be a finite number", value });
     }
     if (!(value >= 0.0 && value <= 1.0)) {
@@ -32,7 +32,7 @@ export const Ratio = {
 };
 
 export function toCents(p: number): number {
-  return __bynkToInt(Math.round((p * 100.0)), "round");
+  return __bynkToInt(globalThis.Math.round((p * 100.0)), "round");
 }
 
 export function fromCents(c: number): number {
@@ -40,7 +40,7 @@ export function fromCents(c: number): number {
 }
 
 export function roundings(f: number): number {
-  return __bynkToInt(Math.round(f), "round") + __bynkToInt(Math.floor(f), "floor") + __bynkToInt(Math.ceil(f), "ceil") + __bynkToInt(Math.trunc(f), "truncate");
+  return __bynkToInt(globalThis.Math.round(f), "round") + __bynkToInt(globalThis.Math.floor(f), "floor") + __bynkToInt(globalThis.Math.ceil(f), "ceil") + __bynkToInt(globalThis.Math.trunc(f), "truncate");
 }
 
 export function mkPrice(raw: number): Result<Price, ValidationError> {
@@ -63,6 +63,6 @@ export function demo(): boolean {
       return false;
     }
   }
-  throw new Error("non-exhaustive match");
+  throw new globalThis.Error("non-exhaustive match");
 }
 

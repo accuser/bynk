@@ -7,13 +7,13 @@ export interface Events {
 }
 
 export const Events = {
-  emit(e: number): Promise<void> {
-    return Promise.resolve(undefined);
+  emit(e: number): globalThis.Promise<void> {
+    return globalThis.Promise.resolve(undefined);
   },
 };
 
 export const pinger = {
-  async call(deps: {}): Promise<void> {
+  async call(deps: {}): globalThis.Promise<void> {
     return Events.emit(1);
   },
 };
@@ -23,7 +23,7 @@ export interface DemoDeps {
 
 export function makeSurface(deps: DemoDeps) {
   return {
-    async pinger(): Promise<void> {
+    async pinger(): globalThis.Promise<void> {
       return pinger.call(deps);
     },
   };

@@ -28,13 +28,13 @@ function __bynkShow(v: unknown): string {
 class __Stub_Vault {
   __seq_0 = 0;
   __seq_1 = 0;
-  async open(): Promise<number> {
+  async open(): globalThis.Promise<number> {
     if (true) {
-      throw new Error("bynk: injected capability fault (stubs … fails)");
+      throw new globalThis.Error("bynk: injected capability fault (stubs … fails)");
     }
-    throw new Error("bynk: no stub clause matched for Vault.open");
+    throw new globalThis.Error("bynk: no stub clause matched for Vault.open");
   }
-  async peek(): Promise<number> {
+  async peek(): globalThis.Promise<number> {
     if (true) {
       const __k = this.__seq_0;
       if (this.__seq_0 < 1) this.__seq_0++;
@@ -43,7 +43,7 @@ class __Stub_Vault {
           return 1;
         }
         default: {
-          throw new Error("bynk: injected capability fault (stubs … fails)");
+          throw new globalThis.Error("bynk: injected capability fault (stubs … fails)");
         }
       }
     }
@@ -55,7 +55,7 @@ class __Stub_Vault {
         }
       }
     }
-    throw new Error("bynk: no stub clause matched for Vault.peek");
+    throw new globalThis.Error("bynk: no stub clause matched for Vault.peek");
   }
 }
 

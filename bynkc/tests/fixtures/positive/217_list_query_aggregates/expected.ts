@@ -44,6 +44,6 @@ export function meanId(items: readonly Item[]): Option<number> {
 }
 
 export function meanDuration(ds: readonly number[]): Option<number> {
-  return ((__xs: readonly number[]) => { if (__xs.length === 0) return None; let __s = 0; for (const __x of __xs) __s += ((d) => d)(__x); return Some(Math.round(__s / __xs.length)); })(ds);
+  return ((__xs: readonly number[]) => { if (__xs.length === 0) return None; let __s = 0; for (const __x of __xs) __s += ((d) => d)(__x); return Some(globalThis.Math.round(__s / __xs.length)); })(ds);
 }
 

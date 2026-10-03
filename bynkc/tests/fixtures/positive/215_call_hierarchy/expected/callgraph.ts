@@ -22,7 +22,7 @@ export function caller(x: number): number {
 }
 
 export const api = {
-  async call(c: Counter, deps: {}): Promise<number> {
+  async call(c: Counter, deps: {}): globalThis.Promise<number> {
     return caller(c.n);
   },
 };
@@ -32,7 +32,7 @@ export interface CallgraphDeps {
 
 export function makeSurface(deps: CallgraphDeps) {
   return {
-    async api(c: Counter): Promise<number> {
+    async api(c: Counter): globalThis.Promise<number> {
       return api.call(c, deps);
     },
   };

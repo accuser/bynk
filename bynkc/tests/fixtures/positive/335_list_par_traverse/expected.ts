@@ -3,12 +3,12 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "./runtime.js";
 
-export async function notify(id: number): Promise<void> {
+export async function notify(id: number): globalThis.Promise<void> {
   return undefined;
 }
 
-export async function notifyAll(ids: readonly number[]): Promise<void> {
-  await (async (__xs: readonly number[]) => { await Promise.all(__xs.map((__x: number) => (async (id: number) => notify(id))(__x))); })(ids);
+export async function notifyAll(ids: readonly number[]): globalThis.Promise<void> {
+  await (async (__xs: readonly number[]) => { await globalThis.Promise.all(__xs.map((__x: number) => (async (id: number) => notify(id))(__x))); })(ids);
   return undefined;
 }
 

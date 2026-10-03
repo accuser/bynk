@@ -8,7 +8,7 @@ import { Claims } from "../tokens.js";
 import * as tokens from "../tokens.js";
 
 export const login = {
-  async call(deps: { Jwt: tokens.Jwt }): Promise<string> {
+  async call(deps: { Jwt: tokens.Jwt }): globalThis.Promise<string> {
     const token = await deps.Jwt.sign({ sub: "u1", exp: 0 });
     return token;
   },
@@ -20,7 +20,7 @@ export interface AuthSessionsDeps {
 
 export function makeSurface(deps: AuthSessionsDeps) {
   return {
-    async login(): Promise<string> {
+    async login(): globalThis.Promise<string> {
       return login.call(deps);
     },
   };

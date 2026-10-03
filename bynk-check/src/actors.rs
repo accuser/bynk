@@ -536,7 +536,10 @@ pub fn parse_claim_predicate(e: &Expr) -> Result<ClaimPredicate, Span> {
 pub fn claim_predicate_to_js(pred: &ClaimPredicate, claims_var: &str) -> String {
     match pred {
         ClaimPredicate::HasClaim(name) => {
-            format!("Boolean({claims_var}[\"{}\"])", js_str_escape(name))
+            format!(
+                "globalThis.Boolean({claims_var}[\"{}\"])",
+                js_str_escape(name)
+            )
         }
         ClaimPredicate::ClaimEquals(name, value) => format!(
             "({claims_var}[\"{}\"] === \"{}\")",

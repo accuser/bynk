@@ -3,19 +3,19 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
 
-export async function run(f: (a0: number) => Promise<number>, x: number): Promise<number> {
+export async function run(f: (a0: number) => globalThis.Promise<number>, x: number): globalThis.Promise<number> {
   const y = await f(x);
   return y;
 }
 
 export interface Clock {
-  now(): Promise<number>;
+  now(): globalThis.Promise<number>;
 }
 
-export const ClockToken: unique symbol = Symbol("Clock");
+export const ClockToken: symbol = globalThis.Symbol("Clock");
 
 export class FixedClock implements Clock {
-  async now(): Promise<number> {
+  async now(): globalThis.Promise<number> {
     return 42;
   }
 }
@@ -23,7 +23,7 @@ export class FixedClock implements Clock {
 export const FixedClockProvider = { token: ClockToken, factory: () => new FixedClock() };
 
 export const stamper = {
-  async call(offset: number, deps: { Clock: Clock }): Promise<number> {
+  async call(offset: number, deps: { Clock: Clock }): globalThis.Promise<number> {
     const stamped = await run(async (n) => {
     const t = await deps.Clock.now();
     return t + n;
@@ -38,7 +38,7 @@ export interface FxClockworkDeps {
 
 export function makeSurface(deps: FxClockworkDeps) {
   return {
-    async stamper(offset: number): Promise<number> {
+    async stamper(offset: number): globalThis.Promise<number> {
       return stamper.call(offset, deps);
     },
   };

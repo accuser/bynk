@@ -14,7 +14,7 @@ export const Color = {
   Blue: { tag: "Blue" } as Color,
 };
 
-export async function channel(c: Color): Promise<number> {
+export async function channel(c: Color): globalThis.Promise<number> {
   switch (c.tag) {
     case "Red": {
       return 1;
@@ -26,6 +26,6 @@ export async function channel(c: Color): Promise<number> {
       return 3;
     }
   }
-  throw new Error("non-exhaustive match");
+  throw new globalThis.Error("non-exhaustive match");
 }
 

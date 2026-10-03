@@ -15,7 +15,7 @@ export type AuthId = string & { readonly __brand: "commerce.payment.AuthId" };
 
 export const AuthId = {
   of(value: string): Result<AuthId, ValidationError> {
-    if (!(new RegExp("^(?:" + "AUTH-[0-9]{8}" + ")$").test(value))) {
+    if (!(new globalThis.RegExp("^(?:" + "AUTH-[0-9]{8}" + ")$").test(value))) {
       return Err({ field: "AuthId", message: "must match /AUTH-[0-9]{8}/", value });
     }
     return Ok(value as AuthId);
@@ -37,13 +37,13 @@ export const PaymentError = {
 };
 
 export interface Payments {
-  authorise(amount: Money): Promise<Result<AuthId, PaymentError>>;
+  authorise(amount: Money): globalThis.Promise<Result<AuthId, PaymentError>>;
 }
 
-export const PaymentsToken: unique symbol = Symbol("Payments");
+export const PaymentsToken: symbol = globalThis.Symbol("Payments");
 
 export class StubPayments implements Payments {
-  async authorise(amount: Money): Promise<Result<AuthId, PaymentError>> {
+  async authorise(amount: Money): globalThis.Promise<Result<AuthId, PaymentError>> {
     return (amount.minorUnits > 1000000 ? Err(PaymentError.Declined) : Ok(AuthId.unsafe("AUTH-12345678")));
   }
 }
@@ -55,7 +55,7 @@ export const StubPaymentsProvider = { token: PaymentsToken, factory: () => new S
  * from other contexts.
  */
 export const authorise = {
-  async call(amount: Money, deps: { Payments: Payments }): Promise<Result<AuthId, PaymentError>> {
+  async call(amount: Money, deps: { Payments: Payments }): globalThis.Promise<Result<AuthId, PaymentError>> {
     const result = await deps.Payments.authorise(amount);
     return result;
   },
@@ -67,7 +67,7 @@ export interface CommercePaymentDeps {
 
 export function makeSurface(deps: CommercePaymentDeps) {
   return {
-    async authorise(amount: Money): Promise<Result<AuthId, PaymentError>> {
+    async authorise(amount: Money): globalThis.Promise<Result<AuthId, PaymentError>> {
       return authorise.call(amount, deps);
     },
   };
