@@ -1,0 +1,2 @@
+bynk.event.outside_context
+`event` declarations are only allowed inside a context

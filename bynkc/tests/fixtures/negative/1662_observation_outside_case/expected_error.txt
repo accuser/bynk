@@ -1,0 +1,2 @@
+bynk.expect.outside_case
+`expect` is only valid inside a `case` body

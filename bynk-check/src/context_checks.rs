@@ -3801,11 +3801,12 @@ fn validate_cron_handler(handler: &Handler, expr: &str, errors: &mut Vec<Compile
     }
 }
 
-/// Validate an `on queue "name" (message: T) -> Effect[Result[(), E]]` handler
-/// (v0.10b §4.2): a non-empty queue name, exactly one parameter (the message,
-/// any wire-deserialisable type), and the unit-Result return shape. `Ok(())`
-/// acknowledges the message at emission; `Err` retries it. The service-only
-/// rule is enforced earlier, in the parser (`bynk.parse.handler_in_agent`).
+/// Validate an `on message(message: T) -> Effect[QueueResult]` handler of a
+/// `from queue("name")` service (v0.10b §4.2, v0.44): a non-empty queue name,
+/// exactly one parameter (the message, any wire-deserialisable type), and the
+/// `Effect[QueueResult]` return — the verdict sum, where `Ack` acknowledges the
+/// message and `Retry(...)` has it redelivered. The service-only rule is
+/// enforced earlier, in the parser (`bynk.parse.handler_in_agent`).
 fn validate_queue_handler(handler: &Handler, name: &str, errors: &mut Vec<CompileError>) {
     if name.is_empty() {
         errors.push(CompileError::new(

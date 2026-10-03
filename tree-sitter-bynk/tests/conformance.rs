@@ -432,6 +432,12 @@ const EXCLUDED_PARSE_TIME_CATEGORIES: &[(&str, &str)] = &[
          alone) rejects it",
     ),
     (
+        "bynk.parse.unexpected_context",
+        "inexpressible: not a grammar rule — the file is a well-formed context \
+         unit, and only single-file compilation (which accepts a `commons` \
+         alone) rejects it",
+    ),
+    (
         "bynk.parse.unexpected_suite",
         "inexpressible: not a grammar rule — the file is a well-formed suite \
          unit, and only single-file compilation (which accepts a `commons` \

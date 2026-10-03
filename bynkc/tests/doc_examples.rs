@@ -13,7 +13,8 @@
 //!     * a block starting `context …` is compiled as a one-file project;
 //!     * anything else (declarations shown on their own) is compiled inside a
 //!       synthetic `commons doc`, or failing that a `context doc`.
-//! - ```bynk,fail      → must FAIL to compile (negative examples).
+//! - ```bynk,fail      → must FAIL to compile (negative examples);
+//!   ```bynk,fail=<code> also requires `<code>` among the errors.
 //! - ```bynk,fragment  → must **parse**, inside at least one of the wrappers a
 //!   partial snippet comes from (a unit, an agent or service body, a function
 //!   body, a suite or a test case). For blocks that name types the page
@@ -195,8 +196,12 @@ fn parses_as_fragment(body: &str) -> Result<(), String> {
             },
             Err(e) => vec![e],
         };
+        // A parser that fails must say why; an empty error list is a gate
+        // failure, never a silent pass (#1662 review).
         let Some(first) = errs.first() else {
-            return Ok(());
+            return Err(format!(
+                "{prefix:?} wrapper: parse failed with no diagnostic"
+            ));
         };
         let progress = first.span.start.saturating_sub(prefix.len());
         if best.as_ref().is_none_or(|(p, _)| progress > *p) {
@@ -306,9 +311,17 @@ fn every_doc_example_compiles() {
             compile_wrapped(&b.body, idx)
         };
 
+        // `bynk,fail=<code>` also pins the diagnostic the prose names
+        // (#1662 review): the block must fail *with* that code.
+        let pinned = b.info.split(',').find_map(|f| f.strip_prefix("fail="));
         match (expect_fail, result) {
             (false, Ok(())) => checked_ok += 1,
-            (true, Err(_)) => checked_fail += 1,
+            (true, Err(e)) => match pinned {
+                Some(code) if !e.contains(code) => {
+                    failures.push(format!("{loc}: marked `fail={code}` but failed with: {e}"))
+                }
+                _ => checked_fail += 1,
+            },
             (false, Err(e)) => failures.push(format!("{loc}: expected to compile, but: {e}")),
             (true, Ok(())) => {
                 failures.push(format!("{loc}: marked `fail` but compiled successfully"))

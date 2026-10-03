@@ -12,7 +12,7 @@ predicates at runtime. That only makes sense when the value's type matches the
 refined type's **base** — you cannot check a `String` against an `Int`-based
 refinement.
 
-```bynk,fail
+```bynk,fail=bynk.types.is_base_mismatch
 type Quantity = Int where InRange(1, 100)
 
 fn f(s: String) -> Bool {

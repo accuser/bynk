@@ -1,0 +1,2 @@
+bynk.http.limit_bad_max_body
+`@limit` `maxBody` must be a positive `Int` literal — a byte count

@@ -1,0 +1,22 @@
+context commerce.payment {
+  -- #1662 review: an observation in a handler, outside a test body. The
+  -- `expect` is reported, and the checker must not then walk into the
+  -- observation (a debug-build panic before the fix).
+  capability Logger {
+    fn log(msg: String) -> Effect[()]
+  }
+
+  provides Logger = NoOpLogger {
+    fn log(msg: String) -> Effect[()] {
+      Effect.pure(())
+    }
+  }
+
+  service authorise {
+    on call() -> Effect[Bool] given Logger {
+      let _ <- Logger.log("x")
+      expect Logger.log called once
+      Effect.pure(true)
+    }
+  }
+}

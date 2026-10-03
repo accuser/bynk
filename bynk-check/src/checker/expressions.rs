@@ -477,12 +477,13 @@ fn resolve_observation_seam(cap: &Ident, op: &Ident, ctx: &mut Ctx) -> Option<Ca
 pub(crate) fn check_observation(o: &ObservationExpr, _span: Span, ctx: &mut Ctx) -> Option<TyId> {
     let tys = ctx.tys;
     // An observation parses only as the subject of an `expect`, and an
-    // `expect` outside a test body is rejected first
-    // (`bynk.expect.outside_case`), so no observation reaches here from one.
-    debug_assert!(
-        ctx.in_test_body,
-        "an observation is only parsed after `expect`, which is test-body-only"
-    );
+    // `expect` outside a test body has already been reported
+    // (`bynk.expect.outside_case`) — but the walk continues into the subject,
+    // so stop here rather than resolve a recording seam that only a test body
+    // has (#1662 review).
+    if !ctx.in_test_body {
+        return None;
+    }
     let op_info = resolve_observation_seam(&o.cap, &o.op, ctx);
     match &o.matcher {
         ObservationMatcher::Called { count, with_pred } => {

@@ -1,0 +1,2 @@
+bynk.parse.unexpected_context
+expected a `commons` declaration but found a `context` declaration

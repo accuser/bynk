@@ -483,9 +483,11 @@ pub fn build_unit_table(
                         ));
                         continue;
                     }
-                    // The parser rejects a `service` outside a context
-                    // (`bynk.service.outside_context`) before a symbol table is
-                    // built (#1662).
+                    // An adapter's is rejected just above
+                    // (`bynk.adapter.disallowed_item`), and the parser rejects
+                    // a `service` in a commons (`bynk.service.outside_context`)
+                    // before a symbol table is built, so only a context reaches
+                    // here (#1662).
                     if kind != UnitKind::Context {
                         continue;
                     }
@@ -511,9 +513,11 @@ pub fn build_unit_table(
                         ));
                         continue;
                     }
-                    // The parser rejects an `agent` outside a context
-                    // (`bynk.agent.outside_context`) before a symbol table is
-                    // built (#1662).
+                    // An adapter's is rejected just above
+                    // (`bynk.adapter.disallowed_item`), and the parser rejects
+                    // an `agent` in a commons (`bynk.agent.outside_context`)
+                    // before a symbol table is built, so only a context reaches
+                    // here (#1662).
                     if kind != UnitKind::Context {
                         continue;
                     }

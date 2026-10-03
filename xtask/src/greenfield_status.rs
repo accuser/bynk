@@ -2632,8 +2632,9 @@ fn test_density(root: &Path) -> Probe {
 ///   substring and may quote other codes);
 /// - any other non-`.bynk` file under a crate's `tests/` directory (test
 ///   sources, expected-diagnostics files, JSON goldens). `.bynk` sources are
-///   skipped, because their comments often name the code they provoke;
-/// - a `#[cfg(test)] mod` block in a crate's `src/`;
+///   skipped, because their comments often name the code they provoke, and Rust
+///   sources are read with their `//` comments removed, for the same reason;
+/// - a `#[cfg(test)] mod` block in a crate's `src/`, comments removed;
 /// - a blessed diagnostic transcript, `site/src/diagnostics/*.txt`.
 ///
 /// Gated at the argued floor of **4** (#1662 Decision B). Each of the four is
@@ -2672,6 +2673,8 @@ pub fn unasserted_codes(root: &Path) -> Vec<&'static str> {
                         .find(|l| !l.trim().is_empty())
                         .unwrap_or(""),
                 );
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                note(&strip_line_comments(&contents));
             } else {
                 note(&contents);
             }
@@ -2679,7 +2682,7 @@ pub fn unasserted_codes(root: &Path) -> Vec<&'static str> {
         for (_, contents) in rust_files(&krate.join("src")) {
             let lines: Vec<&str> = contents.lines().collect();
             for (start, end) in test_mod_ranges(&lines) {
-                note(&lines[start..=end].join("\n"));
+                note(&strip_line_comments(&lines[start..=end].join("\n")));
             }
         }
     }
@@ -2692,6 +2695,32 @@ pub fn unasserted_codes(root: &Path) -> Vec<&'static str> {
         .into_iter()
         .filter(|c| !asserted.contains(*c))
         .collect()
+}
+
+/// `src` with every `//` comment (including `///` and `//!` doc comments)
+/// removed, so a code named only in prose does not count as asserted. A `//`
+/// inside a string literal is kept; block comments are rare enough in this
+/// workspace to leave.
+fn strip_line_comments(src: &str) -> String {
+    src.lines()
+        .map(|line| {
+            let bytes = line.as_bytes();
+            let (mut in_str, mut escaped) = (false, false);
+            for (i, &b) in bytes.iter().enumerate() {
+                if escaped {
+                    escaped = false;
+                } else if b == b'\\' && in_str {
+                    escaped = true;
+                } else if b == b'"' {
+                    in_str = !in_str;
+                } else if b == b'/' && !in_str && bytes.get(i + 1) == Some(&b'/') {
+                    return &line[..i];
+                }
+            }
+            line
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Every `bynk.<family>.<name>` token in `text` — the shape of a registry code,

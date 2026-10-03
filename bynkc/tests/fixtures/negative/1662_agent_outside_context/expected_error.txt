@@ -1,0 +1,2 @@
+bynk.agent.outside_context
+`agent` declarations are only allowed inside a context, not a commons

@@ -15,7 +15,7 @@ starting value. Types that have one include `Int` (`0`), `Bool` (`false`),
 do **not** include opaque types, sum types (other than `Option`), and refined
 types that exclude their zero.
 
-```bynk,fail
+```bynk,fail=bynk.agents.non_zeroable_state_field
 type Level = Int where Positive
 
 agent Gauge {
