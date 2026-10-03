@@ -1,0 +1,2 @@
+bynk.context.opaque_inspection
+cannot `match` on opaquely-exported type `Status` from outside context `pay`

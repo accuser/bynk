@@ -112,11 +112,15 @@ for an opaque type it compares the representation. `==` is defined only on an
 container element, or a generic argument written in the type, such as
 `Box[(Int) -> Int]`) is not equality-supporting, and `==` on it is rejected
 (`bynk.types.not_comparable`, `bynk.types.stream_not_comparable`,
-`bynk.types.held_not_comparable`). Two cases are not yet checked, and fall back to
-comparing such values by identity: `==` on a type parameter inside a generic
-function (`fn same[T](a: T, b: T) -> Bool { a == b }`) accepts whatever type the
-caller instantiates `T` with (#1688), and a record imported from another unit is not
-walked through its fields. A nullary variant read from storage or decoded
+`bynk.types.held_not_comparable`). Inside a generic function, `==` on a type
+parameter is accepted; the bound moves to the call. A generic function
+*compares* a type parameter when `==`/`!=` reaches a value of it, directly or by
+passing it to a compared parameter of another generic function, and each call
+MUST instantiate a compared parameter with an equality-supporting type (the same
+codes, reported at the call: `same(f, h)` on two functions is rejected for
+`fn same[T](a: T, b: T) -> Bool { a == b }`). One case is not yet checked, and
+falls back to comparing such values by identity: a record imported from another
+unit is not walked through its fields. A nullary variant read from storage or decoded
 from JSON equals the same variant written in source.
 
 **`Float` equality** (v0.21). `==`/`!=` on `Float` follow the host's IEEE
@@ -1051,9 +1055,13 @@ never a context (`bynk.adapter.consumes_context`).
 or with conflicting visibility, and an exported capability MUST have a provider
 (the `bynk.exports.*` codes). A value crossing a boundary MUST be structurally
 compatible with the receiving side ([§6.5](/book/spec/type-system/#65-type-compatibility--boundaries),
-`bynk.boundary.structural_mismatch`); a context-owned type MUST NOT be constructed
-or an opaque export inspected from outside (`bynk.context.external_construction`,
-`bynk.context.opaque_inspection`).
+`bynk.boundary.structural_mismatch`); outside its owning context, a context-owned
+type MUST NOT be built through its constructors (`.of`, `.unsafe`, a variant) and
+an opaque export MUST NOT be built with record syntax or inspected
+(`bynk.context.external_construction`, `bynk.context.opaque_inspection`). A
+transparent record's fields are shared, so a consumer MAY build one with record
+syntax. These rules hold in every body — functions, service and agent handlers,
+and provider operations.
 
 **Adapters are the host boundary.** An adapter MUST NOT declare a `service` or an
 `agent` (`bynk.adapter.disallowed_item`); it MAY declare at most one `binding`

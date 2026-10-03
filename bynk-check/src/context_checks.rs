@@ -68,6 +68,39 @@ pub fn check_context_constraints(
     errors
 }
 
+/// #1700: the same cross-context constraints as [`check_context_constraints`],
+/// over the bodies it cannot reach — service and agent handlers and provider
+/// operations. These are typed by [`check_context_declarations`], after
+/// [`check_context_constraints`] runs, so this pass runs after that one: the
+/// opaque-`match` rule reads the discriminant's checked type.
+pub fn check_handler_constraints(
+    typed: &checker::TypedCommons,
+    consumed_types: &HashMap<String, ConsumedType>,
+    local_type_names: &HashSet<String>,
+    tys: &Arc<Types>,
+) -> Vec<CompileError> {
+    let mut errors = Vec::new();
+    let mut walk = |body: &Block| {
+        walk_block_for_constraints(
+            body,
+            typed,
+            consumed_types,
+            local_type_names,
+            &mut errors,
+            tys,
+        );
+    };
+    for item in &typed.commons.items {
+        match item {
+            CommonsItem::Service(s) => s.handlers.iter().for_each(|h| walk(&h.body)),
+            CommonsItem::Agent(a) => a.handlers.iter().for_each(|h| walk(&h.body)),
+            CommonsItem::Provider(p) => p.ops.iter().for_each(|op| walk(&op.body)),
+            _ => {}
+        }
+    }
+    errors
+}
+
 fn walk_block_for_constraints(
     block: &Block,
     typed: &checker::TypedCommons,
@@ -109,8 +142,16 @@ fn walk_expr_for_constraints(
     tys: &Arc<Types>,
 ) {
     match &e.kind {
+        // A transparent export shares its structure with consumers, including
+        // field-level construction (type-system §6.5); only an opaque one's
+        // record form is the owner's alone. #1700: this used to reject any
+        // consumed type, which free functions rarely hit but handlers do —
+        // building `bynk`'s `Request`, or an adapter's boundary record, is how
+        // those capabilities are called.
         ExprKind::RecordConstruction { type_name, .. } => {
-            if let Some(ct) = consumed.get(&type_name.name) {
+            if let Some(ct) = consumed.get(&type_name.name)
+                && ct.visibility == Visibility::Opaque
+            {
                 errors.push(
                     CompileError::new(
                         "bynk.context.external_construction",
