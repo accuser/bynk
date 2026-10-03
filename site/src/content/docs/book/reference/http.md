@@ -96,9 +96,11 @@ body.
 | `GatewayTimeout(message)` | 504 | message |
 
 > [!TIP]
-> When `Ok`/`Err` could mean either `Result` or `HttpResult`, qualify the
-> constructor (e.g. `HttpResult.Ok(…)`) to resolve
-> `bynk.types.ambiguous_constructor`.
+> A bare `Ok(…)` builds whatever the expected type says (a `let` annotation, a
+> match arm, an argument) and otherwise follows the handler's return type. So in a
+> handler returning `HttpResult[_]`, `let r: Result[Int, String] = Ok(1)` is a
+> `Result`. Qualify it (`Result.Ok(…)`, `HttpResult.Ok(…)`) to choose explicitly
+> (#1659).
 
 ## Lifting an `Option` with `?` (v0.153)
 

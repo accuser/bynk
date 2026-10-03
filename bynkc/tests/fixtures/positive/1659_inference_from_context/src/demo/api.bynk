@@ -1,0 +1,17 @@
+---
+#1659: in a handler returning `HttpResult[_]`, a `let` annotated `Result` decides
+what `Ok` builds; it used to be `ambiguous_constructor`.
+---
+context demo.api
+
+uses demo.inf
+
+service api from http {
+  on GET("/") () -> Effect[HttpResult[String]] by v: Visitor {
+    let r: Result[Int, String] = Ok(1)
+    match r {
+      Ok(n) => Ok("ok \(n)")
+      Err(e) => Ok(e)
+    }
+  }
+}

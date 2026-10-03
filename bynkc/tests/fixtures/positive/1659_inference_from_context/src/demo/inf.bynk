@@ -1,0 +1,47 @@
+---
+#1659: an expected type flows from the other operand of `==`/`!=`, and a `let`
+annotation decides an `Ok`/`Err` over the enclosing return type.
+---
+commons demo.inf
+
+fn isNone(o: Option[Int]) -> Bool {
+  o == None
+}
+
+fn isNoneFlipped(o: Option[Int]) -> Bool {
+  None == o
+}
+
+fn isSeven(r: Result[Int, String]) -> Bool {
+  r == Ok(7)
+}
+
+fn notBad(r: Result[Int, String]) -> Bool {
+  r != Err("bad")
+}
+
+fn none() -> Option[Int] {
+  None
+}
+
+fn seven() -> Result[Int, String] {
+  Ok(7)
+}
+
+type Qty = Int where Positive
+
+-- Either order: the self-typing side (`Some(1)`, `[1]`) types the other
+-- (review of #1696).
+fn noneVsSome() -> Bool {
+  None == Some(1)
+}
+
+fn emptyVsList() -> Bool {
+  [] == [1]
+}
+
+-- A literal compared with a refined value is typed on its own, not admitted to
+-- the refined type, so a value outside the refinement still compares.
+fn isZero(q: Qty) -> Bool {
+  q == 0
+}

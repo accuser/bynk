@@ -727,8 +727,30 @@ pub(crate) fn check_binop(op: BinOp, lhs: &Expr, rhs: &Expr, ctx: &mut Ctx) -> O
         return Some(tys.intern(Ty::Base(BaseType::Bool)));
     }
 
-    let lt = type_of(lhs, None, ctx);
-    let rt = type_of(rhs, None, ctx);
+    // #1659 (Decision A): `==`/`!=` operands are same-typed (§5.2), so one
+    // side's type is the expected type for the other. That lets a bare
+    // `None`/`Ok(…)`/`Err(…)`/`[]` take its type from the other operand
+    // (`o == None`, `None == o`, `r == Ok(7)`) instead of failing to infer, or
+    // reading an unrelated surrounding type. Type the determined side first.
+    //
+    // Only an operand that cannot type itself is given the other's type. A
+    // self-typing operand is typed on its own, as before: passing a literal
+    // the other side's refined type would run refinement admission on it
+    // (`q == 0` against `Int where Positive` would become a
+    // `literal_violates` error), a new rejection this does not intend (review
+    // of #1696).
+    let eq = matches!(op, BinOp::Eq | BinOp::NotEq);
+    let (lt, rt) = if eq && needs_expected_type(lhs) && !needs_expected_type(rhs) {
+        let rt = type_of(rhs, None, ctx);
+        let lt = type_of(lhs, rt, ctx);
+        (lt, rt)
+    } else if eq && needs_expected_type(rhs) {
+        let lt = type_of(lhs, None, ctx);
+        let rt = type_of(rhs, lt, ctx);
+        (lt, rt)
+    } else {
+        (type_of(lhs, None, ctx), type_of(rhs, None, ctx))
+    };
     let (lt, rt) = (lt?, rt?);
     let span = lhs.span.merge(rhs.span);
     let lt_base = lt.base(tys);
@@ -1678,6 +1700,21 @@ pub(crate) fn check_if(
     }
 }
 
+/// #1659: an expression whose type comes only from its context: a bare
+/// `None`, an `Ok(…)`/`Err(…)` (the other type parameter is unknown), an
+/// empty list literal, or a `Some(…)`/list whose payload/first element is one
+/// of these. `Some(1)` and `[1]` type themselves (review of #1696), so
+/// `None == Some(1)` and `[] == [1]` take their type from that side.
+fn needs_expected_type(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::None | ExprKind::Ok(_) | ExprKind::Err(_) => true,
+        ExprKind::Some(inner) => needs_expected_type(inner),
+        ExprKind::ListLit(items) => items.first().is_none_or(needs_expected_type),
+        ExprKind::Paren(inner) => needs_expected_type(inner),
+        _ => false,
+    }
+}
+
 pub(crate) fn check_ok(
     inner: &Expr,
     span: Span,
@@ -1688,24 +1725,22 @@ pub(crate) fn check_ok(
     // v0.9: `Ok` is now overloaded between `Result.Ok` and `HttpResult.Ok`.
     // First consult the expected type (propagated from let-annotations, match
     // arms, and the enclosing return type via tail-position auto-lift).
-    let in_result = surrounding_result(expected, ctx.return_ty, tys);
-    let in_http = expected
-        .and_then(|t| peel_to_http_result(t, tys))
-        .or_else(|| peel_to_http_result(ctx.return_ty, tys));
+    // #1659: an expected type that settles the question wins outright. A
+    // `let r: Result[Int, String] = Ok(1)` in a handler returning
+    // `HttpResult[_]` read both the annotation (`Result`) and the return type
+    // (`HttpResult`) and reported `ambiguous_constructor`; the enclosing return
+    // type is only the fallback when the expected type says neither.
+    //
+    // One type decides, so `Ok` is never ambiguous: a `Result` builds
+    // `Result.Ok`, an `HttpResult` builds `HttpResult.Ok`. The former
+    // `bynk.types.ambiguous_constructor` (annotation `Result`, return type
+    // `HttpResult`) is withdrawn with it (review of #1696).
+    let settles =
+        |t: TyId| peel_to_result(t, tys).is_some() || peel_to_http_result(t, tys).is_some();
+    let context = expected.filter(|&t| settles(t)).unwrap_or(ctx.return_ty);
+    let in_result = peel_to_result(context, tys);
+    let in_http = peel_to_http_result(context, tys);
     match (in_result, in_http) {
-        (Some(_), Some(_)) => {
-            ctx.errors.push(
-                CompileError::new(
-                    "bynk.types.ambiguous_constructor",
-                    span,
-                    "ambiguous constructor `Ok`: could be `Result.Ok` or `HttpResult.Ok`",
-                )
-                .with_note("qualify it as `Result.Ok(...)` or `HttpResult.Ok(...)`"),
-            );
-            // Best-effort: still type the inner.
-            let _ = type_of(inner, None, ctx);
-            None
-        }
         (None, Some(t_ty)) => {
             let inner_ty = type_of(inner, Some(t_ty), ctx)?;
             if !compatible(inner_ty, t_ty, tys) {
@@ -1722,7 +1757,7 @@ pub(crate) fn check_ok(
             }
             Some(tys.intern(Ty::HttpResult(t_ty)))
         }
-        (Some((t_ty, e_ty)), None) => {
+        (Some((t_ty, e_ty)), _) => {
             let inner_ty = type_of(inner, Some(t_ty), ctx)?;
             if !compatible(inner_ty, t_ty, tys) {
                 ctx.errors.push(
@@ -2045,6 +2080,10 @@ pub(crate) fn check_err(
     ctx: &mut Ctx,
 ) -> Option<TyId> {
     let tys = ctx.tys;
+    // Unlike `Ok`, `Err` has no `HttpResult` overload, so it only asks for a
+    // surrounding `Result`: the expected type's if it is one, else the return
+    // type's (`surrounding_result`). The same preference as `check_ok`'s, without
+    // the `HttpResult` arm.
     let surrounding = surrounding_result(expected, ctx.return_ty, tys);
     let expected_e = surrounding.as_ref().map(|(_, e)| *e);
     let inner_ty = type_of(inner, expected_e, ctx)?;

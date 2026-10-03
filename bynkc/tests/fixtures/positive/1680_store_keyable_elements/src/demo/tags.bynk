@@ -1,0 +1,32 @@
+---
+#1680: a store `Set` element (and a `Map` key) must be value-keyable. A refined
+or opaque type over `String`/`Int` is, and keys by its underlying value.
+---
+context demo.tags
+
+type Tag = String where NonEmpty
+
+type UserId = opaque String
+
+agent Board {
+  key id: String
+  store tags: Set[Tag]
+  store owners: Map[UserId, Int]
+
+  on call tag(t: Tag) -> Effect[()] {
+    let _ <- tags.add(t)
+    ()
+  }
+  on call hasTag(t: Tag) -> Effect[Bool] {
+    let r <- tags.contains(t)
+    r
+  }
+  on call own(u: UserId, n: Int) -> Effect[()] {
+    let _ <- owners.put(u, n)
+    ()
+  }
+  on call owned(u: UserId) -> Effect[Int] {
+    let r <- owners.get(u)
+    r.getOrElse(0)
+  }
+}
