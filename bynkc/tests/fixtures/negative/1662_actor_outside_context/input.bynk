@@ -1,0 +1,4 @@
+commons demo
+
+-- #1662: an `actor` in a commons.
+actor User { auth = None }

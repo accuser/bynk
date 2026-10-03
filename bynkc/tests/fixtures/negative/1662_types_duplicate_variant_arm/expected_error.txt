@@ -1,0 +1,2 @@
+bynk.types.duplicate_variant_arm
+`Red` is matched more than once

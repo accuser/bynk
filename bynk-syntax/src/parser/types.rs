@@ -390,7 +390,9 @@ impl<'a> Parser<'a> {
                         t.kind.describe()
                     ),
                 )
-                .with_note("type declarations are refined base types in v0")),
+                .with_note(
+                    "a refined or opaque type is built over one of these base types; a sum starts with `|` (`type S = | A | B`), and a payloadless one can be an `enum { A, B }`",
+                )),
             },
             None => Err(CompileError::new(
                 "bynk.parse.unexpected_eof",
@@ -714,9 +716,7 @@ impl<'a> Parser<'a> {
                             t.span,
                             "the built-in `Result` type requires two type arguments: `Result[T, E]`",
                         )
-                        .with_note(
-                            "`Result` cannot appear without its `[T, E]` parameters in v0.1",
-                        ));
+                        .with_note("`Result` cannot appear without its `[T, E]` parameters"));
                     }
                     self.bump();
                     let arg_t = self.parse_type_ref("as the first `Result` type argument")?;
@@ -728,7 +728,7 @@ impl<'a> Parser<'a> {
                             t.span.merge(close.span),
                             "the built-in `Result` type requires two type arguments: `Result[T, E]`",
                         )
-                        .with_note("v0.1 has no other generic types; `Result` always has two parameters"));
+                        .with_note("`Result` always has two parameters: the success type and the error type"));
                     }
                     self.expect(TokenKind::Comma, "between the `Result` type arguments")?;
                     let arg_e = self.parse_type_ref("as the second `Result` type argument")?;

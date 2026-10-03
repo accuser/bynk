@@ -11,7 +11,7 @@ You wrote a literal in a position whose expected type is a refined type, and the
 literal does not satisfy that type's predicate. Because Bynk checks admitted
 literals at compile time, this is a build error rather than a runtime failure.
 
-```bynk,fail
+```bynk,fail=bynk.refine.literal_violates
 commons demo {
   type Reps = Int where InRange(1, 100)
 
@@ -31,7 +31,7 @@ Pick the option that matches where the value comes from:
   [`.of`](/book/guides/type-system/define-and-validate/), which returns a `Result` you
   handle:
 
-  ```bynk
+  ```bynk,fragment
   fn parse(n: Int) -> Result[Reps, ValidationError] {
     Reps.of(n)
   }

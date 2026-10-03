@@ -1,0 +1,2 @@
+bynk.resolve.duplicate_capability
+capability `Clock` is already declared

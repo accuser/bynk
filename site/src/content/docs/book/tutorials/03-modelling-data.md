@@ -40,7 +40,7 @@ type ResolveView = {
 [Tutorial 4](/book/tutorials/04-refined-types/); for now plain strings keep us moving.) You
 construct a record by naming it and giving every field a value:
 
-```bynk,ignore
+```bynk,fragment
 Created(CreatedView { code: "abc123", target: body.target })
 ```
 
@@ -98,7 +98,7 @@ To read a sum type, you `match` on it. `match` forces you to handle **every**
 variant, so adding a case later makes the compiler revisit every place that
 inspects the type:
 
-```bynk
+```bynk,fragment
 fn describe(error: LinkError) -> String {
   match error {
     AlreadyExists => "code already in use"
@@ -134,7 +134,7 @@ The third tool is the **opaque type**: a value backed by some base type but with
 its own identity, so the compiler refuses to mix it up with another value of the
 same underlying shape.
 
-```bynk,ignore
+```bynk
 type LinkId = opaque String   -- a String, but not interchangeable with one
 ```
 

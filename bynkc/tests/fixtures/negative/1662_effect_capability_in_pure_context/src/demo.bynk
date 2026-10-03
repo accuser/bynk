@@ -1,0 +1,19 @@
+context demo
+
+-- #1662: a capability called inside a lambda typed as pure.
+capability Clock {
+  fn now() -> Effect[Int]
+}
+
+provides Clock = FixedClock {
+  fn now() -> Effect[Int] {
+    Effect.pure(0)
+  }
+}
+
+service probe {
+  on call() -> Effect[Int] given Clock {
+    let f: (Int) -> Int = (n) => Clock.now()
+    Effect.pure(1)
+  }
+}

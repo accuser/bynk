@@ -28,23 +28,25 @@ type.
 
 **Fix:** give the queue a name matching the Cloudflare queue you are binding to.
 
-## `bynk.queue.return_not_effect_result`
+## `bynk.queue.return_not_queue_result`
 
 ```text
-[bynk.queue.return_not_effect_result] `on message` handler must return `Effect[Result[(), E]]`
+[bynk.queue.return_not_queue_result] `on message` handler must return `Effect[QueueResult]`, but got `Effect[Result[(), String]]`
 ```
 
-**Cause:** the return type isn't `Effect[Result[(), E]]` — the `Ok` payload must
-be unit `()`.
+**Cause:** the handler's return type isn't `Effect[QueueResult]`. A message
+handler reports what happened to the message as a `QueueResult` verdict, not a
+`Result`.
 
-**Fix:** return `Effect[Result[(), E]]`; `Ok(())` acknowledges the message and
-`Err(e)` retries it.
+**Fix:** return `Effect[QueueResult]` — for example `Ack` when the message is
+handled, or `Retry("reason")` to have it redelivered. See the
+[queue reference](/book/reference/queue/).
 
 ## Other queue errors
 
 - `bynk.queue.duplicate_consumer` — two queue handlers in the context consume
   the same queue. Give each a distinct queue name.
-- `bynk.parse.queue_in_agent` — `from queue` was placed in an `agent`. Queue
+- `bynk.parse.handler_in_agent` — `from queue` was placed in an `agent`. Queue
   consumers belong in a `service`.
 
 ## Related

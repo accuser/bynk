@@ -1,0 +1,13 @@
+context demo
+
+-- #1662: a type exported by two clauses.
+exports transparent { P }
+exports transparent { P }
+
+type P = { a: Int }
+
+service probe {
+  on call() -> Effect[Int] {
+    Effect.pure(1)
+  }
+}

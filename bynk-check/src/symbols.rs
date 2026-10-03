@@ -453,14 +453,10 @@ pub fn build_unit_table(
                                 continue;
                             }
                         }
-                        _ => {
-                            errors.push(CompileError::new(
-                                "bynk.provider.outside_context",
-                                p.span,
-                                "`provides` declarations are only allowed inside a context or adapter",
-                            ));
-                            continue;
-                        }
+                        // The parser rejects `provides` anywhere else
+                        // (`bynk.provider.outside_context`) before a symbol
+                        // table is built (#1662).
+                        _ => continue,
                     }
                     if let Some(prev) = table.providers.get(&p.capability.name) {
                         errors.push(
@@ -487,12 +483,12 @@ pub fn build_unit_table(
                         ));
                         continue;
                     }
+                    // An adapter's is rejected just above
+                    // (`bynk.adapter.disallowed_item`), and the parser rejects
+                    // a `service` in a commons (`bynk.service.outside_context`)
+                    // before a symbol table is built, so only a context reaches
+                    // here (#1662).
                     if kind != UnitKind::Context {
-                        errors.push(CompileError::new(
-                            "bynk.service.outside_context",
-                            s.span,
-                            "`service` declarations are only allowed inside a context, not a commons",
-                        ));
                         continue;
                     }
                     if let Some(prev) = table.services.get(&s.name.name) {
@@ -517,12 +513,12 @@ pub fn build_unit_table(
                         ));
                         continue;
                     }
+                    // An adapter's is rejected just above
+                    // (`bynk.adapter.disallowed_item`), and the parser rejects
+                    // an `agent` in a commons (`bynk.agent.outside_context`)
+                    // before a symbol table is built, so only a context reaches
+                    // here (#1662).
                     if kind != UnitKind::Context {
-                        errors.push(CompileError::new(
-                            "bynk.agent.outside_context",
-                            a.span,
-                            "`agent` declarations are only allowed inside a context, not a commons",
-                        ));
                         continue;
                     }
                     if let Some(prev) = table.agents.get(&a.name.name) {

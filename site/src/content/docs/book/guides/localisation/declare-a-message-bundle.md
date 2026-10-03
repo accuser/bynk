@@ -111,7 +111,7 @@ A `messages` block gives its own commons a generated
 `render(tag: LocaleTag, msg: Message) -> String`. Use it alongside the builders
 from `bynk.locale`:
 
-```bynk,ignore
+```bynk,fragment
 commons shop.messages
 
 uses bynk.locale
@@ -142,7 +142,7 @@ fn greet(tag: LocaleTag, code: String, name: String) -> String {
 Wrap the rendering in a function inside the bundle's own commons — as `greet`
 above does — and call *that* from your context:
 
-```bynk,ignore
+```bynk,fragment
 context shop.web
 
 uses bynk.locale.types

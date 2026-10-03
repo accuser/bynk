@@ -1,0 +1,2 @@
+bynk.parse.unexpected_suite
+expected a `commons` declaration but found a `suite` declaration

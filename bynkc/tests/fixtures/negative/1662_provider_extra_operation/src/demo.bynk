@@ -1,0 +1,22 @@
+context demo
+
+-- #1662: a provider operation the capability does not declare.
+capability Clock {
+  fn now() -> Effect[Int]
+}
+
+provides Clock = FixedClock {
+  fn now() -> Effect[Int] {
+    Effect.pure(0)
+  }
+
+  fn later() -> Effect[Int] {
+    Effect.pure(1)
+  }
+}
+
+service probe {
+  on call() -> Effect[Int] {
+    Effect.pure(1)
+  }
+}

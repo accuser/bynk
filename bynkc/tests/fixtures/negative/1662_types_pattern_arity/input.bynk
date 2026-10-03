@@ -1,0 +1,11 @@
+commons demo
+
+-- #1662: a pattern binding more fields than the variant has.
+type S = | Circle(r: Int) | Dot
+
+fn f(s: S) -> Int {
+  match s {
+    Circle(a, b) => a
+    Dot => 0
+  }
+}

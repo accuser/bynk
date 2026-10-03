@@ -395,6 +395,55 @@ const EXCLUDED_PARSE_TIME_CATEGORIES: &[(&str, &str)] = &[
          guard tying the two together",
     ),
     (
+        "bynk.parse.empty_agent",
+        "declined: a cardinality rule (at least one handler) on a body whose \
+         members interleave; expressible as `repeat1` over handlers, but that \
+         changes the generated parser and the grammar-derived site pages (#1662 \
+         added the first fixture for this code)",
+    ),
+    (
+        "bynk.parse.empty_capability",
+        "declined: a cardinality rule (at least one operation) — `repeat1` in a \
+         CFG, but a generated-parser change out of scope for #1662, which added \
+         the first fixture for this code",
+    ),
+    (
+        "bynk.parse.empty_service",
+        "declined: a cardinality rule (at least one handler) — `repeat1` in a \
+         CFG, but a generated-parser change out of scope for #1662, which added \
+         the first fixture for this code",
+    ),
+    (
+        "bynk.parse.expected_agent_storage",
+        "declined: a cardinality rule (at least one `store` field) on a body \
+         whose members interleave — expressible, but a generated-parser change \
+         out of scope for #1662, which added the first fixture for this code",
+    ),
+    (
+        "bynk.parse.self_outside_method",
+        "declined: `self` is an ordinary parameter name to the tree-sitter \
+         grammar; restricting it to a method's first parameter needs a separate \
+         `fn_decl` production for methods (#1662 added the first fixture)",
+    ),
+    (
+        "bynk.parse.unexpected_adapter",
+        "inexpressible: not a grammar rule — the file is a well-formed adapter \
+         unit, and only single-file compilation (which accepts a `commons` \
+         alone) rejects it",
+    ),
+    (
+        "bynk.parse.unexpected_context",
+        "inexpressible: not a grammar rule — the file is a well-formed context \
+         unit, and only single-file compilation (which accepts a `commons` \
+         alone) rejects it",
+    ),
+    (
+        "bynk.parse.unexpected_suite",
+        "inexpressible: not a grammar rule — the file is a well-formed suite \
+         unit, and only single-file compilation (which accepts a `commons` \
+         alone) rejects it",
+    ),
+    (
         "bynk.parse.uses_after_decls",
         "declined: the ordering rule is fragment-form-only (`!brace` in \
          declarations.rs) and differs per unit kind (commons/context: before \

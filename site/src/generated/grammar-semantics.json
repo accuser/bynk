@@ -230,10 +230,6 @@
       "summary": "Two flattened `consumes U { Cap }` capabilities collide, or one clashes with a local capability."
     },
     {
-      "code": "bynk.consumes.in_commons",
-      "summary": "`consumes` appears in a `commons` (it is only valid in a context)."
-    },
-    {
       "code": "bynk.consumes.name_conflict",
       "summary": "A `consumes` name collides with another name in scope."
     },
@@ -834,10 +830,6 @@
     {
       "code": "bynk.types.field_value_mismatch",
       "summary": "A record field was given a value of the wrong type."
-    },
-    {
-      "code": "bynk.types.opaque_record_construction",
-      "summary": "An opaque type was constructed with record syntax."
     }
   ],
   "record_field": [

@@ -1,0 +1,4 @@
+commons demo
+
+-- #1662: a sum without its leading `|`.
+type S = A | B

@@ -1,0 +1,2 @@
+bynk.parse.empty_capability
+a capability must declare at least one operation

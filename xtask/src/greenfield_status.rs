@@ -1,6 +1,6 @@
 //! `cargo xtask greenfield-status` — the probe harness (track doc §8, proposal #999).
 //!
-//! Twenty probes measuring the tree against `design/bynk-greenfield-compiler.md`:
+//! Twenty-one probes measuring the tree against `design/bynk-greenfield-compiler.md`:
 //! the twelve in track doc §8, `emit_abi_shapes` (ADR 0310's probe, #999 Decision E —
 //! this slice measures the emit-ABI enumeration guard but does not wire it; wiring is
 //! packaging-track work), phase 7's own four — `ts_writes`, `ts_any`,
@@ -9,13 +9,14 @@
 //! `incremental_query_types` and `keystroke_latency` (P8.0/#1510, settled by #1509's
 //! Q5/ADR 0414 — see `design/tracks/incrementality.md` §5), plus the IR cutover
 //! track's own adoption probe, `unconsumed_ir_items` (Slice D3 of #1542 — the gate the
-//! 30 August 2026 post-restructuring review's Part 5 §8 asked for).
+//! 30 August 2026 post-restructuring review's Part 5 §8 asked for), and the
+//! runtime-semantics track's `diagnostic_coverage` (#1662, G2 of #1648).
 //!
-//! **Fifteen are gated**, committed and diffed: `workspace_lints`, `fs_below_driver`,
+//! **Sixteen are gated**, committed and diffed: `workspace_lints`, `fs_below_driver`,
 //! `options_sources`, `hoist_sinks`, `span_keyed_maps`, `emit_diagnostics`,
 //! `ide_emit_edge`, `ast_importers`, `emit_abi_shapes`, `ts_writes`, `ts_any`,
 //! `verbatim_origins`, `verbatim_sites`, `incremental_query_types`,
-//! `unconsumed_ir_items`. Ten of these are
+//! `unconsumed_ir_items`, `diagnostic_coverage`. Ten of these are
 //! zero/closure-shaped — a boolean, or a count pinned at a small, argued floor
 //! (`ast_importers` = 5, `emit_abi_shapes` = 1). Phase 7's own four are the same shape:
 //! each converged toward an argued floor over dozens of slices, the same trajectory
@@ -77,7 +78,7 @@ impl Report {
 }
 
 /// Run every probe against the tree rooted at `root` (the repo root). Used by the CLI's
-/// full report; the gating test uses the fifteen gated probes alone
+/// full report; the gating test uses the sixteen gated probes alone
 /// ([`gated_disagreements`]) so it never pays for a workspace-wide clippy pass
 /// (`wildcard_arms`) just to check the probes that are actually diffed.
 pub fn run(root: &Path) -> Report {
@@ -86,7 +87,7 @@ pub fn run(root: &Path) -> Report {
     Report { probes }
 }
 
-/// The fifteen gated (zero/closure) probes only — what [`gated_disagreements`] diffs.
+/// The sixteen gated (zero/closure) probes only — what [`gated_disagreements`] diffs.
 fn run_gated(root: &Path) -> Vec<Probe> {
     vec![
         workspace_lints(root),
@@ -104,6 +105,7 @@ fn run_gated(root: &Path) -> Vec<Probe> {
         verbatim_sites(root),
         incremental_query_types(root),
         unconsumed_ir_items(root),
+        diagnostic_coverage(root),
     ]
 }
 
@@ -2613,6 +2615,168 @@ fn test_density(root: &Path) -> Probe {
     }
 }
 
+// --- diagnostic_coverage ---------------------------------------------------
+
+/// #1662 (track #1648, G2). Registry codes that some test **asserts**, out of all
+/// `bynk_syntax::diagnostics::REGISTRY` codes, and the count no test asserts.
+///
+/// Static, so it runs inside this harness: the review that set the baseline
+/// (2026-10-01, #1647 Part 4) instrumented `CompileError::new` across a full
+/// `cargo test --workspace`, which this harness cannot afford. Asserted is a
+/// subset of produced (a passing test that names a code saw it), so driving the
+/// unasserted count to the argued floor meets "every reachable code is produced
+/// by a test" a fortiori.
+///
+/// A code counts as asserted when it appears in:
+/// - line 1 of a negative fixture's `expected_error.txt` (line 2 is a message
+///   substring and may quote other codes);
+/// - any other non-`.bynk` file under a crate's `tests/` directory (test
+///   sources, expected-diagnostics files, JSON goldens). `.bynk` sources are
+///   skipped, because their comments often name the code they provoke, and Rust
+///   sources are read with their `//` comments removed, for the same reason;
+/// - a `#[cfg(test)] mod` block in a crate's `src/`, comments removed;
+/// - a blessed diagnostic transcript, `site/src/diagnostics/*.txt`.
+///
+/// Gated at the argued floor of **4** (#1662 Decision B). Each of the four is
+/// emitted where no compiler test can reach it:
+/// - `bynk.deploy.contract_skew`: `bynk deploy`, against a live deployment's
+///   lock;
+/// - `bynk.project.read_failed`: only when a host's file overlay omits a
+///   discovered file, which neither the CLI nor the LSP does;
+/// - `bynk.target.vendor_conflict`: needs platform-native capabilities from two
+///   platforms, and only Cloudflare ships any today (the decision function is
+///   unit-tested);
+/// - `bynk.wasm.strip_failed`: stripping the compiler's own emitted TypeScript,
+///   which fails only on an emitter bug.
+///
+/// `cargo xtask greenfield-status --list-unasserted` prints the codes.
+pub fn unasserted_codes(root: &Path) -> Vec<&'static str> {
+    let registry: BTreeSet<&'static str> = bynk_syntax::diagnostics::REGISTRY
+        .iter()
+        .map(|d| d.code)
+        .collect();
+    let mut asserted: BTreeSet<String> = BTreeSet::new();
+    let mut note = |text: &str| {
+        for code in registry_tokens(text) {
+            asserted.insert(code);
+        }
+    };
+    for krate in top_level_crate_dirs(root) {
+        for (path, contents) in text_files(&krate.join("tests")) {
+            if path.extension().is_some_and(|e| e == "bynk") {
+                continue;
+            }
+            if path.file_name().is_some_and(|n| n == "expected_error.txt") {
+                note(
+                    contents
+                        .lines()
+                        .find(|l| !l.trim().is_empty())
+                        .unwrap_or(""),
+                );
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                note(&strip_line_comments(&contents));
+            } else {
+                note(&contents);
+            }
+        }
+        for (_, contents) in rust_files(&krate.join("src")) {
+            let lines: Vec<&str> = contents.lines().collect();
+            for (start, end) in test_mod_ranges(&lines) {
+                note(&strip_line_comments(&lines[start..=end].join("\n")));
+            }
+        }
+    }
+    for (path, contents) in text_files(&root.join("site/src/diagnostics")) {
+        if path.extension().is_some_and(|e| e == "txt") {
+            note(&contents);
+        }
+    }
+    registry
+        .into_iter()
+        .filter(|c| !asserted.contains(*c))
+        .collect()
+}
+
+/// `src` with every `//` comment (including `///` and `//!` doc comments)
+/// removed, so a code named only in prose does not count as asserted. A `//`
+/// inside a string literal is kept; block comments are rare enough in this
+/// workspace to leave.
+fn strip_line_comments(src: &str) -> String {
+    src.lines()
+        .map(|line| {
+            let bytes = line.as_bytes();
+            let (mut in_str, mut escaped) = (false, false);
+            for (i, &b) in bytes.iter().enumerate() {
+                if escaped {
+                    escaped = false;
+                } else if b == b'\\' && in_str {
+                    escaped = true;
+                } else if b == b'"' {
+                    in_str = !in_str;
+                } else if b == b'/' && !in_str && bytes.get(i + 1) == Some(&b'/') {
+                    return &line[..i];
+                }
+            }
+            line
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Every `bynk.<family>.<name>` token in `text` — the shape of a registry code,
+/// whether quoted (Rust source) or bare (fixtures, transcripts).
+fn registry_tokens(text: &str) -> Vec<String> {
+    let bytes = text.as_bytes();
+    let ident = |b: u8| b.is_ascii_alphanumeric() || b == b'_' || b == b'.';
+    let mut out = Vec::new();
+    let mut i = 0;
+    while let Some(rel) = text[i..].find("bynk.") {
+        let start = i + rel;
+        let mut end = start;
+        while end < bytes.len() && ident(bytes[end]) {
+            end += 1;
+        }
+        if start == 0 || !ident(bytes[start - 1]) {
+            out.push(text[start..end].trim_end_matches('.').to_string());
+        }
+        i = end.max(start + 1);
+    }
+    out
+}
+
+/// Every readable UTF-8 file under `dir`, recursively, as `(path, contents)`.
+fn text_files(dir: &Path) -> Vec<(PathBuf, String)> {
+    let mut out = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&d) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if let Ok(contents) = std::fs::read_to_string(&path) {
+                out.push((path, contents));
+            }
+        }
+    }
+    out
+}
+
+fn diagnostic_coverage(root: &Path) -> Probe {
+    let total = bynk_syntax::diagnostics::REGISTRY.len();
+    let unasserted = unasserted_codes(root).len();
+    Probe {
+        name: "diagnostic_coverage",
+        gated: true,
+        reads: format!(
+            "unasserted={unasserted} (asserted {}/{total})",
+            total - unasserted
+        ),
+    }
+}
+
 // --- Reported probe 4: fixture_kinds --------------------------------------
 
 /// R11.2. Fixture directories under `bynkc/tests` using each assertion granularity —
@@ -2698,7 +2862,8 @@ pub fn render_table(report: &Report) -> String {
         "Track slice T0.0 (#999); `ts_writes`/`ts_any` added by P7.0 (#1296); \
          `verbatim_origins`/`verbatim_sites` added by P7.5 (#1307); \
          `incremental_query_types`/`keystroke_latency` added by P8.0 (#1510); \
-         `unconsumed_ir_items` added by Slice D3 of the IR cutover (#1542). Fifteen \
+         `unconsumed_ir_items` added by Slice D3 of the IR cutover (#1542); \
+         `diagnostic_coverage` added by #1662. Sixteen \
          probes are gated — a disagreement between this file and a fresh run fails \
          `greenfield_status_table_is_current` (`xtask/tests/greenfield_status.rs`). \
          Five are trend probes, reported only.\n\n",
@@ -2734,10 +2899,10 @@ pub fn render_table(report: &Report) -> String {
 
 /// Every gated probe whose live reading disagrees with the committed table's, as
 /// `(probe name, committed, live)`. Trend probes are never compared, and never
-/// computed here — this only runs the fifteen gated probes, so checking currency never
+/// computed here — this only runs the sixteen gated probes, so checking currency never
 /// pays for `wildcard_arms`'s workspace-wide clippy pass. For a caller that has already
 /// run the full report (e.g. to print it), use [`gated_disagreements_in`] instead so the
-/// fifteen gated probes aren't computed a second time.
+/// sixteen gated probes aren't computed a second time.
 pub fn gated_disagreements(root: &Path) -> Vec<(String, String, String)> {
     gated_disagreements_in(&run_gated(root), root)
 }

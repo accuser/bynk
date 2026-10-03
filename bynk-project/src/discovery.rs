@@ -572,6 +572,20 @@ pub fn check_file_directory_conflicts(
 mod tests {
     use super::*;
 
+    /// #1662: discovery reports a missing project root as a diagnostic, which
+    /// a library host (the LSP, a multi-root build) surfaces as-is; the CLI
+    /// checks the path itself first, so only this test reaches the code.
+    #[test]
+    fn a_missing_root_is_reported_as_no_root() {
+        let root = std::env::temp_dir().join(format!(
+            "bynk-discovery-no-root-{}-does-not-exist",
+            std::process::id()
+        ));
+        let err =
+            discover_bynk_files(&root, &[]).expect_err("a missing root must not discover files");
+        assert_eq!(err.category, "bynk.project.no_root");
+    }
+
     /// Finding #55/#65: a synthetic path that never exists on disk (the
     /// in-memory/wasm case) must still resolve via the overlay's literal-path
     /// entry — `canonicalize()` on such a path always fails, so the fix tries

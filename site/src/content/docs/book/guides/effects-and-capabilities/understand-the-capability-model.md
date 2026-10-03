@@ -38,7 +38,7 @@ claims to be pure cannot secretly call the network.
 A **capability** is a contract — a named set of operation *signatures*, with no
 bodies:
 
-```bynk,ignore
+```bynk
 capability Logger {
   fn info(message: String) -> Effect[()]
 }
@@ -53,7 +53,7 @@ it is exactly how effectful work reaches the outside.
 A handler — a service operation, an agent handler, or another provider — lists
 the capabilities it needs in a **`given`** clause, and may then call them:
 
-```bynk,ignore
+```bynk,fragment
 on call() -> Effect[String] given Logger {
   let _ <- Logger.info("hi")
   "ok"
@@ -70,7 +70,7 @@ effect and binds its result.
 When an effect is run only for its side effect — a log line, a durable write —
 its result is `()`, and binding it to `_` is noise. Write **`do e`** instead:
 
-```bynk,ignore
+```bynk,fragment
 on call() -> Effect[()] given Logger {
   do Logger.info("hi")
 }
@@ -89,7 +89,7 @@ a missing `else` on a unit branch defaults to "do nothing".
 A **provider** implements a capability — every operation, signatures matching
 exactly:
 
-```bynk,ignore
+```bynk,fragment
 provides Logger = ConsoleLogger {
   fn info(message: String) -> Effect[()] {
     Effect.pure(())

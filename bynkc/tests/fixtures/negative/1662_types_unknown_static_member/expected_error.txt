@@ -1,0 +1,2 @@
+bynk.types.unknown_static_member
+`HttpResult` has no variant named `Nope`

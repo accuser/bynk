@@ -6,21 +6,21 @@ These diagnostics come from the **tier dial** (the `as <tier>` clause) and from
 the [`stub` reference](/book/reference/testing/#stub), and the
 [tiers reference](/book/reference/testing/#tiers-the-as-tier-clause).
 
-## `bynk.tier.property_has_tier`
+## A tier on a `property`
 
 ```text
-[bynk.tier.property_has_tier] a `property` cannot carry a tier; `as <tier>` is a `case`-only clause
+[bynk.parse.expected_token] expected `{` to open the property body, found `as`
 ```
 
-**Cause:** an `as <tier>` clause is attached to a `property` header (or a `property`
-sits under a tiered `suite` and tried to inherit it). A `property` *generates* its
-subjects and does not promote — promoting it would multiply generation by
-real-collaborator cost and re-admit the ambient nondeterminism a tier removes.
+**Cause:** an `as <tier>` clause is attached to a `property` header. Tiers are a
+`case`-only clause, so the grammar has no place for one on a `property`. A
+`property` *generates* its subjects and does not promote — promoting it would
+multiply generation by real-collaborator cost and re-admit the ambient
+nondeterminism a tier removes.
 
 **Fix:** remove the tier from the `property`. A suite-level `as` binds its `case`
-members only, so a `property` under a tiered suite is fine as long as it carries no
-tier of its own. To check a generated input end to end, promote *that witness* as a
-concrete `case … as integration`.
+members only, so a `property` under a tiered suite is fine. To check a generated
+input end to end, promote *that witness* as a concrete `case … as integration`.
 
 ## `bynk.tier.system_needs_wire`
 

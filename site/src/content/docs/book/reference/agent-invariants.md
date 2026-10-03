@@ -11,7 +11,7 @@ of validation; tests are the behaviour half (see
 
 Invariants form a phase **between the `store` fields and the handlers**:
 
-```bynk
+```bynk,fragment
 type OrderStatus = enum { Pending, Placed, Paid }
 
 agent Order {
@@ -75,7 +75,7 @@ invariants, in the same phase between the store fields and the handlers, and rea
 over two contextual bindings: **`old`** (the last committed state) and **`new`**
 (the state this commit would persist):
 
-```bynk
+```bynk,fragment
 type OrderStatus = enum { Pending, Placed, Paid }
 
 agent Order {

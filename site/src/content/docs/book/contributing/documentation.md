@@ -186,9 +186,17 @@ rest are Rust drift-guard tests and Node `--check` scripts that CI runs.
 1. **Every example compiles.** `bynkc/tests/doc_examples.rs` extracts every
    fenced ```` ```bynk ```` block from `site/src/content/docs/book/**` and
    compiles it — `commons` blocks in-process, `context` blocks as a temp
-   project. Annotate blocks that should not be compiled as-is:
-   - ```` ```bynk,ignore ```` — a fragment, a `test` block, or pseudo-syntax;
-   - ```` ```bynk,fail ```` — a negative example that must fail to compile.
+   project, and a block with neither header inside a synthetic `commons` (or
+   `context`). Annotate blocks that should not be compiled as-is:
+   - ```` ```bynk,fragment ```` — a partial snippet (a single member, a statement,
+     or code naming types declared elsewhere on the page). It must still
+     **parse**, inside the unit, agent, service, function or test body it comes
+     from;
+   - ```` ```bynk,fail ```` — a negative example that must fail to compile;
+     ```` ```bynk,fail=<code> ```` also requires that diagnostic code, so a page
+     explaining one error cannot drift onto another;
+   - ```` ```bynk,ignore ```` — pseudo-syntax only (`<Name>` placeholders, `…`
+     elisions), which is not Bynk at all.
 
    Bynk uses `--` for comments, not `//` (the gate will catch `//`).
 

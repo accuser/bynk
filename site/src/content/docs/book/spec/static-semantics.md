@@ -342,8 +342,10 @@ MUST agree exactly (`bynk.generics.type_arg_mismatch`); a type parameter
 neither inferable nor given explicitly (`name[T](…)`) is rejected
 (`bynk.generics.uninferable_type_arg`), as is a bare generic function passed
 as a value. There is no inference between lambdas and none from the call's
-own expected type. Generic *type* declarations and parameter *bounds* are
-rejected (`bynk.generics.no_generic_types`, `bynk.generics.no_bounds`); a
+own expected type. Only a record or sum *type* declaration may be generic — type
+parameters on a refined or opaque body are rejected
+(`bynk.generics.generic_non_record`) — and parameter *bounds* are rejected
+(`bynk.generics.no_bounds`); a
 type parameter MUST NOT shadow a declared type. Within a generic function's
 body its type parameters are rigid: equal only to themselves. The checker
 maintains the invariant that a type-variable-bearing expected type imposes
@@ -424,8 +426,7 @@ type is thus constructed at run time through `.of` alone and has **no** unchecke
 `.unsafe` — the unchecked escape hatch is opaque-only (`Age.unsafe(x)` is rejected
 as `bynk.resolve.unknown_static_member`). **Opaque
 types are excluded** from admission and MUST be constructed through `.of`,
-`.unsafe`, or `.raw`, never record syntax (`bynk.resolve.opaque_record_construction`,
-`bynk.types.opaque_record_construction`); `.raw` MUST be used only within the
+`.unsafe`, or `.raw`, never record syntax (`bynk.resolve.opaque_record_construction`); `.raw` MUST be used only within the
 defining `commons` (`bynk.types.opaque_raw_outside`) and `.unsafe` only within
 the defining context (`bynk.types.opaque_unsafe_outside`).
 
@@ -1023,7 +1024,8 @@ audit/logging belongs *after* resolution.
 
 ## §5.8 Boundaries & cross-context
 
-`consumes` MUST appear only in a context or an adapter (`bynk.consumes.in_commons`),
+`consumes` MUST appear only in a context or an adapter (a `commons` or `suite`
+cannot declare one: `bynk.parse.expected_item`),
 MUST name an existing context or adapter — not a `commons`
 (`bynk.consumes.unknown_context`, `bynk.consumes.target_is_commons`) — and not the
 consumer itself (`bynk.consumes.self_reference`), and MUST NOT produce colliding
@@ -1120,8 +1122,8 @@ executable statement: promotion changes substitution, not assertion, and the cas
 body is identical across tiers.
 
 - **Tiers are `case`-only.** A `property` generates and does not promote, so a
-  suite-level `as` binds its `case` members only; a tier attached to a `property`
-  header (or a `property` that would inherit one) is `bynk.tier.property_has_tier`.
+  suite-level `as` binds its `case` members only, and a `property` header has no
+  tier production (a tier there is a parse error).
 - **Participants are inferred (DECISION K).** For `integration` / `system` the
   real/wired participant set is the unit under test's transitive `consumes` closure
   — there is no `wires` clause. `system` is the cross-context, wired tier and its
@@ -1210,15 +1212,16 @@ only when the predicate is syntactically the refinement over the bound variable
 capability, inside a `case` — ADR 0152. Its subject is a `Cap.op` reference (a
 capability and one of its operations, named not called). Well-formedness:
 
-- the observation MUST occur inside a `case` body (`bynk.observe.outside_case`);
+- the observation MUST occur inside a `case` body — it is an `expect`, so outside a
+  test body it is rejected as one (`bynk.expect.outside_case`);
 - `Cap` MUST be a capability the unit under test consumes / has in scope via
   `given` (`bynk.observe.not_a_seam`); `op` MUST be one of its declared operations
   (`bynk.observe.unknown_op`);
 - a `with <pred>` predicate is the one predicate surface with the operation's
   parameters in scope by their declared names; it MUST type to `Bool`
   (`bynk.observe.with_not_bool`) and MUST be pure (`bynk.observe.impure_with`);
-- a call count MUST be a non-negative integer literal
-  (`bynk.observe.bad_count`) — `called once` desugars to a count of one.
+- a call count is `once` or a non-negative integer literal followed by `times`
+  (the grammar admits nothing else) — `called once` desugars to a count of one.
 
 `trace(Cap.op)` is a **test-only builtin** yielding `List[<CallRecord>]`, where
 `<CallRecord>` is a synthetic record of the operation's parameters at their declared
@@ -1403,8 +1406,8 @@ non-indexed keyable field is `bynk.index.missing` (add the index), and a declare
 index no equality filter routes through is `bynk.index.unused` (it costs
 maintenance on every write). Under the wholesale-`Record` representation the index
 is a **CPU** optimisation (the map loads whole regardless); the I/O scaling awaits
-per-entry storage keys. The most-selective tie-break and a `bynk.index.ambiguous`
-note arrive with compound-predicate routing (a later slice).
+per-entry storage keys. The most-selective tie-break, and a note when two indexes
+could serve one filter, arrive with compound-predicate routing (a later slice).
 
 **Keys.** A `Map` key type MUST be value-keyable — `String`, `Int`, or a
 refined/opaque type over them; anything else is

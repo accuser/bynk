@@ -2716,8 +2716,9 @@ fn unresolved_type_ref_error(
             format!("unknown type `{}`", id.name),
         )
         .with_note(
-            "only base types (Int, String, Bool), types declared in this commons, \
-             `Result[T, E]`, `Option[T]`, and `ValidationError` are in scope",
+            "in scope are the base types (`Int`, `Float`, `String`, `Bool`, `Duration`, \
+             `Instant`, `Bytes`), the built-in generics (`List`, `Map`, `Option`, `Result`, …), \
+             `ValidationError`, and the types this unit declares or imports",
         ),
         None => CompileError::new(
             "bynk.resolve.unknown_type",

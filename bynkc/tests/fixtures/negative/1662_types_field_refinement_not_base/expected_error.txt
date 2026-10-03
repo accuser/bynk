@@ -1,0 +1,2 @@
+bynk.types.field_refinement_not_base
+inline refinement on field `a` requires a base or refined type

@@ -1,0 +1,2 @@
+bynk.val.pin_unsupported
+pinned `Val[Status](...)` is not yet supported for this kind of type

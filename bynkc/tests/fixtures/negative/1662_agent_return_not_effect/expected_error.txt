@@ -1,0 +1,2 @@
+bynk.agent.return_not_effect
+agent handler must return `Effect[T]`, but got `Int`

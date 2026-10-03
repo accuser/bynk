@@ -85,10 +85,11 @@ caller-supplied idempotency key requires.
 `Events` emits an `event` — a typed fact a context declares — for any number
 of other contexts to subscribe to with `from Events(E)`:
 
-```bynk,ignore
+```bynk
 context commerce.order
 
 exports transparent { PaymentConfirmed }
+consumes bynk { Events }
 
 event PaymentConfirmed = {
   orderId: String,
@@ -112,7 +113,7 @@ differs between Cloudflare and Bundle targets.
 
 The `bynk` unit also exports the transparent types these operations use:
 
-```bynk,ignore
+```bynk
 type Uuid       = String where Matches("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 type Method     = enum { Get, Post, Put, Delete }
 type FetchError = enum { Network, Timeout }

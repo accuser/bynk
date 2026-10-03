@@ -1,0 +1,2 @@
+bynk.record_spread.type_mismatch
+spread type prefix `P` does not match the base's type `Q`

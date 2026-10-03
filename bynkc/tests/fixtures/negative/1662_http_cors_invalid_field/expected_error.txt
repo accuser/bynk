@@ -1,0 +1,2 @@
+bynk.http.cors_invalid_field
+`cors` `headers` must be a list of string literals

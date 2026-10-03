@@ -14,7 +14,7 @@ providers are **external** (bodiless).
 
 ## Anatomy
 
-```bynk,ignore
+```bynk,fragment
 adapter tokens {
   binding "./tokens.binding.ts" requires { "jose": "^5" }
   consumes bynk { Secrets }     -- v0.18: adapter-to-adapter dependency
@@ -136,7 +136,7 @@ deferred; see ADR 0050).
 **Structured values** are composition with the v0.22 codec, not extra ops —
 store `Json.encode(entry)`, read back through `Json.decode[Entry]`:
 
-```bynk,ignore
+```bynk,fragment
 service cache {
   on call(key: String, e: Entry) -> Effect[Option[Entry]] given Kv {
     let _ <- Kv.putTtl(key, Json.encode(e), 60)
@@ -152,7 +152,7 @@ service cache {
 }
 ```
 
-```bynk,ignore
+```bynk
 context cache.store {
   consumes bynk.cloudflare { Kv }   -- locks this deployment unit to cloudflare
 
@@ -187,7 +187,7 @@ arrive with the v0.22 extension.
 A context `consumes` an adapter exactly as it consumes another context. Selected
 capabilities can be flattened to bare names:
 
-```bynk,ignore
+```bynk,fragment
 context auth.sessions {
   consumes bynk   { Logger }   -- portable
   consumes tokens { Jwt }      -- library adapter; bare `Jwt` in scope

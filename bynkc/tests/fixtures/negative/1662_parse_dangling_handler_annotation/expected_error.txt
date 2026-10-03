@@ -1,0 +1,2 @@
+bynk.parse.dangling_handler_annotation
+expected `on` to start the annotated handler, found `}`

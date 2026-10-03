@@ -1,0 +1,2 @@
+bynk.types.call_arity
+`g` takes 1 argument(s), but 2 were given

@@ -1,0 +1,2 @@
+bynk.resolve.duplicate_actor
+actor `User` is already declared

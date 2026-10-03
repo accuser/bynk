@@ -26,7 +26,7 @@ flowchart LR
 - An **`event`** is a typed fact, declared inside a context — a record shape,
   nothing more:
 
-  ```bynk,ignore
+  ```bynk
   context commerce.order
 
   exports transparent { PaymentConfirmed }
@@ -42,7 +42,7 @@ flowchart LR
   [First-party `bynk` capabilities](/book/reference/bynk-capabilities/)), the
   type argument is always explicit, never inferred from `value`'s type.
 
-  ```bynk,ignore
+  ```bynk,fragment
   service markPaid {
     on call(orderId: String) -> Effect[()] given Events {
       Events.emit[PaymentConfirmed](PaymentConfirmed { orderId: orderId })
@@ -55,7 +55,7 @@ flowchart LR
   with this protocol has exactly one handler, `on event`, and is not called
   directly; it runs whenever a matching event arrives.
 
-  ```bynk,ignore
+  ```bynk,fragment
   context commerce.notifications
 
   consumes commerce.order
@@ -77,7 +77,7 @@ flowchart LR
 A subscription may narrow which emissions it receives with a structural
 pattern on the payload:
 
-```bynk,ignore
+```bynk,fragment
 context commerce.notifications
 
 consumes commerce.order
@@ -116,7 +116,7 @@ pattern matched still reads `e.region` at its full declared type.
 An `on event` handler may declare a second, optional parameter —
 `env: EventEnvelope` — carrying runtime metadata about the emission:
 
-```bynk,ignore
+```bynk,fragment
 context commerce.notifications
 
 consumes commerce.order
@@ -171,7 +171,7 @@ An event's fields can carry a default (`field: T = expr`), so a field added
 later doesn't break subscribers still holding an older wire event that never
 had it:
 
-```bynk,ignore
+```bynk
 context commerce.order
 
 exports transparent { PaymentConfirmed, Region }
@@ -229,7 +229,7 @@ registry last recorded:
   emit](#only-the-declaring-context-may-emit) below for why that's cheap) —
   this track's prescribed path for an actual breaking change.
 
-```bynk,ignore
+```bynk,fragment
 event PaymentConfirmed = {
   orderId: String,
   region: Region = Region.Domestic,
@@ -255,7 +255,7 @@ the same way you would `Cargo.lock`.
 
 An event may also declare its current version explicitly:
 
-```bynk,ignore
+```bynk,fragment
 event PaymentConfirmed @schema(2) = {
   orderId: String,
   region: Region = Region.Domestic,
@@ -279,7 +279,7 @@ rejected, and `@schema` itself may appear at most once per event.
 A subscriber can filter delivery by the envelope's `schemaVersion`, using a
 `via` clause after the `from Events(...)` header's closing `)`:
 
-```bynk,ignore
+```bynk,fragment
 service OnPaymentV1 from Events(PaymentConfirmed) via schema(1) {
   on event(e: PaymentConfirmed) -> Effect[()] {
     -- handles the original shape
@@ -357,7 +357,7 @@ emission only ever reaches a subscriber if the emitting handler itself
 its own invariants emits nothing — the invariant violation throws before the
 event is released, exactly as if `Events.emit` had never been called:
 
-```bynk,ignore
+```bynk,fragment
 agent Ledger {
   key id: String
   store total: Cell[Int] = 0

@@ -28,7 +28,7 @@ rules that must always hold for that aggregate. Putting them on the agent means:
 
 ## A worked contrast
 
-```bynk
+```bynk,fragment
 agent Inventory {
   key sku: Sku
 

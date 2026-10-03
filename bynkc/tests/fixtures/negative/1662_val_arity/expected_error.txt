@@ -1,0 +1,2 @@
+bynk.val.arity
+`Val[Age]` takes at most one pin argument, but 2 were given

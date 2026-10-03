@@ -1,0 +1,2 @@
+bynk.types.cannot_infer_option_type_param
+cannot infer the value type of `None`

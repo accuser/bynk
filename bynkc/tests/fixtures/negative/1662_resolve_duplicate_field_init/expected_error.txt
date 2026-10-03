@@ -1,0 +1,2 @@
+bynk.resolve.duplicate_field_init
+field `a` is initialised more than once

@@ -1,0 +1,2 @@
+bynk.parse.event_pattern_empty
+an events subscription pattern must list at least one field — found

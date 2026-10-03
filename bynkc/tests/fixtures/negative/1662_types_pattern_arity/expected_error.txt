@@ -1,0 +1,2 @@
+bynk.types.pattern_arity
+variant `Circle` has 1 payload field(s), but the pattern has 2

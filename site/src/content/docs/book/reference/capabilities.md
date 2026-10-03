@@ -18,7 +18,7 @@ returns `Effect[T]` (capabilities are how effectful work reaches the outside).
 
 ## Providing a capability
 
-```bynk
+```bynk,fragment
 provides Logger = ConsoleLogger {
   fn info(message: String) -> Effect[()] {
     Effect.pure(())
@@ -35,7 +35,7 @@ provider per capability in a context.
 
 A handler lists the capabilities it needs with `given`, then calls them:
 
-```bynk
+```bynk,fragment
 service hello {
   on call() -> Effect[String] given Logger {
     let _ <- Logger.info("hi")
@@ -69,7 +69,7 @@ capability Idempotency {
 inferred from the arguments or the expected type, the same discipline
 `Json.decode[T](s)` uses:
 
-```bynk
+```bynk,fragment
 service reserve {
   on call() -> Effect[Option[ReserveOutcome]] given Idempotency {
     let cached <- Idempotency.dedup[ReserveOutcome]("order-key-1")
@@ -168,7 +168,7 @@ A consumer `consumes` that context and depends on the capability through a
 **qualified `given`** — `given B.Cap`, or `given Alias.Cap` when the `consumes`
 clause introduces an alias. The capability call uses the same prefix:
 
-```bynk,ignore
+```bynk,fragment
 context ops.jobs
 
 consumes platform.time

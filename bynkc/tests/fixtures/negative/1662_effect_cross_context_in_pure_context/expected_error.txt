@@ -1,0 +1,2 @@
+bynk.effect.cross_context_in_pure_context
+cross-context service call `pay.charge` can only be made inside an

@@ -1,0 +1,2 @@
+bynk.record_spread.non_record_base
+record spread requires a record-typed base, but got `Int`

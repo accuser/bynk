@@ -1,0 +1,2 @@
+bynk.parse.duplicate_limits
+a service declares at most one `limits { }` policy

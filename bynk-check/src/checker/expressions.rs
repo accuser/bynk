@@ -474,30 +474,27 @@ fn resolve_observation_seam(cap: &Ident, op: &Ident, ctx: &mut Ctx) -> Option<Ca
 /// invariant predicate over the operation's parameters (in scope by name); a
 /// count must be a non-negative literal; `before Cap.op` resolves a second seam.
 /// The observation itself is a `Bool` claim about the recorded trace.
-pub(crate) fn check_observation(o: &ObservationExpr, span: Span, ctx: &mut Ctx) -> Option<TyId> {
+pub(crate) fn check_observation(o: &ObservationExpr, _span: Span, ctx: &mut Ctx) -> Option<TyId> {
     let tys = ctx.tys;
+    // An observation parses only as the subject of an `expect`, and an
+    // `expect` outside a test body has already been reported
+    // (`bynk.expect.outside_case`) — but the walk continues into the subject,
+    // so stop here rather than resolve a recording seam that only a test body
+    // has (#1662 review).
     if !ctx.in_test_body {
-        ctx.errors.push(
-            CompileError::new(
-                "bynk.observe.outside_case",
-                span,
-                "an observation is only valid inside a `case` body",
-            )
-            .with_note("observations assert over calls recorded during a `case`"),
-        );
+        return None;
     }
     let op_info = resolve_observation_seam(&o.cap, &o.op, ctx);
     match &o.matcher {
         ObservationMatcher::Called { count, with_pred } => {
-            if let Some(c) = count
-                && !matches!(&c.kind, ExprKind::IntLit { value: n, .. } if *n >= 0)
-            {
-                ctx.errors.push(CompileError::new(
-                    "bynk.observe.bad_count",
-                    c.span,
-                    "a call count must be a non-negative integer literal (`called once` or `called <n> times`)",
-                ));
-            }
+            // The parser accepts only `once` or a bare integer-literal token as a
+            // count, and a literal token is never negative.
+            debug_assert!(
+                count.as_ref().is_none_or(
+                    |c| matches!(&c.kind, ExprKind::IntLit { value: n, .. } if *n >= 0)
+                ),
+                "an observation count is always a non-negative literal"
+            );
             if let Some(p) = with_pred {
                 if let Some(impure) = predicate_impure_construct(p) {
                     ctx.errors.push(
@@ -2442,20 +2439,10 @@ pub(crate) fn check_record_construction(
     let decl = ctx.input.types.get(&type_name.name)?.clone();
     ctx.refs
         .record(type_name.span, SymbolKind::Type, &type_name.name);
+    // An opaque type built with record-literal syntax is reported by the
+    // resolver (`bynk.resolve.opaque_record_construction`), which runs first;
+    // here it only stops the record checks from cascading (#1662).
     if matches!(decl.body, TypeBody::Opaque { .. }) {
-        ctx.errors.push(
-            CompileError::new(
-                "bynk.types.opaque_record_construction",
-                type_name.span,
-                format!(
-                    "opaque type `{}` cannot be constructed with record-literal syntax",
-                    type_name.name
-                ),
-            )
-            .with_note(
-                "construct opaque values via `T.of(value)` (validated) or `T.unsafe(value)` (inside the defining commons)",
-            ),
-        );
         return None;
     }
     let TypeBody::Record(r) = &decl.body else {

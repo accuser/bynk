@@ -1,0 +1,2 @@
+bynk.service.return_not_effect
+service handler must return `Effect[T]`, but got `Int`

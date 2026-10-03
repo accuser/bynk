@@ -46,7 +46,7 @@ agent Counter {
 
 A `:=` write replaces a cell's value with an expression that stands on its own:
 
-```bynk,ignore
+```bynk,fragment
 count := 0          -- reset
 limit := limit      -- rejected: the right-hand side reads the cell being written
 ```
@@ -54,7 +54,7 @@ limit := limit      -- rejected: the right-hand side reads the cell being writte
 When the new value is computed *from the old one*, reach for `update(fn)` instead.
 It takes a pure combiner `(T) -> T` and applies it to the current value:
 
-```bynk,ignore
+```bynk,fragment
 let _ <- count.update((c) => c + 1)   -- increment
 let _ <- count.update((c) => c * 2)   -- double
 ```
@@ -70,7 +70,7 @@ A self-referencing `:=` is therefore rejected with
 **and** return — as `increment` above does — await the `update`, then read the
 bare name back (the read sees the staged write):
 
-```bynk,ignore
+```bynk,fragment
 let _ <- count.update((c) => c + 1)
 count                                  -- the committed new value
 ```
@@ -80,21 +80,25 @@ count                                  -- the committed new value
 Every `store` field needs a starting value for the never-seen key that Bynk
 initialises automatically. Either the type has a zero (`Int`→`0`, `Bool`→`false`,
 `String`→`""`, `Option[T]`→`None`), or you supply an explicit initialiser with
-`=`. A field whose type excludes its zero (for example `Int where Positive`, which
-excludes `0`) and which has no initialiser is rejected with
+`=`. A field whose type excludes its zero (for example a refined
+`type Limit = Int where Positive`, which excludes `0`) and which has no
+initialiser is rejected with
 [`bynk.agents.non_zeroable_state_field`](/book/troubleshooting/agents-non-zeroable-state-field/).
 
 When you need "not set yet", use `Option`:
 
-```bynk
+```bynk,fragment
 store reading: Cell[Option[Int]]   -- starts as None — "never set"
 ```
 
 When the type has no zero but you have a sensible default, give an initialiser:
 
-```bynk
-store limit: Cell[Int where Positive] = 1
+```bynk,fragment
+store limit: Cell[Limit] = 1
 ```
+
+A store type argument names a type, so declare the refinement as its own type
+(`type Limit = Int where Positive`) rather than writing it inline.
 
 ## Beyond `Cell`: maps, sets, caches, and logs
 
@@ -103,7 +107,7 @@ expose **effectful methods** (awaited with `<-`) instead of `:=`.
 
 A **`Map`** keys values; a **`Set`** holds membership:
 
-```bynk,ignore
+```bynk,fragment
 store members: Set[UserId]
 store profiles: Map[UserId, Profile]
 
@@ -122,7 +126,7 @@ on call lookup(u: UserId) -> Effect[Option[Profile]] {
 A **`Cache`** is a TTL-bounded map: `@ttl` is required, and any time-consulting op
 needs `given Clock` (which makes expiry testable with a mocked clock):
 
-```bynk,ignore
+```bynk,fragment
 store sessions: Cache[SessionId, Session] @ttl(30.minutes)
 
 on call touch(id: SessionId, s: Session) -> Effect[()] given Clock {
@@ -135,10 +139,10 @@ A **`Log`** is an append-only, time-indexed sequence. `append` stamps the curren
 time (so it needs `given Clock`), but the window reads take explicit `Instant`s and
 so need no clock — they return a lazy [`Query`](/book/reference/types/#query):
 
-```bynk,ignore
+```bynk,fragment
 store events: Log[Event] @retain(7.days)
 
-on call record(e: Event) -> Effect[()] given Clock {
+on call add(e: Event) -> Effect[()] given Clock {
   let _ <- events.append(e)
   ()
 }
@@ -155,7 +159,7 @@ with `.key` and the value with `.value`, so a stored value need not carry a
 denormalised copy of its own key (`map.keys` and `map.values` give the keys and
 values alone):
 
-```bynk,ignore
+```bynk,fragment
 store items: Map[String, Stored]
 
 on call all() -> Effect[List[TodoItem]] {
@@ -171,7 +175,7 @@ To route an equality filter through a maintained index, annotate the map with
 Construct an agent with its key, then call a handler (binding the effectful
 result with `<-`):
 
-```bynk
+```bynk,fragment
 let c = Counter(CounterId.unsafe("a"))
 let n <- c.increment()
 ```

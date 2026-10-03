@@ -1,0 +1,2 @@
+bynk.parse.expected_provider_op
+expected `fn` to declare a provider operation, found `type`

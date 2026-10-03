@@ -1,0 +1,2 @@
+bynk.capability.op_arity
+capability operation `Clock.now` expects 0 argument(s), but 1 were

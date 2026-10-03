@@ -1,0 +1,2 @@
+bynk.uses.self_reference
+`demo` cannot `uses` itself

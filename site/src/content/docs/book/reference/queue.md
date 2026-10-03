@@ -8,7 +8,7 @@ bound on the service header (`from queue("name")`), and each handler is an
 
 ## Handler form
 
-```bynk
+```bynk,ignore
 service <Name> from queue("<name>") {
   on message(message: T) -> Effect[QueueResult] {
     …

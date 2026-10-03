@@ -1,0 +1,2 @@
+bynk.types.variant_missing_payload
+variant `Circle` of `S` has a payload — call it with arguments:

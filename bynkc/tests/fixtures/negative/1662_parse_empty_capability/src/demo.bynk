@@ -1,0 +1,11 @@
+context demo
+
+-- #1662: a capability with no operations.
+capability Clock {
+}
+
+service probe {
+  on call() -> Effect[Int] {
+    Effect.pure(1)
+  }
+}

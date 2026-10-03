@@ -417,11 +417,6 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         &["consumes_decl"],
     ),
     dg(
-        "bynk.consumes.in_commons",
-        "`consumes` appears in a `commons` (it is only valid in a context).",
-        &["consumes_decl"],
-    ),
-    dg(
         "bynk.consumes.name_conflict",
         "A `consumes` name collides with another name in scope.",
         &["consumes_decl"],
@@ -511,6 +506,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.cron.return_not_effect_result",
         "A cron handler does not return `Effect[Result[(), E]]`.",
         &["cron_handler"],
+    ),
+    d(
+        "bynk.deploy.contract_skew",
+        "A worker was compiled against a contract its live dependencies no longer provide, so `bynk deploy` refuses to ship it.",
     ),
     d(
         "bynk.duration.literal_overflow",
@@ -669,6 +668,14 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.exports.undeclared_type",
         "`exports` names a type that is not declared.",
         &["exports_decl"],
+    ),
+    d(
+        "bynk.fmt.comment_loss",
+        "The formatter would drop a comment, so it leaves the file unchanged.",
+    ),
+    d(
+        "bynk.fmt.roundtrip",
+        "The formatter's output does not re-parse to the same program, so it leaves the file unchanged.",
     ),
     dg(
         "bynk.generics.duplicate_type_param",
@@ -1040,20 +1047,12 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A user unit is named `bynk` or `bynk.*`; the `bynk` root is reserved for the toolchain.",
     ),
     d(
-        "bynk.observe.bad_count",
-        "An observation call count is not a non-negative integer literal (`called once` / `called <n> times`).",
-    ),
-    d(
         "bynk.observe.impure_with",
         "A `with` predicate uses an effectful or test-only construct; it must be pure.",
     ),
     d(
         "bynk.observe.not_a_seam",
         "An observation targets a capability the unit under test does not consume.",
-    ),
-    d(
-        "bynk.observe.outside_case",
-        "An observation appears outside a `case` body.",
     ),
     d(
         "bynk.observe.trace_outside_test",
@@ -1804,10 +1803,6 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         &["case"],
     ),
     d(
-        "bynk.tier.property_has_tier",
-        "A `property` carries an `as <tier>` clause; tiers are a `case`-only affordance.",
-    ),
-    d(
         "bynk.tier.system_needs_wire",
         "An `as system` test stands up fewer than two contexts; the system tier wires across contexts.",
     ),
@@ -2072,11 +2067,6 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         &["field_access"],
     ),
     dg(
-        "bynk.types.opaque_record_construction",
-        "An opaque type was constructed with record syntax.",
-        &["record_construction"],
-    ),
-    dg(
         "bynk.types.opaque_unsafe_outside",
         "`.unsafe` on an opaque type was used outside its defining context.",
         &["field_access"],
@@ -2277,6 +2267,14 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.val.unsupported_kind",
         "`Val[T]` cannot fabricate a value for this kind of type.",
         &["val_expr"],
+    ),
+    d(
+        "bynk.wasm.panic",
+        "The in-browser compiler panicked internally (a compiler bug, reported as a diagnostic instead of crashing the page).",
+    ),
+    d(
+        "bynk.wasm.strip_failed",
+        "The in-browser compiler could not strip the emitted TypeScript to JavaScript.",
     ),
     d(
         "bynk.ws.message_frame_param",

@@ -1,0 +1,11 @@
+context demo
+
+-- #1662: two `cors` policies.
+service api from http {
+  cors { origins: ["*"] }
+  cors { origins: ["*"] }
+
+  on GET("/a") () -> Effect[HttpResult[Int]] by Visitor {
+    Ok(1)
+  }
+}

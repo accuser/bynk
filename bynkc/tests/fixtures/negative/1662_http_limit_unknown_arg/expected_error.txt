@@ -1,0 +1,2 @@
+bynk.http.limit_unknown_arg
+`@limit` accepts only the `maxBody:` argument

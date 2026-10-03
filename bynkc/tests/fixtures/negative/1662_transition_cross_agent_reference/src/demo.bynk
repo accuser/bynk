@@ -1,0 +1,23 @@
+context demo
+
+-- #1662: a transition that reads another agent.
+agent Counter {
+  key id: String
+  store n: Cell[Int]
+
+  on call get() -> Effect[Int] {
+    n
+  }
+}
+
+agent Mirror {
+  key id: String
+  store m: Cell[Int]
+
+  transition follows:
+    new.m >= Counter("a").n
+
+  on call get() -> Effect[Int] {
+    m
+  }
+}

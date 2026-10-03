@@ -12,7 +12,7 @@ We give the shortener a `Link` agent. Keep editing `shortener.bynk`.
 
 ## Declare an agent
 
-```bynk,ignore
+```bynk,fragment
 agent Link {
   key code: ShortCode
 
@@ -59,11 +59,12 @@ Both our fields are fine on the zero: a brand-new link starts with `target: None
 has never been registered", which is exactly what `resolve` will check.
 
 A field whose type *excludes* its natural zero, and which you give no initialiser,
-is rejected. You might reach for `Int where Positive` on the hit count — but a
-fresh link has had `0` hits, and `Positive` excludes `0`:
+is rejected. You might reach for a positive count on the hits
+(`type Hits = Int where Positive`) — but a fresh link has had `0` hits, and
+`Positive` excludes `0`:
 
-```bynk,ignore
-store hits: Cell[Int where Positive]   -- no zero, and no initialiser
+```bynk,fragment
+store hits: Cell[Hits]   -- no zero, and no initialiser
 ```
 
 ```text
@@ -71,7 +72,7 @@ store hits: Cell[Int where Positive]   -- no zero, and no initialiser
 defined zero value, so a fresh key cannot be initialised
 ```
 
-Give it an explicit start (`store hits: Cell[Int where Positive] = 1`), or — when
+Give it an explicit start (`store hits: Cell[Hits] = 1`), or — when
 you genuinely need "not set yet" — reach for `Option`, as we did for `target`.
 
 ## Read and update state
@@ -82,7 +83,7 @@ value into a local first (a `:=` whose right-hand side names its own field is
 rejected, to keep read-modify-write visible). Add a `resolve` handler that returns
 the target and counts the hit:
 
-```bynk,ignore
+```bynk,fragment
   on call resolve() -> Effect[Result[ResolveView, LinkError]] {
     match target {
       Some(url) => {
@@ -146,7 +147,7 @@ Durable Object instead, but the handler logic you wrote is identical.
 Now the API can do real work. A small `CodeGen` capability mints new codes, and
 the handlers store and resolve through the `Link` agent:
 
-```bynk,ignore
+```bynk
 capability CodeGen {
   fn next() -> Effect[String]
 }

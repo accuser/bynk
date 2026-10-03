@@ -16,7 +16,7 @@ An agent state field's initialiser (`field: T = <value>`) is not a valid
 - **Type mismatch** — the initialiser's type doesn't match the field (e.g. a
   variant of the wrong sum, or a literal of the wrong base type).
 
-```bynk
+```bynk,fragment
 store count: Cell[Int] = Red   -- Red is a variant of Light, not an Int
 ```
 
@@ -28,7 +28,7 @@ Use a compile-time value of the field's type:
 - a sum variant (`Pending`), `Some`/`None`/`Ok`/`Err`, or a record literal;
 - `T.unsafe(lit)` for an opaque type defined in this context.
 
-```bynk
+```bynk,fragment
 store count:  Cell[Int]         = 0
 store status: Cell[OrderStatus] = Pending
 ```

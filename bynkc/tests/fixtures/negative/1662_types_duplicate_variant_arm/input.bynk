@@ -1,0 +1,12 @@
+commons demo
+
+-- #1662: a variant matched by two arms.
+type C = | Red | Green
+
+fn f(c: C) -> Int {
+  match c {
+    Red => 1
+    Red => 2
+    Green => 3
+  }
+}

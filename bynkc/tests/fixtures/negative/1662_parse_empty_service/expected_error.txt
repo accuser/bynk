@@ -1,0 +1,2 @@
+bynk.parse.empty_service
+a service must declare at least one handler

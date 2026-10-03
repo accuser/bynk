@@ -1,0 +1,10 @@
+context demo
+
+-- #1662: a context that consumes itself.
+consumes demo
+
+service probe {
+  on call() -> Effect[Int] {
+    Effect.pure(1)
+  }
+}

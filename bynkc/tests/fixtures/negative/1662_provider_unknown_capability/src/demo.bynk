@@ -1,0 +1,14 @@
+context demo
+
+-- #1662: a provider for a capability that is not declared.
+provides Clock = FixedClock {
+  fn now() -> Effect[Int] {
+    Effect.pure(0)
+  }
+}
+
+service probe {
+  on call() -> Effect[Int] {
+    Effect.pure(1)
+  }
+}

@@ -1,0 +1,2 @@
+bynk.agent.handler_arity
+agent handler `Counter.get` expects 0 argument(s), but 1 were given

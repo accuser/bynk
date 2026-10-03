@@ -1,0 +1,2 @@
+bynk.parse.expected_agent_key
+expected `key id: Type` at the start of the agent body, found `store`

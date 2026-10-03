@@ -1,0 +1,2 @@
+bynk.actor.signature_identity_unsupported
+a `Signature` actor does not yet support a declared `identity`

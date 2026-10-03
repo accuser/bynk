@@ -14,7 +14,7 @@ These diagnostics relate to **adapters** — the host boundary. See the
 Providers inside an adapter are **external**: write `provides Cap = Name` with no
 brace block. The implementation lives in the binding, not in Bynk.
 
-```bynk,ignore
+```bynk,fragment
 provides Jwt = JoseJwt        -- not `provides Jwt = JoseJwt { fn sign(…) { … } }`
 ```
 
@@ -44,7 +44,7 @@ pure helpers, and `exports`. Put services and agents in a `context`.
 
 An adapter with external providers must name a `binding` module:
 
-```bynk,ignore
+```bynk,fragment
 binding "./tokens.binding.ts"
 ```
 

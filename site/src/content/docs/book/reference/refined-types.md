@@ -59,7 +59,7 @@ them only one way.
 
 ## `.of` — checked construction
 
-```bynk
+```bynk,fragment
 Age.of(value)   -- Result[Age, ValidationError]
 ```
 

@@ -38,7 +38,7 @@ else.
 `Message` and `MessageArg` live in `bynk.locale.types`, but you build them with
 the functions in `bynk.locale`:
 
-```bynk,ignore
+```bynk,fragment
 withText(message("order.item.out_of_stock"), "item", "Blue widget")
 ```
 
@@ -57,7 +57,7 @@ The variant matters: it is what lets a template ask for a *plural* or a
 `Locale` is a first-party capability — `consumes bynk { Locale }`, then `given
 Locale` on the handler:
 
-```bynk,ignore
+```bynk,fragment
 on GET("/hello") () -> Effect[HttpResult[String]] given Locale {
   let tag <- Locale.current()
   Ok(greet(tag))

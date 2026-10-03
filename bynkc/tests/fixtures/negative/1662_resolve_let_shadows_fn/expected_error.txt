@@ -1,0 +1,2 @@
+bynk.resolve.let_shadows_fn
+`let g` shadows the declared function `g`

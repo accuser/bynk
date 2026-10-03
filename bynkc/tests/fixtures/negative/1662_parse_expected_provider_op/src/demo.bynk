@@ -1,0 +1,16 @@
+context demo
+
+-- #1662: a provider body that is not `fn` operations.
+capability Clock {
+  fn now() -> Effect[Int]
+}
+
+provides Clock = FixedClock {
+  type T = Int
+}
+
+service probe {
+  on call() -> Effect[Int] {
+    Effect.pure(1)
+  }
+}

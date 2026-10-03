@@ -56,7 +56,7 @@ that returns a real value or an error is rejected
 ([`bynk.send.requires_unit`](/book/reference/diagnostics/)), because that value
 or error would vanish without a trace:
 
-```bynk
+```bynk,fragment
 ~> Logger.info("served")                  -- ✅ Effect[()] — nothing to drop
 ~> Fetch.send(request)                     -- ❌ Effect[Result[Response, FetchError]]
                                            --    the error would be lost; use `let r <- …`

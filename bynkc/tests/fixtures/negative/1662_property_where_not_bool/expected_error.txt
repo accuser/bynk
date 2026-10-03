@@ -1,0 +1,2 @@
+bynk.property.where_not_bool
+a `for all ... where` filter has type `Int`, but a `Bool` is required

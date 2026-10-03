@@ -1,0 +1,10 @@
+context demo
+
+-- #1662: an agent with no `store` fields.
+agent Counter {
+  key id: String
+
+  on call get() -> Effect[Int] {
+    Effect.pure(1)
+  }
+}

@@ -183,7 +183,7 @@ above applies to `.entries` unchanged. `MapEntry` is
 [non-boundary](#query) (it is a generic-record instantiation, ADR 0183), so a read
 handler projects each entry into a named type before its terminal:
 
-```bynk,ignore
+```bynk,fragment
 -- the id lives in the key; project it back into the boundary shape
 items.entries.map((e) => TodoItem { id: e.key, seq: e.value.seq, title: e.value.title, done: e.value.done }).collect()
 ```
@@ -254,7 +254,7 @@ token in the `Sec-WebSocket-Protocol` subprotocol, since it cannot set an
 `Authorization` header) — and the handler receives a fresh, owned `Connection[out]`
 it must dispose, the canonical disposal being transfer into an agent:
 
-```bynk
+```bynk,fragment
 service ChatGateway from websocket(in: ClientFrame, out: ServerFrame) {
   on open (roomId: RoomId) -> Effect[()] by user: Participant {
     let _ <- connection.send(ServerFrame { text: "welcome" })
@@ -371,7 +371,7 @@ delegating to their codecs (`__serialise_List_User`, `__serialise_Option_String`
 The emitted TypeScript interface stays the erased `Paginated<T>`; only the codec
 is per-instantiation, matching how `List`/`Map`/`Result` already specialise.
 
-```bynk
+```bynk,fragment
 fn save(page: Paginated[User]) -> String {
   Json.encode(page)                          -- __serialise_Paginated_User
 }
@@ -452,7 +452,7 @@ sub-error. The [`?` operator](/book/reference/operators/) then converts that
 sub-error automatically, replacing the boilerplate `.mapErr(Wrap)` on every
 cross-context chain:
 
-```bynk,ignore
+```bynk,fragment
 type OrderError =
   | OutOfStock(sku: Sku)
   | Payment(reason: PaymentError)
@@ -520,7 +520,7 @@ A base type plus a predicate. See the [refined-type reference](/book/reference/r
 
 `match` branches on every variant of a sum/`Result`/`Option`, binding payloads:
 
-```bynk
+```bynk,fragment
 match s {
   Pending => "…"
   Shipped(tracking: t) => t
@@ -536,20 +536,24 @@ Every arm must also be reachable (`bynk.types.unreachable_arm`): an arm is an
 error when each value its pattern matches is already matched by an earlier
 arm. Each of these is rejected at the marked arm:
 
-```bynk
+```bynk,fragment
 match o {
   Some(_) => 1
   Some(Red) => 2   -- `Some(_)` already matches every `Some`
   None => 3
 }
+```
 
+```bynk,fragment
 match c {
   Red => 1
   Green => 2
   Blue => 3
   _ => 4           -- the variants above are already exhaustive
 }
+```
 
+```bynk,fragment
 match o {
   Some(Red | Green) => 1
   Some(Blue) => 2

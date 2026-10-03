@@ -1,0 +1,2 @@
+bynk.parse.duplicate_security
+a service declares at most one `security { }` policy

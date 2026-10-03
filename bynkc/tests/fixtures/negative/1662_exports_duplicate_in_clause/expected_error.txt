@@ -1,0 +1,2 @@
+bynk.exports.duplicate_in_clause
+type `P` appears more than once in this exports clause

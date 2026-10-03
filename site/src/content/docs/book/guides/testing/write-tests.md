@@ -10,7 +10,7 @@ its target unit, containing named `case`s.
 
 ## Write and run
 
-```bynk
+```bynk,fragment
 suite counters {
   case "a fresh counter starts at zero" {
     let n <- Counter(CounterId.unsafe("fresh")).current()
@@ -36,7 +36,7 @@ failure reports the predicate structure: `expected` versus `actual`.
 `Val[T]` produces a value of `T`. For a refined type it satisfies the
 refinement; pass an argument to pin a specific value:
 
-```bynk
+```bynk,fragment
 suite quantities {
   case "vals" {
     let a = Val[Quantity]       -- a valid Quantity
@@ -83,7 +83,7 @@ Where an `ensures` constrains one function call and an `invariant` constrains on
 committed state, a **`transition`** constrains the *move* between two — declared on
 the agent, over the `old`/`new` state pair:
 
-```bynk
+```bynk,fragment
 agent Order {
   key id: OrderId
 
@@ -110,7 +110,7 @@ Where a `case` supplies its subjects, a `property` **generates** them and checks
 claim holds across many. `for all x: T` binds `x` to a generated inhabitant of
 `T`; an optional `where` filters the generated tuples:
 
-```bynk
+```bynk,fragment
 suite pricing {
   property "more discount, never a higher price" {
     for all p: Price, a: Percent, b: Percent where a <= b {
@@ -134,7 +134,7 @@ When a case depends on what a collaborator *returns*, override that one seam wit
 (or `fails`) on the right. It is the same seam word production uses, scoped to the
 test:
 
-```bynk
+```bynk,fragment
 suite pricing {
   stub Rates.lookup("GBP") returns 1.25    -- suite-scoped; applies to every case
   stub Rates.lookup(_)     returns 1.0     -- fallback; first matching clause wins
@@ -152,7 +152,7 @@ needs logic is the signal to promote the tier instead. For a collaborator whose
 successive calls differ, use the **sequenced** form (one outcome per call, last
 repeats):
 
-```bynk
+```bynk,fragment
 stub Clock.now() returns each [1000, 2000, 3000]   -- three ticks, then holds at 3000
 stub Net.fetch(_) returns each [fails, fails, ok(resp)]  -- fails twice, then succeeds
 ```
@@ -167,7 +167,7 @@ A test declares *how much of the real world runs* with an `as <tier>` clause on 
 header — `unit` (the default, elided), `integration`, or `system`. The body does
 not change; only the header does:
 
-```bynk
+```bynk,ignore
 case "a small order authorises end to end"                { … }  -- as unit (default)
 case "a small order authorises end to end" as integration { … }  -- real collaborators, one context
 case "a small order authorises end to end" as system      { … }  -- contexts wired across the real edge
@@ -186,7 +186,7 @@ To assert *that* a collaborator was called — not just what the unit returned �
 the seam and a matcher. Calls are recorded automatically in the test build, so a
 pure-observation case needs no `stub`:
 
-```bynk
+```bynk,fragment
 suite payments {
   case "a rejected charge is logged and writes nothing" {
     let r <- authorise.call(-1)
@@ -203,7 +203,7 @@ The matchers are `called`, `never called`, `called once` / `called <n> times`,
 recorded calls as an ordinary `List` you assert with `length()`, `all` / `any`, and
 indexing:
 
-```bynk
+```bynk,fragment
 let calls = trace(Logger.log)
 expect calls.length() == 2
 expect calls.all((c) => c.msg.length() > 0)

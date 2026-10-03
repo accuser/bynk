@@ -1,0 +1,2 @@
+bynk.resolve.duplicate_agent
+agent `Counter` is already declared

@@ -107,7 +107,7 @@ deploy api
 
 **Declared** — an actor's `auth` secret:
 
-```bynk
+```bynk,fragment
 actor User { auth = Bearer(secret = "AUTH_JWT_SECRET"), identity = UserId }
 ```
 
@@ -116,7 +116,7 @@ compiled project. You supply the value; you never name it.
 
 **Read** — a `bynk.Secrets` lookup:
 
-```bynk
+```bynk,fragment
 let key <- Secrets.get("STRIPE_KEY")
 ```
 

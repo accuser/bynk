@@ -14,9 +14,10 @@ These diagnostics relate to **sharing a capability across contexts** —
 `exports capability { … }` may only name capabilities the context **declares**.
 Declare the capability (or fix the name):
 
-```bynk,ignore
-capability Clock { fn now() -> Effect[Int] }
+```bynk,fragment
 exports capability { Clock }   -- not `{ Nope }`
+
+capability Clock { fn now() -> Effect[Int] }
 ```
 
 Type exports (`exports opaque` / `exports transparent`) and capability exports
@@ -31,7 +32,7 @@ are separate name kinds — a type cannot appear in `exports capability`.
 An exported capability must also be **provided** in the same context, so a
 consumer's composition can instantiate it. Add a provider:
 
-```bynk,ignore
+```bynk,fragment
 provides Clock = SystemClock {
   fn now() -> Effect[Int] { 0 }
 }

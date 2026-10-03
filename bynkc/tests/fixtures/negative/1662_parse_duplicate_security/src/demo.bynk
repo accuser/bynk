@@ -1,0 +1,11 @@
+context demo
+
+-- #1662: two `security` policies.
+service api from http {
+  security { nosniff: true }
+  security { nosniff: true }
+
+  on GET("/a") () -> Effect[HttpResult[Int]] by Visitor {
+    Ok(1)
+  }
+}

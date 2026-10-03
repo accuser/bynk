@@ -1,0 +1,2 @@
+bynk.types.match_non_sum_discriminant
+cannot match on a value of type `P` — `match` requires a sum,

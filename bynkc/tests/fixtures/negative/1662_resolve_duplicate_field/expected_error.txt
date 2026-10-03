@@ -1,0 +1,2 @@
+bynk.resolve.duplicate_field
+field `a` is declared more than once

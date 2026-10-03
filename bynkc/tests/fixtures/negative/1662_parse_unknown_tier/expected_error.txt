@@ -1,0 +1,2 @@
+bynk.parse.unknown_tier
+`weird` is not a test tier; expected `unit`, `integration`, or
