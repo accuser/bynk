@@ -112,11 +112,15 @@ for an opaque type it compares the representation. `==` is defined only on an
 container element, or a generic argument written in the type, such as
 `Box[(Int) -> Int]`) is not equality-supporting, and `==` on it is rejected
 (`bynk.types.not_comparable`, `bynk.types.stream_not_comparable`,
-`bynk.types.held_not_comparable`). Two cases are not yet checked, and fall back to
-comparing such values by identity: `==` on a type parameter inside a generic
-function (`fn same[T](a: T, b: T) -> Bool { a == b }`) accepts whatever type the
-caller instantiates `T` with (#1688), and a record imported from another unit is not
-walked through its fields. A nullary variant read from storage or decoded
+`bynk.types.held_not_comparable`). Inside a generic function, `==` on a type
+parameter is accepted; the bound moves to the call. A generic function
+*compares* a type parameter when `==`/`!=` reaches a value of it, directly or by
+passing it to a compared parameter of another generic function, and each call
+MUST instantiate a compared parameter with an equality-supporting type (the same
+codes, reported at the call: `same(f, h)` on two functions is rejected for
+`fn same[T](a: T, b: T) -> Bool { a == b }`). One case is not yet checked, and
+falls back to comparing such values by identity: a record imported from another
+unit is not walked through its fields. A nullary variant read from storage or decoded
 from JSON equals the same variant written in source.
 
 **`Float` equality** (v0.21). `==`/`!=` on `Float` follow the host's IEEE

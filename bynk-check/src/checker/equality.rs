@@ -17,15 +17,17 @@
 //! `Option[Connection[F]]`, `List[(Int) -> Int]`, a record with an `Effect`
 //! field, and `Box[(Int) -> Int]` were all accepted.
 //!
-//! Two gaps remain, both permissive (the runtime walker then compares the
-//! offending part by identity):
+//! Inside a generic function a type variable is equality-supporting, so `==`
+//! on `T` there is accepted; the bound moves to the call site instead (#1688).
+//! [`compared_type_params`] infers which of a generic function's type
+//! parameters it compares — directly with `==`/`!=`, or by passing them to a
+//! compared parameter of another generic function — and the call checks each
+//! such argument with [`not_comparable`]. Bynk generics are not monomorphised,
+//! so the instantiation is the only place the concrete type is known.
 //!
-//! - a type variable is equality-supporting, so `==` on `T` inside a generic
-//!   function is accepted, and nothing re-checks the type argument a caller
-//!   instantiates `T` with (`same(f, h)` on two functions compiles). Closing it
-//!   needs equality bounds inferred per generic function, transitively;
-//! - a record imported from another unit is absent from `ctx.input.types`, so
-//!   `walk_decl` cannot see its fields.
+//! One gap remains, and it is permissive (the runtime walker then compares the
+//! offending part by identity): a record imported from another unit is absent
+//! from `ctx.input.types`, so `walk_decl` cannot see its fields.
 //!
 //! Records and sums are walked through their declared field types
 //! (`TypeRef`s), because the interned `Ty::Named` carries only the name and the
@@ -33,11 +35,130 @@
 //! parameters is covered by walking the corresponding applied argument. A
 //! visited set keeps recursive types (`Node = { next: Option[Node] }`) finite.
 
-use std::collections::HashSet;
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 
-use bynk_syntax::ast::{TypeBody, TypeRef};
+use bynk_syntax::ast::{FnDecl, TypeBody, TypeRef};
 
-use super::{Ctx, Ty, TyId};
+use super::{Ctx, Ty, TyId, Types};
+use crate::hints::HintSink;
+use crate::index::RefSink;
+use crate::locals::LocalsSink;
+use crate::requirements::RequirementSink;
+
+thread_local! {
+    /// #1688: one frame per generic body being scanned by
+    /// [`compared_type_params`]; `==` and compared call arguments add the type
+    /// variables they mention to the innermost frame. Empty outside a scan, so
+    /// ordinary checking records nothing.
+    static RECORDING: RefCell<Vec<HashSet<String>>> = const { RefCell::new(Vec::new()) };
+    /// #1688: each generic function's compared type parameters, keyed by its
+    /// declaration's address and valid for one [`super::check_record_in`] run
+    /// (see [`reset_compared_cache`]). `None` marks a scan in progress, which a
+    /// recursive call reads as "compares nothing yet".
+    static COMPARED: RefCell<HashMap<usize, Option<Rc<HashSet<String>>>>> =
+        RefCell::new(HashMap::new());
+}
+
+/// #1688: clear the per-unit cache of compared type parameters. Called at the
+/// start of each unit's check, so a declaration address never outlives the unit
+/// it was computed for.
+pub(crate) fn reset_compared_cache() {
+    COMPARED.with(|c| c.borrow_mut().clear());
+}
+
+/// #1688: inside a [`compared_type_params`] scan, note that every type variable
+/// in `ty` is compared. A no-op during ordinary checking.
+pub(crate) fn record_compared(ty: TyId, tys: &Types) {
+    RECORDING.with(|r| {
+        if let Some(frame) = r.borrow_mut().last_mut() {
+            collect_vars(ty, tys, frame);
+        }
+    });
+}
+
+fn collect_vars(ty: TyId, tys: &Types, out: &mut HashSet<String>) {
+    match &*tys.get(ty) {
+        Ty::Var(name) => {
+            out.insert(name.clone());
+        }
+        Ty::Result(a, b) | Ty::Map(a, b) => {
+            collect_vars(*a, tys, out);
+            collect_vars(*b, tys, out);
+        }
+        Ty::Option(a)
+        | Ty::Effect(a)
+        | Ty::HttpResult(a)
+        | Ty::List(a)
+        | Ty::Query(a)
+        | Ty::Stream(a)
+        | Ty::Connection(a) => collect_vars(*a, tys, out),
+        Ty::Fn { params, ret } => {
+            for p in params {
+                collect_vars(*p, tys, out);
+            }
+            collect_vars(*ret, tys, out);
+        }
+        Ty::Named { args, .. } => {
+            for a in args {
+                collect_vars(*a, tys, out);
+            }
+        }
+        Ty::Base(_)
+        | Ty::Error
+        | Ty::QueueResult
+        | Ty::ValidationError
+        | Ty::JsonError
+        | Ty::Unit
+        | Ty::Actor(_)
+        | Ty::ActorSum(_) => {}
+    }
+}
+
+/// #1688: the type parameters of generic function `decl` that it compares —
+/// that reach an `==`/`!=` operand in its body, or a compared parameter of a
+/// generic function it calls (transitively). A caller must instantiate each
+/// with an equality-supporting type.
+///
+/// Computed by checking `decl`'s body again into throwaway sinks with a
+/// recording frame pushed; its diagnostics were already reported (or will be)
+/// by its own unit's check, so they are discarded here. Cached per unit. A
+/// recursive cycle reads an in-progress scan as comparing nothing, which can
+/// only under-approximate (accept), never reject a valid call.
+pub(crate) fn compared_type_params(decl: &FnDecl, ctx: &Ctx) -> Rc<HashSet<String>> {
+    if decl.type_params.is_empty() {
+        return Rc::new(HashSet::new());
+    }
+    let key = decl as *const FnDecl as usize;
+    if let Some(entry) = COMPARED.with(|c| c.borrow().get(&key).cloned()) {
+        return entry.unwrap_or_default();
+    }
+    COMPARED.with(|c| c.borrow_mut().insert(key, None));
+    RECORDING.with(|r| r.borrow_mut().push(HashSet::new()));
+    super::calls::check_fn(
+        decl,
+        ctx.input,
+        &mut HashMap::new(),
+        &mut HashMap::new(),
+        &mut Vec::new(),
+        &mut RefSink::new(),
+        &mut HintSink::new(),
+        &mut LocalsSink::new(),
+        &mut RequirementSink::new(),
+        ctx.tys,
+    );
+    let seen = RECORDING.with(|r| r.borrow_mut().pop()).unwrap_or_default();
+    let compared: HashSet<String> = decl
+        .type_params
+        .iter()
+        .map(|tp| tp.name.name.clone())
+        .filter(|n| seen.contains(n))
+        .collect();
+    let compared = Rc::new(compared);
+    COMPARED.with(|c| c.borrow_mut().insert(key, Some(Rc::clone(&compared))));
+    compared
+}
 
 /// Why a type is not equality-supporting: the first offending part found.
 pub(crate) enum NotComparable {

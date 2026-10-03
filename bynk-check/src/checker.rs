@@ -907,6 +907,8 @@ pub fn check_record_in(
         }
     }
 
+    // #1688: compared-type-parameter scans are cached per unit.
+    equality::reset_compared_cache();
     // 2. Type-check each function and method body.
     for item in &input.commons.items {
         if let CommonsItem::Fn(f) = item {

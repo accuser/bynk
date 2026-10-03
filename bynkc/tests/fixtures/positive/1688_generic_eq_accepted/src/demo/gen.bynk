@@ -1,0 +1,30 @@
+---
+#1688: a comparing generic accepts every equality-supporting instantiation, and
+a generic that never compares its parameter still takes a function.
+---
+commons demo.gen
+
+fn same[T](a: T, b: T) -> Bool { a == b }
+
+fn twice[U](a: U, b: U) -> Bool { same(a, b) }
+
+fn apply[A, B](f: (A) -> B, x: A) -> B { f(x) }
+
+fn pick[T](a: T, b: T, first: Bool) -> T {
+  if first { a } else { b }
+}
+
+fn countdown[T](a: T, n: Int) -> Bool {
+  if n == 0 { same(a, a) } else { countdown(a, n - 1) }
+}
+
+fn inc(n: Int) -> Int { n + 1 }
+
+fn dec(n: Int) -> Int { n - 1 }
+
+fn applyTen(f: (Int) -> Int) -> Int { f(10) }
+
+-- `pick` never compares its `T`, so it may be instantiated with a function type.
+fn applyPicked(first: Bool) -> Int {
+  applyTen(pick[(Int) -> Int](inc, dec, first))
+}
