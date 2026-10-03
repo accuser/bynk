@@ -17,6 +17,8 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0429](0429-unreachable-match-arms.md) | **A match arm that an earlier arm covers is an error** (v0.299) — Usefulness check over nested, or- and literal patterns; guarded arms and refined patterns never cover | Accepted (v0.299) |
+| [0428](0428-emitted-name-hygiene.md) | **Emitted names cannot collide with Bynk names** (v0.299) — Host globals via `globalThis`, runtime and helper names under `__`, fresh names for shadowing binders, `$tag`; `kind` payload fields and `globalThis` declarations reserved | Accepted (v0.299) |
 | [0427](0427-is-binding-scope.md) | **An `is` binding is in scope wherever its test is known to have matched** (v0.297) — One structural rule (which `is` tests an expression proves, by outcome) decides is-binding scope for the resolver, checker and emitter alike | Accepted (v0.297) |
 | [0426](0426-unbound-effect-is-an-error.md) | **An `Effect` value built in an effectful body and not awaited is an error** (v0.296) — A plain let, list element or constructor payload of Effect type is bynk.effect.unbound_effect; bind, do, return or pass it instead | Accepted (v0.296) |
 | [0425](0425-int-safe-integer-domain.md) | **`Int` is the JS safe-integer domain, enforced at every entry** (v0.295) — Literals, the wire (both directions), Int.parse, division by zero and Float→Int conversions all hold an Int to ±(2^53 − 1) | Accepted (v0.295) |

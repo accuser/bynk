@@ -1,11 +1,6 @@
----
-level: minor
-changelog: Every unreachable `match` arm is now an error, not only one after a leading wildcard (`Some(_)` then `Some(Red)`, a trailing `_` after every variant, an or-pattern overlap; guarded arms never cover) (#1656). User names can no longer collide with emitted names (#1653): host globals are reached as `globalThis.X`, runtime imports and codec helpers carry a `__` prefix (`__JsonValue`, `__serialise_T`), shadowing parameters and pattern bindings get fresh names, and a payload field `tag` becomes `$tag` in TypeScript. A payload field named `kind` (`bynk.resolve.reserved_payload_field`) and any declaration named `globalThis` (`bynk.resolve.reserved_host_name`) are rejected
----
+# 0428 — Emitted names cannot collide with Bynk names
 
-## ADR: emitted-name-hygiene
-title: Emitted names cannot collide with Bynk names
-summary: Host globals via `globalThis`, runtime and helper names under `__`, fresh names for shadowing binders, `$tag`; `kind` payload fields and `globalThis` declarations reserved
+- **Status:** Accepted (v0.299)
 
 **Context.** Before #1653, Bynk names went into TypeScript verbatim, in the
 same module scope as everything the emitter adds: the in-memory discriminant
@@ -88,34 +83,3 @@ Proved by:
 - negatives `1653_payload_field_named_kind`, `1653_type_named_global_this` and
   `1653_agent_named_global_this`;
 - the drift guard.
-
-## ADR: unreachable-match-arms
-title: A match arm that an earlier arm covers is an error
-summary: Usefulness check over nested, or- and literal patterns; guarded arms and refined patterns never cover
-
-**Context.** static-semantics says match arms MUST NOT be unreachable, but
-`bynk.types.unreachable_arm` fired only after a leading wildcard. `Some(_)`
-then `Some(Red)` was accepted, and its emitted narrowing failed `tsc`. A
-defensive trailing `_` after every variant compiled silently.
-
-**Decision.**
-- An arm is unreachable, and an error, when every value its pattern matches is
-  already matched by an earlier **unguarded** arm.
-- The check recurses through nested payloads, or-patterns and literals, and is
-  sound but bounded like exhaustiveness. A multi-field payload is covered only
-  when one earlier arm covers it field by field. An arm is reported only when
-  it is certainly unreachable.
-- A guarded arm and a refined pattern (`n where P`) never cover a later arm,
-  since the guard or predicate may fail.
-- Duplicate arms keep their own codes (`duplicate_variant_arm`,
-  `duplicate_literal_arm`).
-- Severity is an error, matching the spec's MUST (issue Decision A).
-
-**Consequences.** Some programs are newly rejected, including a defensive
-trailing `_`. The diagnostic says why, and suggests removing the arm or moving
-it above the arm that covers it.
-
-Proved by negatives covering each shape in the issue, and the behavioural
-fixture `1656_reachable_arms`, which shows that guarded duplicates, a refined
-arm followed by the same refined arm or a wildcard, and narrow-before-wide arms
-all stay legal.
