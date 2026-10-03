@@ -1,0 +1,11 @@
+context demo
+
+-- #1662: two `limits` policies.
+service api from http {
+  limits { maxBody: 1024 }
+  limits { maxBody: 2048 }
+
+  on GET("/a") () -> Effect[HttpResult[Int]] by Visitor {
+    Ok(1)
+  }
+}

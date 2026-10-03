@@ -42,7 +42,6 @@ There are **464** codes in total.
 |---|---|---|---|
 | `bynk.consumes.alias_conflict` | Two `consumes` aliases collide. | [`consumes_decl`](/book/reference/grammar/#rule-consumes_decl) | — |
 | `bynk.consumes.capability_name_clash` | Two flattened `consumes U { Cap }` capabilities collide, or one clashes with a local capability. | [`consumes_decl`](/book/reference/grammar/#rule-consumes_decl) | — |
-| `bynk.consumes.in_commons` | `consumes` appears in a `commons` (it is only valid in a context). | [`consumes_decl`](/book/reference/grammar/#rule-consumes_decl) | — |
 | `bynk.consumes.name_conflict` | A `consumes` name collides with another name in scope. | [`consumes_decl`](/book/reference/grammar/#rule-consumes_decl) | — |
 | `bynk.consumes.self_reference` | A context `consumes` itself. | [`consumes_decl`](/book/reference/grammar/#rule-consumes_decl) | — |
 | `bynk.consumes.service_arity` | A consumed service was called with the wrong number of arguments. | [`consumes_decl`](/book/reference/grammar/#rule-consumes_decl) | — |
@@ -186,10 +185,8 @@ There are **464** codes in total.
 
 | Code | Summary | Construct | Severity |
 |---|---|---|---|
-| `bynk.observe.bad_count` | An observation call count is not a non-negative integer literal (`called once` / `called <n> times`). |  | — |
 | `bynk.observe.impure_with` | A `with` predicate uses an effectful or test-only construct; it must be pure. |  | — |
 | `bynk.observe.not_a_seam` | An observation targets a capability the unit under test does not consume. |  | — |
-| `bynk.observe.outside_case` | An observation appears outside a `case` body. |  | — |
 | `bynk.observe.trace_outside_test` | `trace(Cap.op)` appears outside a `case` body. |  | — |
 | `bynk.observe.unknown_op` | An observation names an operation the capability does not declare. |  | — |
 | `bynk.observe.with_not_bool` | A `with` predicate does not have type `Bool`. |  | — |
@@ -232,6 +229,7 @@ There are **464** codes in total.
 | `bynk.adapter.provider_has_body` | A provider inside an `adapter` has a Bynk body; adapter providers must be external. | [`provider_decl`](/book/reference/grammar/#rule-provider_decl) | — |
 | `bynk.cell.invalid_target` | A `:=` write targets something that is not a `store Cell` field. |  | — |
 | `bynk.cell.self_reference` | A `:=` right-hand side reads the cell being written (a read-modify-write); use `.update`. |  | — |
+| `bynk.deploy.contract_skew` | A worker was compiled against a contract its live dependencies no longer provide, so `bynk deploy` refuses to ship it. |  | — |
 | `bynk.duration.literal_overflow` | A `Duration` literal (`<int>.<unit>`) exceeds the representable millisecond range. |  | — |
 | `bynk.event.bad_field_default` | An event field's default expression (`field: T = expr`) is not a static, wire-representable value of the field's declared type — a literal (including one admitted to a refined type), a sum variant, `Some`/`None`/`Ok`/`Err`, a record, or `T.unsafe(lit)` for an opaque type whose literal also satisfies the refinement. |  | — |
 | `bynk.event.bad_params` | An `on event` handler declared the wrong number of parameters, or a second parameter whose type is not `EventEnvelope` — it takes the event payload and, optionally, the runtime envelope. |  | — |
@@ -251,6 +249,8 @@ There are **464** codes in total.
 | `bynk.event.schema_version_mismatch` | An event's `@schema(N)` annotation disagrees with the version the schema registry computes from the event's build history. |  | — |
 | `bynk.event.unknown_annotation` | An `event` declaration carried an `@`-annotation other than `@schema` — event annotations are a closed set. |  | — |
 | `bynk.event.unknown_subscription` | A `from Events(E)` subscription named `E`, which is not a declared event in this context or any consumed context. |  | — |
+| `bynk.fmt.comment_loss` | The formatter would drop a comment, so it leaves the file unchanged. |  | — |
+| `bynk.fmt.roundtrip` | The formatter's output does not re-parse to the same program, so it leaves the file unchanged. |  | — |
 | `bynk.generics.duplicate_type_param` | A `type` or `fn` declares the same type-parameter name more than once (v0.157, ADR 0183). |  | — |
 | `bynk.generics.generic_non_record` | A `type` declaration carries type parameters on a refined or opaque body; only a record (`type Name[T] = { … }`) or sum (`type Name[T] = | … | …`) body may be generic (v0.157/#593, ADRs 0183/0197). | [`type_decl`](/book/reference/grammar/#rule-type_decl) | — |
 | `bynk.generics.generic_record_at_boundary` | A `Val[…]` fabricates a value of a generic type; per-instantiation value fabrication is not yet wired (ADR 0197). Since v0.174 a generic-record instantiation may otherwise cross a boundary through its monomorphised codec. |  | — |
@@ -325,8 +325,9 @@ There are **464** codes in total.
 | `bynk.test.service_unknown_route` | A test body addresses an http route / cron schedule / queue message the service does not declare. | [`case`](/book/reference/grammar/#rule-case) | — |
 | `bynk.test.unknown_actor` | A call-site `by <Actor>` names an actor the target context does not declare and that is not a prelude actor. | [`case`](/book/reference/grammar/#rule-case) | — |
 | `bynk.test.wire_needs_system` | A `Wire(...)` raw argument is used outside a `system`-tier service address; `Wire` hands pre-validation input to the boundary and is meaningless at `unit` or in any other position. | [`case`](/book/reference/grammar/#rule-case) | — |
-| `bynk.tier.property_has_tier` | A `property` carries an `as <tier>` clause; tiers are a `case`-only affordance. |  | — |
 | `bynk.tier.system_needs_wire` | An `as system` test stands up fewer than two contexts; the system tier wires across contexts. |  | — |
+| `bynk.wasm.panic` | The in-browser compiler panicked internally (a compiler bug, reported as a diagnostic instead of crashing the page). |  | — |
+| `bynk.wasm.strip_failed` | The in-browser compiler could not strip the emitted TypeScript to JavaScript. |  | — |
 | `bynk.ws.message_frame_param` | A WebSocket `on message` handler does not have exactly one parameter of the service's inbound (`in:`) frame type — the decoded frame (real-time track slice 3b-iii). |  | — |
 | `bynk.ws.open_given_unsupported` | A WebSocket `on open` handler declares `given` capabilities — unsupported at v1, since on Workers the handler runs inside the connection-hosting Durable Object, which has no composition root to supply them (real-time track slice 3b). |  | — |
 | `bynk.ws.open_transfer_shape` | A WebSocket `on open` handler does not transfer its `connection` into exactly one agent, so the Workers upgrade has no single Durable Object to route to (real-time track slice 3b). |  | — |
@@ -569,7 +570,6 @@ There are **464** codes in total.
 | `bynk.types.not_comparable` | A value compared with `==`/`!=` contains a function, `Effect`, or `Query` somewhere inside it — those have no value equality, so the type is not equality-supporting (type-system §2.3.5, #1652). |  | — |
 | `bynk.types.ok_value_mismatch` | An `Ok` payload has the wrong type. | [`ok_expr`](/book/reference/grammar/#rule-ok_expr) | — |
 | `bynk.types.opaque_raw_outside` | `.raw` on an opaque type was used outside its defining commons. | [`field_access`](/book/reference/grammar/#rule-field_access) | — |
-| `bynk.types.opaque_record_construction` | An opaque type was constructed with record syntax. | [`record_construction`](/book/reference/grammar/#rule-record_construction) | — |
 | `bynk.types.opaque_unsafe_outside` | `.unsafe` on an opaque type was used outside its defining context. | [`field_access`](/book/reference/grammar/#rule-field_access) | — |
 | `bynk.types.or_pattern_binding_mismatch` | An or-pattern's alternatives don't all bind the same set of names. | [`match_arm`](/book/reference/grammar/#rule-match_arm), [`is_expr`](/book/reference/grammar/#rule-is_expr) | — |
 | `bynk.types.or_pattern_type_mismatch` | An or-pattern's alternatives give a shared binding different types (or refinements). | [`match_arm`](/book/reference/grammar/#rule-match_arm), [`is_expr`](/book/reference/grammar/#rule-is_expr) | — |

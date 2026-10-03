@@ -1,0 +1,2 @@
+bynk.types.cannot_infer_result_type_params
+cannot infer the type parameter of `Ok(...)`

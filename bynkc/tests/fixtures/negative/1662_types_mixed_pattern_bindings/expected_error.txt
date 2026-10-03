@@ -1,0 +1,2 @@
+bynk.types.mixed_pattern_bindings
+pattern bindings must be all named (`field: name`) or all positional

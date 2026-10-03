@@ -1,0 +1,15 @@
+context demo
+
+-- #1662: a service declared twice.
+
+service probe {
+  on call() -> Effect[Int] {
+    Effect.pure(1)
+  }
+}
+
+service probe {
+  on call() -> Effect[Int] {
+    Effect.pure(1)
+  }
+}

@@ -1,0 +1,9 @@
+context demo
+
+-- #1662: an annotation with no handler after it.
+service api from http {
+  on GET("/a") () -> Effect[HttpResult[Int]] by Visitor {
+    Ok(1)
+  }
+  @cache(maxAge: 5.minutes)
+}

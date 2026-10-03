@@ -1,0 +1,2 @@
+bynk.parse.expected_visibility
+expected `opaque`, `transparent`, or `capability` after `exports`,

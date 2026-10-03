@@ -1,0 +1,2 @@
+bynk.actor.outside_context
+`actor` declarations are only allowed inside a context, not a commons

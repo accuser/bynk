@@ -1,0 +1,2 @@
+bynk.agent.handler_not_found
+agent `Counter` has no handler named `nope`

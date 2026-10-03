@@ -53,16 +53,11 @@ block).
 **Fix:** remove the effectful/test-only construct. A `with` predicate may read the
 operation's arguments and call pure value methods only.
 
-## `bynk.observe.outside_case`
+## An observation outside a `case`
 
-```text
-[bynk.observe.outside_case] Error: an observation is only valid inside a `case` body
-```
-
-**Cause:** an `expect Cap.op called …` observation appears outside a `case` — calls
-are recorded per case, so there is nothing to observe elsewhere.
-
-**Fix:** move the observation into a `case`.
+An `expect Cap.op called …` observation is an `expect`, so outside a test body it
+is rejected as one (`bynk.expect.outside_case`): calls are recorded per case, so
+there is nothing to observe elsewhere. Move the observation into a `case`.
 
 ## `bynk.observe.trace_outside_test`
 
@@ -76,13 +71,7 @@ elsewhere it is an ordinary identifier.
 **Fix:** use `trace(Cap.op)` only inside a `case`. In production code, `trace` names
 whatever value you bind it to.
 
-## `bynk.observe.bad_count`
+## A call count that is not a literal
 
-```text
-[bynk.observe.bad_count] Error: a call count must be a non-negative integer literal (`called once` or `called <n> times`)
-```
-
-**Cause:** a call count is not a non-negative integer literal.
-
-**Fix:** write `called once`, or `called <n> times` with a literal `<n>` (e.g.
-`called 3 times`).
+A call count is `once` or a literal `<n> times` (e.g. `called 3 times`); anything
+else — a variable, an expression, a negative number — does not parse as a count.

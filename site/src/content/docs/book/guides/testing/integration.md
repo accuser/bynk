@@ -48,7 +48,7 @@ A case's effective tier is `case.tier ?? suite.tier ?? unit`.
 
 Tiers are a **`case`-only** affordance. A `property` *generates* and does not
 promote, so a suite-level `as` binds its `case` members only; an `as` on a
-`property` header is [`bynk.tier.property_has_tier`](/book/troubleshooting/integration-errors/#bynktierproperty_has_tier).
+`property` header [does not parse](/book/troubleshooting/integration-errors/#a-tier-on-a-property).
 To check a generated input end to end, promote *that witness* as a concrete
 `case … as integration`.
 

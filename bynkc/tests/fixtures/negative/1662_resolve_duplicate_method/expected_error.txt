@@ -1,0 +1,2 @@
+bynk.resolve.duplicate_method
+method `P.m` is already declared

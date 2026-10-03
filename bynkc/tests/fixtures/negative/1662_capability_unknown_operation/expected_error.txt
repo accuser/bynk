@@ -1,0 +1,2 @@
+bynk.capability.unknown_operation
+capability `Clock` has no operation named `nope`

@@ -1,0 +1,2 @@
+bynk.resolve.type_as_function
+`P` is a type, not a function — use `P.of(value)` or `P { ... }`

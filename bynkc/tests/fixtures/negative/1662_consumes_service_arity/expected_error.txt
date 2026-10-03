@@ -1,0 +1,2 @@
+bynk.consumes.service_arity
+cross-context service `pay.charge` expects 1 argument(s), but 2 were

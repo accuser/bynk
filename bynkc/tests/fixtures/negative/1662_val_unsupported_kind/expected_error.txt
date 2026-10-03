@@ -1,0 +1,2 @@
+bynk.val.unsupported_kind
+`Val` is not a value type: `Int -> Int`

@@ -1,0 +1,2 @@
+bynk.parse.self_outside_method
+`self` can only appear as the first parameter of a method declaration

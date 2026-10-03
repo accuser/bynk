@@ -193,8 +193,8 @@ A case's effective tier is `case.tier ?? suite.tier ?? unit`. Promotion changes
   a queue-only target does not yet qualify.) `integration` carries no such rule — it
   is real collaborators within one context, no wire.
 - Tiers are **`case`-only**: a `property` generates and does not promote, so a
-  suite-level `as` binds its `case` members only; an `as` on a `property` header is
-  `bynk.tier.property_has_tier`.
+  suite-level `as` binds its `case` members only, and a `property` header has no
+  place for an `as` (it does not parse).
 - The **agent-state lifecycle is fixed across tiers**: the unit under test is
   always a real in-memory instance, keyed normally, fresh per case; only its
   collaborators' realness and whether sends cross a serialisation boundary change.

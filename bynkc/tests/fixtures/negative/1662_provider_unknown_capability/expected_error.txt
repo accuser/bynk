@@ -1,0 +1,2 @@
+bynk.provider.unknown_capability
+provider targets unknown capability `Clock` — declare the capability

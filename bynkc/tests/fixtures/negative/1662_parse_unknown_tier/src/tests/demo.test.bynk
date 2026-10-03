@@ -1,0 +1,6 @@
+suite demo {
+  -- #1662: a test tier that does not exist.
+  case "x" as weird {
+    expect true
+  }
+}

@@ -1138,21 +1138,6 @@ pub fn phase_resolve_consumes(
             refs.enter_file(&parsed[i].identity_path(), name, parsed[i].is_synthetic());
             for c in parsed[i].consumes() {
                 let target = c.target.joined();
-                if kind != UnitKind::Context && kind != UnitKind::Adapter {
-                    errors.push_for(Some(&parsed[i].identity_path()),
-                        CompileError::new(
-                            "bynk.consumes.in_commons",
-                            c.span,
-                            format!(
-                                "`consumes` is only valid inside a context or adapter, not a commons `{name}`",
-                            ),
-                        )
-                        .with_note(
-                            "commons declare vocabulary; only contexts and adapters can declare behavioural dependencies",
-                        ),
-                    );
-                    continue;
-                }
                 // v0.18: an adapter's `consumes` is the braced capability-selection
                 // form only — an adapter has no services to RPC-call, so the
                 // whole-unit and `as Alias` forms are meaningless inside one.

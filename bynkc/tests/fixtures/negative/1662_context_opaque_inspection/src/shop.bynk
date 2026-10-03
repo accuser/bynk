@@ -1,0 +1,18 @@
+context shop
+
+-- #1662: matching on a type the owner exports opaquely, in a free function.
+consumes pay
+
+fn label(s: Status) -> Int {
+  match s {
+    Paid => 1
+    Declined => 2
+  }
+}
+
+service checkout {
+  on call() -> Effect[Int] {
+    let s <- pay.charge(1)
+    Effect.pure(label(s))
+  }
+}

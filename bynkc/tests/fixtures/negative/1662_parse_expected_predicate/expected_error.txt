@@ -1,0 +1,2 @@
+bynk.parse.expected_predicate
+expected a refinement predicate name, found integer literal

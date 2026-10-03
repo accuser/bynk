@@ -1,0 +1,11 @@
+context demo
+
+-- #1662: an actor declared twice.
+actor User { auth = None }
+actor User { auth = None }
+
+service api from http {
+  on GET("/a") () -> Effect[HttpResult[Int]] by Visitor {
+    Ok(1)
+  }
+}

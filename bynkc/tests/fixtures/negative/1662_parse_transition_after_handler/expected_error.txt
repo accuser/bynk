@@ -1,0 +1,2 @@
+bynk.parse.transition_after_handler
+a `transition` must be declared before the agent's handlers

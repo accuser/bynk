@@ -1,0 +1,2 @@
+bynk.resolve.duplicate_param
+parameter `a` is declared more than once

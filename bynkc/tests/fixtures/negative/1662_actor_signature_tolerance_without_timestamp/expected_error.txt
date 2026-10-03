@@ -1,0 +1,2 @@
+bynk.actor.signature_tolerance_without_timestamp
+`tolerance` requires a `timestamp` header to check against

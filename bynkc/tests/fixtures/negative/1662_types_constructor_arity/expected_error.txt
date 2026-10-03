@@ -1,0 +1,2 @@
+bynk.types.constructor_arity
+constructor `Age.of` expects 1 argument, but 2 were given

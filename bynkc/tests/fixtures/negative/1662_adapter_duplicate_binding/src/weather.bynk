@@ -1,0 +1,11 @@
+adapter weather {
+  -- #1662: two `binding` clauses.
+  binding "./a.binding.ts"
+  binding "./b.binding.ts"
+
+  capability Weather {
+    fn now() -> Effect[Int]
+  }
+
+  provides Weather = External
+}

@@ -1,0 +1,2 @@
+bynk.parse.unknown_handler_kind
+unknown handler form `nope` — expected `call`, an HTTP method

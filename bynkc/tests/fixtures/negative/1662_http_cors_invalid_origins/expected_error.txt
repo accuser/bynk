@@ -1,0 +1,2 @@
+bynk.http.cors_invalid_origins
+a `cors { }` policy must declare `origins` — the allowed origins, or

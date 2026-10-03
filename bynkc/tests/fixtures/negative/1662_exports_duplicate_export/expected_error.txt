@@ -1,0 +1,2 @@
+bynk.exports.duplicate_export
+type `P` is exported more than once

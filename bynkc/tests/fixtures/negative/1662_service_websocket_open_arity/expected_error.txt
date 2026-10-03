@@ -1,0 +1,2 @@
+bynk.service.websocket_open_arity
+the `from websocket` service `chat` has no `on open` handler — it

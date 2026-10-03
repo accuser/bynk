@@ -1,0 +1,2 @@
+bynk.parse.extra_tokens
+unexpected token after top-level declaration

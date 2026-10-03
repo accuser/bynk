@@ -1,0 +1,2 @@
+bynk.parse.expected_handler
+expected `on` to start a handler, found `fn`

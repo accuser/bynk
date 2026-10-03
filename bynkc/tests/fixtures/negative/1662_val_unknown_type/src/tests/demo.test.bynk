@@ -1,0 +1,8 @@
+suite demo {
+  -- #1662: a `for all` over a type that does not resolve.
+  property "x" {
+    for all n: Nope {
+      expect true
+    }
+  }
+}

@@ -1,0 +1,2 @@
+bynk.actor.signature_missing_header
+a `Signature` actor must name the signature header

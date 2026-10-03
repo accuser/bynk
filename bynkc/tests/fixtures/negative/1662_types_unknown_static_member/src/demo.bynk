@@ -1,0 +1,8 @@
+context demo
+
+-- #1662: a payloadless `HttpResult` variant that does not exist.
+service api from http {
+  on GET("/a") () -> Effect[HttpResult[Int]] by Visitor {
+    HttpResult.Nope
+  }
+}

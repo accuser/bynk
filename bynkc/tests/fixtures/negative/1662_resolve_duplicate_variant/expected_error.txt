@@ -1,0 +1,2 @@
+bynk.resolve.duplicate_variant
+variant `Red` is declared more than once

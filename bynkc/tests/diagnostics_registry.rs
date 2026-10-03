@@ -3,10 +3,8 @@
 //!
 //! 1. Every `bynk.*` code used as a string literal in the compiler source must
 //!    appear in `bynk_syntax::diagnostics::REGISTRY`, and vice versa. "Compiler
-//!    source" now spans two crates: `bynkc/src` and the `bynk-syntax/src` leaf
-//!    the syntax foundation (lexer/parser/diagnostics) was extracted into
-//!    (crate-decomposition slice 1) — the registry lives in `bynk-syntax`, but
-//!    emit sites are split across both crates, so both trees are scanned.
+//!    source" is the `src/` of every workspace member (#1662), since emit sites
+//!    are spread across crates.
 //! 2. `site/src/content/docs/book/reference/diagnostics.md` must match what the
 //!    registry renders.
 //!
@@ -35,23 +33,55 @@ fn grammar_json() -> String {
 /// the literal filename). Excluded by value rather than by skipping their
 /// whole file, since that file also contains genuine diagnostic emissions
 /// that must still be counted.
-const NON_DIAGNOSTIC_LOOKALIKES: &[&str] = &["bynk.locale.types", "bynk.schema.lock"];
+///
+/// #1662 widened the scan to every workspace member, which adds a lockfile
+/// name (`bynk`'s `bynk.deploy.lock`) and three placeholder codes that tests
+/// use to exercise code-agnostic machinery (rendering, `explain` and LSP
+/// lookups of an unknown code, the literal scanner itself).
+const NON_DIAGNOSTIC_LOOKALIKES: &[&str] = &[
+    "bynk.locale.types",
+    "bynk.schema.lock",
+    "bynk.deploy.lock",
+    "bynk.test.example",
+    "bynk.not.a_real_code",
+    "bynk.check.something",
+];
 
 /// Collect every `"bynk.x.y"` string literal across the compiler source,
-/// excluding the registry module itself. Scans every compiler crate, since the
-/// decomposition split the emit sites across crate boundaries: `bynkc` (CLI +
-/// glue), the `bynk-syntax` leaf (lexer/parser), the `bynk-check` layer
-/// (resolver/checker/actors), and `bynk-emit` (emitter/project/validate).
+/// excluding the registry module itself. Scans the `src/` of **every**
+/// workspace member, read from the root `Cargo.toml`, rather than a
+/// hand-kept list: #1662 found five codes emitted by crates the old list
+/// missed (`bynk-fmt`, `bynk-wasm`, `bynk`), which `bynk explain` then
+/// denied existed.
 fn codes_used_in_source() -> BTreeSet<String> {
     let re = regex::Regex::new(r#""(bynk\.[a-z_]+\.[a-z_]+)""#).unwrap();
-    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
     let mut codes = BTreeSet::new();
-    collect(&manifest.join("src"), &re, &mut codes);
-    collect(&manifest.join("../bynk-syntax/src"), &re, &mut codes);
-    collect(&manifest.join("../bynk-check/src"), &re, &mut codes);
-    collect(&manifest.join("../bynk-project/src"), &re, &mut codes);
-    collect(&manifest.join("../bynk-emit/src"), &re, &mut codes);
+    for member in workspace_members(&root) {
+        collect(&root.join(member).join("src"), &re, &mut codes);
+    }
     codes
+}
+
+/// The `[workspace] members` of the root `Cargo.toml`.
+fn workspace_members(root: &Path) -> Vec<String> {
+    let manifest = fs::read_to_string(root.join("Cargo.toml")).unwrap();
+    let start = manifest
+        .find("members = [")
+        .expect("a workspace members list");
+    let list = &manifest[start..start + manifest[start..].find(']').unwrap()];
+    let members: Vec<String> = list
+        .lines()
+        .map(|l| l.split("--").next().unwrap_or("").trim())
+        .filter(|l| !l.starts_with('#'))
+        .filter_map(|l| l.split('"').nth(1))
+        .map(str::to_string)
+        .collect();
+    assert!(
+        members.len() > 10,
+        "parsed too few workspace members: {members:?}"
+    );
+    members
 }
 
 fn collect(dir: &Path, re: &regex::Regex, out: &mut BTreeSet<String>) {

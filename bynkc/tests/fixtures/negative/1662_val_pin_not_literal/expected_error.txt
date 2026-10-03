@@ -1,0 +1,2 @@
+bynk.val.pin_not_literal
+`Val[Age](...)` requires a literal `Int` value

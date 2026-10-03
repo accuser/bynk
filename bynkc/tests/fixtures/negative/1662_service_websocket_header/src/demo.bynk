@@ -1,0 +1,10 @@
+context demo
+
+-- #1662: a WebSocket header without `in:`.
+type Frame = { text: String }
+
+service chat from websocket(input: Frame, out: Frame) {
+  on message (frame: Frame) -> Effect[()] {
+    ()
+  }
+}

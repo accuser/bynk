@@ -47,7 +47,7 @@ a domain failure.
 
 - `bynk.cron.duplicate_schedule` — two cron handlers in the context declare the
   same schedule. Give each a distinct expression.
-- `bynk.parse.cron_in_agent` — `from cron` was placed in an `agent`. Scheduled
+- `bynk.parse.handler_in_agent` — `from cron` was placed in an `agent`. Scheduled
   tasks belong in a `service`.
 
 ## Related

@@ -1,0 +1,2 @@
+bynk.test.service_bad_address
+`api.GET` addresses an http route, so its first argument must be the

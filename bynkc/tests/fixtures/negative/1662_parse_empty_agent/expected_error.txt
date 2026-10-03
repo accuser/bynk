@@ -1,0 +1,2 @@
+bynk.parse.empty_agent
+an agent must declare at least one handler

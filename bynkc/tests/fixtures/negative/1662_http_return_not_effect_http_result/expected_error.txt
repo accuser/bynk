@@ -1,0 +1,2 @@
+bynk.http.return_not_effect_http_result
+`on http` handler must return `Effect[HttpResult[T]]`, but got

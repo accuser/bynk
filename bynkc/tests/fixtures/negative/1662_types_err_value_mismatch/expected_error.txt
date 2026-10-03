@@ -1,0 +1,2 @@
+bynk.types.err_value_mismatch
+`Err(...)` value has type `Int`, but the surrounding context expects

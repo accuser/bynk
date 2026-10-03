@@ -1,0 +1,10 @@
+context demo
+
+-- #1662: a `cors` policy with no origins.
+service api from http {
+  cors { headers: ["x-a"] }
+
+  on GET("/a") () -> Effect[HttpResult[Int]] by Visitor {
+    Ok(1)
+  }
+}

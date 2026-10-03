@@ -1,0 +1,2 @@
+bynk.stub.rhs_type
+the value provided for `Clock.now` does not match the operation's

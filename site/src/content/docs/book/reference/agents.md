@@ -34,7 +34,7 @@ the other kinds (`Map`, `Set`, `Cache`, `Log`) expose effectful methods. See the
 catalogue.
 
 Agents may only be declared inside a context (`bynk.agent.outside_context`), and
-may not declare HTTP handlers (`bynk.parse.http_in_agent`).
+may not declare HTTP handlers (`bynk.parse.handler_in_agent`).
 
 ## State initialisation
 

@@ -1,0 +1,2 @@
+bynk.service.outside_context
+`service` declarations are only allowed inside a context, not a

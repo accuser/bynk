@@ -1,0 +1,2 @@
+bynk.agent.construction_arity
+agent `Counter` is constructed with one key argument, but 2 were given

@@ -1,5 +1,9 @@
 use super::*;
 
+/// #1662: the diagnostic code a contract skew is reported under — a literal so
+/// the registry test sees it, and `bynk explain` knows it.
+const CONTRACT_SKEW: &str = "bynk.deploy.contract_skew";
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum DeployFormat {
     #[default]
@@ -288,7 +292,7 @@ pub fn run(
         );
         if !skews.is_empty() {
             eprintln!(
-                "bynk: `{worker}` was compiled against a contract its live dependencies no longer provide (bynk.deploy.contract_skew):"
+                "bynk: `{worker}` was compiled against a contract its live dependencies no longer provide ({CONTRACT_SKEW}):"
             );
             for s in &skews {
                 eprintln!(

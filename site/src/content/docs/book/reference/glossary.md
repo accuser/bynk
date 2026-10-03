@@ -199,7 +199,7 @@ clause on the `case` (or `suite`) header — one of `unit` / `integration` /
 `system`. A tier is **one body promoted, not a distinct kind of test**: promotion
 changes only the header, never the body. `as` on the suite sets a default the case
 may override (case wins); tiers are a `case`-only affordance (a `property` has no
-tier — `bynk.tier.property_has_tier`). See
+tier, and its header has no place for one). See
 [Test tiers](/book/guides/testing/integration/).
 
 ### `unit` / `integration` / `system` {#term-tiers}

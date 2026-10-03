@@ -1,0 +1,2 @@
+bynk.parse.unexpected_adapter
+expected a `commons` declaration but found an `adapter` declaration

@@ -1,0 +1,2 @@
+bynk.parse.duplicate_cors
+a service declares at most one `cors { }` policy

@@ -17,10 +17,20 @@ fn main() -> ExitCode {
     match args.first().map(String::as_str) {
         Some("check-pending") => check_pending(),
         Some("greenfield-status") => {
-            if let Some(bad) = args[1..].iter().find(|a| *a != "--apply") {
+            if let Some(bad) = args[1..]
+                .iter()
+                .find(|a| *a != "--apply" && *a != "--list-unasserted")
+            {
                 eprintln!("xtask greenfield-status: unknown argument {bad:?}");
                 usage();
                 return ExitCode::from(2);
+            }
+            // #1662: the codes behind `diagnostic_coverage`'s count, one per line.
+            if args.iter().any(|a| a == "--list-unasserted") {
+                for code in xtask::greenfield_status::unasserted_codes(&repo_root()) {
+                    println!("{code}");
+                }
+                return ExitCode::SUCCESS;
             }
             greenfield_status(args.iter().any(|a| a == "--apply"))
         }
@@ -366,7 +376,7 @@ fn have_nextest(root: &Path) -> bool {
 
 fn usage() {
     eprintln!(
-        "usage: cargo xtask <check-pending | ci [--fast] | greenfield-status [--apply] | stamp [--apply]>"
+        "usage: cargo xtask <check-pending | ci [--fast] | greenfield-status [--apply | --list-unasserted] | stamp [--apply]>"
     );
 }
 

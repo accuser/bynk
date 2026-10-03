@@ -1,0 +1,7 @@
+commons demo
+
+-- #1662: `Ok` with nothing to infer the error type from.
+fn f() -> Int {
+  let x = Ok(1)
+  1
+}

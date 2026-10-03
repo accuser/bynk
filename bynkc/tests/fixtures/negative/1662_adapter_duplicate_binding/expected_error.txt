@@ -1,0 +1,2 @@
+bynk.adapter.duplicate_binding
+an adapter may declare at most one `binding` clause

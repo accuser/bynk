@@ -105,8 +105,8 @@ shortener:
 2 passed, 0 failed.
 ```
 
-`assert` is only valid inside a test case — using it elsewhere is a compile error
-(`bynk.assert.outside_test`), so test-only checks can never leak into production
+`expect` is only valid inside a test case — using it elsewhere is a compile error
+(`bynk.expect.outside_case`), so test-only checks can never leak into production
 code.
 
 ## Fabricate values with `Val[T]`

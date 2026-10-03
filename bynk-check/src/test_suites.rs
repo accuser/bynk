@@ -855,21 +855,11 @@ fn check_test_bodies(
         }
         // v0.114: generative `property` blocks — check their `for all` bindings,
         // `where` filter, and predicate body (testing track slice 2).
+        // v0.118: a `property` never carries a tier — `as <tier>` is a
+        // `case`-only affordance, and the grammar has no property-tier
+        // production (`PropertyDecl` has no tier field), so there is nothing to
+        // check here (#1662 removed an unreachable guard for it).
         for prop in &test_decl.properties {
-            // v0.118: a `property` never carries a tier — `as <tier>` is a
-            // `case`-only affordance and the grammar has no property-tier
-            // production. Guard defensively so a future surface that attaches one
-            // is rejected rather than silently mis-tiered.
-            if property_tier(prop).is_some() {
-                errors.push(CompileError::new(
-                    "bynk.tier.property_has_tier",
-                    prop.name_span,
-                    format!(
-                        "property `\"{}\"` cannot declare a tier — tiers are a `case`-only affordance",
-                        prop.name
-                    ),
-                ));
-            }
             check_property_body(
                 target_name,
                 target_kind,
@@ -886,14 +876,6 @@ fn check_test_bodies(
     }
 
     errors
-}
-
-/// v0.118: the tier a `property` carries, if any. Always `None` — a `property`
-/// has no tier field (the `as <tier>` clause is a `case`-only affordance). A
-/// dedicated accessor so the defensive `bynk.tier.property_has_tier` guard reads
-/// as a real check against a future surface rather than a hard-coded `false`.
-fn property_tier(_prop: &PropertyDecl) -> Option<bynk_syntax::ast::TestTier> {
-    None
 }
 
 /// v0.118: wrap a single expression as a `{ tail: e }` block, so a `stub`

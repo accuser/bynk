@@ -3738,7 +3738,7 @@ fn validate_limit_args(ann: &Annotation, errors: &mut Vec<CompileError>) {
 /// (v0.10a §4.1): at most one `Int` parameter (the scheduled time, Unix epoch
 /// milliseconds), a structurally well-formed schedule, and the unit-Result
 /// return shape. The service-only rule is enforced earlier, in the parser
-/// (`bynk.parse.cron_in_agent`).
+/// (`bynk.parse.handler_in_agent`).
 fn validate_cron_handler(handler: &Handler, expr: &str, errors: &mut Vec<CompileError>) {
     // A cron handler takes at most one parameter — the scheduled time, typed
     // `Int` (epoch milliseconds). A scheduled trigger has no other payload.
@@ -3805,7 +3805,7 @@ fn validate_cron_handler(handler: &Handler, expr: &str, errors: &mut Vec<Compile
 /// (v0.10b §4.2): a non-empty queue name, exactly one parameter (the message,
 /// any wire-deserialisable type), and the unit-Result return shape. `Ok(())`
 /// acknowledges the message at emission; `Err` retries it. The service-only
-/// rule is enforced earlier, in the parser (`bynk.parse.queue_in_agent`).
+/// rule is enforced earlier, in the parser (`bynk.parse.handler_in_agent`).
 fn validate_queue_handler(handler: &Handler, name: &str, errors: &mut Vec<CompileError>) {
     if name.is_empty() {
         errors.push(CompileError::new(

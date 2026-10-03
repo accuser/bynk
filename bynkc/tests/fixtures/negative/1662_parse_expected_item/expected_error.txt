@@ -1,0 +1,2 @@
+bynk.parse.expected_item
+expected `type`, `fn`, `messages`, or `uses` declaration, found `let`

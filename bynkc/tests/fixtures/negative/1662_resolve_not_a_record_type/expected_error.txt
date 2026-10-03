@@ -1,0 +1,2 @@
+bynk.resolve.not_a_record_type
+`C` is not a record type — only record types can be constructed with

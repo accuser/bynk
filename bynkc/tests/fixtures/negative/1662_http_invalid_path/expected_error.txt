@@ -1,0 +1,2 @@
+bynk.http.invalid_path
+HTTP path `a` must start with `/`

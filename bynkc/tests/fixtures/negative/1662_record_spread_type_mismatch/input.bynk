@@ -1,0 +1,8 @@
+commons demo
+
+-- #1662: a record spread whose base is a different record type.
+type P = { a: Int }
+
+type Q = { a: Int }
+
+fn f(q: Q) -> P { P { ...q, a: 1 } }

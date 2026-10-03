@@ -1,0 +1,2 @@
+bynk.transition.cross_agent_reference
+transition `follows` references another agent; a step invariant

@@ -1,0 +1,2 @@
+bynk.service.websocket_header
+the WebSocket header binds frame types as `in: <type>, out: <type>`

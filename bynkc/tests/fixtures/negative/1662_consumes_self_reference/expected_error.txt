@@ -1,0 +1,2 @@
+bynk.consumes.self_reference
+context `demo` cannot `consumes` itself
