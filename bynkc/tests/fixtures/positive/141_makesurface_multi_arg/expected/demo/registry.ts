@@ -14,7 +14,7 @@ export type Code = string & { readonly __brand: "demo.registry.Code" };
 
 export const Code = {
   of(value: string): Result<Code, ValidationError> {
-    if (!(new RegExp("^(?:" + "[a-z0-9]{3,8}" + ")$").test(value))) {
+    if (!(new globalThis.RegExp("^(?:" + "[a-z0-9]{3,8}" + ")$").test(value))) {
       return Err({ field: "Code", message: "must match /[a-z0-9]{3,8}/", value });
     }
     return Ok(value as Code);
@@ -25,7 +25,7 @@ export type Target = string & { readonly __brand: "demo.registry.Target" };
 
 export const Target = {
   of(value: string): Result<Target, ValidationError> {
-    if (!(new RegExp("^(?:" + "https?://.+" + ")$").test(value))) {
+    if (!(new globalThis.RegExp("^(?:" + "https?://.+" + ")$").test(value))) {
       return Err({ field: "Target", message: "must match /https?://.+/", value });
     }
     return Ok(value as Target);
@@ -40,13 +40,13 @@ export const RegError = {
 };
 
 export interface Clock {
-  now(): Promise<number>;
+  now(): globalThis.Promise<number>;
 }
 
-export const ClockToken: unique symbol = Symbol("Clock");
+export const ClockToken: symbol = globalThis.Symbol("Clock");
 
 export class SystemClock implements Clock {
-  async now(): Promise<number> {
+  async now(): globalThis.Promise<number> {
     return 0;
   }
 }
@@ -54,7 +54,7 @@ export class SystemClock implements Clock {
 export const SystemClockProvider = { token: ClockToken, factory: () => new SystemClock() };
 
 export const create = {
-  async call(code: Code, target: Target, deps: { Clock: Clock }): Promise<Result<number, RegError>> {
+  async call(code: Code, target: Target, deps: { Clock: Clock }): globalThis.Promise<Result<number, RegError>> {
     const t = await deps.Clock.now();
     return Ok(t);
   },
@@ -66,7 +66,7 @@ export interface DemoRegistryDeps {
 
 export function makeSurface(deps: DemoRegistryDeps) {
   return {
-    async create(code: Code, target: Target): Promise<Result<number, RegError>> {
+    async create(code: Code, target: Target): globalThis.Promise<Result<number, RegError>> {
       return create.call(code, target, deps);
     },
   };

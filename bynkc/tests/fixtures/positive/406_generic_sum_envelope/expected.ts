@@ -49,7 +49,7 @@ export function name_or_default(r: ApiResult<User>): string {
       return m;
     }
   }
-  throw new Error("non-exhaustive match");
+  throw new globalThis.Error("non-exhaustive match");
 }
 
 export function empty_tree(): Tree<number> {
@@ -66,6 +66,6 @@ export function leaf_value(t: Tree<number>): number {
       return 0;
     }
   }
-  throw new Error("non-exhaustive match");
+  throw new globalThis.Error("non-exhaustive match");
 }
 

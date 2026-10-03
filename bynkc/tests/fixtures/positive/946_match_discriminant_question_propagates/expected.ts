@@ -28,7 +28,7 @@ export function f(): Result<number, string> {
         return 0;
       }
     }
-    throw new Error("non-exhaustive match");
+    throw new globalThis.Error("non-exhaustive match");
   })(__r0.value);
   return Ok(x);
 }

@@ -6,7 +6,7 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError } f
 import { LocaleTag, Message, MessageArg } from "../bynk/locale/types.js";
 import { render as __bynkLocaleRender, renderArg } from "../bynk/locale.js";
 
-const messagesByLocale: Record<string, Record<string, (params: ReadonlyMap<string, MessageArg>) => string>> = {
+const messagesByLocale: globalThis.Record<string, globalThis.Record<string, (params: ReadonlyMap<string, MessageArg>) => string>> = {
   /**
    * #909: a BCP-47 variant-subtagged locale tag (`"ca-valencia"`) is now
    * declarable — `LocaleTag`'s pattern widened past `language[-Script][-REGION]`

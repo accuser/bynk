@@ -4,8 +4,8 @@
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "./runtime.js";
 
 export interface Jwt {
-  sign(sub: string, secret: string): Promise<string>;
+  sign(sub: string, secret: string): globalThis.Promise<string>;
 }
 
-export const JwtToken: unique symbol = Symbol("Jwt");
+export const JwtToken: symbol = globalThis.Symbol("Jwt");
 

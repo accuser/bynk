@@ -1255,8 +1255,8 @@ fn emit_boundary_helpers(
             );
             let mut parts: Vec<String> = Vec::new();
             for n in &sorted_names {
-                parts.push(format!("serialise_{n}"));
-                parts.push(format!("deserialise_{n}"));
+                parts.push(format!("__serialise_{n}"));
+                parts.push(format!("__deserialise_{n}"));
             }
             // v0.9.1: emit both a regular import (so the names are bound
             // locally for use inside this file's serialisation helpers) and a
@@ -2832,20 +2832,20 @@ fn write_header(commons: &TypedCommons, ctx: &EmitProjectCtx) -> Vec<bynk_ts::Ts
             // v0.9.2: agent-declaring files lower instantiation through the
             // `makeAgent` helper and a per-agent `StateRegistry`, and the
             // generated factory's signature names `DurableObjectNamespace`.
-            parts.push("type DurableObjectState");
-            parts.push("type DurableObjectNamespace");
-            parts.push("StateRegistry");
-            parts.push("makeAgent");
+            parts.push("type __DurableObjectState");
+            parts.push("type __DurableObjectNamespace");
+            parts.push("__StateRegistry");
+            parts.push("__makeAgent");
         }
         if has_agent_invariants {
-            parts.push("invariantViolation");
+            parts.push("__invariantViolation");
         }
         // #1678: on `workers` an agent's calls cross its Durable Object's
         // `fetch` through a wire table read by both ends.
         if workers && has_agent {
-            parts.push("type AgentWire");
-            parts.push("decodeAgentArgs");
-            parts.push("encodeAgentResult");
+            parts.push("type __AgentWire");
+            parts.push("__decodeAgentArgs");
+            parts.push("__encodeAgentResult");
             let passes_through = commons.commons.items.iter().any(|i| match i {
                 CommonsItem::Agent(a) => a.handlers.iter().any(|h| {
                     serialisation::agent_wire_passes_through(&h.return_type)
@@ -2856,7 +2856,7 @@ fn write_header(commons: &TypedCommons, ctx: &EmitProjectCtx) -> Vec<bynk_ts::Ts
                 _ => false,
             });
             if passes_through {
-                parts.push("AGENT_WIRE_PASS");
+                parts.push("__AGENT_WIRE_PASS");
             }
         }
         // Events track, slice 0 (spine #936): an agent whose own handler body
@@ -2874,7 +2874,7 @@ fn write_header(commons: &TypedCommons, ctx: &EmitProjectCtx) -> Vec<bynk_ts::Ts
                 _ => false,
             });
         if has_agent_uses_emit {
-            parts.push("dispatchToEventsFanout");
+            parts.push("__dispatchToEventsFanout");
         }
         // v0.96 (ADR 0124): an agent whose load-time validation gate fires imports
         // the `rehydrationViolation` fault helper.
@@ -2883,7 +2883,7 @@ fn write_header(commons: &TypedCommons, ctx: &EmitProjectCtx) -> Vec<bynk_ts::Ts
             _ => false,
         });
         if has_rehydration_gate {
-            parts.push("rehydrationViolation");
+            parts.push("__rehydrationViolation");
         }
         // v0.104/v0.105 (real-time track slice 3b): on Workers a `store Map[K,
         // Connection]` persists the connection id; its entry ops re-resolve the live
@@ -2894,8 +2894,8 @@ fn write_header(commons: &TypedCommons, ctx: &EmitProjectCtx) -> Vec<bynk_ts::Ts
                 _ => false,
             })
         {
-            parts.push("resolveConnection");
-            parts.push("connIdOf");
+            parts.push("__resolveConnection");
+            parts.push("__connIdOf");
         }
         // v0.104/v0.105 (real-time track slice 3b): on Workers a context hosting a
         // `from websocket` `on open` accepts the socket inside its Durable Object via
@@ -2913,9 +2913,9 @@ fn write_header(commons: &TypedCommons, ctx: &EmitProjectCtx) -> Vec<bynk_ts::Ts
             _ => false,
         });
         if workers && hosts_ws_open {
-            parts.push("acceptHibernatableConnection");
-            parts.push("newWebSocketPair");
-            parts.push("webSocketUpgradeResponse");
+            parts.push("__acceptHibernatableConnection");
+            parts.push("__newWebSocketPair");
+            parts.push("__webSocketUpgradeResponse");
         }
         // v0.106 (slice 3b-iii): a context with an inbound/close handler re-wraps
         // the firing socket as a `WorkersConnection` in `webSocketMessage`/
@@ -2935,7 +2935,7 @@ fn write_header(commons: &TypedCommons, ctx: &EmitProjectCtx) -> Vec<bynk_ts::Ts
             _ => false,
         });
         if workers && hosts_ws_inbound {
-            parts.push("WorkersConnection");
+            parts.push("__WorkersConnection");
         }
         if has_http {
             // `HttpResult` is both a value (the constructor namespace) and a
@@ -2949,18 +2949,18 @@ fn write_header(commons: &TypedCommons, ctx: &EmitProjectCtx) -> Vec<bynk_ts::Ts
             parts.push(QUEUE_RESULT);
         }
         if workers {
-            parts.push("type JsonValue");
-            parts.push("type BoundaryError");
-            parts.push("type ServiceBinding");
-            parts.push("callService");
-            parts.push("boundaryError");
+            parts.push("type __JsonValue");
+            parts.push("type __BoundaryError");
+            parts.push("type __ServiceBinding");
+            parts.push("__callService");
+            parts.push("__boundaryError");
         } else if uses_codec || has_agent {
             // v0.22b: the bundle-mode codec helpers reference JsonValue and
             // BoundaryError. v0.96 (ADR 0124): so do an agent's emitted
             // rehydration deserialisers and the gate's inline base checks — the
             // boundary helpers now emit on bundle too (for the rehydration gate).
-            parts.push("type JsonValue");
-            parts.push("type BoundaryError");
+            parts.push("type __JsonValue");
+            parts.push("type __BoundaryError");
         }
         // #1476: `bytes()`/`icu()` fold in here directly now, in the same order
         // the old post-print `inject_runtime_imports` pass appended them (bytes
@@ -3036,7 +3036,7 @@ fn write_header_single(
         // v0.22b: codec imports only when the file uses the `Json` codec.
         let uses_codec = !collect_json_codec_roots(commons).is_empty();
         let codec_imports = if uses_codec {
-            ", type JsonError, type JsonValue, type BoundaryError"
+            ", type JsonError, type __JsonValue, type __BoundaryError"
         } else if file_mentions_json_error(commons) {
             ", type JsonError"
         } else {
@@ -3104,7 +3104,7 @@ pub(crate) const INT_RUNTIME_IMPORTS: &str = ", __bynkIntDiv, __bynkToInt";
 /// helpers, appended to a module's import list when an emitted `messages`
 /// bundle's `render` references any of them (`emit_icu_placeholder`,
 /// `bynk-emit/src/emitter/emit.rs`).
-const MESSAGES_RUNTIME_IMPORTS: &str = ", selectPluralArm, formatIcuNumber, formatIcuDate";
+const MESSAGES_RUNTIME_IMPORTS: &str = ", __selectPluralArm, __formatIcuNumber, __formatIcuDate";
 
 /// #914: the names an **inlined** boundary deserialiser builds directly, appended
 /// to the import list of a module that curates its own — a Worker's `compose.ts`
@@ -3122,7 +3122,7 @@ const MESSAGES_RUNTIME_IMPORTS: &str = ", selectPluralArm, formatIcuNumber, form
 /// post-print-text-splice mechanism both are the tree-level successor to)
 /// makes it free wherever it is already imported.
 pub(crate) const BOUNDARY_CODEC_RUNTIME_IMPORTS: &str =
-    ", Ok, Err, type Result, type BoundaryError";
+    ", Ok, Err, type Result, type __BoundaryError";
 
 /// #914: the names the `Json.decode[T]` wrapper puts in the module — its own
 /// `Result<T, JsonError>` signature and the `JsonValue` it parses into
@@ -3149,7 +3149,7 @@ pub(crate) const BOUNDARY_CODEC_RUNTIME_IMPORTS: &str =
 /// `918_json_decode_in_test_case` (base type, delegation-free) and
 /// `919_json_decode_named_record_in_test_case` (named record, delegating).
 pub(crate) const JSON_CODEC_RUNTIME_IMPORTS: &str =
-    ", Ok, Err, type Result, type JsonValue, type JsonError";
+    ", Ok, Err, type Result, type __JsonValue, type JsonError";
 
 /// Emit the commons-level doc block (if any) at the current position.
 /// #1478: real-node-internally already (a single `TsStmtKind::DocComment`,
@@ -4404,7 +4404,7 @@ impl<'a> LowerCtx<'a> {
             && let Some(v) = s.variants.iter().find(|v| v.name.name == variant)
             && let Some(f) = v.payload.get(idx)
         {
-            return f.name.name.clone();
+            return payload_prop(&f.name.name);
         }
         // Single-field fallback. The checker rejects mixed bindings already.
         "value".to_string()
@@ -4508,7 +4508,7 @@ fn ts_base(b: BaseType) -> &'static str {
         BaseType::Duration | BaseType::Instant => "number",
         // v0.110 (ADR 0142): `Bytes` is the one base type that does NOT erase
         // to `number` — it lowers to an immutable octet sequence, `Uint8Array`.
-        BaseType::Bytes => "Uint8Array",
+        BaseType::Bytes => "globalThis.Uint8Array",
     }
 }
 
@@ -4638,9 +4638,9 @@ fn ts_type_ref_to_ts_type(r: &TypeRef, qualify: Option<QualifyFn<'_>>) -> TsType
         TypeRef::Effect(t, _) => {
             let inner = ts_type_ref_to_ts_type(t, qualify);
             if is_bare_named(&inner, "()") || is_bare_named(&inner, "void") {
-                TsType::named_with_args("Promise", vec![TsType::named("void")])
+                TsType::named_with_args("globalThis.Promise", vec![TsType::named("void")])
             } else {
-                TsType::named_with_args("Promise", vec![inner])
+                TsType::named_with_args("globalThis.Promise", vec![inner])
             }
         }
         TypeRef::HttpResult(t, _) => {
@@ -4806,13 +4806,13 @@ mod ts_type_ref_tests {
     #[test]
     fn effect_of_a_non_unit_type_becomes_promise() {
         let r = TypeRef::Effect(Box::new(base(BaseType::Int)), sp());
-        assert_eq!(ts_type_ref(&r), "Promise<number>");
+        assert_eq!(ts_type_ref(&r), "globalThis.Promise<number>");
     }
 
     #[test]
     fn effect_of_unit_becomes_promise_void() {
         let r = TypeRef::Effect(Box::new(TypeRef::Unit(sp())), sp());
-        assert_eq!(ts_type_ref(&r), "Promise<void>");
+        assert_eq!(ts_type_ref(&r), "globalThis.Promise<void>");
     }
 
     #[test]
@@ -4909,7 +4909,7 @@ mod ts_type_ref_tests {
         assert_eq!(ts_type_ref(&base(BaseType::Instant)), "number");
         assert_eq!(ts_type_ref(&base(BaseType::String)), "string");
         assert_eq!(ts_type_ref(&base(BaseType::Bool)), "boolean");
-        assert_eq!(ts_type_ref(&base(BaseType::Bytes)), "Uint8Array");
+        assert_eq!(ts_type_ref(&base(BaseType::Bytes)), "globalThis.Uint8Array");
     }
 
     /// Coverage gap named in review of #1315/#1316: every test above goes
@@ -5001,8 +5001,8 @@ fn ts_ty_to_ts_type(t: TyId, tys: &Arc<Types>) -> TsType {
         ),
         Ty::Option(t) => TsType::named_with_args("Option", vec![ts_ty_to_ts_type(*t, tys)]),
         Ty::Effect(t) => match &*tys.get(*t) {
-            Ty::Unit => TsType::named_with_args("Promise", vec![TsType::named("void")]),
-            _ => TsType::named_with_args("Promise", vec![ts_ty_to_ts_type(*t, tys)]),
+            Ty::Unit => TsType::named_with_args("globalThis.Promise", vec![TsType::named("void")]),
+            _ => TsType::named_with_args("globalThis.Promise", vec![ts_ty_to_ts_type(*t, tys)]),
         },
         Ty::HttpResult(t) => TsType::named_with_args("HttpResult", vec![ts_ty_to_ts_type(*t, tys)]),
         Ty::List(t) => TsType::readonly_array(ts_ty_to_ts_type(*t, tys)),
@@ -5117,11 +5117,11 @@ mod ts_ty_tests {
         assert_eq!(ts_ty(option, &tys), "Option<number>");
 
         let effect = tys.intern(Ty::Effect(int));
-        assert_eq!(ts_ty(effect, &tys), "Promise<number>");
+        assert_eq!(ts_ty(effect, &tys), "globalThis.Promise<number>");
 
         let unit = tys.intern(Ty::Unit);
         let effect_unit = tys.intern(Ty::Effect(unit));
-        assert_eq!(ts_ty(effect_unit, &tys), "Promise<void>");
+        assert_eq!(ts_ty(effect_unit, &tys), "globalThis.Promise<void>");
 
         let http_result = tys.intern(Ty::HttpResult(int));
         assert_eq!(ts_ty(http_result, &tys), "HttpResult<number>");
@@ -5261,6 +5261,20 @@ fn ts_binop(op: BinOp) -> &'static str {
     }
 }
 
+/// #1653: the TypeScript property name of a sum variant's payload field. A
+/// variant object already carries the in-memory discriminant `tag`, so a
+/// payload field of that name moves to `$tag` (`$` is not a Bynk identifier
+/// character, so no other field can be spelled that way). Only the in-memory
+/// shape changes: the wire key stays the field's own name, and the codec maps
+/// between the two.
+pub(crate) fn payload_prop(field: &str) -> String {
+    if field == "tag" {
+        "$tag".to_string()
+    } else {
+        field.to_string()
+    }
+}
+
 /// The TypeScript spelling of a user identifier in a *binding or reference*
 /// position (params, locals, function names, import names). Bynk identifiers
 /// that are illegal as TS binding names — the JS reserved words plus the
@@ -5324,6 +5338,9 @@ pub(crate) fn ts_ident(name: &str) -> String {
         // Illegal binding targets in strict mode.
         "arguments",
         "eval",
+        // #1653: the emitted code reaches host globals through `globalThis`
+        // (`globalThis.JSON`), so no user binding may take that name.
+        "globalThis",
         // Generated identifiers a user binding may sit next to: handler
         // signatures append a `deps` parameter, so a user param named `deps`
         // would otherwise duplicate it.
@@ -5461,7 +5478,7 @@ pub(crate) fn pred_condition_and_message(
                 TsExpr::Lit(TsLit::Str(")$".to_string())),
             );
             let regexp = TsExpr::New {
-                callee: Box::new(TsExpr::Ident("RegExp".to_string())),
+                callee: Box::new(TsExpr::Ident("globalThis.RegExp".to_string())),
                 args: vec![pattern],
             };
             let test_call = TsExpr::Call {
@@ -5636,7 +5653,7 @@ mod conditional_runtime_import_tests {
 
     // -- the ICU formatters ---------------------------------------------------
 
-    const ICU_HELPERS: [&str; 3] = ["selectPluralArm", "formatIcuNumber", "formatIcuDate"];
+    const ICU_HELPERS: [&str; 3] = ["__selectPluralArm", "__formatIcuNumber", "__formatIcuDate"];
 
     /// The case the per-arm recording exists for. A `select` placeholder lowers to
     /// `Object.hasOwn` over an arm table and calls no formatter, so a bundle whose
@@ -5648,7 +5665,7 @@ mod conditional_runtime_import_tests {
             "messages \"en\" @reference {\n  \"greeting\" => \"{g, select, male {He} female {She} other {They}} liked this.\"\n}\n",
         );
         assert!(
-            ts.contains("Object.hasOwn"),
+            ts.contains("globalThis.Object.hasOwn"),
             "the select arm table should have been emitted, else this proves nothing: {ts}"
         );
         for helper in ICU_HELPERS {
@@ -5667,7 +5684,7 @@ mod conditional_runtime_import_tests {
             "messages \"en\" @reference {\n  \"cart\" => \"You have {n, plural, one {# item} other {# items}} in your cart\"\n}\n",
         );
         assert!(
-            ts.contains("selectPluralArm("),
+            ts.contains("__selectPluralArm("),
             "the plural dispatch should have been emitted: {ts}"
         );
         for helper in ICU_HELPERS {

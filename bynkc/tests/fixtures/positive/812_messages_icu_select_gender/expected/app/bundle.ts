@@ -6,14 +6,14 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError } f
 import { LocaleTag, Message, MessageArg } from "../bynk/locale/types.js";
 import { render as __bynkLocaleRender, renderArg } from "../bynk/locale.js";
 
-const messagesByLocale: Record<string, Record<string, (params: ReadonlyMap<string, MessageArg>) => string>> = {
+const messagesByLocale: globalThis.Record<string, globalThis.Record<string, (params: ReadonlyMap<string, MessageArg>) => string>> = {
   /**
    * message-bundles slice 3 (#878): a `select` placeholder with arbitrary
    * (non-CLDR) keys, plus its mandatory `other` arm as the fallback for an
    * undeclared key.
    */
   "en": {
-    "greeting": (params: ReadonlyMap<string, MessageArg>): string => ((__arg) => { if (__arg === undefined || __arg.tag !== "Text") { return "{g}"; } const __arms: Record<string, string> = { "male": "He", "female": "She", "other": "They" }; return Object.hasOwn(__arms, __arg.value) ? __arms[__arg.value] : __arms["other"]; })(params.get("g")) + " liked this.",
+    "greeting": (params: ReadonlyMap<string, MessageArg>): string => ((__arg) => { if (__arg === undefined || __arg.tag !== "Text") { return "{g}"; } const __arms: globalThis.Record<string, string> = { "male": "He", "female": "She", "other": "They" }; return globalThis.Object.hasOwn(__arms, __arg.value) ? __arms[__arg.value] : __arms["other"]; })(params.get("g")) + " liked this.",
   },
 };
 

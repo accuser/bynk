@@ -8,7 +8,7 @@ import { Uuid } from "../bynk.js";
 import * as bynk from "../bynk.js";
 
 export const generate = {
-  async call(deps: { Random: bynk.Random }): Promise<Uuid> {
+  async call(deps: { Random: bynk.Random }): globalThis.Promise<Uuid> {
     const id = await deps.Random.uuid();
     return id;
   },
@@ -20,7 +20,7 @@ export interface IdsGenDeps {
 
 export function makeSurface(deps: IdsGenDeps) {
   return {
-    async generate(): Promise<Uuid> {
+    async generate(): globalThis.Promise<Uuid> {
       return generate.call(deps);
     },
   };

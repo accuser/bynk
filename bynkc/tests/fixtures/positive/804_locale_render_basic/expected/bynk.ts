@@ -12,7 +12,7 @@ export type Uuid = string & { readonly __brand: "Uuid" };
 
 export const Uuid = {
   of(value: string): Result<Uuid, ValidationError> {
-    if (!(new RegExp("^(?:" + "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}" + ")$").test(value))) {
+    if (!(new globalThis.RegExp("^(?:" + "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}" + ")$").test(value))) {
       return Err({ field: "Uuid", message: "must match /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/", value });
     }
     return Ok(value as Uuid);
@@ -105,58 +105,58 @@ export const EventEnvelope = {
  * Reads the current wall-clock time, as Unix milliseconds.
  */
 export interface Clock {
-  now(): Promise<number>;
+  now(): globalThis.Promise<number>;
 }
 
-export const ClockToken: unique symbol = Symbol("Clock");
+export const ClockToken: symbol = globalThis.Symbol("Clock");
 
 /**
  * A source of randomness — fresh UUIDs and bounded integers.
  */
 export interface Random {
-  uuid(): Promise<Uuid>;
-  int(lo: number, hi: number): Promise<number>;
+  uuid(): globalThis.Promise<Uuid>;
+  int(lo: number, hi: number): globalThis.Promise<number>;
 }
 
-export const RandomToken: unique symbol = Symbol("Random");
+export const RandomToken: symbol = globalThis.Symbol("Random");
 
 /**
  * Structured logging at info and error levels.
  */
 export interface Logger {
-  info(msg: string): Promise<void>;
-  error(msg: string): Promise<void>;
+  info(msg: string): globalThis.Promise<void>;
+  error(msg: string): globalThis.Promise<void>;
 }
 
-export const LoggerToken: unique symbol = Symbol("Logger");
+export const LoggerToken: symbol = globalThis.Symbol("Logger");
 
 /**
  * Performs outbound HTTP requests.
  */
 export interface Fetch {
-  send(req: Request): Promise<Result<Response, FetchError>>;
+  send(req: Request): globalThis.Promise<Result<Response, FetchError>>;
 }
 
-export const FetchToken: unique symbol = Symbol("Fetch");
+export const FetchToken: symbol = globalThis.Symbol("Fetch");
 
 /**
  * Reads named secrets from the platform's secret store.
  */
 export interface Secrets {
-  get(name: string): Promise<Option<string>>;
+  get(name: string): globalThis.Promise<Option<string>>;
 }
 
-export const SecretsToken: unique symbol = Symbol("Secrets");
+export const SecretsToken: symbol = globalThis.Symbol("Secrets");
 
 /**
  * Reads the current locale for this request/session. Slice 1: always
  * returns a fixed reference tag (`"en"`) on every platform.
  */
 export interface Locale {
-  current(): Promise<LocaleTag>;
+  current(): globalThis.Promise<LocaleTag>;
 }
 
-export const LocaleToken: unique symbol = Symbol("Locale");
+export const LocaleToken: symbol = globalThis.Symbol("Locale");
 
 /**
  * Mechanical dedup for at-least-once delivery (design notes §12). `dedup`
@@ -169,11 +169,11 @@ export const LocaleToken: unique symbol = Symbol("Locale");
  * in-memory provider, lost on process restart — no durability guarantee yet.
  */
 export interface Idempotency {
-  dedup<T>(key: string): Promise<Option<T>>;
-  remember<T>(key: string, value: T, expiresAfter: number): Promise<void>;
+  dedup<T>(key: string): globalThis.Promise<Option<T>>;
+  remember<T>(key: string, value: T, expiresAfter: number): globalThis.Promise<void>;
 }
 
-export const IdempotencyToken: unique symbol = Symbol("Idempotency");
+export const IdempotencyToken: symbol = globalThis.Symbol("Idempotency");
 
 /**
  * Emits an event declared by the calling context (Events track, slice 0;
@@ -188,8 +188,8 @@ export const IdempotencyToken: unique symbol = Symbol("Idempotency");
  * determine it.
  */
 export interface Events {
-  emit<E>(event: E): Promise<void>;
+  emit<E>(event: E): globalThis.Promise<void>;
 }
 
-export const EventsToken: unique symbol = Symbol("Events");
+export const EventsToken: symbol = globalThis.Symbol("Events");
 

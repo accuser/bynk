@@ -7,7 +7,7 @@ export type Widget = number & { readonly __brand: "Widget" };
 
 export const Widget = {
   of(value: number): Result<Widget, ValidationError> {
-    if (!Number.isSafeInteger(value)) {
+    if (!globalThis.Number.isSafeInteger(value)) {
       return Err({ field: "Widget", message: "must be a safe integer", value });
     }
     if (!(value >= 0)) {

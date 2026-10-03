@@ -22,13 +22,13 @@ export const PaymentError = {
 };
 
 export interface Logger {
-  log(msg: string): Promise<void>;
+  log(msg: string): globalThis.Promise<void>;
 }
 
-export const LoggerToken: unique symbol = Symbol("Logger");
+export const LoggerToken: symbol = globalThis.Symbol("Logger");
 
 export class NoOpLogger implements Logger {
-  async log(msg: string): Promise<void> {
+  async log(msg: string): globalThis.Promise<void> {
     return undefined;
   }
 }
@@ -36,7 +36,7 @@ export class NoOpLogger implements Logger {
 export const NoOpLoggerProvider = { token: LoggerToken, factory: () => new NoOpLogger() };
 
 export const authorise = {
-  async call(amount: number, deps: { Logger: Logger }): Promise<Result<AuthId, PaymentError>> {
+  async call(amount: number, deps: { Logger: Logger }): globalThis.Promise<Result<AuthId, PaymentError>> {
     const __r0 = await deps.Logger.log("authorise");
     return (amount > 0 ? Ok(AuthId.unsafe("AUTH-OK")) : Err(PaymentError.Declined));
   },
@@ -48,7 +48,7 @@ export interface CommercePaymentDeps {
 
 export function makeSurface(deps: CommercePaymentDeps) {
   return {
-    async authorise(amount: number): Promise<Result<AuthId, PaymentError>> {
+    async authorise(amount: number): globalThis.Promise<Result<AuthId, PaymentError>> {
       return authorise.call(amount, deps);
     },
   };

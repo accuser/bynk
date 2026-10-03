@@ -3,7 +3,7 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "./runtime.js";
 
-export async function run(f: (a0: number) => Promise<number>, x: number): Promise<number> {
+export async function run(f: (a0: number) => globalThis.Promise<number>, x: number): globalThis.Promise<number> {
   const y = await f(x);
   return y + 1;
 }

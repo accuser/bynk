@@ -32,6 +32,6 @@ export function unwrap(o: Outer<Inner>): string {
   if (o.tag === "Nothing") {
     return "nothing";
   }
-  throw new Error("non-exhaustive match");
+  throw new globalThis.Error("non-exhaustive match");
 }
 

@@ -3,11 +3,11 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "./runtime.js";
 
-export async function fetch(): Promise<number> {
+export async function fetch(): globalThis.Promise<number> {
   return 1;
 }
 
-export async function f(c: boolean): Promise<number> {
+export async function f(c: boolean): globalThis.Promise<number> {
   const r = await (async () => {
     if (c) {
       const y = await fetch();

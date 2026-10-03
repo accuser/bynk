@@ -26,6 +26,6 @@ export function describe(s: Status): string {
       return "finished";
     }
   }
-  throw new Error("non-exhaustive match");
+  throw new globalThis.Error("non-exhaustive match");
 }
 

@@ -30,7 +30,7 @@ export const placeOrder = {
    * payment's error variants to orders' own OrderError shape (the
    * anti-corruption-layer pattern).
    */
-  async call(total: Money, deps: { surface: { Payment: ReturnType<typeof commerce_payment.makeSurface> } }): Promise<Result<void, OrderError>> {
+  async call(total: Money, deps: { surface: { Payment: globalThis.ReturnType<typeof commerce_payment.makeSurface> } }): globalThis.Promise<Result<void, OrderError>> {
     const auth = await deps.surface.Payment.authorise((total as unknown as commerce_payment.Money));
     switch (auth.tag) {
       case "Ok": {
@@ -50,21 +50,21 @@ export const placeOrder = {
         return Err(OrderError.PaymentInfrastructureError);
       }
     }
-    throw new Error("non-exhaustive match");
+    throw new globalThis.Error("non-exhaustive match");
   })(error);
       }
     }
-    throw new Error("non-exhaustive match");
+    throw new globalThis.Error("non-exhaustive match");
   },
 };
 
 export interface CommerceOrdersDeps {
-  readonly surface: { Payment: ReturnType<typeof commerce_payment.makeSurface> };
+  readonly surface: { Payment: globalThis.ReturnType<typeof commerce_payment.makeSurface> };
 }
 
 export function makeSurface(deps: CommerceOrdersDeps) {
   return {
-    async placeOrder(total: Money): Promise<Result<void, OrderError>> {
+    async placeOrder(total: Money): globalThis.Promise<Result<void, OrderError>> {
       return placeOrder.call(total, deps);
     },
   };

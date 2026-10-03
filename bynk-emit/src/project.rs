@@ -3138,7 +3138,7 @@ fn emit_composition_root(
                             "ev.payload as any".to_string()
                         };
                         format!(
-                            "try {{ await {sub_ns}.{sub_svc}.event({call_args}, {sub_ns}Deps); }} catch (e) {{ console.error(\"EventsFanout delivery failed\", {{ event: ev.type, service: {sub_svc:?}, error: String(e) }}); }}"
+                            "try {{ await {sub_ns}.{sub_svc}.event({call_args}, {sub_ns}Deps); }} catch (e) {{ globalThis.console.error(\"EventsFanout delivery failed\", {{ event: ev.type, service: {sub_svc:?}, error: String(e) }}); }}"
                         )
                     })
                     .collect();
@@ -3166,7 +3166,7 @@ fn emit_composition_root(
                 params: vec![TsParam {
                     name: "events".to_string(),
                     ty: Some(TsType::named_with_args(
-                        "Array",
+                        "globalThis.Array",
                         vec![TsType::named(crate::emitter::EVENTS_WIRE_EVENT_TS_TYPE)],
                     )),
                     optional: false,
@@ -3822,7 +3822,7 @@ mod tests {
                 ),
                 (
                     "adapters/payments.binding.ts",
-                    "import type { Pay } from \"./payments.js\";\n\nexport class RealPay implements Pay {\n  async charge(amount: number): Promise<string> {\n    return \"ok\";\n  }\n}\n",
+                    "import type { Pay } from \"./payments.js\";\n\nexport class RealPay implements Pay {\n  async charge(amount: number): globalThis.Promise<string> {\n    return \"ok\";\n  }\n}\n",
                 ),
             ],
         );

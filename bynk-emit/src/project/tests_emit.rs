@@ -373,25 +373,25 @@ fn emit_integration_module(
         "Err",
         "Some",
         "None",
-        "callService",
+        "__callService",
         "type Result",
         "type Option",
         "type ValidationError",
         "type JsonError",
-        "type JsonValue",
-        "type BoundaryError",
-        "type ServiceBinding",
-        "responseToHttpResult",
-        "responseToHttpOutcome",
-        "responseToUnauthOutcome",
+        "type __JsonValue",
+        "type __BoundaryError",
+        "type __ServiceBinding",
+        "__responseToHttpResult",
+        "__responseToHttpOutcome",
+        "__responseToUnauthOutcome",
     ]
     .iter()
     .map(|s| s.to_string())
     .collect();
     if has_agents {
-        runtime_names.push("makeIntegrationDoNamespace".to_string());
-        runtime_names.push("type DurableObjectState".to_string());
-        runtime_names.push("type DurableObjectNamespace".to_string());
+        runtime_names.push("__makeIntegrationDoNamespace".to_string());
+        runtime_names.push("type __DurableObjectState".to_string());
+        runtime_names.push("type __DurableObjectNamespace".to_string());
     }
     let import_idx = stmts.len();
 
@@ -783,7 +783,7 @@ fn emit_system_http_support(
                     // values genuinely are `string | undefined`, so `string` is both
                     // accurate and what makes `?? ""` actually type as `string`.
                     let secret_read = format!(
-                        "((globalThis as {{ process?: {{ env?: Record<string, string> }} }}).process?.env?.[{:?}] ?? \"\")",
+                        "((globalThis as {{ process?: {{ env?: globalThis.Record<string, string> }} }}).process?.env?.[{:?}] ?? \"\")",
                         seam.secret
                     );
                     (
@@ -815,7 +815,10 @@ fn emit_system_http_support(
                     let stmt = TsStmt::const_stmt(
                         TsBindingName::Ident("__body".to_string()),
                         None,
-                        call(member(ident("JSON"), "stringify"), vec![ident(ser)]),
+                        call(
+                            member(ident("globalThis.JSON"), "stringify"),
+                            vec![ident(ser)],
+                        ),
                         None,
                     );
                     (Some(stmt), "body: __body, ")
@@ -833,7 +836,7 @@ fn emit_system_http_support(
                         runtime_use,
                     ))
                 }
-                None => format!("{type_ns}deserialise_unit"),
+                None => format!("{type_ns}__deserialise_unit"),
             };
             // Driver params mirror the handler's params (path params, then body).
             let driver_params: Vec<TsParam> = h
@@ -886,7 +889,7 @@ fn emit_system_http_support(
                 url.clone(),
                 typed_options,
                 &binding,
-                "responseToHttpResult",
+                "__responseToHttpResult",
                 &payload_deser,
             ));
             // Slice C: the raw driver for a `Wire(…)`-carrying call. Every slot is
@@ -916,7 +919,7 @@ fn emit_system_http_support(
                     url.clone(),
                     raw_options,
                     &binding,
-                    "responseToHttpOutcome",
+                    "__responseToHttpOutcome",
                     &payload_deser,
                 ));
             }
@@ -941,7 +944,7 @@ fn emit_system_http_support(
                     url.clone(),
                     noauth_options,
                     &binding,
-                    "responseToUnauthOutcome",
+                    "__responseToUnauthOutcome",
                     &payload_deser,
                 ));
             }
@@ -973,7 +976,7 @@ fn emit_system_http_support(
                     url,
                     rawnoauth_options,
                     &binding,
-                    "responseToUnauthOutcome",
+                    "__responseToUnauthOutcome",
                     &payload_deser,
                 ));
             }
@@ -1015,7 +1018,7 @@ fn emit_system_http_support(
                         TsBindingName::Ident("__req".to_string()),
                         None,
                         TsExpr::New {
-                            callee: Box::new(ident("Request")),
+                            callee: Box::new(ident("globalThis.Request")),
                             args: vec![
                                 TsExpr::template_lit(
                                     vec!["https://test".to_string(), String::new()],
@@ -1040,13 +1043,13 @@ fn emit_system_http_support(
                     ),
                     TsStmt::return_stmt(
                         Some(call(
-                            ident("responseToHttpOutcome"),
+                            ident("__responseToHttpOutcome"),
                             vec![
                                 ident("__res"),
                                 TsExpr::Arrow {
                                     params: vec![TsParam {
                                         name: "__j".to_string(),
-                                        ty: Some(TsType::named("JsonValue")),
+                                        ty: Some(TsType::named("__JsonValue")),
                                         optional: false,
                                     }],
                                     is_async: false,
@@ -1094,7 +1097,7 @@ fn emit_system_http_support(
     // P7.2: `Record<string, string>` — same reasoning as `__bynkSignHs256`'s own
     // `secret: string` parameter in `emitter/test_runtime/jwt_signer.ts`.
     let record_string_string = TsType::named_with_args(
-        "Record",
+        "globalThis.Record",
         vec![TsType::named("string"), TsType::named("string")],
     );
     let cast_globalthis_process = |process_optional: bool| -> TsExpr {
@@ -1193,7 +1196,7 @@ fn service_binding_forward(worker_ident: &str, env_ident: &str) -> TsExpr {
             TsExpr::Arrow {
                 params: vec![TsParam {
                     name: "req".to_string(),
-                    ty: Some(TsType::named("Request")),
+                    ty: Some(TsType::named("globalThis.Request")),
                     optional: false,
                 }],
                 is_async: false,
@@ -1206,7 +1209,7 @@ fn service_binding_forward(worker_ident: &str, env_ident: &str) -> TsExpr {
                 )))),
             },
         )])),
-        ty: TsType::named("ServiceBinding"),
+        ty: TsType::named("__ServiceBinding"),
     }
 }
 
@@ -1269,7 +1272,7 @@ fn emit_integration_harness(
                 body.push(TsStmt::assign(
                     member(ident(format!("env_{ns}")), binding),
                     call(
-                        ident("makeIntegrationDoNamespace"),
+                        ident("__makeIntegrationDoNamespace"),
                         vec![TsExpr::Arrow {
                             params: vec![TsParam {
                                 name: "state".to_string(),
@@ -1749,7 +1752,7 @@ fn emit_test_module(
         .map(|s| s.to_string())
         .collect();
     if has_agents {
-        runtime_names.push("makeTestState".to_string());
+        runtime_names.push("__makeTestState".to_string());
     }
     runtime_names.push("type Result".to_string());
     runtime_names.push("type Option".to_string());
@@ -2589,7 +2592,7 @@ fn emit_stub_class(
             body_text.push_str("    }\n");
         }
         body_text.push_str(&format!(
-            "    throw new Error(\"bynk: no stub clause matched for {cap}.{method}\");\n"
+            "    throw new globalThis.Error(\"bynk: no stub clause matched for {cap}.{method}\");\n"
         ));
 
         let method_node = TsClassMethod {
@@ -2614,7 +2617,7 @@ fn emit_stub_class(
 fn stub_fault_stmt() -> TsStmt {
     TsStmt::throw_stmt(
         TsExpr::New {
-            callee: Box::new(ident("Error")),
+            callee: Box::new(ident("globalThis.Error")),
             args: vec![str_lit("bynk: injected capability fault (stubs … fails)")],
         },
         None,
@@ -2972,7 +2975,9 @@ fn emit_test_deps(
             let other_ns = q.replace('.', "_");
             surface_entries.push((
                 key,
-                undefined_as_unknown_as(format!("ReturnType<typeof {other_ns}.makeSurface>")),
+                undefined_as_unknown_as(format!(
+                    "globalThis.ReturnType<typeof {other_ns}.makeSurface>"
+                )),
             ));
         }
         if !surface_entries.is_empty() {
@@ -3112,7 +3117,7 @@ fn emit_test_scope_setup(
             // P7.2: matches `emitter/lower.rs`'s own `{ args: unknown[] }` reads
             // of this exact shape (`Trace`/`Called`-with-predicate lowering).
             let obs_ty = TsType::named_with_args(
-                "Record",
+                "globalThis.Record",
                 vec![
                     TsType::named("string"),
                     TsType::array(TsType::Object(vec![
@@ -3685,7 +3690,7 @@ fn base_canon(base: BaseType) -> String {
         BaseType::Bool => "true".to_string(),
         BaseType::Float => "0".to_string(),
         BaseType::Duration | BaseType::Instant => "0".to_string(),
-        BaseType::Bytes => "new Uint8Array()".to_string(),
+        BaseType::Bytes => "new globalThis.Uint8Array()".to_string(),
     }
 }
 
@@ -3780,7 +3785,7 @@ fn coerce_int_field(
         return value;
     }
     if ty_draws_bigint(t, types, tys) {
-        call(ident("Number"), vec![value])
+        call(ident("globalThis.Number"), vec![value])
     } else {
         value
     }
@@ -4846,7 +4851,9 @@ fn emit_test_history_property_function(
     // P7.2: matches `__bynkDriveHistory_*`'s own real signature — see
     // `emit.rs`'s own driver-signature narrowing and the matching `__drive`
     // call site below (`{target_ns}.__bynkDriveHistory_{agent_name}`).
-    out.push_str("    const __body = async (__run: Array<{ h: number, args: unknown[] }>) => {\n");
+    out.push_str(
+        "    const __body = async (__run: globalThis.Array<{ h: number, args: unknown[] }>) => {\n",
+    );
     out.push_str(&format!("      const {run_var} = __run;\n"));
     for line in body_src.lines() {
         out.push_str("      ");
@@ -4876,7 +4883,9 @@ fn emit_test_history_property_function(
         TsExpr::Arrow {
             params: vec![TsParam {
                 name: "seq".to_string(),
-                ty: Some(TsType::named("Array<{ h: number, args: unknown[] }>")),
+                ty: Some(TsType::named(
+                    "globalThis.Array<{ h: number, args: unknown[] }>",
+                )),
                 optional: false,
             }],
             is_async: false,
@@ -5207,7 +5216,7 @@ fn sysdrive_driver(
         TsBindingName::Ident("__req".to_string()),
         None,
         TsExpr::New {
-            callee: Box::new(ident("Request")),
+            callee: Box::new(ident("globalThis.Request")),
             args: vec![url, options],
         },
         None,
@@ -5369,7 +5378,7 @@ fn cond_expr(test: TsExpr, consequent: TsExpr, alternate: TsExpr) -> TsExpr {
 }
 
 fn console_log(arg: TsExpr) -> TsStmt {
-    expr_stmt(method_call(ident("console"), "log", vec![arg]))
+    expr_stmt(method_call(ident("globalThis.console"), "log", vec![arg]))
 }
 
 fn const_(name: impl Into<String>, init: TsExpr) -> TsStmt {
@@ -5503,9 +5512,13 @@ pub(crate) fn emit_test_main(tests: &[RunnableTest], import_ext: ImportExt) -> T
                 generics: Vec::new(),
                 return_type: None,
                 body: Box::new(TsArrowBody::Expr(Box::new(method_call(
-                    ident("console"),
+                    ident("globalThis.console"),
                     "log",
-                    vec![method_call(ident("JSON"), "stringify", vec![ident("o")])],
+                    vec![method_call(
+                        ident("globalThis.JSON"),
+                        "stringify",
+                        vec![ident("o")],
+                    )],
                 )))),
             },
         ),
@@ -5772,7 +5785,7 @@ mod tests {
         );
         assert_eq!(
             names,
-            vec!["Ok", "Err", "type Result", "type BoundaryError"],
+            vec!["Ok", "Err", "type Result", "type __BoundaryError"],
         );
     }
 
@@ -5784,7 +5797,7 @@ mod tests {
             "Ok".to_string(),
             "Err".to_string(),
             "type Result".to_string(),
-            "BoundaryError".to_string(),
+            "__BoundaryError".to_string(),
         ];
         let before = names.clone();
         append_missing_bindings(&mut names, emitter::BOUNDARY_CODEC_RUNTIME_IMPORTS);
@@ -5826,8 +5839,8 @@ mod tests {
                 "Ok",
                 "Err",
                 "type Result",
-                "type BoundaryError",
-                "type JsonValue",
+                "type __BoundaryError",
+                "type __JsonValue",
                 "type JsonError",
             ],
             "the shared bindings must be added once: {names:?}"
@@ -6050,7 +6063,7 @@ mod tests {
         let coerced = coerce_int_field(int_ty, &types, &tys, draw);
         assert_eq!(
             bynk_ts::print_expr(&coerced),
-            "Number(rng.int(-1000n, 1000n))"
+            "globalThis.Number(rng.int(-1000n, 1000n))"
         );
     }
 
@@ -6074,7 +6087,7 @@ mod tests {
         let coerced = coerce_int_field(pct_ty, &types, &tys, draw);
         assert_eq!(
             bynk_ts::print_expr(&coerced),
-            "Number((rng.int(0n, 100n) as any))"
+            "globalThis.Number((rng.int(0n, 100n) as any))"
         );
     }
 
@@ -6093,7 +6106,7 @@ mod tests {
         let coerced = coerce_int_field(pct_ty, &types, &tys, draw);
         assert_eq!(
             bynk_ts::print_expr(&coerced),
-            "Number(Pct.unsafe(rng.int(0n, 100n)))"
+            "globalThis.Number(Pct.unsafe(rng.int(0n, 100n)))"
         );
     }
 
@@ -6300,7 +6313,7 @@ mod tests {
                 Box::new(TypeRef::Unit(Span::default())),
                 Span::default()
             )),
-            "Promise<void>"
+            "globalThis.Promise<void>"
         );
         assert_eq!(
             emitter::ts_type_ref(&TypeRef::Map(

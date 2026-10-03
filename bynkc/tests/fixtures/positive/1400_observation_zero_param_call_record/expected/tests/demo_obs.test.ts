@@ -51,7 +51,7 @@ function makeTestDeps() {
 // case tier: unit
 async function test_traces_the_zero_param_clock_read() {
   try {
-    const __obs = { log: {} as Record<string, { args: unknown[]; order: number }[]>, n: 0 };
+    const __obs = { log: {} as globalThis.Record<string, { args: unknown[]; order: number }[]>, n: 0 };
     const deps = __bynkRecordDeps(makeTestDeps(), { Clock: ["now"] }, __obs);
     const { tick } = demo_obs;
     const r = await tick.call(deps);

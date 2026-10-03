@@ -19,7 +19,7 @@ export const Code = {
     if (!(value.length <= 16)) {
       return Err({ field: "Code", message: "length must be at most 16", value });
     }
-    if (!(new RegExp("^(?:" + "\\d*-?\\d*" + ")$").test(value))) {
+    if (!(new globalThis.RegExp("^(?:" + "\\d*-?\\d*" + ")$").test(value))) {
       return Err({ field: "Code", message: "must match /\\d*-?\\d*/", value });
     }
     return Ok(value as Code);
@@ -36,10 +36,10 @@ export function accepts(s: string): boolean {
       return false;
     }
   }
-  throw new Error("non-exhaustive match");
+  throw new globalThis.Error("non-exhaustive match");
 }
 
 export function admits(s: string): boolean {
   const __r0 = s;
-  return (__r0.length <= 16 && new RegExp("^(?:" + "\\d*-?\\d*" + ")$").test(__r0));
+  return (__r0.length <= 16 && new globalThis.RegExp("^(?:" + "\\d*-?\\d*" + ")$").test(__r0));
 }

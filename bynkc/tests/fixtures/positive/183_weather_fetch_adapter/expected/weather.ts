@@ -23,8 +23,8 @@ export const WeatherError = {
 };
 
 export interface Weather {
-  current(city: string): Promise<Result<Report, WeatherError>>;
+  current(city: string): globalThis.Promise<Result<Report, WeatherError>>;
 }
 
-export const WeatherToken: unique symbol = Symbol("Weather");
+export const WeatherToken: symbol = globalThis.Symbol("Weather");
 

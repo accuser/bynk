@@ -20,13 +20,13 @@ export function relabel(m: Money): Money {
 }
 
 export interface Clock {
-  now(): Promise<number>;
+  now(): globalThis.Promise<number>;
 }
 
-export const ClockToken: unique symbol = Symbol("Clock");
+export const ClockToken: symbol = globalThis.Symbol("Clock");
 
 export const api = {
-  async call(deps: { Clock: Clock }): Promise<number> {
+  async call(deps: { Clock: Clock }): globalThis.Promise<number> {
     const t = await deps.Clock.now();
     return t;
   },
@@ -38,7 +38,7 @@ export interface ShopDeps {
 
 export function makeSurface(deps: ShopDeps) {
   return {
-    async api(): Promise<number> {
+    async api(): globalThis.Promise<number> {
       return api.call(deps);
     },
   };

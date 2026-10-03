@@ -205,11 +205,11 @@ fn default_case(body: Vec<TsStmt>) -> TsSwitchCase {
 }
 
 fn new_response(args: Vec<TsExpr>) -> TsExpr {
-    new_expr("Response", args)
+    new_expr("globalThis.Response", args)
 }
 
 fn json_stringify(expr: TsExpr) -> TsExpr {
-    method_call(ident("JSON"), "stringify", vec![expr])
+    method_call(ident("globalThis.JSON"), "stringify", vec![expr])
 }
 
 fn status_obj(status: i64) -> TsExpr {
@@ -337,7 +337,7 @@ pub(crate) fn emit_worker_entry(
                 vec![TsParam {
                     name: "promise".to_string(),
                     ty: Some(TsType::named_with_args(
-                        "Promise",
+                        "globalThis.Promise",
                         vec![TsType::named("unknown")],
                     )),
                     optional: false,
@@ -540,45 +540,45 @@ pub(crate) fn emit_worker_entry(
         "Ok".to_string(),
         "Err".to_string(),
         "type Result".to_string(),
-        "type JsonValue".to_string(),
-        "type BoundaryError".to_string(),
-        "boundaryError".to_string(),
+        "type __JsonValue".to_string(),
+        "type __BoundaryError".to_string(),
+        "__boundaryError".to_string(),
     ];
     if has_http {
-        imports.push("matchPath".to_string());
-        imports.push("httpResultToResponse".to_string());
+        imports.push("__matchPath".to_string());
+        imports.push("__httpResultToResponse".to_string());
     }
     if has_event_services {
-        imports.push("deserialiseEventEnvelope".to_string());
+        imports.push("__deserialiseEventEnvelope".to_string());
     }
     // v0.139: a context that answers `HEAD` (any `GET` route) strips the built
     // response body through `headResponse`.
     if has_get_route {
-        imports.push("headResponse".to_string());
+        imports.push("__headResponse".to_string());
         // v0.140 (ADR 0163): every `GET` carries a weak `ETag` and is answered
         // `304` on a matching `If-None-Match` via `notModifiedIfMatch`.
-        imports.push("notModifiedIfMatch".to_string());
+        imports.push("__notModifiedIfMatch".to_string());
     }
     // v0.140 (ADR 0163): a `GET` carrying `@cache` stamps `Cache-Control` through
     // `applyCache` — imported only when some route declares one.
     if http_routes.iter().any(|r| r.cache.is_some()) {
-        imports.push("applyCache".to_string());
+        imports.push("__applyCache".to_string());
     }
     // v0.131: a context with a CORS-enabled service imports the CORS helpers.
     if !cors_services.is_empty() {
-        imports.push("type CorsPolicy".to_string());
-        imports.push("applyCors".to_string());
-        imports.push("corsPreflightResponse".to_string());
+        imports.push("type __CorsPolicy".to_string());
+        imports.push("__applyCors".to_string());
+        imports.push("__corsPreflightResponse".to_string());
     }
     // v0.141: a context with any `from http` service imports the security-header
     // helper — every such service stamps at least the default `nosniff`.
     if !security_services.is_empty() {
-        imports.push("type SecurityPolicy".to_string());
-        imports.push("applySecurityHeaders".to_string());
+        imports.push("type __SecurityPolicy".to_string());
+        imports.push("__applySecurityHeaders".to_string());
     }
     // v0.51: a context with a Signature handler imports the HMAC verifier.
     if http_routes.iter().any(|r| r.signature.is_some()) {
-        imports.push("verifySignatureHmacSha256".to_string());
+        imports.push("__verifySignatureHmacSha256".to_string());
     }
     // The runtime import's own `names` list isn't finalised yet — #914's own
     // codec-family follow-on (here, only `Bytes`) is only known once the
@@ -638,7 +638,7 @@ pub(crate) fn emit_worker_entry(
     let mut fetch_params: Vec<TsParam> = vec![
         TsParam {
             name: "request".to_string(),
-            ty: Some(TsType::named("Request")),
+            ty: Some(TsType::named("globalThis.Request")),
             optional: false,
         },
         TsParam {
@@ -652,7 +652,7 @@ pub(crate) fn emit_worker_entry(
     let mut fetch_body: Vec<TsStmt> = vec![
         const_(
             "url",
-            new_expr("URL", vec![member(ident("request"), "url")]),
+            new_expr("globalThis.URL", vec![member(ident("request"), "url")]),
         ),
         const_("path", member(ident("url"), "pathname")),
         const_("method", member(ident("request"), "method")),
@@ -665,7 +665,7 @@ pub(crate) fn emit_worker_entry(
     for cs in &cors_services {
         fetch_body.push(const_typed(
             cs.const_name.clone(),
-            TsType::named("CorsPolicy"),
+            TsType::named("__CorsPolicy"),
             cs.literal.clone(),
         ));
     }
@@ -674,7 +674,7 @@ pub(crate) fn emit_worker_entry(
     for ss in &security_services {
         fetch_body.push(const_typed(
             ss.const_name.clone(),
-            TsType::named("SecurityPolicy"),
+            TsType::named("__SecurityPolicy"),
             ss.literal.clone(),
         ));
     }
@@ -748,7 +748,7 @@ pub(crate) fn emit_worker_entry(
             "args",
             as_expr(
                 await_expr(method_call(ident("request"), "json", vec![])),
-                TsType::named("JsonValue"),
+                TsType::named("__JsonValue"),
             ),
         ));
         case_body.extend(emit_call_handler_dispatch(
@@ -885,8 +885,8 @@ pub(crate) fn emit_worker_entry(
                     // affecting the other site.
                     paren(await_expr(method_call(ident("request"), "json", vec![]))),
                     TsType::Object(vec![
-                        TsTypeMember::prop("payload", TsType::named("JsonValue")),
-                        TsTypeMember::prop("envelope", TsType::named("JsonValue")),
+                        TsTypeMember::prop("payload", TsType::named("__JsonValue")),
+                        TsTypeMember::prop("envelope", TsType::named("__JsonValue")),
                     ]),
                 ),
                 None,
@@ -894,7 +894,7 @@ pub(crate) fn emit_worker_entry(
             const_(
                 "__r_envelope",
                 call(
-                    ident("deserialiseEventEnvelope"),
+                    ident("__deserialiseEventEnvelope"),
                     vec![ident("envelope"), str_lit("$.envelope")],
                 ),
             ),
@@ -969,7 +969,7 @@ pub(crate) fn emit_worker_entry(
             if *has_params {
                 strict_neq(
                     call(
-                        ident("matchPath"),
+                        ident("__matchPath"),
                         vec![str_lit(path.clone()), ident("path")],
                     ),
                     null_lit(),
@@ -1000,7 +1000,7 @@ pub(crate) fn emit_worker_entry(
         // service's security headers — a CORS-enabled service is a `from http`
         // service, so it always has a security policy constant.
         let preflight = call(
-            ident("corsPreflightResponse"),
+            ident("__corsPreflightResponse"),
             vec![
                 ident(cs.const_name.clone()),
                 method_call(
@@ -1012,7 +1012,7 @@ pub(crate) fn emit_worker_entry(
         );
         let stamped = match security_services.iter().find(|s| s.service == cs.service) {
             Some(ss) => call(
-                ident("applySecurityHeaders"),
+                ident("__applySecurityHeaders"),
                 vec![preflight, ident(ss.const_name.clone())],
             ),
             None => preflight,
@@ -1052,7 +1052,7 @@ pub(crate) fn emit_worker_entry(
         let match_cond = if pm.has_params {
             strict_neq(
                 call(
-                    ident("matchPath"),
+                    ident("__matchPath"),
                     vec![str_lit(pm.path.clone()), ident("path")],
                 ),
                 null_lit(),
@@ -1088,7 +1088,7 @@ pub(crate) fn emit_worker_entry(
         // policy (DECISION E), CORS only when the path's service opts in.
         let cors_res = match &pm.cors_const {
             Some(c) => call(
-                ident("applyCors"),
+                ident("__applyCors"),
                 vec![
                     ident("__res"),
                     ident(c.clone()),
@@ -1103,7 +1103,7 @@ pub(crate) fn emit_worker_entry(
         };
         let stamped = match &pm.security_const {
             Some(s) => call(
-                ident("applySecurityHeaders"),
+                ident("__applySecurityHeaders"),
                 vec![cors_res, ident(s.clone())],
             ),
             None => cors_res,
@@ -1126,8 +1126,8 @@ pub(crate) fn emit_worker_entry(
         generics: Vec::new(),
         params: fetch_params,
         return_type: Some(TsType::named_with_args(
-            "Promise",
-            vec![TsType::named("Response")],
+            "globalThis.Promise",
+            vec![TsType::named("globalThis.Response")],
         )),
         doc: None,
         inline: false,
@@ -1240,7 +1240,7 @@ fn emit_scheduled_handler(
             if_(
                 strict_eq(member(ident("result"), "tag"), str_lit("Err")),
                 expr_stmt(method_call(
-                    ident("console"),
+                    ident("globalThis.console"),
                     "error",
                     vec![
                         str_lit(format!("cron {} failed", route.expr)),
@@ -1261,7 +1261,7 @@ fn emit_scheduled_handler(
         generics: Vec::new(),
         params,
         return_type: Some(TsType::named_with_args(
-            "Promise",
+            "globalThis.Promise",
             vec![TsType::named("void")],
         )),
         doc: None,
@@ -1316,7 +1316,7 @@ fn emit_queue_handler(
         let method_key = crate::emitter::queue_handler_method_name(&route.service, route.index);
         let (dser, brand) = match &route.msg_type {
             Some(t) => (
-                deserialise_call(t, "(msg.body as JsonValue)", "$", ru),
+                deserialise_call(t, "(msg.body as __JsonValue)", "$", ru),
                 brand_assertion(t, local_types),
             ),
             // P7.2: `msg.body` is already declared `unknown` at `queue()`'s own
@@ -1325,7 +1325,7 @@ fn emit_queue_handler(
             None => (
                 as_expr(
                     call(ident("Ok"), vec![member(ident("msg"), "body")]),
-                    TsType::named("Result<unknown, BoundaryError>"),
+                    TsType::named("Result<unknown, __BoundaryError>"),
                 ),
                 String::new(),
             ),
@@ -1340,7 +1340,7 @@ fn emit_queue_handler(
                 TsStmt::inline_block(
                     vec![
                         expr_stmt(method_call(
-                            ident("console"),
+                            ident("globalThis.console"),
                             "error",
                             vec![
                                 str_lit(format!("queue {} deserialise failed", route.name)),
@@ -1366,7 +1366,7 @@ fn emit_queue_handler(
                 TsStmt::inline_block(
                     vec![
                         expr_stmt(method_call(
-                            ident("console"),
+                            ident("globalThis.console"),
                             "error",
                             vec![
                                 str_lit(format!("queue {} retry", route.name)),
@@ -1392,7 +1392,7 @@ fn emit_queue_handler(
             TsStmt::inline_block(
                 vec![
                     expr_stmt(method_call(
-                        ident("console"),
+                        ident("globalThis.console"),
                         "error",
                         vec![str_lit(format!("queue {} threw", route.name)), ident("e")],
                     )),
@@ -1430,7 +1430,7 @@ fn emit_queue_handler(
         generics: Vec::new(),
         params,
         return_type: Some(TsType::named_with_args(
-            "Promise",
+            "globalThis.Promise",
             vec![TsType::named("void")],
         )),
         doc: None,
@@ -1764,7 +1764,7 @@ fn stamp_rejection(
 ) -> TsExpr {
     let corsed = match cors_const {
         Some(c) => call(
-            ident("applyCors"),
+            ident("__applyCors"),
             vec![
                 inner,
                 ident(c.to_string()),
@@ -1779,7 +1779,7 @@ fn stamp_rejection(
     };
     match security_const {
         Some(s) => call(
-            ident("applySecurityHeaders"),
+            ident("__applySecurityHeaders"),
             vec![corsed, ident(s.to_string())],
         ),
         None => corsed,
@@ -1819,7 +1819,7 @@ fn emit_http_route_dispatch(
         inner.push(const_(
             "__m",
             call(
-                ident("matchPath"),
+                ident("__matchPath"),
                 vec![str_lit(route.path.clone()), ident("path")],
             ),
         ));
@@ -1871,7 +1871,7 @@ fn emit_http_route_dispatch(
                 strict_neq(ident("__contentLength"), null_lit()),
                 binary(
                     bynk_ts::TsBinaryOp::GreaterThan,
-                    call(ident("Number"), vec![ident("__contentLength")]),
+                    call(ident("globalThis.Number"), vec![ident("__contentLength")]),
                     num_lit(cap.to_string()),
                 ),
             ),
@@ -1930,7 +1930,7 @@ fn emit_http_route_dispatch(
                 security_const,
             )
         };
-        guarded.push(let_typed("__body_json", TsType::named("JsonValue")));
+        guarded.push(let_typed("__body_json", TsType::named("__JsonValue")));
         if let Some(seam) = &route.signature {
             // v0.51: read the raw body once, verify the HMAC fail-closed (401),
             // then parse the body param from the *same* bytes (not a re-read /
@@ -1952,7 +1952,7 @@ fn emit_http_route_dispatch(
                     as_expr(
                         as_expr(ident("env"), TsType::named("unknown")),
                         TsType::named_with_args(
-                            "Record",
+                            "globalThis.Record",
                             vec![TsType::named("string"), TsType::named("unknown")],
                         ),
                     ),
@@ -1968,7 +1968,7 @@ fn emit_http_route_dispatch(
                                     TsType::Object(vec![TsTypeMember::optional_prop(
                                         "env",
                                         TsType::named_with_args(
-                                            "Record",
+                                            "globalThis.Record",
                                             vec![TsType::named("string"), TsType::named("unknown")],
                                         ),
                                     )]),
@@ -2022,7 +2022,7 @@ fn emit_http_route_dispatch(
             guarded.push(const_(
                 "__ok",
                 await_expr(call(
-                    ident("verifySignatureHmacSha256"),
+                    ident("__verifySignatureHmacSha256"),
                     vec![
                         ident("__raw"),
                         ident("__secret"),
@@ -2047,8 +2047,8 @@ fn emit_http_route_dispatch(
                 vec![TsStmt::assign(
                     ident("__body_json"),
                     as_expr(
-                        method_call(ident("JSON"), "parse", vec![ident("__raw")]),
-                        TsType::named("JsonValue"),
+                        method_call(ident("globalThis.JSON"), "parse", vec![ident("__raw")]),
+                        TsType::named("__JsonValue"),
                     ),
                     None,
                 )],
@@ -2065,7 +2065,7 @@ fn emit_http_route_dispatch(
                         // unlike the `/_bynk/call/` dispatch's bare `args`
                         // above — see that site's own comment.
                         paren(await_expr(method_call(ident("request"), "json", vec![]))),
-                        TsType::named("JsonValue"),
+                        TsType::named("__JsonValue"),
                     ),
                     None,
                 )],
@@ -2118,7 +2118,7 @@ fn emit_http_route_dispatch(
     // conditional, no freshness (DECISION B).
     let response_expr = if route.method == bynk_ir::IrHttpMethod::Get {
         let base = call(
-            ident("httpResultToResponse"),
+            ident("__httpResultToResponse"),
             vec![
                 ident("result"),
                 ser_fn,
@@ -2127,21 +2127,27 @@ fn emit_http_route_dispatch(
         );
         let cached = match &route.cache {
             Some(p) => call(
-                ident("applyCache"),
+                ident("__applyCache"),
                 vec![base, num_lit(p.max_age_secs.to_string()), str_lit(p.scope)],
             ),
             None => base,
         };
-        call(ident("notModifiedIfMatch"), vec![cached, ident("request")])
+        call(
+            ident("__notModifiedIfMatch"),
+            vec![cached, ident("request")],
+        )
     } else {
-        call(ident("httpResultToResponse"), vec![ident("result"), ser_fn])
+        call(
+            ident("__httpResultToResponse"),
+            vec![ident("result"), ser_fn],
+        )
     };
     // v0.131: a CORS-enabled service stamps the `Access-Control-*` headers onto
     // every real response, uniformly across variant families — including the
     // synthesised `304`, so a cross-origin revalidation stays readable.
     let cors_expr = match cors_const {
         Some(c) => call(
-            ident("applyCors"),
+            ident("__applyCors"),
             vec![
                 response_expr,
                 ident(c.to_string()),
@@ -2161,7 +2167,7 @@ fn emit_http_route_dispatch(
     // `response_expr`) and the `HEAD` answer (`headResponse` copies the headers).
     let build_expr = match security_const {
         Some(s) => call(
-            ident("applySecurityHeaders"),
+            ident("__applySecurityHeaders"),
             vec![cors_expr, ident(s.to_string())],
         ),
         None => cors_expr,
@@ -2174,7 +2180,7 @@ fn emit_http_route_dispatch(
         guarded.push(const_("__response", build_expr));
         guarded.push(return_(Some(cond_expr(
             strict_eq(ident("method"), str_lit("HEAD")),
-            call(ident("headResponse"), vec![ident("__response")]),
+            call(ident("__headResponse"), vec![ident("__response")]),
             ident("__response"),
         ))));
     } else {
@@ -2267,7 +2273,10 @@ fn emit_call_handler_dispatch(
                     strict_neq(typeof_args.clone(), str_lit("object")),
                     strict_eq(ident("args"), null_lit()),
                 ),
-                call(member(ident("Array"), "isArray"), vec![ident("args")]),
+                call(
+                    member(ident("globalThis.Array"), "isArray"),
+                    vec![ident("args")],
+                ),
             ),
             return_(Some(json_response(
                 json_error_kind(
@@ -2340,7 +2349,7 @@ fn index_signature_record_ty() -> TsType {
     TsType::Object(vec![TsTypeMember::index(
         "k",
         TsType::named("string"),
-        TsType::named("JsonValue"),
+        TsType::named("__JsonValue"),
     )])
 }
 

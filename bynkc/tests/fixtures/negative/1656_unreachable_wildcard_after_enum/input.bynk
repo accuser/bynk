@@ -1,0 +1,13 @@
+commons test {
+  type Color = enum { Red, Green, Blue }
+
+  -- #1656: every variant is listed, so a defensive trailing `_` is dead.
+  fn bad(c: Color) -> Int {
+    match c {
+      Red => 1
+      Green => 2
+      Blue => 3
+      _ => 4
+    }
+  }
+}

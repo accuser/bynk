@@ -11,19 +11,19 @@ export const Token = {
 };
 
 export const api = {
-  async http_GET_health(deps: {}): Promise<HttpResult<string>> {
+  async http_GET_health(deps: {}): globalThis.Promise<HttpResult<string>> {
     return HttpResult.Ok("ok");
   },
 };
 
 export const jobs = {
-  async cron_jobs_0(deps: {}): Promise<Result<void, string>> {
+  async cron_jobs_0(deps: {}): globalThis.Promise<Result<void, string>> {
     return Ok(undefined);
   },
 };
 
 export const rpc = {
-  async call(deps: {}): Promise<Result<void, string>> {
+  async call(deps: {}): globalThis.Promise<Result<void, string>> {
     return Ok(undefined);
   },
 };
@@ -33,7 +33,7 @@ export interface ShopDeps {
 
 export function makeSurface(deps: ShopDeps) {
   return {
-    async rpc(): Promise<Result<void, string>> {
+    async rpc(): globalThis.Promise<Result<void, string>> {
       return rpc.call(deps);
     },
   };

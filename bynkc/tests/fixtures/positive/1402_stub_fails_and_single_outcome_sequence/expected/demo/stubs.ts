@@ -4,17 +4,17 @@
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
 
 export interface Vault {
-  open(): Promise<number>;
-  peek(): Promise<number>;
+  open(): globalThis.Promise<number>;
+  peek(): globalThis.Promise<number>;
 }
 
-export const VaultToken: unique symbol = Symbol("Vault");
+export const VaultToken: symbol = globalThis.Symbol("Vault");
 
 export class RealVault implements Vault {
-  async open(): Promise<number> {
+  async open(): globalThis.Promise<number> {
     return 1;
   }
-  async peek(): Promise<number> {
+  async peek(): globalThis.Promise<number> {
     return 2;
   }
 }
@@ -22,7 +22,7 @@ export class RealVault implements Vault {
 export const RealVaultProvider = { token: VaultToken, factory: () => new RealVault() };
 
 export const box = {
-  async call(deps: { Vault: Vault }): Promise<number> {
+  async call(deps: { Vault: Vault }): globalThis.Promise<number> {
     const a = await deps.Vault.open();
     const b = await deps.Vault.peek();
     return a + b;
@@ -35,7 +35,7 @@ export interface DemoStubsDeps {
 
 export function makeSurface(deps: DemoStubsDeps) {
   return {
-    async box(): Promise<number> {
+    async box(): globalThis.Promise<number> {
       return box.call(deps);
     },
   };

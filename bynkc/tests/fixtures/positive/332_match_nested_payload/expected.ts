@@ -23,7 +23,7 @@ export function code(res: Result<number, FetchError>): number {
   if (res.tag === "Err" && res.error.tag === "UnknownChoice") {
     return 400;
   }
-  throw new Error("non-exhaustive match");
+  throw new globalThis.Error("non-exhaustive match");
 }
 
 export function inner(opt: Option<Result<number, FetchError>>): number {
@@ -37,6 +37,6 @@ export function inner(opt: Option<Result<number, FetchError>>): number {
   if (opt.tag === "None") {
     return -2;
   }
-  throw new Error("non-exhaustive match");
+  throw new globalThis.Error("non-exhaustive match");
 }
 

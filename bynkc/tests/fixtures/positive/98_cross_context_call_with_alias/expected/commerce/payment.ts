@@ -4,7 +4,7 @@
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
 
 export const authorise = {
-  async call(amount: number, deps: {}): Promise<Result<number, number>> {
+  async call(amount: number, deps: {}): globalThis.Promise<Result<number, number>> {
     return Ok(amount);
   },
 };
@@ -14,7 +14,7 @@ export interface CommercePaymentDeps {
 
 export function makeSurface(deps: CommercePaymentDeps) {
   return {
-    async authorise(amount: number): Promise<Result<number, number>> {
+    async authorise(amount: number): globalThis.Promise<Result<number, number>> {
       return authorise.call(amount, deps);
     },
   };

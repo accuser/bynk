@@ -12,7 +12,7 @@ export type Qty = number & { readonly __brand: "Qty" };
 
 export const Qty = {
   of(value: number): Result<Qty, ValidationError> {
-    if (!Number.isSafeInteger(value)) {
+    if (!globalThis.Number.isSafeInteger(value)) {
       return Err({ field: "Qty", message: "must be a safe integer", value });
     }
     if (!(value > 0)) {

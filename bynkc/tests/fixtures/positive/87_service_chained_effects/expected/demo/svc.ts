@@ -4,13 +4,13 @@
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
 
 export interface Counter {
-  next(seed: number): Promise<number>;
+  next(seed: number): globalThis.Promise<number>;
 }
 
-export const CounterToken: unique symbol = Symbol("Counter");
+export const CounterToken: symbol = globalThis.Symbol("Counter");
 
 export const compute = {
-  async call(start: number, deps: { Counter: Counter }): Promise<number> {
+  async call(start: number, deps: { Counter: Counter }): globalThis.Promise<number> {
     const a = await deps.Counter.next(start);
     const b = await deps.Counter.next(a);
     return b;
@@ -23,7 +23,7 @@ export interface DemoSvcDeps {
 
 export function makeSurface(deps: DemoSvcDeps) {
   return {
-    async compute(start: number): Promise<number> {
+    async compute(start: number): globalThis.Promise<number> {
       return compute.call(start, deps);
     },
   };

@@ -286,8 +286,8 @@ nor an embedding applies, it is `bynk.types.question_error_mismatch`.
 **The typed JSON codec** (v0.22b, ADR 0045). `Json.encode(v) -> String` and
 `Json.decode[T](s) -> Result[T, JsonError]` are compiler-backed statics on
 the built-in `Json` module: `encode` dispatches to the generated
-`serialise_<T>` for the value's checked type; `decode` to `JSON.parse` +
-`deserialise_<T>`. The **domain of `T`** (and of `encode`'s argument) is any
+`__serialise_<T>` for the value's checked type; `decode` to `JSON.parse` +
+`__deserialise_<T>`. The **domain of `T`** (and of `encode`'s argument) is any
 boundary-legal shape — base types, named types, and the built-in containers
 over them; functions, effects, `HttpResult`, the error builtins, and type
 variables are `bynk.types.json_uncodable`. `decode`'s target is given
@@ -699,7 +699,9 @@ MUST **join** to a common result type — their least upper bound, so a refined
 type and its base agree at the base (`bynk.types.match_arm_mismatch`), MUST NOT
 repeat a
 variant (`bynk.types.duplicate_variant_arm`), and MUST NOT be unreachable
-(`bynk.types.unreachable_arm`).
+(`bynk.types.unreachable_arm`): every arm MUST match some value that no earlier
+unguarded arm matches. A guarded arm or a refined pattern (`n where P`) never
+covers a later arm, since its guard or predicate may fail.
 
 A pattern MUST name a real variant (`bynk.types.unknown_variant_in_pattern`) and
 real payload fields (`bynk.types.unknown_pattern_field`), bind the right number

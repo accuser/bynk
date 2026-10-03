@@ -819,7 +819,7 @@ fn zero_of_base(b: BaseType) -> Option<String> {
             BaseType::Duration | BaseType::Instant => "0",
             // v0.110 (ADR 0142): the zero of `Bytes` is the empty octet
             // sequence (`""` in base64), erased to an empty `Uint8Array`.
-            BaseType::Bytes => "new Uint8Array()",
+            BaseType::Bytes => "new globalThis.Uint8Array()",
         }
         .to_string(),
     )

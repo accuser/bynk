@@ -15,17 +15,17 @@ export const AuthId = {
 };
 
 export interface Logger {
-  log(msg: string): Promise<void>;
-  warn(msg: string): Promise<void>;
+  log(msg: string): globalThis.Promise<void>;
+  warn(msg: string): globalThis.Promise<void>;
 }
 
-export const LoggerToken: unique symbol = Symbol("Logger");
+export const LoggerToken: symbol = globalThis.Symbol("Logger");
 
 export class NoOpLogger implements Logger {
-  async log(msg: string): Promise<void> {
+  async log(msg: string): globalThis.Promise<void> {
     return undefined;
   }
-  async warn(msg: string): Promise<void> {
+  async warn(msg: string): globalThis.Promise<void> {
     return undefined;
   }
 }
@@ -33,7 +33,7 @@ export class NoOpLogger implements Logger {
 export const NoOpLoggerProvider = { token: LoggerToken, factory: () => new NoOpLogger() };
 
 export const authorise = {
-  async call(amount: number, deps: { Logger: Logger }): Promise<Result<AuthId, string>> {
+  async call(amount: number, deps: { Logger: Logger }): globalThis.Promise<Result<AuthId, string>> {
     const __r0 = await deps.Logger.log("start");
     const __r1 = await deps.Logger.log("checking");
     const __r2 = await deps.Logger.warn("authorised");
@@ -47,7 +47,7 @@ export interface CommercePaymentDeps {
 
 export function makeSurface(deps: CommercePaymentDeps) {
   return {
-    async authorise(amount: number): Promise<Result<AuthId, string>> {
+    async authorise(amount: number): globalThis.Promise<Result<AuthId, string>> {
       return authorise.call(amount, deps);
     },
   };

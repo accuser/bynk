@@ -24,7 +24,7 @@ export const PaymentError = {
 };
 
 export const authorise = {
-  async call(amount: number, deps: {}): Promise<Result<AuthId, PaymentError>> {
+  async call(amount: number, deps: {}): globalThis.Promise<Result<AuthId, PaymentError>> {
     return (amount === 0 ? Err(PaymentError.Declined) : (amount > 1000000 ? Err(PaymentError.InsufficientFunds) : Ok(AuthId.unsafe("AUTH-DEFAULT"))));
   },
 };
@@ -34,7 +34,7 @@ export interface DemoSvcDeps {
 
 export function makeSurface(deps: DemoSvcDeps) {
   return {
-    async authorise(amount: number): Promise<Result<AuthId, PaymentError>> {
+    async authorise(amount: number): globalThis.Promise<Result<AuthId, PaymentError>> {
       return authorise.call(amount, deps);
     },
   };

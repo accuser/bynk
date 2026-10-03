@@ -7,7 +7,7 @@ export type Sku = string & { readonly __brand: "Sku" };
 
 export const Sku = {
   of(value: string): Result<Sku, ValidationError> {
-    if (!(new RegExp("^(?:" + "[A-Z0-9]{3,16}" + ")$").test(value))) {
+    if (!(new globalThis.RegExp("^(?:" + "[A-Z0-9]{3,16}" + ")$").test(value))) {
       return Err({ field: "Sku", message: "must match /[A-Z0-9]{3,16}/", value });
     }
     return Ok(value as Sku);
@@ -18,7 +18,7 @@ export type Quantity = number & { readonly __brand: "Quantity" };
 
 export const Quantity = {
   of(value: number): Result<Quantity, ValidationError> {
-    if (!Number.isSafeInteger(value)) {
+    if (!globalThis.Number.isSafeInteger(value)) {
       return Err({ field: "Quantity", message: "must be a safe integer", value });
     }
     if (!(value >= 1 && value <= 9999)) {
@@ -32,7 +32,7 @@ export type Discount = number & { readonly __brand: "Discount" };
 
 export const Discount = {
   of(value: number): Result<Discount, ValidationError> {
-    if (!Number.isSafeInteger(value)) {
+    if (!globalThis.Number.isSafeInteger(value)) {
       return Err({ field: "Discount", message: "must be a safe integer", value });
     }
     if (!(value >= 0 && value <= 100)) {

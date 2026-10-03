@@ -121,14 +121,14 @@ fn client_id_inline_revalidation_matches_the_committed_consumer_codec() {
     // `deserialise_ClientId`, since a `workers` build never imports a
     // consumed type's codec as a value.
     let gateway_ts = read(&root.join("expected/workers/wire-gateway/handlers.ts"));
-    let body = extract_fn(&gateway_ts, "deserialise_ClientId");
+    let body = extract_fn(&gateway_ts, "__deserialise_ClientId");
 
     // One `if (!(` per declared predicate.
     let if_not_count = body.matches("if (!(").count();
     assert_eq!(
         if_not_count,
         scalar.predicates.len(),
-        "expected one `if (!(` per predicate in deserialise_ClientId:\n{body}"
+        "expected one `if (!(` per predicate in __deserialise_ClientId:\n{body}"
     );
 
     // In declaration order: each predicate's known condition snippet appears,
@@ -165,7 +165,7 @@ fn client_id_via_constructor_revalidation_matches_the_committed_owner_codec() {
     assert_eq!(scalar.revalidation, Revalidation::ViaConstructor);
 
     let auth_ts = read(&root.join("expected/workers/wire-auth/handlers.ts"));
-    let body = extract_fn(&auth_ts, "deserialise_ClientId");
+    let body = extract_fn(&auth_ts, "__deserialise_ClientId");
     assert!(
         body.contains(".of === \"function\""),
         "ViaConstructor revalidation must probe the owner's own `.of`:\n{body}"
@@ -190,7 +190,7 @@ fn auth_id_structural_only_revalidation_matches_the_committed_consumer_codec() {
     assert_eq!(scalar.revalidation, Revalidation::StructuralOnly);
 
     let gateway_ts = read(&root.join("expected/workers/wire-gateway/handlers.ts"));
-    let body = extract_fn(&gateway_ts, "deserialise_AuthId");
+    let body = extract_fn(&gateway_ts, "__deserialise_AuthId");
 
     // Neither the Inline predicate-check pattern nor the ViaConstructor `.of`
     // probe appears — the predicate really is the owner's secret here, cast
@@ -228,17 +228,17 @@ fn login_error_sum_codec_matches_the_wire_discriminant_the_ir_declares() {
     // too — check that copy, so this exercises the same consumer-side
     // generation path the predicate assertions above do.
     let gateway_ts = read(&root.join("expected/workers/wire-gateway/handlers.ts"));
-    let deser = extract_fn(&gateway_ts, "deserialise_LoginError");
-    let ser = extract_fn(&gateway_ts, "serialise_LoginError");
+    let deser = extract_fn(&gateway_ts, "__deserialise_LoginError");
+    let ser = extract_fn(&gateway_ts, "__serialise_LoginError");
 
     let wire_needle = format!("obj[\"{}\"]", sum.wire_discriminant);
     assert!(
         deser.contains(&wire_needle),
-        "deserialise_LoginError should switch on `{wire_needle}` (the IR's wire_discriminant):\n{deser}"
+        "__deserialise_LoginError should switch on `{wire_needle}` (the IR's wire_discriminant):\n{deser}"
     );
     let memory_needle = format!("value.{}", sum.memory_discriminant);
     assert!(
         ser.contains(&memory_needle),
-        "serialise_LoginError should switch on `{memory_needle}` (the IR's memory_discriminant):\n{ser}"
+        "__serialise_LoginError should switch on `{memory_needle}` (the IR's memory_discriminant):\n{ser}"
     );
 }

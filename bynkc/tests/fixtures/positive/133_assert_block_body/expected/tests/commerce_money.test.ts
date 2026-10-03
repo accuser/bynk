@@ -47,7 +47,7 @@ async function test_block_arm_expect() {
             return undefined;
           }
         }
-        throw new Error("non-exhaustive match");
+        throw new globalThis.Error("non-exhaustive match");
       })(m));
     return { pass: true };
   } catch (e) {

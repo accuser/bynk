@@ -6,19 +6,19 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError } f
 import * as commerce_payment from "./payment.js";
 
 export const placeOrder = {
-  async call(totals: readonly number[], deps: { surface: { payment: ReturnType<typeof commerce_payment.makeSurface> } }): Promise<Result<number, number>> {
+  async call(totals: readonly number[], deps: { surface: { payment: globalThis.ReturnType<typeof commerce_payment.makeSurface> } }): globalThis.Promise<Result<number, number>> {
     const __r0 = await deps.surface.payment.batch(totals);
     return Ok(1);
   },
 };
 
 export interface CommerceOrdersDeps {
-  readonly surface: { payment: ReturnType<typeof commerce_payment.makeSurface> };
+  readonly surface: { payment: globalThis.ReturnType<typeof commerce_payment.makeSurface> };
 }
 
 export function makeSurface(deps: CommerceOrdersDeps) {
   return {
-    async placeOrder(totals: readonly number[]): Promise<Result<number, number>> {
+    async placeOrder(totals: readonly number[]): globalThis.Promise<Result<number, number>> {
       return placeOrder.call(totals, deps);
     },
   };

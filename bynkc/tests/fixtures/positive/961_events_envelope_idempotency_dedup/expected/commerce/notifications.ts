@@ -10,7 +10,7 @@ import * as bynk from "../bynk.js";
 import * as commerce_order from "./order.js";
 
 export const OnPayment = {
-  async event(e: PaymentConfirmed, env: EventEnvelope, deps: { Idempotency: bynk.Idempotency; Logger: bynk.Logger }): Promise<void> {
+  async event(e: PaymentConfirmed, env: EventEnvelope, deps: { Idempotency: bynk.Idempotency; Logger: bynk.Logger }): globalThis.Promise<void> {
     const seen = await deps.Idempotency.dedup<void>(`commerce.notifications.OnPayment.event::${env.eventId}`);
     switch (seen.tag) {
       case "Some": {
@@ -22,14 +22,14 @@ export const OnPayment = {
         return undefined;
       }
     }
-    throw new Error("non-exhaustive match");
+    throw new globalThis.Error("non-exhaustive match");
   },
 };
 
 export interface CommerceNotificationsDeps {
   readonly Idempotency: bynk.Idempotency;
   readonly Logger: bynk.Logger;
-  readonly surface: { order: ReturnType<typeof commerce_order.makeSurface> };
+  readonly surface: { order: globalThis.ReturnType<typeof commerce_order.makeSurface> };
 }
 
 export function makeSurface(deps: CommerceNotificationsDeps) {

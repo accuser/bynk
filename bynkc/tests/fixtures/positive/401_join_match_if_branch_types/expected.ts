@@ -25,7 +25,7 @@ export function pick(r: Result<Email, string>): string {
       return m;
     }
   }
-  throw new Error("non-exhaustive match");
+  throw new globalThis.Error("non-exhaustive match");
 }
 
 export function choose(flag: boolean, e: Email, s: string): string {

@@ -592,6 +592,7 @@ pub fn resolve(commons: Commons) -> Result<ResolvedCommons, Vec<CompileError>> {
         refs: &mut refs,
     };
     for item in &commons.items {
+        check_reserved_host_name(item, &mut sinks);
         match item {
             CommonsItem::Type(t) => {
                 check_type_decl_refs(t, &types, &mut sinks);
@@ -671,6 +672,7 @@ pub fn resolve_file_record(
         refs,
     };
     for item in &resolved.commons.items {
+        check_reserved_host_name(item, &mut sinks);
         match item {
             CommonsItem::Type(t) => {
                 sinks.refs.set_owner(&t.name.name);
@@ -864,6 +866,27 @@ fn check_duplicate_type_params(params: &[TypeParam], owner: &str, errors: &mut S
     }
 }
 
+/// #1653: the generated TypeScript reaches host globals as `globalThis.<name>`,
+/// so a module-scope declaration of that name (a type, function, agent,
+/// provider, …) would hide every one of them in its module. Parameters and
+/// locals are renamed by the emitter instead; a declaration is rejected.
+fn check_reserved_host_name(item: &CommonsItem, errors: &mut Sinks) {
+    if let Some(name) = item.name()
+        && name.name == "globalThis"
+    {
+        errors.push(
+            CompileError::new(
+                "bynk.resolve.reserved_host_name",
+                name.span,
+                "`globalThis` cannot be used as a declaration name",
+            )
+            .with_note(
+                "the generated TypeScript uses `globalThis` to reach the host's built-in objects; rename the declaration",
+            ),
+        );
+    }
+}
+
 /// Recursively walk a type declaration to check that every type reference
 /// inside it resolves.
 fn check_type_decl_refs(t: &TypeDecl, types: &HashMap<String, Arc<TypeDecl>>, errors: &mut Sinks) {
@@ -1039,6 +1062,24 @@ fn check_type_decl_refs(t: &TypeDecl, types: &HashMap<String, Arc<TypeDecl>>, er
                         );
                     } else {
                         payload_seen.insert(f.name.name.clone(), f.name.span);
+                    }
+                    // #1653: a variant is a flat `{ "kind": "<Variant>", ... }`
+                    // object on the wire, so a payload field named `kind` would
+                    // collide with the discriminant itself.
+                    if f.name.name == "kind" {
+                        errors.push(
+                            CompileError::new(
+                                "bynk.resolve.reserved_payload_field",
+                                f.name.span,
+                                format!(
+                                    "variant `{}` cannot have a payload field named `kind`",
+                                    v.name.name
+                                ),
+                            )
+                            .with_note(
+                                "`kind` carries the variant's name when a sum is encoded as JSON; rename the field (e.g. `category`)",
+                            ),
+                        );
                     }
                     // #593: a generic sum's declared type parameters are in scope
                     // in its variant payloads, resolving as rigid vars (empty set

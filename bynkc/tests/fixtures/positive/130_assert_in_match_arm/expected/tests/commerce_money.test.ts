@@ -45,7 +45,7 @@ async function test_match_arm_expect() {
             return __bynkExpect((false), "tests/money.test.bynk:6:24", 152, 157, "expect false");
           }
         }
-        throw new Error("non-exhaustive match");
+        throw new globalThis.Error("non-exhaustive match");
       })(m));
     return { pass: true };
   } catch (e) {

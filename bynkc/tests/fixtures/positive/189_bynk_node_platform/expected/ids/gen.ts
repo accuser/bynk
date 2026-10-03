@@ -6,7 +6,7 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError } f
 import * as bynk from "../bynk.js";
 
 export const stamp = {
-  async call(deps: { Clock: bynk.Clock; Secrets: bynk.Secrets }): Promise<number> {
+  async call(deps: { Clock: bynk.Clock; Secrets: bynk.Secrets }): globalThis.Promise<number> {
     const salt = await deps.Secrets.get("STAMP_SALT");
     const now = await deps.Clock.now();
     switch (salt.tag) {
@@ -17,7 +17,7 @@ export const stamp = {
         return now;
       }
     }
-    throw new Error("non-exhaustive match");
+    throw new globalThis.Error("non-exhaustive match");
   },
 };
 
@@ -28,7 +28,7 @@ export interface IdsGenDeps {
 
 export function makeSurface(deps: IdsGenDeps) {
   return {
-    async stamp(): Promise<number> {
+    async stamp(): globalThis.Promise<number> {
       return stamp.call(deps);
     },
   };

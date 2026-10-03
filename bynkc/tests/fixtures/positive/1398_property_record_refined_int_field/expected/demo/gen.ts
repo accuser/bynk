@@ -7,7 +7,7 @@ export type Pct = number & { readonly __brand: "Pct" };
 
 export const Pct = {
   of(value: number): Result<Pct, ValidationError> {
-    if (!Number.isSafeInteger(value)) {
+    if (!globalThis.Number.isSafeInteger(value)) {
       return Err({ field: "Pct", message: "must be a safe integer", value });
     }
     if (!(value >= 0 && value <= 100)) {

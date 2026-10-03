@@ -11,7 +11,7 @@ export function greet(tag: LocaleTag): string {
   return render(tag, message("greeting"));
 }
 
-const messagesByLocale: Record<string, Record<string, (params: ReadonlyMap<string, MessageArg>) => string>> = {
+const messagesByLocale: globalThis.Record<string, globalThis.Record<string, (params: ReadonlyMap<string, MessageArg>) => string>> = {
   /**
    * Locale-negotiation-slice-2 follow-up (#886): the actual scenario slice 2
    * (#882) could never build under one `uses`-clause name collision — a

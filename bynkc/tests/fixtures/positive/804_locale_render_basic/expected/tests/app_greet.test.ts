@@ -29,11 +29,11 @@ function __bynkShow(v: unknown): string {
 }
 
 class __Stub_Locale {
-  async current(): Promise<bynk_locale_types.LocaleTag> {
+  async current(): globalThis.Promise<bynk_locale_types.LocaleTag> {
     if (true) {
       return ("en" as any);
     }
-    throw new Error("bynk: no stub clause matched for Locale.current");
+    throw new globalThis.Error("bynk: no stub clause matched for Locale.current");
   }
 }
 

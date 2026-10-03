@@ -38,6 +38,6 @@ export function route(r: Req): string {
     const body = r.body;
     return body;
   }
-  throw new Error("non-exhaustive match");
+  throw new globalThis.Error("non-exhaustive match");
 }
 

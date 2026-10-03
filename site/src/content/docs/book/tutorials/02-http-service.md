@@ -79,7 +79,7 @@ Open `out/workers/shortener/handlers.ts` and find your handler:
 
 ```typescript
 export const api = {
-  async http_GET_links_Param_code(code: string, deps: {}): Promise<HttpResult<string>> {
+  async http_GET_links_Param_code(code: string, deps: {}): globalThis.Promise<HttpResult<string>> {
     return HttpResult.NotFound;
   },
 };
@@ -89,11 +89,11 @@ The routing lives in `index.ts`, which Cloudflare calls for every request. It
 matches the path, pulls out the `:code` parameter, and calls your handler:
 
 ```typescript
-const __m = matchPath("/links/:code", path);
+const __m = __matchPath("/links/:code", path);
 if (method === "GET" && __m) {
   const code = __m.params["code"];
   const result = await surface.http_GET_links_Param_code(code);
-  return httpResultToResponse(result, (v: any) => v as JsonValue);
+  return __httpResultToResponse(result, (v: any) => v as __JsonValue);
 }
 ```
 
@@ -133,7 +133,7 @@ Recompile (`bynkc compile . --output out --target workers`) and look again at
 `handlers.ts`. Your handler is there:
 
 ```typescript
-async http_POST_links(body: CreateLinkRequest, deps: {}): Promise<HttpResult<string>> {
+async http_POST_links(body: CreateLinkRequest, deps: {}): globalThis.Promise<HttpResult<string>> {
   return HttpResult.Created(body.target);
 },
 ```
@@ -142,11 +142,11 @@ async http_POST_links(body: CreateLinkRequest, deps: {}): Promise<HttpResult<str
 incoming JSON before your handler ever runs:
 
 ```typescript
-export function deserialise_CreateLinkRequest(json: JsonValue, path: string = "$"): Result<CreateLinkRequest, BoundaryError> {
-  if (typeof json !== "object" || json === null || Array.isArray(json)) {
+export function __deserialise_CreateLinkRequest(json: __JsonValue, path: string = "$"): Result<CreateLinkRequest, __BoundaryError> {
+  if (typeof json !== "object" || json === null || globalThis.Array.isArray(json)) {
     return Err({ kind: "StructuralMismatch", path, expected: "object", actual: typeof json });
   }
-  const obj = json as { [k: string]: JsonValue };
+  const obj = json as { [k: string]: __JsonValue };
   if (typeof obj["target"] !== "string") {
     return Err({ kind: "StructuralMismatch", path: `${path}.target`, expected: "string", actual: typeof obj["target"] });
   }
@@ -160,8 +160,8 @@ at the boundary, so inside the handler `body` is always a well-formed
 `CreateLinkRequest`:
 
 ```typescript
-const __r_body = handlers.deserialise_CreateLinkRequest(__body_json, "$");
-if (__r_body.tag === "Err") return new Response(JSON.stringify(__r_body.error), { status: 400, headers: { "content-type": "application/json" } });
+const __r_body = handlers.__deserialise_CreateLinkRequest(__body_json, "$");
+if (__r_body.tag === "Err") return new globalThis.Response(globalThis.JSON.stringify(__r_body.error), { status: 400, headers: { "content-type": "application/json" } });
 const body = __r_body.value;
 const result = await surface.http_POST_links(body);
 ```

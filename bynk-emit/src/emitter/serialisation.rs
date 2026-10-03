@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use bynk_syntax::ast::{BaseType, PredKind, TypeBody, TypeDecl, TypeRef};
 
-use crate::emitter::RuntimeUse;
+use crate::emitter::{RuntimeUse, payload_prop};
 use bynk_check::wire_default::lower_field_default_wire;
 use bynk_ts::{
     TsArrowBody, TsBinaryOp, TsBindingName, TsDecl, TsExpr, TsLit, TsObjectEntry, TsParam, TsStmt,
@@ -660,7 +660,7 @@ fn index_signature_record_ty() -> TsType {
     TsType::Object(vec![TsTypeMember::index(
         "k",
         TsType::named("string"),
-        TsType::named("JsonValue"),
+        TsType::named("__JsonValue"),
     )])
 }
 
@@ -685,19 +685,19 @@ fn emit_bytes_named_codec(name: &str, qual: &Qual, ru: &RuntimeUse) -> Vec<TsDec
     let ty = format!("{}{name}", qual_prefix(qual, name));
 
     let serialise = TsDecl::Export(Box::new(TsDecl::Function {
-        name: format!("serialise_{name}"),
+        name: format!("__serialise_{name}"),
         generics: Vec::new(),
         params: vec![TsParam {
             name: "value".to_string(),
             ty: Some(TsType::named(ty.clone())),
             optional: false,
         }],
-        return_type: Some(TsType::named("JsonValue")),
+        return_type: Some(TsType::named("__JsonValue")),
         body: vec![return_(call(
             ident("__bynkBytesToBase64"),
             vec![as_expr(
                 as_expr(ident("value"), TsType::named("unknown")),
-                TsType::named("Uint8Array"),
+                TsType::named("globalThis.Uint8Array"),
             )],
         ))],
         is_async: false,
@@ -705,17 +705,17 @@ fn emit_bytes_named_codec(name: &str, qual: &Qual, ru: &RuntimeUse) -> Vec<TsDec
     }));
 
     let deserialise = TsDecl::Export(Box::new(TsDecl::Function {
-        name: format!("deserialise_{name}"),
+        name: format!("__deserialise_{name}"),
         generics: Vec::new(),
         params: vec![
             TsParam {
                 name: "json".to_string(),
-                ty: Some(TsType::named("JsonValue")),
+                ty: Some(TsType::named("__JsonValue")),
                 optional: false,
             },
             deserialise_path_param(),
         ],
-        return_type: Some(TsType::named(format!("Result<{ty}, BoundaryError>"))),
+        return_type: Some(TsType::named(format!("Result<{ty}, __BoundaryError>"))),
         body: vec![
             if_(
                 strict_neq(typeof_expr(ident("json")), str_lit("string")),
@@ -829,14 +829,14 @@ fn emit_refined(
     let typeof_str = prim;
 
     let serialise = TsDecl::Export(Box::new(TsDecl::Function {
-        name: format!("serialise_{name}"),
+        name: format!("__serialise_{name}"),
         generics: Vec::new(),
         params: vec![TsParam {
             name: "value".to_string(),
             ty: Some(TsType::named(ty.clone())),
             optional: false,
         }],
-        return_type: Some(TsType::named("JsonValue")),
+        return_type: Some(TsType::named("__JsonValue")),
         body: vec![return_(as_expr(
             as_expr(ident("value"), TsType::named("unknown")),
             TsType::named(prim),
@@ -941,17 +941,17 @@ fn emit_refined(
     }
 
     let deserialise = TsDecl::Export(Box::new(TsDecl::Function {
-        name: format!("deserialise_{name}"),
+        name: format!("__deserialise_{name}"),
         generics: Vec::new(),
         params: vec![
             TsParam {
                 name: "json".to_string(),
-                ty: Some(TsType::named("JsonValue")),
+                ty: Some(TsType::named("__JsonValue")),
                 optional: false,
             },
             deserialise_path_param(),
         ],
-        return_type: Some(TsType::named(format!("Result<{ty}, BoundaryError>"))),
+        return_type: Some(TsType::named(format!("Result<{ty}, __BoundaryError>"))),
         body,
         is_async: false,
         inline: false,
@@ -1025,14 +1025,14 @@ fn emit_inline_refinement_checks(
             // #1657: an `Int` is a JS safe integer, so `1e300` is rejected too.
             BaseGuard::Integral => stmts.push(if_(
                 not_expr(call(
-                    member(ident("Number"), "isSafeInteger"),
+                    member(ident("globalThis.Number"), "isSafeInteger"),
                     vec![ident("json")],
                 )),
                 block(vec![violation("must be a safe integer")]),
             )),
             BaseGuard::Finite => stmts.push(if_(
                 not_expr(call(
-                    member(ident("Number"), "isFinite"),
+                    member(ident("globalThis.Number"), "isFinite"),
                     vec![ident("json")],
                 )),
                 block(vec![violation("must be a finite number")]),
@@ -1112,7 +1112,7 @@ mod emit_inline_refinement_checks_tests {
         let stmts = emit_inline_refinement_checks("name", &[BaseGuard::Finite], &[]);
         assert_eq!(
             render(stmts),
-            "  if (!Number.isFinite(json)) {\n    return Err({ kind: \"RefinementViolation\", path, violation: { field: \"name\", message: \"must be a finite number\", value: json } });\n  }\n"
+            "  if (!globalThis.Number.isFinite(json)) {\n    return Err({ kind: \"RefinementViolation\", path, violation: { field: \"name\", message: \"must be a finite number\", value: json } });\n  }\n"
         );
     }
 }
@@ -1203,14 +1203,14 @@ fn emit_record_codec(
     ru: &RuntimeUse,
 ) -> Vec<TsDecl> {
     let serialise = TsDecl::Export(Box::new(TsDecl::Function {
-        name: format!("serialise_{fn_suffix}"),
+        name: format!("__serialise_{fn_suffix}"),
         generics: Vec::new(),
         params: vec![TsParam {
             name: "value".to_string(),
             ty: Some(TsType::named(ts_type)),
             optional: false,
         }],
-        return_type: Some(TsType::named("JsonValue")),
+        return_type: Some(TsType::named("__JsonValue")),
         body: vec![return_(TsExpr::multiline_object(
             fields
                 .iter()
@@ -1241,7 +1241,10 @@ fn emit_record_codec(
                     strict_neq(typeof_expr(ident("json")), str_lit("object")),
                     strict_eq(ident("json"), TsExpr::Lit(TsLit::Null)),
                 ),
-                call(member(ident("Array"), "isArray"), vec![ident("json")]),
+                call(
+                    member(ident("globalThis.Array"), "isArray"),
+                    vec![ident("json")],
+                ),
             ),
             block(vec![return_(err_structural_mismatch_top(
                 "object",
@@ -1286,7 +1289,7 @@ fn emit_record_codec(
             // branch's own shape.
             body.push(TsStmt::const_stmt(
                 TsBindingName::Ident(format!("__d_{fname}")),
-                Some(TsType::named("JsonValue")),
+                Some(TsType::named("__JsonValue")),
                 TsExpr::Conditional {
                     test: Box::new(in_expr(str_lit(fname.clone()), ident("obj"))),
                     consequent: Box::new(index(ident("obj"), str_lit(fname.clone()))),
@@ -1337,17 +1340,17 @@ fn emit_record_codec(
     )));
 
     let deserialise = TsDecl::Export(Box::new(TsDecl::Function {
-        name: format!("deserialise_{fn_suffix}"),
+        name: format!("__deserialise_{fn_suffix}"),
         generics: Vec::new(),
         params: vec![
             TsParam {
                 name: "json".to_string(),
-                ty: Some(TsType::named("JsonValue")),
+                ty: Some(TsType::named("__JsonValue")),
                 optional: false,
             },
             deserialise_path_param(),
         ],
-        return_type: Some(TsType::named(format!("Result<{ts_type}, BoundaryError>"))),
+        return_type: Some(TsType::named(format!("Result<{ts_type}, __BoundaryError>"))),
         body,
         is_async: false,
         inline: false,
@@ -1474,7 +1477,7 @@ fn emit_sum_codec(fn_suffix: &str, ts_type: &str, sum: &WireSum, ru: &RuntimeUse
                         field.name.clone(),
                         serialise_field_expr_wire(
                             &field.shape,
-                            &format!("value.{}", field.name),
+                            &format!("value.{}", payload_prop(&field.name)),
                             "",
                             ru,
                         ),
@@ -1489,14 +1492,14 @@ fn emit_sum_codec(fn_suffix: &str, ts_type: &str, sum: &WireSum, ru: &RuntimeUse
         })
         .collect();
     let serialise = TsDecl::Export(Box::new(TsDecl::Function {
-        name: format!("serialise_{fn_suffix}"),
+        name: format!("__serialise_{fn_suffix}"),
         generics: Vec::new(),
         params: vec![TsParam {
             name: "value".to_string(),
             ty: Some(TsType::named(ts_type)),
             optional: false,
         }],
-        return_type: Some(TsType::named("JsonValue")),
+        return_type: Some(TsType::named("__JsonValue")),
         body: vec![switch_stmt(member(ident("value"), tag), serialise_cases)],
         is_async: false,
         inline: false,
@@ -1513,7 +1516,10 @@ fn emit_sum_codec(fn_suffix: &str, ts_type: &str, sum: &WireSum, ru: &RuntimeUse
                     strict_neq(typeof_expr(ident("json")), str_lit("object")),
                     strict_eq(ident("json"), TsExpr::Lit(TsLit::Null)),
                 ),
-                call(member(ident("Array"), "isArray"), vec![ident("json")]),
+                call(
+                    member(ident("globalThis.Array"), "isArray"),
+                    vec![ident("json")],
+                ),
             ),
             block(vec![return_(err_structural_mismatch_top(
                 "object",
@@ -1567,7 +1573,10 @@ fn emit_sum_codec(fn_suffix: &str, ts_type: &str, sum: &WireSum, ru: &RuntimeUse
                 }
                 let mut entries = vec![(tag.to_string(), str_lit(vname.clone()))];
                 for field in &variant.payload {
-                    entries.push((field.name.clone(), ident(format!("__{}", field.name))));
+                    entries.push((
+                        payload_prop(&field.name),
+                        ident(format!("__{}", field.name)),
+                    ));
                 }
                 stmts.push(return_(call(
                     ident("Ok"),
@@ -1584,17 +1593,17 @@ fn emit_sum_codec(fn_suffix: &str, ts_type: &str, sum: &WireSum, ru: &RuntimeUse
     deserialise_body.push(switch_stmt(ident(kind), deserialise_cases));
 
     let deserialise = TsDecl::Export(Box::new(TsDecl::Function {
-        name: format!("deserialise_{fn_suffix}"),
+        name: format!("__deserialise_{fn_suffix}"),
         generics: Vec::new(),
         params: vec![
             TsParam {
                 name: "json".to_string(),
-                ty: Some(TsType::named("JsonValue")),
+                ty: Some(TsType::named("__JsonValue")),
                 optional: false,
             },
             deserialise_path_param(),
         ],
-        return_type: Some(TsType::named(format!("Result<{ts_type}, BoundaryError>"))),
+        return_type: Some(TsType::named(format!("Result<{ts_type}, __BoundaryError>"))),
         body: deserialise_body,
         is_async: false,
         inline: false,
@@ -1675,7 +1684,7 @@ mod emit_sum_codec_tests {
         let decls = emit_sum_codec("Parcel", "Parcel", &sum, &ru);
         assert_eq!(
             render_decls(decls),
-            "export function serialise_Parcel(value: Parcel): JsonValue {\n  switch (value.tag) {\n    case \"Pending\":\n      return { kind: \"Pending\" };\n    case \"Shipped\": {\n      return { kind: \"Shipped\", tracking: value.tracking as JsonValue, weight: ((v: number) => { if (!Number.isSafeInteger(v)) throw new Error(\"Int outside the safe-integer range at boundary\"); return v as JsonValue; })(value.weight) };\n    }\n  }\n}\n\nexport function deserialise_Parcel(json: JsonValue, path: string = \"$\"): Result<Parcel, BoundaryError> {\n  if (typeof json !== \"object\" || json === null || Array.isArray(json)) {\n    return Err({ kind: \"StructuralMismatch\", path, expected: \"object\", actual: typeof json });\n  }\n  const obj = json as { [k: string]: JsonValue };\n  const kind = obj[\"kind\"];\n  switch (kind) {\n    case \"Pending\":\n      return Ok({ tag: \"Pending\" } as Parcel);\n    case \"Shipped\": {\n  if (typeof obj[\"tracking\"] !== \"string\") {\n    return Err({ kind: \"StructuralMismatch\", path: `${path}.tracking`, expected: \"string\", actual: typeof obj[\"tracking\"] });\n  }\n  const __tracking = obj[\"tracking\"];\n  if (typeof obj[\"weight\"] !== \"number\") {\n    return Err({ kind: \"StructuralMismatch\", path: `${path}.weight`, expected: \"number\", actual: typeof obj[\"weight\"] });\n  }\n  if (!Number.isSafeInteger(obj[\"weight\"])) {\n    return Err({ kind: \"StructuralMismatch\", path: `${path}.weight`, expected: \"safe integer\", actual: String(obj[\"weight\"]) });\n  }\n  const __weight = obj[\"weight\"];\n      return Ok({ tag: \"Shipped\", tracking: __tracking, weight: __weight } as Parcel);\n    }\n    default:\n      return Err({ kind: \"StructuralMismatch\", path, expected: \"sum variant kind\", actual: String(kind) });\n  }\n}\n"
+            "export function __serialise_Parcel(value: Parcel): __JsonValue {\n  switch (value.tag) {\n    case \"Pending\":\n      return { kind: \"Pending\" };\n    case \"Shipped\": {\n      return { kind: \"Shipped\", tracking: value.tracking as __JsonValue, weight: ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error(\"Int outside the safe-integer range at boundary\"); return v as __JsonValue; })(value.weight) };\n    }\n  }\n}\n\nexport function __deserialise_Parcel(json: __JsonValue, path: string = \"$\"): Result<Parcel, __BoundaryError> {\n  if (typeof json !== \"object\" || json === null || globalThis.Array.isArray(json)) {\n    return Err({ kind: \"StructuralMismatch\", path, expected: \"object\", actual: typeof json });\n  }\n  const obj = json as { [k: string]: __JsonValue };\n  const kind = obj[\"kind\"];\n  switch (kind) {\n    case \"Pending\":\n      return Ok({ tag: \"Pending\" } as Parcel);\n    case \"Shipped\": {\n  if (typeof obj[\"tracking\"] !== \"string\") {\n    return Err({ kind: \"StructuralMismatch\", path: `${path}.tracking`, expected: \"string\", actual: typeof obj[\"tracking\"] });\n  }\n  const __tracking = obj[\"tracking\"];\n  if (typeof obj[\"weight\"] !== \"number\") {\n    return Err({ kind: \"StructuralMismatch\", path: `${path}.weight`, expected: \"number\", actual: typeof obj[\"weight\"] });\n  }\n  if (!globalThis.Number.isSafeInteger(obj[\"weight\"])) {\n    return Err({ kind: \"StructuralMismatch\", path: `${path}.weight`, expected: \"safe integer\", actual: String(obj[\"weight\"]) });\n  }\n  const __weight = obj[\"weight\"];\n      return Ok({ tag: \"Shipped\", tracking: __tracking, weight: __weight } as Parcel);\n    }\n    default:\n      return Err({ kind: \"StructuralMismatch\", path, expected: \"sum variant kind\", actual: String(kind) });\n  }\n}\n"
         );
     }
 }
@@ -1795,7 +1804,10 @@ fn emit_field_deserialise_wire(
                     BaseGuard::Finite => ("isFinite", "finite number"),
                 };
                 stmts.push(if_(
-                    not_expr(call(member(ident("Number"), method), vec![ident(json)])),
+                    not_expr(call(
+                        member(ident("globalThis.Number"), method),
+                        vec![ident(json)],
+                    )),
                     block(vec![return_(err_structural_mismatch(
                         path_expr,
                         expected,
@@ -1821,7 +1833,7 @@ fn emit_field_deserialise_wire(
             const_(
                 format!("__r_{name}"),
                 call(
-                    ident(format!("deserialise_{type_name}")),
+                    ident(format!("__deserialise_{type_name}")),
                     vec![ident(json), ident(path_expr)],
                 ),
             ),
@@ -1991,7 +2003,7 @@ mod emit_field_deserialise_wire_tests {
         );
         assert_eq!(
             render(stmts),
-            "  const __r_name = deserialise_Foo(json, path);\n  if (__r_name.tag === \"Err\") return __r_name;\n  const __name = __r_name.value;\n"
+            "  const __r_name = __deserialise_Foo(json, path);\n  if (__r_name.tag === \"Err\") return __r_name;\n  const __name = __r_name.value;\n"
         );
     }
 
@@ -2017,7 +2029,7 @@ mod emit_field_deserialise_wire_tests {
         let stmts = emit_field_deserialise_wire("name", &wire, "json", "path", &ru);
         assert_eq!(
             render(stmts),
-            "  if (typeof json !== \"number\") {\n    return Err({ kind: \"StructuralMismatch\", path: path, expected: \"number\", actual: typeof json });\n  }\n  if (!Number.isSafeInteger(json)) {\n    return Err({ kind: \"StructuralMismatch\", path: path, expected: \"safe integer\", actual: String(json) });\n  }\n  if (!Number.isFinite(json)) {\n    return Err({ kind: \"StructuralMismatch\", path: path, expected: \"finite number\", actual: String(json) });\n  }\n  const __name = json;\n"
+            "  if (typeof json !== \"number\") {\n    return Err({ kind: \"StructuralMismatch\", path: path, expected: \"number\", actual: typeof json });\n  }\n  if (!globalThis.Number.isSafeInteger(json)) {\n    return Err({ kind: \"StructuralMismatch\", path: path, expected: \"safe integer\", actual: String(json) });\n  }\n  if (!globalThis.Number.isFinite(json)) {\n    return Err({ kind: \"StructuralMismatch\", path: path, expected: \"finite number\", actual: String(json) });\n  }\n  const __name = json;\n"
         );
     }
 }
@@ -2073,18 +2085,24 @@ fn guarded_number(value: &str, check: &str, message: &str) -> TsExpr {
                 TsStmt::if_stmt(
                     TsExpr::Unary {
                         op: TsUnaryOp::Not,
-                        expr: Box::new(call(member(ident("Number"), check), vec![ident("v")])),
+                        expr: Box::new(call(
+                            member(ident("globalThis.Number"), check),
+                            vec![ident("v")],
+                        )),
                     },
                     TsStmt::throw_stmt(
                         TsExpr::New {
-                            callee: Box::new(ident("Error")),
+                            callee: Box::new(ident("globalThis.Error")),
                             args: vec![str_lit(message)],
                         },
                         None,
                     ),
                     None,
                 ),
-                TsStmt::return_stmt(Some(as_expr(ident("v"), TsType::named("JsonValue"))), None),
+                TsStmt::return_stmt(
+                    Some(as_expr(ident("v"), TsType::named("__JsonValue"))),
+                    None,
+                ),
             ])),
         },
         vec![ident(value)],
@@ -2105,8 +2123,10 @@ fn serialise_field_expr_wire(wire: &WireRef, value: &str, ns: &str, ru: &Runtime
         // Named type or generic instantiation (`Result`/`Option`/`List`/`Map`/
         // a generic `App` all key the same way — see `wire_ref`'s doc):
         // serialise through its own `serialise_<key>`.
-        WireRef::Named { name } => call(ident(format!("{ns}serialise_{name}")), vec![ident(value)]),
-        WireRef::Inst { key } => call(ident(format!("{ns}serialise_{key}")), vec![ident(value)]),
+        WireRef::Named { name } => {
+            call(ident(format!("{ns}__serialise_{name}")), vec![ident(value)])
+        }
+        WireRef::Inst { key } => call(ident(format!("{ns}__serialise_{key}")), vec![ident(value)]),
         // v0.21: serialising a non-finite `Float` is a contract violation
         // (`JSON.stringify(NaN)` would silently produce `null`); the guard is
         // a self-contained IIFE (`guarded_number`).
@@ -2133,10 +2153,10 @@ fn serialise_field_expr_wire(wire: &WireRef, value: &str, ns: &str, ru: &Runtime
             ru.note_bytes();
             as_expr(
                 call(ident("__bynkBytesToBase64"), vec![ident(value)]),
-                TsType::named("JsonValue"),
+                TsType::named("__JsonValue"),
             )
         }
-        WireRef::Base { .. } => as_expr(ident(value), TsType::named("JsonValue")),
+        WireRef::Base { .. } => as_expr(ident(value), TsType::named("__JsonValue")),
         // The runtime-owned error types have no *generated* codec — they are
         // declared by the runtime, not by a `TypeDecl` this emitter can walk, so
         // there is no `serialise_ValidationError` to name. They keep the
@@ -2170,7 +2190,7 @@ fn serialise_field_expr_wire(wire: &WireRef, value: &str, ns: &str, ru: &Runtime
         // `value as unknown as JsonValue`.
         WireRef::Unchecked { .. } => as_expr(
             as_expr(ident(value), TsType::named("unknown")),
-            TsType::named("JsonValue"),
+            TsType::named("__JsonValue"),
         ),
         WireRef::Unit => TsExpr::Lit(TsLit::Null),
     }
@@ -2206,16 +2226,16 @@ pub(crate) fn serialise_expr_via(t: &TypeRef, value: &str, ns: &str, ru: &Runtim
 /// identity the caller path used to fall back to.
 pub(crate) fn deserialise_ref_via(t: &TypeRef, ns: &str, ru: &RuntimeUse) -> TsExpr {
     match strip_effect(t) {
-        TypeRef::Named(id) => ident(format!("{ns}deserialise_{}", id.name)),
+        TypeRef::Named(id) => ident(format!("{ns}__deserialise_{}", id.name)),
         t @ (TypeRef::Result(..)
         | TypeRef::Option(..)
         | TypeRef::List(..)
         | TypeRef::Map(..)
-        | TypeRef::App { .. }) => ident(format!("{ns}deserialise_{}", inner_ts_name(t))),
+        | TypeRef::App { .. }) => ident(format!("{ns}__deserialise_{}", inner_ts_name(t))),
         other => TsExpr::Arrow {
             params: vec![TsParam {
                 name: "__j".to_string(),
-                ty: Some(TsType::named("JsonValue")),
+                ty: Some(TsType::named("__JsonValue")),
                 optional: false,
             }],
             is_async: false,
@@ -2236,12 +2256,12 @@ pub(crate) fn deserialise_ref_via(t: &TypeRef, ns: &str, ru: &RuntimeUse) -> TsE
 /// `Bytes` base64 encoding that `serialise_field_expr_via` already carries.
 pub(crate) fn serialise_ref_via(t: &TypeRef, ns: &str, ru: &RuntimeUse) -> TsExpr {
     match strip_effect(t) {
-        TypeRef::Named(id) => ident(format!("{ns}serialise_{}", id.name)),
+        TypeRef::Named(id) => ident(format!("{ns}__serialise_{}", id.name)),
         t @ (TypeRef::Result(..)
         | TypeRef::Option(..)
         | TypeRef::List(..)
         | TypeRef::Map(..)
-        | TypeRef::App { .. }) => ident(format!("{ns}serialise_{}", inner_ts_name(t))),
+        | TypeRef::App { .. }) => ident(format!("{ns}__serialise_{}", inner_ts_name(t))),
         other => TsExpr::Arrow {
             params: vec![TsParam {
                 name: "__v".to_string(),
@@ -2353,7 +2373,7 @@ pub(crate) fn deserialise_expr_via(
                     TsType::named(ty.to_string()),
                 )],
             ),
-            TsType::named(format!("Result<{ty}, BoundaryError>")),
+            TsType::named(format!("Result<{ty}, __BoundaryError>")),
         )
     };
     // `Err({ kind: "StructuralMismatch", path, expected, actual } as
@@ -2369,13 +2389,13 @@ pub(crate) fn deserialise_expr_via(
                     ("expected".to_string(), str_lit(expected)),
                     ("actual".to_string(), actual),
                 ]),
-                TsType::named("BoundaryError"),
+                TsType::named("__BoundaryError"),
             )],
         )
     };
     match t {
         TypeRef::Named(id) => call(
-            ident(format!("{ns}deserialise_{}", id.name)),
+            ident(format!("{ns}__deserialise_{}", id.name)),
             vec![ident(json), str_lit(path)],
         ),
         TypeRef::Result(..)
@@ -2385,7 +2405,7 @@ pub(crate) fn deserialise_expr_via(
         // v0.174 (#592): a generic-record instantiation decodes through its
         // monomorphised codec (`deserialise_Paginated_User`).
         | TypeRef::App { .. } => call(
-            ident(format!("{ns}deserialise_{}", inner_ts_name(t))),
+            ident(format!("{ns}__deserialise_{}", inner_ts_name(t))),
             vec![ident(json), str_lit(path)],
         ),
         TypeRef::Effect(inner, _) => deserialise_expr_via(inner, json, path, ns, ru),
@@ -2401,7 +2421,7 @@ pub(crate) fn deserialise_expr_via(
         // defensive, and saying so is more useful than implying coverage.
         TypeRef::Unit(_) => as_expr(
             call(ident("Ok"), vec![ident("undefined")]),
-            TsType::named("Result<void, BoundaryError>"),
+            TsType::named("Result<void, __BoundaryError>"),
         ),
         // The runtime-owned error types: no generated codec to name, so the
         // deserialised value casts through unchecked — same shape as
@@ -2519,12 +2539,12 @@ pub(crate) fn deserialise_expr_via(
             // only past job (interpolating into a hand-built `format!`) is
             // gone.
             let predicate: Option<TsExpr> = match b {
-                BaseType::Float => Some(call(member(ident("Number"), "isFinite"), vec![ident("__v")])),
+                BaseType::Float => Some(call(member(ident("globalThis.Number"), "isFinite"), vec![ident("__v")])),
                 // v0.86 (ADR 0112 D6): a `Duration` is whole milliseconds —
                 // reject a non-integer from the wire, as a refined `Int` does.
                 // #1657: whole *and* within ±(2^53 − 1), the `Int` domain.
                 BaseType::Int | BaseType::Duration | BaseType::Instant => Some(call(
-                    member(ident("Number"), "isSafeInteger"),
+                    member(ident("globalThis.Number"), "isSafeInteger"),
                     vec![ident("__v")],
                 )),
                 _ => None,
@@ -2642,7 +2662,7 @@ mod deserialise_expr_via_error_type_tests {
         let t = TypeRef::ValidationError(sp());
         assert_eq!(
             bynk_ts::print_expr(&deserialise_expr(&t, "json", "path", &ru)),
-            "Ok(json as unknown as ValidationError) as Result<ValidationError, BoundaryError>"
+            "Ok(json as unknown as ValidationError) as Result<ValidationError, __BoundaryError>"
         );
     }
 
@@ -2652,7 +2672,7 @@ mod deserialise_expr_via_error_type_tests {
         let t = TypeRef::JsonError(sp());
         assert_eq!(
             bynk_ts::print_expr(&deserialise_expr(&t, "json", "path", &ru)),
-            "Ok(json as unknown as JsonError) as Result<JsonError, BoundaryError>"
+            "Ok(json as unknown as JsonError) as Result<JsonError, __BoundaryError>"
         );
     }
 
@@ -2662,7 +2682,7 @@ mod deserialise_expr_via_error_type_tests {
         let t = TypeRef::HttpResult(Box::new(TypeRef::Base(BaseType::Int, sp())), sp());
         assert_eq!(
             bynk_ts::print_expr(&deserialise_expr(&t, "json", "path", &ru)),
-            "Ok(json as unknown as HttpResult<number>) as Result<HttpResult<number>, BoundaryError>"
+            "Ok(json as unknown as HttpResult<number>) as Result<HttpResult<number>, __BoundaryError>"
         );
     }
 
@@ -2672,7 +2692,7 @@ mod deserialise_expr_via_error_type_tests {
         let t = TypeRef::QueueResult(sp());
         assert_eq!(
             bynk_ts::print_expr(&deserialise_expr(&t, "json", "path", &ru)),
-            "Ok(json as unknown as QueueResult) as Result<QueueResult, BoundaryError>"
+            "Ok(json as unknown as QueueResult) as Result<QueueResult, __BoundaryError>"
         );
     }
 }
@@ -2705,7 +2725,10 @@ fn object_shape_guard() -> Vec<TsStmt> {
                     strict_neq(typeof_expr(ident("json")), str_lit("object")),
                     strict_eq(ident("json"), TsExpr::Lit(TsLit::Null)),
                 ),
-                call(member(ident("Array"), "isArray"), vec![ident("json")]),
+                call(
+                    member(ident("globalThis.Array"), "isArray"),
+                    vec![ident("json")],
+                ),
             ),
             block(vec![return_(err_structural_mismatch_top(
                 "object",
@@ -2726,7 +2749,10 @@ fn object_shape_guard() -> Vec<TsStmt> {
 /// sibling of [`object_shape_guard`] just above.
 fn array_shape_guard() -> TsStmt {
     if_(
-        not_expr(call(member(ident("Array"), "isArray"), vec![ident("json")])),
+        not_expr(call(
+            member(ident("globalThis.Array"), "isArray"),
+            vec![ident("json")],
+        )),
         block(vec![return_(err_structural_mismatch_top(
             "array",
             typeof_expr(ident("json")),
@@ -2954,14 +2980,14 @@ pub(crate) fn emit_generic_helpers_qualified(
                 );
 
                 let serialise = TsDecl::Export(Box::new(TsDecl::Function {
-                    name: format!("serialise_Result_{ok_ts}_{err_ts}"),
+                    name: format!("__serialise_Result_{ok_ts}_{err_ts}"),
                     generics: Vec::new(),
                     params: vec![TsParam {
                         name: "value".to_string(),
                         ty: Some(result_ty.clone()),
                         optional: false,
                     }],
-                    return_type: Some(TsType::named("JsonValue")),
+                    return_type: Some(TsType::named("__JsonValue")),
                     body: vec![
                         if_(
                             strict_eq(member(ident("value"), "tag"), str_lit("Ok")),
@@ -3012,19 +3038,19 @@ pub(crate) fn emit_generic_helpers_qualified(
                 )));
 
                 let deserialise = TsDecl::Export(Box::new(TsDecl::Function {
-                    name: format!("deserialise_Result_{ok_ts}_{err_ts}"),
+                    name: format!("__deserialise_Result_{ok_ts}_{err_ts}"),
                     generics: Vec::new(),
                     params: vec![
                         TsParam {
                             name: "json".to_string(),
-                            ty: Some(TsType::named("JsonValue")),
+                            ty: Some(TsType::named("__JsonValue")),
                             optional: false,
                         },
                         deserialise_path_param(),
                     ],
                     return_type: Some(TsType::named_with_args(
                         "Result",
-                        vec![result_ty, TsType::named("BoundaryError")],
+                        vec![result_ty, TsType::named("__BoundaryError")],
                     )),
                     body,
                     is_async: false,
@@ -3039,14 +3065,14 @@ pub(crate) fn emit_generic_helpers_qualified(
                 let option_ty = TsType::named_with_args("Option", vec![TsType::named(inner_ty)]);
 
                 let serialise = TsDecl::Export(Box::new(TsDecl::Function {
-                    name: format!("serialise_Option_{inner_ts}"),
+                    name: format!("__serialise_Option_{inner_ts}"),
                     generics: Vec::new(),
                     params: vec![TsParam {
                         name: "value".to_string(),
                         ty: Some(option_ty.clone()),
                         optional: false,
                     }],
-                    return_type: Some(TsType::named("JsonValue")),
+                    return_type: Some(TsType::named("__JsonValue")),
                     body: vec![
                         if_(
                             strict_eq(member(ident("value"), "tag"), str_lit("Some")),
@@ -3088,19 +3114,19 @@ pub(crate) fn emit_generic_helpers_qualified(
                 )));
 
                 let deserialise = TsDecl::Export(Box::new(TsDecl::Function {
-                    name: format!("deserialise_Option_{inner_ts}"),
+                    name: format!("__deserialise_Option_{inner_ts}"),
                     generics: Vec::new(),
                     params: vec![
                         TsParam {
                             name: "json".to_string(),
-                            ty: Some(TsType::named("JsonValue")),
+                            ty: Some(TsType::named("__JsonValue")),
                             optional: false,
                         },
                         deserialise_path_param(),
                     ],
                     return_type: Some(TsType::named_with_args(
                         "Result",
-                        vec![option_ty, TsType::named("BoundaryError")],
+                        vec![option_ty, TsType::named("__BoundaryError")],
                     )),
                     body,
                     is_async: false,
@@ -3116,14 +3142,14 @@ pub(crate) fn emit_generic_helpers_qualified(
                 let readonly_elem_array = TsType::readonly_array(elem_ty.clone());
 
                 let serialise = TsDecl::Export(Box::new(TsDecl::Function {
-                    name: format!("serialise_List_{elem_ts}"),
+                    name: format!("__serialise_List_{elem_ts}"),
                     generics: Vec::new(),
                     params: vec![TsParam {
                         name: "value".to_string(),
                         ty: Some(readonly_elem_array.clone()),
                         optional: false,
                     }],
-                    return_type: Some(TsType::named("JsonValue")),
+                    return_type: Some(TsType::named("__JsonValue")),
                     body: vec![return_(call(
                         member(ident("value"), "map"),
                         vec![TsExpr::Arrow {
@@ -3167,19 +3193,19 @@ pub(crate) fn emit_generic_helpers_qualified(
                 ));
 
                 let deserialise = TsDecl::Export(Box::new(TsDecl::Function {
-                    name: format!("deserialise_List_{elem_ts}"),
+                    name: format!("__deserialise_List_{elem_ts}"),
                     generics: Vec::new(),
                     params: vec![
                         TsParam {
                             name: "json".to_string(),
-                            ty: Some(TsType::named("JsonValue")),
+                            ty: Some(TsType::named("__JsonValue")),
                             optional: false,
                         },
                         deserialise_path_param(),
                     ],
                     return_type: Some(TsType::named_with_args(
                         "Result",
-                        vec![readonly_elem_array, TsType::named("BoundaryError")],
+                        vec![readonly_elem_array, TsType::named("__BoundaryError")],
                     )),
                     body: vec![
                         array_shape_guard(),
@@ -3227,23 +3253,23 @@ pub(crate) fn emit_generic_helpers_qualified(
                 // elsewhere in this file (`emit_field_deserialise_wire`'s
                 // own `Named`/`Inst` arm).
                 let map_ctor = bynk_ts::print_type(&TsType::named_with_args(
-                    "Map",
+                    "globalThis.Map",
                     vec![key_ty.clone(), val_ty.clone()],
                 ));
 
                 let serialise = TsDecl::Export(Box::new(TsDecl::Function {
-                    name: format!("serialise_Map_{key_ts}_{val_ts}"),
+                    name: format!("__serialise_Map_{key_ts}_{val_ts}"),
                     generics: Vec::new(),
                     params: vec![TsParam {
                         name: "value".to_string(),
                         ty: Some(map_ty.clone()),
                         optional: false,
                     }],
-                    return_type: Some(TsType::named("JsonValue")),
+                    return_type: Some(TsType::named("__JsonValue")),
                     body: vec![
                         TsStmt::const_stmt(
                             TsBindingName::Ident("entries".to_string()),
-                            Some(TsType::array(TsType::named("JsonValue"))),
+                            Some(TsType::array(TsType::named("__JsonValue"))),
                             TsExpr::array(vec![]),
                             None,
                         ),
@@ -3273,7 +3299,7 @@ pub(crate) fn emit_generic_helpers_qualified(
                     if_(
                         or_expr(
                             not_expr(call(
-                                member(ident("Array"), "isArray"),
+                                member(ident("globalThis.Array"), "isArray"),
                                 vec![ident("entry")],
                             )),
                             strict_neq(
@@ -3320,19 +3346,19 @@ pub(crate) fn emit_generic_helpers_qualified(
                 ));
 
                 let deserialise = TsDecl::Export(Box::new(TsDecl::Function {
-                    name: format!("deserialise_Map_{key_ts}_{val_ts}"),
+                    name: format!("__deserialise_Map_{key_ts}_{val_ts}"),
                     generics: Vec::new(),
                     params: vec![
                         TsParam {
                             name: "json".to_string(),
-                            ty: Some(TsType::named("JsonValue")),
+                            ty: Some(TsType::named("__JsonValue")),
                             optional: false,
                         },
                         deserialise_path_param(),
                     ],
                     return_type: Some(TsType::named_with_args(
                         "Result",
-                        vec![map_ty, TsType::named("BoundaryError")],
+                        vec![map_ty, TsType::named("__BoundaryError")],
                     )),
                     body: vec![
                         array_shape_guard(),

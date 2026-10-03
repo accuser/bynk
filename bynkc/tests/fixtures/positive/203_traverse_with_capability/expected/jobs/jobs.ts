@@ -6,13 +6,13 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError } f
 import { traverse } from "../bynk/list.js";
 
 export interface Clock {
-  now(): Promise<number>;
+  now(): globalThis.Promise<number>;
 }
 
-export const ClockToken: unique symbol = Symbol("Clock");
+export const ClockToken: symbol = globalThis.Symbol("Clock");
 
 export class FixedClock implements Clock {
-  async now(): Promise<number> {
+  async now(): globalThis.Promise<number> {
     return 42;
   }
 }
@@ -20,7 +20,7 @@ export class FixedClock implements Clock {
 export const FixedClockProvider = { token: ClockToken, factory: () => new FixedClock() };
 
 export const stamps = {
-  async call(names: readonly string[], deps: { Clock: Clock }): Promise<Result<readonly number[], void>> {
+  async call(names: readonly string[], deps: { Clock: Clock }): globalThis.Promise<Result<readonly number[], void>> {
     const stamped = await traverse(names, async (name) => deps.Clock.now());
     return Ok(stamped);
   },
@@ -32,7 +32,7 @@ export interface JobsDeps {
 
 export function makeSurface(deps: JobsDeps) {
   return {
-    async stamps(names: readonly string[]): Promise<Result<readonly number[], void>> {
+    async stamps(names: readonly string[]): globalThis.Promise<Result<readonly number[], void>> {
       return stamps.call(names, deps);
     },
   };

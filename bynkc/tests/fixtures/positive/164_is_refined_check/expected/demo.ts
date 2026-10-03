@@ -7,7 +7,7 @@ export type Quantity = number & { readonly __brand: "Quantity" };
 
 export const Quantity = {
   of(value: number): Result<Quantity, ValidationError> {
-    if (!Number.isSafeInteger(value)) {
+    if (!globalThis.Number.isSafeInteger(value)) {
       return Err({ field: "Quantity", message: "must be a safe integer", value });
     }
     if (!(value >= 1 && value <= 100)) {
@@ -19,6 +19,6 @@ export const Quantity = {
 
 export function valid(n: number): boolean {
   const __r0 = n;
-  return (Number.isSafeInteger(__r0) && (__r0 >= 1 && __r0 <= 100));
+  return (globalThis.Number.isSafeInteger(__r0) && (__r0 >= 1 && __r0 <= 100));
 }
 

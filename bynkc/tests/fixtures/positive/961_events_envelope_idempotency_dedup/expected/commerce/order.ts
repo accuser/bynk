@@ -13,10 +13,10 @@ export const PaymentConfirmed = {
 };
 
 export const markPaid = {
-  async call(orderId: string, deps: { __eventsDispatch: (events: Array<{ type: string; payload: unknown; envelope: { eventId: string; publisherId: string; emittedAt: number; schemaVersion: number } }>) => Promise<void> }): Promise<void> {
-    const __events: Array<{ type: string; payload: unknown; envelope: { eventId: string; publisherId: string; emittedAt: number; schemaVersion: number } }> = [];
+  async call(orderId: string, deps: { __eventsDispatch: (events: globalThis.Array<{ type: string; payload: unknown; envelope: { eventId: string; publisherId: string; emittedAt: number; schemaVersion: number } }>) => globalThis.Promise<void> }): globalThis.Promise<void> {
+    const __events: globalThis.Array<{ type: string; payload: unknown; envelope: { eventId: string; publisherId: string; emittedAt: number; schemaVersion: number } }> = [];
     const __result = await (async () => {
-    return (async () => { __events.push({ type: "PaymentConfirmed", payload: { orderId: orderId }, envelope: { eventId: crypto.randomUUID(), publisherId: "commerce.order", emittedAt: Date.now(), schemaVersion: 1 } }); })();
+    return (async () => { __events.push({ type: "PaymentConfirmed", payload: { orderId: orderId }, envelope: { eventId: globalThis.crypto.randomUUID(), publisherId: "commerce.order", emittedAt: globalThis.Date.now(), schemaVersion: 1 } }); })();
     })();
     if (__events.length > 0) {
       await deps.__eventsDispatch(__events);
@@ -26,12 +26,12 @@ export const markPaid = {
 };
 
 export interface CommerceOrderDeps {
-  readonly __eventsDispatch: (events: Array<{ type: string; payload: unknown; envelope: { eventId: string; publisherId: string; emittedAt: number; schemaVersion: number } }>) => Promise<void>;
+  readonly __eventsDispatch: (events: globalThis.Array<{ type: string; payload: unknown; envelope: { eventId: string; publisherId: string; emittedAt: number; schemaVersion: number } }>) => globalThis.Promise<void>;
 }
 
 export function makeSurface(deps: CommerceOrderDeps) {
   return {
-    async markPaid(orderId: string): Promise<void> {
+    async markPaid(orderId: string): globalThis.Promise<void> {
       return markPaid.call(orderId, deps);
     },
   };

@@ -28,7 +28,7 @@ export function render(tag: LocaleTag, msg: Message): string {
         return acc;
       }
     }
-    throw new Error("non-exhaustive match");
+    throw new globalThis.Error("non-exhaustive match");
   })(((__m: ReadonlyMap<string, MessageArg>, __k: string) => __m.has(__k) ? Some(__m.get(__k) as MessageArg) : None)(msg.params, k))));
     return msg.code.concat(" {").concat(join(parts, ", ")).concat("}");
   }
@@ -53,7 +53,7 @@ export function renderArg(arg: MessageArg): string {
       return String(v);
     }
   }
-  throw new Error("non-exhaustive match");
+  throw new globalThis.Error("non-exhaustive match");
 }
 
 /**
@@ -67,22 +67,22 @@ export function renderArg(arg: MessageArg): string {
  * sidestepping the rebrand entirely.
  */
 export function message(code: string): Message {
-  return { code: code, params: new Map<string, MessageArg>() };
+  return { code: code, params: new globalThis.Map<string, MessageArg>() };
 }
 
 export function withText(msg: Message, key: string, value: string): Message {
-  return { code: msg.code, params: new Map(msg.params).set(key, MessageArg.Text(value)) };
+  return { code: msg.code, params: new globalThis.Map(msg.params).set(key, MessageArg.Text(value)) };
 }
 
 export function withWhole(msg: Message, key: string, value: number): Message {
-  return { code: msg.code, params: new Map(msg.params).set(key, MessageArg.Whole(value)) };
+  return { code: msg.code, params: new globalThis.Map(msg.params).set(key, MessageArg.Whole(value)) };
 }
 
 export function withNum(msg: Message, key: string, value: number): Message {
-  return { code: msg.code, params: new Map(msg.params).set(key, MessageArg.Num(value)) };
+  return { code: msg.code, params: new globalThis.Map(msg.params).set(key, MessageArg.Num(value)) };
 }
 
 export function withMoment(msg: Message, key: string, value: number): Message {
-  return { code: msg.code, params: new Map(msg.params).set(key, MessageArg.Moment(value)) };
+  return { code: msg.code, params: new globalThis.Map(msg.params).set(key, MessageArg.Moment(value)) };
 }
 

@@ -4,13 +4,13 @@
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "./runtime.js";
 
 export function classify(status: number): string {
-  if ((Number.isSafeInteger(status) && (status >= 200 && status <= 299))) {
+  if ((globalThis.Number.isSafeInteger(status) && (status >= 200 && status <= 299))) {
     return "success";
   }
-  if ((Number.isSafeInteger(status) && (status >= 400 && status <= 499))) {
+  if ((globalThis.Number.isSafeInteger(status) && (status >= 400 && status <= 499))) {
     return "client error";
   }
-  if ((Number.isSafeInteger(status) && (status >= 500 && status <= 599))) {
+  if ((globalThis.Number.isSafeInteger(status) && (status >= 500 && status <= 599))) {
     return "server error";
   }
   return "other";

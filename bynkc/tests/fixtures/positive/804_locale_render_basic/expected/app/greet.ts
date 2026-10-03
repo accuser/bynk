@@ -11,14 +11,14 @@ import * as bynk from "../bynk.js";
 export type Message = __CommonsMessage & { readonly __ctxBrand: "app.greet" };
 
 export const greeting = {
-  async call(deps: { Locale: bynk.Locale }): Promise<string> {
+  async call(deps: { Locale: bynk.Locale }): globalThis.Promise<string> {
     const tag = await deps.Locale.current();
     return render(tag, (message("hello") as Message));
   },
 };
 
 export const greetingWithName = {
-  async call(name: string, deps: { Locale: bynk.Locale }): Promise<string> {
+  async call(name: string, deps: { Locale: bynk.Locale }): globalThis.Promise<string> {
     const tag = await deps.Locale.current();
     const msg = (withText((message("greeting") as Message), "name", name) as Message);
     return render(tag, msg);
@@ -26,7 +26,7 @@ export const greetingWithName = {
 };
 
 export const greetingWithCountAndName = {
-  async call(name: string, count: number, deps: { Locale: bynk.Locale }): Promise<string> {
+  async call(name: string, count: number, deps: { Locale: bynk.Locale }): globalThis.Promise<string> {
     const tag = await deps.Locale.current();
     const msg = (withWhole((withText((message("greeting") as Message), "name", name) as Message), "count", count) as Message);
     return render(tag, msg);
@@ -39,13 +39,13 @@ export interface AppGreetDeps {
 
 export function makeSurface(deps: AppGreetDeps) {
   return {
-    async greeting(): Promise<string> {
+    async greeting(): globalThis.Promise<string> {
       return greeting.call(deps);
     },
-    async greetingWithName(name: string): Promise<string> {
+    async greetingWithName(name: string): globalThis.Promise<string> {
       return greetingWithName.call(name, deps);
     },
-    async greetingWithCountAndName(name: string, count: number): Promise<string> {
+    async greetingWithCountAndName(name: string, count: number): globalThis.Promise<string> {
       return greetingWithCountAndName.call(name, count, deps);
     },
   };

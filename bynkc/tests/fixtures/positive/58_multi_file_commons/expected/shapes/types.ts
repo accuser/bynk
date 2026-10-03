@@ -7,7 +7,7 @@ export type Width = number & { readonly __brand: "Width" };
 
 export const Width = {
   of(value: number): Result<Width, ValidationError> {
-    if (!Number.isSafeInteger(value)) {
+    if (!globalThis.Number.isSafeInteger(value)) {
       return Err({ field: "Width", message: "must be a safe integer", value });
     }
     if (!(value > 0)) {
@@ -21,7 +21,7 @@ export type Height = number & { readonly __brand: "Height" };
 
 export const Height = {
   of(value: number): Result<Height, ValidationError> {
-    if (!Number.isSafeInteger(value)) {
+    if (!globalThis.Number.isSafeInteger(value)) {
       return Err({ field: "Height", message: "must be a safe integer", value });
     }
     if (!(value > 0)) {

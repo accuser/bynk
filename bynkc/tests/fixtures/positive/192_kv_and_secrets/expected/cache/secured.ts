@@ -7,7 +7,7 @@ import * as bynk from "../bynk.js";
 import * as bynk_cloudflare from "../bynk/cloudflare.js";
 
 export const vault = {
-  async call(key: string, deps: { Kv: bynk_cloudflare.Kv; Secrets: bynk.Secrets }): Promise<Option<string>> {
+  async call(key: string, deps: { Kv: bynk_cloudflare.Kv; Secrets: bynk.Secrets }): globalThis.Promise<Option<string>> {
     const fallback = await deps.Secrets.get("CACHE_FALLBACK");
     const hit = await deps.Kv.get(key);
     switch (hit.tag) {
@@ -19,7 +19,7 @@ export const vault = {
         return fallback;
       }
     }
-    throw new Error("non-exhaustive match");
+    throw new globalThis.Error("non-exhaustive match");
   },
 };
 
@@ -30,7 +30,7 @@ export interface CacheSecuredDeps {
 
 export function makeSurface(deps: CacheSecuredDeps) {
   return {
-    async vault(key: string): Promise<Option<string>> {
+    async vault(key: string): globalThis.Promise<Option<string>> {
       return vault.call(key, deps);
     },
   };

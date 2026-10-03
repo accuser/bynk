@@ -15,7 +15,7 @@ export const Token = {
 };
 
 export const verify = {
-  async call(token: Token, deps: {}): Promise<Result<number, number>> {
+  async call(token: Token, deps: {}): globalThis.Promise<Result<number, number>> {
     return Ok(0);
   },
 };
@@ -25,7 +25,7 @@ export interface BoundaryProviderDeps {
 
 export function makeSurface(deps: BoundaryProviderDeps) {
   return {
-    async verify(token: Token): Promise<Result<number, number>> {
+    async verify(token: Token): globalThis.Promise<Result<number, number>> {
       return verify.call(token, deps);
     },
   };

@@ -26,7 +26,7 @@ function __bynkShow(v: unknown): string {
 }
 
 class __Stub_Clock {
-  async now(): Promise<number> {
+  async now(): globalThis.Promise<number> {
     const { Code, RegError, Target } = demo_registry;
     type Code = demo_registry.Code;
     type RegError = demo_registry.RegError;
@@ -34,7 +34,7 @@ class __Stub_Clock {
     if (true) {
       return 7;
     }
-    throw new Error("bynk: no stub clause matched for Clock.now");
+    throw new globalThis.Error("bynk: no stub clause matched for Clock.now");
   }
 }
 
@@ -74,14 +74,14 @@ async function test_create_accepts_two_args_and_threads_deps() {
                 return __bynkExpect((false), "tests/demo/registry.bynk:18:23", 473, 478, "expect false");
               }
             }
-            throw new Error("non-exhaustive match");
+            throw new globalThis.Error("non-exhaustive match");
           }
         }
-        throw new Error("non-exhaustive match");
+        throw new globalThis.Error("non-exhaustive match");
       })(Target.of("https://example.com"));
           }
         }
-        throw new Error("non-exhaustive match");
+        throw new globalThis.Error("non-exhaustive match");
       })(Code.of("abc123")));
     return { pass: true };
   } catch (e) {

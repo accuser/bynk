@@ -4,8 +4,8 @@
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "./runtime.js";
 
 export interface Idempotency {
-  dedup<T>(key: string): Promise<Option<T>>;
+  dedup<T>(key: string): globalThis.Promise<Option<T>>;
 }
 
-export const IdempotencyToken: unique symbol = Symbol("Idempotency");
+export const IdempotencyToken: symbol = globalThis.Symbol("Idempotency");
 

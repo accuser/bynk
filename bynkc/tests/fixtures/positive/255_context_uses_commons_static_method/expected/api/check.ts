@@ -22,7 +22,7 @@ export const Cents = {
  */
 
 export const mk = {
-  async call(n: number, deps: {}): Promise<boolean> {
+  async call(n: number, deps: {}): globalThis.Promise<boolean> {
     const r = Cents.fromInt(n);
     switch (r.tag) {
       case "Ok": {
@@ -33,7 +33,7 @@ export const mk = {
         return false;
       }
     }
-    throw new Error("non-exhaustive match");
+    throw new globalThis.Error("non-exhaustive match");
   },
 };
 
@@ -42,7 +42,7 @@ export interface ApiDeps {
 
 export function makeSurface(deps: ApiDeps) {
   return {
-    async mk(n: number): Promise<boolean> {
+    async mk(n: number): globalThis.Promise<boolean> {
       return mk.call(n, deps);
     },
   };

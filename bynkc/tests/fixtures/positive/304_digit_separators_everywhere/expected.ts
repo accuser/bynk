@@ -7,7 +7,7 @@ export type Score = number & { readonly __brand: "Score" };
 
 export const Score = {
   of(value: number): Result<Score, ValidationError> {
-    if (!Number.isSafeInteger(value)) {
+    if (!globalThis.Number.isSafeInteger(value)) {
       return Err({ field: "Score", message: "must be a safe integer", value });
     }
     if (!(value >= -1000 && value <= 1000000)) {
@@ -21,7 +21,7 @@ export type Ratio = number & { readonly __brand: "Ratio" };
 
 export const Ratio = {
   of(value: number): Result<Ratio, ValidationError> {
-    if (!Number.isFinite(value)) {
+    if (!globalThis.Number.isFinite(value)) {
       return Err({ field: "Ratio", message: "must be a finite number", value });
     }
     if (!(value >= 0.0 && value <= 1_000.5)) {
@@ -57,6 +57,6 @@ export function classify(n: number): string {
       return "other";
     }
   }
-  throw new Error("non-exhaustive match");
+  throw new globalThis.Error("non-exhaustive match");
 }
 

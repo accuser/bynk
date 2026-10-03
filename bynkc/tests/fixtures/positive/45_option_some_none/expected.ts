@@ -21,6 +21,6 @@ export function extract(o: Option<number>): number {
       return 0;
     }
   }
-  throw new Error("non-exhaustive match");
+  throw new globalThis.Error("non-exhaustive match");
 }
 

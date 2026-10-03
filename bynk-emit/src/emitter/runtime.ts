@@ -2015,3 +2015,62 @@ export function negotiateLocale(
   }
   return reference;
 }
+
+// #1653: every runtime name an emitted module imports is also exported under
+// a `__` alias, and emitted code imports only the alias. A Bynk identifier
+// cannot start with `_`, so no user type, function or binding in the
+// importing module can collide with an imported runtime name (a user
+// `type JsonValue` beside an import of `JsonValue` would not compile).
+// The plain names stay exported for the runtime's own tests.
+
+export {
+  AGENT_WIRE_PASS as __AGENT_WIRE_PASS,
+  StateRegistry as __StateRegistry,
+  WorkersConnection as __WorkersConnection,
+  acceptHibernatableConnection as __acceptHibernatableConnection,
+  applyCache as __applyCache,
+  applyCors as __applyCors,
+  applySecurityHeaders as __applySecurityHeaders,
+  boundaryError as __boundaryError,
+  callService as __callService,
+  connIdOf as __connIdOf,
+  corsPreflightResponse as __corsPreflightResponse,
+  decodeAgentArgs as __decodeAgentArgs,
+  deliverEvent as __deliverEvent,
+  deserialiseEventEnvelope as __deserialiseEventEnvelope,
+  dispatchToEventsFanout as __dispatchToEventsFanout,
+  encodeAgentResult as __encodeAgentResult,
+  formatIcuDate as __formatIcuDate,
+  formatIcuNumber as __formatIcuNumber,
+  headResponse as __headResponse,
+  httpResultToResponse as __httpResultToResponse,
+  invariantViolation as __invariantViolation,
+  makeAgent as __makeAgent,
+  makeIntegrationDoNamespace as __makeIntegrationDoNamespace,
+  makeTestState as __makeTestState,
+  matchPath as __matchPath,
+  newWebSocketPair as __newWebSocketPair,
+  notModifiedIfMatch as __notModifiedIfMatch,
+  rehydrationViolation as __rehydrationViolation,
+  resolveConnection as __resolveConnection,
+  responseToHttpOutcome as __responseToHttpOutcome,
+  responseToHttpResult as __responseToHttpResult,
+  responseToUnauthOutcome as __responseToUnauthOutcome,
+  selectPluralArm as __selectPluralArm,
+  serialiseAgentKey as __serialiseAgentKey,
+  verifyBearerJwtHs256 as __verifyBearerJwtHs256,
+  verifyOidcJwt as __verifyOidcJwt,
+  verifySignatureHmacSha256 as __verifySignatureHmacSha256,
+  webSocketUpgradeResponse as __webSocketUpgradeResponse,
+};
+export type {
+  AgentWire as __AgentWire,
+  BoundaryError as __BoundaryError,
+  CorsPolicy as __CorsPolicy,
+  DurableObjectNamespace as __DurableObjectNamespace,
+  DurableObjectState as __DurableObjectState,
+  JsonValue as __JsonValue,
+  KVNamespace as __KVNamespace,
+  SecurityPolicy as __SecurityPolicy,
+  ServiceBinding as __ServiceBinding,
+};

@@ -8,12 +8,12 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError } f
  * expiry and prefix listing.
  */
 export interface Kv {
-  get(key: string): Promise<Option<string>>;
-  put(key: string, value: string): Promise<void>;
-  putTtl(key: string, value: string, ttlSeconds: number): Promise<void>;
-  delete(key: string): Promise<void>;
-  list(prefix: Option<string>): Promise<readonly string[]>;
+  get(key: string): globalThis.Promise<Option<string>>;
+  put(key: string, value: string): globalThis.Promise<void>;
+  putTtl(key: string, value: string, ttlSeconds: number): globalThis.Promise<void>;
+  delete(key: string): globalThis.Promise<void>;
+  list(prefix: Option<string>): globalThis.Promise<readonly string[]>;
 }
 
-export const KvToken: unique symbol = Symbol("Kv");
+export const KvToken: symbol = globalThis.Symbol("Kv");
 

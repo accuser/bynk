@@ -24,13 +24,13 @@ export const PaymentError = {
 };
 
 export interface Logger {
-  log(msg: string): Promise<void>;
+  log(msg: string): globalThis.Promise<void>;
 }
 
-export const LoggerToken: unique symbol = Symbol("Logger");
+export const LoggerToken: symbol = globalThis.Symbol("Logger");
 
 export class ConsoleLogger implements Logger {
-  async log(msg: string): Promise<void> {
+  async log(msg: string): globalThis.Promise<void> {
     return undefined;
   }
 }
@@ -38,7 +38,7 @@ export class ConsoleLogger implements Logger {
 export const ConsoleLoggerProvider = { token: LoggerToken, factory: () => new ConsoleLogger() };
 
 export const authorise = {
-  async call(amount: number, deps: { Logger: Logger }): Promise<Result<AuthId, PaymentError>> {
+  async call(amount: number, deps: { Logger: Logger }): globalThis.Promise<Result<AuthId, PaymentError>> {
     const __r0 = await deps.Logger.log("authorise");
     return (amount === 0 ? Err(PaymentError.Declined) : (amount > 1000000 ? Err(PaymentError.InsufficientFunds) : Ok(AuthId.unsafe("AUTH-DEFAULT"))));
   },
@@ -50,7 +50,7 @@ export interface CommercePaymentDeps {
 
 export function makeSurface(deps: CommercePaymentDeps) {
   return {
-    async authorise(amount: number): Promise<Result<AuthId, PaymentError>> {
+    async authorise(amount: number): globalThis.Promise<Result<AuthId, PaymentError>> {
       return authorise.call(amount, deps);
     },
   };

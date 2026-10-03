@@ -4,7 +4,7 @@
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
 
 export const batch = {
-  async call(amounts: readonly number[], deps: {}): Promise<Result<number, number>> {
+  async call(amounts: readonly number[], deps: {}): globalThis.Promise<Result<number, number>> {
     return Ok(1);
   },
 };
@@ -14,7 +14,7 @@ export interface CommercePaymentDeps {
 
 export function makeSurface(deps: CommercePaymentDeps) {
   return {
-    async batch(amounts: readonly number[]): Promise<Result<number, number>> {
+    async batch(amounts: readonly number[]): globalThis.Promise<Result<number, number>> {
       return batch.call(amounts, deps);
     },
   };

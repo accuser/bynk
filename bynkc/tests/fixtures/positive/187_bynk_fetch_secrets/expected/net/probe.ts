@@ -8,7 +8,7 @@ import { Method, Request } from "../bynk.js";
 import * as bynk from "../bynk.js";
 
 export const probe = {
-  async call(url: string, deps: { Fetch: bynk.Fetch; Secrets: bynk.Secrets }): Promise<number> {
+  async call(url: string, deps: { Fetch: bynk.Fetch; Secrets: bynk.Secrets }): globalThis.Promise<number> {
     const auth = await deps.Secrets.get("PROBE_TOKEN");
     const req = { method: Method.Get, url: url, contentType: None, authorization: auth, body: None };
     const res = await deps.Fetch.send(req);
@@ -21,7 +21,7 @@ export const probe = {
         return 0;
       }
     }
-    throw new Error("non-exhaustive match");
+    throw new globalThis.Error("non-exhaustive match");
   },
 };
 
@@ -32,7 +32,7 @@ export interface NetProbeDeps {
 
 export function makeSurface(deps: NetProbeDeps) {
   return {
-    async probe(url: string): Promise<number> {
+    async probe(url: string): globalThis.Promise<number> {
       return probe.call(url, deps);
     },
   };

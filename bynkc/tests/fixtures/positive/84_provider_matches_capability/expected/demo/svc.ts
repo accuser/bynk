@@ -4,17 +4,17 @@
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
 
 export interface Counter {
-  next(seed: number): Promise<number>;
-  reset(): Promise<void>;
+  next(seed: number): globalThis.Promise<number>;
+  reset(): globalThis.Promise<void>;
 }
 
-export const CounterToken: unique symbol = Symbol("Counter");
+export const CounterToken: symbol = globalThis.Symbol("Counter");
 
 export class StubCounter implements Counter {
-  async next(seed: number): Promise<number> {
+  async next(seed: number): globalThis.Promise<number> {
     return seed + 1;
   }
-  async reset(): Promise<void> {
+  async reset(): globalThis.Promise<void> {
     return undefined;
   }
 }

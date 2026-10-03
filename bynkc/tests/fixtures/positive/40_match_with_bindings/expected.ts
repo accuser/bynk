@@ -13,6 +13,6 @@ export function handle(r: Result<number, string>): number {
       return 0;
     }
   }
-  throw new Error("non-exhaustive match");
+  throw new globalThis.Error("non-exhaustive match");
 }
 

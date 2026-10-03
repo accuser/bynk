@@ -14,7 +14,7 @@ export const ReserveOutcome = {
 };
 
 export const ordering = {
-  async call(orderId: string, deps: { Idempotency: bynk.Idempotency }): Promise<ReserveOutcome> {
+  async call(orderId: string, deps: { Idempotency: bynk.Idempotency }): globalThis.Promise<ReserveOutcome> {
     const cached = await deps.Idempotency.dedup<ReserveOutcome>(`shop.reserve.ordering.call::${orderId}`);
     switch (cached.tag) {
       case "Some": {
@@ -27,7 +27,7 @@ export const ordering = {
         return outcome;
       }
     }
-    throw new Error("non-exhaustive match");
+    throw new globalThis.Error("non-exhaustive match");
   },
 };
 
@@ -37,7 +37,7 @@ export interface ShopReserveDeps {
 
 export function makeSurface(deps: ShopReserveDeps) {
   return {
-    async ordering(orderId: string): Promise<ReserveOutcome> {
+    async ordering(orderId: string): globalThis.Promise<ReserveOutcome> {
       return ordering.call(orderId, deps);
     },
   };

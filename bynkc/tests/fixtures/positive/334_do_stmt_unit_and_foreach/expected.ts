@@ -3,16 +3,16 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "./runtime.js";
 
-export async function noop(): Promise<void> {
+export async function noop(): globalThis.Promise<void> {
   return undefined;
 }
 
-export async function greetAll(names: readonly string[]): Promise<void> {
+export async function greetAll(names: readonly string[]): globalThis.Promise<void> {
   await (async (__xs: readonly string[]) => { for (const __x of __xs) { await (async (n: string) => noop())(__x); } })(names);
   return undefined;
 }
 
-export async function maybeLog(verbose: boolean): Promise<void> {
+export async function maybeLog(verbose: boolean): globalThis.Promise<void> {
   if (verbose) {
     await noop();
     return undefined;
@@ -21,7 +21,7 @@ export async function maybeLog(verbose: boolean): Promise<void> {
   }
 }
 
-export async function run(): Promise<void> {
+export async function run(): globalThis.Promise<void> {
   await noop();
   return undefined;
 }

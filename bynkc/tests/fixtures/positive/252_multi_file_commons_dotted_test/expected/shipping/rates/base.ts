@@ -7,7 +7,7 @@ export type Rate = number & { readonly __brand: "Rate" };
 
 export const Rate = {
   of(value: number): Result<Rate, ValidationError> {
-    if (!Number.isSafeInteger(value)) {
+    if (!globalThis.Number.isSafeInteger(value)) {
       return Err({ field: "Rate", message: "must be a safe integer", value });
     }
     if (!(value >= 0)) {

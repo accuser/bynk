@@ -11,13 +11,13 @@ export const Failure = {
 };
 
 export interface Source {
-  fetch(id: number): Promise<Result<number, Failure>>;
+  fetch(id: number): globalThis.Promise<Result<number, Failure>>;
 }
 
-export const SourceToken: unique symbol = Symbol("Source");
+export const SourceToken: symbol = globalThis.Symbol("Source");
 
 export const totalise = {
-  async call(id: number, deps: { Source: Source }): Promise<Result<number, Failure>> {
+  async call(id: number, deps: { Source: Source }): globalThis.Promise<Result<number, Failure>> {
     const raw = await deps.Source.fetch(id);
     const __r0 = raw;
     if (__r0.tag === "Err") return __r0;
@@ -32,7 +32,7 @@ export interface DemoSvcDeps {
 
 export function makeSurface(deps: DemoSvcDeps) {
   return {
-    async totalise(id: number): Promise<Result<number, Failure>> {
+    async totalise(id: number): globalThis.Promise<Result<number, Failure>> {
       return totalise.call(id, deps);
     },
   };

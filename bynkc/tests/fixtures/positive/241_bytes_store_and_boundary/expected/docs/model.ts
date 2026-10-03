@@ -5,7 +5,7 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError } f
 
 export interface Doc {
   readonly name: string;
-  readonly body: Uint8Array;
+  readonly body: globalThis.Uint8Array;
 }
 
 export const Doc = {

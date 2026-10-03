@@ -6,7 +6,7 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError } f
 import * as bynk_cloudflare from "../bynk/cloudflare.js";
 
 export const cache = {
-  async call(key: string, value: string, deps: { Kv: bynk_cloudflare.Kv }): Promise<Option<string>> {
+  async call(key: string, value: string, deps: { Kv: bynk_cloudflare.Kv }): globalThis.Promise<Option<string>> {
     const previous = await deps.Kv.get(key);
     const __r0 = await deps.Kv.put(key, value);
     const __r1 = await deps.Kv.delete("stale");
@@ -20,7 +20,7 @@ export interface CacheStoreDeps {
 
 export function makeSurface(deps: CacheStoreDeps) {
   return {
-    async cache(key: string, value: string): Promise<Option<string>> {
+    async cache(key: string, value: string): globalThis.Promise<Option<string>> {
       return cache.call(key, value, deps);
     },
   };

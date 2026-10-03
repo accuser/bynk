@@ -1,0 +1,12 @@
+commons test {
+  type Color = enum { Red, Green, Blue }
+
+  -- #1656: `Some(_)` already matches every `Some`, so `Some(Red)` can never run.
+  fn bad(o: Option[Color]) -> Int {
+    match o {
+      Some(_) => 1
+      Some(Red) => 2
+      None => 3
+    }
+  }
+}

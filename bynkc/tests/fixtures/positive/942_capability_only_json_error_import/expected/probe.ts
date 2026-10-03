@@ -7,5 +7,5 @@ export interface Parser {
   parse(pre: Result<number, JsonError>): Result<number, JsonError>;
 }
 
-export const ParserToken: unique symbol = Symbol("Parser");
+export const ParserToken: symbol = globalThis.Symbol("Parser");
 

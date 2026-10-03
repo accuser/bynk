@@ -7,5 +7,5 @@
 # The contrast case — a *directly* typed field (`region: Region`) — is
 # 966_event_field_default_cross_context, which was always qualified correctly.
 # This fixture pins the generic-wrapped path that was not.
-export function serialise_Option_Region(value: Option<commerce_order.Region>): JsonValue {
-export function deserialise_Option_Region(json: JsonValue, path: string = "$"): Result<Option<commerce_order.Region>, BoundaryError> {
+export function __serialise_Option_Region(value: Option<commerce_order.Region>): __JsonValue {
+export function __deserialise_Option_Region(json: __JsonValue, path: string = "$"): Result<Option<commerce_order.Region>, __BoundaryError> {

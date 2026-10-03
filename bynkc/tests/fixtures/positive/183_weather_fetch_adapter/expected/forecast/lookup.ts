@@ -8,7 +8,7 @@ import { Report, WeatherError } from "../weather.js";
 import * as weather from "../weather.js";
 
 export const lookup = {
-  async call(city: string, deps: { Weather: weather.Weather }): Promise<Result<Report, WeatherError>> {
+  async call(city: string, deps: { Weather: weather.Weather }): globalThis.Promise<Result<Report, WeatherError>> {
     const r = await deps.Weather.current(city);
     return r;
   },
@@ -20,7 +20,7 @@ export interface ForecastLookupDeps {
 
 export function makeSurface(deps: ForecastLookupDeps) {
   return {
-    async lookup(city: string): Promise<Result<Report, WeatherError>> {
+    async lookup(city: string): globalThis.Promise<Result<Report, WeatherError>> {
       return lookup.call(city, deps);
     },
   };

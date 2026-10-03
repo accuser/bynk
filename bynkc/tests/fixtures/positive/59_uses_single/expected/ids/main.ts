@@ -7,7 +7,7 @@ export type UserId = number & { readonly __brand: "UserId" };
 
 export const UserId = {
   of(value: number): Result<UserId, ValidationError> {
-    if (!Number.isSafeInteger(value)) {
+    if (!globalThis.Number.isSafeInteger(value)) {
       return Err({ field: "UserId", message: "must be a safe integer", value });
     }
     if (!(value > 0)) {

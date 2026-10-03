@@ -4,7 +4,7 @@
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, HttpResult } from "./runtime.js";
 
 export const api = {
-  async http_GET_hello_Param_deps(__id_deps: string, deps: {}): Promise<HttpResult<string>> {
+  async http_GET_hello_Param_deps(__id_deps: string, deps: {}): globalThis.Promise<HttpResult<string>> {
     return HttpResult.Ok(__id_deps);
   },
 };

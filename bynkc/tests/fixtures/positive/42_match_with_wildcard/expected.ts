@@ -23,6 +23,6 @@ export function isPending(s: Status): boolean {
       return false;
     }
   }
-  throw new Error("non-exhaustive match");
+  throw new globalThis.Error("non-exhaustive match");
 }
 

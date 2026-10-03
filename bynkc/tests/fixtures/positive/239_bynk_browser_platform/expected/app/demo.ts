@@ -8,7 +8,7 @@ import { Method, Request } from "../bynk.js";
 import * as bynk from "../bynk.js";
 
 export const demo = {
-  async call(url: string, deps: { Clock: bynk.Clock; Random: bynk.Random; Logger: bynk.Logger; Fetch: bynk.Fetch; Secrets: bynk.Secrets }): Promise<number> {
+  async call(url: string, deps: { Clock: bynk.Clock; Random: bynk.Random; Logger: bynk.Logger; Fetch: bynk.Fetch; Secrets: bynk.Secrets }): globalThis.Promise<number> {
     const __r0 = await deps.Logger.info("probe");
     const __r1 = await deps.Clock.now();
     const __r2 = await deps.Random.uuid();
@@ -25,7 +25,7 @@ export const demo = {
         return n;
       }
     }
-    throw new Error("non-exhaustive match");
+    throw new globalThis.Error("non-exhaustive match");
   },
 };
 
@@ -39,7 +39,7 @@ export interface AppDemoDeps {
 
 export function makeSurface(deps: AppDemoDeps) {
   return {
-    async demo(url: string): Promise<number> {
+    async demo(url: string): globalThis.Promise<number> {
       return demo.call(url, deps);
     },
   };

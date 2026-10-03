@@ -10,14 +10,14 @@ import * as bynk from "../bynk.js";
 import * as commerce_order from "./order.js";
 
 export const OnV1 = {
-  async event(e: PaymentConfirmed, __bynkSchemaEnv: EventEnvelope, deps: { Logger: bynk.Logger }): Promise<void> {
+  async event(e: PaymentConfirmed, __bynkSchemaEnv: EventEnvelope, deps: { Logger: bynk.Logger }): globalThis.Promise<void> {
     if (!(__bynkSchemaEnv.schemaVersion === 1)) return undefined;
     return deps.Logger.info(e.orderId);
   },
 };
 
 export const OnV2 = {
-  async event(e: PaymentConfirmed, env: EventEnvelope, deps: { Logger: bynk.Logger }): Promise<void> {
+  async event(e: PaymentConfirmed, env: EventEnvelope, deps: { Logger: bynk.Logger }): globalThis.Promise<void> {
     if (!(env.schemaVersion === 2)) return undefined;
     return deps.Logger.info(e.orderId);
   },
@@ -25,7 +25,7 @@ export const OnV2 = {
 
 export interface CommerceNotificationsDeps {
   readonly Logger: bynk.Logger;
-  readonly surface: { order: ReturnType<typeof commerce_order.makeSurface> };
+  readonly surface: { order: globalThis.ReturnType<typeof commerce_order.makeSurface> };
 }
 
 export function makeSurface(deps: CommerceNotificationsDeps) {

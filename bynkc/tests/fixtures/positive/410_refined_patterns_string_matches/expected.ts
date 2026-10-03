@@ -4,7 +4,7 @@
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "./runtime.js";
 
 export function classify(code: string): number {
-  if ((new RegExp("^(?:" + "^[a-z]+$" + ")$").test(code))) {
+  if ((new globalThis.RegExp("^(?:" + "^[a-z]+$" + ")$").test(code))) {
     return 1;
   }
   if ((code.length > 0)) {
