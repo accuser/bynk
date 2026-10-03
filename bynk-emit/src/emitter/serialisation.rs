@@ -3253,7 +3253,7 @@ pub(crate) fn emit_generic_helpers_qualified(
                 // elsewhere in this file (`emit_field_deserialise_wire`'s
                 // own `Named`/`Inst` arm).
                 let map_ctor = bynk_ts::print_type(&TsType::named_with_args(
-                    "Map",
+                    "globalThis.Map",
                     vec![key_ty.clone(), val_ty.clone()],
                 ));
 

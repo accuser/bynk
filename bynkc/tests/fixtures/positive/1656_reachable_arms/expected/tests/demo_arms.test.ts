@@ -33,7 +33,7 @@ function makeTestDeps() {
 async function test_a_guarded_arm_does_not_cover_the_same_pattern_after_it() {
   try {
     const deps = {};
-    const { Color, Pair, score, shade, size } = demo_arms;
+    const { Color, Pair, score, shade, sign, size } = demo_arms;
     type Color = demo_arms.Color;
     type Pair = demo_arms.Pair;
     if (!(size(Some(500)) === "big")) { throw __bynkExpectFailure("tests/demo/arms.bynk:7:10", 156, 180, "expect size(Some(500)) == \"big\"\n  expected: size(Some(500)) == \"big\"\n  actual:   " + __bynkShow((size(Some(500)))) + " == " + __bynkShow(("big"))); }
@@ -53,7 +53,7 @@ async function test_a_guarded_arm_does_not_cover_the_same_pattern_after_it() {
 async function test_a_narrow_arm_precedes_a_wider_one() {
   try {
     const deps = {};
-    const { Color, Pair, score, shade, size } = demo_arms;
+    const { Color, Pair, score, shade, sign, size } = demo_arms;
     type Color = demo_arms.Color;
     type Pair = demo_arms.Pair;
     if (!(shade(Some(Color.Red)) === 1)) { throw __bynkExpectFailure("tests/demo/arms.bynk:14:10", 341, 362, "expect shade(Some(Red)) == 1\n  expected: shade(Some(Red)) == 1\n  actual:   " + __bynkShow((shade(Some(Color.Red)))) + " == " + __bynkShow((1))); }
@@ -72,7 +72,7 @@ async function test_a_narrow_arm_precedes_a_wider_one() {
 async function test_multi_field_payloads() {
   try {
     const deps = {};
-    const { Color, Pair, score, shade, size } = demo_arms;
+    const { Color, Pair, score, shade, sign, size } = demo_arms;
     type Color = demo_arms.Color;
     type Pair = demo_arms.Pair;
     if (!(score(Pair.P(1, true)) === 10)) { throw __bynkExpectFailure("tests/demo/arms.bynk:20:10", 463, 486, "expect score(P(1, true)) == 10\n  expected: score(P(1, true)) == 10\n  actual:   " + __bynkShow((score(Pair.P(1, true)))) + " == " + __bynkShow((10))); }
@@ -88,11 +88,31 @@ async function test_multi_field_payloads() {
   }
 }
 
+// case tier: unit
+async function test_a_refined_arm_does_not_cover_the_arms_after_it() {
+  try {
+    const deps = {};
+    const { Color, Pair, score, shade, sign, size } = demo_arms;
+    type Color = demo_arms.Color;
+    type Pair = demo_arms.Pair;
+    if (!(sign(3) === "positive")) { throw __bynkExpectFailure("tests/demo/arms.bynk:27:10", 644, 665, "expect sign(3) == \"positive\"\n  expected: sign(3) == \"positive\"\n  actual:   " + __bynkShow((sign(3))) + " == " + __bynkShow(("positive"))); }
+    if (!(sign(0) === "not positive")) { throw __bynkExpectFailure("tests/demo/arms.bynk:28:10", 675, 700, "expect sign(0) == \"not positive\"\n  expected: sign(0) == \"not positive\"\n  actual:   " + __bynkShow((sign(0))) + " == " + __bynkShow(("not positive"))); }
+    if (!(sign(-2) === "not positive")) { throw __bynkExpectFailure("tests/demo/arms.bynk:29:10", 710, 736, "expect sign(-2) == \"not positive\"\n  expected: sign(-2) == \"not positive\"\n  actual:   " + __bynkShow((sign(-2))) + " == " + __bynkShow(("not positive"))); }
+    return { pass: true };
+  } catch (e) {
+    if (e instanceof ExpectationError) {
+      return { pass: false, error: { message: e.message, location: e.location } };
+    }
+    return { pass: false, error: { message: String(e), location: "unknown" } };
+  }
+}
+
 export async function run(only?: string) {
   const results = [];
   const want = (n: string): boolean => only === undefined || only === n;
   if (want("a guarded arm does not cover the same pattern after it")) results.push({ name: "a guarded arm does not cover the same pattern after it", ...(await test_a_guarded_arm_does_not_cover_the_same_pattern_after_it()) });
   if (want("a narrow arm precedes a wider one")) results.push({ name: "a narrow arm precedes a wider one", ...(await test_a_narrow_arm_precedes_a_wider_one()) });
   if (want("multi-field payloads")) results.push({ name: "multi-field payloads", ...(await test_multi_field_payloads()) });
+  if (want("a refined arm does not cover the arms after it")) results.push({ name: "a refined arm does not cover the arms after it", ...(await test_a_refined_arm_does_not_cover_the_arms_after_it()) });
   return results;
 }

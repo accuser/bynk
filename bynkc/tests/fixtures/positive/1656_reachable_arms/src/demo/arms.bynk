@@ -37,3 +37,13 @@ fn score(p: Pair) -> Int {
     Q => -1
   }
 }
+
+-- A refined pattern never covers: its predicate may fail, like a guard, so
+-- neither a repeated refined arm nor a wildcard after one is unreachable.
+fn sign(n: Int) -> String {
+  match n {
+    _ where Positive => "positive"
+    _ where Positive => "never reached, but legal: predicates are not analysed"
+    _ => "not positive"
+  }
+}

@@ -84,3 +84,13 @@ export function score(p: Pair): number {
   }
   throw new globalThis.Error("non-exhaustive match");
 }
+
+export function sign(n: number): string {
+  if ((globalThis.Number.isSafeInteger(n) && n > 0)) {
+    return "positive";
+  }
+  if ((globalThis.Number.isSafeInteger(n) && n > 0)) {
+    return "never reached, but legal: predicates are not analysed";
+  }
+  return "not positive";
+}

@@ -172,7 +172,7 @@ export function __deserialise_Map_String_MessageArg(json: __JsonValue, path: str
   if (!globalThis.Array.isArray(json)) {
     return Err({ kind: "StructuralMismatch", path, expected: "array", actual: typeof json });
   }
-  const out = new Map<string, MessageArg>();
+  const out = new globalThis.Map<string, MessageArg>();
   for (let i = 0; i < json.length; i++) {
   const entry = json[i];
   if (!globalThis.Array.isArray(entry) || entry.length !== 2) {

@@ -38,11 +38,22 @@ case "Bytes beside a user type named Uint8Array" {
   expect size(Bytes.fromUtf8("hi")) == 2
 }
 
-case "an agent's store collections beside user types named Record and Set" {
+case "an agent's store collections beside a type named Record and a function named Set" {
   do Bag("b").put("x", 1)
   do Bag("b").put("y", 2)
   let n <- Bag("b").count()
   expect n == 2
   let v <- Bag("b").get("y")
   expect v == Some(2)
+}
+
+case "Set and Map as function names beside the JS Set and Map" {
+  expect unique([1, 2, 1, 3]) == [1, 2, 3]
+  expect withKey(Map.empty()).get("k") == Some(1)
+}
+
+case "payload fields named like JS reserved words" {
+  expect keywordSum(Kw(1, 2, 3)) == 6
+  expect Json.encode(Kw(1, 2, 3)) == "{\"kind\":\"Kw\",\"class\":1,\"arguments\":2,\"deps\":3}"
+  expect keywordRoundTrip(Kw(1, 2, 3))
 }

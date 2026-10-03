@@ -116,8 +116,8 @@ export function sameToken(a: string, b: string): boolean {
 }
 
 export function scores(k: string, n: number): ReadonlyMap<string, number> {
-  const m: ReadonlyMap<string, number> = new Map<string, number>();
-  return new Map(m).set(k, n);
+  const m: ReadonlyMap<string, number> = new globalThis.Map<string, number>();
+  return new globalThis.Map(m).set(k, n);
 }
 
 export function nan(): number {

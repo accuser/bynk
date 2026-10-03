@@ -16,7 +16,6 @@ type Number = { n: Int }
 type JSON = { raw: String }
 type Math = { n: Int }
 type Uint8Array = { n: Int }
-type Set = { n: Int }
 type Date = { day: Int }
 type RegExp = { src: String }
 type Request = { path: String }
@@ -39,8 +38,11 @@ type BoundaryError = { why: String }
 type DurableObjectState = { n: Int }
 type StateRegistry = { n: Int }
 
--- A payload field named like the in-memory discriminant.
+-- A payload field named like the in-memory discriminant, and payload fields
+-- named like JS reserved words (constructor parameters are bindings).
 type Labelled = | Tagged(tag: String, n: Int) | Plain(n: Int)
+
+type Keyword = | Kw(class: Int, arguments: Int, deps: Int) | Bare
 
 -- Host and runtime value names, and a generated codec name, as functions.
 fn console(x: Int) -> Int {
@@ -67,6 +69,37 @@ fn serialise_Labelled(l: Labelled) -> Int {
   match l {
     Tagged(_, n) => n
     Plain(n) => n
+  }
+}
+
+-- `Set` and `Map` as function names, beside code that builds a JS `Set`/`Map`.
+fn Set(x: Int) -> Int {
+  x
+}
+
+fn Map(x: Int) -> Int {
+  x
+}
+
+fn unique(xs: List[Int]) -> List[Int] {
+  xs.distinct()
+}
+
+fn withKey(m: Map[String, Int]) -> Map[String, Int] {
+  m.insert("k", Set(Map(1)))
+}
+
+fn keywordSum(k: Keyword) -> Int {
+  match k {
+    Kw(class: c, arguments: a, deps: d) => c + a + d
+    Bare => 0
+  }
+}
+
+fn keywordRoundTrip(k: Keyword) -> Bool {
+  match Json.decode[Keyword](Json.encode(k)) {
+    Ok(back) => back == k
+    Err(_) => false
   }
 }
 

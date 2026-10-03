@@ -107,9 +107,12 @@ that no Bynk name can collide with it. The emitted code MUST compile under
 
 - **Host globals** are reached through `globalThis` (`globalThis.JSON.stringify`,
   `new globalThis.Error(…)`, `globalThis.Promise<T>`), so a user type or
-  function named `Error`, `JSON`, `Record` or `console` cannot hide them. A
-  value binding named `globalThis` is emitted as `__id_globalThis`, and a type
-  named `globalThis` is rejected (`bynk.resolve.reserved_host_name`). A
+  function named `Error`, `JSON`, `Record`, `Set` or `console` cannot hide
+  them. A parameter or local named `globalThis` is emitted as
+  `__id_globalThis`, and a declaration of that name (a type, function, agent,
+  provider, …) is rejected (`bynk.resolve.reserved_host_name`). `String` is
+  the one global emitted bare: it is a Bynk keyword, so nothing can declare it.
+  A
   capability's injection token is therefore typed `symbol`, not
   `unique symbol`: TypeScript only gives a bare `Symbol(…)` call a unique type.
 - **Runtime names** are imported under a `__` alias (`__JsonValue`,
@@ -121,8 +124,10 @@ that no Bynk name can collide with it. The emitted code MUST compile under
   in scope, so `if o is Some(o)` reads the outer `o` and `let x = x + 1` after a
   parameter `x` does not redeclare it.
 - **Sum payload fields.** A variant object carries the in-memory discriminant
-  `tag`, so a payload field named `tag` (or `globalThis`) is emitted as the
-  property `$tag` (`$globalThis`); its wire key is unchanged. On the wire a
+  `tag`, so a payload field named `tag` is emitted as the property `$tag`; its
+  wire key is unchanged. The variant constructor binds each field as a
+  parameter, so a field named like a reserved word (`class`, `arguments`) is
+  renamed there and keeps its own property and wire name. On the wire a
   variant is a flat `{ "kind": "<Variant>", … }` object, so a payload field
   named `kind` is rejected (`bynk.resolve.reserved_payload_field`).
 

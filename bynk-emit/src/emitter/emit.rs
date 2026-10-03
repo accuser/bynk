@@ -583,7 +583,7 @@ fn emit_sum_type(
             let ctor_params: Vec<bynk_ts::TsParam> = payload
                 .iter()
                 .map(|(field, ty)| bynk_ts::TsParam {
-                    name: payload_prop(field),
+                    name: ts_ident(&payload_prop(field)),
                     ty: Some(ts_ty_to_ts_type(*ty, &commons.ty_intern)),
                     optional: false,
                 })
@@ -592,11 +592,18 @@ fn emit_sum_type(
                 "tag".to_string(),
                 bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(tag.clone())),
             )];
-            obj_entries.extend(
-                payload
-                    .iter()
-                    .map(|(field, _)| bynk_ts::TsObjectEntry::Shorthand(payload_prop(field))),
-            );
+            // #1653: the parameter is a binding, so a field named like a
+            // reserved word (`class`, `arguments`, `deps`) or `globalThis` is
+            // renamed there by `ts_ident`; the property keeps its own name.
+            obj_entries.extend(payload.iter().map(|(field, _)| {
+                let prop = payload_prop(field);
+                let param = ts_ident(&prop);
+                if param == prop {
+                    bynk_ts::TsObjectEntry::Shorthand(prop)
+                } else {
+                    bynk_ts::TsObjectEntry::Prop(prop, bynk_ts::TsExpr::Ident(param))
+                }
+            }));
             let ctor_body =
                 bynk_ts::TsExpr::Paren(Box::new(bynk_ts::TsExpr::object_entries(obj_entries)));
             entries.push(bynk_ts::TsObjectEntry::Prop(

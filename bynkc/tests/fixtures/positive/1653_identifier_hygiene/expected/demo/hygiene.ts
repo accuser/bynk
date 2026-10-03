@@ -79,13 +79,6 @@ export interface Uint8Array {
 export const Uint8Array = {
 };
 
-export interface Set {
-  readonly n: number;
-}
-
-export const Set = {
-};
-
 export interface Date {
   readonly day: number;
 }
@@ -228,6 +221,15 @@ export const Labelled = {
   Plain: (n: number): Labelled => ({ tag: "Plain", n }),
 };
 
+export type Keyword =
+    { readonly tag: "Kw"; readonly class: number; readonly arguments: number; readonly deps: number }
+  | { readonly tag: "Bare" };
+
+export const Keyword = {
+  Kw: (__id_class: number, __id_arguments: number, __id_deps: number): Keyword => ({ tag: "Kw", class: __id_class, arguments: __id_arguments, deps: __id_deps }),
+  Bare: { tag: "Bare" } as Keyword,
+};
+
 export function console(x: number): number {
   return x + 1;
 }
@@ -257,6 +259,51 @@ export function serialise_Labelled(l: Labelled): number {
     case "Plain": {
       const n = l.n;
       return n;
+    }
+  }
+  throw new globalThis.Error("non-exhaustive match");
+}
+
+export function Set(x: number): number {
+  return x;
+}
+
+export function Map(x: number): number {
+  return x;
+}
+
+export function unique(xs: readonly number[]): readonly number[] {
+  return [...new globalThis.Set(xs)];
+}
+
+export function withKey(m: ReadonlyMap<string, number>): ReadonlyMap<string, number> {
+  return new globalThis.Map(m).set("k", Set(Map(1)));
+}
+
+export function keywordSum(k: Keyword): number {
+  switch (k.tag) {
+    case "Kw": {
+      const c = k.class;
+      const a = k.arguments;
+      const d = k.deps;
+      return c + a + d;
+    }
+    case "Bare": {
+      return 0;
+    }
+  }
+  throw new globalThis.Error("non-exhaustive match");
+}
+
+export function keywordRoundTrip(k: Keyword): boolean {
+  const __r0 = ((__s: string): Result<Keyword, JsonError> => { let __j: __JsonValue; try { __j = globalThis.JSON.parse(__s) as __JsonValue; } catch (__e) { return Err({ kind: "Malformed", path: "$", message: String(__e) }); } const __r = __deserialise_Keyword(__j, "$"); if (__r.tag === "Ok") return Ok(__r.value as Keyword); const __be = __r.error; return Err({ kind: __be.kind, path: (__be.kind === "StructuralMismatch" || __be.kind === "RefinementViolation") ? __be.path : "$", message: __be.kind === "StructuralMismatch" ? `expected ${__be.expected}, got ${String(__be.actual)}` : __be.kind === "RefinementViolation" ? __be.violation.message : __be.details }); })(globalThis.JSON.stringify(__serialise_Keyword(k)));
+  switch (__r0.tag) {
+    case "Ok": {
+      const back = __r0.value;
+      return __bynkEq(back, k);
+    }
+    case "Err": {
+      return false;
     }
   }
   throw new globalThis.Error("non-exhaustive match");
@@ -422,6 +469,54 @@ export function __makeBag(key: string, env?: { BAG?: __DurableObjectNamespace })
 
 export function __resetAgents(): void {
   __BagRegistry.reset();
+}
+
+export function __serialise_Keyword(value: Keyword): __JsonValue {
+  switch (value.tag) {
+    case "Kw": {
+      return { kind: "Kw", class: ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(value.class), arguments: ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(value.arguments), deps: ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(value.deps) };
+    }
+    case "Bare":
+      return { kind: "Bare" };
+  }
+}
+
+export function __deserialise_Keyword(json: __JsonValue, path: string = "$"): Result<Keyword, __BoundaryError> {
+  if (typeof json !== "object" || json === null || globalThis.Array.isArray(json)) {
+    return Err({ kind: "StructuralMismatch", path, expected: "object", actual: typeof json });
+  }
+  const obj = json as { [k: string]: __JsonValue };
+  const kind = obj["kind"];
+  switch (kind) {
+    case "Kw": {
+  if (typeof obj["class"] !== "number") {
+    return Err({ kind: "StructuralMismatch", path: `${path}.class`, expected: "number", actual: typeof obj["class"] });
+  }
+  if (!globalThis.Number.isSafeInteger(obj["class"])) {
+    return Err({ kind: "StructuralMismatch", path: `${path}.class`, expected: "safe integer", actual: String(obj["class"]) });
+  }
+  const __class = obj["class"];
+  if (typeof obj["arguments"] !== "number") {
+    return Err({ kind: "StructuralMismatch", path: `${path}.arguments`, expected: "number", actual: typeof obj["arguments"] });
+  }
+  if (!globalThis.Number.isSafeInteger(obj["arguments"])) {
+    return Err({ kind: "StructuralMismatch", path: `${path}.arguments`, expected: "safe integer", actual: String(obj["arguments"]) });
+  }
+  const __arguments = obj["arguments"];
+  if (typeof obj["deps"] !== "number") {
+    return Err({ kind: "StructuralMismatch", path: `${path}.deps`, expected: "number", actual: typeof obj["deps"] });
+  }
+  if (!globalThis.Number.isSafeInteger(obj["deps"])) {
+    return Err({ kind: "StructuralMismatch", path: `${path}.deps`, expected: "safe integer", actual: String(obj["deps"]) });
+  }
+  const __deps = obj["deps"];
+      return Ok({ tag: "Kw", class: __class, arguments: __arguments, deps: __deps } as Keyword);
+    }
+    case "Bare":
+      return Ok({ tag: "Bare" } as Keyword);
+    default:
+      return Err({ kind: "StructuralMismatch", path, expected: "sum variant kind", actual: String(kind) });
+  }
 }
 
 export function __serialise_Labelled(value: Labelled): __JsonValue {

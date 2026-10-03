@@ -1,0 +1,12 @@
+context a
+
+-- #1653: an agent emits a module-scope class of its own name, which would hide
+-- the `globalThis.<name>` references generated code uses.
+agent globalThis {
+  key id: String
+  store n: Cell[Int] = 0
+  on call touch() -> Effect[Int] {
+    let v <- n.get()
+    v
+  }
+}

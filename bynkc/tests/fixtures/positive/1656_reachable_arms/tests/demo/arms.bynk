@@ -22,3 +22,9 @@ case "multi-field payloads" {
   expect score(P(1, false)) == 0
   expect score(Q) == -1
 }
+
+case "a refined arm does not cover the arms after it" {
+  expect sign(3) == "positive"
+  expect sign(0) == "not positive"
+  expect sign(-2) == "not positive"
+}

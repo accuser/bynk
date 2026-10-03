@@ -592,6 +592,7 @@ pub fn resolve(commons: Commons) -> Result<ResolvedCommons, Vec<CompileError>> {
         refs: &mut refs,
     };
     for item in &commons.items {
+        check_reserved_host_name(item, &mut sinks);
         match item {
             CommonsItem::Type(t) => {
                 check_type_decl_refs(t, &types, &mut sinks);
@@ -671,6 +672,7 @@ pub fn resolve_file_record(
         refs,
     };
     for item in &resolved.commons.items {
+        check_reserved_host_name(item, &mut sinks);
         match item {
             CommonsItem::Type(t) => {
                 sinks.refs.set_owner(&t.name.name);
@@ -864,6 +866,27 @@ fn check_duplicate_type_params(params: &[TypeParam], owner: &str, errors: &mut S
     }
 }
 
+/// #1653: the generated TypeScript reaches host globals as `globalThis.<name>`,
+/// so a module-scope declaration of that name (a type, function, agent,
+/// provider, …) would hide every one of them in its module. Parameters and
+/// locals are renamed by the emitter instead; a declaration is rejected.
+fn check_reserved_host_name(item: &CommonsItem, errors: &mut Sinks) {
+    if let Some(name) = item.name()
+        && name.name == "globalThis"
+    {
+        errors.push(
+            CompileError::new(
+                "bynk.resolve.reserved_host_name",
+                name.span,
+                "`globalThis` cannot be used as a declaration name",
+            )
+            .with_note(
+                "the generated TypeScript uses `globalThis` to reach the host's built-in objects; rename the declaration",
+            ),
+        );
+    }
+}
+
 /// Recursively walk a type declaration to check that every type reference
 /// inside it resolves.
 fn check_type_decl_refs(t: &TypeDecl, types: &HashMap<String, Arc<TypeDecl>>, errors: &mut Sinks) {
@@ -886,19 +909,6 @@ fn check_type_decl_refs(t: &TypeDecl, types: &HashMap<String, Arc<TypeDecl>>, er
                 ),
             )
             .with_note("rename the type — built-in type names are reserved in type position"),
-        );
-    }
-    // #1653: the generated TypeScript reaches host globals as
-    // `globalThis.<name>`, so a type of that name would hide every one of them
-    // in its module. (Value names are renamed by the emitter instead.)
-    if t.name.name == "globalThis" {
-        errors.push(
-            CompileError::new(
-                "bynk.resolve.reserved_host_name",
-                t.name.span,
-                "`globalThis` cannot be used as a type name",
-            )
-            .with_note("the generated TypeScript uses `globalThis` to reach the host's built-in objects; rename the type"),
         );
     }
     // v0.157 (ADR 0183): a record body may be generic. #593: a sum body may too

@@ -24,7 +24,7 @@ export function firstOrZero(xs: readonly number[]): number {
 export function demo(): number {
   const xs = [1, 2, 3];
   const ys = [0, ...xs];
-  const m: ReadonlyMap<string, number> = new Map(new Map<string, number>()).set("a", 1);
+  const m: ReadonlyMap<string, number> = new globalThis.Map(new globalThis.Map<string, number>()).set("a", 1);
   const __r0 = ((__m: ReadonlyMap<string, number>, __k: string) => __m.has(__k) ? Some(__m.get(__k) as number) : None)(m, "a");
   switch (__r0.tag) {
     case "Some": {

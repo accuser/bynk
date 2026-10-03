@@ -46,6 +46,10 @@
     {
       "code": "bynk.resolve.duplicate_agent",
       "summary": "Two agents share a name."
+    },
+    {
+      "code": "bynk.resolve.reserved_host_name",
+      "summary": "A declaration is named `globalThis`, which the generated TypeScript uses to reach host globals."
     }
   ],
   "applied_type_ref": [
@@ -444,6 +448,10 @@
     {
       "code": "bynk.resolve.duplicate_method",
       "summary": "Two methods share a name."
+    },
+    {
+      "code": "bynk.resolve.reserved_host_name",
+      "summary": "A declaration is named `globalThis`, which the generated TypeScript uses to reach host globals."
     }
   ],
   "for_all": [
@@ -762,6 +770,10 @@
     {
       "code": "bynk.resolve.duplicate_provider",
       "summary": "A capability is provided more than once."
+    },
+    {
+      "code": "bynk.resolve.reserved_host_name",
+      "summary": "A declaration is named `globalThis`, which the generated TypeScript uses to reach host globals."
     }
   ],
   "provider_op": [
@@ -1047,7 +1059,7 @@
     },
     {
       "code": "bynk.resolve.reserved_host_name",
-      "summary": "A type is named `globalThis`, which the generated TypeScript uses to reach host globals."
+      "summary": "A declaration is named `globalThis`, which the generated TypeScript uses to reach host globals."
     }
   ],
   "uses_decl": [

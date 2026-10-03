@@ -16,11 +16,11 @@ export function sortedNames(items: readonly Item[]): readonly Item[] {
 }
 
 export function uniqueIds(items: readonly Item[]): readonly Item[] {
-  return ((__xs: readonly Item[]) => { const __seen = new Set(); const __out: Item[] = []; for (const __x of __xs) { const __k = ((i) => i.id)(__x); if (!__seen.has(__k)) { __seen.add(__k); __out.push(__x); } } return __out; })(items);
+  return ((__xs: readonly Item[]) => { const __seen = new globalThis.Set(); const __out: Item[] = []; for (const __x of __xs) { const __k = ((i) => i.id)(__x); if (!__seen.has(__k)) { __seen.add(__k); __out.push(__x); } } return __out; })(items);
 }
 
 export function uniqueInts(xs: readonly number[]): readonly number[] {
-  return [...new Set(xs)];
+  return [...new globalThis.Set(xs)];
 }
 
 export function ascending(xs: readonly number[]): readonly number[] {

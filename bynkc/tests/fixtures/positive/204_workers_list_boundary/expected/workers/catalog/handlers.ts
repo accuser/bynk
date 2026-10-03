@@ -14,7 +14,7 @@ export const Order = {
 
 export const orders = {
   async call(ids: readonly string[], deps: {}): globalThis.Promise<Result<readonly Order[], void>> {
-    const none: ReadonlyMap<string, number> = new Map<string, number>();
+    const none: ReadonlyMap<string, number> = new globalThis.Map<string, number>();
     return Ok([{ id: "a", total: 1, tags: none }, { id: "b", total: 2, tags: none }]);
   },
 };
@@ -123,7 +123,7 @@ export function __deserialise_Map_String_Int(json: __JsonValue, path: string = "
   if (!globalThis.Array.isArray(json)) {
     return Err({ kind: "StructuralMismatch", path, expected: "array", actual: typeof json });
   }
-  const out = new Map<string, number>();
+  const out = new globalThis.Map<string, number>();
   for (let i = 0; i < json.length; i++) {
   const entry = json[i];
   if (!globalThis.Array.isArray(entry) || entry.length !== 2) {

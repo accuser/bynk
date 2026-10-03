@@ -1532,8 +1532,8 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     ),
     dg(
         "bynk.resolve.reserved_host_name",
-        "A type is named `globalThis`, which the generated TypeScript uses to reach host globals.",
-        &["type_decl"],
+        "A declaration is named `globalThis`, which the generated TypeScript uses to reach host globals.",
+        &["type_decl", "fn_decl", "agent_decl", "provider_decl"],
     ),
     dg(
         "bynk.resolve.reserved_payload_field",

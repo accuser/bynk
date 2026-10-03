@@ -20,7 +20,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 /// The host globals emitted code references. Kept in step with the emitter:
-/// add a name here when emitted code starts using a new global.
+/// add a name here when emitted code starts using a new global. `String` is
+/// the one global emitted bare (`String(x)`): it is a hard Bynk keyword, so no
+/// declaration can take the name.
 const HOST_GLOBALS: &[&str] = &[
     "ArrayBuffer",
     "Array",
@@ -32,6 +34,7 @@ const HOST_GLOBALS: &[&str] = &[
     "Headers",
     "Intl",
     "JSON",
+    "Map",
     "Math",
     "Number",
     "Object",
@@ -42,6 +45,7 @@ const HOST_GLOBALS: &[&str] = &[
     "Request",
     "Response",
     "ReturnType",
+    "Set",
     "Symbol",
     "TextDecoder",
     "TextEncoder",

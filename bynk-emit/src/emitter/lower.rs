@@ -1867,7 +1867,11 @@ fn lower_method_call(
                 return pre.finish(format!("([] as readonly {}[])", ts_ty(*t, tys)));
             }
             Some(Ty::Map(k, v)) => {
-                return pre.finish(format!("new Map<{}, {}>()", ts_ty(*k, tys), ts_ty(*v, tys)));
+                return pre.finish(format!(
+                    "new globalThis.Map<{}, {}>()",
+                    ts_ty(*k, tys),
+                    ts_ty(*v, tys)
+                ));
             }
             _ => {}
         }
@@ -3264,13 +3268,13 @@ fn lower_list_kernel(
         }
         ("distinct", []) => {
             let recv = pre.lower(receiver, cx);
-            Some(format!("[...new Set({recv})]"))
+            Some(format!("[...new globalThis.Set({recv})]"))
         }
         ("distinctBy", [key]) => {
             let recv = pre.lower(receiver, cx);
             let key = pre.lower(key, cx);
             Some(format!(
-                "((__xs: readonly {elem_ts}[]) => {{ const __seen = new Set(); const __out: {elem_ts}[] = []; for (const __x of __xs) {{ const __k = ({key})(__x); if (!__seen.has(__k)) {{ __seen.add(__k); __out.push(__x); }} }} return __out; }})({recv})"
+                "((__xs: readonly {elem_ts}[]) => {{ const __seen = new globalThis.Set(); const __out: {elem_ts}[] = []; for (const __x of __xs) {{ const __k = ({key})(__x); if (!__seen.has(__k)) {{ __seen.add(__k); __out.push(__x); }} }} return __out; }})({recv})"
             ))
         }
         ("sum", [key]) => {
@@ -3447,7 +3451,7 @@ fn lower_query_method(
         )),
         ("take", [n]) => thunk(format!("{source}.slice(0, globalThis.Math.max(0, {n}))")),
         ("skip", [n]) => thunk(format!("{source}.slice(globalThis.Math.max(0, {n}))")),
-        ("distinct", []) => thunk(format!("[...new Set({source})]")),
+        ("distinct", []) => thunk(format!("[...new globalThis.Set({source})]")),
         // Review of #1460: narrowed, not deferred. A first attempt used
         // `unknown[]` here and broke real `tsc --strict` fixtures (228/231) —
         // the whole expression's result flows into a context expecting a
@@ -3460,7 +3464,7 @@ fn lower_query_method(
         // (the `List[T]` sibling, `lower_list_kernel`, already does this for
         // its own `distinctBy`/`joinOn`/`leftJoin`/`groupBy`).
         ("distinctBy", [key]) => thunk(format!(
-            "(() => {{ const __seen = new Set(); const __out: {elem_ts}[] = []; for (const __x of {source}) {{ const __k = ({key})(__x); if (!__seen.has(__k)) {{ __seen.add(__k); __out.push(__x); }} }} return __out; }})()"
+            "(() => {{ const __seen = new globalThis.Set(); const __out: {elem_ts}[] = []; for (const __x of {source}) {{ const __k = ({key})(__x); if (!__seen.has(__k)) {{ __seen.add(__k); __out.push(__x); }} }} return __out; }})()"
         )),
         // v0.94 (ADR 0116/0120): joins & grouping over storage queries — lazy
         // builders. `other` is itself a `Query` thunk, invoked to materialise the
@@ -4246,7 +4250,7 @@ fn lower_map_kernel(
             let recv = pre.lower(receiver, cx);
             let k = pre.lower(k, cx);
             let v = pre.lower(v, cx);
-            Some(format!("new Map({recv}).set({k}, {v})"))
+            Some(format!("new globalThis.Map({recv}).set({k}, {v})"))
         }
         _ => None,
     };

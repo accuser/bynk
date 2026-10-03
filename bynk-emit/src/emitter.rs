@@ -5264,16 +5264,14 @@ fn ts_binop(op: BinOp) -> &'static str {
 /// #1653: the TypeScript property name of a sum variant's payload field. A
 /// variant object already carries the in-memory discriminant `tag`, so a
 /// payload field of that name moves to `$tag` (`$` is not a Bynk identifier
-/// character, so no other field can be spelled that way), as does one named
-/// `globalThis`. Only the in-memory
+/// character, so no other field can be spelled that way). Only the in-memory
 /// shape changes: the wire key stays the field's own name, and the codec maps
 /// between the two.
 pub(crate) fn payload_prop(field: &str) -> String {
-    match field {
-        // The constructor binds each field as a parameter of the same name,
-        // and a parameter named `globalThis` would hide the host globals.
-        "tag" | "globalThis" => format!("${field}"),
-        _ => field.to_string(),
+    if field == "tag" {
+        "$tag".to_string()
+    } else {
+        field.to_string()
     }
 }
 
