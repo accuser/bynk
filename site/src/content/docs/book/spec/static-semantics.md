@@ -1055,9 +1055,13 @@ never a context (`bynk.adapter.consumes_context`).
 or with conflicting visibility, and an exported capability MUST have a provider
 (the `bynk.exports.*` codes). A value crossing a boundary MUST be structurally
 compatible with the receiving side ([§6.5](/book/spec/type-system/#65-type-compatibility--boundaries),
-`bynk.boundary.structural_mismatch`); a context-owned type MUST NOT be constructed
-or an opaque export inspected from outside (`bynk.context.external_construction`,
-`bynk.context.opaque_inspection`).
+`bynk.boundary.structural_mismatch`); outside its owning context, a context-owned
+type MUST NOT be built through its constructors (`.of`, `.unsafe`, a variant) and
+an opaque export MUST NOT be built with record syntax or inspected
+(`bynk.context.external_construction`, `bynk.context.opaque_inspection`). A
+transparent record's fields are shared, so a consumer MAY build one with record
+syntax. These rules hold in every body — functions, service and agent handlers,
+and provider operations.
 
 **Adapters are the host boundary.** An adapter MUST NOT declare a `service` or an
 `agent` (`bynk.adapter.disallowed_item`); it MAY declare at most one `binding`

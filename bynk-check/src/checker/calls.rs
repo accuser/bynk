@@ -945,7 +945,9 @@ fn check_generic_call(
             ),
             super::equality::NotComparable::Computation(part) if top => (
                 "bynk.types.not_comparable",
-                format!("a function, `Effect` or `Query` like `{part}` is a computation, which has no value equality"),
+                format!(
+                    "a function, `Effect` or `Query` like `{part}` is a computation, which has no value equality"
+                ),
             ),
             super::equality::NotComparable::Computation(part) => (
                 "bynk.types.not_comparable",
