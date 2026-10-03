@@ -3005,24 +3005,21 @@ pub(crate) fn check_match(
     };
     let mut arm_types: Vec<(TyId, Span)> = Vec::new();
     let mut saw_wildcard = false;
-    let mut unreachable_reported = false;
     // Unguarded, refutable patterns already seen — structural duplicate
     // detection (ADR 0169: `Err(A)` and `Err(B)` are distinct, so a duplicate
     // keys on pattern *shape*, not the outer variant name).
     let mut seen: Vec<&Pattern> = Vec::new();
+    // #1656: every earlier unguarded arm's pattern, for the usefulness check.
+    // A guarded arm never covers (its guard may fail), so it is not recorded.
+    let mut covering: Vec<&Pattern> = Vec::new();
     for arm in arms {
-        if saw_wildcard && !unreachable_reported {
-            ctx.errors.push(CompileError::new(
-                "bynk.types.unreachable_arm",
-                arm.span,
-                "this match arm is unreachable because a wildcard arm precedes it",
-            ));
-            unreachable_reported = true;
-        }
         ctx.push_scope();
         // Validate the pattern against the scrutinee and bind its names,
         // recursing through nested payload patterns (ADR 0169).
+        let errors_before = ctx.errors.len();
         check_pattern(&arm.pattern, disc_ty, ctx);
+        let pattern_ok = ctx.errors.len() == errors_before;
+        let mut duplicate_reported = false;
         // Structural duplicate detection over unguarded, refutable patterns —
         // `Err(A)` and `Err(B)` are distinct, `Ok(_)` twice is a duplicate.
         // #474: an or-pattern is checked alternative-by-alternative, so
@@ -3044,10 +3041,45 @@ pub(crate) fn check_match(
                         ),
                     };
                     ctx.errors.push(CompileError::new(code, cand.span(), msg));
+                    duplicate_reported = true;
                 } else {
                     seen.push(cand);
                 }
             }
+        }
+        // #1656 (static-semantics: arms MUST NOT be unreachable): an arm is
+        // unreachable when every value its pattern matches is already matched
+        // by an earlier unguarded arm. A duplicate is the simplest case and
+        // already has its own report; an ill-typed pattern has one too.
+        if pattern_ok
+            && !duplicate_reported
+            && pattern_covered(&covering, &arm.pattern, disc_ty, ctx)
+        {
+            ctx.errors.push(if saw_wildcard {
+                CompileError::new(
+                    "bynk.types.unreachable_arm",
+                    arm.span,
+                    "this match arm is unreachable because a wildcard arm precedes it",
+                )
+            } else {
+                CompileError::new(
+                    "bynk.types.unreachable_arm",
+                    arm.span,
+                    if arm.pattern.is_irrefutable() {
+                        "this match arm is unreachable — the earlier arms already match every value"
+                            .to_string()
+                    } else {
+                        format!(
+                            "this match arm is unreachable — every value `{}` matches is already matched by an earlier arm",
+                            describe_pattern(&arm.pattern)
+                        )
+                    },
+                )
+                .with_note("remove the arm, or move it above the arm that covers it")
+            });
+        }
+        if arm.guard.is_none() {
+            covering.push(&arm.pattern);
         }
         // Guard (ADR 0169): must be `Bool`; a guarded arm never covers.
         if let Some(guard) = &arm.guard
@@ -3514,6 +3546,116 @@ fn describe_pattern(pat: &Pattern) -> String {
             .collect::<Vec<_>>()
             .join(" | "),
     }
+}
+
+/// #1656: whether every value `pat` matches is already matched by one of
+/// `prior` (the earlier unguarded arms' patterns), i.e. `pat` is not useful
+/// after them. Sound but bounded, like [`missing_patterns`]:
+///
+/// - an or-pattern is covered when each alternative is;
+/// - a refined pattern is covered when its inner pattern is (it matches a
+///   subset of it), while a refined *prior* never covers — its predicate may
+///   fail, exactly as a guard may;
+/// - an irrefutable pattern is covered when the priors are exhaustive;
+/// - a variant pattern is covered by a prior of the same variant whose payload
+///   patterns are all irrefutable, by recursion on a single-field payload, or,
+///   for a multi-field payload, by one prior that covers it field by field.
+///
+/// Anything this cannot decide counts as *not* covered, so an arm is only ever
+/// reported when it is certainly unreachable.
+fn pattern_covered(prior: &[&Pattern], pat: &Pattern, ty: TyId, ctx: &Ctx) -> bool {
+    let prior: Vec<&Pattern> = prior
+        .iter()
+        .copied()
+        .flat_map(pattern_alternatives)
+        .collect();
+    if prior.iter().any(|p| p.is_irrefutable()) {
+        return true;
+    }
+    match pat {
+        Pattern::Or(alts, _) => alts.iter().all(|a| pattern_covered(&prior, a, ty, ctx)),
+        Pattern::Refined { inner, .. } => pattern_covered(&prior, inner, ty, ctx),
+        Pattern::Wildcard(_) | Pattern::Binding(_) => missing_patterns(ty, &prior, ctx).is_empty(),
+        Pattern::Literal { value, .. } => prior
+            .iter()
+            .any(|p| matches!(p, Pattern::Literal { value: v, .. } if v == value)),
+        Pattern::Variant { variant, .. } => {
+            let Some(info) = variants_of(ty, &ctx.input.types, ctx.tys)
+                .and_then(|vs| vs.into_iter().find(|v| v.name == variant.name))
+            else {
+                return false;
+            };
+            let Some(fields) = payload_patterns(pat, &info) else {
+                return false;
+            };
+            let matching: Vec<Vec<Option<&Pattern>>> = prior
+                .iter()
+                .filter_map(|p| payload_patterns(p, &info))
+                .collect();
+            // A prior that binds every payload field irrefutably (or binds none)
+            // matches the whole variant.
+            if matching
+                .iter()
+                .any(|m| m.iter().all(|f| f.is_none_or(Pattern::is_irrefutable)))
+            {
+                return true;
+            }
+            if info.payload.len() == 1 {
+                let sub: Vec<&Pattern> = matching.iter().filter_map(|m| m[0]).collect();
+                return fields[0].is_some_and(|q| pattern_covered(&sub, q, info.payload[0].1, ctx));
+            }
+            matching.iter().any(|m| {
+                m.iter()
+                    .zip(&fields)
+                    .zip(&info.payload)
+                    .all(|((p, q), (_, fty))| match (p, q) {
+                        (None, _) => true,
+                        (Some(p), Some(q)) => pattern_covered(&[p], q, *fty, ctx),
+                        (Some(p), None) => p.is_irrefutable(),
+                    })
+            })
+        }
+    }
+}
+
+/// #1656: a variant pattern's payload sub-patterns in declared field order —
+/// `None` for a field the pattern leaves unbound (a nullary-form pattern, or a
+/// named pattern omitting it), which matches anything. `None` overall when
+/// `pat` is not a well-formed pattern for `info`'s variant.
+fn payload_patterns<'p>(pat: &'p Pattern, info: &VariantInfo) -> Option<Vec<Option<&'p Pattern>>> {
+    let Pattern::Variant {
+        variant, bindings, ..
+    } = pat
+    else {
+        return None;
+    };
+    if variant.name != info.name {
+        return None;
+    }
+    let mut fields = vec![None; info.payload.len()];
+    if bindings.is_empty() {
+        return Some(fields);
+    }
+    if bindings
+        .iter()
+        .any(|b| matches!(b.kind, PatternBindingKind::Named { .. }))
+    {
+        for b in bindings {
+            let PatternBindingKind::Named { field, pattern } = &b.kind else {
+                return None;
+            };
+            let i = info.payload.iter().position(|(n, _)| n == &field.name)?;
+            fields[i] = Some(pattern);
+        }
+    } else {
+        if bindings.len() != fields.len() {
+            return None;
+        }
+        for (slot, b) in fields.iter_mut().zip(bindings) {
+            *slot = Some(b.pattern());
+        }
+    }
+    Some(fields)
 }
 
 /// Value shapes of `ty` NOT covered by the sibling patterns `pats` (empty ⇒

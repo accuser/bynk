@@ -699,7 +699,9 @@ MUST **join** to a common result type — their least upper bound, so a refined
 type and its base agree at the base (`bynk.types.match_arm_mismatch`), MUST NOT
 repeat a
 variant (`bynk.types.duplicate_variant_arm`), and MUST NOT be unreachable
-(`bynk.types.unreachable_arm`).
+(`bynk.types.unreachable_arm`): every arm MUST match some value that no earlier
+unguarded arm matches. A guarded arm or a refined pattern (`n where P`) never
+covers a later arm, since its guard or predicate may fail.
 
 A pattern MUST name a real variant (`bynk.types.unknown_variant_in_pattern`) and
 real payload fields (`bynk.types.unknown_pattern_field`), bind the right number

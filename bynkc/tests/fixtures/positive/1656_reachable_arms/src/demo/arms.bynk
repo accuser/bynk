@@ -1,0 +1,39 @@
+---
+#1656: arms that overlap an earlier arm but still match something new stay
+legal — a guarded arm never covers, and a narrower arm may precede a wider one.
+---
+commons demo.arms
+
+type Color = enum { Red, Green, Blue }
+
+type Pair = | P(a: Int, b: Bool) | Q
+
+-- A guarded arm never covers, so the same pattern may follow it.
+fn size(o: Option[Int]) -> String {
+  match o {
+    Some(n) if n > 100 => "big"
+    Some(n) if n > 100 => "never reached, but legal: guards are not analysed"
+    Some(n) if n > 0 => "small"
+    Some(_) => "non-positive"
+    None => "none"
+  }
+}
+
+-- Narrow before wide: each later arm still matches values the earlier miss.
+fn shade(o: Option[Color]) -> Int {
+  match o {
+    Some(Red) => 1
+    Some(Green | Blue) => 2
+    None => 0
+  }
+}
+
+-- A multi-field payload: P(1, true) precedes the wider P(_, true).
+fn score(p: Pair) -> Int {
+  match p {
+    P(1, true) => 10
+    P(a: _, b: true) => 1
+    P(_, _) => 0
+    Q => -1
+  }
+}

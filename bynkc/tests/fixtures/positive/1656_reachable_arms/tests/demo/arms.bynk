@@ -1,0 +1,24 @@
+---
+#1656: the arms reachable after narrowing run as written.
+---
+suite demo.arms
+
+case "a guarded arm does not cover the same pattern after it" {
+  expect size(Some(500)) == "big"
+  expect size(Some(5)) == "small"
+  expect size(Some(0)) == "non-positive"
+  expect size(None) == "none"
+}
+
+case "a narrow arm precedes a wider one" {
+  expect shade(Some(Red)) == 1
+  expect shade(Some(Blue)) == 2
+  expect shade(None) == 0
+}
+
+case "multi-field payloads" {
+  expect score(P(1, true)) == 10
+  expect score(P(2, true)) == 1
+  expect score(P(1, false)) == 0
+  expect score(Q) == -1
+}

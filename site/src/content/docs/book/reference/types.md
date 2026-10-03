@@ -527,3 +527,33 @@ match s {
 A `match` must be exhaustive (`bynk.types.non_exhaustive_match`); a `match` is an
 expression whose arms must join to a common type — their least upper bound, so a
 refined type and its base agree at the base (`bynk.types.match_arm_mismatch`).
+
+Every arm must also be reachable (`bynk.types.unreachable_arm`): an arm is an
+error when each value its pattern matches is already matched by an earlier
+arm. Each of these is rejected at the marked arm:
+
+```bynk
+match o {
+  Some(_) => 1
+  Some(Red) => 2   -- `Some(_)` already matches every `Some`
+  None => 3
+}
+
+match c {
+  Red => 1
+  Green => 2
+  Blue => 3
+  _ => 4           -- the variants above are already exhaustive
+}
+
+match o {
+  Some(Red | Green) => 1
+  Some(Blue) => 2
+  Some(Green) => 3 -- the first arm's or-pattern already matches it
+  None => 4
+}
+```
+
+A narrower arm may precede a wider one (`Some(Red)` then `Some(_)`), and a
+guarded arm never counts as covering, because its guard may fail. So an
+unguarded arm with the same pattern can always follow it.
