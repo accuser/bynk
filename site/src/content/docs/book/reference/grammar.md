@@ -206,7 +206,7 @@ non-Bynk `binding`, declaring capabilities, boundary types, inline pure helpers,
 and external (bodiless) providers. The only place host code may enter a program.
 
 **Example.**
-```bynk
+```bynk,fragment
 adapter tokens {
   binding "./tokens.binding.ts" requires { "jose": "^5" }
   exports capability  { Jwt }
@@ -337,7 +337,7 @@ Type declarations and the type references that appear in signatures.
 Names a type as a record, sum, enum, opaque, or refined type.
 
 **Example.**
-```bynk,ignore
+```bynk
 type Status =
   | Pending
   | Shipped(tracking: String)
@@ -372,7 +372,7 @@ A base or named type narrowed by a `where` refinement, e.g. `Int where
 Positive`.
 
 **Example.**
-```bynk,ignore
+```bynk
 type Quantity = Int where InRange(1, 100)
 ```
 
@@ -1247,7 +1247,7 @@ A conditional expression; both branches must have the same type.
 Pattern-matches a value against variants; must be exhaustive.
 
 **Example.**
-```bynk,ignore
+```bynk,fragment
 match s {
   Pending => "awaiting shipment"
   Shipped(tracking: t) => t
@@ -1727,7 +1727,7 @@ classifier (`unit`, `integration`, or `system`) records the test level, and the
 body may open with `stub` clauses before its statements.
 
 **Example.**
-```bynk,ignore
+```bynk,fragment
 case "a fresh counter starts at zero" {
   let n <- Counter(CounterId.unsafe("fresh")).current()
   expect n == 0
@@ -1747,7 +1747,7 @@ A generative `property` (v0.114) — the generative sibling of `case`. Its body 
 a single [`for all`](#rule-for_all) binder; the runner produces the subjects.
 
 **Example.**
-```bynk,ignore
+```bynk,fragment
 property "more discount, never a higher price" {
   for all p: Price, a: Percent, b: Percent where a <= b {
     expect discount(p, b) <= discount(p, a)

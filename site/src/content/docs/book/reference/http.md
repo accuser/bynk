@@ -7,7 +7,7 @@ and the diagnostics that govern it.
 
 ## Handler form
 
-```bynk
+```bynk,ignore
 service <Name> from http {
   on <METHOD>("<route>") (<params>) -> Effect[HttpResult[T]] {
     …
@@ -109,7 +109,7 @@ operator lifts an `Option`: `Some(v)` yields `v`, and `None` **early-returns
 `NotFound` (404)**. This collapses the outer half of the ubiquitous read →
 respond pyramid — a lookup that misses becomes a 404 without a `match`:
 
-```bynk
+```bynk,fragment
 on GET("/links/:code") (code: Slug) -> Effect[HttpResult[String]] by v: Visitor given Kv {
   let stored <- Kv.get(code.value)   -- stored : Option[String]
   let raw = stored?                  -- None → 404 NotFound; Some(s) → s
@@ -211,7 +211,7 @@ a cross-origin revalidation stays readable by the browser.
 To let a client or CDN serve a response **without revalidating** for a window,
 annotate the handler with `@cache`, written immediately before `on GET`:
 
-```bynk
+```bynk,ignore
 service links from http {
   @cache(maxAge: 5.minutes)
   on GET("/links/:code") (code: Slug) -> Effect[HttpResult[Url]] by v: Visitor given Kv { … }
@@ -246,7 +246,7 @@ emitted as Server-Sent Events (`content-type: text/event-stream`). Each stream
 element becomes one SSE event — `data: <element>\n\n` — so a handler can send an
 incremental feed without buffering the whole response:
 
-```bynk
+```bynk,fragment
 on GET("/ticks") () -> Effect[HttpResult[()]] by v: Visitor {
   Streaming(Stream.of(["tick-1", "tick-2", "tick-3"]).take(3))
 }
@@ -259,7 +259,7 @@ pre-stream failure by returning an ordinary variant *instead* of `Streaming`
 (`NotFound`, `Unauthorized(…)`, …), which share `HttpResult[()]` and so sit in
 the same handler with no type conflict:
 
-```bynk
+```bynk,fragment
 on GET("/feed/:mode") (mode: String) -> Effect[HttpResult[()]] by v: Visitor {
   if mode == "live" {
     Streaming(Stream.of(events).take(100))
@@ -282,7 +282,7 @@ content-type*; it does **not** template HTML (that is the frontend tier).
 `Bytes.fromUtf8` — which makes the UTF-8 charset an explicit author decision
 rather than a runtime guess:
 
-```bynk
+```bynk,fragment
 on GET("/sitemap.xml") () -> Effect[HttpResult[()]] by v: Visitor {
   let xml = "<?xml version=\"1.0\"?><urlset></urlset>"
   Raw(Bytes.fromUtf8(xml), "application/xml")
@@ -315,7 +315,7 @@ but *without* the `Access-Control-*` grant, so the browser still blocks the read
 To make a service **cross-origin callable**, declare a `cors { }` policy in header
 position — before the routes:
 
-```bynk
+```bynk,ignore
 service api from http {
   cors {
     origins:     ["https://app.example.com"],
@@ -378,7 +378,7 @@ default. The one header with a genuine footgun — HSTS — is a deliberate opt-
 
 Declare a `security { }` policy in header position, beside `cors { }`:
 
-```bynk
+```bynk,ignore
 service api from http {
   security {
     hsts:    180.days,   -- opt-in; omit to send no HSTS
@@ -444,7 +444,7 @@ Set a service-wide default with a **`limits { }`** section in header position,
 beside `cors { }` and `security { }`; override it per route with a **`@limit`**
 handler annotation, written immediately before `on` (the `@cache` placement):
 
-```bynk
+```bynk,ignore
 service uploads from http {
   limits {
     maxBody: 1_048_576,        -- 1 MiB — the default for every body-taking route

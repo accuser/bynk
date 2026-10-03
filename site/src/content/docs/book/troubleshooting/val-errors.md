@@ -37,7 +37,7 @@ type Code = String where Matches("[a-z]+")
 
 …pin the value where you fabricate it in a test case:
 
-```bynk
+```bynk,fragment
 let c = Val[Code]("abc")
 ```
 

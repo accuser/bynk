@@ -15,7 +15,7 @@ type Order = {
 Construct by naming every field; read with dot access; produce a changed copy
 with the spread form:
 
-```bynk
+```bynk,fragment
 fn rename(o: Order, item: String) -> Order {
   Order { ...o, item: item }
 }

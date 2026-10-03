@@ -34,7 +34,7 @@ commons pricing {
 Untrusted input must be checked at runtime. Every refined type has an `.of`
 constructor that returns a `Result`:
 
-```bynk
+```bynk,fragment
 fn parseAge(raw: Int) -> Result[Age, ValidationError] {
   Age.of(raw)
 }
@@ -47,7 +47,7 @@ fn parseAge(raw: Int) -> Result[Age, ValidationError] {
 
 Propagate the error with `?` inside a function that returns a `Result`:
 
-```bynk
+```bynk,fragment
 fn register(name: String) -> Result[Username, ValidationError] {
   let u = Username.of(name)?
   Ok(u)
@@ -56,7 +56,7 @@ fn register(name: String) -> Result[Username, ValidationError] {
 
 …or branch on both cases with `match`:
 
-```bynk
+```bynk,fragment
 fn label(raw: Int) -> String {
   match Age.of(raw) {
     Ok(a) => "valid age"

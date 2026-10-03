@@ -21,7 +21,7 @@ This is convention, not a rule. **Test-ness is structural** — a `suite` block 
 a test wherever it lives — so you can put tests beside the code they exercise, or
 even in the *same file*:
 
-```bynk
+```bynk,fragment
 -- src/quantities.bynk — an atomic file: the commons and its tests together
 commons quantities {
   fn double(n: Int) -> Int { n + n }

@@ -5,7 +5,7 @@ An agent is a keyed, stateful entity declared inside a `context`.
 
 ## Declaration
 
-```bynk
+```bynk,fragment
 agent Counter {
   key id: CounterId
 
@@ -48,7 +48,7 @@ variant, `Some`/`None`/`Ok`/`Err`, a record, or — for an opaque type —
 capabilities (`bynk.agents.bad_state_initialiser` otherwise). An initialiser
 makes any type admissible — including the ones that have no implicit zero.
 
-```bynk
+```bynk,fragment
 store status:  Cell[OrderStatus] = Pending   -- a sum: the initial state
 store level:   Cell[Level]       = 1         -- a refined Int (Positive)
 store retries: Cell[Int]         = 3         -- a non-zero default
@@ -79,7 +79,7 @@ a **state machine**: the sum's variants are the states, the initialiser names th
 start state, `match <field>` reads the current state (exhaustively), and a
 transition is an assignment:
 
-```bynk
+```bynk,fragment
 agent Order {
   key id: OrderId
 
@@ -117,7 +117,7 @@ field's type type-checks. (Legal-transition tables are a later increment;
   |---|---|---|
   | `cell.update(f)` | `Effect[()]` | `f: (T) -> T`, a pure combiner applied to the current value. Awaited with `<-`. Mutates the cell; does not return the new value (read the bare name back to observe it). |
 
-  ```bynk,ignore
+  ```bynk,fragment
   let _ <- count.update((c) => c + 1)
   ```
 
@@ -170,9 +170,13 @@ and the compiler **routes an equality filter** through it: a query that filters 
 map by equality on the indexed field becomes an index lookup rather than a full
 scan, transparently — the query text is unchanged.
 
-```bynk,ignore
+```bynk,fragment
 store orders: Map[OrderId, Order] @indexed(by: customerId)
--- routed through the index (equality on the indexed field):
+```
+
+An equality filter on the indexed field is routed through the index:
+
+```bynk,fragment
 orders.filter((o) => o.customerId == c).collect()
 ```
 
@@ -186,7 +190,7 @@ perf hint), and a declared `@indexed` that no equality filter uses is
 An agent may declare **invariants** — predicates that must hold of every
 committed state — in a phase between the `store` fields and the handlers:
 
-```bynk
+```bynk,fragment
 invariant available_non_negative:
   available >= 0
 ```
@@ -226,7 +230,7 @@ See the normative rule in
 
 Construct an agent with its key, then call a handler, binding the effect:
 
-```bynk
+```bynk,fragment
 let c = Counter(CounterId.unsafe("a"))
 let n <- c.increment()
 ```

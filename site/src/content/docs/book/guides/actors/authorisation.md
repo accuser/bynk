@@ -42,7 +42,7 @@ Token claims are untyped, so the `where` predicate is a closed set:
 - `claimEquals("name", "value")` — the claim equals a string;
 - composed with `&&`, `||`, and `!`.
 
-```bynk,ignore
+```bynk,fragment
 actor Admin = User where hasClaim("admin") && claimEquals("tier", "gold")
 ```
 

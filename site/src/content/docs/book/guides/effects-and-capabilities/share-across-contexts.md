@@ -34,7 +34,7 @@ Only a capability the context both **declares** and **provides** may be exported
 The consumer `consumes` the providing context and depends on the capability
 through a **qualified `given`** — the same prefix is used for the call:
 
-```bynk,ignore
+```bynk,fragment
 context ops.jobs
 
 consumes platform.time

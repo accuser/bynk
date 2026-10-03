@@ -113,7 +113,7 @@ as in a [`match` arm](/book/guides/type-system/match/).
 
 Because `is` yields a `Bool`, it pairs naturally with `expect` in tests:
 
-```bynk
+```bynk,fragment
 expect result is Ok(_)
 ```
 

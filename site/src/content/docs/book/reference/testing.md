@@ -5,7 +5,7 @@ title: Testing
 
 A test file is a `suite` block naming its target unit, containing named `case`s:
 
-```bynk
+```bynk,fragment
 suite counters {
   case "a fresh counter starts at zero" {
     let n <- Counter(CounterId.unsafe("fresh")).current()
@@ -38,7 +38,7 @@ A route/schedule the service does not declare is `bynk.test.service_unknown_rout
 A handler guarded by an actor (`by u: User`) runs as a verified identity. A case
 supplies that identity with a call-site `by` clause on the effect-let:
 
-```bynk
+```bynk,fragment
 case "each owner's list is private" {
   let _    <- api.POST("/todos", AddRequest { title: "bob's" }) by User("bob")
   let mine <- api.GET("/todos")                                 by User("carol")
@@ -72,7 +72,7 @@ passes a raw `Wire(<String>)` argument: the string reaches the router
 **unvalidated**, exactly as an over-the-wire request would, so a refinement
 violation or malformed JSON is refused *before the handler runs*.
 
-```bynk
+```bynk,fragment
 case "an empty sku is rejected at the boundary" as system {
   let r <- api.POST("/cart", Wire("{\"sku\": \"\"}")) by User("alice")
   expect r is Rejected(_)
@@ -85,7 +85,7 @@ A `Wire`-carrying call yields `Rejected(kind) | Handled(_)` instead of an
 `expect r is Handled(_)`). The rejection's *kind* is discriminable — the nested
 pattern tests it:
 
-```bynk
+```bynk,fragment
 expect r is Rejected(_)                       -- any boundary rejection
 expect r is Rejected(RefinementViolation(_))  -- specifically a refinement violation
 expect r is Rejected(MalformedJson(_))        -- specifically malformed JSON
@@ -106,7 +106,7 @@ verifies. To test the *rejection* — an unauthenticated request — a `system`-
 case drives the route as **`by Nobody`**: the request carries no `Authorization`
 header, so the seam refuses it before the handler runs.
 
-```bynk
+```bynk,fragment
 case "no credential is rejected at the seam" as system {
   let r <- api.POST("/cart", Item { sku: "widget" }) by Nobody
   expect r is Rejected(Unauthorized)
@@ -126,7 +126,7 @@ router's method fall-through. The path must be a declared route (a genuinely
 unknown path is still `bynk.test.service_unknown_route`); the wrong method drives
 the `405`:
 
-```bynk
+```bynk,fragment
 case "DELETE is not allowed on /cart" as system {
   let r <- api.DELETE("/cart")           -- /cart is declared for POST, not DELETE
   expect r is Rejected(MethodNotAllowed)
@@ -161,7 +161,7 @@ and a tier is **one body promoted, not a distinct kind of test**:
 | `integration` | real, **within one context** | no |
 | `system` | contexts stood up as the Workers they deploy as | **yes** — the real serialise → JSON → deserialise edge |
 
-```bynk
+```bynk,ignore
 suite money {
   case "never negative"                   { … }  -- as unit, by default
   case "used in a payment" as integration { … }  -- real collaborators, one context, no wire
@@ -172,7 +172,7 @@ suite money {
 `unit` is the default and is **never written**. `as` also sits on the **`suite`**
 header, setting a default every `case` inherits and may override (case wins):
 
-```bynk
+```bynk,ignore
 suite checkout as integration {          -- every case defaults to integration…
   case "small order authorises"       { … }  -- as integration (inherited)
   case "a unit-level edge"    as unit { … }  -- case overrides the suite default
@@ -208,7 +208,7 @@ See [Test tiers](/book/guides/testing/integration/) for the full guide, and
 overrides *one* method's provision under test — an explicit call pattern on the
 left, a value or `fails` on the right, **never a computed body**:
 
-```bynk
+```bynk,fragment
 suite pricing {
   stub Rates.lookup("GBP") returns 1.25        -- suite-scoped: applies to every case
   stub Rates.lookup(_)     returns 1.0         -- fallback; first matching clause wins
@@ -254,7 +254,7 @@ advancing clock, a `Kv.get` that returns `None` then `Some`, a network that fail
 twice then succeeds. The **return-sequence** form supplies one outcome per call, in
 order:
 
-```bynk
+```bynk,fragment
 stub Clock.now()  returns each [1000, 2000, 3000]      -- three successive successes
 stub Kv.get(_)     returns each [None, Some(row)]        -- None, then Some…
 stub Net.fetch(_)  returns each [fails, fails, ok(resp)] -- fails twice, then succeeds
@@ -302,7 +302,7 @@ A `property` is the generative sibling of `case`, legal in the same `suite`. Whe
 a `case` supplies its subjects, a `property` **generates** them and checks that a
 claim holds across many:
 
-```bynk
+```bynk,fragment
 property "more discount, never a higher price" {
   for all p: Price, a: Percent, b: Percent where a <= b {
     expect discount(p, b) <= discount(p, a)
@@ -354,7 +354,7 @@ agent. `for all run: History[Wallet]` binds `run` to a generated, driven
 call-history of the `Wallet` agent — the generative sibling of `property` now spans
 values *and* whole behaviours:
 
-```bynk
+```bynk,fragment
 suite demo.wallet {
   property "no accepted spend without a prior accepted top-up" {
     for all run: History[Wallet] {
@@ -482,7 +482,7 @@ Where an `ensures` constrains one function *call* and an `invariant` constrains 
 committed *state*, a **`transition`** constrains the *move* between two committed
 states — declared on the agent, over the `old`/`new` state pair:
 
-```bynk
+```bynk,fragment
 agent Order {
   key id: OrderId
 
@@ -516,7 +516,7 @@ how many times, and in what order. Because a capability is injected at a known
 seam, its calls are **recorded automatically** in the test build — a
 pure-observation `case` needs no `stub` or setup at all:
 
-```bynk
+```bynk,fragment
 suite orders {
   case "an oversized order is rejected and logged" {
     let r <- place.call(50000)
@@ -547,7 +547,7 @@ parameters in scope by their declared names (`Logger.log(msg: String)` → `msg`
 For anything the sugar does not cover, the **escape hatch** binds the recorded calls
 as an ordinary value:
 
-```bynk
+```bynk,fragment
 let calls = trace(Logger.log)
 expect calls.length() == 2
 expect calls.all((c) => c.msg.length() > 0)
@@ -574,7 +574,7 @@ JSON → deserialise → structural projection) is under test, which the in-proc
 tiers never touch. Its participants are **inferred** from the unit under test's
 `consumes` graph, so there is nothing to wire by hand:
 
-```bynk
+```bynk,fragment
 suite checkout as system {
   case "small order authorises across the wire" {
     let r <- shop.orders.place(100)

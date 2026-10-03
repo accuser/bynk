@@ -35,7 +35,7 @@ The handler returns a `QueueResult` verdict: `Ack` acknowledges the message
 API — return the verdict and the framework routes it. The verdict is independent
 of success or failure, so a poison message can be `Ack`'d to drop it:
 
-```bynk
+```bynk,fragment
 service outbox from queue("outbound-email") {
   on message(message: EmailJob) -> Effect[QueueResult] {
     Retry("smtp unavailable")
@@ -50,7 +50,7 @@ A message that keeps retrying eventually hits the queue's dead-letter policy
 
 A queue handler reaches the outside world through `given`, like any handler:
 
-```bynk
+```bynk,fragment
   on message(message: EmailJob) -> Effect[QueueResult] given Smtp {
     let _ <- Smtp.send(message.to, message.subject)
     Ack

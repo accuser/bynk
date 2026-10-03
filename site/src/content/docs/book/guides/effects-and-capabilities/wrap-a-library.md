@@ -15,7 +15,7 @@ Configuration the binding needs — here the signing secret — is a **capabilit
 dependency** (`consumes bynk { Secrets }` + `given Secrets`), not an operation
 parameter (v0.18).
 
-```bynk,ignore
+```bynk,fragment
 adapter tokens {
   binding "./tokens.binding.ts" requires { "jose": "^5" }
   consumes bynk { Secrets }
@@ -87,7 +87,7 @@ mapping the typed `Response` to a `Result`.
 
 ## 3. Consume it
 
-```bynk,ignore
+```bynk,fragment
 context auth.sessions {
   consumes tokens { Jwt }      -- flatten `Jwt` into the local namespace
 

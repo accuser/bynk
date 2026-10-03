@@ -7,7 +7,7 @@ Cron handlers run on a schedule. Like HTTP handlers, they are declared in a
 
 ## Handler form
 
-```bynk
+```bynk,ignore
 service <Name> from cron {
   on schedule("<schedule>") (at: Int) -> Effect[Result[(), E]] {
     …

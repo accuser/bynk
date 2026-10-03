@@ -25,7 +25,7 @@ service api from http {
 
 A `:name` segment in the route becomes a parameter of the same name:
 
-```bynk
+```bynk,fragment
   on GET("/notes/:id") (id: String) -> Effect[HttpResult[String]] by Visitor {
     NotFound
   }
@@ -90,7 +90,7 @@ chunk, streaming is **200-only**: decide any failure *before* you start, and
 return an ordinary variant instead — it shares `HttpResult[()]`, so both live in
 one handler:
 
-```bynk
+```bynk,fragment
 on GET("/feed/:mode") (mode: String) -> Effect[HttpResult[()]] by Visitor {
   if mode == "live" {
     Streaming(Stream.of(["a", "b", "c"]).take(2))
@@ -225,7 +225,7 @@ bandwidth. Two things fix that, and Bynk splits them by who knows what.
 `ETag` it saved gets a `304 Not Modified` with an empty body instead of the whole
 payload:
 
-```bynk
+```bynk,fragment
 on GET("/links/:code") (code: String) -> Effect[HttpResult[String]] by v: Visitor {
   Ok(code)
 }
@@ -238,7 +238,7 @@ on GET("/links/:code") (code: String) -> Effect[HttpResult[String]] by v: Visito
 *without* checking back, and for how long. Say so with `@cache`, written just above
 the handler:
 
-```bynk
+```bynk,fragment
 @cache(maxAge: 5.minutes)
 on GET("/links/:code") (code: String) -> Effect[HttpResult[String]] by v: Visitor {
   Ok(code)
@@ -248,7 +248,7 @@ on GET("/links/:code") (code: String) -> Effect[HttpResult[String]] by v: Visito
 That adds `Cache-Control: private, max-age=300`. Reach for `scope: public` only
 when a **shared** cache or CDN should store the response too:
 
-```bynk
+```bynk,fragment
 @cache(maxAge: 1.hours, scope: public)
 on GET("/config") () -> Effect[HttpResult[String]] by v: Visitor {
   Ok("…")

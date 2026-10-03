@@ -41,7 +41,7 @@ A test file is a `suite` block naming its target, containing one or more named
 cases. Inside a case, `expect` checks a predicate. Put this in
 `tests/shortener.bynk`:
 
-```bynk,ignore
+```bynk,fragment
 suite shortener
 
 case "a fresh code resolves to NotFound" {
@@ -116,7 +116,7 @@ Tests often need a value of some type without caring exactly what it is.
 it produces a value that satisfies
 the refinement; pass an argument to pin a specific one:
 
-```bynk,ignore
+```bynk,fragment
 case "a fabricated code is a valid ShortCode" {
   let code = Val[ShortCode]
   expect code == code
@@ -145,7 +145,7 @@ it with `given CodeGen`). When a case depends on what that collaborator *returns
 override the seam with a `stub` clause — the capability, the method with an
 argument pattern, and a value on the right:
 
-```bynk,ignore
+```bynk,fragment
 suite shortener {
   stub CodeGen.next() returns "test01"
 

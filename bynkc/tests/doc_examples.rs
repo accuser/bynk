@@ -6,17 +6,26 @@
 //! (`site/src/content/docs/index.mdx`, which ships the most visible example) and
 //! compiles each, so a doc example can never fall out of step with the compiler.
 //!
-//! Block handling, by the fence's info string and the block's first line:
-//! - ```bynk,ignore  → skipped (fragments, pseudo-syntax, partial snippets).
-//! - ```bynk,fail    → must FAIL to compile (negative examples).
-//! - ```bynk         → checked:
+//! Block handling, by the fence's info string and the block's first line
+//! (#1661: every block is checked unless it says otherwise):
+//! - ```bynk           → must compile:
 //!     * a block starting `commons …` is compiled as a single file;
 //!     * a block starting `context …` is compiled as a one-file project;
-//!     * anything else (a fragment, a `test` block, a bare expression) is
-//!       skipped — it cannot stand alone.
+//!     * anything else (declarations shown on their own) is compiled inside a
+//!       synthetic `commons doc`, or failing that a `context doc`.
+//! - ```bynk,fail      → must FAIL to compile (negative examples).
+//! - ```bynk,fragment  → must **parse**, inside at least one of the wrappers a
+//!   partial snippet comes from (a unit, an agent or service body, a function
+//!   body, a suite or a test case). For blocks that name types the page
+//!   declared elsewhere, or show a single member or statement; parsing still
+//!   catches syntax that has drifted from the grammar.
+//! - ```bynk,ignore    → skipped. Only for pseudo-syntax that is not Bynk at all
+//!   (`<Name>` placeholders, `…` elisions, lines from different contexts set
+//!   side by side).
 //!
-//! Skip counts are printed so unchecked blocks are never silently assumed good.
-//! Run with `--nocapture` to see the summary.
+//! The site renders all four alike (it keeps only the language before the
+//! comma). Counts are printed so unchecked blocks are never silently assumed
+//! good. Run with `--nocapture` to see the summary.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -111,6 +120,96 @@ fn first_line(body: &str) -> &str {
         .unwrap_or("")
 }
 
+/// #1661 (Decision A): an un-headed block — the declarations a page shows on
+/// their own — compiled inside a synthetic unit. A `commons` is tried first; a
+/// block declaring context-only items (an agent, a service, a capability) is
+/// then tried as a `context`. Either succeeding means the block compiles; the
+/// errors reported are the `commons` attempt's unless the `context` one got
+/// further.
+fn compile_wrapped(body: &str, idx: usize) -> Result<(), String> {
+    let as_commons = bynkc::compile(&format!("commons doc\n\n{body}"), "doc.bynk")
+        .map(|_| ())
+        .map_err(|errs| {
+            errs.iter()
+                .map(|e| format!("{}: {}", e.category, e.message))
+                .collect::<Vec<_>>()
+                .join("; ")
+        });
+    match as_commons {
+        Ok(()) => Ok(()),
+        Err(commons_err) => {
+            compile_context(&format!("context doc\n\n{body}"), idx).map_err(|context_err| {
+                format!("as commons: {commons_err} | as context: {context_err}")
+            })
+        }
+    }
+}
+
+/// #1661: the wrappers a `fragment` block is parsed in — one per place a page
+/// shows a partial snippet from: declarations, a whole unit, an agent or service
+/// body (members and handlers), a function body (statements and expressions),
+/// a suite, a test case's body, and an adapter body. Each is `(prefix, suffix)` around the block.
+const FRAGMENT_WRAPPERS: &[(&str, &str)] = &[
+    ("", ""),
+    ("commons doc\n\n", ""),
+    ("context doc\n\n", ""),
+    (
+        "context doc\n\nagent Doc {\n  key id: String\n  store docProbeCell: Cell[Int]\n",
+        "\n  on call docProbe() -> Effect[()] {\n    ()\n  }\n}\n",
+    ),
+    ("context doc\n\nservice doc from http {\n", "\n}\n"),
+    (
+        "context doc\n\nservice doc from queue(\"doc\") {\n",
+        "\n}\n",
+    ),
+    (
+        "context doc\n\nservice doc from websocket(in: Doc, out: Doc) {\n",
+        "\n}\n",
+    ),
+    ("commons doc\n\nfn doc() -> Int {\n", "\n}\n"),
+    ("suite doc\n\n", ""),
+    ("suite doc\n\ncase \"doc\" {\n", "\n}\n"),
+    ("adapter doc {\n", "\n}\n"),
+];
+
+/// #1661: a `fragment` block cannot compile on its own (it names types the page
+/// declared earlier, or is a single member or statement), but it must still be
+/// **syntactically** current: it has to parse inside at least one of
+/// [`FRAGMENT_WRAPPERS`]. On failure, the error from the wrapper that got
+/// furthest into the block is reported, as the likeliest intended reading.
+fn parses_as_fragment(body: &str) -> Result<(), String> {
+    // A page may show several units in one file (an atomic commons beside its
+    // suite), which only the multi-unit parser accepts.
+    if let Ok(tokens) = bynk_syntax::lexer::tokenize(body)
+        && bynk_syntax::parser::parse_units(&tokens, body).is_ok()
+    {
+        return Ok(());
+    }
+    let mut best: Option<(usize, String)> = None;
+    for (prefix, suffix) in FRAGMENT_WRAPPERS {
+        let src = format!("{prefix}{body}{suffix}");
+        let errs = match bynk_syntax::lexer::tokenize(&src) {
+            Ok(tokens) => match bynk_syntax::parser::parse_unit(&tokens, &src) {
+                Ok(_) => return Ok(()),
+                Err(errs) => errs,
+            },
+            Err(e) => vec![e],
+        };
+        let Some(first) = errs.first() else {
+            return Ok(());
+        };
+        let progress = first.span.start.saturating_sub(prefix.len());
+        if best.as_ref().is_none_or(|(p, _)| progress > *p) {
+            let line = body[..progress.min(body.len())].lines().count().max(1);
+            best = Some((
+                progress,
+                format!("block line {line}: {}: {}", first.category, first.message),
+            ));
+        }
+    }
+    Err(best.map(|(_, e)| e).unwrap_or_default())
+}
+
 /// Compile a `context …` block as a one-file project under a unique temp dir.
 fn compile_context(body: &str, idx: usize) -> Result<(), String> {
     let first = first_line(body);
@@ -148,7 +247,7 @@ fn every_doc_example_compiles() {
     let blocks = collect_blocks();
     assert!(!blocks.is_empty(), "found no ```bynk blocks under the Book");
 
-    let (mut checked_ok, mut checked_fail, mut skip_ignored, mut skip_fragment, mut skip_include) =
+    let (mut checked_ok, mut checked_fail, mut skip_ignored, mut parsed_fragment, mut skip_include) =
         (0, 0, 0, 0, 0);
     let mut failures: Vec<String> = Vec::new();
 
@@ -176,6 +275,22 @@ fn every_doc_example_compiles() {
         let expect_fail = b.info.contains("fail");
         let first = first_line(&b.body);
 
+        // An explicitly marked fragment is parsed, not compiled — even a headed
+        // one (a context that consumes another the page declares separately).
+        if b.info.contains("fragment") {
+            if expect_fail {
+                failures.push(format!(
+                    "{loc}: marked `fail` but is a `fragment`, which is parsed, not compiled"
+                ));
+            }
+            match parses_as_fragment(&b.body) {
+                Ok(()) => parsed_fragment += 1,
+                Err(e) => {
+                    failures.push(format!("{loc}: marked `fragment` but does not parse: {e}"))
+                }
+            }
+            continue;
+        }
         let result: Result<(), String> = if first.starts_with("commons ") {
             bynkc::compile(&b.body, &b.file)
                 .map(|_| ())
@@ -188,14 +303,7 @@ fn every_doc_example_compiles() {
         } else if first.starts_with("context ") {
             compile_context(&b.body, idx)
         } else {
-            // A fragment, `test` block, or bare expression — cannot stand alone.
-            if expect_fail {
-                failures.push(format!(
-                    "{loc}: marked `fail` but is not a standalone commons/context block"
-                ));
-            }
-            skip_fragment += 1;
-            continue;
+            compile_wrapped(&b.body, idx)
         };
 
         match (expect_fail, result) {
@@ -210,7 +318,7 @@ fn every_doc_example_compiles() {
 
     eprintln!(
         "doc examples: {checked_ok} compiled, {checked_fail} failed-as-expected, \
-         {skip_fragment} fragments skipped, {skip_ignored} ignored, \
+         {parsed_fragment} fragments parsed, {skip_ignored} ignored, \
          {skip_include} include-only skipped ({} total)",
         blocks.len()
     );

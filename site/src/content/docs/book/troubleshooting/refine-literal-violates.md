@@ -31,7 +31,7 @@ Pick the option that matches where the value comes from:
   [`.of`](/book/guides/type-system/define-and-validate/), which returns a `Result` you
   handle:
 
-  ```bynk
+  ```bynk,fragment
   fn parse(n: Int) -> Result[Reps, ValidationError] {
     Reps.of(n)
   }

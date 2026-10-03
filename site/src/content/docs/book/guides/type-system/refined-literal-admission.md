@@ -7,7 +7,7 @@ checks it at compile time and admits it directly — no
 [`.of`](/book/reference/glossary/#term-of-unsafe), no
 [`Result`](/book/reference/glossary/#term-result-option):
 
-```bynk
+```bynk,fragment
 fn defaultQty() -> Quantity {   -- Quantity = Int where InRange(1, 100)
   5
 }

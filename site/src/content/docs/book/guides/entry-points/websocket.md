@@ -14,7 +14,7 @@ the canonical disposal being transfer into an agent that holds it.
 
 ## Open a connection
 
-```bynk,ignore
+```bynk,fragment
 context chat
 
 type RoomId = opaque String
@@ -50,7 +50,7 @@ it undisposed is a compile error (`bynk.held.leak`).
 The agent stores each connection in a `Map` keyed by user, alongside the room's
 membership:
 
-```bynk
+```bynk,fragment
 agent Room {
   key id: RoomId
   store members: Set[UserId]
@@ -79,7 +79,7 @@ A `Connection` may be stored **only** in `Cell[Option[Connection]]` or
 Inbound frames arrive through `on message`; `on close` fires when the client
 disconnects. Each delegates to the room agent, which broadcasts over its held map:
 
-```bynk
+```bynk,fragment
 service ChatGateway from websocket(in: ClientFrame, out: ServerFrame) {
   on open (roomId: RoomId) -> Effect[()] by user: Participant {
     let _ <- connection.send(ServerFrame { text: "welcome" })
@@ -99,7 +99,7 @@ service ChatGateway from websocket(in: ClientFrame, out: ServerFrame) {
 }
 ```
 
-```bynk
+```bynk,fragment
   on call post(sender: UserId, text: String) -> Effect[()] {
     let _ <- conns.parTraverse((c: Connection[ServerFrame]) => c.send(ServerFrame { text: text }))
     ()

@@ -151,10 +151,10 @@ Two of these are worth reading closely when debugging generated code:
 A `match` arm binds its payload as `const` before the arm body, so a debugger sees
 named locals rather than repeated `.tag` access:
 
-```bynk,ignore
+```bynk,fragment
 match status {
   Pending => "waiting"
-  Shipped(tracking) => "sent: " ++ tracking
+  Shipped(tracking) => "sent: \(tracking)"
 }
 ```
 

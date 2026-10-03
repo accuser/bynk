@@ -20,7 +20,7 @@ adding one word to the header — the body does not change.
 Promotion changes only the header. The body is byte-for-byte identical at every
 tier:
 
-```bynk
+```bynk,ignore
 case "a small order authorises end to end"                { … }  -- as unit (default)
 case "a small order authorises end to end" as integration { … }  -- real Payment, no wire
 case "a small order authorises end to end" as system      { … }  -- deployed Workers, real wire
@@ -37,7 +37,7 @@ invariant has caught a defect a stub was hiding, with **no new test code**.
 `as` also sits on the `suite` header, setting a default every `case` inherits and
 may override — the case always wins:
 
-```bynk
+```bynk,ignore
 suite checkout as integration {          -- every case defaults to integration…
   case "small order authorises"       { … }  -- as integration (inherited)
   case "a unit-level edge"    as unit { … }  -- case overrides the suite default
@@ -110,7 +110,7 @@ service authorise {
 }
 ```
 
-```bynk,ignore
+```bynk,fragment
 context shop.orders
 
 consumes shop.payment as Pay
@@ -134,7 +134,7 @@ A `system` suite exercises the flow end to end. Its participants — `shop.order
 and `shop.payment` — are **inferred** from `shop.orders`'s `consumes`, so there is
 nothing to wire by hand:
 
-```bynk
+```bynk,fragment
 suite checkout as system {
   case "small order authorises across the wire" {
     let r <- shop.orders.place(100)

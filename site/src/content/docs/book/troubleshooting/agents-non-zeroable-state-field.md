@@ -15,10 +15,16 @@ starting value. Types that have one include `Int` (`0`), `Bool` (`false`),
 do **not** include opaque types, sum types (other than `Option`), and refined
 types that exclude their zero.
 
-```bynk
+```bynk,fail
+type Level = Int where Positive
+
 agent Gauge {
   key id: String
-  store level: Cell[Int where Positive]   -- Positive excludes 0 — no zero value
+  store level: Cell[Level]   -- Positive excludes 0 — no zero value
+
+  on call read() -> Effect[Level] {
+    level
+  }
 }
 ```
 
@@ -28,8 +34,8 @@ agent Gauge {
   `= <value>`; any type becomes admissible, including sums (a state machine's
   initial state) and refined types:
 
-  ```bynk
-  store level: Cell[Int where Positive] = 1
+  ```bynk,fragment
+  store level: Cell[Level] = 1
   ```
 
   The initialiser must be a compile-time value; see

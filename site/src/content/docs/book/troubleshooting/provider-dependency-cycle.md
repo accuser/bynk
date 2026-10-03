@@ -11,14 +11,14 @@ Providers depend on other capabilities through `given`, forming a dependency
 graph. A **cycle** in that graph — a capability that depends on itself, directly
 or transitively — has no valid instantiation order, so it is rejected.
 
-```bynk
+```bynk,ignore
 provides A = AImpl given B { … }   -- A needs B
 provides B = BImpl given A { … }   -- B needs A  → cycle A → B → A
 ```
 
 The trivial case is a provider listing its own capability:
 
-```bynk
+```bynk,ignore
 provides Logger = RecursiveLogger given Logger { … }   -- Logger → Logger
 ```
 

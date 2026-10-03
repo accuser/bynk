@@ -31,7 +31,7 @@ length bounds are enough to see the idea. The
 
 Now swap the plain `String` fields in the data model for these types:
 
-```bynk,ignore
+```bynk,fragment
 type CreateLinkRequest = { target: Url }
 type CreatedView       = { code: ShortCode, target: Url }
 ```
@@ -41,7 +41,7 @@ type CreatedView       = { code: ShortCode, target: Url }
 When you write a literal where a refined type is expected, Bynk checks it **at
 compile time** and admits it directly. No validation call, no error handling:
 
-```bynk,ignore
+```bynk,fragment
 fn exampleCode() -> ShortCode {
   "abc123"
 }
@@ -75,7 +75,7 @@ an HTTP path segment, a request body, a generated code — is not known at compi
 time, so it must be *checked at runtime*. Every refined type has an `.of`
 constructor for exactly this, and it **always** returns a `Result`:
 
-```bynk,ignore
+```bynk,fragment
 ShortCode.of(raw)   -- Result[ShortCode, ValidationError]
 ```
 
@@ -107,7 +107,7 @@ have two common ways.
 **Propagate with `?`.** Inside a function that itself returns a `Result`, the `?`
 operator unwraps an `Ok` or returns early on an `Err`:
 
-```bynk,ignore
+```bynk,fragment
 fn parseCode(raw: String) -> Result[ShortCode, ValidationError] {
   let code = ShortCode.of(raw)?
   Ok(code)
@@ -118,7 +118,7 @@ fn parseCode(raw: String) -> Result[ShortCode, ValidationError] {
 the `Result` — which is exactly what the shortener's handlers do with a
 generated code:
 
-```bynk,ignore
+```bynk,fragment
 match ShortCode.of(raw) {
   Ok(code) => Created(CreatedView { code: code, target: body.target })
   Err(_)   => ServerError("generated an invalid code")
@@ -141,7 +141,7 @@ unwrap it first. Calling one returns the **base** type (a read that leaves the
 refinement behind), which is exactly what you want when you are formatting or
 comparing:
 
-```bynk
+```bynk,fragment
 fn normalise(code: ShortCode) -> String {
   code.toUpper()          -- ShortCode's String kernel; result : String
 }

@@ -15,7 +15,7 @@ For the worked chat-room, see the guide
 
 ## Service form
 
-```bynk
+```bynk,ignore
 service <Name> from websocket(in: ClientFrame, out: ServerFrame) {
   on open (roomId: RoomId) -> Effect[()] by user: Participant { … }
   on message (roomId: RoomId, frame: ClientFrame) -> Effect[()] by user: Participant { … }
@@ -58,7 +58,7 @@ The agent that owns the connection sends with `connection.send(frame)`
 (**consuming**). To fan a frame out to many clients, hold the connections in a
 `store Map[K, Connection[out]]` and iterate:
 
-```bynk
+```bynk,fragment
 agent Room {
   key id: RoomId
   store members: Set[UserId]
