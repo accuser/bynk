@@ -12,5 +12,6 @@ suite demo.wallet {
 
   case "a case body" {
     expect missing == 1
+    expect absent() == 1
   }
 }
