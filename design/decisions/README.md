@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0430](0430-equality-bounds-at-instantiation.md) | **A generic function's comparisons bound its callers' type arguments** (v0.300) — Compared type parameters are inferred per generic function, transitively, and checked at each call; closes ADR 0421's first known limit | Accepted (v0.300) |
 | [0429](0429-unreachable-match-arms.md) | **A match arm that an earlier arm covers is an error** (v0.299) — Usefulness check over nested, or- and literal patterns; guarded arms and refined patterns never cover | Accepted (v0.299) |
 | [0428](0428-emitted-name-hygiene.md) | **Emitted names cannot collide with Bynk names** (v0.299) — Host globals via `globalThis`, runtime and helper names under `__`, fresh names for shadowing binders, `$tag`; `kind` payload fields and `globalThis` declarations reserved | Accepted (v0.299) |
 | [0427](0427-is-binding-scope.md) | **An `is` binding is in scope wherever its test is known to have matched** (v0.297) — One structural rule (which `is` tests an expression proves, by outcome) decides is-binding scope for the resolver, checker and emitter alike | Accepted (v0.297) |

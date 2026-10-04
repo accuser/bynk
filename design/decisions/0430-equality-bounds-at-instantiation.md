@@ -1,11 +1,6 @@
----
-level: minor
-changelog: A call to a generic function or method that compares a type parameter with `==` must instantiate it with an equality-supporting type, directly or through other generics and units (`same(f, h)` on two functions is now rejected, #1688). The cross-context visibility rules now hold in service and agent handlers, agent invariants and transitions, provider operations and function contracts, not only in free-function bodies, and a consumer may build a transparent export with record syntax, as the spec says (#1700)
----
+# 0430 — A generic function's comparisons bound its callers' type arguments
 
-## ADR: equality-bounds-at-instantiation
-title: A generic function's comparisons bound its callers' type arguments
-summary: Compared type parameters are inferred per generic function, transitively, and checked at each call; closes ADR 0421's first known limit
+- **Status:** Accepted (v0.300)
 
 **Context.** ADR 0421 made `==` require an equality-supporting type,
 recursively. It left one known limit: inside a generic function a type
