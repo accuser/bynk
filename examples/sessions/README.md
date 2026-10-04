@@ -10,33 +10,45 @@ What it shows:
   and `size` counts only live entries — expiry without a sweep.
 - **Honest time as an effect** — eviction consults the clock, so every cache op
   *except* `remove` declares `given Clock`. The time dependency is visible in the
-  signature, and a mocked clock would make expiry deterministic.
+  signature, and a stubbed clock makes expiry deterministic in a test.
 - **Refined boundary types** — `Token` (non-empty, bounded) and `UserId`
   (non-empty) carry their constraints, so a malformed token is rejected at the
   boundary before any cache lookup runs. Those constraints live in
   `commons tokens`.
 
-> **No `bynkc test` here.** Like [`event-log`](../event-log/) and
-> [`webhook-relay`](../webhook-relay/), the cache is platform-clock-effectful, and
-> the platform `Clock` has no in-test substitute
-> ([#291](https://github.com/accuser/bynk/issues/291)). The `Token`/`UserId`
-> boundary is still type-checked by `bynkc check`; the expiry behaviour is
-> exercised under `bynk dev`.
+- **Testing expiry without waiting** — under `bynkc test` the platform `Clock`
+  is a deterministic test double that reads the epoch. A case moves time on with
+  `stub Clock.now() returns each [Instant.fromEpochMillis(0), Instant.fromEpochMillis(1860000)]`:
+  the `login` reads the first instant, and the `whoami` 31 minutes later finds
+  the session gone.
 
 ## Layout
 
 ```text
 sessions/
 ├── bynk.toml
-└── src/
-    ├── tokens.bynk     # commons tokens — Token + UserId refined types
-    └── sessions.bynk   # context sessions — the Cache-backed agent + HTTP service
+├── src/
+│   ├── tokens.bynk     # commons tokens — Token + UserId refined types
+│   └── sessions.bynk   # context sessions — the Cache-backed agent + HTTP service
+└── tests/
+    └── sessions.bynk   # tests targeting the sessions context
 ```
 
-## Check
+## Check and test
 
 ```sh
 bynkc check src      # type-check, no output
+bynkc test .
+```
+
+```text
+sessions:
+  ✓ a logged-in token resolves to its user
+  ✓ logout ends the session
+  ✓ a session expires after its 30-minute ttl
+  ✓ the http surface reports live sessions
+
+4 passed, 0 failed.
 ```
 
 ## Run it

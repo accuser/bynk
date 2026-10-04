@@ -1,0 +1,86 @@
+suite demo.plat
+
+-- #291: a platform capability the target consumes gets a deterministic test
+-- double under `bynkc test` — the same answer on every run, and no I/O.
+
+case "the clock reads the epoch" {
+  let t <- clock.call()
+  expect t == 0
+}
+
+case "random integers come from a fixed seed" {
+  let xs <- draws.call()
+  expect xs == [156, 731]
+}
+
+case "random uuids count up" {
+  let xs <- ids.call()
+  expect xs == ["00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002"]
+}
+
+case "no secret is set" {
+  let s <- secret.call("API_KEY")
+  expect s is None
+}
+
+case "the locale is en" {
+  let l <- locale.call()
+  expect l == "en"
+}
+
+case "the logger records without printing" {
+  let _ <- greet.call("ann")
+  expect Logger.info called once with msg == "hello ann"
+  expect Logger.error never called
+}
+
+case "idempotency remembers within a case" {
+  let first <- once.call("k")
+  let second <- once.call("k")
+  expect first == true
+  expect second == false
+}
+
+case "idempotency is fresh per case" {
+  let first <- once.call("k")
+  expect first == true
+}
+
+case "kv is in-memory" {
+  let r <- store.call("a", "1")
+  expect r == Some("1")
+  expect Kv.put called once with key == "a"
+}
+
+case "kv is fresh per case" {
+  let r <- lookup.call("a")
+  expect r is None
+}
+
+-- A case-scoped `stub` applies to its own case only: before #291 it leaked
+-- into every case of the suite, so "kv is in-memory" read "stubbed".
+case "a stubbed operation answers; the rest reach the double" {
+  stub Kv.get(_) returns Some("stubbed")
+  let r <- store.call("a", "1")
+  expect r == Some("stubbed")
+  expect Kv.put called once
+}
+
+case "a stubbed fetch answers for the network" {
+  stub Fetch.send(_) returns Ok(Response { status: 204, body: "" })
+  let s <- relay.call("https://example.test")
+  expect s == 204
+  expect Fetch.send called once with req.url == "https://example.test"
+}
+
+case "an unstubbed fetch faults rather than reach the network" {
+  let s <- relay.call("https://example.test")
+  expect s == 0
+}
+
+case "the doubles hold at the integration tier" as integration {
+  let t <- clock.call()
+  let s <- secret.call("API_KEY")
+  expect t == 0
+  expect s is None
+}

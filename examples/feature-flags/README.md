@@ -47,9 +47,8 @@ keys:
 
 The `FlagKey` boundary and the `keyOf`/`nameOf` helpers live in `commons keys`,
 so they are unit-tested without a KV binding. The HTTP handlers themselves
-consume the platform `Kv`, which keeps them out of the test surface
-([#291](https://github.com/accuser/bynk/issues/291)) — exercise those end to end
-under `bynk dev`, below.
+consume the platform `Kv`, which is in memory under `bynkc test`. Exercise them
+end to end under `bynk dev`, below.
 
 ## Run it
 

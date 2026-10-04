@@ -327,6 +327,9 @@ pub fn analyse_project(roots: &Roots, overlay: &HashMap<PathBuf, String>) -> Pro
         &mut errors,
         &mut refs,
     );
+    let mut unit_tables = unit_tables;
+    crate::symbols::record_flattened_caps(&mut unit_tables, &unit_flattened);
+    let unit_tables = unit_tables;
 
     // -- 5b'. `consumes` aliases. --
     let unit_consumes_aliases =

@@ -241,7 +241,10 @@ production `provides`).
   operation the capability does not declare is `bynk.stub.unknown_op`; a
   `returns` value whose type disagrees with the operation's result type is
   `bynk.stub.rhs_type`.
-- **Precedence:** case `stub` > suite `stub` > the tier default.
+- **Precedence:** case `stub` > suite `stub` > the tier default, **per
+  operation**. A case-scoped clause applies to its own case only. An operation
+  no clause covers (for this case) reaches the tier default, so stubbing
+  `Kv.get` leaves `Kv.put` working.
 
 Bare [observation](#observation) needs **no `stub`** — the recording proxy
 records calls at the seam regardless. You reach for `stub` only when the case
@@ -273,6 +276,49 @@ stub Net.fetch(_)  returns each [fails, fails, ok(resp)] -- fails twice, then su
   a named follow-on, not shipped in v0.118.
 
 See [`bynk.stub.*` errors](/book/troubleshooting/integration-errors/).
+
+## Platform capabilities under test {#platform-doubles}
+
+A platform capability that a context consumes (`consumes bynk { Clock, Logger }`,
+`consumes bynk.cloudflare { Kv }`) has no real provider in a test. At the `unit`
+and `integration` tiers `bynkc test` gives each one a **deterministic test
+double** instead. It returns the same answer on every run, does no I/O, and is
+fresh for each case:
+
+| Capability | Under test |
+|---|---|
+| `Clock` | `now()` reads the epoch (`Instant.fromEpochMillis(0)`) |
+| `Random` | `uuid()` counts up (`00000000-0000-4000-8000-000000000001`, `…002`, …); `int(lo, hi)` draws from a fixed seed |
+| `Secrets` | `get(_)` is `None` |
+| `Locale` | `current()` is `"en"` |
+| `Logger` | records, prints nothing |
+| `Events` | records, delivers nothing |
+| `Idempotency` | in memory; `remember`'s `expiresAfter` is accepted and ignored |
+| `Kv` | in memory; `putTtl`'s TTL is accepted and ignored |
+| `Fetch` | `send(_)` **faults**: a test never reaches the network |
+
+Expiry is not modelled: a value written with a TTL stays readable for the whole
+case, so a test of TTL expiry on `Kv` or `Idempotency` stubs the read instead
+(`stub Kv.get(_) returns each [Some(v), None]`). An agent `Cache` store's
+`@ttl` does consult the `Clock`, so stubbing `Clock.now` drives its expiry.
+
+A case reads a different answer with an ordinary [`stub`](#stub), which
+overrides just the operations it names. Every other operation keeps the double:
+
+```bynk,fragment
+case "a session expires after its ttl" {
+  stub Clock.now() returns each [Instant.fromEpochMillis(0), Instant.fromEpochMillis(1860000)]
+  do Sessions("s").login("t1", "ann")
+  let who <- Sessions("s").whoami("t1")
+  expect who is None
+}
+```
+
+A handler that calls `Fetch.send` needs a `stub Fetch.send(_) returns …`; without
+one, the case fails with a message naming the missing stub. Platform
+capabilities are seams like the context's own, so
+[observation](#observation) works on them too
+(`expect Logger.info called once with msg == "…"`).
 
 ## `Val[T]` — value fabrication
 

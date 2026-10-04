@@ -1,0 +1,25 @@
+suite events
+
+-- The time-window routes read the platform `Clock`, so these cases run them
+-- against `bynkc test`'s deterministic one, which reads the epoch unless a case
+-- stubs it. The write path (`add`) takes a `digest.Event`, which a test can't
+-- yet build (#1704), so the cases here drive the reads.
+
+case "the last-day count reads the clock and starts empty" {
+  let r <- api.GET("/events/last-day") by Visitor
+  expect r is Ok(0)
+  expect Clock.now called once
+}
+
+case "the last-hour tally reads a stubbed clock" {
+  stub Clock.now() returns Instant.fromEpochMillis(86400000)
+  let r <- api.GET("/events/last-hour") by Visitor
+  expect r is Ok(_)
+  expect Clock.now called once
+}
+
+case "a window read needs no clock" {
+  let n <- Activity("s").countSince(Instant.fromEpochMillis(0))
+  expect n == 0
+  expect Clock.now never called
+}

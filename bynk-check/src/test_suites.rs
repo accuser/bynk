@@ -86,6 +86,10 @@ pub struct ResolvedStub {
     /// The `stub` clauses for this capability, in match order (case-scoped
     /// first so they take precedence over suite-scoped in the emitted if-chain).
     pub clauses: Vec<StubClause>,
+    /// #291: parallel to `clauses` — the name of the case each clause is scoped
+    /// to, or `None` for a suite-scoped clause. A case-scoped clause applies only
+    /// while its own case runs.
+    pub clause_cases: Vec<Option<String>>,
     /// The test file declaring the first clause — the recording context for
     /// edges in its value expressions (v0.25).
     ///
@@ -251,19 +255,23 @@ fn resolve_stubs(
 
     // Collect clauses tagged with the declaring file. Case-scoped first so they
     // precede suite-scoped clauses in each capability's match order.
-    let mut collected: Vec<(StubClause, PathBuf)> = Vec::new();
+    let mut collected: Vec<(StubClause, Option<String>, PathBuf)> = Vec::new();
     for &i in indices {
         let Some(t) = parsed[i].test() else { continue };
         for case in &t.cases {
             for pc in &case.stubs {
-                collected.push((pc.clone(), parsed[i].identity_path()));
+                collected.push((
+                    pc.clone(),
+                    Some(case.name.clone()),
+                    parsed[i].identity_path(),
+                ));
             }
         }
     }
     for &i in indices {
         let Some(t) = parsed[i].test() else { continue };
         for pc in &t.stubs {
-            collected.push((pc.clone(), parsed[i].identity_path()));
+            collected.push((pc.clone(), None, parsed[i].identity_path()));
         }
     }
 
@@ -283,7 +291,7 @@ fn resolve_stubs(
     };
 
     let mut out: HashMap<String, ResolvedStub> = HashMap::new();
-    for (pc, identity_path) in collected {
+    for (pc, case, identity_path) in collected {
         let cap_name = pc.capability.name.clone();
         let Some(cap_decl) = resolve_cap(&cap_name) else {
             // Commons have no seams at all; contexts may still name a
@@ -354,9 +362,11 @@ fn resolve_stubs(
             cap: cap_name.clone(),
             cap_decl: cap_decl.clone(),
             clauses: Vec::new(),
+            clause_cases: Vec::new(),
             identity_path: identity_path.clone(),
         });
         entry.clauses.push(pc);
+        entry.clause_cases.push(case);
     }
     out
 }
@@ -983,7 +993,15 @@ pub fn register_call_record_types(
     let Some(table) = unit_tables.get(target_name) else {
         return;
     };
-    for (cap_name, decl) in &table.capabilities {
+    // #291: a consumed adapter's capabilities are seams too (its `trace` and
+    // `with` records); the target's own wins a name clash.
+    let mut caps: Vec<(&String, &CapabilityDecl)> = table.capabilities.iter().collect();
+    for (n, d) in flattened_platform_capabilities(unit_tables, resolved) {
+        if !table.capabilities.contains_key(n) {
+            caps.push((n, d));
+        }
+    }
+    for (cap_name, decl) in caps {
         for op in &decl.ops {
             let fields: Vec<RecordField> = op
                 .params
@@ -1053,6 +1071,59 @@ fn target_test_services(table: Option<&UnitTable>) -> HashMap<String, checker::T
         .collect()
 }
 
+/// #291: the platform capabilities the target flattens in from a consumed
+/// adapter (`consumes bynk { Logger }`) — seams of the unit under test, like
+/// the capabilities it declares — with their declarations, sorted by name.
+fn flattened_platform_capabilities<'a>(
+    unit_tables: &'a HashMap<String, UnitTable>,
+    resolved: &ResolvedCommons,
+) -> Vec<(&'a String, &'a CapabilityDecl)> {
+    let mut out: Vec<_> = resolved
+        .cross_context
+        .flattened_caps
+        .iter()
+        .filter_map(|(cap, owner)| {
+            let t = unit_tables.get(owner)?;
+            if t.kind != Some(UnitKind::Adapter) {
+                return None;
+            }
+            t.capabilities.get_key_value(cap)
+        })
+        .collect();
+    out.sort_by_key(|(cap, _)| cap.as_str());
+    out
+}
+
+/// #291: a platform capability the target flattens in from a consumed
+/// **adapter** (`bynk`'s `Logger`, by `consumes bynk { Logger }`) is a seam of
+/// the unit under test too, so a test body may observe it (`expect Logger.info
+/// called once`), as it may already `stub` it. A capability the target declares
+/// itself wins on a name clash.
+fn add_consumed_adapter_capabilities(
+    map: &mut HashMap<String, checker::CapabilityInfo>,
+    unit_tables: &HashMap<String, UnitTable>,
+    resolved: &ResolvedCommons,
+    tys: &Arc<Types>,
+) {
+    for (name, decl) in flattened_platform_capabilities(unit_tables, resolved) {
+        if map.contains_key(name) {
+            continue;
+        }
+        let ops = decl
+            .ops
+            .iter()
+            .map(|op| build_capability_op_info(op, &resolved.types, tys))
+            .collect();
+        map.insert(
+            name.clone(),
+            checker::CapabilityInfo {
+                name: name.clone(),
+                ops,
+            },
+        );
+    }
+}
+
 /// Type-check a test `case`/`property` body against the target unit's privileges,
 /// returning the inferred `expr_types` map and the `Callee` classification
 /// recorded alongside it. The **check** path feeds real diagnostic/ref sinks;
@@ -1115,6 +1186,7 @@ pub fn typecheck_case_body(
             );
         }
     }
+    add_consumed_adapter_capabilities(&mut capability_info_map, unit_tables, resolved, tys);
 
     // All declared capabilities are implicitly "given" inside a test body;
     // the test runner wires them via the mocked deps. We feed the same map
@@ -2064,6 +2136,7 @@ fn check_property_body(
             );
         }
     }
+    add_consumed_adapter_capabilities(&mut capability_info_map, unit_tables, &resolved, tys);
     let given_declared: Vec<String> = capability_info_map.keys().cloned().collect();
     let return_ty = checker::resolve_type_ref(&synthetic_return, &resolved.types, tys).unwrap();
     let return_ty_span = prop.span;

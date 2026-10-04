@@ -50,9 +50,8 @@ status:
 
 The health policy and key helper live in `commons status` so they are unit-tested
 without `Fetch`/`Kv`. The cron and HTTP handlers consume those platform
-capabilities, which keeps them out of the test surface
-([#291](https://github.com/accuser/bynk/issues/291)) — run the schedule locally
-(below) to exercise the whole path.
+capabilities; under `bynkc test` `Kv` is in memory and `Fetch` must be stubbed.
+Run the schedule locally (below) to exercise the whole path.
 
 ## Run it
 

@@ -1948,6 +1948,25 @@ fn emit_test_module(
         stmts.push(stmt);
     }
 
+    // #291: the overlay `stub` layers over a seam's tier default, and the
+    // deterministic test double of each platform capability the target
+    // consumes.
+    if !stubs.is_empty() {
+        stmts.push(TsStmt::raw(STUB_OVERLAY_TS.to_string(), None));
+    }
+    if target_kind == UnitKind::Context {
+        let mut flattened: Vec<(&String, &String)> = unit_flattened
+            .get(target_name)
+            .map(|m| m.iter().collect())
+            .unwrap_or_default();
+        flattened.sort_by_key(|(cap, _)| cap.as_str());
+        for (cap, owner) in flattened {
+            if let Some(def) = platform_double(owner, cap, &owner.replace('.', "_")) {
+                stmts.push(TsStmt::raw(def, None));
+            }
+        }
+    }
+
     // Emit the deps factory.
     let mut deps_stmt = emit_test_deps(
         target_name,
@@ -2158,8 +2177,13 @@ fn emit_test_module(
         .filter_map(|ty| crate::emitter::ty_to_type_ref(ty, tys))
         .collect();
     if !json_codec_roots.is_empty() {
-        let synthetic =
-            synthetic_typed_commons_for_target(target_name, unit_tables, unit_uses, tys);
+        let synthetic = synthetic_typed_commons_for_target(
+            target_name,
+            unit_tables,
+            unit_uses,
+            unit_consumes,
+            tys,
+        );
         let (codec_names, codec_insts) = crate::emitter::serialisation::collect_codec_closure(
             &json_codec_roots,
             &synthetic.types,
@@ -2453,6 +2477,20 @@ fn emit_stub_class(
             }
         }
     }
+    // #291: a consumed adapter's types (`bynk`'s `Response`, `FetchError`) are
+    // what a platform capability's stub takes and returns.
+    let adapters: Vec<&String> = unit_consumes
+        .get(&owning_unit)
+        .into_iter()
+        .flatten()
+        .filter(|u| unit_tables.get(*u).and_then(|t| t.kind) == Some(UnitKind::Adapter))
+        .collect();
+    for u in &adapters {
+        let uns = u.replace('.', "_");
+        for n in unit_tables[*u].types.keys() {
+            type_ns.entry(n.clone()).or_insert_with(|| uns.clone());
+        }
+    }
     let scope_names: Vec<String> = if let Some(table) = unit_tables.get(&owning_unit) {
         let mut v: Vec<String> = table
             .types
@@ -2508,6 +2546,44 @@ fn emit_stub_class(
             out.push_str(&format!("  __seq_{idx} = 0;\n"));
         }
     }
+    // #291: a case-scoped clause applies only while its own case runs, so a
+    // class with one carries the running case's name (`makeTestDeps`'s
+    // argument), and `__applies` tells `__bynkOverlay` which operations this
+    // case stubs at all — an operation stubbed only by other cases reaches the
+    // tier default instead.
+    let case_scoped = rp.clause_cases.iter().any(Option::is_some);
+    if case_scoped {
+        out.push_str("  __case: string | undefined;\n");
+        out.push_str("  constructor(c?: string) {\n    this.__case = c;\n  }\n");
+        out.push_str("  __applies(op: string): boolean {\n");
+        for (method, clause_idxs) in &by_method {
+            let cases: Vec<&String> = clause_idxs
+                .iter()
+                .map(|&i| rp.clause_cases[i].as_ref())
+                .collect::<Option<Vec<_>>>()
+                .unwrap_or_default();
+            if cases.is_empty() {
+                continue;
+            }
+            let tests: Vec<String> = cases
+                .iter()
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
+                .map(|c| {
+                    format!(
+                        "this.__case === {}",
+                        bynk_ts::print_expr(&str_lit(c.as_str()))
+                    )
+                })
+                .collect();
+            out.push_str(&format!(
+                "    if (op === {}) return {};\n",
+                bynk_ts::print_expr(&str_lit(method.as_str())),
+                tests.join(" || ")
+            ));
+        }
+        out.push_str("    return true;\n  }\n");
+    }
 
     for (method, clause_idxs) in &by_method {
         let Some(op) = rp.cap_decl.ops.iter().find(|o| &o.name.name == method) else {
@@ -2533,6 +2609,24 @@ fn emit_stub_class(
             emit_ns_destructure(&scope_ns, &scope_names, &scope_type_names),
             2,
         );
+        let mut taken: HashSet<&String> = scope_names.iter().collect();
+        for u in &adapters {
+            let mut names: Vec<String> = unit_tables[*u]
+                .types
+                .keys()
+                .filter(|n| taken.insert(*n))
+                .cloned()
+                .collect();
+            if names.is_empty() {
+                continue;
+            }
+            names.sort();
+            crate::emitter::extend_printed_at(
+                &mut body_text,
+                emit_ns_destructure(&u.replace('.', "_"), &names, &names),
+                2,
+            );
+        }
         for &idx in clause_idxs {
             let clause = &rp.clauses[idx];
             // Argument-pattern consts: a `Value(e)` pattern lowers to a const the
@@ -2565,6 +2659,15 @@ fn emit_stub_class(
                     runtime_use.note_eq();
                     cond_parts.push(format!("__bynkEq({}, {vname})", param.name.name));
                 }
+            }
+            if let Some(case) = &rp.clause_cases[idx] {
+                cond_parts.insert(
+                    0,
+                    format!(
+                        "this.__case === {}",
+                        bynk_ts::print_expr(&str_lit(case.as_str()))
+                    ),
+                );
             }
             let cond = if cond_parts.is_empty() {
                 "true".to_string()
@@ -2739,7 +2842,13 @@ fn lower_stub_value_block(
     tys: &Arc<Types>,
 ) -> String {
     let owning_unit = target_name.to_string();
-    let mut typed = synthetic_typed_commons_for_target(&owning_unit, unit_tables, unit_uses, tys);
+    let mut typed = synthetic_typed_commons_for_target(
+        &owning_unit,
+        unit_tables,
+        unit_uses,
+        unit_consumes,
+        tys,
+    );
     let block = test_suites::value_block(e);
     if let Some((resolved, _)) = test_suites::build_privileged_resolved(
         &owning_unit,
@@ -2776,6 +2885,7 @@ fn synthetic_typed_commons_for_target(
     target_name: &str,
     unit_tables: &HashMap<String, UnitTable>,
     unit_uses: &HashMap<String, Vec<String>>,
+    unit_consumes: &HashMap<String, Vec<String>>,
     tys: &Arc<checker::Types>,
 ) -> checker::TypedCommons {
     let table = unit_tables.get(target_name).cloned().unwrap_or_default();
@@ -2785,13 +2895,29 @@ fn synthetic_typed_commons_for_target(
     // v0.117: carry the target's capability declarations into the synthetic
     // commons items so observation lowering (`with` param destructure,
     // `trace(Cap.op)` record fields) can look up each op's parameter names.
-    let capability_items: Vec<CommonsItem> = {
-        let mut caps: Vec<&String> = table.capabilities.keys().collect();
-        caps.sort();
-        caps.into_iter()
-            .map(|c| CommonsItem::Capability(table.capabilities[c].clone()))
-            .collect()
-    };
+    // #291: a flattened platform capability (`bynk`'s `Fetch`, `Logger`, …) is
+    // a seam too, and a consumed adapter's types (`Response`, `FetchError`) are
+    // the values a stub returns and a case names — so both come in, the
+    // target's own winning a name clash.
+    let mut caps: std::collections::BTreeMap<String, bynk_syntax::ast::CapabilityDecl> = table
+        .capabilities
+        .iter()
+        .map(|(n, c)| (n.clone(), c.clone()))
+        .collect();
+    for unit in unit_consumes.get(target_name).into_iter().flatten() {
+        if let Some(t) = unit_tables.get(unit)
+            && t.kind == Some(UnitKind::Adapter)
+        {
+            for (n, d) in &t.types {
+                types.entry(n.clone()).or_insert_with(|| d.clone());
+            }
+        }
+    }
+    for (n, c, _) in platform_seams(target_name, unit_tables) {
+        caps.entry(n.clone()).or_insert_with(|| c.clone());
+    }
+    let capability_items: Vec<CommonsItem> =
+        caps.into_values().map(CommonsItem::Capability).collect();
     // Pull in names that come into scope via the target's `uses` clauses, so
     // the test-body lowering's static-call check (`<Type>.of(...)` etc.)
     // resolves against the same set of names the source can mention.
@@ -2871,6 +2997,111 @@ fn undefined_as_unknown_as(ty: impl Into<String>) -> TsExpr {
     }
 }
 
+/// #291: the platform capabilities `target` flattens in from a consumed adapter
+/// (`consumes bynk { Logger }`) — seams of the unit under test, observable and
+/// stubbable like its own — as `(capability, declaration, owning adapter)`.
+fn platform_seams<'a>(
+    target: &str,
+    unit_tables: &'a HashMap<String, UnitTable>,
+) -> Vec<(&'a String, &'a bynk_syntax::ast::CapabilityDecl, &'a String)> {
+    let mut out: Vec<_> = unit_tables
+        .get(target)
+        .into_iter()
+        .flat_map(|t| t.flattened_caps.iter())
+        .filter_map(|(cap, owner)| {
+            let t = unit_tables.get(owner)?;
+            if t.kind != Some(UnitKind::Adapter) {
+                return None;
+            }
+            Some((cap, t.capabilities.get(cap)?, owner))
+        })
+        .collect();
+    out.sort_by_key(|(cap, _, _)| cap.as_str());
+    out
+}
+
+/// #291: a stubbed capability's `makeTestDeps` entry — its `__Stub_<Cap>`
+/// layered over `base`, the tier default (the context's own provider, a
+/// platform capability's test double, or nothing). A stubbed operation answers
+/// from the stub; every other operation reaches the base, so `stub` overrides
+/// one operation and leaves the rest of the seam working (case `stub` > suite
+/// `stub` > the tier default).
+fn stub_overlay(rp: &ResolvedStub, ty: &str, base: Option<TsExpr>) -> TsExpr {
+    let cap = &rp.cap;
+    // A class with case-scoped clauses is told which case is running.
+    let args = if rp.clause_cases.iter().any(Option::is_some) {
+        vec![ident("__case")]
+    } else {
+        Vec::new()
+    };
+    TsExpr::As {
+        expr: Box::new(call(
+            ident("__bynkOverlay"),
+            vec![
+                base.unwrap_or_else(|| ident("undefined")),
+                TsExpr::New {
+                    callee: Box::new(ident(format!("__Stub_{cap}"))),
+                    args,
+                },
+                str_lit(cap.as_str()),
+            ],
+        )),
+        ty: TsType::named(ty),
+    }
+}
+
+/// #291: `__bynkOverlay`, emitted into a test module that has a `stub`.
+const STUB_OVERLAY_TS: &str = "\
+function __bynkOverlay(base: unknown, stub: object, cap: string): unknown {
+  return new globalThis.Proxy(stub, {
+    get(target, prop) {
+      const t = target as Record<PropertyKey, unknown> & { __applies?: (op: string) => boolean };
+      // An own property (the stub's state, or a wrapper the recording proxy
+      // installed) always answers; a stubbed operation answers when it applies
+      // to the running case.
+      if (globalThis.Object.prototype.hasOwnProperty.call(t, prop)) return t[prop];
+      if (prop in t && (t.__applies === undefined || typeof prop !== \"string\" || t.__applies(prop))) return t[prop];
+      if (base !== undefined) {
+        const v = (base as Record<PropertyKey, unknown>)[prop];
+        return typeof v === \"function\" ? v.bind(base) : v;
+      }
+      return () => {
+        throw new globalThis.Error(`bynk: ${cap}.${String(prop)} is not stubbed, and the capability has no provider in this test`);
+      };
+    },
+  });
+}
+";
+
+/// #291: the deterministic test double for platform capability `cap` (owned by
+/// first-party unit `owner`, imported in the test module as `ns`), as the
+/// definition of a `__bynkTest_<Cap>()` factory — or `None` for a capability
+/// with no double (a user adapter's). Each double is the same on every run and
+/// does no I/O: `Logger` and `Events` do nothing (observation records the
+/// calls), `Clock` reads `0`, `Random` counts its UUIDs and draws integers
+/// from a fixed-seed generator, `Secrets` has none, `Locale` is `"en"`,
+/// `Idempotency` and `Kv` are in-memory (a TTL or `expiresAfter` is accepted
+/// and ignored: expiry is not modelled), and `Fetch` faults — a test never
+/// reaches the network, so it must `stub Fetch.send`. `makeTestDeps` builds
+/// fresh ones per case.
+fn platform_double(owner: &str, cap: &str, ns: &str) -> Option<String> {
+    let body = match (owner, cap) {
+        ("bynk", "Logger") => "  return {\n    async info() {},\n    async error() {},\n  };\n".to_string(),
+        ("bynk", "Events") => "  return {\n    async emit() {},\n  };\n".to_string(),
+        ("bynk", "Clock") => "  return {\n    async now() {\n      return 0;\n    },\n  };\n".to_string(),
+        ("bynk", "Random") => "  let n = 0;\n  let seed = 0x2545f491;\n  return {\n    async uuid() {\n      n += 1;\n      return `00000000-0000-4000-8000-${n.toString(16).padStart(12, \"0\")}` as never;\n    },\n    async int(lo, hi) {\n      seed = (globalThis.Math.imul(seed, 1664525) + 1013904223) >>> 0;\n      return hi > lo ? lo + (seed % (hi - lo)) : lo;\n    },\n  };\n".to_string(),
+        ("bynk", "Secrets") => "  return {\n    async get() {\n      return None;\n    },\n  };\n".to_string(),
+        ("bynk", "Locale") => "  return {\n    async current() {\n      return \"en\" as never;\n    },\n  };\n".to_string(),
+        ("bynk", "Fetch") => "  return {\n    async send() {\n      throw new globalThis.Error(\"bynk: `Fetch.send` is not stubbed, and a test never reaches the network — add `stub Fetch.send(_) returns …`\");\n    },\n  };\n".to_string(),
+        ("bynk", "Idempotency") => "  const store = new globalThis.Map<string, unknown>();\n  return {\n    async dedup(key) {\n      return (store.has(key) ? Some(store.get(key)) : None) as never;\n    },\n    async remember(key, value) {\n      store.set(key, value);\n    },\n  };\n".to_string(),
+        ("bynk.cloudflare", "Kv") => "  const store = new globalThis.Map<string, string>();\n  return {\n    async get(key) {\n      const v = store.get(key);\n      return v === undefined ? None : Some(v);\n    },\n    async put(key, value) {\n      store.set(key, value);\n    },\n    async putTtl(key, value) {\n      store.set(key, value);\n    },\n    async delete(key) {\n      store.delete(key);\n    },\n    async list(prefix) {\n      return [...store.keys()].filter((k) => prefix.tag === \"None\" || k.startsWith(prefix.value)).sort();\n    },\n  };\n".to_string(),
+        _ => return None,
+    };
+    Some(format!(
+        "function __bynkTest_{cap}(): {ns}.{cap} {{\n{body}}}\n"
+    ))
+}
+
 /// #1479: returns the real [`TsStmt`] itself (was pre-printed `String`) — the
 /// one real declaration this function ever built; its caller now prints it
 /// directly via `bynk_ts::print_stmt`, the same shape it always used, just
@@ -2897,21 +3128,18 @@ fn emit_test_deps(
             // v0.118: a capability with a `stub` override plugs its
             // `__Stub_<Cap>` stub; otherwise the declared provider (its real
             // implementation) is used, as an un-overridden seam.
-            let value = if stubs.contains_key(cap) {
-                TsExpr::New {
-                    callee: Box::new(ident(format!("__Stub_{cap}"))),
-                    args: Vec::new(),
-                }
-            } else if let Some(provider) = table.providers.get(cap) {
-                TsExpr::New {
-                    callee: Box::new(member(
-                        ident(ns.clone()),
-                        provider.provider_name.name.clone(),
-                    )),
-                    args: Vec::new(),
-                }
+            let base = table.providers.get(cap).map(|provider| TsExpr::New {
+                callee: Box::new(member(
+                    ident(ns.clone()),
+                    provider.provider_name.name.clone(),
+                )),
+                args: Vec::new(),
+            });
+            let ty = format!("{ns}.{cap}");
+            let value = if let Some(rp) = stubs.get(cap) {
+                stub_overlay(rp, &ty, base)
             } else {
-                undefined_as_unknown_as(format!("{ns}.{cap}"))
+                base.unwrap_or_else(|| undefined_as_unknown_as(ty))
             };
             entries.push((cap.clone(), value));
         }
@@ -2930,13 +3158,15 @@ fn emit_test_deps(
         flattened.sort_by_key(|(cap, _)| cap.as_str());
         for (cap, owner) in flattened {
             let owner_ns = owner.replace('.', "_");
-            let value = if stubs.contains_key(cap) {
-                TsExpr::New {
-                    callee: Box::new(ident(format!("__Stub_{cap}"))),
-                    args: Vec::new(),
-                }
+            // #291: a platform capability's tier default is its deterministic
+            // test double (`platform_double`), never an `undefined` placeholder.
+            let base = platform_double(owner, cap, &owner_ns)
+                .map(|_| call(ident(format!("__bynkTest_{cap}")), Vec::new()));
+            let ty = format!("{owner_ns}.{cap}");
+            let value = if let Some(rp) = stubs.get(cap) {
+                stub_overlay(rp, &ty, base)
             } else {
-                undefined_as_unknown_as(format!("{owner_ns}.{cap}"))
+                base.unwrap_or_else(|| undefined_as_unknown_as(ty))
             };
             entries.push((cap.clone(), value));
         }
@@ -2993,6 +3223,9 @@ fn emit_test_deps(
     // produced a double space, not the tight `"{}"` `TsExpr::object`'s own
     // empty-entries shortcut renders — a real, reachable shape (an
     // integration target's own non-`Context` participants all hit it).
+    let case_scoped = stubs
+        .values()
+        .any(|rp| rp.clause_cases.iter().any(Option::is_some));
     let return_value = if entries.is_empty() {
         ident("{  }")
     } else {
@@ -3002,7 +3235,16 @@ fn emit_test_deps(
         TsDecl::Function {
             name: "makeTestDeps".to_string(),
             generics: Vec::new(),
-            params: Vec::new(),
+            // #291: the running case's name, when some `stub` is case-scoped.
+            params: if case_scoped {
+                vec![TsParam {
+                    name: "__case".to_string(),
+                    ty: Some(TsType::named("string")),
+                    optional: true,
+                }]
+            } else {
+                Vec::new()
+            },
             return_type: None,
             body: vec![TsStmt::return_stmt(Some(return_value), None)],
             is_async: false,
@@ -3068,7 +3310,11 @@ fn emit_test_scope_setup(
     // `deps` with the recording proxy and declare the per-case trace `__obs`. Off
     // for bodies that don't observe, so their emitted output is unchanged.
     record_calls: bool,
+    // #291: the running case's name, passed to `makeTestDeps` when the case
+    // has its own `stub` clauses (so they apply to it and no other case).
+    case_name: Option<&str>,
 ) {
+    let deps_args: Vec<TsExpr> = case_name.map(str_lit).into_iter().collect();
     let target_ns = target_name.replace('.', "_");
     // v0.9.2: reset the target context's agent registries so each test sees a
     // fresh per-key state (finding #10's "fresh per test" half).
@@ -3087,19 +3333,22 @@ fn emit_test_scope_setup(
     // calls into `__obs`. Observations and `trace(Cap.op)` in the body read it.
     let obs_spec: Option<TsExpr> = if record_calls && target_kind == UnitKind::Context {
         unit_tables.get(target_name).and_then(|table| {
-            if table.capabilities.is_empty() {
+            // #291: the seams are the target's own capabilities and the platform
+            // capabilities it flattens in (`consumes bynk { Logger }`); its own
+            // wins on a name clash.
+            let mut seams: std::collections::BTreeMap<&String, &bynk_syntax::ast::CapabilityDecl> =
+                platform_seams(target_name, unit_tables)
+                    .into_iter()
+                    .map(|(cap, decl, _)| (cap, decl))
+                    .collect();
+            seams.extend(table.capabilities.iter());
+            if seams.is_empty() {
                 return None;
             }
-            let mut caps: Vec<&String> = table.capabilities.keys().collect();
-            caps.sort();
-            let entries: Vec<(String, TsExpr)> = caps
+            let entries: Vec<(String, TsExpr)> = seams
                 .iter()
-                .map(|c| {
-                    let mut ops: Vec<&String> = table.capabilities[*c]
-                        .ops
-                        .iter()
-                        .map(|o| &o.name.name)
-                        .collect();
+                .map(|(c, decl)| {
+                    let mut ops: Vec<&String> = decl.ops.iter().map(|o| &o.name.name).collect();
                     ops.sort();
                     (
                         (*c).clone(),
@@ -3158,7 +3407,7 @@ fn emit_test_scope_setup(
                 call(
                     ident("__bynkRecordDeps"),
                     vec![
-                        call(ident("makeTestDeps"), Vec::new()),
+                        call(ident("makeTestDeps"), deps_args.clone()),
                         spec,
                         ident("__obs"),
                     ],
@@ -3170,7 +3419,7 @@ fn emit_test_scope_setup(
             let deps_stmt = TsStmt::const_stmt(
                 TsBindingName::Ident("deps".to_string()),
                 None,
-                call(ident("makeTestDeps"), Vec::new()),
+                call(ident("makeTestDeps"), deps_args.clone()),
                 None,
             );
             out.push_str(&bynk_ts::print_stmt(&deps_stmt, 2));
@@ -3397,8 +3646,10 @@ fn emit_test_case_function(
         unit_consumes,
         unit_consumes_aliases,
         block_uses_observation(&case.body),
+        (!case.stubs.is_empty()).then_some(case.name.as_str()),
     );
-    let mut typed = synthetic_typed_commons_for_target(target_name, unit_tables, unit_uses, tys);
+    let mut typed =
+        synthetic_typed_commons_for_target(target_name, unit_tables, unit_uses, unit_consumes, tys);
     // v0.117: re-type-check the case body (with the call-record types registered)
     // so the lowering has full expr types — collection kernels, notably a
     // `trace(Cap.op)` result's `List[…]` methods, dispatch on the checked type.
@@ -3536,23 +3787,48 @@ fn observation_call_record_types(
     // so qualify them (`AuthId` → `commerce_payment.AuthId`); base types are
     // unaffected. Matches the mock-signature qualification.
     let scope_ns = target_name.replace('.', "_");
-    let scope_type_names: HashSet<String> = table.types.keys().cloned().collect();
-    let mut caps: Vec<&String> = table.capabilities.keys().collect();
-    caps.sort();
+    let mut type_ns: HashMap<String, String> = table
+        .types
+        .keys()
+        .map(|n| (n.clone(), scope_ns.clone()))
+        .collect();
+    // #291: a consumed adapter's capabilities are seams too, their parameter
+    // types qualified by the adapter's namespace (`bynk.Request`).
+    let mut caps: std::collections::BTreeMap<&String, &bynk_syntax::ast::CapabilityDecl> =
+        table.capabilities.iter().collect();
+    for (cap, decl, owner) in platform_seams(target_name, unit_tables) {
+        let uns = owner.replace('.', "_");
+        for n in unit_tables[owner].types.keys() {
+            type_ns.entry(n.clone()).or_insert_with(|| uns.clone());
+        }
+        caps.entry(cap).or_insert(decl);
+    }
     let mut stmts = Vec::new();
-    for cap in caps {
-        for op in &table.capabilities[cap].ops {
+    for (cap, decl) in caps {
+        for op in &decl.ops {
             let name = checker::call_record_type_name(cap, &op.name.name);
             let fields: Vec<TsTypeMember> = op
                 .params
                 .iter()
                 .map(|p| TsTypeMember::Prop {
                     name: p.name.name.clone(),
-                    ty: emitter::ts_type_ref_qualified_ts_type(
-                        &p.type_ref,
-                        &scope_type_names,
-                        &scope_ns,
-                    ),
+                    ty: {
+                        // A generic operation's own type parameter (`Events.emit[E]`)
+                        // has no binding here, so a field mentioning one is `unknown`.
+                        let ty =
+                            emitter::ts_type_ref_qualified_multi_ts_type(&p.type_ref, &type_ns);
+                        let printed = bynk_ts::print_type(&ty);
+                        let generic = op.type_params.iter().any(|tp| {
+                            printed
+                                .split(|c: char| !c.is_alphanumeric() && c != '_')
+                                .any(|w| w == tp.name.name)
+                        });
+                        if generic {
+                            TsType::named("unknown")
+                        } else {
+                            ty
+                        }
+                    },
                     optional: false,
                     readonly: false,
                 })
@@ -4458,6 +4734,7 @@ fn emit_test_property_function(
         unit_consumes,
         unit_consumes_aliases,
         false,
+        None,
     );
 
     // Generator descriptors, one per binding, over the target's privileged type
@@ -4506,7 +4783,8 @@ fn emit_test_property_function(
     out.push_str(&bynk_ts::print_stmt(&gens_stmt, 2));
 
     // The `where` filter and the predicate body, as closures over the tuple.
-    let mut typed = synthetic_typed_commons_for_target(target_name, unit_tables, unit_uses, tys);
+    let mut typed =
+        synthetic_typed_commons_for_target(target_name, unit_tables, unit_uses, unit_consumes, tys);
     let cross = bynk_check::resolver::CrossContextInfo::default();
     let binding_names: Vec<String> = prop
         .forall
@@ -4714,6 +4992,7 @@ fn emit_test_history_property_function(
         unit_consumes,
         unit_consumes_aliases,
         false,
+        None,
     );
 
     let Some((run_var, agent_name)) = prop_history_binding(prop) else {
@@ -4740,7 +5019,8 @@ fn emit_test_history_property_function(
     // The privileged view, plus the synthetic call/step/state types and the body's
     // expr types (with `run: List[Step]` in scope), so the lowering resolves the
     // predicate's `List` and value surface (`.call is …`, `.old`/`.new`, `.upTo`).
-    let mut typed = synthetic_typed_commons_for_target(target_name, unit_tables, unit_uses, tys);
+    let mut typed =
+        synthetic_typed_commons_for_target(target_name, unit_tables, unit_uses, unit_consumes, tys);
     let mut handler_descs: Vec<TsExpr> = Vec::new();
     if let Some((mut resolved, _)) = test_suites::build_privileged_resolved(
         target_name,
@@ -4969,6 +5249,7 @@ fn emit_contract_attack_function(
         unit_consumes,
         unit_consumes_aliases,
         false,
+        None,
     );
     let _ = target_kind;
 
@@ -5035,8 +5316,13 @@ fn emit_contract_attack_function(
         })
     });
     if let Some(w) = where_pred {
-        let mut typed =
-            synthetic_typed_commons_for_target(target_name, unit_tables, unit_uses, tys);
+        let mut typed = synthetic_typed_commons_for_target(
+            target_name,
+            unit_tables,
+            unit_uses,
+            unit_consumes,
+            tys,
+        );
         let cross = bynk_check::resolver::CrossContextInfo::default();
         let synth = Block {
             statements: Vec::new(),

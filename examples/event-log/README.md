@@ -18,27 +18,38 @@ What it shows:
   tallies it with `summarise` from `commons digest`, whose `groupBy` runs eagerly
   over a `List` — the same vocabulary the agent runs lazily over storage.
 
-> **No `bynkc test` here.** Like [`webhook-relay`](../webhook-relay/), every write
-> path is platform-effectful at the boundary — `append` stamps the platform
-> `Clock`, which has no in-test substitute
-> ([#291](https://github.com/accuser/bynk/issues/291)). The pure `summarise` in
-> `commons digest` is still type-checked by `bynkc check`; the behaviour is
-> exercised end to end under `bynk dev`.
+- **Testing against the platform clock** — under `bynkc test` the platform
+  `Clock` is a deterministic test double that reads the epoch, and a case can
+  `stub Clock.now()` to read any instant. The tests drive the time-window routes
+  and observe `expect Clock.now called once`. A test can't yet build an `Event`
+  for the write path ([#1704](https://github.com/accuser/bynk/issues/1704)).
 
 ## Layout
 
 ```text
 event-log/
 ├── bynk.toml
-└── src/
-    ├── digest.bynk     # commons digest — Event + the pure `summarise` query
-    └── events.bynk     # context events — the Log-backed agent + HTTP service
+├── src/
+│   ├── digest.bynk     # commons digest — Event + the pure `summarise` query
+│   └── events.bynk     # context events — the Log-backed agent + HTTP service
+└── tests/
+    └── events.bynk     # tests targeting the events context
 ```
 
-## Check
+## Check and test
 
 ```sh
 bynkc check src      # type-check, no output
+bynkc test .
+```
+
+```text
+events:
+  ✓ the last-day count reads the clock and starts empty
+  ✓ the last-hour tally reads a stubbed clock
+  ✓ a window read needs no clock
+
+3 passed, 0 failed.
 ```
 
 ## Run it

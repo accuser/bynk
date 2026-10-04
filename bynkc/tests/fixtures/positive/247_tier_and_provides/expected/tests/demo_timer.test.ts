@@ -27,8 +27,16 @@ function __bynkShow(v: unknown): string {
 
 class __Stub_Clock {
   __seq_0 = 0;
+  __case: string | undefined;
+  constructor(c?: string) {
+    this.__case = c;
+  }
+  __applies(op: string): boolean {
+    if (op === "now") return this.__case === "an advancing clock via returns each";
+    return true;
+  }
   async now(): globalThis.Promise<number> {
-    if (true) {
+    if (this.__case === "an advancing clock via returns each") {
       const __k = this.__seq_0;
       if (this.__seq_0 < 1) this.__seq_0++;
       switch (__k) {
@@ -59,8 +67,28 @@ class __Stub_Rates {
   }
 }
 
-function makeTestDeps() {
-  return { Clock: new __Stub_Clock(), Rates: new __Stub_Rates() };
+function __bynkOverlay(base: unknown, stub: object, cap: string): unknown {
+  return new globalThis.Proxy(stub, {
+    get(target, prop) {
+      const t = target as Record<PropertyKey, unknown> & { __applies?: (op: string) => boolean };
+      // An own property (the stub's state, or a wrapper the recording proxy
+      // installed) always answers; a stubbed operation answers when it applies
+      // to the running case.
+      if (globalThis.Object.prototype.hasOwnProperty.call(t, prop)) return t[prop];
+      if (prop in t && (t.__applies === undefined || typeof prop !== "string" || t.__applies(prop))) return t[prop];
+      if (base !== undefined) {
+        const v = (base as Record<PropertyKey, unknown>)[prop];
+        return typeof v === "function" ? v.bind(base) : v;
+      }
+      return () => {
+        throw new globalThis.Error(`bynk: ${cap}.${String(prop)} is not stubbed, and the capability has no provider in this test`);
+      };
+    },
+  });
+}
+
+function makeTestDeps(__case?: string) {
+  return { Clock: __bynkOverlay(new demo_timer.SystemClock(), new __Stub_Clock(__case), "Clock") as demo_timer.Clock, Rates: __bynkOverlay(new demo_timer.LiveRates(), new __Stub_Rates(), "Rates") as demo_timer.Rates };
 }
 
 // case tier: integration
@@ -98,7 +126,7 @@ async function test_the_fallback_pattern_applies_to_other_arguments() {
 // case tier: integration
 async function test_an_advancing_clock_via_returns_each() {
   try {
-    const deps = makeTestDeps();
+    const deps = makeTestDeps("an advancing clock via returns each");
     const { elapsed, rate } = demo_timer;
     const e = await elapsed.call(deps);
     if (!(__bynkEq(e, 150))) { throw __bynkExpectFailure("tests/timer.test.bynk:25:12", 780, 788, "expect e == 150\n  expected: e == 150\n  actual:   " + __bynkShow((e)) + " == " + __bynkShow((150))); }

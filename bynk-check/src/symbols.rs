@@ -321,6 +321,24 @@ pub struct UnitTable {
     /// just any type" checks key off it. Empty for commons/adapters
     /// (`bynk.event.outside_context` rejects it there).
     pub events: HashMap<String, EventDecl>,
+    /// #291: the capabilities this unit flattens in with `consumes U { Cap }`,
+    /// each mapped to the unit providing it — `phase_resolve_consumes`'s
+    /// per-unit answer, recorded by [`record_flattened_caps`] so a test body's
+    /// privileged view sees the target's platform seams.
+    pub flattened_caps: HashMap<String, String>,
+}
+
+/// #291: record each unit's flattened capabilities (`consumes U { Cap }`, from
+/// `phase_resolve_consumes`) on its table.
+pub fn record_flattened_caps(
+    unit_tables: &mut HashMap<String, UnitTable>,
+    unit_flattened: &HashMap<String, HashMap<String, String>>,
+) {
+    for (name, flattened) in unit_flattened {
+        if let Some(t) = unit_tables.get_mut(name) {
+            t.flattened_caps = flattened.clone();
+        }
+    }
 }
 
 /// #696: each table-construction diagnostic is attributed to the project-relative
@@ -919,7 +937,10 @@ pub fn build_cross_context_info(
         consumed_types,
         consumed_capabilities,
         // Set by the caller from the unit's `consumes U { … }` clauses.
-        flattened_caps: HashMap::new(),
+        flattened_caps: unit_tables
+            .get(name)
+            .map(|t| t.flattened_caps.clone())
+            .unwrap_or_default(),
         consumed_event_names,
     }
 }
