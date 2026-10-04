@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0431](0431-deterministic-platform-test-doubles.md) | **Platform capabilities get deterministic test doubles under `bynkc test`** (v0.301) — A consumed platform capability is a fixed, I/O-free double at the unit and integration tiers; `stub` layers over it per operation, and case-scoped stubs no longer leak | Accepted (v0.301) |
 | [0430](0430-equality-bounds-at-instantiation.md) | **A generic function's comparisons bound its callers' type arguments** (v0.300) — Compared type parameters are inferred per generic function, transitively, and checked at each call; closes ADR 0421's first known limit | Accepted (v0.300) |
 | [0429](0429-unreachable-match-arms.md) | **A match arm that an earlier arm covers is an error** (v0.299) — Usefulness check over nested, or- and literal patterns; guarded arms and refined patterns never cover | Accepted (v0.299) |
 | [0428](0428-emitted-name-hygiene.md) | **Emitted names cannot collide with Bynk names** (v0.299) — Host globals via `globalThis`, runtime and helper names under `__`, fresh names for shadowing binders, `$tag`; `kind` payload fields and `globalThis` declarations reserved | Accepted (v0.299) |

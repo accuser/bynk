@@ -1,11 +1,6 @@
----
-level: minor
-changelog: A context that consumes platform capabilities can now be tested. Under `bynkc test`, each one (`Clock`, `Random`, `Secrets`, `Locale`, `Logger`, `Events`, `Idempotency`, `Kv`, `Fetch`) is a deterministic test double, fresh per case. A `stub` overrides just the operations it names, and observation (`expect Logger.info called once`) works on platform seams. A case-scoped `stub` now applies to its own case only; before, it leaked into every case of the suite. `sessions`, `webhook-relay` and `event-log` gain handler tests, and every example's suite now runs in CI (#291)
----
+# 0431 — Platform capabilities get deterministic test doubles under `bynkc test`
 
-## ADR: deterministic-platform-test-doubles
-title: Platform capabilities get deterministic test doubles under `bynkc test`
-summary: A consumed platform capability is a fixed, I/O-free double at the unit and integration tiers; `stub` layers over it per operation, and case-scoped stubs no longer leak
+- **Status:** Accepted (v0.301)
 
 **Context.** A context that consumed a platform capability
 (`consumes bynk { Clock }`) could not be tested. The test module wired the

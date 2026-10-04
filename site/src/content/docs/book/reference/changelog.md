@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.300**.
+written against **v0.301**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.301.0** | A context that consumes platform capabilities can now be tested. Under `bynkc test`, each one (`Clock`, `Random`, `Secrets`, `Locale`, `Logger`, `Events`, `Idempotency`, `Kv`, `Fetch`) is a deterministic test double, fresh per case. A `stub` overrides just the operations it names, and observation (`expect Logger.info called once`) works on platform seams. A case-scoped `stub` now applies to its own case only; before, it leaked into every case of the suite. `sessions`, `webhook-relay` and `event-log` gain handler tests, and every example's suite now runs in CI (#291) |
 | **v0.300.0** | A call to a generic function or method that compares a type parameter with `==` must instantiate it with an equality-supporting type, directly or through other generics and units (`same(f, h)` on two functions is now rejected, #1688). The cross-context visibility rules now hold in service and agent handlers, agent invariants and transitions, provider operations and function contracts, not only in free-function bodies, and a consumer may build a transparent export with record syntax, as the spec says (#1700) |
 | **v0.299.1** | The doc gate now checks every `bynk` block in the Book: an un-headed block must compile inside a synthetic unit, and one marked `fragment` must parse (#1661), which fixed rotted examples (an inline store refinement, `++`, a missing `consumes bynk { Events }`, misplaced `exports`). Every diagnostic code the compiler can emit is now asserted by a test except four that no compiler test can reach, and the new gated probe `diagnostic_coverage` holds that floor (#1662). The registry test scans every workspace crate, so `bynk explain` now knows `bynk.fmt.*`, `bynk.wasm.*` and `bynk.deploy.contract_skew`. Five unreachable diagnostic codes were removed (`bynk.consumes.in_commons`, `bynk.types.opaque_record_construction`, `bynk.tier.property_has_tier`, `bynk.observe.outside_case`, `bynk.observe.bad_count`), as were the symbol table's duplicates of the parser's `outside_context` checks; seven phantom codes in the docs now name real ones, and three stale notes were corrected |
 | **v0.299.0** | Every unreachable `match` arm is now an error, not only one after a leading wildcard (`Some(_)` then `Some(Red)`, a trailing `_` after every variant, an or-pattern overlap; guarded arms never cover) (#1656). User names can no longer collide with emitted names (#1653): host globals are reached as `globalThis.X`, runtime imports and codec helpers carry a `__` prefix (`__JsonValue`, `__serialise_T`), shadowing parameters and pattern bindings get fresh names, and a payload field `tag` becomes `$tag` in TypeScript. A payload field named `kind` (`bynk.resolve.reserved_payload_field`) and any declaration named `globalThis` (`bynk.resolve.reserved_host_name`) are rejected |
