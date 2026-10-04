@@ -1,0 +1,5 @@
+bynk.resolve.unknown_name unknown name `nope`
+# exact
+bynk.types.return_mismatch function body has type `String`, but the declared return type is `Int`
+bynk.resolve.unknown_name unknown name `missing`
+bynk.types.return_mismatch handler body has type `Effect[String]`, but the declared return type is `Effect[Int]`

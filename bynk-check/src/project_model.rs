@@ -364,6 +364,17 @@ pub fn firstparty_parsed(
         .clone()
 }
 
+/// #1663: every syntax error in `source`, from a recovering parse, when the
+/// strict parse failed with `strict` (its first), merged with it
+/// ([`bynk_syntax::parser::merge_syntax_errors`]). A lex error has no recovery.
+fn all_syntax_errors(source: &str, strict: Vec<CompileError>) -> Vec<CompileError> {
+    let Ok(tokens) = bynk_syntax::lexer::tokenize(source) else {
+        return strict;
+    };
+    let recovered = bynk_syntax::parser::parse_units_recovering(&tokens, source).errors;
+    bynk_syntax::parser::merge_syntax_errors(strict, recovered)
+}
+
 /// Phase 2: parse every discovered file into a `ParsedFile`, recording each
 /// file's source text into `snapshots` and any parse errors into `errors`.
 /// Then inject the first-party synthetic units (the `bynk`/`bynk.cloudflare`
@@ -423,7 +434,13 @@ pub fn phase_parse(
                     // surface with the build but never gate it.
                     errors.extend_for(Some(&id), warnings);
                 }
-                Err(errs) => errors.extend_for(Some(&id), errs),
+                // #1663: the strict parse stops at a file's first syntax
+                // error. Report every one, from a recovering parse; the file
+                // still drops out of checking, as before.
+                Err(errs) => {
+                    let source = &snapshots.last().expect("pushed just above").1;
+                    errors.extend_for(Some(&id), all_syntax_errors(source, errs));
+                }
             }
         }
     };

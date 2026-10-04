@@ -1,0 +1,4 @@
+bynk.parse.expected_expression expected an expression, found `}` @ 5:22
+# exact
+bynk.parse.expected_token expected identifier as a parameter name, found `->` @ 9:7
+bynk.types.return_mismatch function body has type `String`, but the declared return type is `Int` @ 7:17

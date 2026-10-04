@@ -76,7 +76,12 @@ pub fn diagnose(source: &str) -> Vec<Diagnostic> {
             return diagnostics;
         }
     };
-    let (unit_opt, parse_errors) = parser::parse_unit_with_recovery(&tokens, source);
+    let parser::Recovered {
+        units,
+        errors: parse_errors,
+        broken_decl_names,
+    } = parser::parse_units_recovering(&tokens, source);
+    let unit_opt = units.into_iter().next();
     for e in parse_errors {
         diagnostics.push(Diagnostic {
             severity: Severity::for_error(&e),
@@ -90,45 +95,35 @@ pub fn diagnose(source: &str) -> Vec<Diagnostic> {
     // commons units in single-file mode — contexts go through compile_project
     // which has the cross-file machinery. Match the same restriction here.
     if let ast::SourceUnit::Commons(c) = unit {
-        match resolver::resolve(c) {
-            Ok(resolved) => {
-                if let Err(errs) = resolver::resolve_file(&resolved) {
-                    for e in errs {
-                        diagnostics.push(Diagnostic {
-                            severity: Severity::for_error(&e),
-                            error: e,
-                        });
-                    }
-                }
-                // ADR 0117: a clean check may still carry non-failing warnings
-                // (`Ok` now), so surface those too — not only the `Err` path.
-                match checker::check(resolved) {
-                    Ok(typed) => {
-                        for e in typed.warnings {
-                            diagnostics.push(Diagnostic {
-                                severity: Severity::for_error(&e),
-                                error: e,
-                            });
-                        }
-                    }
-                    Err(errs) => {
-                        for e in errs {
-                            diagnostics.push(Diagnostic {
-                                severity: Severity::for_error(&e),
-                                error: e,
-                            });
-                        }
-                    }
-                }
-            }
-            Err(errs) => {
-                for e in errs {
-                    diagnostics.push(Diagnostic {
-                        severity: Severity::for_error(&e),
-                        error: e,
-                    });
-                }
-            }
+        let push = |diagnostics: &mut Vec<Diagnostic>, errs: Vec<CompileError>| {
+            diagnostics.extend(errs.into_iter().map(|e| Diagnostic {
+                severity: Severity::for_error(&e),
+                error: e,
+            }));
+        };
+        // #1663 (Decision A): a resolve error no longer stops the checker. It
+        // still checks every declaration; its diagnostics in a declaration the
+        // resolver rejected are echoes and are dropped.
+        let item_spans: Vec<_> = c.items.iter().map(|i| i.span()).collect();
+        let (resolved, resolve_errors) = resolver::resolve_recovering(c);
+        if resolve_errors.is_empty()
+            && let Err(errs) = resolver::resolve_file(&resolved)
+        {
+            push(&mut diagnostics, errs);
+        }
+        // #1663 (Decision B): an unknown name that is a declaration the parser
+        // skipped is not reported again; it still rejects its declaration.
+        let (shown, _hidden) =
+            resolver::split_broken_decl_echoes(resolve_errors.clone(), &broken_decl_names);
+        push(&mut diagnostics, shown);
+        // ADR 0117: a clean check may still carry non-failing warnings
+        // (`Ok` now), so surface those too — not only the `Err` path.
+        match checker::check(resolved) {
+            Ok(typed) => push(&mut diagnostics, typed.warnings),
+            Err(errs) => push(
+                &mut diagnostics,
+                resolver::without_resolve_echoes(errs, &resolve_errors, &item_spans),
+            ),
         }
     }
     diagnostics

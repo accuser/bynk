@@ -1,0 +1,2 @@
+bynk.parse.expected_token expected `}` to close the record body, found identifier @ 7:3
+# exact

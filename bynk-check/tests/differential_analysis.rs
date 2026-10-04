@@ -270,7 +270,7 @@ fn new_entry_point_reports_errors_on_a_broken_project() {
 
     let mut rendered = render(&analysed.errors);
     rendered.sort();
-    // Sorted by (path, category, message) — all four share `demo/svc.bynk`,
+    // Sorted by (path, category, message) — all three share `demo/svc.bynk`,
     // so this is alphabetical by category.
     assert_eq!(
         rendered,
@@ -294,11 +294,8 @@ fn new_entry_point_reports_errors_on_a_broken_project() {
                           used in the body"
                     .to_string(),
             },
-            RenderedError {
-                path: Some("demo/svc.bynk".to_string()),
-                category: "bynk.resolve.unknown_name",
-                message: "unknown name `n`".to_string(),
-            },
+            // #1663: no `unknown name `n`` echo. The failed `let n <- …` still
+            // binds `n` (error-typed), so its use in the body raises nothing.
         ],
         "renaming the `given` capability must report exactly this set of downstream errors"
     );

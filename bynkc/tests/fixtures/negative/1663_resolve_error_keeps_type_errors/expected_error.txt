@@ -1,0 +1,3 @@
+bynk.resolve.unknown_name unknown name `nope` @ 6:17
+# exact
+bynk.types.return_mismatch function body has type `String`, but the declared return type is `Int` @ 4:17

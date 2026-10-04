@@ -1,0 +1,11 @@
+commons demo
+
+-- #1663: each independent syntax error is reported, and a well-formed
+-- declaration between them is still checked.
+fn a() -> Int { 1 +  }
+
+fn b() -> Int { "s" }
+
+fn c( -> Int { 2 }
+
+fn d() -> Int { 3 }

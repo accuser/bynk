@@ -798,6 +798,12 @@ pub struct RecordCheck {
     /// The same `Rc` the `Ok` path's `TypedCommons::ty_intern` carries, so a
     /// caller that reads either map has the table either way.
     pub ty_intern: Arc<Types>,
+    /// #1663 (Decision A): on the `Err` path, the program as checked so far —
+    /// every declaration was still checked, so a later stage (context
+    /// declarations, handler bodies) can go on checking the *other*
+    /// declarations. Never certifiable: the errors in `result` still fail
+    /// the unit. `None` on the `Ok` path.
+    pub typed_despite_errors: Option<TypedCommons>,
 }
 
 /// T3.7 (R3.10): the gate between analysis and emission, as a type rather
@@ -978,6 +984,7 @@ pub fn check_record_in(
             }),
             partial_expr_types: HashMap::new(),
             ty_intern,
+            typed_despite_errors: None,
         }
     } else {
         // Keep the best-effort types the checker already computed; Analyse mode
@@ -986,7 +993,18 @@ pub fn check_record_in(
         all.extend(warnings);
         RecordCheck {
             result: Err(all),
-            partial_expr_types: expr_types,
+            partial_expr_types: expr_types.clone(),
+            typed_despite_errors: Some(TypedCommons {
+                commons: input.commons,
+                types: input.types,
+                fns: input.fns,
+                methods: input.methods,
+                expr_types,
+                callees,
+                warnings: Vec::new(),
+                ty_intern: Arc::clone(&ty_intern),
+                actor_bindings: HashMap::new(),
+            }),
             ty_intern,
         }
     }
@@ -3034,7 +3052,15 @@ pub(crate) fn type_of_block(block: &Block, expected: Option<TyId>, ctx: &mut Ctx
                     }
                     (Some(annot), None) => annot,
                     (None, Some(rhs)) => rhs,
-                    (None, None) => continue,
+                    // #1663: the value failed to type (already reported).
+                    // Bind the name to the error type anyway, so its uses
+                    // absorb instead of echoing as unknown names.
+                    (None, None) => {
+                        if l.name.name != "_" {
+                            ctx.bind(l.name.name.clone(), tys.intern(Ty::Error));
+                        }
+                        continue;
+                    }
                 };
                 if l.name.name != "_" {
                     // v0.27 (ADR 0056): an annotation-absent binding gets an
@@ -3137,7 +3163,15 @@ pub(crate) fn type_of_block(block: &Block, expected: Option<TyId>, ctx: &mut Ctx
                     }
                     (Some(annot), None) => annot,
                     (None, Some(rhs)) => rhs,
-                    (None, None) => continue,
+                    // #1663: the value failed to type (already reported).
+                    // Bind the name to the error type anyway, so its uses
+                    // absorb instead of echoing as unknown names.
+                    (None, None) => {
+                        if l.name.name != "_" {
+                            ctx.bind(l.name.name.clone(), tys.intern(Ty::Error));
+                        }
+                        continue;
+                    }
                 };
                 if l.name.name != "_" {
                     // v0.27 (ADR 0056): as for `let =`, but `final_ty` here

@@ -332,11 +332,38 @@ pub fn check_file_core(
         &pf.identity_path(),
         pf.is_synthetic() || matches!(pf.kind(), UnitKind::Test | UnitKind::Integration),
     );
-    if let Err(errs) = resolver::resolve_file_record(&resolved, refs) {
-        errors.extend_for(Some(&pf.identity_path()), errs);
-        return None;
-    }
+    // #1663 (Decision A): a resolve error no longer stops the file before the
+    // checker. Every declaration is still checked; the checker's diagnostics
+    // in a declaration the resolver rejected are its echoes and are dropped
+    // (`without_resolve_echoes`), and the file still fails here.
+    let resolve_errors = resolver::resolve_file_record(&resolved, refs).err();
+    let item_spans: Vec<bynk_syntax::span::Span> =
+        resolved.commons.items.iter().map(|i| i.span()).collect();
     let rc = checker::check_record_in(resolved, tys, refs, hints, locals, requirements);
+    if let Some(resolve_errors) = &resolve_errors {
+        errors.extend_for(Some(&pf.identity_path()), resolve_errors.clone());
+    }
+    let unechoed = |errs: Vec<bynk_syntax::CompileError>| match &resolve_errors {
+        Some(r) => resolver::without_resolve_echoes(errs, r, &item_spans),
+        None => errs,
+    };
+    // #1663: the declaration stages walk the whole unit's handlers, so a file's
+    // pass also meets another file's faults — and attributes them to this
+    // file, at a position in the wrong source. That file's own pass reports
+    // them; here, keep only diagnostics located in this file (or unlocated).
+    let own_file = item_spans.first().map(|s| s.file);
+    let in_this_file = |errs: Vec<bynk_syntax::CompileError>| -> Vec<bynk_syntax::CompileError> {
+        errs.into_iter()
+            .filter(|e| {
+                own_file.is_none_or(|f| e.span.file == f)
+                    || e.span == bynk_syntax::span::Span::default()
+            })
+            .collect()
+    };
+    // #1663: whether this file has already failed (a resolve or type error).
+    // The later stages still check its other declarations; the file returns
+    // no result at the end.
+    let mut failed = resolve_errors.is_some();
     let typed = match rc.result {
         Ok(t) => {
             // v0.89 (ADR 0117): a unit that checks clean may still carry
@@ -348,7 +375,7 @@ pub fn check_file_core(
             t
         }
         Err(errs) => {
-            errors.extend_for(Some(&pf.identity_path()), errs);
+            errors.extend_for(Some(&pf.identity_path()), unechoed(errs));
             // ADR 0094: surface the best-effort partial types the checker
             // computed so `.`-member completion / signature help work on a
             // buffer with an unrelated error. Unconditional now (this
@@ -360,7 +387,11 @@ pub fn check_file_core(
                 pf.is_synthetic(),
                 &rc.partial_expr_types,
             );
-            return None;
+            // #1663 (Decision A): a type error in one declaration must not
+            // hide the next stage's checks of the others (a service handler's
+            // body is typed in `check_context_declarations`).
+            failed = true;
+            rc.typed_despite_errors?
         }
     };
 
@@ -370,7 +401,10 @@ pub fn check_file_core(
         let context_check_errs =
             check_context_constraints(&typed, consumed_types, local_names, tys);
         if !context_check_errs.is_empty() {
-            errors.extend_for(Some(&pf.identity_path()), context_check_errs);
+            errors.extend_for(
+                Some(&pf.identity_path()),
+                unechoed(in_this_file(context_check_errs)),
+            );
             record_analyse_types(
                 exprs,
                 &pf.identity_path(),
@@ -414,7 +448,7 @@ pub fn check_file_core(
                     bynk_syntax::Severity::Error
                 )
             });
-            errors.extend_for(Some(&pf.identity_path()), decl_errs);
+            errors.extend_for(Some(&pf.identity_path()), unechoed(in_this_file(decl_errs)));
             if blocks_emission {
                 // ADR 0094: handler bodies are typed here — surface their
                 // best-effort types even when a declaration check (e.g. a
@@ -436,7 +470,10 @@ pub fn check_file_core(
     if kind == UnitKind::Context {
         let handler_errs = check_handler_constraints(&typed, consumed_types, local_names, tys);
         if !handler_errs.is_empty() {
-            errors.extend_for(Some(&pf.identity_path()), handler_errs);
+            errors.extend_for(
+                Some(&pf.identity_path()),
+                unechoed(in_this_file(handler_errs)),
+            );
             record_analyse_types(
                 exprs,
                 &pf.identity_path(),
@@ -447,6 +484,17 @@ pub fn check_file_core(
         }
     }
 
+    // #1663: every stage has now checked past the earlier errors; the file
+    // still fails on them.
+    if failed {
+        record_analyse_types(
+            exprs,
+            &pf.identity_path(),
+            pf.is_synthetic(),
+            &typed.expr_types,
+        );
+        return None;
+    }
     Some(FileCheckResult {
         typed,
         cross_context: cross_context_for_file,

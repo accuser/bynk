@@ -1,0 +1,11 @@
+context shop
+
+uses demo
+
+fn local() -> Int { missing }
+
+service api {
+  on call() -> Effect[Int] {
+    Effect.pure("not an int")
+  }
+}

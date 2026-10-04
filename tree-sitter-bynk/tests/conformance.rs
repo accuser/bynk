@@ -331,8 +331,11 @@ fn totality_positive_corpus_accepted_by_both_parsers() {
     );
 }
 
-/// The first non-blank, non-comment line of a negative fixture's
-/// `expected_error.txt` — its diagnostic category, e.g. `bynk.parse.expected_token`.
+/// The first token of the first non-blank, non-comment line of a negative
+/// fixture's `expected_error.txt` — its diagnostic category, e.g.
+/// `bynk.parse.expected_token`. The line may go on to pin the message and
+/// span (`bynk.parse.expected_token expected `}` … @ 7:3`), as an exact-set
+/// fixture's lines do (#1663).
 fn expected_error_category(dir: &Path) -> Option<String> {
     let f = dir.join("expected_error.txt");
     if !f.exists() {
@@ -342,6 +345,7 @@ fn expected_error_category(dir: &Path) -> Option<String> {
         .lines()
         .map(str::trim)
         .find(|l| !l.is_empty() && !l.starts_with('#'))
+        .and_then(|l| l.split_whitespace().next())
         .map(String::from)
 }
 

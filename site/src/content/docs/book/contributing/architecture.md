@@ -25,7 +25,7 @@ resolve│  resolver.rs     →  symbols
 | Stage | Module | Role |
 |---|---|---|
 | Lex | `lexer.rs` | Tokenise source (built on `logos`); doc blocks via a hand-written scanner. |
-| Parse | `parser.rs` | Build the AST (`ast.rs`); recover where possible for the LSP. |
+| Parse | `parser.rs` | Build the AST (`ast.rs`); recover where possible, so the LSP and a CLI check of a file that fails to parse report every syntax error. |
 | Resolve | `resolver.rs` | Name resolution and symbol-table construction. |
 | Check | `checker.rs` | Type checking, refinement validation, effect rules. |
 | Emit | `emitter.rs` | Generate TypeScript. |

@@ -269,9 +269,10 @@ fn hints_survive_a_transient_error_at_reached_sites() {
     assert_eq!(label_at(&hints, &text, "let m = ", "m"), Some(": Int"));
     // The erroring binding itself has no computed type, so no hint.
     assert_eq!(label_at(&hints, &text, "let s = ", "s"), None);
-    // Bounded guarantee (settled): a `check_record` Err short-circuits the
-    // v0.5 pass, so the handler-body `let <-` hint is suppressed until the
-    // fn-body error clears — "sites the checker still reaches", not
-    // file-total.
-    assert_eq!(label_at(&hints, &text, "let stamp <- ", "stamp"), None);
+    // #1663 (Decision A): a fn-body error no longer short-circuits the v0.5
+    // pass, so the handler body is still typed and its `let <-` hints too.
+    assert_eq!(
+        label_at(&hints, &text, "let stamp <- ", "stamp"),
+        Some(": Int")
+    );
 }

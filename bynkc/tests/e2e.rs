@@ -521,6 +521,54 @@ fn check_expected_diagnostics(
     }
 }
 
+/// Check a negative fixture's `expected_error.txt` needles against its
+/// diagnostics, one rendered line each.
+///
+/// By default this is a **subset** check: every needle must be a substring of
+/// some line, and extra diagnostics pass. A `# exact` line (#1663) makes it an
+/// **exact-set** check: the needles and the diagnostics must pair up one to
+/// one, each needle matching a distinct line, with nothing left over. That is
+/// what pins "no spurious diagnostics" — a cascade the subset check cannot
+/// see. `# exact` is a comment line, so a parse-time fixture's first line can
+/// still be the bare code its tree-sitter conformance reads.
+fn check_expected_errors(dir: &Path, want: &str, lines: &[String], failures: &mut Vec<String>) {
+    let exact = want.lines().any(|l| l.trim() == "# exact");
+    let needles: Vec<&str> = want
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .collect();
+    let got = lines.join("\n");
+    let mut unmatched: Vec<&String> = lines.iter().collect();
+    for needle in &needles {
+        let hit = if exact {
+            unmatched.iter().position(|l| l.contains(needle)).map(|i| {
+                unmatched.remove(i);
+            })
+        } else {
+            lines.iter().any(|l| l.contains(needle)).then_some(())
+        };
+        if hit.is_none() {
+            failures.push(format!(
+                "\n=== {} ===\nexpected error containing `{needle}`, but got:\n{got}",
+                dir.display(),
+            ));
+        }
+    }
+    if exact && !unmatched.is_empty() {
+        failures.push(format!(
+            "\n=== {} ===\n`# exact`: {} diagnostic(s) matched no needle:\n{}",
+            dir.display(),
+            unmatched.len(),
+            unmatched
+                .iter()
+                .map(|l| l.as_str())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        ));
+    }
+}
+
 #[test]
 fn negative_fixtures() {
     let dirs = fixture_dirs("negative");
@@ -563,27 +611,14 @@ fn negative_fixtures() {
                     // an ` @ line:col` suffix, so a fixture can pin the span
                     // (`code message @ 5:22`) — plain `code message` needles
                     // keep matching as substrings of the same line.
-                    let haystack: String = errors
+                    let lines: Vec<String> = errors
                         .iter()
                         .map(|e| {
                             let (line, col) = bynk_syntax::span::line_col(&source, e.span.start);
-                            format!("{} {} @ {line}:{col}\n", e.category, e.message)
+                            format!("{} {} @ {line}:{col}", e.category, e.message)
                         })
                         .collect();
-                    for needle in want.lines() {
-                        let needle = needle.trim();
-                        if needle.is_empty() || needle.starts_with('#') {
-                            continue;
-                        }
-                        if !haystack.contains(needle) {
-                            failures.push(format!(
-                                "\n=== {} ===\nexpected error containing `{}`, but got:\n{}",
-                                dir.display(),
-                                needle,
-                                haystack,
-                            ));
-                        }
-                    }
+                    check_expected_errors(&dir, want, &lines, &mut failures);
                 }
             }
         } else if src_dir.is_dir() {
@@ -596,25 +631,12 @@ fn negative_fixtures() {
                     ));
                 }
                 Err(failure) => {
-                    let haystack: String = failure
+                    let lines: Vec<String> = failure
                         .errors
                         .iter()
-                        .map(|e| format!("{} {}\n", e.error.category, e.error.message))
+                        .map(|e| format!("{} {}", e.error.category, e.error.message))
                         .collect();
-                    for needle in want.lines() {
-                        let needle = needle.trim();
-                        if needle.is_empty() || needle.starts_with('#') {
-                            continue;
-                        }
-                        if !haystack.contains(needle) {
-                            failures.push(format!(
-                                "\n=== {} ===\nexpected error containing `{}`, but got:\n{}",
-                                dir.display(),
-                                needle,
-                                haystack,
-                            ));
-                        }
-                    }
+                    check_expected_errors(&dir, want, &lines, &mut failures);
                     check_expected_diagnostics(
                         &dir,
                         &failure.errors,

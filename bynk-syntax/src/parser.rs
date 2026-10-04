@@ -208,6 +208,43 @@ pub fn parse_units_with_recovery(
     tokens: &[Token],
     source: &str,
 ) -> (Vec<SourceUnit>, Vec<CompileError>) {
+    let recovered = parse_units_recovering(tokens, source);
+    (recovered.units, recovered.errors)
+}
+
+/// #1663: everything a recovering parse learns — the units it built, every
+/// syntax error, and the names of the top-level declarations it had to skip.
+#[derive(Debug)]
+pub struct Recovered {
+    pub units: Vec<SourceUnit>,
+    pub errors: Vec<CompileError>,
+    /// Declarations recovery dropped, by name (see `Parser::broken_decl_names`).
+    /// A caller keeps references to them from echoing as unknown names.
+    pub broken_decl_names: Vec<String>,
+}
+
+/// #1663: a strict parse's error(s) together with a recovering parse's, each
+/// reported once. The strict errors come first and always survive: some rules
+/// hold only for the strict single-unit parse (`extra_tokens`, a `commons`
+/// expected but a `context` found), which the multi-unit recovering parse
+/// accepts. A recovered error at the same position as one already listed is
+/// the same fault (the two parsers may name it differently) and is dropped.
+pub fn merge_syntax_errors(
+    strict: Vec<CompileError>,
+    recovered: Vec<CompileError>,
+) -> Vec<CompileError> {
+    let mut out = strict;
+    for e in recovered {
+        if !out.iter().any(|o| o.span.start == e.span.start) {
+            out.push(e);
+        }
+    }
+    out
+}
+
+/// [`parse_units_with_recovery`], also returning the names of the declarations
+/// recovery skipped (#1663).
+pub fn parse_units_recovering(tokens: &[Token], source: &str) -> Recovered {
     let (filtered, trivia) = split_trivia(tokens, source);
     let mut warnings = Vec::new();
     let mut p = Parser::new(&filtered, source, trivia, &mut warnings);
@@ -230,9 +267,14 @@ pub fn parse_units_with_recovery(
             break;
         }
     }
+    let broken_decl_names = std::mem::take(&mut p.broken_decl_names);
     let mut all_errors = p.recovered_errors;
     all_errors.append(&mut warnings);
-    (units, all_errors)
+    Recovered {
+        units,
+        errors: all_errors,
+        broken_decl_names,
+    }
 }
 
 /// Parse a token slice into a [`SourceUnit`] — either a commons or a context.
@@ -444,6 +486,15 @@ struct Parser<'a> {
     /// Errors collected during recovery-mode parsing. Only populated when
     /// `recover_mode` is true.
     recovered_errors: Vec<CompileError>,
+    /// #1663: the token index where the current top-level item starts, set by
+    /// each top-level item loop. Read once by [`Self::handle_item_err`] to name
+    /// the declaration a recovery skips.
+    pub(crate) item_start: Option<usize>,
+    /// #1663: the names of top-level declarations recovery skipped (a `type`,
+    /// `fn`, method, `event`, `capability`, `service`, `agent` or `actor`).
+    /// They are known names whose declaration is broken, so a caller can keep
+    /// references to them from echoing as unknown. Recovery mode only.
+    broken_decl_names: Vec<String>,
     /// Line-comment trivia separated from the token stream. See
     /// [`TriviaTable`].
     trivia: TriviaTable,
@@ -501,6 +552,8 @@ impl<'a> Parser<'a> {
             warnings,
             recover_mode: false,
             recovered_errors: Vec::new(),
+            item_start: None,
+            broken_decl_names: Vec::new(),
             trivia,
             depth: 0,
             no_record_literal: false,
@@ -647,6 +700,9 @@ impl<'a> Parser<'a> {
     fn handle_item_err(&mut self, e: CompileError) -> Result<(), CompileError> {
         if self.recover_mode {
             self.recovered_errors.push(e);
+            if let Some(start) = self.item_start.take() {
+                self.broken_decl_names.extend(self.decl_names_at(start));
+            }
             let before = self.pos;
             self.recover_to_top_item();
             // The sync target may be the very token that produced the error —
@@ -655,12 +711,60 @@ impl<'a> Parser<'a> {
             // itself a sync point. Recovery must always make progress, or the
             // item loop re-reports the same error until memory runs out
             // (found by the `parse` fuzz target on a seed input).
-            if self.pos == before {
+            // #1663: unless the cursor is on the `}` that closes this item
+            // loop's own body (an error raised at the end of the last item):
+            // consuming it would make the body look unclosed, a follow-on
+            // `unexpected_eof`. The loop ends on that `}` itself. A fragment-
+            // form loop has no closing brace (baseline 0), so a stray `}`
+            // there is still consumed.
+            let baseline = self.item_loop_baseline.last().copied().unwrap_or(0);
+            let closes_body = baseline > 0
+                && self.brace_depth == baseline
+                && self.peek_kind() == Some(TokenKind::RBrace);
+            if self.pos == before && !closes_body {
                 self.bump();
+                // #1663: and skip the rest of the rejected item too (`agent`
+                // in a commons: its name and `{ … }` body). Otherwise the next
+                // loop iteration misreads its name as a malformed item and
+                // reports a second, follow-on syntax error.
+                self.recover_to_top_item();
             }
             Ok(())
         } else {
             Err(e)
+        }
+    }
+
+    /// #1663: the name(s) a declaration starting at token `start` declares:
+    /// `type T`, `fn f`, `fn T.m` (both `T`-qualified method `m`), `event E`,
+    /// `capability C`, `service S`, `agent A`, `actor A`. Empty when the item
+    /// is not one of those or its name never parsed (`fn ( -> Int`).
+    fn decl_names_at(&self, start: usize) -> Vec<String> {
+        let kind_at = |i: usize| self.tokens.get(i).map(|t| t.kind);
+        let ident_at = |i: usize| {
+            self.tokens
+                .get(i)
+                .filter(|t| t.kind == TokenKind::Ident)
+                .map(|t| self.slice(t.span).to_string())
+        };
+        match kind_at(start) {
+            Some(
+                TokenKind::Type
+                | TokenKind::Event
+                | TokenKind::Capability
+                | TokenKind::Service
+                | TokenKind::Agent
+                | TokenKind::Actor,
+            ) => ident_at(start + 1).into_iter().collect(),
+            Some(TokenKind::Fn) => match (ident_at(start + 1), kind_at(start + 2)) {
+                (Some(owner), Some(TokenKind::Dot)) => match ident_at(start + 3) {
+                    Some(method) => vec![method],
+                    None => vec![owner],
+                },
+                (Some(name), _) => vec![name],
+                (None, _) => Vec::new(),
+            },
+            _ => Vec::new(),
         }
     }
 
