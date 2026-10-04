@@ -1,0 +1,2 @@
+bynk.context.external_construction
+cannot construct `Amount.of` here — `Amount` is owned by context `pay`

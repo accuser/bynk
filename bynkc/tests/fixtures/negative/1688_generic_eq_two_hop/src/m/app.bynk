@@ -1,0 +1,6 @@
+commons m.app
+
+uses m.lib
+
+-- #1702 review: two `uses` hops from the comparison.
+fn g(f: (Int) -> Int) -> Bool { same(f, f) }

@@ -1,6 +1,6 @@
 ---
 level: minor
-changelog: A call to a generic function that compares its type parameter with `==` must instantiate it with an equality-supporting type, directly or through other generics (`same(f, h)` on two functions is now rejected, #1688). The cross-context visibility rules now hold in service and agent handlers and provider operations, not only in free functions, and a consumer may build a transparent export with record syntax, as the spec says (#1700)
+changelog: A call to a generic function or method that compares a type parameter with `==` must instantiate it with an equality-supporting type, directly or through other generics and units (`same(f, h)` on two functions is now rejected, #1688). The cross-context visibility rules now hold in service and agent handlers, agent invariants and transitions, provider operations and function contracts, not only in free-function bodies, and a consumer may build a transparent export with record syntax, as the spec says (#1700)
 ---
 
 ## ADR: equality-bounds-at-instantiation
@@ -21,16 +21,20 @@ place the concrete type is known.
    the bound transitive across calls (and across units, since a caller sees the
    callee's declaration). Explicit `T: Eq` bounds were the alternative, and a
    larger language change.
-2. **Computed by checking the callee again.** The checker re-checks a generic
-   callee's body into throwaway sinks, with a recording frame that `==` and
-   compared call arguments add type variables to. The result is cached per
-   declaration for one unit's check. A recursive cycle reads an in-progress
-   scan as comparing nothing, which can only accept, never wrongly reject.
+2. **Computed in the declaring unit.** While a unit is checked, the checker
+   re-checks each of its generic functions and methods into throwaway sinks,
+   with a recording frame that `==` and compared call arguments add type
+   variables to. It does this in that unit's own environment, so a call made
+   through the unit's own `uses`, or a name shadowed in an importer, resolves
+   as written. Units are checked `uses`-first, and the result is cached per
+   declaration for the whole project check, so an importer only looks it up.
+   A miss, or a recursive cycle read mid-scan, counts as comparing nothing,
+   which can only accept, never wrongly reject.
 3. **Checked at the call.** Once the type arguments are inferred, each compared
    parameter's argument is checked with the same walk `==` uses. A hit reports
    `bynk.types.not_comparable` (or the `Stream` or held-value code) at the call,
    naming the function and the parameter, and labelling the parameter's
-   declaration.
+   declaration when it is in the caller's file.
 
 **Consequences.**
 - Calls that instantiate a compared parameter with a function, `Effect`,
@@ -38,12 +42,20 @@ place the concrete type is known.
   rejected.
 - Generics that never compare their parameter, such as a `map`-style helper,
   still accept functions.
+- Methods are bound the same way: a method's own type parameters, and its
+  generic receiver type's (`fn Box.has(self, x: A)`), so ADR 0421's first
+  known limit is closed for methods too.
 - ADR 0421's other known limit (a record imported from another unit is not
   walked through its fields) is unchanged.
 
 Proved by:
 - negatives `1688_generic_eq_function_arg` (direct),
-  `1688_generic_eq_transitive` and `1688_generic_eq_across_units`;
+  `1688_generic_eq_transitive`, `1688_generic_eq_across_units`,
+  `1688_generic_eq_two_hop` (transitive through another unit's `uses`) and
+  `1688_generic_eq_method_receiver`;
 - the behavioural fixture `1688_generic_eq_accepted`, which shows comparable
   instantiations, a recursive comparing generic, and non-comparing generics
-  given functions all still compile and run.
+  given functions all still compile and run;
+- the compile-only fixtures `1688_generic_eq_shadowed_helper` (an importer's
+  own comparing `helper` does not change what an imported generic compares)
+  and `1688_generic_eq_methods_accepted`.

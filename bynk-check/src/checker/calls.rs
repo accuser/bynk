@@ -913,58 +913,20 @@ fn check_generic_call(
     }
     // #1688: a type parameter the callee compares (`==` on it, directly or
     // through another generic call) must be instantiated with an
-    // equality-supporting type. Inside a generic caller's own scan the
-    // argument may be the caller's variable; recording it makes the bound
-    // transitive.
-    let compared = super::equality::compared_type_params(fn_decl, ctx);
-    for tp in &fn_decl.type_params {
-        if !compared.contains(&tp.name.name) {
-            continue;
+    // equality-supporting type.
+    let compared = match ctx.input.fns.get(&name.name) {
+        Some(decl) if std::ptr::eq(decl.as_ref(), fn_decl) => {
+            super::equality::compared_type_params(decl, ctx)
         }
-        let Some(&arg_ty) = subst.get(&tp.name.name) else {
-            continue;
-        };
-        super::equality::record_compared(arg_ty, tys);
-        let Some(blocker) = super::equality::not_comparable(arg_ty, ctx) else {
-            continue;
-        };
-        let shown = arg_ty.display(tys);
-        let top = matches!(
-            &*tys.get(arg_ty),
-            Ty::Stream(_) | Ty::Connection(_) | Ty::Fn { .. } | Ty::Effect(_) | Ty::Query(_)
-        );
-        let it = if top { "it is" } else { "it contains" };
-        let (code, why) = match blocker {
-            super::equality::NotComparable::Stream => (
-                "bynk.types.stream_not_comparable",
-                format!("{it} a `Stream`, a live value-over-time source, not a comparable value"),
-            ),
-            super::equality::NotComparable::Held(held) => (
-                "bynk.types.held_not_comparable",
-                format!("{it} a held `{held}`, which has identity, not value-equality"),
-            ),
-            super::equality::NotComparable::Computation(part) if top => (
-                "bynk.types.not_comparable",
-                format!(
-                    "a function, `Effect` or `Query` like `{part}` is a computation, which has no value equality"
-                ),
-            ),
-            super::equality::NotComparable::Computation(part) => (
-                "bynk.types.not_comparable",
-                format!("it contains `{part}`, which has no value equality"),
-            ),
-        };
-        ctx.errors.push(
-            CompileError::new(
-                code,
-                name.span,
-                format!(
-                    "`{}` compares values of its type parameter `{}`, but this call makes `{}` `{shown}` — {why}",
-                    name.name, tp.name.name, tp.name.name
-                ),
-            )
-            .with_label(tp.span, "compared inside the function"),
-        );
+        _ => Default::default(),
+    };
+    let params: Vec<(String, Option<Span>)> = fn_decl
+        .type_params
+        .iter()
+        .map(|tp| (tp.name.name.clone(), Some(tp.span)))
+        .collect();
+    if !super::equality::check_compared_args(&name.name, name.span, &params, &compared, &subst, ctx)
+    {
         return None;
     }
     // v0.39 (ADR 0072): when the user omitted the type arguments, show the
@@ -2997,6 +2959,31 @@ fn check_generic_method_call(
         }
     }
     if !ok {
+        return None;
+    }
+    // #1702 review: the same call-site bound as a generic function's, over the
+    // receiver type's parameters and the method's own.
+    let decl = ctx.input.methods.get(type_name).and_then(|t| {
+        t.instance
+            .get(&method.name)
+            .or_else(|| t.statics.get(&method.name))
+            .cloned()
+    });
+    let compared = match &decl {
+        Some(decl) if std::ptr::eq(decl.as_ref(), method_decl) => {
+            super::equality::compared_type_params(decl, ctx)
+        }
+        _ => Default::default(),
+    };
+    let mut params: Vec<(String, Option<Span>)> = method_decl
+        .type_params
+        .iter()
+        .map(|tp| (tp.name.name.clone(), Some(tp.span)))
+        .collect();
+    params.extend(recv_type_params.iter().map(|p| (p.clone(), None)));
+    let callee = format!("{type_name}.{}", method.name);
+    if !super::equality::check_compared_args(&callee, method.span, &params, &compared, &subst, ctx)
+    {
         return None;
     }
     // v0.39 (ADR 0072)-style hint: show the inferred method type arguments after

@@ -112,13 +112,16 @@ for an opaque type it compares the representation. `==` is defined only on an
 container element, or a generic argument written in the type, such as
 `Box[(Int) -> Int]`) is not equality-supporting, and `==` on it is rejected
 (`bynk.types.not_comparable`, `bynk.types.stream_not_comparable`,
-`bynk.types.held_not_comparable`). Inside a generic function, `==` on a type
-parameter is accepted; the bound moves to the call. A generic function
+`bynk.types.held_not_comparable`). Inside a generic function or method, `==` on
+a type parameter is accepted; the bound moves to the call. A generic function
 *compares* a type parameter when `==`/`!=` reaches a value of it, directly or by
-passing it to a compared parameter of another generic function, and each call
-MUST instantiate a compared parameter with an equality-supporting type (the same
-codes, reported at the call: `same(f, h)` on two functions is rejected for
-`fn same[T](a: T, b: T) -> Bool { a == b }`). One case is not yet checked, and
+passing it to a compared parameter of another generic function — through any
+number of calls and units. A method compares its own type parameters and its
+receiver type's the same way. Each call MUST instantiate a compared parameter
+with an equality-supporting type (the same codes, reported at the call:
+`same(f, h)` on two functions is rejected for
+`fn same[T](a: T, b: T) -> Bool { a == b }`, and `b.has(dec)` for
+`fn Box.has(self, x: A) -> Bool { self.value == x }` on a `Box[(Int) -> Int]`). One case is not yet checked, and
 falls back to comparing such values by identity: a record imported from another
 unit is not walked through its fields. A nullary variant read from storage or decoded
 from JSON equals the same variant written in source.

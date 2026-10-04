@@ -63,14 +63,25 @@ pub fn check_context_constraints(
                 &mut errors,
                 tys,
             );
+            // #1700: a contract predicate is an expression like any other.
+            for c in f.requires.iter().chain(&f.ensures) {
+                walk_expr_for_constraints(
+                    &c.predicate,
+                    typed,
+                    consumed_types,
+                    local_type_names,
+                    &mut errors,
+                    tys,
+                );
+            }
         }
     }
     errors
 }
 
 /// #1700: the same cross-context constraints as [`check_context_constraints`],
-/// over the bodies it cannot reach — service and agent handlers and provider
-/// operations. These are typed by [`check_context_declarations`], after
+/// over the bodies it cannot reach — service and agent handlers, agent
+/// invariants and transitions, and provider operations. These are typed by [`check_context_declarations`], after
 /// [`check_context_constraints`] runs, so this pass runs after that one: the
 /// opaque-`match` rule reads the discriminant's checked type.
 pub fn check_handler_constraints(
@@ -80,22 +91,34 @@ pub fn check_handler_constraints(
     tys: &Arc<Types>,
 ) -> Vec<CompileError> {
     let mut errors = Vec::new();
-    let mut walk = |body: &Block| {
-        walk_block_for_constraints(
-            body,
-            typed,
-            consumed_types,
-            local_type_names,
-            &mut errors,
-            tys,
-        );
-    };
     for item in &typed.commons.items {
-        match item {
-            CommonsItem::Service(s) => s.handlers.iter().for_each(|h| walk(&h.body)),
-            CommonsItem::Agent(a) => a.handlers.iter().for_each(|h| walk(&h.body)),
-            CommonsItem::Provider(p) => p.ops.iter().for_each(|op| walk(&op.body)),
-            _ => {}
+        let (bodies, predicates): (Vec<&Block>, Vec<&Expr>) = match item {
+            CommonsItem::Service(s) => (s.handlers.iter().map(|h| &h.body).collect(), Vec::new()),
+            // An agent's invariants and transitions are typed alongside its
+            // handlers, and are expressions that can name a consumed type.
+            CommonsItem::Agent(a) => (
+                a.handlers.iter().map(|h| &h.body).collect(),
+                a.invariants
+                    .iter()
+                    .map(|i| &i.predicate)
+                    .chain(a.transitions.iter().map(|t| &t.predicate))
+                    .collect(),
+            ),
+            CommonsItem::Provider(p) => (p.ops.iter().map(|op| &op.body).collect(), Vec::new()),
+            _ => continue,
+        };
+        for body in bodies {
+            walk_block_for_constraints(
+                body,
+                typed,
+                consumed_types,
+                local_type_names,
+                &mut errors,
+                tys,
+            );
+        }
+        for e in predicates {
+            walk_expr_for_constraints(e, typed, consumed_types, local_type_names, &mut errors, tys);
         }
     }
     errors

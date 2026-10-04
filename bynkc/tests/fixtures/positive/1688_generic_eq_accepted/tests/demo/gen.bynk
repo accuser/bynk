@@ -20,3 +20,4 @@ case "generics that never compare take functions" {
   expect applyPicked(true) == 11
   expect applyPicked(false) == 9
 }
+
