@@ -1,11 +1,6 @@
----
-level: minor
-changelog: Diagnostics recover past an error instead of stopping at it. An unknown name in one declaration no longer hides type errors in the others, including service and agent handler bodies. `bynkc check` reports every syntax error in a file, not just the first, and checks the declarations that did parse. A declaration that fails to parse no longer cascades into a wave of unknown-name and unknown-type errors at every reference to it (one missing comma in a record went from 21 diagnostics to 1). A pattern or `let` that fails to check still binds its names, so their uses do not echo as unknown names. Nothing with an error is ever emitted (#1663)
----
+# 0433 — Check per declaration, and treat a broken declaration's name as known
 
-## ADR: diagnostic-recovery
-title: Check per declaration, and treat a broken declaration's name as known
-summary: Resolve-then-check runs per declaration rather than per unit, a declaration the parser skips registers its name, and failed bindings are error-typed, so one fault yields one diagnostic
+- **Status:** Accepted (v0.302)
 
 **Context.** Four recovery gaps (#1663, the 2026-10-01 review, Part 4) each
 turned one fault into a hidden or multiplied set of diagnostics:

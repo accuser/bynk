@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.301**.
+written against **v0.302**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.302.0** | Diagnostics recover past an error instead of stopping at it. An unknown name in one declaration no longer hides type errors in the others, including service and agent handler bodies. `bynkc check` reports every syntax error in a file, not just the first, and checks the declarations that did parse. A declaration that fails to parse no longer cascades into a wave of unknown-name and unknown-type errors at every reference to it (one missing comma in a record went from 21 diagnostics to 1). A pattern or `let` that fails to check still binds its names, so their uses do not echo as unknown names. Nothing with an error is ever emitted (#1663) |
 | **v0.301.1** | A record literal of a `uses`-commons type built in a context, or in a test of one, now type-checks under `tsc`. So does a `uses`-commons record nested in another crossing a boundary. The context's brand on a rebranded type is now optional, so a plain commons value fits it while another context's brand is still rejected. `event-log` gains write-path tests (#1704) |
 | **v0.301.0** | A context that consumes platform capabilities can now be tested. Under `bynkc test`, each one (`Clock`, `Random`, `Secrets`, `Locale`, `Logger`, `Events`, `Idempotency`, `Kv`, `Fetch`) is a deterministic test double, fresh per case. A `stub` overrides just the operations it names, and observation (`expect Logger.info called once`) works on platform seams. A case-scoped `stub` now applies to its own case only; before, it leaked into every case of the suite. `sessions`, `webhook-relay` and `event-log` gain handler tests, and every example's suite now runs in CI (#291) |
 | **v0.300.0** | A call to a generic function or method that compares a type parameter with `==` must instantiate it with an equality-supporting type, directly or through other generics and units (`same(f, h)` on two functions is now rejected, #1688). The cross-context visibility rules now hold in service and agent handlers, agent invariants and transitions, provider operations and function contracts, not only in free-function bodies, and a consumer may build a transparent export with record syntax, as the spec says (#1700) |
