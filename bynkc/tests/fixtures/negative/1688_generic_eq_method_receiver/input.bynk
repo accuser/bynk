@@ -1,0 +1,11 @@
+commons m
+
+-- #1702 review: a method on a generic type compares the receiver's `A`, so the
+-- receiver's type argument is bound at the call like a generic function's.
+type Box[A] = { value: A }
+
+fn Box.has(self, x: A) -> Bool { self.value == x }
+
+fn dec(n: Int) -> Int { n - 1 }
+
+fn g(b: Box[(Int) -> Int]) -> Bool { b.has(dec) }

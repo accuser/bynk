@@ -881,6 +881,11 @@ pub(crate) fn check_binop(op: BinOp, lhs: &Expr, rhs: &Expr, ctx: &mut Ctx) -> O
             // the operand's type makes it non-comparable. Before #1652 only the
             // top-level type was checked, so `Option[Connection[F]]` and
             // `List[(Int) -> Int]` slipped through to a reference `===`.
+            // #1688: inside a generic body, note which type variables are
+            // compared, so a call site can check what they are instantiated
+            // with.
+            super::equality::record_compared(lt, tys);
+            super::equality::record_compared(rt, tys);
             for operand in [lt, rt] {
                 let Some(blocker) = super::equality::not_comparable(operand, ctx) else {
                     continue;

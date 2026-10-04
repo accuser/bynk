@@ -476,7 +476,11 @@ pub fn analyse_project(roots: &Roots, overlay: &HashMap<PathBuf, String>) -> Pro
     //       (platform-lock) closes right after, below the loop, at the same
     //       relative point `run_checks` calls it (after its own per-unit
     //       checking, gated on a clean error sink so far). --
-    for (name, info) in &unit_info {
+    // #1702 review: `uses` targets first, so a generic callee's compared type
+    // parameters are known before an importer's calls are checked.
+    crate::checker::reset_compared_cache();
+    for name in project_model::uses_first_order(unit_info.keys(), &unit_uses) {
+        let info = &unit_info[name];
         let kind = info.kind;
         let indices = info.files.as_slice();
         let local_table = &info.table;

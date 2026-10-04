@@ -1,0 +1,23 @@
+---
+#1688: comparing generics on comparable types, and non-comparing generics on functions.
+---
+suite demo.gen
+
+case "a comparing generic on values" {
+  expect same(1, 1)
+  expect !same(1, 2)
+  expect same(Some(1), Some(1))
+  expect !same(Some(1), None)
+  expect twice([1, 2], [1, 2])
+}
+
+case "a recursive comparing generic" {
+  expect countdown("x", 3)
+}
+
+case "generics that never compare take functions" {
+  expect apply(inc, 1) == 2
+  expect applyPicked(true) == 11
+  expect applyPicked(false) == 9
+}
+

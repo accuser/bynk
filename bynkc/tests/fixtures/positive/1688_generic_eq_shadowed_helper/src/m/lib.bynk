@@ -1,0 +1,8 @@
+---
+#1702 review: `same` calls this unit's own `helper`, which never compares.
+---
+commons m.lib
+
+fn helper[T](a: T, b: T) -> Bool { true }
+
+fn same[T](a: T, b: T) -> Bool { helper(a, b) }

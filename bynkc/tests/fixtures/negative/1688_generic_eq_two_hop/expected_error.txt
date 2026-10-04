@@ -1,0 +1,2 @@
+bynk.types.not_comparable
+`same` compares values of its type parameter `T`

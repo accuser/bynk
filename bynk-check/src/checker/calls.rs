@@ -911,6 +911,24 @@ fn check_generic_call(
     if !ok {
         return None;
     }
+    // #1688: a type parameter the callee compares (`==` on it, directly or
+    // through another generic call) must be instantiated with an
+    // equality-supporting type.
+    let compared = match ctx.input.fns.get(&name.name) {
+        Some(decl) if std::ptr::eq(decl.as_ref(), fn_decl) => {
+            super::equality::compared_type_params(decl, ctx)
+        }
+        _ => Default::default(),
+    };
+    let params: Vec<(String, Option<Span>)> = fn_decl
+        .type_params
+        .iter()
+        .map(|tp| (tp.name.name.clone(), Some(tp.span)))
+        .collect();
+    if !super::equality::check_compared_args(&name.name, name.span, &params, &compared, &subst, ctx)
+    {
+        return None;
+    }
     // v0.39 (ADR 0072): when the user omitted the type arguments, show the
     // inferred ones as a `Type`-kind hint after the function name —
     // `identity` ⟨`[Int]`⟩ `(5)`. Declaration order; skipped if any var stayed
@@ -2941,6 +2959,31 @@ fn check_generic_method_call(
         }
     }
     if !ok {
+        return None;
+    }
+    // #1702 review: the same call-site bound as a generic function's, over the
+    // receiver type's parameters and the method's own.
+    let decl = ctx.input.methods.get(type_name).and_then(|t| {
+        t.instance
+            .get(&method.name)
+            .or_else(|| t.statics.get(&method.name))
+            .cloned()
+    });
+    let compared = match &decl {
+        Some(decl) if std::ptr::eq(decl.as_ref(), method_decl) => {
+            super::equality::compared_type_params(decl, ctx)
+        }
+        _ => Default::default(),
+    };
+    let mut params: Vec<(String, Option<Span>)> = method_decl
+        .type_params
+        .iter()
+        .map(|tp| (tp.name.name.clone(), Some(tp.span)))
+        .collect();
+    params.extend(recv_type_params.iter().map(|p| (p.clone(), None)));
+    let callee = format!("{type_name}.{}", method.name);
+    if !super::equality::check_compared_args(&callee, method.span, &params, &compared, &subst, ctx)
+    {
         return None;
     }
     // v0.39 (ADR 0072)-style hint: show the inferred method type arguments after

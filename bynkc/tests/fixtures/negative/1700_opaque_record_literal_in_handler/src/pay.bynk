@@ -1,0 +1,11 @@
+context pay
+
+exports opaque { Receipt }
+
+type Receipt = { amount: Int }
+
+service charge {
+  on call(amount: Int) -> Effect[Receipt] {
+    Effect.pure(Receipt { amount: amount })
+  }
+}

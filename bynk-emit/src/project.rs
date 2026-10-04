@@ -1693,7 +1693,11 @@ fn run_checks(
     // inside the per-file emit prologue).
     let history_target_agents = collect_history_target_agents(&parsed);
 
-    for (name, info) in &unit_info {
+    // #1702 review: `uses` targets first, so a generic callee's compared type
+    // parameters are known before an importer's calls are checked.
+    bynk_check::checker::reset_compared_cache();
+    for name in bynk_check::project_model::uses_first_order(unit_info.keys(), &unit_uses) {
+        let info = &unit_info[name];
         let kind = info.kind;
         let indices = info.files.as_slice();
         let local_table = &info.table;

@@ -276,8 +276,9 @@ A context's `exports` clause controls what the boundary reveals: an
 `exports transparent` type shares its structure with consumers — including
 field-level construction — whereas an `exports opaque` type exposes only an
 opaque handle — inspecting it from outside the owning context is rejected
-(`bynk.context.opaque_inspection`), as is constructing a context-owned type from
-outside (`bynk.context.external_construction`).
+(`bynk.context.opaque_inspection`), as is building a context-owned type through
+its constructors (`.of`, `.unsafe`, a variant), or an opaque one with record
+syntax, from outside (`bynk.context.external_construction`).
 
 **An adapter's binding is a privileged constructor of its boundary types.** The
 binding is host code: it sits outside Bynk's static semantics, and only the

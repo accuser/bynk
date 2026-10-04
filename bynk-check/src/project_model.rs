@@ -1041,6 +1041,46 @@ pub fn phase_symbol_tables(
 /// Phase 5: resolve each unit's `uses` clauses, checking the target exists, is
 /// a commons, and is not self-referential. Returns unit → deduplicated list of
 /// used commons; diagnostics go into `errors`.
+/// #1702 review: the order to check units in — every `uses` target before the
+/// units that use it, ties broken by name, so the order stays a function of
+/// the source alone (`deterministic_diagnostic_order_behaviour`). A generic
+/// function's compared type parameters (#1688) are computed while its own unit
+/// is checked, in that unit's environment, so an importer must come after.
+/// Units on a `uses` cycle (already an error) are appended in name order.
+pub fn uses_first_order<'a, I>(
+    names: I,
+    unit_uses: &HashMap<String, Vec<String>>,
+) -> Vec<&'a String>
+where
+    I: IntoIterator<Item = &'a String>,
+{
+    let names: BTreeSet<&String> = names.into_iter().collect();
+    let mut placed: HashSet<&String> = HashSet::new();
+    let mut order = Vec::with_capacity(names.len());
+    loop {
+        let ready: Vec<&String> = names
+            .iter()
+            .copied()
+            .filter(|n| !placed.contains(n))
+            .filter(|n| {
+                unit_uses.get(*n).is_none_or(|deps| {
+                    deps.iter()
+                        .all(|d| !names.contains(d) || placed.iter().any(|p| *p == d))
+                })
+            })
+            .collect();
+        if ready.is_empty() {
+            break;
+        }
+        for n in ready {
+            placed.insert(n);
+            order.push(n);
+        }
+    }
+    order.extend(names.iter().copied().filter(|n| !placed.contains(n)));
+    order
+}
+
 pub fn phase_resolve_uses(
     groups: &BTreeMap<String, Vec<usize>>,
     kinds: &BTreeMap<String, UnitKind>,

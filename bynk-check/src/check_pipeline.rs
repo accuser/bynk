@@ -29,7 +29,9 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::checker::{self, TypedCommons, Types};
-use crate::context_checks::{check_context_constraints, check_context_declarations};
+use crate::context_checks::{
+    check_context_constraints, check_context_declarations, check_handler_constraints,
+};
 use crate::expr_types::ExprTypeSink;
 use crate::hints::HintSink;
 use crate::index::RefSink;
@@ -426,6 +428,22 @@ pub fn check_file_core(
                 return None;
             }
             // Warnings only: the declarations are valid — fall through.
+        }
+    }
+
+    // #1700: the context constraints again, over the handler and provider
+    // bodies `check_context_declarations` has just typed.
+    if kind == UnitKind::Context {
+        let handler_errs = check_handler_constraints(&typed, consumed_types, local_names, tys);
+        if !handler_errs.is_empty() {
+            errors.extend_for(Some(&pf.identity_path()), handler_errs);
+            record_analyse_types(
+                exprs,
+                &pf.identity_path(),
+                pf.is_synthetic(),
+                &typed.expr_types,
+            );
+            return None;
         }
     }
 

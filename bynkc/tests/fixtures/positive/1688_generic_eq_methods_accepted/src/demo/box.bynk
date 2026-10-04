@@ -1,0 +1,25 @@
+---
+#1702 review: a method that compares its receiver's type parameter accepts an
+equality-supporting receiver, and one that does not compare it accepts a
+function. (Compile-only: a suite cannot yet target a unit that declares a
+generic type, #1703.)
+---
+commons demo.box
+
+type Box[A] = { value: A }
+
+fn Box.has(self, x: A) -> Bool { self.value == x }
+
+fn Box.apply(self, n: Int) -> Int { 0 }
+
+fn hasThree(n: Int) -> Bool {
+  let b = Box { value: 3 }
+  b.has(n)
+}
+
+fn inc(n: Int) -> Int { n + 1 }
+
+fn boxedFnApplied(f: (Int) -> Int) -> Int {
+  let b = Box { value: f }
+  b.apply(1)
+}

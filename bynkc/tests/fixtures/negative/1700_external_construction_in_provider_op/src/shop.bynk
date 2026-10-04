@@ -1,0 +1,21 @@
+context shop
+
+consumes pay
+
+capability Pricing {
+  fn floor() -> Effect[Int]
+}
+
+-- #1700: a provider operation constructs a type owned by `pay`.
+provides Pricing = FixedPricing {
+  fn floor() -> Effect[Int] {
+    let a = Amount.of(5)
+    Effect.pure(1)
+  }
+}
+
+service probe {
+  on call() -> Effect[Int] given Pricing {
+    Pricing.floor()
+  }
+}
