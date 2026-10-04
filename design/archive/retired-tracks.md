@@ -1191,3 +1191,109 @@ imposed; entries keep the order they were retired in.
   [#1537](https://github.com/accuser/bynk/issues/1537) — is the same question on different evidence
   and is not decided here. Two ADRs carry the decisions: ADR 0418 (Slice 1) and the retirement ADR this
   slice adds, superseding `the-ir.md`'s Q7 and ADR 0338.
+
+- **`runtime-semantics.md`** — spine [#1648](https://github.com/accuser/bynk/issues/1648), opened from the
+  [2026-10-01 language-implementation review](../reviews/2026-10-01-language-implementation-review.md)
+  ([#1647](https://github.com/accuser/bynk/pull/1647)). The review found that the gates certified "the
+  output type-checks and matches its golden", not "the program behaves as the spec says". Goldens had
+  blessed an agent-state reload fault for months. The track's theme was that emitted programs do what the
+  spec says, and that the gates check it. Settled 1 October 2026
+  ([#1681](https://github.com/accuser/bynk/pull/1681), v0.290.1); every slice shipped by 4 October
+  (v0.290.2–v0.302.0).
+
+  **The four settled questions, each with its ADR.**
+  - **`==` is structural**, and defined only on equality-supporting types (S3,
+    [#1652](https://github.com/accuser/bynk/issues/1652), ADR 0421). It shipped with or before the
+    state-shape slice, as §3.1 required: once state decodes into fresh objects, a reference `==` made an
+    invariant like `status == Paid implies …` silently never fire.
+  - **Agent state is stored in the wire shape** and decoded on load, with no tolerant loader (S0,
+    [#1649](https://github.com/accuser/bynk/issues/1649), the track's P0, ADR 0422). Both S3 and S0 shipped
+    in [#1687](https://github.com/accuser/bynk/pull/1687), v0.291.0.
+  - **`Matches` patterns are admitted by an automaton ambiguity check** (S2,
+    [#1651](https://github.com/accuser/bynk/issues/1651), ADR 0423), with `String.replace` inserting
+    literally (S1, [#1650](https://github.com/accuser/bynk/issues/1650)). Both shipped in
+    [#1689](https://github.com/accuser/bynk/pull/1689), v0.292.0.
+  - **`Int` is the JS safe-integer domain**, enforced at every entry (S8,
+    [#1657](https://github.com/accuser/bynk/issues/1657), ADR 0425,
+    [#1693](https://github.com/accuser/bynk/pull/1693), v0.295.0).
+
+  **The other correctness slices.**
+  - **S4** identifier hygiene ([#1653](https://github.com/accuser/bynk/issues/1653), ADR 0428) and **S7**
+    unreachable match arms ([#1656](https://github.com/accuser/bynk/issues/1656), ADR 0429), both in
+    [#1698](https://github.com/accuser/bynk/pull/1698), v0.299.0.
+  - **S5** `is` bindings across `&&` and a negated `else`
+    ([#1654](https://github.com/accuser/bynk/issues/1654), ADR 0427) and **S6** tsc-clean workers builds
+    ([#1655](https://github.com/accuser/bynk/issues/1655)), both in
+    [#1695](https://github.com/accuser/bynk/pull/1695), v0.297.0.
+  - **S9** an unbound `Effect` is an error ([#1658](https://github.com/accuser/bynk/issues/1658),
+    ADR 0426), in [#1694](https://github.com/accuser/bynk/pull/1694), v0.296.0.
+  - **S10** inference and suite-diagnostic locations
+    ([#1659](https://github.com/accuser/bynk/issues/1659)), in
+    [#1696](https://github.com/accuser/bynk/pull/1696), v0.298.0.
+  - Found while settling:
+    - **S11** workers agent calls use the boundary codec
+      ([#1678](https://github.com/accuser/bynk/issues/1678), ADR 0424,
+      [#1692](https://github.com/accuser/bynk/pull/1692), v0.294.0);
+    - **S12** handler signature types must resolve
+      ([#1679](https://github.com/accuser/bynk/issues/1679), #1694);
+    - **S13** store keys must be keyable ([#1680](https://github.com/accuser/bynk/issues/1680), #1696).
+  - Found in review:
+    - **S14** store collection keys are own properties
+      ([#1685](https://github.com/accuser/bynk/issues/1685),
+      [#1690](https://github.com/accuser/bynk/pull/1690), v0.293.0);
+    - **S15** a generic function's comparisons bound its callers' type arguments
+      ([#1688](https://github.com/accuser/bynk/issues/1688), ADR 0430), with
+      [#1700](https://github.com/accuser/bynk/issues/1700), visibility rules holding in handler bodies.
+      Both shipped in [#1702](https://github.com/accuser/bynk/pull/1702), v0.300.0.
+  - **#291** platform capabilities under `bynkc test`, re-scoped onto the track
+    ([#291](https://github.com/accuser/bynk/issues/291), ADR 0431,
+    [#1705](https://github.com/accuser/bynk/pull/1705), v0.301.0):
+    - deterministic doubles;
+    - per-operation `stub`;
+    - case-scoped stubs that no longer leak;
+    - every example's suite run in CI.
+
+    Its follow-on was a context's optional brand on a `uses`-commons type
+    ([#1704](https://github.com/accuser/bynk/issues/1704), ADR 0432,
+    [#1707](https://github.com/accuser/bynk/pull/1707), v0.301.1).
+
+  **The gates.**
+  - **G0** behavioural fixtures ([#1660](https://github.com/accuser/bynk/issues/1660),
+    [#1683](https://github.com/accuser/bynk/pull/1683), v0.290.2). A positive fixture's `expected_run.txt`
+    runs its suites through the real `bynkc test`, strictly in both directions. `InMemoryStorage` now
+    clones, so `bynkc test` observes storage as workerd does. Each later slice added its runtime proof
+    there. The baseline fixture's expected failures were deleted one slice at a time, reaching
+    `passed=10 failed=0` at #1690.
+  - **G1** the doc gate checks every `bynk` block ([#1661](https://github.com/accuser/bynk/issues/1661)),
+    and **G2** brought diagnostic coverage and registry drift under the gated `diagnostic_coverage`
+    probe, at a floor of 4 ([#1662](https://github.com/accuser/bynk/issues/1662)). Both shipped in
+    [#1701](https://github.com/accuser/bynk/pull/1701), v0.299.1.
+  - **G3** diagnostic recovery ([#1663](https://github.com/accuser/bynk/issues/1663), ADR 0433,
+    [#1709](https://github.com/accuser/bynk/pull/1709), v0.302.0):
+    - per-declaration resolve-then-check;
+    - a skipped declaration's name still known;
+    - error-typed bindings for failed patterns and `let`s;
+    - every syntax error reported by the CLI;
+    - an exact-set mode for negative fixtures, so "no spurious diagnostics" is now checkable.
+
+  **Done-when, met.**
+  - Every §4 slice landed.
+  - The four §5 ADRs are written (0421, 0422, 0423, 0425).
+  - `behaviour_fixtures.rs` runs in CI under `BYNK_REQUIRE_TSC`.
+  - `InMemoryStorage` clones.
+
+  **Follow-ons, named rather than left implicit; all stay open:**
+  - [#1697](https://github.com/accuser/bynk/issues/1697): emitted names derived from user names (S4);
+  - [#1691](https://github.com/accuser/bynk/issues/1691): held-map coverage (S14);
+  - [#1686](https://github.com/accuser/bynk/issues/1686): leaked workerd processes;
+  - [#1703](https://github.com/accuser/bynk/issues/1703): a suite whose target uses a generic type fails
+    `tsc`;
+  - [#1706](https://github.com/accuser/bynk/issues/1706): a stub `fails` throws where the docs promise
+    an `Err`. This one needs a language decision;
+  - [#1708](https://github.com/accuser/bynk/issues/1708): `bynkc check` panics on a suite property body
+    with a type error, found by G3's mutation sweep;
+  - [#1710](https://github.com/accuser/bynk/issues/1710): partial-parse checking on the project path,
+    which G3 named as out of scope.
+
+  The 2026-10-01 review's other track, toolchain pins as gates
+  ([#1670](https://github.com/accuser/bynk/issues/1670)), is separate and unaffected. Retired 4 October 2026.

@@ -1,5 +1,6 @@
 //! Which types support `==`/`!=`. #1652 (runtime-semantics track #1648, slice
-//! S3; settled in `design/tracks/runtime-semantics.md` §3.1).
+//! S3; decided in ADR 0421, the track's summary in
+//! `design/archive/retired-tracks.md`).
 //!
 //! `==` is **structural**: two values are equal when they have the same shape and
 //! their parts compare equal, recursively (type-system §2.3.5). That only means

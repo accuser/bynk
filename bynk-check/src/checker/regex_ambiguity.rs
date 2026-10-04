@@ -1,6 +1,6 @@
 //! Which `Matches` patterns can backtrack catastrophically. #1651
-//! (runtime-semantics track #1648, slice S2; settled in
-//! `design/tracks/runtime-semantics.md` §3.3).
+//! (runtime-semantics track #1648, slice S2; decided in ADR 0423, the track's
+//! summary in `design/archive/retired-tracks.md`).
 //!
 //! A refined `String`'s boundary check runs its pattern under the JS `RegExp`
 //! engine, a backtracker, on request input. A backtracker's running time is

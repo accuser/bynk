@@ -78,7 +78,6 @@ each track's spine issue; this table is deliberately just the map.
 |---|---|---|---|
 | [`documentation.md`](documentation.md) | [#557](https://github.com/accuser/bynk/issues/557) | Slicing (slice 0 shipped) | Documentation & web presence: the Astro + Starlight migration, a CI snippet-verification harness, playground integration seams |
 | [`idempotency-capability.md`](idempotency-capability.md) | [#921](https://github.com/accuser/bynk/issues/921) | Slicing (slice 0 shipped, #929; call-site key scoping follow-up shipped, #934) | The `Idempotency` capability: mechanical dedup for at-least-once delivery, per design notes §4, §12 |
-| [`runtime-semantics.md`](runtime-semantics.md) | [#1648](https://github.com/accuser/bynk/issues/1648) | Slicing (settled by #1681; no slice accepted yet) | Emitted programs do what the spec says: structural `==`, agent state stored in the wire shape, regex admissibility, the `Int` domain, and behavioural fixtures that assert runtime results. Opened from the [2026-10-01 review](../reviews/2026-10-01-language-implementation-review.md) |
 | [`post-trajectory-crate-hygiene.md`](post-trajectory-crate-hygiene.md) | [#1533](https://github.com/accuser/bynk/issues/1533) | Settling | READMEs, crate-local unit tests, comment rewrite, and module decomposition left open after the compiler-trajectory's eight phases closed — internal-architecture theme, not language surface, continuing the posture `compiler-architecture.md`/`crate-decomposition.md`/`content-ownership.md` took |
 
 (`documentation.md` pre-dates the GitHub-native flow, so its doc was
@@ -222,6 +221,12 @@ A retired track's closing summary — what shipped, which ADRs carry its
 decisions, the named follow-ons — is kept for the record in
 [`../archive/retired-tracks.md`](../archive/retired-tracks.md):
 
+- **`runtime-semantics.md`** — spine [#1648](https://github.com/accuser/bynk/issues/1648), opened
+  from the [2026-10-01 review](../reviews/2026-10-01-language-implementation-review.md): emitted
+  programs do what the spec says, and the gates check it. Sixteen correctness slices (S0–S15), #291, and four
+  gates shipped (v0.290.2–v0.302.0; ADRs 0421–0433). The headline changes were structural `==`, agent
+  state in the wire shape, regex admissibility, the safe-integer `Int`, behavioural fixtures that run a
+  fixture's suites, and diagnostic recovery. Retired 4 October 2026.
 - **`the-ir-cutover.md`** — the follow-on to phase 6 of
   [`../bynk-compiler-trajectory.md`](../bynk-compiler-trajectory.md), spine
   [#1542](https://github.com/accuser/bynk/issues/1542): opened to wire `bynk-lower`'s unconsumed

@@ -10,7 +10,8 @@ disagreed:
 - `Int.parse` ran `trim()` then `Number()`, so `"0x10"`, `"1e3"` and `" 7 "` all
   parsed, contradicting the spec's "full-string" rule.
 
-Settling (`design/tracks/runtime-semantics.md` §3.4) found the type unsound, not
+Settling (the runtime-semantics track's §3.4, now retired; see
+`design/archive/retired-tracks.md`) found the type unsound, not
 only imprecise:
 - `5 / 0` produced `Infinity` as an `Int`, which `Json.encode` wrote as `null`
   and the consumer then rejected;

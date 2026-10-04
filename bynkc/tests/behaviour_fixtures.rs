@@ -1,6 +1,6 @@
 //! Behavioural fixtures: positive fixtures whose `suite`s are **run**, not just
-//! type-checked. #1660 (runtime-semantics track, slice G0; design in
-//! `design/tracks/runtime-semantics.md` §3.5).
+//! type-checked. #1660 (runtime-semantics track, slice G0; the track is retired,
+//! its summary in `design/archive/retired-tracks.md`).
 //!
 //! The other positive-fixture gates certify two things about a program. Its
 //! emitted TypeScript matches a blessed golden (`e2e.rs`), and it passes
