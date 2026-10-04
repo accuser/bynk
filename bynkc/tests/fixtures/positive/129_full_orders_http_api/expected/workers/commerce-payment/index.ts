@@ -21,7 +21,7 @@ export default {
             const args = await request.json() as __JsonValue;
             const __r_amount = handlers.__deserialise_Money(args, "$");
             if (__r_amount.tag === "Err") return new globalThis.Response(globalThis.JSON.stringify(__r_amount.error), { status: 400, headers: { "content-type": "application/json" } });
-            const amount = __r_amount.value as unknown as handlers.Money;
+            const amount = __r_amount.value;
             const result = await surface.authorise(amount);
             const body = handlers.__serialise_Result_AuthId_PaymentError(result);
             return new globalThis.Response(globalThis.JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });

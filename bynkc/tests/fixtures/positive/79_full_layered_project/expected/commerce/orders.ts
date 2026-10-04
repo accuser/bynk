@@ -8,12 +8,12 @@ import { Money as __CommonsMoney } from "./money.js";
 
 export type CustomerId = __CommonsCustomerId & { readonly __ctxBrand?: "commerce.orders" };
 export const CustomerId = {
-  of(value: string): Result<CustomerId, ValidationError> { return __CommonsCustomerId.of(value) as unknown as Result<CustomerId, ValidationError>; },
+  of(value: string): Result<CustomerId, ValidationError> { return __CommonsCustomerId.of(value); },
 };
 export type Money = __CommonsMoney & { readonly __ctxBrand?: "commerce.orders" };
 export type OrderId = __CommonsOrderId & { readonly __ctxBrand?: "commerce.orders" };
 export const OrderId = {
-  of(value: string): Result<OrderId, ValidationError> { return __CommonsOrderId.of(value) as unknown as Result<OrderId, ValidationError>; },
+  of(value: string): Result<OrderId, ValidationError> { return __CommonsOrderId.of(value); },
 };
 
 /**

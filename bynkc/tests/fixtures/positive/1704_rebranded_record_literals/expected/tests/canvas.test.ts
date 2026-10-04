@@ -60,7 +60,9 @@ async function test_a_nested_rebranded_record_crosses_the_state_boundary() {
     type Line = shapes.Line;
     type Point = shapes.Point;
     const w = await __makeBoard("t").draw({ start: { x: 1, y: 0 }, end: { x: 4, y: 0 } }, deps);
-    if (!(w === 3)) { throw __bynkExpectFailure("tests/canvas.bynk:10:10", 300, 306, "expect w == 3\n  expected: w == 3\n  actual:   " + __bynkShow((w)) + " == " + __bynkShow((3))); }
+    const w2 = await __makeBoard("t").draw({ start: { x: 2, y: 0 }, end: { x: 7, y: 0 } }, deps);
+    if (!(w === 3)) { throw __bynkExpectFailure("tests/canvas.bynk:13:10", 549, 555, "expect w == 3\n  expected: w == 3\n  actual:   " + __bynkShow((w)) + " == " + __bynkShow((3))); }
+    if (!(w2 === 5)) { throw __bynkExpectFailure("tests/canvas.bynk:14:10", 565, 572, "expect w2 == 5\n  expected: w2 == 5\n  actual:   " + __bynkShow((w2)) + " == " + __bynkShow((5))); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -80,7 +82,7 @@ async function test_a_context_builds_them_with_literals__a_spread_and_a_commons_
     type Line = shapes.Line;
     type Point = shapes.Point;
     const w = await api.call(deps);
-    if (!(__bynkEq(w, 8))) { throw __bynkExpectFailure("tests/canvas.bynk:15:10", 413, 419, "expect w == 8\n  expected: w == 8\n  actual:   " + __bynkShow((w)) + " == " + __bynkShow((8))); }
+    if (!(__bynkEq(w, 8))) { throw __bynkExpectFailure("tests/canvas.bynk:19:10", 679, 685, "expect w == 8\n  expected: w == 8\n  actual:   " + __bynkShow((w)) + " == " + __bynkShow((8))); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {

@@ -1771,11 +1771,9 @@ fn emit_context_rebrands(
                 commons.types.get(name).map(|d| &d.body),
                 Some(TypeBody::Opaque { .. })
             );
-            // `X.of(value) as unknown as Result<Name, ValidationError>` — a
-            // real nested `TsExpr::As`, the same shape `emit_forwarded_
-            // methods` (immediately below) already proves renders correctly
-            // with no extra parens: the `As` arm's own inner-expr check
-            // only guards `Binary`/`Arrow`/`Conditional`, not a nested `As`.
+            // #1704: `return __CommonsX.of(value);` with no cast — the
+            // commons result is unbranded, which fits the context's
+            // optionally-branded `Result<X, ValidationError>` directly.
             let of_entry = bynk_ts::TsObjectEntry::Method {
                 name: "of".to_string(),
                 is_async: false,
@@ -1795,26 +1793,12 @@ fn emit_context_rebrands(
                 doc: None,
                 inline: true,
                 body: vec![bynk_ts::TsStmt::return_stmt(
-                    Some(bynk_ts::TsExpr::As {
-                        expr: Box::new(bynk_ts::TsExpr::As {
-                            expr: Box::new(bynk_ts::TsExpr::Call {
-                                callee: Box::new(bynk_ts::TsExpr::Member {
-                                    object: Box::new(bynk_ts::TsExpr::Ident(format!(
-                                        "__Commons{name}"
-                                    ))),
-                                    property: "of".to_string(),
-                                }),
-                                args: vec![bynk_ts::TsExpr::Ident("value".to_string())],
-                            }),
-                            ty: bynk_ts::TsType::named("unknown"),
+                    Some(bynk_ts::TsExpr::Call {
+                        callee: Box::new(bynk_ts::TsExpr::Member {
+                            object: Box::new(bynk_ts::TsExpr::Ident(format!("__Commons{name}"))),
+                            property: "of".to_string(),
                         }),
-                        ty: bynk_ts::TsType::named_with_args(
-                            "Result",
-                            vec![
-                                bynk_ts::TsType::named(name.clone()),
-                                bynk_ts::TsType::named("ValidationError"),
-                            ],
-                        ),
+                        args: vec![bynk_ts::TsExpr::Ident("value".to_string())],
                     }),
                     None,
                 )],
@@ -1837,20 +1821,14 @@ fn emit_context_rebrands(
                     doc: None,
                     inline: true,
                     body: vec![bynk_ts::TsStmt::return_stmt(
-                        Some(bynk_ts::TsExpr::As {
-                            expr: Box::new(bynk_ts::TsExpr::As {
-                                expr: Box::new(bynk_ts::TsExpr::Call {
-                                    callee: Box::new(bynk_ts::TsExpr::Member {
-                                        object: Box::new(bynk_ts::TsExpr::Ident(format!(
-                                            "__Commons{name}"
-                                        ))),
-                                        property: "unsafe".to_string(),
-                                    }),
-                                    args: vec![bynk_ts::TsExpr::Ident("value".to_string())],
-                                }),
-                                ty: bynk_ts::TsType::named("unknown"),
+                        Some(bynk_ts::TsExpr::Call {
+                            callee: Box::new(bynk_ts::TsExpr::Member {
+                                object: Box::new(bynk_ts::TsExpr::Ident(format!(
+                                    "__Commons{name}"
+                                ))),
+                                property: "unsafe".to_string(),
                             }),
-                            ty: bynk_ts::TsType::named(name.clone()),
+                            args: vec![bynk_ts::TsExpr::Ident("value".to_string())],
                         }),
                         None,
                     )],

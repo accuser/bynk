@@ -5,7 +5,7 @@ changelog: A record literal of a `uses`-commons type built in a context, or in a
 
 ## ADR: optional-context-brand
 title: A context's rebrand of a `uses`-commons type carries an optional brand
-summary: `T = __CommonsT & { readonly __ctxBrand?: "<ctx>" }` admits plain commons values and still keeps two contexts' views apart; supersedes #527's call-site casts
+summary: `T = __CommonsT & { readonly __ctxBrand?: "<ctx>" }` admits plain commons values and still keeps two contexts' views apart; supersedes the casts that bridged the required brand
 
 **Context.** A context that `uses` a commons rebrands each of its types
 (#527, v0.4 §6.2):
@@ -39,9 +39,17 @@ export type Event = __CommonsEvent & { readonly __ctxBrand?: "events" };
   for still holds.
 - A context's value is still assignable to the commons type.
 
-#527's call-site casts on commons function results are removed
-(`set_rebrand_info`, `rebranded_types`, `commons_imported_fns`). The optional
-brand makes them unnecessary.
+Every cast that existed only to bridge the required brand is removed, since
+each now bridges nothing:
+- #527's call-site casts on commons function results (`set_rebrand_info`,
+  `rebranded_types`, `commons_imported_fns`);
+- the workers entry's `brand_assertion` (`__r.value as unknown as
+  handlers.T`) at its five codec-to-handler sites. A commons codec's unbranded
+  result now fits the handler's branded parameter directly, so a codec whose
+  return type drifts from the handler's parameter fails `tsc` again, which is
+  the check that assertion's own doc said it must not disarm;
+- the rebrand's value-side forwarders (`of`, `unsafe`, attached methods), which
+  returned `__CommonsT.op(…) as unknown as R` and now return the call.
 
 **Alternatives.** Casting every record literal into the brand was tried
 first. A plain `as T` is rejected by `tsc` for a nested literal (neither side
@@ -53,15 +61,17 @@ them at the type.
 
 **Consequences.**
 - Emitted output changes only in the brand member's `?` and the removed
-  `as T` casts.
+  casts.
 - Constructing a *sum* variant of a `uses`-commons type in a context is still
   `bynk.context.rebrand_construction`: the rebrand exports no value-side
   constructors. Its registry text now says "sum", not "record or sum".
 
 Proved by:
 - the behavioural fixture `1704_rebranded_record_literals`, which covers a
-  literal in a test body, a nested literal crossing an agent's state boundary,
-  and a context building literals, a spread and a commons function's result;
+  literal in a test body, a nested literal crossing an agent's state boundary
+  in both directions (a second call reloads it through the nested
+  deserialisers), and a context building literals, a spread and a commons
+  function's result;
 - the compile-only fixture `1704_rebranded_generic_record_literal` (a generic
   `Page[T]` built with record syntax);
 - `tsc_verify`'s `context_brands_admit_commons_values_and_reject_other_contexts`,

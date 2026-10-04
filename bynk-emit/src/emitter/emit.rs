@@ -745,16 +745,9 @@ pub(crate) fn emit_forwarded_methods(
             }),
             args,
         };
-        let body = vec![bynk_ts::TsStmt::return_stmt(
-            Some(bynk_ts::TsExpr::As {
-                expr: Box::new(bynk_ts::TsExpr::As {
-                    expr: Box::new(call),
-                    ty: bynk_ts::TsType::named("unknown"),
-                }),
-                ty: bynk_ts::TsType::named(ret.clone()),
-            }),
-            None,
-        )];
+        // #1704: no cast. The commons method speaks the unbranded types,
+        // which fit the context's optionally-branded ones directly.
+        let body = vec![bynk_ts::TsStmt::return_stmt(Some(call), None)];
         let entry = bynk_ts::TsObjectEntry::Method {
             name: f.name.clone(),
             is_async: false,

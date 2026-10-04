@@ -643,8 +643,10 @@ it.
 **R4.10 — The context brand is a property carried in the IR from the checker, not a decoration
 invented at emission.**
 *Rationale:* `__ctxBrand` exists only in the emitter today — `emit_context_rebrands` writes
-`export type {name} = __Commons{name} & { readonly __ctxBrand: "{owning}" }` so two contexts that
-both `uses` the same commons type see nominally distinct TS types. The checker mirrors the predicate
+`export type {name} = __Commons{name} & { readonly __ctxBrand?: "{owning}" }` so two contexts that
+both `uses` the same commons type see nominally distinct TS types. The brand is optional (#1704), so
+an unbranded commons value fits either context's type while a value branded by one context does not
+fit the other's. The checker mirrors the predicate
 separately, through `ResolvedCommons::is_uses_commons_type`, whose doc says it mirrors
 `emit_context_rebrands`'s predicate *exactly* — a P2 violation with the mirror stated in prose. The
 cost when they disagree is a `tsc` failure in generated code the author never wrote, which is exactly
@@ -1345,14 +1347,18 @@ This is a property of the base, so it belongs in the generated check, not in a p
 for refined or opaque bases, value-side forwarders.**
 
 ```ts
-export type Cents = __CommonsCents & { readonly __ctxBrand: "billing" };
+export type Cents = __CommonsCents & { readonly __ctxBrand?: "billing" };
 export const Cents = {
-  of(value: number): Result<Cents, ValidationError> {
-    return __CommonsCents.of(value) as unknown as Result<Cents, ValidationError>; },
+  of(value: number): Result<Cents, ValidationError> { return __CommonsCents.of(value); },
 };
 ```
 
-*Rationale:* two rules the shipped emitter learned the hard way and that a reference must state.
+*Rationale:* three rules the shipped emitter learned the hard way and that a reference must state.
+**The brand is optional** (#1704): every unbranded commons value (a record literal, a nested field
+typed by the commons, a commons function's result, a commons codec's result) then fits the
+context's type with no cast, while a value carrying another context's brand still does not. A
+required brand made each of those a `tsc` failure that `bynkc check` accepted, patched one call
+site at a time.
 **Only types are rebranded** — "a `uses`-imported function is a value and imports plainly". And the
 generic parameters must be threaded (`Paginated<T> = __CommonsPaginated<T> & …`), because otherwise
 every `Paginated<User>` reference errors "type is not generic" (#592). Without the value-side

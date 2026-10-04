@@ -656,7 +656,6 @@ pub(crate) fn emit_worker_compose(
                                 method,
                                 &path,
                                 &members,
-                                &table.types,
                                 &runtime_use,
                             ));
                         }
@@ -1847,7 +1846,6 @@ fn emit_http_sum_wrapper(
     method: bynk_ir::IrHttpMethod,
     path: &str,
     members: &[bynk_check::actors::SumMember],
-    local_types: &std::collections::HashMap<String, std::sync::Arc<bynk_syntax::ast::TypeDecl>>,
     runtime_use: &RuntimeUse,
 ) -> TsObjectEntry {
     use bynk_check::actors::SumMemberSeam;
@@ -2076,9 +2074,9 @@ fn emit_http_sum_wrapper(
         ));
         // #1321: `super::workers_entry::deserialise_call` delegates to
         // `serialisation::deserialise_expr_via` (#1435, Arc E slice 1: a
-        // real `bynk_ts::TsExpr` now, not opaque text) — `brand_assertion`
-        // is the still-`String`-returning sibling this file's own
-        // `claim_predicate_to_js` situation names.
+        // real `bynk_ts::TsExpr` now, not opaque text). Its result feeds the
+        // handler directly: since #1704 a `uses`-commons codec's unbranded
+        // result fits the context's optionally-branded parameter type.
         let dser = super::workers_entry::deserialise_call(
             &body_param.type_ref,
             "__body_json",
@@ -2093,8 +2091,7 @@ fn emit_http_sum_wrapper(
                 vec![str_lit("Invalid request body")],
             ))),
         ));
-        let brand = super::workers_entry::brand_assertion(&body_param.type_ref, local_types);
-        stmts.push(const_("body", ident(format!("__r_body.value{brand}"))));
+        stmts.push(const_("body", member(ident("__r_body"), "value")));
         call_args.push(ident("body"));
     }
     call_args.push(deps_spread_with("who", ident("__who")));
