@@ -293,9 +293,14 @@ fresh for each case:
 | `Locale` | `current()` is `"en"` |
 | `Logger` | records, prints nothing |
 | `Events` | records, delivers nothing |
-| `Idempotency` | in memory |
-| `Kv` | in memory |
+| `Idempotency` | in memory; `remember`'s `expiresAfter` is accepted and ignored |
+| `Kv` | in memory; `putTtl`'s TTL is accepted and ignored |
 | `Fetch` | `send(_)` **faults**: a test never reaches the network |
+
+Expiry is not modelled: a value written with a TTL stays readable for the whole
+case, so a test of TTL expiry on `Kv` or `Idempotency` stubs the read instead
+(`stub Kv.get(_) returns each [Some(v), None]`). An agent `Cache` store's
+`@ttl` does consult the `Clock`, so stubbing `Clock.now` drives its expiry.
 
 A case reads a different answer with an ordinary [`stub`](#stub), which
 overrides just the operations it names. Every other operation keeps the double:

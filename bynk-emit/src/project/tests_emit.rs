@@ -3078,10 +3078,12 @@ function __bynkOverlay(base: unknown, stub: object, cap: string): unknown {
 /// definition of a `__bynkTest_<Cap>()` factory — or `None` for a capability
 /// with no double (a user adapter's). Each double is the same on every run and
 /// does no I/O: `Logger` and `Events` do nothing (observation records the
-/// calls), `Clock` reads `0`, `Random` counts its UUIDs and draws integers from a fixed-seed generator, `Secrets` has none, `Locale` is
-/// `"en"`, `Idempotency` and `Kv` are in-memory, and `Fetch` faults — a test
-/// never reaches the network, so it must `stub Fetch.send`. `makeTestDeps`
-/// builds fresh ones per case.
+/// calls), `Clock` reads `0`, `Random` counts its UUIDs and draws integers
+/// from a fixed-seed generator, `Secrets` has none, `Locale` is `"en"`,
+/// `Idempotency` and `Kv` are in-memory (a TTL or `expiresAfter` is accepted
+/// and ignored: expiry is not modelled), and `Fetch` faults — a test never
+/// reaches the network, so it must `stub Fetch.send`. `makeTestDeps` builds
+/// fresh ones per case.
 fn platform_double(owner: &str, cap: &str, ns: &str) -> Option<String> {
     let body = match (owner, cap) {
         ("bynk", "Logger") => "  return {\n    async info() {},\n    async error() {},\n  };\n".to_string(),

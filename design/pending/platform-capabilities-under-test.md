@@ -26,7 +26,10 @@ siblings, contradicting the documented "case-scoped: overrides for this case".
      linear congruential generator in `[lo, hi)`, matching the production range;
    - `Secrets.get` is `None`, and `Locale.current` is `"en"`;
    - `Logger` and `Events` do nothing;
-   - `Idempotency` and `Kv` are in memory.
+   - `Idempotency` and `Kv` are in memory. A TTL (`Kv.putTtl`) or
+     `expiresAfter` (`Idempotency.remember`) is accepted and ignored: modelling
+     expiry would tie these doubles to the `Clock` double. A test of expiry
+     stubs the read instead.
 
    `Fetch.send` **faults**, with a message naming the missing stub: a test never
    reaches the network, so a handler that fetches must say what the upstream
@@ -66,6 +69,9 @@ Proved by:
   observation on a platform seam, a partial stub falling through, case
   isolation, a stubbed `Fetch`, the unstubbed `Fetch` fault, and the integration
   tier;
+- the behavioural fixture `291_stub_precedence`, which pins case `stub` >
+  suite `stub` > the double on the same operation, and that a suite stub
+  answers again in the case after a case-scoped override;
 - the example suites, now run by `bynkc/tests/example_tests_behaviour.rs`
   (`sessions` stubs the clock to test expiry, and `webhook-relay` stubs
   `Secrets` and `Fetch`).

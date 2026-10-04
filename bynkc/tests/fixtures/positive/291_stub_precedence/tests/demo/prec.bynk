@@ -1,0 +1,22 @@
+suite demo.prec {
+  -- #291: case `stub` > suite `stub` > the tier default, per operation. The
+  -- suite stubs `Kv.get`; `Kv.put` stays the in-memory double throughout.
+  stub Kv.get(_) returns Some("suite")
+
+  case "a suite stub beats the double" {
+    let r <- store.call("a", "1")
+    expect r == Some("suite")
+    expect Kv.put called once
+  }
+
+  case "a case stub beats the suite stub" {
+    stub Kv.get(_) returns Some("case")
+    let r <- store.call("a", "1")
+    expect r == Some("case")
+  }
+
+  case "a later case sees the suite stub again" {
+    let r <- store.call("a", "1")
+    expect r == Some("suite")
+  }
+}

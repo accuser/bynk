@@ -1,5 +1,6 @@
 //! #291: `examples.rs` proves every example *builds*; this runs the `tests/`
-//! suites the examples ship, so a showcase test that stops passing fails CI.
+//! suite every example must ship, so a showcase test that stops passing (or a
+//! suite that goes missing) fails CI.
 //! Several of them (`sessions`, `event-log`, `webhook-relay`) drive handlers on
 //! platform capabilities, so they also pin the deterministic test doubles
 //! `bynkc test` provides for `bynk`'s `Clock`, `Secrets`, `Fetch` and `Logger`.
@@ -25,13 +26,14 @@ fn have_runner() -> bool {
     tool_exists("tsx") || (tool_exists("tsc") && tool_exists("node")) || tool_exists("npx")
 }
 
-/// Every example project with a `tests/` directory, sorted for a stable report.
-fn examples_with_tests() -> Vec<PathBuf> {
+/// Every example project (a directory with a `bynk.toml`), sorted for a stable
+/// report.
+fn example_projects() -> Vec<PathBuf> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples");
     let mut out: Vec<PathBuf> = std::fs::read_dir(&root)
         .expect("read examples")
         .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.join("bynk.toml").is_file() && p.join("tests").is_dir())
+        .filter(|p| p.join("bynk.toml").is_file())
         .collect();
     out.sort();
     out
@@ -56,10 +58,17 @@ fn every_example_test_suite_passes() {
         return;
     }
 
-    let examples = examples_with_tests();
+    // Every example ships a suite, so none can drop out of this gate unnoticed
+    // by losing or renaming its `tests/` directory.
+    let examples = example_projects();
+    assert!(!examples.is_empty(), "no example projects under examples/");
+    let untested: Vec<_> = examples
+        .iter()
+        .filter(|p| !p.join("tests").is_dir())
+        .collect();
     assert!(
-        examples.len() >= 3,
-        "expected the examples' test suites, found {examples:?}"
+        untested.is_empty(),
+        "every example project ships a `tests/` suite; these have none: {untested:?}"
     );
     let scratch = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("example-tests");
     let mut problems: Vec<String> = Vec::new();
