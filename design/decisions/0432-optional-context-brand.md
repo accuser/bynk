@@ -1,11 +1,6 @@
----
-level: patch
-changelog: A record literal of a `uses`-commons type built in a context, or in a test of one, now type-checks under `tsc`. So does a `uses`-commons record nested in another crossing a boundary. The context's brand on a rebranded type is now optional, so a plain commons value fits it while another context's brand is still rejected. `event-log` gains write-path tests (#1704)
----
+# 0432 — A context's rebrand of a `uses`-commons type carries an optional brand
 
-## ADR: optional-context-brand
-title: A context's rebrand of a `uses`-commons type carries an optional brand
-summary: `T = __CommonsT & { readonly __ctxBrand?: "<ctx>" }` admits plain commons values and still keeps two contexts' views apart; supersedes the casts that bridged the required brand
+- **Status:** Accepted (v0.301.1)
 
 **Context.** A context that `uses` a commons rebrands each of its types
 (#527, v0.4 §6.2):
