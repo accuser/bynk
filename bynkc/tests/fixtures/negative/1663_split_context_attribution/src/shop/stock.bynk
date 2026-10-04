@@ -1,0 +1,7 @@
+context shop
+
+service stock {
+  on call() -> Effect[Bool] {
+    Effect.pure(1)
+  }
+}

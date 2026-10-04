@@ -1,0 +1,5 @@
+bynk.types.pattern_arity variant `Circle` has 1 payload field(s), but the pattern has 2 binding(s) @ 12:5
+# exact
+bynk.types.unknown_pattern_field variant `Circle` has no payload field `radius` @ 19:12
+bynk.types.unknown_variant_in_pattern type `Shape` has no variant `Triangle` @ 26:5
+bynk.types.pattern_arity variant `Circle` has 1 payload field(s), but the pattern has 2 binding(s) @ 32:8

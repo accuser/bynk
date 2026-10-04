@@ -54,7 +54,16 @@ pub fn compile_with_warnings(source: &str, _filename: &str) -> Result<Compiled, 
     let tokens = lexer::tokenize(source).map_err(|e| vec![e])?;
     // ADR 0117: parse-time warnings (orphan doc blocks) ride alongside the
     // AST — they surface with the build's warnings instead of failing it.
-    let (commons, mut warnings) = parser::parse_with_warnings(&tokens, source)?;
+    let (commons, mut warnings) = match parser::parse_with_warnings(&tokens, source) {
+        Ok(parsed) => parsed,
+        // #1663: the strict parse stops at the first syntax error. Diagnose the
+        // file as the editor does instead, and still refuse to compile it.
+        Err(strict) => {
+            return Err(bynk_check::recovery::diagnose_unparsable(
+                &tokens, source, strict,
+            ));
+        }
+    };
     // v0.20a: function types are confined to non-boundary positions — the same
     // rule the project path applies.
     let mut boundary_errors = Vec::new();
@@ -64,11 +73,25 @@ pub fn compile_with_warnings(source: &str, _filename: &str) -> Result<Compiled, 
         &boundary_types,
         &mut boundary_errors,
     );
-    if !boundary_errors.is_empty() {
-        return Err(boundary_errors);
-    }
-    let resolved = resolver::resolve(commons)?;
-    let typed = checker::check(resolved)?;
+    // #1663: a boundary or resolve error is local to its declaration, so the
+    // checker still runs over every declaration and its diagnostics join
+    // theirs (minus echoes); any error still refuses the compile.
+    let item_spans: Vec<_> = commons.items.iter().map(|i| i.span()).collect();
+    let (resolved, resolve_errors) = resolver::resolve_recovering(commons);
+    let mut errors = boundary_errors;
+    errors.extend(resolve_errors.iter().cloned());
+    let typed = match checker::check(resolved) {
+        Ok(typed) if errors.is_empty() => typed,
+        Ok(_) => return Err(errors),
+        Err(checked) => {
+            errors.extend(resolver::without_resolve_echoes(
+                checked,
+                &resolve_errors,
+                &item_spans,
+            ));
+            return Err(errors);
+        }
+    };
     warnings.extend(typed.warnings.clone());
     // T3.7 (R3.10): `check` already gated on error-severity diagnostics, so
     // `typed.warnings` — the only diagnostics left riding along with it — can

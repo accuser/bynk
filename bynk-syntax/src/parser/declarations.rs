@@ -149,6 +149,7 @@ impl<'a> Parser<'a> {
         loop {
             // Optional doc block and leading line comments before the next item.
             let (mut leading, item_doc) = self.collect_item_lead();
+            self.item_start = Some(self.pos);
             match self.peek_kind() {
                 Some(TokenKind::RBrace) if brace => {
                     // Doc not attachable; treat as orphan if present. Any
@@ -520,6 +521,7 @@ impl<'a> Parser<'a> {
         let trailing_comments: Vec<String>;
         loop {
             let (mut leading, item_doc) = self.collect_item_lead();
+            self.item_start = Some(self.pos);
             match self.peek_kind() {
                 Some(TokenKind::RBrace) if brace => {
                     if let Some((_, doc_span)) = item_doc {
@@ -950,6 +952,7 @@ impl<'a> Parser<'a> {
         let trailing_comments: Vec<String>;
         loop {
             let (mut leading, item_doc) = self.collect_item_lead();
+            self.item_start = Some(self.pos);
             match self.peek_kind() {
                 Some(TokenKind::RBrace) if brace => {
                     if let Some((_, doc_span)) = item_doc {
@@ -1303,6 +1306,7 @@ impl<'a> Parser<'a> {
         let trailing_comments: Vec<String>;
         loop {
             let (mut leading, item_doc) = self.collect_item_lead();
+            self.item_start = Some(self.pos);
             match self.peek_kind() {
                 Some(TokenKind::RBrace) if brace => {
                     if let Some((_, doc_span)) = item_doc {

@@ -47,6 +47,12 @@ pub(crate) fn given_insertion_edit(
 pub(crate) fn check_ident(id: &Ident, expected: Option<TyId>, ctx: &mut Ctx) -> Option<TyId> {
     let tys = ctx.tys;
     if let Some(ty) = ctx.lookup(id.name.as_str()) {
+        // #1663: a name bound to the error type (a pattern that failed to
+        // check) was already reported; typing its use as unknown (`None`)
+        // lets every enclosing check absorb it instead of reporting again.
+        if matches!(&*tys.get(ty), Ty::Error) {
+            return None;
+        }
         return Some(ty);
     }
     // v0.20a: a named function referenced as a *value* where a function type
@@ -3191,6 +3197,18 @@ pub(crate) fn check_match(
 /// scope and emitting diagnostics. Recurses through nested payload patterns
 /// (ADR 0169). Duplicate-arm and exhaustiveness are computed separately over
 /// the whole arm set; this is per-pattern validation + binding only.
+/// #1663: bind every name `pat` introduces to the error type. A pattern that
+/// fails to check (wrong arity, an unknown variant or field, a non-variant
+/// scrutinee) is already reported; without its bindings, each use in the arm
+/// would echo as `bynk.resolve.unknown_name`. The error type is absorbing, so
+/// those uses raise nothing further.
+fn bind_as_error(pat: &Pattern, ctx: &mut Ctx) {
+    let error = ctx.tys.intern(Ty::Error);
+    for id in pat.bound_names() {
+        ctx.bind(id.name.clone(), error);
+    }
+}
+
 fn check_pattern(pat: &Pattern, ty: TyId, ctx: &mut Ctx) {
     let tys = ctx.tys;
     match pat {
@@ -3274,6 +3292,7 @@ fn check_pattern(pat: &Pattern, ty: TyId, ctx: &mut Ctx) {
                         ty.display(tys)
                     ),
                 ));
+                bind_as_error(pat, ctx);
                 return;
             };
             // v0.25: a qualified `T.Variant` references `T`, and its qualifier
@@ -3306,6 +3325,7 @@ fn check_pattern(pat: &Pattern, ty: TyId, ctx: &mut Ctx) {
                         variant.name
                     ),
                 ));
+                bind_as_error(pat, ctx);
                 return;
             };
             // Clone the payload so the immutable borrow of `ctx.input` (via
@@ -3324,6 +3344,7 @@ fn check_pattern(pat: &Pattern, ty: TyId, ctx: &mut Ctx) {
                         variant.name
                     ),
                 ));
+                bind_as_error(pat, ctx);
                 return;
             }
             let any_named = bindings
@@ -3346,6 +3367,7 @@ fn check_pattern(pat: &Pattern, ty: TyId, ctx: &mut Ctx) {
                                         variant.name, field.name
                                     ),
                                 ));
+                                bind_as_error(pattern, ctx);
                                 continue;
                             };
                             check_pattern(pattern, field_ty, ctx);
@@ -3356,6 +3378,7 @@ fn check_pattern(pat: &Pattern, ty: TyId, ctx: &mut Ctx) {
                                 b.span,
                                 "pattern bindings must be all named (`field: name`) or all positional",
                             ));
+                            bind_as_error(b.pattern(), ctx);
                         }
                     }
                 }
@@ -3370,6 +3393,7 @@ fn check_pattern(pat: &Pattern, ty: TyId, ctx: &mut Ctx) {
                         bindings.len()
                     ),
                 ));
+                bind_as_error(pat, ctx);
             } else {
                 for (b, (_, field_ty)) in bindings.iter().zip(payload.iter()) {
                     let field_ty = *field_ty;
@@ -4171,10 +4195,19 @@ fn gather_pattern_bindings(
     else {
         return;
     };
+    // #1663: on a pattern error (already reported by `check_is_pattern`), the
+    // names the pattern would have bound are still bound — to the error type,
+    // so their uses neither echo as unknown names nor raise further errors.
+    let error = tys.intern(Ty::Error);
+    let bind_error = |p: &Pattern, out: &mut Vec<(String, TyId)>| {
+        out.extend(p.bound_names().into_iter().map(|n| (n.name.clone(), error)));
+    };
     let Some(variants) = variants_of(value_ty, types, tys) else {
+        bind_error(pattern, out);
         return;
     };
     let Some(info) = variants.iter().find(|v| v.name == variant.name) else {
+        bind_error(pattern, out);
         return;
     };
     let any_named = bindings
@@ -4186,9 +4219,11 @@ fn gather_pattern_bindings(
         for b in bindings {
             if let PatternBindingKind::Named { field, pattern } = &b.kind
                 && let Pattern::Binding(name) = pattern
-                && let Some(ty) = payload_map.get(field.name.as_str())
             {
-                out.push((name.name.clone(), (*ty)));
+                match payload_map.get(field.name.as_str()) {
+                    Some(ty) => out.push((name.name.clone(), *ty)),
+                    None => out.push((name.name.clone(), error)),
+                }
             }
         }
     } else {
@@ -4196,6 +4231,9 @@ fn gather_pattern_bindings(
             if let Pattern::Binding(name) = b.pattern() {
                 out.push((name.name.clone(), *ty));
             }
+        }
+        for b in bindings.iter().skip(info.payload.len()) {
+            bind_error(b.pattern(), out);
         }
     }
 }

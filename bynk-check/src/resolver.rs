@@ -402,6 +402,21 @@ impl ResolvedCommons {
 /// projects and `uses`-resolving commons, use [`resolve_file`] against a
 /// pre-built combined symbol table.
 pub fn resolve(commons: Commons) -> Result<ResolvedCommons, Vec<CompileError>> {
+    let (resolved, errors) = resolve_recovering(commons);
+    if errors.is_empty() {
+        Ok(resolved)
+    } else {
+        Err(errors)
+    }
+}
+
+/// [`resolve`], returning the symbol table *with* every resolve error rather
+/// than instead of it (#1663, Decision A). A resolve error is local to the
+/// declaration it is in, so the checker can still check every declaration —
+/// an unknown name in `b` no longer hides a type error in `a`. The table is
+/// complete apart from what the errors name (a duplicate keeps its first
+/// declaration). A caller that emits must still refuse on any error.
+pub fn resolve_recovering(commons: Commons) -> (ResolvedCommons, Vec<CompileError>) {
     let mut errors = Vec::new();
     let mut types: HashMap<String, Arc<TypeDecl>> = HashMap::new();
     let mut fns: HashMap<String, Arc<FnDecl>> = HashMap::new();
@@ -619,7 +634,7 @@ pub fn resolve(commons: Commons) -> Result<ResolvedCommons, Vec<CompileError>> {
         }
     }
 
-    if errors.is_empty() {
+    {
         let local_type_names = types.keys().cloned().collect();
         let event_type_names = commons
             .items
@@ -629,7 +644,7 @@ pub fn resolve(commons: Commons) -> Result<ResolvedCommons, Vec<CompileError>> {
                 _ => None,
             })
             .collect();
-        Ok(ResolvedCommons {
+        let resolved = ResolvedCommons {
             commons,
             types,
             fns,
@@ -644,10 +659,101 @@ pub fn resolve(commons: Commons) -> Result<ResolvedCommons, Vec<CompileError>> {
             is_context: false,
             uses_commons_type_names: HashSet::new(),
             event_type_names,
-        })
-    } else {
-        Err(errors)
+        };
+        (resolved, errors)
     }
+}
+
+/// #1663 (Decision B): split resolve errors into those to report and those
+/// that only echo a declaration the parser had to skip.
+///
+/// A declaration that fails to parse is dropped from the AST, so every
+/// reference to its name — `Money` in a signature, `Money.zero` as a method's
+/// owner, a call to a skipped `fn` — resolves as unknown, and one missing comma
+/// becomes twenty diagnostics. Its name is known (the parser recorded it in
+/// `broken_decl_names`); only its declaration is broken, and that is already
+/// reported. So an unknown-name diagnostic naming one is hidden.
+///
+/// The hidden errors still count as resolve errors: pass *both* halves to
+/// [`without_resolve_echoes`], so the declarations they are in reject the
+/// checker's follow-on diagnostics too.
+pub fn split_broken_decl_echoes(
+    resolve_errors: Vec<CompileError>,
+    broken_decl_names: &[String],
+) -> (Vec<CompileError>, Vec<CompileError>) {
+    const ECHO_CODES: &[&str] = &[
+        "bynk.resolve.unknown_type",
+        "bynk.resolve.method_unknown_type",
+        "bynk.resolve.unknown_name",
+        "bynk.resolve.unknown_function",
+        "bynk.resolve.unknown_static_member",
+    ];
+    // The *subject* each of these diagnostics is about, spelled as the parser
+    // records a broken declaration (`T`, `f`, or a method as `T.m`):
+    // - `unknown type `T``, `unknown name `x``, `unknown function `f``: the
+    //   one backticked name;
+    // - `method `T.m` attached to an unknown type `T``: the type, its last;
+    // - `type `T` has no static method or variant named `m``: the member,
+    //   qualified by its type (`T.m`), its first and last.
+    // Matching only the subject keeps a broken `fn m` from hiding an unrelated
+    // `Other.m` that merely shares the name.
+    let names = |message: &str| -> Vec<String> {
+        message
+            .split('`')
+            .skip(1)
+            .step_by(2)
+            .map(str::to_string)
+            .collect()
+    };
+    let subject = |e: &CompileError| -> Option<String> {
+        let ns = names(&e.message);
+        if e.category == "bynk.resolve.unknown_static_member" {
+            Some(format!("{}.{}", ns.first()?, ns.last()?))
+        } else {
+            ns.last().cloned()
+        }
+    };
+    resolve_errors.into_iter().partition(|e| {
+        !(ECHO_CODES.contains(&e.category)
+            && subject(e).is_some_and(|s| broken_decl_names.contains(&s)))
+    })
+}
+
+/// #1663 (Decision A): the checker's diagnostics after a resolve that reported
+/// errors, keeping only those in declarations the resolver found clean.
+///
+/// Resolve-then-check is per *declaration*: an unknown name in `b` must not
+/// hide a type error in `a`, so the checker runs over every declaration. Inside
+/// a declaration the resolver rejected, the checker would only meet the same
+/// fault again — under the same code (`unknown_function`), under its own twin
+/// code (`types.unknown_static_member`), or as a follow-on (`unknown_name` for a
+/// misplaced `self`, `type_in_expr` beside an unknown variant). The resolver's
+/// report is the one that names the fault, so that declaration keeps only it.
+/// `item_spans` are the unit's top-level declarations' spans
+/// ([`CommonsItem::span`]). A diagnostic outside every declaration is kept
+/// unless it overlaps a resolve error.
+pub fn without_resolve_echoes(
+    checked: Vec<CompileError>,
+    resolve_errors: &[CompileError],
+    item_spans: &[Span],
+) -> Vec<CompileError> {
+    let within = |outer: Span, at: Span| {
+        outer.file == at.file
+            && outer.start <= at.start
+            && at.start < outer.end.max(outer.start + 1)
+    };
+    let rejected: Vec<Span> = item_spans
+        .iter()
+        .copied()
+        .filter(|item| resolve_errors.iter().any(|r| within(*item, r.span)))
+        .collect();
+    checked
+        .into_iter()
+        .filter(|c| {
+            !rejected.iter().any(|item| within(*item, c.span))
+                && !resolve_errors.iter().any(|r| within(r.span, c.span))
+        })
+        .collect()
 }
 
 /// Validate name references inside a single file's items against an

@@ -515,6 +515,21 @@ impl CommonsItem {
             CommonsItem::Event(e) => Some(&e.name),
         }
     }
+
+    /// The whole declaration's span, from its first token to its last.
+    pub fn span(&self) -> Span {
+        match self {
+            CommonsItem::Type(t) => t.span,
+            CommonsItem::Fn(f) => f.span,
+            CommonsItem::Capability(c) => c.span,
+            CommonsItem::Provider(p) => p.span,
+            CommonsItem::Service(s) => s.span,
+            CommonsItem::Agent(a) => a.span,
+            CommonsItem::Actor(a) => a.span,
+            CommonsItem::Messages(m) => m.span,
+            CommonsItem::Event(e) => e.span,
+        }
+    }
 }
 
 /// One locale's message bundle (v0.222+): `messages "<tag>" @reference { ... }`.

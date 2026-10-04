@@ -1,0 +1,33 @@
+commons demo
+
+-- #1663: a pattern that fails to check is one error; the names it binds are
+-- still in scope (error-typed), so their uses neither echo as unknown names
+-- nor raise further type errors.
+type Shape =
+  | Circle(r: Int)
+  | Square(side: Int)
+
+fn area(s: Shape) -> Int {
+  match s {
+    Circle(r, extra) => r + extra
+    Square(side) => side
+  }
+}
+
+fn named(s: Shape) -> Int {
+  match s {
+    Circle(radius: r) => r * 2
+    Square(side) => side
+  }
+}
+
+fn unknown(s: Shape) -> Int {
+  match s {
+    Triangle(a) => a + 1
+    _ => 0
+  }
+}
+
+fn tested(s: Shape) -> Bool {
+  s is Circle(r, extra) && r > extra
+}

@@ -1,0 +1,6 @@
+# #1663: each fault once, in its own file. Before, orders.bynk's handler error
+# was also reported against stock.bynk, at a position past its end (8:1).
+# exact
+bynk.types.return_mismatch	src/shop/orders.bynk:5:19
+bynk.types.return_mismatch	src/shop/orders.bynk:9:5
+bynk.types.return_mismatch	src/shop/stock.bynk:5:5

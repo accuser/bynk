@@ -470,7 +470,8 @@ fn no_unknown_placeholder_in_emitted_output() {
 }
 
 /// #58 (adjacent to #696): checks a project fixture's `expected_diagnostics.txt`
-/// — optional, `category<TAB>path:line:col` lines — against the *attributed*
+/// — optional, `category<TAB>path:line:col` lines, plus an optional `# exact`
+/// line (#1663) — against the *attributed*
 /// errors a project-mode compile produced. Unlike `expected_error.txt`'s
 /// substring-over-`category message` check, this pins the file and position
 /// too: `project.rs:5013-5017`'s and `bynk-driver/tests/project_diagnostics.rs`'s
@@ -505,20 +506,123 @@ fn check_expected_diagnostics(
             format!("{}\t{path}:{line}:{col}", e.error.category)
         })
         .collect();
-    for needle in want.lines() {
-        let needle = needle.trim();
-        if needle.is_empty() || needle.starts_with('#') {
-            continue;
-        }
-        if !actual.iter().any(|a| a == needle) {
-            failures.push(format!(
-                "\n=== {} ===\nexpected_diagnostics.txt: expected `{}`, but got:\n{}",
-                dir.display(),
-                needle,
-                actual.join("\n"),
-            ));
-        }
+    // #1663: `# exact` makes this an exact-set check too (see
+    // `match_needles`), which is what pins a *mislocated* diagnostic: the
+    // same fault reported again at another file's position.
+    let exact = want.lines().any(|l| l.trim() == "# exact");
+    let (missing, extra) = match_needles(&needles_of(&want), &actual, |n, a| a == n, exact);
+    for needle in missing {
+        failures.push(format!(
+            "\n=== {} ===\nexpected_diagnostics.txt: expected `{needle}`, but got:\n{}",
+            dir.display(),
+            actual.join("\n"),
+        ));
     }
+    if !extra.is_empty() {
+        failures.push(format!(
+            "\n=== {} ===\nexpected_diagnostics.txt `# exact`: {} diagnostic(s) matched no line:\n{}",
+            dir.display(),
+            extra.len(),
+            extra.join("\n"),
+        ));
+    }
+}
+
+/// Check a negative fixture's `expected_error.txt` needles against its
+/// diagnostics, one rendered line each.
+///
+/// By default this is a **subset** check: every needle must be a substring of
+/// some line, and extra diagnostics pass. A `# exact` line (#1663) makes it an
+/// **exact-set** check: the needles and the diagnostics must pair up one to
+/// one, each needle matching a distinct line, with nothing left over. That is
+/// what pins "no spurious diagnostics" — a cascade the subset check cannot
+/// see. `# exact` is a comment line, so a parse-time fixture's first line can
+/// still be the bare code its tree-sitter conformance reads.
+fn check_expected_errors(dir: &Path, want: &str, lines: &[String], failures: &mut Vec<String>) {
+    let exact = want.lines().any(|l| l.trim() == "# exact");
+    let needles = needles_of(want);
+    let got = lines.join("\n");
+    let (missing, extra) = match_needles(&needles, lines, |n, l| l.contains(n), exact);
+    for needle in missing {
+        failures.push(format!(
+            "\n=== {} ===\nexpected error containing `{needle}`, but got:\n{got}",
+            dir.display(),
+        ));
+    }
+    if !extra.is_empty() {
+        failures.push(format!(
+            "\n=== {} ===\n`# exact`: {} diagnostic(s) matched no needle:\n{}",
+            dir.display(),
+            extra.len(),
+            extra.join("\n"),
+        ));
+    }
+}
+
+/// The non-blank, non-comment lines of an expectation file, trimmed.
+fn needles_of(want: &str) -> Vec<&str> {
+    want.lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .collect()
+}
+
+/// #1663: match expectation needles to diagnostic lines. Returns the needles
+/// with no line, and (when `exact`) the lines with no needle.
+///
+/// A subset check only asks that each needle `fits` some line. An exact check
+/// pairs needles and lines one to one: a maximum bipartite matching (augmenting
+/// paths), so the outcome never depends on the order the needles are listed in
+/// — a needle that fits two lines can never take the one a later, narrower
+/// needle needed, and a failure always means a real mismatch.
+fn match_needles<'a>(
+    needles: &[&'a str],
+    lines: &'a [String],
+    fits: impl Fn(&str, &str) -> bool,
+    exact: bool,
+) -> (Vec<&'a str>, Vec<&'a str>) {
+    if !exact {
+        let missing = needles
+            .iter()
+            .copied()
+            .filter(|n| !lines.iter().any(|l| fits(n, l)))
+            .collect();
+        return (missing, Vec::new());
+    }
+    // `owner[l]`: the needle line `l` is matched to.
+    let mut owner: Vec<Option<usize>> = vec![None; lines.len()];
+    fn augment(
+        n: usize,
+        needles: &[&str],
+        lines: &[String],
+        fits: &dyn Fn(&str, &str) -> bool,
+        seen: &mut [bool],
+        owner: &mut [Option<usize>],
+    ) -> bool {
+        for l in 0..lines.len() {
+            if seen[l] || !fits(needles[n], &lines[l]) {
+                continue;
+            }
+            seen[l] = true;
+            if owner[l].is_none_or(|m| augment(m, needles, lines, fits, seen, owner)) {
+                owner[l] = Some(n);
+                return true;
+            }
+        }
+        false
+    }
+    let missing = (0..needles.len())
+        .filter(|&n| {
+            let mut seen = vec![false; lines.len()];
+            !augment(n, needles, lines, &fits, &mut seen, &mut owner)
+        })
+        .map(|n| needles[n])
+        .collect();
+    let extra = (0..lines.len())
+        .filter(|&l| owner[l].is_none())
+        .map(|l| lines[l].as_str())
+        .collect();
+    (missing, extra)
 }
 
 #[test]
@@ -563,27 +667,14 @@ fn negative_fixtures() {
                     // an ` @ line:col` suffix, so a fixture can pin the span
                     // (`code message @ 5:22`) — plain `code message` needles
                     // keep matching as substrings of the same line.
-                    let haystack: String = errors
+                    let lines: Vec<String> = errors
                         .iter()
                         .map(|e| {
                             let (line, col) = bynk_syntax::span::line_col(&source, e.span.start);
-                            format!("{} {} @ {line}:{col}\n", e.category, e.message)
+                            format!("{} {} @ {line}:{col}", e.category, e.message)
                         })
                         .collect();
-                    for needle in want.lines() {
-                        let needle = needle.trim();
-                        if needle.is_empty() || needle.starts_with('#') {
-                            continue;
-                        }
-                        if !haystack.contains(needle) {
-                            failures.push(format!(
-                                "\n=== {} ===\nexpected error containing `{}`, but got:\n{}",
-                                dir.display(),
-                                needle,
-                                haystack,
-                            ));
-                        }
-                    }
+                    check_expected_errors(&dir, want, &lines, &mut failures);
                 }
             }
         } else if src_dir.is_dir() {
@@ -596,25 +687,12 @@ fn negative_fixtures() {
                     ));
                 }
                 Err(failure) => {
-                    let haystack: String = failure
+                    let lines: Vec<String> = failure
                         .errors
                         .iter()
-                        .map(|e| format!("{} {}\n", e.error.category, e.error.message))
+                        .map(|e| format!("{} {}", e.error.category, e.error.message))
                         .collect();
-                    for needle in want.lines() {
-                        let needle = needle.trim();
-                        if needle.is_empty() || needle.starts_with('#') {
-                            continue;
-                        }
-                        if !haystack.contains(needle) {
-                            failures.push(format!(
-                                "\n=== {} ===\nexpected error containing `{}`, but got:\n{}",
-                                dir.display(),
-                                needle,
-                                haystack,
-                            ));
-                        }
-                    }
+                    check_expected_errors(&dir, want, &lines, &mut failures);
                     check_expected_diagnostics(
                         &dir,
                         &failure.errors,

@@ -1,0 +1,16 @@
+commons demo
+
+-- #1663: a missing comma breaks `Money`. Every later use of `Money` is
+-- still a known name, so the one syntax error is the only diagnostic.
+type Money = {
+  amount: Int
+  currency: String,
+}
+
+fn zero() -> Money { Money { amount: 0, currency: "GBP" } }
+
+fn add(a: Money, b: Money) -> Money {
+  Money { amount: a.amount + b.amount, currency: a.currency }
+}
+
+fn Money.isZero(self) -> Bool { self.amount == 0 }

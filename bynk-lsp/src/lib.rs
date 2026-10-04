@@ -6357,16 +6357,14 @@ mod tests {
         );
     }
 
-    /// The provenance-based half does not need `type_receiver` to succeed: an
-    /// unresolved type name elsewhere in the same file — in an unrelated
+    /// An unresolved type name elsewhere in the same file — in an unrelated
     /// `type` declaration, not even the agent using `items` — trips the
-    /// *resolve* gate (`resolve_file`), which runs before `check_record` and
-    /// so blanks `expr_types` for the **whole file** if it fails: the one
-    /// clean-file-ceiling gap ADR 0094 didn't close (that error-tolerance is
-    /// inside the checker; a resolve failure never reaches it). Before the
-    /// #812 review fix, `value_member_completions` returned early on that
-    /// `None` and never reached the store-field path at all; the entry
-    /// ops/accessors must still surface here.
+    /// *resolve* gate. That once blanked `expr_types` for the **whole file**
+    /// (the one clean-file-ceiling gap ADR 0094 didn't close), and before the
+    /// #812 review fix `value_member_completions` then returned early and
+    /// never reached the store-field path. Since #1663 (Decision A) the
+    /// checker runs past a resolve error, so both halves survive: the typed
+    /// `Query` kernel methods and the store-field entry ops/accessors.
     #[tokio::test]
     async fn store_field_vocabulary_survives_an_unrelated_resolve_failure() {
         let src = "context shop\n\ntype Bad = { x: NoSuchType }\n\nagent Inventory {\n  key id: String\n  store items: Map[String, Int]\n\n  on call f() -> Effect[()] {\n    items.\n  }\n}\n";
@@ -6397,15 +6395,11 @@ mod tests {
         );
 
         let labels = complete_at(&backend, &uri, src, "    items.").await;
-        // A sharper precondition than "some diagnostic exists": the typed half
-        // (`Query` kernel methods) really did go silent, confirming this
-        // exercises `type_receiver` returning `None` — not a fixture that
-        // merely warns while still typing `items` fine, which would let the
-        // pre-fix code pass here too.
+        // #1663: the resolve error in `Bad` no longer blanks the agent's types,
+        // so the typed half (`Query` kernel methods) survives too.
         assert!(
-            !labels.contains(&"filter".to_string()),
-            "the fixture must blank the typed half too, or this doesn't test \
-             the gap: {labels:?}"
+            labels.contains(&"filter".to_string()),
+            "an unrelated resolve error must not blank the typed half: {labels:?}"
         );
         assert!(
             labels.contains(&"put".to_string()),
