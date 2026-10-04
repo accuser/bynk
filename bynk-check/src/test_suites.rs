@@ -2044,6 +2044,9 @@ fn check_property_body(
                 Err(err) => {
                     errors.push(err);
                     binding_types.push((b.name.name.clone(), None));
+                    // #1708: rejected, but still in scope (error-typed), so
+                    // its uses in the body do not echo as unknown names.
+                    binding_scope.insert(b.name.name.clone(), tys.intern(checker::Ty::Error));
                 }
             }
             continue;
@@ -2067,6 +2070,9 @@ fn check_property_body(
                 ),
             );
             binding_types.push((b.name.name.clone(), None));
+            // #1708: rejected, but still in scope (error-typed), so
+            // its uses in the body do not echo as unknown names.
+            binding_scope.insert(b.name.name.clone(), tys.intern(checker::Ty::Error));
             continue;
         }
         let ty = match checker::resolve_type_ref(&b.type_ref, &resolved.types, tys) {
@@ -2085,6 +2091,9 @@ fn check_property_body(
                     ),
                 ));
                 binding_types.push((b.name.name.clone(), None));
+                // #1708: rejected, but still in scope (error-typed), so
+                // its uses in the body do not echo as unknown names.
+                binding_scope.insert(b.name.name.clone(), tys.intern(checker::Ty::Error));
                 continue;
             }
         };

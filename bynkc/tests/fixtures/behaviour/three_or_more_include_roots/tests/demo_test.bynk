@@ -1,5 +1,5 @@
 suite demo
 
 case "f returns one" {
-  expect demo.f() == 1
+  expect f() == 1
 }

@@ -136,17 +136,16 @@ pub(crate) fn check_ident(id: &Ident, expected: Option<TyId>, ctx: &mut Ctx) -> 
         }
     }
     // Nothing owns the name. The resolver's reference walk reports these in
-    // `fn`/method bodies (and a resolve error stops the pipeline before the
-    // checker runs), but handler/service/agent bodies never pass through
-    // that walk — the checker is their only backstop, and a silent `None`
-    // here admitted any unknown name and emitted it verbatim. Mirror the
-    // resolver's ladder. Test bodies stay silent: their service-call results
-    // are deliberately loosely typed (v0.25 — the runner recovers outcomes
-    // at runtime), so bindings like `let r <- svc.call(…)` carry no type and
-    // their uses must not misfire as unknown.
-    if ctx.in_test_body {
-        return None;
-    }
+    // `fn`/method bodies, but handler/service/agent bodies and test bodies
+    // never pass through that walk — the checker is their only backstop, and
+    // a silent `None` here admitted any unknown name and emitted it verbatim.
+    // Mirror the resolver's ladder.
+    //
+    // #1708: test bodies were exempt, because a loosely typed service-call
+    // result (`let r <- svc.call(…)`, v0.25) left `r` unbound and its uses
+    // misfired as unknown. Since #1663 such a binding is bound error-typed and
+    // its uses absorb, so the exemption only hid real unknown names — which
+    // then reached test-module emission as `Ty::Error` and panicked.
     if owners.len() > 1 {
         ctx.errors.push(CompileError::new(
             "bynk.resolve.ambiguous_variant",

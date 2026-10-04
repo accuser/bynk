@@ -1,0 +1,6 @@
+# #1708: every unknown name in a test body, once each; no panic.
+# exact
+bynk.resolve.unknown_name	tests/wallet.test.bynk:9:36
+bynk.resolve.unknown_name	tests/wallet.test.bynk:9:41
+bynk.resolve.unknown_name	tests/wallet.test.bynk:9:60
+bynk.resolve.unknown_name	tests/wallet.test.bynk:14:12
