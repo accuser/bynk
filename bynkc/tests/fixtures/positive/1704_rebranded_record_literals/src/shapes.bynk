@@ -1,0 +1,7 @@
+commons shapes
+
+type Point = { x: Int, y: Int }
+
+type Line = { start: Point, end: Point }
+
+fn origin() -> Point { Point { x: 0, y: 0 } }

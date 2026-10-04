@@ -5,7 +5,7 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError } f
 
 import { Money as __CommonsMoney } from "./money.js";
 
-export type Money = __CommonsMoney & { readonly __ctxBrand: "commerce.orders" };
+export type Money = __CommonsMoney & { readonly __ctxBrand?: "commerce.orders" };
 
 export interface Order {
   readonly total: Money;

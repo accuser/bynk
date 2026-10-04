@@ -7,7 +7,7 @@ import { ReserveOutcome as __CommonsReserveOutcome } from "./catalog.js";
 
 import * as idempotency from "../idempotency.js";
 
-export type ReserveOutcome = __CommonsReserveOutcome & { readonly __ctxBrand: "demo.orders" };
+export type ReserveOutcome = __CommonsReserveOutcome & { readonly __ctxBrand?: "demo.orders" };
 
 export const reserve = {
   async call(deps: { Idempotency: idempotency.Idempotency }): globalThis.Promise<Option<ReserveOutcome>> {

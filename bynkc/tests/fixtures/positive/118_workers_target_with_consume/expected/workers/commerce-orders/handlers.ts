@@ -7,7 +7,7 @@ import { Money as __CommonsMoney } from "../../commerce/money.js";
 
 import type * as commerce_payment from "../commerce-payment/handlers.js";
 
-export type Money = __CommonsMoney & { readonly __ctxBrand: "commerce.orders" };
+export type Money = __CommonsMoney & { readonly __ctxBrand?: "commerce.orders" };
 
 /**
  * Orders context. Places orders, calling payment for authorisation.

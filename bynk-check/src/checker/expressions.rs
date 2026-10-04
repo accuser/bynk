@@ -2406,11 +2406,12 @@ pub(crate) fn check_record_spread(
 /// construction expression at all, so it needs its own call site rather than
 /// falling out of `check_variant_construction`/`nullary_variant_ty`.
 ///
-/// Record-literal construction of a `uses`-sourced commons record type has
-/// no such hazard and is *not* gated here: `lower_record_construction`
+/// Record-literal construction of a `uses`-sourced commons record type is
+/// *not* gated here: `lower_record_construction`
 /// (`bynk-emit/src/emitter/lower.rs`) never emits the type name at all — a
 /// record literal lowers to a plain structural `{ field: value, ... }`
-/// object, so the type-only rebrand never surfaces at the construction site.
+/// object, and since #1704 the rebrand's brand is optional, so that
+/// unbranded object fits the context's branded type.
 /// Refined/opaque types are likewise unaffected by the sum-specific gate
 /// below — the emitter re-exports a real value (`.of`/`.unsafe`) for those.
 fn reject_rebrand_construction(type_name: &str, span: Span, ctx: &mut Ctx) -> bool {

@@ -1,0 +1,34 @@
+context canvas
+
+uses shapes
+
+-- #1704: `canvas` rebrands `Point` and `Line` (#527). A record literal of
+-- either, a nested one, a spread, and a commons fn's result must all fit the
+-- branded parameters below, and a `Line` crossing the agent's state boundary
+-- serialises its nested `Point`s.
+agent Board {
+  key id: String
+  store total: Cell[Int]
+  store last: Cell[Option[Line]]
+
+  on call add(p: Point) -> Effect[Int] {
+    let cur = total
+    total := cur + p.x + p.y
+    total
+  }
+
+  on call draw(l: Line) -> Effect[Int] {
+    last := Some(l)
+    Effect.pure(l.end.x - l.start.x)
+  }
+}
+
+service api {
+  on call() -> Effect[Int] {
+    let p = Point { x: 1, y: 2 }
+    let moved = Point { ...p, x: 3 }
+    let _ <- Board("svc").add(origin())
+    let _ <- Board("svc").add(moved)
+    Board("svc").draw(Line { start: p, end: Point { x: 9, y: 9 } })
+  }
+}

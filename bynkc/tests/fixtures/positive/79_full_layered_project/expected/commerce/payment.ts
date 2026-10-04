@@ -6,11 +6,11 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError } f
 import { CustomerId as __CommonsCustomerId } from "./identifiers.js";
 import { Money as __CommonsMoney } from "./money.js";
 
-export type CustomerId = __CommonsCustomerId & { readonly __ctxBrand: "commerce.payment" };
+export type CustomerId = __CommonsCustomerId & { readonly __ctxBrand?: "commerce.payment" };
 export const CustomerId = {
   of(value: string): Result<CustomerId, ValidationError> { return __CommonsCustomerId.of(value) as unknown as Result<CustomerId, ValidationError>; },
 };
-export type Money = __CommonsMoney & { readonly __ctxBrand: "commerce.payment" };
+export type Money = __CommonsMoney & { readonly __ctxBrand?: "commerce.payment" };
 
 /**
  * Payment context. Authorises monetary transactions and records auth IDs.

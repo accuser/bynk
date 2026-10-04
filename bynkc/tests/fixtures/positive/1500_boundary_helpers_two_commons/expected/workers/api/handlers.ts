@@ -6,11 +6,11 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError, ty
 import { A as __CommonsA } from "../../alpha.js";
 import { B as __CommonsB } from "../../beta.js";
 
-export type A = __CommonsA & { readonly __ctxBrand: "api" };
+export type A = __CommonsA & { readonly __ctxBrand?: "api" };
 export const A = {
   of(value: number): Result<A, ValidationError> { return __CommonsA.of(value) as unknown as Result<A, ValidationError>; },
 };
-export type B = __CommonsB & { readonly __ctxBrand: "api" };
+export type B = __CommonsB & { readonly __ctxBrand?: "api" };
 export const B = {
   of(value: number): Result<B, ValidationError> { return __CommonsB.of(value) as unknown as Result<B, ValidationError>; },
 };

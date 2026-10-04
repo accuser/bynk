@@ -1,0 +1,5 @@
+commons pages
+
+type Item = { name: String }
+
+type Page[T] = { items: List[T], next: Option[String] }

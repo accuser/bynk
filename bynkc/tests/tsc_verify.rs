@@ -456,6 +456,61 @@ fn emitted_typescript_has_no_verbatim_violations() {
 /// in isolation. (The `.ts` *bindings* import the emitted adapter surface and
 /// stay covered transitively by fixtures 177/201–211; their standalone scaffold
 /// is a follow-up.)
+/// #1704: a context's rebrand of a `uses`-commons type carries an *optional*
+/// brand (`Point = __CommonsPoint & { readonly __ctxBrand?: "left" }`), so a
+/// plain literal or commons value fits it. The brand's job is still to keep two
+/// contexts' views of one commons type apart, and no golden can show a
+/// rejection, so this stages `1704_context_brands_distinct` with a probe module
+/// asserting both halves under `tsc --strict`.
+#[test]
+fn context_brands_admit_commons_values_and_reject_other_contexts() {
+    let runner = match discover_tsc() {
+        Some(r) => r,
+        None => {
+            eprintln!(
+                "\n!!! TYPESCRIPT VERIFICATION SKIPPED (context brands) !!!\n\
+                 neither `tsc` nor `npx` is on PATH.\n"
+            );
+            if std::env::var(REQUIRE_ENV).is_ok() {
+                panic!("{REQUIRE_ENV} is set but no tsc runner was found");
+            }
+            return;
+        }
+    };
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/positive/1704_context_brands_distinct");
+    let out = compile_fixture(&fixture, bynkc::BuildTarget::Bundle)
+        .unwrap_or_else(|e| panic!("fixture failed to compile: {e:?}"));
+    let tmp = std::env::temp_dir().join(format!("bynk-brand-tsc-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&tmp);
+    fs::create_dir_all(&tmp).unwrap();
+    write_outputs(&out, &tmp).unwrap();
+    fs::write(
+        tmp.join("brand_probe.ts"),
+        r#"import type { Point as GeoPoint } from "./geo.js";
+import type { Point as LeftPoint } from "./left.js";
+import type { Point as RightPoint } from "./right.js";
+
+declare const plain: GeoPoint;
+declare const left: LeftPoint;
+
+// A commons value and a literal fit a context's branded type.
+export const fromCommons: LeftPoint = plain;
+export const fromLiteral: LeftPoint = { x: 1, y: 2 };
+// A context's value still fits the commons type.
+export const toCommons: GeoPoint = left;
+// @ts-expect-error another context's brand is rejected
+export const crossed: RightPoint = left;
+"#,
+    )
+    .unwrap();
+    let (ok, output) = run_tsc_in(&runner, &tmp);
+    if ok {
+        let _ = fs::remove_dir_all(&tmp);
+    }
+    assert!(ok, "context brand probe failed tsc --strict:\n{output}");
+}
+
 #[test]
 fn embedded_runtime_passes_tsc_strict_standalone() {
     let runner = match discover_tsc() {

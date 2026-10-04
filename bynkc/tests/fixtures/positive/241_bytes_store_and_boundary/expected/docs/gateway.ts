@@ -7,7 +7,7 @@ import { Doc as __CommonsDoc } from "./model.js";
 
 import * as docs_archive from "./archive.js";
 
-export type Doc = __CommonsDoc & { readonly __ctxBrand: "docs.gateway" };
+export type Doc = __CommonsDoc & { readonly __ctxBrand?: "docs.gateway" };
 
 export const submit = {
   async call(d: Doc, deps: { surface: { archive: globalThis.ReturnType<typeof docs_archive.makeSurface> } }): globalThis.Promise<Result<number, void>> {

@@ -5,7 +5,7 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError, ty
 
 import { Cents as __CommonsCents } from "../../money/money.js";
 
-export type Cents = __CommonsCents & { readonly __ctxBrand: "api" };
+export type Cents = __CommonsCents & { readonly __ctxBrand?: "api" };
 export const Cents = {
   of(value: number): Result<Cents, ValidationError> { return __CommonsCents.of(value) as unknown as Result<Cents, ValidationError>; },
   equals(self: Cents, other: Cents): boolean { return __CommonsCents.equals(self, other) as unknown as boolean; },

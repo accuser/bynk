@@ -1,0 +1,16 @@
+suite canvas
+
+case "a test builds a rebranded record for a handler" {
+  let n <- Board("t").add(Point { x: 1, y: 2 })
+  expect n == 3
+}
+
+case "a nested rebranded record crosses the state boundary" {
+  let w <- Board("t").draw(Line { start: Point { x: 1, y: 0 }, end: Point { x: 4, y: 0 } })
+  expect w == 3
+}
+
+case "a context builds them with literals, a spread and a commons fn" {
+  let w <- api.call()
+  expect w == 8
+}

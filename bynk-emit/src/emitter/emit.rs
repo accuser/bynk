@@ -2497,7 +2497,6 @@ pub(crate) fn emit_provider(
         let mut module = ModuleCtx::new(commons, &ctx.cross_context, &ctx.runtime_use);
         module.agent_method_givens = ctx.agent_method_givens.clone();
         module.event_schema_versions = ctx.event_schema_versions.clone();
-        module.set_rebrand_info(commons, ctx);
         module.target = ctx.target;
         module.in_bynk_unit = ctx.commons_name == "bynk";
         let body_smb = RefCell::new(SourceMapBuilder::new());
@@ -2814,7 +2813,6 @@ pub(crate) fn emit_service(
         module.in_bynk_unit = ctx.commons_name == "bynk";
         module.agent_method_givens = ctx.agent_method_givens.clone();
         module.event_schema_versions = ctx.event_schema_versions.clone();
-        module.set_rebrand_info(commons, ctx);
         module.target = ctx.target;
         let mut cx = LowerCtx::new(
             module,
@@ -4895,7 +4893,6 @@ pub(crate) fn emit_agent(
             module.target = ctx.target;
             module.agent_method_givens = ctx.agent_method_givens.clone();
             module.event_schema_versions = ctx.event_schema_versions.clone();
-            module.set_rebrand_info(commons, ctx);
             let mut icx = LowerCtx::new(module, BodyMode::StaticInit);
             icx.local_agents = ctx.local_agents.clone();
             let expr = pre.lower(init, &mut icx);
@@ -5735,7 +5732,6 @@ pub(crate) fn emit_agent(
         module.in_bynk_unit = ctx.commons_name == "bynk";
         module.agent_method_givens = ctx.agent_method_givens.clone();
         module.event_schema_versions = ctx.event_schema_versions.clone();
-        module.set_rebrand_info(commons, ctx);
         let mut cx = LowerCtx::new(
             module,
             BodyMode::AgentHandler {
@@ -6704,7 +6700,6 @@ fn emit_ws_do_method(
     module.in_bynk_unit = ctx.commons_name == "bynk";
     module.agent_method_givens = ctx.agent_method_givens.clone();
     module.event_schema_versions = ctx.event_schema_versions.clone();
-    module.set_rebrand_info(commons, ctx);
     module.target = ctx.target;
     let mut cx = LowerCtx::new(
         module,

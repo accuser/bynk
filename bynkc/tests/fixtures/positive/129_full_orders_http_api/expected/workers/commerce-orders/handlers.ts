@@ -7,11 +7,11 @@ import { CurrencyCode as __CommonsCurrencyCode, Money as __CommonsMoney } from "
 
 import type * as commerce_payment from "../commerce-payment/handlers.js";
 
-export type CurrencyCode = __CommonsCurrencyCode & { readonly __ctxBrand: "commerce.orders" };
+export type CurrencyCode = __CommonsCurrencyCode & { readonly __ctxBrand?: "commerce.orders" };
 export const CurrencyCode = {
   of(value: string): Result<CurrencyCode, ValidationError> { return __CommonsCurrencyCode.of(value) as unknown as Result<CurrencyCode, ValidationError>; },
 };
-export type Money = __CommonsMoney & { readonly __ctxBrand: "commerce.orders" };
+export type Money = __CommonsMoney & { readonly __ctxBrand?: "commerce.orders" };
 
 /**
  * Orders context with both an internal `on call` service and an external

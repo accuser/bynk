@@ -8,19 +8,19 @@ import { Message as __CommonsMessage } from "../bynk/locale/types.js";
 
 import * as bynk from "../bynk.js";
 
-export type Message = __CommonsMessage & { readonly __ctxBrand: "app.greet" };
+export type Message = __CommonsMessage & { readonly __ctxBrand?: "app.greet" };
 
 export const greeting = {
   async call(deps: { Locale: bynk.Locale }): globalThis.Promise<string> {
     const tag = await deps.Locale.current();
-    return render(tag, (message("hello") as Message));
+    return render(tag, message("hello"));
   },
 };
 
 export const greetingWithName = {
   async call(name: string, deps: { Locale: bynk.Locale }): globalThis.Promise<string> {
     const tag = await deps.Locale.current();
-    const msg = (withText((message("greeting") as Message), "name", name) as Message);
+    const msg = withText(message("greeting"), "name", name);
     return render(tag, msg);
   },
 };
@@ -28,7 +28,7 @@ export const greetingWithName = {
 export const greetingWithCountAndName = {
   async call(name: string, count: number, deps: { Locale: bynk.Locale }): globalThis.Promise<string> {
     const tag = await deps.Locale.current();
-    const msg = (withWhole((withText((message("greeting") as Message), "name", name) as Message), "count", count) as Message);
+    const msg = withWhole(withText(message("greeting"), "name", name), "count", count);
     return render(tag, msg);
   },
 };
