@@ -30,6 +30,13 @@ function __bynkShow(v: unknown): string {
 
 class __Stub_Locale {
   async current(): globalThis.Promise<bynk_locale_types.LocaleTag> {
+    const { EventEnvelope, FetchError, Method, Request, Response, Uuid } = bynk;
+    type EventEnvelope = bynk.EventEnvelope;
+    type FetchError = bynk.FetchError;
+    type Method = bynk.Method;
+    type Request = bynk.Request;
+    type Response = bynk.Response;
+    type Uuid = bynk.Uuid;
     if (true) {
       return ("fr" as any);
     }
@@ -37,8 +44,36 @@ class __Stub_Locale {
   }
 }
 
+function __bynkOverlay(base: unknown, stub: object, cap: string): unknown {
+  return new globalThis.Proxy(stub, {
+    get(target, prop) {
+      const t = target as Record<PropertyKey, unknown> & { __applies?: (op: string) => boolean };
+      // An own property (the stub's state, or a wrapper the recording proxy
+      // installed) always answers; a stubbed operation answers when it applies
+      // to the running case.
+      if (globalThis.Object.prototype.hasOwnProperty.call(t, prop)) return t[prop];
+      if (prop in t && (t.__applies === undefined || typeof prop !== "string" || t.__applies(prop))) return t[prop];
+      if (base !== undefined) {
+        const v = (base as Record<PropertyKey, unknown>)[prop];
+        return typeof v === "function" ? v.bind(base) : v;
+      }
+      return () => {
+        throw new globalThis.Error(`bynk: ${cap}.${String(prop)} is not stubbed, and the capability has no provider in this test`);
+      };
+    },
+  });
+}
+
+function __bynkTest_Locale(): bynk.Locale {
+  return {
+    async current() {
+      return "en" as never;
+    },
+  };
+}
+
 function makeTestDeps() {
-  return { Locale: new __Stub_Locale() };
+  return { Locale: __bynkOverlay(__bynkTest_Locale(), new __Stub_Locale(), "Locale") as bynk.Locale };
 }
 
 // case tier: integration

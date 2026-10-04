@@ -50,9 +50,9 @@ codes:
 
 The `Slug`/`Url` boundary types and the `keyOf` helper live in `commons codes`,
 so they are unit-tested without a KV or `Random` binding. The handlers consume
-those platform capabilities, which keeps them out of the test surface
-([#291](https://github.com/accuser/bynk/issues/291)); exercise them end to end
-under `bynk dev`, below.
+those platform capabilities; under `bynkc test` each is a deterministic test
+double, so a handler test is possible too. Exercise them end to end under
+`bynk dev`, below.
 
 ## Run it
 

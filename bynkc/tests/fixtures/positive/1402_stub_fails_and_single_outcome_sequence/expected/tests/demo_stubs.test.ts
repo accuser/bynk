@@ -28,6 +28,14 @@ function __bynkShow(v: unknown): string {
 class __Stub_Vault {
   __seq_0 = 0;
   __seq_1 = 0;
+  __case: string | undefined;
+  constructor(c?: string) {
+    this.__case = c;
+  }
+  __applies(op: string): boolean {
+    if (op === "peek") return this.__case === "a single-outcome returns each" || this.__case === "returns each ending in fails";
+    return true;
+  }
   async open(): globalThis.Promise<number> {
     if (true) {
       throw new globalThis.Error("bynk: injected capability fault (stubs … fails)");
@@ -35,7 +43,7 @@ class __Stub_Vault {
     throw new globalThis.Error("bynk: no stub clause matched for Vault.open");
   }
   async peek(): globalThis.Promise<number> {
-    if (true) {
+    if (this.__case === "returns each ending in fails") {
       const __k = this.__seq_0;
       if (this.__seq_0 < 1) this.__seq_0++;
       switch (__k) {
@@ -47,7 +55,7 @@ class __Stub_Vault {
         }
       }
     }
-    if (true) {
+    if (this.__case === "a single-outcome returns each") {
       const __k = this.__seq_1;
       switch (__k) {
         default: {
@@ -59,8 +67,28 @@ class __Stub_Vault {
   }
 }
 
-function makeTestDeps() {
-  return { Vault: new __Stub_Vault() };
+function __bynkOverlay(base: unknown, stub: object, cap: string): unknown {
+  return new globalThis.Proxy(stub, {
+    get(target, prop) {
+      const t = target as Record<PropertyKey, unknown> & { __applies?: (op: string) => boolean };
+      // An own property (the stub's state, or a wrapper the recording proxy
+      // installed) always answers; a stubbed operation answers when it applies
+      // to the running case.
+      if (globalThis.Object.prototype.hasOwnProperty.call(t, prop)) return t[prop];
+      if (prop in t && (t.__applies === undefined || typeof prop !== "string" || t.__applies(prop))) return t[prop];
+      if (base !== undefined) {
+        const v = (base as Record<PropertyKey, unknown>)[prop];
+        return typeof v === "function" ? v.bind(base) : v;
+      }
+      return () => {
+        throw new globalThis.Error(`bynk: ${cap}.${String(prop)} is not stubbed, and the capability has no provider in this test`);
+      };
+    },
+  });
+}
+
+function makeTestDeps(__case?: string) {
+  return { Vault: __bynkOverlay(new demo_stubs.RealVault(), new __Stub_Vault(__case), "Vault") as demo_stubs.Vault };
 }
 
 // case tier: unit
@@ -82,7 +110,7 @@ async function test_a_direct_fails_clause() {
 // case tier: unit
 async function test_returns_each_ending_in_fails() {
   try {
-    const deps = makeTestDeps();
+    const deps = makeTestDeps("returns each ending in fails");
     const { box } = demo_stubs;
     const r = await box.call(deps);
     if (!(true)) { throw __bynkExpectFailure("tests/stubs.test.bynk:17:12", 562, 566, "expect true"); }
@@ -98,7 +126,7 @@ async function test_returns_each_ending_in_fails() {
 // case tier: unit
 async function test_a_single_outcome_returns_each() {
   try {
-    const deps = makeTestDeps();
+    const deps = makeTestDeps("a single-outcome returns each");
     const { box } = demo_stubs;
     const r = await box.call(deps);
     if (!(true)) { throw __bynkExpectFailure("tests/stubs.test.bynk:23:12", 688, 692, "expect true"); }

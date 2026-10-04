@@ -22,16 +22,45 @@ What it shows:
 ```text
 webhook-relay/
 ├── bynk.toml
-└── src/
-    └── relay.bynk       # context relay — the HTTP service
+├── src/
+│   └── relay.bynk       # context relay — the HTTP service
+└── tests/
+    └── relay.bynk       # tests targeting the relay context
 ```
 
-> **No unit tests, by design.** Unlike the other examples, this one has no pure
-> kernel to factor into a `commons`: every step is effectful at the boundary —
-> the HMAC verification is the actor's, then `Secrets.get` → `Fetch.send`. The
-> handler consumes platform capabilities throughout, which keeps it out of the
-> test surface ([#291](https://github.com/accuser/bynk/issues/291)). Exercise it
-> end to end under `bynk dev`, below.
+## Test
+
+Every step of the handler runs on a platform capability, and under `bynkc test`
+each one is a deterministic test double: `Secrets` holds no values, `Logger`
+records without printing, and `Fetch` never reaches the network. A case that
+forwards supplies the secret and the upstream's answer with `stub`, then
+observes the calls:
+
+```bynk,ignore
+case "a configured target forwards the event and logs it" {
+  stub Secrets.get("RELAY_TARGET_URL") returns Some("https://upstream.test/hook")
+  stub Fetch.send(_) returns Ok(Response { status: 202, body: "" })
+  let r <- api.POST("/hooks/event", Event { id: "evt_1", kind: "order.created" }) by Webhook
+  expect r is Ok(_)
+  expect Fetch.send called once with req.url == "https://upstream.test/hook"
+}
+```
+
+```sh
+bynkc test .
+```
+
+```text
+relay:
+  ✓ an unconfigured relay target is a server error
+  ✓ a configured target forwards the event and logs it
+  ✓ an upstream failure is a server error
+
+3 passed, 0 failed.
+```
+
+At this tier the actor is given, not verified, so the HMAC check itself runs
+only on a real request — exercise it under `bynk dev`, below.
 
 ## Run it
 

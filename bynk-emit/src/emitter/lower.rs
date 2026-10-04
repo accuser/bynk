@@ -1190,10 +1190,24 @@ fn lower_observation(o: &ObservationExpr, cx: &mut LowerCtx) -> String {
             },
             Some(p) => {
                 let names = cap_op_param_names(cx, &o.cap.name, &o.op.name);
+                // #291: typed through the operation's call-record alias (as
+                // `trace` is), so a predicate may read a record parameter's
+                // fields (`with req.url == …`) — `__c.args` is `unknown[]`.
                 let destructure = if names.is_empty() {
                     String::new()
                 } else {
-                    format!("const [{}] = __c.args; ", names.join(", "))
+                    let record_ty =
+                        bynk_check::checker::call_record_type_name(&o.cap.name, &o.op.name);
+                    let fields = names
+                        .iter()
+                        .enumerate()
+                        .map(|(i, n)| format!("{n}: __c.args[{i}]"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    format!(
+                        "const {{ {} }} = {{ {fields} }} as {record_ty}; ",
+                        names.join(", ")
+                    )
                 };
                 let pred_lowered = lower_expr(p, cx);
                 let pre_src = pred_lowered.pre.join(" ");

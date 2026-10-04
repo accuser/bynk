@@ -86,18 +86,11 @@ These examples are honest about what compiles *today* (Bynk is pre-1.0):
   aggregate, a record, a `Result`) rather than on a returned `List`, because a
   `List` terminal in a test needs a typed receiver the test harness does not yet
   track — so `orders` and `todo` test through their aggregate handlers.
-- **A test can target a `commons`, a capability-free agent, a user-declared
-  `capability`, or a consumed *context*** — substitutable in a `test` block with
-  `mocks`. What a test **cannot** target today is a context that itself
-  `consumes bynk { … }`: a *platform* capability has no in-test substitute, and
-  merely declaring one breaks the whole context's test emission
-  ([#291](https://github.com/accuser/bynk/issues/291)). So a testable example
-  keeps its logic — a refined type's boundary, a key helper, a policy, or a
-  capability-free agent (as in `todo` and `orders`) — out of any platform-touching
-  context.
-
-  **Three examples therefore ship no test**, each because its boundary work is
-  platform-effectful with no in-test stand-in: `webhook-relay` (HMAC verify →
-  `Fetch` → `Secrets`), and `sessions` / `event-log` (their `Cache` / `Log` stamp
-  the platform `Clock`). Their pure pieces are still type-checked by `bynkc check`,
-  and their behaviour is exercised end to end under `bynk dev`.
+- **A test can target a `commons`, an agent, or a context's handlers** — including
+  a context that `consumes bynk { … }`. Under `bynkc test` each platform
+  capability is a deterministic test double (the clock reads the epoch, `Secrets`
+  holds nothing, `Kv` is in memory, `Fetch` never reaches the network), and a
+  `stub` overrides any one operation. `sessions` stubs the `Clock` to test expiry,
+  `webhook-relay` stubs `Secrets` and `Fetch` to test forwarding, and `event-log`
+  drives its time-window routes. See
+  [Platform capabilities under test](https://bynk-lang.org/book/reference/testing/#platform-doubles).

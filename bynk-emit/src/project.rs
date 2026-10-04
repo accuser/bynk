@@ -1498,6 +1498,9 @@ fn run_checks(
         &mut errors,
         &mut refs,
     );
+    let mut unit_tables = unit_tables;
+    bynk_check::symbols::record_flattened_caps(&mut unit_tables, &unit_flattened);
+    let unit_tables = unit_tables;
 
     // -- 5b'. Collect `consumes` aliases (v0.6 §3.1). Each consuming context
     //         has an alias map: alias → consumed-context qualified name.

@@ -53,9 +53,9 @@ greeter.messages:
 
 `greeter.messages` (the bundle and its `greet` wrapper) is unit-tested by
 passing locale tags as literals — no `Locale` binding needed. `greeter.web`
-consumes the platform capability, which keeps it out of the test surface
-([#291](https://github.com/accuser/bynk/issues/291)); exercise it end to end
-under `bynk dev`, below.
+consumes the platform capability, which `bynkc test` replaces with a test double
+that answers `"en"` (or whatever a `stub Locale.current()` says). Exercise it end
+to end under `bynk dev`, below.
 
 ## Run it locally
 

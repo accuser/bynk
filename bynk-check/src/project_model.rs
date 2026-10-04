@@ -3425,6 +3425,7 @@ mod native_platform_closure_tests {
             actors: StdHashMap::new(),
             exported_capabilities: Default::default(),
             events: StdHashMap::new(),
+            flattened_caps: StdHashMap::new(),
         }
     }
 

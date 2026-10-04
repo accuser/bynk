@@ -619,6 +619,7 @@ mod tests {
                 .into_iter()
                 .map(|(n, e)| (n.to_string(), e))
                 .collect(),
+            flattened_caps: StdHashMap::new(),
         }
     }
 

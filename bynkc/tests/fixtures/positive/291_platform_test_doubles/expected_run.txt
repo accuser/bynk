@@ -1,0 +1,5 @@
+# #291: run by bynkc/tests/behaviour_fixtures.rs; see that file for the format.
+passed=13 failed=1
+# #291: by design, not a defect — an unstubbed `Fetch.send` faults ("not
+# stubbed, and a test never reaches the network"), so this case must fail.
+fail an unstubbed fetch faults rather than reach the network
