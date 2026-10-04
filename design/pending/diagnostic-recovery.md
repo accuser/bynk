@@ -32,9 +32,11 @@ turned one fault into a hidden or multiplied set of diagnostics:
     keeps its type errors.
   - On the project path the later stages run past a checker error too, so a
     service handler's body is still typed when a free function failed. Each
-    file keeps only the later-stage diagnostics located in it: those stages
-    walk the whole unit and used to attribute another file's fault to the
-    current one, at a position in the wrong source.
+    file keeps only the later-stage diagnostics located in it (by the unit's
+    own span, so a file with no items of its own is covered), and decides
+    whether a stage failed it from those alone. Those stages walk the whole
+    unit and used to attribute another file's fault to the current one, at a
+    position in the wrong source.
 - **B: broken declarations are known names (recommended in the issue).**
   - The parser records the name of each top-level declaration recovery skips
     (`Recovered::broken_decl_names`).
@@ -42,9 +44,12 @@ turned one fault into a hidden or multiplied set of diagnostics:
     own syntax error already reports the fault (`split_broken_decl_echoes`).
   - It still counts as a resolve error for A, so the checker's follow-ons in
     the referencing declaration are dropped too.
-  - The names are matched in the diagnostic's message, scoped to the five
-    unknown-name codes. That is cheaper than threading a name set into a dozen
-    emission sites.
+  - A diagnostic is hidden only when a broken name is its *subject* — the
+    name it is about, as the parser records it (`T`, `f`, or a method as
+    `T.m`). Mentioning the name somewhere else in the message doesn't count, so
+    a broken `fn m` never hides `Other.m`. The subject is read from the
+    message of the five unknown-name codes, which is cheaper than threading a
+    name set into a dozen emission sites.
 - **Error-typed bindings.**
   - A pattern that fails to check, and a `let`/`<-` whose value fails to
     type, bind their names to `Ty::Error`.
@@ -75,8 +80,10 @@ turned one fault into a hidden or multiplied set of diagnostics:
   a file's types for completion (the gap ADR 0094 left open). It now asserts
   the typed completions survive.
 - The negative-fixture harness had only subset checks, so it could not see a
-  spurious diagnostic. `expected_error.txt` gains an exact-set mode (`# exact`):
-  needles and diagnostics must pair one to one.
+  spurious diagnostic. `expected_error.txt` and `expected_diagnostics.txt`
+  gain an exact-set mode (`# exact`): needles and diagnostics must pair one to
+  one, by a maximum matching, so the order needles are listed in never
+  matters.
 - Not in scope: on the project path, checking a partially-parsed file's
   surviving declarations (and suppressing references to its broken names from
   other files).
@@ -86,8 +93,12 @@ Proved by:
   and `_project`), `1663_syntax_errors_all_reported`,
   `1663_broken_record_no_cascade` and `1663_pattern_arity_keeps_bindings`,
   each first pinned at the old output and then flipped by its fix;
-- `bynk-ide/tests/recovery.rs` (the editor path: the 21-to-1 `Money` case, and
-  broken functions and methods);
+- `1663_split_context_attribution`, one context in two files, pinned by path
+  and position (`expected_diagnostics.txt` gains `# exact` too);
+- parser unit tests for both recovery invariants (a bodiless item before the
+  body's `}`; an `agent` skipped whole in a commons);
+- `bynk-ide/tests/recovery.rs` (the editor path: the 21-to-1 `Money` case,
+  broken functions and methods, and a broken `fn m` not hiding `Other.m`);
 - a corpus diff of every negative fixture against `main`;
 - 4,600 mutated positive fixtures through `bynkc check` across three sweeps,
   with no panic or hang this change introduced (the one panic found also

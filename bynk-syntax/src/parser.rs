@@ -736,7 +736,7 @@ impl<'a> Parser<'a> {
     }
 
     /// #1663: the name(s) a declaration starting at token `start` declares:
-    /// `type T`, `fn f`, `fn T.m` (both `T`-qualified method `m`), `event E`,
+    /// `type T`, `fn f`, `fn T.m` (recorded as `T.m`), `event E`,
     /// `capability C`, `service S`, `agent A`, `actor A`. Empty when the item
     /// is not one of those or its name never parsed (`fn ( -> Int`).
     fn decl_names_at(&self, start: usize) -> Vec<String> {
@@ -757,9 +757,11 @@ impl<'a> Parser<'a> {
                 | TokenKind::Actor,
             ) => ident_at(start + 1).into_iter().collect(),
             Some(TokenKind::Fn) => match (ident_at(start + 1), kind_at(start + 2)) {
+                // A method is recorded qualified, `T.m`, so a broken method
+                // is never mistaken for a free `fn m` of the same name.
                 (Some(owner), Some(TokenKind::Dot)) => match ident_at(start + 3) {
-                    Some(method) => vec![method],
-                    None => vec![owner],
+                    Some(method) => vec![format!("{owner}.{method}")],
+                    None => Vec::new(),
                 },
                 (Some(name), _) => vec![name],
                 (None, _) => Vec::new(),
@@ -1351,6 +1353,56 @@ mod tests {
     /// early, returning zero items and a spurious second
     /// `bynk.parse.expected_unit_header` error. With brace-depth tracking, `g`
     /// is recovered as the sole item and only `f`'s own error is reported.
+    /// #1663: an item that ends without its body (`fn f() -> Int` then the
+    /// commons' own `}`) raises its error *on* that `}`, so recovery makes no
+    /// progress. The no-progress step must not consume the brace that closes
+    /// the body (brace form): doing so made the body look unclosed, a
+    /// follow-on `unexpected_eof`.
+    #[test]
+    fn recovery_keeps_the_bodys_closing_brace_after_a_bodiless_item() {
+        let src = "commons m {\n  fn f() -> Int\n}\n";
+        let (unit, errors) = parse_recover_str(src);
+        assert!(unit.is_some(), "recovery should produce a partial AST");
+        let categories: Vec<_> = errors.iter().map(|e| e.category).collect();
+        assert_eq!(
+            categories.len(),
+            1,
+            "one syntax error, no follow-on: {categories:?}"
+        );
+        assert!(
+            !categories.contains(&"bynk.parse.unexpected_eof"),
+            "the commons' closing brace must survive: {categories:?}"
+        );
+    }
+
+    /// #1663: an item keyword illegal at this position (`agent` in a commons)
+    /// is skipped *with* its name and `{ … }` body, not one token at a time —
+    /// otherwise the item loop misreads the agent's name as a malformed item,
+    /// a second, follow-on `expected_item`. The next item still parses.
+    #[test]
+    fn recovery_skips_a_rejected_item_whole() {
+        let src = "commons m\n\nagent Counter {\n  key id: String\n}\n\nfn g() -> Int { 2 }\n";
+        let recovered = parse_units_recovering(&crate::lexer::tokenize(src).unwrap(), src);
+        assert_eq!(
+            recovered.errors.len(),
+            1,
+            "one syntax error, no follow-on: {:?}",
+            recovered
+                .errors
+                .iter()
+                .map(|e| e.category)
+                .collect::<Vec<_>>()
+        );
+        let Some(SourceUnit::Commons(c)) = recovered.units.first() else {
+            panic!("expected commons")
+        };
+        assert!(
+            c.items.iter().any(|i| matches!(i, CommonsItem::Fn(_))),
+            "the `fn g` after the skipped agent must still parse"
+        );
+        assert_eq!(recovered.broken_decl_names, ["Counter"]);
+    }
+
     #[test]
     fn recovery_skips_a_nested_blocks_own_closing_brace() {
         let src = "commons m {\n  \

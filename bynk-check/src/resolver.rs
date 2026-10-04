@@ -688,11 +688,34 @@ pub fn split_broken_decl_echoes(
         "bynk.resolve.unknown_function",
         "bynk.resolve.unknown_static_member",
     ];
+    // The *subject* each of these diagnostics is about, spelled as the parser
+    // records a broken declaration (`T`, `f`, or a method as `T.m`):
+    // - `unknown type `T``, `unknown name `x``, `unknown function `f``: the
+    //   one backticked name;
+    // - `method `T.m` attached to an unknown type `T``: the type, its last;
+    // - `type `T` has no static method or variant named `m``: the member,
+    //   qualified by its type (`T.m`), its first and last.
+    // Matching only the subject keeps a broken `fn m` from hiding an unrelated
+    // `Other.m` that merely shares the name.
+    let names = |message: &str| -> Vec<String> {
+        message
+            .split('`')
+            .skip(1)
+            .step_by(2)
+            .map(str::to_string)
+            .collect()
+    };
+    let subject = |e: &CompileError| -> Option<String> {
+        let ns = names(&e.message);
+        if e.category == "bynk.resolve.unknown_static_member" {
+            Some(format!("{}.{}", ns.first()?, ns.last()?))
+        } else {
+            ns.last().cloned()
+        }
+    };
     resolve_errors.into_iter().partition(|e| {
         !(ECHO_CODES.contains(&e.category)
-            && broken_decl_names
-                .iter()
-                .any(|n| e.message.contains(&format!("`{n}`"))))
+            && subject(e).is_some_and(|s| broken_decl_names.contains(&s)))
     })
 }
 

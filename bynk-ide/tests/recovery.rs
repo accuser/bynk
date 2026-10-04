@@ -56,3 +56,27 @@ fn mistyped() -> Int { "s" }
         ]
     );
 }
+
+/// A broken declaration's name hides only diagnostics whose *subject* it is: a
+/// broken `fn m` does not hide `Other.m` — an unrelated static member that
+/// merely shares the name — on a type that exists.
+#[test]
+fn a_broken_name_hides_only_diagnostics_about_it() {
+    let src = r#"commons demo
+
+type Other = { x: Int }
+
+fn m() -> Int { 1 + }
+
+fn calls_broken() -> Int { m() }
+
+fn unrelated() -> Int { Other.m() }
+"#;
+    assert_eq!(
+        diagnostics(src),
+        [
+            "bynk.parse.expected_expression @ 5:21",
+            "bynk.resolve.unknown_static_member @ 9:31",
+        ]
+    );
+}
