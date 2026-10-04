@@ -1,0 +1,21 @@
+context catalog
+
+uses pages
+
+-- #1704: a generic rebranded record (`Page[T]` aliases as
+-- `Page<T> = __CommonsPage<T> & { readonly __ctxBrand?: "catalog" }`) built
+-- with record syntax, its elements themselves rebranded literals.
+agent Shelf {
+  key id: String
+  store seen: Cell[Int]
+
+  on call count(p: Page[Item]) -> Effect[Int] {
+    Effect.pure(p.items.length())
+  }
+}
+
+service api {
+  on call() -> Effect[Int] {
+    Shelf("s").count(Page { items: [Item { name: "a" }, Item { name: "b" }], next: None })
+  }
+}

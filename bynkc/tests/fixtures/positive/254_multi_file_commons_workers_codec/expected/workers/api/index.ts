@@ -21,7 +21,7 @@ export default {
             const args = await request.json() as __JsonValue;
             const __r_c = handlers.__deserialise_Cents(args, "$");
             if (__r_c.tag === "Err") return new globalThis.Response(globalThis.JSON.stringify(__r_c.error), { status: 400, headers: { "content-type": "application/json" } });
-            const c = __r_c.value as unknown as handlers.Cents;
+            const c = __r_c.value;
             const result = await surface.check(c);
             const body = ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(result);
             return new globalThis.Response(globalThis.JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });

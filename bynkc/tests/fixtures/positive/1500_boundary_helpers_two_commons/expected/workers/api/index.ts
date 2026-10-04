@@ -23,10 +23,10 @@ export default {
             const argsObj = args as { [k: string]: __JsonValue };
             const __r_a = handlers.__deserialise_A(argsObj["a"], "$.a");
             if (__r_a.tag === "Err") return new globalThis.Response(globalThis.JSON.stringify(__r_a.error), { status: 400, headers: { "content-type": "application/json" } });
-            const a = __r_a.value as unknown as handlers.A;
+            const a = __r_a.value;
             const __r_b = handlers.__deserialise_B(argsObj["b"], "$.b");
             if (__r_b.tag === "Err") return new globalThis.Response(globalThis.JSON.stringify(__r_b.error), { status: 400, headers: { "content-type": "application/json" } });
-            const b = __r_b.value as unknown as handlers.B;
+            const b = __r_b.value;
             const result = await surface.check(a, b);
             const body = ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(result);
             return new globalThis.Response(globalThis.JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });

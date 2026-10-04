@@ -8,12 +8,12 @@ import { Message as __CommonsMessage } from "../../bynk/locale/types.js";
 
 import * as bynk from "../../bynk.js";
 
-export type Message = __CommonsMessage & { readonly __ctxBrand: "web" };
+export type Message = __CommonsMessage & { readonly __ctxBrand?: "web" };
 
 export const api = {
   async http_GET_greet(deps: { Locale: bynk.Locale }): globalThis.Promise<HttpResult<string>> {
     const tag = await deps.Locale.current();
-    return HttpResult.Ok(render(tag, (message("hello") as Message)));
+    return HttpResult.Ok(render(tag, message("hello")));
   },
 };
 

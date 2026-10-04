@@ -3165,8 +3165,8 @@ fn emit_composition_root(
             // the same nested `format!` calls as before conversion, just fed
             // into a real `Arrow` node's `body` as one opaque `TsExpr::Ident`
             // — the same "opaque text carrier" precedent `workers.rs`'s/
-            // `workers_entry.rs`'s own `deserialise_call`/`brand_assertion`/
-            // `claim_predicate_to_js` outputs already use.
+            // `workers_entry.rs`'s own `claim_predicate_to_js` output already
+            // uses.
             let dispatch_body =
                 format!("{{ for (const ev of events) {{ switch (ev.type) {{ {cases}}} }} }}");
             let arrow = TsExpr::Arrow {

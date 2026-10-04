@@ -465,7 +465,7 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     ),
     d(
         "bynk.context.rebrand_construction",
-        "A `uses`-sourced commons record or sum type was constructed directly inside a context, where the emitter's per-context rebrand leaves its constructors out of scope.",
+        "A variant of a `uses`-sourced commons sum type was constructed directly inside a context, where the emitter's per-context rebrand leaves its constructors out of scope.",
     ),
     d(
         "bynk.contract.duplicate_name",

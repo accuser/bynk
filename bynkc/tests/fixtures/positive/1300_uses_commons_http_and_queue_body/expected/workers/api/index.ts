@@ -31,7 +31,7 @@ export default {
           }
           const __r_body = handlers.__deserialise_Cents(__body_json, "$");
           if (__r_body.tag === "Err") return __applySecurityHeaders(new globalThis.Response(globalThis.JSON.stringify(__r_body.error), { status: 400, headers: { "content-type": "application/json" } }), __security_intake);
-          const body = __r_body.value as unknown as handlers.Cents;
+          const body = __r_body.value;
           const result = await surface.http_POST_cents(body);
           return __applySecurityHeaders(__httpResultToResponse(result, (__v: number) => ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(__v)), __security_intake);
         }
@@ -54,7 +54,7 @@ export default {
           try {
             const __r = handlers.__deserialise_Cents((msg.body as __JsonValue), "$");
             if (__r.tag === "Err") { globalThis.console.error("queue cents-credited deserialise failed", __r.error); msg.retry(); continue; }
-            const result = await surface.queue_credit_0(__r.value as unknown as handlers.Cents);
+            const result = await surface.queue_credit_0(__r.value);
             if (result.tag === "Ack") msg.ack();
             else { globalThis.console.error("queue cents-credited retry", result.reason); msg.retry(); }
           } catch (e) {

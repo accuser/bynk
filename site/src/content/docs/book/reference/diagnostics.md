@@ -57,7 +57,7 @@ There are **464** codes in total.
 | `bynk.context.external_construction` | A context-owned type was constructed from outside that context. |  | — |
 | `bynk.context.external_provider` | A bodiless (external) provider was declared outside an `adapter`. | [`provider_decl`](/book/reference/grammar/#rule-provider_decl) | — |
 | `bynk.context.opaque_inspection` | An opaquely-exported type was inspected from outside its context. |  | — |
-| `bynk.context.rebrand_construction` | A `uses`-sourced commons record or sum type was constructed directly inside a context, where the emitter's per-context rebrand leaves its constructors out of scope. |  | — |
+| `bynk.context.rebrand_construction` | A variant of a `uses`-sourced commons sum type was constructed directly inside a context, where the emitter's per-context rebrand leaves its constructors out of scope. |  | — |
 
 ## Contracts
 

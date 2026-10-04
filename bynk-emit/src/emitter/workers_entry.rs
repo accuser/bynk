@@ -11,12 +11,10 @@
 //! this file's own conversion, closing the fourth Arc C slice (`workers.rs`
 //! was the third, #1321).
 
-use std::sync::Arc;
-
 use crate::emitter::http_handler_method_name_ir;
 use crate::emitter::ts_ident;
 use crate::project::UnitTable;
-use bynk_syntax::ast::{BaseType, Handler, LimitsPolicy, ServiceProtocol, TypeDecl, TypeRef};
+use bynk_syntax::ast::{BaseType, Handler, LimitsPolicy, ServiceProtocol, TypeRef};
 
 use crate::emitter::RuntimeUse;
 use bynk_ts::{
@@ -755,7 +753,6 @@ pub(crate) fn emit_worker_entry(
             sname,
             h,
             &table.actors,
-            &table.types,
             &runtime_use,
         ));
         call_cases.push(case_(str_lit(sname.to_string()), case_body));
@@ -1035,7 +1032,6 @@ pub(crate) fn emit_worker_entry(
             route,
             cors_const,
             security_const,
-            &table.types,
             &runtime_use,
         ));
     }
@@ -1153,7 +1149,6 @@ pub(crate) fn emit_worker_entry(
             &queue_routes,
             &exec_params,
             &other_compose_args,
-            &table.types,
             &runtime_use,
         ));
     }
@@ -1279,7 +1274,6 @@ fn emit_queue_handler(
     queue_routes: &[QueueRoute],
     exec_params: &[TsParam],
     compose_args: &[TsExpr],
-    local_types: &std::collections::HashMap<String, Arc<TypeDecl>>,
     ru: &RuntimeUse,
 ) -> TsObjectEntry {
     let mut params = vec![TsParam {
@@ -1314,20 +1308,14 @@ fn emit_queue_handler(
     let mut cases: Vec<TsSwitchCase> = Vec::new();
     for route in queue_routes {
         let method_key = crate::emitter::queue_handler_method_name(&route.service, route.index);
-        let (dser, brand) = match &route.msg_type {
-            Some(t) => (
-                deserialise_call(t, "(msg.body as __JsonValue)", "$", ru),
-                brand_assertion(t, local_types),
-            ),
+        let dser = match &route.msg_type {
+            Some(t) => deserialise_call(t, "(msg.body as __JsonValue)", "$", ru),
             // P7.2: `msg.body` is already declared `unknown` at `queue()`'s own
             // signature above — no cast needed at all when there's no declared type
             // to (dis)trust it against.
-            None => (
-                as_expr(
-                    call(ident("Ok"), vec![member(ident("msg"), "body")]),
-                    TsType::named("Result<unknown, __BoundaryError>"),
-                ),
-                String::new(),
+            None => as_expr(
+                call(ident("Ok"), vec![member(ident("msg"), "body")]),
+                TsType::named("Result<unknown, __BoundaryError>"),
             ),
         };
         let try_stmts = vec![
@@ -1357,7 +1345,7 @@ fn emit_queue_handler(
                 "result",
                 await_expr(call(
                     member(ident("surface"), method_key),
-                    vec![ident(format!("__r.value{brand}"))],
+                    vec![member(ident("__r"), "value")],
                 )),
             ),
             TsStmt::if_else_stmt(
@@ -1796,7 +1784,6 @@ fn emit_http_route_dispatch(
     route: &HttpRoute,
     cors_const: Option<&str>,
     security_const: Option<&str>,
-    local_types: &std::collections::HashMap<String, Arc<TypeDecl>>,
     ru: &RuntimeUse,
 ) -> TsStmt {
     let h = &route.handler;
@@ -2086,8 +2073,7 @@ fn emit_http_route_dispatch(
             strict_eq(member(ident("__r_body"), "tag"), str_lit("Err")),
             return_(Some(body_reject)),
         ));
-        let brand = brand_assertion(&body_param.type_ref, local_types);
-        guarded.push(const_("body", ident(format!("__r_body.value{brand}"))));
+        guarded.push(const_("body", member(ident("__r_body"), "value")));
         call_args.push(ident("body"));
     }
 
@@ -2200,7 +2186,6 @@ fn emit_call_handler_dispatch(
     sname: &str,
     h: &Handler,
     actors: &std::collections::HashMap<String, bynk_syntax::ast::ActorDecl>,
-    local_types: &std::collections::HashMap<String, Arc<TypeDecl>>,
     ru: &RuntimeUse,
 ) -> Vec<TsStmt> {
     let mut stmts: Vec<TsStmt> = Vec::new();
@@ -2248,10 +2233,9 @@ fn emit_call_handler_dispatch(
                 400,
             ))),
         ));
-        let brand = brand_assertion(&p.type_ref, local_types);
         stmts.push(const_(
             jname.clone(),
-            ident(format!("__r_{pname}.value{brand}")),
+            member(ident(format!("__r_{pname}")), "value"),
         ));
         let mut call_args = Vec::new();
         if has_caller {
@@ -2315,10 +2299,9 @@ fn emit_call_handler_dispatch(
                     400,
                 ))),
             ));
-            let brand = brand_assertion(&p.type_ref, local_types);
             stmts.push(const_(
                 jname.clone(),
-                ident(format!("__r_{pname}.value{brand}")),
+                member(ident(format!("__r_{pname}")), "value"),
             ));
             names.push(jname);
         }
@@ -2464,43 +2447,4 @@ pub(crate) fn deserialise_call(
 
 fn serialise_call(t: &TypeRef, value: &str, ru: &RuntimeUse) -> TsExpr {
     crate::emitter::serialisation::serialise_expr_via(t, value, "handlers.", ru)
-}
-
-/// v0.176 (#642): re-assert a deserialised value into this context's *branded*
-/// view of a type it `uses` from a commons.
-///
-/// A context rebrands the commons types it `uses` (`Money & { __ctxBrand:
-/// "commerce.orders" }`, ADR §6.2) so the same commons type is nominally distinct
-/// per context. The boundary codec for such a type lives in the *commons* module
-/// and necessarily returns the **unbranded** commons type, while the handler it
-/// feeds is typed against the branded one — so the entry must bridge them.
-/// Routing through `unknown` is the established spelling: a direct cast is
-/// rejected under `tsc --strict` because the brand discriminants are
-/// incompatible, and Bynk has already guaranteed the value's shape structurally
-/// at the boundary (the same reasoning as the bundle path's cross-context
-/// argument cast). The gap has always existed; it was invisible while the compose
-/// wrapper typed every parameter `any` (Decision E).
-///
-/// **Only an imported type is asserted, and the narrowness is the point.** An
-/// `as unknown as T` is exactly the unchecked assertion this increment exists to
-/// delete, so it must not be applied one position wider than the gap it bridges.
-/// For a **context-declared** type there is no brand gap at all: the type is
-/// declared here, `handlers.ts` exports it, and `deserialise_<T>` already returns
-/// precisely `handlers.<T>` — asserting there would re-disarm the very check
-/// Decision E just bought, letting a wrong codec type-check again. `table.types`
-/// holds only this unit's own declarations, so absence from it means the name was
-/// imported (the `uses`-commons case, where the brands genuinely differ).
-///
-/// Only a *named root* is asserted, mirroring the bundle path: for a generic
-/// (`List[Money]`) TypeScript resolves the brand through the intersection.
-pub(crate) fn brand_assertion(
-    t: &TypeRef,
-    local_types: &std::collections::HashMap<String, Arc<TypeDecl>>,
-) -> String {
-    match crate::emitter::emit::type_ref_named_root(t) {
-        Some(name) if !local_types.contains_key(name) => {
-            format!(" as unknown as handlers.{name}")
-        }
-        _ => String::new(),
-    }
 }

@@ -5,7 +5,7 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError, ty
 
 import { Money as __CommonsMoney } from "../../commerce/money.js";
 
-export type Money = __CommonsMoney & { readonly __ctxBrand: "commerce.payment" };
+export type Money = __CommonsMoney & { readonly __ctxBrand?: "commerce.payment" };
 
 /**
  * Payment context. Authorises monetary transactions.

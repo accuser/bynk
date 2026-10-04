@@ -5,8 +5,8 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError, ty
 
 import { Paginated as __CommonsPaginated, User as __CommonsUser } from "../../shop/envelope.js";
 
-export type Paginated<T> = __CommonsPaginated<T> & { readonly __ctxBrand: "shop.api" };
-export type User = __CommonsUser & { readonly __ctxBrand: "shop.api" };
+export type Paginated<T> = __CommonsPaginated<T> & { readonly __ctxBrand?: "shop.api" };
+export type User = __CommonsUser & { readonly __ctxBrand?: "shop.api" };
 
 export const users = {
   async call(page: Paginated<User>, deps: {}): globalThis.Promise<Result<Paginated<User>, void>> {

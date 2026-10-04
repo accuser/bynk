@@ -5,9 +5,9 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError, Ht
 
 import { Cents as __CommonsCents } from "../../money/cents.js";
 
-export type Cents = __CommonsCents & { readonly __ctxBrand: "api" };
+export type Cents = __CommonsCents & { readonly __ctxBrand?: "api" };
 export const Cents = {
-  of(value: number): Result<Cents, ValidationError> { return __CommonsCents.of(value) as unknown as Result<Cents, ValidationError>; },
+  of(value: number): Result<Cents, ValidationError> { return __CommonsCents.of(value); },
 };
 
 /**

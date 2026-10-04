@@ -5,7 +5,7 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError, ty
 
 import { Doc as __CommonsDoc } from "./model.js";
 
-export type Doc = __CommonsDoc & { readonly __ctxBrand: "docs.archive" };
+export type Doc = __CommonsDoc & { readonly __ctxBrand?: "docs.archive" };
 
 export interface Blob {
   readonly label: string;

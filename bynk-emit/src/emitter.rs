@@ -1671,10 +1671,14 @@ fn called_consumed_services(
 
 /// For each type imported via `uses` that's referenced in this file, emit:
 /// 1. (Done in imports) an aliased import: `import { Money as __CommonsMoney } from ...`
-/// 2. A rebranded type alias: `export type Money = __CommonsMoney & { readonly __ctxBrand: "..." }`
+/// 2. A rebranded type alias: `export type Money = __CommonsMoney & { readonly __ctxBrand?: "..." }`
 ///
 /// The brand makes two contexts that both `uses` the same commons see distinct
-/// nominal `Money` types in their TypeScript output (v0.4 §3.4 / §6.2).
+/// nominal `Money` types in their TypeScript output (v0.4 §3.4 / §6.2). It is
+/// optional (#1704), so an unbranded commons value (a record literal, a nested
+/// field of another rebranded record, a commons fn's result) is accepted where
+/// the context's type is expected, while a value carrying another context's
+/// brand is still rejected.
 /// #1478: real-node-internally already — returns its real declarations
 /// (a rebrand type alias, and — for a refined/opaque base — a forwarding
 /// const, per name) instead of writing into `out: &mut String`.
@@ -1735,10 +1739,17 @@ fn emit_context_rebrands(
                 type_params: params.iter().map(|p| p.to_string()).collect(),
                 ty: bynk_ts::TsType::intersection(vec![
                     bynk_ts::TsType::named_with_args(format!("__Commons{name}"), generic_args),
-                    bynk_ts::TsType::Object(vec![bynk_ts::TsTypeMember::readonly_prop(
-                        "__ctxBrand",
-                        bynk_ts::TsType::named(format!("\"{owning}\"")),
-                    )]),
+                    // #1704: the brand is *optional*. A plain commons value (a
+                    // record literal, a nested field, a commons fn's result)
+                    // has no brand, and it is assignable here; another
+                    // context's brand (`"a"` against `"b"`) still is not, so
+                    // the two contexts' types stay nominally distinct.
+                    bynk_ts::TsType::Object(vec![bynk_ts::TsTypeMember::Prop {
+                        name: "__ctxBrand".to_string(),
+                        ty: bynk_ts::TsType::named(format!("\"{owning}\"")),
+                        optional: true,
+                        readonly: true,
+                    }]),
                 ]),
             })),
             None,
@@ -1760,11 +1771,9 @@ fn emit_context_rebrands(
                 commons.types.get(name).map(|d| &d.body),
                 Some(TypeBody::Opaque { .. })
             );
-            // `X.of(value) as unknown as Result<Name, ValidationError>` — a
-            // real nested `TsExpr::As`, the same shape `emit_forwarded_
-            // methods` (immediately below) already proves renders correctly
-            // with no extra parens: the `As` arm's own inner-expr check
-            // only guards `Binary`/`Arrow`/`Conditional`, not a nested `As`.
+            // #1704: `return __CommonsX.of(value);` with no cast — the
+            // commons result is unbranded, which fits the context's
+            // optionally-branded `Result<X, ValidationError>` directly.
             let of_entry = bynk_ts::TsObjectEntry::Method {
                 name: "of".to_string(),
                 is_async: false,
@@ -1784,26 +1793,12 @@ fn emit_context_rebrands(
                 doc: None,
                 inline: true,
                 body: vec![bynk_ts::TsStmt::return_stmt(
-                    Some(bynk_ts::TsExpr::As {
-                        expr: Box::new(bynk_ts::TsExpr::As {
-                            expr: Box::new(bynk_ts::TsExpr::Call {
-                                callee: Box::new(bynk_ts::TsExpr::Member {
-                                    object: Box::new(bynk_ts::TsExpr::Ident(format!(
-                                        "__Commons{name}"
-                                    ))),
-                                    property: "of".to_string(),
-                                }),
-                                args: vec![bynk_ts::TsExpr::Ident("value".to_string())],
-                            }),
-                            ty: bynk_ts::TsType::named("unknown"),
+                    Some(bynk_ts::TsExpr::Call {
+                        callee: Box::new(bynk_ts::TsExpr::Member {
+                            object: Box::new(bynk_ts::TsExpr::Ident(format!("__Commons{name}"))),
+                            property: "of".to_string(),
                         }),
-                        ty: bynk_ts::TsType::named_with_args(
-                            "Result",
-                            vec![
-                                bynk_ts::TsType::named(name.clone()),
-                                bynk_ts::TsType::named("ValidationError"),
-                            ],
-                        ),
+                        args: vec![bynk_ts::TsExpr::Ident("value".to_string())],
                     }),
                     None,
                 )],
@@ -1826,20 +1821,14 @@ fn emit_context_rebrands(
                     doc: None,
                     inline: true,
                     body: vec![bynk_ts::TsStmt::return_stmt(
-                        Some(bynk_ts::TsExpr::As {
-                            expr: Box::new(bynk_ts::TsExpr::As {
-                                expr: Box::new(bynk_ts::TsExpr::Call {
-                                    callee: Box::new(bynk_ts::TsExpr::Member {
-                                        object: Box::new(bynk_ts::TsExpr::Ident(format!(
-                                            "__Commons{name}"
-                                        ))),
-                                        property: "unsafe".to_string(),
-                                    }),
-                                    args: vec![bynk_ts::TsExpr::Ident("value".to_string())],
-                                }),
-                                ty: bynk_ts::TsType::named("unknown"),
+                        Some(bynk_ts::TsExpr::Call {
+                            callee: Box::new(bynk_ts::TsExpr::Member {
+                                object: Box::new(bynk_ts::TsExpr::Ident(format!(
+                                    "__Commons{name}"
+                                ))),
+                                property: "unsafe".to_string(),
                             }),
-                            ty: bynk_ts::TsType::named(name.clone()),
+                            args: vec![bynk_ts::TsExpr::Ident("value".to_string())],
                         }),
                         None,
                     )],
@@ -3222,14 +3211,6 @@ pub(crate) struct ModuleCtx<'a> {
     /// 1`, exactly every event's behaviour before this map existed, not a
     /// hard failure the way a missing `runtime_use` would be.
     event_schema_versions: HashMap<String, i64>,
-    /// #527: type names this context *rebrands* (`uses`-imported commons
-    /// types re-exported as `T & { __ctxBrand }`). Drives brand-assertion
-    /// casts where unbranded commons values meet branded local positions.
-    rebranded_types: HashSet<String>,
-    /// #527: fn names imported from a commons. Such a fn's signature uses the
-    /// *unbranded* commons types, so calls whose return mentions a rebranded
-    /// type are asserted back into the local (branded) namespace.
-    commons_imported_fns: HashSet<String>,
     /// #934: true when the unit being emitted is the reserved first-party
     /// `bynk` adapter itself. `bynk` is a reserved namespace, so a capability
     /// literally named `Idempotency` declared *in this unit* is unambiguously
@@ -3253,32 +3234,7 @@ impl<'a> ModuleCtx<'a> {
             target: BuildTarget::Bundle,
             agent_method_givens: HashMap::new(),
             event_schema_versions: HashMap::new(),
-            rebranded_types: HashSet::new(),
-            commons_imported_fns: HashSet::new(),
             in_bynk_unit: false,
-        }
-    }
-
-    /// #527: derive which imported names this context rebrands and which fns
-    /// come from a commons (and so speak the unbranded types). Mirrors the
-    /// alias predicate in `emit_project_imports`.
-    pub(crate) fn set_rebrand_info(
-        &mut self,
-        commons: &TypedCommons,
-        ctx: &crate::project::EmitProjectCtx,
-    ) {
-        if ctx.unit_kind != UnitKind::Context {
-            return;
-        }
-        for (name, kind) in &ctx.imported_from_kind {
-            if *kind != UnitKind::Commons {
-                continue;
-            }
-            if commons.types.contains_key(name) {
-                self.rebranded_types.insert(name.clone());
-            } else if commons.fns.contains_key(name) {
-                self.commons_imported_fns.insert(name.clone());
-            }
         }
     }
 }
@@ -3708,16 +3664,6 @@ impl<'a> LowerCtx<'a> {
     /// v0.8 build target.
     pub(crate) fn target(&self) -> BuildTarget {
         self.module.target
-    }
-
-    /// #527: type names this context rebrands.
-    pub(crate) fn rebranded_types(&self) -> &HashSet<String> {
-        &self.module.rebranded_types
-    }
-
-    /// #527: fn names imported from a commons.
-    pub(crate) fn commons_imported_fns(&self) -> &HashSet<String> {
-        &self.module.commons_imported_fns
     }
 
     /// #934: true when the unit being emitted is the first-party `bynk` adapter.

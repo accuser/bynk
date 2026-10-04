@@ -745,16 +745,9 @@ pub(crate) fn emit_forwarded_methods(
             }),
             args,
         };
-        let body = vec![bynk_ts::TsStmt::return_stmt(
-            Some(bynk_ts::TsExpr::As {
-                expr: Box::new(bynk_ts::TsExpr::As {
-                    expr: Box::new(call),
-                    ty: bynk_ts::TsType::named("unknown"),
-                }),
-                ty: bynk_ts::TsType::named(ret.clone()),
-            }),
-            None,
-        )];
+        // #1704: no cast. The commons method speaks the unbranded types,
+        // which fit the context's optionally-branded ones directly.
+        let body = vec![bynk_ts::TsStmt::return_stmt(Some(call), None)];
         let entry = bynk_ts::TsObjectEntry::Method {
             name: f.name.clone(),
             is_async: false,
@@ -2497,7 +2490,6 @@ pub(crate) fn emit_provider(
         let mut module = ModuleCtx::new(commons, &ctx.cross_context, &ctx.runtime_use);
         module.agent_method_givens = ctx.agent_method_givens.clone();
         module.event_schema_versions = ctx.event_schema_versions.clone();
-        module.set_rebrand_info(commons, ctx);
         module.target = ctx.target;
         module.in_bynk_unit = ctx.commons_name == "bynk";
         let body_smb = RefCell::new(SourceMapBuilder::new());
@@ -2814,7 +2806,6 @@ pub(crate) fn emit_service(
         module.in_bynk_unit = ctx.commons_name == "bynk";
         module.agent_method_givens = ctx.agent_method_givens.clone();
         module.event_schema_versions = ctx.event_schema_versions.clone();
-        module.set_rebrand_info(commons, ctx);
         module.target = ctx.target;
         let mut cx = LowerCtx::new(
             module,
@@ -4895,7 +4886,6 @@ pub(crate) fn emit_agent(
             module.target = ctx.target;
             module.agent_method_givens = ctx.agent_method_givens.clone();
             module.event_schema_versions = ctx.event_schema_versions.clone();
-            module.set_rebrand_info(commons, ctx);
             let mut icx = LowerCtx::new(module, BodyMode::StaticInit);
             icx.local_agents = ctx.local_agents.clone();
             let expr = pre.lower(init, &mut icx);
@@ -5735,7 +5725,6 @@ pub(crate) fn emit_agent(
         module.in_bynk_unit = ctx.commons_name == "bynk";
         module.agent_method_givens = ctx.agent_method_givens.clone();
         module.event_schema_versions = ctx.event_schema_versions.clone();
-        module.set_rebrand_info(commons, ctx);
         let mut cx = LowerCtx::new(
             module,
             BodyMode::AgentHandler {
@@ -6704,7 +6693,6 @@ fn emit_ws_do_method(
     module.in_bynk_unit = ctx.commons_name == "bynk";
     module.agent_method_givens = ctx.agent_method_givens.clone();
     module.event_schema_versions = ctx.event_schema_versions.clone();
-    module.set_rebrand_info(commons, ctx);
     module.target = ctx.target;
     let mut cx = LowerCtx::new(
         module,

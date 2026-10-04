@@ -20,9 +20,9 @@ What it shows:
 
 - **Testing against the platform clock** — under `bynkc test` the platform
   `Clock` is a deterministic test double that reads the epoch, and a case can
-  `stub Clock.now()` to read any instant. The tests drive the time-window routes
-  and observe `expect Clock.now called once`. A test can't yet build an `Event`
-  for the write path ([#1704](https://github.com/accuser/bynk/issues/1704)).
+  `stub Clock.now()` to read any instant. The tests append events through the
+  agent and the `POST` route, read them back through the time-window routes,
+  and observe `expect Clock.now called 2 times`.
 
 ## Layout
 
@@ -48,8 +48,10 @@ events:
   ✓ the last-day count reads the clock and starts empty
   ✓ the last-hour tally reads a stubbed clock
   ✓ a window read needs no clock
+  ✓ appended events are counted in the window
+  ✓ the last-day route counts posted events
 
-3 passed, 0 failed.
+5 passed, 0 failed.
 ```
 
 ## Run it

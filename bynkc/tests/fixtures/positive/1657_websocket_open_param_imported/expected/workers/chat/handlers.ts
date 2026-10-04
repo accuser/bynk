@@ -5,10 +5,10 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError, ty
 
 import { RoomId as __CommonsRoomId } from "../../ids.js";
 
-export type RoomId = __CommonsRoomId & { readonly __ctxBrand: "chat" };
+export type RoomId = __CommonsRoomId & { readonly __ctxBrand?: "chat" };
 export const RoomId = {
-  of(value: string): Result<RoomId, ValidationError> { return __CommonsRoomId.of(value) as unknown as Result<RoomId, ValidationError>; },
-  unsafe(value: string): RoomId { return __CommonsRoomId.unsafe(value) as unknown as RoomId; },
+  of(value: string): Result<RoomId, ValidationError> { return __CommonsRoomId.of(value); },
+  unsafe(value: string): RoomId { return __CommonsRoomId.unsafe(value); },
 };
 
 /**

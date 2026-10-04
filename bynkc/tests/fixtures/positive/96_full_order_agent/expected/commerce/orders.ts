@@ -5,13 +5,13 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError, ty
 
 import { CustomerId as __CommonsCustomerId, OrderId as __CommonsOrderId } from "./identifiers.js";
 
-export type CustomerId = __CommonsCustomerId & { readonly __ctxBrand: "commerce.orders" };
+export type CustomerId = __CommonsCustomerId & { readonly __ctxBrand?: "commerce.orders" };
 export const CustomerId = {
-  of(value: string): Result<CustomerId, ValidationError> { return __CommonsCustomerId.of(value) as unknown as Result<CustomerId, ValidationError>; },
+  of(value: string): Result<CustomerId, ValidationError> { return __CommonsCustomerId.of(value); },
 };
-export type OrderId = __CommonsOrderId & { readonly __ctxBrand: "commerce.orders" };
+export type OrderId = __CommonsOrderId & { readonly __ctxBrand?: "commerce.orders" };
 export const OrderId = {
-  of(value: string): Result<OrderId, ValidationError> { return __CommonsOrderId.of(value) as unknown as Result<OrderId, ValidationError>; },
+  of(value: string): Result<OrderId, ValidationError> { return __CommonsOrderId.of(value); },
 };
 
 /**
