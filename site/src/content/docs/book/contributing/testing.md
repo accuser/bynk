@@ -43,7 +43,8 @@ Every gate that runs the workspace suite runs it the same way:
 retries a failure once. A test that passes on the retry is listed as **FLAKY**
 but doesn't fail the gate, at release as on a PR. The policy is decided in that
 one file, so a test can't pass CI and then fail the release because of the
-harness.
+harness. `xtask/tests/suite_harness.rs` checks that all three workflows run that
+exact command, so they can't drift apart again unnoticed.
 
 To reproduce a CI run locally, install
 [nextest](https://nexte.st) and use the same command. A plain `cargo test` also

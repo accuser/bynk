@@ -1,5 +1,6 @@
-# cargo-nextest configuration. The `test` CI leg runs under the `ci` profile
-# (`cargo nextest run --profile ci`); local `cargo nextest run` uses `default`.
+# cargo-nextest configuration. Every gate that runs the workspace suite runs
+# under the `ci` profile (`cargo nextest run --profile ci`; see the #1676 block
+# below); local `cargo nextest run` uses `default`.
 #
 # Why nextest at all: the suite is ~700 tests spread across dozens of
 # integration-test binaries (the bynkc/tests/fixtures/** corpus especially).
@@ -20,7 +21,16 @@
 # Decided: a FLAKY pass does not fail the release, as it does not fail a PR.
 # It is still listed in the run summary. If the release ever needs to be
 # zero-retry, add a named `[profile.release]` here and point release.yml at
-# it, rather than switching that workflow back to a different command.
+# it, rather than switching that workflow back to a different command. Note:
+# a nextest profile inherits from `[profile.default]`, not from `[profile.ci]`.
+# So a `[profile.release]` must restate everything `ci` sets (`fail-fast`,
+# `failure-output`, `status-level`, and whatever else is added below), or move
+# those shared settings into `[profile.default]` first. Otherwise the release
+# would stop at the first failure and report differently from the PR gate:
+# the same divergence this block exists to remove.
+#
+# `xtask/tests/suite_harness.rs` pins that all three workflows run this exact
+# command, so a fourth variant fails a test rather than drifting silently.
 [profile.ci]
 # Surface every failure in one run rather than stopping at the first, so a
 # single red fixture doesn't mask the rest — mirrors the matrix's
