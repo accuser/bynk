@@ -134,6 +134,8 @@ pub const TYPESCRIPT_MAJOR_FLOOR: u32 = 5;
 /// than it as untested.
 pub const TYPESCRIPT_MAJOR_TESTED: u32 = 7;
 
+pub use emitter::wrangler::{COMPATIBILITY_DATE, WRANGLER_MIN};
+
 // `write_output`/`write_document` moved to `bynk-driver` (#1047, R2.3/
 // T0.7 residue): every caller was already at driver level, so this crate
 // never needed direct filesystem access for it — the pure move closes it
