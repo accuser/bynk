@@ -1,0 +1,18 @@
+commons demo.bundle
+
+uses bynk.locale
+uses bynk.locale.types
+
+type Message = { text: String }
+
+fn messagesByLocale() -> Int { 1 }
+
+messages "en" @reference {
+  "greeting" => "Hello, {name}!"
+}
+
+fn shout(m: Message) -> String { m.text }
+
+fn withText(s: String) -> String { s }
+
+fn greetAll(tag: LocaleTag) -> String { withText(render(tag, message("greeting"))) }

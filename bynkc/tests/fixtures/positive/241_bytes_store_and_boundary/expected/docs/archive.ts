@@ -77,7 +77,7 @@ export function __resetAgents(): void {
 export interface DocsArchiveDeps {
 }
 
-export function makeSurface(deps: DocsArchiveDeps) {
+export function __makeSurface(deps: DocsArchiveDeps) {
   return {
     async intake(d: Doc): globalThis.Promise<Result<number, void>> {
       return intake.call(d, deps);

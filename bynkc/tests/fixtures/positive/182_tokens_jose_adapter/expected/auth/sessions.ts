@@ -18,7 +18,7 @@ export interface AuthSessionsDeps {
   readonly Jwt: tokens.Jwt;
 }
 
-export function makeSurface(deps: AuthSessionsDeps) {
+export function __makeSurface(deps: AuthSessionsDeps) {
   return {
     async login(): globalThis.Promise<string> {
       return login.call(deps);

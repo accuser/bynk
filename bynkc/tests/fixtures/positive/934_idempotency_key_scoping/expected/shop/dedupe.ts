@@ -107,7 +107,7 @@ export interface ShopDedupeDeps {
   readonly Idempotency: bynk.Idempotency;
 }
 
-export function makeSurface(deps: ShopDedupeDeps) {
+export function __makeSurface(deps: ShopDedupeDeps) {
   return {
     async alpha(): globalThis.Promise<string> {
       return alpha.call(deps);

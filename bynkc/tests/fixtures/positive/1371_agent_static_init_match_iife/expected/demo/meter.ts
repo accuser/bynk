@@ -102,7 +102,7 @@ export function __resetAgents(): void {
 export interface DemoMeterDeps {
 }
 
-export function makeSurface(deps: DemoMeterDeps) {
+export function __makeSurface(deps: DemoMeterDeps) {
   return {
     async hits(id: MeterId): globalThis.Promise<Result<number, MeterError>> {
       return hits.call(id, deps);

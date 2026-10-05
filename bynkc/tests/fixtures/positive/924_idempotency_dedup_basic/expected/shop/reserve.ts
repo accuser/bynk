@@ -35,7 +35,7 @@ export interface ShopReserveDeps {
   readonly Idempotency: bynk.Idempotency;
 }
 
-export function makeSurface(deps: ShopReserveDeps) {
+export function __makeSurface(deps: ShopReserveDeps) {
   return {
     async ordering(orderId: string): globalThis.Promise<ReserveOutcome> {
       return ordering.call(orderId, deps);

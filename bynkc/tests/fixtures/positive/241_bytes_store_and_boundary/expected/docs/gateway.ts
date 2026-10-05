@@ -10,17 +10,17 @@ import * as docs_archive from "./archive.js";
 export type Doc = __CommonsDoc & { readonly __ctxBrand?: "docs.gateway" };
 
 export const submit = {
-  async call(d: Doc, deps: { surface: { archive: globalThis.ReturnType<typeof docs_archive.makeSurface> } }): globalThis.Promise<Result<number, void>> {
+  async call(d: Doc, deps: { surface: { archive: globalThis.ReturnType<typeof docs_archive.__makeSurface> } }): globalThis.Promise<Result<number, void>> {
     const n = await deps.surface.archive.intake((d as unknown as docs_archive.Doc));
     return n;
   },
 };
 
 export interface DocsGatewayDeps {
-  readonly surface: { archive: globalThis.ReturnType<typeof docs_archive.makeSurface> };
+  readonly surface: { archive: globalThis.ReturnType<typeof docs_archive.__makeSurface> };
 }
 
-export function makeSurface(deps: DocsGatewayDeps) {
+export function __makeSurface(deps: DocsGatewayDeps) {
   return {
     async submit(d: Doc): globalThis.Promise<Result<number, void>> {
       return submit.call(d, deps);

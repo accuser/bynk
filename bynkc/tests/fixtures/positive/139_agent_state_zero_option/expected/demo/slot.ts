@@ -103,7 +103,7 @@ export function __resetAgents(): void {
 export interface DemoSlotDeps {
 }
 
-export function makeSurface(deps: DemoSlotDeps) {
+export function __makeSurface(deps: DemoSlotDeps) {
   return {
     async resolve(id: Label): globalThis.Promise<Result<number, SlotError>> {
       return resolve.call(id, deps);

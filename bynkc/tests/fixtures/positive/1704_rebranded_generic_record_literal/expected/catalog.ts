@@ -65,7 +65,7 @@ export function __resetAgents(): void {
 export interface CatalogDeps {
 }
 
-export function makeSurface(deps: CatalogDeps) {
+export function __makeSurface(deps: CatalogDeps) {
   return {
     async api(): globalThis.Promise<number> {
       return api.call(deps);

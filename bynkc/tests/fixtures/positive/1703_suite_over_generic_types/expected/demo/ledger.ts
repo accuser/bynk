@@ -21,7 +21,7 @@ export interface Audit {
   note(e: Entry<number>): globalThis.Promise<void>;
 }
 
-export const AuditToken: symbol = globalThis.Symbol("Audit");
+export const __AuditToken: symbol = globalThis.Symbol("Audit");
 
 export class SilentAudit implements Audit {
   async note(e: Entry<number>): globalThis.Promise<void> {
@@ -29,7 +29,7 @@ export class SilentAudit implements Audit {
   }
 }
 
-export const SilentAuditProvider = { token: AuditToken, factory: () => new SilentAudit() };
+export const __SilentAuditProvider = { token: __AuditToken, factory: () => new SilentAudit() };
 
 export const post = {
   async call(n: number, deps: { Audit: Audit }): globalThis.Promise<number> {
@@ -42,7 +42,7 @@ export interface DemoLedgerDeps {
   readonly Audit: Audit;
 }
 
-export function makeSurface(deps: DemoLedgerDeps) {
+export function __makeSurface(deps: DemoLedgerDeps) {
   return {
     async post(n: number): globalThis.Promise<number> {
       return post.call(n, deps);

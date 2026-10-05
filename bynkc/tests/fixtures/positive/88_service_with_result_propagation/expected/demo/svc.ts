@@ -14,7 +14,7 @@ export interface Source {
   fetch(id: number): globalThis.Promise<Result<number, Failure>>;
 }
 
-export const SourceToken: symbol = globalThis.Symbol("Source");
+export const __SourceToken: symbol = globalThis.Symbol("Source");
 
 export const totalise = {
   async call(id: number, deps: { Source: Source }): globalThis.Promise<Result<number, Failure>> {
@@ -30,7 +30,7 @@ export interface DemoSvcDeps {
   readonly Source: Source;
 }
 
-export function makeSurface(deps: DemoSvcDeps) {
+export function __makeSurface(deps: DemoSvcDeps) {
   return {
     async totalise(id: number): globalThis.Promise<Result<number, Failure>> {
       return totalise.call(id, deps);

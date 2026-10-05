@@ -105,7 +105,7 @@ export function __resetAgents(): void {
 export interface DemoCounterDeps {
 }
 
-export function makeSurface(deps: DemoCounterDeps) {
+export function __makeSurface(deps: DemoCounterDeps) {
   return {
     async bump(id: CounterId): globalThis.Promise<Result<number, CounterError>> {
       return bump.call(id, deps);

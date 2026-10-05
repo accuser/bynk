@@ -32,7 +32,7 @@ export const authorise = {
 export interface DemoSvcDeps {
 }
 
-export function makeSurface(deps: DemoSvcDeps) {
+export function __makeSurface(deps: DemoSvcDeps) {
   return {
     async authorise(amount: number): globalThis.Promise<Result<AuthId, PaymentError>> {
       return authorise.call(amount, deps);

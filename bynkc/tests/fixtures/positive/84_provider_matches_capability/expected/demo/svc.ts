@@ -8,7 +8,7 @@ export interface Counter {
   reset(): globalThis.Promise<void>;
 }
 
-export const CounterToken: symbol = globalThis.Symbol("Counter");
+export const __CounterToken: symbol = globalThis.Symbol("Counter");
 
 export class StubCounter implements Counter {
   async next(seed: number): globalThis.Promise<number> {
@@ -19,5 +19,5 @@ export class StubCounter implements Counter {
   }
 }
 
-export const StubCounterProvider = { token: CounterToken, factory: () => new StubCounter() };
+export const __StubCounterProvider = { token: __CounterToken, factory: () => new StubCounter() };
 

@@ -28,7 +28,7 @@ export interface CacheSecuredDeps {
   readonly Secrets: bynk.Secrets;
 }
 
-export function makeSurface(deps: CacheSecuredDeps) {
+export function __makeSurface(deps: CacheSecuredDeps) {
   return {
     async vault(key: string): globalThis.Promise<Option<string>> {
       return vault.call(key, deps);

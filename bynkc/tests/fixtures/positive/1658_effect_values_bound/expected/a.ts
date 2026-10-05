@@ -87,7 +87,7 @@ export function __resetAgents(): void {
 export interface ADeps {
 }
 
-export function makeSurface(deps: ADeps) {
+export function __makeSurface(deps: ADeps) {
   return {
     async s(): globalThis.Promise<number> {
       return s.call(deps);

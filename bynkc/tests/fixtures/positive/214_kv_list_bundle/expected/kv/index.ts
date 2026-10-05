@@ -60,7 +60,7 @@ export interface KvIndexDeps {
   readonly Kv: bynk_cloudflare.Kv;
 }
 
-export function makeSurface(deps: KvIndexDeps) {
+export function __makeSurface(deps: KvIndexDeps) {
   return {
     async scan(prefix: string): globalThis.Promise<Result<readonly string[], void>> {
       return scan.call(prefix, deps);

@@ -15,10 +15,10 @@ export const OnPayment = {
 };
 
 export interface CommerceNotificationsDeps {
-  readonly surface: { order: globalThis.ReturnType<typeof commerce_order.makeSurface> };
+  readonly surface: { order: globalThis.ReturnType<typeof commerce_order.__makeSurface> };
 }
 
-export function makeSurface(deps: CommerceNotificationsDeps) {
+export function __makeSurface(deps: CommerceNotificationsDeps) {
   return {
   };
 }

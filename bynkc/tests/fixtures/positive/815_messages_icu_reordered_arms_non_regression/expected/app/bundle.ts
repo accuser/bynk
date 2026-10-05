@@ -3,10 +3,10 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, __selectPluralArm, __formatIcuNumber, __formatIcuDate } from "../runtime.js";
 
-import { LocaleTag, Message, MessageArg } from "../bynk/locale/types.js";
-import { render as __bynkLocaleRender, renderArg } from "../bynk/locale.js";
+import { render as __bynkLocaleRender, renderArg as __bynkRenderArg } from "../bynk/locale.js";
+import type { LocaleTag as __bynkLocaleTag, Message as __bynkMessage, MessageArg as __bynkMessageArg } from "../bynk/locale/types.js";
 
-const messagesByLocale: globalThis.Record<string, globalThis.Record<string, (params: ReadonlyMap<string, MessageArg>) => string>> = {
+const __messagesByLocale: globalThis.Record<string, globalThis.Record<string, (params: ReadonlyMap<string, __bynkMessageArg>) => string>> = {
   /**
    * message-bundles slice 3 (#878): `bynk.messages.format_mismatch` compares
    * format *kind*, not arm order or arm count — `pl`'s arms are written in a
@@ -15,19 +15,19 @@ const messagesByLocale: globalThis.Record<string, globalThis.Record<string, (par
    * must compile with no diagnostics.
    */
   "en": {
-    "cart.count": (params: ReadonlyMap<string, MessageArg>): string => "You have " + ((__arg) => __arg === undefined || (__arg.tag !== "Whole" && __arg.tag !== "Num") ? "{count}" : __selectPluralArm("en", __arg.value, { "one": __formatIcuNumber("en", __arg.value) + " item", "other": __formatIcuNumber("en", __arg.value) + " items" }))(params.get("count")),
+    "cart.count": (params: ReadonlyMap<string, __bynkMessageArg>): string => "You have " + ((__arg) => __arg === undefined || (__arg.tag !== "Whole" && __arg.tag !== "Num") ? "{count}" : __selectPluralArm("en", __arg.value, { "one": __formatIcuNumber("en", __arg.value) + " item", "other": __formatIcuNumber("en", __arg.value) + " items" }))(params.get("count")),
   },
   "pl": {
-    "cart.count": (params: ReadonlyMap<string, MessageArg>): string => "Masz " + ((__arg) => __arg === undefined || (__arg.tag !== "Whole" && __arg.tag !== "Num") ? "{count}" : __selectPluralArm("pl", __arg.value, { "other": __formatIcuNumber("pl", __arg.value) + " elementu", "one": __formatIcuNumber("pl", __arg.value) + " element", "few": __formatIcuNumber("pl", __arg.value) + " elementy" }))(params.get("count")),
+    "cart.count": (params: ReadonlyMap<string, __bynkMessageArg>): string => "Masz " + ((__arg) => __arg === undefined || (__arg.tag !== "Whole" && __arg.tag !== "Num") ? "{count}" : __selectPluralArm("pl", __arg.value, { "other": __formatIcuNumber("pl", __arg.value) + " elementu", "one": __formatIcuNumber("pl", __arg.value) + " element", "few": __formatIcuNumber("pl", __arg.value) + " elementy" }))(params.get("count")),
   },
 };
 
-export const messagesReferenceLocale: LocaleTag = ("en" as string) as LocaleTag;
-export const messagesLocales: readonly LocaleTag[] = [("en" as string) as LocaleTag, ("pl" as string) as LocaleTag];
+export const __messagesReferenceLocale: __bynkLocaleTag = ("en" as string) as __bynkLocaleTag;
+export const __messagesLocales: readonly __bynkLocaleTag[] = [("en" as string) as __bynkLocaleTag, ("pl" as string) as __bynkLocaleTag];
 
-export function render(tag: LocaleTag, msg: Message): string {
-  const __localeTable = messagesByLocale[tag];
-  const __referenceTable = messagesByLocale[messagesReferenceLocale];
+export function render(tag: __bynkLocaleTag, msg: __bynkMessage): string {
+  const __localeTable = __messagesByLocale[tag];
+  const __referenceTable = __messagesByLocale[__messagesReferenceLocale];
   const __entry = (__localeTable !== undefined ? __localeTable[msg.code] : undefined) ?? __referenceTable[msg.code];
   if (__entry !== undefined) {
     return __entry(msg.params);

@@ -26,7 +26,7 @@ export interface ShopOrdersDeps {
   readonly Logger: bynk.Logger;
 }
 
-export function makeSurface(deps: ShopOrdersDeps) {
+export function __makeSurface(deps: ShopOrdersDeps) {
   return {
     async ordering(sku: string): globalThis.Promise<Order> {
       return ordering.call(sku, deps);

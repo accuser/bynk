@@ -28,7 +28,7 @@ export const api = {
 export interface DemoApiDeps {
 }
 
-export function makeSurface(deps: DemoApiDeps) {
+export function __makeSurface(deps: DemoApiDeps) {
   return {
   };
 }

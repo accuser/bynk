@@ -23,7 +23,7 @@ export interface DemoOrdersDeps {
   readonly Idempotency: idempotency.Idempotency;
 }
 
-export function makeSurface(deps: DemoOrdersDeps) {
+export function __makeSurface(deps: DemoOrdersDeps) {
   return {
     async reserve(): globalThis.Promise<Option<ReserveOutcome>> {
       return reserve.call(deps);

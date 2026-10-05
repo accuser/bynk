@@ -21,7 +21,7 @@ export const pinger = {
 export interface DemoDeps {
 }
 
-export function makeSurface(deps: DemoDeps) {
+export function __makeSurface(deps: DemoDeps) {
   return {
     async pinger(): globalThis.Promise<void> {
       return pinger.call(deps);

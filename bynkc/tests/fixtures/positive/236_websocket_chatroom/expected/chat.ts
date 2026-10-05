@@ -131,7 +131,7 @@ export function __resetAgents(): void {
 export interface ChatDeps {
 }
 
-export function makeSurface(deps: ChatDeps) {
+export function __makeSurface(deps: ChatDeps) {
   return {
   };
 }

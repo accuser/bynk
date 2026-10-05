@@ -1,0 +1,22 @@
+context demo.clock
+
+capability Clock {
+  fn now() -> Effect[Int]
+}
+
+provides Clock = SystemClock {
+  fn now() -> Effect[Int] { 42 }
+}
+
+type ClockToken = { id: Int }
+
+fn SystemClockProvider() -> Int { 1 }
+
+fn makeSurface() -> Int { 2 }
+
+service time {
+  on call() -> Effect[Int] given Clock {
+    let t <- Clock.now()
+    t + SystemClockProvider() + makeSurface() + ClockToken { id: 3 }.id
+  }
+}

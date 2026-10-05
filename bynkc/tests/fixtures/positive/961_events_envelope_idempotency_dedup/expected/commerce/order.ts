@@ -29,7 +29,7 @@ export interface CommerceOrderDeps {
   readonly __eventsDispatch: (events: globalThis.Array<{ type: string; payload: unknown; envelope: { eventId: string; publisherId: string; emittedAt: number; schemaVersion: number } }>) => globalThis.Promise<void>;
 }
 
-export function makeSurface(deps: CommerceOrderDeps) {
+export function __makeSurface(deps: CommerceOrderDeps) {
   return {
     async markPaid(orderId: string): globalThis.Promise<void> {
       return markPaid.call(orderId, deps);

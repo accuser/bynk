@@ -3200,7 +3200,7 @@ fn emit_test_deps(
             surface_entries.push((
                 key,
                 undefined_as_unknown_as(format!(
-                    "globalThis.ReturnType<typeof {other_ns}.makeSurface>"
+                    "globalThis.ReturnType<typeof {other_ns}.__makeSurface>"
                 )),
             ));
         }

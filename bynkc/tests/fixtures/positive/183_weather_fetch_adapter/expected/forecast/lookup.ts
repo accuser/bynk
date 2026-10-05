@@ -18,7 +18,7 @@ export interface ForecastLookupDeps {
   readonly Weather: weather.Weather;
 }
 
-export function makeSurface(deps: ForecastLookupDeps) {
+export function __makeSurface(deps: ForecastLookupDeps) {
   return {
     async lookup(city: string): globalThis.Promise<Result<Report, WeatherError>> {
       return lookup.call(city, deps);

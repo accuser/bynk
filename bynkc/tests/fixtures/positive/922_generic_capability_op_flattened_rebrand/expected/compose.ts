@@ -6,7 +6,7 @@ import * as idempotency__binding from "./idempotency.binding.js";
 
 export function composeApp() {
   const demo_ordersDeps = { Idempotency: new idempotency__binding.MemoIdempotency() };
-  const demo_ordersSurface = demo_orders.makeSurface(demo_ordersDeps);
+  const demo_ordersSurface = demo_orders.__makeSurface(demo_ordersDeps);
 
   return {
     orders: demo_ordersSurface,

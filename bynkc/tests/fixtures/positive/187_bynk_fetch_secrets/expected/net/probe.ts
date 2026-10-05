@@ -30,7 +30,7 @@ export interface NetProbeDeps {
   readonly Secrets: bynk.Secrets;
 }
 
-export function makeSurface(deps: NetProbeDeps) {
+export function __makeSurface(deps: NetProbeDeps) {
   return {
     async probe(url: string): globalThis.Promise<number> {
       return probe.call(url, deps);

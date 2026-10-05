@@ -7,7 +7,7 @@ export interface Clock {
   now(): globalThis.Promise<number>;
 }
 
-export const ClockToken: symbol = globalThis.Symbol("Clock");
+export const __ClockToken: symbol = globalThis.Symbol("Clock");
 
 export class FixedClock implements Clock {
   async now(): globalThis.Promise<number> {
@@ -15,7 +15,7 @@ export class FixedClock implements Clock {
   }
 }
 
-export const FixedClockProvider = { token: ClockToken, factory: () => new FixedClock() };
+export const __FixedClockProvider = { token: __ClockToken, factory: () => new FixedClock() };
 
 export const hello = {
   async call(name: string, deps: { Clock: Clock }): globalThis.Promise<Result<string, void>> {

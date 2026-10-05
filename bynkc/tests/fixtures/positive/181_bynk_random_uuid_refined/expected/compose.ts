@@ -6,7 +6,7 @@ import * as bynk__binding from "./bynk-cloudflare.js";
 
 export function composeApp() {
   const ids_genDeps = { Random: new bynk__binding.RandomProvider() };
-  const ids_genSurface = ids_gen.makeSurface(ids_genDeps);
+  const ids_genSurface = ids_gen.__makeSurface(ids_genDeps);
 
   return {
     gen: ids_genSurface,

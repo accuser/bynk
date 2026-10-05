@@ -18,7 +18,7 @@ export interface CacheStoreDeps {
   readonly Kv: bynk_cloudflare.Kv;
 }
 
-export function makeSurface(deps: CacheStoreDeps) {
+export function __makeSurface(deps: CacheStoreDeps) {
   return {
     async cache(key: string, value: string): globalThis.Promise<Option<string>> {
       return cache.call(key, value, deps);

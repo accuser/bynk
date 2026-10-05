@@ -12,7 +12,7 @@ export const batch = {
 export interface CommercePaymentDeps {
 }
 
-export function makeSurface(deps: CommercePaymentDeps) {
+export function __makeSurface(deps: CommercePaymentDeps) {
   return {
     async batch(amounts: readonly number[]): globalThis.Promise<Result<number, number>> {
       return batch.call(amounts, deps);

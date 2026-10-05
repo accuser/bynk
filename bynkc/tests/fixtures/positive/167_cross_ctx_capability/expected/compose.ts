@@ -6,7 +6,7 @@ import * as platform_time from "./platform/time.js";
 
 export function composeApp() {
   const ops_jobsDeps = { Clock: new platform_time.SystemClock() };
-  const ops_jobsSurface = ops_jobs.makeSurface(ops_jobsDeps);
+  const ops_jobsSurface = ops_jobs.__makeSurface(ops_jobsDeps);
 
   return {
     jobs: ops_jobsSurface,

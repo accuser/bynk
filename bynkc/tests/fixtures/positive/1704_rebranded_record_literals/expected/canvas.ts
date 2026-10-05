@@ -87,7 +87,7 @@ export function __resetAgents(): void {
 export interface CanvasDeps {
 }
 
-export function makeSurface(deps: CanvasDeps) {
+export function __makeSurface(deps: CanvasDeps) {
   return {
     async api(): globalThis.Promise<number> {
       return api.call(deps);

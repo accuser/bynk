@@ -16,7 +16,7 @@ export interface OpsJobsDeps {
   readonly Clock: platform_time.Clock;
 }
 
-export function makeSurface(deps: OpsJobsDeps) {
+export function __makeSurface(deps: OpsJobsDeps) {
   return {
     async tick(): globalThis.Promise<number> {
       return tick.call(deps);

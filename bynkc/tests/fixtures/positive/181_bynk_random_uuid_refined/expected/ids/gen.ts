@@ -18,7 +18,7 @@ export interface IdsGenDeps {
   readonly Random: bynk.Random;
 }
 
-export function makeSurface(deps: IdsGenDeps) {
+export function __makeSurface(deps: IdsGenDeps) {
   return {
     async generate(): globalThis.Promise<Uuid> {
       return generate.call(deps);

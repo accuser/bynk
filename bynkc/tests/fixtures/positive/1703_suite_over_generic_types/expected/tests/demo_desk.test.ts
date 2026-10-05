@@ -28,7 +28,7 @@ function __bynkShow(v: unknown): string {
 }
 
 function makeTestDeps() {
-  return { surface: { Vault: undefined as unknown as globalThis.ReturnType<typeof demo_vault.makeSurface> } };
+  return { surface: { Vault: undefined as unknown as globalThis.ReturnType<typeof demo_vault.__makeSurface> } };
 }
 
 // case tier: unit

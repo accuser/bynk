@@ -37,7 +37,7 @@ export interface AppGreetDeps {
   readonly Locale: bynk.Locale;
 }
 
-export function makeSurface(deps: AppGreetDeps) {
+export function __makeSurface(deps: AppGreetDeps) {
   return {
     async greeting(): globalThis.Promise<string> {
       return greeting.call(deps);

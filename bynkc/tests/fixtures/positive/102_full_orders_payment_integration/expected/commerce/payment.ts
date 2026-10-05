@@ -40,7 +40,7 @@ export interface Payments {
   authorise(amount: Money): globalThis.Promise<Result<AuthId, PaymentError>>;
 }
 
-export const PaymentsToken: symbol = globalThis.Symbol("Payments");
+export const __PaymentsToken: symbol = globalThis.Symbol("Payments");
 
 export class StubPayments implements Payments {
   async authorise(amount: Money): globalThis.Promise<Result<AuthId, PaymentError>> {
@@ -48,7 +48,7 @@ export class StubPayments implements Payments {
   }
 }
 
-export const StubPaymentsProvider = { token: PaymentsToken, factory: () => new StubPayments() };
+export const __StubPaymentsProvider = { token: __PaymentsToken, factory: () => new StubPayments() };
 
 /**
  * Authorise a payment. The single entry point for payment authorisation
@@ -65,7 +65,7 @@ export interface CommercePaymentDeps {
   readonly Payments: Payments;
 }
 
-export function makeSurface(deps: CommercePaymentDeps) {
+export function __makeSurface(deps: CommercePaymentDeps) {
   return {
     async authorise(amount: Money): globalThis.Promise<Result<AuthId, PaymentError>> {
       return authorise.call(amount, deps);

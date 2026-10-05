@@ -106,7 +106,7 @@ export interface DemoPlatDeps {
   readonly Secrets: bynk.Secrets;
 }
 
-export function makeSurface(deps: DemoPlatDeps) {
+export function __makeSurface(deps: DemoPlatDeps) {
   return {
     async clock(): globalThis.Promise<number> {
       return clock.call(deps);

@@ -6,17 +6,17 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError } f
 import * as app_b from "./b.js";
 
 export const ask = {
-  async call(ping: string, deps: { surface: { B: globalThis.ReturnType<typeof app_b.makeSurface> } }): globalThis.Promise<Result<string, string>> {
+  async call(ping: string, deps: { surface: { B: globalThis.ReturnType<typeof app_b.__makeSurface> } }): globalThis.Promise<Result<string, string>> {
     const r = await deps.surface.B.whoami(ping);
     return r;
   },
 };
 
 export interface AppADeps {
-  readonly surface: { B: globalThis.ReturnType<typeof app_b.makeSurface> };
+  readonly surface: { B: globalThis.ReturnType<typeof app_b.__makeSurface> };
 }
 
-export function makeSurface(deps: AppADeps) {
+export function __makeSurface(deps: AppADeps) {
   return {
     async ask(ping: string): globalThis.Promise<Result<string, string>> {
       return ask.call(ping, deps);

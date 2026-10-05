@@ -84,7 +84,7 @@ export function __resetAgents(): void {
 export interface DemoTallyDeps {
 }
 
-export function makeSurface(deps: DemoTallyDeps) {
+export function __makeSurface(deps: DemoTallyDeps) {
   return {
     async read(id: TallyId): globalThis.Promise<Result<number, TallyError>> {
       return read.call(id, deps);

@@ -6,7 +6,7 @@ import * as bynk_cloudflare__binding from "./bynk/cloudflare.binding.js";
 
 export function composeApp(env?: unknown) {
   const demo_precDeps = { Kv: new bynk_cloudflare__binding.WorkersKv(env) };
-  const demo_precSurface = demo_prec.makeSurface(demo_precDeps);
+  const demo_precSurface = demo_prec.__makeSurface(demo_precDeps);
 
   return {
     prec: demo_precSurface,

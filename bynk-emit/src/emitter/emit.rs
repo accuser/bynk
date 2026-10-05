@@ -1529,10 +1529,10 @@ fn emit_message_entry_renderer(
                             right: Box::new(bynk_ts::TsExpr::Ident("undefined".to_string())),
                         }),
                         consequent: Box::new(bynk_ts::TsExpr::Call {
-                            callee: Box::new(bynk_ts::TsExpr::Ident("renderArg".to_string())),
+                            callee: Box::new(bynk_ts::TsExpr::Ident("__bynkRenderArg".to_string())),
                             args: vec![bynk_ts::TsExpr::As {
                                 expr: Box::new(get_call),
-                                ty: bynk_ts::TsType::named("MessageArg"),
+                                ty: bynk_ts::TsType::named("__bynkMessageArg"),
                             }],
                         }),
                         alternate: Box::new(bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(format!(
@@ -1562,7 +1562,7 @@ fn emit_message_entry_renderer(
                 "ReadonlyMap",
                 vec![
                     bynk_ts::TsType::named("string"),
-                    bynk_ts::TsType::named("MessageArg"),
+                    bynk_ts::TsType::named("__bynkMessageArg"),
                 ],
             )),
             optional: false,
@@ -1920,7 +1920,7 @@ pub(crate) fn emit_messages_bundle(
     let mut table = String::new();
     writeln!(
         table,
-        "const messagesByLocale: globalThis.Record<string, globalThis.Record<string, (params: ReadonlyMap<string, MessageArg>) => string>> = {{"
+        "const __messagesByLocale: globalThis.Record<string, globalThis.Record<string, (params: ReadonlyMap<string, __bynkMessageArg>) => string>> = {{"
     )
     .unwrap();
     for m in blocks {
@@ -1969,12 +1969,12 @@ pub(crate) fn emit_messages_bundle(
             expr: Box::new(bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(tag.to_string()))),
             ty: bynk_ts::TsType::named("string"),
         }))),
-        ty: bynk_ts::TsType::named("LocaleTag"),
+        ty: bynk_ts::TsType::named("__bynkLocaleTag"),
     };
     let ref_locale_decl = bynk_ts::TsStmt::decl(
         bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::ConstDecl {
-            name: "messagesReferenceLocale".to_string(),
-            ty: Some(bynk_ts::TsType::named("LocaleTag")),
+            name: "__messagesReferenceLocale".to_string(),
+            ty: Some(bynk_ts::TsType::named("__bynkLocaleTag")),
             init: tag_cast(&reference.tag),
         })),
         None,
@@ -1989,9 +1989,9 @@ pub(crate) fn emit_messages_bundle(
     // without this escape hatch (see `TsStmt::no_blank_before`'s own doc).
     let mut locales_decl = bynk_ts::TsStmt::decl(
         bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::ConstDecl {
-            name: "messagesLocales".to_string(),
+            name: "__messagesLocales".to_string(),
             ty: Some(bynk_ts::TsType::readonly_array(bynk_ts::TsType::named(
-                "LocaleTag",
+                "__bynkLocaleTag",
             ))),
             init: bynk_ts::TsExpr::array(locale_list),
         })),
@@ -2018,13 +2018,16 @@ pub(crate) fn emit_messages_bundle(
     let local_table_decl = bynk_ts::TsStmt::const_stmt(
         bynk_ts::TsBindingName::Ident("__localeTable".to_string()),
         None,
-        index(ident("messagesByLocale"), ident("tag")),
+        index(ident("__messagesByLocale"), ident("tag")),
         None,
     );
     let reference_table_decl = bynk_ts::TsStmt::const_stmt(
         bynk_ts::TsBindingName::Ident("__referenceTable".to_string()),
         None,
-        index(ident("messagesByLocale"), ident("messagesReferenceLocale")),
+        index(
+            ident("__messagesByLocale"),
+            ident("__messagesReferenceLocale"),
+        ),
         None,
     );
     let entry_ternary = bynk_ts::TsExpr::Paren(Box::new(bynk_ts::TsExpr::Conditional {
@@ -2074,12 +2077,12 @@ pub(crate) fn emit_messages_bundle(
             params: vec![
                 bynk_ts::TsParam {
                     name: "tag".to_string(),
-                    ty: Some(bynk_ts::TsType::named("LocaleTag")),
+                    ty: Some(bynk_ts::TsType::named("__bynkLocaleTag")),
                     optional: false,
                 },
                 bynk_ts::TsParam {
                     name: "msg".to_string(),
-                    ty: Some(bynk_ts::TsType::named("Message")),
+                    ty: Some(bynk_ts::TsType::named("__bynkMessage")),
                     optional: false,
                 },
             ],
@@ -2212,7 +2215,7 @@ pub(crate) fn emit_capability(
     // `globalThis.Symbol` so a user type named `Symbol` cannot hide it.
     let token_decl = bynk_ts::TsStmt::decl(
         bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::ConstDecl {
-            name: format!("{}Token", c.name.name),
+            name: format!("__{}Token", c.name.name),
             ty: Some(bynk_ts::TsType::named("symbol")),
             init: bynk_ts::TsExpr::Call {
                 callee: Box::new(bynk_ts::TsExpr::Ident("globalThis.Symbol".to_string())),
@@ -2580,7 +2583,7 @@ pub(crate) fn emit_provider(
     };
     writeln!(
         out,
-        "export const {prov}Provider = {{ token: {cap}Token, factory: {factory} }};",
+        "export const __{prov}Provider = {{ token: __{cap}Token, factory: {factory} }};",
         prov = p.provider_name.name,
         cap = p.capability.name,
     )
@@ -3440,7 +3443,7 @@ fn surface_ty(cross_context: &bynk_check::resolver::CrossContextInfo) -> bynk_ts
             .cloned()
             .unwrap_or_else(|| q.rsplit('.').next().unwrap_or(q.as_str()).to_string());
         let ns = qualified_to_ns(q);
-        entries.push((key, format!("typeof {ns}.makeSurface")));
+        entries.push((key, format!("typeof {ns}.__makeSurface")));
     }
     bynk_ts::TsType::Object(
         entries
@@ -3714,7 +3717,7 @@ pub(crate) fn emit_make_surface(
     }
     let func_decl = bynk_ts::TsStmt::decl(
         bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::Function {
-            name: "makeSurface".to_string(),
+            name: "__makeSurface".to_string(),
             generics: Vec::new(),
             params,
             return_type: None,
@@ -7949,7 +7952,7 @@ context demo {
         let ts = emit_store_context(STORE_FIXTURE);
         assert!(ts.contains("export interface Store {\n"), "{ts}");
         assert!(
-            ts.contains("export const StoreToken: symbol = globalThis.Symbol(\"Store\");\n"),
+            ts.contains("export const __StoreToken: symbol = globalThis.Symbol(\"Store\");\n"),
             "{ts}"
         );
     }

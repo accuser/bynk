@@ -30,7 +30,7 @@ export const api = {
 export interface CallgraphDeps {
 }
 
-export function makeSurface(deps: CallgraphDeps) {
+export function __makeSurface(deps: CallgraphDeps) {
   return {
     async api(c: Counter): globalThis.Promise<number> {
       return api.call(c, deps);

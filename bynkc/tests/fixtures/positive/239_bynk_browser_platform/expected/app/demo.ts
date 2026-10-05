@@ -37,7 +37,7 @@ export interface AppDemoDeps {
   readonly Secrets: bynk.Secrets;
 }
 
-export function makeSurface(deps: AppDemoDeps) {
+export function __makeSurface(deps: AppDemoDeps) {
   return {
     async demo(url: string): globalThis.Promise<number> {
       return demo.call(url, deps);

@@ -12,7 +12,7 @@ export interface Clock {
   now(): globalThis.Promise<number>;
 }
 
-export const ClockToken: symbol = globalThis.Symbol("Clock");
+export const __ClockToken: symbol = globalThis.Symbol("Clock");
 
 export class FixedClock implements Clock {
   async now(): globalThis.Promise<number> {
@@ -20,7 +20,7 @@ export class FixedClock implements Clock {
   }
 }
 
-export const FixedClockProvider = { token: ClockToken, factory: () => new FixedClock() };
+export const __FixedClockProvider = { token: __ClockToken, factory: () => new FixedClock() };
 
 export const stamper = {
   async call(offset: number, deps: { Clock: Clock }): globalThis.Promise<number> {
@@ -36,7 +36,7 @@ export interface FxClockworkDeps {
   readonly Clock: Clock;
 }
 
-export function makeSurface(deps: FxClockworkDeps) {
+export function __makeSurface(deps: FxClockworkDeps) {
   return {
     async stamper(offset: number): globalThis.Promise<number> {
       return stamper.call(offset, deps);

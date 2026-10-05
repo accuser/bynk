@@ -107,7 +107,7 @@ export function __resetAgents(): void {
 export interface ShopOrdersDeps {
 }
 
-export function makeSurface(deps: ShopOrdersDeps) {
+export function __makeSurface(deps: ShopOrdersDeps) {
   return {
   };
 }

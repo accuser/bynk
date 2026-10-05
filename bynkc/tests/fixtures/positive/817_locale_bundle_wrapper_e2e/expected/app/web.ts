@@ -18,7 +18,7 @@ export interface AppWebDeps {
   readonly Locale: bynk.Locale;
 }
 
-export function makeSurface(deps: AppWebDeps) {
+export function __makeSurface(deps: AppWebDeps) {
   return {
     async greeting(): globalThis.Promise<string> {
       return greeting.call(deps);

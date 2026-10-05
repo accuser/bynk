@@ -30,7 +30,7 @@ export const placeOrder = {
    * payment's error variants to orders' own OrderError shape (the
    * anti-corruption-layer pattern).
    */
-  async call(total: Money, deps: { surface: { Payment: globalThis.ReturnType<typeof commerce_payment.makeSurface> } }): globalThis.Promise<Result<void, OrderError>> {
+  async call(total: Money, deps: { surface: { Payment: globalThis.ReturnType<typeof commerce_payment.__makeSurface> } }): globalThis.Promise<Result<void, OrderError>> {
     const auth = await deps.surface.Payment.authorise((total as unknown as commerce_payment.Money));
     switch (auth.tag) {
       case "Ok": {
@@ -59,10 +59,10 @@ export const placeOrder = {
 };
 
 export interface CommerceOrdersDeps {
-  readonly surface: { Payment: globalThis.ReturnType<typeof commerce_payment.makeSurface> };
+  readonly surface: { Payment: globalThis.ReturnType<typeof commerce_payment.__makeSurface> };
 }
 
-export function makeSurface(deps: CommerceOrdersDeps) {
+export function __makeSurface(deps: CommerceOrdersDeps) {
   return {
     async placeOrder(total: Money): globalThis.Promise<Result<void, OrderError>> {
       return placeOrder.call(total, deps);

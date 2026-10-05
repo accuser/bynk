@@ -7,7 +7,7 @@ export interface Counter {
   next(seed: number): globalThis.Promise<number>;
 }
 
-export const CounterToken: symbol = globalThis.Symbol("Counter");
+export const __CounterToken: symbol = globalThis.Symbol("Counter");
 
 export const compute = {
   async call(start: number, deps: { Counter: Counter }): globalThis.Promise<number> {
@@ -21,7 +21,7 @@ export interface DemoSvcDeps {
   readonly Counter: Counter;
 }
 
-export function makeSurface(deps: DemoSvcDeps) {
+export function __makeSurface(deps: DemoSvcDeps) {
   return {
     async compute(start: number): globalThis.Promise<number> {
       return compute.call(start, deps);

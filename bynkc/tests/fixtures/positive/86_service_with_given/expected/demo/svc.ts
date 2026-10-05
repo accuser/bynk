@@ -7,7 +7,7 @@ export interface Logger {
   log(message: string): globalThis.Promise<void>;
 }
 
-export const LoggerToken: symbol = globalThis.Symbol("Logger");
+export const __LoggerToken: symbol = globalThis.Symbol("Logger");
 
 export const announce = {
   async call(message: string, deps: { Logger: Logger }): globalThis.Promise<void> {
@@ -20,7 +20,7 @@ export interface DemoSvcDeps {
   readonly Logger: Logger;
 }
 
-export function makeSurface(deps: DemoSvcDeps) {
+export function __makeSurface(deps: DemoSvcDeps) {
   return {
     async announce(message: string): globalThis.Promise<void> {
       return announce.call(message, deps);

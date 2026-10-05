@@ -17,7 +17,7 @@ export const OrderError = {
 };
 
 export const place = {
-  async call(amount: number, deps: { surface: { Payment: globalThis.ReturnType<typeof commerce_payment.makeSurface> } }): globalThis.Promise<Result<AuthId, OrderError>> {
+  async call(amount: number, deps: { surface: { Payment: globalThis.ReturnType<typeof commerce_payment.__makeSurface> } }): globalThis.Promise<Result<AuthId, OrderError>> {
     const auth = await deps.surface.Payment.authorise(amount);
     switch (auth.tag) {
       case "Ok": {
@@ -44,10 +44,10 @@ export const place = {
 };
 
 export interface CommerceOrdersDeps {
-  readonly surface: { Payment: globalThis.ReturnType<typeof commerce_payment.makeSurface> };
+  readonly surface: { Payment: globalThis.ReturnType<typeof commerce_payment.__makeSurface> };
 }
 
-export function makeSurface(deps: CommerceOrdersDeps) {
+export function __makeSurface(deps: CommerceOrdersDeps) {
   return {
     async place(amount: number): globalThis.Promise<Result<AuthId, OrderError>> {
       return place.call(amount, deps);

@@ -16,7 +16,7 @@ export interface DemoPrecDeps {
   readonly Kv: bynk_cloudflare.Kv;
 }
 
-export function makeSurface(deps: DemoPrecDeps) {
+export function __makeSurface(deps: DemoPrecDeps) {
   return {
     async store(k: string, v: string): globalThis.Promise<Option<string>> {
       return store.call(k, v, deps);

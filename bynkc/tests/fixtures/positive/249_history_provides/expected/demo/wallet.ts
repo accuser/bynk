@@ -21,7 +21,7 @@ export interface Ledger {
   note(amount: number): globalThis.Promise<void>;
 }
 
-export const LedgerToken: symbol = globalThis.Symbol("Ledger");
+export const __LedgerToken: symbol = globalThis.Symbol("Ledger");
 
 export class RealLedger implements Ledger {
   async note(amount: number): globalThis.Promise<void> {
@@ -29,7 +29,7 @@ export class RealLedger implements Ledger {
   }
 }
 
-export const RealLedgerProvider = { token: LedgerToken, factory: () => new RealLedger() };
+export const __RealLedgerProvider = { token: __LedgerToken, factory: () => new RealLedger() };
 
 export interface WalletState {
   readonly balance: number;
