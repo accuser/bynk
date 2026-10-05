@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.303.4** | The VS Code extension downloads its language server from the last published release, so a build from `main` can always provision one; a newer `bynkc-lsp` on `PATH` is no longer warned about or offered a download that would only fetch an older server (#1673) |
 | **v0.303.3** | `bynk test` now checks that the `bynkc` it runs matches `bynk`. A different minor version prints a warning; a different major version refuses to run unless you pass `--allow-skew` or set `BYNK_ALLOW_SKEW=1`. `bynk check`, `bynk fmt`, `bynk dev` and `bynk deploy` apply the same check when `BYNK_BYNKC` points them at a separate compiler, offering only the variable (#1675) |
 | **v0.303.2** | Bynk's emitted TypeScript is now verified under both TypeScript 5 and TypeScript 7, the current major (CI previously checked only 5). `bynk doctor` checks your `tsc` version, warning below 5 and calling anything newer than 7 untested, and its install advice, like `bynkc test`'s, now names `npm install -g typescript@7`. The `npx` fallbacks provision TypeScript 7 (#1672) |
 | **v0.303.1** | Bynk's minimum Node.js version is now 22, the oldest release still supported (it was 18, which reached end of life in April 2025). `bynk doctor` warns below it, so its `ok` now means `bynkc test --inspect` works too. CI runs its test suites on Node 22 and now fails, rather than silently skipping, if the type-stripping check that `--inspect` depends on can't run (#1674, #1671) |
