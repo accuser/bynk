@@ -8,8 +8,10 @@ use crate::emitter::toml_doc::{TomlBlock, TomlDocument, TomlEntry, TomlValue};
 use crate::project::{UnitTable, worker_dir_name};
 
 /// Compile-time pinned compatibility date. Cloudflare uses this to lock
-/// Workers runtime behaviour. Bump cautiously when changing the runtime
-/// dependencies.
+/// Workers runtime behaviour. When to bump it, and the gate a bump must pass,
+/// is the policy in `design/bynk-release-discipline.md` ("Part 3 — The Workers
+/// compatibility date", #1677): reviewed at each named milestone, and moved only
+/// after the workerd smokes pass on the new date.
 const COMPATIBILITY_DATE: &str = "2024-11-01";
 
 /// Events track, slice 0 (spine #936, ADR 0284): the class name of a

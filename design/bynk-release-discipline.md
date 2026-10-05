@@ -1,10 +1,12 @@
-# Bynk — Release Discipline: Milestone Cadence & Doc-Truth Guards
+# Bynk — Release Discipline: Milestone Cadence, Doc-Truth Guards & the Compatibility Date
 
 *Decision record for [#540](https://github.com/accuser/bynk/issues/540) §7(4), the
 two bullets left after the [1.0 definition](bynk-1.0-definition.md): **monthly
 milestone cadence** and **README/about drift guards**. Fourth of the strategy
 records. A strategy record, not a language-defining call. With this, §7(4) is
-closed.*
+closed. Part 3, the Workers compatibility-date policy, was added later for
+[#1677](https://github.com/accuser/bynk/issues/1677), because it rides on the
+same milestones.*
 
 ---
 
@@ -123,6 +125,47 @@ The line this draws: we **compile every example**, make the **doc-delta a requir
 part of every increment** for the front-door surfaces, and **prefer checkable
 references over unguarded claims** — that is the extension of the drift-guard
 pattern the review asked for, without pretending to mechanize prose.
+
+## Part 3 — The Workers compatibility date
+
+### The bind
+
+Every generated `wrangler.toml` pins `compatibility_date` to one compile-time
+constant (`COMPATIBILITY_DATE` in `bynk-emit/src/emitter/wrangler.rs`).
+Cloudflare uses the date to fix the Workers runtime behaviour a Worker sees, so
+moving it can change how deployed Bynk code behaves without any change to the
+compiler's output. Until #1677 the only guidance was "bump cautiously", with no
+trigger for a bump. The date stayed at `2024-11-01` for 23 months, falling
+further behind the runtime that Cloudflare and the local `workerd` actually
+test.
+
+### The decision
+
+**Review the date at each named milestone, and move it only once the workerd
+smokes pass on the new date.** The recommended option of #1677's Decision A.
+
+1. **Trigger.** Each named milestone (Part 1) reviews the date. The candidate is
+   a date no later than the milestone and no later than the newest date the
+   `workerd` behind the smokes' wrangler (`bynkc/tests/wrangler/mod.rs`'s
+   `SPEC`) supports. A review may keep the date when nothing is worth taking,
+   and the milestone says so.
+2. **Gate.** The bump lands as its own PR. Before it merges, the full suite runs
+   with `BYNK_REQUIRE_WORKERD=1` on the new date, so the workerd smokes exercise
+   the generated Workers under the new runtime behaviour. The PR lists the
+   compatibility flags Cloudflare switched on between the two dates and says
+   which of them, if any, the runtime or the emitted code depends on.
+3. **Record.** A bump changes what every deployed Worker runs under, so it
+   carries a changelog entry. It needs an ADR only when a flag changes
+   behaviour a Bynk program can observe.
+
+### Why at milestones
+
+A milestone is the point at which an upgrader already reads one cumulative
+note, so a runtime change belongs there, and not in a daily increment that
+nobody outside reads. The smokes are the gate because they are the only tests
+that run the generated Workers on the real runtime. A golden can't see a
+runtime behaviour change, since the emitted `wrangler.toml` differs only in the
+date.
 
 ## Interlocks
 
