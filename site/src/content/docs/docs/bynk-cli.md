@@ -303,7 +303,7 @@ Discover and run a project's test declarations — the same behaviour as
 Node.js) or `tsx` on `PATH`, exactly as `bynkc test`.
 
 ```text
-bynk test [INPUT] [-o OUTPUT] [--no-run] [--format rich|json] [--inspect] [--seed HEX] [--case NAME] [--coverage]
+bynk test [INPUT] [-o OUTPUT] [--no-run] [--format rich|json] [--inspect] [--seed HEX] [--case NAME] [--coverage] [--allow-skew]
 ```
 
 | Argument | Default | Meaning |
@@ -316,9 +316,12 @@ bynk test [INPUT] [-o OUTPUT] [--no-run] [--format rich|json] [--inspect] [--see
 | `--seed HEX` | random | Root seed for generative `property` tests (e.g. `0x5f3a`). A failing property prints the seed it used; re-running with `--seed <hex>` reproduces the run byte-for-byte. |
 | `--case NAME` | — | Run only test cases whose name matches `NAME` — the filter behind the editor's per-case *▷ Run Test* lens. No effect with `--no-run`. |
 | `--coverage` | off | After the run, report statement/line coverage attributed to `.bynk` source (rich table, or a `coverage` block under `--format json`). Requires the `tsc → node` path — incompatible with `--inspect` and `--no-run`. |
+| `--allow-skew` | off | Run even when the resolved `bynkc` is a different **major** version from `bynk` (see [skew](#version-skew)). Also settable as `BYNK_ALLOW_SKEW=1`. |
 
 **Exit code** — follows the runner's own process status: `0` when every case
-passed, non-zero on a failing case, a compile error, or a missing runner.
+passed, non-zero on a failing case, a compile error, or a missing runner. It is
+also non-zero, without running anything, when the resolved `bynkc` is majorly
+skewed from `bynk` and skew isn't allowed.
 
 ---
 
@@ -364,6 +367,17 @@ escape hatch below — in this order:
 `BYNK_BYNKC` is set, in which case they shell that pinned compiler so an
 externally-managed `bynkc` still governs the result. `bynk doctor` reports this
 resolution and any driver↔compiler version skew.
+
+### Version skew
+
+When `bynk` is about to run a separate `bynkc` (`bynk test` always does, and
+`bynk dev`/`deploy` do under `BYNK_BYNKC`), it compares versions first, as
+`bynk doctor` does. A patch difference is ignored. A **minor** difference prints
+a warning and runs anyway. A **major** difference refuses to run, since the two
+don't share a contract. Pass `--allow-skew` to `bynk test`, or set
+`BYNK_ALLOW_SKEW=1` for any command, to run anyway with a warning. The usual
+cause is a `cargo install bynkc` on `PATH` beside a different `bynk`. Align
+them, or pin one with `BYNK_BYNKC`.
 
 ---
 

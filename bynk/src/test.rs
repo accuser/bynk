@@ -9,6 +9,8 @@
 //! locating `bynkc` themselves (the fix direction for #486). The trade-off (a
 //! `bynkc` binary must be present, and the driver↔compiler skew surface stays)
 //! is accepted; the driver at least resolves it more richly than any editor.
+//! #1675: and it acts on that skew before delegating — see
+//! [`crate::compiler::skew_verdict`].
 
 use std::ffi::OsString;
 use std::process::ExitCode;
@@ -26,7 +28,7 @@ use crate::compiler::Compiler;
 /// this function's whole body is re-spelling its fields back out as argv
 /// tokens for the shell-out, so a field added there needs no matching change
 /// here beyond this list.
-pub fn run(compiler: &Compiler, args: TestArgs) -> ExitCode {
+pub fn run(compiler: &Compiler, args: TestArgs, allow_skew: bool) -> ExitCode {
     let Some(bynkc) = compiler.path.as_deref() else {
         eprintln!(
             "bynk test: no `bynkc` compiler found (looked at $BYNK_BYNKC, PATH, and next to `bynk`)."
@@ -34,6 +36,13 @@ pub fn run(compiler: &Compiler, args: TestArgs) -> ExitCode {
         eprintln!("  Run `bynk doctor --only test` for the exact remedy.");
         return ExitCode::FAILURE;
     };
+    // #1675: `test` always runs a second compiler, so act on its skew from the
+    // driver: a minor skew warns, a major one refuses unless allowed.
+    let allow = allow_skew || crate::compiler::skew_allowed_by_env();
+    if !crate::compiler::apply_skew_verdict(crate::compiler::skew_verdict(compiler, "test", allow))
+    {
+        return ExitCode::FAILURE;
+    }
 
     let mut argv: Vec<OsString> = vec!["test".into(), args.input.into_os_string()];
     if let Some(output) = args.output {

@@ -81,7 +81,7 @@ fn main() -> ExitCode {
         Command::New { path, name } => new::run(&NewOptions { path, name }),
         Command::Check { input, format } => run_check(input, format),
         Command::Fmt { args } => run_fmt(args),
-        Command::Test { args } => run_test(args),
+        Command::Test { args, allow_skew } => run_test(args, allow_skew),
         Command::Explain { code } => bynk::explain::run(&code),
     }
 }
@@ -187,10 +187,10 @@ fn run_fmt(args: bynk_driver::FmtArgs) -> ExitCode {
 
 /// `bynk test` (#487): delegate to the driver-resolved `bynkc`, forwarding every
 /// flag verbatim.
-fn run_test(args: bynk_driver::test_runner::TestArgs) -> ExitCode {
+fn run_test(args: bynk_driver::test_runner::TestArgs, allow_skew: bool) -> ExitCode {
     let tb = SystemToolbox;
     let compiler = resolve_compiler(&tb);
-    test::run(&compiler, args)
+    test::run(&compiler, args, allow_skew)
 }
 
 /// Walk up from `start` for the nearest `bynk.toml` (the project root).

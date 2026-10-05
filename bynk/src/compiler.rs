@@ -156,6 +156,76 @@ fn locate(
     (None, None)
 }
 
+/// #1675: the override for the skew gate below, beside `bynk test`'s
+/// `--allow-skew` flag. Any non-empty value allows a skewed `bynkc` (the same
+/// "non-empty means set" contract as the CI `BYNK_REQUIRE_*` switches).
+pub const ALLOW_SKEW_ENV: &str = "BYNK_ALLOW_SKEW";
+
+/// Whether the skew override is set in the environment.
+pub fn skew_allowed_by_env() -> bool {
+    std::env::var(ALLOW_SKEW_ENV).is_ok_and(|v| !v.is_empty())
+}
+
+/// #1675: what a command that is about to run a *second* compiler does about
+/// its skew from the driver — the same classification `doctor` renders,
+/// acted on. `bynk test` always shells `bynkc`, and `bynk dev`/`deploy` do
+/// under a `BYNK_BYNKC` override, so on those paths a skewed `bynkc` could
+/// check and test the code with a different compiler, many increments apart,
+/// silently.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SkewVerdict {
+    /// Matching (patch ignored), or the version is unknown: run, silently.
+    Run,
+    /// Run, after printing this warning.
+    Warn(String),
+    /// Do not run; print this error.
+    Refuse(String),
+}
+
+/// Decide what `command` does about `compiler`'s skew. Minor skew warns;
+/// major skew refuses unless `allow` (the `--allow-skew` flag or
+/// `BYNK_ALLOW_SKEW`), in which case it warns instead.
+pub fn skew_verdict(compiler: &Compiler, command: &str, allow: bool) -> SkewVerdict {
+    let (Some(skew), Some(ver), Some(path)) = (compiler.skew, compiler.version, &compiler.path)
+    else {
+        return SkewVerdict::Run;
+    };
+    let driver = crate::DRIVER_VERSION;
+    let which = format!("`bynkc` {ver} ({})", path.display());
+    let remedy = "install a `bynkc` matching `bynk`, point BYNK_BYNKC at one, or run `bynk doctor`";
+    match skew {
+        Skew::Match => SkewVerdict::Run,
+        Skew::Minor => SkewVerdict::Warn(format!(
+            "bynk {command}: warning: {which} is a different minor version from bynk {driver} — \
+             it may check this code differently. To align: {remedy}."
+        )),
+        Skew::Major if allow => SkewVerdict::Warn(format!(
+            "bynk {command}: warning: {which} is a different major version from bynk {driver}; \
+             running it anyway (skew allowed)."
+        )),
+        Skew::Major => SkewVerdict::Refuse(format!(
+            "bynk {command}: {which} is a different major version from bynk {driver}, so the two \
+             do not share a contract. Refusing to run it. To align: {remedy}. To run it anyway, \
+             pass --allow-skew (`bynk test`) or set {ALLOW_SKEW_ENV}=1."
+        )),
+    }
+}
+
+/// Print `verdict`'s message (if any) and say whether to go ahead.
+pub fn apply_skew_verdict(verdict: SkewVerdict) -> bool {
+    match verdict {
+        SkewVerdict::Run => true,
+        SkewVerdict::Warn(msg) => {
+            eprintln!("{msg}");
+            true
+        }
+        SkewVerdict::Refuse(msg) => {
+            eprintln!("{msg}");
+            false
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -246,5 +316,57 @@ mod tests {
         assert_eq!(Skew::classify(v(0, 46, 0), v(0, 46, 3)), Skew::Match);
         assert_eq!(Skew::classify(v(0, 46, 0), v(0, 44, 0)), Skew::Minor);
         assert_eq!(Skew::classify(v(1, 0, 0), v(0, 46, 0)), Skew::Major);
+    }
+
+    fn skewed(skew: Skew) -> Compiler {
+        Compiler {
+            path: Some(PathBuf::from("/usr/bin/bynkc")),
+            origin: Some(Origin::Path),
+            version: Some(Version {
+                major: 0,
+                minor: 1,
+                patch: 0,
+            }),
+            skew: Some(skew),
+        }
+    }
+
+    /// #1675: match runs silently; minor skew warns and runs.
+    #[test]
+    fn minor_skew_warns_and_runs() {
+        assert_eq!(
+            skew_verdict(&skewed(Skew::Match), "test", false),
+            SkewVerdict::Run
+        );
+        let SkewVerdict::Warn(msg) = skew_verdict(&skewed(Skew::Minor), "test", false) else {
+            panic!("minor skew must warn");
+        };
+        assert!(msg.contains("different minor version"), "{msg}");
+        assert!(msg.contains("/usr/bin/bynkc"), "names the binary: {msg}");
+    }
+
+    /// #1675: major skew refuses, naming both overrides; allowed, it warns.
+    #[test]
+    fn major_skew_refuses_unless_allowed() {
+        let SkewVerdict::Refuse(msg) = skew_verdict(&skewed(Skew::Major), "test", false) else {
+            panic!("major skew must refuse");
+        };
+        assert!(
+            msg.contains("--allow-skew") && msg.contains(ALLOW_SKEW_ENV),
+            "{msg}"
+        );
+        let SkewVerdict::Warn(msg) = skew_verdict(&skewed(Skew::Major), "test", true) else {
+            panic!("allowed major skew must warn, not refuse");
+        };
+        assert!(msg.contains("running it anyway"), "{msg}");
+    }
+
+    /// No compiler, or an unreadable version: nothing to judge, so run (the
+    /// missing-compiler case is reported by the caller).
+    #[test]
+    fn unknown_skew_runs() {
+        let mut c = skewed(Skew::Major);
+        c.skew = None;
+        assert_eq!(skew_verdict(&c, "test", false), SkewVerdict::Run);
     }
 }
