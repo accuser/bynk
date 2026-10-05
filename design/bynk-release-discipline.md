@@ -177,7 +177,8 @@ moving it can change how deployed Bynk code behaves without any change to the
 compiler's output. Until #1677 the only guidance was "bump cautiously", with no
 trigger for a bump. The date stayed at `2024-11-01` for 23 months, falling
 further behind the runtime that Cloudflare and the local `workerd` actually
-test.
+test. The first review under this policy, at the `v0.303.4` release, moved it
+to `2026-07-01`.
 
 ### The decision
 
@@ -185,11 +186,26 @@ test.
 monthly milestone from 1.0), and move it only once the workerd smokes pass on
 the new date.** The recommended option of #1677's Decision A.
 
-1. **Trigger.** Each release reviews the date. The candidate is a date no later
-   than the release and no later than the newest date the
-   `workerd` behind the smokes' wrangler (`bynkc/tests/wrangler/mod.rs`'s
-   `SPEC`) supports. A review may keep the date when nothing is worth taking,
-   and the release says so.
+1. **Trigger.** Each release reviews the date. A review may keep the date when
+   nothing is worth taking, and the release says so. The candidate is a date no
+   later than any of:
+   - the release itself;
+   - the newest date the `workerd` behind the smokes' wrangler
+     (`bynkc/tests/wrangler/mod.rs`'s `SPEC`) supports;
+   - **the newest date supported by a wrangler released at least three months
+     before the review** (the lag rule, added at the first review, #1731).
+
+   The lag rule exists because **an older `workerd` refuses a newer date
+   outright.** It doesn't fall back: `wrangler dev` exits with "This Worker
+   requires compatibility date …, but the newest date supported by this server
+   binary is …". A developer's wrangler is often older than the newest release,
+   whether it's installed on `PATH`, pinned in the project, or extracted in the
+   `npx` cache, which is keyed on the spec `wrangler@4` rather than the version
+   it resolves to. A date only the newest wrangler supports would break
+   `bynk dev` for all of them. Three months back keeps any wrangler from the
+   last quarter working. Look the date up with `npm view wrangler time` and
+   `npm view wrangler@<v> dependencies.workerd`: the `workerd` version
+   `1.YYYYMMDD.n` names the newest date it supports.
 2. **Gate.** The bump lands as its own PR. Before it merges, the full suite runs
    with `BYNK_REQUIRE_WORKERD=1` on the new date, so the workerd smokes exercise
    the generated Workers under the new runtime behaviour. The PR lists the
