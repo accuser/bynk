@@ -118,11 +118,19 @@ pub fn diagnose(source: &str) -> Vec<Diagnostic> {
         push(&mut diagnostics, shown);
         // ADR 0117: a clean check may still carry non-failing warnings
         // (`Ok` now), so surface those too — not only the `Err` path.
+        // #1710: the checker reports some echoes of a skipped declaration
+        // under its own codes (a method, a capability, an actor), so its
+        // diagnostics are split the same way.
+        let unechoed = |errs| resolver::split_broken_decl_echoes(errs, &broken_decl_names).0;
         match checker::check(resolved) {
-            Ok(typed) => push(&mut diagnostics, typed.warnings),
+            Ok(typed) => push(&mut diagnostics, unechoed(typed.warnings)),
             Err(errs) => push(
                 &mut diagnostics,
-                resolver::without_resolve_echoes(errs, &resolve_errors, &item_spans),
+                unechoed(resolver::without_resolve_echoes(
+                    errs,
+                    &resolve_errors,
+                    &item_spans,
+                )),
             ),
         }
     }

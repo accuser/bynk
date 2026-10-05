@@ -50,7 +50,7 @@ use bynk_project::{
     AttributedError, ParsedFile, UnitKind, check_directory_kind_consistency,
     check_directory_name_consistency, check_file_directory_conflicts, check_group_kind_consistency,
     check_path_name_alignment, detect_consumes_cycles, discover_bynk_files, is_unpinned_range,
-    normalize_rel, parse_sources, read_adapter_binding, read_source,
+    normalize_rel, parse_sources, parse_sources_recovering, read_adapter_binding, read_source,
 };
 use bynk_syntax::ast::*;
 /// P6.49 (design/tracks/the-ir.md §6b), following P6.27's `ExprId` precedent
@@ -380,8 +380,9 @@ fn all_syntax_errors(source: &str, strict: Vec<CompileError>) -> Vec<CompileErro
 /// Then inject the first-party synthetic units (the `bynk`/`bynk.cloudflare`
 /// adapters and the `bynk.{list,map,string}` commons) that the project
 /// consumes/uses. Returns the parsed units plus whether the `bynk` and
-/// `bynk.cloudflare` adapters were injected; signals a pipeline bail via
-/// `Err(())` when parsing produced errors and yielded no units at all.
+/// `bynk.cloudflare` adapters were injected, and (#1710) each unit's
+/// [`BrokenDeclNames`]; signals a pipeline bail via `Err(())` when parsing
+/// produced errors and yielded no units at all.
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::result_unit_err)]
 pub fn phase_parse(
@@ -392,8 +393,9 @@ pub fn phase_parse(
     overlay: &HashMap<PathBuf, String>,
     errors: &mut ErrorSink,
     snapshots: &mut Vec<(PathBuf, String)>,
-) -> Result<(Vec<ParsedFile>, bool, bool), ()> {
+) -> Result<(Vec<ParsedFile>, bool, bool, BrokenDeclNames), ()> {
     let mut parsed: Vec<ParsedFile> = Vec::new();
+    let mut broken: BrokenDeclNames = HashMap::new();
     // P8.4 (#1515): `FileId`/`ExprId` allocation is no longer threaded through
     // this function — `parse_sources` now resolves both through
     // `bynk_project::parse_cache`'s own durable, process-lifetime counters
@@ -404,6 +406,7 @@ pub fn phase_parse(
                       prefix: &Path,
                       files: &[PathBuf],
                       parsed: &mut Vec<ParsedFile>,
+                      broken: &mut BrokenDeclNames,
                       errors: &mut ErrorSink,
                       snapshots: &mut Vec<(PathBuf, String)>| {
         for path in files {
@@ -435,17 +438,47 @@ pub fn phase_parse(
                     errors.extend_for(Some(&id), warnings);
                 }
                 // #1663: the strict parse stops at a file's first syntax
-                // error. Report every one, from a recovering parse; the file
-                // still drops out of checking, as before.
+                // error. Report every one, from a recovering parse. #1710: the
+                // declarations that recovery kept are checked too, with the
+                // ones it skipped as known names (Decision B), so the file's
+                // other faults aren't hidden behind its syntax error. Nothing
+                // is emitted: the syntax errors already fail the build.
                 Err(errs) => {
-                    let source = &snapshots.last().expect("pushed just above").1;
-                    errors.extend_for(Some(&id), all_syntax_errors(source, errs));
+                    let source = snapshots.last().expect("pushed just above").1.clone();
+                    match parse_sources_recovering(root, prefix, path, source.clone()) {
+                        Some(recovered) => {
+                            errors.extend_for(
+                                Some(&id),
+                                bynk_syntax::parser::merge_syntax_errors(errs, recovered.errors),
+                            );
+                            // The parser records skipped names per file, so
+                            // each unit the file declares (a `commons` beside
+                            // its `suite`, say) gets them all: wider, but only
+                            // within the one file.
+                            for pf in &recovered.files {
+                                broken
+                                    .entry(pf.unit().name().joined())
+                                    .or_default()
+                                    .extend(recovered.broken_decl_names.iter().cloned());
+                            }
+                            parsed.extend(recovered.files);
+                        }
+                        None => errors.extend_for(Some(&id), all_syntax_errors(&source, errs)),
+                    }
                 }
             }
         }
     };
     for ((root, prefix), files) in trees.iter().zip(file_lists.iter()) {
-        parse_tree(root, prefix, files, &mut parsed, errors, snapshots);
+        parse_tree(
+            root,
+            prefix,
+            files,
+            &mut parsed,
+            &mut broken,
+            errors,
+            snapshots,
+        );
     }
     if !errors.is_empty() && parsed.is_empty() {
         return Err(());
@@ -593,8 +626,14 @@ pub fn phase_parse(
         }
     }
 
-    Ok((parsed, consumes_bynk, consumes_cloudflare))
+    Ok((parsed, consumes_bynk, consumes_cloudflare, broken))
 }
+
+/// #1710: for each unit with a file the strict parse rejected, the names of
+/// the declarations recovery skipped there. References to them, from any file
+/// that can see the unit, are known names, not unknown ones (#1663's Decision
+/// B); see [`crate::check_pipeline::prepare_unit_check_ctx`].
+pub type BrokenDeclNames = HashMap<String, Vec<String>>;
 
 /// The `include` tree that discovered `pf`, found by matching its absolute
 /// path against each tree's root — not `trees[0]` unconditionally, since
@@ -2447,6 +2486,8 @@ pub fn phase_validate_providers(
     // provider and attribute the diagnostic to it.
     groups: &BTreeMap<String, Vec<usize>>,
     parsed: &[ParsedFile],
+    // #1710: each unit's declarations recovery skipped (`phase_parse`).
+    broken: &BrokenDeclNames,
     errors: &mut ErrorSink,
     tys: &Arc<Types>,
 ) {
@@ -2478,6 +2519,12 @@ pub fn phase_validate_providers(
                 continue;
             }
             let Some(cap) = table.capabilities.get(cap_name) else {
+                // #1710: a capability recovery skipped is a known name; its
+                // syntax error is the report, and the provider has nothing to
+                // be matched against until it's fixed.
+                if broken.get(name).is_some_and(|b| b.contains(cap_name)) {
+                    continue;
+                }
                 errors.push_for(provider_file,
                     CompileError::new(
                         "bynk.provider.unknown_capability",

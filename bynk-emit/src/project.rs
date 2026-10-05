@@ -1123,6 +1123,8 @@ fn emit_unit(
 fn check_unit_files(
     name: &str,
     kind: UnitKind,
+    // #1710: each unit's declarations recovery skipped (`phase_parse`).
+    broken: &project_model::BrokenDeclNames,
     indices: &[usize],
     parsed: &[ParsedFile],
     unit_info: &BTreeMap<String, UnitInfo>,
@@ -1169,7 +1171,14 @@ fn check_unit_files(
     // Emit-prologue tables invariant across every file of this unit — built
     // once here rather than once per file (see `EmitUnitCtx`).
     let unit_ctx = build_emit_unit_ctx(name, unit_info, target, tys);
-    let check_ctx = prepare_unit_check_ctx(kind, unit_info, combined_types, imported_from_kind);
+    let check_ctx = prepare_unit_check_ctx(
+        name,
+        kind,
+        broken,
+        unit_info,
+        combined_types,
+        imported_from_kind,
+    );
 
     for &i in indices {
         let pf = &parsed[i];
@@ -1438,7 +1447,7 @@ fn run_checks(
     }
 
     // -- 2. Parse every file. --
-    let (mut parsed, consumes_bynk, consumes_cloudflare) = match project_model::phase_parse(
+    let (mut parsed, consumes_bynk, consumes_cloudflare, broken) = match project_model::phase_parse(
         trees,
         &file_lists,
         overlay,
@@ -1603,7 +1612,14 @@ fn run_checks(
     );
 
     // -- 6c. Validate that providers match their capabilities exactly. --
-    project_model::phase_validate_providers(&unit_tables, &groups, &parsed, &mut errors, tys);
+    project_model::phase_validate_providers(
+        &unit_tables,
+        &groups,
+        &parsed,
+        &broken,
+        &mut errors,
+        tys,
+    );
 
     // -- 6d. Events track, slice 3c (#980): reconcile every event's shape
     //        against the committed schema registry. `schema_registry` is
@@ -1756,6 +1772,7 @@ fn run_checks(
         check_unit_files(
             name,
             kind,
+            &broken,
             indices,
             &parsed,
             &unit_info,
