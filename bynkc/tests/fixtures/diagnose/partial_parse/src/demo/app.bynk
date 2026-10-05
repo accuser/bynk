@@ -9,3 +9,5 @@ fn useBox(n: Int) -> Int { boxed(n).value }
 fn alsoWrong() -> String { 1 }
 
 fn ghostly(g: Ghost) -> Int { 0 }
+
+fn scaled(n: Int) -> Int { boxed(n).scale(2).value }

@@ -385,6 +385,16 @@ mod tests {
         assert!(cached_recovery(&clean, "commons demo\n\nfn one() -> Int { 1 }\n").is_none());
     }
 
+    /// #1710: source that doesn't lex has no recovery (there are no tokens to
+    /// recover from); the strict result carries the lexer's error.
+    #[test]
+    fn source_that_does_not_lex_has_no_recovery() {
+        let p = unique_path("unlexable");
+        let src = "commons demo\n\nfn s() -> String { \"unterminated }\n";
+        assert!(cached_parse(&p, src).1.is_err());
+        assert!(cached_recovery(&p, src).is_none());
+    }
+
     /// [DECISION E]: broken syntax is cached too — as an `Err`, not silently
     /// dropped — so a caller that needs the real errors (the build path) gets
     /// them from the cache exactly like a clean parse.

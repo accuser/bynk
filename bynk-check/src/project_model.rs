@@ -451,6 +451,10 @@ pub fn phase_parse(
                                 Some(&id),
                                 bynk_syntax::parser::merge_syntax_errors(errs, recovered.errors),
                             );
+                            // The parser records skipped names per file, so
+                            // each unit the file declares (a `commons` beside
+                            // its `suite`, say) gets them all: wider, but only
+                            // within the one file.
                             for pf in &recovered.files {
                                 broken
                                     .entry(pf.unit().name().joined())
@@ -2482,6 +2486,8 @@ pub fn phase_validate_providers(
     // provider and attribute the diagnostic to it.
     groups: &BTreeMap<String, Vec<usize>>,
     parsed: &[ParsedFile],
+    // #1710: each unit's declarations recovery skipped (`phase_parse`).
+    broken: &BrokenDeclNames,
     errors: &mut ErrorSink,
     tys: &Arc<Types>,
 ) {
@@ -2513,6 +2519,12 @@ pub fn phase_validate_providers(
                 continue;
             }
             let Some(cap) = table.capabilities.get(cap_name) else {
+                // #1710: a capability recovery skipped is a known name; its
+                // syntax error is the report, and the provider has nothing to
+                // be matched against until it's fixed.
+                if broken.get(name).is_some_and(|b| b.contains(cap_name)) {
+                    continue;
+                }
                 errors.push_for(provider_file,
                     CompileError::new(
                         "bynk.provider.unknown_capability",

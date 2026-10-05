@@ -91,7 +91,9 @@ pub struct UnitCheckCtx {
     /// #1710: the declarations recovery skipped in the files this unit can see
     /// (its own, and the units it `uses` and `consumes`). A reference to one is
     /// a known name, not an unknown one (#1663's Decision B), so its
-    /// unknown-name echo is not reported.
+    /// unknown-name echo is not reported. One level of `uses`, matching
+    /// `compose_unit_symbols`. A suite sees its target's skipped names because
+    /// it carries its target's unit name; it is in no unit's `uses`/`consumes`.
     pub visible_broken_names: Vec<String>,
 }
 
@@ -370,9 +372,19 @@ pub fn check_file_core(
             resolver::split_broken_decl_echoes(resolve_errors.clone(), &ctx.visible_broken_names);
         errors.extend_for(Some(&pf.identity_path()), shown);
     }
-    let unechoed = |errs: Vec<bynk_syntax::CompileError>| match &resolve_errors {
-        Some(r) => resolver::without_resolve_echoes(errs, r, &item_spans),
-        None => errs,
+    // Every diagnostic past the resolver goes out through this: the checker's
+    // errors and warnings, and the declaration stages' (`ours`, below).
+    // Decision A drops the checker's follow-ons inside a declaration the
+    // resolver rejected; #1710 then drops echoes of a declaration recovery
+    // skipped (a method, a capability, an actor, a consumed context's service)
+    // that this unit can see. The checker reports those under its own codes,
+    // in any unit kind, so the split runs here, not only in the stages.
+    let unechoed = |errs: Vec<bynk_syntax::CompileError>| {
+        let errs = match &resolve_errors {
+            Some(r) => resolver::without_resolve_echoes(errs, r, &item_spans),
+            None => errs,
+        };
+        resolver::split_broken_decl_echoes(errs, &ctx.visible_broken_names).0
     };
     // #1663: the declaration stages walk the whole unit's handlers, so a file's
     // pass also meets another file's faults — and attributes them to this
@@ -380,14 +392,11 @@ pub fn check_file_core(
     // them; here, keep only this file's diagnostics (or unlocated ones), and
     // decide whether a stage failed this file from those alone.
     let ours = |errs: Vec<bynk_syntax::CompileError>| -> Vec<bynk_syntax::CompileError> {
-        let kept = unechoed(
+        unechoed(
             errs.into_iter()
                 .filter(|e| e.span.file == own_file || e.span == bynk_syntax::span::Span::default())
                 .collect(),
-        );
-        // #1710: the checker meets a skipped declaration too (a consumed
-        // context's skipped service), so its echoes are split the same way.
-        resolver::split_broken_decl_echoes(kept, &ctx.visible_broken_names).0
+        )
     };
     // #1663: whether this file has already failed (a resolve or type error).
     // The later stages still check its other declarations; the file returns
@@ -399,7 +408,7 @@ pub fn check_file_core(
             // non-failing warnings — push them into the (severity-aware)
             // sink, where they are classified as warnings and never gate.
             if !t.warnings.is_empty() {
-                errors.extend_for(Some(&pf.identity_path()), t.warnings.clone());
+                errors.extend_for(Some(&pf.identity_path()), unechoed(t.warnings.clone()));
             }
             t
         }

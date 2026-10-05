@@ -30,10 +30,13 @@ every other file's ids.
 - **Skipped names are known, scoped to what can see them.** `phase_parse`
   records each unit's skipped declarations; a file's unit sees its own, and
   those of the units it `uses` and `consumes`. Unknown-name echoes of those
-  are split out (Decision B), from the resolver and now from the checker too,
-  which also reports a consumed context's skipped service
-  (`bynk.consumes.unknown_service`). A unit that can't see the broken one
-  still gets its genuine unknown-name error.
+  are split out (Decision B) from everything past the resolver too: the
+  checker reports a skipped declaration under its own codes (a consumed
+  context's service, a method, a capability in a provider or `given`, an
+  actor), so its errors and warnings are split on the project path and on
+  the single-file paths alike, and provider validation skips a capability
+  recovery dropped. A unit that can't see the broken one still gets its
+  genuine unknown-name error.
 - **A build still fails fast.** In build mode any error from the phases
   before checking stops the pipeline, and a syntax error is no exception; the
   check path (`bynkc check <dir>`, the editor) is where the full set is

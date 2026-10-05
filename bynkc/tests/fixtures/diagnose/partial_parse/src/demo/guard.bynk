@@ -1,0 +1,18 @@
+context demo.guard
+
+capability Audit {
+  fn note(s: String) -> Effect[()
+}
+
+actor User { auth = Bearer(secret = , identity = String }
+
+provides Audit = Silent {
+  fn note(s: String) -> Effect[()] { () }
+}
+
+service s from http {
+  on POST("/a") (body: String) -> Effect[HttpResult[String]] by u: User given Audit {
+    let _ <- Audit.note(body)
+    Ok(body)
+  }
+}

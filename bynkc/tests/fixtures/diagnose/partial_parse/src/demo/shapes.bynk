@@ -7,3 +7,5 @@ type Pair = { first: Int second: Int }
 fn wrongType() -> Int { "not an int" }
 
 fn boxed(n: Int) -> Box { Box { value: n } }
+
+fn Box.scale(self, n: Int) -> Box { Box { value: self.value * } }

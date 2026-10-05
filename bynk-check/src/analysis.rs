@@ -423,7 +423,14 @@ pub fn analyse_project(roots: &Roots, overlay: &HashMap<PathBuf, String>) -> Pro
     );
 
     // -- 6c. Provider matching. --
-    project_model::phase_validate_providers(&unit_tables, &groups, &parsed, &mut errors, tys);
+    project_model::phase_validate_providers(
+        &unit_tables,
+        &groups,
+        &parsed,
+        &broken,
+        &mut errors,
+        tys,
+    );
 
     // -- 6d. Events track, slice 3c (#980): schema-registry reconciliation.
     //        P5.3: closes category 1 of this module's own residual-gap

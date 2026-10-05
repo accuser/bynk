@@ -429,9 +429,10 @@ pub fn parse_sources(
 /// recovering parse: a [`ParsedFile`] per unit it recovered, the names of the
 /// declarations recovery had to skip (references to them are known names, not
 /// unknown ones; #1663's Decision B), and the recovering parse's diagnostics.
-/// `None` when nothing was recovered (the source didn't lex, or no unit
-/// survived). These files are for diagnostics only: the strict parse's error
-/// still stands, so nothing they belong to is ever emitted.
+/// `files` is empty when no unit survived (a broken header); the diagnostics
+/// still come from this recovery, with real spans. These files are for
+/// diagnostics only: the strict parse's error still stands, so nothing they
+/// belong to is ever emitted.
 pub struct RecoveredSources {
     pub files: Vec<ParsedFile>,
     pub broken_decl_names: Vec<String>,
@@ -439,7 +440,8 @@ pub struct RecoveredSources {
 }
 
 /// #1710: [`parse_sources`] for a file whose strict parse failed, from the
-/// recovering parse the parse cache keeps beside that failure.
+/// recovering parse the parse cache keeps beside that failure. `None` only
+/// when there is none: the source didn't lex.
 pub fn parse_sources_recovering(
     root: &Path,
     prefix: &Path,
@@ -449,9 +451,6 @@ pub fn parse_sources_recovering(
     let abs_path = std::path::absolute(path).ok();
     let cache_key: &Path = abs_path.as_deref().unwrap_or(path);
     let recovered = crate::parse_cache::cached_recovery(cache_key, &source)?;
-    if recovered.units.is_empty() {
-        return None;
-    }
     let files = parsed_files(
         root,
         prefix,

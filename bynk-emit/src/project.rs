@@ -1612,7 +1612,14 @@ fn run_checks(
     );
 
     // -- 6c. Validate that providers match their capabilities exactly. --
-    project_model::phase_validate_providers(&unit_tables, &groups, &parsed, &mut errors, tys);
+    project_model::phase_validate_providers(
+        &unit_tables,
+        &groups,
+        &parsed,
+        &broken,
+        &mut errors,
+        tys,
+    );
 
     // -- 6d. Events track, slice 3c (#980): reconcile every event's shape
     //        against the committed schema registry. `schema_registry` is

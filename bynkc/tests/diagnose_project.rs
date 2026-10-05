@@ -205,12 +205,17 @@ fn multi_file_commons_src_tree_analyses_clean() {
 /// surviving declarations checked, and a reference to a declaration recovery
 /// had to skip (from a file that can see it) is a known name, not an unknown
 /// one. Pinned as the exact set, per file:
-/// - `shapes.bynk` (broken `type Pair`): its syntax error, and the type error in
-///   the surviving `fn wrongType`;
+/// - `shapes.bynk` (broken `type Pair` and method `Box.scale`): its syntax
+///   errors, and the type error in the surviving `fn wrongType`;
 /// - `vault.bynk` (broken `service open`): its syntax error, and the type error
 ///   in the surviving `service count`;
-/// - `app.bynk` (`uses demo.shapes`): no echo for `Pair`, its own type error,
+/// - `app.bynk` (`uses demo.shapes`): no echo for `Pair`, nor for the call to
+///   the skipped `Box.scale` (`types.method_not_found`), its own type error,
 ///   and a genuinely unknown `Ghost` still reported;
+/// - `guard.bynk` (broken `capability Audit`, `actor User`): its syntax errors,
+///   and no echo from the provider, the `given`, or the `by` that name them;
+/// - `headless.bynk` (no unit survives recovery): its syntax error, still at
+///   its real position;
 /// - `desk.bynk` (`consumes demo.vault`): no echo for the skipped `open`;
 /// - `other.bynk` (sees no `demo.shapes`): `Pair` is still unknown there, so
 ///   the suppression is scoped to what a unit can see.
@@ -245,6 +250,11 @@ fn partial_parse_checks_surviving_declarations_without_echoes() {
         ),
         (
             "demo/shapes.bynk",
+            "bynk.parse.expected_expression",
+            "expected an expression, found `}`",
+        ),
+        (
+            "demo/shapes.bynk",
             "bynk.types.return_mismatch",
             "function body has type `String`, but the declared return type is `Int`",
         ),
@@ -267,6 +277,21 @@ fn partial_parse_checks_surviving_declarations_without_echoes() {
             "demo/app.bynk",
             "bynk.resolve.unknown_type",
             "unknown type `Ghost`",
+        ),
+        (
+            "demo/guard.bynk",
+            "bynk.parse.expected_token",
+            "expected `]` to close the `Effect` type argument, found `}`",
+        ),
+        (
+            "demo/guard.bynk",
+            "bynk.parse.expected_token",
+            "expected a string or integer scheme config value",
+        ),
+        (
+            "demo/headless.bynk",
+            "bynk.parse.reserved_keyword",
+            "expected identifier for the commons name, but `fn` is a reserved keyword",
         ),
         (
             "demo/other.bynk",

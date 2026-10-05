@@ -35,11 +35,10 @@ pub fn diagnose_unparsable(
         out.extend(shown);
         if let Err(checked) = checker::check(resolved) {
             let (checked, _warnings) = bynk_syntax::partition_by_severity(checked);
-            out.extend(resolver::without_resolve_echoes(
-                checked,
-                &resolve_errors,
-                &item_spans,
-            ));
+            // #1710: the checker reports some echoes of a skipped declaration
+            // under its own codes (a method, a capability, an actor).
+            let checked = resolver::without_resolve_echoes(checked, &resolve_errors, &item_spans);
+            out.extend(resolver::split_broken_decl_echoes(checked, &broken_decl_names).0);
         }
     }
     out
