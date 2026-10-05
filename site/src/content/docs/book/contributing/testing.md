@@ -59,7 +59,11 @@ project-form positive fixture and runs `tsc --strict --noEmit` over the output.
 It is a backstop for emitter bugs that produce TypeScript which round-trips our
 own comparison but does not actually type-check.
 
-It needs `tsc` on `PATH`, or falls back to `npx -p typescript@5 tsc`. Behaviour
+It needs `tsc` on `PATH`, or falls back to `npx -p typescript@7 tsc`. CI runs it
+under both TypeScript majors the output is verified against: **5**, the floor, on
+every test leg, and **7**, the current one, in a second pass on the Linux leg.
+The two are `TYPESCRIPT_MAJOR_FLOOR` and `TYPESCRIPT_MAJOR_TESTED` in
+`bynk-emit`, which `bynk doctor` and every `npx` fallback also read. Behaviour
 when neither is available:
 
 - locally — it logs a warning and passes (so a missing toolchain does not block

@@ -375,6 +375,66 @@ fn node_below_the_floor_warns() {
     assert_eq!(cap(&report, Capability::Deploy).level, Level::Ok);
 }
 
+/// #1672: `tsc` is checked against the verified TypeScript majors — below the
+/// floor it warns, above the tested major it warns as untested, and both
+/// verified majors (and everything between) are `ok`. `tsx` type-checks
+/// nothing, so it carries no TypeScript version to check.
+#[test]
+fn tsc_outside_the_verified_majors_warns() {
+    let floor = bynk_emit::TYPESCRIPT_MAJOR_FLOOR;
+    let tested = bynk_emit::TYPESCRIPT_MAJOR_TESTED;
+    let test_row = |tsc: Version| {
+        let fake = Fake::default()
+            .path_tool("node", "/usr/bin/node", Some(node_at_floor()))
+            .path_tool("tsc", "/usr/bin/tsc", Some(tsc));
+        let report = doctor::diagnose(&fake, &bynkc_ok(Skew::Match), &ctx(false), &bare());
+        let r = cap(&report, Capability::Test);
+        let row = r
+            .rows
+            .iter()
+            .find(|row| row.label == "tsc | tsx")
+            .expect("a runner row")
+            .clone();
+        (r.level, row)
+    };
+
+    let (level, row) = test_row(v(floor - 1, 9, 0));
+    assert_eq!(level, Level::Warn);
+    assert!(
+        row.detail.ends_with(&format!("below floor (≥ {floor})")),
+        "{}",
+        row.detail
+    );
+    assert!(
+        row.remedy
+            .as_deref()
+            .is_some_and(|r| r.starts_with(&format!("npm install -g typescript@{tested}"))),
+        "{:?}",
+        row.remedy
+    );
+
+    let (level, row) = test_row(v(tested + 1, 0, 0));
+    assert_eq!(level, Level::Warn);
+    assert!(
+        row.detail
+            .ends_with(&format!("untested (verified up to {tested})")),
+        "{}",
+        row.detail
+    );
+
+    for ok in [v(floor, 0, 0), v(tested, 0, 2)] {
+        let (level, row) = test_row(ok);
+        assert_eq!(level, Level::Ok, "{}", row.detail);
+    }
+
+    // `tsx` alone: present, no TypeScript version to judge.
+    let fake = Fake::default()
+        .path_tool("node", "/usr/bin/node", Some(node_at_floor()))
+        .path_tool("tsx", "/usr/bin/tsx", Some(v(4, 19, 0)));
+    let report = doctor::diagnose(&fake, &bynkc_ok(Skew::Match), &ctx(false), &bare());
+    assert_eq!(cap(&report, Capability::Test).level, Level::Ok);
+}
+
 /// A fixed, mixed environment: compile ok, test ok, deploy provisionable-only
 /// (warn), editor missing (note). Driver/compiler versions are pinned to a
 /// sentinel so the goldens survive version bumps.

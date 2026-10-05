@@ -314,8 +314,42 @@ fn detect_runner(tb: &dyn Toolbox, root: Option<&std::path::Path>) -> Row {
         },
     );
     let best = pick_better(&tsc, &tsx);
-    let remedy = "npm install -g tsx (or: npm install -g typescript)".to_string();
+    let floor = bynk_emit::TYPESCRIPT_MAJOR_FLOOR;
+    let tested = bynk_emit::TYPESCRIPT_MAJOR_TESTED;
+    // #1672: lead with the TypeScript that is verified, and the one that
+    // type-checks; `tsx` only runs the emitted code.
+    let remedy = format!(
+        "npm install -g typescript@{tested} (or `npm install -g tsx`, which runs tests without type-checking)"
+    );
     match best {
+        // #1672: a `tsc` outside the verified majors is reported, not passed as
+        // `ok`: below the floor it is unsupported, and above the tested major
+        // nobody has checked the emitted output under it yet.
+        Some(p) if p.is_present() && p.tool == "tsc" => {
+            let detail = format!("{} {}", p.tool, present_detail(p));
+            match p.version.map(|v| v.major) {
+                Some(major) if major < floor => Row {
+                    label: "tsc | tsx".into(),
+                    level: Level::Warn,
+                    detail: format!("{detail}, below floor (≥ {floor})"),
+                    remedy: Some(remedy),
+                },
+                Some(major) if major > tested => Row {
+                    label: "tsc | tsx".into(),
+                    level: Level::Warn,
+                    detail: format!("{detail}, untested (verified up to {tested})"),
+                    remedy: Some(format!(
+                        "npm install -g typescript@{tested} for the verified major"
+                    )),
+                },
+                _ => Row {
+                    label: "tsc | tsx".into(),
+                    level: Level::Ok,
+                    detail,
+                    remedy: None,
+                },
+            }
+        }
         Some(p) if p.is_present() => Row {
             label: "tsc | tsx".into(),
             level: Level::Ok,

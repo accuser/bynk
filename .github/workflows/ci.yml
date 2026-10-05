@@ -290,8 +290,9 @@ jobs:
         with:
           node-version: "22"
       # `tsc` is needed by the tsc-verify stage and the `bynkc test` fixtures.
-      # Pinned to v5: an unpinned `typescript` could turn CI red on a new TS
-      # major with no repo change, and the tsc_verify fallback already pins @5.
+      # Pinned to the verified floor, v5 (TYPESCRIPT_MAJOR_FLOOR): an unpinned
+      # `typescript` could turn CI red on a new TS major with no repo change.
+      # The verified current major, v7, runs as a second pass below (#1672).
       - name: Install TypeScript
         run: npm install -g typescript@5
       # Provision wrangler ONCE, serially, before the suite. The three workerd
@@ -352,6 +353,21 @@ jobs:
           # resolvable, and several `bynkc test` runner paths branch on exactly
           # that. Not worth the risk on the OS we just put on the PR gate.
           BYNK_REQUIRE_WORKERD: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
+      # #1672: the emitted output is verified under both TypeScript majors it
+      # supports — the floor (v5, the main run above) and the current one users
+      # get from `npm install -g typescript` (v7, here). Linux only: the type-
+      # check is OS-independent, and the corpus takes seconds. The version check
+      # keeps a failed install from silently re-running the suite under v5.
+      - name: Install TypeScript 7 (the tested major)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          npm install -g typescript@7
+          tsc --version | grep -q '^Version 7\.' || { tsc --version; echo "::error::expected TypeScript 7"; exit 1; }
+      - name: Type-check emitted output under TypeScript 7
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo nextest run --locked --profile ci -p bynkc --test tsc_verify --test examples
+        env:
+          BYNK_REQUIRE_TSC: "1"
 
   msrv:
     # Verify the declared rust-version (Cargo.toml) actually builds, rather than

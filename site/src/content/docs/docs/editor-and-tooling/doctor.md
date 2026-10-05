@@ -33,7 +33,7 @@ compiler: in-process
     compiler — in-process
 ✓ test [ok]
     node — v22.12.0 (path)
-    tsc | tsx — tsc v5.4.2 (path)
+    tsc | tsx — tsc v7.0.2 (path)
 ! deploy [warn]
     node — v22.12.0 (path)
     wrangler — provisionable via npx (not installed)
@@ -48,7 +48,7 @@ compiler: in-process
 | Capability | Needs | Missing means |
 |---|---|---|
 | **compile / check / fmt** | nothing — the compiler is built into `bynk` | always available |
-| **`bynk test`** | Node ≥ 22 **and** `tsc` or `tsx` | you can't run `test` blocks |
+| **`bynk test`** | Node ≥ 22 **and** `tsc` (TypeScript 5–7) or `tsx` | you can't run `test` blocks |
 | **dev / deploy** | Node ≥ 22 **and** `wrangler` | you can't deploy to Cloudflare |
 | **editor** *(optional)* | `bynkc-lsp` | a note — editor features only |
 | **build-from-source** *(optional)* | a Rust toolchain | shown only inside the Bynk repo |
@@ -57,6 +57,14 @@ A `node` below the floor (Node **22**, the oldest major still in support) is
 reported as a warning, `v20.11.0 below floor (≥ 22)`, with the fix to install a
 newer one. `bynkc test --inspect` checks its own minor floor on top of that: Node
 ≥ 22.6 to run, ≥ 22.18 for source-mapped breakpoints.
+
+The emitted TypeScript is verified under **TypeScript 5** (the oldest supported
+major) and **7** (the current one, what `npm install -g typescript` installs). A
+`tsc` outside that range is a warning: below 5 as `below floor (≥ 5)`, and above 7
+as `untested (verified up to 7)`, since nobody has checked the emitted output
+under it yet. The fix `doctor` suggests is `npm install -g typescript@7`. `tsx`
+also satisfies the requirement, but it only runs the tests: it doesn't
+type-check them.
 
 ### Provenance, and why `npx` isn't "ok"
 

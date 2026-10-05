@@ -42,7 +42,7 @@ fn discover_tsc() -> Option<(String, Vec<String>)> {
             "npx".to_string(),
             vec![
                 "-y".to_string(),
-                "typescript@5".to_string(),
+                format!("typescript@{}", bynk_emit::TYPESCRIPT_MAJOR_TESTED),
                 "tsc".to_string(),
             ],
         ));

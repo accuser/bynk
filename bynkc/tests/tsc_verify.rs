@@ -54,14 +54,15 @@ fn discover_tsc() -> Option<TscRunner> {
         });
     }
     if tool_exists("npx") {
-        // Pin TypeScript to avoid surprising upgrades. The compiler emits
-        // ES2022 + NodeNext output; tsc 5.x supports this.
+        // Pin TypeScript to avoid surprising upgrades: #1672, the newest
+        // verified major, the one users get. CI installs both verified majors
+        // explicitly, so this fallback is for a local run without `tsc`.
         return Some(TscRunner {
             program: "npx".to_string(),
             args: vec![
                 "--yes".to_string(),
                 "-p".to_string(),
-                "typescript@5".to_string(),
+                format!("typescript@{}", bynk_emit::TYPESCRIPT_MAJOR_TESTED),
                 "tsc".to_string(),
             ],
         });
