@@ -2,11 +2,12 @@
 
 *Decision record for [#540](https://github.com/accuser/bynk/issues/540) §7(4), the
 two bullets left after the [1.0 definition](bynk-1.0-definition.md): **monthly
-milestone cadence** and **README/about drift guards**. Fourth of the strategy
+milestone cadence** (from 1.0; Part 1 records the pre-1.0 trigger, #1673) and
+**README/about drift guards**. Fourth of the strategy
 records. A strategy record, not a language-defining call. With this, §7(4) is
 closed. Part 3, the Workers compatibility-date policy, was added later for
 [#1677](https://github.com/accuser/bynk/issues/1677), because it rides on the
-same milestones.*
+same releases.*
 
 ---
 
@@ -69,34 +70,44 @@ This is exactly the cadence the [1.0 definition](bynk-1.0-definition.md) leans o
 1.0 stability promise *legible*: a 1.x user upgrades milestone to milestone, reads
 one migration note, and (for anything mechanical) runs one codemod.
 
-### Reaffirmed, with a trigger (#1673)
+### Before 1.0: a release at each track retirement (#1673)
 
 The monthly cadence was written down, but nothing said when a milestone was
-due, and the September milestone was missed. The last release tag is
-`v0.290.0` (2026-09-04), and `main` has moved on by more than a dozen versions
-since. [#1673](https://github.com/accuser/bynk/issues/1673) asked for the
-cadence to be reaffirmed or replaced in writing. **It is reaffirmed, with a
-trigger:**
+due, and in practice none was cut after `v0.290.0` (2026-09-04), while `main`
+moved on by more than a dozen versions.
+[#1673](https://github.com/accuser/bynk/issues/1673) asked for the cadence to
+be reaffirmed or replaced in writing.
 
-1. **When.** A milestone is cut on the first working day of each month. Its tag
-   is the version on `main` at that point (`git tag vX.Y.Z` on a commit whose CI
-   is green), pushed by the maintainer.
-2. **What the tag does.** `release.yml` does the rest from the tag: it builds
+**Monthly milestones are the cadence from 1.0.** Before 1.0 a calendar trigger
+doesn't fit. The month is the right grain for an *outside* upgrader, and before
+1.0 the only Bynk source is this repo's own corpus (the reasoning ADR 0123
+applied to codemods). Work also lands in tracks, not months, and a release cut
+partway through a track ships half of a change. **So before 1.0, a release is
+cut when the work it ships is whole:**
+
+1. **When a track retires.** The retirement PR is the point at which a track's
+   slices are all merged and its spine closes, so the version on `main` after it
+   merges is a coherent unit. The maintainer tags it (`git tag vX.Y.Z` on a
+   commit whose CI is green).
+2. **When a user-facing fix needs to reach users** before the track it sits in
+   retires: a broken download, a crash in a released `bynkc`, a security fix.
+   That release is tagged from `main` as soon as the fix merges.
+3. **What the tag does.** `release.yml` does the rest from the tag: it builds
    the binaries, cuts the GitHub Release, publishes the crates and the grammar,
    and moves the VS Code extension's server pin to the new release.
-3. **What the milestone carries.** The cumulative migration note (above), and
-   the Workers compatibility-date review (Part 3).
-4. **A missed month** is cut as soon as it is noticed, not skipped. The next
-   month's milestone is still due on its own first working day.
+4. **What a release carries.** The cumulative migration note (above), covering
+   the increments since the previous release, and the Workers
+   compatibility-date review (Part 3).
+
+At 1.0 this section gives way to the monthly cadence above, unchanged.
 
 **What still depends on the cadence.** The extension's server pin used to: it
 was rewritten to the workspace version on every increment, so between releases
 it named a release that didn't exist. It now names the last shipped release, so
-a missed milestone leaves the extension *behind* rather than broken. What a
-missed milestone still costs is currency: the GitHub Release binaries, the
-crates on crates.io, and the server the extension downloads all stay at the
-last milestone, while the README's `cargo install --path` builds whatever is on
-`main`.
+a long gap between releases leaves the extension *behind* rather than broken.
+What a gap still costs is currency: the GitHub Release binaries, the crates on
+crates.io, and the server the extension downloads all stay at the last release,
+while the README's `cargo install --path` builds whatever is on `main`.
 
 ## Part 2 — Doc-truth drift guards
 
@@ -170,14 +181,15 @@ test.
 
 ### The decision
 
-**Review the date at each named milestone, and move it only once the workerd
-smokes pass on the new date.** The recommended option of #1677's Decision A.
+**Review the date at each release (Part 1: a track retirement before 1.0, a
+monthly milestone from 1.0), and move it only once the workerd smokes pass on
+the new date.** The recommended option of #1677's Decision A.
 
-1. **Trigger.** Each named milestone (Part 1) reviews the date. The candidate is
-   a date no later than the milestone and no later than the newest date the
+1. **Trigger.** Each release reviews the date. The candidate is a date no later
+   than the release and no later than the newest date the
    `workerd` behind the smokes' wrangler (`bynkc/tests/wrangler/mod.rs`'s
    `SPEC`) supports. A review may keep the date when nothing is worth taking,
-   and the milestone says so.
+   and the release says so.
 2. **Gate.** The bump lands as its own PR. Before it merges, the full suite runs
    with `BYNK_REQUIRE_WORKERD=1` on the new date, so the workerd smokes exercise
    the generated Workers under the new runtime behaviour. The PR lists the
@@ -187,10 +199,9 @@ smokes pass on the new date.** The recommended option of #1677's Decision A.
    carries a changelog entry. It needs an ADR only when a flag changes
    behaviour a Bynk program can observe.
 
-### Why at milestones
+### Why at releases
 
-A milestone is the point at which an upgrader already reads one cumulative
-note, so a runtime change belongs there, and not in a daily increment that
+A release is the point at which an upgrader already reads one cumulative note, so a runtime change belongs there, and not in a daily increment that
 nobody outside reads. The smokes are the gate because they are the only tests
 that run the generated Workers on the real runtime. A golden can't see a
 runtime behaviour change, since the emitted `wrangler.toml` differs only in the
