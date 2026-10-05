@@ -212,6 +212,11 @@ pub enum Command {
     Test {
         #[command(flatten)]
         args: bynk_driver::test_runner::TestArgs,
+        /// Run even when the resolved `bynkc` is a different *major* version
+        /// from `bynk` (#1675). A minor skew only warns. Also settable as
+        /// `BYNK_ALLOW_SKEW=1`.
+        #[arg(long)]
+        allow_skew: bool,
     },
     /// Explain a diagnostic code — the longer-form "what the rule is, why it
     /// exists, and how to fix it" behind a `bynk.*` error code (#853).
