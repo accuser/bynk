@@ -1,4 +1,7 @@
 bynk.tier.cross_context_needs_system case `"a unit case through a service that crosses"` calls `check`, which calls `demo.vault.open` in another context, but it is a `unit`-tier case
 bynk.tier.cross_context_needs_system case `"an integration case through an agent that crosses"` calls `tally`, which calls `demo.vault.open` in another context, but it is an `integration`-tier case
 bynk.tier.cross_context_needs_system case `"a unit case calling the consumed surface directly"` calls `demo.vault.open` in another context, but it is a `unit`-tier case
+bynk.tier.cross_context_needs_system case `"a unit case driving a crossing agent directly"` calls `Counter.bump`, which calls `demo.vault.open` in another context, but it is a `unit`-tier case
+bynk.tier.cross_context_needs_system case `"a unit case through a service that crosses via a let-bound agent"` calls `letBound`, which calls `demo.vault.open` in another context, but it is a `unit`-tier case
+bynk.tier.cross_context_needs_system property `"a property crossing through a service"` calls `check`, which calls `demo.vault.open` in another context, but a property runs in-process (it generates, and has no `system` tier)
 # exact

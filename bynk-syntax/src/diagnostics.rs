@@ -1804,7 +1804,7 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     ),
     dg(
         "bynk.tier.cross_context_needs_system",
-        "A `unit` or `integration` case reaches another context's service, directly or through a target service or agent handler that calls one; below `system` no other context is stood up to call, so the case must be promoted with `as system`.",
+        "A `unit` or `integration` case, or a `property`, reaches another context's service, directly or through a target service or agent handler that calls one; below `system` no other context is stood up to call, so the flow belongs in a `suite … as system`.",
         &["case"],
     ),
     dg(

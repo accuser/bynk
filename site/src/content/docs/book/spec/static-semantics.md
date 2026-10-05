@@ -1138,9 +1138,10 @@ executable statement: promotion changes substitution, not assertion, and between
   (`bynk.tier.mixed_system_suite`).
 - **Crossing a context requires `system` (#1737).** Below `system` a case runs
   in-process: no consumed context is stood up, and `stub` substitutes capability
-  seams only. A `unit` or `integration` case that reaches a consumed context's
-  service, directly or through a service or agent handler of the unit under test
-  that (transitively) calls one, MUST be rejected
+  seams only. A `unit` or `integration` case, or a `property` (which has no tier
+  and always runs in-process), that reaches a consumed context's service,
+  directly or through a service or agent handler of the unit under test that
+  (transitively) calls one, MUST be rejected
   (`bynk.tier.cross_context_needs_system`).
 
 - **Tiers are `case`-only.** A `property` generates and does not promote, so a

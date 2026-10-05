@@ -959,6 +959,7 @@ fn check_test_bodies(
                 refs,
                 tys,
             );
+            crossing.check_property(target_name, prop, &mut errors);
         }
     }
 
@@ -1047,32 +1048,39 @@ fn block_uses_wire(block: &Block) -> bool {
     contains_wire(&block.tail)
 }
 
-/// #1737: the target's services that reach another context, and the one call
-/// that does it for each (`service` → `(context, service)`), for the
-/// `bynk.tier.cross_context_needs_system` gate.
-///
-/// Below `system` a case runs in-process: a consumed context is not stood up,
-/// and `stub` doubles capabilities only, never a context's services. So a case
-/// that reaches another context's service (directly, or through a target
-/// service or an agent handler that calls one) had no collaborator to call,
-/// and crashed at runtime on an `undefined` surface. Crossing a context
-/// boundary is the `system` tier's job; this finds the cases that try it below.
-///
-/// A cross-context call is recognised the way the resolver resolves one
-/// (`CrossContextInfo::resolve_prefix`): a method call whose receiver chain is a
-/// consumed context's alias or qualified name, naming a service that context
-/// declares. A service reaches another context if its own handlers make such a
-/// call, or dispatch to an agent handler that (transitively) does.
 /// A cross-context service call: `(context, service)`.
 type CrossCall = (String, String);
 
 /// A same-context agent handler: `(agent, handler)`.
 type AgentHandler = (String, String);
 
+/// #1737: what in the target reaches another context, for the
+/// `bynk.tier.cross_context_needs_system` gate: each service, and each agent
+/// handler, that does, with the cross-context call it reaches.
+///
+/// Below `system` a case runs in-process: a consumed context is not stood up,
+/// and `stub` doubles capabilities only, never a context's services. So a case
+/// that reaches another context's service (directly, or through a target
+/// service or agent handler that calls one) had no collaborator to call, and
+/// crashed at runtime on an `undefined` surface. Crossing a context boundary is
+/// the `system` tier's job; this finds the test bodies that try it below.
+///
+/// A cross-context call is recognised the way the resolver resolves one
+/// (`CrossContextInfo::resolve_prefix`): a method call whose receiver chain is a
+/// consumed context's alias or qualified name, naming a service that context
+/// declares. A service or agent handler reaches another context if its own
+/// body makes such a call, or dispatches to an agent handler that
+/// (transitively) does. An agent call is recognised inline
+/// (`Counter(k).bump(…)`) and through a `let`-bound instance
+/// (`let c = Counter(k)` then `c.bump(…)`).
 struct CrossingServices<'a> {
     /// service name → the cross-context call it reaches.
     services: HashMap<String, CrossCall>,
-    /// The target's consumed contexts and aliases, for direct calls in a case.
+    /// agent handler → the cross-context call it reaches.
+    agents: HashMap<AgentHandler, CrossCall>,
+    /// The target's own table, for recognising agent calls in a test body.
+    table: Option<&'a UnitTable>,
+    /// The target's consumed contexts and aliases, for direct calls in a body.
     consumed: &'a [String],
     aliases: Option<&'a HashMap<String, String>>,
     unit_tables: &'a HashMap<String, UnitTable>,
@@ -1087,6 +1095,8 @@ impl<'a> CrossingServices<'a> {
     ) -> Self {
         let mut this = CrossingServices {
             services: HashMap::new(),
+            agents: HashMap::new(),
+            table: unit_tables.get(target_name),
             consumed: unit_consumes
                 .get(target_name)
                 .map(Vec::as_slice)
@@ -1094,15 +1104,14 @@ impl<'a> CrossingServices<'a> {
             aliases: unit_consumes_aliases.get(target_name),
             unit_tables,
         };
-        let Some(table) = unit_tables.get(target_name) else {
+        let Some(table) = this.table else {
             return this;
         };
         if this.consumed.is_empty() {
             return this;
         }
-        // Each agent handler's direct cross-context call (if any) and the agent
+        // Each agent handler's own cross-context call (if any) and the agent
         // handlers it dispatches to, then a fixpoint over the dispatch edges.
-        let mut agent_hits: HashMap<AgentHandler, CrossCall> = HashMap::new();
         let mut agent_edges: HashMap<AgentHandler, Vec<AgentHandler>> = HashMap::new();
         for (agent, decl) in &table.agents {
             for h in &decl.handlers {
@@ -1110,9 +1119,9 @@ impl<'a> CrossingServices<'a> {
                     continue;
                 };
                 let key = (agent.clone(), method.name.clone());
-                let (hit, edges) = this.scan(&h.body, table);
+                let (hit, edges) = this.scan(&h.body);
                 if let Some(hit) = hit {
-                    agent_hits.insert(key.clone(), hit);
+                    this.agents.insert(key.clone(), hit);
                 }
                 agent_edges.insert(key, edges);
             }
@@ -1120,11 +1129,11 @@ impl<'a> CrossingServices<'a> {
         loop {
             let mut changed = false;
             for (key, edges) in &agent_edges {
-                if agent_hits.contains_key(key) {
+                if this.agents.contains_key(key) {
                     continue;
                 }
-                if let Some(hit) = edges.iter().find_map(|e| agent_hits.get(e).cloned()) {
-                    agent_hits.insert(key.clone(), hit);
+                if let Some(hit) = edges.iter().find_map(|e| this.agents.get(e).cloned()) {
+                    this.agents.insert(key.clone(), hit);
                     changed = true;
                 }
             }
@@ -1134,8 +1143,9 @@ impl<'a> CrossingServices<'a> {
         }
         for (name, decl) in &table.services {
             for h in &decl.handlers {
-                let (hit, edges) = this.scan(&h.body, table);
-                let reached = hit.or_else(|| edges.iter().find_map(|e| agent_hits.get(e).cloned()));
+                let (hit, edges) = this.scan(&h.body);
+                let reached =
+                    hit.or_else(|| edges.iter().find_map(|e| this.agents.get(e).cloned()));
                 if let Some(reached) = reached {
                     this.services.entry(name.clone()).or_insert(reached);
                 }
@@ -1151,7 +1161,7 @@ impl<'a> CrossingServices<'a> {
             .or_else(|| self.consumed.iter().find(|c| *c == chain))
     }
 
-    /// `e` as a cross-context service call: `(context, service)`.
+    /// `e` as a cross-context service call.
     fn cross_call(&self, e: &Expr) -> Option<CrossCall> {
         let ExprKind::MethodCall {
             receiver, method, ..
@@ -1167,30 +1177,143 @@ impl<'a> CrossingServices<'a> {
             .then(|| (ctx.clone(), method.name.clone()))
     }
 
-    /// The first cross-context call in `block`, and every agent handler it
-    /// dispatches to (`Agent(key).handler(…)`).
-    fn scan(&self, block: &Block, table: &UnitTable) -> (Option<CrossCall>, Vec<AgentHandler>) {
+    /// `e` as an agent handler call, inline (`Counter(k).bump(…)`) or through
+    /// an instance `bound` by a `let` (`c.bump(…)`).
+    fn dispatch(&self, e: &Expr, bound: &HashMap<String, String>) -> Option<AgentHandler> {
+        let table = self.table?;
+        let ExprKind::MethodCall {
+            receiver, method, ..
+        } = &e.kind
+        else {
+            return None;
+        };
+        let agent = match &receiver.kind {
+            ExprKind::Call { name, .. } if table.agents.contains_key(&name.name) => {
+                name.name.clone()
+            }
+            ExprKind::Ident(x) => bound.get(&x.name)?.clone(),
+            _ => return None,
+        };
+        Some((agent, method.name.clone()))
+    }
+
+    /// The first cross-context call in `block` (in source order), and every
+    /// agent handler it dispatches to.
+    fn scan(&self, block: &Block) -> (Option<CrossCall>, Vec<AgentHandler>) {
+        let bound = self.agent_bindings(block);
         let mut hit = None;
         let mut edges = Vec::new();
-        for e in block_exprs_deep(block) {
+        for e in exprs_in_order(block) {
             if hit.is_none() {
                 hit = self.cross_call(e);
             }
-            if let ExprKind::MethodCall {
-                receiver, method, ..
-            } = &e.kind
-                && let ExprKind::Call { name, .. } = &receiver.kind
-                && table.agents.contains_key(&name.name)
-            {
-                edges.push((name.name.clone(), method.name.clone()));
+            if let Some(edge) = self.dispatch(e, &bound) {
+                edges.push(edge);
             }
         }
         (hit, edges)
     }
 
-    /// Report each call in a non-`system` `case` that reaches another context:
-    /// a target service that crosses (`check.call(…)`), or a consumed
-    /// context's service called directly.
+    /// The names `block` binds, at any depth, to an agent instance
+    /// (`let c = Counter(k)`), mapped to the agent.
+    fn agent_bindings(&self, block: &Block) -> HashMap<String, String> {
+        let mut bound = HashMap::new();
+        let Some(table) = self.table else {
+            return bound;
+        };
+        for b in blocks_deep(block) {
+            for s in &b.statements {
+                if let Statement::Let(l) | Statement::EffectLet(l) = s
+                    && let ExprKind::Call { name, .. } = &l.value.kind
+                    && table.agents.contains_key(&name.name)
+                {
+                    bound.insert(l.name.name.clone(), name.name.clone());
+                }
+            }
+        }
+        bound
+    }
+
+    /// Report each call in a non-`system` test body that reaches another
+    /// context: a target service that crosses (`check.call(…)`), an agent
+    /// handler that crosses (`Counter(k).bump(…)`), or a consumed context's
+    /// service called directly. `subject` names the body (``case `"…"` ``),
+    /// and `below` says why it runs in-process.
+    fn check_block(
+        &self,
+        target_name: &str,
+        subject: &str,
+        below: &str,
+        body: &Block,
+        errors: &mut Vec<CompileError>,
+    ) {
+        if self.consumed.is_empty() {
+            return;
+        }
+        let bound = self.agent_bindings(body);
+        // A name a `let` in the body rebinds is the binding, not a service.
+        let shadowed: HashSet<String> = blocks_deep(body)
+            .iter()
+            .flat_map(|b| &b.statements)
+            .filter_map(|s| match s {
+                Statement::Let(l) | Statement::EffectLet(l) => Some(l.name.name.clone()),
+                _ => None,
+            })
+            .collect();
+        for e in exprs_in_order(body) {
+            let ExprKind::MethodCall { receiver, .. } = &e.kind else {
+                continue;
+            };
+            let through = match &receiver.kind {
+                // `svc.call(…)` / `svc.GET(…)` / … on a target service.
+                ExprKind::Ident(svc) if !shadowed.contains(&svc.name) => self
+                    .services
+                    .get(&svc.name)
+                    .map(|reached| (format!("`{}`", svc.name), Some(svc.name.clone()), reached)),
+                _ => None,
+            };
+            let through = through.or_else(|| {
+                let (agent, handler) = self.dispatch(e, &bound)?;
+                let reached = self.agents.get(&(agent.clone(), handler.clone()))?;
+                Some((format!("`{agent}.{handler}`"), None, reached))
+            });
+            let message = match through {
+                Some((via, _, (ctx, svc))) => {
+                    format!(
+                        "{subject} calls {via}, which calls `{ctx}.{svc}` in another context, but {below}"
+                    )
+                }
+                None => match self.cross_call(e) {
+                    Some((ctx, svc)) => {
+                        format!("{subject} calls `{ctx}.{svc}` in another context, but {below}")
+                    }
+                    None => continue,
+                },
+            };
+            let service = match &receiver.kind {
+                ExprKind::Ident(svc) if self.services.contains_key(&svc.name) => {
+                    Some(svc.name.clone())
+                }
+                _ => None,
+            };
+            let promote = match service {
+                Some(s) => format!(
+                    "move it into a `system` suite (`suite {target_name} as system {{ … }}`), where the service is addressed by its context path (`{target_name}.{s}(…)`)"
+                ),
+                None => format!(
+                    "move it into a `system` suite (`suite {target_name} as system {{ … }}`) and drive it through one of `{target_name}`'s services (`{target_name}.<service>(…)`), which reaches the other context over the real wire"
+                ),
+            };
+            errors.push(
+                CompileError::new("bynk.tier.cross_context_needs_system", e.span, message)
+                    .with_note(format!(
+                        "below `system` a test runs in-process, with no other context stood up to call (`stub` doubles capabilities, not a context's services); {promote}"
+                    )),
+            );
+        }
+    }
+
+    /// The gate for a non-`system` `case`.
     fn check_case(
         &self,
         target_name: &str,
@@ -1198,52 +1321,32 @@ impl<'a> CrossingServices<'a> {
         tier: TestTier,
         errors: &mut Vec<CompileError>,
     ) {
-        if self.consumed.is_empty() {
-            return;
-        }
-        for e in block_exprs_deep(&case.body) {
-            let ExprKind::MethodCall { receiver, .. } = &e.kind else {
-                continue;
-            };
-            // `svc.call(…)` / `svc.GET(…)` / … on a target service that crosses.
-            let via = match &receiver.kind {
-                ExprKind::Ident(svc) => self
-                    .services
-                    .get(&svc.name)
-                    .map(|reached| (Some(svc.name.clone()), reached.clone())),
-                _ => None,
-            };
-            // A consumed context's service called straight from the case.
-            let via = via.or_else(|| self.cross_call(e).map(|reached| (None, reached)));
-            let Some((through, (ctx, svc))) = via else {
-                continue;
-            };
-            let what = match &through {
-                Some(s) => format!("calls `{s}`, which calls `{ctx}.{svc}` in another context"),
-                None => format!("calls `{ctx}.{svc}` in another context"),
-            };
-            let promote = match &through {
-                Some(s) => format!(
-                    "move the case into a `system` suite (`suite {target_name} as system {{ … }}`), where the service is addressed by its context path (`{target_name}.{s}(…)`)"
-                ),
-                None => format!(
-                    "move the case into a `system` suite (`suite {target_name} as system {{ … }}`) and drive it through one of `{target_name}`'s services (`{target_name}.<service>(…)`), which reaches the other context over the real wire"
-                ),
-            };
-            let tier = tier.as_str();
-            // "an integration", but "a unit" (said with a "y" sound).
-            let article = if tier == "integration" { "an" } else { "a" };
-            errors.push(
-                CompileError::new(
-                    "bynk.tier.cross_context_needs_system",
-                    e.span,
-                    format!("case `\"{}\"` {what}, but it is {article} `{tier}`-tier case", case.name),
-                )
-                .with_note(format!(
-                    "below `system` a case runs in-process, with no other context stood up to call (`stub` doubles capabilities, not a context's services); {promote}"
-                )),
-            );
-        }
+        let tier = tier.as_str();
+        // "an integration", but "a unit" (said with a "y" sound).
+        let article = if tier == "integration" { "an" } else { "a" };
+        self.check_block(
+            target_name,
+            &format!("case `\"{}\"`", case.name),
+            &format!("it is {article} `{tier}`-tier case"),
+            &case.body,
+            errors,
+        );
+    }
+
+    /// The gate for a `property`, which has no tier and always runs in-process.
+    fn check_property(
+        &self,
+        target_name: &str,
+        prop: &PropertyDecl,
+        errors: &mut Vec<CompileError>,
+    ) {
+        self.check_block(
+            target_name,
+            &format!("property `\"{}\"`", prop.name),
+            "a property runs in-process (it generates, and has no `system` tier)",
+            &prop.forall.body,
+            errors,
+        );
     }
 }
 
@@ -1259,18 +1362,49 @@ fn receiver_chain(e: &Expr) -> Option<String> {
     }
 }
 
-/// Every expression in `block`, at any depth (statement values, the tail, and
-/// everything under them, via [`bynk_syntax::ast::expr_children`]).
-fn block_exprs_deep(block: &Block) -> Vec<&Expr> {
+/// Every expression in `block` at any depth, in source order: each statement's
+/// expressions, then the tail, each visited before its children (via
+/// [`bynk_syntax::ast::expr_children`]).
+fn exprs_in_order(block: &Block) -> Vec<&Expr> {
     let mut roots: Vec<&Expr> = Vec::new();
     for s in &block.statements {
         bynk_syntax::ast::statement_exprs(s, &mut roots);
     }
     roots.push(&block.tail);
+    // A stack popped from the end, so push in reverse to visit in order.
+    let mut stack: Vec<&Expr> = roots.into_iter().rev().collect();
     let mut out = Vec::new();
-    while let Some(e) = roots.pop() {
+    while let Some(e) = stack.pop() {
         out.push(e);
-        roots.extend(bynk_syntax::ast::expr_children(e));
+        stack.extend(bynk_syntax::ast::expr_children(e).into_iter().rev());
+    }
+    out
+}
+
+/// `block` and every block nested in it (a block expression, an `if`'s
+/// branches, a `match` arm's block body), so a `let` at any depth is seen.
+fn blocks_deep(block: &Block) -> Vec<&Block> {
+    let mut out = vec![block];
+    for e in exprs_in_order(block) {
+        match &e.kind {
+            ExprKind::Block(b) => out.push(b),
+            ExprKind::If {
+                then_block,
+                else_block,
+                ..
+            } => {
+                out.push(then_block);
+                out.push(else_block);
+            }
+            ExprKind::Match { arms, .. } => {
+                for arm in arms {
+                    if let MatchBody::Block(b) = &arm.body {
+                        out.push(b);
+                    }
+                }
+            }
+            _ => {}
+        }
     }
     out
 }
@@ -2656,4 +2790,68 @@ pub fn build_privileged_resolved(
         HashSet::new(),
     );
     Some((resolved, ()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The body of `service svc`'s single handler in a parsed context.
+    fn handler_body(src: &str) -> Block {
+        let tokens = bynk_syntax::lexer::tokenize(src).expect("lex");
+        let unit = bynk_syntax::parser::parse_unit(&tokens, src).expect("parse");
+        let SourceUnit::Context(ctx) = unit else {
+            panic!("expected a context unit");
+        };
+        ctx.items
+            .into_iter()
+            .find_map(|item| match item {
+                bynk_syntax::ast::CommonsItem::Service(s) => s.handlers.into_iter().next(),
+                _ => None,
+            })
+            .expect("a service handler")
+            .body
+    }
+
+    const SRC: &str = "context demo\n\
+        service svc {\n\
+          on call(n: Int) -> Effect[Int] {\n\
+            let a <- first(n)\n\
+            let b = if n > 0 { let c = second(n)\n c } else { third(n) }\n\
+            fourth(a + b)\n\
+          }\n\
+        }\n";
+
+    /// #1740 review: the walk is in source order (it used to run bottom-up), so
+    /// "the first cross-context call" and the order errors are reported in
+    /// both read top to bottom.
+    #[test]
+    fn exprs_in_order_is_source_order() {
+        let body = handler_body(SRC);
+        let calls: Vec<&str> = exprs_in_order(&body)
+            .into_iter()
+            .filter_map(|e| match &e.kind {
+                ExprKind::Call { name, .. } => Some(name.name.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(calls, ["first", "second", "third", "fourth"]);
+    }
+
+    /// `blocks_deep` reaches a block nested in an `if` branch, so a `let` there
+    /// (an agent binding, or a name that shadows a service) is seen.
+    #[test]
+    fn blocks_deep_reaches_nested_lets() {
+        let body = handler_body(SRC);
+        let lets: Vec<String> = blocks_deep(&body)
+            .iter()
+            .flat_map(|b| &b.statements)
+            .filter_map(|s| match s {
+                Statement::Let(l) | Statement::EffectLet(l) => Some(l.name.name.clone()),
+                _ => None,
+            })
+            .collect();
+        assert!(lets.contains(&"c".to_string()), "{lets:?}");
+        assert!(lets.contains(&"a".to_string()) && lets.contains(&"b".to_string()));
+    }
 }

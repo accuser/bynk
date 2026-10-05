@@ -43,9 +43,11 @@ inferred from that graph, never listed.
 [bynk.tier.cross_context_needs_system] case `"pays"` calls `check`, which calls `shop.payment.authorise` in another context, but it is a `unit`-tier case
 ```
 
-**Cause:** a `unit` or `integration` case reaches another context's service:
-directly (`Payment.authorise(…)`), or through a service or agent handler of the
-unit under test that calls one. Below `system` a case runs in-process. No
+**Cause:** a `unit` or `integration` case, or a `property`, reaches another
+context's service: directly (`Payment.authorise(…)`), or through a service or
+agent handler of the unit under test that calls one. A property has no tier and
+always runs in-process, so it can't cross a context at all; drive that flow
+from a case in a `system` suite. Below `system` a case runs in-process. No
 consumed context is stood up, and `stub` doubles *capabilities*, not a context's
 services, so there would be nothing on the other side of the call.
 

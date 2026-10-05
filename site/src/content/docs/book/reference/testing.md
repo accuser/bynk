@@ -188,9 +188,10 @@ A case's effective tier is `case.tier ?? suite.tier ?? unit`. Between `unit` and
   tiers in one suite is `bynk.tier.mixed_system_suite`.
 - **Crossing a context needs `system`.** Below `system` a case runs in-process:
   no consumed context is stood up, and `stub` doubles capabilities, not a
-  context's services. A `unit` or `integration` case that reaches another
-  context's service, directly or through a service or agent handler that calls
-  one, is `bynk.tier.cross_context_needs_system`.
+  context's services. A `unit` or `integration` case, or a `property` (always
+  in-process), that reaches another context's service, directly or through a
+  service or agent handler that calls one, is
+  `bynk.tier.cross_context_needs_system`.
 - **Participants are inferred**, not listed: `system` derives its wired
   collaborator set from the unit under test's transitive `consumes` graph. There
   is no `wires` clause.
