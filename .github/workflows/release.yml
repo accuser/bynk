@@ -331,6 +331,24 @@ jobs:
   # dependency's build or test code (#727). The change touches only
   # `vscode-bynk/package.json`, outside stamp.yml's `design/pending/**` filter,
   # so it fires no stamp run; it does run CI on `main`.
+  #
+  # Why it pushes rather than opening a PR for the maintainer to merge:
+  #   - A PR would still need this token. One opened with GITHUB_TOKEN runs no
+  #     workflows, so the required "CI green" check would never report and the
+  #     PR could never merge.
+  #   - The token is no more exposed. STAMP_APP_ID/STAMP_APP_KEY are
+  #     repository secrets with no environment, so any workflow that can run
+  #     can mint the token already (#730). What this job adds is the risk of
+  #     our own code writing to `main` unreviewed: one line, written by
+  #     scripts/next-server-pin.sh, which xtask/tests/server_pin.rs tests.
+  #   - The tag is the review. Before 1.0 a release is tagged deliberately,
+  #     at a track retirement (design/bynk-release-discipline.md), so a PR
+  #     would approve the same decision twice.
+  #   - A PR left unmerged would leave the pin behind the latest release: the
+  #     drift #1673 removed.
+  # If the stamp secrets move into an Environment with required reviewers
+  # (the #730 follow-up), this job needs that environment too, and a release
+  # then pauses here for approval.
   server-pin:
     name: Point the extension at this release
     needs: github-release
