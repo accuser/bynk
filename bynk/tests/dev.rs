@@ -188,3 +188,50 @@ fn golden_serving_report() {
     )));
     bless_or_assert("dev-serving-report.txt", &out);
 }
+
+/// #1732: `bynk dev` warns, before serving, about a wrangler older than
+/// `bynk_emit::WRANGLER_MIN`, naming the version, the minimum, the pinned date
+/// and the fix. A wrangler at the minimum gets no such warning, and neither
+/// does one with no installed version to judge (missing here; npx-provisioned
+/// is the same case, since `wrangler_below_min` requires an installed wrangler).
+#[test]
+fn dev_warns_about_a_wrangler_too_old_for_the_compatibility_date() {
+    use bynk::probe::{self, DetectOpts};
+    let min = Version::parse(bynk_emit::WRANGLER_MIN).expect("WRANGLER_MIN is a version");
+    let old = v(min.major, min.minor.saturating_sub(1), 0);
+    let detect = |fake: &Fake| {
+        probe::detect(
+            fake,
+            "wrangler",
+            DetectOpts {
+                project_root: None,
+                allow_npx: true,
+            },
+        )
+    };
+
+    let notice = dev::wrangler_age_notice(&detect(&Fake::default().path_tool(
+        "wrangler",
+        "/usr/bin/wrangler",
+        old,
+    )))
+    .expect("an old wrangler is warned about");
+    for part in [
+        format!("wrangler {old}"),
+        bynk_emit::WRANGLER_MIN.to_string(),
+        bynk_emit::COMPATIBILITY_DATE.to_string(),
+        "npm install -g wrangler@4".to_string(),
+    ] {
+        assert!(notice.contains(&part), "missing {part:?} in: {notice}");
+    }
+
+    assert_eq!(
+        dev::wrangler_age_notice(&detect(&Fake::default().path_tool(
+            "wrangler",
+            "/usr/bin/wrangler",
+            min
+        ))),
+        None
+    );
+    assert_eq!(dev::wrangler_age_notice(&detect(&Fake::default())), None);
+}

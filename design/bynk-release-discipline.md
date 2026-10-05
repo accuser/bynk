@@ -206,6 +206,13 @@ the new date.** The recommended option of #1677's Decision A.
    last quarter working. Look the date up with `npm view wrangler time` and
    `npm view wrangler@<v> dependencies.workerd`: the `workerd` version
    `1.YYYYMMDD.n` names the newest date it supports.
+
+   **The review also sets the wrangler minimum** (#1732): `WRANGLER_MIN`, beside
+   `COMPATIBILITY_DATE`, is the oldest wrangler whose `workerd` serves the date.
+   It's currently `4.107.0` for `2026-07-01`. `bynk doctor` warns about an
+   installed wrangler below it, and `bynk dev` prints the same warning before
+   serving. `bynk-emit/tests/compat_date_policy.rs` fails until this section,
+   the doctor guide and the emission reference all name the current pair.
 2. **Gate.** The bump lands as its own PR. Before it merges, the full suite runs
    with `BYNK_REQUIRE_WORKERD=1` on the new date, so the workerd smokes exercise
    the generated Workers under the new runtime behaviour. The PR lists the

@@ -16,7 +16,7 @@
 use std::path::PathBuf;
 
 use crate::compiler::{Compiler, Origin, Skew};
-use crate::probe::{self, DetectOpts, Probe, Toolbox};
+use crate::probe::{self, DetectOpts, Probe, Provenance, Toolbox};
 
 /// A unit of work a user might want to do, and the tools it needs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -157,7 +157,7 @@ pub fn diagnose(
     }
     if want(Capability::Deploy) {
         let node = detect_node(tb, root, ctx.node_floor);
-        let wrangler = detect_npm_tool(tb, root, "wrangler", "npm install -g wrangler");
+        let wrangler = detect_wrangler(tb, root);
         capabilities.push(capability(Capability::Deploy, vec![node, wrangler]));
     }
     if want(Capability::Editor) {
@@ -374,21 +374,67 @@ fn detect_runner(tb: &dyn Toolbox, root: Option<&std::path::Path>) -> Row {
     }
 }
 
-fn detect_npm_tool(
-    tb: &dyn Toolbox,
-    root: Option<&std::path::Path>,
-    tool: &str,
-    remedy: &str,
-) -> Row {
+/// #1732: an installed wrangler older than [`bynk_emit::WRANGLER_MIN`], whose
+/// `workerd` therefore refuses the pinned [`bynk_emit::COMPATIBILITY_DATE`].
+/// `false` for an npx-provisioned or unversioned wrangler, which can't be
+/// judged without running it. Shared by `doctor`'s row and `bynk dev`'s notice.
+pub fn wrangler_below_min(probe: &Probe) -> bool {
+    let min = probe::Version::parse(bynk_emit::WRANGLER_MIN).expect("WRANGLER_MIN is a version");
+    probe.is_present()
+        && probe
+            .version
+            .is_some_and(|v| (v.major, v.minor, v.patch) < (min.major, min.minor, min.patch))
+}
+
+/// #1732: wrangler, checked against [`bynk_emit::WRANGLER_MIN`], the oldest
+/// whose `workerd` serves the [`bynk_emit::COMPATIBILITY_DATE`] every generated
+/// `wrangler.toml` pins. An older one still deploys (Cloudflare accepts any past
+/// date), but its `workerd` refuses the date, so `bynk dev` fails. That's a
+/// warning, not a failure, so `doctor --only deploy` doesn't go red on a
+/// toolchain that deploys. An npx-provisioned wrangler's version isn't known
+/// without running npx (which may download), so its row keeps the usual
+/// "provisionable" warning, and the remedy says to clear a stale npx cache: one
+/// older than the minimum fails the same way, because npx keys the cache on the
+/// spec `wrangler@4`, not the version.
+fn detect_wrangler(tb: &dyn Toolbox, root: Option<&std::path::Path>) -> Row {
+    let min = bynk_emit::WRANGLER_MIN;
+    let date = bynk_emit::COMPATIBILITY_DATE;
+    // No version or date in a remedy: it shows in every `--format short` line
+    // (and the goldens), which a compatibility-date review shouldn't churn. The
+    // below-minimum detail names both. Each remedy fits where wrangler came
+    // from: a project's own wrangler is upgraded in the project, and only an npx
+    // one can be a stale cache.
+    let install = "npm install -g wrangler@4";
     let probe = probe::detect(
         tb,
-        tool,
+        "wrangler",
         DetectOpts {
             project_root: root,
             allow_npx: true,
         },
     );
-    npm_row(tool, &probe, remedy)
+    if wrangler_below_min(&probe) {
+        let remedy = match probe.provenance {
+            Provenance::ProjectLocal(_) => "npm install --save-dev wrangler@4 (in the project)",
+            _ => install,
+        };
+        return Row {
+            label: "wrangler".into(),
+            level: Level::Warn,
+            detail: format!(
+                "{}, below {min}: `bynk dev` can't serve compatibility date {date}",
+                present_detail(&probe)
+            ),
+            remedy: Some(remedy.into()),
+        };
+    }
+    let mut row = npm_row("wrangler", &probe, install);
+    if probe.is_provisionable() {
+        row.remedy = Some(format!(
+            "{install}, or clear a stale npx cache (~/.npm/_npx)"
+        ));
+    }
+    row
 }
 
 fn detect_plain(tb: &dyn Toolbox, tool: &str, remedy: &str) -> Row {

@@ -228,6 +228,9 @@ pub fn run(
     if matches!(probe.provenance, Provenance::Npx) {
         eprintln!("bynk: wrangler resolved via npx — it will download on first run.");
     }
+    if let Some(notice) = wrangler_age_notice(&probe) {
+        eprintln!("{notice}");
+    }
     if matches!(probe.provenance, Provenance::Missing) {
         // The pre-flight gate should have caught this; defensive only.
         eprintln!("bynk: wrangler not found (run `bynk doctor --only deploy`)");
@@ -438,6 +441,25 @@ fn collect_bynk_files(dir: &Path, excludes: &[PathBuf], visit: &mut dyn FnMut(&P
 /// doctor's own human report, so the remedy lines are identical to `bynk
 /// doctor`. Pure (no I/O) so this deterministic surface is pinned by a golden
 /// (§5), unlike the non-deterministic `wrangler dev` stream.
+/// #1732: the warning `bynk dev` prints before serving with a wrangler older
+/// than [`bynk_emit::WRANGLER_MIN`]. Its `workerd` refuses the pinned
+/// compatibility date outright, and wrangler's own error says nothing about
+/// Bynk, so this names the cause and the fix first. A warning, not a refusal:
+/// the version is `doctor`'s judgement, and the wrangler itself has the last
+/// word. `None` when the wrangler is new enough, or can't be versioned (npx).
+pub fn wrangler_age_notice(probe: &probe::Probe) -> Option<String> {
+    let v = probe
+        .version
+        .filter(|_| doctor::wrangler_below_min(probe))?;
+    Some(format!(
+        "bynk: warning: wrangler {v} is older than {}, the first whose runtime serves \
+         compatibility date {}; `wrangler dev` will refuse it. Upgrade with \
+         `npm install -g wrangler@4`.",
+        bynk_emit::WRANGLER_MIN,
+        bynk_emit::COMPATIBILITY_DATE
+    ))
+}
+
 pub fn preflight_failure_message(report: &Report) -> String {
     format!(
         "bynk: environment not ready for `dev` — see below.\n\n{}",

@@ -72,6 +72,13 @@ impl Toolbox for Fake {
 /// model the real floor and a bump can't leave them asserting a stale one.
 const FLOOR: u32 = bynk_emit::NODE_MAJOR_FLOOR;
 
+/// #1732: a `wrangler` exactly at `bynk_emit::WRANGLER_MIN`, the oldest whose
+/// `workerd` serves the pinned compatibility date, read from the constant so a
+/// review that moves it can't leave these tests on a stale version.
+fn wrangler_at_min() -> Version {
+    Version::parse(bynk_emit::WRANGLER_MIN).expect("WRANGLER_MIN is a version")
+}
+
 /// A `node` exactly at the floor: the oldest one `doctor` reports `ok`.
 fn node_at_floor() -> Version {
     v(FLOOR, 0, 0)
@@ -223,11 +230,108 @@ fn everything_present_is_all_green_exit_zero() {
     let fake = Fake::default()
         .path_tool("node", "/usr/bin/node", Some(node_at_floor()))
         .path_tool("tsc", "/usr/bin/tsc", Some(v(5, 4, 2)))
-        .path_tool("wrangler", "/usr/bin/wrangler", Some(v(3, 90, 0)))
+        .path_tool("wrangler", "/usr/bin/wrangler", Some(wrangler_at_min()))
         .path_tool("bynkc-lsp", "/usr/bin/bynkc-lsp", Some(v(9, 9, 9)));
     let report = doctor::diagnose(&fake, &bynkc_ok(Skew::Match), &ctx(false), &bare());
     assert!(report.is_all_ok());
     assert!(!report.exit_nonzero(&bare()));
+}
+
+/// #1732: wrangler is checked against `bynk_emit::WRANGLER_MIN`. Below it, its
+/// `workerd` refuses the pinned compatibility date, so `bynk dev` fails: the row
+/// warns, says why, and gives a remedy. It still deploys, so `--only deploy`
+/// stays exit 0 (only `--strict` turns the warning red). At the minimum, or
+/// newer, it's `ok`. An npx-provisioned wrangler can't be versioned without
+/// running npx, so it keeps its usual "provisionable" warning, and its remedy
+/// mentions the npx cache.
+#[test]
+fn wrangler_is_checked_against_the_compatibility_date_minimum() {
+    let min = wrangler_at_min();
+    let date = bynk_emit::COMPATIBILITY_DATE;
+    let deploy = |fake: Fake| {
+        let fake = fake.path_tool("node", "/usr/bin/node", Some(node_at_floor()));
+        let report = doctor::diagnose(&fake, &bynkc_ok(Skew::Match), &ctx(false), &bare());
+        let r = cap(&report, Capability::Deploy).clone();
+        let row = r
+            .rows
+            .iter()
+            .find(|row| row.label == "wrangler")
+            .expect("a wrangler row")
+            .clone();
+        (report, r.level, row)
+    };
+
+    let below = if min.patch > 0 {
+        v(min.major, min.minor, min.patch - 1)
+    } else {
+        v(min.major, min.minor - 1, 9)
+    };
+    let (report, level, row) =
+        deploy(Fake::default().path_tool("wrangler", "/usr/bin/wrangler", Some(below)));
+    assert_eq!(level, Level::Warn, "{}", row.detail);
+    assert!(
+        row.detail.contains(&format!(
+            "below {}: `bynk dev` can't serve compatibility date {date}",
+            bynk_emit::WRANGLER_MIN
+        )),
+        "{}",
+        row.detail
+    );
+    assert!(
+        row.remedy
+            .as_deref()
+            .is_some_and(|r| r.starts_with("npm install -g wrangler@4")),
+        "{:?}",
+        row.remedy
+    );
+    let only_deploy = DoctorOptions {
+        only: Some(Capability::Deploy),
+        strict: false,
+    };
+    assert!(
+        !report.exit_nonzero(&only_deploy),
+        "an old wrangler still deploys"
+    );
+
+    for ok in [min, v(min.major, min.minor + 1, 0), v(min.major + 1, 0, 0)] {
+        let (_, level, row) =
+            deploy(Fake::default().path_tool("wrangler", "/usr/bin/wrangler", Some(ok)));
+        assert_eq!(level, Level::Ok, "{}", row.detail);
+        assert_eq!(row.remedy, None);
+    }
+
+    // In a project, the project-local wrangler is the one the driver runs, so it
+    // is the one judged, even with a newer one on PATH.
+    let fake = Fake::default()
+        .path_tool("node", "/usr/bin/node", Some(node_at_floor()))
+        .path_tool("wrangler", "/usr/bin/wrangler", Some(min))
+        .local_tool("wrangler", "/proj/node_modules/.bin/wrangler", Some(below));
+    let in_project = Context {
+        project_root: Some(PathBuf::from("/proj")),
+        ..ctx(false)
+    };
+    let report = doctor::diagnose(&fake, &bynkc_ok(Skew::Match), &in_project, &bare());
+    assert_eq!(cap(&report, Capability::Deploy).level, Level::Warn);
+    let row = cap(&report, Capability::Deploy)
+        .rows
+        .iter()
+        .find(|row| row.label == "wrangler")
+        .expect("a wrangler row");
+    assert_eq!(
+        row.remedy.as_deref(),
+        Some("npm install --save-dev wrangler@4 (in the project)"),
+        "a project's own wrangler is upgraded in the project"
+    );
+
+    let (_, level, row) = deploy(Fake::default().with_npx());
+    assert_eq!(level, Level::Warn);
+    assert!(
+        row.remedy
+            .as_deref()
+            .is_some_and(|r| r.contains("~/.npm/_npx")),
+        "{:?}",
+        row.remedy
+    );
 }
 
 #[test]
@@ -252,7 +356,7 @@ fn strict_escalates_optional_only_gap() {
     let fake = Fake::default()
         .path_tool("node", "/usr/bin/node", Some(node_at_floor()))
         .path_tool("tsc", "/usr/bin/tsc", Some(v(5, 4, 2)))
-        .path_tool("wrangler", "/usr/bin/wrangler", Some(v(3, 90, 0)));
+        .path_tool("wrangler", "/usr/bin/wrangler", Some(wrangler_at_min()));
     let report = doctor::diagnose(&fake, &bynkc_ok(Skew::Match), &ctx(false), &bare());
     assert_eq!(cap(&report, Capability::Editor).level, Level::Fail); // displayed as "note"
     assert!(!report.exit_nonzero(&bare()));
@@ -353,7 +457,7 @@ fn node_below_the_floor_warns() {
     let fake = Fake::default()
         .path_tool("node", "/usr/bin/node", Some(v(FLOOR - 2, 11, 0)))
         .path_tool("tsc", "/usr/bin/tsc", Some(v(5, 4, 2)))
-        .path_tool("wrangler", "/usr/bin/wrangler", Some(v(4, 0, 0)));
+        .path_tool("wrangler", "/usr/bin/wrangler", Some(wrangler_at_min()));
     let report = doctor::diagnose(&fake, &bynkc_ok(Skew::Match), &ctx(false), &bare());
     for c in [Capability::Test, Capability::Deploy] {
         let r = cap(&report, c);
@@ -369,7 +473,7 @@ fn node_below_the_floor_warns() {
     let fake = Fake::default()
         .path_tool("node", "/usr/bin/node", Some(node_at_floor()))
         .path_tool("tsc", "/usr/bin/tsc", Some(v(5, 4, 2)))
-        .path_tool("wrangler", "/usr/bin/wrangler", Some(v(4, 0, 0)));
+        .path_tool("wrangler", "/usr/bin/wrangler", Some(wrangler_at_min()));
     let report = doctor::diagnose(&fake, &bynkc_ok(Skew::Match), &ctx(false), &bare());
     assert_eq!(cap(&report, Capability::Test).level, Level::Ok);
     assert_eq!(cap(&report, Capability::Deploy).level, Level::Ok);

@@ -37,7 +37,7 @@ compiler: in-process
 ! deploy [warn]
     node — v22.12.0 (path)
     wrangler — provisionable via npx (not installed)
-      ↳ fix: npm install -g wrangler
+      ↳ fix: npm install -g wrangler@4, or clear a stale npx cache (~/.npm/_npx)
 · editor [note] (optional)
     bynkc-lsp — missing
       ↳ fix: install bynkc-lsp (or download from releases)
@@ -49,7 +49,7 @@ compiler: in-process
 |---|---|---|
 | **compile / check / fmt** | nothing — the compiler is built into `bynk` | always available |
 | **`bynk test`** | Node ≥ 22 **and** `tsc` (TypeScript 5–7) or `tsx` | you can't run `test` blocks |
-| **dev / deploy** | Node ≥ 22 **and** `wrangler` | you can't deploy to Cloudflare |
+| **dev / deploy** | Node ≥ 22 **and** `wrangler` (4.107.0 or newer for `bynk dev`) | you can't deploy to Cloudflare |
 | **editor** *(optional)* | `bynkc-lsp` | a note — editor features only |
 | **build-from-source** *(optional)* | a Rust toolchain | shown only inside the Bynk repo |
 
@@ -57,6 +57,22 @@ A `node` below the floor (Node **22**, the oldest major still in support) is
 reported as a warning, `v20.11.0 below floor (≥ 22)`, with the fix to install a
 newer one. `bynkc test --inspect` checks its own minor floor on top of that: Node
 ≥ 22.6 to run, ≥ 22.18 for source-mapped breakpoints.
+
+An installed `wrangler` older than **4.107.0** is a warning too:
+
+```text
+    wrangler — v4.100.0 (path), below 4.107.0: `bynk dev` can't serve compatibility date 2026-07-01
+      ↳ fix: npm install -g wrangler@4
+```
+
+Every generated `wrangler.toml` pins a `compatibility_date`, and an older
+wrangler's runtime refuses a newer date outright. It doesn't fall back, so
+`bynk dev` would fail. Deploying still works, since Cloudflare accepts the date,
+so this doesn't fail `--only deploy`. `bynk dev` prints the same warning before
+it serves. A wrangler that `doctor` would fetch with `npx` can't be versioned
+without running it. If `bynk dev` then fails with "This Worker requires
+compatibility date …", the npx cache holds an older wrangler: clear
+`~/.npm/_npx`, or install one with `npm install -g wrangler@4`.
 
 The emitted TypeScript is verified under **TypeScript 5** (the oldest supported
 major) and **7** (the current one, what `npm install -g typescript` installs). A
@@ -110,7 +126,7 @@ bynk doctor --format json     # structured, for CI
 ```text
 compile: ok
 test: ok
-deploy: warn (npm install -g wrangler)
+deploy: warn (npm install -g wrangler@4, or clear a stale npx cache (~/.npm/_npx))
 editor: note (install bynkc-lsp (or download from releases))
 ```
 
