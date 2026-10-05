@@ -605,15 +605,11 @@ pub(crate) fn check_call(
         };
     }
     // Nothing owns the call. The resolver's reference walk reports these in
-    // `fn`/method bodies (and a resolve error stops the pipeline before the
-    // checker runs), but handler/service/agent bodies never pass through
-    // that walk — the checker is their only backstop, and a silent `None`
-    // here admitted any unknown call and emitted it verbatim. Mirror the
-    // resolver's ladder. Test bodies stay silent, matching the loosely
-    // typed test-call surface (v0.25) — see the same gate in `check_ident`.
-    if ctx.in_test_body {
-        return None;
-    }
+    // `fn`/method bodies, but handler/service/agent bodies and test bodies
+    // never pass through that walk — the checker is their only backstop, and
+    // a silent `None` here admitted any unknown call and emitted it verbatim.
+    // Mirror the resolver's ladder. #1708: test bodies were exempt, for the
+    // same since-repaired reason as `check_ident`'s twin gate; dropped with it.
     for a in args {
         let _ = type_of(a, None, ctx);
     }

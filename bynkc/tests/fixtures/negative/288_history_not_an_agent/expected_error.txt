@@ -1,1 +1,3 @@
 bynk.history.not_an_agent
+# exact
+# #1708: one diagnostic, no unknown-name echo of the rejected binding in the body.
