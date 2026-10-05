@@ -1063,9 +1063,15 @@ fn block_uses_wire(block: &Block) -> bool {
 /// consumed context's alias or qualified name, naming a service that context
 /// declares. A service reaches another context if its own handlers make such a
 /// call, or dispatch to an agent handler that (transitively) does.
+/// A cross-context service call: `(context, service)`.
+type CrossCall = (String, String);
+
+/// A same-context agent handler: `(agent, handler)`.
+type AgentHandler = (String, String);
+
 struct CrossingServices<'a> {
     /// service name → the cross-context call it reaches.
-    services: HashMap<String, (String, String)>,
+    services: HashMap<String, CrossCall>,
     /// The target's consumed contexts and aliases, for direct calls in a case.
     consumed: &'a [String],
     aliases: Option<&'a HashMap<String, String>>,
@@ -1096,8 +1102,8 @@ impl<'a> CrossingServices<'a> {
         }
         // Each agent handler's direct cross-context call (if any) and the agent
         // handlers it dispatches to, then a fixpoint over the dispatch edges.
-        let mut agent_hits: HashMap<(String, String), (String, String)> = HashMap::new();
-        let mut agent_edges: HashMap<(String, String), Vec<(String, String)>> = HashMap::new();
+        let mut agent_hits: HashMap<AgentHandler, CrossCall> = HashMap::new();
+        let mut agent_edges: HashMap<AgentHandler, Vec<AgentHandler>> = HashMap::new();
         for (agent, decl) in &table.agents {
             for h in &decl.handlers {
                 let Some(method) = &h.method_name else {
@@ -1146,7 +1152,7 @@ impl<'a> CrossingServices<'a> {
     }
 
     /// `e` as a cross-context service call: `(context, service)`.
-    fn cross_call(&self, e: &Expr) -> Option<(String, String)> {
+    fn cross_call(&self, e: &Expr) -> Option<CrossCall> {
         let ExprKind::MethodCall {
             receiver, method, ..
         } = &e.kind
@@ -1163,11 +1169,7 @@ impl<'a> CrossingServices<'a> {
 
     /// The first cross-context call in `block`, and every agent handler it
     /// dispatches to (`Agent(key).handler(…)`).
-    fn scan(
-        &self,
-        block: &Block,
-        table: &UnitTable,
-    ) -> (Option<(String, String)>, Vec<(String, String)>) {
+    fn scan(&self, block: &Block, table: &UnitTable) -> (Option<CrossCall>, Vec<AgentHandler>) {
         let mut hit = None;
         let mut edges = Vec::new();
         for e in block_exprs_deep(block) {
