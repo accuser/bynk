@@ -88,12 +88,19 @@ pub struct UnitCheckCtx {
     /// which `imported_from_kind` tags `UnitKind::Context` in
     /// `merge_consumed_exports` and which the emitter never rebrands).
     pub uses_commons_type_names: HashSet<String>,
+    /// #1710: the declarations recovery skipped in the files this unit can see
+    /// (its own, and the units it `uses` and `consumes`). A reference to one is
+    /// a known name, not an unknown one (#1663's Decision B), so its
+    /// unknown-name echo is not reported.
+    pub visible_broken_names: Vec<String>,
 }
 
 /// Build the per-unit prelude [`check_file_core`] shares across every file
 /// in the unit — see [`UnitCheckCtx`]'s own doc comment.
 pub fn prepare_unit_check_ctx(
+    name: &str,
     kind: UnitKind,
+    broken: &crate::project_model::BrokenDeclNames,
     unit_info: &BTreeMap<String, UnitInfo>,
     combined_types: &HashMap<String, Arc<TypeDecl>>,
     imported_from_kind: &HashMap<String, UnitKind>,
@@ -126,9 +133,21 @@ pub fn prepare_unit_check_ctx(
         })
         .cloned()
         .collect();
+    let visible_broken_names: Vec<String> = std::iter::once(name)
+        .chain(
+            unit_info
+                .get(name)
+                .into_iter()
+                .flat_map(|i| i.uses.iter().chain(i.consumes.iter()).map(String::as_str)),
+        )
+        .filter_map(|u| broken.get(u))
+        .flatten()
+        .cloned()
+        .collect();
     UnitCheckCtx {
         cross_context_views,
         uses_commons_type_names,
+        visible_broken_names,
     }
 }
 
@@ -344,7 +363,12 @@ pub fn check_file_core(
     let own_file = resolved.commons.span.file;
     let rc = checker::check_record_in(resolved, tys, refs, hints, locals, requirements);
     if let Some(resolve_errors) = &resolve_errors {
-        errors.extend_for(Some(&pf.identity_path()), resolve_errors.clone());
+        // #1710: a reference to a declaration recovery skipped (here or in a
+        // file this unit can see) is a known name; its echo isn't reported. It
+        // still counts as a resolve error below (Decision A).
+        let (shown, _hidden) =
+            resolver::split_broken_decl_echoes(resolve_errors.clone(), &ctx.visible_broken_names);
+        errors.extend_for(Some(&pf.identity_path()), shown);
     }
     let unechoed = |errs: Vec<bynk_syntax::CompileError>| match &resolve_errors {
         Some(r) => resolver::without_resolve_echoes(errs, r, &item_spans),
@@ -356,11 +380,14 @@ pub fn check_file_core(
     // them; here, keep only this file's diagnostics (or unlocated ones), and
     // decide whether a stage failed this file from those alone.
     let ours = |errs: Vec<bynk_syntax::CompileError>| -> Vec<bynk_syntax::CompileError> {
-        unechoed(
+        let kept = unechoed(
             errs.into_iter()
                 .filter(|e| e.span.file == own_file || e.span == bynk_syntax::span::Span::default())
                 .collect(),
-        )
+        );
+        // #1710: the checker meets a skipped declaration too (a consumed
+        // context's skipped service), so its echoes are split the same way.
+        resolver::split_broken_decl_echoes(kept, &ctx.visible_broken_names).0
     };
     // #1663: whether this file has already failed (a resolve or type error).
     // The later stages still check its other declarations; the file returns

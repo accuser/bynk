@@ -1,0 +1,11 @@
+commons demo.app
+
+uses demo.shapes
+
+fn first(p: Pair) -> Int { p.first }
+
+fn useBox(n: Int) -> Int { boxed(n).value }
+
+fn alsoWrong() -> String { 1 }
+
+fn ghostly(g: Ghost) -> Int { 0 }

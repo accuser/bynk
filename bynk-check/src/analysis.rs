@@ -285,7 +285,7 @@ pub fn analyse_project(roots: &Roots, overlay: &HashMap<PathBuf, String>) -> Pro
     }
 
     // -- 2. Parse. --
-    let (mut parsed, consumes_bynk, consumes_cloudflare) =
+    let (mut parsed, consumes_bynk, consumes_cloudflare, broken) =
         match project_model::phase_parse(&trees, &file_lists, overlay, &mut errors, &mut snapshots)
         {
             Ok(out) => out,
@@ -513,7 +513,14 @@ pub fn analyse_project(roots: &Roots, overlay: &HashMap<PathBuf, String>) -> Pro
 
         let local_names: HashSet<String> = local_table.types.keys().cloned().collect();
         let local_methods_for_type = collect_unit_methods(indices, &parsed);
-        let ctx = prepare_unit_check_ctx(kind, &unit_info, &combined_types, &imported_from_kind);
+        let ctx = prepare_unit_check_ctx(
+            name,
+            kind,
+            &broken,
+            &unit_info,
+            &combined_types,
+            &imported_from_kind,
+        );
 
         for &i in indices {
             let pf = &parsed[i];

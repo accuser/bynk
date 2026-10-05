@@ -421,10 +421,64 @@ pub fn parse_sources(
     // the warnings ride out to the caller's severity-aware sink.
     let (_file_id, result) = crate::parse_cache::cached_parse(cache_key, &source);
     let (units, warnings) = result.map_err(|errors| (*errors).clone())?;
+    let files = parsed_files(root, prefix, path, abs_path, &source, units.iter().cloned());
+    Ok((files, (*warnings).clone()))
+}
+
+/// #1710: what a file the strict parse rejects still yields, from its
+/// recovering parse: a [`ParsedFile`] per unit it recovered, the names of the
+/// declarations recovery had to skip (references to them are known names, not
+/// unknown ones; #1663's Decision B), and the recovering parse's diagnostics.
+/// `None` when nothing was recovered (the source didn't lex, or no unit
+/// survived). These files are for diagnostics only: the strict parse's error
+/// still stands, so nothing they belong to is ever emitted.
+pub struct RecoveredSources {
+    pub files: Vec<ParsedFile>,
+    pub broken_decl_names: Vec<String>,
+    pub errors: Vec<CompileError>,
+}
+
+/// #1710: [`parse_sources`] for a file whose strict parse failed, from the
+/// recovering parse the parse cache keeps beside that failure.
+pub fn parse_sources_recovering(
+    root: &Path,
+    prefix: &Path,
+    path: &Path,
+    source: String,
+) -> Option<RecoveredSources> {
+    let abs_path = std::path::absolute(path).ok();
+    let cache_key: &Path = abs_path.as_deref().unwrap_or(path);
+    let recovered = crate::parse_cache::cached_recovery(cache_key, &source)?;
+    if recovered.units.is_empty() {
+        return None;
+    }
+    let files = parsed_files(
+        root,
+        prefix,
+        path,
+        abs_path,
+        &source,
+        recovered.units.iter().cloned(),
+    );
+    Some(RecoveredSources {
+        files,
+        broken_decl_names: recovered.broken_decl_names.clone(),
+        errors: recovered.errors.clone(),
+    })
+}
+
+/// One [`ParsedFile`] per unit of a file (a file may declare several, v0.113),
+/// each classified by kind and sharing the file's source and paths.
+fn parsed_files(
+    root: &Path,
+    prefix: &Path,
+    path: &Path,
+    abs_path: Option<PathBuf>,
+    source: &str,
+    units: impl Iterator<Item = SourceUnit>,
+) -> Vec<ParsedFile> {
     let rel = path.strip_prefix(root).unwrap_or(path).to_path_buf();
-    let files = units
-        .iter()
-        .cloned()
+    units
         .map(|unit| {
             let kind = match &unit {
                 SourceUnit::Commons(_) => UnitKind::Commons,
@@ -440,14 +494,13 @@ pub fn parse_sources(
                 abs_path: abs_path.clone(),
                 identity_path: prefix.join(&rel),
                 source_path: rel.clone(),
-                source: source.clone(),
+                source: source.to_string(),
                 unit,
                 kind,
                 synthetic: false,
             }
         })
-        .collect();
-    Ok((files, (*warnings).clone()))
+        .collect()
 }
 
 pub fn discover_bynk_files(

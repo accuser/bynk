@@ -200,3 +200,83 @@ fn multi_file_commons_src_tree_analyses_clean() {
             .collect::<Vec<_>>()
     );
 }
+
+/// #1710: on the project path, a file that fails the strict parse still has its
+/// surviving declarations checked, and a reference to a declaration recovery
+/// had to skip (from a file that can see it) is a known name, not an unknown
+/// one. Pinned as the exact set, per file:
+/// - `shapes.bynk` (broken `type Pair`): its syntax error, and the type error in
+///   the surviving `fn wrongType`;
+/// - `vault.bynk` (broken `service open`): its syntax error, and the type error
+///   in the surviving `service count`;
+/// - `app.bynk` (`uses demo.shapes`): no echo for `Pair`, its own type error,
+///   and a genuinely unknown `Ghost` still reported;
+/// - `desk.bynk` (`consumes demo.vault`): no echo for the skipped `open`;
+/// - `other.bynk` (sees no `demo.shapes`): `Pair` is still unknown there, so
+///   the suppression is scoped to what a unit can see.
+#[test]
+fn partial_parse_checks_surviving_declarations_without_echoes() {
+    let root =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/diagnose/partial_parse/src");
+    let result = bynk_ide::diagnose_project(
+        &root,
+        &bynk_testkit::read_project_sources(&bynk_ide::AnalysisRoots::SingleTree(root.clone())),
+    );
+    let mut got: Vec<(String, String, String)> = result
+        .files
+        .iter()
+        .flat_map(|f| {
+            let path = f.source_path.to_string_lossy().replace('\\', "/");
+            f.diagnostics.iter().map(move |d| {
+                (
+                    path.clone(),
+                    d.error.category.to_string(),
+                    d.error.message.clone(),
+                )
+            })
+        })
+        .collect();
+    got.sort();
+    let mut want: Vec<(String, String, String)> = [
+        (
+            "demo/shapes.bynk",
+            "bynk.parse.expected_token",
+            "expected `}` to close the record body, found identifier",
+        ),
+        (
+            "demo/shapes.bynk",
+            "bynk.types.return_mismatch",
+            "function body has type `String`, but the declared return type is `Int`",
+        ),
+        (
+            "demo/vault.bynk",
+            "bynk.parse.expected_expression",
+            "expected an expression, found `}`",
+        ),
+        (
+            "demo/vault.bynk",
+            "bynk.types.return_mismatch",
+            "handler body has type `String`, but the declared return type is `Effect[Int]`",
+        ),
+        (
+            "demo/app.bynk",
+            "bynk.types.return_mismatch",
+            "function body has type `Int`, but the declared return type is `String`",
+        ),
+        (
+            "demo/app.bynk",
+            "bynk.resolve.unknown_type",
+            "unknown type `Ghost`",
+        ),
+        (
+            "demo/other.bynk",
+            "bynk.resolve.unknown_type",
+            "unknown type `Pair`",
+        ),
+    ]
+    .into_iter()
+    .map(|(p, c, m)| (p.to_string(), c.to_string(), m.to_string()))
+    .collect();
+    want.sort();
+    assert_eq!(got, want);
+}

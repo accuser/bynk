@@ -687,6 +687,10 @@ pub fn split_broken_decl_echoes(
         "bynk.resolve.unknown_name",
         "bynk.resolve.unknown_function",
         "bynk.resolve.unknown_static_member",
+        // #1710: a consumed context's skipped service, called from another
+        // context (`context `c` has no service named `s``). The checker reports
+        // this one, so the project path splits the checker's diagnostics too.
+        "bynk.consumes.unknown_service",
     ];
     // The *subject* each of these diagnostics is about, spelled as the parser
     // records a broken declaration (`T`, `f`, or a method as `T.m`):
@@ -694,7 +698,8 @@ pub fn split_broken_decl_echoes(
     //   one backticked name;
     // - `method `T.m` attached to an unknown type `T``: the type, its last;
     // - `type `T` has no static method or variant named `m``: the member,
-    //   qualified by its type (`T.m`), its first and last.
+    //   qualified by its type (`T.m`), its first and last;
+    // - `context `c` has no service named `s``: the service, its last.
     // Matching only the subject keeps a broken `fn m` from hiding an unrelated
     // `Other.m` that merely shares the name.
     let names = |message: &str| -> Vec<String> {

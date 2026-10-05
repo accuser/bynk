@@ -49,7 +49,13 @@
 //! [DECISION E] (new): this cache stores the **strict** parse
 //! (`parser::parse_units_with_warnings_from`, `recover_mode: false`) — the
 //! one the build/diagnostics path needs, since a build must never silently
-//! succeed on broken syntax by reading a best-effort recovered AST. `bynk
+//! succeed on broken syntax by reading a best-effort recovered AST.
+//! #1710 amends this without weakening it: when the strict parse fails in the
+//! parser, the entry *also* keeps the recovering parse of the same tokens
+//! (`parser::parse_units_recovering_from`, ids from the same durable counter),
+//! read through [`cached_recovery`] by the project path so a file's surviving
+//! declarations are still checked. The strict result is unchanged and still
+//! the `Err` the build reads; the recovered units are for diagnostics only. `bynk
 //! -ide::completion`'s own recovery-tolerant parsing
 //! (`parser::parse_unit_with_recovery`) is a genuinely different parser
 //! configuration, not just a different entry point over the same result —
@@ -85,6 +91,10 @@ type StrictParseResult =
 struct CachedParse {
     content: Arc<str>,
     result: StrictParseResult,
+    /// #1710: when the strict parse failed in the *parser* (the source
+    /// lexed), the recovering parse of the same tokens, its ids drawn from the
+    /// same durable counter — for diagnostics only ([DECISION E]).
+    recovered: Option<Arc<parser::Recovered>>,
 }
 
 #[derive(Default)]
@@ -214,12 +224,20 @@ fn cached_parse_in(
         return (id, entry.result.clone());
     }
 
+    let mut recovered = None;
     let result = match lexer::tokenize_in(content, id) {
         Ok(tokens) => {
             match parser::parse_units_with_warnings_from(&tokens, content, &mut state.next_expr_id)
             {
                 Ok((units, warnings)) => Ok((Arc::new(units), Arc::new(warnings))),
-                Err(errors) => Err(Arc::new(errors)),
+                Err(errors) => {
+                    recovered = Some(Arc::new(parser::parse_units_recovering_from(
+                        &tokens,
+                        content,
+                        &mut state.next_expr_id,
+                    )));
+                    Err(Arc::new(errors))
+                }
             }
         }
         Err(e) => Err(Arc::new(vec![e])),
@@ -239,9 +257,23 @@ fn cached_parse_in(
         CachedParse {
             content: Arc::from(content),
             result: result.clone(),
+            recovered,
         },
     );
     (id, result)
+}
+
+/// #1710: the recovering parse of `path`'s `content`, when its strict parse
+/// fails in the parser — `None` for clean source, and for source that doesn't
+/// lex. Cached with the strict parse (one entry, one content check), so a file
+/// that stays broken keeps the same `ExprId`s across calls, and the strict
+/// result is still the `Err` the build reads ([DECISION E]).
+pub fn cached_recovery(path: &Path, content: &str) -> Option<Arc<parser::Recovered>> {
+    let mut state = CACHE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (id, _) = cached_parse_in(&mut state, path, content, PARSE_CACHE_CAP);
+    state.entries.get(&id).and_then(|e| e.recovered.clone())
 }
 
 #[cfg(test)]
@@ -327,6 +359,30 @@ mod tests {
             !Arc::ptr_eq(&u1, &u2),
             "a content change must trigger a fresh parse"
         );
+    }
+
+    /// #1710: broken syntax also carries its recovering parse, cached in the
+    /// same entry, so a repeat call returns the very same recovery (the same
+    /// `ExprId`s, stable across project analyses) and the strict result stays
+    /// the `Err`. Clean source has none.
+    #[test]
+    fn cached_recovery_is_cached_beside_the_strict_error() {
+        let p = unique_path("recovery");
+        let r1 = cached_recovery(&p, BROKEN).expect("broken source recovers");
+        let r2 = cached_recovery(&p, BROKEN).expect("broken source recovers");
+        assert!(
+            Arc::ptr_eq(&r1, &r2),
+            "the recovery must be cached, not re-parsed"
+        );
+        assert!(
+            cached_parse(&p, BROKEN).1.is_err(),
+            "the strict result stays the error"
+        );
+
+        let clean = unique_path("recovery-clean");
+        let (_, strict) = cached_parse(&clean, "commons demo\n\nfn one() -> Int { 1 }\n");
+        assert!(strict.is_ok());
+        assert!(cached_recovery(&clean, "commons demo\n\nfn one() -> Int { 1 }\n").is_none());
     }
 
     /// [DECISION E]: broken syntax is cached too — as an `Err`, not silently
