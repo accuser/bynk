@@ -1,0 +1,12 @@
+context demo.desk
+
+consumes demo.vault as Vault
+
+type Wrapper[T] = { item: T, note: Int }
+
+service sent {
+  on call(n: Int) -> Effect[Int] {
+    let w: Wrapper[Int] = Wrapper { item: n, note: 0 }
+    Vault.readBack(w)
+  }
+}

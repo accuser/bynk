@@ -2914,8 +2914,11 @@ pub(crate) fn emit_generic_helpers_qualified(
             // type is the erased generic `ApiResult<User>`. Mirrors `RecordInst`.
             GenericInst::SumInst { name, args } => {
                 let fn_suffix = app_ts_name(name, args);
+                // #1736: qualified like `RecordInst` above: a consumed
+                // context's generic sum is named through its namespace.
                 let ts_type = format!(
-                    "{}<{}>",
+                    "{}{}<{}>",
+                    qual_prefix(qual, name),
                     name,
                     args.iter()
                         .map(|a| bynk_ts::print_type(&qualified_ts_type(a, qual)))

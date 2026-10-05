@@ -17,13 +17,13 @@ export default {
         switch (servicePath) {
           case "open": {
             const __contract = request.headers.get("X-Bynk-Contract");
-            if (__contract !== "67d1924079d47559") return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "open", expected: "67d1924079d47559", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            if (__contract !== "57700891e7302936") return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "open", expected: "57700891e7302936", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
             const args = await request.json() as __JsonValue;
             const __r_n = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(args);
             if (__r_n.tag === "Err") return new globalThis.Response(globalThis.JSON.stringify(__r_n.error), { status: 400, headers: { "content-type": "application/json" } });
             const n = __r_n.value;
             const result = await surface.open(n);
-            const body = ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(result);
+            const body = handlers.__serialise_Envelope_Int(result);
             return new globalThis.Response(globalThis.JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
           }
           default:

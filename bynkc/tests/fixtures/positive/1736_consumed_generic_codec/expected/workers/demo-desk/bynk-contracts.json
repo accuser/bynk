@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "provides": {
+    "sent": "d79765324db9916a",
+    "sentBack": "f6096134bb9f5caa",
+    "sentWrapper": "ecc5773a401f9fc0",
+    "settled": "81322e527698e854",
+    "total": "26a626d0a1391c3d"
+  },
+  "expects": {
+    "demo.vault": {
+      "many": "2487ff1b622fbaa9",
+      "open": "57700891e7302936",
+      "read": "b797903bbb7dffed",
+      "readBack": "117e26b47336a282",
+      "settle": "d90380f9cd1937cf",
+      "wrapPlain": "93e4a0f8e9768f44"
+    }
+  }
+}

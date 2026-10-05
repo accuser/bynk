@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "provides": {
+    "open": "67d1924079d47559"
+  },
+  "expects": {}
+}

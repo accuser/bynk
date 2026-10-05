@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.303**.
+written against **v0.304**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,8 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.304.0** | A `unit` or `integration` test case can't reach another context, and now says so. A case (or a `property`, which always runs in-process) that calls another context's service, directly or through a service or agent handler that calls one, is `bynk.tier.cross_context_needs_system` (#1737); it used to compile and then crash at runtime, since no consumed context runs in-process and `stub` doubles capabilities only. A suite that mixes `system` cases with lower-tier ones is `bynk.tier.mixed_system_suite` (#1738); it used to emit invalid TypeScript, because a `system` case addresses services by context path and one suite can't be both. Keep each target's in-process cases and its `system` cases in separate suites |
+| **v0.303.8** | A context can now call a consumed context's service that takes or returns a generic type the other context exports, such as `Envelope[Int]`. The consumer's Workers boundary codec now names the type through the other context's namespace, where before it failed `tsc` with `TS2304`; generic sums get the same fix. Passing such a value as an argument no longer fails `bynk.boundary.structural_mismatch` against an identical type (#1736) |
 | **v0.303.7** | A test suite whose target declares a generic type, or `uses` one, now type-checks and runs; the generated test module aliases each generic type with its type parameters, where before every such suite failed `tsc` with `TS2314` even if no case mentioned the type (#1703) |
 | **v0.303.6** | `bynk doctor` warns when your `wrangler` is too old to serve the compatibility date Bynk pins (currently it needs 4.107.0 or newer), and `bynk dev` says so before serving, rather than leaving wrangler to fail with "This Worker requires compatibility date …". Deploying still works with an older wrangler, so `doctor --only deploy` doesn't fail on it (#1732) |
 | **v0.303.5** | Generated `wrangler.toml` files now pin `compatibility_date = "2026-07-01"` (it was `2024-11-01`), so deployed Workers run under current Workers runtime behaviour. Local `bynk dev` needs wrangler 4.107.0 or newer (July 2026); an older one refuses the date rather than falling back. The first review under the compatibility-date policy found no flag in between that changes how a Bynk program behaves |

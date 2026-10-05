@@ -1,0 +1,3 @@
+bynk.tier.mixed_system_suite case `"a case stepping up to system"` is `as system`, but other cases in its suite run below `system`
+bynk.tier.mixed_system_suite case `"a case stepping down to unit"` is `unit`-tier, but its suite is `as system`
+# exact

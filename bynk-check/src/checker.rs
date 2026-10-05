@@ -4347,7 +4347,8 @@ fn structurally_compatible_inner(
         ) => {
             // v0.157 (ADR 0183): applied type arguments must match structurally
             // too — `Paginated[String]` and `Paginated[Int]` are not the same
-            // brand (latent while generic records are boundary-rejected).
+            // brand. (#1736: live now that a generic type's fields compare at
+            // these arguments, in `structural_compare_named`.)
             if aa.len() != ba.len()
                 || !aa.iter().zip(ba).all(|(x, y)| {
                     structurally_compatible_inner(*x, *y, arg_types, param_types, tys, visited)
@@ -4361,7 +4362,8 @@ fn structurally_compatible_inner(
             if !visited.insert(key.clone()) {
                 return true;
             }
-            let ok = structural_compare_named(an, bn, arg_types, param_types, tys, visited);
+            let ok =
+                structural_compare_named((an, aa), (bn, ba), arg_types, param_types, tys, visited);
             visited.remove(&key);
             ok
         }
@@ -4408,8 +4410,8 @@ fn structurally_compatible_inner(
 }
 
 fn structural_compare_named(
-    arg_name: &str,
-    param_name: &str,
+    (arg_name, arg_args): (&str, &[TyId]),
+    (param_name, param_args): (&str, &[TyId]),
     arg_types: &HashMap<String, Arc<TypeDecl>>,
     param_types: &HashMap<String, Arc<TypeDecl>>,
     tys: &Types,
@@ -4423,6 +4425,14 @@ fn structural_compare_named(
     let Some(param_decl) = param_types.get(param_name) else {
         return false;
     };
+    // #1736: a generic declaration's fields name its type parameters
+    // (`item: T`), which resolve against neither side's type table, so every
+    // generic record or sum used to compare as incompatible, even against
+    // itself. Each side's fields are resolved at that side's *applied*
+    // arguments (`Envelope[Int]` → `item: Int`) with [`instantiate_field_ty`],
+    // whose arity guard turns a mis-applied reference into `None` (rejected),
+    // so the bodies compare as instantiated. The arguments were already
+    // compared pairwise by the caller.
     match (&arg_decl.body, &param_decl.body) {
         (
             TypeBody::Refined {
@@ -4471,8 +4481,9 @@ fn structural_compare_named(
                 let Some(bf) = b.fields.iter().find(|f| f.name.name == af.name.name) else {
                     return false;
                 };
-                let at = resolve_type_ref(&af.type_ref, arg_types, tys);
-                let bt = resolve_type_ref(&bf.type_ref, param_types, tys);
+                let at = instantiate_field_ty(arg_decl, arg_args, &af.type_ref, arg_types, tys);
+                let bt =
+                    instantiate_field_ty(param_decl, param_args, &bf.type_ref, param_types, tys);
                 let (Some(at), Some(bt)) = (at, bt) else {
                     return false;
                 };
@@ -4497,8 +4508,14 @@ fn structural_compare_named(
                     if af.name.name != bf.name.name {
                         return false;
                     }
-                    let at = resolve_type_ref(&af.type_ref, arg_types, tys);
-                    let bt = resolve_type_ref(&bf.type_ref, param_types, tys);
+                    let at = instantiate_field_ty(arg_decl, arg_args, &af.type_ref, arg_types, tys);
+                    let bt = instantiate_field_ty(
+                        param_decl,
+                        param_args,
+                        &bf.type_ref,
+                        param_types,
+                        tys,
+                    );
                     let (Some(at), Some(bt)) = (at, bt) else {
                         return false;
                     };

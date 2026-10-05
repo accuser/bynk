@@ -168,15 +168,20 @@ header — `unit` (the default, elided), `integration`, or `system`. The body do
 not change; only the header does:
 
 ```bynk,ignore
-case "a small order authorises end to end"                { … }  -- as unit (default)
-case "a small order authorises end to end" as integration { … }  -- real collaborators, one context
-case "a small order authorises end to end" as system      { … }  -- contexts wired across the real edge
+case "a small order prices with tax"                { … }  -- as unit (default)
+case "a small order prices with tax" as integration { … }  -- real collaborators, one context
+
+suite shop.orders as system {                                -- contexts wired across the real edge
+  case "a small order authorises end to end" { let r <- shop.orders.place(100) … }
+}
 ```
 
 Reach for `as integration` when the point is a unit with its **real** collaborators
-in one process (no stub), and `as system` when the flow crosses **contexts** —
+in one process (no stub), and a `suite … as system` when the flow crosses
+**contexts**. A `system` case addresses a service by its context path, and its
 participants are inferred from the `consumes` graph, so there is no list to
-maintain. A green `unit` case that *fails* when promoted means a real collaborator's
+maintain. Below `system` a case can't reach another context
+(`bynk.tier.cross_context_needs_system`). A green `unit` case that *fails* when promoted means a real collaborator's
 invariant caught a defect the stub was hiding. See [Test
 tiers](/book/guides/testing/integration/).
 
