@@ -93,16 +93,22 @@ the canonical, reader-facing spec and reference.
 
 The repo carries a **single version** while everything lives together. The
 sites that must agree — the Cargo workspace (`[workspace.package]` plus the
-in-workspace dependency requirements), `vscode-bynk` (`version` *and*
-`bynkServerVersion`, the GitHub Release the extension downloads server
-binaries from), and `tree-sitter-bynk` — are all set by one command:
+in-workspace dependency requirements), `vscode-bynk`'s `version`, and
+`tree-sitter-bynk` — are all set by one command:
 
 ```sh
 scripts/bump-version.sh X.Y.Z
 ```
 
-The extension pin is why drift is behavioural, not cosmetic: a trailing
-`bynkServerVersion` means users get a stale compiler even after a release.
+One versioned value is deliberately **not** on that list: the extension's
+`bynkServerVersion`, the GitHub Release it downloads `bynkc-lsp` from. It names
+the **last shipped release**, not the workspace version (#1673). Tying it to the
+workspace version meant that, between releases, it named a release that didn't
+exist, and a freshly packaged VSIX couldn't download its server. `release.yml`'s
+`server-pin` job moves it to the new tag once that GitHub Release is published.
+ci.yml's `extension` job checks on every PR that the pin's release exists with
+its server binaries. `xtask/tests/server_pin.rs` checks offline that the pin is
+never ahead of the workspace and that the bump script leaves it alone.
 
 Per release:
 
@@ -115,10 +121,12 @@ Per release:
    crates.io and the grammar to npm (both via OIDC Trusted Publishing, both
    re-run-safe — a version already on a registry is skipped, so a partial
    publish can be retried by re-running the run).
-3. A release tag is cut when a version is to be shipped (not necessarily every
-   increment) — the GitHub Release the extension's `bynkServerVersion` pin
-   points at must exist. A manual `workflow_dispatch` against the tag re-runs
-   just the registry publishes (the override / retry path).
+3. A release tag is cut at each named milestone (see
+   [`bynk-release-discipline.md`](bynk-release-discipline.md)), not every
+   increment. Once the release is published, the workflow moves the extension's
+   `bynkServerVersion` to it, so the pin on `main` always names a release that
+   exists. A manual `workflow_dispatch` against the tag re-runs just the
+   registry publishes (the override / retry path).
 
 The release workflow's `verify` job refuses a tag whose version does not
 match **all** of the sites above. The registry publishes are irreversible; the

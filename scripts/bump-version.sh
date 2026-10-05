@@ -6,8 +6,9 @@
 #
 #   - Cargo.toml  [workspace.package] version
 #   - Cargo.toml  in-workspace dependency requirements (path + version)
-#   - vscode-bynk/package.json        version + bynkServerVersion ("vX.Y.Z" —
-#     the GitHub Release the extension downloads server binaries from)
+#   - vscode-bynk/package.json        version (NOT bynkServerVersion: that pin
+#     names the last *shipped* release, and release.yml's server-pin job moves
+#     it once a release is published — #1673)
 #   - tree-sitter-bynk/package.json   version
 #   - the lockfiles (Cargo.lock, both package-lock.json)
 #   - the Bynk Book's current-version banners (the Book, MAJOR.MINOR) —
@@ -37,12 +38,10 @@ rm Cargo.toml.bak
 cargo update --workspace --quiet
 
 # npm manifests. Targeted sed (not `npm version`/JSON rewrite) so the bump
-# never reformats the files. bynkServerVersion is the extension's server pin —
-# the GitHub Release tag it downloads binaries from.
+# never reformats the files. The extension's bynkServerVersion pin is left
+# alone: it names a release that exists, which this version does not yet.
 sed -i.bak -E 's/^(  "version": )"[^"]+"/\1"'"$ver"'"/' \
 	vscode-bynk/package.json tree-sitter-bynk/package.json
-sed -i.bak -E 's/^(  "bynkServerVersion": )"[^"]+"/\1"v'"$ver"'"/' \
-	vscode-bynk/package.json
 rm vscode-bynk/package.json.bak tree-sitter-bynk/package.json.bak
 
 # Sync the npm lockfiles to the new manifest versions. These calls exist to

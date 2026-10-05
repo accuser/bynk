@@ -69,6 +69,35 @@ This is exactly the cadence the [1.0 definition](bynk-1.0-definition.md) leans o
 1.0 stability promise *legible*: a 1.x user upgrades milestone to milestone, reads
 one migration note, and (for anything mechanical) runs one codemod.
 
+### Reaffirmed, with a trigger (#1673)
+
+The monthly cadence was written down, but nothing said when a milestone was
+due, and the September milestone was missed. The last release tag is
+`v0.290.0` (2026-09-04), and `main` has moved on by more than a dozen versions
+since. [#1673](https://github.com/accuser/bynk/issues/1673) asked for the
+cadence to be reaffirmed or replaced in writing. **It is reaffirmed, with a
+trigger:**
+
+1. **When.** A milestone is cut on the first working day of each month. Its tag
+   is the version on `main` at that point (`git tag vX.Y.Z` on a commit whose CI
+   is green), pushed by the maintainer.
+2. **What the tag does.** `release.yml` does the rest from the tag: it builds
+   the binaries, cuts the GitHub Release, publishes the crates and the grammar,
+   and moves the VS Code extension's server pin to the new release.
+3. **What the milestone carries.** The cumulative migration note (above), and
+   the Workers compatibility-date review (Part 3).
+4. **A missed month** is cut as soon as it is noticed, not skipped. The next
+   month's milestone is still due on its own first working day.
+
+**What still depends on the cadence.** The extension's server pin used to: it
+was rewritten to the workspace version on every increment, so between releases
+it named a release that didn't exist. It now names the last shipped release, so
+a missed milestone leaves the extension *behind* rather than broken. What a
+missed milestone still costs is currency: the GitHub Release binaries, the
+crates on crates.io, and the server the extension downloads all stay at the
+last milestone, while the README's `cargo install --path` builds whatever is on
+`main`.
+
 ## Part 2 — Doc-truth drift guards
 
 ### The principle

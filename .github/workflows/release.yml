@@ -14,8 +14,11 @@ name: Release
 #
 # The repo carries a single version across all manifests (see design/README.md
 # "Versioning & release"): the increment PR runs scripts/bump-version.sh, and a
-# release tag is cut when a version is to be shipped — so the GitHub Release the
-# VS Code extension's bynkServerVersion pin points at always exists.
+# release tag is cut when a version is to be shipped. The one exception is the
+# VS Code extension's bynkServerVersion pin, which names the last *shipped*
+# release rather than the workspace version (#1673): the `server-pin` job below
+# moves it to the tag once that tag's GitHub Release exists, so the pin on
+# `main` always names a release that does.
 #
 # The registry publishes are irreversible. The `verify` + `test` gates (the
 # tag/version match, the tagged commit being on `main`, and a green suite on
@@ -65,8 +68,10 @@ jobs:
   # Gate every publish on a green test run AND on the tag matching the version
   # baked into the manifests — so you can't accidentally ship v0.17.0 from a
   # tree that still says 0.16.0. "The manifests" is every versioned site in
-  # the repo (single-version posture): the Cargo workspace, both npm packages,
-  # and the extension's bynkServerVersion server-download pin.
+  # the repo (single-version posture): the Cargo workspace and both npm
+  # packages. The extension's bynkServerVersion pin is not one of them: it names
+  # the last shipped release (#1673), so here it must name a published release,
+  # which on a tagged commit is the *previous* one.
   verify:
     name: Verify (tag/version + on-main)
     runs-on: ubuntu-latest
@@ -85,11 +90,9 @@ jobs:
         run: |
           ver="$(grep -m1 '^version' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')"
           ext="$(node -p "require('./vscode-bynk/package.json').version")"
-          pin="$(node -p "require('./vscode-bynk/package.json').bynkServerVersion")"
           ts="$(node -p "require('./tree-sitter-bynk/package.json').version")"
           fail=0
           test "$ext" = "$ver" || { echo "::error::vscode-bynk version $ext does not match workspace version $ver"; fail=1; }
-          test "$pin" = "v$ver" || { echo "::error::vscode-bynk bynkServerVersion $pin does not match workspace version v$ver"; fail=1; }
           test "$ts" = "$ver" || { echo "::error::tree-sitter-bynk version $ts does not match workspace version $ver"; fail=1; }
           if [ "$GITHUB_REF_TYPE" = "tag" ]; then
             tag="${GITHUB_REF_NAME#v}"   # strip leading v
@@ -100,6 +103,18 @@ jobs:
             echo "::notice::manual dispatch from $GITHUB_REF_NAME — will publish manifest version $ver"
           fi
           exit "$fail"
+      - name: The extension's server pin names a published release
+        # #1673: the pin is the last shipped release, moved by the `server-pin`
+        # job below, so whatever commit is tagged must already point at a
+        # release that exists. The same check runs on every PR in ci.yml's
+        # `extension` job; this repeats it at the commit actually being shipped.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pin="$(node -p "require('./vscode-bynk/package.json').bynkServerVersion")"
+          gh release view "$pin" --repo "$GITHUB_REPOSITORY" --json tagName >/dev/null \
+            || { echo "::error::vscode-bynk bynkServerVersion $pin is not a published release"; exit 1; }
+          echo "::notice::server pin $pin is a published release"
       - name: Commit under release must be on main (reviewed)
         # `v*` tags are NOT covered by the `main` ruleset, so a tag can be pushed
         # at ANY commit on ANY branch, and a manual dispatch can run from a branch
@@ -306,6 +321,83 @@ jobs:
             dist/SHA256SUMS
           generate_release_notes: true
           fail_on_unmatched_files: true
+
+  # #1673: point the VS Code extension at the release just published. The pin
+  # names the last *shipped* release, not the workspace version
+  # (`bump-version.sh` leaves it alone), so it is moved here, after the GitHub
+  # Release exists, and the pin on `main` is never ahead of a real release.
+  #
+  # It pushes to `main` as the stamp App (the only identity in the `main`
+  # ruleset's bypass list), the way stamp.yml does. The token is minted on a
+  # runner that has run no crate or npm code: this job checks out, edits one
+  # line with `sed`, and pushes, so the token never shares a machine with a
+  # dependency's build or test code (#727). The change touches only
+  # `vscode-bynk/package.json`, outside stamp.yml's `design/pending/**` filter,
+  # so it fires no stamp run; it does run CI on `main`.
+  server-pin:
+    name: Point the extension at this release
+    needs: github-release
+    if: github.event_name == 'push' # a tag push; the GitHub Release exists
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read # the App token does the writing
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0 # for the rebase-retry push
+          persist-credentials: false
+      - name: Decide whether the pin moves
+        id: decide
+        # A pre-release tag (`-rc1`) never becomes the pin, and a re-run or a
+        # late tag of an older version never moves it backwards.
+        run: |
+          tag="$GITHUB_REF_NAME"
+          pin="$(sed -nE 's/^  "bynkServerVersion": "([^"]+)".*/\1/p' vscode-bynk/package.json)"
+          if [ -z "$pin" ]; then
+            echo "::error::no bynkServerVersion line in vscode-bynk/package.json"
+            exit 1
+          fi
+          if [ "${tag#*-}" != "$tag" ]; then
+            echo "::notice::$tag is a pre-release; the pin stays at $pin"
+            echo "move=false" >>"$GITHUB_OUTPUT"
+          elif [ "$(printf '%s\n%s\n' "$pin" "$tag" | sort -V | tail -n1)" = "$pin" ]; then
+            echo "::notice::the pin is already $pin (not behind $tag)"
+            echo "move=false" >>"$GITHUB_OUTPUT"
+          else
+            sed -i -E 's/^(  "bynkServerVersion": )"[^"]+"/\1"'"$tag"'"/' vscode-bynk/package.json
+            git diff --exit-code --quiet && { echo "::error::the pin edit changed nothing"; exit 1; }
+            echo "::notice::moving the pin $pin -> $tag"
+            echo "move=true" >>"$GITHUB_OUTPUT"
+          fi
+      - name: Mint stamp-app token
+        if: steps.decide.outputs.move == 'true'
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.STAMP_APP_ID }}
+          private-key: ${{ secrets.STAMP_APP_KEY }}
+      - name: Commit and push
+        if: steps.decide.outputs.move == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          git add -- vscode-bynk/package.json
+          slug='${{ steps.app-token.outputs.app-slug }}'
+          uid="$(gh api "/users/${slug}[bot]" --jq .id)"
+          git config user.name "${slug}[bot]"
+          git config user.email "${uid}+${slug}[bot]@users.noreply.github.com"
+          git commit -m "chore(release): point the extension at $GITHUB_REF_NAME"
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+          for attempt in 1 2 3; do
+            git push "$remote" HEAD:main && exit 0
+            echo "push rejected (attempt $attempt); rebasing onto main and retrying"
+            git pull --rebase "$remote" main
+          done
+          git push "$remote" HEAD:main && exit 0
+          echo "::error::could not push the pin; set bynkServerVersion to $GITHUB_REF_NAME by PR" >&2
+          exit 1
 
   # Publish the workspace crates in dependency order. Modern cargo waits for each
   # crate to appear in the index before returning, so the next publish resolves.

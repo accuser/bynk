@@ -609,6 +609,23 @@ jobs:
         run: node scripts/check-bundle.mjs
       - name: Package the VSIX
         run: npx --yes @vscode/vsce@3.9.2 package --no-dependencies --skip-license
+      - name: The server pin names a published release
+        # #1673: the VSIX just packaged downloads `bynkc-lsp` from the release
+        # its `bynkServerVersion` names, so that release must exist and carry
+        # what `src/server.ts` fetches: `SHA256SUMS` and a raw server binary.
+        # The pin is the last shipped release (release.yml's `server-pin` job
+        # moves it), so this stays green between releases.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pin="$(node -p "require('./package.json').bynkServerVersion")"
+          assets="$(gh release view "$pin" --repo "$GITHUB_REPOSITORY" --json assets -q '.assets[].name')" \
+            || { echo "::error::bynkServerVersion $pin is not a published release"; exit 1; }
+          for want in SHA256SUMS bynkc-lsp-x86_64-unknown-linux-gnu; do
+            printf '%s\n' "$assets" | grep -qx "$want" \
+              || { echo "::error::release $pin has no $want asset"; exit 1; }
+          done
+          echo "::notice::server pin $pin is a published release with server binaries"
 
   extension-tests:
     # Launch a real VS Code instance with the extension + a fixture workspace
