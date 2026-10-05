@@ -177,7 +177,8 @@ moving it can change how deployed Bynk code behaves without any change to the
 compiler's output. Until #1677 the only guidance was "bump cautiously", with no
 trigger for a bump. The date stayed at `2024-11-01` for 23 months, falling
 further behind the runtime that Cloudflare and the local `workerd` actually
-test.
+test. The first review under this policy, at `v0.303.4`, moved it to
+`2026-10-01`.
 
 ### The decision
 
