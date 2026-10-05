@@ -32,10 +32,10 @@ compiler: in-process
 ✓ compile [ok]
     compiler — in-process
 ✓ test [ok]
-    node — v20.11.0 (path)
+    node — v22.12.0 (path)
     tsc | tsx — tsc v5.4.2 (path)
 ! deploy [warn]
-    node — v20.11.0 (path)
+    node — v22.12.0 (path)
     wrangler — provisionable via npx (not installed)
       ↳ fix: npm install -g wrangler
 · editor [note] (optional)
@@ -48,10 +48,15 @@ compiler: in-process
 | Capability | Needs | Missing means |
 |---|---|---|
 | **compile / check / fmt** | nothing — the compiler is built into `bynk` | always available |
-| **`bynk test`** | Node **and** `tsc` or `tsx` | you can't run `test` blocks |
-| **dev / deploy** | Node **and** `wrangler` | you can't deploy to Cloudflare |
+| **`bynk test`** | Node ≥ 22 **and** `tsc` or `tsx` | you can't run `test` blocks |
+| **dev / deploy** | Node ≥ 22 **and** `wrangler` | you can't deploy to Cloudflare |
 | **editor** *(optional)* | `bynkc-lsp` | a note — editor features only |
 | **build-from-source** *(optional)* | a Rust toolchain | shown only inside the Bynk repo |
+
+A `node` below the floor (Node **22**, the oldest major still in support) is
+reported as a warning, `v20.11.0 below floor (≥ 22)`, with the fix to install a
+newer one. `bynkc test --inspect` checks its own minor floor on top of that: Node
+≥ 22.6 to run, ≥ 22.18 for source-mapped breakpoints.
 
 ### Provenance, and why `npx` isn't "ok"
 

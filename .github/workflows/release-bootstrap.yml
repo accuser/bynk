@@ -63,9 +63,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      # #1671: Node 22, like ci.yml's and release.yml's test legs — this job runs
+      # the suite under BYNK_REQUIRE_TSC, so its strip-types checks need >= 22.13.
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
-          node-version: "20"
+          node-version: "22"
       # Global CLI install, not a `uses:` action, so there is no lockfile or
       # commit-hash to pin against (Scorecard Pinned-Dependencies has no hash
       # mechanism for `npm install -g`). Range-pinned to major 5. Accepted, #828.

@@ -21,13 +21,20 @@ fail-fast = false
 # don't contain "tsc", so a `filter = 'test(/tsc/)'` override would miss the
 # bulk of it. A blanket retry is the honest expression of "any test may hit a
 # cold-sandbox flake." It does not silently mask a genuinely intermittent
-# product bug: nextest reports a retried-then-passed test as FLAKY in the run
-# summary (status-level = fail keeps failures loud), so an emitter path or race
-# that only sometimes fails still leaves a visible trace to chase.
+# product bug: nextest lists a retried-then-passed test as FLAKY in the final
+# summary, so an emitter path or race that only sometimes fails still leaves a
+# visible trace to chase.
 retries = { backoff = "fixed", count = 1, delay = "1s" }
 
 # CI output: compact while green, but print the full output of anything that
 # failed (or was retried) at the end so a red run is diagnosable from the log.
+#
+# `status-level` only chooses which test statuses are *listed* as they finish;
+# it says nothing about output. What decides whether a passing test's output
+# is ever seen is `success-output`, left at its `never` default — so a test
+# that prints a "SKIPPED" banner and passes is invisible here (#1671). A gate
+# must therefore fail, not skip, when CI requires it (`BYNK_REQUIRE_TSC` and
+# friends), rather than rely on its banner being read.
 failure-output = "final"
 status-level = "fail"
 

@@ -13,6 +13,12 @@
 //! - In CI the skip is a hard failure; locally it's permitted with a
 //!   visible warning. Setting `BYNK_REQUIRE_TSC=1` enforces the strict CI
 //!   behaviour; otherwise an unavailable tsc prints a warning and passes.
+//! - #1671: the same switch governs the Node strip-types checks (ADR 0136's
+//!   strip-only invariant, which `bynkc test --inspect` and in-browser eval
+//!   depend on). Under it, a missing or too-old Node (< 22.6 for the runtime
+//!   check, < 22.13 for `stripTypeScriptTypes`) fails rather than skips.
+
+mod require;
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -212,7 +218,7 @@ fn emitted_typescript_passes_tsc_strict() {
     let runner = match discover_tsc() {
         Some(r) => r,
         None => {
-            let require = std::env::var(REQUIRE_ENV).is_ok();
+            let require = require::is_required(REQUIRE_ENV);
             eprintln!(
                 "\n!!! TYPESCRIPT VERIFICATION SKIPPED !!!\n\
                  neither `tsc` nor `npx` is on PATH.\n\
@@ -471,7 +477,7 @@ fn context_brands_admit_commons_values_and_reject_other_contexts() {
                 "\n!!! TYPESCRIPT VERIFICATION SKIPPED (context brands) !!!\n\
                  neither `tsc` nor `npx` is on PATH.\n"
             );
-            if std::env::var(REQUIRE_ENV).is_ok() {
+            if require::is_required(REQUIRE_ENV) {
                 panic!("{REQUIRE_ENV} is set but no tsc runner was found");
             }
             return;
@@ -516,7 +522,7 @@ fn embedded_runtime_passes_tsc_strict_standalone() {
     let runner = match discover_tsc() {
         Some(r) => r,
         None => {
-            let require = std::env::var(REQUIRE_ENV).is_ok();
+            let require = require::is_required(REQUIRE_ENV);
             eprintln!(
                 "\n!!! TYPESCRIPT VERIFICATION SKIPPED (runtime standalone) !!!\n\
                  neither `tsc` nor `npx` is on PATH.\n"
@@ -563,29 +569,39 @@ fn embedded_runtime_passes_tsc_strict_standalone() {
 fn embedded_runtime_strips_types_under_node() {
     // Node gained `--experimental-strip-types` in 22.6; older nodes can't run the
     // check. Skip (loudly under the CI gate) when node is absent or too old.
-    let node_ok = Command::new("node")
+    // The detected `node --version` (`None` when `node` is absent or its
+    // version unparseable), so a refusal says which of those it was.
+    let node_version: Option<(u32, u32, String)> = Command::new("node")
         .arg("--version")
         .output()
         .ok()
         .and_then(|o| {
-            let v = String::from_utf8_lossy(&o.stdout);
-            let v = v.trim().trim_start_matches('v');
-            let mut it = v.split('.');
+            let raw = String::from_utf8_lossy(&o.stdout).trim().to_string();
+            let mut it = raw.trim_start_matches('v').split('.');
             let major: u32 = it.next()?.parse().ok()?;
             let minor: u32 = it.next()?.parse().ok()?;
-            Some(major > 22 || (major == 22 && minor >= 6))
-        })
-        .unwrap_or(false);
+            Some((major, minor, raw))
+        });
+    let node_ok = node_version
+        .as_ref()
+        .is_some_and(|(major, minor, _)| *major > 22 || (*major == 22 && *minor >= 6));
     if !node_ok {
-        // Strip-types is a Node *capability* gate, not the `tsc`-presence gate — so
-        // this skips silently on an older Node regardless of `BYNK_REQUIRE_TSC` (CI's
-        // `Test suite` runs Node 20, which predates `--experimental-strip-types`).
-        // The strip-types coverage in CI comes from the Node-22 VS Code integration
-        // job that runs the emitted `.ts`; this test is the fast local backstop.
-        eprintln!(
-            "\n!!! NODE STRIP-TYPES CHECK SKIPPED (runtime) !!!\n\
-             `node` (>= 22.6, for --experimental-strip-types) is not on PATH.\n"
-        );
+        // #1671: ADR 0136's strip-only invariant is a gate, so under
+        // `BYNK_REQUIRE_TSC` a missing or too-old Node fails rather than skips.
+        // CI's `Test suite` legs run Node 22, so they always reach the check;
+        // only a local run without that Node skips, and says so.
+        let reason = match &node_version {
+            Some((_, _, raw)) => {
+                format!("`node` is {raw}, below the 22.6 needed for --experimental-strip-types")
+            }
+            None => "`node` (>= 22.6, for --experimental-strip-types) is not on PATH, or its \
+                     version could not be read"
+                .to_string(),
+        };
+        if require::is_required(REQUIRE_ENV) {
+            panic!("{REQUIRE_ENV} is set but {reason} — refusing to skip the strip-types check");
+        }
+        eprintln!("\n!!! NODE STRIP-TYPES CHECK SKIPPED (runtime) !!!\n{reason}.\n");
         return;
     }
     let tmp = std::env::temp_dir().join(format!("bynk-runtime-strip-{}", std::process::id()));
@@ -632,6 +648,13 @@ fn embedded_runtime_strips_types_under_node() {
 #[test]
 fn all_emitted_typescript_strips_under_node() {
     if !node_present() {
+        // #1671: fails rather than skips under `BYNK_REQUIRE_TSC`.
+        if require::is_required(REQUIRE_ENV) {
+            panic!(
+                "{REQUIRE_ENV} is set but `node` is not on PATH — refusing to skip the \
+                 strip-types check"
+            );
+        }
         eprintln!(
             "\n!!! NODE STRIP-TYPES CHECK SKIPPED (all emitted output) !!!\n\
              `node` is not on PATH.\n"
@@ -711,8 +734,16 @@ fn all_emitted_typescript_strips_under_node() {
             let _ = fs::remove_dir_all(&root);
         }
         // `stripTypeScriptTypes` unavailable (Node < 22.13): skip loudly, like the
-        // `tsc`-presence and runtime strip gates above.
+        // `tsc`-presence and runtime strip gates above — and, #1671, fail instead
+        // under `BYNK_REQUIRE_TSC`.
         Some(2) => {
+            if require::is_required(REQUIRE_ENV) {
+                panic!(
+                    "{REQUIRE_ENV} is set but `stripTypeScriptTypes` is unavailable (Node \
+                     >= 22.13 is required) — refusing to skip the strip-types check:\n{}",
+                    stderr.trim()
+                );
+            }
             eprintln!(
                 "\n!!! NODE STRIP-TYPES CHECK SKIPPED (all emitted output) !!!\n\
                  {}\n",

@@ -284,9 +284,11 @@ jobs:
       - uses: taiki-e/install-action@4cef1412cce204788f482e778a0b9187f9626a29 # v2
         with:
           tool: nextest@0.9
+      # #1671: Node 22 (the floor, NODE_MAJOR_FLOOR) so tsc_verify's strip-types
+      # checks run here; under BYNK_REQUIRE_TSC they fail rather than skip.
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
-          node-version: "20"
+          node-version: "22"
       # `tsc` is needed by the tsc-verify stage and the `bynkc test` fixtures.
       # Pinned to v5: an unpinned `typescript` could turn CI red on a new TS
       # major with no repo change, and the tsc_verify fallback already pins @5.
