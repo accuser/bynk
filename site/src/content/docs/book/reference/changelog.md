@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.303.7** | A test suite whose target declares a generic type, or `uses` one, now type-checks and runs; the generated test module aliases each generic type with its type parameters, where before every such suite failed `tsc` with `TS2314` even if no case mentioned the type (#1703) |
 | **v0.303.6** | `bynk doctor` warns when your `wrangler` is too old to serve the compatibility date Bynk pins (currently it needs 4.107.0 or newer), and `bynk dev` says so before serving, rather than leaving wrangler to fail with "This Worker requires compatibility date …". Deploying still works with an older wrangler, so `doctor --only deploy` doesn't fail on it (#1732) |
 | **v0.303.5** | Generated `wrangler.toml` files now pin `compatibility_date = "2026-07-01"` (it was `2024-11-01`), so deployed Workers run under current Workers runtime behaviour. Local `bynk dev` needs wrangler 4.107.0 or newer (July 2026); an older one refuses the date rather than falling back. The first review under the compatibility-date policy found no flag in between that changes how a Bynk program behaves |
 | **v0.303.4** | The VS Code extension downloads its language server from the last published release, so a build from `main` can always provision one; a newer `bynkc-lsp` on `PATH` is no longer warned about or offered a download that would only fetch an older server (#1673) |
