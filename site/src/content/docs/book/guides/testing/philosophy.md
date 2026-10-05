@@ -103,8 +103,9 @@ testing pyramid names three amounts — `unit` (collaborators doubled),
 across the real serialise → JSON → deserialise edge) — and the instinct everywhere
 else in Bynk is to treat these as **one thing with a setting**, not three
 different artefacts. So a tier is an `as <tier>` clause in the header, not a
-separate construct: `unit` is the default and elided, and promotion is a
-**one-word header edit** with a byte-for-byte identical body. "Did I stub this
+separate construct: `unit` is the default and elided, and promoting to
+`integration` is a **one-word header edit** with a byte-for-byte identical body.
+(`system` drives deployed Workers by context path, so it is a suite of its own.) "Did I stub this
 faithfully?" becomes a checkable question — promote the case and see whether the
 real collaborator's invariants, which a stub was standing in for, still pass. The
 participants of a higher tier are **inferred** from the `consumes` graph the

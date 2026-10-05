@@ -1,0 +1,14 @@
+---
+#1738: the other direction: a case stepping down to `unit` in a `system` suite.
+---
+suite demo.desk as system {
+  case "a system case" {
+    let n <- demo.desk.check(5)
+    expect n == 5
+  }
+
+  case "a case stepping down to unit" as unit {
+    let n <- demo.desk.local(5)
+    expect n == 6
+  }
+}

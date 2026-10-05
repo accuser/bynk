@@ -1802,6 +1802,16 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A `Wire(...)` raw argument is used outside a `system`-tier service address; `Wire` hands pre-validation input to the boundary and is meaningless at `unit` or in any other position.",
         &["case"],
     ),
+    dg(
+        "bynk.tier.cross_context_needs_system",
+        "A `unit` or `integration` case, or a `property`, reaches another context's service, directly or through a target service or agent handler that calls one; below `system` no other context is stood up to call, so the flow belongs in a `suite … as system`.",
+        &["case"],
+    ),
+    dg(
+        "bynk.tier.mixed_system_suite",
+        "A suite mixes `system` cases with `unit` or `integration` ones; a `system` case runs against deployed Workers and addresses services by context path, so it needs a `suite … as system` of its own.",
+        &["case"],
+    ),
     d(
         "bynk.tier.system_needs_wire",
         "An `as system` test stands up fewer than two contexts; the system tier wires across contexts.",

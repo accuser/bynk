@@ -179,12 +179,22 @@ suite checkout as integration {          -- every case defaults to integration�
 }
 ```
 
-A case's effective tier is `case.tier ?? suite.tier ?? unit`. Promotion changes
-**only** the header — the body is byte-for-byte identical at every tier.
+A case's effective tier is `case.tier ?? suite.tier ?? unit`. Between `unit` and
+`integration`, promotion changes **only** the header, and the body is identical.
 
-- **Participants are inferred**, not listed: `integration` / `system` derive their
-  real/wired collaborator set from the unit under test's transitive `consumes`
-  graph. There is no `wires` clause.
+- **`system` is a suite of its own.** A `system` case runs against deployed
+  Workers and addresses a service by its context path (`shop.orders.place(…)`),
+  not `place.call(…)`, so a `system` suite holds `system` cases only. Mixing
+  tiers in one suite is `bynk.tier.mixed_system_suite`.
+- **Crossing a context needs `system`.** Below `system` a case runs in-process:
+  no consumed context is stood up, and `stub` doubles capabilities, not a
+  context's services. A `unit` or `integration` case, or a `property` (always
+  in-process), that reaches another context's service, directly or through a
+  service or agent handler that calls one, is
+  `bynk.tier.cross_context_needs_system`.
+- **Participants are inferred**, not listed: `system` derives its wired
+  collaborator set from the unit under test's transitive `consumes` graph. There
+  is no `wires` clause.
 - **`system` needs a serialisation edge**: a `system` suite must cross a real
   serialise → JSON → deserialise boundary — either two or more wired contexts, **or**
   a single target that exposes an `http` service (its public boundary). A target

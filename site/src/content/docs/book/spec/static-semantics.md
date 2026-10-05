@@ -1128,16 +1128,28 @@ a type that cannot be fabricated MUST be pinned (`bynk.val.needs_pin`,
 `system` — declared by an optional `as <tier>` clause on the `case` header. `unit`
 is the default and is elided. `as` also sits on the `suite` header as an inherited
 default; a case's effective tier is `case.tier ?? suite.tier ?? unit`, so a case
-always overrides the suite default. A tier is metadata on the header, **not** an
-executable statement: promotion changes substitution, not assertion, and the case
-body is identical across tiers.
+overrides the suite default. A tier is metadata on the header, **not** an
+executable statement: promotion changes substitution, not assertion, and between
+`unit` and `integration` the case body is identical.
+
+- **`system` is a suite of its own (#1738).** A `system` case runs against the
+  contexts stood up as Workers and addresses a service by its context path, so a
+  suite whose effective tiers include `system` MUST contain only `system` cases
+  (`bynk.tier.mixed_system_suite`).
+- **Crossing a context requires `system` (#1737).** Below `system` a case runs
+  in-process: no consumed context is stood up, and `stub` substitutes capability
+  seams only. A `unit` or `integration` case, or a `property` (which has no tier
+  and always runs in-process), that reaches a consumed context's service,
+  directly or through a service or agent handler of the unit under test that
+  (transitively) calls one, MUST be rejected
+  (`bynk.tier.cross_context_needs_system`).
 
 - **Tiers are `case`-only.** A `property` generates and does not promote, so a
   suite-level `as` binds its `case` members only, and a `property` header has no
   tier production (a tier there is a parse error).
-- **Participants are inferred (DECISION K).** For `integration` / `system` the
-  real/wired participant set is the unit under test's transitive `consumes` closure
-  — there is no `wires` clause. `system` is the cross-context, wired tier and its
+- **Participants are inferred (DECISION K).** For `system` the wired participant
+  set is the unit under test's transitive `consumes` closure — there is no `wires`
+  clause. `system` is the cross-context, wired tier and its
   inferred set MUST span at least two contexts (`bynk.tier.system_needs_wire`);
   `integration` is real collaborators **within one context, no wire**, and carries
   no ≥ 2-context rule.
