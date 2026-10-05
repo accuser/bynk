@@ -1297,3 +1297,84 @@ imposed; entries keep the order they were retired in.
 
   The 2026-10-01 review's other track, toolchain pins as gates
   ([#1670](https://github.com/accuser/bynk/issues/1670)), is separate and unaffected. Retired 4 October 2026.
+
+- **Toolchain pins as gates** — spine [#1670](https://github.com/accuser/bynk/issues/1670), opened
+  from the [2026-10-01 language-implementation review](../reviews/2026-10-01-language-implementation-review.md)
+  ([#1647](https://github.com/accuser/bynk/pull/1647)). Part 0 of that review re-measured the eight asks
+  of the [3 September toolchain review](../reviews/2026-09-03-compiler-toolchain-review.md) and found that
+  none had landed or been filed. The Rust half of the toolchain was pinned with care; the Node half (the
+  tools that run emitted code) stated versions to users as if they were tested contracts. The track's
+  theme was the review's own: "the fix in every case is a gate, not a bump". Its end state was every
+  external-tool version the toolchain states to users either checked by a gate or covered by a written
+  policy, and the release running the same suite, the same way, as the PR gate.
+
+  The track never had a doc in `design/tracks/`. Its open questions were small enough that each slice's
+  issue carried its own decisions, and the spine's checklist served as the track. So this retirement
+  removes no doc and changes no row in the tracks table.
+
+  **What shipped** (all seven slices, 5 October 2026):
+  - **T1 + T4** ([#1671](https://github.com/accuser/bynk/issues/1671),
+    [#1674](https://github.com/accuser/bynk/issues/1674);
+    [#1713](https://github.com/accuser/bynk/pull/1713), v0.303.1):
+    - `NODE_MAJOR_FLOOR` raised from 18 to 22, the oldest supported Node;
+    - the CI and release test legs on Node 22, so the strip-types gate runs for real;
+    - its skips panic under `BYNK_REQUIRE_TSC`.
+  - **T2** ([#1672](https://github.com/accuser/bynk/issues/1672),
+    [#1714](https://github.com/accuser/bynk/pull/1714), v0.303.2):
+    - emitted TypeScript verified under TypeScript 5 (the floor) and 7 (the current major);
+    - `bynk doctor` checks the `tsc` major, warning below the floor and reporting an untested newer major
+      without failing `--strict`;
+    - every `npx` fallback aligned on one constant.
+  - **T5** ([#1675](https://github.com/accuser/bynk/issues/1675),
+    [#1727](https://github.com/accuser/bynk/pull/1727), v0.303.3,
+    [ADR 0434](../decisions/0434-act-on-compiler-skew.md)):
+    - wherever `bynk` runs a second compiler, it acts on `doctor`'s skew classification;
+    - that is `bynk test` always, and `check`, `fmt`, `dev` and `deploy` under `BYNK_BYNKC`;
+    - a minor skew warns once per process, and a major skew refuses unless allowed.
+  - **T6** ([#1676](https://github.com/accuser/bynk/issues/1676),
+    [#1726](https://github.com/accuser/bynk/pull/1726)):
+    - the release and bootstrap gates run `cargo nextest run --workspace --locked --profile ci`, like the
+      PR gate;
+    - the retry policy is stated once, in `.config/nextest.toml`;
+    - drift guard: `xtask/tests/suite_harness.rs`.
+  - **T7** ([#1677](https://github.com/accuser/bynk/issues/1677),
+    [#1728](https://github.com/accuser/bynk/pull/1728)):
+    - every `wasm-bindgen-cli` install must be pinned to `Cargo.lock`'s `wasm-bindgen` version
+      (`xtask/tests/wasm_bindgen_pin.rs`);
+    - the stale 0.2.126 pin moved to 0.2.127;
+    - the Workers `compatibility_date` policy is Part 3 of
+      [`../bynk-release-discipline.md`](../bynk-release-discipline.md): reviewed at each release, moved
+      only after the workerd smokes pass. The date itself stayed at `2024-11-01`.
+  - **T3** ([#1673](https://github.com/accuser/bynk/issues/1673),
+    [#1729](https://github.com/accuser/bynk/pull/1729), v0.303.4):
+    - the VS Code extension's `bynkServerVersion` names the last shipped release, not the workspace
+      version. It had named releases that didn't exist since `v0.290.0`;
+    - `release.yml`'s `server-pin` job moves it after each release;
+    - `scripts/check-server-pin.sh` checks the release on every CI run and in `verify`;
+    - the extension judges a `PATH` server by its own version.
+
+    Its Decision B, the release cadence, was the maintainer's call. Monthly milestones are the cadence
+    from 1.0. **Before 1.0, a release is tagged at each track retirement** (step 6 of the lifecycle in
+    [`../tracks/README.md`](../tracks/README.md)), plus any user-facing fix that can't wait. This
+    retirement is the first release under that rule.
+
+  **Done-when, met.** Each version the toolchain states to users is now gated or written down:
+  - TypeScript: by the 5/7 verification and `doctor`;
+  - Node: by the floor and the Node 22 legs;
+  - the LSP server release: by `check-server-pin.sh` and the offline `server_pin.rs`;
+  - `wasm-bindgen-cli`: by its drift test;
+  - the compatibility date: by a written policy.
+
+  The release runs the PR gate's harness and profile.
+
+  **Not duplicated:** the review's ask 8, repointing the dead `design/tracks/*.md` citations, is slice S8
+  of the crate-hygiene track [#1533](https://github.com/accuser/bynk/issues/1533) and stays there.
+
+  **Follow-ons, named rather than left implicit:**
+  - [#1686](https://github.com/accuser/bynk/issues/1686): leaked workerd processes. This stays open and
+    affects local runs of the gates this track tightened.
+  - On 0.x every release is a minor skew, so ADR 0434's major refusal can't trigger before 1.0. This is
+    recorded in the ADR. Treating 0.x minor skew as major would change `Skew::classify`, and with it what
+    `doctor` reports, so it is left as a question for 1.0 rather than a filed issue.
+
+  Retired 5 October 2026.
