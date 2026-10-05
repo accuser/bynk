@@ -11,7 +11,7 @@
 
 use std::path::PathBuf;
 
-const CLI: &str = "wasm-bindgen-cli@";
+const CLI: &str = "wasm-bindgen-cli";
 
 fn repo() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
@@ -39,10 +39,17 @@ fn locked_version() -> String {
     versions[0].to_string()
 }
 
-/// Every `wasm-bindgen-cli@<version>` pin in `.github/workflows/`, as
-/// `(workflow, version)`. Every workflow is scanned, so a new one that installs
-/// the CLI is covered without being listed here.
-fn pins() -> Vec<(String, String)> {
+/// Every mention of `wasm-bindgen-cli` on a non-comment line in
+/// `.github/workflows/`, as `(workflow, pin)`. Every workflow is scanned, so a
+/// new one that installs the CLI is covered without being listed here, and so
+/// is every spelling: an unpinned `tool: wasm-bindgen-cli`, or a
+/// `cargo install wasm-bindgen-cli --version …`, records `None` and fails,
+/// since a pin outside the `@<version>` token can't be read reliably.
+///
+/// The pin is the whole token after `@`, up to whitespace, a comma (the
+/// `install-action` list form `tool: a@1,wasm-bindgen-cli@…`) or a quote. It is
+/// compared whole, so `0.2.127-rc.1` or `^0.2` never passes as `0.2.127`.
+fn pins() -> Vec<(String, Option<String>)> {
     let dir = repo().join(".github/workflows");
     let mut pins = Vec::new();
     for entry in std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("read {dir:?}: {e}")) {
@@ -53,12 +60,14 @@ fn pins() -> Vec<(String, String)> {
         let yaml = std::fs::read_to_string(&path).unwrap();
         let name = path.file_name().unwrap().to_string_lossy().into_owned();
         for line in yaml.lines().map(str::trim).filter(|l| !l.starts_with('#')) {
-            if let Some(rest) = line.split(CLI).nth(1) {
-                let version: String = rest
-                    .chars()
-                    .take_while(|c| c.is_ascii_digit() || *c == '.')
-                    .collect();
-                pins.push((name.clone(), version));
+            for rest in line.split(CLI).skip(1) {
+                let pin = rest.strip_prefix('@').map(|v| {
+                    v.split(|c: char| c.is_whitespace() || matches!(c, ',' | '"' | '\''))
+                        .next()
+                        .unwrap_or_default()
+                        .to_string()
+                });
+                pins.push((name.clone(), pin));
             }
         }
     }
@@ -69,11 +78,17 @@ fn pins() -> Vec<(String, String)> {
 #[test]
 fn every_wasm_bindgen_cli_pin_matches_the_lockfile() {
     let locked = locked_version();
-    let pins = pins();
-    for (workflow, version) in &pins {
+    for (workflow, pin) in pins() {
+        let Some(version) = pin else {
+            panic!(
+                "{workflow} mentions `{CLI}` with no `@<version>` pin. Install it as \
+                 `{CLI}@{locked}` (the form `install-action` and `cargo install` both \
+                 accept), so the version is pinned and this guard can read it."
+            );
+        };
         assert_eq!(
-            version, &locked,
-            "{workflow} installs `{CLI}{version}`, but Cargo.lock has wasm-bindgen \
+            version, locked,
+            "{workflow} installs `{CLI}@{version}`, but Cargo.lock has wasm-bindgen \
              {locked}. The CLI must be the same version as the crate: bump the pin \
              with the lockfile."
         );
@@ -89,9 +104,8 @@ fn the_playground_builds_are_pinned() {
     for workflow in ["ci.yml", "deploy-playground.yml"] {
         assert!(
             pins.iter().any(|(w, _)| w == workflow),
-            "{workflow} no longer pins `{CLI}<version>`. If it stopped building \
-             the playground's wasm, drop it here; if the install is spelled \
-             differently now, teach `pins` the new spelling. Found: {pins:?}"
+            "{workflow} no longer installs `{CLI}`. If it stopped building \
+             the playground's wasm, drop it here. Found: {pins:?}"
         );
     }
 }

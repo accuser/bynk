@@ -278,7 +278,7 @@ jobs:
       # nextest runs one process pool across every test binary at once (the
       # fixture corpus is dozens of separate binaries `cargo test` would run
       # serially), cutting this leg's wall-clock. Prebuilt binary — no compile.
-      # Pinned to the 0.9 line (like typescript@5 / wasm-bindgen-cli): this now
+      # Pinned to the 0.9 line (like typescript@5): this now
       # gates every test run, so a future 0.10 with changed behaviour must not
       # turn CI red with no repo change.
       - uses: taiki-e/install-action@4cef1412cce204788f482e778a0b9187f9626a29 # v2

@@ -1,10 +1,12 @@
-# Bynk — Release Discipline: Milestone Cadence & Doc-Truth Guards
+# Bynk — Release Discipline: Milestone Cadence, Doc-Truth Guards & the Compatibility Date
 
 *Decision record for [#540](https://github.com/accuser/bynk/issues/540) §7(4), the
 two bullets left after the [1.0 definition](bynk-1.0-definition.md): **monthly
 milestone cadence** and **README/about drift guards**. Fourth of the strategy
 records. A strategy record, not a language-defining call. With this, §7(4) is
-closed.*
+closed. Part 3, the Workers compatibility-date policy, was added later for
+[#1677](https://github.com/accuser/bynk/issues/1677), because it rides on the
+same milestones.*
 
 ---
 
@@ -21,10 +23,6 @@ promise is only worth what the discipline behind it can *keep* and *prove*:
 Both are the release-discipline layer under the 1.0 definition: the machinery that
 turns "Foundations is stable" from an intention into something a user can rely on
 and verify.
-
-Part 3, added later for [#1677](https://github.com/accuser/bynk/issues/1677),
-records one rule that rides on the same milestones: when the Workers
-compatibility date that every generated `wrangler.toml` pins is moved forward.
 
 ## Part 1 — Monthly milestone cadence
 
