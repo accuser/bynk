@@ -186,11 +186,13 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
-      # wasm-bindgen-cli must match the wasm-bindgen crate (Cargo.lock: 0.2.126);
-      # a version skew between the glue and the module fails at load.
+      # wasm-bindgen-cli must be the same version as the wasm-bindgen crate in
+      # Cargo.lock: the glue it generates is matched to the module the crate
+      # compiled. Its own check compares only a schema version, so a mismatch can
+      # still build. xtask/tests/wasm_bindgen_pin.rs fails when the two differ.
       - uses: taiki-e/install-action@4cef1412cce204788f482e778a0b9187f9626a29 # v2
         with:
-          tool: wasm-bindgen-cli@0.2.126
+          tool: wasm-bindgen-cli@0.2.127
       # wasm-opt (binaryen) shrinks the release artefact (-Oz, the size budget).
       # build-wasm.sh applies it only when present, so this is an optimisation.
       - name: Install binaryen (wasm-opt)

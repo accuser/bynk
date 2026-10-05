@@ -523,9 +523,11 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      # Same version as the wasm-bindgen crate in Cargo.lock, like
+      # deploy-playground.yml; xtask/tests/wasm_bindgen_pin.rs checks both.
       - uses: taiki-e/install-action@4cef1412cce204788f482e778a0b9187f9626a29 # v2
         with:
-          tool: wasm-bindgen-cli@0.2.126
+          tool: wasm-bindgen-cli@0.2.127
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
           node-version: "20"
