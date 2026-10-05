@@ -302,13 +302,14 @@ jobs:
       # single test. Concurrent `npx -y wrangler@4` installs all land in the
       # SAME `~/.npm/_npx/<hash>` directory (the hash is of the package spec,
       # not the argv), and npm does not lock it. On the v0.245.0 release run
-      # (release.yml, same tests, no nextest retries) they raced on a cold
-      # cache: npm tore down its own half-extracted tree (`ENOTEMPTY` on rmdir,
-      # then a fan of `TAR_ENTRY_ERROR ENOENT`), neither wrangler ever served,
-      # and both tests burned the full 180s boot window before failing under
-      # BYNK_REQUIRE_WORKERD. This leg's `retries = 1` was hiding the same race
-      # here as a FLAKY line rather than a failure. Warming the cache means
-      # every test finds a complete cache and installs nothing.
+      # (release.yml, same tests, then on `cargo test` with no retries) they
+      # raced on a cold cache: npm tore down its own half-extracted tree
+      # (`ENOTEMPTY` on rmdir, then a fan of `TAR_ENTRY_ERROR ENOENT`),
+      # neither wrangler ever served, and both tests burned the full 180s boot
+      # window before failing under BYNK_REQUIRE_WORKERD. This leg's
+      # `retries = 1` was hiding the same race here as a FLAKY line rather than
+      # a failure. Warming the cache means every test finds a complete cache
+      # and installs nothing.
       #
       # The spec must stay in step with the tests' own; a drift guard
       # (bynkc/tests/wrangler/mod.rs) fails if it doesn't.

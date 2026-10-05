@@ -34,6 +34,23 @@ are checked separately).
   `"{code} {message}"` of the diagnostics. So a line is usually just a code, e.g.
   `bynk.refine.literal_violates`.
 
+## How CI and the release run the suite
+
+Every gate that runs the workspace suite runs it the same way:
+`cargo nextest run --workspace --locked --profile ci`. That covers the PR gate
+(`ci.yml`), the release gate (`release.yml`) and the bootstrap's verify job. The
+`ci` profile in `.config/nextest.toml` runs each test in its own process, and
+retries a failure once. A test that passes on the retry is listed as **FLAKY**
+but doesn't fail the gate, at release as on a PR. The policy is decided in that
+one file, so a test can't pass CI and then fail the release because of the
+harness. `xtask/tests/suite_harness.rs` checks that all three workflows run that
+exact command, so they can't drift apart again unnoticed.
+
+To reproduce a CI run locally, install
+[nextest](https://nexte.st) and use the same command. A plain `cargo test` also
+works, but it runs each binary's tests as threads in one process, with no
+retry.
+
 ## The bless workflow
 
 When you change the emitter (and the new output is correct), regenerate the
