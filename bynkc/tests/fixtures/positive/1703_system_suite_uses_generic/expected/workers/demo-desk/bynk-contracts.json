@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "provides": {
+    "check": "c4ebec6946345787",
+    "pairUp": "aef0380154d84e26"
+  },
+  "expects": {
+    "demo.vault": {
+      "open": "67d1924079d47559"
+    }
+  }
+}

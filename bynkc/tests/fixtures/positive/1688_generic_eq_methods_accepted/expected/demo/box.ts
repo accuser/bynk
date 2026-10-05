@@ -6,8 +6,8 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError, __
 /**
  * #1702 review: a method that compares its receiver's type parameter accepts an
  * equality-supporting receiver, and one that does not compare it accepts a
- * function. (Compile-only: a suite cannot yet target a unit that declares a
- * generic type, #1703.)
+ * function. Its suite runs both (#1703: a suite can now target a unit that
+ * declares a generic type).
  */
 
 export interface Box<A> {

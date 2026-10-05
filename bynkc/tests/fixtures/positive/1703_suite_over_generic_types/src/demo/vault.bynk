@@ -1,0 +1,19 @@
+---
+#1703 review: a context exporting a generic type that another context
+consumes, so the suite over the consumer aliases it from the consumed
+context's namespace. Its service returns `Int`, not `Envelope[Int]`: a
+cross-context call returning a generic type hits a separate codec bug in the
+Workers output (filed as a follow-on), which the system tier would compile.
+---
+context demo.vault
+
+exports transparent { Envelope }
+
+type Envelope[T] = { item: T, note: String }
+
+service open {
+  on call(n: Int) -> Effect[Int] {
+    let e = Envelope { item: n, note: "sealed" }
+    e.item
+  }
+}
