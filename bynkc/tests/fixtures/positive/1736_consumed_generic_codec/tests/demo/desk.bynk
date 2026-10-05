@@ -19,6 +19,11 @@ suite demo.desk as system {
     expect n == 4
   }
 
+  case "the consumer's own structurally identical generic is accepted" {
+    let n <- demo.desk.sentWrapper(8)
+    expect n == 8
+  }
+
   case "a generic record sent back across" {
     let n <- demo.desk.sentBack(6)
     expect n == 6

@@ -17,6 +17,9 @@ export function compose(env: Env) {
     async sentBack(n: number) {
       return handlers.sentBack.call(n, deps);
     },
+    async sentWrapper(n: number) {
+      return handlers.sentWrapper.call(n, deps);
+    },
     async settled(n: number) {
       return handlers.settled.call(n, deps);
     },

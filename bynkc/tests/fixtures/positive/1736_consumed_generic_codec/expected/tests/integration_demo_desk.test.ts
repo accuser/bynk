@@ -82,11 +82,25 @@ async function test_a_generic_record_built_by_the_consumer_and_sent() {
   }
 }
 
+async function test_the_consumer_s_own_structurally_identical_generic_is_accepted() {
+  try {
+    const deps = makeHarness();
+    const n = await __callService(deps.env.DEMO_DESK, "sentWrapper", ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(8), (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j), "integration", "ecc5773a401f9fc0");
+    if (!(__bynkEq(n, 8))) { throw __bynkExpectFailure("tests/demo/desk.bynk:24:12", 639, 645, "expect n == 8\n  expected: n == 8\n  actual:   " + __bynkShow((n)) + " == " + __bynkShow((8))); }
+    return { pass: true };
+  } catch (e) {
+    if (e instanceof ExpectationError) {
+      return { pass: false, error: { message: e.message, location: e.location } };
+    }
+    return { pass: false, error: { message: String(e), location: "unknown" } };
+  }
+}
+
 async function test_a_generic_record_sent_back_across() {
   try {
     const deps = makeHarness();
     const n = await __callService(deps.env.DEMO_DESK, "sentBack", ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(6), (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j), "integration", "f6096134bb9f5caa");
-    if (!(__bynkEq(n, 6))) { throw __bynkExpectFailure("tests/demo/desk.bynk:24:12", 608, 614, "expect n == 6\n  expected: n == 6\n  actual:   " + __bynkShow((n)) + " == " + __bynkShow((6))); }
+    if (!(__bynkEq(n, 6))) { throw __bynkExpectFailure("tests/demo/desk.bynk:29:12", 742, 748, "expect n == 6\n  expected: n == 6\n  actual:   " + __bynkShow((n)) + " == " + __bynkShow((6))); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -102,6 +116,7 @@ export async function run(only?: string) {
   if (want("a returned generic record, alone, nested and at another type")) results.push({ name: "a returned generic record, alone, nested and at another type", ...(await test_a_returned_generic_record__alone__nested_and_at_another_type()) });
   if (want("a returned generic sum, each variant")) results.push({ name: "a returned generic sum, each variant", ...(await test_a_returned_generic_sum__each_variant()) });
   if (want("a generic record built by the consumer and sent")) results.push({ name: "a generic record built by the consumer and sent", ...(await test_a_generic_record_built_by_the_consumer_and_sent()) });
+  if (want("the consumer's own structurally identical generic is accepted")) results.push({ name: "the consumer's own structurally identical generic is accepted", ...(await test_the_consumer_s_own_structurally_identical_generic_is_accepted()) });
   if (want("a generic record sent back across")) results.push({ name: "a generic record sent back across", ...(await test_a_generic_record_sent_back_across()) });
   return results;
 }

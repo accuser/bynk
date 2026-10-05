@@ -6,6 +6,10 @@ context demo.desk
 
 consumes demo.vault as Vault
 
+-- The consumer's own generic, structurally identical to `Envelope`: the
+-- boundary check compares it field by field at its applied argument.
+type Wrapper[T] = { item: T, note: String }
+
 service total {
   on call(n: Int) -> Effect[Int] {
     let e <- Vault.open(n)
@@ -36,5 +40,12 @@ service sentBack {
 service sent {
   on call(s: String) -> Effect[Int] {
     Vault.read(Envelope { item: s, note: "out" })
+  }
+}
+
+service sentWrapper {
+  on call(n: Int) -> Effect[Int] {
+    let w: Wrapper[Int] = Wrapper { item: n, note: "mine" }
+    Vault.readBack(w)
   }
 }

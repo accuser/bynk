@@ -4428,32 +4428,11 @@ fn structural_compare_named(
     // #1736: a generic declaration's fields name its type parameters
     // (`item: T`), which resolve against neither side's type table, so every
     // generic record or sum used to compare as incompatible, even against
-    // itself. Resolve each side's fields with its parameters bound to that
-    // side's *applied* arguments (`Envelope[Int]` → `item: Int`), so the bodies
-    // compare as instantiated. The arguments were already compared pairwise by
-    // the caller.
-    let field_ty = |r: &TypeRef,
-                    decl: &TypeDecl,
-                    args: &[TyId],
-                    types: &HashMap<String, Arc<TypeDecl>>|
-     -> Option<TyId> {
-        if decl.type_params.is_empty() {
-            return resolve_type_ref(r, types, tys);
-        }
-        let vars: HashSet<String> = decl
-            .type_params
-            .iter()
-            .map(|p| p.name.name.clone())
-            .collect();
-        let subst: HashMap<String, TyId> = decl
-            .type_params
-            .iter()
-            .map(|p| p.name.name.clone())
-            .zip(args.iter().copied())
-            .collect();
-        let t = resolve_type_ref_in(r, types, &vars, tys)?;
-        Some(substitute(t, &subst, tys))
-    };
+    // itself. Each side's fields are resolved at that side's *applied*
+    // arguments (`Envelope[Int]` → `item: Int`) with [`instantiate_field_ty`],
+    // whose arity guard turns a mis-applied reference into `None` (rejected),
+    // so the bodies compare as instantiated. The arguments were already
+    // compared pairwise by the caller.
     match (&arg_decl.body, &param_decl.body) {
         (
             TypeBody::Refined {
@@ -4502,8 +4481,9 @@ fn structural_compare_named(
                 let Some(bf) = b.fields.iter().find(|f| f.name.name == af.name.name) else {
                     return false;
                 };
-                let at = field_ty(&af.type_ref, arg_decl, arg_args, arg_types);
-                let bt = field_ty(&bf.type_ref, param_decl, param_args, param_types);
+                let at = instantiate_field_ty(arg_decl, arg_args, &af.type_ref, arg_types, tys);
+                let bt =
+                    instantiate_field_ty(param_decl, param_args, &bf.type_ref, param_types, tys);
                 let (Some(at), Some(bt)) = (at, bt) else {
                     return false;
                 };
@@ -4528,8 +4508,14 @@ fn structural_compare_named(
                     if af.name.name != bf.name.name {
                         return false;
                     }
-                    let at = field_ty(&af.type_ref, arg_decl, arg_args, arg_types);
-                    let bt = field_ty(&bf.type_ref, param_decl, param_args, param_types);
+                    let at = instantiate_field_ty(arg_decl, arg_args, &af.type_ref, arg_types, tys);
+                    let bt = instantiate_field_ty(
+                        param_decl,
+                        param_args,
+                        &bf.type_ref,
+                        param_types,
+                        tys,
+                    );
                     let (Some(at), Some(bt)) = (at, bt) else {
                         return false;
                     };

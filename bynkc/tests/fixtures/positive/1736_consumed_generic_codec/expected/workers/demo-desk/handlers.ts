@@ -12,6 +12,14 @@ import type * as demo_vault from "../demo-vault/handlers.js";
  * directions: returned, sent back, and built here and sent.
  */
 
+export interface Wrapper<T> {
+  readonly item: T;
+  readonly note: string;
+}
+
+export const Wrapper = {
+};
+
 export const total = {
   async call(n: number, deps: { env: { DEMO_VAULT: __ServiceBinding } }): globalThis.Promise<number> {
     const e = await __callService(deps.env.DEMO_VAULT, "open", ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(n), __deserialise_Envelope_Int, "demo.desk", "57700891e7302936");
@@ -48,6 +56,13 @@ export const sentBack = {
 export const sent = {
   async call(s: string, deps: { env: { DEMO_VAULT: __ServiceBinding } }): globalThis.Promise<number> {
     return __callService(deps.env.DEMO_VAULT, "read", __serialise_Envelope_String({ item: s, note: "out" }), (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j), "demo.desk", "b797903bbb7dffed");
+  },
+};
+
+export const sentWrapper = {
+  async call(n: number, deps: { env: { DEMO_VAULT: __ServiceBinding } }): globalThis.Promise<number> {
+    const w: Wrapper<number> = { item: n, note: "mine" };
+    return __callService(deps.env.DEMO_VAULT, "readBack", __serialise_Envelope_Int(w), (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j), "demo.desk", "117e26b47336a282");
   },
 };
 
