@@ -1,11 +1,6 @@
----
-level: patch
-changelog: `bynk test` now checks that the `bynkc` it runs matches `bynk`. A different minor version prints a warning; a different major version refuses to run unless you pass `--allow-skew` or set `BYNK_ALLOW_SKEW=1`. `bynk check`, `bynk fmt`, `bynk dev` and `bynk deploy` apply the same check when `BYNK_BYNKC` points them at a separate compiler, offering only the variable (#1675)
----
+# 0434 — Where `bynk` runs a second compiler, it acts on that compiler's skew
 
-## ADR: act-on-compiler-skew
-title: Where `bynk` runs a second compiler, it acts on that compiler's skew
-summary: `bynk test` and every `BYNK_BYNKC` override path warn on minor skew and refuse major skew unless allowed, using `doctor`'s classification
+- **Status:** Accepted (v0.303.3)
 
 **Context.** `bynk` links the compiler in-process for `check`, `fmt`, `dev`
 and `deploy` (ADR 0101). A second, separately versioned `bynkc` runs in two
