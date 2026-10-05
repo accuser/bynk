@@ -41,13 +41,13 @@ pub fn compile_once(
     if let (true, Some(bynkc)) = (used_override, compiler.path.as_deref()) {
         // #1675: the override is the one path on which `dev`/`deploy` run a
         // second compiler, so its skew is acted on here, as `bynk test` does.
-        // No flag here (these commands take none for it): `BYNK_ALLOW_SKEW`.
-        let verdict = crate::compiler::skew_verdict(
-            compiler,
-            "build",
-            crate::compiler::skew_allowed_by_env(),
-        );
-        if !crate::compiler::apply_skew_verdict(verdict) {
+        // This compile is shared by both commands, so the message says `bynk:`;
+        // neither takes `--allow-skew`, so only `BYNK_ALLOW_SKEW` is offered.
+        let asker = crate::compiler::SkewAsker {
+            command: None,
+            has_flag: false,
+        };
+        if !crate::compiler::skew_gate(compiler, asker, false) {
             return false;
         }
         let status = Command::new(bynkc)

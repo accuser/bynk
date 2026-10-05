@@ -10,14 +10,14 @@
 //! `bynkc` binary must be present, and the driver↔compiler skew surface stays)
 //! is accepted; the driver at least resolves it more richly than any editor.
 //! #1675: and it acts on that skew before delegating — see
-//! [`crate::compiler::skew_verdict`].
+//! [`crate::compiler::skew_gate`].
 
 use std::ffi::OsString;
 use std::process::ExitCode;
 
 use bynk_driver::test_runner::TestArgs;
 
-use crate::compiler::Compiler;
+use crate::compiler::{Compiler, SkewAsker, skew_gate};
 
 /// Run `bynk test` by shelling the resolved `bynkc`. When no `bynkc` could be
 /// located, point the developer at `bynk doctor` rather than emitting a raw
@@ -38,9 +38,11 @@ pub fn run(compiler: &Compiler, args: TestArgs, allow_skew: bool) -> ExitCode {
     };
     // #1675: `test` always runs a second compiler, so act on its skew from the
     // driver: a minor skew warns, a major one refuses unless allowed.
-    let allow = allow_skew || crate::compiler::skew_allowed_by_env();
-    if !crate::compiler::apply_skew_verdict(crate::compiler::skew_verdict(compiler, "test", allow))
-    {
+    let asker = SkewAsker {
+        command: Some("test"),
+        has_flag: true,
+    };
+    if !skew_gate(compiler, asker, allow_skew) {
         return ExitCode::FAILURE;
     }
 

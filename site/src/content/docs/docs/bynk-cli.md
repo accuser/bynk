@@ -371,11 +371,13 @@ resolution and any driver↔compiler version skew.
 ### Version skew
 
 When `bynk` is about to run a separate `bynkc` (`bynk test` always does, and
-`bynk dev`/`deploy` do under `BYNK_BYNKC`), it compares versions first, as
-`bynk doctor` does. A patch difference is ignored. A **minor** difference prints
-a warning and runs anyway. A **major** difference refuses to run, since the two
-don't share a contract. Pass `--allow-skew` to `bynk test`, or set
-`BYNK_ALLOW_SKEW=1` for any command, to run anyway with a warning. The usual
+`bynk check`, `fmt`, `dev` and `deploy` do under `BYNK_BYNKC`), it compares
+versions first, as `bynk doctor` does. A patch difference is ignored. A
+**minor** difference prints a warning (once per run, so a `bynk dev` session
+doesn't repeat it on every rebuild) and runs anyway. A **major** difference
+refuses to run, since the two don't share a contract. Pass `--allow-skew` to
+`bynk test`, or set `BYNK_ALLOW_SKEW=1` for any of these commands, to run anyway
+with a warning. The usual
 cause is a `cargo install bynkc` on `PATH` beside a different `bynk`. Align
 them, or pin one with `BYNK_BYNKC`.
 

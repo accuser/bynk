@@ -11,12 +11,20 @@ use std::process::ExitCode;
 
 use bynk_driver::{FmtArgs, IndentKind};
 
-use crate::compiler::{Compiler, Origin};
+use crate::compiler::{Compiler, Origin, SkewAsker, skew_gate};
 
 /// Run `bynk fmt`. `compiler` carries the driver's resolution so a `BYNK_BYNKC`
 /// override can be honoured by shelling the pinned `bynkc`.
 pub fn run(compiler: &Compiler, args: FmtArgs) -> ExitCode {
     if let (Some(Origin::Override), Some(bynkc)) = (compiler.origin, compiler.path.as_deref()) {
+        // #1675: a second compiler, so its skew from the driver is acted on.
+        let asker = SkewAsker {
+            command: Some("fmt"),
+            has_flag: false,
+        };
+        if !skew_gate(compiler, asker, false) {
+            return ExitCode::FAILURE;
+        }
         return crate::shell::delegate(bynkc, delegated_argv(&args));
     }
     fmt_in_process(args)

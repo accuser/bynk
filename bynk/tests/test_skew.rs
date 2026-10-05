@@ -1,6 +1,8 @@
-//! #1675: `bynk test` acts on the driver↔compiler skew it computes, end to end
-//! — a real `bynk test` run against a fake `bynkc` (via `BYNK_BYNKC`) that
-//! reports a chosen version and echoes its arguments when it is run.
+//! #1675: `bynk test`, and `bynk check`/`bynk fmt` under a `BYNK_BYNKC`
+//! override, act on the driver↔compiler skew they compute, end to end — a real
+//! `bynk` run against a fake `bynkc` (via `BYNK_BYNKC`) that reports a chosen
+//! version and echoes its arguments when it is run. The `dev`/`deploy` compile
+//! is covered by `compile_once_warnings_behaviour.rs`.
 #![cfg(unix)]
 
 use std::os::unix::fs::PermissionsExt;
@@ -28,8 +30,12 @@ fn fake_bynkc(name: &str, version: &str) -> PathBuf {
 }
 
 fn bynk_test(bynkc: &PathBuf, extra: &[&str], allow_env: bool) -> Output {
+    bynk(bynkc, "test", extra, allow_env)
+}
+
+fn bynk(bynkc: &PathBuf, command: &str, extra: &[&str], allow_env: bool) -> Output {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_bynk"));
-    cmd.arg("test")
+    cmd.arg(command)
         .arg(".")
         .args(extra)
         .env("BYNK_BYNKC", bynkc);
@@ -102,6 +108,41 @@ fn major_skew_runs_when_allowed() {
         assert!(
             stdout.contains("FAKE BYNKC RAN: test"),
             "delegates: {stdout}"
+        );
+    }
+}
+
+/// `check` and `fmt` shell the override's `bynkc` too, so they are gated the
+/// same way — but neither takes `--allow-skew`, so the refusal offers only the
+/// variable, and the variable alone lets them run.
+#[test]
+fn overridden_check_and_fmt_are_gated() {
+    let (major, _) = driver();
+    let bynkc = fake_bynkc("major-check-fmt", &format!("{}.0.0", major + 1));
+    for command in ["check", "fmt"] {
+        let out = bynk(&bynkc, command, &[], false);
+        let (stdout, stderr) = (
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr),
+        );
+        assert!(!out.status.success(), "{command}: a major skew fails");
+        assert!(
+            stderr.contains(&format!("bynk {command}:")) && stderr.contains("Refusing"),
+            "{command}: explains: {stderr}"
+        );
+        assert!(
+            !stderr.contains("--allow-skew"),
+            "{command}: never advises a flag it rejects: {stderr}"
+        );
+        assert!(
+            !stdout.contains("FAKE BYNKC RAN"),
+            "{command}: never delegates: {stdout}"
+        );
+
+        let out = bynk(&bynkc, command, &[], true);
+        assert!(
+            String::from_utf8_lossy(&out.stdout).contains(&format!("FAKE BYNKC RAN: {command}")),
+            "{command}: runs when allowed"
         );
     }
 }
