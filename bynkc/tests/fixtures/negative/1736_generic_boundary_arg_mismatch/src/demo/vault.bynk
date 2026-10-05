@@ -1,0 +1,15 @@
+---
+#1736: the structural check now compares a generic type's fields at its
+applied arguments. `Envelope[Int]` is still not `Envelope[String]`.
+---
+context demo.vault
+
+exports transparent { Envelope }
+
+type Envelope[T] = { item: T, note: String }
+
+service read {
+  on call(e: Envelope[String]) -> Effect[Int] {
+    e.item.length()
+  }
+}

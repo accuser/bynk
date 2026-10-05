@@ -1583,6 +1583,19 @@ fn emit_consumed_context_helpers(
                 qual.insert(n.clone(), ns.clone());
             }
         }
+        // #1736: a generic type the callee owns reaches the closure only as the
+        // base of an instantiation (`Envelope[Int]`), never as a plain name, so
+        // the loop above can't see it. Without this the instantiation's codec
+        // named it bare (`Envelope<number>`), which the caller doesn't declare:
+        // `TS2304`, failing every consumer of a service that returns one.
+        for i in &cinsts {
+            if let serialisation::GenericInst::RecordInst { name, .. }
+            | serialisation::GenericInst::SumInst { name, .. } = i
+                && owned(name)
+            {
+                qual.insert(name.clone(), ns.clone());
+            }
+        }
 
         let mut to_emit: Vec<String> = names
             .iter()

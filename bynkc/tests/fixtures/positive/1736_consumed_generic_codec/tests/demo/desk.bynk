@@ -1,0 +1,26 @@
+---
+#1736: each generic codec round-trips across the real wire.
+---
+suite demo.desk as system {
+  case "a returned generic record, alone, nested and at another type" {
+    let n <- demo.desk.total(4)
+    expect n == 10
+  }
+
+  case "a returned generic sum, each variant" {
+    let done <- demo.desk.settled(3)
+    expect done == 3
+    let pending <- demo.desk.settled(0)
+    expect pending == 0
+  }
+
+  case "a generic record built by the consumer and sent" {
+    let n <- demo.desk.sent("four")
+    expect n == 4
+  }
+
+  case "a generic record sent back across" {
+    let n <- demo.desk.sentBack(6)
+    expect n == 6
+  }
+}

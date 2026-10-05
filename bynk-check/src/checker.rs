@@ -4347,7 +4347,8 @@ fn structurally_compatible_inner(
         ) => {
             // v0.157 (ADR 0183): applied type arguments must match structurally
             // too — `Paginated[String]` and `Paginated[Int]` are not the same
-            // brand (latent while generic records are boundary-rejected).
+            // brand. (#1736: live now that a generic type's fields compare at
+            // these arguments, in `structural_compare_named`.)
             if aa.len() != ba.len()
                 || !aa.iter().zip(ba).all(|(x, y)| {
                     structurally_compatible_inner(*x, *y, arg_types, param_types, tys, visited)
@@ -4361,7 +4362,8 @@ fn structurally_compatible_inner(
             if !visited.insert(key.clone()) {
                 return true;
             }
-            let ok = structural_compare_named(an, bn, arg_types, param_types, tys, visited);
+            let ok =
+                structural_compare_named((an, aa), (bn, ba), arg_types, param_types, tys, visited);
             visited.remove(&key);
             ok
         }
@@ -4408,8 +4410,8 @@ fn structurally_compatible_inner(
 }
 
 fn structural_compare_named(
-    arg_name: &str,
-    param_name: &str,
+    (arg_name, arg_args): (&str, &[TyId]),
+    (param_name, param_args): (&str, &[TyId]),
     arg_types: &HashMap<String, Arc<TypeDecl>>,
     param_types: &HashMap<String, Arc<TypeDecl>>,
     tys: &Types,
@@ -4422,6 +4424,35 @@ fn structural_compare_named(
     };
     let Some(param_decl) = param_types.get(param_name) else {
         return false;
+    };
+    // #1736: a generic declaration's fields name its type parameters
+    // (`item: T`), which resolve against neither side's type table, so every
+    // generic record or sum used to compare as incompatible, even against
+    // itself. Resolve each side's fields with its parameters bound to that
+    // side's *applied* arguments (`Envelope[Int]` → `item: Int`), so the bodies
+    // compare as instantiated. The arguments were already compared pairwise by
+    // the caller.
+    let field_ty = |r: &TypeRef,
+                    decl: &TypeDecl,
+                    args: &[TyId],
+                    types: &HashMap<String, Arc<TypeDecl>>|
+     -> Option<TyId> {
+        if decl.type_params.is_empty() {
+            return resolve_type_ref(r, types, tys);
+        }
+        let vars: HashSet<String> = decl
+            .type_params
+            .iter()
+            .map(|p| p.name.name.clone())
+            .collect();
+        let subst: HashMap<String, TyId> = decl
+            .type_params
+            .iter()
+            .map(|p| p.name.name.clone())
+            .zip(args.iter().copied())
+            .collect();
+        let t = resolve_type_ref_in(r, types, &vars, tys)?;
+        Some(substitute(t, &subst, tys))
     };
     match (&arg_decl.body, &param_decl.body) {
         (
@@ -4471,8 +4502,8 @@ fn structural_compare_named(
                 let Some(bf) = b.fields.iter().find(|f| f.name.name == af.name.name) else {
                     return false;
                 };
-                let at = resolve_type_ref(&af.type_ref, arg_types, tys);
-                let bt = resolve_type_ref(&bf.type_ref, param_types, tys);
+                let at = field_ty(&af.type_ref, arg_decl, arg_args, arg_types);
+                let bt = field_ty(&bf.type_ref, param_decl, param_args, param_types);
                 let (Some(at), Some(bt)) = (at, bt) else {
                     return false;
                 };
@@ -4497,8 +4528,8 @@ fn structural_compare_named(
                     if af.name.name != bf.name.name {
                         return false;
                     }
-                    let at = resolve_type_ref(&af.type_ref, arg_types, tys);
-                    let bt = resolve_type_ref(&bf.type_ref, param_types, tys);
+                    let at = field_ty(&af.type_ref, arg_decl, arg_args, arg_types);
+                    let bt = field_ty(&bf.type_ref, param_decl, param_args, param_types);
                     let (Some(at), Some(bt)) = (at, bt) else {
                         return false;
                     };
