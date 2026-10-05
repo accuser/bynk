@@ -106,15 +106,12 @@ jobs:
       - name: The extension's server pin names a published release
         # #1673: the pin is the last shipped release, moved by the `server-pin`
         # job below, so whatever commit is tagged must already point at a
-        # release that exists. The same check runs on every PR in ci.yml's
-        # `extension` job; this repeats it at the commit actually being shipped.
+        # release a VSIX can download from. ci.yml's `server-pin` job runs the
+        # same check on every CI run; this repeats it at the commit actually
+        # being shipped, strictly (a GitHub API failure fails the release too).
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          pin="$(node -p "require('./vscode-bynk/package.json').bynkServerVersion")"
-          gh release view "$pin" --repo "$GITHUB_REPOSITORY" --json tagName >/dev/null \
-            || { echo "::error::vscode-bynk bynkServerVersion $pin is not a published release"; exit 1; }
-          echo "::notice::server pin $pin is a published release"
+        run: scripts/check-server-pin.sh --strict
       - name: Commit under release must be on main (reviewed)
         # `v*` tags are NOT covered by the `main` ruleset, so a tag can be pushed
         # at ANY commit on ANY branch, and a manual dispatch can run from a branch
@@ -350,27 +347,10 @@ jobs:
           persist-credentials: false
       - name: Decide whether the pin moves
         id: decide
-        # A pre-release tag (`-rc1`) never becomes the pin, and a re-run or a
-        # late tag of an older version never moves it backwards.
-        run: |
-          tag="$GITHUB_REF_NAME"
-          pin="$(sed -nE 's/^  "bynkServerVersion": "([^"]+)".*/\1/p' vscode-bynk/package.json)"
-          if [ -z "$pin" ]; then
-            echo "::error::no bynkServerVersion line in vscode-bynk/package.json"
-            exit 1
-          fi
-          if [ "${tag#*-}" != "$tag" ]; then
-            echo "::notice::$tag is a pre-release; the pin stays at $pin"
-            echo "move=false" >>"$GITHUB_OUTPUT"
-          elif [ "$(printf '%s\n%s\n' "$pin" "$tag" | sort -V | tail -n1)" = "$pin" ]; then
-            echo "::notice::the pin is already $pin (not behind $tag)"
-            echo "move=false" >>"$GITHUB_OUTPUT"
-          else
-            sed -i -E 's/^(  "bynkServerVersion": )"[^"]+"/\1"'"$tag"'"/' vscode-bynk/package.json
-            git diff --exit-code --quiet && { echo "::error::the pin edit changed nothing"; exit 1; }
-            echo "::notice::moving the pin $pin -> $tag"
-            echo "move=true" >>"$GITHUB_OUTPUT"
-          fi
+        # scripts/next-server-pin.sh: a pre-release tag never becomes the pin,
+        # the pin never moves backwards, and any tag that isn't vX.Y.Z[-pre] is
+        # refused (verify already rejects those, but this job writes to main).
+        run: scripts/next-server-pin.sh "$GITHUB_REF_NAME" >>"$GITHUB_OUTPUT"
       - name: Mint stamp-app token
         if: steps.decide.outputs.move == 'true'
         id: app-token

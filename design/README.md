@@ -106,9 +106,19 @@ the **last shipped release**, not the workspace version (#1673). Tying it to the
 workspace version meant that, between releases, it named a release that didn't
 exist, and a freshly packaged VSIX couldn't download its server. `release.yml`'s
 `server-pin` job moves it to the new tag once that GitHub Release is published.
-ci.yml's `extension` job checks on every PR that the pin's release exists with
-its server binaries. `xtask/tests/server_pin.rs` checks offline that the pin is
-never ahead of the workspace and that the bump script leaves it alone.
+`scripts/check-server-pin.sh` checks that the pin's release exists, isn't a
+draft, and carries `SHA256SUMS` and a server binary for every target
+`release.yml` builds. It runs in ci.yml's `server-pin` job, which has no path
+filter, so it runs on every CI run and on the weekly schedule (a release can
+stop being valid without a change in the repo), and again, strictly, in the
+release's `verify` job. `xtask/tests/server_pin.rs` checks offline that the
+pin is never ahead of the workspace, that the bump script leaves it alone, and
+that `scripts/next-server-pin.sh` only moves it forward to a release tag.
+
+The extension judges a server it downloaded against the pin, and one from
+`PATH` or `bynk.executablePath` against its own version, so a contributor
+running a `bynkc-lsp` built from the same tree isn't warned that it is newer
+than the last release.
 
 Per release:
 

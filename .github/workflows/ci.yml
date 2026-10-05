@@ -609,23 +609,26 @@ jobs:
         run: node scripts/check-bundle.mjs
       - name: Package the VSIX
         run: npx --yes @vscode/vsce@3.9.2 package --no-dependencies --skip-license
-      - name: The server pin names a published release
-        # #1673: the VSIX just packaged downloads `bynkc-lsp` from the release
-        # its `bynkServerVersion` names, so that release must exist and carry
-        # what `src/server.ts` fetches: `SHA256SUMS` and a raw server binary.
-        # The pin is the last shipped release (release.yml's `server-pin` job
-        # moves it), so this stays green between releases.
+
+  server-pin:
+    # #1673: the VS Code extension's `bynkServerVersion` names the GitHub
+    # Release a freshly packaged VSIX downloads `bynkc-lsp` from (the last
+    # shipped release; release.yml's `server-pin` job moves it). Unlike the
+    # other jobs this one has no path filter: the release can stop being valid
+    # without any change in the repo (deleted, flipped to draft, an asset
+    # removed), so it runs on every CI run, the weekly schedule included. It is
+    # one API call. A failure to reach GitHub is a warning, not a red build.
+    name: Extension server pin (release exists)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: The pin names a downloadable release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          pin="$(node -p "require('./package.json').bynkServerVersion")"
-          assets="$(gh release view "$pin" --repo "$GITHUB_REPOSITORY" --json assets -q '.assets[].name')" \
-            || { echo "::error::bynkServerVersion $pin is not a published release"; exit 1; }
-          for want in SHA256SUMS bynkc-lsp-x86_64-unknown-linux-gnu; do
-            printf '%s\n' "$assets" | grep -qx "$want" \
-              || { echo "::error::release $pin has no $want asset"; exit 1; }
-          done
-          echo "::notice::server pin $pin is a published release with server binaries"
+        run: scripts/check-server-pin.sh
 
   extension-tests:
     # Launch a real VS Code instance with the extension + a fixture workspace
@@ -946,6 +949,7 @@ jobs:
       - playground
       - site
       - extension
+      - server-pin
       - grammar
       - runtime
       - drift
@@ -991,6 +995,7 @@ jobs:
       - playground
       - site
       - extension
+      - server-pin
       - extension-tests
       - grammar
       - runtime
