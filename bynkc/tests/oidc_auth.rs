@@ -48,7 +48,7 @@ fn discover_tsc() -> Option<(String, Vec<String>)> {
             vec![
                 "--yes".to_string(),
                 "-p".to_string(),
-                "typescript@5".to_string(),
+                format!("typescript@{}", bynk_emit::TYPESCRIPT_MAJOR_TESTED),
                 "tsc".to_string(),
             ],
         ));

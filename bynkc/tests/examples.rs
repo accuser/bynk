@@ -163,7 +163,7 @@ fn every_example_output_passes_tsc_strict() {
 
 /// The `discover_tsc` ladder shared with `tsc_verify`: a global `tsc`, else
 /// `npx`-provisioned TypeScript (pinned major, `-p` package form — the bare
-/// `npx typescript@5 tsc` form fails with "could not determine executable").
+/// `npx typescript@N tsc` form fails with "could not determine executable").
 fn discover_tsc() -> Option<(String, Vec<String>)> {
     let exists = |name: &str| which::which(name).is_ok();
     if exists("tsc") {
@@ -172,9 +172,12 @@ fn discover_tsc() -> Option<(String, Vec<String>)> {
     if exists("npx") {
         return Some((
             "npx".to_string(),
-            ["--yes", "-p", "typescript@5", "tsc"]
-                .map(String::from)
-                .to_vec(),
+            vec![
+                "--yes".to_string(),
+                "-p".to_string(),
+                format!("typescript@{}", bynk_emit::TYPESCRIPT_MAJOR_TESTED),
+                "tsc".to_string(),
+            ],
         ));
     }
     None

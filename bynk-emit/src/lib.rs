@@ -122,6 +122,18 @@ pub fn compile_with_warnings(source: &str, _filename: &str) -> Result<Compiled, 
 /// source-mapped breakpoints) and says so when it isn't met.
 pub const NODE_MAJOR_FLOOR: u32 = 22;
 
+/// #1672: the oldest TypeScript major the emitted output is verified against.
+/// CI type-checks every positive fixture under it (`tsc_verify`, with
+/// `typescript@5` installed on every test leg).
+pub const TYPESCRIPT_MAJOR_FLOOR: u32 = 5;
+
+/// #1672: the newest TypeScript major the emitted output is verified against —
+/// the one users get from `npm install -g typescript`. CI type-checks every
+/// positive fixture under it too (a second `tsc_verify` pass on the Linux leg),
+/// the `npx` fallbacks provision it, and `bynk doctor` reports a `tsc` newer
+/// than it as untested.
+pub const TYPESCRIPT_MAJOR_TESTED: u32 = 7;
+
 // `write_output`/`write_document` moved to `bynk-driver` (#1047, R2.3/
 // T0.7 residue): every caller was already at driver level, so this crate
 // never needed direct filesystem access for it — the pure move closes it

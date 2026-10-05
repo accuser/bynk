@@ -367,9 +367,12 @@ pub fn run_test(program: &str, args: TestArgs) -> ExitCode {
     // tsc step is captured so its output never reaches stdout (the document is
     // the only thing on stdout); a tsc failure on the emitted TS is a
     // toolchain/internal problem, surfaced as a `runtime` error.
+    // #1672: the `npx` fallback provisions the TypeScript major the output is
+    // verified against and users get, not an older pin.
+    let typescript_pkg = format!("typescript@{}", bynk_emit::TYPESCRIPT_MAJOR_TESTED);
     let tsc_runners: Vec<(&str, Vec<&str>)> = vec![
         ("tsc", vec![]),
-        ("npx", vec!["--yes", "-p", "typescript@5", "tsc"]),
+        ("npx", vec!["--yes", "-p", typescript_pkg.as_str(), "tsc"]),
     ];
     for (prog, prefix) in &tsc_runners {
         if !tool_exists(prog) {
@@ -503,7 +506,8 @@ pub fn run_test(program: &str, args: TestArgs) -> ExitCode {
     } else {
         eprintln!(
             "{program} test: requires either `tsc` (with Node.js) or `tsx` on PATH. \
-             Install one of:\n  - `npm install -g typescript` (provides tsc; requires Node.js to run output)\n  - `npm install -g tsx` (compiles and runs TypeScript in one step)\n  Or run inside a project where `npx tsc` / `npx tsx` resolves.",
+             Install one of:\n  - `npm install -g typescript@{tested}` (provides tsc, which type-checks; requires Node.js to run output)\n  - `npm install -g tsx` (runs TypeScript in one step, without type-checking)\n  Or run inside a project where `npx tsc` / `npx tsx` resolves.",
+            tested = bynk_emit::TYPESCRIPT_MAJOR_TESTED,
         );
     }
     ExitCode::FAILURE
