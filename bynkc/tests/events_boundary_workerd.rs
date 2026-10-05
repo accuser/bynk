@@ -24,9 +24,10 @@
 //! the event's *owner* is a different, consumed context; a locally-declared
 //! event already had its codec via the pre-existing `local_boundary` path).
 //!
-//! Same toolchain-skip, `BYNK_REQUIRE_WORKERD` gate, and SIGTERM-then-reap
-//! teardown idiom as `events_ordering_workerd.rs` — see that file's module
-//! doc for why each of those exists; not restated here.
+//! Same toolchain-skip and `BYNK_REQUIRE_WORKERD` gate as
+//! `events_ordering_workerd.rs` — see that file's module doc for why each
+//! exists; not restated here. Teardown is the shared [`wrangler::Wrangler`]
+//! guard.
 //!
 //! Events slice 3a (#972) adds a second test,
 //! `events_boundary_field_default_cross_context_on_workerd`, that does need a
@@ -45,7 +46,7 @@ use bynkc::BuildTarget;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 mod require;
@@ -178,52 +179,6 @@ fn skip(reason: &str) -> bool {
     true
 }
 
-/// Mirrors `events_ordering_workerd.rs`'s `request_stop` — SIGTERM, not
-/// `Child::kill`'s SIGKILL, so wrangler tears down its own `node`/`workerd`
-/// children instead of stranding an orphan still holding the port.
-fn request_stop(child: &mut Child) {
-    #[cfg(unix)]
-    {
-        let sent = Command::new("kill")
-            .arg("-TERM")
-            .arg(child.id().to_string())
-            .status()
-            .is_ok_and(|s| s.success());
-        if sent {
-            return;
-        }
-    }
-    let _ = child.kill();
-}
-
-fn reap(child: &mut Child) {
-    const GRACE: Duration = Duration::from_secs(10);
-    const TICK: Duration = Duration::from_millis(50);
-    let mut waited = Duration::ZERO;
-    while waited < GRACE {
-        match child.try_wait() {
-            Ok(Some(_)) => return,
-            Ok(None) => {}
-            Err(_) => break,
-        }
-        std::thread::sleep(TICK);
-        waited += TICK;
-    }
-    let _ = child.kill();
-    let _ = child.wait();
-}
-
-struct Wrangler(Option<Child>);
-
-impl Drop for Wrangler {
-    fn drop(&mut self) {
-        if let Some(c) = &mut self.0 {
-            request_stop(c);
-            reap(c);
-        }
-    }
-}
-
 /// A raw HTTP/1.1 client returning `(status, body)` — `events_ordering_workerd.rs`'s
 /// `http()` only returns the body and treats non-200 as an error, which loses
 /// exactly the status code this test needs to assert on.
@@ -329,20 +284,21 @@ fn events_boundary_rejects_malformed_payload_and_envelope_on_workerd() {
     let log_path = tmp.join("wrangler.log");
     let out_log = fs::File::create(&log_path).unwrap();
     let err_log = out_log.try_clone().unwrap();
-    let child = base_command("npx")
-        .args([
-            "-y",
-            WRANGLER,
-            "dev",
-            "--port",
-            &port.to_string(),
-            "--inspector-port",
-            &inspector_port.to_string(),
-        ])
-        .current_dir(&dir)
-        .stdout(Stdio::from(out_log))
-        .stderr(Stdio::from(err_log))
-        .spawn();
+    let child = wrangler::Wrangler::spawn(
+        base_command("npx")
+            .args([
+                "-y",
+                WRANGLER,
+                "dev",
+                "--port",
+                &port.to_string(),
+                "--inspector-port",
+                &inspector_port.to_string(),
+            ])
+            .current_dir(&dir)
+            .stdout(Stdio::from(out_log))
+            .stderr(Stdio::from(err_log)),
+    );
     let child = match child {
         Ok(c) => c,
         Err(_) => {
@@ -352,7 +308,7 @@ fn events_boundary_rejects_malformed_payload_and_envelope_on_workerd() {
             unreachable!()
         }
     };
-    let wrangler = Wrangler(Some(child));
+    let wrangler = child;
 
     let deadline = Instant::now() + Duration::from_secs(180);
     loop {
@@ -499,20 +455,21 @@ fn events_boundary_field_default_cross_context_on_workerd() {
     let log_path = tmp.join("wrangler.log");
     let out_log = fs::File::create(&log_path).unwrap();
     let err_log = out_log.try_clone().unwrap();
-    let child = base_command("npx")
-        .args([
-            "-y",
-            WRANGLER,
-            "dev",
-            "--port",
-            &port.to_string(),
-            "--inspector-port",
-            &inspector_port.to_string(),
-        ])
-        .current_dir(&dir)
-        .stdout(Stdio::from(out_log))
-        .stderr(Stdio::from(err_log))
-        .spawn();
+    let child = wrangler::Wrangler::spawn(
+        base_command("npx")
+            .args([
+                "-y",
+                WRANGLER,
+                "dev",
+                "--port",
+                &port.to_string(),
+                "--inspector-port",
+                &inspector_port.to_string(),
+            ])
+            .current_dir(&dir)
+            .stdout(Stdio::from(out_log))
+            .stderr(Stdio::from(err_log)),
+    );
     let child = match child {
         Ok(c) => c,
         Err(_) => {
@@ -522,7 +479,7 @@ fn events_boundary_field_default_cross_context_on_workerd() {
             unreachable!()
         }
     };
-    let wrangler = Wrangler(Some(child));
+    let wrangler = child;
 
     let deadline = Instant::now() + Duration::from_secs(180);
     loop {
