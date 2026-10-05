@@ -9,8 +9,8 @@ by **building from source** with a recent Rust toolchain.
 - **Rust** (stable, 2024 edition). Install via [rustup](https://rustup.rs/).
 - **Git**, to clone the repository.
 - A **Node.js / TypeScript** toolchain if you want to type-check or run the
-  emitted TypeScript (and `wrangler` if you want to deploy to Cloudflare
-  Workers).
+  emitted TypeScript: Node **22 or newer** (`bynk doctor` checks it), and
+  `wrangler` if you want to deploy to Cloudflare Workers.
 
 ## Build and install the compiler
 

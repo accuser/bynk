@@ -145,9 +145,11 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      # #1671: Node 22 (the floor, NODE_MAJOR_FLOOR) so tsc_verify's strip-types
+      # checks run here; under BYNK_REQUIRE_TSC they fail rather than skip.
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
-          node-version: "20"
+          node-version: "22"
       # Range-pinned to major 5, as in the verify job above — see #828.
       - name: Install TypeScript
         run: npm install -g typescript@5

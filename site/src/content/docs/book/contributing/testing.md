@@ -66,6 +66,19 @@ when neither is available:
   you);
 - in CI — set **`BYNK_REQUIRE_TSC=1`** to make a missing `tsc` a hard failure.
 
+The same file checks that every emitted `.ts` is erasable by pure type-stripping
+(ADR 0136), which `bynkc test --inspect` and in-browser evaluation depend on.
+`embedded_runtime_strips_types_under_node` needs Node ≥ 22.6;
+`all_emitted_typescript_strips_under_node` needs Node ≥ 22.13 (for
+`stripTypeScriptTypes`). **`BYNK_REQUIRE_TSC=1` governs them too:** with it set,
+a missing or too-old Node is a hard failure rather than a skip. CI's test legs
+run Node 22, so both checks always run there.
+
+A skip banner alone is not a gate: a test that prints `SKIPPED` and passes is
+invisible in CI, because nextest never shows a passing test's output
+(`success-output` defaults to `never`). That is why a required check fails
+rather than skips.
+
 ## The behavioural gate
 
 The golden comparison and the `tsc` gate prove what the compiler **emits**.

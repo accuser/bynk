@@ -114,7 +114,13 @@ pub fn compile_with_warnings(source: &str, _filename: &str) -> Result<Compiled, 
 /// `bynkc`'s CLI re-exports it rather than restating the number. Lives in
 /// `bynk-emit` (which emits the TS that runs on Node) so both binaries share one
 /// definition (slice 7; was a `bynkc` const before the driver dropped that dep).
-pub const NODE_MAJOR_FLOOR: u32 = 18;
+///
+/// #1674: 22, the oldest Node major still in support (18 reached end-of-life in
+/// April 2025, 20 in April 2026), and the one `bynkc test --inspect` needs. So
+/// `bynk doctor`'s `ok` means the commands work, not merely that Node exists.
+/// The `--inspect` path checks its own minor floor (22.6 to run, 22.18 for
+/// source-mapped breakpoints) and says so when it isn't met.
+pub const NODE_MAJOR_FLOOR: u32 = 22;
 
 // `write_output`/`write_document` moved to `bynk-driver` (#1047, R2.3/
 // T0.7 residue): every caller was already at driver level, so this crate
