@@ -1,5 +1,5 @@
 [project]
-name = "rebranded-generic-record-literal"
+name = "system-suite-uses-generic"
 version = "0.1.0"
 
 [paths]

@@ -501,9 +501,7 @@ fn emit_integration_module(
                     .collect();
                 names.sort();
                 names.dedup();
-                let mut type_names: Vec<String> = table.types.keys().cloned().collect();
-                type_names.sort();
-                type_names.dedup();
+                let type_names = aliased_types(table, |_| true);
                 crate::emitter::extend_printed_at(
                     &mut case_out,
                     emit_ns_destructure(&ns, &names, &type_names),
@@ -2504,14 +2502,9 @@ fn emit_stub_class(
     } else {
         Vec::new()
     };
-    let scope_type_names: Vec<String> = unit_tables
+    let scope_type_names: Vec<(String, Vec<String>)> = unit_tables
         .get(&owning_unit)
-        .map(|t| {
-            let mut v: Vec<String> = t.types.keys().cloned().collect();
-            v.sort();
-            v.dedup();
-            v
-        })
+        .map(|t| aliased_types(t, |_| true))
         .unwrap_or_default();
 
     // Group clause indices by method, preserving resolution order (case-scoped
@@ -2621,9 +2614,10 @@ fn emit_stub_class(
                 continue;
             }
             names.sort();
+            let types = aliased_types(&unit_tables[*u], |n| names.contains(n));
             crate::emitter::extend_printed_at(
                 &mut body_text,
-                emit_ns_destructure(&u.replace('.', "_"), &names, &names),
+                emit_ns_destructure(&u.replace('.', "_"), &names, &types),
                 2,
             );
         }
@@ -3270,7 +3264,16 @@ fn emit_test_deps(
 /// #1479: returns real [`TsStmt`]s (was `out: &mut String`) — every caller
 /// now appends via `crate::emitter::extend_printed_at(out, stmts, 2)`, the
 /// same depth-2 this scaffold body's own statements always printed at.
-fn emit_ns_destructure(ns: &str, value_names: &[String], type_names: &[String]) -> Vec<TsStmt> {
+/// #1703: each type name carries its type parameters, so a generic type's
+/// alias is generic too (`type Box<A> = ns.Box<A>;`). A bare alias of a generic
+/// type is `TS2314` under `tsc`, which failed every suite whose target declared
+/// or `uses` one, whether or not a case mentioned it. Build the list with
+/// [`aliased_types`].
+fn emit_ns_destructure(
+    ns: &str,
+    value_names: &[String],
+    type_names: &[(String, Vec<String>)],
+) -> Vec<TsStmt> {
     let mut stmts = Vec::new();
     if !value_names.is_empty() {
         stmts.push(TsStmt::const_stmt(
@@ -3280,17 +3283,43 @@ fn emit_ns_destructure(ns: &str, value_names: &[String], type_names: &[String]) 
             None,
         ));
     }
-    for t in type_names {
+    for (t, params) in type_names {
+        let target = format!("{ns}.{t}");
+        let ty = if params.is_empty() {
+            TsType::named(target)
+        } else {
+            TsType::named_with_args(target, params.iter().map(TsType::named).collect())
+        };
         stmts.push(TsStmt::decl(
             TsDecl::TypeAlias {
                 name: t.clone(),
-                type_params: Vec::new(),
-                ty: TsType::named(format!("{ns}.{t}")),
+                type_params: params.clone(),
+                ty,
             },
             None,
         ));
     }
     stmts
+}
+
+/// #1703: the types of `table` that `keep` admits, each with its type
+/// parameters, sorted by name: the `type_names` [`emit_ns_destructure`] aliases.
+fn aliased_types(table: &UnitTable, keep: impl Fn(&String) -> bool) -> Vec<(String, Vec<String>)> {
+    let mut types: Vec<(String, Vec<String>)> = table
+        .types
+        .iter()
+        .filter(|(name, _)| keep(name))
+        .map(|(name, decl)| {
+            let params = decl
+                .type_params
+                .iter()
+                .map(|p| p.name.name.clone())
+                .collect();
+            (name.clone(), params)
+        })
+        .collect();
+    types.sort();
+    types
 }
 
 /// Emit the shared per-runner scope setup — agent reset, the `deps` factory, and
@@ -3458,9 +3487,7 @@ fn emit_test_scope_setup(
         }
         names.sort();
         names.dedup();
-        let mut type_names: Vec<String> = table.types.keys().cloned().collect();
-        type_names.sort();
-        type_names.dedup();
+        let type_names = aliased_types(table, |_| true);
         crate::emitter::extend_printed_at(
             out,
             emit_ns_destructure(&target_ns, &names, &type_names),
@@ -3495,14 +3522,7 @@ fn emit_test_scope_setup(
                     .collect();
                 names.sort();
                 names.dedup();
-                let mut type_names: Vec<String> = table
-                    .types
-                    .keys()
-                    .filter(|n| !target_local.contains(n))
-                    .cloned()
-                    .collect();
-                type_names.sort();
-                type_names.dedup();
+                let type_names = aliased_types(table, |n| !target_local.contains(n));
                 crate::emitter::extend_printed_at(
                     out,
                     emit_ns_destructure(&ns, &names, &type_names),
@@ -3529,10 +3549,9 @@ fn emit_test_scope_setup(
                 Some(UnitKind::Adapter)
             );
             if let Some(table) = unit_tables.get(q) {
-                let mut names: Vec<String> = table.types.keys().cloned().collect();
-                names.sort();
-                names.dedup();
-                crate::emitter::extend_printed_at(out, emit_ns_destructure(&ns, &names, &names), 2);
+                let types = aliased_types(table, |_| true);
+                let names: Vec<String> = types.iter().map(|(n, _)| n.clone()).collect();
+                crate::emitter::extend_printed_at(out, emit_ns_destructure(&ns, &names, &types), 2);
             }
             // An `adapter` target has no `makeSurface`/`deps.surface` entry —
             // its capabilities are already flattened onto `deps` directly

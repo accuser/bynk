@@ -1,5 +1,5 @@
 [project]
-name = "rebranded-generic-record-literal"
+name = "suite-over-generic-types"
 version = "0.1.0"
 
 [paths]

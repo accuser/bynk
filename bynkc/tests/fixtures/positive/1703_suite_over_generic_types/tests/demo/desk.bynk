@@ -1,0 +1,10 @@
+---
+#1703 review: the unit tier over a context that consumes one with a generic
+type. The consumed context's types are aliased into scope (`Envelope<T>`).
+---
+suite demo.desk
+
+case "a generic type from a consumed context is in scope" {
+  let n <- pairUp.call(9)
+  expect n == 9
+}

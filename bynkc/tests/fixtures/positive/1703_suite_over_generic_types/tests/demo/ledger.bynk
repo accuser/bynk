@@ -1,0 +1,13 @@
+---
+#1703 review: a stubbed capability whose owning unit declares a generic type
+(the stub class's scope aliases `Entry<T>`).
+---
+suite demo.ledger {
+  stub Audit.note(_) returns ()
+
+  case "a stub over a capability taking a generic type" {
+    let n <- post.call(3)
+    expect n == 3
+    expect Audit.note called once
+  }
+}

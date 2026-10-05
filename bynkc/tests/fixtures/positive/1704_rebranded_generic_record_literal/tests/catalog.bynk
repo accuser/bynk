@@ -1,0 +1,16 @@
+---
+#1703: a suite over a context that rebrands a generic `uses` type. The test
+module aliases `Page<T>` from the `uses` commons' namespace (`pages`), the
+unbranded type; the rebrand (`catalog.Page<T>`, with its optional
+`__ctxBrand`) exists only in emitted code. Feeding the literal to the
+context's own agent operation checks that an unbranded `Page<Item>` is
+accepted where the branded one is expected.
+---
+suite catalog
+
+case "a generic record built in a case reaches the context's agent" {
+  let p: Page[Item] = Page { items: [Item { name: "a" }, Item { name: "b" }], next: None }
+  expect p.items.length() == 2
+  let n <- Shelf("s").count(p)
+  expect n == 2
+}
