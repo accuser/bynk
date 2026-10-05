@@ -386,6 +386,18 @@ pub fn wrangler_below_min(probe: &Probe) -> bool {
             .is_some_and(|v| (v.major, v.minor, v.patch) < (min.major, min.minor, min.patch))
 }
 
+/// #1732: how to upgrade a too-old wrangler, for where it came from. A
+/// project's own wrangler (which the driver prefers over `PATH`) is upgraded in
+/// the project, since a global install wouldn't change what runs. Shared by
+/// `doctor`'s row and `bynk dev`'s notice so the two can't disagree. No version
+/// in it: it shows in every `--format short` line and the goldens.
+pub fn wrangler_upgrade_remedy(probe: &Probe) -> &'static str {
+    match probe.provenance {
+        Provenance::ProjectLocal(_) => "npm install --save-dev wrangler@4 (in the project)",
+        _ => "npm install -g wrangler@4",
+    }
+}
+
 /// #1732: wrangler, checked against [`bynk_emit::WRANGLER_MIN`], the oldest
 /// whose `workerd` serves the [`bynk_emit::COMPATIBILITY_DATE`] every generated
 /// `wrangler.toml` pins. An older one still deploys (Cloudflare accepts any past
@@ -414,10 +426,7 @@ fn detect_wrangler(tb: &dyn Toolbox, root: Option<&std::path::Path>) -> Row {
         },
     );
     if wrangler_below_min(&probe) {
-        let remedy = match probe.provenance {
-            Provenance::ProjectLocal(_) => "npm install --save-dev wrangler@4 (in the project)",
-            _ => install,
-        };
+        let remedy = wrangler_upgrade_remedy(&probe);
         return Row {
             label: "wrangler".into(),
             level: Level::Warn,

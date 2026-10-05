@@ -23,6 +23,7 @@ use bynk::probe::{Toolbox, Version};
 #[derive(Default)]
 struct Fake {
     on_path: HashMap<String, PathBuf>,
+    project_local: HashMap<String, PathBuf>,
     versions: HashMap<PathBuf, Version>,
 }
 
@@ -33,14 +34,25 @@ impl Fake {
         self.versions.insert(p, ver);
         self
     }
+    fn local_tool(mut self, tool: &str, path: &str, ver: Version) -> Self {
+        let p = PathBuf::from(path);
+        self.project_local.insert(tool.into(), p.clone());
+        self.versions.insert(p, ver);
+        self
+    }
 }
 
 impl Toolbox for Fake {
     fn on_path(&self, tool: &str) -> Option<PathBuf> {
         self.on_path.get(tool).cloned()
     }
-    fn in_dir(&self, _dir: &Path, _tool: &str) -> Option<PathBuf> {
-        None
+    fn in_dir(&self, dir: &Path, tool: &str) -> Option<PathBuf> {
+        // Only resolve project-local tools when asked inside a node_modules/.bin.
+        if dir.ends_with(Path::new("node_modules/.bin")) {
+            self.project_local.get(tool).cloned()
+        } else {
+            None
+        }
     }
     fn version(&self, path: &Path) -> Option<Version> {
         self.versions.get(path).copied()
@@ -198,13 +210,21 @@ fn golden_serving_report() {
 fn dev_warns_about_a_wrangler_too_old_for_the_compatibility_date() {
     use bynk::probe::{self, DetectOpts};
     let min = Version::parse(bynk_emit::WRANGLER_MIN).expect("WRANGLER_MIN is a version");
-    let old = v(min.major, min.minor.saturating_sub(1), 0);
+    // The newest version strictly below `min`, for any `min` (`X.0.0` included).
+    let old = if min.patch > 0 {
+        v(min.major, min.minor, min.patch - 1)
+    } else if min.minor > 0 {
+        v(min.major, min.minor - 1, 999)
+    } else {
+        v(min.major - 1, 999, 999)
+    };
+    // As `bynk dev` probes: in the project, so a project-local wrangler wins.
     let detect = |fake: &Fake| {
         probe::detect(
             fake,
             "wrangler",
             DetectOpts {
-                project_root: None,
+                project_root: Some(Path::new("/proj")),
                 allow_npx: true,
             },
         )
@@ -234,4 +254,17 @@ fn dev_warns_about_a_wrangler_too_old_for_the_compatibility_date() {
         None
     );
     assert_eq!(dev::wrangler_age_notice(&detect(&Fake::default())), None);
+
+    // The project's own wrangler is the one `bynk dev` runs, so the fix upgrades
+    // it in the project; a global install wouldn't change what runs.
+    let notice = dev::wrangler_age_notice(&detect(
+        &Fake::default()
+            .path_tool("wrangler", "/usr/bin/wrangler", min)
+            .local_tool("wrangler", "/proj/node_modules/.bin/wrangler", old),
+    ))
+    .expect("an old project-local wrangler is warned about");
+    assert!(
+        notice.contains("npm install --save-dev wrangler@4 (in the project)"),
+        "{notice}"
+    );
 }

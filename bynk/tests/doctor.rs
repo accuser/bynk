@@ -79,6 +79,18 @@ fn wrangler_at_min() -> Version {
     Version::parse(bynk_emit::WRANGLER_MIN).expect("WRANGLER_MIN is a version")
 }
 
+/// The newest version strictly below `min`, for any `min` above `0.0.0`
+/// (`X.0.0` included), so a review that moves the minimum can't break it.
+fn just_below(min: Version) -> Version {
+    if min.patch > 0 {
+        v(min.major, min.minor, min.patch - 1)
+    } else if min.minor > 0 {
+        v(min.major, min.minor - 1, 999)
+    } else {
+        v(min.major - 1, 999, 999)
+    }
+}
+
 /// A `node` exactly at the floor: the oldest one `doctor` reports `ok`.
 fn node_at_floor() -> Version {
     v(FLOOR, 0, 0)
@@ -261,11 +273,7 @@ fn wrangler_is_checked_against_the_compatibility_date_minimum() {
         (report, r.level, row)
     };
 
-    let below = if min.patch > 0 {
-        v(min.major, min.minor, min.patch - 1)
-    } else {
-        v(min.major, min.minor - 1, 9)
-    };
+    let below = just_below(min);
     let (report, level, row) =
         deploy(Fake::default().path_tool("wrangler", "/usr/bin/wrangler", Some(below)));
     assert_eq!(level, Level::Warn, "{}", row.detail);
@@ -291,6 +299,28 @@ fn wrangler_is_checked_against_the_compatibility_date_minimum() {
     assert!(
         !report.exit_nonzero(&only_deploy),
         "an old wrangler still deploys"
+    );
+    // --strict fails on the warning: in an otherwise all-green environment,
+    // the old wrangler alone turns it red, and one at the minimum doesn't.
+    let strict = DoctorOptions {
+        only: None,
+        strict: true,
+    };
+    let all_green_but = |wrangler: Version| {
+        let fake = Fake::default()
+            .path_tool("node", "/usr/bin/node", Some(node_at_floor()))
+            .path_tool("tsc", "/usr/bin/tsc", Some(v(5, 4, 2)))
+            .path_tool("bynkc-lsp", "/usr/bin/bynkc-lsp", Some(v(9, 9, 9)))
+            .path_tool("wrangler", "/usr/bin/wrangler", Some(wrangler));
+        doctor::diagnose(&fake, &bynkc_ok(Skew::Match), &ctx(false), &bare())
+    };
+    assert!(
+        !all_green_but(min).exit_nonzero(&strict),
+        "control: all green"
+    );
+    assert!(
+        all_green_but(below).exit_nonzero(&strict),
+        "--strict fails on an old wrangler"
     );
 
     for ok in [min, v(min.major, min.minor + 1, 0), v(min.major + 1, 0, 0)] {

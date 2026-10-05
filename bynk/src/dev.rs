@@ -437,10 +437,6 @@ fn collect_bynk_files(dir: &Path, excludes: &[PathBuf], visit: &mut dyn FnMut(&P
     }
 }
 
-/// The text `bynk dev` prints when the deploy pre-flight fails: a lead line plus
-/// doctor's own human report, so the remedy lines are identical to `bynk
-/// doctor`. Pure (no I/O) so this deterministic surface is pinned by a golden
-/// (§5), unlike the non-deterministic `wrangler dev` stream.
 /// #1732: the warning `bynk dev` prints before serving with a wrangler older
 /// than [`bynk_emit::WRANGLER_MIN`]. Its `workerd` refuses the pinned
 /// compatibility date outright, and wrangler's own error says nothing about
@@ -454,12 +450,17 @@ pub fn wrangler_age_notice(probe: &probe::Probe) -> Option<String> {
     Some(format!(
         "bynk: warning: wrangler {v} is older than {}, the first whose runtime serves \
          compatibility date {}; `wrangler dev` will refuse it. Upgrade with \
-         `npm install -g wrangler@4`.",
+         `{}`.",
         bynk_emit::WRANGLER_MIN,
-        bynk_emit::COMPATIBILITY_DATE
+        bynk_emit::COMPATIBILITY_DATE,
+        doctor::wrangler_upgrade_remedy(probe)
     ))
 }
 
+/// The text `bynk dev` prints when the deploy pre-flight fails: a lead line plus
+/// doctor's own human report, so the remedy lines are identical to `bynk
+/// doctor`. Pure (no I/O) so this deterministic surface is pinned by a golden
+/// (§5), unlike the non-deterministic `wrangler dev` stream.
 pub fn preflight_failure_message(report: &Report) -> String {
     format!(
         "bynk: environment not ready for `dev` — see below.\n\n{}",
