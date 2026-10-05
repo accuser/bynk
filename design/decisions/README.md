@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0434](0434-act-on-compiler-skew.md) | **Where `bynk` runs a second compiler, it acts on that compiler's skew** (v0.303.3) — `bynk test` and every `BYNK_BYNKC` override path warn on minor skew and refuse major skew unless allowed, using `doctor`'s classification | Accepted (v0.303.3) |
 | [0433](0433-diagnostic-recovery.md) | **Check per declaration, and treat a broken declaration's name as known** (v0.302) — Resolve-then-check runs per declaration rather than per unit, a declaration the parser skips registers its name, and failed bindings are error-typed, so one fault yields one diagnostic | Accepted (v0.302) |
 | [0432](0432-optional-context-brand.md) | **A context's rebrand of a `uses`-commons type carries an optional brand** (v0.301.1) — `T = __CommonsT & { readonly __ctxBrand?: "<ctx>" }` admits plain commons values and still keeps two contexts' views apart; supersedes the casts that bridged the required brand | Accepted (v0.301.1) |
 | [0431](0431-deterministic-platform-test-doubles.md) | **Platform capabilities get deterministic test doubles under `bynkc test`** (v0.301) — A consumed platform capability is a fixed, I/O-free double at the unit and integration tiers; `stub` layers over it per operation, and case-scoped stubs no longer leak | Accepted (v0.301) |
