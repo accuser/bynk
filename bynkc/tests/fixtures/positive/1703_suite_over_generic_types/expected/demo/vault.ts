@@ -6,9 +6,8 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError } f
 /**
  * #1703 review: a context exporting a generic type that another context
  * consumes, so the suite over the consumer aliases it from the consumed
- * context's namespace. Its service returns `Int`, not `Envelope[Int]`: a
- * cross-context call returning a generic type hits a separate codec bug in the
- * Workers output (filed as a follow-on), which the system tier would compile.
+ * context's namespace. Its service returns one across the boundary (#1736
+ * fixed the consumer's codec for that).
  */
 
 export interface Envelope<T> {
@@ -20,9 +19,8 @@ export const Envelope = {
 };
 
 export const open = {
-  async call(n: number, deps: {}): globalThis.Promise<number> {
-    const e = { item: n, note: "sealed" };
-    return e.item;
+  async call(n: number, deps: {}): globalThis.Promise<Envelope<number>> {
+    return { item: n, note: "sealed" };
   },
 };
 
@@ -31,7 +29,7 @@ export interface DemoVaultDeps {
 
 export function makeSurface(deps: DemoVaultDeps) {
   return {
-    async open(n: number): globalThis.Promise<number> {
+    async open(n: number): globalThis.Promise<Envelope<number>> {
       return open.call(n, deps);
     },
   };

@@ -1,0 +1,17 @@
+---
+#1736: a guard on the *argument* comparison. `Envelope[Int]` is not
+`Envelope[String]`, rejected pairwise at the applied arguments before any
+field is compared. The field-level comparison #1736 added is pinned by
+`1736_generic_boundary_field_mismatch`.
+---
+context demo.vault
+
+exports transparent { Envelope }
+
+type Envelope[T] = { item: T, note: String }
+
+service read {
+  on call(e: Envelope[String]) -> Effect[Int] {
+    e.item.length()
+  }
+}

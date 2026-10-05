@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "provides": {
+    "many": "2487ff1b622fbaa9",
+    "open": "57700891e7302936",
+    "read": "b797903bbb7dffed",
+    "readBack": "117e26b47336a282",
+    "settle": "d90380f9cd1937cf",
+    "wrapPlain": "93e4a0f8e9768f44"
+  },
+  "expects": {}
+}

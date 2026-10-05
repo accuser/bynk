@@ -17,7 +17,8 @@ export type Pair<A, B> = __CommonsPair<A, B> & { readonly __ctxBrand?: "demo.des
 
 export const check = {
   async call(n: number, deps: { env: { DEMO_VAULT: __ServiceBinding } }): globalThis.Promise<number> {
-    return __callService(deps.env.DEMO_VAULT, "open", ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(n), (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j), "demo.desk", "67d1924079d47559");
+    const e = await __callService(deps.env.DEMO_VAULT, "open", ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(n), __deserialise_Envelope_Int, "demo.desk", "57700891e7302936");
+    return e.item;
   },
 };
 
@@ -27,3 +28,29 @@ export const pairUp = {
     return p.first;
   },
 };
+
+export function __serialise_Envelope_Int(value: demo_vault.Envelope<number>): __JsonValue {
+  return {
+    item: ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(value.item),
+    note: value.note as __JsonValue,
+  };
+}
+
+export function __deserialise_Envelope_Int(json: __JsonValue, path: string = "$"): Result<demo_vault.Envelope<number>, __BoundaryError> {
+  if (typeof json !== "object" || json === null || globalThis.Array.isArray(json)) {
+    return Err({ kind: "StructuralMismatch", path, expected: "object", actual: typeof json });
+  }
+  const obj = json as { [k: string]: __JsonValue };
+  if (typeof obj["item"] !== "number") {
+    return Err({ kind: "StructuralMismatch", path: `${path}.item`, expected: "number", actual: typeof obj["item"] });
+  }
+  if (!globalThis.Number.isSafeInteger(obj["item"])) {
+    return Err({ kind: "StructuralMismatch", path: `${path}.item`, expected: "safe integer", actual: String(obj["item"]) });
+  }
+  const __item = obj["item"];
+  if (typeof obj["note"] !== "string") {
+    return Err({ kind: "StructuralMismatch", path: `${path}.note`, expected: "string", actual: typeof obj["note"] });
+  }
+  const __note = obj["note"];
+  return Ok({ item: __item, note: __note } as demo_vault.Envelope<number>);
+}

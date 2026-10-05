@@ -6,9 +6,8 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError, ty
 /**
  * #1703 review: a context exporting a generic type that another context
  * consumes, so the suite over the consumer aliases it from the consumed
- * context's namespace. Its service returns `Int`, not `Envelope[Int]`: a
- * cross-context call returning a generic type hits a separate codec bug in the
- * Workers output (filed as a follow-on), which the system tier would compile.
+ * context's namespace. Its service returns one across the boundary (#1736
+ * fixed the consumer's codec for that).
  */
 
 export interface Envelope<T> {
@@ -20,8 +19,33 @@ export const Envelope = {
 };
 
 export const open = {
-  async call(n: number, deps: {}): globalThis.Promise<number> {
-    const e = { item: n, note: "sealed" };
-    return e.item;
+  async call(n: number, deps: {}): globalThis.Promise<Envelope<number>> {
+    return { item: n, note: "sealed" };
   },
 };
+
+export function __serialise_Envelope_Int(value: Envelope<number>): __JsonValue {
+  return {
+    item: ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(value.item),
+    note: value.note as __JsonValue,
+  };
+}
+
+export function __deserialise_Envelope_Int(json: __JsonValue, path: string = "$"): Result<Envelope<number>, __BoundaryError> {
+  if (typeof json !== "object" || json === null || globalThis.Array.isArray(json)) {
+    return Err({ kind: "StructuralMismatch", path, expected: "object", actual: typeof json });
+  }
+  const obj = json as { [k: string]: __JsonValue };
+  if (typeof obj["item"] !== "number") {
+    return Err({ kind: "StructuralMismatch", path: `${path}.item`, expected: "number", actual: typeof obj["item"] });
+  }
+  if (!globalThis.Number.isSafeInteger(obj["item"])) {
+    return Err({ kind: "StructuralMismatch", path: `${path}.item`, expected: "safe integer", actual: String(obj["item"]) });
+  }
+  const __item = obj["item"];
+  if (typeof obj["note"] !== "string") {
+    return Err({ kind: "StructuralMismatch", path: `${path}.note`, expected: "string", actual: typeof obj["note"] });
+  }
+  const __note = obj["note"];
+  return Ok({ item: __item, note: __note } as Envelope<number>);
+}

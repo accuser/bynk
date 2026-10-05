@@ -10,7 +10,8 @@ consumes demo.vault as Vault
 
 service check {
   on call(n: Int) -> Effect[Int] {
-    Vault.open(n)
+    let e <- Vault.open(n)
+    e.item
   }
 }
 
