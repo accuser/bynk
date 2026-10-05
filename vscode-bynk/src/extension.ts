@@ -17,6 +17,7 @@ import {
 import {
   compareVersions,
   downloadServer,
+  expectedServerVersion,
   parseVersion,
   readServerVersion,
   resolveExistingServer,
@@ -307,17 +308,24 @@ async function reportNoServer(
 }
 
 /** Warn if the running server's version disagrees with the one this extension
- *  build expects. A server *older* than expected (most likely a stale
- *  `bynkc-lsp` on PATH — `resolveExistingServer` prefers PATH over the
- *  pinned/downloaded copy without comparing versions, #484) gets an
- *  actionable prompt, since it can silently mis-diagnose syntax the checker
- *  already accepts. A newer or otherwise-differing server just gets a note. */
+ *  build expects ({@link expectedServerVersion}: the pin for a downloaded server,
+ *  the extension's own version for one from PATH or the setting, #1673). A
+ *  server *older* than expected (most likely a stale `bynkc-lsp` on PATH —
+ *  `resolveExistingServer` prefers PATH over the pinned/downloaded copy without
+ *  comparing versions, #484) gets an actionable prompt, since it can silently
+ *  mis-diagnose syntax the checker already accepts. A newer or
+ *  otherwise-differing server just gets a note in the output channel: the
+ *  download remedy would only fetch an older one. */
 function checkVersionMatch(
   context: vscode.ExtensionContext,
   resolved: ResolvedServer,
 ): void {
   const reported = readServerVersion(resolved.path); // "bynkc-lsp 0.23.0"
-  const expected = serverVersion(context).replace(/^v/, ""); // "0.23.0"
+  const expected = expectedServerVersion(
+    resolved.source,
+    serverVersion(context),
+    context.extension.packageJSON.version as string,
+  ); // "0.23.0"
   if (!reported || reported.includes(expected)) return;
 
   output.appendLine(
@@ -349,6 +357,15 @@ function checkVersionMatch(
           );
         }
       });
+  } else if (isStale && !downloadIsNewer(context, reportedVer)) {
+    // #1673: a PATH server can be older than this extension build yet newer
+    // than the last shipped release the download fetches, so downloading would
+    // only go further back. Point at the PATH install instead.
+    void vscode.window.showWarningMessage(
+      `Bynk: language server is "${reported}" (${resolved.source}), older than the ` +
+        `${expected} this extension expects. Rebuild or reinstall that \`bynkc-lsp\`; ` +
+        "the downloadable server is older still.",
+    );
   } else if (isStale) {
     void vscode.window
       .showWarningMessage(
@@ -362,12 +379,18 @@ function checkVersionMatch(
           void startServer(context, { interactive: true, forceDownload: true });
         }
       });
-  } else {
-    void vscode.window.showWarningMessage(
-      `Bynk: language server is "${reported}" but this extension expects ${expected}. ` +
-        "Consider running “Bynk: Download Language Server”.",
-    );
   }
+  // A newer or otherwise-differing server: the version note above is all.
+}
+
+/** Whether the server a download would fetch (the pin) is newer than
+ *  `reported`, i.e. whether "Download Matching Server" actually helps. */
+function downloadIsNewer(
+  context: vscode.ExtensionContext,
+  reported: ReturnType<typeof parseVersion>,
+): boolean {
+  const pin = parseVersion(serverVersion(context));
+  return !!reported && !!pin && compareVersions(reported, pin) < 0;
 }
 
 async function stopClient(): Promise<void> {

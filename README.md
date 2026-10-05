@@ -58,6 +58,12 @@ cargo install --path bynk       # the `bynk` driver (doctor / new / dev / deploy
 cargo install --path bynk-lsp   # optional: the `bynkc-lsp` language server
 ```
 
+That builds `main`, which moves on with every merged increment. To build the
+last release instead, check out its tag (the newest `vX.Y.Z` on the
+[releases page](https://github.com/accuser/bynk/releases)) before installing.
+Before 1.0, a release is cut when a track of work retires ([release
+discipline](design/bynk-release-discipline.md)).
+
 `bynkc --help` lists the four compiler commands (`compile`, `check`, `fmt`,
 `test`); `bynk --help` lists the driver's (`doctor`, `dev`, `deploy`, `new`,
 `check`, `fmt`, `test`, `explain`).
@@ -86,7 +92,7 @@ or [Compile your first program](https://bynk-lang.org/book/tutorials/01-first-pr
 This is a Cargo workspace. The three user-facing tools — `bynkc`, `bynk`, and
 `bynk-lsp` — are front-ends over a layered set of library crates; every crate
 except `bynk-wasm`, `bynk-testkit`, `tree-sitter-bynk`'s Rust binding, `xtask`,
-and `fuzz` is published to crates.io at the workspace version. Each crate's README
+and `fuzz` is published to crates.io at each release. Each crate's README
 says where it sits in the layering.
 
 | Path | What it is | Published as |

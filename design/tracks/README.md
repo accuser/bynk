@@ -68,6 +68,10 @@ slices land.
    [`../archive/retired-tracks.md`](../archive/retired-tracks.md), and closes
    the spine (`Closes #<n>`). The decisions live on in the ADRs and the
    spec-in-place.
+6. **Release.** Before 1.0, a track's retirement is the release trigger
+   ([`../bynk-release-discipline.md`](../bynk-release-discipline.md), #1673):
+   once the retirement PR merges and `main` is green, the maintainer tags the
+   version on `main` (`vX.Y.Z`), and `release.yml` ships it.
 
 ## Active tracks
 
