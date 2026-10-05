@@ -1,0 +1,27 @@
+---
+#1737: below `system`, a case can't reach another context: no other context is
+stood up in-process, and `stub` doubles capabilities, not a context's services.
+Each crossing case is `bynk.tier.cross_context_needs_system`; the `local`
+case is the control and stays silent.
+---
+suite demo.desk
+
+case "a unit case through a service that crosses" {
+  let n <- check.call(5)
+  expect n == 5
+}
+
+case "an integration case through an agent that crosses" as integration {
+  let n <- tally.call(5)
+  expect n == 5
+}
+
+case "a unit case calling the consumed surface directly" {
+  let n <- Vault.open(5)
+  expect n == 5
+}
+
+case "a case that stays in the context" {
+  let n <- local.call(5)
+  expect n == 6
+}

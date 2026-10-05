@@ -1,0 +1,33 @@
+---
+#1737: a context that reaches another context from a service directly
+(`check`), and through an agent handler (`tally`, via `Counter.bump`); `local`
+never leaves the context.
+---
+context demo.desk
+
+consumes demo.vault as Vault
+
+agent Counter {
+  key id: String
+  store n: Cell[Int]
+
+  on call bump(k: Int) -> Effect[Int] {
+    Vault.open(k)
+  }
+}
+
+service check {
+  on call(n: Int) -> Effect[Int] {
+    Vault.open(n)
+  }
+}
+
+service tally {
+  on call(n: Int) -> Effect[Int] {
+    Counter("c").bump(n)
+  }
+}
+
+service local {
+  on call(n: Int) -> Effect[Int] { n + 1 }
+}

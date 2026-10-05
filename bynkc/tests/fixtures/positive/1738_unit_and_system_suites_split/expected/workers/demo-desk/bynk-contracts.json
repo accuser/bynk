@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "provides": {
+    "check": "c4ebec6946345787",
+    "local": "ca5abcc7749b379a"
+  },
+  "expects": {
+    "demo.vault": {
+      "open": "67d1924079d47559"
+    }
+  }
+}

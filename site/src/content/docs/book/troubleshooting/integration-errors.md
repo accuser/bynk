@@ -37,6 +37,49 @@ collaborators, one context, no wire) instead. If it should cross a boundary, mak
 sure the unit under test actually `consumes` the other context — participants are
 inferred from that graph, never listed.
 
+## `bynk.tier.cross_context_needs_system`
+
+```text
+[bynk.tier.cross_context_needs_system] case `"pays"` calls `check`, which calls `shop.payment.authorise` in another context, but it is a `unit`-tier case
+```
+
+**Cause:** a `unit` or `integration` case reaches another context's service:
+directly (`Payment.authorise(…)`), or through a service or agent handler of the
+unit under test that calls one. Below `system` a case runs in-process. No
+consumed context is stood up, and `stub` doubles *capabilities*, not a context's
+services, so there would be nothing on the other side of the call.
+
+**Fix:** move the case into a `system` suite, which stands the contexts up as
+Workers on either side of the real wire. There a service is addressed by its
+context path:
+
+```bynk,ignore
+suite shop.orders as system {
+  case "pays" {
+    let r <- shop.orders.check(100)
+    expect r is Ok(_)
+  }
+}
+```
+
+To test the unit's own logic in-process instead, drive a service that stays in
+the context.
+
+## `bynk.tier.mixed_system_suite`
+
+```text
+[bynk.tier.mixed_system_suite] case `"pays"` is `as system`, but other cases in its suite run below `system`
+```
+
+**Cause:** a suite mixes `system` cases with `unit` or `integration` ones. A
+`system` case runs against deployed Workers and addresses services by context
+path (`shop.orders.place(…)`), while a lower-tier case calls `place.call(…)`
+in-process, and one suite is emitted one way or the other, not both.
+
+**Fix:** keep a target's in-process cases and its `system` cases in separate
+suites, one `suite shop.orders { … }` and one `suite shop.orders as system { … }`
+(they may sit in separate files).
+
 ## `bynk.stub.not_a_seam`
 
 ```text

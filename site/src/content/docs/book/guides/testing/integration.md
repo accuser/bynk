@@ -12,30 +12,57 @@ of test**. There is **one body**; a tier only changes how much of it is real.
 | `integration` | real collaborators **within one context** | no |
 | `system` | contexts stood up as the Workers they deploy as | **yes** — the real serialise → JSON → deserialise edge |
 
-`unit` is the default and is **never written**. You reach for a higher tier by
-adding one word to the header — the body does not change.
+`unit` is the default and is **never written**. You reach for `integration` by
+adding one word to the header, and the body does not change. `system` is a
+suite of its own (see below).
 
-## One body, three tiers
+## One body: `unit` and `integration`
 
-Promotion changes only the header. The body is byte-for-byte identical at every
-tier:
+Between `unit` and `integration`, promotion changes only the header. The body is
+byte-for-byte identical:
 
 ```bynk,ignore
-case "a small order authorises end to end"                { … }  -- as unit (default)
-case "a small order authorises end to end" as integration { … }  -- real Payment, no wire
-case "a small order authorises end to end" as system      { … }  -- deployed Workers, real wire
+case "a small order prices with tax"                { … }  -- as unit (default)
+case "a small order prices with tax" as integration { … }  -- real collaborators, one context
 ```
 
 At `unit` a collaborator's provision is under your control (you may stub a seam
-with [`stub`](/book/reference/testing/#stub)). At `integration` and
-`system` the real collaborators run — so their own invariants and contracts run
+with [`stub`](/book/reference/testing/#stub)). At `integration` the real
+collaborators *within the context* run, so their own invariants and contracts run
 too. A green `unit` case that *fails* when promoted means a collaborator's
 invariant has caught a defect a stub was hiding, with **no new test code**.
+
+Neither tier crosses into **another context**. A consumed context isn't stood up
+in-process, and `stub` doubles capabilities, not a context's services, so a
+`unit` or `integration` case that reaches another context's service (directly,
+or through a service or agent handler that calls one) is
+[`bynk.tier.cross_context_needs_system`](/book/troubleshooting/integration-errors/#bynktiercross_context_needs_system).
+That flow belongs in a `system` suite.
+
+## `system`: a suite of its own
+
+A `system` case runs against the contexts stood up as the Workers they deploy
+as, so it addresses a service by its **context path** rather than
+`service.call(…)`:
+
+```bynk,ignore
+suite shop.orders as system {
+  case "a small order authorises end to end" {
+    let r <- shop.orders.place(100)   -- deployed Workers, real wire
+    expect r is Ok(_)
+  }
+}
+```
+
+A `system` suite holds `system` cases only. A suite that mixes them with `unit`
+or `integration` cases is
+[`bynk.tier.mixed_system_suite`](/book/troubleshooting/integration-errors/#bynktiermixed_system_suite):
+keep each target's in-process cases and its `system` cases in separate suites.
 
 ## `as` on the `suite` header
 
 `as` also sits on the `suite` header, setting a default every `case` inherits and
-may override — the case always wins:
+may override between `unit` and `integration` (the case wins):
 
 ```bynk,ignore
 suite checkout as integration {          -- every case defaults to integration…
@@ -44,7 +71,9 @@ suite checkout as integration {          -- every case defaults to integration�
 }
 ```
 
-A case's effective tier is `case.tier ?? suite.tier ?? unit`.
+A case's effective tier is `case.tier ?? suite.tier ?? unit`. `system` doesn't
+mix: a `suite … as system` can't hold a case that steps down, and a case can't
+step up to `system` beside lower-tier ones.
 
 Tiers are a **`case`-only** affordance. A `property` *generates* and does not
 promote, so a suite-level `as` binds its `case` members only; an `as` on a
@@ -54,8 +83,8 @@ To check a generated input end to end, promote *that witness* as a concrete
 
 ## Participants are inferred, not listed
 
-For `integration` and `system` the compiler already knows which collaborators are
-real: it walks the unit under test's transitive **`consumes` graph**. There is **no
+For `system` the compiler already knows which contexts to stand up: it walks the
+unit under test's transitive **`consumes` graph**. There is **no
 participant list to maintain** — an explicit list could only drift from the real
 dependency graph. (The old `suite integration "…" { wires … }` form and its
 `wires` clause are retired.)

@@ -1,0 +1,10 @@
+---
+#1737/#1738: the same target's `system` suite, kept separate, crossing into
+`demo.vault` over the real wire.
+---
+suite demo.desk as system {
+  case "a system case crosses into the consumed context" {
+    let n <- demo.desk.check(5)
+    expect n == 5
+  }
+}
