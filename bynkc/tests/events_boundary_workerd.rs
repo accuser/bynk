@@ -284,7 +284,7 @@ fn events_boundary_rejects_malformed_payload_and_envelope_on_workerd() {
     let log_path = tmp.join("wrangler.log");
     let out_log = fs::File::create(&log_path).unwrap();
     let err_log = out_log.try_clone().unwrap();
-    let child = wrangler::Wrangler::spawn(
+    let spawned = wrangler::Wrangler::spawn(
         base_command("npx")
             .args([
                 "-y",
@@ -299,7 +299,7 @@ fn events_boundary_rejects_malformed_payload_and_envelope_on_workerd() {
             .stdout(Stdio::from(out_log))
             .stderr(Stdio::from(err_log)),
     );
-    let child = match child {
+    let server = match spawned {
         Ok(c) => c,
         Err(_) => {
             if skip("could not launch npx") {
@@ -308,13 +308,12 @@ fn events_boundary_rejects_malformed_payload_and_envelope_on_workerd() {
             unreachable!()
         }
     };
-    let wrangler = child;
 
     let deadline = Instant::now() + Duration::from_secs(180);
     loop {
         if Instant::now() > deadline {
             let log = read_log(&log_path);
-            drop(wrangler);
+            drop(server);
             let _ = fs::remove_dir_all(&tmp);
             if skip(&format!(
                 "wrangler dev did not serve within the boot window (likely no \
@@ -388,7 +387,7 @@ fn events_boundary_rejects_malformed_payload_and_envelope_on_workerd() {
         "a well-formed event must actually reach and run the handler"
     );
 
-    drop(wrangler);
+    drop(server);
     let _ = fs::remove_dir_all(&tmp);
 }
 
@@ -455,7 +454,7 @@ fn events_boundary_field_default_cross_context_on_workerd() {
     let log_path = tmp.join("wrangler.log");
     let out_log = fs::File::create(&log_path).unwrap();
     let err_log = out_log.try_clone().unwrap();
-    let child = wrangler::Wrangler::spawn(
+    let spawned = wrangler::Wrangler::spawn(
         base_command("npx")
             .args([
                 "-y",
@@ -470,7 +469,7 @@ fn events_boundary_field_default_cross_context_on_workerd() {
             .stdout(Stdio::from(out_log))
             .stderr(Stdio::from(err_log)),
     );
-    let child = match child {
+    let server = match spawned {
         Ok(c) => c,
         Err(_) => {
             if skip("could not launch npx") {
@@ -479,13 +478,12 @@ fn events_boundary_field_default_cross_context_on_workerd() {
             unreachable!()
         }
     };
-    let wrangler = child;
 
     let deadline = Instant::now() + Duration::from_secs(180);
     loop {
         if Instant::now() > deadline {
             let log = read_log(&log_path);
-            drop(wrangler);
+            drop(server);
             let _ = fs::remove_dir_all(&tmp);
             if skip(&format!(
                 "wrangler dev did not serve within the boot window (likely no \
@@ -555,6 +553,6 @@ fn events_boundary_field_default_cross_context_on_workerd() {
         "a rejected payload must never reach the handler"
     );
 
-    drop(wrangler);
+    drop(server);
     let _ = fs::remove_dir_all(&tmp);
 }

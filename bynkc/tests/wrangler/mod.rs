@@ -41,11 +41,20 @@ pub const SPEC: &str = "wrangler@4";
 /// first, because wrangler traps it and stops its `workerd`s cleanly. SIGKILL
 /// follows only for what is still running after the grace period.
 ///
+/// One cost: the group is not the terminal's foreground group, so a Ctrl-C on
+/// a local `cargo test` no longer reaches the chain. The test process dies
+/// without running `Drop`, and the wrangler it started is left running. Before
+/// #1686 the SIGINT reached the whole chain directly. CI is unaffected. To
+/// clean up after an interrupted run, kill the `workerd`s whose cwd is under
+/// `/tmp/bynk-*`.
+///
 /// Off unix there are no process groups, and this falls back to
 /// `Child::kill`, as before.
 #[allow(dead_code)] // `wrangler_prewarm.rs` takes only `SPEC` from this module.
 pub struct Wrangler {
     child: std::process::Child,
+    /// `Some` once SIGTERM has been sent: whether `kill(1)` delivered it.
+    terminated: Option<bool>,
     stopped: bool,
 }
 
@@ -55,11 +64,17 @@ impl Wrangler {
     pub const GRACE: std::time::Duration = std::time::Duration::from_secs(10);
 
     /// Spawn `cmd` as the leader of a new process group.
+    ///
+    /// Stdin is null. A process outside the terminal's foreground group that
+    /// reads from the terminal, or changes its mode, is stopped by SIGTTIN or
+    /// SIGTTOU. Wrangler's hotkeys would do both on a TTY, which would freeze
+    /// it before it serves.
     pub fn spawn(cmd: &mut std::process::Command) -> std::io::Result<Self> {
         #[cfg(unix)]
         std::os::unix::process::CommandExt::process_group(cmd, 0);
         Ok(Wrangler {
-            child: cmd.spawn()?,
+            child: cmd.stdin(std::process::Stdio::null()).spawn()?,
+            terminated: None,
             stopped: false,
         })
     }
@@ -71,6 +86,20 @@ impl Wrangler {
         &mut self.child
     }
 
+    /// Send SIGTERM to the group without waiting. [`stop_all`] does this for
+    /// every wrangler before waiting on any, so their shutdowns overlap.
+    /// Idempotent.
+    pub fn request_stop(&mut self) {
+        if self.terminated.is_some() {
+            return;
+        }
+        #[cfg(unix)]
+        let sent = signal_group("TERM", &self.group());
+        #[cfg(not(unix))]
+        let sent = false;
+        self.terminated = Some(sent);
+    }
+
     /// Stop the whole group, giving wrangler [`Wrangler::GRACE`] to do it
     /// cleanly. Idempotent; `Drop` calls it.
     pub fn stop(&mut self) {
@@ -79,15 +108,18 @@ impl Wrangler {
 
     /// [`Wrangler::stop`] with an explicit grace period, so a test can reach
     /// the SIGKILL escalation without waiting the full ten seconds.
+    ///
+    /// When it returns, the group is gone, so a caller can check right away
+    /// that nothing survived. The exception is a failed `kill(1)`. That leaves
+    /// only `Child::kill`, which reaches the leader alone.
     pub fn stop_within(&mut self, grace: std::time::Duration) {
         if std::mem::replace(&mut self.stopped, true) {
             return;
         }
+        self.request_stop();
         #[cfg(unix)]
-        {
-            // The leader's pid is the group id: `process_group(0)` made it so.
-            let group = format!("-{}", self.child.id());
-            signal_group("TERM", &group);
+        if self.terminated == Some(true) {
+            let group = self.group();
             let deadline = std::time::Instant::now() + grace;
             // Reap the leader first: a zombie leader still counts as a member,
             // so the group would never look empty until it is reaped.
@@ -96,22 +128,62 @@ impl Wrangler {
             {
                 std::thread::sleep(std::time::Duration::from_millis(50));
             }
-            if self.child.try_wait().is_ok_and(|s| s.is_some()) {
-                while signal_group("0", &group) && std::time::Instant::now() < deadline {
-                    std::thread::sleep(std::time::Duration::from_millis(100));
-                }
+            let empty = self.child.try_wait().is_ok_and(|s| s.is_some())
+                && wait_until_empty(&group, deadline);
+            // Only a group that still has members gets SIGKILL. Once the group
+            // is empty and the leader reaped, its id can be reused by an
+            // unrelated group.
+            if !empty {
+                signal_group("KILL", &group);
+                let _ = self.child.wait();
+                // SIGKILL is delivered asynchronously. Wait until it has landed.
+                let soon = std::time::Instant::now() + std::time::Duration::from_secs(1);
+                wait_until_empty(&group, soon);
             }
-            // A no-op if the group is already empty.
-            signal_group("KILL", &group);
         }
         let _ = self.child.kill();
         let _ = self.child.wait();
+    }
+
+    /// The group's id in the form `kill(1)` takes. It is the leader's pid,
+    /// because `process_group(0)` made it so.
+    #[cfg(unix)]
+    fn group(&self) -> String {
+        format!("-{}", self.child.id())
     }
 }
 
 impl Drop for Wrangler {
     fn drop(&mut self) {
         self.stop();
+    }
+}
+
+/// Stop several wranglers. All of them are signalled before any is waited on,
+/// so the worst case is one grace period rather than one per wrangler, and
+/// none keeps serving while another shuts down.
+#[allow(dead_code)]
+pub fn stop_all(wranglers: &mut [Wrangler]) {
+    for w in wranglers.iter_mut() {
+        w.request_stop();
+    }
+    for w in wranglers.iter_mut() {
+        w.stop();
+    }
+}
+
+/// Poll until `group` has no members, or until `deadline`. `true` if it
+/// emptied.
+#[cfg(unix)]
+fn wait_until_empty(group: &str, deadline: std::time::Instant) -> bool {
+    loop {
+        if !signal_group("0", group) {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
     }
 }
 

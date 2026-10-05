@@ -56,7 +56,8 @@
 //!
 //! Teardown goes through [`wrangler::Wrangler`], which stops each `wrangler
 //! dev` together with the `workerd`s under it (#1686). Both are stopped when
-//! the guards drop, so a panicking assertion still tears them down.
+//! the guards drop, so a panicking assertion still tears them down. Both
+//! are signalled before either is waited on.
 
 use bynkc::BuildTarget;
 use std::fs;
@@ -198,6 +199,17 @@ fn skip(reason: &str) -> bool {
         panic!("{REQUIRE_ENV} is set but {reason}");
     }
     true
+}
+
+/// Both `wrangler dev`s, stopped together on every exit path, including a
+/// panicking assertion. [`wrangler::stop_all`] signals both before waiting on
+/// either, so the two shutdowns overlap.
+struct Wranglers(Vec<wrangler::Wrangler>);
+
+impl Drop for Wranglers {
+    fn drop(&mut self) {
+        wrangler::stop_all(&mut self.0);
+    }
 }
 
 /// A dependency-free HTTP client (the test crate has no HTTP dep): one
@@ -443,14 +455,14 @@ fn per_publisher_fifo_on_workerd() {
             if let Ok(c) = b {
                 stray.push(c);
             }
-            drop(stray);
+            drop(Wranglers(stray));
             if skip("could not launch npx for one or both workers") {
                 return;
             }
             unreachable!()
         }
     };
-    let wranglers = [pub_child, sub_child];
+    let wranglers = Wranglers(vec![pub_child, sub_child]);
 
     // Both processes must be answering before any trigger fires — a
     // not-yet-connected Service Binding must show up as a bounded retry in
