@@ -1,0 +1,25 @@
+---
+#1703 review: a context declaring both a capability and a generic type, so a
+suite that stubs the capability builds a stub class whose scope aliases the
+generic type.
+---
+context demo.ledger
+
+type Entry[T] = { value: T, memo: String }
+
+capability Audit {
+  fn note(e: Entry[Int]) -> Effect[()]
+}
+
+provides Audit = SilentAudit {
+  fn note(e: Entry[Int]) -> Effect[()] {
+    ()
+  }
+}
+
+service post {
+  on call(n: Int) -> Effect[Int] given Audit {
+    let _ <- Audit.note(Entry { value: n, memo: "posted" })
+    n
+  }
+}
