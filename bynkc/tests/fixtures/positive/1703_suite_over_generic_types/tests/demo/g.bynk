@@ -1,0 +1,21 @@
+suite demo.g
+
+case "a case that never mentions a generic type" {
+  expect one() == 1
+}
+
+case "a generic type the target declares" {
+  expect boxed(3).value == 3
+  expect tagged(4).body == 4
+}
+
+case "a generic type built in the case body" {
+  let b = Box { value: "x" }
+  expect b.value == "x"
+}
+
+case "a generic type reached through uses" {
+  let p = swapped(pairOf(7, "seven"))
+  expect p.first == "seven"
+  expect p.second == 7
+}

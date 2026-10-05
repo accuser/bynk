@@ -1,0 +1,10 @@
+---
+#1703: a suite over a context that rebrands a generic `uses` type. The test
+module aliases `Page<T>` from the context's namespace, with its parameter.
+---
+suite catalog
+
+case "a rebranded generic record built in a case" {
+  let p: Page[Item] = Page { items: [Item { name: "a" }, Item { name: "b" }], next: None }
+  expect p.items.length() == 2
+}
