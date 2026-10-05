@@ -8,6 +8,19 @@
 # doctests in the tree (nextest cannot run those), so nothing is lost — the
 # `doc_examples` gate is an ordinary `#[test]`, which nextest runs normally.
 
+# #1676: the `ci` profile is THE suite policy for every gate that runs the
+# workspace suite — ci.yml's Test suite legs (the PR gate), release.yml's test
+# job (the release gate) and release-bootstrap.yml's verify job. All three run
+# `cargo nextest run --workspace --locked --profile ci`, so the retry policy
+# below is decided here, once, not by which command a workflow happens to use.
+# They used to differ: the release ran `cargo test` (threads in a shared
+# process, no retry), stricter about flakes and weaker about isolation than the
+# PR gate it was meant to repeat.
+#
+# Decided: a FLAKY pass does not fail the release, as it does not fail a PR.
+# It is still listed in the run summary. If the release ever needs to be
+# zero-retry, add a named `[profile.release]` here and point release.yml at
+# it, rather than switching that workflow back to a different command.
 [profile.ci]
 # Surface every failure in one run rather than stopping at the first, so a
 # single red fixture doesn't mask the rest — mirrors the matrix's

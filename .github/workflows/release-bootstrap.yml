@@ -86,9 +86,15 @@ jobs:
           test "$ts" = "$ver" || { echo "::error::tree-sitter-bynk version $ts does not match workspace version $ver"; fail=1; }
           echo "::notice::token bootstrap from $GITHUB_REF_NAME — manifest version $ver"
           exit "$fail"
+      # #1676: the same harness and profile as ci.yml's and release.yml's test
+      # legs (.config/nextest.toml's `ci` profile), pinned the same way.
+      - uses: taiki-e/install-action@4cef1412cce204788f482e778a0b9187f9626a29 # v2
+        if: ${{ inputs.run_tests }}
+        with:
+          tool: nextest@0.9
       - name: Run tests
         if: ${{ inputs.run_tests }}
-        run: cargo test --workspace --locked
+        run: cargo nextest run --workspace --locked --profile ci
         env:
           BYNK_REQUIRE_TSC: "1"
 
