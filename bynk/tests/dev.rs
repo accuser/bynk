@@ -102,11 +102,15 @@ fn bless_or_assert(name: &str, actual: &str) {
 fn golden_preflight_deploy_missing() {
     // Node present, wrangler absent and not provisionable → the deploy
     // capability fails, so `bynk dev` bails before compiling and prints this.
-    let fake = Fake::default().path_tool("node", "/usr/bin/node", v(20, 0, 0));
+    let fake = Fake::default().path_tool(
+        "node",
+        "/usr/bin/node",
+        v(bynk_emit::NODE_MAJOR_FLOOR, 0, 0),
+    );
     let ctx = Context {
         project_root: None,
         in_repo: false,
-        node_floor: 18,
+        node_floor: bynk_emit::NODE_MAJOR_FLOOR,
     };
     let opts = DoctorOptions {
         only: Some(Capability::Deploy),

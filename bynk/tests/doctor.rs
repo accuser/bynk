@@ -68,6 +68,15 @@ impl Toolbox for Fake {
     }
 }
 
+/// #1674: the floor the shipped driver uses, not a copy of it, so these tests
+/// model the real floor and a bump can't leave them asserting a stale one.
+const FLOOR: u32 = bynk_emit::NODE_MAJOR_FLOOR;
+
+/// A `node` exactly at the floor: the oldest one `doctor` reports `ok`.
+fn node_at_floor() -> Version {
+    v(FLOOR, 0, 0)
+}
+
 fn v(major: u32, minor: u32, patch: u32) -> Version {
     Version {
         major,
@@ -122,7 +131,7 @@ fn ctx(in_repo: bool) -> Context {
     Context {
         project_root: None,
         in_repo,
-        node_floor: 18,
+        node_floor: FLOOR,
     }
 }
 
@@ -212,7 +221,7 @@ fn bare_compile_only_env_exits_zero_with_test_dev_flagged() {
 #[test]
 fn everything_present_is_all_green_exit_zero() {
     let fake = Fake::default()
-        .path_tool("node", "/usr/bin/node", Some(v(20, 0, 0)))
+        .path_tool("node", "/usr/bin/node", Some(node_at_floor()))
         .path_tool("tsc", "/usr/bin/tsc", Some(v(5, 4, 2)))
         .path_tool("wrangler", "/usr/bin/wrangler", Some(v(3, 90, 0)))
         .path_tool("bynkc-lsp", "/usr/bin/bynkc-lsp", Some(v(9, 9, 9)));
@@ -224,7 +233,7 @@ fn everything_present_is_all_green_exit_zero() {
 #[test]
 fn only_deploy_without_wrangler_exits_nonzero() {
     // No wrangler, no npx → truly cannot deploy.
-    let fake = Fake::default().path_tool("node", "/usr/bin/node", Some(v(20, 0, 0)));
+    let fake = Fake::default().path_tool("node", "/usr/bin/node", Some(node_at_floor()));
     let report = doctor::diagnose(&fake, &bynkc_ok(Skew::Match), &ctx(false), &bare());
     let opts = DoctorOptions {
         only: Some(Capability::Deploy),
@@ -241,7 +250,7 @@ fn strict_escalates_optional_only_gap() {
     // Everything an end user needs is present; only the optional editor LSP is
     // missing. Bare → 0; --strict → non-zero.
     let fake = Fake::default()
-        .path_tool("node", "/usr/bin/node", Some(v(20, 0, 0)))
+        .path_tool("node", "/usr/bin/node", Some(node_at_floor()))
         .path_tool("tsc", "/usr/bin/tsc", Some(v(5, 4, 2)))
         .path_tool("wrangler", "/usr/bin/wrangler", Some(v(3, 90, 0)));
     let report = doctor::diagnose(&fake, &bynkc_ok(Skew::Match), &ctx(false), &bare());
@@ -260,7 +269,7 @@ fn in_process_compile_floor_is_always_ok() {
     // compile floor is always satisfiable — a missing *external* bynkc is no
     // longer a failure (the driver doesn't shell it). Compile is ok, bare.
     let fake = Fake::default()
-        .path_tool("node", "/usr/bin/node", Some(v(20, 0, 0)))
+        .path_tool("node", "/usr/bin/node", Some(node_at_floor()))
         .path_tool("tsc", "/usr/bin/tsc", Some(v(5, 4, 2)));
     let report = doctor::diagnose(&fake, &bynkc_missing(), &ctx(false), &bare());
     assert_eq!(cap(&report, Capability::Compile).level, Level::Ok);
@@ -272,7 +281,7 @@ fn broken_override_fails_even_bare() {
     // state left: the user explicitly asked for an external compiler and it
     // isn't there. Fails even bare.
     let fake = Fake::default()
-        .path_tool("node", "/usr/bin/node", Some(v(20, 0, 0)))
+        .path_tool("node", "/usr/bin/node", Some(node_at_floor()))
         .path_tool("tsc", "/usr/bin/tsc", Some(v(5, 4, 2)));
     let report = doctor::diagnose(&fake, &bynkc_override_missing(), &ctx(false), &bare());
     assert_eq!(cap(&report, Capability::Compile).level, Level::Fail);
@@ -309,7 +318,7 @@ fn npx_provisionable_runner_is_warn_not_ok() {
     // tsc/tsx only via npx → test capability is available but flagged (never a
     // green "ok"), and --strict escalates it.
     let fake = Fake::default()
-        .path_tool("node", "/usr/bin/node", Some(v(20, 0, 0)))
+        .path_tool("node", "/usr/bin/node", Some(node_at_floor()))
         .with_npx();
     let report = doctor::diagnose(&fake, &bynkc_ok(Skew::Match), &ctx(false), &bare());
     assert_eq!(cap(&report, Capability::Test).level, Level::Warn);
@@ -323,7 +332,7 @@ fn npx_provisionable_runner_is_warn_not_ok() {
 #[test]
 fn only_filter_scopes_probes() {
     // `--only test` must not probe Cloudflare/editor at all.
-    let fake = Fake::default().path_tool("node", "/usr/bin/node", Some(v(20, 0, 0)));
+    let fake = Fake::default().path_tool("node", "/usr/bin/node", Some(node_at_floor()));
     let opts = DoctorOptions {
         only: Some(Capability::Test),
         strict: false,
@@ -337,12 +346,41 @@ fn only_filter_scopes_probes() {
 // Pinned output goldens (--format short / json)
 // ---------------------------------------------------------------------------
 
+/// #1674: a `node` below the floor is reported, as a warning with the floor in
+/// its detail, on every capability that needs Node — not passed as `ok`.
+#[test]
+fn node_below_the_floor_warns() {
+    let fake = Fake::default()
+        .path_tool("node", "/usr/bin/node", Some(v(FLOOR - 2, 11, 0)))
+        .path_tool("tsc", "/usr/bin/tsc", Some(v(5, 4, 2)))
+        .path_tool("wrangler", "/usr/bin/wrangler", Some(v(4, 0, 0)));
+    let report = doctor::diagnose(&fake, &bynkc_ok(Skew::Match), &ctx(false), &bare());
+    for c in [Capability::Test, Capability::Deploy] {
+        let r = cap(&report, c);
+        assert_eq!(r.level, Level::Warn, "{c:?} with a below-floor node");
+        let detail = format!("v{}.11.0 below floor (≥ {FLOOR})", FLOOR - 2);
+        assert!(
+            r.rows.iter().any(|row| row.detail == detail),
+            "{c:?} names the floor: {:?}",
+            r.rows
+        );
+    }
+    // At the floor, the same environment is all green.
+    let fake = Fake::default()
+        .path_tool("node", "/usr/bin/node", Some(node_at_floor()))
+        .path_tool("tsc", "/usr/bin/tsc", Some(v(5, 4, 2)))
+        .path_tool("wrangler", "/usr/bin/wrangler", Some(v(4, 0, 0)));
+    let report = doctor::diagnose(&fake, &bynkc_ok(Skew::Match), &ctx(false), &bare());
+    assert_eq!(cap(&report, Capability::Test).level, Level::Ok);
+    assert_eq!(cap(&report, Capability::Deploy).level, Level::Ok);
+}
+
 /// A fixed, mixed environment: compile ok, test ok, deploy provisionable-only
 /// (warn), editor missing (note). Driver/compiler versions are pinned to a
 /// sentinel so the goldens survive version bumps.
 fn golden_report() -> doctor::Report {
     let fake = Fake::default()
-        .path_tool("node", "/usr/bin/node", Some(v(20, 0, 0)))
+        .path_tool("node", "/usr/bin/node", Some(node_at_floor()))
         .path_tool("tsc", "/usr/bin/tsc", Some(v(5, 4, 2)))
         .with_npx(); // wrangler provisionable, not installed
     let mut report = doctor::diagnose(&fake, &bynkc_ok(Skew::Match), &ctx(false), &bare());

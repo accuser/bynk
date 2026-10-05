@@ -569,25 +569,35 @@ fn embedded_runtime_passes_tsc_strict_standalone() {
 fn embedded_runtime_strips_types_under_node() {
     // Node gained `--experimental-strip-types` in 22.6; older nodes can't run the
     // check. Skip (loudly under the CI gate) when node is absent or too old.
-    let node_ok = Command::new("node")
+    // The detected `node --version` (`None` when `node` is absent or its
+    // version unparseable), so a refusal says which of those it was.
+    let node_version: Option<(u32, u32, String)> = Command::new("node")
         .arg("--version")
         .output()
         .ok()
         .and_then(|o| {
-            let v = String::from_utf8_lossy(&o.stdout);
-            let v = v.trim().trim_start_matches('v');
-            let mut it = v.split('.');
+            let raw = String::from_utf8_lossy(&o.stdout).trim().to_string();
+            let mut it = raw.trim_start_matches('v').split('.');
             let major: u32 = it.next()?.parse().ok()?;
             let minor: u32 = it.next()?.parse().ok()?;
-            Some(major > 22 || (major == 22 && minor >= 6))
-        })
-        .unwrap_or(false);
+            Some((major, minor, raw))
+        });
+    let node_ok = node_version
+        .as_ref()
+        .is_some_and(|(major, minor, _)| *major > 22 || (*major == 22 && *minor >= 6));
     if !node_ok {
         // #1671: ADR 0136's strip-only invariant is a gate, so under
         // `BYNK_REQUIRE_TSC` a missing or too-old Node fails rather than skips.
         // CI's `Test suite` legs run Node 22, so they always reach the check;
         // only a local run without that Node skips, and says so.
-        let reason = "`node` (>= 22.6, for --experimental-strip-types) is not on PATH";
+        let reason = match &node_version {
+            Some((_, _, raw)) => {
+                format!("`node` is {raw}, below the 22.6 needed for --experimental-strip-types")
+            }
+            None => "`node` (>= 22.6, for --experimental-strip-types) is not on PATH, or its \
+                     version could not be read"
+                .to_string(),
+        };
         if require::is_required(REQUIRE_ENV) {
             panic!("{REQUIRE_ENV} is set but {reason} — refusing to skip the strip-types check");
         }
