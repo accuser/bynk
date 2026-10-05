@@ -60,9 +60,11 @@ newer one. `bynkc test --inspect` checks its own minor floor on top of that: Nod
 
 The emitted TypeScript is verified under **TypeScript 5** (the oldest supported
 major) and **7** (the current one, what `npm install -g typescript` installs). A
-`tsc` outside that range is a warning: below 5 as `below floor (≥ 5)`, and above 7
-as `untested (verified up to 7)`, since nobody has checked the emitted output
-under it yet. The fix `doctor` suggests is `npm install -g typescript@7`. `tsx`
+`tsc` below 5 is a warning, `below floor (≥ 5)`, with the fix
+`npm install -g typescript@7`. A `tsc` newer than 7 is reported as
+`untested (verified up to 7)` but stays `ok`: it says the emitted output hasn't
+been checked under that major yet, not that anything is wrong. So
+`bynk doctor --strict` doesn't fail the day a new TypeScript major ships. `tsx`
 also satisfies the requirement, but it only runs the tests: it doesn't
 type-check them.
 

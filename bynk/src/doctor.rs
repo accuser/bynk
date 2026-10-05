@@ -322,9 +322,13 @@ fn detect_runner(tb: &dyn Toolbox, root: Option<&std::path::Path>) -> Row {
         "npm install -g typescript@{tested} (or `npm install -g tsx`, which runs tests without type-checking)"
     );
     match best {
-        // #1672: a `tsc` outside the verified majors is reported, not passed as
-        // `ok`: below the floor it is unsupported, and above the tested major
-        // nobody has checked the emitted output under it yet.
+        // #1672: a `tsc` below the verified floor is unsupported, a real defect
+        // in this environment, so it warns. One above the tested major is
+        // *reported* as untested but stays `ok`: it is a statement about this
+        // repo's verification coverage, not a fault the user has, and a
+        // warning would turn `doctor --strict` red for everyone the day a new
+        // TypeScript major ships, with advice to downgrade a likely-working
+        // toolchain.
         Some(p) if p.is_present() && p.tool == "tsc" => {
             let detail = format!("{} {}", p.tool, present_detail(p));
             match p.version.map(|v| v.major) {
@@ -336,11 +340,9 @@ fn detect_runner(tb: &dyn Toolbox, root: Option<&std::path::Path>) -> Row {
                 },
                 Some(major) if major > tested => Row {
                     label: "tsc | tsx".into(),
-                    level: Level::Warn,
+                    level: Level::Ok,
                     detail: format!("{detail}, untested (verified up to {tested})"),
-                    remedy: Some(format!(
-                        "npm install -g typescript@{tested} for the verified major"
-                    )),
+                    remedy: None,
                 },
                 _ => Row {
                     label: "tsc | tsx".into(),

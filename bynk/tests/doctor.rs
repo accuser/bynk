@@ -375,12 +375,13 @@ fn node_below_the_floor_warns() {
     assert_eq!(cap(&report, Capability::Deploy).level, Level::Ok);
 }
 
-/// #1672: `tsc` is checked against the verified TypeScript majors — below the
-/// floor it warns, above the tested major it warns as untested, and both
-/// verified majors (and everything between) are `ok`. `tsx` type-checks
+/// #1672: `tsc` is checked against the verified TypeScript majors. Below the
+/// floor it warns. Above the tested major it is reported as untested but stays
+/// `ok`, so `doctor --strict` does not go red the day a new major ships. Both
+/// verified majors (and everything between) are plain `ok`. `tsx` type-checks
 /// nothing, so it carries no TypeScript version to check.
 #[test]
-fn tsc_outside_the_verified_majors_warns() {
+fn tsc_is_checked_against_the_verified_majors() {
     let floor = bynk_emit::TYPESCRIPT_MAJOR_FLOOR;
     let tested = bynk_emit::TYPESCRIPT_MAJOR_TESTED;
     let test_row = |tsc: Version| {
@@ -414,18 +415,29 @@ fn tsc_outside_the_verified_majors_warns() {
     );
 
     let (level, row) = test_row(v(tested + 1, 0, 0));
-    assert_eq!(level, Level::Warn);
+    assert_eq!(level, Level::Ok, "untested is a report, not a fault");
     assert!(
         row.detail
             .ends_with(&format!("untested (verified up to {tested})")),
         "{}",
         row.detail
     );
+    assert_eq!(row.remedy, None, "no advice to downgrade a working tsc");
 
     for ok in [v(floor, 0, 0), v(tested, 0, 2)] {
         let (level, row) = test_row(ok);
         assert_eq!(level, Level::Ok, "{}", row.detail);
+        assert!(!row.detail.contains("untested"), "{}", row.detail);
     }
+
+    // `tsc` is the runner whenever it is present (`bynkc test` prefers it), so a
+    // below-floor `tsc` still warns even when a healthy `tsx` is installed too.
+    let fake = Fake::default()
+        .path_tool("node", "/usr/bin/node", Some(node_at_floor()))
+        .path_tool("tsc", "/usr/bin/tsc", Some(v(floor - 1, 9, 0)))
+        .path_tool("tsx", "/usr/bin/tsx", Some(v(4, 19, 0)));
+    let report = doctor::diagnose(&fake, &bynkc_ok(Skew::Match), &ctx(false), &bare());
+    assert_eq!(cap(&report, Capability::Test).level, Level::Warn);
 
     // `tsx` alone: present, no TypeScript version to judge.
     let fake = Fake::default()
