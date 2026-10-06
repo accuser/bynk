@@ -94,11 +94,32 @@ fn check_file(path: &Path, opts: &FormatOptions) -> Result<(), String> {
     Ok(())
 }
 
+/// Fixtures whose source the formatter must refuse, with the reason. #1664:
+/// an orphaned `---` block is refused with `bynk.fmt.comment_loss` rather than
+/// deleted, and 308 exists to carry one. Each entry is asserted to refuse, so
+/// the list can't outlive its reason.
+const REFUSED: &[&str] = &["308_orphan_doc_block_warns"];
+
 #[test]
 fn round_trip_positive_corpus() {
     let opts = FormatOptions::default();
     let mut failures = Vec::new();
     for dir in fixture_dirs() {
+        let name = dir.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+        if REFUSED.contains(&name) {
+            for f in collect_bynk_files(&dir.join("src")) {
+                let source = fs::read_to_string(&f).unwrap();
+                match format_source(&source, &opts) {
+                    Err(e) if e.errors[0].category == "bynk.fmt.comment_loss" => {}
+                    other => failures.push(format!(
+                        "{} is listed in REFUSED but formatted to {:?}",
+                        f.display(),
+                        other.map_err(|e| e.errors[0].category)
+                    )),
+                }
+            }
+            continue;
+        }
         let input = dir.join("input.bynk");
         let src_dir = dir.join("src");
         if input.exists() {

@@ -263,7 +263,7 @@ bynk fmt <INPUTS>... [--check] [--indent tab|spaces] [--indent-width N] [--max-l
 
 | Argument | Default | Meaning |
 |---|---|---|
-| `INPUTS` | *(required)* | Files to format. Pass `-` to read from stdin and write the formatted result to stdout. |
+| `INPUTS` | *(required)* | Files or directories to format. A directory formats the `.bynk` files [`bynk check`](#bynk-check) reads for it: a project root's `[paths] include` trees minus `exclude`, or any other directory walked recursively (hidden directories skipped). Pass `-` to read from stdin and write the formatted result to stdout. |
 | `--check` | off | Report files that are not already canonically formatted **without writing changes**. Exits non-zero if any file would change. For CI. |
 | `--indent` | `[fmt] indent`, else `tab` | Indent with tabs or spaces. Tabs are the default so each reader sets their own width in their editor. |
 | `--indent-width N` | `[fmt] indent_width`, else `2` | Spaces per nesting level. Rejected when the run resolves to tabs, where it would have no effect. |
@@ -273,7 +273,16 @@ bynk fmt <INPUTS>... [--check] [--indent tab|spaces] [--indent-width N] [--max-l
 
 **Behaviour** — each file is formatted and rewritten only when it changes; a file
 already canonical is left untouched. A file that does not parse is reported and
-skipped; the other inputs are still processed.
+skipped; the other inputs are still processed. A file named more than once,
+directly or through a directory, is formatted once; a directory holding no
+`.bynk` file is an error, so a mistyped path cannot pass `--check`.
+
+The formatter never deletes your text. When a comment or a `---` documentation
+block has nowhere to go in the formatted output, the file is left unchanged and
+reported with `bynk.fmt.comment_loss`. A `---` block separated from the next
+declaration by a blank line attaches to nothing (`bynk check` warns
+`bynk.parse.orphan_doc_block`); remove the blank line to attach it, or make it a
+`--` comment.
 
 **Where the style comes from** — three layers, each overriding the one before:
 the canonical defaults, then the project's `[fmt]` section in

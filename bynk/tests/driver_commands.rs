@@ -952,3 +952,148 @@ fn test_discovery_delegates_and_matches_bynkc() {
         "delegated discovery document must match bynkc's byte-for-byte"
     );
 }
+
+// ---------------------------------------------------------------------------
+// bynk fmt <directory> (#1753)
+// ---------------------------------------------------------------------------
+
+/// A non-canonical commons named `name`: two spaces after `fn`.
+fn messy(name: &str) -> String {
+    format!("commons {name}\n\nfn  f() -> Int {{ 1 }}\n")
+}
+
+/// A project whose `[paths]` include `src` but exclude `src/vendor`, with a
+/// non-canonical file in each place `fmt` might look: two inside `include`,
+/// one under `exclude`, and one outside `include` altogether.
+fn layout_project(name: &str) -> PathBuf {
+    let dir = scratch(name);
+    write(
+        &dir.join("bynk.toml"),
+        "[project]\nname = \"p\"\n\n[paths]\ninclude = [\"src\"]\nexclude = [\"src/vendor\"]\n",
+    );
+    write(&dir.join("src/demo/a.bynk"), &messy("demo.a"));
+    write(&dir.join("src/demo/b.bynk"), &messy("demo.b"));
+    write(&dir.join("src/vendor/v.bynk"), &messy("vendor.v"));
+    write(&dir.join("scripts/s.bynk"), &messy("scripts.s"));
+    dir
+}
+
+/// The files `--check` reported as non-canonical, as paths relative to the
+/// directory `fmt` ran in.
+fn reported(err: &str) -> Vec<PathBuf> {
+    let mut files: Vec<PathBuf> = err
+        .lines()
+        .filter_map(|l| l.strip_suffix(" is not canonically formatted"))
+        .filter_map(|l| l.split_once("fmt: ").map(|(_, p)| p))
+        .map(|p| {
+            let p = Path::new(p);
+            p.strip_prefix(".").unwrap_or(p).to_path_buf()
+        })
+        .collect();
+    files.sort();
+    files
+}
+
+/// `fmt --check <project-root>` checks exactly the files `check <project-root>`
+/// reads: the `include` trees, minus `exclude`. Every file is non-canonical, so
+/// the reported set *is* the checked set.
+#[test]
+fn fmt_check_on_a_project_root_covers_what_check_reads() {
+    let dir = layout_project("fmt-dir-project");
+    let (code, _out, err) = run_bynk_in(&dir, &["fmt", "--check", "."]);
+    assert_eq!(
+        code, 1,
+        "non-canonical files must fail --check; stderr:\n{err}"
+    );
+    let checked: Vec<PathBuf> = bynk_driver::project_source_files(&dir)
+        .unwrap()
+        .into_iter()
+        .map(|p| p.strip_prefix(&dir).unwrap().to_path_buf())
+        .collect();
+    assert_eq!(
+        checked,
+        vec![
+            PathBuf::from("src/demo/a.bynk"),
+            PathBuf::from("src/demo/b.bynk")
+        ],
+        "the project's own file set"
+    );
+    assert_eq!(reported(&err), checked, "stderr:\n{err}");
+}
+
+/// Without `--check`, a directory argument rewrites what it covers and leaves
+/// the excluded and out-of-`include` files alone.
+#[test]
+fn fmt_on_a_project_root_rewrites_only_its_files() {
+    let dir = layout_project("fmt-dir-write");
+    let (code, _out, err) = run_bynk_in(&dir, &["fmt", "."]);
+    assert_eq!(code, 0, "fmt should succeed; stderr:\n{err}");
+    for (file, name) in [("src/demo/a.bynk", "demo.a"), ("src/demo/b.bynk", "demo.b")] {
+        assert_eq!(
+            std::fs::read_to_string(dir.join(file)).unwrap(),
+            canonical(&messy(name)),
+            "{file} is in `include`, so it is rewritten"
+        );
+    }
+    for (file, name) in [
+        ("src/vendor/v.bynk", "vendor.v"),
+        ("scripts/s.bynk", "scripts.s"),
+    ] {
+        assert_eq!(
+            std::fs::read_to_string(dir.join(file)).unwrap(),
+            messy(name),
+            "{file} is excluded or outside `include`, so it is untouched"
+        );
+    }
+}
+
+/// A directory that is not a project root is walked recursively; a file named
+/// both directly and through its directory is checked once.
+#[test]
+fn fmt_check_walks_a_plain_directory_once_per_file() {
+    let dir = scratch("fmt-dir-plain");
+    write(&dir.join("lib/x.bynk"), &messy("x"));
+    write(&dir.join("lib/deep/y.bynk"), &messy("y"));
+    let (code, _out, err) = run_bynk_in(&dir, &["fmt", "--check", "lib", "lib/x.bynk"]);
+    assert_eq!(code, 1, "stderr:\n{err}");
+    assert_eq!(
+        reported(&err),
+        vec![
+            PathBuf::from("lib/deep/y.bynk"),
+            PathBuf::from("lib/x.bynk")
+        ],
+        "stderr:\n{err}"
+    );
+}
+
+/// A directory holding no `.bynk` file is an error, so a mistyped path can't
+/// pass `--check` green.
+#[test]
+fn fmt_on_a_directory_with_no_sources_fails() {
+    let dir = scratch("fmt-dir-empty");
+    std::fs::create_dir_all(dir.join("empty")).unwrap();
+    let (code, _out, err) = run_bynk_in(&dir, &["fmt", "--check", "empty"]);
+    assert_eq!(code, 1, "stderr:\n{err}");
+    assert!(
+        err.contains("no `.bynk` files under `empty`"),
+        "stderr:\n{err}"
+    );
+}
+
+/// `bynkc fmt` shares `run_fmt`, so a directory behaves the same through it.
+#[test]
+fn fmt_directory_matches_bynkc_when_present() {
+    let Some(bynkc) = bynkc_sibling() else {
+        eprintln!("skipping: sibling `bynkc` not built");
+        return;
+    };
+    let dir = layout_project("fmt-dir-parity");
+    let ours = run_bynk_in(&dir, &["fmt", "--check", "."]);
+    let theirs = run_in(&bynkc, &dir, &["fmt", "--check", "."], None);
+    assert_eq!(ours.0, theirs.0, "exit codes differ");
+    assert_eq!(
+        ours.2.replace("bynk fmt:", "fmt:"),
+        theirs.2.replace("bynkc fmt:", "fmt:"),
+        "stderr differs"
+    );
+}
