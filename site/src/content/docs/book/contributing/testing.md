@@ -77,9 +77,12 @@ Scope it to a specific test when you only mean to bless one thing.
 ## The `tsc` verification gate
 
 `tests/tsc_verify.rs` (`emitted_typescript_passes_tsc_strict`) compiles every
-project-form positive fixture and runs `tsc --strict --noEmit` over the output.
-It is a backstop for emitter bugs that produce TypeScript which round-trips our
-own comparison but does not actually type-check.
+positive fixture and runs `tsc --strict --noEmit` over the output. A
+single-file fixture (`input.bynk`) is staged beside the runtime it imports, so
+it is checked like a project. It is a backstop for emitter bugs that produce
+TypeScript which round-trips our own comparison but does not actually
+type-check. A golden matching the emitter byte for byte proves nothing about
+whether either one type-checks.
 
 It needs `tsc` on `PATH`, or falls back to `npx -p typescript@7 tsc`. CI runs it,
 and the examples' `tsc --strict` check, under both TypeScript majors the output
