@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0436](0436-bynk-dev-sweeps-its-worker-dirs.md) | **`bynk dev` stops leftover processes by process group and worker-dir cwd** (v0.306.1) — Teardown sweeps the shared group for processes under the build's worker dirs, rather than giving each wrangler its own group | Accepted (v0.306.1) |
 | [0435](0435-project-path-partial-parse.md) | **The project path checks a partially-parsed file's surviving declarations** (v0.306) — The parse cache keeps the recovering parse beside a strict failure, for diagnostics only; skipped declarations are known names across the files that can see them | Accepted (v0.306) |
 | [0434](0434-act-on-compiler-skew.md) | **Where `bynk` runs a second compiler, it acts on that compiler's skew** (v0.303.3) — `bynk test` and every `BYNK_BYNKC` override path warn on minor skew and refuse major skew unless allowed, using `doctor`'s classification | Accepted (v0.303.3) |
 | [0433](0433-diagnostic-recovery.md) | **Check per declaration, and treat a broken declaration's name as known** (v0.302) — Resolve-then-check runs per declaration rather than per unit, a declaration the parser skips registers its name, and failed bindings are error-typed, so one fault yields one diagnostic | Accepted (v0.302) |
