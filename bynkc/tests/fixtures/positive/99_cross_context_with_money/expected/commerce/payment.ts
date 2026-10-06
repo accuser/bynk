@@ -27,10 +27,10 @@ export const authorise = {
   },
 };
 
-export interface CommercePaymentDeps {
+export interface __CommercePaymentDeps {
 }
 
-export function makeSurface(deps: CommercePaymentDeps) {
+export function __makeSurface(deps: __CommercePaymentDeps) {
   return {
     async authorise(amount: Money): globalThis.Promise<Result<Token, number>> {
       return authorise.call(amount, deps);

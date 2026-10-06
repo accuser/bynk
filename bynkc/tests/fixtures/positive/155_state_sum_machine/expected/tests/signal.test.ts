@@ -25,7 +25,7 @@ function __bynkShow(v: unknown): string {
   try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
-function makeTestDeps() {
+function __makeTestDeps() {
   return {  };
 }
 
@@ -33,7 +33,7 @@ function makeTestDeps() {
 async function test_a_written_colour_reads_back_after_a_reload() {
   try {
     signal.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Light, Signal, __makeSignal } = signal;
     type Light = signal.Light;
     await __makeSignal("s").turnGreen(deps);

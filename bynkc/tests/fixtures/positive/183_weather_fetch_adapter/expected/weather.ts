@@ -26,5 +26,5 @@ export interface Weather {
   current(city: string): globalThis.Promise<Result<Report, WeatherError>>;
 }
 
-export const WeatherToken: symbol = globalThis.Symbol("Weather");
+export const __WeatherToken: symbol = globalThis.Symbol("Weather");
 

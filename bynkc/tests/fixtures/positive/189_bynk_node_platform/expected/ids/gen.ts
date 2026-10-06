@@ -21,12 +21,12 @@ export const stamp = {
   },
 };
 
-export interface IdsGenDeps {
+export interface __IdsGenDeps {
   readonly Clock: bynk.Clock;
   readonly Secrets: bynk.Secrets;
 }
 
-export function makeSurface(deps: IdsGenDeps) {
+export function __makeSurface(deps: __IdsGenDeps) {
   return {
     async stamp(): globalThis.Promise<number> {
       return stamp.call(deps);

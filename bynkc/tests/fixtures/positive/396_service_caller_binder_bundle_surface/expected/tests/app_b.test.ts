@@ -25,14 +25,14 @@ function __bynkShow(v: unknown): string {
   try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
-function makeTestDeps() {
+function __makeTestDeps() {
   return {  };
 }
 
 // case tier: unit
 async function test_whoami_reads_a_caller_identity_at_the_unit_tier() {
   try {
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { whoami } = app_b;
     const r = await whoami.call("ping", { ...deps, identity: ("app.a" as any) });
     if (!(r.tag === "Ok" && r.value === "app.a")) { throw __bynkExpectFailure("tests/whoami.test.bynk:4:12", 136, 152, "expect r is Ok(\"app.a\")"); }

@@ -7,7 +7,7 @@ import * as weather__binding from "./weather.binding.js";
 
 export function composeApp() {
   const forecast_lookupDeps = { Weather: new weather__binding.FetchWeather({ Fetch: new bynk__binding.FetchProvider(), Secrets: new bynk__binding.SecretsProvider() }) };
-  const forecast_lookupSurface = forecast_lookup.makeSurface(forecast_lookupDeps);
+  const forecast_lookupSurface = forecast_lookup.__makeSurface(forecast_lookupDeps);
 
   return {
     lookup: forecast_lookupSurface,

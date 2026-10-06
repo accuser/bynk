@@ -28,7 +28,7 @@ function __bynkShow(v: unknown): string {
   try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
-function makeHarness() {
+function __makeHarness() {
   const env_shop_orders: any = {};
   const env_shop_payment: any = {};
   env_shop_orders.SHOP_PAYMENT = { fetch: (req: globalThis.Request) => worker_shop_payment.fetch(req, env_shop_payment) } as __ServiceBinding;
@@ -41,7 +41,7 @@ function makeHarness() {
 
 async function test_successful_orders_accumulate_in_the_ledger() {
   try {
-    const deps = makeHarness();
+    const deps = __makeHarness();
     const first = await __callService(deps.env.SHOP_ORDERS, "place", { id: "acct-1" as __JsonValue, cents: ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(100) }, shop_orders.__deserialise_Result_Int_OrderError, "integration", "57187b6ef9a23726");
     const second = await __callService(deps.env.SHOP_ORDERS, "place", { id: "acct-1" as __JsonValue, cents: ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(200) }, shop_orders.__deserialise_Result_Int_OrderError, "integration", "57187b6ef9a23726");
     void (((__d) => {
@@ -67,7 +67,7 @@ async function test_successful_orders_accumulate_in_the_ledger() {
 
 async function test_a_declined_payment_is_rejected_and_does_not_record() {
   try {
-    const deps = makeHarness();
+    const deps = __makeHarness();
     const r = await __callService(deps.env.SHOP_ORDERS, "place", { id: "acct-2" as __JsonValue, cents: ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(50000) }, shop_orders.__deserialise_Result_Int_OrderError, "integration", "57187b6ef9a23726");
     void (((__d) => {
         if (__d.tag === "Err" && __d.error.tag === "Rejected") {

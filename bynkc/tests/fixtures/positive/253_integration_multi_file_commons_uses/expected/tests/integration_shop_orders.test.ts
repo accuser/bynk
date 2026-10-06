@@ -29,7 +29,7 @@ function __bynkShow(v: unknown): string {
   try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
-function makeHarness() {
+function __makeHarness() {
   const env_shop_orders: any = {};
   const env_shop_payment: any = {};
   env_shop_orders.SHOP_PAYMENT = { fetch: (req: globalThis.Request) => worker_shop_payment.fetch(req, env_shop_payment) } as __ServiceBinding;
@@ -41,7 +41,7 @@ function makeHarness() {
 
 async function test_small_order_authorises_across_the_wire() {
   try {
-    const deps = makeHarness();
+    const deps = __makeHarness();
     const { cents, withFee } = money;
     const total = withFee(cents(1));
     if (!(__bynkEq(total, 105))) { throw __bynkExpectFailure("checkout.bynk:15:12", 701, 713, "expect total == 105\n  expected: total == 105\n  actual:   " + __bynkShow((total)) + " == " + __bynkShow((105))); }
@@ -58,7 +58,7 @@ async function test_small_order_authorises_across_the_wire() {
 
 async function test_large_order_is_rejected_end_to_end() {
   try {
-    const deps = makeHarness();
+    const deps = __makeHarness();
     const { cents, withFee } = money;
     const r = await __callService(deps.env.SHOP_ORDERS, "place", ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(50000), shop_orders.__deserialise_Result_Int_OrderError, "integration", "3a273aec9f70d0b4");
     if (!(r.tag === "Err")) { throw __bynkExpectFailure("checkout.bynk:22:12", 874, 885, "expect r is Err(_)"); }

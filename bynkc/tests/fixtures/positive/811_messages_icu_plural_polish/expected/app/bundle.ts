@@ -3,10 +3,10 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, __selectPluralArm, __formatIcuNumber, __formatIcuDate } from "../runtime.js";
 
-import { LocaleTag, Message, MessageArg } from "../bynk/locale/types.js";
-import { render as __bynkLocaleRender, renderArg } from "../bynk/locale.js";
+import { render as __bynkLocaleRender, renderArg as __bynkRenderArg } from "../bynk/locale.js";
+import type { LocaleTag as __bynkLocaleTag, Message as __bynkMessage, MessageArg as __bynkMessageArg } from "../bynk/locale/types.js";
 
-const messagesByLocale: globalThis.Record<string, globalThis.Record<string, (params: ReadonlyMap<string, MessageArg>) => string>> = {
+const __messagesByLocale: globalThis.Record<string, globalThis.Record<string, (params: ReadonlyMap<string, __bynkMessageArg>) => string>> = {
   /**
    * message-bundles slice 3 (#878): a `plural` placeholder over a real
    * 4-category CLDR plural rule (Polish: one/few/many/other) — proves category
@@ -14,16 +14,16 @@ const messagesByLocale: globalThis.Record<string, globalThis.Record<string, (par
    * English's two categories.
    */
   "pl": {
-    "cart.count": (params: ReadonlyMap<string, MessageArg>): string => "Masz " + ((__arg) => __arg === undefined || (__arg.tag !== "Whole" && __arg.tag !== "Num") ? "{n}" : __selectPluralArm("pl", __arg.value, { "one": __formatIcuNumber("pl", __arg.value) + " element", "few": __formatIcuNumber("pl", __arg.value) + " elementy", "many": __formatIcuNumber("pl", __arg.value) + " elementow", "other": __formatIcuNumber("pl", __arg.value) + " elementu" }))(params.get("n")) + " w koszyku",
+    "cart.count": (params: ReadonlyMap<string, __bynkMessageArg>): string => "Masz " + ((__arg) => __arg === undefined || (__arg.tag !== "Whole" && __arg.tag !== "Num") ? "{n}" : __selectPluralArm("pl", __arg.value, { "one": __formatIcuNumber("pl", __arg.value) + " element", "few": __formatIcuNumber("pl", __arg.value) + " elementy", "many": __formatIcuNumber("pl", __arg.value) + " elementow", "other": __formatIcuNumber("pl", __arg.value) + " elementu" }))(params.get("n")) + " w koszyku",
   },
 };
 
-export const messagesReferenceLocale: LocaleTag = ("pl" as string) as LocaleTag;
-export const messagesLocales: readonly LocaleTag[] = [("pl" as string) as LocaleTag];
+export const __messagesReferenceLocale: __bynkLocaleTag = ("pl" as string) as __bynkLocaleTag;
+export const __messagesLocales: readonly __bynkLocaleTag[] = [("pl" as string) as __bynkLocaleTag];
 
-export function render(tag: LocaleTag, msg: Message): string {
-  const __localeTable = messagesByLocale[tag];
-  const __referenceTable = messagesByLocale[messagesReferenceLocale];
+export function render(tag: __bynkLocaleTag, msg: __bynkMessage): string {
+  const __localeTable = __messagesByLocale[tag];
+  const __referenceTable = __messagesByLocale[__messagesReferenceLocale];
   const __entry = (__localeTable !== undefined ? __localeTable[msg.code] : undefined) ?? __referenceTable[msg.code];
   if (__entry !== undefined) {
     return __entry(msg.params);

@@ -6,7 +6,7 @@ import * as bynk_cloudflare__binding from "./bynk/cloudflare.binding.js";
 
 export function composeApp(env?: unknown) {
   const cache_storeDeps = { Kv: new bynk_cloudflare__binding.WorkersKv(env) };
-  const cache_storeSurface = cache_store.makeSurface(cache_storeDeps);
+  const cache_storeSurface = cache_store.__makeSurface(cache_storeDeps);
 
   return {
     store: cache_storeSurface,

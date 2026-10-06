@@ -569,7 +569,7 @@ pub(crate) fn emit_project(
         );
         stmts.push(reset_fn);
     }
-    // v0.6: cross-context surface assembly. Emit `makeSurface` for any
+    // v0.6: cross-context surface assembly. Emit `__makeSurface` for any
     // context that declares services — the composition root references it
     // for every such context, not just those consumed by others. Skipped
     // in workers mode where each Worker has its own `compose(env)` root.
@@ -1997,24 +1997,14 @@ fn collect_external_references(commons: &TypedCommons, ctx: &EmitProjectCtx) -> 
                     collect_refs_in_typeref(id, &local_to_file, ctx, &mut refs);
                 }
             }
-            // `MessageEntry.code`/`.template` are plain string literals with
-            // no TypeRefs/exprs of their own to walk — but the generated
-            // `render` (emit_messages) has a signature and body that name
-            // `LocaleTag`/`Message`/`MessageArg` even though no expression in
-            // this file's *source* does, so those three are registered here
-            // by hand, the same way a real reference would be. `render`/
-            // `renderArg` are deliberately NOT registered this way —
-            // `render` collides with the generated function of the same
-            // name, and both are instead imported together under
-            // `emit_unit`'s (project.rs) hand-written, aliased extra import
-            // line, bypassing this dedup/merge path entirely (importing
-            // `renderArg` there too, alongside the aliased `render`, avoids a
-            // duplicate import of it from here).
-            CommonsItem::Messages(_) => {
-                for name in ["LocaleTag", "Message", "MessageArg"] {
-                    record_name_ref(name, &local_to_file, ctx, &mut refs);
-                }
-            }
+            // A `messages` block's generated table and `render` name
+            // `LocaleTag`/`Message`/`MessageArg` and `render`/`renderArg`
+            // only under private aliases (#1697), imported by `emit_unit`'s
+            // (project.rs) hand-written lines, so a user declaration of the
+            // same name in this unit can't capture them. Nothing is
+            // registered here; user code that names `LocaleTag` itself
+            // imports it the ordinary way.
+            CommonsItem::Messages(_) => {}
         }
     }
     refs
@@ -2410,7 +2400,7 @@ fn record_name_ref(
 }
 
 /// Emit `import * as <ns> from "..."` for each consumed context that
-/// exposes services (so the consuming file can reference its `makeSurface`
+/// exposes services (so the consuming file can reference its `__makeSurface`
 /// return type and brand the cross-context call arguments).
 /// #1478: real-node-internally already — returns one real `TsDecl::
 /// ImportNamespace` per consumed context instead of writing into

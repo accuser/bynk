@@ -9,5 +9,5 @@ export interface Jwt {
   sign(sub: string): globalThis.Promise<string>;
 }
 
-export const JwtToken: symbol = globalThis.Symbol("Jwt");
+export const __JwtToken: symbol = globalThis.Symbol("Jwt");
 

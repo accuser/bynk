@@ -25,7 +25,7 @@ function __bynkShow(v: unknown): string {
   try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
-function makeTestDeps() {
+function __makeTestDeps() {
   return {  };
 }
 
@@ -33,7 +33,7 @@ function makeTestDeps() {
 async function test_agent_place_reports_Ok() {
   try {
     commerce_orders.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Order, OrderError, OrderId, __makeOrder } = commerce_orders;
     type OrderError = commerce_orders.OrderError;
     type OrderId = commerce_orders.OrderId;
@@ -52,7 +52,7 @@ async function test_agent_place_reports_Ok() {
 async function test_agent_place_reports_NotPlaced_for_zero() {
   try {
     commerce_orders.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Order, OrderError, OrderId, __makeOrder } = commerce_orders;
     type OrderError = commerce_orders.OrderError;
     type OrderId = commerce_orders.OrderId;

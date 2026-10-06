@@ -81,10 +81,10 @@ export function __resetAgents(): void {
   __TallyRegistry.reset();
 }
 
-export interface DemoTallyDeps {
+export interface __DemoTallyDeps {
 }
 
-export function makeSurface(deps: DemoTallyDeps) {
+export function __makeSurface(deps: __DemoTallyDeps) {
   return {
     async read(id: TallyId): globalThis.Promise<Result<number, TallyError>> {
       return read.call(id, deps);

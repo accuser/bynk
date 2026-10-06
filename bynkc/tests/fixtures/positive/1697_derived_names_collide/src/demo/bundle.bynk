@@ -1,0 +1,35 @@
+---
+#1697: a bundle commons that declares names its generated table and `render`
+used to share: the module-local table (`messagesByLocale`), the two exported
+locale consts (`messagesLocales`, `messagesReferenceLocale`), and the stdlib
+types the generated code names (`Message`, `MessageArg`). Its own `withText`
+is fine either way: the stdlib one never enters this module.
+---
+commons demo.bundle
+
+uses bynk.locale
+uses bynk.locale.types
+
+type Message = { text: String }
+
+type MessageArg = { raw: String }
+
+fn messagesByLocale() -> Int { 1 }
+
+fn messagesLocales() -> Int { 2 }
+
+fn messagesReferenceLocale() -> Int { 3 }
+
+messages "en" @reference {
+  "greeting" => "Hello, {name}!"
+}
+
+fn shout(m: Message) -> String { m.text }
+
+fn rawOf(a: MessageArg) -> String { a.raw }
+
+fn withText(s: String) -> String { s }
+
+fn greetAll(tag: LocaleTag) -> String { withText(render(tag, message("greeting"))) }
+
+fn tally() -> Int { messagesByLocale() + messagesLocales() + messagesReferenceLocale() }

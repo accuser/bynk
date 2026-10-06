@@ -8,7 +8,7 @@ export interface Vault {
   peek(): globalThis.Promise<number>;
 }
 
-export const VaultToken: symbol = globalThis.Symbol("Vault");
+export const __VaultToken: symbol = globalThis.Symbol("Vault");
 
 export class RealVault implements Vault {
   async open(): globalThis.Promise<number> {
@@ -19,7 +19,7 @@ export class RealVault implements Vault {
   }
 }
 
-export const RealVaultProvider = { token: VaultToken, factory: () => new RealVault() };
+export const __RealVaultProvider = { token: __VaultToken, factory: () => new RealVault() };
 
 export const box = {
   async call(deps: { Vault: Vault }): globalThis.Promise<number> {
@@ -29,11 +29,11 @@ export const box = {
   },
 };
 
-export interface DemoStubsDeps {
+export interface __DemoStubsDeps {
   readonly Vault: Vault;
 }
 
-export function makeSurface(deps: DemoStubsDeps) {
+export function __makeSurface(deps: __DemoStubsDeps) {
   return {
     async box(): globalThis.Promise<number> {
       return box.call(deps);

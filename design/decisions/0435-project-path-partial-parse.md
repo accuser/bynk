@@ -1,11 +1,6 @@
----
-level: minor
-changelog: In a project, a file with a syntax error no longer drops out of checking. `bynkc check` and the editor report the type errors in its declarations that did parse, and a reference to a declaration the syntax error broke (a `uses`d type, a consumed context's service) is no longer reported as unknown in the files that can see it. A build still stops at the syntax error, and nothing is emitted (#1710)
----
+# 0435 — The project path checks a partially-parsed file's surviving declarations
 
-## ADR: project-path-partial-parse
-title: The project path checks a partially-parsed file's surviving declarations
-summary: The parse cache keeps the recovering parse beside a strict failure, for diagnostics only; skipped declarations are known names across the files that can see them
+- **Status:** Accepted (v0.306)
 
 **Context.** #1663 (ADR 0433) made diagnostics recover past errors, but only
 on the single-file paths. On the project path (`bynkc check <dir>`, the

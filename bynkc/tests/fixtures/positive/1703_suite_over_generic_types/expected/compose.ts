@@ -7,11 +7,11 @@ import * as demo_vault from "./demo/vault.js";
 
 export function composeApp() {
   const demo_vaultDeps = {  };
-  const demo_vaultSurface = demo_vault.makeSurface(demo_vaultDeps);
+  const demo_vaultSurface = demo_vault.__makeSurface(demo_vaultDeps);
   const demo_deskDeps = { surface: { Vault: demo_vaultSurface } };
-  const demo_deskSurface = demo_desk.makeSurface(demo_deskDeps);
+  const demo_deskSurface = demo_desk.__makeSurface(demo_deskDeps);
   const demo_ledgerDeps = { Audit: new demo_ledger.SilentAudit() };
-  const demo_ledgerSurface = demo_ledger.makeSurface(demo_ledgerDeps);
+  const demo_ledgerSurface = demo_ledger.__makeSurface(demo_ledgerDeps);
 
   return {
     desk: demo_deskSurface,

@@ -323,8 +323,8 @@ pub(crate) fn emit_worker_compose(
             TsDecl::Import {
                 type_only: false,
                 names: vec![
-                    "messagesLocales as __locale_declaredLocales".to_string(),
-                    "messagesReferenceLocale as __locale_referenceLocale".to_string(),
+                    "__messagesLocales as __locale_declaredLocales".to_string(),
+                    "__messagesReferenceLocale as __locale_referenceLocale".to_string(),
                 ],
                 from: import,
             },

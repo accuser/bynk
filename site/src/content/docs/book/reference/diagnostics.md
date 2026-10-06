@@ -7,7 +7,7 @@ title: Diagnostic index
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](/book/troubleshooting/).
 
-There are **466** codes in total.
+There are **467** codes in total.
 
 ## Agents
 
@@ -19,6 +19,7 @@ There are **466** codes in total.
 | `bynk.agent.key_mismatch` | An agent key argument has the wrong type. | [`agent_decl`](/book/reference/grammar/#rule-agent_decl) | — |
 | `bynk.agent.outside_context` | An `agent` was declared outside a context. | [`agent_decl`](/book/reference/grammar/#rule-agent_decl) | — |
 | `bynk.agent.return_not_effect` | An agent handler's return type is not an `Effect`. | [`agent_decl`](/book/reference/grammar/#rule-agent_decl) | — |
+| `bynk.agent.state_name_conflict` | A type is named `<Agent>State` beside agent `<Agent>`; that name is the agent's state record (its `Cell` fields), which its handlers and invariants see in place of the type. |  | — |
 | `bynk.agents.bad_state_initialiser` | An agent `store` field initialiser is not a static value of the field's type. | [`store_field`](/book/reference/grammar/#rule-store_field) | — |
 | `bynk.agents.non_zeroable_state_field` | An agent `store` field has no initialiser and no implicit zero value. | [`store_field`](/book/reference/grammar/#rule-store_field) | — |
 

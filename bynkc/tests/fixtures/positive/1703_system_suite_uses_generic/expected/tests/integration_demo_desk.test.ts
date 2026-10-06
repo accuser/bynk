@@ -29,7 +29,7 @@ function __bynkShow(v: unknown): string {
   try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
-function makeHarness() {
+function __makeHarness() {
   const env_demo_desk: any = {};
   const env_demo_vault: any = {};
   env_demo_desk.DEMO_VAULT = { fetch: (req: globalThis.Request) => worker_demo_vault.fetch(req, env_demo_vault) } as __ServiceBinding;
@@ -41,7 +41,7 @@ function makeHarness() {
 
 async function test_a_generic_type_crosses_the_wire() {
   try {
-    const deps = makeHarness();
+    const deps = __makeHarness();
     const { Pair, pairOf } = demo_shapes;
     type Pair<A, B> = demo_shapes.Pair<A, B>;
     const p = pairOf(5, "five");

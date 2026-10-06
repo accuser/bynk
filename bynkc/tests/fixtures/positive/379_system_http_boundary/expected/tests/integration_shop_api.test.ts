@@ -26,7 +26,7 @@ function __bynkShow(v: unknown): string {
   try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
-function makeHarness() {
+function __makeHarness() {
   const env_shop_api: any = {};
   env_shop_api.CART = __makeIntegrationDoNamespace((state) => new shop_api.Cart(state));
   const rootEnv: any = {};
@@ -49,44 +49,44 @@ async function __bynkSignHs256(payload: Record<string, unknown>, secret: string)
 (globalThis as unknown as { process: { env: globalThis.Record<string, string> } }).process.env["AUTH_SECRET"] = "__bynk_test_secret";
 async function __sysdrive_api_http_POST_cart(body: any, __sub: string) {
   const __body = globalThis.JSON.stringify(shop_api.__serialise_Item(body));
-  const __h = makeHarness();
+  const __h = __makeHarness();
   const __req = new globalThis.Request(`https://test/cart`, { method: "POST", headers: { "content-type": "application/json", "authorization": `Bearer ${await __bynkSignHs256({ sub: __sub, exp: __bynkNow() + 3600 }, ((globalThis as { process?: { env?: globalThis.Record<string, string> } }).process?.env?.["AUTH_SECRET"] ?? ""))}`, }, body: __body, });
   const __res = await __h.env.SHOP_API.fetch(__req);
   return __responseToHttpResult(__res, shop_api.__deserialise_Item);
 }
 async function __sysdrive_raw_api_http_POST_cart(body: string, __sub: string) {
-  const __h = makeHarness();
+  const __h = __makeHarness();
   const __req = new globalThis.Request(`https://test/cart`, { method: "POST", headers: { "content-type": "application/json", "authorization": `Bearer ${await __bynkSignHs256({ sub: __sub, exp: __bynkNow() + 3600 }, ((globalThis as { process?: { env?: globalThis.Record<string, string> } }).process?.env?.["AUTH_SECRET"] ?? ""))}`, }, body: body, });
   const __res = await __h.env.SHOP_API.fetch(__req);
   return __responseToHttpOutcome(__res, shop_api.__deserialise_Item);
 }
 async function __sysdrive_noauth_api_http_POST_cart(body: any, __sub: string) {
   const __body = globalThis.JSON.stringify(shop_api.__serialise_Item(body));
-  const __h = makeHarness();
+  const __h = __makeHarness();
   const __req = new globalThis.Request(`https://test/cart`, { method: "POST", headers: { "content-type": "application/json", }, body: __body, });
   const __res = await __h.env.SHOP_API.fetch(__req);
   return __responseToUnauthOutcome(__res, shop_api.__deserialise_Item);
 }
 async function __sysdrive_rawnoauth_api_http_POST_cart(body: string, __sub: string) {
-  const __h = makeHarness();
+  const __h = __makeHarness();
   const __req = new globalThis.Request(`https://test/cart`, { method: "POST", headers: { "content-type": "application/json", }, body: body, });
   const __res = await __h.env.SHOP_API.fetch(__req);
   return __responseToUnauthOutcome(__res, shop_api.__deserialise_Item);
 }
 async function __sysdrive_api_http_GET_cart_size(__sub: string) {
-  const __h = makeHarness();
+  const __h = __makeHarness();
   const __req = new globalThis.Request(`https://test/cart/size`, { method: "GET", headers: { "authorization": `Bearer ${await __bynkSignHs256({ sub: __sub, exp: __bynkNow() + 3600 }, ((globalThis as { process?: { env?: globalThis.Record<string, string> } }).process?.env?.["AUTH_SECRET"] ?? ""))}`, }, });
   const __res = await __h.env.SHOP_API.fetch(__req);
   return __responseToHttpResult(__res, (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j));
 }
 async function __sysdrive_noauth_api_http_GET_cart_size(__sub: string) {
-  const __h = makeHarness();
+  const __h = __makeHarness();
   const __req = new globalThis.Request(`https://test/cart/size`, { method: "GET", headers: { }, });
   const __res = await __h.env.SHOP_API.fetch(__req);
   return __responseToUnauthOutcome(__res, (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j));
 }
 async function __sysdrive_wrongmethod_api(method: string, path: string) {
-  const __h = makeHarness();
+  const __h = __makeHarness();
   const __req = new globalThis.Request(`https://test${path}`, { method });
   const __res = await __h.env.SHOP_API.fetch(__req);
   return __responseToHttpOutcome(__res, (__j: __JsonValue) => Ok(__j as never));
@@ -94,7 +94,7 @@ async function __sysdrive_wrongmethod_api(method: string, path: string) {
 
 async function test_a_create_returns_Created_over_the_real_wire() {
   try {
-    const deps = makeHarness();
+    const deps = __makeHarness();
     const item = await __sysdrive_api_http_POST_cart({ sku: "widget" }, "alice");
     if (!(item.tag === "Created")) { throw __bynkExpectFailure("shop/tests/api.test.bynk:4:12", 168, 186, "expect item is Created(_)"); }
     return { pass: true };
@@ -108,7 +108,7 @@ async function test_a_create_returns_Created_over_the_real_wire() {
 
 async function test_the_size_read_is_Ok_over_the_wire() {
   try {
-    const deps = makeHarness();
+    const deps = __makeHarness();
     const n = await __sysdrive_api_http_GET_cart_size("bob");
     if (!(n.tag === "Ok")) { throw __bynkExpectFailure("shop/tests/api.test.bynk:8:12", 297, 307, "expect n is Ok(_)"); }
     return { pass: true };

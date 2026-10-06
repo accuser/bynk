@@ -14,7 +14,7 @@ export interface Logger {
   info(message: string): globalThis.Promise<void>;
 }
 
-export const LoggerToken: symbol = globalThis.Symbol("Logger");
+export const __LoggerToken: symbol = globalThis.Symbol("Logger");
 
 export class ConsoleLogger implements Logger {
   async info(message: string): globalThis.Promise<void> {
@@ -22,7 +22,7 @@ export class ConsoleLogger implements Logger {
   }
 }
 
-export const ConsoleLoggerProvider = { token: LoggerToken, factory: () => new ConsoleLogger() };
+export const __ConsoleLoggerProvider = { token: __LoggerToken, factory: () => new ConsoleLogger() };
 
 export const api = {
   async http_GET_a(deps: { Logger: Logger }): globalThis.Promise<HttpResult<View>> {

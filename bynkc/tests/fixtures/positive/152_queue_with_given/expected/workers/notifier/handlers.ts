@@ -14,7 +14,7 @@ export interface Sender {
   send(text: string): globalThis.Promise<void>;
 }
 
-export const SenderToken: symbol = globalThis.Symbol("Sender");
+export const __SenderToken: symbol = globalThis.Symbol("Sender");
 
 export class StubSender implements Sender {
   async send(text: string): globalThis.Promise<void> {
@@ -22,7 +22,7 @@ export class StubSender implements Sender {
   }
 }
 
-export const StubSenderProvider = { token: SenderToken, factory: () => new StubSender() };
+export const __StubSenderProvider = { token: __SenderToken, factory: () => new StubSender() };
 
 export const notify = {
   async queue_notify_0(message: Notification, deps: { Sender: Sender }): globalThis.Promise<QueueResult> {

@@ -1529,10 +1529,10 @@ fn emit_message_entry_renderer(
                             right: Box::new(bynk_ts::TsExpr::Ident("undefined".to_string())),
                         }),
                         consequent: Box::new(bynk_ts::TsExpr::Call {
-                            callee: Box::new(bynk_ts::TsExpr::Ident("renderArg".to_string())),
+                            callee: Box::new(bynk_ts::TsExpr::Ident("__bynkRenderArg".to_string())),
                             args: vec![bynk_ts::TsExpr::As {
                                 expr: Box::new(get_call),
-                                ty: bynk_ts::TsType::named("MessageArg"),
+                                ty: bynk_ts::TsType::named("__bynkMessageArg"),
                             }],
                         }),
                         alternate: Box::new(bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(format!(
@@ -1562,7 +1562,7 @@ fn emit_message_entry_renderer(
                 "ReadonlyMap",
                 vec![
                     bynk_ts::TsType::named("string"),
-                    bynk_ts::TsType::named("MessageArg"),
+                    bynk_ts::TsType::named("__bynkMessageArg"),
                 ],
             )),
             optional: false,
@@ -1870,7 +1870,7 @@ fn emit_sub_message(
 /// #1355 (R7.1): converts this function's own outer construction to real
 /// `bynk_ts` nodes, with two deliberate, named opaque carve-outs.
 ///
-/// **`messagesByLocale`'s own header/type-annotation/closing-brace stay
+/// **`__messagesByLocale`'s own header/type-annotation/closing-brace stay
 /// hand-written text** — `Record<string, Record<string, (params: ReadonlyMap
 /// <string, MessageArg>) => string>>` needs its inner function type's one
 /// parameter named `params`; `bynk_ts::TsType::Fn`'s own `params` are
@@ -1894,12 +1894,12 @@ fn emit_sub_message(
 /// "call an unconverted sibling helper, carry its text opaquely" pattern
 /// this whole track uses.
 ///
-/// **`messagesReferenceLocale`/`messagesLocales`/`render` convert fully** —
+/// **`__messagesReferenceLocale`/`__messagesLocales`/`render` convert fully** —
 /// no opaque carve-outs, every shape they need (`TsExpr::As`, `TsExpr::
 /// Index`, `TsExpr::Conditional`, `TsBinaryOp::NullishCoalescing`, `TsStmt::
 /// If`/`Return`) already exists.
 /// #1478: returns real [`bynk_ts::TsStmt`]s (was `out: &mut String`). The
-/// `messagesByLocale` header/entries/closing-brace block stays exactly the
+/// `__messagesByLocale` header/entries/closing-brace block stays exactly the
 /// opaque, hand-assembled text #1355's own doc above already carves out —
 /// built into a local buffer instead of the caller's `out`, then carried as
 /// one [`bynk_ts::TsStmtKind::Raw`] statement, the same "already real-node-
@@ -1913,14 +1913,14 @@ pub(crate) fn emit_messages_bundle(
     let mut stmts = Vec::new();
 
     // One `code -> renderer` table per locale, inlined into a single
-    // `messagesByLocale` object literal keyed by tag. No per-locale `const
+    // `__messagesByLocale` object literal keyed by tag. No per-locale `const
     // __messages_<tag>` binding: a locale tag can be `"pt-BR"`, which is not a
     // valid TS identifier, so a named binding would be a syntax error — the
     // object is keyed by the tag *string* and needs no binding of its own.
     let mut table = String::new();
     writeln!(
         table,
-        "const messagesByLocale: globalThis.Record<string, globalThis.Record<string, (params: ReadonlyMap<string, MessageArg>) => string>> = {{"
+        "const __messagesByLocale: globalThis.Record<string, globalThis.Record<string, (params: ReadonlyMap<string, __bynkMessageArg>) => string>> = {{"
     )
     .unwrap();
     for m in blocks {
@@ -1960,7 +1960,7 @@ pub(crate) fn emit_messages_bundle(
     // reachable today (`LocaleTag`'s own `Matches(...)` refinement rejects
     // anything but letters/digits/hyphens) but a real, latent bug had the
     // caller pre-escaped, the same class of hazard #1335's own `msg`
-    // deviation was written to avoid. `messagesByLocale`'s own `Prop` KEY a
+    // deviation was written to avoid. `__messagesByLocale`'s own `Prop` KEY a
     // few lines up is the opposite, correct case: a key is spliced
     // verbatim, never run through a printer escaper, so it needs the
     // explicit `escape_ts_string` call to be safe at all.
@@ -1969,12 +1969,12 @@ pub(crate) fn emit_messages_bundle(
             expr: Box::new(bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(tag.to_string()))),
             ty: bynk_ts::TsType::named("string"),
         }))),
-        ty: bynk_ts::TsType::named("LocaleTag"),
+        ty: bynk_ts::TsType::named("__bynkLocaleTag"),
     };
     let ref_locale_decl = bynk_ts::TsStmt::decl(
         bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::ConstDecl {
-            name: "messagesReferenceLocale".to_string(),
-            ty: Some(bynk_ts::TsType::named("LocaleTag")),
+            name: "__messagesReferenceLocale".to_string(),
+            ty: Some(bynk_ts::TsType::named("__bynkLocaleTag")),
             init: tag_cast(&reference.tag),
         })),
         None,
@@ -1989,9 +1989,9 @@ pub(crate) fn emit_messages_bundle(
     // without this escape hatch (see `TsStmt::no_blank_before`'s own doc).
     let mut locales_decl = bynk_ts::TsStmt::decl(
         bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::ConstDecl {
-            name: "messagesLocales".to_string(),
+            name: "__messagesLocales".to_string(),
             ty: Some(bynk_ts::TsType::readonly_array(bynk_ts::TsType::named(
-                "LocaleTag",
+                "__bynkLocaleTag",
             ))),
             init: bynk_ts::TsExpr::array(locale_list),
         })),
@@ -2018,13 +2018,16 @@ pub(crate) fn emit_messages_bundle(
     let local_table_decl = bynk_ts::TsStmt::const_stmt(
         bynk_ts::TsBindingName::Ident("__localeTable".to_string()),
         None,
-        index(ident("messagesByLocale"), ident("tag")),
+        index(ident("__messagesByLocale"), ident("tag")),
         None,
     );
     let reference_table_decl = bynk_ts::TsStmt::const_stmt(
         bynk_ts::TsBindingName::Ident("__referenceTable".to_string()),
         None,
-        index(ident("messagesByLocale"), ident("messagesReferenceLocale")),
+        index(
+            ident("__messagesByLocale"),
+            ident("__messagesReferenceLocale"),
+        ),
         None,
     );
     let entry_ternary = bynk_ts::TsExpr::Paren(Box::new(bynk_ts::TsExpr::Conditional {
@@ -2074,12 +2077,12 @@ pub(crate) fn emit_messages_bundle(
             params: vec![
                 bynk_ts::TsParam {
                     name: "tag".to_string(),
-                    ty: Some(bynk_ts::TsType::named("LocaleTag")),
+                    ty: Some(bynk_ts::TsType::named("__bynkLocaleTag")),
                     optional: false,
                 },
                 bynk_ts::TsParam {
                     name: "msg".to_string(),
-                    ty: Some(bynk_ts::TsType::named("Message")),
+                    ty: Some(bynk_ts::TsType::named("__bynkMessage")),
                     optional: false,
                 },
             ],
@@ -2130,7 +2133,7 @@ pub(crate) fn emit_messages_bundle(
 /// [`bynk_ts::TsObjectEntry::Method.doc`]'s own identical field, #1337) —
 /// params route through the already-real [`ts_ty_to_ts_type`] (P7.9,
 /// #1315) instead of the opaque pre-printed `String` `ts_ty` returns. The
-/// injection token (`export const {Name}Token: symbol =
+/// injection token (`export const __{Name}Token: symbol =
 /// globalThis.Symbol("{Name}");`, #1653) is a real
 /// [`bynk_ts::TsDecl::ConstDecl`]. This function's own exact signature is
 /// unchanged, the P7.9/step-1 pattern — it never owned a `Verbatim`
@@ -2212,7 +2215,7 @@ pub(crate) fn emit_capability(
     // `globalThis.Symbol` so a user type named `Symbol` cannot hide it.
     let token_decl = bynk_ts::TsStmt::decl(
         bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::ConstDecl {
-            name: format!("{}Token", c.name.name),
+            name: format!("__{}Token", c.name.name),
             ty: Some(bynk_ts::TsType::named("symbol")),
             init: bynk_ts::TsExpr::Call {
                 callee: Box::new(bynk_ts::TsExpr::Ident("globalThis.Symbol".to_string())),
@@ -2580,7 +2583,7 @@ pub(crate) fn emit_provider(
     };
     writeln!(
         out,
-        "export const {prov}Provider = {{ token: {cap}Token, factory: {factory} }};",
+        "export const __{prov}Provider = {{ token: __{cap}Token, factory: {factory} }};",
         prov = p.provider_name.name,
         cap = p.capability.name,
     )
@@ -3398,7 +3401,7 @@ fn workers_env_ty(
 }
 
 /// v0.15: true when at least one consumed context exposes services (and thus
-/// a `makeSurface`). A context may now consume another purely for its
+/// a `__makeSurface`). A context may now consume another purely for its
 /// capabilities, in which case there is no surface to thread.
 fn has_consumed_service(cross_context: &bynk_check::resolver::CrossContextInfo) -> bool {
     cross_context
@@ -3408,13 +3411,13 @@ fn has_consumed_service(cross_context: &bynk_check::resolver::CrossContextInfo) 
 }
 
 /// Build the TS type for the `surface` field in deps, naming each consumed
-/// context by its surface key plus the consumed context's makeSurface type.
+/// context by its surface key plus the consumed context's __makeSurface type.
 /// Only service-bearing consumed contexts contribute (a capability-only
-/// consumed context has no `makeSurface`).
+/// consumed context has no `__makeSurface`).
 ///
 /// Arc F, slice 4 (#1463): `ReturnType<T>` itself is representable generically
 /// (`TsType::named_with_args`, review of #1469) — the real gap is its own
-/// type argument here, `typeof {ns}.makeSurface`, whose `typeof` operand
+/// type argument here, `typeof {ns}.__makeSurface`, whose `typeof` operand
 /// isn't an ordinary type at all and has no algebra member of its own.
 /// `Named` carries only that opaque operand text now, one level narrower
 /// than the whole expression this used to wrap as one string.
@@ -3440,7 +3443,7 @@ fn surface_ty(cross_context: &bynk_check::resolver::CrossContextInfo) -> bynk_ts
             .cloned()
             .unwrap_or_else(|| q.rsplit('.').next().unwrap_or(q.as_str()).to_string());
         let ns = qualified_to_ns(q);
-        entries.push((key, format!("typeof {ns}.makeSurface")));
+        entries.push((key, format!("typeof {ns}.__makeSurface")));
     }
     bynk_ts::TsType::Object(
         entries
@@ -3505,7 +3508,7 @@ fn emit_context_deps_interface(
     commons: &TypedCommons,
     ctx: &EmitProjectCtx,
 ) -> String {
-    let deps_name = format!("{}Deps", context_pascal(&commons.commons.name.joined()));
+    let deps_name = format!("__{}Deps", context_pascal(&commons.commons.name.joined()));
     let mut members: Vec<bynk_ts::TsTypeMember> = commons
         .commons
         .items
@@ -3535,9 +3538,9 @@ fn emit_context_deps_interface(
         ));
     }
     // Events track, slice 0 (spine #936): a context with any handler that
-    // emits needs `__eventsDispatch` threaded all the way from `makeSurface`
+    // emits needs `__eventsDispatch` threaded all the way from `__makeSurface`
     // down to that handler's own `deps` param (`emit_service`/`emit_agent`'s
-    // matching field) — otherwise `svc.call(args, deps)` inside `makeSurface`
+    // matching field) — otherwise `svc.call(args, deps)` inside `__makeSurface`
     // fails to typecheck, since `deps`'s static type there is this interface,
     // not whatever compose actually constructs.
     let is_first_party_events = ctx.commons_name == "bynk"
@@ -3589,7 +3592,7 @@ pub(crate) fn any_service_binds_caller<'a>(
     })
 }
 
-/// Emit the `makeSurface(deps)` function for a context that exposes
+/// Emit the `__makeSurface(deps)` function for a context that exposes
 /// services to other contexts (v0.6 §6.3 / §6.4).
 ///
 /// Arc C, slice 18 (#1364): closes the `emit_make_surface` half of step (8)
@@ -3635,7 +3638,7 @@ pub(crate) fn emit_make_surface(
     let mut stmts = vec![bynk_ts::TsStmt::raw(deps_block, None)];
     // v0.54 (#655): an `on call … by c: Caller` handler reads a live `CallerId`
     // (the calling context's qualified name) threaded through `deps.identity`.
-    // In bundle mode the compose root supplies that name to `makeSurface` as a
+    // In bundle mode the compose root supplies that name to `__makeSurface` as a
     // second `__caller` argument — the analogue of the `X-Bynk-Caller` header a
     // Worker reads at its entry (ADR 0092). Only a context with such a handler
     // takes the extra parameter, so a caller-free surface is byte-unchanged. The
@@ -3714,7 +3717,7 @@ pub(crate) fn emit_make_surface(
     }
     let func_decl = bynk_ts::TsStmt::decl(
         bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::Function {
-            name: "makeSurface".to_string(),
+            name: "__makeSurface".to_string(),
             generics: Vec::new(),
             params,
             return_type: None,
@@ -7949,7 +7952,7 @@ context demo {
         let ts = emit_store_context(STORE_FIXTURE);
         assert!(ts.contains("export interface Store {\n"), "{ts}");
         assert!(
-            ts.contains("export const StoreToken: symbol = globalThis.Symbol(\"Store\");\n"),
+            ts.contains("export const __StoreToken: symbol = globalThis.Symbol(\"Store\");\n"),
             "{ts}"
         );
     }

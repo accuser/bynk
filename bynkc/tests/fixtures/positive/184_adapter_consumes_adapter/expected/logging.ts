@@ -7,5 +7,5 @@ export interface Log {
   info(msg: string): globalThis.Promise<void>;
 }
 
-export const LogToken: symbol = globalThis.Symbol("Log");
+export const __LogToken: symbol = globalThis.Symbol("Log");
 

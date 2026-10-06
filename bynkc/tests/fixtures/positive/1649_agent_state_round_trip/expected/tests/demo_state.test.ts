@@ -25,7 +25,7 @@ function __bynkShow(v: unknown): string {
   try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
-function makeTestDeps() {
+function __makeTestDeps() {
   return { Clock: new demo_state.FixedClock() };
 }
 
@@ -33,7 +33,7 @@ function makeTestDeps() {
 async function test_an_enum_Cell() {
   try {
     demo_state.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Blob, Board, Figure, Gate, History, Labelled, Lamp, Light, Lights, Memo, Note, Outcome, Panel, Reading, Shape, Store, __makeBoard, __makeFigure, __makeGate, __makeHistory, __makeLamp, __makeLights, __makeMemo, __makeNote, __makeOutcome, __makePanel, __makeReading, __makeStore } = demo_state;
     type Blob = demo_state.Blob;
     type Labelled = demo_state.Labelled;
@@ -55,7 +55,7 @@ async function test_an_enum_Cell() {
 async function test_an_Option_Cell() {
   try {
     demo_state.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Blob, Board, Figure, Gate, History, Labelled, Lamp, Light, Lights, Memo, Note, Outcome, Panel, Reading, Shape, Store, __makeBoard, __makeFigure, __makeGate, __makeHistory, __makeLamp, __makeLights, __makeMemo, __makeNote, __makeOutcome, __makePanel, __makeReading, __makeStore } = demo_state;
     type Blob = demo_state.Blob;
     type Labelled = demo_state.Labelled;
@@ -77,7 +77,7 @@ async function test_an_Option_Cell() {
 async function test_a_sum_Cell_with_a_payload() {
   try {
     demo_state.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Blob, Board, Figure, Gate, History, Labelled, Lamp, Light, Lights, Memo, Note, Outcome, Panel, Reading, Shape, Store, __makeBoard, __makeFigure, __makeGate, __makeHistory, __makeLamp, __makeLights, __makeMemo, __makeNote, __makeOutcome, __makePanel, __makeReading, __makeStore } = demo_state;
     type Blob = demo_state.Blob;
     type Labelled = demo_state.Labelled;
@@ -99,7 +99,7 @@ async function test_a_sum_Cell_with_a_payload() {
 async function test_a_Result_Cell() {
   try {
     demo_state.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Blob, Board, Figure, Gate, History, Labelled, Lamp, Light, Lights, Memo, Note, Outcome, Panel, Reading, Shape, Store, __makeBoard, __makeFigure, __makeGate, __makeHistory, __makeLamp, __makeLights, __makeMemo, __makeNote, __makeOutcome, __makePanel, __makeReading, __makeStore } = demo_state;
     type Blob = demo_state.Blob;
     type Labelled = demo_state.Labelled;
@@ -122,7 +122,7 @@ async function test_a_Result_Cell() {
 async function test_a_record_Cell_holding_an_Option() {
   try {
     demo_state.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Blob, Board, Figure, Gate, History, Labelled, Lamp, Light, Lights, Memo, Note, Outcome, Panel, Reading, Shape, Store, __makeBoard, __makeFigure, __makeGate, __makeHistory, __makeLamp, __makeLights, __makeMemo, __makeNote, __makeOutcome, __makePanel, __makeReading, __makeStore } = demo_state;
     type Blob = demo_state.Blob;
     type Labelled = demo_state.Labelled;
@@ -144,7 +144,7 @@ async function test_a_record_Cell_holding_an_Option() {
 async function test_a_record_Cell_holding_Bytes() {
   try {
     demo_state.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Blob, Board, Figure, Gate, History, Labelled, Lamp, Light, Lights, Memo, Note, Outcome, Panel, Reading, Shape, Store, __makeBoard, __makeFigure, __makeGate, __makeHistory, __makeLamp, __makeLights, __makeMemo, __makeNote, __makeOutcome, __makePanel, __makeReading, __makeStore } = demo_state;
     type Blob = demo_state.Blob;
     type Labelled = demo_state.Labelled;
@@ -166,7 +166,7 @@ async function test_a_record_Cell_holding_Bytes() {
 async function test_a_List_of_enums() {
   try {
     demo_state.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Blob, Board, Figure, Gate, History, Labelled, Lamp, Light, Lights, Memo, Note, Outcome, Panel, Reading, Shape, Store, __makeBoard, __makeFigure, __makeGate, __makeHistory, __makeLamp, __makeLights, __makeMemo, __makeNote, __makeOutcome, __makePanel, __makeReading, __makeStore } = demo_state;
     type Blob = demo_state.Blob;
     type Labelled = demo_state.Labelled;
@@ -188,7 +188,7 @@ async function test_a_List_of_enums() {
 async function test_a_store_Map_of_enums() {
   try {
     demo_state.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Blob, Board, Figure, Gate, History, Labelled, Lamp, Light, Lights, Memo, Note, Outcome, Panel, Reading, Shape, Store, __makeBoard, __makeFigure, __makeGate, __makeHistory, __makeLamp, __makeLights, __makeMemo, __makeNote, __makeOutcome, __makePanel, __makeReading, __makeStore } = demo_state;
     type Blob = demo_state.Blob;
     type Labelled = demo_state.Labelled;
@@ -210,7 +210,7 @@ async function test_a_store_Map_of_enums() {
 async function test_a_Cache_of_Options() {
   try {
     demo_state.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Blob, Board, Figure, Gate, History, Labelled, Lamp, Light, Lights, Memo, Note, Outcome, Panel, Reading, Shape, Store, __makeBoard, __makeFigure, __makeGate, __makeHistory, __makeLamp, __makeLights, __makeMemo, __makeNote, __makeOutcome, __makePanel, __makeReading, __makeStore } = demo_state;
     type Blob = demo_state.Blob;
     type Labelled = demo_state.Labelled;
@@ -232,7 +232,7 @@ async function test_a_Cache_of_Options() {
 async function test_a_Log_of_sums() {
   try {
     demo_state.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Blob, Board, Figure, Gate, History, Labelled, Lamp, Light, Lights, Memo, Note, Outcome, Panel, Reading, Shape, Store, __makeBoard, __makeFigure, __makeGate, __makeHistory, __makeLamp, __makeLights, __makeMemo, __makeNote, __makeOutcome, __makePanel, __makeReading, __makeStore } = demo_state;
     type Blob = demo_state.Blob;
     type Labelled = demo_state.Labelled;
@@ -255,7 +255,7 @@ async function test_a_Log_of_sums() {
 async function test_a_scalar_beside_an_enum() {
   try {
     demo_state.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Blob, Board, Figure, Gate, History, Labelled, Lamp, Light, Lights, Memo, Note, Outcome, Panel, Reading, Shape, Store, __makeBoard, __makeFigure, __makeGate, __makeHistory, __makeLamp, __makeLights, __makeMemo, __makeNote, __makeOutcome, __makePanel, __makeReading, __makeStore } = demo_state;
     type Blob = demo_state.Blob;
     type Labelled = demo_state.Labelled;
@@ -277,7 +277,7 @@ async function test_a_scalar_beside_an_enum() {
 async function test_a_transition_reads_the_decoded_prior_state() {
   try {
     demo_state.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Blob, Board, Figure, Gate, History, Labelled, Lamp, Light, Lights, Memo, Note, Outcome, Panel, Reading, Shape, Store, __makeBoard, __makeFigure, __makeGate, __makeHistory, __makeLamp, __makeLights, __makeMemo, __makeNote, __makeOutcome, __makePanel, __makeReading, __makeStore } = demo_state;
     type Blob = demo_state.Blob;
     type Labelled = demo_state.Labelled;

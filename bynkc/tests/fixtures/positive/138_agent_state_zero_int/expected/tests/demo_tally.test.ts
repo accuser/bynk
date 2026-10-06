@@ -25,7 +25,7 @@ function __bynkShow(v: unknown): string {
   try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
-function makeTestDeps() {
+function __makeTestDeps() {
   return {  };
 }
 
@@ -33,7 +33,7 @@ function makeTestDeps() {
 async function test_a_fresh_Tally_key_reads_count_as_0() {
   try {
     demo_tally.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Tally, TallyError, TallyId, __makeTally, read } = demo_tally;
     type TallyError = demo_tally.TallyError;
     type TallyId = demo_tally.TallyId;

@@ -7,13 +7,13 @@ export interface Logger {
   info(message: string): globalThis.Promise<void>;
 }
 
-export const LoggerToken: symbol = globalThis.Symbol("Logger");
+export const __LoggerToken: symbol = globalThis.Symbol("Logger");
 
 export interface Greeter {
   greet(): globalThis.Promise<void>;
 }
 
-export const GreeterToken: symbol = globalThis.Symbol("Greeter");
+export const __GreeterToken: symbol = globalThis.Symbol("Greeter");
 
 export class ConsoleLogger implements Logger {
   async info(message: string): globalThis.Promise<void> {
@@ -21,7 +21,7 @@ export class ConsoleLogger implements Logger {
   }
 }
 
-export const ConsoleLoggerProvider = { token: LoggerToken, factory: () => new ConsoleLogger() };
+export const __ConsoleLoggerProvider = { token: __LoggerToken, factory: () => new ConsoleLogger() };
 
 export class PoliteGreeter implements Greeter {
   private deps: { Logger: Logger };
@@ -32,7 +32,7 @@ export class PoliteGreeter implements Greeter {
   }
 }
 
-export const PoliteGreeterProvider = { token: GreeterToken, factory: (deps: { Logger: Logger }) => new PoliteGreeter(deps) };
+export const __PoliteGreeterProvider = { token: __GreeterToken, factory: (deps: { Logger: Logger }) => new PoliteGreeter(deps) };
 
 export const hello = {
   async call(deps: { Greeter: Greeter }): globalThis.Promise<void> {

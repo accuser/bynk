@@ -16,7 +16,7 @@ export type Pair<A, B> = __CommonsPair<A, B> & { readonly __ctxBrand?: "demo.des
  */
 
 export const check = {
-  async call(n: number, deps: { surface: { Vault: globalThis.ReturnType<typeof demo_vault.makeSurface> } }): globalThis.Promise<number> {
+  async call(n: number, deps: { surface: { Vault: globalThis.ReturnType<typeof demo_vault.__makeSurface> } }): globalThis.Promise<number> {
     const e = await deps.surface.Vault.open(n);
     return e.item;
   },
@@ -29,11 +29,11 @@ export const pairUp = {
   },
 };
 
-export interface DemoDeskDeps {
-  readonly surface: { Vault: globalThis.ReturnType<typeof demo_vault.makeSurface> };
+export interface __DemoDeskDeps {
+  readonly surface: { Vault: globalThis.ReturnType<typeof demo_vault.__makeSurface> };
 }
 
-export function makeSurface(deps: DemoDeskDeps) {
+export function __makeSurface(deps: __DemoDeskDeps) {
   return {
     async check(n: number): globalThis.Promise<number> {
       return check.call(n, deps);

@@ -25,7 +25,7 @@ function __bynkShow(v: unknown): string {
   try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
-function makeTestDeps() {
+function __makeTestDeps() {
   return {  };
 }
 
@@ -33,7 +33,7 @@ function makeTestDeps() {
 async function test_a_fresh_Meter_key_reads_nested_zeros() {
   try {
     demo_meter.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Meter, MeterError, MeterId, Totals, __makeMeter, hits } = demo_meter;
     type MeterError = demo_meter.MeterError;
     type MeterId = demo_meter.MeterId;

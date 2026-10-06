@@ -44,7 +44,7 @@ function __bynkRecordDeps(deps: any, spec: Record<string, string[]>, obs: { log:
 
 type __Clock_now_Call = {  };
 
-function makeTestDeps() {
+function __makeTestDeps() {
   return { Clock: new demo_obs.SystemClock() };
 }
 
@@ -52,7 +52,7 @@ function makeTestDeps() {
 async function test_traces_the_zero_param_clock_read() {
   try {
     const __obs = { log: {} as globalThis.Record<string, { args: unknown[]; order: number }[]>, n: 0 };
-    const deps = __bynkRecordDeps(makeTestDeps(), { Clock: ["now"] }, __obs);
+    const deps = __bynkRecordDeps(__makeTestDeps(), { Clock: ["now"] }, __obs);
     const { tick } = demo_obs;
     const r = await tick.call(deps);
     if (!(__bynkEq(r, 0))) { throw __bynkExpectFailure("tests/obs.test.bynk:8:12", 375, 381, "expect r == 0\n  expected: r == 0\n  actual:   " + __bynkShow((r)) + " == " + __bynkShow((0))); }

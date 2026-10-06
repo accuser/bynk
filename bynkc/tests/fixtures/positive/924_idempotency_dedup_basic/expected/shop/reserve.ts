@@ -31,11 +31,11 @@ export const ordering = {
   },
 };
 
-export interface ShopReserveDeps {
+export interface __ShopReserveDeps {
   readonly Idempotency: bynk.Idempotency;
 }
 
-export function makeSurface(deps: ShopReserveDeps) {
+export function __makeSurface(deps: __ShopReserveDeps) {
   return {
     async ordering(orderId: string): globalThis.Promise<ReserveOutcome> {
       return ordering.call(orderId, deps);

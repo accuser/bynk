@@ -787,7 +787,7 @@ fn finish_build(run: RunChecks, import_ext: ImportExt) -> Result<ProjectOutput, 
 /// v0.54 (#655): whether a context's services declare an `on call … by c: Caller`
 /// handler, whose emitted `deps` carries the calling context's qualified name as
 /// its `CallerId` identity (ADR 0092); in bundle mode the compose root supplies
-/// that name to `makeSurface`, mirroring the `X-Bynk-Caller` header a Worker
+/// that name to `__makeSurface`, mirroring the `X-Bynk-Caller` header a Worker
 /// reads at its entry. Delegates to the *same*
 /// [`any_service_binds_caller`](crate::emitter::any_service_binds_caller) the
 /// emitter's `emit_make_surface` calls, so the compose root and the surface can
@@ -1006,8 +1006,23 @@ fn emit_unit(
             &render_path,
             import_ext,
         );
+        // #1697: the generated table and `render` name the `bynk.locale.types`
+        // types under private aliases too, so a user's own `Message` or
+        // `LocaleTag` in this unit (local shadows `uses`) can't capture them.
+        let types_path = unit_ctx
+            .imported_decl_paths_emit
+            .get("bynk.locale.types")
+            .and_then(|m| m.get("LocaleTag"))
+            .cloned()
+            .unwrap_or_else(|| EmitProjectCtx::commons_path("bynk.locale.types"));
+        let types_import = emitter::cross_commons_import_specifier_for_path(
+            &emit_source_path,
+            &types_path,
+            import_ext,
+        );
         extra_import_lines.push(format!(
-            "import {{ render as __bynkLocaleRender, renderArg }} from \"{import}\";"
+            "import {{ render as __bynkLocaleRender, renderArg as __bynkRenderArg }} from \"{import}\";\n\
+             import type {{ LocaleTag as __bynkLocaleTag, Message as __bynkMessage, MessageArg as __bynkMessageArg }} from \"{types_import}\";"
         ));
     }
 
@@ -3046,7 +3061,7 @@ fn emit_composition_root(
         let Some(table) = unit_tables.get(ctx_name.as_str()) else {
             continue;
         };
-        // A context's deps object exists only to feed its `makeSurface`; a
+        // A context's deps object exists only to feed its `__makeSurface`; a
         // capability-only context (no services) needs neither (v0.15).
         if table.services.is_empty() {
             continue;
@@ -3238,7 +3253,7 @@ fn emit_composition_root(
                 let entry = if context_binds_caller(other) {
                     method_call(
                         ident(t_ns.clone()),
-                        "makeSurface",
+                        "__makeSurface",
                         vec![ident(format!("{t_ns}Deps")), str_lit(ctx_name.as_str())],
                     )
                 } else {
@@ -3277,7 +3292,7 @@ fn emit_composition_root(
             }
             body.push(const_(
                 format!("{ns}Surface"),
-                method_call(ident(ns.clone()), "makeSurface", make_surface_args),
+                method_call(ident(ns.clone()), "__makeSurface", make_surface_args),
             ));
         }
     }

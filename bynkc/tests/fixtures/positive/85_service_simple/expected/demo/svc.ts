@@ -9,10 +9,10 @@ export const echo = {
   },
 };
 
-export interface DemoSvcDeps {
+export interface __DemoSvcDeps {
 }
 
-export function makeSurface(deps: DemoSvcDeps) {
+export function __makeSurface(deps: __DemoSvcDeps) {
   return {
     async echo(message: string): globalThis.Promise<string> {
       return echo.call(message, deps);

@@ -7,7 +7,7 @@ export interface Repo {
   query(filter: string): globalThis.Promise<readonly string[]>;
 }
 
-export const RepoToken: symbol = globalThis.Symbol("Repo");
+export const __RepoToken: symbol = globalThis.Symbol("Repo");
 
 export class MemRepo implements Repo {
   async query(filter: string): globalThis.Promise<readonly string[]> {
@@ -15,5 +15,5 @@ export class MemRepo implements Repo {
   }
 }
 
-export const MemRepoProvider = { token: RepoToken, factory: () => new MemRepo() };
+export const __MemRepoProvider = { token: __RepoToken, factory: () => new MemRepo() };
 

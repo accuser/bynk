@@ -28,7 +28,7 @@ function __bynkShow(v: unknown): string {
   try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
-function makeHarness() {
+function __makeHarness() {
   const env_ops_jobs: any = {};
   const env_platform_time: any = {};
   env_ops_jobs.PLATFORM_TIME = { fetch: (req: globalThis.Request) => worker_platform_time.fetch(req, env_platform_time) } as __ServiceBinding;
@@ -40,7 +40,7 @@ function makeHarness() {
 
 async function test_tick_reads_the_clock_and_succeeds() {
   try {
-    const deps = makeHarness();
+    const deps = __makeHarness();
     const r = await __callService(deps.env.OPS_JOBS, "tick", {  }, ops_jobs.__deserialise_Result_Int_TickError, "integration", "12c6f9c0fb6f00af");
     if (!(r.tag === "Ok")) { throw __bynkExpectFailure("check.bynk:9:12", 318, 328, "expect r is Ok(_)"); }
     return { pass: true };

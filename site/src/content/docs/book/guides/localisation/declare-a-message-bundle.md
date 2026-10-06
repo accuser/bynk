@@ -171,14 +171,16 @@ Note what the context `uses`: `bynk.locale.types` (for `LocaleTag`, which
 ## What a bundle exports
 
 Alongside `render`, a bundle's generated module exports its declared locale set
-and its reference tag:
+and its reference tag, for the compiler's own wiring:
 
 ```ts
-export const messagesReferenceLocale: LocaleTag;
-export const messagesLocales: readonly LocaleTag[];
+export const __messagesReferenceLocale: LocaleTag;
+export const __messagesLocales: readonly LocaleTag[];
 ```
 
-On the Cloudflare platform these are what `Locale.current()` negotiates an
+The `__` prefix is one no Bynk identifier can spell, so these never collide with
+a declaration of your own (#1697). On the Cloudflare platform they are what
+`Locale.current()` negotiates an
 inbound `Accept-Language` header against, wired up automatically when a context
 has exactly one detectable bundle. A context reaching two or more bundles has
 no single answer to negotiate against and is reported as ambiguous.

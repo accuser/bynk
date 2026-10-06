@@ -6,9 +6,9 @@ import * as commerce_payment from "./commerce/payment.js";
 
 export function composeApp() {
   const commerce_paymentDeps = { Logger: new commerce_payment.ConsoleLogger() };
-  const commerce_paymentSurface = commerce_payment.makeSurface(commerce_paymentDeps);
+  const commerce_paymentSurface = commerce_payment.__makeSurface(commerce_paymentDeps);
   const commerce_ordersDeps = { surface: { Payment: commerce_paymentSurface } };
-  const commerce_ordersSurface = commerce_orders.makeSurface(commerce_ordersDeps);
+  const commerce_ordersSurface = commerce_orders.__makeSurface(commerce_ordersDeps);
 
   return {
     orders: commerce_ordersSurface,
