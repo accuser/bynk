@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.306**.
+written against **v0.307**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.307.0** | "`bynk fmt` and `bynkc fmt` accept directories: a project root formats the files `check` reads (its `[paths] include` trees minus `exclude`), and any other directory is walked recursively, so `fmt --check .` covers what `check .` and `test .` see (#1753). The formatter no longer deletes a `---` documentation block that attaches to no declaration (one separated from the next declaration by a blank line, or at the end of a file): it leaves the file unchanged and reports `bynk.fmt.comment_loss`, as it does for a comment it cannot place (#1664)" |
 | **v0.306.2** | An `is` receiver that was not lifted to a temp before its bindings were gathered is now a compiler internal error, rather than a `/* TODO: complex is-receiver */` placeholder in the emitted TypeScript that surfaced as a distant `tsc` error. No well-formed program reaches it (#1668) |
 | **v0.306.1** | When `bynk dev` stops, it no longer leaves `wrangler` and `workerd` processes running and holding their ports, which made the next `bynk dev` fail with `bind(): Address already in use`. Before, the leak happened when one context's wrangler exited and the others were stopped: with wrangler resolved via npx, every context's processes survived, and with any wrangler, the exited context's `workerd`s did. `bynk dev` now also stops whatever is still running in its worker directories (#1742) |
 | **v0.306.0** | In a project, a file with a syntax error no longer drops out of checking. `bynkc check` and the editor report the type errors in its declarations that did parse, and a reference to a declaration the syntax error broke (a `uses`d type, a consumed context's service) is no longer reported as unknown in the files that can see it. A build still stops at the syntax error, and nothing is emitted (#1710) |
