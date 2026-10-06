@@ -563,13 +563,6 @@ fn expr_contains_question(e: &Expr) -> bool {
     match &e.kind {
         ExprKind::Question(_) => true,
         ExprKind::Lambda(_) => false,
-        // #1757 review: `ast::expr_children` does not visit a match arm's guard,
-        // and a guard's `?` lowers inside the same body as the arm's. A nested
-        // `match` is walked here instead, guards included; its discriminant is
-        // evaluated inside the enclosing form's body too.
-        ExprKind::Match { discriminant, arms } => {
-            expr_contains_question(discriminant) || arms_contain_question(arms)
-        }
         _ => bynk_syntax::ast::expr_children(e)
             .into_iter()
             .any(expr_contains_question),
