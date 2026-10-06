@@ -22,6 +22,7 @@
 //! - [`test`](mod@test) — delegate to the driver-resolved `bynkc` (v0.138, #487).
 //! - [`diagnostics`] — shared flatten-then-delegate rendering for in-process
 //!   compiles; [`shell`] — shelling the resolved `bynkc`.
+//! - [`sweep`] — stopping what `bynk dev`'s wranglers leave running (#1742).
 
 pub mod check;
 pub mod cli;
@@ -43,6 +44,7 @@ pub mod new;
 pub use bynk_driver::probe;
 pub mod report;
 pub mod shell;
+pub mod sweep;
 pub mod test;
 pub mod workers;
 
