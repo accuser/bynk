@@ -94,7 +94,9 @@ cut when the work it ships is whole:**
    That release is tagged from `main` as soon as the fix merges.
 3. **What the tag does.** `release.yml` does the rest from the tag: it builds
    the binaries, cuts the GitHub Release, publishes the crates and the grammar,
-   and moves the VS Code extension's server pin to the new release.
+   moves the VS Code extension's server pin to the new release, and tells the
+   bynk-lang org canary, which re-runs the org's example and action
+   repositories against it.
 4. **What a release carries.** The cumulative migration note (above), covering
    the increments since the previous release, and the Workers
    compatibility-date review (Part 3).
