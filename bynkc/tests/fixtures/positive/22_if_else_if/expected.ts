@@ -6,4 +6,3 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError } f
 export function classify(n: number): string {
   return (n < 10 ? "small" : (n < 100 ? "medium" : "large"));
 }
-

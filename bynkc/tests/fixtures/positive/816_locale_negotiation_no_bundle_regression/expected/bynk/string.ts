@@ -22,4 +22,3 @@ export function join(parts: readonly string[], sep: string): string {
     throw new globalThis.Error("non-exhaustive match");
   })(acc)), "");
 }
-

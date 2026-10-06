@@ -23,4 +23,3 @@ export function doubled(n: number): Result<number, ValidationError> {
   const r = __r0.value;
   return Ok(r * 2);
 }
-

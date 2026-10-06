@@ -11,4 +11,3 @@ export const PaymentError = {
   Declined: { tag: "Declined" } as PaymentError,
   InsufficientFunds: { tag: "InsufficientFunds" } as PaymentError,
 };
-

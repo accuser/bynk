@@ -60,4 +60,3 @@ export function __deserialise_Note(json: __JsonValue, path: string = "$"): Resul
   return Ok({ id: __id, owner: __owner } as Note);
 }
 
-

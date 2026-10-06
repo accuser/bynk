@@ -30,4 +30,3 @@ export function describe(o: Outcome): string {
   }
   throw new globalThis.Error("non-exhaustive match");
 }
-

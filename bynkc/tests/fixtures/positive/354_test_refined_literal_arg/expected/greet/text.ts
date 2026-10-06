@@ -20,4 +20,3 @@ export const Subject = {
 export function greeting(subject: Subject): string {
   return `Hello, ${String(subject)}!`;
 }
-

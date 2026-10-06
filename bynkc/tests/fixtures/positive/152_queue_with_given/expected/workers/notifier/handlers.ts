@@ -49,4 +49,3 @@ export function __deserialise_Notification(json: __JsonValue, path: string = "$"
   return Ok({ body: __body } as Notification);
 }
 
-

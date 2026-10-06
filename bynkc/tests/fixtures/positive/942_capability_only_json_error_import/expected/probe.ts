@@ -8,4 +8,3 @@ export interface Parser {
 }
 
 export const __ParserToken: symbol = globalThis.Symbol("Parser");
-

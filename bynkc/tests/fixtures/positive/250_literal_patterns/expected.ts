@@ -70,4 +70,3 @@ export function named(code: LanguageCode): string {
   }
   throw new globalThis.Error("non-exhaustive match");
 }
-

@@ -11,4 +11,3 @@ export const Outcome = {
   Hit: (score: number): Outcome => ({ tag: "Hit", score }),
   Miss: { tag: "Miss" } as Outcome,
 };
-

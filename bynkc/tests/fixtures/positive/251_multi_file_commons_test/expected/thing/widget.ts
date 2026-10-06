@@ -19,4 +19,3 @@ export const Widget = {
     return Widget.of(n);
   },
 };
-

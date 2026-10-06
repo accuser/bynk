@@ -49,4 +49,3 @@ export interface Authorisation {
 
 export const Authorisation = {
 };
-

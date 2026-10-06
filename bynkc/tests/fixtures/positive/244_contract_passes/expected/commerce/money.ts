@@ -6,4 +6,3 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError, __
 export function discount(p: number, pct: number): number {
   return p - __bynkIntDiv((p * pct), 100);
 }
-

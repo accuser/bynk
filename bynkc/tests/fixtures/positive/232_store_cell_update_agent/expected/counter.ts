@@ -60,4 +60,3 @@ export function __makeCounter(key: string, env?: { COUNTER?: __DurableObjectName
 export function __resetAgents(): void {
   __CounterRegistry.reset();
 }
-

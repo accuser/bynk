@@ -12,4 +12,3 @@ export function classify(code: string): number {
   }
   return 0;
 }
-

@@ -16,4 +16,3 @@ export function demo(): string {
   const n = pair_first(7, s);
   return identity(s);
 }
-

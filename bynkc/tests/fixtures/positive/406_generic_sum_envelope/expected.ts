@@ -68,4 +68,3 @@ export function leaf_value(t: Tree<number>): number {
   }
   throw new globalThis.Error("non-exhaustive match");
 }
-

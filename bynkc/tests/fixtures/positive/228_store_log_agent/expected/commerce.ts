@@ -114,4 +114,3 @@ export function __deserialise_ReserveEvent(json: __JsonValue, path: string = "$"
   return Ok({ sku: __sku, qty: __qty } as ReserveEvent);
 }
 
-

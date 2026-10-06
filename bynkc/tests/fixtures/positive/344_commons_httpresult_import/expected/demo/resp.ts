@@ -13,4 +13,3 @@ export function handler(id: number): HttpResult<string> {
   const name = __r0.value;
   return HttpResult.Ok(name);
 }
-

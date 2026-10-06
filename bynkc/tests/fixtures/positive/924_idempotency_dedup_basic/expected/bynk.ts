@@ -192,4 +192,3 @@ export interface Events {
 }
 
 export const __EventsToken: symbol = globalThis.Symbol("Events");
-

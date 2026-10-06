@@ -40,4 +40,3 @@ export function __deserialise_EmailJob(json: __JsonValue, path: string = "$"): R
   return Ok({ to: __to, subject: __subject } as EmailJob);
 }
 
-

@@ -42,4 +42,3 @@ export function render(tag: __bynkLocaleTag, msg: __bynkMessage): string {
   }
   return __bynkLocaleRender(tag, msg);
 }
-

@@ -38,4 +38,3 @@ export const MoneyError = {
   CurrencyMismatch: { tag: "CurrencyMismatch" } as MoneyError,
   InsufficientFunds: { tag: "InsufficientFunds" } as MoneyError,
 };
-

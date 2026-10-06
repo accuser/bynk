@@ -48,4 +48,3 @@ export const Sets = {
 export function totalReps(sets: Sets, reps: Reps): number {
   return sets * reps;
 }
-

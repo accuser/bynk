@@ -92,4 +92,3 @@ export const api = {
 export function __resetAgents(): void {
   __TallyRegistry.reset();
 }
-

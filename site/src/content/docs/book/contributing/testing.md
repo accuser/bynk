@@ -28,7 +28,8 @@ are checked separately).
 ### How matching works
 
 - **Positive** fixtures compare emitted files byte-for-byte against `expected/`
-  (or `expected.ts`).
+  (or `expected.ts`), trailing newlines included. A file that differs only in
+  trailing whitespace fails like any other difference; the failure says so.
 - **Negative** fixtures match by **substring**: each non-blank, non-`#` line of
   `expected_error.txt` must appear somewhere in the concatenated
   `"{code} {message}"` of the diagnostics. So a line is usually just a code, e.g.
@@ -63,7 +64,11 @@ BYNK_BLESS=1 cargo test -p bynkc bless_positive_fixtures
 The `bless_positive_fixtures` test is a no-op unless `BYNK_BLESS` is set; with it
 set, it recompiles each positive fixture and overwrites `expected/`. **Always
 review the resulting diff** — blessing is how a regression silently becomes the
-new "expected" if you are not careful.
+new "expected" if you are not careful. A project fixture's `expected/` is
+deleted and rewritten, so a bless also removes the goldens of files the emitter
+no longer writes. Because the comparison is byte-exact, a bless leaves the tree
+clean unless emission actually changed, in content or in which files are
+emitted.
 
 `BYNK_BLESS` is the project's shared regenerate switch: the same run also
 refreshes the generated reference pages (see [Working on the docs](/book/contributing/documentation/)).

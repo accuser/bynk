@@ -40,4 +40,3 @@ export function total(repCount: number, setCount: number): Result<number, Valida
   const s = __r1.value;
   return Ok(r * s);
 }
-

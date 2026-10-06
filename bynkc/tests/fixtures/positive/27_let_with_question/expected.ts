@@ -23,4 +23,3 @@ export function extract(n: number): Result<Reps, ValidationError> {
   const r: Reps = __r0.value;
   return Ok(r);
 }
-

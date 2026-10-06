@@ -34,4 +34,3 @@ export async function chained(id: number): globalThis.Promise<Result<string, str
 export async function recovered(id: number): globalThis.Promise<Result<number, string>> {
   return (async (__e: globalThis.Promise<Result<number, string>>, __f: (e: string) => globalThis.Promise<Result<number, string>>) => { const __r = await __e; return __r.tag === "Err" ? await __f(__r.error) : __r; })(fetchUser(id), async (e: string) => recover(e));
 }
-

@@ -23,4 +23,3 @@ export const api = {
     return HttpResult.Created(body);
   },
 };
-

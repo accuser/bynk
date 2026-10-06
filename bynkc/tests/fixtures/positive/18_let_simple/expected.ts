@@ -7,4 +7,3 @@ export function double(n: number): number {
   const x: number = n + n;
   return x;
 }
-

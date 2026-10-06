@@ -79,4 +79,3 @@ export async function placeMatch(day: number, mode: number): globalThis.Promise<
   }
   throw new globalThis.Error("non-exhaustive match");
 }
-

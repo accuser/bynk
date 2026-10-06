@@ -20,4 +20,3 @@ export class StubCounter implements Counter {
 }
 
 export const __StubCounterProvider = { token: __CounterToken, factory: () => new StubCounter() };
-

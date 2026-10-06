@@ -28,4 +28,3 @@ export function describe(e: MoneyError): string {
   }
   throw new globalThis.Error("non-exhaustive match");
 }
-

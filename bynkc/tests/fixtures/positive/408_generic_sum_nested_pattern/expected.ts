@@ -34,4 +34,3 @@ export function unwrap(o: Outer<Inner>): string {
   }
   throw new globalThis.Error("non-exhaustive match");
 }
-

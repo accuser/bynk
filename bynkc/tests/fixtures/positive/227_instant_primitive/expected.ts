@@ -34,4 +34,3 @@ export function earliest(ts: readonly number[]): Option<number> {
 export function chronological(ts: readonly number[]): readonly number[] {
   return [...ts].sort((__a: number, __b: number) => { const __ka = ((t) => t)(__a), __kb = ((t) => t)(__b); return __ka < __kb ? -1 : __ka > __kb ? 1 : 0; });
 }
-

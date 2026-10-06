@@ -13,4 +13,3 @@ export const Tweet = {
     return Ok(value as Tweet);
   },
 };
-

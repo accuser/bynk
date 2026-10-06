@@ -28,4 +28,3 @@ export async function channel(c: Color): globalThis.Promise<number> {
   }
   throw new globalThis.Error("non-exhaustive match");
 }
-

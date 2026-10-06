@@ -40,4 +40,3 @@ export function route(r: Req): string {
   }
   throw new globalThis.Error("non-exhaustive match");
 }
-

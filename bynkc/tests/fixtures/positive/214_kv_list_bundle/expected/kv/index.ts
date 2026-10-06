@@ -108,4 +108,3 @@ export function __deserialise_Entry(json: __JsonValue, path: string = "$"): Resu
   return Ok({ sku: __sku, price: __price, qty: __qty } as Entry);
 }
 
-

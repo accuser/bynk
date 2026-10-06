@@ -39,4 +39,3 @@ export function __deserialise_Box(json: __JsonValue, path: string = "$"): Result
   return Ok({ value: __value } as Box);
 }
 
-

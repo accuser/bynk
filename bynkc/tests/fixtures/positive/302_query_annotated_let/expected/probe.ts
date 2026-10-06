@@ -87,4 +87,3 @@ export function __deserialise_Reservation(json: __JsonValue, path: string = "$")
   return Ok({ id: __id, qty: __qty } as Reservation);
 }
 
-

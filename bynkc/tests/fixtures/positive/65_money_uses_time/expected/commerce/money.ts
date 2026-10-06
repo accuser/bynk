@@ -67,4 +67,3 @@ export const Transaction = {
     return Timestamp.diff(self.occurred, other.occurred);
   },
 };
-

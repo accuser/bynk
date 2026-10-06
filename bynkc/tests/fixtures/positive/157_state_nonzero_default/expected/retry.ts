@@ -52,4 +52,3 @@ export function __makeTask(key: string, env?: { TASK?: __DurableObjectNamespace 
 export function __resetAgents(): void {
   __TaskRegistry.reset();
 }
-

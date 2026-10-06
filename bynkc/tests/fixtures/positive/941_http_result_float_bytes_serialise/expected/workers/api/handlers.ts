@@ -11,4 +11,3 @@ export const api = {
     return HttpResult.Ok(new globalThis.Uint8Array());
   },
 };
-

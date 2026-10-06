@@ -34,4 +34,3 @@ export function __deserialise_Result_String_String(json: __JsonValue, path: stri
   }
   return Err({ kind: "StructuralMismatch", path, expected: "Ok | Err", actual: String(obj["kind"]) });
 }
-

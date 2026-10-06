@@ -21,4 +21,3 @@ export const Foo = {
     return Ok(value as Foo);
   },
 };
-

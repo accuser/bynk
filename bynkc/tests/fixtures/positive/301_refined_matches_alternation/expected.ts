@@ -13,4 +13,3 @@ export const Code = {
     return Ok(value as Code);
   },
 };
-

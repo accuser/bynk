@@ -75,4 +75,3 @@ export function __makeWallet(key: Id, env?: { WALLET?: __DurableObjectNamespace 
 export function __resetAgents(): void {
   __WalletRegistry.reset();
 }
-

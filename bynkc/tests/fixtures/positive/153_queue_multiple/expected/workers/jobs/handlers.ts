@@ -40,4 +40,3 @@ export function __deserialise_Job(json: __JsonValue, path: string = "$"): Result
   return Ok({ id: __id } as Job);
 }
 
-

@@ -153,4 +153,3 @@ export function __deserialise_Option_Entry(json: __JsonValue, path: string = "$"
   }
   return Err({ kind: "StructuralMismatch", path, expected: "Some | None", actual: String(obj["kind"]) });
 }
-

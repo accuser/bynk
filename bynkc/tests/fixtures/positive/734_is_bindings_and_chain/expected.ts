@@ -15,4 +15,3 @@ export function sumIfAllOk(r1: Result<number, string>, r2: Result<number, string
     return 0;
   }
 }
-

@@ -8,4 +8,3 @@ export interface Log {
 }
 
 export const __LogToken: symbol = globalThis.Symbol("Log");
-

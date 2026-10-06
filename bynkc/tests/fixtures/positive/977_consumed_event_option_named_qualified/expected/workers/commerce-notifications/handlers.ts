@@ -83,4 +83,3 @@ export function __deserialise_Option_Region(json: __JsonValue, path: string = "$
   }
   return Err({ kind: "StructuralMismatch", path, expected: "Some | None", actual: String(obj["kind"]) });
 }
-

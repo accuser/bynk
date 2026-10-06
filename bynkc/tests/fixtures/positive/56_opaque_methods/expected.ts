@@ -22,4 +22,3 @@ export const Timestamp = {
     return self === other;
   },
 };
-

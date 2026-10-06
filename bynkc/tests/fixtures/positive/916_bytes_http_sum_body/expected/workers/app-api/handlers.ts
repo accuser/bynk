@@ -27,4 +27,3 @@ export const api = {
     throw new globalThis.Error("non-exhaustive match");
   },
 };
-

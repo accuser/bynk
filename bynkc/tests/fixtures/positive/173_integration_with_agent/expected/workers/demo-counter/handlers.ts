@@ -136,4 +136,3 @@ export function __deserialise_Result_Int_CounterError(json: __JsonValue, path: s
   }
   return Err({ kind: "StructuralMismatch", path, expected: "Ok | Err", actual: String(obj["kind"]) });
 }
-

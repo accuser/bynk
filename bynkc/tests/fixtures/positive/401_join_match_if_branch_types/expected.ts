@@ -31,4 +31,3 @@ export function pick(r: Result<Email, string>): string {
 export function choose(flag: boolean, e: Email, s: string): string {
   return (flag ? e : s);
 }
-

@@ -194,6 +194,43 @@ fn compile_fixture(
     }
 }
 
+/// #1684: positive goldens compare byte for byte, trailing newlines included,
+/// so the emitter's output and a blessed golden are the same bytes. A mismatch
+/// only in trailing whitespace prints as two identical-looking blocks, so the
+/// failure names it.
+fn whitespace_note(actual: &str, want: &str) -> &'static str {
+    if actual.trim_end() == want.trim_end() {
+        " (differs only in trailing whitespace; re-bless)"
+    } else {
+        ""
+    }
+}
+
+/// `whitespace_note` names a trailing-only difference and nothing else, so a
+/// later edit can't silently drop the hint (or attach it to a real difference).
+#[test]
+fn whitespace_note_names_only_trailing_differences() {
+    let want = "a\nb\n";
+    assert!(
+        !whitespace_note("a\nb\n\n", want).is_empty(),
+        "extra trailing newline"
+    );
+    assert!(
+        !whitespace_note("a\nb", want).is_empty(),
+        "missing final newline"
+    );
+    assert_eq!(
+        whitespace_note("a\nc\n", want),
+        "",
+        "substantive difference"
+    );
+    assert_eq!(
+        whitespace_note("a \nb\n", want),
+        "",
+        "interior trailing space"
+    );
+}
+
 #[test]
 fn positive_fixtures() {
     let dirs = fixture_dirs("positive");
@@ -209,10 +246,11 @@ fn positive_fixtures() {
             match bynkc::compile(&source, &name) {
                 Ok(actual) => {
                     let want = read(&expected);
-                    if actual.trim_end() != want.trim_end() {
+                    if actual != want {
                         failures.push(format!(
-                            "\n=== {} ===\n--- expected ---\n{}\n--- actual ---\n{}\n",
+                            "\n=== {}{} ===\n--- expected ---\n{}\n--- actual ---\n{}\n",
                             dir.display(),
+                            whitespace_note(&actual, &want),
                             want,
                             actual,
                         ));
@@ -260,11 +298,12 @@ fn positive_fixtures() {
                         let actual = actual_by_path.get(&rel);
                         match actual {
                             Some(a) => {
-                                if a.trim_end() != want.trim_end() {
+                                if *a != want {
                                     all_ok = false;
                                     report.push_str(&format!(
-                                        "\n--- {} ---\n--- expected ---\n{}\n--- actual ---\n{}\n",
+                                        "\n--- {}{} ---\n--- expected ---\n{}\n--- actual ---\n{}\n",
                                         rel.display(),
+                                        whitespace_note(a, &want),
                                         want,
                                         a,
                                     ));

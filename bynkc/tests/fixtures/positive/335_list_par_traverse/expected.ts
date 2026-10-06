@@ -11,4 +11,3 @@ export async function notifyAll(ids: readonly number[]): globalThis.Promise<void
   await (async (__xs: readonly number[]) => { await globalThis.Promise.all(__xs.map((__x: number) => (async (id: number) => notify(id))(__x))); })(ids);
   return undefined;
 }
-

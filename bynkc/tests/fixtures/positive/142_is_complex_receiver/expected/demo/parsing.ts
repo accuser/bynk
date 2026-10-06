@@ -25,4 +25,3 @@ export function label(n: number): number {
     return 0;
   }
 }
-
