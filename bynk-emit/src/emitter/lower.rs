@@ -5526,6 +5526,10 @@ fn lower_lambda(e: &Expr, lambda: &LambdaExpr, cx: &mut LowerCtx) -> String {
     cx.return_ty = lam_ret;
     // #1750: the lambda's own tails `return` from the lambda.
     let saved_slot = cx.tail_slot.take();
+    // #1764 review: an enclosing short-circuit's temp hoist stops here. A
+    // receiver temp inside the lambda is read only inside it, and hoisting its
+    // declaration out would share one slot between the lambda's invocations.
+    let saved_hoist = cx.is_temp_hoist.take();
     let result = match &lambda.body.kind {
         ExprKind::Block(b) => {
             let mut out = format!("{prefix}({params}) => {{\n");
@@ -5564,6 +5568,7 @@ fn lower_lambda(e: &Expr, lambda: &LambdaExpr, cx: &mut LowerCtx) -> String {
             }
         }
     };
+    cx.is_temp_hoist = saved_hoist;
     cx.tail_slot = saved_slot;
     cx.return_ty = saved;
     cx.shadow_scopes.pop();

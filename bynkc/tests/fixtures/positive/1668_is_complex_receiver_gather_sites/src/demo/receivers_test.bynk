@@ -12,6 +12,26 @@ suite demo.receivers {
     expect negatedOrThree(Some(1), Some(2), None) == 0
   }
 
+  case "a right-nested || binds all three" {
+    expect negatedOrRightNested(Some(1), Some(2), Some(3)) == 6
+    expect negatedOrRightNested(Some(1), None, Some(3)) == 0
+  }
+
+  case "a plain && and implies bind the right operand" {
+    expect plainAnd(true, Some(5)) == 5
+    expect plainAnd(false, Some(5)) == 0
+    expect plainAnd(true, None) == 0
+    expect plainImplies(true, Some(5)) == 5
+    expect plainImplies(false, Some(5)) == 0
+    expect plainImplies(true, None) == 0
+  }
+
+  case "a lambda's temp stays in the lambda" {
+    expect inLambda(false, Some(2), [1, 2, 3])
+    expect !inLambda(false, Some(9), [1, 2, 3])
+    expect inLambda(true, None, [])
+  }
+
   case "the other gather sites still read their temps" {
     expect stmtIf(Some(4)) == 4
     expect negatedElse(Some(4)) == 4
