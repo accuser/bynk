@@ -250,7 +250,8 @@ pub fn wrangler_command(provenance: &Provenance, subcommand: &str) -> Option<Com
             Some(cmd)
         }
         Provenance::Npx => {
-            let mut cmd = Command::new("npx");
+            // #1758: the resolved `npx`, so Windows runs its `npx.cmd` shim.
+            let mut cmd = Command::new(crate::probe::program_path("npx"));
             // #524: pinned provisioning, per the repo's npx convention — an
             // unpinned `wrangler` here meant the dev server could drift from
             // the wrangler the tests and deploys run.
