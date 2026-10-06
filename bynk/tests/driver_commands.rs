@@ -1080,6 +1080,26 @@ fn fmt_on_a_directory_with_no_sources_fails() {
     );
 }
 
+/// A bad directory argument fails the run before anything is written, like a
+/// manifest error: a file named before it is left as it was.
+#[test]
+fn a_bad_directory_argument_writes_nothing() {
+    let dir = scratch("fmt-dir-abort");
+    write(&dir.join("good.bynk"), &messy("good"));
+    std::fs::create_dir_all(dir.join("empty")).unwrap();
+    let (code, _out, err) = run_bynk_in(&dir, &["fmt", "good.bynk", "empty"]);
+    assert_eq!(code, 1, "stderr:\n{err}");
+    assert!(
+        err.contains("no `.bynk` files under `empty`"),
+        "stderr:\n{err}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("good.bynk")).unwrap(),
+        messy("good"),
+        "the file named before the bad directory must not be rewritten"
+    );
+}
+
 /// `bynkc fmt` shares `run_fmt`, so a directory behaves the same through it.
 #[test]
 fn fmt_directory_matches_bynkc_when_present() {

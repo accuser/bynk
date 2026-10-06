@@ -325,6 +325,10 @@ fn comment_loss(source: &str, tokens: &[Token], output: &str) -> Option<CompileE
 /// tokenized as `tokens`) that has no counterpart in `output`, compared by
 /// content multiset. An attached doc block is re-rendered with its content
 /// intact; the one the formatter loses is an orphan, which the parser drops.
+///
+/// An `output` that does not tokenize returns `None`: that is a formatter bug
+/// the round-trip guard reports accurately ("no longer parses"), and counting
+/// every block as lost would point the user at an innocent one instead.
 fn doc_block_loss(source: &str, tokens: &[Token], output: &str) -> Option<CompileError> {
     use bynk_syntax::lexer::doc_block_content;
     let in_docs: Vec<Span> = tokens
@@ -344,14 +348,13 @@ fn doc_block_loss(source: &str, tokens: &[Token], output: &str) -> Option<Compil
             .collect::<Vec<_>>()
             .join("\n")
     };
+    let out_tokens = tokenize(output).ok()?;
     let mut out_docs: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-    if let Ok(out_tokens) = tokenize(output) {
-        for t in &out_tokens {
-            if t.kind == TokenKind::DocBlock {
-                *out_docs
-                    .entry(normalise(doc_block_content(output, t.span)))
-                    .or_insert(0) += 1;
-            }
+    for t in &out_tokens {
+        if t.kind == TokenKind::DocBlock {
+            *out_docs
+                .entry(normalise(doc_block_content(output, t.span)))
+                .or_insert(0) += 1;
         }
     }
     let mut lost = 0usize;
@@ -375,11 +378,15 @@ fn doc_block_loss(source: &str, tokens: &[Token], output: &str) -> Option<Compil
         ),
         labels: vec![(
             span,
-            "this documentation block is not attached to any declaration".to_string(),
+            "this documentation block has no counterpart in the formatted output".to_string(),
         )],
         notes: vec![
-            "a `---` block attaches to the declaration directly below it; remove the blank \
-             line to attach it, or make it a `--` comment if it documents nothing"
+            "a `---` block attaches to the declaration directly below it; one separated from \
+             it by a blank line, or with no declaration after it, attaches to nothing. Remove \
+             the blank line to attach it, or make it a `--` comment if it documents nothing"
+                .to_string(),
+            "if the block is already directly above a declaration, this is a formatter bug; \
+             please report it with the file that triggered it"
                 .to_string(),
         ],
         suggestions: Vec::new(),
@@ -3333,6 +3340,20 @@ fn stmt_to_string(s: &Statement) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #1755 review: output that does not even tokenize is the round-trip
+    /// guard's to report ("no longer parses"). The doc-block guard runs first,
+    /// so it must stay silent rather than blame every doc block as lost.
+    #[test]
+    fn doc_block_loss_leaves_an_untokenizable_output_to_the_roundtrip_guard() {
+        let source = "commons d\n\n---\nattached\n---\nfn f() -> Int { 1 }\n";
+        let tokens = tokenize(source).unwrap();
+        assert!(tokenize("commons d\n\"unterminated").is_err());
+        assert!(
+            doc_block_loss(source, &tokens, "commons d\n\"unterminated").is_none(),
+            "an untokenizable output was reported as doc-block loss"
+        );
+    }
 
     fn fmt(src: &str) -> String {
         format_source(src, &FormatOptions::default()).expect("format failed")

@@ -94,45 +94,56 @@ fn check_file(path: &Path, opts: &FormatOptions) -> Result<(), String> {
     Ok(())
 }
 
-/// Fixtures whose source the formatter must refuse, with the reason. #1664:
+/// Fixtures holding a source the formatter must refuse, with the reason. #1664:
 /// an orphaned `---` block is refused with `bynk.fmt.comment_loss` rather than
-/// deleted, and 308 exists to carry one. Each entry is asserted to refuse, so
-/// the list can't outlive its reason.
+/// deleted, and 308 exists to carry one. Each entry must name a fixture that
+/// exists and must refuse at least one of its files, so the list can't outlive
+/// its reason. Its other files round-trip like any fixture's.
 const REFUSED: &[&str] = &["308_orphan_doc_block_warns"];
+
+/// A fixture's `.bynk` files, in either layout: a lone `input.bynk`, or a
+/// `src/` tree.
+fn fixture_files(dir: &Path) -> Vec<PathBuf> {
+    let input = dir.join("input.bynk");
+    if input.exists() {
+        vec![input]
+    } else {
+        collect_bynk_files(&dir.join("src"))
+    }
+}
 
 #[test]
 fn round_trip_positive_corpus() {
     let opts = FormatOptions::default();
     let mut failures = Vec::new();
+    let mut listed: Vec<&str> = REFUSED.to_vec();
     for dir in fixture_dirs() {
         let name = dir.file_name().and_then(|n| n.to_str()).unwrap_or_default();
-        if REFUSED.contains(&name) {
-            for f in collect_bynk_files(&dir.join("src")) {
+        let refusable = REFUSED.contains(&name);
+        listed.retain(|n| *n != name);
+        let mut refused = 0;
+        for f in fixture_files(&dir) {
+            if refusable {
                 let source = fs::read_to_string(&f).unwrap();
-                match format_source(&source, &opts) {
-                    Err(e) if e.errors[0].category == "bynk.fmt.comment_loss" => {}
-                    other => failures.push(format!(
-                        "{} is listed in REFUSED but formatted to {:?}",
-                        f.display(),
-                        other.map_err(|e| e.errors[0].category)
-                    )),
+                if let Err(e) = format_source(&source, &opts)
+                    && e.errors[0].category == "bynk.fmt.comment_loss"
+                {
+                    refused += 1;
+                    continue;
                 }
             }
-            continue;
-        }
-        let input = dir.join("input.bynk");
-        let src_dir = dir.join("src");
-        if input.exists() {
-            if let Err(e) = check_file(&input, &opts) {
+            if let Err(e) = check_file(&f, &opts) {
                 failures.push(e);
             }
-        } else if src_dir.is_dir() {
-            for f in collect_bynk_files(&src_dir) {
-                if let Err(e) = check_file(&f, &opts) {
-                    failures.push(e);
-                }
-            }
         }
+        if refusable && refused == 0 {
+            failures.push(format!(
+                "{name} is listed in REFUSED, but the formatter refused none of its files"
+            ));
+        }
+    }
+    for name in listed {
+        failures.push(format!("{name} is listed in REFUSED but is not a fixture"));
     }
     if !failures.is_empty() {
         panic!(

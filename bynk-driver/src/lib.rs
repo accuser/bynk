@@ -85,11 +85,7 @@ fn project_sources(
 ) -> Result<(Option<project::ProjectPaths>, HashMap<PathBuf, String>), ProjectOptionsError> {
     if input.join("bynk.toml").exists() || input.join("src").is_dir() {
         let paths = try_read_project_paths_with(input, &manifest_overlay(input))?;
-        let roots = project::Roots::Split {
-            project_root: input.to_path_buf(),
-            paths: paths.clone(),
-        };
-        let sources = discovery::sources_for_roots(&roots)?;
+        let sources = split_sources(input, &paths)?;
         Ok((Some(paths), sources))
     } else {
         Ok((None, discovery::read_bynk_tree_single(input)?))
@@ -117,21 +113,32 @@ fn manifest_overlay(input: &Path) -> HashMap<PathBuf, String> {
     }
 }
 
-/// The split-layout half of `project_options`/`try_project_options`: build the
-/// one `Roots` value the project resolves to, walk exactly that (via
-/// [`discovery::sources_for_roots`] — #1081 review, so the CLI's walk can't
-/// drift from what `Roots::trees`/`Roots::excludes` themselves say), and
-/// hand the result to `CompileOptions::split` alongside it.
+/// The split-layout half of `project_options`: walk the project's sources
+/// ([`split_sources`]) and hand them to `CompileOptions::split` alongside the
+/// layout.
 fn options_for_split(
     input: &Path,
     paths: project::ProjectPaths,
 ) -> Result<CompileOptions, discovery::DiscoveryError> {
+    let sources = split_sources(input, &paths)?;
+    Ok(CompileOptions::split(input.to_path_buf(), paths).sources(sources))
+}
+
+/// The sources of a project rooted at `input` with layout `paths`: build the
+/// one `Roots` value the project resolves to and walk exactly that (via
+/// [`discovery::sources_for_roots`] — #1081 review, so the CLI's walk can't
+/// drift from what `Roots::trees`/`Roots::excludes` themselves say). The one
+/// copy of the split-layout walk, shared by [`project_options`] and
+/// [`try_project_options`]/[`project_source_files`] (#1755 review).
+fn split_sources(
+    input: &Path,
+    paths: &project::ProjectPaths,
+) -> Result<HashMap<PathBuf, String>, discovery::DiscoveryError> {
     let roots = project::Roots::Split {
         project_root: input.to_path_buf(),
         paths: paths.clone(),
     };
-    let sources = discovery::sources_for_roots(&roots)?;
-    Ok(CompileOptions::split(input.to_path_buf(), paths).sources(sources))
+    discovery::sources_for_roots(&roots)
 }
 
 /// Why [`try_project_options`] could not produce a usable [`CompileOptions`]:
