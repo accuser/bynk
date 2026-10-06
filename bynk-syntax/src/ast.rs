@@ -2742,10 +2742,19 @@ pub fn expr_children(e: &Expr) -> Vec<&Expr> {
 
 /// The expressions directly contained in a statement — the statement half of
 /// [`expr_children`]'s total walk. Exhaustive over [`Statement`] for the same
-/// reason.
+/// reason, and over each statement's expressions: a `let`'s call-site
+/// principal identity included.
 pub fn statement_exprs<'a>(s: &'a Statement, out: &mut Vec<&'a Expr>) {
     match s {
-        Statement::Let(l) | Statement::EffectLet(l) => out.push(&l.value),
+        Statement::Let(l) | Statement::EffectLet(l) => {
+            // #1766 review: a call-site principal's identity (`by User(who)`)
+            // is a full expression. It is evaluated first, as an argument to
+            // the addressed call.
+            if let Some(identity) = l.principal.as_ref().and_then(|p| p.identity.as_deref()) {
+                out.push(identity);
+            }
+            out.push(&l.value)
+        }
         Statement::Expect(a) => out.push(&a.value),
         Statement::Send(snd) => out.push(&snd.value),
         Statement::Do(d) => out.push(&d.value),
@@ -3095,5 +3104,24 @@ mod expr_children_tests {
             .map(|e| &source[e.span.start..e.span.end])
             .collect();
         assert_eq!(children, ["n", "k > lim", "1", "0"]);
+    }
+
+    /// #1766 review: a `let`'s call-site principal identity is a statement
+    /// expression, before the value it addresses.
+    #[test]
+    fn a_principal_identity_is_a_statement_expression() {
+        let source = "suite demo.s {\n  case \"c\" {\n    let who = \"alice\"\n    let item <- api.get() by User(who)\n    expect item\n  }\n}\n";
+        let tokens = crate::lexer::tokenize(source).unwrap();
+        let units = crate::parser::parse_units(&tokens, source).unwrap();
+        let SourceUnit::Suite(t) = &units[0] else {
+            panic!("a suite");
+        };
+        let mut exprs = Vec::new();
+        statement_exprs(&t.cases[0].body.statements[1], &mut exprs);
+        let texts: Vec<&str> = exprs
+            .into_iter()
+            .map(|e| &source[e.span.start..e.span.end])
+            .collect();
+        assert_eq!(texts, ["who", "api.get()"]);
     }
 }
