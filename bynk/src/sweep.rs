@@ -190,7 +190,7 @@ fn cwds(pids: &[u32]) -> Vec<(u32, PathBuf)> {
 /// Parse `lsof -F pn` output: a `p<pid>` line opens each process, and each
 /// `n<path>` line after it names one of its files (here, only its cwd). Other
 /// field lines (`lsof` adds `f<fd>`) are skipped.
-#[cfg_attr(target_os = "linux", allow(dead_code))]
+#[cfg_attr(not(all(unix, not(target_os = "linux"))), allow(dead_code))]
 fn parse_lsof(text: &str) -> Vec<(u32, PathBuf)> {
     let mut pid = None;
     let mut found = Vec::new();
