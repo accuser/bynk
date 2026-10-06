@@ -5,10 +5,12 @@
 //! `--format json` mode. Moved down from `bynkc` — both `bynkc` and `bynk`
 //! need one implementation instead of two.
 //!
-//! `tool_exists` (a bare PATH check) is replaced by [`crate::probe::detect`]
-//! with [`crate::probe::DetectOpts::default()`] (no project-local search, no
-//! `npx` fallback) — behaviourally identical to the old check, routed through
-//! the one detection implementation both CLIs already share for `doctor`/`dev`.
+//! Runners are found with [`crate::probe::detect`] and
+//! [`crate::probe::DetectOpts::default()`] (no project-local search, no `npx`
+//! fallback), the one detection implementation both CLIs share for
+//! `doctor`/`dev`. #1758: each is spawned by the path detection resolved, not by
+//! its bare name, so a Windows npm shim (`tsc.cmd`) runs, and a runner that is
+//! found but won't start is reported as such rather than as missing.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command as ProcCommand, ExitCode, Stdio};
@@ -19,8 +21,24 @@ use clap::ValueEnum;
 use crate::probe::{DetectOpts, SystemToolbox};
 use crate::test_json::{Case, Location, Suite, TestRun};
 
-fn tool_exists(name: &str) -> bool {
-    crate::probe::detect(&SystemToolbox, name, DetectOpts::default()).is_present()
+/// Where `name` is installed on `PATH`, if it is. #1758: callers spawn this
+/// path, not the bare name, so a Windows npm shim (`tsc.cmd`) that detection
+/// finds is also the program that runs.
+fn resolve_tool(name: &str) -> Option<PathBuf> {
+    crate::probe::detect(&SystemToolbox, name, DetectOpts::default())
+        .provenance
+        .path()
+        .map(Path::to_path_buf)
+}
+
+/// #1758: a runner that was found but would not start. Recorded instead of
+/// silently skipped, so a run with no working runner reports the real cause
+/// rather than advising an install of something already installed.
+fn start_failure(path: &Path, e: &std::io::Error) -> String {
+    format!(
+        "`{}` was found but could not be started: {e}",
+        path.display()
+    )
 }
 
 /// `test --format` selector, shared by `bynkc test` and `bynk test` (review
@@ -370,15 +388,16 @@ pub fn run_test(program: &str, args: TestArgs) -> ExitCode {
     // #1672: the `npx` fallback provisions the TypeScript major the output is
     // verified against and users get, not an older pin.
     let typescript_pkg = format!("typescript@{}", bynk_emit::TYPESCRIPT_MAJOR_TESTED);
+    let mut start_failures: Vec<String> = Vec::new();
     let tsc_runners: Vec<(&str, Vec<&str>)> = vec![
         ("tsc", vec![]),
         ("npx", vec!["--yes", "-p", typescript_pkg.as_str(), "tsc"]),
     ];
     for (prog, prefix) in &tsc_runners {
-        if !tool_exists(prog) {
+        let Some(path) = resolve_tool(prog) else {
             continue;
-        }
-        let mut cmd = ProcCommand::new(prog);
+        };
+        let mut cmd = ProcCommand::new(&path);
         for p in prefix {
             cmd.arg(p);
         }
@@ -407,7 +426,10 @@ pub fn run_test(program: &str, args: TestArgs) -> ExitCode {
                     );
                     return ExitCode::FAILURE;
                 }
-                Err(_) => continue,
+                Err(e) => {
+                    start_failures.push(start_failure(&path, &e));
+                    continue;
+                }
             }
         } else {
             match cmd
@@ -423,11 +445,14 @@ pub fn run_test(program: &str, args: TestArgs) -> ExitCode {
                     );
                     return ExitCode::FAILURE;
                 }
-                Err(_) => continue,
+                Err(e) => {
+                    start_failures.push(start_failure(&path, &e));
+                    continue;
+                }
             }
         };
         if tsc_ok {
-            let mut node_cmd = ProcCommand::new("node");
+            let mut node_cmd = ProcCommand::new(crate::probe::program_path("node"));
             node_cmd.arg(&main_js);
             // #854: the coverage path owns the node launch (it sets
             // `NODE_V8_COVERAGE` and reads the result back), so it does not go
@@ -480,18 +505,34 @@ pub fn run_test(program: &str, args: TestArgs) -> ExitCode {
     // tsx fallback chain.
     let tsx_runners: Vec<(&str, Vec<&str>)> = vec![("tsx", vec![]), ("npx", vec!["--yes", "tsx"])];
     for (prog, prefix) in &tsx_runners {
-        if !tool_exists(prog) {
+        let Some(path) = resolve_tool(prog) else {
             continue;
-        }
-        let mut cmd = ProcCommand::new(prog);
+        };
+        let mut cmd = ProcCommand::new(&path);
         for p in prefix {
             cmd.arg(p);
         }
         cmd.arg(&main_ts);
         match finish_runner(cmd, json, seed_hex.as_deref(), case_filter.as_deref()) {
             Ok(code) => return code,
-            Err(_) => continue,
+            Err(e) => start_failures.push(start_failure(&path, &e)),
         }
+    }
+
+    if !start_failures.is_empty() {
+        let detail = start_failures.join("\n");
+        if json {
+            print!(
+                "{}",
+                TestRun::runtime_error("no test runner could be started", Some(detail)).render()
+            );
+        } else {
+            eprintln!("{program} test: no test runner could be started:");
+            for failure in &start_failures {
+                eprintln!("  - {failure}");
+            }
+        }
+        return ExitCode::FAILURE;
     }
 
     if json {
@@ -695,15 +736,15 @@ fn run_inspect(
     seed_hex: Option<&str>,
     case: Option<&str>,
 ) -> ExitCode {
-    if !tool_exists("node") {
+    let Some(node) = resolve_tool("node") else {
         eprintln!("{program} test --inspect: `node` was not found on PATH");
         return ExitCode::FAILURE;
-    }
+    };
     eprintln!("{program} test --inspect: launching the test runner under Node's inspector.");
     eprintln!("  Attach a JavaScript debugger to the inspector URL below; breakpoints set");
     eprintln!("  in `.bynk` sources resolve through the emitted source maps.");
     eprintln!("  (Requires Node \u{2265} 22.6 for TypeScript type-stripping.)");
-    let mut cmd = ProcCommand::new("node");
+    let mut cmd = ProcCommand::new(node);
     if let Some(hex) = seed_hex {
         cmd.env("BYNK_TEST_SEED", hex);
     }
