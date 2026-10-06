@@ -1,0 +1,44 @@
+suite demo.early {
+  case "binding if propagates Err" {
+    expect withBinding(Some(1), Err("x")) == Err("x")
+    expect withBinding(Some(1), Ok(2)) == Ok(3)
+    expect withBinding(None, Err("x")) == Ok(0)
+  }
+
+  case "statement if propagates Err" {
+    expect withStatement(true, Err("x")) == Err("x")
+    expect withStatement(true, Ok(2)) == Ok(3)
+    expect withStatement(false, Err("x")) == Ok(0)
+  }
+
+  case "match arms propagate Err" {
+    expect matchExpr(Some(1), Err("x")) == Err("x")
+    expect matchExpr(Some(1), Ok(2)) == Ok(3)
+    expect matchBlock(Some(1), Err("x")) == Err("x")
+    expect matchBlock(Some(1), Ok(2)) == Ok(3)
+    expect matchBlock(None, Err("x")) == Ok(0)
+  }
+
+  case "nested propagates Err" {
+    expect nested(Some(1), true, Err("x")) == Err("x")
+    expect nested(Some(1), true, Ok(2)) == Ok(3)
+    expect nested(Some(1), false, Err("x")) == Ok(1)
+  }
+
+  case "a nested guard propagates Err" {
+    expect nestedGuard(Some(1), Err("x")) == Err("x")
+    expect nestedGuard(Some(5), Ok(1)) == Ok(5)
+    expect nestedGuard(Some(5), Ok(0)) == Ok(0)
+    expect nestedGuard(None, Err("x")) == Ok(0)
+  }
+
+  case "a lambda's own result stays the lambda's" {
+    expect inLambda(true, Err("x")) == Ok(-1)
+    expect inLambda(true, Ok(2)) == Ok(30)
+  }
+
+  case "an embedding converts" {
+    expect embedded(Some(1), true) == Err(Io(Disk))
+    expect embedded(Some(1), false) == Ok(2)
+  }
+}

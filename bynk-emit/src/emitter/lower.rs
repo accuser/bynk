@@ -210,7 +210,10 @@ pub(crate) fn emit_block_as_function_body_with_return(
     let prev = cx.return_ty.take();
     cx.return_ty = return_type
         .and_then(|rt| bynk_check::checker::resolve_type_ref(rt, &cx.commons().types, tys));
+    // #1750: a function body's tails `return`, whatever sink encloses it.
+    let prev_slot = cx.tail_slot.take();
     emit_block_inner(out, block, cx, indent, async_tail);
+    cx.tail_slot = prev_slot;
     cx.return_ty = prev;
 }
 
@@ -296,10 +299,13 @@ fn emit_block_inner(
                 write_line(
                     out,
                     indent,
-                    &format!(
-                        "return ({cond_expr} ? {t} : {e});",
-                        t = then_tail.expr,
-                        e = else_tail.expr
+                    &tail_stmt(
+                        cx,
+                        &format!(
+                            "({cond_expr} ? {t} : {e})",
+                            t = then_tail.expr,
+                            e = else_tail.expr
+                        ),
                     ),
                 );
             } else {
@@ -312,9 +318,9 @@ fn emit_block_inner(
                 // their tails lower as plain expressions), rebuilt from the
                 // values already in hand.
                 write_line(out, indent, &format!("if ({cond_expr}) {{"));
-                emit_pure_tail_branch(out, then_tail, indent + INDENT_STEP);
+                emit_pure_tail_branch(out, then_tail, cx, indent + INDENT_STEP);
                 write_line(out, indent, "} else {");
-                emit_pure_tail_branch(out, else_tail, indent + INDENT_STEP);
+                emit_pure_tail_branch(out, else_tail, cx, indent + INDENT_STEP);
                 write_line(out, indent, "}");
             }
         }
@@ -330,21 +336,32 @@ fn emit_block_inner(
             for s in &tail.pre {
                 write_line(out, indent, s);
             }
-            write_line(out, indent, &format!("return {};", tail.expr));
+            write_line(out, indent, &tail_stmt(cx, &tail.expr));
         }
     }
     cx.shadow_scopes.pop();
 }
 
+/// #1750: the statement that hands a block's tail value to its sink: `return
+/// value;` in a function, lambda or arrow body, or, inside a statement-form
+/// value expression ([`hoist_value_as_statement`]), the assignment to its slot
+/// followed by a `break` out of its labelled block.
+fn tail_stmt(cx: &LowerCtx, value: &str) -> String {
+    match &cx.tail_slot {
+        None => format!("return {value};"),
+        Some(TailSlot { slot, label }) => format!("{slot} = {value}; break {label};"),
+    }
+}
+
 /// Write one branch of the statement `if` above: the tail's hoisted statements
-/// followed by its `return`. Exactly the body [`emit_block_inner`]'s own `_`
-/// arm writes for a statement-free block, which is what `emit_if_tail` would
-/// have recursed into.
-fn emit_pure_tail_branch(out: &mut String, tail: Lowered, indent: usize) {
+/// followed by its `return` (or, #1750, its sink's [`tail_stmt`]). Exactly the
+/// body [`emit_block_inner`]'s own `_` arm writes for a statement-free block,
+/// which is what `emit_if_tail` would have recursed into.
+fn emit_pure_tail_branch(out: &mut String, tail: Lowered, cx: &LowerCtx, indent: usize) {
     for s in &tail.pre {
         write_line(out, indent, s);
     }
-    write_line(out, indent, &format!("return {};", tail.expr));
+    write_line(out, indent, &tail_stmt(cx, &tail.expr));
 }
 
 /// Lower an expression that's in the tail position of a returning context.
@@ -463,6 +480,100 @@ fn hoist_if_as_statement(
     pre.extend(assign_branch(else_tail, &slot));
     pre.push("}".to_string());
     slot
+}
+
+/// #1750: emit a value-position `if`, `match` or block (`e`) as a real
+/// statement, for when its branches hold a `?`. The arrow (IIFE) these forms
+/// otherwise lower to would capture the `?`'s `return`, so its `Err` became the
+/// expression's value instead of leaving the function: the same miscompile
+/// [`hoist_if_as_statement`] closes for a ternary-shaped `if`, which has only
+/// branch tails to place. Here `emit` writes the form through its ordinary
+/// statement-position emitter (`emit_if_tail`, `emit_match_tail`,
+/// `emit_block_as_function_body`) with [`LowerCtx::tail_slot`] set, so every
+/// tail, however deeply nested, assigns the slot and breaks out of the
+/// labelled block:
+///
+/// ```text
+/// let __r3: T;
+/// __r3_out: {
+///   if (cond) { …; __r3 = a; break __r3_out; } else { __r3 = b; break __r3_out; }
+/// }
+/// ```
+///
+/// The label is what makes the `break` reach past a `switch` (whose cases
+/// would otherwise fall through to its trailing `throw`) and past nested
+/// statement forms. `return_ty` is deliberately left set: the `?` now returns
+/// from the enclosing function, so ADR 0178's embedding conversion applies
+/// (#1750 corrects that ADR's "an IIFE clears it", which described the
+/// miscompile). An `await` inside lands in the enclosing function's own body,
+/// which is `async` whenever its body can `await`.
+fn hoist_value_as_statement(
+    e: &Expr,
+    cx: &mut LowerCtx,
+    emit: impl FnOnce(&mut String, &mut LowerCtx),
+) -> Lowered {
+    let slot = cx.fresh();
+    let label = slot.clone() + "_out";
+    let mut pre = Pre::new();
+    // Typed for the same reason as `hoist_if_as_statement`'s slot: inference
+    // gives up on a `let` whose assignments sit beside a `return`.
+    let annotation = checked_ty_ts(e, cx)
+        .map(|ty| ": ".to_string() + &ty)
+        .unwrap_or_default();
+    pre.push(format!("let {slot}{annotation};"));
+    pre.push(label.clone() + ": {");
+    let saved = cx.tail_slot.replace(TailSlot {
+        slot: slot.clone(),
+        label,
+    });
+    // The body is a local buffer spliced into `pre` — see `without_source_map`.
+    let mut body = String::new();
+    cx.without_source_map(|cx| emit(&mut body, cx));
+    cx.tail_slot = saved;
+    pre.extend(body.lines().map(str::to_string));
+    pre.push("}".to_string());
+    pre.finish(slot)
+}
+
+/// #1750: whether a `?` in `b` would lower to a `return` inside `b`'s own
+/// emitted body. Structural, like [`ternary_shaped`], so the route is chosen
+/// before anything is lowered. A lambda is its own return scope, so a `?`
+/// inside one doesn't count.
+fn block_contains_question(b: &Block) -> bool {
+    let mut stmt_exprs = Vec::new();
+    for s in &b.statements {
+        bynk_syntax::ast::statement_exprs(s, &mut stmt_exprs);
+    }
+    stmt_exprs.into_iter().any(expr_contains_question) || expr_contains_question(&b.tail)
+}
+
+/// [`block_contains_question`] over a `match`'s arms, guards included: a guard
+/// is evaluated inside the arrow too.
+fn arms_contain_question(arms: &[MatchArm]) -> bool {
+    arms.iter().any(|a| {
+        a.guard.as_ref().is_some_and(expr_contains_question)
+            || match &a.body {
+                MatchBody::Expr(e) => expr_contains_question(e),
+                MatchBody::Block(b) => block_contains_question(b),
+            }
+    })
+}
+
+fn expr_contains_question(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Question(_) => true,
+        ExprKind::Lambda(_) => false,
+        // #1757 review: `ast::expr_children` does not visit a match arm's guard,
+        // and a guard's `?` lowers inside the same body as the arm's. A nested
+        // `match` is walked here instead, guards included; its discriminant is
+        // evaluated inside the enclosing form's body too.
+        ExprKind::Match { discriminant, arms } => {
+            expr_contains_question(discriminant) || arms_contain_question(arms)
+        }
+        _ => bynk_syntax::ast::expr_children(e)
+            .into_iter()
+            .any(expr_contains_question),
+    }
 }
 
 /// One branch of the hoisted statement `if` above: the branch's own hoisted
@@ -1068,6 +1179,21 @@ pub(crate) fn lower_expr(e: &Expr, cx: &mut LowerCtx) -> Lowered {
             type_args,
             args,
         } => pre.absorb(lower_method_call(e, receiver, method, type_args, args, cx)),
+        // #1750: a value-position `if`/`match`/block that holds a `?` becomes a
+        // real statement, so the `?`'s `return` exits the function rather than
+        // an arrow. A ternary-shaped `if` is left to `lower_if`, whose own
+        // hoist already handles a branch that hoists.
+        ExprKind::If {
+            cond,
+            then_block,
+            else_block,
+        } if !ternary_shaped(cond, then_block, else_block, cx)
+            && (block_contains_question(then_block) || block_contains_question(else_block)) =>
+        {
+            pre.absorb(hoist_value_as_statement(e, cx, |out, cx| {
+                emit_if_tail(out, cond, then_block, else_block, cx, INDENT_STEP, false)
+            }))
+        }
         ExprKind::If {
             cond,
             then_block,
@@ -1080,7 +1206,21 @@ pub(crate) fn lower_expr(e: &Expr, cx: &mut LowerCtx) -> Lowered {
         // the arrow, correctly, because a `?`'s `return` there is supposed to
         // exit the lambda.
         ExprKind::Lambda(lambda) => lower_lambda(e, lambda, cx),
+        // Defensive: the parser builds `ExprKind::Block` only for a lambda body,
+        // which `lower_lambda` emits itself, so neither `Block` arm is reached
+        // today. Routed like `if`/`match` so a future value-position block
+        // with a `?` would not reintroduce the arrow miscompile.
+        ExprKind::Block(b) if block_contains_question(b) => {
+            pre.absorb(hoist_value_as_statement(e, cx, |out, cx| {
+                emit_block_as_function_body(out, b, cx, INDENT_STEP, false)
+            }))
+        }
         ExprKind::Block(b) => lower_block_as_expr(b, cx),
+        ExprKind::Match { discriminant, arms } if arms_contain_question(arms) => {
+            pre.absorb(hoist_value_as_statement(e, cx, |out, cx| {
+                emit_match_tail(out, discriminant, arms, cx, INDENT_STEP, false)
+            }))
+        }
         ExprKind::Match { discriminant, arms } => {
             pre.absorb(lower_match_as_iife(discriminant, arms, cx))
         }
@@ -4375,11 +4515,14 @@ fn lower_if(
             iife.push_str(b);
             iife.push('\n');
         }
-        // v0.154 (ADR 0178): a value-position `if` lowers to an IIFE — a `return`
-        // in its arms exits the arrow, not the enclosing function — so clear the
-        // enclosing `return_ty`: an embedding `?` here behaves exactly like a
-        // plain `?` (no function-level wrap), never inheriting the outer type.
+        // v0.154 (ADR 0178): a value-position `if` lowers to an IIFE, whose
+        // `return`s exit the arrow, so clear the enclosing `return_ty`. #1750:
+        // an `if` whose branches hold a `?` no longer reaches here (it becomes a
+        // statement, `hoist_value_as_statement`, so the `?` exits the function
+        // and keeps its embedding), so nothing inside this arrow reads it.
         let saved = cx.return_ty.take();
+        // #1750: the arrow's own tails `return` from the arrow.
+        let saved_slot = cx.tail_slot.take();
         // #4 review: `iife` is a local buffer spliced into the caller's
         // output later, at an offset `record_span` has no way to learn —
         // see `without_source_map`.
@@ -4408,6 +4551,7 @@ fn lower_if(
         });
         cx.shadow_scopes.pop();
         cx.return_ty = saved;
+        cx.tail_slot = saved_slot;
         for _ in 0..(INDENT_STEP * 2) {
             iife.push(' ');
         }
@@ -5357,6 +5501,8 @@ fn lower_lambda(e: &Expr, lambda: &LambdaExpr, cx: &mut LowerCtx) -> String {
     };
     let saved = cx.return_ty.take();
     cx.return_ty = lam_ret;
+    // #1750: the lambda's own tails `return` from the lambda.
+    let saved_slot = cx.tail_slot.take();
     let result = match &lambda.body.kind {
         ExprKind::Block(b) => {
             let mut out = format!("{prefix}({params}) => {{\n");
@@ -5395,6 +5541,7 @@ fn lower_lambda(e: &Expr, lambda: &LambdaExpr, cx: &mut LowerCtx) -> String {
             }
         }
     };
+    cx.tail_slot = saved_slot;
     cx.return_ty = saved;
     cx.shadow_scopes.pop();
     result
@@ -5427,13 +5574,16 @@ fn lower_record_spread(base: &Expr, overrides: &[FieldInit], cx: &mut LowerCtx) 
 }
 
 fn lower_block_as_expr(b: &Block, cx: &mut LowerCtx) -> String {
+    // #1750: the arrow's own tails `return` from the arrow.
+    let saved_slot = cx.tail_slot.take();
     let mut iife = String::new();
     iife.push_str("(() => {\n");
     // IIFE is a synchronous arrow function; the surrounding expression context
     // expects a concrete value, so `Effect.pure(...)` must still wrap as
     // `Promise.resolve(...)`.
     // v0.154 (ADR 0178): a `return` here exits the arrow, not the function, so
-    // clear `return_ty` — an embedding `?` behaves like a plain `?`.
+    // clear `return_ty`. #1750: a block holding a `?` no longer reaches here
+    // (`hoist_value_as_statement`).
     let saved = cx.return_ty.take();
     // #4 review: `iife` is a local buffer spliced into the caller's output
     // later — see `without_source_map`.
@@ -5441,6 +5591,7 @@ fn lower_block_as_expr(b: &Block, cx: &mut LowerCtx) -> String {
         emit_block_as_function_body(&mut iife, b, cx, INDENT_STEP * 2, false)
     });
     cx.return_ty = saved;
+    cx.tail_slot = saved_slot;
     for _ in 0..INDENT_STEP {
         iife.push(' ');
     }
@@ -5469,10 +5620,12 @@ fn lower_match_as_iife(discriminant: &Expr, arms: &[MatchArm], cx: &mut LowerCtx
         .get(&discriminant.id)
         .map(|te| te.ty);
     let disc = pre.lower(discriminant, cx);
-    // v0.154 (ADR 0178): a value-position `match` lowers to an IIFE, so a
-    // `return` in an arm exits the arrow, not the function — clear `return_ty`
-    // so an embedding `?` behaves like a plain `?` here (no function-level wrap).
+    // v0.154 (ADR 0178): a value-position `match` lowers to an IIFE, whose
+    // `return`s exit the arrow, so clear `return_ty`. #1750: a `match` whose
+    // arms hold a `?` no longer reaches here (`hoist_value_as_statement`).
     let saved = cx.return_ty.take();
+    // #1750: the arrow's own tails `return` from the arrow.
+    let saved_slot = cx.tail_slot.take();
     // T2.2 (R6.4): isolate the effectfulness flag to just this IIFE's own
     // body — `disc` was already lowered above, so any await it needed landed
     // in `pre`, not here. Restore as `saved_await || needs_async` so an
@@ -5487,6 +5640,7 @@ fn lower_match_as_iife(discriminant: &Expr, arms: &[MatchArm], cx: &mut LowerCtx
     cx.emitted_await = saved_await || needs_async;
     let inner_iife = finish_async_iife(built, needs_async);
     cx.return_ty = saved;
+    cx.tail_slot = saved_slot;
     pre.finish(inner_iife)
 }
 
@@ -5827,7 +5981,7 @@ fn emit_match_body(
             for s in pre.stmts() {
                 write_line(out, indent, s);
             }
-            write_line(out, indent, &format!("return {v};"));
+            write_line(out, indent, &tail_stmt(cx, &v));
         }
         MatchBody::Block(b) => emit_block_as_function_body(out, b, cx, indent, async_tail),
     }
