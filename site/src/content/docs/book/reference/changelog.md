@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.307**.
+written against **v0.308**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.308.0** | "Checks now see inside a `match` arm's guard. The shared walk over an expression's sub-expressions skipped guards, so a guard escaped every check built on it: a `:=` whose right side reads the written cell only in a guard is now `bynk.cell.self_reference`, and constructing another context's type in a guard is now `bynk.context.external_construction`, so code that compiled before can now fail. The same walk now also sees a call-site principal's identity (`by User(who)`). The editor's extract-to-function threads a name read only in a guard or an identity as a parameter (#1760)" |
 | **v0.307.4** | A binding from an `is` test on the right of `&&` (or of `implies`, or a negated `||`) now type-checks wherever it is read. `if o is Some(v) && p is Some(w) { v + w }` emitted `p.value` outside the arrow that held `p`'s tag test, so TypeScript could not narrow it and `tsc --strict` failed with TS2339. The read now casts to the variant the checker proved (#1752) |
 | **v0.307.3** | An `is` test with a call as its receiver on the right of a negated `||` now binds correctly in the `else` branch. `if !(f(a) is Some(x)) || !(f(b) is Some(y)) { 0 } else { x + y }` emitted TypeScript that read the right operand's value outside the scope it was declared in, which `tsc` rejected and which threw a `ReferenceError` at runtime (#1751) |
 | **v0.307.2** | On Windows, `bynkc test` and `bynk test` run an npm-installed `tsc`, `tsx` or `npx`, and `bynk dev`/`bynk deploy` run an npx-provisioned wrangler. These tools are `.cmd` shims, which were found on `PATH` but then spawned by bare name, which Windows resolves to `.exe` only. A test runner that is found but fails to start is now reported as such, rather than as missing with advice to install it (#1758) |
