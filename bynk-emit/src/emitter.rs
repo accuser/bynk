@@ -4217,8 +4217,8 @@ impl<'a> LowerCtx<'a> {
     /// Return a stable textual reference to an `is` receiver, used by the
     /// `.tag` check in `lower_is`. A simple, repeatable lvalue is lowered
     /// inline exactly as before (preserving rewrites such as `self.state` or
-    /// capability access). A complex receiver (anything `value_text_for_is`
-    /// could not render — e.g. a call) is evaluated once into a fresh temp
+    /// capability access). A complex receiver (anything `is_simple_is_receiver`
+    /// rejects — e.g. a call) is evaluated once into a fresh temp
     /// hoisted into the returned `Lowered` and cached by span, so the bindings
     /// gathered later reference the same evaluation rather than re-running the
     /// expression.
@@ -4302,8 +4302,10 @@ impl<'a> LowerCtx<'a> {
     /// `Lowered`, so it has nowhere to hoist and cannot lift). If the receiver was already lifted to a temp during
     /// condition lowering, reuse that temp; otherwise it must be a simple
     /// repeatable lvalue, rendered inline. The "lower the condition before
-    /// gathering its bindings" ordering in `emit_if_tail` / `lower_and_with_is`
-    /// guarantees the temp exists before this is called for complex receivers.
+    /// gathering its bindings" ordering in `emit_if_tail`, `lower_and_with_is`
+    /// and the value-position `if` IIFE guarantees the temp exists before this
+    /// is called for complex receivers; `value_text_for_is` panics if it does
+    /// not (#1668).
     fn is_receiver_text(&self, value: &Expr) -> String {
         if let Some(t) = self.is_receiver_temps.get(&value.span) {
             return t.clone();

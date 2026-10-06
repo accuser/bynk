@@ -5277,6 +5277,51 @@ mod decode_map_key_tests {
     }
 }
 
+#[cfg(test)]
+mod value_text_for_is_tests {
+    use super::*;
+    use bynk_syntax::ast::Ident;
+    use bynk_syntax::span::Span;
+
+    fn expr(kind: ExprKind) -> Expr {
+        Expr {
+            id: ExprId::SYNTHETIC,
+            kind,
+            span: Span::new(0, 0),
+        }
+    }
+
+    fn ident(name: &str) -> Ident {
+        Ident {
+            name: name.to_string(),
+            span: Span::new(0, 0),
+        }
+    }
+
+    #[test]
+    fn a_simple_receiver_renders_as_its_lvalue() {
+        let field = expr(ExprKind::FieldAccess {
+            receiver: Box::new(expr(ExprKind::Paren(Box::new(expr(ExprKind::Ident(
+                ident("b"),
+            )))))),
+            field: ident("room"),
+        });
+        assert_eq!(value_text_for_is(&field), "b.room");
+    }
+
+    // #1668 review: a complex receiver reaching here means it was not lifted
+    // to a temp before its bindings were gathered. It must fail loudly, not
+    // fall back to emitted text, which is what the arm used to do.
+    #[test]
+    #[should_panic(expected = "bynk internal error (#1668)")]
+    fn a_complex_receiver_panics_instead_of_emitting_a_placeholder() {
+        value_text_for_is(&expr(ExprKind::IntLit {
+            value: 1,
+            lexeme: "1".to_string(),
+        }));
+    }
+}
+
 fn lower_lambda(e: &Expr, lambda: &LambdaExpr, cx: &mut LowerCtx) -> String {
     let tys = cx.commons().tys();
     let is_async = matches!(
