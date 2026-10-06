@@ -25,6 +25,13 @@ suite demo.early {
     expect nested(Some(1), false, Err("x")) == Ok(1)
   }
 
+  case "a nested guard propagates Err" {
+    expect nestedGuard(Some(1), Err("x")) == Err("x")
+    expect nestedGuard(Some(5), Ok(1)) == Ok(5)
+    expect nestedGuard(Some(5), Ok(0)) == Ok(0)
+    expect nestedGuard(None, Err("x")) == Ok(0)
+  }
+
   case "a lambda's own result stays the lambda's" {
     expect inLambda(true, Err("x")) == Ok(-1)
     expect inLambda(true, Ok(2)) == Ok(30)

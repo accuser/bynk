@@ -132,6 +132,31 @@ export function apply(f: (a0: Result<number, string>) => Result<number, string>,
   return f(r);
 }
 
+export function nestedGuard(o: Option<number>, r: Result<number, string>): Result<number, string> {
+  let __r0: number;
+  __r0_out: {
+    switch (o.tag) {
+      case "Some": {
+        const v = o.value;
+        const z = v;
+        const w = z;
+        const __r1 = r;
+        if (__r1.tag === "Err") return __r1;
+        if (__r1.value > 0) {
+          __r0 = w; break __r0_out;
+        }
+        __r0 = 0; break __r0_out;
+      }
+      case "None": {
+        __r0 = 0; break __r0_out;
+      }
+    }
+    throw new globalThis.Error("non-exhaustive match");
+  }
+  const n = __r0;
+  return Ok(n);
+}
+
 export function inLambda(c: boolean, r: Result<number, string>): Result<number, string> {
   const n = (() => {
     if (c) {

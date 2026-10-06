@@ -33,7 +33,7 @@ function __makeTestDeps() {
 async function test_binding_if_propagates_Err() {
   try {
     const deps = {};
-    const { AppError, IoError, apply, embedded, inLambda, matchBlock, matchExpr, nested, risky, withBinding, withStatement } = demo_early;
+    const { AppError, IoError, apply, embedded, inLambda, matchBlock, matchExpr, nested, nestedGuard, risky, withBinding, withStatement } = demo_early;
     type AppError = demo_early.AppError;
     type IoError = demo_early.IoError;
     if (!(__bynkEq(withBinding(Some(1), Err("x")), Err("x")))) { throw __bynkExpectFailure("demo/early_test.bynk:3:12", 67, 109, "expect withBinding(Some(1), Err(\"x\")) == Err(\"x\")\n  expected: withBinding(Some(1), Err(\"x\")) == Err(\"x\")\n  actual:   " + __bynkShow((withBinding(Some(1), Err("x")))) + " == " + __bynkShow((Err("x")))); }
@@ -52,7 +52,7 @@ async function test_binding_if_propagates_Err() {
 async function test_statement_if_propagates_Err() {
   try {
     const deps = {};
-    const { AppError, IoError, apply, embedded, inLambda, matchBlock, matchExpr, nested, risky, withBinding, withStatement } = demo_early;
+    const { AppError, IoError, apply, embedded, inLambda, matchBlock, matchExpr, nested, nestedGuard, risky, withBinding, withStatement } = demo_early;
     type AppError = demo_early.AppError;
     type IoError = demo_early.IoError;
     if (!(__bynkEq(withStatement(true, Err("x")), Err("x")))) { throw __bynkExpectFailure("demo/early_test.bynk:9:12", 261, 302, "expect withStatement(true, Err(\"x\")) == Err(\"x\")\n  expected: withStatement(true, Err(\"x\")) == Err(\"x\")\n  actual:   " + __bynkShow((withStatement(true, Err("x")))) + " == " + __bynkShow((Err("x")))); }
@@ -71,7 +71,7 @@ async function test_statement_if_propagates_Err() {
 async function test_match_arms_propagate_Err() {
   try {
     const deps = {};
-    const { AppError, IoError, apply, embedded, inLambda, matchBlock, matchExpr, nested, risky, withBinding, withStatement } = demo_early;
+    const { AppError, IoError, apply, embedded, inLambda, matchBlock, matchExpr, nested, nestedGuard, risky, withBinding, withStatement } = demo_early;
     type AppError = demo_early.AppError;
     type IoError = demo_early.IoError;
     if (!(__bynkEq(matchExpr(Some(1), Err("x")), Err("x")))) { throw __bynkExpectFailure("demo/early_test.bynk:15:12", 453, 493, "expect matchExpr(Some(1), Err(\"x\")) == Err(\"x\")\n  expected: matchExpr(Some(1), Err(\"x\")) == Err(\"x\")\n  actual:   " + __bynkShow((matchExpr(Some(1), Err("x")))) + " == " + __bynkShow((Err("x")))); }
@@ -92,7 +92,7 @@ async function test_match_arms_propagate_Err() {
 async function test_nested_propagates_Err() {
   try {
     const deps = {};
-    const { AppError, IoError, apply, embedded, inLambda, matchBlock, matchExpr, nested, risky, withBinding, withStatement } = demo_early;
+    const { AppError, IoError, apply, embedded, inLambda, matchBlock, matchExpr, nested, nestedGuard, risky, withBinding, withStatement } = demo_early;
     type AppError = demo_early.AppError;
     type IoError = demo_early.IoError;
     if (!(__bynkEq(nested(Some(1), true, Err("x")), Err("x")))) { throw __bynkExpectFailure("demo/early_test.bynk:23:12", 736, 779, "expect nested(Some(1), true, Err(\"x\")) == Err(\"x\")\n  expected: nested(Some(1), true, Err(\"x\")) == Err(\"x\")\n  actual:   " + __bynkShow((nested(Some(1), true, Err("x")))) + " == " + __bynkShow((Err("x")))); }
@@ -108,14 +108,34 @@ async function test_nested_propagates_Err() {
 }
 
 // case tier: unit
+async function test_a_nested_guard_propagates_Err() {
+  try {
+    const deps = {};
+    const { AppError, IoError, apply, embedded, inLambda, matchBlock, matchExpr, nested, nestedGuard, risky, withBinding, withStatement } = demo_early;
+    type AppError = demo_early.AppError;
+    type IoError = demo_early.IoError;
+    if (!(__bynkEq(nestedGuard(Some(1), Err("x")), Err("x")))) { throw __bynkExpectFailure("demo/early_test.bynk:29:12", 939, 981, "expect nestedGuard(Some(1), Err(\"x\")) == Err(\"x\")\n  expected: nestedGuard(Some(1), Err(\"x\")) == Err(\"x\")\n  actual:   " + __bynkShow((nestedGuard(Some(1), Err("x")))) + " == " + __bynkShow((Err("x")))); }
+    if (!(__bynkEq(nestedGuard(Some(5), Ok(1)), Ok(5)))) { throw __bynkExpectFailure("demo/early_test.bynk:30:12", 993, 1029, "expect nestedGuard(Some(5), Ok(1)) == Ok(5)\n  expected: nestedGuard(Some(5), Ok(1)) == Ok(5)\n  actual:   " + __bynkShow((nestedGuard(Some(5), Ok(1)))) + " == " + __bynkShow((Ok(5)))); }
+    if (!(__bynkEq(nestedGuard(Some(5), Ok(0)), Ok(0)))) { throw __bynkExpectFailure("demo/early_test.bynk:31:12", 1041, 1077, "expect nestedGuard(Some(5), Ok(0)) == Ok(0)\n  expected: nestedGuard(Some(5), Ok(0)) == Ok(0)\n  actual:   " + __bynkShow((nestedGuard(Some(5), Ok(0)))) + " == " + __bynkShow((Ok(0)))); }
+    if (!(__bynkEq(nestedGuard(None, Err("x")), Ok(0)))) { throw __bynkExpectFailure("demo/early_test.bynk:32:12", 1089, 1125, "expect nestedGuard(None, Err(\"x\")) == Ok(0)\n  expected: nestedGuard(None, Err(\"x\")) == Ok(0)\n  actual:   " + __bynkShow((nestedGuard(None, Err("x")))) + " == " + __bynkShow((Ok(0)))); }
+    return { pass: true };
+  } catch (e) {
+    if (e instanceof ExpectationError) {
+      return { pass: false, error: { message: e.message, location: e.location } };
+    }
+    return { pass: false, error: { message: String(e), location: "unknown" } };
+  }
+}
+
+// case tier: unit
 async function test_a_lambda_s_own_result_stays_the_lambda_s() {
   try {
     const deps = {};
-    const { AppError, IoError, apply, embedded, inLambda, matchBlock, matchExpr, nested, risky, withBinding, withStatement } = demo_early;
+    const { AppError, IoError, apply, embedded, inLambda, matchBlock, matchExpr, nested, nestedGuard, risky, withBinding, withStatement } = demo_early;
     type AppError = demo_early.AppError;
     type IoError = demo_early.IoError;
-    if (!(__bynkEq(inLambda(true, Err("x")), Ok(-1)))) { throw __bynkExpectFailure("demo/early_test.bynk:29:12", 950, 984, "expect inLambda(true, Err(\"x\")) == Ok(-1)\n  expected: inLambda(true, Err(\"x\")) == Ok(-1)\n  actual:   " + __bynkShow((inLambda(true, Err("x")))) + " == " + __bynkShow((Ok(-1)))); }
-    if (!(__bynkEq(inLambda(true, Ok(2)), Ok(30)))) { throw __bynkExpectFailure("demo/early_test.bynk:30:12", 996, 1027, "expect inLambda(true, Ok(2)) == Ok(30)\n  expected: inLambda(true, Ok(2)) == Ok(30)\n  actual:   " + __bynkShow((inLambda(true, Ok(2)))) + " == " + __bynkShow((Ok(30)))); }
+    if (!(__bynkEq(inLambda(true, Err("x")), Ok(-1)))) { throw __bynkExpectFailure("demo/early_test.bynk:36:12", 1194, 1228, "expect inLambda(true, Err(\"x\")) == Ok(-1)\n  expected: inLambda(true, Err(\"x\")) == Ok(-1)\n  actual:   " + __bynkShow((inLambda(true, Err("x")))) + " == " + __bynkShow((Ok(-1)))); }
+    if (!(__bynkEq(inLambda(true, Ok(2)), Ok(30)))) { throw __bynkExpectFailure("demo/early_test.bynk:37:12", 1240, 1271, "expect inLambda(true, Ok(2)) == Ok(30)\n  expected: inLambda(true, Ok(2)) == Ok(30)\n  actual:   " + __bynkShow((inLambda(true, Ok(2)))) + " == " + __bynkShow((Ok(30)))); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -129,11 +149,11 @@ async function test_a_lambda_s_own_result_stays_the_lambda_s() {
 async function test_an_embedding_converts() {
   try {
     const deps = {};
-    const { AppError, IoError, apply, embedded, inLambda, matchBlock, matchExpr, nested, risky, withBinding, withStatement } = demo_early;
+    const { AppError, IoError, apply, embedded, inLambda, matchBlock, matchExpr, nested, nestedGuard, risky, withBinding, withStatement } = demo_early;
     type AppError = demo_early.AppError;
     type IoError = demo_early.IoError;
-    if (!(__bynkEq(embedded(Some(1), true), Err(AppError.Io(IoError.Disk))))) { throw __bynkExpectFailure("demo/early_test.bynk:34:12", 1077, 1117, "expect embedded(Some(1), true) == Err(Io(Disk))\n  expected: embedded(Some(1), true) == Err(Io(Disk))\n  actual:   " + __bynkShow((embedded(Some(1), true))) + " == " + __bynkShow((Err(AppError.Io(IoError.Disk))))); }
-    if (!(__bynkEq(embedded(Some(1), false), Ok(2)))) { throw __bynkExpectFailure("demo/early_test.bynk:35:12", 1129, 1162, "expect embedded(Some(1), false) == Ok(2)\n  expected: embedded(Some(1), false) == Ok(2)\n  actual:   " + __bynkShow((embedded(Some(1), false))) + " == " + __bynkShow((Ok(2)))); }
+    if (!(__bynkEq(embedded(Some(1), true), Err(AppError.Io(IoError.Disk))))) { throw __bynkExpectFailure("demo/early_test.bynk:41:12", 1321, 1361, "expect embedded(Some(1), true) == Err(Io(Disk))\n  expected: embedded(Some(1), true) == Err(Io(Disk))\n  actual:   " + __bynkShow((embedded(Some(1), true))) + " == " + __bynkShow((Err(AppError.Io(IoError.Disk))))); }
+    if (!(__bynkEq(embedded(Some(1), false), Ok(2)))) { throw __bynkExpectFailure("demo/early_test.bynk:42:12", 1373, 1406, "expect embedded(Some(1), false) == Ok(2)\n  expected: embedded(Some(1), false) == Ok(2)\n  actual:   " + __bynkShow((embedded(Some(1), false))) + " == " + __bynkShow((Ok(2)))); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -150,6 +170,7 @@ export async function run(only?: string) {
   if (want("statement if propagates Err")) results.push({ name: "statement if propagates Err", ...(await test_statement_if_propagates_Err()) });
   if (want("match arms propagate Err")) results.push({ name: "match arms propagate Err", ...(await test_match_arms_propagate_Err()) });
   if (want("nested propagates Err")) results.push({ name: "nested propagates Err", ...(await test_nested_propagates_Err()) });
+  if (want("a nested guard propagates Err")) results.push({ name: "a nested guard propagates Err", ...(await test_a_nested_guard_propagates_Err()) });
   if (want("a lambda's own result stays the lambda's")) results.push({ name: "a lambda's own result stays the lambda's", ...(await test_a_lambda_s_own_result_stays_the_lambda_s()) });
   if (want("an embedding converts")) results.push({ name: "an embedding converts", ...(await test_an_embedding_converts()) });
   return results;

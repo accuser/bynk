@@ -66,6 +66,21 @@ fn apply(f: Result[Int, String] -> Result[Int, String], r: Result[Int, String]) 
   f(r)
 }
 
+-- A `?` only in the guard of a nested `match` (#1757 review).
+fn nestedGuard(o: Option[Int], r: Result[Int, String]) -> Result[Int, String] {
+  let n = match o {
+    Some(v) => {
+      let z = v
+      match z {
+        w if r? > 0 => w,
+        _ => 0
+      }
+    },
+    None => 0
+  }
+  Ok(n)
+}
+
 -- A `?` inside a lambda in a branch returns from the lambda, not the function.
 fn inLambda(c: Bool, r: Result[Int, String]) -> Result[Int, String] {
   let n = if c {

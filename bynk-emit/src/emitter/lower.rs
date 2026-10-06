@@ -563,6 +563,13 @@ fn expr_contains_question(e: &Expr) -> bool {
     match &e.kind {
         ExprKind::Question(_) => true,
         ExprKind::Lambda(_) => false,
+        // #1757 review: `ast::expr_children` does not visit a match arm's guard,
+        // and a guard's `?` lowers inside the same body as the arm's. A nested
+        // `match` is walked here instead, guards included; its discriminant is
+        // evaluated inside the enclosing form's body too.
+        ExprKind::Match { discriminant, arms } => {
+            expr_contains_question(discriminant) || arms_contain_question(arms)
+        }
         _ => bynk_syntax::ast::expr_children(e)
             .into_iter()
             .any(expr_contains_question),
@@ -1199,6 +1206,10 @@ pub(crate) fn lower_expr(e: &Expr, cx: &mut LowerCtx) -> Lowered {
         // the arrow, correctly, because a `?`'s `return` there is supposed to
         // exit the lambda.
         ExprKind::Lambda(lambda) => lower_lambda(e, lambda, cx),
+        // Defensive: the parser builds `ExprKind::Block` only for a lambda body,
+        // which `lower_lambda` emits itself, so neither `Block` arm is reached
+        // today. Routed like `if`/`match` so a future value-position block
+        // with a `?` would not reintroduce the arrow miscompile.
         ExprKind::Block(b) if block_contains_question(b) => {
             pre.absorb(hoist_value_as_statement(e, cx, |out, cx| {
                 emit_block_as_function_body(out, b, cx, INDENT_STEP, false)
