@@ -1,11 +1,6 @@
----
-level: patch
-changelog: A `?` inside a value-position `if`, `match` or block now propagates its `Err` out of the enclosing function. These forms lowered to an arrow function, so the `?` returned from the arrow and its `Err` became the expression's value (`let n = if a is Some(v) { r? + v } else { 0 }` made `n` the `Err`). A declared error embedding now converts there too (#1750)
----
+# 0437 — A `?` in a value-position `if`, `match` or block returns from the enclosing function
 
-## ADR: question-in-value-position-returns-from-the-function
-title: A `?` in a value-position `if`, `match` or block returns from the enclosing function
-summary: Such forms lower to a labelled statement whose tails assign a slot, not to an arrow; corrects ADR 0178 §E
+- **Status:** Accepted (v0.307.1)
 
 **Context.** The type system says `?` propagates an `Err` out of the enclosing function, and the checker validates every `?` against the function's return type, however deeply it is nested. The emitter lowered a value-position `if` (one not shaped as a ternary), `match`, or block to an arrow called in place, an IIFE. A `?` inside lowers to `if (r.tag === "Err") return r;`, which there returned from the arrow, so the `Err` became the expression's value. `let n = if a is Some(v) { r? + v } else { 0 }` produced `Ok(Err(e))` at runtime. `tsc --strict` rejects the result, but the bundler path does not type-check, so the program built. [[0178]] §E recorded the arrow's behaviour as its rule ("clears it for an IIFE so an embedding `?` behaves like a plain `?`"). That described the miscompile rather than intended semantics. T2.1 had already closed the same class for a ternary-shaped `if` (`hoist_if_as_statement`) and for short-circuit operands.
 
