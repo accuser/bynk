@@ -17,5 +17,6 @@ export function helper(): Outcome {
 }
 
 export function check(x: boolean): boolean {
-  return x && (() => { const __r0 = helper(); return __r0.tag === "Hit"; })();
+  let __r0!: Outcome;
+  return x && (() => { __r0 = helper(); return __r0.tag === "Hit"; })();
 }

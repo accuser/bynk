@@ -1,0 +1,21 @@
+suite demo.receivers {
+  case "a negated || binds both tests in its else-branch" {
+    expect negatedOr(Some(1), Some(2)) == 3
+    expect negatedOr(None, Some(2)) == 0
+    expect negatedOr(Some(1), None) == 0
+    expect negatedOrValue(Some(1), Some(2)) == 3
+    expect negatedOrValue(Some(1), None) == 0
+  }
+
+  case "a negated || of three binds all three" {
+    expect negatedOrThree(Some(1), Some(2), Some(3)) == 6
+    expect negatedOrThree(Some(1), Some(2), None) == 0
+  }
+
+  case "the other gather sites still read their temps" {
+    expect stmtIf(Some(4)) == 4
+    expect negatedElse(Some(4)) == 4
+    expect andChain(Held("g", 200))
+    expect orPattern(Waitlisted("w")) == "w"
+  }
+}
