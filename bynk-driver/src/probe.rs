@@ -195,8 +195,13 @@ pub fn detect(tb: &dyn Toolbox, tool: &str, opts: DetectOpts<'_>) -> Probe {
 /// name with `.exe` only, so an npm shim (`npx.cmd`, `tsc.cmd`) that detection
 /// finds through `PATHEXT` is never started. An explicit path to a `.cmd` is
 /// spawned correctly, with its arguments escaped.
+///
+/// Resolved through [`SystemToolbox::on_path`], the same lookup detection uses,
+/// so the spawned program is the one a probe of `tool` reports.
 pub fn program_path(tool: &str) -> PathBuf {
-    which::which(tool).unwrap_or_else(|_| PathBuf::from(tool))
+    SystemToolbox
+        .on_path(tool)
+        .unwrap_or_else(|| PathBuf::from(tool))
 }
 
 /// The real host: `which`-crate lookups and a `--version` shell-out.

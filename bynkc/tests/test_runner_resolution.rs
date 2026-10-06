@@ -9,6 +9,9 @@
 //! `PATH` that is executable, so detection finds it, but whose interpreter does
 //! not exist, so spawning it fails.
 
+#[cfg(windows)]
+mod require;
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -36,13 +39,18 @@ fn one_case_project(project: &Path) {
 }
 
 /// #1758 acceptance: on Windows an npm-installed `tsc` is a `tsc.cmd` shim,
-/// which `bynkc test` used to find but never start. Skipped unless
-/// `BYNK_REQUIRE_TSC` is set (non-empty), as it is on CI.
+/// which `bynkc test` used to find but never start. Runs whenever `tsc`
+/// resolves; under `BYNK_REQUIRE_TSC` (set on CI, which installs
+/// `typescript@5` with npm) a missing `tsc` fails rather than skips.
 #[cfg(windows)]
 #[test]
 fn an_npm_installed_tsc_shim_runs_the_suite() {
-    if std::env::var_os("BYNK_REQUIRE_TSC").is_none_or(|v| v.is_empty()) {
-        eprintln!("skipping: BYNK_REQUIRE_TSC is not set");
+    if which::which("tsc").is_err() {
+        assert!(
+            !require::is_required("BYNK_REQUIRE_TSC"),
+            "BYNK_REQUIRE_TSC is set but `tsc` is not on PATH"
+        );
+        eprintln!("skipping: `tsc` is not on PATH");
         return;
     }
     let project = scratch("runner-windows-shim").join("project");
@@ -60,28 +68,37 @@ fn an_npm_installed_tsc_shim_runs_the_suite() {
     );
 }
 
+/// Run `bynkc test <extra>` on the one-case project with only a `tsc` on
+/// `PATH` that is executable, so detection finds it, but whose interpreter
+/// does not exist, so spawning it fails. Returns the path of that `tsc` and
+/// the run's output.
 #[cfg(unix)]
-#[test]
-fn a_runner_that_is_found_but_will_not_start_is_reported_not_called_missing() {
+fn run_with_unstartable_tsc(tag: &str, extra: &[&str]) -> (PathBuf, std::process::Output) {
     use std::os::unix::fs::PermissionsExt;
 
-    let dir = scratch("runner-will-not-start");
+    let dir = scratch(tag);
     let project = dir.join("project");
     one_case_project(&project);
-
-    // The only thing on PATH: a `tsc` whose interpreter is missing.
     let bin = dir.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
     let tsc = bin.join("tsc");
     std::fs::write(&tsc, "#!/nonexistent/bynk-test-interpreter\n").unwrap();
     std::fs::set_permissions(&tsc, std::fs::Permissions::from_mode(0o755)).unwrap();
-
     let out = Command::new(env!("CARGO_BIN_EXE_bynkc"))
-        .args(["test", "."])
+        .arg("test")
+        .args(extra)
+        .arg(".")
         .current_dir(&project)
         .env("PATH", &bin)
         .output()
         .expect("bynkc runs");
+    (tsc, out)
+}
+
+#[cfg(unix)]
+#[test]
+fn a_runner_that_is_found_but_will_not_start_is_reported_not_called_missing() {
+    let (tsc, out) = run_with_unstartable_tsc("runner-will-not-start", &[]);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(!out.status.success(), "stderr:\n{stderr}");
     assert!(
@@ -96,7 +113,58 @@ fn a_runner_that_is_found_but_will_not_start_is_reported_not_called_missing() {
         "the report names the resolved path; stderr:\n{stderr}"
     );
     assert!(
+        stderr.contains("npm install -g tsx"),
+        "the install advice still follows; stderr:\n{stderr}"
+    );
+    assert!(
         !stderr.contains("requires either"),
         "an installed runner must not be reported as missing; stderr:\n{stderr}"
+    );
+}
+
+/// #1761 review: `--coverage` returned its own "requires `tsc`" message before
+/// the start failures were reported.
+#[cfg(unix)]
+#[test]
+fn coverage_reports_a_tsc_that_will_not_start_not_a_missing_one() {
+    let (tsc, out) = run_with_unstartable_tsc("runner-will-not-start-coverage", &["--coverage"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "stderr:\n{stderr}");
+    assert!(
+        stderr.contains(&format!(
+            "`{}` was found but could not be started",
+            tsc.display()
+        )),
+        "stderr:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("requires `tsc` and `node` on PATH"),
+        "an installed tsc must not be reported as missing; stderr:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("npm install -g tsx"),
+        "`--coverage` doesn't accept tsx, so it isn't advised; stderr:\n{stderr}"
+    );
+}
+
+/// The JSON document carries the same report: a `runtime` error whose
+/// `stderr` names each runner that would not start.
+#[cfg(unix)]
+#[test]
+fn the_json_document_reports_a_runner_that_will_not_start() {
+    let (tsc, out) = run_with_unstartable_tsc("runner-will-not-start-json", &["--format", "json"]);
+    assert!(!out.status.success());
+    let doc: serde_json::Value =
+        serde_json::from_slice(&out.stdout).expect("stdout is the JSON document");
+    assert_eq!(doc["error"]["kind"], "runtime", "{doc}");
+    assert_eq!(
+        doc["error"]["message"], "no test runner could be started",
+        "{doc}"
+    );
+    assert!(
+        doc["error"]["stderr"]
+            .as_str()
+            .is_some_and(|e| e.contains(&tsc.display().to_string())),
+        "{doc}"
     );
 }

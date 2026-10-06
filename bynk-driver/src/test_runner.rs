@@ -495,6 +495,11 @@ pub fn run_test(program: &str, args: TestArgs) -> ExitCode {
     // not silently fall through to `tsx`, whose on-the-fly transform muddies
     // which map applies. Fail clearly instead.
     if coverage {
+        // #1761 review: a `tsc` that is installed but won't start is reported as
+        // such here too, not as missing.
+        if !start_failures.is_empty() {
+            return report_start_failures(program, json, &start_failures, true);
+        }
         return coverage_unsupported(
             program,
             json,
@@ -520,19 +525,7 @@ pub fn run_test(program: &str, args: TestArgs) -> ExitCode {
     }
 
     if !start_failures.is_empty() {
-        let detail = start_failures.join("\n");
-        if json {
-            print!(
-                "{}",
-                TestRun::runtime_error("no test runner could be started", Some(detail)).render()
-            );
-        } else {
-            eprintln!("{program} test: no test runner could be started:");
-            for failure in &start_failures {
-                eprintln!("  - {failure}");
-            }
-        }
-        return ExitCode::FAILURE;
+        return report_start_failures(program, json, &start_failures, false);
     }
 
     if json {
@@ -547,11 +540,52 @@ pub fn run_test(program: &str, args: TestArgs) -> ExitCode {
     } else {
         eprintln!(
             "{program} test: requires either `tsc` (with Node.js) or `tsx` on PATH. \
-             Install one of:\n  - `npm install -g typescript@{tested}` (provides tsc, which type-checks; requires Node.js to run output)\n  - `npm install -g tsx` (runs TypeScript in one step, without type-checking)\n  Or run inside a project where `npx tsc` / `npx tsx` resolves.",
-            tested = bynk_emit::TYPESCRIPT_MAJOR_TESTED,
+             Install one of:\n{}",
+            install_advice(false)
         );
     }
     ExitCode::FAILURE
+}
+
+/// #1758: the run found runners but none would start. Each failure names the
+/// resolved path and the error. In rich mode the install advice follows, since
+/// installing another runner is often the fix for a broken one. `coverage`
+/// limits that advice to `tsc`, the only runner `--coverage` accepts.
+fn report_start_failures(
+    program: &str,
+    json: bool,
+    failures: &[String],
+    coverage: bool,
+) -> ExitCode {
+    if json {
+        print!(
+            "{}",
+            TestRun::runtime_error("no test runner could be started", Some(failures.join("\n")))
+                .render()
+        );
+    } else {
+        eprintln!("{program} test: no test runner could be started:");
+        for failure in failures {
+            eprintln!("  - {failure}");
+        }
+        eprintln!("Or install another:\n{}", install_advice(coverage));
+    }
+    ExitCode::FAILURE
+}
+
+/// The install advice for a missing or broken runner, one indented line each.
+/// With `coverage`, only `tsc`, since `--coverage` doesn't accept `tsx`.
+fn install_advice(coverage: bool) -> String {
+    let tsc = format!(
+        "  - `npm install -g typescript@{}` (provides tsc, which type-checks; requires Node.js to run output)",
+        bynk_emit::TYPESCRIPT_MAJOR_TESTED
+    );
+    if coverage {
+        return tsc;
+    }
+    format!(
+        "{tsc}\n  - `npm install -g tsx` (runs TypeScript in one step, without type-checking)\n  Or run inside a project where `npx tsc` / `npx tsx` resolves."
+    )
 }
 
 /// A normal run with no suites — the JSON-mode document for a project with no
