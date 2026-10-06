@@ -1,0 +1,100 @@
+---
+#1750: a `?` inside a value-position `if`, `match` or block propagates its
+`Err` out of the enclosing **function**. These forms used to lower to an arrow
+(an IIFE), so the `?`'s `return` exited the arrow instead, and its `Err` became
+the expression's value: `withBinding(Some(1), Err("x"))` returned
+`Ok(Err("x"))`. They now lower to a real statement whose branch tails assign a
+slot, so the `return` exits the function. The suite pins the runtime value of
+each shape.
+---
+commons demo.early
+
+type IoError = enum { Disk }
+
+type AppError =
+  | Io(reason: IoError)
+  | Other
+  embeds IoError as Io
+
+-- An `if` whose condition binds a name.
+fn withBinding(a: Option[Int], r: Result[Int, String]) -> Result[Int, String] {
+  let n = if a is Some(v) { r? + v } else { 0 }
+  Ok(n)
+}
+
+-- An `if` with a statement in a branch.
+fn withStatement(c: Bool, r: Result[Int, String]) -> Result[Int, String] {
+  let n = if c {
+    let x = r?
+    x + 1
+  } else {
+    0
+  }
+  Ok(n)
+}
+
+-- A `match` with an expression arm, and one with a block arm.
+fn matchExpr(o: Option[Int], r: Result[Int, String]) -> Result[Int, String] {
+  let n = match o {
+    Some(v) => r? + v,
+    None => 0
+  }
+  Ok(n)
+}
+
+fn matchBlock(o: Option[Int], r: Result[Int, String]) -> Result[Int, String] {
+  let n = match o {
+    Some(v) => {
+      let x = r?
+      x + v
+    },
+    None => 0
+  }
+  Ok(n)
+}
+
+-- A `?` two levels deep: an `if` inside a `match` arm.
+fn nested(o: Option[Int], c: Bool, r: Result[Int, String]) -> Result[Int, String] {
+  let n = match o {
+    Some(v) => if c { r? + v } else { v },
+    None => 0
+  }
+  Ok(n)
+}
+
+fn apply(f: Result[Int, String] -> Result[Int, String], r: Result[Int, String]) -> Result[Int, String] {
+  f(r)
+}
+
+-- A `?` inside a lambda in a branch returns from the lambda, not the function.
+fn inLambda(c: Bool, r: Result[Int, String]) -> Result[Int, String] {
+  let n = if c {
+    let k = 1
+    apply((x: Result[Int, String]) => {
+      let y = x?
+      Ok(y + k)
+    }, r)
+  } else {
+    Ok(0)
+  }
+  match n {
+    Ok(v) => Ok(v * 10),
+    Err(_) => Ok(-1)
+  }
+}
+
+-- ADR 0178: an embedding `?` converts to the function's error type.
+fn risky(fail: Bool) -> Result[Int, IoError] {
+  if fail { Err(Disk) } else { Ok(1) }
+}
+
+fn embedded(o: Option[Int], fail: Bool) -> Result[Int, AppError] {
+  let n = match o {
+    Some(v) => {
+      let x = risky(fail)?
+      x + v
+    },
+    None => 0
+  }
+  Ok(n)
+}
