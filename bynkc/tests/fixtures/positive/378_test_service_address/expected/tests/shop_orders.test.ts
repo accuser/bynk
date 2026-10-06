@@ -25,7 +25,7 @@ function __bynkShow(v: unknown): string {
   try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
-function makeTestDeps() {
+function __makeTestDeps() {
   return {  };
 }
 
@@ -33,7 +33,7 @@ function makeTestDeps() {
 async function test_a_buyer_s_cart_is_their_own() {
   try {
     shop_orders.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Cart, Item, UserId, __makeCart, api, intake, sweeper } = shop_orders;
     type Item = shop_orders.Item;
     type UserId = shop_orders.UserId;
@@ -53,7 +53,7 @@ async function test_a_buyer_s_cart_is_their_own() {
 async function test_the_sweeper_runs_clean() {
   try {
     shop_orders.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Cart, Item, UserId, __makeCart, api, intake, sweeper } = shop_orders;
     type Item = shop_orders.Item;
     type UserId = shop_orders.UserId;
@@ -72,7 +72,7 @@ async function test_the_sweeper_runs_clean() {
 async function test_an_intake_message_is_acked() {
   try {
     shop_orders.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Cart, Item, UserId, __makeCart, api, intake, sweeper } = shop_orders;
     type Item = shop_orders.Item;
     type UserId = shop_orders.UserId;

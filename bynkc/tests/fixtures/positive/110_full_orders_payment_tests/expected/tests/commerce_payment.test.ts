@@ -57,14 +57,14 @@ function __bynkOverlay(base: unknown, stub: object, cap: string): unknown {
   });
 }
 
-function makeTestDeps() {
+function __makeTestDeps() {
   return { Logger: __bynkOverlay(new commerce_payment.ConsoleLogger(), new __Stub_Logger(), "Logger") as commerce_payment.Logger };
 }
 
 // case tier: unit
 async function test_authorise_returns_Ok_for_a_small_positive_amount() {
   try {
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { AuthId, PaymentError, authorise } = commerce_payment;
     type AuthId = commerce_payment.AuthId;
     type PaymentError = commerce_payment.PaymentError;
@@ -82,7 +82,7 @@ async function test_authorise_returns_Ok_for_a_small_positive_amount() {
 // case tier: unit
 async function test_authorise_returns_Err_Declined__for_zero() {
   try {
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { AuthId, PaymentError, authorise } = commerce_payment;
     type AuthId = commerce_payment.AuthId;
     type PaymentError = commerce_payment.PaymentError;
@@ -107,7 +107,7 @@ async function test_authorise_returns_Err_Declined__for_zero() {
 // case tier: unit
 async function test_authorise_returns_Err_InsufficientFunds__for_large_amounts() {
   try {
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { AuthId, PaymentError, authorise } = commerce_payment;
     type AuthId = commerce_payment.AuthId;
     type PaymentError = commerce_payment.PaymentError;

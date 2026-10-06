@@ -32,11 +32,11 @@ export const stamper = {
   },
 };
 
-export interface FxClockworkDeps {
+export interface __FxClockworkDeps {
   readonly Clock: Clock;
 }
 
-export function __makeSurface(deps: FxClockworkDeps) {
+export function __makeSurface(deps: __FxClockworkDeps) {
   return {
     async stamper(offset: number): globalThis.Promise<number> {
       return stamper.call(offset, deps);

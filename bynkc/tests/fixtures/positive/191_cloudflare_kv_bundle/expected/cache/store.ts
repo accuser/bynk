@@ -14,11 +14,11 @@ export const cache = {
   },
 };
 
-export interface CacheStoreDeps {
+export interface __CacheStoreDeps {
   readonly Kv: bynk_cloudflare.Kv;
 }
 
-export function __makeSurface(deps: CacheStoreDeps) {
+export function __makeSurface(deps: __CacheStoreDeps) {
   return {
     async cache(key: string, value: string): globalThis.Promise<Option<string>> {
       return cache.call(key, value, deps);

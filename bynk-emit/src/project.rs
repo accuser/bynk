@@ -787,7 +787,7 @@ fn finish_build(run: RunChecks, import_ext: ImportExt) -> Result<ProjectOutput, 
 /// v0.54 (#655): whether a context's services declare an `on call … by c: Caller`
 /// handler, whose emitted `deps` carries the calling context's qualified name as
 /// its `CallerId` identity (ADR 0092); in bundle mode the compose root supplies
-/// that name to `makeSurface`, mirroring the `X-Bynk-Caller` header a Worker
+/// that name to `__makeSurface`, mirroring the `X-Bynk-Caller` header a Worker
 /// reads at its entry. Delegates to the *same*
 /// [`any_service_binds_caller`](crate::emitter::any_service_binds_caller) the
 /// emitter's `emit_make_surface` calls, so the compose root and the surface can
@@ -3061,7 +3061,7 @@ fn emit_composition_root(
         let Some(table) = unit_tables.get(ctx_name.as_str()) else {
             continue;
         };
-        // A context's deps object exists only to feed its `makeSurface`; a
+        // A context's deps object exists only to feed its `__makeSurface`; a
         // capability-only context (no services) needs neither (v0.15).
         if table.services.is_empty() {
             continue;

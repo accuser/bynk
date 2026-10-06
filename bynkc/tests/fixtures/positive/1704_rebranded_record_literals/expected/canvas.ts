@@ -84,10 +84,10 @@ export function __resetAgents(): void {
   __BoardRegistry.reset();
 }
 
-export interface CanvasDeps {
+export interface __CanvasDeps {
 }
 
-export function __makeSurface(deps: CanvasDeps) {
+export function __makeSurface(deps: __CanvasDeps) {
   return {
     async api(): globalThis.Promise<number> {
       return api.call(deps);

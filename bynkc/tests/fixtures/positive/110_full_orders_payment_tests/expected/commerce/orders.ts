@@ -43,11 +43,11 @@ export const place = {
   },
 };
 
-export interface CommerceOrdersDeps {
+export interface __CommerceOrdersDeps {
   readonly surface: { Payment: globalThis.ReturnType<typeof commerce_payment.__makeSurface> };
 }
 
-export function __makeSurface(deps: CommerceOrdersDeps) {
+export function __makeSurface(deps: __CommerceOrdersDeps) {
   return {
     async place(amount: number): globalThis.Promise<Result<AuthId, OrderError>> {
       return place.call(amount, deps);

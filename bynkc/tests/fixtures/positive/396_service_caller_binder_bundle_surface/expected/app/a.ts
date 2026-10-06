@@ -12,11 +12,11 @@ export const ask = {
   },
 };
 
-export interface AppADeps {
+export interface __AppADeps {
   readonly surface: { B: globalThis.ReturnType<typeof app_b.__makeSurface> };
 }
 
-export function __makeSurface(deps: AppADeps) {
+export function __makeSurface(deps: __AppADeps) {
   return {
     async ask(ping: string): globalThis.Promise<Result<string, string>> {
       return ask.call(ping, deps);

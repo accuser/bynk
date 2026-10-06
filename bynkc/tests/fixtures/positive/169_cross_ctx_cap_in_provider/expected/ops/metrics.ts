@@ -29,11 +29,11 @@ export const report = {
   },
 };
 
-export interface OpsMetricsDeps {
+export interface __OpsMetricsDeps {
   readonly Stamp: Stamp;
 }
 
-export function __makeSurface(deps: OpsMetricsDeps) {
+export function __makeSurface(deps: __OpsMetricsDeps) {
   return {
     async report(): globalThis.Promise<number> {
       return report.call(deps);

@@ -100,10 +100,10 @@ export function __resetAgents(): void {
   __SlotRegistry.reset();
 }
 
-export interface DemoSlotDeps {
+export interface __DemoSlotDeps {
 }
 
-export function __makeSurface(deps: DemoSlotDeps) {
+export function __makeSurface(deps: __DemoSlotDeps) {
   return {
     async resolve(id: Label): globalThis.Promise<Result<number, SlotError>> {
       return resolve.call(id, deps);

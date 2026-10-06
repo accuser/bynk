@@ -269,13 +269,13 @@ function __bynkOverlay(base: unknown, stub: object, cap: string): unknown {
   });
 }
 
-function makeTestDeps() {
+function __makeTestDeps() {
   return { Ledger: __bynkOverlay(new demo_wallet.RealLedger(), new __Stub_Ledger(), "Ledger") as demo_wallet.Ledger };
 }
 
 async function __prop_test_top_ups_compose_with_a_stubbed_ledger() {
     demo_wallet.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Amount, Wallet, __makeWallet } = demo_wallet;
     type Amount = demo_wallet.Amount;
     type __History_Wallet_Step = any; type __History_Wallet_Call = any; type __History_Wallet_State = any;

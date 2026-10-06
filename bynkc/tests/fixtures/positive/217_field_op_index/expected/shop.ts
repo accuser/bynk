@@ -32,11 +32,11 @@ export const api = {
   },
 };
 
-export interface ShopDeps {
+export interface __ShopDeps {
   readonly Clock: Clock;
 }
 
-export function __makeSurface(deps: ShopDeps) {
+export function __makeSurface(deps: __ShopDeps) {
   return {
     async api(): globalThis.Promise<number> {
       return api.call(deps);

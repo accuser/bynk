@@ -103,11 +103,11 @@ export function __resetAgents(): void {
   __LedgerRegistry.reset();
 }
 
-export interface ShopDedupeDeps {
+export interface __ShopDedupeDeps {
   readonly Idempotency: bynk.Idempotency;
 }
 
-export function __makeSurface(deps: ShopDedupeDeps) {
+export function __makeSurface(deps: __ShopDedupeDeps) {
   return {
     async alpha(): globalThis.Promise<string> {
       return alpha.call(deps);

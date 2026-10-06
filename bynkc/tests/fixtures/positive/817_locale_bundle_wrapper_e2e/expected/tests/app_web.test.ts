@@ -72,14 +72,14 @@ function __bynkTest_Locale(): bynk.Locale {
   };
 }
 
-function makeTestDeps() {
+function __makeTestDeps() {
   return { Locale: __bynkOverlay(__bynkTest_Locale(), new __Stub_Locale(), "Locale") as bynk.Locale };
 }
 
 // case tier: unit
 async function test_renders_the_bundle_s_greeting_through_the_wrapper() {
   try {
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { greeting } = app_web;
     const { LocaleTag, Message, MessageArg } = bynk_locale_types;
     type LocaleTag = bynk_locale_types.LocaleTag;

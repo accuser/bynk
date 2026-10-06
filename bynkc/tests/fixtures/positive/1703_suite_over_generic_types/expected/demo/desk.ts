@@ -29,11 +29,11 @@ export const pairUp = {
   },
 };
 
-export interface DemoDeskDeps {
+export interface __DemoDeskDeps {
   readonly surface: { Vault: globalThis.ReturnType<typeof demo_vault.__makeSurface> };
 }
 
-export function __makeSurface(deps: DemoDeskDeps) {
+export function __makeSurface(deps: __DemoDeskDeps) {
   return {
     async check(n: number): globalThis.Promise<number> {
       return check.call(n, deps);

@@ -238,13 +238,13 @@ async function __bynkRunHistory(spec: __BynkHistorySpec): Promise<{ pass: boolea
   return { pass: true };
 }
 
-function makeTestDeps() {
+function __makeTestDeps() {
   return {  };
 }
 
 async function __prop_test_no_accepted_spend_without_a_prior_accepted_top_up() {
     demo_wallet.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Amount, Wallet, __makeWallet } = demo_wallet;
     type Amount = demo_wallet.Amount;
     type __History_Wallet_Step = any; type __History_Wallet_Call = any; type __History_Wallet_State = any;

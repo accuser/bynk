@@ -72,14 +72,14 @@ function __bynkTest_Locale(): bynk.Locale {
   };
 }
 
-function makeTestDeps() {
+function __makeTestDeps() {
   return { Locale: __bynkOverlay(__bynkTest_Locale(), new __Stub_Locale(), "Locale") as bynk.Locale };
 }
 
 // case tier: unit
 async function test_no_params_renders_just_the_code() {
   try {
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { greeting, greetingWithCountAndName, greetingWithName } = app_greet;
     const { message, render, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale;
     const { LocaleTag, Message, MessageArg } = bynk_locale_types;
@@ -107,7 +107,7 @@ async function test_no_params_renders_just_the_code() {
 // case tier: unit
 async function test_one_param_renders_code_plus_the_substitution() {
   try {
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { greeting, greetingWithCountAndName, greetingWithName } = app_greet;
     const { message, render, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale;
     const { LocaleTag, Message, MessageArg } = bynk_locale_types;
@@ -135,7 +135,7 @@ async function test_one_param_renders_code_plus_the_substitution() {
 // case tier: unit
 async function test_multiple_params_render_sorted_by_key__not_call_order() {
   try {
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { greeting, greetingWithCountAndName, greetingWithName } = app_greet;
     const { message, render, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale;
     const { LocaleTag, Message, MessageArg } = bynk_locale_types;

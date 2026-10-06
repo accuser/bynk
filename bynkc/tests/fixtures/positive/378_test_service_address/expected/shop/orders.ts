@@ -104,10 +104,10 @@ export function __resetAgents(): void {
   __CartRegistry.reset();
 }
 
-export interface ShopOrdersDeps {
+export interface __ShopOrdersDeps {
 }
 
-export function __makeSurface(deps: ShopOrdersDeps) {
+export function __makeSurface(deps: __ShopOrdersDeps) {
   return {
   };
 }

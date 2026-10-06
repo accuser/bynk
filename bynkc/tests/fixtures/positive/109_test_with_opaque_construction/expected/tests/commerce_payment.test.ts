@@ -25,14 +25,14 @@ function __bynkShow(v: unknown): string {
   try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
-function makeTestDeps() {
+function __makeTestDeps() {
   return {  };
 }
 
 // case tier: unit
 async function test_constructs_AuthId_from_inside_the_test() {
   try {
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { AuthId } = commerce_payment;
     type AuthId = commerce_payment.AuthId;
     const id = AuthId.unsafe("AUTH-12345678");

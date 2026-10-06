@@ -61,11 +61,11 @@ export const authorise = {
   },
 };
 
-export interface CommercePaymentDeps {
+export interface __CommercePaymentDeps {
   readonly Payments: Payments;
 }
 
-export function __makeSurface(deps: CommercePaymentDeps) {
+export function __makeSurface(deps: __CommercePaymentDeps) {
   return {
     async authorise(amount: Money): globalThis.Promise<Result<AuthId, PaymentError>> {
       return authorise.call(amount, deps);

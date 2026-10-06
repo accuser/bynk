@@ -569,7 +569,7 @@ pub(crate) fn emit_project(
         );
         stmts.push(reset_fn);
     }
-    // v0.6: cross-context surface assembly. Emit `makeSurface` for any
+    // v0.6: cross-context surface assembly. Emit `__makeSurface` for any
     // context that declares services — the composition root references it
     // for every such context, not just those consumed by others. Skipped
     // in workers mode where each Worker has its own `compose(env)` root.
@@ -2400,7 +2400,7 @@ fn record_name_ref(
 }
 
 /// Emit `import * as <ns> from "..."` for each consumed context that
-/// exposes services (so the consuming file can reference its `makeSurface`
+/// exposes services (so the consuming file can reference its `__makeSurface`
 /// return type and brand the cross-context call arguments).
 /// #1478: real-node-internally already — returns one real `TsDecl::
 /// ImportNamespace` per consumed context instead of writing into

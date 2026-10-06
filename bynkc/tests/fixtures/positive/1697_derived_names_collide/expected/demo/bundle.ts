@@ -8,6 +8,14 @@ import { LocaleTag } from "../bynk/locale/types.js";
 import { render as __bynkLocaleRender, renderArg as __bynkRenderArg } from "../bynk/locale.js";
 import type { LocaleTag as __bynkLocaleTag, Message as __bynkMessage, MessageArg as __bynkMessageArg } from "../bynk/locale/types.js";
 
+/**
+ * #1697: a bundle commons that declares names its generated table and `render`
+ * used to share: the module-local table (`messagesByLocale`), the two exported
+ * locale consts (`messagesLocales`, `messagesReferenceLocale`), and the stdlib
+ * types the generated code names (`Message`, `MessageArg`). Its own `withText`
+ * is fine either way: the stdlib one never enters this module.
+ */
+
 export interface Message {
   readonly text: string;
 }
@@ -15,12 +23,31 @@ export interface Message {
 export const Message = {
 };
 
+export interface MessageArg {
+  readonly raw: string;
+}
+
+export const MessageArg = {
+};
+
 export function messagesByLocale(): number {
   return 1;
 }
 
+export function messagesLocales(): number {
+  return 2;
+}
+
+export function messagesReferenceLocale(): number {
+  return 3;
+}
+
 export function shout(m: Message): string {
   return m.text;
+}
+
+export function rawOf(a: MessageArg): string {
+  return a.raw;
 }
 
 export function withText(s: string): string {
@@ -29,6 +56,10 @@ export function withText(s: string): string {
 
 export function greetAll(tag: LocaleTag): string {
   return withText(render(tag, message("greeting")));
+}
+
+export function tally(): number {
+  return messagesByLocale() + messagesLocales() + messagesReferenceLocale();
 }
 
 const __messagesByLocale: globalThis.Record<string, globalThis.Record<string, (params: ReadonlyMap<string, __bynkMessageArg>) => string>> = {

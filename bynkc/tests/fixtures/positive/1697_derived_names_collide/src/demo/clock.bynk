@@ -1,3 +1,11 @@
+---
+#1697: each user name here collides with a name the compiler derives from a
+declaration beside it, unless the generated one is `__`-prefixed: the
+capability's token (`ClockToken`), the provider's binding
+(`SystemClockProvider`), the surface factory (`makeSurface`), the context's
+deps interface (`DemoClockDeps`), the agent's state interface (`BagState`),
+and the test scaffold's deps factory (`makeTestDeps`).
+---
 context demo.clock
 
 capability Clock {
@@ -10,13 +18,17 @@ provides Clock = SystemClock {
 
 type ClockToken = { id: Int }
 
+type DemoClockDeps = { id: Int }
+
 fn SystemClockProvider() -> Int { 1 }
 
 fn makeSurface() -> Int { 2 }
 
+fn makeTestDeps() -> Int { 4 }
+
 service time {
   on call() -> Effect[Int] given Clock {
     let t <- Clock.now()
-    t + SystemClockProvider() + makeSurface() + ClockToken { id: 3 }.id
+    t + SystemClockProvider() + makeSurface() + ClockToken { id: 3 }.id + DemoClockDeps { id: 5 }.id + makeTestDeps()
   }
 }

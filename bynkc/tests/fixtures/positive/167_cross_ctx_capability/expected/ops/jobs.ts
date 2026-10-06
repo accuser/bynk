@@ -12,11 +12,11 @@ export const tick = {
   },
 };
 
-export interface OpsJobsDeps {
+export interface __OpsJobsDeps {
   readonly Clock: platform_time.Clock;
 }
 
-export function __makeSurface(deps: OpsJobsDeps) {
+export function __makeSurface(deps: __OpsJobsDeps) {
   return {
     async tick(): globalThis.Promise<number> {
       return tick.call(deps);

@@ -2,5 +2,5 @@ suite demo.clock
 
 case "the generated names don't collide" {
   let t <- time.call()
-  expect t == 48
+  expect t == 57
 }

@@ -60,11 +60,11 @@ export const create = {
   },
 };
 
-export interface DemoRegistryDeps {
+export interface __DemoRegistryDeps {
   readonly Clock: Clock;
 }
 
-export function __makeSurface(deps: DemoRegistryDeps) {
+export function __makeSurface(deps: __DemoRegistryDeps) {
   return {
     async create(code: Code, target: Target): globalThis.Promise<Result<number, RegError>> {
       return create.call(code, target, deps);

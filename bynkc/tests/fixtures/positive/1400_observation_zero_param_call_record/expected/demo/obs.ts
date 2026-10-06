@@ -24,11 +24,11 @@ export const tick = {
   },
 };
 
-export interface DemoObsDeps {
+export interface __DemoObsDeps {
   readonly Clock: Clock;
 }
 
-export function __makeSurface(deps: DemoObsDeps) {
+export function __makeSurface(deps: __DemoObsDeps) {
   return {
     async tick(): globalThis.Promise<number> {
       return tick.call(deps);

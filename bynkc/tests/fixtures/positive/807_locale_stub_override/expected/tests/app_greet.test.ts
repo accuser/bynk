@@ -72,14 +72,14 @@ function __bynkTest_Locale(): bynk.Locale {
   };
 }
 
-function makeTestDeps() {
+function __makeTestDeps() {
   return { Locale: __bynkOverlay(__bynkTest_Locale(), new __Stub_Locale(), "Locale") as bynk.Locale };
 }
 
 // case tier: integration
 async function test_a_stubbed_locale_is_what_the_capability_reports() {
   try {
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { currentTag, greeting } = app_greet;
     const { message, render, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale;
     const { LocaleTag, Message, MessageArg } = bynk_locale_types;
@@ -107,7 +107,7 @@ async function test_a_stubbed_locale_is_what_the_capability_reports() {
 // case tier: integration
 async function test_render_is_unaffected_by_the_stub_in_slice_1__tag_is_unused_() {
   try {
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { currentTag, greeting } = app_greet;
     const { message, render, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale;
     const { LocaleTag, Message, MessageArg } = bynk_locale_types;

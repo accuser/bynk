@@ -74,10 +74,10 @@ export function __resetAgents(): void {
   __VaultRegistry.reset();
 }
 
-export interface DocsArchiveDeps {
+export interface __DocsArchiveDeps {
 }
 
-export function __makeSurface(deps: DocsArchiveDeps) {
+export function __makeSurface(deps: __DocsArchiveDeps) {
   return {
     async intake(d: Doc): globalThis.Promise<Result<number, void>> {
       return intake.call(d, deps);

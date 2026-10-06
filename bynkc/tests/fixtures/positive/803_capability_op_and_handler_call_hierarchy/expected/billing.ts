@@ -86,11 +86,11 @@ export function __resetAgents(): void {
   __OrderRegistry.reset();
 }
 
-export interface BillingDeps {
+export interface __BillingDeps {
   readonly Clock: Clock;
 }
 
-export function __makeSurface(deps: BillingDeps) {
+export function __makeSurface(deps: __BillingDeps) {
   return {
     async api(qty: number): globalThis.Promise<Result<void, OrderError>> {
       return api.call(qty, deps);

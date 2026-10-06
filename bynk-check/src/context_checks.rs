@@ -2906,6 +2906,26 @@ fn check_agent_decls(
         // under the name `<AgentName>State` in the type table so the body and
         // invariants can be checked against it.
         let agent_state_name = format!("{}State", agent.name.name);
+        // #1697: the state record is a name the agent's handlers and invariants
+        // can write, so a user type of the same name would be silently replaced
+        // there by the record (and collide with its interface in the emitted
+        // module). Reject it instead.
+        if let Some(user) = table.types.get(&agent_state_name) {
+            errors.push(
+                CompileError::new(
+                    "bynk.agent.state_name_conflict",
+                    user.name.span,
+                    format!(
+                        "type `{agent_state_name}` has the name of agent `{}`'s state record",
+                        agent.name.name
+                    ),
+                )
+                .with_note(format!(
+                    "inside `{}`'s handlers, `{agent_state_name}` is the record of its `Cell` fields, so this type would be replaced there; rename it",
+                    agent.name.name
+                )),
+            );
+        }
         let state_record_fields: Vec<RecordField> = agent
             .store_fields
             .iter()

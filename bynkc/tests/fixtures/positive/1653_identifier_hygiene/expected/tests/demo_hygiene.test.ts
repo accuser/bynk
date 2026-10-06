@@ -25,7 +25,7 @@ function __bynkShow(v: unknown): string {
   try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
-function makeTestDeps() {
+function __makeTestDeps() {
   return { Clock: new demo_hygiene.FixedClock() };
 }
 
@@ -33,7 +33,7 @@ function makeTestDeps() {
 async function test_functions_named_after_host_and_runtime_names() {
   try {
     demo_hygiene.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Array, ArrayBuffer, Bag, BigInt, Blob, Boolean, BoundaryError, Date, DurableObjectState, Error, Headers, Intl, JSON, JsonValue, Keyword, Labelled, Map, Math, Number, Object, Parameters, Promise, Record, RegExp, Request, Response, ReturnType, Set, StateRegistry, Symbol, TextDecoder, TextEncoder, URL, Uint8Array, __makeBag, callService, console, crypto, encodeLabel, encodeURIComponent, half, keywordRoundTrip, keywordSum, labelIs, labelOf, matchPath, mkError, rebind, roundTrip, serialise_Labelled, size, unique, unwrapIs, unwrapMatch, withKey } = demo_hygiene;
     type Array = demo_hygiene.Array;
     type ArrayBuffer = demo_hygiene.ArrayBuffer;
@@ -86,7 +86,7 @@ async function test_functions_named_after_host_and_runtime_names() {
 async function test_Int_division_beside_a_user_type_named_Math() {
   try {
     demo_hygiene.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Array, ArrayBuffer, Bag, BigInt, Blob, Boolean, BoundaryError, Date, DurableObjectState, Error, Headers, Intl, JSON, JsonValue, Keyword, Labelled, Map, Math, Number, Object, Parameters, Promise, Record, RegExp, Request, Response, ReturnType, Set, StateRegistry, Symbol, TextDecoder, TextEncoder, URL, Uint8Array, __makeBag, callService, console, crypto, encodeLabel, encodeURIComponent, half, keywordRoundTrip, keywordSum, labelIs, labelOf, matchPath, mkError, rebind, roundTrip, serialise_Labelled, size, unique, unwrapIs, unwrapMatch, withKey } = demo_hygiene;
     type Array = demo_hygiene.Array;
     type ArrayBuffer = demo_hygiene.ArrayBuffer;
@@ -134,7 +134,7 @@ async function test_Int_division_beside_a_user_type_named_Math() {
 async function test_a_binding_that_shadows_the_value_it_is_read_from() {
   try {
     demo_hygiene.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Array, ArrayBuffer, Bag, BigInt, Blob, Boolean, BoundaryError, Date, DurableObjectState, Error, Headers, Intl, JSON, JsonValue, Keyword, Labelled, Map, Math, Number, Object, Parameters, Promise, Record, RegExp, Request, Response, ReturnType, Set, StateRegistry, Symbol, TextDecoder, TextEncoder, URL, Uint8Array, __makeBag, callService, console, crypto, encodeLabel, encodeURIComponent, half, keywordRoundTrip, keywordSum, labelIs, labelOf, matchPath, mkError, rebind, roundTrip, serialise_Labelled, size, unique, unwrapIs, unwrapMatch, withKey } = demo_hygiene;
     type Array = demo_hygiene.Array;
     type ArrayBuffer = demo_hygiene.ArrayBuffer;
@@ -184,7 +184,7 @@ async function test_a_binding_that_shadows_the_value_it_is_read_from() {
 async function test_a_payload_field_named_tag() {
   try {
     demo_hygiene.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Array, ArrayBuffer, Bag, BigInt, Blob, Boolean, BoundaryError, Date, DurableObjectState, Error, Headers, Intl, JSON, JsonValue, Keyword, Labelled, Map, Math, Number, Object, Parameters, Promise, Record, RegExp, Request, Response, ReturnType, Set, StateRegistry, Symbol, TextDecoder, TextEncoder, URL, Uint8Array, __makeBag, callService, console, crypto, encodeLabel, encodeURIComponent, half, keywordRoundTrip, keywordSum, labelIs, labelOf, matchPath, mkError, rebind, roundTrip, serialise_Labelled, size, unique, unwrapIs, unwrapMatch, withKey } = demo_hygiene;
     type Array = demo_hygiene.Array;
     type ArrayBuffer = demo_hygiene.ArrayBuffer;
@@ -236,7 +236,7 @@ async function test_a_payload_field_named_tag() {
 async function test_Bytes_beside_a_user_type_named_Uint8Array() {
   try {
     demo_hygiene.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Array, ArrayBuffer, Bag, BigInt, Blob, Boolean, BoundaryError, Date, DurableObjectState, Error, Headers, Intl, JSON, JsonValue, Keyword, Labelled, Map, Math, Number, Object, Parameters, Promise, Record, RegExp, Request, Response, ReturnType, Set, StateRegistry, Symbol, TextDecoder, TextEncoder, URL, Uint8Array, __makeBag, callService, console, crypto, encodeLabel, encodeURIComponent, half, keywordRoundTrip, keywordSum, labelIs, labelOf, matchPath, mkError, rebind, roundTrip, serialise_Labelled, size, unique, unwrapIs, unwrapMatch, withKey } = demo_hygiene;
     type Array = demo_hygiene.Array;
     type ArrayBuffer = demo_hygiene.ArrayBuffer;
@@ -283,7 +283,7 @@ async function test_Bytes_beside_a_user_type_named_Uint8Array() {
 async function test_an_agent_s_store_collections_beside_a_type_named_Record_and_a_function_named_Set() {
   try {
     demo_hygiene.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Array, ArrayBuffer, Bag, BigInt, Blob, Boolean, BoundaryError, Date, DurableObjectState, Error, Headers, Intl, JSON, JsonValue, Keyword, Labelled, Map, Math, Number, Object, Parameters, Promise, Record, RegExp, Request, Response, ReturnType, Set, StateRegistry, Symbol, TextDecoder, TextEncoder, URL, Uint8Array, __makeBag, callService, console, crypto, encodeLabel, encodeURIComponent, half, keywordRoundTrip, keywordSum, labelIs, labelOf, matchPath, mkError, rebind, roundTrip, serialise_Labelled, size, unique, unwrapIs, unwrapMatch, withKey } = demo_hygiene;
     type Array = demo_hygiene.Array;
     type ArrayBuffer = demo_hygiene.ArrayBuffer;
@@ -335,7 +335,7 @@ async function test_an_agent_s_store_collections_beside_a_type_named_Record_and_
 async function test_Set_and_Map_as_function_names_beside_the_JS_Set_and_Map() {
   try {
     demo_hygiene.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Array, ArrayBuffer, Bag, BigInt, Blob, Boolean, BoundaryError, Date, DurableObjectState, Error, Headers, Intl, JSON, JsonValue, Keyword, Labelled, Map, Math, Number, Object, Parameters, Promise, Record, RegExp, Request, Response, ReturnType, Set, StateRegistry, Symbol, TextDecoder, TextEncoder, URL, Uint8Array, __makeBag, callService, console, crypto, encodeLabel, encodeURIComponent, half, keywordRoundTrip, keywordSum, labelIs, labelOf, matchPath, mkError, rebind, roundTrip, serialise_Labelled, size, unique, unwrapIs, unwrapMatch, withKey } = demo_hygiene;
     type Array = demo_hygiene.Array;
     type ArrayBuffer = demo_hygiene.ArrayBuffer;
@@ -383,7 +383,7 @@ async function test_Set_and_Map_as_function_names_beside_the_JS_Set_and_Map() {
 async function test_payload_fields_named_like_JS_reserved_words() {
   try {
     demo_hygiene.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Array, ArrayBuffer, Bag, BigInt, Blob, Boolean, BoundaryError, Date, DurableObjectState, Error, Headers, Intl, JSON, JsonValue, Keyword, Labelled, Map, Math, Number, Object, Parameters, Promise, Record, RegExp, Request, Response, ReturnType, Set, StateRegistry, Symbol, TextDecoder, TextEncoder, URL, Uint8Array, __makeBag, callService, console, crypto, encodeLabel, encodeURIComponent, half, keywordRoundTrip, keywordSum, labelIs, labelOf, matchPath, mkError, rebind, roundTrip, serialise_Labelled, size, unique, unwrapIs, unwrapMatch, withKey } = demo_hygiene;
     type Array = demo_hygiene.Array;
     type ArrayBuffer = demo_hygiene.ArrayBuffer;

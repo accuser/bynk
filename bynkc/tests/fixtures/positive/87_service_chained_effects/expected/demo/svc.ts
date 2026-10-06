@@ -17,11 +17,11 @@ export const compute = {
   },
 };
 
-export interface DemoSvcDeps {
+export interface __DemoSvcDeps {
   readonly Counter: Counter;
 }
 
-export function __makeSurface(deps: DemoSvcDeps) {
+export function __makeSurface(deps: __DemoSvcDeps) {
   return {
     async compute(start: number): globalThis.Promise<number> {
       return compute.call(start, deps);

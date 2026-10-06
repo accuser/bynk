@@ -3,11 +3,27 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
 
+/**
+ * #1697: each user name here collides with a name the compiler derives from a
+ * declaration beside it, unless the generated one is `__`-prefixed: the
+ * capability's token (`ClockToken`), the provider's binding
+ * (`SystemClockProvider`), the surface factory (`makeSurface`), the context's
+ * deps interface (`DemoClockDeps`), the agent's state interface (`BagState`),
+ * and the test scaffold's deps factory (`makeTestDeps`).
+ */
+
 export interface ClockToken {
   readonly id: number;
 }
 
 export const ClockToken = {
+};
+
+export interface DemoClockDeps {
+  readonly id: number;
+}
+
+export const DemoClockDeps = {
 };
 
 export function SystemClockProvider(): number {
@@ -16,6 +32,10 @@ export function SystemClockProvider(): number {
 
 export function makeSurface(): number {
   return 2;
+}
+
+export function makeTestDeps(): number {
+  return 4;
 }
 
 export interface Clock {
@@ -35,15 +55,15 @@ export const __SystemClockProvider = { token: __ClockToken, factory: () => new S
 export const time = {
   async call(deps: { Clock: Clock }): globalThis.Promise<number> {
     const t = await deps.Clock.now();
-    return t + SystemClockProvider() + makeSurface() + { id: 3 }.id;
+    return t + SystemClockProvider() + makeSurface() + { id: 3 }.id + { id: 5 }.id + makeTestDeps();
   },
 };
 
-export interface DemoClockDeps {
+export interface __DemoClockDeps {
   readonly Clock: Clock;
 }
 
-export function __makeSurface(deps: DemoClockDeps) {
+export function __makeSurface(deps: __DemoClockDeps) {
   return {
     async time(): globalThis.Promise<number> {
       return time.call(deps);

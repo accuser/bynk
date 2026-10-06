@@ -37,10 +37,10 @@ export const mk = {
   },
 };
 
-export interface ApiDeps {
+export interface __ApiDeps {
 }
 
-export function __makeSurface(deps: ApiDeps) {
+export function __makeSurface(deps: __ApiDeps) {
   return {
     async mk(n: number): globalThis.Promise<boolean> {
       return mk.call(n, deps);

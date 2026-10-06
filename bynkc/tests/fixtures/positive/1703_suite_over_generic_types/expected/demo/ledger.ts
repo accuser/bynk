@@ -38,11 +38,11 @@ export const post = {
   },
 };
 
-export interface DemoLedgerDeps {
+export interface __DemoLedgerDeps {
   readonly Audit: Audit;
 }
 
-export function __makeSurface(deps: DemoLedgerDeps) {
+export function __makeSurface(deps: __DemoLedgerDeps) {
   return {
     async post(n: number): globalThis.Promise<number> {
       return post.call(n, deps);

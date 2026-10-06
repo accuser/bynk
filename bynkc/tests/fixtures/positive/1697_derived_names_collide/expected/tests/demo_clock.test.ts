@@ -25,18 +25,19 @@ function __bynkShow(v: unknown): string {
   try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
-function makeTestDeps() {
+function __makeTestDeps() {
   return { Clock: new demo_clock.SystemClock() };
 }
 
 // case tier: unit
 async function test_the_generated_names_don_t_collide() {
   try {
-    const deps = makeTestDeps();
-    const { ClockToken, SystemClockProvider, makeSurface, time } = demo_clock;
+    const deps = __makeTestDeps();
+    const { ClockToken, DemoClockDeps, SystemClockProvider, makeSurface, makeTestDeps, time } = demo_clock;
     type ClockToken = demo_clock.ClockToken;
+    type DemoClockDeps = demo_clock.DemoClockDeps;
     const t = await time.call(deps);
-    if (!(__bynkEq(t, 48))) { throw __bynkExpectFailure("tests/demo/clock.bynk:5:10", 93, 100, "expect t == 48\n  expected: t == 48\n  actual:   " + __bynkShow((t)) + " == " + __bynkShow((48))); }
+    if (!(__bynkEq(t, 57))) { throw __bynkExpectFailure("tests/demo/clock.bynk:5:10", 93, 100, "expect t == 57\n  expected: t == 57\n  actual:   " + __bynkShow((t)) + " == " + __bynkShow((57))); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {

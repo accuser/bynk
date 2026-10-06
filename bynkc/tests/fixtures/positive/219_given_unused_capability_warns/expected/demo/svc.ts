@@ -15,11 +15,11 @@ export const silent = {
   },
 };
 
-export interface DemoSvcDeps {
+export interface __DemoSvcDeps {
   readonly Logger: Logger;
 }
 
-export function __makeSurface(deps: DemoSvcDeps) {
+export function __makeSurface(deps: __DemoSvcDeps) {
   return {
     async silent(): globalThis.Promise<void> {
       return silent.call(deps);

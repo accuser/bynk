@@ -56,11 +56,11 @@ export const allKeys = {
   },
 };
 
-export interface KvIndexDeps {
+export interface __KvIndexDeps {
   readonly Kv: bynk_cloudflare.Kv;
 }
 
-export function __makeSurface(deps: KvIndexDeps) {
+export function __makeSurface(deps: __KvIndexDeps) {
   return {
     async scan(prefix: string): globalThis.Promise<Result<readonly string[], void>> {
       return scan.call(prefix, deps);

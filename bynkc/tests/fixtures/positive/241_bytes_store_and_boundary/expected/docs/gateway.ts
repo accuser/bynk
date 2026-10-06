@@ -16,11 +16,11 @@ export const submit = {
   },
 };
 
-export interface DocsGatewayDeps {
+export interface __DocsGatewayDeps {
   readonly surface: { archive: globalThis.ReturnType<typeof docs_archive.__makeSurface> };
 }
 
-export function __makeSurface(deps: DocsGatewayDeps) {
+export function __makeSurface(deps: __DocsGatewayDeps) {
   return {
     async submit(d: Doc): globalThis.Promise<Result<number, void>> {
       return submit.call(d, deps);

@@ -13,10 +13,10 @@ export const api = {
   },
 };
 
-export interface RightDeps {
+export interface __RightDeps {
 }
 
-export function __makeSurface(deps: RightDeps) {
+export function __makeSurface(deps: __RightDeps) {
   return {
     async api(p: Point): globalThis.Promise<Point> {
       return api.call(p, deps);

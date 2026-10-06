@@ -62,10 +62,10 @@ export function __resetAgents(): void {
   __ShelfRegistry.reset();
 }
 
-export interface CatalogDeps {
+export interface __CatalogDeps {
 }
 
-export function __makeSurface(deps: CatalogDeps) {
+export function __makeSurface(deps: __CatalogDeps) {
   return {
     async api(): globalThis.Promise<number> {
       return api.call(deps);

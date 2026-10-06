@@ -128,10 +128,10 @@ export function __resetAgents(): void {
   __RoomRegistry.reset();
 }
 
-export interface ChatDeps {
+export interface __ChatDeps {
 }
 
-export function __makeSurface(deps: ChatDeps) {
+export function __makeSurface(deps: __ChatDeps) {
   return {
   };
 }

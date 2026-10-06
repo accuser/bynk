@@ -27,14 +27,14 @@ function __bynkShow(v: unknown): string {
   try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
-function makeTestDeps() {
+function __makeTestDeps() {
   return { surface: { Vault: undefined as unknown as globalThis.ReturnType<typeof demo_vault.__makeSurface> } };
 }
 
 // case tier: unit
 async function test_a_generic_type_from_a_consumed_context_is_in_scope() {
   try {
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { check, pairUp } = demo_desk;
     const { Pair, pairOf } = demo_shapes;
     type Pair<A, B> = demo_shapes.Pair<A, B>;

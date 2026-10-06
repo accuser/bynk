@@ -59,7 +59,7 @@ pub(crate) fn process_tests(
     // v0.17 (Locale capability track, slice 1, #844): capability name -> owning
     // unit, per target, for capabilities flattened in via `consumes U { Cap }`
     // (this never includes anything a target declares itself). Needed so
-    // `makeTestDeps()` wires an adapter-flattened capability (real *or*
+    // `__makeTestDeps()` wires an adapter-flattened capability (real *or*
     // stubbed) — it is not in `UnitTable.capabilities`, which holds only
     // locally-declared capabilities.
     unit_flattened: &HashMap<String, HashMap<String, String>>,
@@ -488,7 +488,7 @@ fn emit_integration_module(
         // hand-templated text spliced straight into the module.
         let mut case_out = String::new();
         case_out.push_str("  try {\n");
-        case_out.push_str("    const deps = makeHarness();\n");
+        case_out.push_str("    const deps = __makeHarness();\n");
         // Bring `uses` commons names into scope for argument construction.
         for u in uses_targets {
             let ns = u.replace('.', "_");
@@ -1009,7 +1009,7 @@ fn emit_system_http_support(
                     TsStmt::const_stmt(
                         TsBindingName::Ident("__h".to_string()),
                         None,
-                        call(ident("makeHarness"), vec![]),
+                        call(ident("__makeHarness"), vec![]),
                         None,
                     ),
                     TsStmt::const_stmt(
@@ -1211,7 +1211,7 @@ fn service_binding_forward(worker_ident: &str, env_ident: &str) -> TsExpr {
     }
 }
 
-/// Emit the `makeHarness()` factory: an in-process env per participant whose
+/// Emit the `__makeHarness()` factory: an in-process env per participant whose
 /// Service Bindings call the sibling participants' real Worker `fetch` and whose
 /// Durable-Object namespaces back the participant's own agents in memory, plus a
 /// root env binding every participant (the test cases call in through it). A
@@ -1314,7 +1314,7 @@ fn emit_integration_harness(
     ));
     TsStmt::decl(
         TsDecl::Function {
-            name: "makeHarness".to_string(),
+            name: "__makeHarness".to_string(),
             generics: Vec::new(),
             params: Vec::new(),
             return_type: None,
@@ -2540,7 +2540,7 @@ fn emit_stub_class(
         }
     }
     // #291: a case-scoped clause applies only while its own case runs, so a
-    // class with one carries the running case's name (`makeTestDeps`'s
+    // class with one carries the running case's name (`__makeTestDeps`'s
     // argument), and `__applies` tells `__bynkOverlay` which operations this
     // case stubs at all — an operation stubbed only by other cases reaches the
     // tier default instead.
@@ -3014,7 +3014,7 @@ fn platform_seams<'a>(
     out
 }
 
-/// #291: a stubbed capability's `makeTestDeps` entry — its `__Stub_<Cap>`
+/// #291: a stubbed capability's `__makeTestDeps` entry — its `__Stub_<Cap>`
 /// layered over `base`, the tier default (the context's own provider, a
 /// platform capability's test double, or nothing). A stubbed operation answers
 /// from the stub; every other operation reaches the base, so `stub` overrides
@@ -3076,7 +3076,7 @@ function __bynkOverlay(base: unknown, stub: object, cap: string): unknown {
 /// from a fixed-seed generator, `Secrets` has none, `Locale` is `"en"`,
 /// `Idempotency` and `Kv` are in-memory (a TTL or `expiresAfter` is accepted
 /// and ignored: expiry is not modelled), and `Fetch` faults — a test never
-/// reaches the network, so it must `stub Fetch.send`. `makeTestDeps` builds
+/// reaches the network, so it must `stub Fetch.send`. `__makeTestDeps` builds
 /// fresh ones per case.
 fn platform_double(owner: &str, cap: &str, ns: &str) -> Option<String> {
     let body = match (owner, cap) {
@@ -3114,7 +3114,7 @@ fn emit_test_deps(
         && let Some(table) = unit_tables.get(target_name)
     {
         let ns = target_name.replace('.', "_");
-        // Sorted so `makeTestDeps` field order is deterministic across the
+        // Sorted so `__makeTestDeps` field order is deterministic across the
         // capability map's hash iteration order.
         let mut caps: Vec<&String> = table.capabilities.keys().collect();
         caps.sort();
@@ -3168,7 +3168,7 @@ fn emit_test_deps(
         // (v0.118 `stub` is capability-only — a consumed-context capability
         // flattened via `consumes U { Cap }` is folded in via `unit_flattened`
         // above). An `adapter` target (e.g. `consumes bynk { Locale }`) has no
-        // `makeSurface` at all — so it must not get a surface entry either
+        // `__makeSurface` at all — so it must not get a surface entry either
         // (Locale capability track, slice 1, #844).
         let consumed: Vec<String> = unit_consumes
             .get(target_name)
@@ -3227,7 +3227,7 @@ fn emit_test_deps(
     };
     TsStmt::decl(
         TsDecl::Function {
-            name: "makeTestDeps".to_string(),
+            name: "__makeTestDeps".to_string(),
             generics: Vec::new(),
             // #291: the running case's name, when some `stub` is case-scoped.
             params: if case_scoped {
@@ -3339,7 +3339,7 @@ fn emit_test_scope_setup(
     // `deps` with the recording proxy and declare the per-case trace `__obs`. Off
     // for bodies that don't observe, so their emitted output is unchanged.
     record_calls: bool,
-    // #291: the running case's name, passed to `makeTestDeps` when the case
+    // #291: the running case's name, passed to `__makeTestDeps` when the case
     // has its own `stub` clauses (so they apply to it and no other case).
     case_name: Option<&str>,
 ) {
@@ -3436,7 +3436,7 @@ fn emit_test_scope_setup(
                 call(
                     ident("__bynkRecordDeps"),
                     vec![
-                        call(ident("makeTestDeps"), deps_args.clone()),
+                        call(ident("__makeTestDeps"), deps_args.clone()),
                         spec,
                         ident("__obs"),
                     ],
@@ -3448,7 +3448,7 @@ fn emit_test_scope_setup(
             let deps_stmt = TsStmt::const_stmt(
                 TsBindingName::Ident("deps".to_string()),
                 None,
-                call(ident("makeTestDeps"), deps_args.clone()),
+                call(ident("__makeTestDeps"), deps_args.clone()),
                 None,
             );
             out.push_str(&bynk_ts::print_stmt(&deps_stmt, 2));
@@ -3553,7 +3553,7 @@ fn emit_test_scope_setup(
                 let names: Vec<String> = types.iter().map(|(n, _)| n.clone()).collect();
                 crate::emitter::extend_printed_at(out, emit_ns_destructure(&ns, &names, &types), 2);
             }
-            // An `adapter` target has no `makeSurface`/`deps.surface` entry —
+            // An `adapter` target has no `__makeSurface`/`deps.surface` entry —
             // its capabilities are already flattened onto `deps` directly
             // (Locale capability track, slice 1, #844).
             if is_adapter {
@@ -5479,7 +5479,7 @@ fn template(text: impl Into<String>) -> TsExpr {
 
 /// One `async function __sysdrive_*` driver: an optional lead statement
 /// (`const __body = JSON.stringify(...)`, typed/no-auth drivers only), `const
-/// __h = makeHarness();`, `const __req = new Request(<url>, <options>);`,
+/// __h = __makeHarness();`, `const __req = new Request(<url>, <options>);`,
 /// `const __res = await __h.env.<binding>.fetch(__req);`, then `return
 /// <decode_fn>(__res, <payload>);`. Slice F (#1407): the one real shape
 /// shared by all four per-route `__sysdrive_{,raw_,noauth_,rawnoauth_}*`
@@ -5514,7 +5514,7 @@ fn sysdrive_driver(
     body.push(TsStmt::const_stmt(
         TsBindingName::Ident("__h".to_string()),
         None,
-        call(ident("makeHarness"), vec![]),
+        call(ident("__makeHarness"), vec![]),
         None,
     ));
     body.push(TsStmt::const_stmt(

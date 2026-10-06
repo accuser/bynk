@@ -25,7 +25,7 @@ function __bynkShow(v: unknown): string {
   try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
-function makeTestDeps() {
+function __makeTestDeps() {
   return {  };
 }
 
@@ -33,7 +33,7 @@ function makeTestDeps() {
 async function test_a_fresh_Slot_key_resolves_to_Empty() {
   try {
     demo_slot.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Label, Slot, SlotError, __makeSlot, resolve } = demo_slot;
     type Label = demo_slot.Label;
     type SlotError = demo_slot.SlotError;
@@ -79,7 +79,7 @@ async function test_a_fresh_Slot_key_resolves_to_Empty() {
 async function test_a_written_Slot_key_reads_back_after_a_reload() {
   try {
     demo_slot.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Label, Slot, SlotError, __makeSlot, resolve } = demo_slot;
     type Label = demo_slot.Label;
     type SlotError = demo_slot.SlotError;

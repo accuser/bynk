@@ -46,12 +46,12 @@ export const rate = {
   },
 };
 
-export interface DemoTimerDeps {
+export interface __DemoTimerDeps {
   readonly Clock: Clock;
   readonly Rates: Rates;
 }
 
-export function __makeSurface(deps: DemoTimerDeps) {
+export function __makeSurface(deps: __DemoTimerDeps) {
   return {
     async elapsed(): globalThis.Promise<number> {
       return elapsed.call(deps);

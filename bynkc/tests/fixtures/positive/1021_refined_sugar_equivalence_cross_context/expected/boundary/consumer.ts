@@ -33,11 +33,11 @@ export const submit = {
   },
 };
 
-export interface BoundaryConsumerDeps {
+export interface __BoundaryConsumerDeps {
   readonly surface: { Provider: globalThis.ReturnType<typeof boundary_provider.__makeSurface> };
 }
 
-export function __makeSurface(deps: BoundaryConsumerDeps) {
+export function __makeSurface(deps: __BoundaryConsumerDeps) {
   return {
     async submit(value: LocalToken): globalThis.Promise<Result<number, number>> {
       return submit.call(value, deps);

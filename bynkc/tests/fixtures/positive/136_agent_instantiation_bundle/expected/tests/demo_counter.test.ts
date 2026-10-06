@@ -25,7 +25,7 @@ function __bynkShow(v: unknown): string {
   try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
-function makeTestDeps() {
+function __makeTestDeps() {
   return {  };
 }
 
@@ -33,7 +33,7 @@ function makeTestDeps() {
 async function test_a_fresh_counter_reads_zero() {
   try {
     demo_counter.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Counter, CounterError, CounterId, __makeCounter, bump, read } = demo_counter;
     type CounterError = demo_counter.CounterError;
     type CounterId = demo_counter.CounterId;
@@ -72,7 +72,7 @@ async function test_a_fresh_counter_reads_zero() {
 async function test_bumping_twice_accumulates() {
   try {
     demo_counter.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Counter, CounterError, CounterId, __makeCounter, bump, read } = demo_counter;
     type CounterError = demo_counter.CounterError;
     type CounterId = demo_counter.CounterId;

@@ -102,10 +102,10 @@ export function __resetAgents(): void {
   __CounterRegistry.reset();
 }
 
-export interface DemoCounterDeps {
+export interface __DemoCounterDeps {
 }
 
-export function __makeSurface(deps: DemoCounterDeps) {
+export function __makeSurface(deps: __DemoCounterDeps) {
   return {
     async bump(id: CounterId): globalThis.Promise<Result<number, CounterError>> {
       return bump.call(id, deps);

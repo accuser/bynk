@@ -26,11 +26,11 @@ export const stamps = {
   },
 };
 
-export interface JobsDeps {
+export interface __JobsDeps {
   readonly Clock: Clock;
 }
 
-export function __makeSurface(deps: JobsDeps) {
+export function __makeSurface(deps: __JobsDeps) {
   return {
     async stamps(names: readonly string[]): globalThis.Promise<Result<readonly number[], void>> {
       return stamps.call(names, deps);

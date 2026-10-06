@@ -29,11 +29,11 @@ export const box = {
   },
 };
 
-export interface DemoStubsDeps {
+export interface __DemoStubsDeps {
   readonly Vault: Vault;
 }
 
-export function __makeSurface(deps: DemoStubsDeps) {
+export function __makeSurface(deps: __DemoStubsDeps) {
   return {
     async box(): globalThis.Promise<number> {
       return box.call(deps);

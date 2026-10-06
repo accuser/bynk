@@ -26,7 +26,7 @@ function __bynkShow(v: unknown): string {
   try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
-function makeTestDeps() {
+function __makeTestDeps() {
   return {  };
 }
 
@@ -34,7 +34,7 @@ function makeTestDeps() {
 async function test_a_generic_record_built_in_a_case_reaches_the_context_s_agent() {
   try {
     catalog.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Shelf, __makeShelf, api } = catalog;
     const { Item, Page } = pages;
     type Item = pages.Item;

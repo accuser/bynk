@@ -84,7 +84,7 @@ function __bynkOverlay(base: unknown, stub: object, cap: string): unknown {
   });
 }
 
-function makeTestDeps() {
+function __makeTestDeps() {
   return { Logger: __bynkOverlay(new commerce_payment.NoOpLogger(), new __Stub_Logger(), "Logger") as commerce_payment.Logger };
 }
 
@@ -92,7 +92,7 @@ function makeTestDeps() {
 async function test_records_the_observed_calls() {
   try {
     const __obs = { log: {} as globalThis.Record<string, { args: unknown[]; order: number }[]>, n: 0 };
-    const deps = __bynkRecordDeps(makeTestDeps(), { Logger: ["log", "warn"] }, __obs);
+    const deps = __bynkRecordDeps(__makeTestDeps(), { Logger: ["log", "warn"] }, __obs);
     const { AuthId, authorise } = commerce_payment;
     type AuthId = commerce_payment.AuthId;
     const r = await authorise.call(100, deps);
@@ -118,7 +118,7 @@ async function test_records_the_observed_calls() {
 async function test_no_observation_when_the_seam_is_idle() {
   try {
     const __obs = { log: {} as globalThis.Record<string, { args: unknown[]; order: number }[]>, n: 0 };
-    const deps = __bynkRecordDeps(makeTestDeps(), { Logger: ["log", "warn"] }, __obs);
+    const deps = __bynkRecordDeps(__makeTestDeps(), { Logger: ["log", "warn"] }, __obs);
     const { AuthId, authorise } = commerce_payment;
     type AuthId = commerce_payment.AuthId;
     if (!(((__obs.log["Logger.log"] ?? []).length === 0))) { throw __bynkExpectFailure("tests/payment.test.bynk:19:12", 564, 587, "expect Logger.log never called"); }
