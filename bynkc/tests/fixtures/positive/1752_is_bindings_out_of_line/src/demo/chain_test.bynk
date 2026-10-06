@@ -26,4 +26,16 @@ suite demo.chain {
     expect !implied(Some(2), Some(1))
     expect implied(None, None)
   }
+
+  case "an or-pattern reads each alternative's fields" {
+    expect guestOf(Some(1), Booked("b", 1)) == "b"
+    expect guestOf(Some(1), Queued("q")) == "q"
+    expect guestOf(Some(1), Gone) == ""
+    expect guestOf(None, Queued("q")) == ""
+  }
+
+  case "Result bindings" {
+    expect okSum(Ok(1), Ok(2)) == 3
+    expect okSum(Ok(1), Err("e")) == 0
+  }
 }

@@ -33,8 +33,9 @@ function __makeTestDeps() {
 async function test_a_then_branch_reads_the_right_operand_s_binding() {
   try {
     const deps = {};
-    const { Booking, four, implied, middle, negated, rooms, two } = demo_chain;
+    const { Booking, Stay, four, guestOf, implied, middle, negated, okSum, rooms, two } = demo_chain;
     type Booking = demo_chain.Booking;
+    type Stay = demo_chain.Stay;
     if (!(two(Some(1), Some(2)) === 3)) { throw __bynkExpectFailure("demo/chain_test.bynk:3:12", 89, 115, "expect two(Some(1), Some(2)) == 3\n  expected: two(Some(1), Some(2)) == 3\n  actual:   " + __bynkShow((two(Some(1), Some(2)))) + " == " + __bynkShow((3))); }
     if (!(two(Some(1), None) === 0)) { throw __bynkExpectFailure("demo/chain_test.bynk:4:12", 127, 150, "expect two(Some(1), None) == 0\n  expected: two(Some(1), None) == 0\n  actual:   " + __bynkShow((two(Some(1), None))) + " == " + __bynkShow((0))); }
     if (!(two(None, Some(2)) === 0)) { throw __bynkExpectFailure("demo/chain_test.bynk:5:12", 162, 185, "expect two(None, Some(2)) == 0\n  expected: two(None, Some(2)) == 0\n  actual:   " + __bynkShow((two(None, Some(2)))) + " == " + __bynkShow((0))); }
@@ -51,8 +52,9 @@ async function test_a_then_branch_reads_the_right_operand_s_binding() {
 async function test_a_later_operand_reads_a_middle_operand_s_binding() {
   try {
     const deps = {};
-    const { Booking, four, implied, middle, negated, rooms, two } = demo_chain;
+    const { Booking, Stay, four, guestOf, implied, middle, negated, okSum, rooms, two } = demo_chain;
     type Booking = demo_chain.Booking;
+    type Stay = demo_chain.Stay;
     if (!(middle(Some(1), Some(2)))) { throw __bynkExpectFailure("demo/chain_test.bynk:9:12", 262, 286, "expect middle(Some(1), Some(2))"); }
     if (!(!middle(Some(2), Some(1)))) { throw __bynkExpectFailure("demo/chain_test.bynk:10:12", 298, 323, "expect !middle(Some(2), Some(1))"); }
     if (!(!middle(Some(1), None))) { throw __bynkExpectFailure("demo/chain_test.bynk:11:12", 335, 357, "expect !middle(Some(1), None)"); }
@@ -71,8 +73,9 @@ async function test_a_later_operand_reads_a_middle_operand_s_binding() {
 async function test_field_bindings_of_a_user_sum() {
   try {
     const deps = {};
-    const { Booking, four, implied, middle, negated, rooms, two } = demo_chain;
+    const { Booking, Stay, four, guestOf, implied, middle, negated, okSum, rooms, two } = demo_chain;
     type Booking = demo_chain.Booking;
+    type Stay = demo_chain.Stay;
     if (!(rooms(Booking.Held("a", 1), Booking.Held("b", 2)))) { throw __bynkExpectFailure("demo/chain_test.bynk:17:12", 501, 534, "expect rooms(Held(\"a\", 1), Held(\"b\", 2))"); }
     if (!(!rooms(Booking.Held("a", 1), Booking.Held("a", 2)))) { throw __bynkExpectFailure("demo/chain_test.bynk:18:12", 546, 580, "expect !rooms(Held(\"a\", 1), Held(\"a\", 2))"); }
     if (!(!rooms(Booking.Held("a", 1), Booking.Released))) { throw __bynkExpectFailure("demo/chain_test.bynk:19:12", 592, 622, "expect !rooms(Held(\"a\", 1), Released)"); }
@@ -89,13 +92,52 @@ async function test_field_bindings_of_a_user_sum() {
 async function test_a_negated____and_an_implies() {
   try {
     const deps = {};
-    const { Booking, four, implied, middle, negated, rooms, two } = demo_chain;
+    const { Booking, Stay, four, guestOf, implied, middle, negated, okSum, rooms, two } = demo_chain;
     type Booking = demo_chain.Booking;
+    type Stay = demo_chain.Stay;
     if (!(negated(Some(1), Some(2)) === 3)) { throw __bynkExpectFailure("demo/chain_test.bynk:23:12", 678, 708, "expect negated(Some(1), Some(2)) == 3\n  expected: negated(Some(1), Some(2)) == 3\n  actual:   " + __bynkShow((negated(Some(1), Some(2)))) + " == " + __bynkShow((3))); }
     if (!(negated(Some(1), None) === 0)) { throw __bynkExpectFailure("demo/chain_test.bynk:24:12", 720, 747, "expect negated(Some(1), None) == 0\n  expected: negated(Some(1), None) == 0\n  actual:   " + __bynkShow((negated(Some(1), None))) + " == " + __bynkShow((0))); }
     if (!(implied(Some(1), Some(2)))) { throw __bynkExpectFailure("demo/chain_test.bynk:25:12", 759, 784, "expect implied(Some(1), Some(2))"); }
     if (!(!implied(Some(2), Some(1)))) { throw __bynkExpectFailure("demo/chain_test.bynk:26:12", 796, 822, "expect !implied(Some(2), Some(1))"); }
     if (!(implied(None, None))) { throw __bynkExpectFailure("demo/chain_test.bynk:27:12", 834, 853, "expect implied(None, None)"); }
+    return { pass: true };
+  } catch (e) {
+    if (e instanceof ExpectationError) {
+      return { pass: false, error: { message: e.message, location: e.location } };
+    }
+    return { pass: false, error: { message: String(e), location: "unknown" } };
+  }
+}
+
+// case tier: unit
+async function test_an_or_pattern_reads_each_alternative_s_fields() {
+  try {
+    const deps = {};
+    const { Booking, Stay, four, guestOf, implied, middle, negated, okSum, rooms, two } = demo_chain;
+    type Booking = demo_chain.Booking;
+    type Stay = demo_chain.Stay;
+    if (!(guestOf(Some(1), Stay.Booked("b", 1)) === "b")) { throw __bynkExpectFailure("demo/chain_test.bynk:31:12", 927, 966, "expect guestOf(Some(1), Booked(\"b\", 1)) == \"b\"\n  expected: guestOf(Some(1), Booked(\"b\", 1)) == \"b\"\n  actual:   " + __bynkShow((guestOf(Some(1), Stay.Booked("b", 1)))) + " == " + __bynkShow(("b"))); }
+    if (!(guestOf(Some(1), Stay.Queued("q")) === "q")) { throw __bynkExpectFailure("demo/chain_test.bynk:32:12", 978, 1014, "expect guestOf(Some(1), Queued(\"q\")) == \"q\"\n  expected: guestOf(Some(1), Queued(\"q\")) == \"q\"\n  actual:   " + __bynkShow((guestOf(Some(1), Stay.Queued("q")))) + " == " + __bynkShow(("q"))); }
+    if (!(guestOf(Some(1), Stay.Gone) === "")) { throw __bynkExpectFailure("demo/chain_test.bynk:33:12", 1026, 1054, "expect guestOf(Some(1), Gone) == \"\"\n  expected: guestOf(Some(1), Gone) == \"\"\n  actual:   " + __bynkShow((guestOf(Some(1), Stay.Gone))) + " == " + __bynkShow((""))); }
+    if (!(guestOf(None, Stay.Queued("q")) === "")) { throw __bynkExpectFailure("demo/chain_test.bynk:34:12", 1066, 1098, "expect guestOf(None, Queued(\"q\")) == \"\"\n  expected: guestOf(None, Queued(\"q\")) == \"\"\n  actual:   " + __bynkShow((guestOf(None, Stay.Queued("q")))) + " == " + __bynkShow((""))); }
+    return { pass: true };
+  } catch (e) {
+    if (e instanceof ExpectationError) {
+      return { pass: false, error: { message: e.message, location: e.location } };
+    }
+    return { pass: false, error: { message: String(e), location: "unknown" } };
+  }
+}
+
+// case tier: unit
+async function test_Result_bindings() {
+  try {
+    const deps = {};
+    const { Booking, Stay, four, guestOf, implied, middle, negated, okSum, rooms, two } = demo_chain;
+    type Booking = demo_chain.Booking;
+    type Stay = demo_chain.Stay;
+    if (!(okSum(Ok(1), Ok(2)) === 3)) { throw __bynkExpectFailure("demo/chain_test.bynk:38:12", 1142, 1166, "expect okSum(Ok(1), Ok(2)) == 3\n  expected: okSum(Ok(1), Ok(2)) == 3\n  actual:   " + __bynkShow((okSum(Ok(1), Ok(2)))) + " == " + __bynkShow((3))); }
+    if (!(okSum(Ok(1), Err("e")) === 0)) { throw __bynkExpectFailure("demo/chain_test.bynk:39:12", 1178, 1205, "expect okSum(Ok(1), Err(\"e\")) == 0\n  expected: okSum(Ok(1), Err(\"e\")) == 0\n  actual:   " + __bynkShow((okSum(Ok(1), Err("e")))) + " == " + __bynkShow((0))); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -112,5 +154,7 @@ export async function run(only?: string) {
   if (want("a later operand reads a middle operand's binding")) results.push({ name: "a later operand reads a middle operand's binding", ...(await test_a_later_operand_reads_a_middle_operand_s_binding()) });
   if (want("field bindings of a user sum")) results.push({ name: "field bindings of a user sum", ...(await test_field_bindings_of_a_user_sum()) });
   if (want("a negated || and an implies")) results.push({ name: "a negated || and an implies", ...(await test_a_negated____and_an_implies()) });
+  if (want("an or-pattern reads each alternative's fields")) results.push({ name: "an or-pattern reads each alternative's fields", ...(await test_an_or_pattern_reads_each_alternative_s_fields()) });
+  if (want("Result bindings")) results.push({ name: "Result bindings", ...(await test_Result_bindings()) });
   return results;
 }

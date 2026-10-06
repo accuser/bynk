@@ -3023,6 +3023,18 @@ fn lower_and_with_is(lhs: &Expr, rhs: &Expr, cx: &mut LowerCtx) -> Option<AndWit
     })
 }
 
+/// #1751/#1752: the receiver text to read variant `tag`'s payload fields from.
+/// When the test was emitted out of line (`unnarrowed`), TypeScript hasn't
+/// narrowed `value_text`, so the read goes through the variant the checker
+/// proved.
+fn variant_payload(value_text: &str, tag: &str, unnarrowed: bool) -> String {
+    if unnarrowed {
+        format!("({value_text} as Extract<typeof {value_text}, {{ tag: \"{tag}\" }}>)")
+    } else {
+        value_text.to_string()
+    }
+}
+
 /// #1752: record the `is` tests in `rhs`, a short-circuit right operand
 /// about to be emitted out of line (inside an arrow, or a hoisted `if`), as
 /// unable to narrow their receivers anywhere else. A test is recorded under
@@ -3070,14 +3082,8 @@ fn emit_is_test_bindings(e: &Expr, cx: &mut LowerCtx, out: &mut Vec<String>, fou
             // #1751/#1752: a test emitted out of line (inside a short-circuit
             // arrow) doesn't narrow its receiver here; read through the
             // variant the checker proved instead.
-            let payload = if cx.unnarrowed_is_tests.contains(&e.span) {
-                format!(
-                    "({value_text} as Extract<typeof {value_text}, {{ tag: \"{}\" }}>)",
-                    variant.name
-                )
-            } else {
-                value_text.clone()
-            };
+            let unnarrowed = cx.unnarrowed_is_tests.contains(&e.span);
+            let payload = variant_payload(&value_text, &variant.name, unnarrowed);
             // v0.13: refinement narrowing re-binds the value's name to the
             // branded refined type, read from the forced receiver temp.
             if bindings.is_empty()
@@ -3150,7 +3156,15 @@ fn emit_is_test_bindings(e: &Expr, cx: &mut LowerCtx, out: &mut Vec<String>, fou
                             let local = cx
                                 .resolved_local_name(&name.name)
                                 .unwrap_or_else(|| ts_ident(&name.name));
-                            pairs.push((local, format!("{value_text}.{field}")));
+                            // #1765 review: out of line, the dispatch below
+                            // starts from the whole union, so its last arm (a
+                            // bare `else`) isn't narrowed to this variant.
+                            let payload = variant_payload(
+                                &value_text,
+                                &variant.name,
+                                cx.unnarrowed_is_tests.contains(&e.span),
+                            );
+                            pairs.push((local, payload + "." + &field));
                         }
                         (Some(variant.name.clone()), pairs)
                     }

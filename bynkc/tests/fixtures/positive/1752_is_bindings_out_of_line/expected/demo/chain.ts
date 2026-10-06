@@ -11,6 +11,10 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError } f
  * elsewhere (a later operand, or the `if`'s branch) failed `tsc --strict` with
  * TS2339, e.g. `if o is Some(v) && p is Some(w) { v + w }`. Such reads now go
  * through a cast to the variant the checker proved.
+ *
+ * `negated` emits no cast: both its operands lower inline, so it guards the
+ * inline path. The negated `||` that needs one (a hoisted receiver temp) is in
+ * `1668_is_complex_receiver_gather_sites`.
  */
 
 export type Booking =
@@ -20,6 +24,17 @@ export type Booking =
 export const Booking = {
   Held: (guest: string, room: number): Booking => ({ tag: "Held", guest, room }),
   Released: { tag: "Released" } as Booking,
+};
+
+export type Stay =
+    { readonly tag: "Booked"; readonly guest: string; readonly room: number }
+  | { readonly tag: "Queued"; readonly guest: string }
+  | { readonly tag: "Gone" };
+
+export const Stay = {
+  Booked: (guest: string, room: number): Stay => ({ tag: "Booked", guest, room }),
+  Queued: (guest: string): Stay => ({ tag: "Queued", guest }),
+  Gone: { tag: "Gone" } as Stay,
 };
 
 export function two(o: Option<number>, p: Option<number>): number {
@@ -56,4 +71,29 @@ export function negated(o: Option<number>, p: Option<number>): number {
 
 export function implied(o: Option<number>, p: Option<number>): boolean {
   return (!(o.tag === "Some") || ((() => { const v = o.value; return (p.tag === "Some" && ((() => { const w = p.value; return v < w; })())); })()));
+}
+
+export function guestOf(o: Option<number>, s: Stay): string {
+  if (o.tag === "Some" && ((() => { const v = o.value; return ((s.tag === "Booked" || s.tag === "Queued")); })())) {
+    const v = o.value;
+    let g;
+    if (s.tag === "Booked") {
+      g = (s as Extract<typeof s, { tag: "Booked" }>).guest;
+    } else {
+      g = (s as Extract<typeof s, { tag: "Queued" }>).guest;
+    }
+    return g;
+  } else {
+    return "";
+  }
+}
+
+export function okSum(a: Result<number, string>, b: Result<number, string>): number {
+  if (a.tag === "Ok" && ((() => { const x = a.value; return b.tag === "Ok"; })())) {
+    const x = a.value;
+    const y = (b as Extract<typeof b, { tag: "Ok" }>).value;
+    return x + y;
+  } else {
+    return 0;
+  }
 }
