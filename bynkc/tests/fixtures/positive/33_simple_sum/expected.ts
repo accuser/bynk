@@ -17,4 +17,3 @@ export const Status = {
 export function first(): Status {
   return Status.Pending;
 }
-

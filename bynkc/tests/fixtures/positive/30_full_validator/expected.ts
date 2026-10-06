@@ -64,4 +64,3 @@ export function classifyQuantity(qty: number): Result<string, ValidationError> {
   const q = __r0.value;
   return (q < 10 ? Ok("small") : (q < 100 ? Ok("medium") : Ok("large")));
 }
-

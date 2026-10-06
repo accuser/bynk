@@ -16,4 +16,3 @@ export class SystemClock implements Clock {
 }
 
 export const __SystemClockProvider = { token: __ClockToken, factory: () => new SystemClock() };
-

@@ -13,4 +13,3 @@ export const Gerund = {
     return Ok(value as Gerund);
   },
 };
-

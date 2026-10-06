@@ -19,4 +19,3 @@ export const UserId = {
     return UserId.unsafe(n);
   },
 };
-

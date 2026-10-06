@@ -6,4 +6,3 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError } f
 export function add3(a: number, b: number, c: number): number {
   return a + b + c;
 }
-

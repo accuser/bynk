@@ -8,4 +8,3 @@ export const api = {
     return HttpResult.Ok("pong");
   },
 };
-

@@ -32,4 +32,3 @@ export async function kvHandler(id: number): globalThis.Promise<HttpResult<strin
   const name = __r0.value;
   return HttpResult.Ok(name);
 }
-

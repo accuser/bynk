@@ -30,4 +30,3 @@ export function findIn(s: string, sub: string): Option<number> {
 export function checks(s: string): boolean {
   return s.includes("a") && s.startsWith("b") && s.endsWith("c") && s.toLowerCase() === s;
 }
-

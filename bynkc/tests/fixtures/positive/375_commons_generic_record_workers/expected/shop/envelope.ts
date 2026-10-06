@@ -45,4 +45,3 @@ export function __deserialise_User(json: __JsonValue, path: string = "$"): Resul
   return Ok({ id: __id, name: __name } as User);
 }
 
-

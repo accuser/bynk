@@ -90,4 +90,3 @@ export function __deserialise_Order(json: __JsonValue, path: string = "$"): Resu
   return Ok({ id: __id, total: __total } as Order);
 }
 
-

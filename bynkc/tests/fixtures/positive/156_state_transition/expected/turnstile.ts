@@ -90,4 +90,3 @@ export function __deserialise_Gate(json: __JsonValue, path: string = "$"): Resul
   }
 }
 
-

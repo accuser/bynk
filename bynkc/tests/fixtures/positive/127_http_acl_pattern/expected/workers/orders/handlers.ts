@@ -107,4 +107,3 @@ export function __deserialise_OrderView(json: __JsonValue, path: string = "$"): 
   return Ok({ id: __id, status: __status } as OrderView);
 }
 
-

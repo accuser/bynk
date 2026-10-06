@@ -178,4 +178,3 @@ export function __deserialise_Pair_User_String(json: __JsonValue, path: string =
   const __second = obj["second"];
   return Ok({ first: __first, second: __second } as Pair<User, string>);
 }
-

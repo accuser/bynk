@@ -27,4 +27,3 @@ export function check(o: Outcome, threshold: number): Result<boolean, string> {
   }
   return Ok((!(o.tag === "Hit") || __r1));
 }
-

@@ -26,4 +26,3 @@ export function classify(n: number): boolean {
     return (globalThis.Number.isSafeInteger(__r1) && __r1 > 0);
   }
 }
-

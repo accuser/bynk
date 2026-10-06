@@ -20,4 +20,3 @@ export const Reps = {
 export function safeMake(n: number): Result<Reps, ValidationError> {
   return (n < 1 ? Reps.of(1) : Reps.of(n));
 }
-

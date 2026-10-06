@@ -25,4 +25,3 @@ export const markPaid = {
     return __result;
   },
 };
-

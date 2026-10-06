@@ -20,4 +20,3 @@ export function demo(): number {
   const b = map_one((n) => n + 1, a);
   return compose((n: number) => n * 2, (n) => n + 3, b);
 }
-

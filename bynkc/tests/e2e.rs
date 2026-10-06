@@ -194,6 +194,18 @@ fn compile_fixture(
     }
 }
 
+/// #1684: positive goldens compare byte for byte, trailing newlines included,
+/// so the emitter's output and a blessed golden are the same bytes. A mismatch
+/// only in trailing whitespace prints as two identical-looking blocks, so the
+/// failure names it.
+fn whitespace_note(actual: &str, want: &str) -> &'static str {
+    if actual.trim_end() == want.trim_end() {
+        " (differs only in trailing whitespace; re-bless)"
+    } else {
+        ""
+    }
+}
+
 #[test]
 fn positive_fixtures() {
     let dirs = fixture_dirs("positive");
@@ -209,10 +221,11 @@ fn positive_fixtures() {
             match bynkc::compile(&source, &name) {
                 Ok(actual) => {
                     let want = read(&expected);
-                    if actual.trim_end() != want.trim_end() {
+                    if actual != want {
                         failures.push(format!(
-                            "\n=== {} ===\n--- expected ---\n{}\n--- actual ---\n{}\n",
+                            "\n=== {}{} ===\n--- expected ---\n{}\n--- actual ---\n{}\n",
                             dir.display(),
+                            whitespace_note(&actual, &want),
                             want,
                             actual,
                         ));
@@ -260,11 +273,12 @@ fn positive_fixtures() {
                         let actual = actual_by_path.get(&rel);
                         match actual {
                             Some(a) => {
-                                if a.trim_end() != want.trim_end() {
+                                if *a != want {
                                     all_ok = false;
                                     report.push_str(&format!(
-                                        "\n--- {} ---\n--- expected ---\n{}\n--- actual ---\n{}\n",
+                                        "\n--- {}{} ---\n--- expected ---\n{}\n--- actual ---\n{}\n",
                                         rel.display(),
+                                        whitespace_note(a, &want),
                                         want,
                                         a,
                                     ));

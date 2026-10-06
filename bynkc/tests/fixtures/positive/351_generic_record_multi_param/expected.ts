@@ -26,4 +26,3 @@ export function key_of(e: Keyed<string, number>): string {
 export function values_of(e: Keyed<string, readonly number[]>): readonly number[] {
   return e.value;
 }
-

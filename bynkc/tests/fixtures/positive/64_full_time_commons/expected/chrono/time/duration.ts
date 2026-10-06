@@ -28,4 +28,3 @@ export const Span = {
     return (self as number) === 0;
   },
 };
-

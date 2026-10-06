@@ -8,4 +8,3 @@ export async function doWork(n: number): globalThis.Promise<number> {
   const result = await globalThis.Promise.resolve(inc * 2);
   return result;
 }
-

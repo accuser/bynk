@@ -31,4 +31,3 @@ export function relabel(p: Pair<number, string>): Pair<boolean, string> {
 export function tag_of(p: Pair<number, string>): string {
   return Pair.second_of(p);
 }
-

@@ -6,4 +6,3 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError } f
 export function absVal(n: number): number {
   return (n < 0 ? -n : n);
 }
-

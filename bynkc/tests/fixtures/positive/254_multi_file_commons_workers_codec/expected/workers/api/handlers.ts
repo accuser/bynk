@@ -27,4 +27,3 @@ export const check = {
 
 import { __serialise_Cents, __deserialise_Cents } from "../../money/cents.js";
 export { __serialise_Cents, __deserialise_Cents };
-

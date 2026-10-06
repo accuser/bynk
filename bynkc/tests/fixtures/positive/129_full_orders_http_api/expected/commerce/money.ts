@@ -64,4 +64,3 @@ export function __deserialise_Money(json: __JsonValue, path: string = "$"): Resu
   return Ok({ minorUnits: __minorUnits, currency: __currency } as Money);
 }
 
-

@@ -24,4 +24,3 @@ export const CustomerId = {
     return Ok(value as CustomerId);
   },
 };
-

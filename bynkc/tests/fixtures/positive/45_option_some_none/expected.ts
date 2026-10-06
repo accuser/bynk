@@ -23,4 +23,3 @@ export function extract(o: Option<number>): number {
   }
   throw new globalThis.Error("non-exhaustive match");
 }
-

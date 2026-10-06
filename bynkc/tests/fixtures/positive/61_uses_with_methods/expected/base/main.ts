@@ -19,4 +19,3 @@ export const Count = {
     return Count.of(self + 1);
   },
 };
-

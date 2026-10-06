@@ -53,4 +53,3 @@ export interface Message {
 
 export const Message = {
 };
-

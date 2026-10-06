@@ -16,4 +16,3 @@ export const UserId = {
     return Ok(value as UserId);
   },
 };
-

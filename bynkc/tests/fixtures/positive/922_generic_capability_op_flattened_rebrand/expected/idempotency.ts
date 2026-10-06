@@ -8,4 +8,3 @@ export interface Idempotency {
 }
 
 export const __IdempotencyToken: symbol = globalThis.Symbol("Idempotency");
-

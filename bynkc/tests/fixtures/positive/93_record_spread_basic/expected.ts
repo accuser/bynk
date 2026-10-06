@@ -14,4 +14,3 @@ export const Counter = {
 export function inc(c: Counter): Counter {
   return { ...c, n: c.n + 1 };
 }
-

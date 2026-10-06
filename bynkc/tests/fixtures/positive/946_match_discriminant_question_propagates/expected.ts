@@ -32,4 +32,3 @@ export function f(): Result<number, string> {
   })(__r0.value);
   return Ok(x);
 }
-

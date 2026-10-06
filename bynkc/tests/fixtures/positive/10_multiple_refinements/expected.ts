@@ -19,4 +19,3 @@ export const Username = {
     return Ok(value as Username);
   },
 };
-

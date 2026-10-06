@@ -16,4 +16,3 @@ export class ConsoleLogger implements Logger {
 }
 
 export const __ConsoleLoggerProvider = { token: __LoggerToken, factory: () => new ConsoleLogger() };
-

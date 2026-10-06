@@ -6,4 +6,3 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError } f
 export function double(n: number): number {
   return n * 2;
 }
-

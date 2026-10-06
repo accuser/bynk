@@ -25,4 +25,3 @@ export const OrderId = {
     return OrderId.of(value);
   },
 };
-

@@ -85,4 +85,3 @@ export function withNum(msg: Message, key: string, value: number): Message {
 export function withMoment(msg: Message, key: string, value: number): Message {
   return { code: msg.code, params: new globalThis.Map(msg.params).set(key, MessageArg.Moment(value)) };
 }
-

@@ -25,4 +25,3 @@ export function isPending(s: Status): boolean {
   }
   throw new globalThis.Error("non-exhaustive match");
 }
-

@@ -11,4 +11,3 @@ export interface Mid {
 
 export const Mid = {
 };
-

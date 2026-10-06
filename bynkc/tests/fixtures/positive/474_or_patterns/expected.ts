@@ -149,4 +149,3 @@ export function classify(s: Status): string {
   }
   throw new globalThis.Error("non-exhaustive match");
 }
-

@@ -20,4 +20,3 @@ export function as_label(w: Wrap): string {
 export function doubled(w: Wrap): number {
   return Wrap.cast(w, (x) => x * 2);
 }
-

@@ -19,4 +19,3 @@ export async function run(): globalThis.Promise<number> {
   const got = await firstTwoDoubled([1, 2, 3, 4]);
   return ((__xs: readonly number[], __d: number) => __xs.length > 0 ? __xs[0] : __d)(got, 0);
 }
-

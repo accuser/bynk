@@ -10,4 +10,3 @@ export function pass(f: (a0: number) => number): (a0: number) => number {
 export function run(f: (a0: number) => globalThis.Promise<number>): (a0: number) => globalThis.Promise<number> {
   return f;
 }
-

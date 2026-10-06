@@ -13,4 +13,3 @@ export const AuthId = {
     return value as AuthId;
   },
 };
-

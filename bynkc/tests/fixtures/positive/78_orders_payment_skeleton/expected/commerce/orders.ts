@@ -24,4 +24,3 @@ export const OrderError = {
   EmptyCart: { tag: "EmptyCart" } as OrderError,
   TooManyItems: { tag: "TooManyItems" } as OrderError,
 };
-

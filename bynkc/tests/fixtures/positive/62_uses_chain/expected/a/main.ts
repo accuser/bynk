@@ -16,4 +16,3 @@ export const Root = {
     return Ok(value as Root);
   },
 };
-

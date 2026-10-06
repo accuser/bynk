@@ -18,4 +18,3 @@ export async function f(c: boolean): globalThis.Promise<number> {
   })();
   return r;
 }
-

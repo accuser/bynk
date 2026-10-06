@@ -182,4 +182,3 @@ export function __deserialise_Result_Grant_TokenError(json: __JsonValue, path: s
   }
   return Err({ kind: "StructuralMismatch", path, expected: "Ok | Err", actual: String(obj["kind"]) });
 }
-

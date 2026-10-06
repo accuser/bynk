@@ -16,4 +16,3 @@ export const Alpha = {
     return Ok(value as Alpha);
   },
 };
-

@@ -18,4 +18,3 @@ export function check(x: boolean): Result<boolean, string> {
   }
   return Ok(__r1);
 }
-

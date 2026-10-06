@@ -9,4 +9,3 @@ export interface Logger {
 }
 
 export const __LoggerToken: symbol = globalThis.Symbol("Logger");
-

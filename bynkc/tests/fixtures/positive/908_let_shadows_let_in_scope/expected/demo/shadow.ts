@@ -16,4 +16,3 @@ export function describe(x: number): string {
   const __r1 = (__r0 ? "positive" : "non-positive");
   return __r1;
 }
-

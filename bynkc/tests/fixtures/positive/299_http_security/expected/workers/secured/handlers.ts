@@ -55,4 +55,3 @@ export function __deserialise_ShortCode(json: __JsonValue, path: string = "$"): 
   return Ok(validated.value as ShortCode);
 }
 
-

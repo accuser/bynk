@@ -27,4 +27,3 @@ export interface Weather {
 }
 
 export const __WeatherToken: symbol = globalThis.Symbol("Weather");
-

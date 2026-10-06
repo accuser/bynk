@@ -112,4 +112,3 @@ export function __deserialise_Blob(json: __JsonValue, path: string = "$"): Resul
   return Ok({ label: __label, bytes: __bytes } as Blob);
 }
 
-

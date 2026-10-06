@@ -22,4 +22,3 @@ export const Cents = {
     return self === other;
   },
 };
-

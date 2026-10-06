@@ -8,4 +8,3 @@ import { Count } from "../base/main.js";
 export function next(c: Count): Result<Count, ValidationError> {
   return Count.successor(c);
 }
-

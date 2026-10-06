@@ -26,4 +26,3 @@ export interface Jwt {
 }
 
 export const __JwtToken: symbol = globalThis.Symbol("Jwt");
-

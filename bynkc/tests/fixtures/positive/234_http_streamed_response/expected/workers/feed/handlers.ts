@@ -11,4 +11,3 @@ export const Feed = {
     return (mode === "live" ? HttpResult.Streaming((async function* (__s) { const __n = 2; if (__n <= 0) { return; } let __i = 0; for await (const __e of __s) { yield __e; if (++__i >= __n) { return; } } })((async function* (__s) { for await (const __e of __s) { yield ((s) => s)(__e); } })((async function* () { for (const __e of ["a", "b", "c"]) { yield __e; } })()))) : HttpResult.NotFound);
   },
 };
-
