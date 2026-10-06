@@ -1,0 +1,38 @@
+---
+#1752: an `is` test in the right operand of `&&` (or `implies`, or a negated
+`||`) is emitted inside an arrow whenever bindings flow into that operand,
+because the arrow is where they are declared. TypeScript cannot carry the
+narrowing of a test inside an arrow to a read outside it, so a binding read
+elsewhere (a later operand, or the `if`'s branch) failed `tsc --strict` with
+TS2339, e.g. `if o is Some(v) && p is Some(w) { v + w }`. Such reads now go
+through a cast to the variant the checker proved.
+---
+commons demo.chain
+
+type Booking =
+  | Held(guest: String, room: Int)
+  | Released
+
+fn two(o: Option[Int], p: Option[Int]) -> Int {
+  if o is Some(v) && p is Some(w) { v + w } else { 0 }
+}
+
+fn middle(o: Option[Int], p: Option[Int]) -> Bool {
+  o is Some(v) && p is Some(w) && v < w
+}
+
+fn four(o: Option[Int], p: Option[Int], q: Option[Int]) -> Bool {
+  o is Some(v) && p is Some(w) && q is Some(x) && v < w && w < x
+}
+
+fn rooms(b: Booking, c: Booking) -> Bool {
+  b is Held(g, r) && c is Held(h, s) && r < s && g != h
+}
+
+fn negated(o: Option[Int], p: Option[Int]) -> Int {
+  if !(o is Some(v)) || !(p is Some(w)) { 0 } else { v + w }
+}
+
+fn implied(o: Option[Int], p: Option[Int]) -> Bool {
+  o is Some(v) implies (p is Some(w) && v < w)
+}
