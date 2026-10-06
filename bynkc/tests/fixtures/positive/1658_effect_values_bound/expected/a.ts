@@ -84,10 +84,10 @@ export function __resetAgents(): void {
   __CounterRegistry.reset();
 }
 
-export interface ADeps {
+export interface __ADeps {
 }
 
-export function makeSurface(deps: ADeps) {
+export function __makeSurface(deps: __ADeps) {
   return {
     async s(): globalThis.Promise<number> {
       return s.call(deps);

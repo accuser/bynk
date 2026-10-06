@@ -10,17 +10,17 @@ import * as commerce_payment from "./payment.js";
 export type Money = __CommonsMoney & { readonly __ctxBrand?: "commerce.orders" };
 
 export const placeOrder = {
-  async call(total: Money, deps: { surface: { payment: globalThis.ReturnType<typeof commerce_payment.makeSurface> } }): globalThis.Promise<Result<number, number>> {
+  async call(total: Money, deps: { surface: { payment: globalThis.ReturnType<typeof commerce_payment.__makeSurface> } }): globalThis.Promise<Result<number, number>> {
     const __r0 = await deps.surface.payment.authorise((total as unknown as commerce_payment.Money));
     return Ok(0);
   },
 };
 
-export interface CommerceOrdersDeps {
-  readonly surface: { payment: globalThis.ReturnType<typeof commerce_payment.makeSurface> };
+export interface __CommerceOrdersDeps {
+  readonly surface: { payment: globalThis.ReturnType<typeof commerce_payment.__makeSurface> };
 }
 
-export function makeSurface(deps: CommerceOrdersDeps) {
+export function __makeSurface(deps: __CommerceOrdersDeps) {
   return {
     async placeOrder(total: Money): globalThis.Promise<Result<number, number>> {
       return placeOrder.call(total, deps);

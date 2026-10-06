@@ -217,14 +217,14 @@ function __bynkTest_Secrets(): bynk.Secrets {
   };
 }
 
-function makeTestDeps(__case?: string) {
+function __makeTestDeps(__case?: string) {
   return { Clock: __bynkTest_Clock(), Fetch: __bynkOverlay(__bynkTest_Fetch(), new __Stub_Fetch(__case), "Fetch") as bynk.Fetch, Idempotency: __bynkTest_Idempotency(), Kv: __bynkOverlay(__bynkTest_Kv(), new __Stub_Kv(__case), "Kv") as bynk_cloudflare.Kv, Locale: __bynkTest_Locale(), Logger: __bynkTest_Logger(), Random: __bynkTest_Random(), Secrets: __bynkTest_Secrets() };
 }
 
 // case tier: unit
 async function test_the_clock_reads_the_epoch() {
   try {
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { clock, draws, greet, ids, locale, lookup, once, relay, secret, store } = demo_plat;
     const { LocaleTag, Message, MessageArg } = bynk_locale_types;
     type LocaleTag = bynk_locale_types.LocaleTag;
@@ -251,7 +251,7 @@ async function test_the_clock_reads_the_epoch() {
 // case tier: unit
 async function test_random_integers_come_from_a_fixed_seed() {
   try {
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { clock, draws, greet, ids, locale, lookup, once, relay, secret, store } = demo_plat;
     const { LocaleTag, Message, MessageArg } = bynk_locale_types;
     type LocaleTag = bynk_locale_types.LocaleTag;
@@ -278,7 +278,7 @@ async function test_random_integers_come_from_a_fixed_seed() {
 // case tier: unit
 async function test_random_uuids_count_up() {
   try {
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { clock, draws, greet, ids, locale, lookup, once, relay, secret, store } = demo_plat;
     const { LocaleTag, Message, MessageArg } = bynk_locale_types;
     type LocaleTag = bynk_locale_types.LocaleTag;
@@ -305,7 +305,7 @@ async function test_random_uuids_count_up() {
 // case tier: unit
 async function test_no_secret_is_set() {
   try {
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { clock, draws, greet, ids, locale, lookup, once, relay, secret, store } = demo_plat;
     const { LocaleTag, Message, MessageArg } = bynk_locale_types;
     type LocaleTag = bynk_locale_types.LocaleTag;
@@ -332,7 +332,7 @@ async function test_no_secret_is_set() {
 // case tier: unit
 async function test_the_locale_is_en() {
   try {
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { clock, draws, greet, ids, locale, lookup, once, relay, secret, store } = demo_plat;
     const { LocaleTag, Message, MessageArg } = bynk_locale_types;
     type LocaleTag = bynk_locale_types.LocaleTag;
@@ -360,7 +360,7 @@ async function test_the_locale_is_en() {
 async function test_the_logger_records_without_printing() {
   try {
     const __obs = { log: {} as globalThis.Record<string, { args: unknown[]; order: number }[]>, n: 0 };
-    const deps = __bynkRecordDeps(makeTestDeps(), { Clock: ["now"], Fetch: ["send"], Idempotency: ["dedup", "remember"], Kv: ["delete", "get", "list", "put", "putTtl"], Locale: ["current"], Logger: ["error", "info"], Random: ["int", "uuid"], Secrets: ["get"] }, __obs);
+    const deps = __bynkRecordDeps(__makeTestDeps(), { Clock: ["now"], Fetch: ["send"], Idempotency: ["dedup", "remember"], Kv: ["delete", "get", "list", "put", "putTtl"], Locale: ["current"], Logger: ["error", "info"], Random: ["int", "uuid"], Secrets: ["get"] }, __obs);
     const { clock, draws, greet, ids, locale, lookup, once, relay, secret, store } = demo_plat;
     const { LocaleTag, Message, MessageArg } = bynk_locale_types;
     type LocaleTag = bynk_locale_types.LocaleTag;
@@ -388,7 +388,7 @@ async function test_the_logger_records_without_printing() {
 // case tier: unit
 async function test_idempotency_remembers_within_a_case() {
   try {
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { clock, draws, greet, ids, locale, lookup, once, relay, secret, store } = demo_plat;
     const { LocaleTag, Message, MessageArg } = bynk_locale_types;
     type LocaleTag = bynk_locale_types.LocaleTag;
@@ -417,7 +417,7 @@ async function test_idempotency_remembers_within_a_case() {
 // case tier: unit
 async function test_idempotency_is_fresh_per_case() {
   try {
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { clock, draws, greet, ids, locale, lookup, once, relay, secret, store } = demo_plat;
     const { LocaleTag, Message, MessageArg } = bynk_locale_types;
     type LocaleTag = bynk_locale_types.LocaleTag;
@@ -445,7 +445,7 @@ async function test_idempotency_is_fresh_per_case() {
 async function test_kv_is_in_memory() {
   try {
     const __obs = { log: {} as globalThis.Record<string, { args: unknown[]; order: number }[]>, n: 0 };
-    const deps = __bynkRecordDeps(makeTestDeps(), { Clock: ["now"], Fetch: ["send"], Idempotency: ["dedup", "remember"], Kv: ["delete", "get", "list", "put", "putTtl"], Locale: ["current"], Logger: ["error", "info"], Random: ["int", "uuid"], Secrets: ["get"] }, __obs);
+    const deps = __bynkRecordDeps(__makeTestDeps(), { Clock: ["now"], Fetch: ["send"], Idempotency: ["dedup", "remember"], Kv: ["delete", "get", "list", "put", "putTtl"], Locale: ["current"], Logger: ["error", "info"], Random: ["int", "uuid"], Secrets: ["get"] }, __obs);
     const { clock, draws, greet, ids, locale, lookup, once, relay, secret, store } = demo_plat;
     const { LocaleTag, Message, MessageArg } = bynk_locale_types;
     type LocaleTag = bynk_locale_types.LocaleTag;
@@ -473,7 +473,7 @@ async function test_kv_is_in_memory() {
 // case tier: unit
 async function test_kv_is_fresh_per_case() {
   try {
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { clock, draws, greet, ids, locale, lookup, once, relay, secret, store } = demo_plat;
     const { LocaleTag, Message, MessageArg } = bynk_locale_types;
     type LocaleTag = bynk_locale_types.LocaleTag;
@@ -501,7 +501,7 @@ async function test_kv_is_fresh_per_case() {
 async function test_a_stubbed_operation_answers__the_rest_reach_the_double() {
   try {
     const __obs = { log: {} as globalThis.Record<string, { args: unknown[]; order: number }[]>, n: 0 };
-    const deps = __bynkRecordDeps(makeTestDeps("a stubbed operation answers; the rest reach the double"), { Clock: ["now"], Fetch: ["send"], Idempotency: ["dedup", "remember"], Kv: ["delete", "get", "list", "put", "putTtl"], Locale: ["current"], Logger: ["error", "info"], Random: ["int", "uuid"], Secrets: ["get"] }, __obs);
+    const deps = __bynkRecordDeps(__makeTestDeps("a stubbed operation answers; the rest reach the double"), { Clock: ["now"], Fetch: ["send"], Idempotency: ["dedup", "remember"], Kv: ["delete", "get", "list", "put", "putTtl"], Locale: ["current"], Logger: ["error", "info"], Random: ["int", "uuid"], Secrets: ["get"] }, __obs);
     const { clock, draws, greet, ids, locale, lookup, once, relay, secret, store } = demo_plat;
     const { LocaleTag, Message, MessageArg } = bynk_locale_types;
     type LocaleTag = bynk_locale_types.LocaleTag;
@@ -530,7 +530,7 @@ async function test_a_stubbed_operation_answers__the_rest_reach_the_double() {
 async function test_a_stubbed_fetch_answers_for_the_network() {
   try {
     const __obs = { log: {} as globalThis.Record<string, { args: unknown[]; order: number }[]>, n: 0 };
-    const deps = __bynkRecordDeps(makeTestDeps("a stubbed fetch answers for the network"), { Clock: ["now"], Fetch: ["send"], Idempotency: ["dedup", "remember"], Kv: ["delete", "get", "list", "put", "putTtl"], Locale: ["current"], Logger: ["error", "info"], Random: ["int", "uuid"], Secrets: ["get"] }, __obs);
+    const deps = __bynkRecordDeps(__makeTestDeps("a stubbed fetch answers for the network"), { Clock: ["now"], Fetch: ["send"], Idempotency: ["dedup", "remember"], Kv: ["delete", "get", "list", "put", "putTtl"], Locale: ["current"], Logger: ["error", "info"], Random: ["int", "uuid"], Secrets: ["get"] }, __obs);
     const { clock, draws, greet, ids, locale, lookup, once, relay, secret, store } = demo_plat;
     const { LocaleTag, Message, MessageArg } = bynk_locale_types;
     type LocaleTag = bynk_locale_types.LocaleTag;
@@ -558,7 +558,7 @@ async function test_a_stubbed_fetch_answers_for_the_network() {
 // case tier: unit
 async function test_an_unstubbed_fetch_faults_rather_than_reach_the_network() {
   try {
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { clock, draws, greet, ids, locale, lookup, once, relay, secret, store } = demo_plat;
     const { LocaleTag, Message, MessageArg } = bynk_locale_types;
     type LocaleTag = bynk_locale_types.LocaleTag;
@@ -585,7 +585,7 @@ async function test_an_unstubbed_fetch_faults_rather_than_reach_the_network() {
 // case tier: integration
 async function test_the_doubles_hold_at_the_integration_tier() {
   try {
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { clock, draws, greet, ids, locale, lookup, once, relay, secret, store } = demo_plat;
     const { LocaleTag, Message, MessageArg } = bynk_locale_types;
     type LocaleTag = bynk_locale_types.LocaleTag;

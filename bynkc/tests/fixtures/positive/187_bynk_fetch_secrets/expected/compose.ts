@@ -6,7 +6,7 @@ import * as bynk__binding from "./bynk-cloudflare.js";
 
 export function composeApp() {
   const net_probeDeps = { Fetch: new bynk__binding.FetchProvider(), Secrets: new bynk__binding.SecretsProvider() };
-  const net_probeSurface = net_probe.makeSurface(net_probeDeps);
+  const net_probeSurface = net_probe.__makeSurface(net_probeDeps);
 
   return {
     probe: net_probeSurface,

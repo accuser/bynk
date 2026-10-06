@@ -57,14 +57,14 @@ function __bynkOverlay(base: unknown, stub: object, cap: string): unknown {
   });
 }
 
-function makeTestDeps() {
+function __makeTestDeps() {
   return { Logger: __bynkOverlay(new commerce_payment.NoOpLogger(), new __Stub_Logger(), "Logger") as commerce_payment.Logger };
 }
 
 // case tier: unit
 async function test_case_one() {
   try {
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { AuthId, PaymentError, authorise } = commerce_payment;
     type AuthId = commerce_payment.AuthId;
     type PaymentError = commerce_payment.PaymentError;
@@ -82,7 +82,7 @@ async function test_case_one() {
 // case tier: unit
 async function test_case_two() {
   try {
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { AuthId, PaymentError, authorise } = commerce_payment;
     type AuthId = commerce_payment.AuthId;
     type PaymentError = commerce_payment.PaymentError;
@@ -100,7 +100,7 @@ async function test_case_two() {
 // case tier: unit
 async function test_case_three() {
   try {
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { AuthId, PaymentError, authorise } = commerce_payment;
     type AuthId = commerce_payment.AuthId;
     type PaymentError = commerce_payment.PaymentError;

@@ -1979,7 +1979,7 @@ pub enum TsDecl {
     /// named-imports form — `events_fanout.rs` never uses a default
     /// import, so none is represented. `names` entries are pushed verbatim
     /// (`printer.rs`'s own `names.join(", ")`), so a renamed import
-    /// (`messagesLocales as __locale_declaredLocales`, `workers.rs`'s own
+    /// (`__messagesLocales as __locale_declaredLocales`, `workers.rs`'s own
     /// locale-negotiation import) is one opaque `String` entry, not a
     /// structured rename — the same "the field is already a raw-text slot"
     /// reasoning that also covers a `type`-prefixed single specifier

@@ -111,10 +111,10 @@ export function __resetAgents(): void {
   __MeterRegistry.reset();
 }
 
-export interface DemoMeterDeps {
+export interface __DemoMeterDeps {
 }
 
-export function makeSurface(deps: DemoMeterDeps) {
+export function __makeSurface(deps: __DemoMeterDeps) {
   return {
     async hits(id: MeterId): globalThis.Promise<Result<number, MeterError>> {
       return hits.call(id, deps);

@@ -26,7 +26,7 @@ function __bynkShow(v: unknown): string {
   try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
-function makeTestDeps() {
+function __makeTestDeps() {
   return {  };
 }
 
@@ -34,7 +34,7 @@ function makeTestDeps() {
 async function test_a_test_builds_a_rebranded_record_for_a_handler() {
   try {
     canvas.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Board, __makeBoard, api } = canvas;
     const { Line, Point, origin } = shapes;
     type Line = shapes.Line;
@@ -54,7 +54,7 @@ async function test_a_test_builds_a_rebranded_record_for_a_handler() {
 async function test_a_nested_rebranded_record_crosses_the_state_boundary() {
   try {
     canvas.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Board, __makeBoard, api } = canvas;
     const { Line, Point, origin } = shapes;
     type Line = shapes.Line;
@@ -76,7 +76,7 @@ async function test_a_nested_rebranded_record_crosses_the_state_boundary() {
 async function test_a_context_builds_them_with_literals__a_spread_and_a_commons_fn() {
   try {
     canvas.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Board, __makeBoard, api } = canvas;
     const { Line, Point, origin } = shapes;
     type Line = shapes.Line;

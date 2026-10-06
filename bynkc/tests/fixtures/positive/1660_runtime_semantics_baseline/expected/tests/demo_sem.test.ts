@@ -25,7 +25,7 @@ function __bynkShow(v: unknown): string {
   try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
-function makeTestDeps() {
+function __makeTestDeps() {
   return {  };
 }
 
@@ -33,7 +33,7 @@ function makeTestDeps() {
 async function test_a_scalar_Cell_reads_back_after_a_reload() {
   try {
     demo_sem.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Bag, Gauge, Lamp, Light, Meter, Panel, Pt, __makeBag, __makeGauge, __makeLamp, __makeMeter, __makePanel, literalReplace, samePoint, sameReading, survivesJson } = demo_sem;
     type Light = demo_sem.Light;
     type Pt = demo_sem.Pt;
@@ -53,7 +53,7 @@ async function test_a_scalar_Cell_reads_back_after_a_reload() {
 async function test_a_scalar_Cell_beside_an_enum_Cell_reads_back_after_a_reload() {
   try {
     demo_sem.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Bag, Gauge, Lamp, Light, Meter, Panel, Pt, __makeBag, __makeGauge, __makeLamp, __makeMeter, __makePanel, literalReplace, samePoint, sameReading, survivesJson } = demo_sem;
     type Light = demo_sem.Light;
     type Pt = demo_sem.Pt;
@@ -73,7 +73,7 @@ async function test_a_scalar_Cell_beside_an_enum_Cell_reads_back_after_a_reload(
 async function test_an_enum_Cell_reads_back_after_a_reload() {
   try {
     demo_sem.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Bag, Gauge, Lamp, Light, Meter, Panel, Pt, __makeBag, __makeGauge, __makeLamp, __makeMeter, __makePanel, literalReplace, samePoint, sameReading, survivesJson } = demo_sem;
     type Light = demo_sem.Light;
     type Pt = demo_sem.Pt;
@@ -93,7 +93,7 @@ async function test_an_enum_Cell_reads_back_after_a_reload() {
 async function test_an_Option_Cell_reads_back_after_a_reload() {
   try {
     demo_sem.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Bag, Gauge, Lamp, Light, Meter, Panel, Pt, __makeBag, __makeGauge, __makeLamp, __makeMeter, __makePanel, literalReplace, samePoint, sameReading, survivesJson } = demo_sem;
     type Light = demo_sem.Light;
     type Pt = demo_sem.Pt;
@@ -113,7 +113,7 @@ async function test_an_Option_Cell_reads_back_after_a_reload() {
 async function test_an_enum_survives_a_JSON_round_trip() {
   try {
     demo_sem.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Bag, Gauge, Lamp, Light, Meter, Panel, Pt, __makeBag, __makeGauge, __makeLamp, __makeMeter, __makePanel, literalReplace, samePoint, sameReading, survivesJson } = demo_sem;
     type Light = demo_sem.Light;
     type Pt = demo_sem.Pt;
@@ -131,7 +131,7 @@ async function test_an_enum_survives_a_JSON_round_trip() {
 async function test_a_record_equals_an_identical_record() {
   try {
     demo_sem.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Bag, Gauge, Lamp, Light, Meter, Panel, Pt, __makeBag, __makeGauge, __makeLamp, __makeMeter, __makePanel, literalReplace, samePoint, sameReading, survivesJson } = demo_sem;
     type Light = demo_sem.Light;
     type Pt = demo_sem.Pt;
@@ -149,7 +149,7 @@ async function test_a_record_equals_an_identical_record() {
 async function test_Some_1__equals_Some_1_() {
   try {
     demo_sem.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Bag, Gauge, Lamp, Light, Meter, Panel, Pt, __makeBag, __makeGauge, __makeLamp, __makeMeter, __makePanel, literalReplace, samePoint, sameReading, survivesJson } = demo_sem;
     type Light = demo_sem.Light;
     type Pt = demo_sem.Pt;
@@ -167,7 +167,7 @@ async function test_Some_1__equals_Some_1_() {
 async function test_String_replace_inserts_its_replacement_literally() {
   try {
     demo_sem.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Bag, Gauge, Lamp, Light, Meter, Panel, Pt, __makeBag, __makeGauge, __makeLamp, __makeMeter, __makePanel, literalReplace, samePoint, sameReading, survivesJson } = demo_sem;
     type Light = demo_sem.Light;
     type Pt = demo_sem.Pt;
@@ -185,7 +185,7 @@ async function test_String_replace_inserts_its_replacement_literally() {
 async function test_a_store_Map_keeps_a___proto___key_like_any_other() {
   try {
     demo_sem.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Bag, Gauge, Lamp, Light, Meter, Panel, Pt, __makeBag, __makeGauge, __makeLamp, __makeMeter, __makePanel, literalReplace, samePoint, sameReading, survivesJson } = demo_sem;
     type Light = demo_sem.Light;
     type Pt = demo_sem.Pt;
@@ -205,7 +205,7 @@ async function test_a_store_Map_keeps_a___proto___key_like_any_other() {
 async function test_a_store_Map_has_no_inherited_keys() {
   try {
     demo_sem.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Bag, Gauge, Lamp, Light, Meter, Panel, Pt, __makeBag, __makeGauge, __makeLamp, __makeMeter, __makePanel, literalReplace, samePoint, sameReading, survivesJson } = demo_sem;
     type Light = demo_sem.Light;
     type Pt = demo_sem.Pt;

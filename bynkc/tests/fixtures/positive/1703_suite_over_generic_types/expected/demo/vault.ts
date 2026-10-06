@@ -24,10 +24,10 @@ export const open = {
   },
 };
 
-export interface DemoVaultDeps {
+export interface __DemoVaultDeps {
 }
 
-export function makeSurface(deps: DemoVaultDeps) {
+export function __makeSurface(deps: __DemoVaultDeps) {
   return {
     async open(n: number): globalThis.Promise<Envelope<number>> {
       return open.call(n, deps);

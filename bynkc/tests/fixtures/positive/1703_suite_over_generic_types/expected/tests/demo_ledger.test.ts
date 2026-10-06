@@ -75,7 +75,7 @@ function __bynkOverlay(base: unknown, stub: object, cap: string): unknown {
   });
 }
 
-function makeTestDeps() {
+function __makeTestDeps() {
   return { Audit: __bynkOverlay(new demo_ledger.SilentAudit(), new __Stub_Audit(), "Audit") as demo_ledger.Audit };
 }
 
@@ -83,7 +83,7 @@ function makeTestDeps() {
 async function test_a_stub_over_a_capability_taking_a_generic_type() {
   try {
     const __obs = { log: {} as globalThis.Record<string, { args: unknown[]; order: number }[]>, n: 0 };
-    const deps = __bynkRecordDeps(makeTestDeps(), { Audit: ["note"] }, __obs);
+    const deps = __bynkRecordDeps(__makeTestDeps(), { Audit: ["note"] }, __obs);
     const { Entry, post } = demo_ledger;
     type Entry<T> = demo_ledger.Entry<T>;
     const n = await post.call(3, deps);

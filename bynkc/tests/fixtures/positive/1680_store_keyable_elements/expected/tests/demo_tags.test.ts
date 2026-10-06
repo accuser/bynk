@@ -25,7 +25,7 @@ function __bynkShow(v: unknown): string {
   try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
-function makeTestDeps() {
+function __makeTestDeps() {
   return {  };
 }
 
@@ -33,7 +33,7 @@ function makeTestDeps() {
 async function test_a_Set_of_a_refined_String() {
   try {
     demo_tags.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Board, Tag, UserId, __makeBoard } = demo_tags;
     type Tag = demo_tags.Tag;
     type UserId = demo_tags.UserId;
@@ -57,7 +57,7 @@ async function test_a_Set_of_a_refined_String() {
 async function test_a_Map_keyed_by_an_opaque_String() {
   try {
     demo_tags.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Board, Tag, UserId, __makeBoard } = demo_tags;
     type Tag = demo_tags.Tag;
     type UserId = demo_tags.UserId;

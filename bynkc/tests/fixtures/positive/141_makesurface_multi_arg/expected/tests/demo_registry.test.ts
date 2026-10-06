@@ -58,14 +58,14 @@ function __bynkOverlay(base: unknown, stub: object, cap: string): unknown {
   });
 }
 
-function makeTestDeps() {
+function __makeTestDeps() {
   return { Clock: __bynkOverlay(new demo_registry.SystemClock(), new __Stub_Clock(), "Clock") as demo_registry.Clock };
 }
 
 // case tier: unit
 async function test_create_accepts_two_args_and_threads_deps() {
   try {
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Code, RegError, Target, create } = demo_registry;
     type Code = demo_registry.Code;
     type RegError = demo_registry.RegError;

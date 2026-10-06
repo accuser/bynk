@@ -23,12 +23,12 @@ export const vault = {
   },
 };
 
-export interface CacheSecuredDeps {
+export interface __CacheSecuredDeps {
   readonly Kv: bynk_cloudflare.Kv;
   readonly Secrets: bynk.Secrets;
 }
 
-export function makeSurface(deps: CacheSecuredDeps) {
+export function __makeSurface(deps: __CacheSecuredDeps) {
   return {
     async vault(key: string): globalThis.Promise<Option<string>> {
       return vault.call(key, deps);

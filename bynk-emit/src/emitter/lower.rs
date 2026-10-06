@@ -2334,7 +2334,7 @@ fn lower_method_call(
     // `Call(Agent, [<key>])`. Lower to
     // `__makeAgent(<key>).method(args, deps)`. Works in service and
     // agent-handler bodies (deps is the handler's deps parameter) and
-    // test bodies (deps is the locally-built makeTestDeps record).
+    // test bodies (deps is the locally-built __makeTestDeps record).
     //
     // P6.21 (partial, continued): reads `Callee::Agent` (P6.0) instead of
     // `cx.local_agents.contains(&name.name)` — the checker's own

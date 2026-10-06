@@ -369,6 +369,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "An agent handler's return type is not an `Effect`.",
         &["agent_decl"],
     ),
+    d(
+        "bynk.agent.state_name_conflict",
+        "A type is named `<Agent>State` beside agent `<Agent>`; that name is the agent's state record (its `Cell` fields), which its handlers and invariants see in place of the type.",
+    ),
     dg(
         "bynk.agents.bad_state_initialiser",
         "An agent `store` field initialiser is not a static value of the field's type.",

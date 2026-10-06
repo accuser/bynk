@@ -28,7 +28,7 @@ function __bynkShow(v: unknown): string {
   try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
-function makeHarness() {
+function __makeHarness() {
   const env_demo_api: any = {};
   const env_demo_counter: any = {};
   env_demo_api.DEMO_COUNTER = { fetch: (req: globalThis.Request) => worker_demo_counter.fetch(req, env_demo_counter) } as __ServiceBinding;
@@ -41,7 +41,7 @@ function makeHarness() {
 
 async function test_two_ticks_on_the_same_id_accumulate_across_the_wire() {
   try {
-    const deps = makeHarness();
+    const deps = __makeHarness();
     const a = await __callService(deps.env.DEMO_API, "tick", "c1" as __JsonValue, demo_api.__deserialise_Result_Int_ApiError, "integration", "309a1117c5ee9379");
     const b = await __callService(deps.env.DEMO_API, "tick", "c1" as __JsonValue, demo_api.__deserialise_Result_Int_ApiError, "integration", "309a1117c5ee9379");
     void (((__d) => {
@@ -67,7 +67,7 @@ async function test_two_ticks_on_the_same_id_accumulate_across_the_wire() {
 
 async function test_a_fresh_id_starts_from_zero_in_a_new_case() {
   try {
-    const deps = makeHarness();
+    const deps = __makeHarness();
     const a = await __callService(deps.env.DEMO_API, "tick", "c2" as __JsonValue, demo_api.__deserialise_Result_Int_ApiError, "integration", "309a1117c5ee9379");
     void (((__d) => {
         switch (__d.tag) {

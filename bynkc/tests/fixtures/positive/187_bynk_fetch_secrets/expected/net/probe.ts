@@ -25,12 +25,12 @@ export const probe = {
   },
 };
 
-export interface NetProbeDeps {
+export interface __NetProbeDeps {
   readonly Fetch: bynk.Fetch;
   readonly Secrets: bynk.Secrets;
 }
 
-export function makeSurface(deps: NetProbeDeps) {
+export function __makeSurface(deps: __NetProbeDeps) {
   return {
     async probe(url: string): globalThis.Promise<number> {
       return probe.call(url, deps);

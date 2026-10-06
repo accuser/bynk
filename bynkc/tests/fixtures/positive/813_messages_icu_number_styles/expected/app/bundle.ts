@@ -3,28 +3,28 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, __selectPluralArm, __formatIcuNumber, __formatIcuDate } from "../runtime.js";
 
-import { LocaleTag, Message, MessageArg } from "../bynk/locale/types.js";
-import { render as __bynkLocaleRender, renderArg } from "../bynk/locale.js";
+import { render as __bynkLocaleRender, renderArg as __bynkRenderArg } from "../bynk/locale.js";
+import type { LocaleTag as __bynkLocaleTag, Message as __bynkMessage, MessageArg as __bynkMessageArg } from "../bynk/locale/types.js";
 
-const messagesByLocale: globalThis.Record<string, globalThis.Record<string, (params: ReadonlyMap<string, MessageArg>) => string>> = {
+const __messagesByLocale: globalThis.Record<string, globalThis.Record<string, (params: ReadonlyMap<string, __bynkMessageArg>) => string>> = {
   /**
    * message-bundles slice 3 (#878): `number` placeholders, bare (default
    * decimal) and both fixed styles (`integer`, `percent`) — all delegated to
    * the host `Intl.NumberFormat`.
    */
   "en": {
-    "price": (params: ReadonlyMap<string, MessageArg>): string => ((__arg) => __arg !== undefined && (__arg.tag === "Whole" || __arg.tag === "Num") ? __formatIcuNumber("en", __arg.value) : "{n}")(params.get("n")),
-    "quantity": (params: ReadonlyMap<string, MessageArg>): string => ((__arg) => __arg !== undefined && (__arg.tag === "Whole" || __arg.tag === "Num") ? __formatIcuNumber("en", __arg.value, "integer") : "{n}")(params.get("n")),
-    "discount": (params: ReadonlyMap<string, MessageArg>): string => ((__arg) => __arg !== undefined && (__arg.tag === "Whole" || __arg.tag === "Num") ? __formatIcuNumber("en", __arg.value, "percent") : "{n}")(params.get("n")),
+    "price": (params: ReadonlyMap<string, __bynkMessageArg>): string => ((__arg) => __arg !== undefined && (__arg.tag === "Whole" || __arg.tag === "Num") ? __formatIcuNumber("en", __arg.value) : "{n}")(params.get("n")),
+    "quantity": (params: ReadonlyMap<string, __bynkMessageArg>): string => ((__arg) => __arg !== undefined && (__arg.tag === "Whole" || __arg.tag === "Num") ? __formatIcuNumber("en", __arg.value, "integer") : "{n}")(params.get("n")),
+    "discount": (params: ReadonlyMap<string, __bynkMessageArg>): string => ((__arg) => __arg !== undefined && (__arg.tag === "Whole" || __arg.tag === "Num") ? __formatIcuNumber("en", __arg.value, "percent") : "{n}")(params.get("n")),
   },
 };
 
-export const messagesReferenceLocale: LocaleTag = ("en" as string) as LocaleTag;
-export const messagesLocales: readonly LocaleTag[] = [("en" as string) as LocaleTag];
+export const __messagesReferenceLocale: __bynkLocaleTag = ("en" as string) as __bynkLocaleTag;
+export const __messagesLocales: readonly __bynkLocaleTag[] = [("en" as string) as __bynkLocaleTag];
 
-export function render(tag: LocaleTag, msg: Message): string {
-  const __localeTable = messagesByLocale[tag];
-  const __referenceTable = messagesByLocale[messagesReferenceLocale];
+export function render(tag: __bynkLocaleTag, msg: __bynkMessage): string {
+  const __localeTable = __messagesByLocale[tag];
+  const __referenceTable = __messagesByLocale[__messagesReferenceLocale];
   const __entry = (__localeTable !== undefined ? __localeTable[msg.code] : undefined) ?? __referenceTable[msg.code];
   if (__entry !== undefined) {
     return __entry(msg.params);

@@ -7,7 +7,7 @@ export interface Pinger {
   ping(): globalThis.Promise<void>;
 }
 
-export const PingerToken: symbol = globalThis.Symbol("Pinger");
+export const __PingerToken: symbol = globalThis.Symbol("Pinger");
 
 export class StubPinger implements Pinger {
   async ping(): globalThis.Promise<void> {
@@ -15,7 +15,7 @@ export class StubPinger implements Pinger {
   }
 }
 
-export const StubPingerProvider = { token: PingerToken, factory: () => new StubPinger() };
+export const __StubPingerProvider = { token: __PingerToken, factory: () => new StubPinger() };
 
 export const ticker = {
   async cron_ticker_0(deps: { Pinger: Pinger }): globalThis.Promise<Result<void, string>> {

@@ -6,7 +6,7 @@ import * as bynk_cloudflare__binding from "./bynk/cloudflare.binding.js";
 
 export function composeApp(env?: unknown) {
   const kv_indexDeps = { Kv: new bynk_cloudflare__binding.WorkersKv(env) };
-  const kv_indexSurface = kv_index.makeSurface(kv_indexDeps);
+  const kv_indexSurface = kv_index.__makeSurface(kv_indexDeps);
 
   return {
     index: kv_indexSurface,

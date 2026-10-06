@@ -151,7 +151,7 @@ async function __bynkRunProperty(spec: { seed: number, cases: number, gens: any[
   return { pass: true };
 }
 
-function makeTestDeps() {
+function __makeTestDeps() {
   return {  };
 }
 

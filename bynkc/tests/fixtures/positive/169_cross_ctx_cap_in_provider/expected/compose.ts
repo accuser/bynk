@@ -6,7 +6,7 @@ import * as platform_time from "./platform/time.js";
 
 export function composeApp() {
   const ops_metricsDeps = { Stamp: new ops_metrics.ClockStamp({ Clock: new platform_time.SystemClock() }) };
-  const ops_metricsSurface = ops_metrics.makeSurface(ops_metricsDeps);
+  const ops_metricsSurface = ops_metrics.__makeSurface(ops_metricsDeps);
 
   return {
     metrics: ops_metricsSurface,

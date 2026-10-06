@@ -25,7 +25,7 @@ function __bynkShow(v: unknown): string {
   try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
-function makeTestDeps() {
+function __makeTestDeps() {
   return { Clock: new demo_keys.FixedClock() };
 }
 
@@ -33,7 +33,7 @@ function makeTestDeps() {
 async function test_a_store_Map_stores__reads__counts_and_removes_prototype_named_keys() {
   try {
     demo_keys.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Bag, Entry, Ledger, Line, Memo, Order, Points, Pt, Sales, Tags, Total, __makeBag, __makeLedger, __makeMemo, __makePoints, __makeSales, __makeTags } = demo_keys;
     type Entry = demo_keys.Entry;
     type Line = demo_keys.Line;
@@ -67,7 +67,7 @@ async function test_a_store_Map_stores__reads__counts_and_removes_prototype_name
 async function test_a_store_Map_has_no_inherited_keys() {
   try {
     demo_keys.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Bag, Entry, Ledger, Line, Memo, Order, Points, Pt, Sales, Tags, Total, __makeBag, __makeLedger, __makeMemo, __makePoints, __makeSales, __makeTags } = demo_keys;
     type Entry = demo_keys.Entry;
     type Line = demo_keys.Line;
@@ -95,7 +95,7 @@ async function test_a_store_Map_has_no_inherited_keys() {
 async function test_upsert_on_an_inherited_name_starts_from_the_default() {
   try {
     demo_keys.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Bag, Entry, Ledger, Line, Memo, Order, Points, Pt, Sales, Tags, Total, __makeBag, __makeLedger, __makeMemo, __makePoints, __makeSales, __makeTags } = demo_keys;
     type Entry = demo_keys.Entry;
     type Line = demo_keys.Line;
@@ -121,7 +121,7 @@ async function test_upsert_on_an_inherited_name_starts_from_the_default() {
 async function test_an_object_value_under___proto___adds_no_phantom_keys() {
   try {
     demo_keys.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Bag, Entry, Ledger, Line, Memo, Order, Points, Pt, Sales, Tags, Total, __makeBag, __makeLedger, __makeMemo, __makePoints, __makeSales, __makeTags } = demo_keys;
     type Entry = demo_keys.Entry;
     type Line = demo_keys.Line;
@@ -146,7 +146,7 @@ async function test_an_object_value_under___proto___adds_no_phantom_keys() {
 async function test_a_store_Set_handles_prototype_named_members() {
   try {
     demo_keys.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Bag, Entry, Ledger, Line, Memo, Order, Points, Pt, Sales, Tags, Total, __makeBag, __makeLedger, __makeMemo, __makePoints, __makeSales, __makeTags } = demo_keys;
     type Entry = demo_keys.Entry;
     type Line = demo_keys.Line;
@@ -177,7 +177,7 @@ async function test_a_store_Set_handles_prototype_named_members() {
 async function test_a_store_Cache_handles_prototype_named_keys() {
   try {
     demo_keys.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Bag, Entry, Ledger, Line, Memo, Order, Points, Pt, Sales, Tags, Total, __makeBag, __makeLedger, __makeMemo, __makePoints, __makeSales, __makeTags } = demo_keys;
     type Entry = demo_keys.Entry;
     type Line = demo_keys.Line;
@@ -208,7 +208,7 @@ async function test_a_store_Cache_handles_prototype_named_keys() {
 async function test_an__indexed_map_indexes_prototype_named_field_values() {
   try {
     demo_keys.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Bag, Entry, Ledger, Line, Memo, Order, Points, Pt, Sales, Tags, Total, __makeBag, __makeLedger, __makeMemo, __makePoints, __makeSales, __makeTags } = demo_keys;
     type Entry = demo_keys.Entry;
     type Line = demo_keys.Line;
@@ -240,7 +240,7 @@ async function test_an__indexed_map_indexes_prototype_named_field_values() {
 async function test_groupBy_and_joinOn_group_by_prototype_named_keys() {
   try {
     demo_keys.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Bag, Entry, Ledger, Line, Memo, Order, Points, Pt, Sales, Tags, Total, __makeBag, __makeLedger, __makeMemo, __makePoints, __makeSales, __makeTags } = demo_keys;
     type Entry = demo_keys.Entry;
     type Line = demo_keys.Line;
@@ -268,7 +268,7 @@ async function test_groupBy_and_joinOn_group_by_prototype_named_keys() {
 async function test_update_rewrites_an_existing___proto___entry_in_place() {
   try {
     demo_keys.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Bag, Entry, Ledger, Line, Memo, Order, Points, Pt, Sales, Tags, Total, __makeBag, __makeLedger, __makeMemo, __makePoints, __makeSales, __makeTags } = demo_keys;
     type Entry = demo_keys.Entry;
     type Line = demo_keys.Line;
@@ -300,7 +300,7 @@ async function test_update_rewrites_an_existing___proto___entry_in_place() {
 async function test_an__indexed_update_re_indexes_a___proto___entry() {
   try {
     demo_keys.__resetAgents();
-    const deps = makeTestDeps();
+    const deps = __makeTestDeps();
     const { Bag, Entry, Ledger, Line, Memo, Order, Points, Pt, Sales, Tags, Total, __makeBag, __makeLedger, __makeMemo, __makePoints, __makeSales, __makeTags } = demo_keys;
     type Entry = demo_keys.Entry;
     type Line = demo_keys.Line;
