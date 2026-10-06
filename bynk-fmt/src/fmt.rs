@@ -122,6 +122,16 @@ pub fn format_source(source: &str, opts: &FormatOptions) -> Result<String, Forma
             errors: vec![error],
         });
     }
+    // #1664: a `---` doc block the parser could not attach (an orphan, separated
+    // from the next declaration by a blank line, or with none to follow) is
+    // dropped from the AST with only a warning. It never enters the trivia
+    // table, so `fully_drained` says nothing about it, and the guard above
+    // counts `--` comments only. Check the doc blocks separately, on every run.
+    if let Some(error) = doc_block_loss(source, &tokens, &output) {
+        return Err(FormatError {
+            errors: vec![error],
+        });
+    }
     // #735 guard: the printer is hand-written and dodges several parse traps by
     // convention (a tail `()` re-attaching as a call, a trailing comma making a
     // param list unparseable). A shape the corpus misses that the printer
@@ -304,6 +314,79 @@ fn comment_loss(source: &str, tokens: &[Token], output: &str) -> Option<CompileE
         notes: vec![
             "comments inside expression subtrees are not yet preserved; move the comment onto \
              its own line before the enclosing statement to format this file"
+                .to_string(),
+        ],
+        suggestions: Vec::new(),
+    })
+}
+
+/// #1664: the `---` counterpart of [`comment_loss`]. Returns a
+/// `bynk.fmt.comment_loss` error naming the first doc block of `source` (already
+/// tokenized as `tokens`) that has no counterpart in `output`, compared by
+/// content multiset. An attached doc block is re-rendered with its content
+/// intact; the one the formatter loses is an orphan, which the parser drops.
+///
+/// An `output` that does not tokenize returns `None`: that is a formatter bug
+/// the round-trip guard reports accurately ("no longer parses"), and counting
+/// every block as lost would point the user at an innocent one instead.
+fn doc_block_loss(source: &str, tokens: &[Token], output: &str) -> Option<CompileError> {
+    use bynk_syntax::lexer::doc_block_content;
+    let in_docs: Vec<Span> = tokens
+        .iter()
+        .filter(|t| t.kind == TokenKind::DocBlock)
+        .map(|t| t.span)
+        .collect();
+    if in_docs.is_empty() {
+        return None;
+    }
+    // Compare content line by line with surrounding whitespace removed, so the
+    // formatter's re-indentation of an attached block is not mistaken for loss.
+    let normalise = |content: String| {
+        content
+            .lines()
+            .map(str::trim)
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let out_tokens = tokenize(output).ok()?;
+    let mut out_docs: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for t in &out_tokens {
+        if t.kind == TokenKind::DocBlock {
+            *out_docs
+                .entry(normalise(doc_block_content(output, t.span)))
+                .or_insert(0) += 1;
+        }
+    }
+    let mut lost = 0usize;
+    let mut first_lost: Option<Span> = None;
+    for span in &in_docs {
+        match out_docs.get_mut(&normalise(doc_block_content(source, *span))) {
+            Some(n) if *n > 0 => *n -= 1,
+            _ => {
+                lost += 1;
+                first_lost.get_or_insert(*span);
+            }
+        }
+    }
+    let span = first_lost?;
+    Some(CompileError {
+        category: "bynk.fmt.comment_loss",
+        span,
+        message: format!(
+            "formatting would lose {lost} documentation block{} — the file was left unchanged",
+            if lost == 1 { "" } else { "s" }
+        ),
+        labels: vec![(
+            span,
+            "this documentation block has no counterpart in the formatted output".to_string(),
+        )],
+        notes: vec![
+            "a `---` block attaches to the declaration directly below it; one separated from \
+             it by a blank line, or with no declaration after it, attaches to nothing. Remove \
+             the blank line to attach it, or make it a `--` comment if it documents nothing"
+                .to_string(),
+            "if the block is already directly above a declaration, this is a formatter bug; \
+             please report it with the file that triggered it"
                 .to_string(),
         ],
         suggestions: Vec::new(),
@@ -3257,6 +3340,20 @@ fn stmt_to_string(s: &Statement) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #1755 review: output that does not even tokenize is the round-trip
+    /// guard's to report ("no longer parses"). The doc-block guard runs first,
+    /// so it must stay silent rather than blame every doc block as lost.
+    #[test]
+    fn doc_block_loss_leaves_an_untokenizable_output_to_the_roundtrip_guard() {
+        let source = "commons d\n\n---\nattached\n---\nfn f() -> Int { 1 }\n";
+        let tokens = tokenize(source).unwrap();
+        assert!(tokenize("commons d\n\"unterminated").is_err());
+        assert!(
+            doc_block_loss(source, &tokens, "commons d\n\"unterminated").is_none(),
+            "an untokenizable output was reported as doc-block loss"
+        );
+    }
 
     fn fmt(src: &str) -> String {
         format_source(src, &FormatOptions::default()).expect("format failed")

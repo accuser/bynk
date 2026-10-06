@@ -82,3 +82,38 @@ fn statement_level_comments_format_without_refusal() {
     let again = format_source(&out, &FormatOptions::default()).expect("must reformat");
     assert_eq!(out, again, "formatting must be idempotent");
 }
+
+/// #1664: a `---` block separated from the next declaration by a blank line is
+/// an orphan, which the parser drops. The formatter refused nothing and wrote
+/// the file without it. Each shape must now refuse (or, if orphans are later
+/// preserved, keep the block).
+#[test]
+fn refuses_to_drop_an_orphan_doc_block_before_a_declaration() {
+    expect_refusal(
+        "orphan before decl",
+        "commons d\n\n---\nkeep me\n---\n\nfn f() -> Int { 1 }\n",
+    );
+}
+
+#[test]
+fn refuses_to_drop_an_orphan_doc_block_between_declarations() {
+    expect_refusal(
+        "orphan between decls",
+        "commons d\n\nfn g() -> Int { 2 }\n\n---\nkeep me\n---\n\nfn f() -> Int { 1 }\n",
+    );
+}
+
+#[test]
+fn refuses_to_drop_an_orphan_doc_block_at_end_of_file() {
+    expect_refusal("orphan at eof", "commons d\n\n---\nkeep me\n---\n");
+}
+
+/// The doc-block guard runs whether or not any `--` comment needed a slot, and
+/// an attached block, re-indented inside a brace body, is not mistaken for a
+/// lost one.
+#[test]
+fn an_attached_doc_block_formats() {
+    let src = "context c {\n---\n  keep me\n---\nfn f() -> Int { 1 }\n}\n";
+    let out = format_source(src, &FormatOptions::default()).expect("an attached doc formats");
+    assert!(out.contains("keep me"), "{out}");
+}

@@ -56,12 +56,39 @@ pub fn project_options(input: &Path) -> Result<CompileOptions, discovery::Discov
 /// a cascade of `bynk.uses.unknown_target` errors points at units that
 /// plainly exist on disk.
 pub fn try_project_options(input: &Path) -> Result<CompileOptions, ProjectOptionsError> {
+    Ok(match project_sources(input)? {
+        (Some(paths), sources) => {
+            CompileOptions::split(input.to_path_buf(), paths).sources(sources)
+        }
+        (None, sources) => CompileOptions::single(input.to_path_buf()).sources(sources),
+    })
+}
+
+/// The `.bynk` files [`try_project_options`] reads for the directory `input`,
+/// sorted: what `check`, `test` and `compile` see. #1753: `fmt` expands a
+/// directory argument through this, so `fmt --check <dir>` and
+/// `check <dir>` cover the same files.
+pub fn project_source_files(input: &Path) -> Result<Vec<PathBuf>, ProjectOptionsError> {
+    let (_, sources) = project_sources(input)?;
+    let mut files: Vec<PathBuf> = sources.into_keys().collect();
+    files.sort();
+    Ok(files)
+}
+
+/// [`try_project_options`]' rooting and walk, shared with
+/// [`project_source_files`] so the two can't disagree on which files a
+/// directory holds. A `bynk.toml` or a `src/` subdir selects project mode,
+/// returning its `[paths]` layout alongside the sources; otherwise `input` is
+/// a single tree and the layout is `None`.
+fn project_sources(
+    input: &Path,
+) -> Result<(Option<project::ProjectPaths>, HashMap<PathBuf, String>), ProjectOptionsError> {
     if input.join("bynk.toml").exists() || input.join("src").is_dir() {
         let paths = try_read_project_paths_with(input, &manifest_overlay(input))?;
-        Ok(options_for_split(input, paths)?)
+        let sources = split_sources(input, &paths)?;
+        Ok((Some(paths), sources))
     } else {
-        let sources = discovery::read_bynk_tree_single(input)?;
-        Ok(CompileOptions::single(input.to_path_buf()).sources(sources))
+        Ok((None, discovery::read_bynk_tree_single(input)?))
     }
 }
 
@@ -86,21 +113,32 @@ fn manifest_overlay(input: &Path) -> HashMap<PathBuf, String> {
     }
 }
 
-/// The split-layout half of `project_options`/`try_project_options`: build the
-/// one `Roots` value the project resolves to, walk exactly that (via
-/// [`discovery::sources_for_roots`] — #1081 review, so the CLI's walk can't
-/// drift from what `Roots::trees`/`Roots::excludes` themselves say), and
-/// hand the result to `CompileOptions::split` alongside it.
+/// The split-layout half of `project_options`: walk the project's sources
+/// ([`split_sources`]) and hand them to `CompileOptions::split` alongside the
+/// layout.
 fn options_for_split(
     input: &Path,
     paths: project::ProjectPaths,
 ) -> Result<CompileOptions, discovery::DiscoveryError> {
+    let sources = split_sources(input, &paths)?;
+    Ok(CompileOptions::split(input.to_path_buf(), paths).sources(sources))
+}
+
+/// The sources of a project rooted at `input` with layout `paths`: build the
+/// one `Roots` value the project resolves to and walk exactly that (via
+/// [`discovery::sources_for_roots`] — #1081 review, so the CLI's walk can't
+/// drift from what `Roots::trees`/`Roots::excludes` themselves say). The one
+/// copy of the split-layout walk, shared by [`project_options`] and
+/// [`try_project_options`]/[`project_source_files`] (#1755 review).
+fn split_sources(
+    input: &Path,
+    paths: &project::ProjectPaths,
+) -> Result<HashMap<PathBuf, String>, discovery::DiscoveryError> {
     let roots = project::Roots::Split {
         project_root: input.to_path_buf(),
         paths: paths.clone(),
     };
-    let sources = discovery::sources_for_roots(&roots)?;
-    Ok(CompileOptions::split(input.to_path_buf(), paths).sources(sources))
+    discovery::sources_for_roots(&roots)
 }
 
 /// Why [`try_project_options`] could not produce a usable [`CompileOptions`]:
@@ -368,7 +406,10 @@ pub enum IndentKind {
 /// flag nobody passed. `None` means *defer to the layer below*.
 #[derive(clap::Args, Debug)]
 pub struct FmtArgs {
-    /// Files to format. Use `-` for stdin → stdout.
+    /// Files or directories to format. A directory formats the `.bynk` files
+    /// `check` would read in it: a project root's `[paths] include` trees minus
+    /// `exclude`, or any other directory walked recursively. Use `-` for stdin
+    /// → stdout.
     pub inputs: Vec<PathBuf>,
     /// Check formatting without writing changes. Exits non-zero if any
     /// file is not already canonical.
@@ -550,11 +591,19 @@ impl ManifestCache {
 /// non-canonical files without writing; `-` reads stdin and writes the
 /// formatted result to stdout. `prog` prefixes messages (`bynk fmt: …`).
 pub fn run_fmt(prog: &str, args: &FmtArgs) -> ExitCode {
-    let (inputs, check) = (&args.inputs, args.check);
-    if inputs.is_empty() {
-        eprintln!("{prog} fmt: no input files (pass file paths or `-` for stdin)");
+    let check = args.check;
+    if args.inputs.is_empty() {
+        eprintln!("{prog} fmt: no input files (pass file or directory paths, or `-` for stdin)");
         return ExitCode::FAILURE;
     }
+    let inputs = match expand_fmt_inputs(&args.inputs) {
+        Ok(inputs) => inputs,
+        Err(e) => {
+            eprintln!("{prog} fmt: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let inputs = &inputs;
     // Resolve *every* input's options before formatting any of them. Options
     // are per-input — `[fmt]` belongs to the project the file sits in, so a
     // path outside the current project obeys that project's style — but a
@@ -646,6 +695,40 @@ pub fn run_fmt(prog: &str, args: &FmtArgs) -> ExitCode {
     } else {
         ExitCode::SUCCESS
     }
+}
+
+/// #1753: expand `fmt`'s arguments to the files it formats. A directory
+/// becomes the `.bynk` files [`project_source_files`] finds in it, which is what
+/// `check` and `test` read for the same argument: a project root's `[paths]`
+/// `include` trees minus `exclude`, or a plain directory walked recursively,
+/// hidden directories skipped either way. A file or `-` passes through. A file
+/// named more than once, directly or through a directory, is formatted once.
+///
+/// A directory with no `.bynk` files is an error rather than an empty run, so
+/// a mistyped path cannot pass `--check`. Expansion happens before any file is
+/// read, so its errors, like a manifest error, land before anything is written.
+fn expand_fmt_inputs(inputs: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
+    let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for input in inputs {
+        let files = if input.as_os_str() != "-" && input.is_dir() {
+            let files =
+                project_source_files(input).map_err(|e| format!("`{}`: {e}", input.display()))?;
+            if files.is_empty() {
+                return Err(format!("no `.bynk` files under `{}`", input.display()));
+            }
+            files
+        } else {
+            vec![input.clone()]
+        };
+        for file in files {
+            let key = std::fs::canonicalize(&file).unwrap_or_else(|_| file.clone());
+            if seen.insert(key) {
+                out.push(file);
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// Write `contents` to `path` atomically: the bytes land in a sibling temp

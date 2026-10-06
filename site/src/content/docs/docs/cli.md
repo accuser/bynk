@@ -52,7 +52,7 @@ bynkc fmt [INPUTS] [--check] [--indent <INDENT>] [--indent-width <N>] [--max-lin
 
 | Argument | Required | Default | Description |
 |---|---|---|---|
-| `INPUTS` | no | — | Files to format. Use `-` for stdin → stdout |
+| `INPUTS` | no | — | Files or directories to format. A directory formats the `.bynk` files `check` would read in it: a project root's `[paths] include` trees minus `exclude`, or any other directory walked recursively. Use `-` for stdin → stdout |
 | `--check` | no | — | Check formatting without writing changes. Exits non-zero if any file is not already canonical |
 | `--indent` | no | — | Indent with tabs or spaces. Defaults to the project's `[fmt] indent`, or tabs (one of: tab, spaces) |
 | `--indent-width` | no | — | Spaces per nesting level, with spaces indentation. Defaults to the project's `[fmt] indent_width`, or 2. Rejected when the effective indentation is tabs, where it would have no effect |

@@ -10,7 +10,12 @@ Bynk's formatter is built into the compiler as `bynkc fmt`.
 ```sh
 bynkc fmt src/counters.bynk
 bynkc fmt src/*.bynk
+bynkc fmt .
 ```
+
+A directory formats the `.bynk` files `bynkc check` reads for it: a project
+root's `[paths] include` trees minus `exclude`, or any other directory walked
+recursively.
 
 This rewrites the named files to canonical form (tab indentation, normalised
 spacing). For example:
