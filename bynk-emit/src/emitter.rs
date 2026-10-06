@@ -3563,11 +3563,12 @@ pub(crate) struct LowerCtx<'a> {
     /// finds it in scope. `None` outside such a right operand. #1751: also set
     /// around the right operand of a plain `&&`/`||`/`implies`.
     pub(crate) is_temp_hoist: Option<Vec<String>>,
-    /// #1751: the receiver temps declared through `is_temp_hoist`. Their tag
-    /// test runs inside an arrow, so TypeScript cannot carry its narrowing to a
-    /// branch that reads a binding from them, and those reads cast to the
-    /// matched variant instead (see `emit_is_test_bindings`).
-    pub(crate) hoisted_is_temps: HashSet<String>,
+    /// #1752 (generalising #1751): the `is` tests, by span, whose tag test was
+    /// emitted out of line: inside a short-circuit right operand that lowered
+    /// to an arrow or a hoisted `if`. TypeScript cannot carry such a test's
+    /// narrowing to a binding read elsewhere, so `emit_is_test_bindings` reads
+    /// those bindings through a cast to the variant the checker proved.
+    pub(crate) unnarrowed_is_tests: HashSet<bynk_syntax::span::Span>,
     /// Variable bindings that point at agent instances. Updated by the
     /// statement emitter when it sees `let x = AgentName(key)`. Used by
     /// the method-call lowering so `x.method(args)` resolves through
@@ -3656,7 +3657,7 @@ impl<'a> LowerCtx<'a> {
             shadow_scopes: vec![HashMap::new()],
             is_receiver_temps: HashMap::new(),
             is_temp_hoist: None,
-            hoisted_is_temps: HashSet::new(),
+            unnarrowed_is_tests: HashSet::new(),
             local_agent_vars: HashMap::new(),
             call_site_identity: None,
             call_site_no_credential: false,
@@ -4276,7 +4277,6 @@ impl<'a> LowerCtx<'a> {
             (Some(hoist), Some(ty)) => {
                 hoist.push(format!("let {tmp}!: {ty};"));
                 pre.push(format!("{tmp} = {lowered};"));
-                self.hoisted_is_temps.insert(tmp.to_string());
             }
             _ => pre.push(format!("const {tmp} = {lowered};")),
         }

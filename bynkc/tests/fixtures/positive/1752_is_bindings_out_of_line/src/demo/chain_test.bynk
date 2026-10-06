@@ -1,0 +1,41 @@
+suite demo.chain {
+  case "a then-branch reads the right operand's binding" {
+    expect two(Some(1), Some(2)) == 3
+    expect two(Some(1), None) == 0
+    expect two(None, Some(2)) == 0
+  }
+
+  case "a later operand reads a middle operand's binding" {
+    expect middle(Some(1), Some(2))
+    expect !middle(Some(2), Some(1))
+    expect !middle(Some(1), None)
+    expect four(Some(1), Some(2), Some(3))
+    expect !four(Some(1), Some(3), Some(2))
+  }
+
+  case "field bindings of a user sum" {
+    expect rooms(Held("a", 1), Held("b", 2))
+    expect !rooms(Held("a", 1), Held("a", 2))
+    expect !rooms(Held("a", 1), Released)
+  }
+
+  case "a negated || and an implies" {
+    expect negated(Some(1), Some(2)) == 3
+    expect negated(Some(1), None) == 0
+    expect implied(Some(1), Some(2))
+    expect !implied(Some(2), Some(1))
+    expect implied(None, None)
+  }
+
+  case "an or-pattern reads each alternative's fields" {
+    expect guestOf(Some(1), Booked("b", 1)) == "b"
+    expect guestOf(Some(1), Queued("q")) == "q"
+    expect guestOf(Some(1), Gone) == ""
+    expect guestOf(None, Queued("q")) == ""
+  }
+
+  case "Result bindings" {
+    expect okSum(Ok(1), Ok(2)) == 3
+    expect okSum(Ok(1), Err("e")) == 0
+  }
+}

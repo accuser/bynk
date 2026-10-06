@@ -3023,6 +3023,31 @@ fn lower_and_with_is(lhs: &Expr, rhs: &Expr, cx: &mut LowerCtx) -> Option<AndWit
     })
 }
 
+/// #1751/#1752: the receiver text to read variant `tag`'s payload fields from.
+/// When the test was emitted out of line (`unnarrowed`), TypeScript hasn't
+/// narrowed `value_text`, so the read goes through the variant the checker
+/// proved.
+fn variant_payload(value_text: &str, tag: &str, unnarrowed: bool) -> String {
+    if unnarrowed {
+        format!("({value_text} as Extract<typeof {value_text}, {{ tag: \"{tag}\" }}>)")
+    } else {
+        value_text.to_string()
+    }
+}
+
+/// #1752: record the `is` tests in `rhs`, a short-circuit right operand
+/// about to be emitted out of line (inside an arrow, or a hoisted `if`), as
+/// unable to narrow their receivers anywhere else. A test is recorded under
+/// either polarity, since an enclosing condition may gather its bindings
+/// through `!`. See [`LowerCtx::unnarrowed_is_tests`].
+fn mark_unnarrowed(rhs: &Expr, cx: &mut LowerCtx) {
+    for when_true in [true, false] {
+        for test in bynk_check::narrowing::matched_is_tests(rhs, when_true) {
+            cx.unnarrowed_is_tests.insert(test.span);
+        }
+    }
+}
+
 /// Walk an expression collecting `const name = expr.field;` strings for
 /// any `is`-pattern bindings on the truthy path. `found` indicates whether
 /// at least one `is` was seen.
@@ -3054,17 +3079,11 @@ fn emit_is_test_bindings(e: &Expr, cx: &mut LowerCtx, out: &mut Vec<String>, fou
             variant, bindings, ..
         } = pattern.as_ref()
         {
-            // #1751: a hoisted temp's tag test ran inside an arrow, so its
-            // narrowing doesn't reach here; read through the variant the
-            // checker proved instead.
-            let payload = if cx.hoisted_is_temps.contains(&value_text) {
-                format!(
-                    "({value_text} as Extract<typeof {value_text}, {{ tag: \"{}\" }}>)",
-                    variant.name
-                )
-            } else {
-                value_text.clone()
-            };
+            // #1751/#1752: a test emitted out of line (inside a short-circuit
+            // arrow) doesn't narrow its receiver here; read through the
+            // variant the checker proved instead.
+            let unnarrowed = cx.unnarrowed_is_tests.contains(&e.span);
+            let payload = variant_payload(&value_text, &variant.name, unnarrowed);
             // v0.13: refinement narrowing re-binds the value's name to the
             // branded refined type, read from the forced receiver temp.
             if bindings.is_empty()
@@ -3137,7 +3156,15 @@ fn emit_is_test_bindings(e: &Expr, cx: &mut LowerCtx, out: &mut Vec<String>, fou
                             let local = cx
                                 .resolved_local_name(&name.name)
                                 .unwrap_or_else(|| ts_ident(&name.name));
-                            pairs.push((local, format!("{value_text}.{field}")));
+                            // #1765 review: out of line, the dispatch below
+                            // starts from the whole union, so its last arm (a
+                            // bare `else`) isn't narrowed to this variant.
+                            let payload = variant_payload(
+                                &value_text,
+                                &variant.name,
+                                cx.unnarrowed_is_tests.contains(&e.span),
+                            );
+                            pairs.push((local, payload + "." + &field));
                         }
                         (Some(variant.name.clone()), pairs)
                     }
@@ -4878,6 +4905,8 @@ fn lower_bin_op(op: BinOp, lhs: &Expr, rhs: &Expr, cx: &mut LowerCtx) -> Lowered
         if bindings.is_empty() {
             return pre.finish(format!("{lhs_expr} && {rhs_expr}"));
         }
+        // Every path below emits `rhs` out of line.
+        mark_unnarrowed(rhs, cx);
         // T2.3 (R6.3): `bindings` includes rhs's own hoisted statements
         // (`lower_and_with_is`'s doc comment above), so if one of those is a
         // `?`'s propagating early return, the arrow-IIFE below would capture
@@ -4943,6 +4972,8 @@ fn lower_bin_op(op: BinOp, lhs: &Expr, rhs: &Expr, cx: &mut LowerCtx) -> Lowered
         if bindings.is_empty() {
             return pre.finish(format!("(!({lhs_expr}) || {rhs_expr})"));
         }
+        // Every path below emits `rhs` out of line.
+        mark_unnarrowed(rhs, cx);
         // #1044 review: same fix as the `And` arm above — `lhs_expr` (the
         // antecedent's `is`-check) must stay in the returned text for a
         // caller's narrowing to hold, so gate `slot`'s computation on
@@ -5014,6 +5045,10 @@ fn lower_bin_op(op: BinOp, lhs: &Expr, rhs: &Expr, cx: &mut LowerCtx) -> Lowered
         }
         let rhs_returns = cx.emitted_early_return;
         cx.emitted_early_return = saved_early_return || rhs_returns;
+        if !r.pre.is_empty() {
+            // Both paths below emit `rhs` out of line.
+            mark_unnarrowed(rhs, cx);
+        }
         if !r.pre.is_empty() && rhs_returns {
             let value = match op {
                 BinOp::And => hoist_if_as_statement(
