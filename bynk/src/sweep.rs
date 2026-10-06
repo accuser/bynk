@@ -35,8 +35,13 @@ use std::time::Duration;
 /// `grace`. Returns once none is left, or after SIGKILL has been given a moment
 /// to land.
 ///
-/// Best effort: if `ps` cannot be run, there is nothing to select from and
-/// this does nothing, as `bynk dev` did before #1742.
+/// Best effort, but never silently. If there is something to stop, it says
+/// so, because the wait can be long and would otherwise read as a hang. If
+/// anything is still running at the end, or `kill(1)` cannot be run, it names
+/// the survivors: they hold ports, and the next `bynk dev` would otherwise fail
+/// with a bind error and nothing pointing back here. If `ps` cannot be run
+/// there is nothing to select from, and this does nothing, as `bynk dev` did
+/// before #1742.
 pub fn sweep(root: &Path, grace: Duration) {
     #[cfg(unix)]
     {
@@ -48,15 +53,30 @@ pub fn sweep(root: &Path, grace: Duration) {
                 return;
             }
             if !termed {
-                signal("TERM", &left);
+                eprintln!(
+                    "bynk dev: stopping {} leftover process(es) under {}…",
+                    left.len(),
+                    root.display()
+                );
+                // Without `kill(1)` nothing can be signalled (std signals only
+                // its own children), so waiting out the grace would be wasted.
+                if !signal("TERM", &left) {
+                    report_survivors("could not run `kill`", &left);
+                    return;
+                }
                 termed = true;
             } else if std::time::Instant::now() >= deadline {
                 signal("KILL", &left);
                 // SIGKILL is delivered asynchronously. Wait briefly for it to
                 // land, so a caller checking straight afterwards sees it.
                 let soon = std::time::Instant::now() + Duration::from_secs(1);
-                while !stragglers(root).is_empty() && std::time::Instant::now() < soon {
+                let mut left = stragglers(root);
+                while !left.is_empty() && std::time::Instant::now() < soon {
                     std::thread::sleep(Duration::from_millis(20));
+                    left = stragglers(root);
+                }
+                if !left.is_empty() {
+                    report_survivors("they survived SIGKILL", &left);
                 }
                 return;
             }
@@ -65,6 +85,20 @@ pub fn sweep(root: &Path, grace: Duration) {
     }
     #[cfg(not(unix))]
     let _ = (root, grace);
+}
+
+/// Name the processes [`sweep`] could not stop, and why.
+#[cfg(unix)]
+fn report_survivors(why: &str, pids: &[u32]) {
+    let pids = pids
+        .iter()
+        .map(u32::to_string)
+        .collect::<Vec<_>>()
+        .join(" ");
+    eprintln!(
+        "bynk dev: could not stop leftover processes ({why}): {pids}. They may hold \
+         ports the next `bynk dev` needs; stop them by hand."
+    );
 }
 
 /// The processes [`sweep`] would stop now.
@@ -206,13 +240,17 @@ fn parse_lsof(text: &str) -> Vec<(u32, PathBuf)> {
 
 /// Send `signal` to `pids` with `kill(1)`; std can send only SIGKILL, and only
 /// to its own children.
+///
+/// `false` when `kill` could not be run at all. Its exit status is no test: a
+/// pid that has exited in the meantime makes it fail as well.
 #[cfg(unix)]
-fn signal(signal: &str, pids: &[u32]) {
-    let _ = std::process::Command::new("kill")
+fn signal(signal: &str, pids: &[u32]) -> bool {
+    std::process::Command::new("kill")
         .arg(format!("-{signal}"))
         .args(pids.iter().map(u32::to_string))
         .stderr(std::process::Stdio::null())
-        .status();
+        .status()
+        .is_ok()
 }
 
 #[cfg(test)]
@@ -298,6 +336,16 @@ mod tests {
             );
             std::thread::sleep(Duration::from_millis(20));
         }
+        // A bystander: in the same process group (the test's), but working
+        // elsewhere, like a script's other job. The sweep must not touch it.
+        let mut bystander = Command::new("sleep")
+            .arg("300")
+            .current_dir(std::env::temp_dir())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("sleep spawns");
         let _ = sh.kill();
         let _ = sh.wait();
         let orphans = stragglers(&root);
@@ -306,8 +354,16 @@ mod tests {
             2,
             "the sleeps outlive their parent: {orphans:?}"
         );
+        assert!(
+            !orphans.contains(&bystander.id()),
+            "a process outside the root was selected"
+        );
         sweep(&root, grace);
         let left = stragglers(&root);
+        let spared = bystander.try_wait().is_ok_and(|s| s.is_none());
+        let _ = bystander.kill();
+        let _ = bystander.wait();
+        assert!(spared, "the sweep stopped a process outside the root");
         let _ = std::fs::remove_dir_all(&root);
         assert!(left.is_empty(), "processes survived the sweep: {left:?}");
     }
