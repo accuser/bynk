@@ -3027,10 +3027,19 @@ pub(crate) fn is_simple_is_receiver(value: &Expr) -> bool {
 }
 
 /// Render a *simple* `is` receiver (see `is_simple_is_receiver`) as a textual
-/// reference for binding lookups. Complex receivers never reach this function
-/// — they are lifted to a temp and resolved via the span cache in
-/// `LowerCtx::is_receiver_text` — so the final arm is a defensive backstop the
-/// `no_unknown_placeholder_in_emitted_output` test also guards against.
+/// reference for binding lookups.
+///
+/// #1668: a complex receiver never reaches this function. Its only caller,
+/// `LowerCtx::is_receiver_text`, serves the binding gatherer
+/// (`gather_is_bindings_for_emit`), and each of the gatherer's call sites
+/// (`lower_and_with_is`, the value-position `if` IIFE, `emit_if_tail`) lowers
+/// the condition first. Lowering every `is` test the gatherer visits
+/// (`bynk_check::narrowing::matched_is_tests`: through `&&`, `!` and parens)
+/// runs `is_receiver_ref`, which lifts a complex receiver into a temp cached by
+/// span, and `is_receiver_text` returns that temp. Reaching the last arm means
+/// that ordering broke. It used to emit a placeholder into the output, invalid
+/// TypeScript that surfaced as a distant `tsc` error; it now fails here, like
+/// the emitter's other broken invariants.
 pub(crate) fn value_text_for_is(value: &Expr) -> String {
     match &value.kind {
         ExprKind::Ident(id) => ts_ident(&id.name),
@@ -3038,7 +3047,12 @@ pub(crate) fn value_text_for_is(value: &Expr) -> String {
             format!("{}.{}", value_text_for_is(receiver), field.name)
         }
         ExprKind::Paren(inner) => value_text_for_is(inner),
-        _ => "(/* TODO: complex is-receiver */ )".to_string(),
+        _ => panic!(
+            "bynk internal error (#1668): the `is` receiver at {:?} is not a simple \
+             lvalue and was not lifted to a temp before its bindings were gathered \
+             — the condition must be lowered first",
+            value.span
+        ),
     }
 }
 
@@ -5260,6 +5274,51 @@ mod decode_map_key_tests {
     fn a_widened_non_string_int_base_panics_instead_of_silently_passing_through() {
         let b = TYS.intern(Ty::Base(BaseType::Bool));
         decode_map_key(Some(b), "k", &TYS);
+    }
+}
+
+#[cfg(test)]
+mod value_text_for_is_tests {
+    use super::*;
+    use bynk_syntax::ast::Ident;
+    use bynk_syntax::span::Span;
+
+    fn expr(kind: ExprKind) -> Expr {
+        Expr {
+            id: ExprId::SYNTHETIC,
+            kind,
+            span: Span::new(0, 0),
+        }
+    }
+
+    fn ident(name: &str) -> Ident {
+        Ident {
+            name: name.to_string(),
+            span: Span::new(0, 0),
+        }
+    }
+
+    #[test]
+    fn a_simple_receiver_renders_as_its_lvalue() {
+        let field = expr(ExprKind::FieldAccess {
+            receiver: Box::new(expr(ExprKind::Paren(Box::new(expr(ExprKind::Ident(
+                ident("b"),
+            )))))),
+            field: ident("room"),
+        });
+        assert_eq!(value_text_for_is(&field), "b.room");
+    }
+
+    // #1668 review: a complex receiver reaching here means it was not lifted
+    // to a temp before its bindings were gathered. It must fail loudly, not
+    // fall back to emitted text, which is what the arm used to do.
+    #[test]
+    #[should_panic(expected = "bynk internal error (#1668)")]
+    fn a_complex_receiver_panics_instead_of_emitting_a_placeholder() {
+        value_text_for_is(&expr(ExprKind::IntLit {
+            value: 1,
+            lexeme: "1".to_string(),
+        }));
     }
 }
 

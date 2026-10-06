@@ -473,11 +473,11 @@ fn bless_positive_fixtures() {
 fn no_unknown_placeholder_in_emitted_output() {
     // Every emitter placeholder is the signature of an unresolved lowering path
     // that would otherwise ship invalid TypeScript. `/* unknown */` is the
-    // instance-method-call fallback (the historical v0.7 regression);
-    // `complex is-receiver` is the `is`-pattern receiver fallback. Markers use
-    // distinct text, so the guard checks for each one explicitly — add new
-    // markers here as they are introduced.
-    const MARKERS: &[&str] = &["/* unknown */", "complex is-receiver"];
+    // instance-method-call fallback (the historical v0.7 regression). Markers
+    // use distinct text, so the guard checks for each one explicitly — add new
+    // markers here as they are introduced. (`complex is-receiver`, the `is`
+    // receiver fallback, is now an internal-error panic instead (#1668).)
+    const MARKERS: &[&str] = &["/* unknown */"];
     let hit = |s: &str| MARKERS.iter().any(|m| s.contains(m));
     let mut offenders = Vec::new();
     for dir in fixture_dirs("positive") {
