@@ -3054,6 +3054,17 @@ fn emit_is_test_bindings(e: &Expr, cx: &mut LowerCtx, out: &mut Vec<String>, fou
             variant, bindings, ..
         } = pattern.as_ref()
         {
+            // #1751: a hoisted temp's tag test ran inside an arrow, so its
+            // narrowing doesn't reach here; read through the variant the
+            // checker proved instead.
+            let payload = if cx.hoisted_is_temps.contains(&value_text) {
+                format!(
+                    "({value_text} as Extract<typeof {value_text}, {{ tag: \"{}\" }}>)",
+                    variant.name
+                )
+            } else {
+                value_text.clone()
+            };
             // v0.13: refinement narrowing re-binds the value's name to the
             // branded refined type, read from the forced receiver temp.
             if bindings.is_empty()
@@ -3083,7 +3094,7 @@ fn emit_is_test_bindings(e: &Expr, cx: &mut LowerCtx, out: &mut Vec<String>, fou
                 // #1653: renamed when it shadows (`o is Some(o)`), so the
                 // declaration can't read itself in its temporal dead zone.
                 let local = cx.bind_local_name(&name.name);
-                out.push(format!("const {local} = {value_text}.{field};"));
+                out.push(format!("const {local} = {payload}.{field};"));
             }
         }
         // #474 §2.3.6: an or-pattern's shared names can live at different
@@ -4988,7 +4999,19 @@ fn lower_bin_op(op: BinOp, lhs: &Expr, rhs: &Expr, cx: &mut LowerCtx) -> Lowered
     // fixture pins.
     if matches!(op, BinOp::And | BinOp::Or | BinOp::Implies) {
         let saved_early_return = std::mem::take(&mut cx.emitted_early_return);
+        // #1751: `rhs` may be lowered inside an arrow (below), which would scope
+        // an `is` receiver temp it introduces away from a branch that reads it
+        // (`if !(f(a) is Some(x)) || !(f(b) is Some(y)) { … } else { x + y }`).
+        // Hoist the temps' declarations out of the arrow, as `lower_and_with_is`
+        // does for `&&` (#1654); a nested operator adds to the outermost list.
+        let outermost = cx.is_temp_hoist.is_none();
+        if outermost {
+            cx.is_temp_hoist = Some(Vec::new());
+        }
         let r = lower_expr(rhs, cx);
+        if outermost {
+            pre.extend(cx.is_temp_hoist.take().unwrap_or_default());
+        }
         let rhs_returns = cx.emitted_early_return;
         cx.emitted_early_return = saved_early_return || rhs_returns;
         if !r.pre.is_empty() && rhs_returns {
@@ -5503,6 +5526,10 @@ fn lower_lambda(e: &Expr, lambda: &LambdaExpr, cx: &mut LowerCtx) -> String {
     cx.return_ty = lam_ret;
     // #1750: the lambda's own tails `return` from the lambda.
     let saved_slot = cx.tail_slot.take();
+    // #1764 review: an enclosing short-circuit's temp hoist stops here. A
+    // receiver temp inside the lambda is read only inside it, and hoisting its
+    // declaration out would share one slot between the lambda's invocations.
+    let saved_hoist = cx.is_temp_hoist.take();
     let result = match &lambda.body.kind {
         ExprKind::Block(b) => {
             let mut out = format!("{prefix}({params}) => {{\n");
@@ -5541,6 +5568,7 @@ fn lower_lambda(e: &Expr, lambda: &LambdaExpr, cx: &mut LowerCtx) -> String {
             }
         }
     };
+    cx.is_temp_hoist = saved_hoist;
     cx.tail_slot = saved_slot;
     cx.return_ty = saved;
     cx.shadow_scopes.pop();

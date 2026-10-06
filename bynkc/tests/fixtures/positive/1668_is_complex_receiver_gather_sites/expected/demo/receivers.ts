@@ -11,6 +11,11 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError } f
  * exercised here with a complex receiver: a statement `if`, a value-position
  * `if`, `&&`, `implies`, the else-branch of a negated test, a refinement test, an
  * or-pattern, and an `if` nested as another `is`'s receiver.
+ *
+ * #1751: and a negated `||`, whose right operand lowers inside an arrow. Its
+ * receiver temp is declared before the condition, so the else-branch reading its
+ * binding finds it in scope (it was a `ReferenceError`), and the read casts to
+ * the matched variant, since the tag test's narrowing stays inside the arrow.
  */
 
 export type Q = number & { readonly __brand: "Q" };
@@ -140,4 +145,86 @@ export function nestedReceiver(o: Option<Option<number>>, d: Option<number>): nu
   } else {
     return 0;
   }
+}
+
+export function negatedOr(a: Option<number>, b: Option<number>): number {
+  const __r0 = id(a);
+  let __r1!: Option<number>;
+  if (!(__r0.tag === "Some") || (() => { __r1 = id(b); return !(__r1.tag === "Some"); })()) {
+    return 0;
+  } else {
+    const x = __r0.value;
+    const y = (__r1 as Extract<typeof __r1, { tag: "Some" }>).value;
+    return x + y;
+  }
+}
+
+export function negatedOrValue(a: Option<number>, b: Option<number>): number {
+  const __r0 = id(a);
+  let __r1!: Option<number>;
+  const n = (() => {
+    if (!(__r0.tag === "Some") || (() => { __r1 = id(b); return !(__r1.tag === "Some"); })()) {
+      return 0;
+    } else {
+      const x = __r0.value;
+      const y = (__r1 as Extract<typeof __r1, { tag: "Some" }>).value;
+      return x + y;
+    }
+  })();
+  return n;
+}
+
+export function negatedOrThree(a: Option<number>, b: Option<number>, c: Option<number>): number {
+  const __r0 = id(a);
+  let __r1!: Option<number>;
+  let __r2!: Option<number>;
+  if (!(__r0.tag === "Some") || (() => { __r1 = id(b); return !(__r1.tag === "Some"); })() || (() => { __r2 = id(c); return !(__r2.tag === "Some"); })()) {
+    return 0;
+  } else {
+    const x = __r0.value;
+    const y = (__r1 as Extract<typeof __r1, { tag: "Some" }>).value;
+    const z = (__r2 as Extract<typeof __r2, { tag: "Some" }>).value;
+    return x + y + z;
+  }
+}
+
+export function negatedOrRightNested(a: Option<number>, b: Option<number>, c: Option<number>): number {
+  const __r0 = id(a);
+  let __r1!: Option<number>;
+  let __r2!: Option<number>;
+  if (!(__r0.tag === "Some") || (() => { __r1 = id(b); return (!(__r1.tag === "Some") || (() => { __r2 = id(c); return !(__r2.tag === "Some"); })()); })()) {
+    return 0;
+  } else {
+    const x = __r0.value;
+    const y = (__r1 as Extract<typeof __r1, { tag: "Some" }>).value;
+    const z = (__r2 as Extract<typeof __r2, { tag: "Some" }>).value;
+    return x + y + z;
+  }
+}
+
+export function plainAnd(c: boolean, b: Option<number>): number {
+  let __r0!: Option<number>;
+  if (c && (() => { __r0 = id(b); return __r0.tag === "Some"; })()) {
+    const y = (__r0 as Extract<typeof __r0, { tag: "Some" }>).value;
+    return y;
+  } else {
+    return 0;
+  }
+}
+
+export function plainImplies(c: boolean, b: Option<number>): number {
+  let __r0!: Option<number>;
+  if ((!(c) || (() => { __r0 = id(b); return !(__r0.tag === "Some"); })())) {
+    return 0;
+  } else {
+    const y = (__r0 as Extract<typeof __r0, { tag: "Some" }>).value;
+    return y;
+  }
+}
+
+export function inLambda(c: boolean, b: Option<number>, xs: readonly number[]): boolean {
+  return c || (xs).some((__x: number) => ((e: number) => {
+const __r0 = id(b);
+  return __r0.tag === "Some" && ((() => { const y = __r0.value; return y === e; })());
+})(__x));
 }
