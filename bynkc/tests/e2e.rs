@@ -206,6 +206,31 @@ fn whitespace_note(actual: &str, want: &str) -> &'static str {
     }
 }
 
+/// `whitespace_note` names a trailing-only difference and nothing else, so a
+/// later edit can't silently drop the hint (or attach it to a real difference).
+#[test]
+fn whitespace_note_names_only_trailing_differences() {
+    let want = "a\nb\n";
+    assert!(
+        !whitespace_note("a\nb\n\n", want).is_empty(),
+        "extra trailing newline"
+    );
+    assert!(
+        !whitespace_note("a\nb", want).is_empty(),
+        "missing final newline"
+    );
+    assert_eq!(
+        whitespace_note("a\nc\n", want),
+        "",
+        "substantive difference"
+    );
+    assert_eq!(
+        whitespace_note("a \nb\n", want),
+        "",
+        "interior trailing space"
+    );
+}
+
 #[test]
 fn positive_fixtures() {
     let dirs = fixture_dirs("positive");
