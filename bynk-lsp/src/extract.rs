@@ -1264,6 +1264,29 @@ mod tests {
             assert_eq!(edits[1].new_text, "extractedFn(num)");
         }
 
+        /// #1760: a name read only in a match-arm guard is still free in the
+        /// selection, so it's threaded as a parameter. `expr_children` didn't
+        /// visit guards, so `lim` was dropped and the extracted `fn` read an
+        /// unbound name.
+        #[test]
+        fn a_name_read_only_in_a_guard_is_a_parameter() {
+            let src = "context c\n\nfn f(num: Int, lim: Int) -> Int {\n  match num {\n    n if n > lim => 1\n    _ => 0\n  }\n}\n";
+            let selection = "match num {\n    n if n > lim => 1\n    _ => 0\n  }";
+            let locals = vec![param(src, "num", "Int"), param(src, "lim", "Int")];
+            let types = vec![int_type(src, selection)];
+            let actions = function_actions_for(src, selection, &[], &locals, &types);
+            assert_eq!(actions.len(), 1);
+            let edits = sole_edit(&actions[0]);
+            assert!(
+                edits[0]
+                    .new_text
+                    .starts_with("fn extractedFn(num: Int, lim: Int) -> Int {"),
+                "{}",
+                edits[0].new_text
+            );
+            assert_eq!(edits[1].new_text, "extractedFn(num, lim)");
+        }
+
         #[test]
         fn no_free_variables_yields_a_nullary_call() {
             let src = "context c\n\nfn f() -> Int {\n  1 + 2\n}\n";
