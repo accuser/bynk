@@ -868,6 +868,14 @@ const TSCONFIG_JSON: &str = r#"{
 /// alongside `driver`, then `tsc`-compile and run the driver under node, asserting
 /// it prints `ALL OK`. Skips loudly without a TS toolchain.
 fn verify(tag: &str, source: &str, driver: &str) {
+    verify_with(tag, source, driver, bynkc::BuildTarget::Bundle);
+}
+
+/// [`verify`] for a chosen build target. #1691: a held `Map[K, Connection]` is
+/// lowered by its own branch only on Workers (the record stores connection ids,
+/// re-resolved through the Durable Object's hibernation API), so its driver
+/// compiles for Workers and imports `workers/shop/handlers.js`.
+fn verify_with(tag: &str, source: &str, driver: &str, target: bynkc::BuildTarget) {
     let runner = match discover_tsc() {
         Some(r) => r,
         None => {
@@ -892,9 +900,10 @@ fn verify(tag: &str, source: &str, driver: &str) {
     let src = tmp.join("src");
     fs::create_dir_all(&src).unwrap();
     fs::write(src.join("shop.bynk"), source).unwrap();
-    let out = bynkc::compile_project(&bynk_testkit::compile_options_single(src.clone()))
-        .map_err(bynkc::ProjectFailure::flatten)
-        .expect("the store agent must compile");
+    let out =
+        bynkc::compile_project(&bynk_testkit::compile_options_single(src.clone()).target(target))
+            .map_err(bynkc::ProjectFailure::flatten)
+            .expect("the store agent must compile");
 
     for (path, doc) in &out.artefacts.docs {
         if path.to_string_lossy() == "tsconfig.json" {
@@ -924,6 +933,135 @@ fn verify(tag: &str, source: &str, driver: &str) {
         "store-agent behaviour driver ({tag}) did not pass:\n{out_text}"
     );
 }
+
+/// #1691: a held connection map (`Map[String, Connection[F]]`), lowered by
+/// `lower.rs`'s held-map branch on Workers: `put` stores the connection's id with
+/// an own-property write, `contains`/`get` test with `Object.hasOwn`, `get`
+/// re-resolves the live socket, `remove` closes it and deletes the entry.
+const HELD_MAP_SOURCE: &str = "context shop\n\
+\n\
+type ServerFrame = { text: String }\n\
+\n\
+agent Room {\n\
+\x20 key id: String\n\
+\x20 store conns: Map[String, Connection[ServerFrame]]\n\
+\n\
+\x20 on call join(u: String, conn: Connection[ServerFrame]) -> Effect[()] {\n\
+\x20   let _ <- conns.put(u, conn)\n\
+\x20   ()\n\
+\x20 }\n\
+\x20 on call has(u: String) -> Effect[Bool] {\n\
+\x20   let b <- conns.contains(u)\n\
+\x20   Effect.pure(b)\n\
+\x20 }\n\
+\x20 on call present(u: String) -> Effect[Bool] {\n\
+\x20   let c <- conns.get(u)\n\
+\x20   match c {\n\
+\x20     Some(_) => true\n\
+\x20     None => false\n\
+\x20   }\n\
+\x20 }\n\
+\x20 on call leave(u: String) -> Effect[()] {\n\
+\x20   let _ <- conns.remove(u)\n\
+\x20   ()\n\
+\x20 }\n\
+\x20 on call count() -> Effect[Int] {\n\
+\x20   let n <- conns.size()\n\
+\x20   Effect.pure(n)\n\
+\x20 }\n\
+}\n";
+
+/// Drives the held map with keys that name `Object.prototype` members
+/// (`__proto__`, `constructor`, `toString`) beside an ordinary one, through a
+/// fake Durable Object state: storage, plus the hibernatable-WebSocket surface
+/// (`acceptWebSocket`/`getWebSockets`) that `resolveConnection` re-presents a
+/// socket through. Connections come from the runtime's own
+/// `acceptHibernatableConnection`, so their ids are real connIds.
+const HELD_MAP_DRIVER_TS: &str = r#"
+import { Room } from "./workers/shop/handlers.js";
+import { acceptHibernatableConnection } from "./runtime.js";
+
+function assert(cond: boolean, msg: string): void {
+  if (!cond) {
+    throw new Error(`assertion failed: ${msg}`);
+  }
+}
+
+interface FakeWs {
+  closed: boolean;
+  accept(): void;
+  send(data: string): void;
+  close(): void;
+  serializeAttachment(value: unknown): void;
+  deserializeAttachment(): unknown;
+}
+
+function fakeWs(): FakeWs {
+  let attachment: unknown;
+  const ws: FakeWs = {
+    closed: false,
+    accept(): void {},
+    send(_data: string): void {},
+    close(): void { ws.closed = true; },
+    serializeAttachment(value: unknown): void { attachment = value; },
+    deserializeAttachment(): unknown { return attachment; },
+  };
+  return ws;
+}
+
+// Storage round-trips through structuredClone, like a real DO's.
+function fakeState() {
+  const m = new Map<string, unknown>();
+  const sockets = new Map<string, FakeWs>();
+  return {
+    storage: {
+      async get(key: string): Promise<unknown> { return m.get(key); },
+      async put(key: string, value: unknown): Promise<void> { m.set(key, structuredClone(value)); },
+    },
+    acceptWebSocket(ws: FakeWs, tags?: string[]): void {
+      for (const t of tags ?? []) sockets.set(t, ws);
+    },
+    getWebSockets(tag?: string): FakeWs[] {
+      const ws = tag === undefined ? undefined : sockets.get(tag);
+      return ws === undefined || ws.closed ? [] : [ws];
+    },
+  };
+}
+
+const state = fakeState();
+const room = new Room(state as never);
+const keys = ["__proto__", "constructor", "toString", "alice"];
+const sockets: Record<string, FakeWs> = {};
+
+for (const k of keys) {
+  const ws = fakeWs();
+  sockets[k] = ws;
+  await room.join(k, acceptHibernatableConnection(state as never, ws as never), {});
+}
+
+assert((await room.count({})) === 4, "size counts all four entries, prototype names included");
+for (const k of keys) {
+  assert((await room.has(k, {})) === true, `contains ${k}`);
+  assert((await room.present(k, {})) === true, `get ${k} resolves its connection`);
+}
+for (const k of ["hasOwnProperty", "valueOf", "isPrototypeOf"]) {
+  assert((await room.has(k, {})) === false, `contains ${k}: never stored, not inherited`);
+  assert((await room.present(k, {})) === false, `get ${k}: never stored, not inherited`);
+}
+
+// remove closes that entry's socket and deletes only it
+await room.leave("__proto__", {});
+assert(sockets["__proto__"].closed, "remove closes the __proto__ connection");
+assert((await room.has("__proto__", {})) === false, "remove deletes the __proto__ entry");
+assert((await room.count({})) === 3, "size after removing __proto__");
+await room.leave("constructor", {});
+assert(sockets["constructor"].closed, "remove closes the constructor connection");
+assert(!sockets["toString"].closed && !sockets["alice"].closed, "remove touches only its own entry");
+assert((await room.present("toString", {})) === true, "toString still resolves");
+assert((await room.count({})) === 2, "size after removing constructor");
+
+console.log("ALL OK");
+"#;
 
 #[test]
 fn store_cell_agent_runtime_semantics() {
@@ -1384,4 +1522,14 @@ console.log("ALL OK");
 #[test]
 fn int_stays_a_safe_integer_at_runtime() {
     verify("int_domain", INT_DOMAIN_SOURCE, INT_DOMAIN_DRIVER_TS);
+}
+
+#[test]
+fn store_held_connection_map_prototype_keys() {
+    verify_with(
+        "held_map",
+        HELD_MAP_SOURCE,
+        HELD_MAP_DRIVER_TS,
+        bynkc::BuildTarget::Workers,
+    );
 }
