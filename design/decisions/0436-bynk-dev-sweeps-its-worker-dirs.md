@@ -1,11 +1,6 @@
----
-level: patch
-changelog: When `bynk dev` stops, it no longer leaves `wrangler` and `workerd` processes running and holding their ports, which made the next `bynk dev` fail with `bind(): Address already in use`. Before, the leak happened when one context's wrangler exited and the others were stopped: with wrangler resolved via npx, every context's processes survived, and with any wrangler, the exited context's `workerd`s did. `bynk dev` now also stops whatever is still running in its worker directories (#1742)
----
+# 0436 — `bynk dev` stops leftover processes by process group and worker-dir cwd
 
-## ADR: bynk-dev-sweeps-its-worker-dirs
-title: `bynk dev` stops leftover processes by process group and worker-dir cwd
-summary: Teardown sweeps the shared group for processes under the build's worker dirs, rather than giving each wrangler its own group
+- **Status:** Accepted (v0.306.1)
 
 **Context.** `bynk dev` stops its wranglers by signalling each child it spawned (#1742). That child is rarely the server. Via npx it is `npx`, which does not pass SIGTERM on to the `sh` → launcher → CLI → `workerd` chain below it. With any provenance, a context whose wrangler exits on its own has its `workerd`s re-parented to init before teardown begins, so nothing reachable from a child leads to them. The survivors keep their ports, and the next `bynk dev` fails with `bind(): Address already in use`. The workerd smokes had the same leak and fixed it by giving each wrangler its own process group (#1686). That fix depends on the guard signalling the group, and in a test nobody presses Ctrl-C.
 
