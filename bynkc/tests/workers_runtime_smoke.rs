@@ -14,7 +14,7 @@
 use std::fs;
 use std::io::Read;
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 mod require;
@@ -58,17 +58,6 @@ fn skip(reason: &str) -> bool {
     true
 }
 
-/// Kill the `wrangler dev` child on every exit path — a leaked workerd holds
-/// the port and outlives the test binary.
-struct KillOnDrop(Child);
-
-impl Drop for KillOnDrop {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
-
 #[test]
 fn hello_world_serves_on_workerd() {
     if !tool_exists("npx") && skip("`npx` is not on PATH") {
@@ -102,14 +91,15 @@ fn hello_world_serves_on_workerd() {
 
     // A pid-derived port keeps parallel test binaries off each other.
     let port = 20000 + (std::process::id() % 10000) as u16;
-    let child = base_command("npx")
-        .args(["-y", WRANGLER, "dev", "--port", &port.to_string()])
-        .current_dir(&worker_dir)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn();
+    let child = wrangler::Wrangler::spawn(
+        base_command("npx")
+            .args(["-y", WRANGLER, "dev", "--port", &port.to_string()])
+            .current_dir(&worker_dir)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped()),
+    );
     let child = match child {
-        Ok(c) => KillOnDrop(c),
+        Ok(c) => c,
         Err(e) => {
             if skip(&format!("could not launch npx: {e}")) {
                 return;
@@ -126,9 +116,10 @@ fn hello_world_serves_on_workerd() {
     loop {
         if Instant::now() > deadline {
             let mut child = child;
-            let _ = child.0.kill();
+            // Stop first: the pipe reaches EOF only once the whole group is gone.
+            child.stop();
             let mut logs = String::new();
-            if let Some(mut e) = child.0.stderr.take() {
+            if let Some(mut e) = child.child().stderr.take() {
                 let _ = e.read_to_string(&mut logs);
             }
             if skip(&format!(
@@ -146,8 +137,15 @@ fn hello_world_serves_on_workerd() {
                     body.contains("Hello, World!"),
                     "unexpected body from workerd: {body}"
                 );
-                // Drop kills wrangler (and its workerd) before cleanup.
+                // Drop stops wrangler and its workerds before cleanup.
                 drop(child);
+                // #1686: nothing wrangler started may outlive it. Checked
+                // before the removal, which would hide a survivor's cwd.
+                #[cfg(target_os = "linux")]
+                {
+                    let left = wrangler::processes_under(&tmp);
+                    assert!(left.is_empty(), "wrangler left processes running: {left:?}");
+                }
                 let _ = fs::remove_dir_all(&tmp);
                 return;
             }
@@ -316,7 +314,7 @@ fn agent_calls_use_the_boundary_codec_on_workerd() {
 /// (and its workerd) and removes the scratch directory.
 struct Served {
     url: String,
-    child: Option<KillOnDrop>,
+    child: Option<wrangler::Wrangler>,
     tmp: std::path::PathBuf,
 }
 
@@ -365,22 +363,23 @@ fn serve_smoke(source: &str, tag: &str, port_base: u16) -> Option<Served> {
 
     let port = port_base + (std::process::id() % 10000) as u16;
     let inspector_port = port + 1;
-    let child = base_command("npx")
-        .args([
-            "-y",
-            WRANGLER,
-            "dev",
-            "--port",
-            &port.to_string(),
-            "--inspector-port",
-            &inspector_port.to_string(),
-        ])
-        .current_dir(&worker_dir)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn();
+    let child = wrangler::Wrangler::spawn(
+        base_command("npx")
+            .args([
+                "-y",
+                WRANGLER,
+                "dev",
+                "--port",
+                &port.to_string(),
+                "--inspector-port",
+                &inspector_port.to_string(),
+            ])
+            .current_dir(&worker_dir)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped()),
+    );
     let child = match child {
-        Ok(c) => KillOnDrop(c),
+        Ok(c) => c,
         Err(e) => {
             if skip(&format!("could not launch npx: {e}")) {
                 return None;
@@ -395,9 +394,10 @@ fn serve_smoke(source: &str, tag: &str, port_base: u16) -> Option<Served> {
     loop {
         if Instant::now() > deadline {
             let mut child = child;
-            let _ = child.0.kill();
+            // Stop first: the pipe reaches EOF only once the whole group is gone.
+            child.stop();
             let mut logs = String::new();
-            if let Some(mut e) = child.0.stderr.take() {
+            if let Some(mut e) = child.child().stderr.take() {
                 let _ = e.read_to_string(&mut logs);
             }
             if skip(&format!(
