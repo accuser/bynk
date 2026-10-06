@@ -54,18 +54,16 @@
 //! `.github/workflows/ci.yml`) turns the skip into a failure. Empty counts as
 //! unset — see `required`.
 //!
-//! Teardown follows `bynk/src/dev.rs`'s SIGTERM-then-reap idiom, not a bare
-//! `Child::kill()`: `dev.rs` documents (as verified) that SIGKILL strands an
-//! orphaned `workerd` still holding its port, because wrangler traps SIGTERM
-//! to tear down the `node`/`workerd` processes it spawned but cannot trap
-//! SIGKILL. Both wrangler children are stopped from a `Drop` impl so a
-//! panicking assertion still tears them down.
+//! Teardown goes through [`wrangler::Wrangler`], which stops each `wrangler
+//! dev` together with the `workerd`s under it (#1686). Both are stopped when
+//! the guards drop, so a panicking assertion still tears them down. Both
+//! are signalled before either is waited on.
 
 use bynkc::BuildTarget;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 mod require;
@@ -203,59 +201,14 @@ fn skip(reason: &str) -> bool {
     true
 }
 
-/// Ask one `wrangler dev` to stop **and take its own process tree with it**.
-///
-/// Mirrors `bynk/src/dev.rs`'s `request_stop`: SIGTERM, not
-/// [`std::process::Child::kill`]'s SIGKILL — wrangler traps SIGTERM and tears
-/// down the `node`/`workerd` processes it spawned, whereas SIGKILL is
-/// untrappable and strands an orphaned `workerd` still holding the port.
-fn request_stop(child: &mut Child) {
-    #[cfg(unix)]
-    {
-        let sent = Command::new("kill")
-            .arg("-TERM")
-            .arg(child.id().to_string())
-            .status()
-            .is_ok_and(|s| s.success());
-        if sent {
-            return;
-        }
-    }
-    let _ = child.kill();
-}
-
-/// Reap a signalled child, giving it a moment to run wrangler's own teardown
-/// before escalating to SIGKILL. Mirrors `bynk/src/dev.rs`'s `reap`.
-fn reap(child: &mut Child) {
-    const GRACE: Duration = Duration::from_secs(10);
-    const TICK: Duration = Duration::from_millis(50);
-    let mut waited = Duration::ZERO;
-    while waited < GRACE {
-        match child.try_wait() {
-            Ok(Some(_)) => return,
-            Ok(None) => {}
-            Err(_) => break,
-        }
-        std::thread::sleep(TICK);
-        waited += TICK;
-    }
-    let _ = child.kill();
-    let _ = child.wait();
-}
-
-/// Both `wrangler dev` children, stopped on every exit path including a
-/// panicking assertion — signal both first, then reap both, so the two
-/// shutdowns overlap (mirrors `bynk/src/dev.rs`'s `terminate`).
-struct Wranglers(Vec<Child>);
+/// Both `wrangler dev`s, stopped together on every exit path, including a
+/// panicking assertion. [`wrangler::stop_all`] signals both before waiting on
+/// either, so the two shutdowns overlap.
+struct Wranglers(Vec<wrangler::Wrangler>);
 
 impl Drop for Wranglers {
     fn drop(&mut self) {
-        for c in self.0.iter_mut() {
-            request_stop(c);
-        }
-        for c in self.0.iter_mut() {
-            reap(c);
-        }
+        wrangler::stop_all(&mut self.0);
     }
 }
 
@@ -466,10 +419,14 @@ fn per_publisher_fifo_on_workerd() {
     // practice, not just in theory.
     let pub_log = tmp.join("pub-wrangler.log");
     let sub_log = tmp.join("sub-wrangler.log");
-    let spawn =
-        |dir: &Path, port: u16, inspector_port: u16, log_path: &Path| -> std::io::Result<Child> {
-            let out_log = fs::File::create(log_path)?;
-            let err_log = out_log.try_clone()?;
+    let spawn = |dir: &Path,
+                 port: u16,
+                 inspector_port: u16,
+                 log_path: &Path|
+     -> std::io::Result<wrangler::Wrangler> {
+        let out_log = fs::File::create(log_path)?;
+        let err_log = out_log.try_clone()?;
+        wrangler::Wrangler::spawn(
             base_command("npx")
                 .args([
                     "-y",
@@ -482,9 +439,9 @@ fn per_publisher_fifo_on_workerd() {
                 ])
                 .current_dir(dir)
                 .stdout(Stdio::from(out_log))
-                .stderr(Stdio::from(err_log))
-                .spawn()
-        };
+                .stderr(Stdio::from(err_log)),
+        )
+    };
 
     let pub_child = spawn(&pub_dir, pub_port, pub_inspector_port, &pub_log);
     let sub_child = spawn(&sub_dir, sub_port, sub_inspector_port, &sub_log);
@@ -498,7 +455,7 @@ fn per_publisher_fifo_on_workerd() {
             if let Ok(c) = b {
                 stray.push(c);
             }
-            let _ = Wranglers(stray);
+            drop(Wranglers(stray));
             if skip("could not launch npx for one or both workers") {
                 return;
             }
