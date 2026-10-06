@@ -969,6 +969,19 @@ agent Room {\n\
 \x20   let n <- conns.size()\n\
 \x20   Effect.pure(n)\n\
 \x20 }\n\
+\x20 on call ping(u: String) -> Effect[()] {\n\
+\x20   let c <- conns.get(u)\n\
+\x20   match c {\n\
+\x20     Some(conn) => {\n\
+\x20       let _ <- conn.send(ServerFrame { text: u })\n\
+\x20       conns.put(u, conn)\n\
+\x20     },\n\
+\x20     None => Effect.pure(())\n\
+\x20   }\n\
+\x20 }\n\
+\x20 on call broadcast(text: String) -> Effect[()] {\n\
+\x20   conns.parTraverse((c: Connection[ServerFrame]) => c.send(ServerFrame { text: text }))\n\
+\x20 }\n\
 }\n";
 
 /// Drives the held map with keys that name `Object.prototype` members
@@ -989,6 +1002,7 @@ function assert(cond: boolean, msg: string): void {
 
 interface FakeWs {
   closed: boolean;
+  sent: string[];
   accept(): void;
   send(data: string): void;
   close(): void;
@@ -1000,8 +1014,9 @@ function fakeWs(): FakeWs {
   let attachment: unknown;
   const ws: FakeWs = {
     closed: false,
+    sent: [],
     accept(): void {},
-    send(_data: string): void {},
+    send(data: string): void { ws.sent.push(data); },
     close(): void { ws.closed = true; },
     serializeAttachment(value: unknown): void { attachment = value; },
     deserializeAttachment(): unknown { return attachment; },
@@ -1015,14 +1030,18 @@ function fakeState() {
   const sockets = new Map<string, FakeWs>();
   return {
     storage: {
-      async get(key: string): Promise<unknown> { return m.get(key); },
+      async get(key: string): Promise<unknown> { return structuredClone(m.get(key)); },
       async put(key: string, value: unknown): Promise<void> { m.set(key, structuredClone(value)); },
     },
     acceptWebSocket(ws: FakeWs, tags?: string[]): void {
       for (const t of tags ?? []) sockets.set(t, ws);
     },
     getWebSockets(tag?: string): FakeWs[] {
-      const ws = tag === undefined ? undefined : sockets.get(tag);
+      // The lowering only ever hands `resolveConnection` a stored connId; an
+      // inherited value (`Object.prototype`, a builtin method) reaching here
+      // means a lookup read through the prototype chain.
+      if (typeof tag !== "string") throw new Error(`getWebSockets: non-string tag ${typeof tag}`);
+      const ws = sockets.get(tag);
       return ws === undefined || ws.closed ? [] : [ws];
     },
   };
@@ -1031,11 +1050,15 @@ function fakeState() {
 const state = fakeState();
 const room = new Room(state as never);
 const keys = ["__proto__", "constructor", "toString", "alice"];
-const sockets: Record<string, FakeWs> = {};
+// A Map, not an object literal: `obj["__proto__"] = ws` would hit the
+// prototype setter rather than store an own entry.
+const sockets = new Map<string, FakeWs>();
+const sock = (k: string): FakeWs => sockets.get(k)!;
+const texts = (k: string): string[] => sock(k).sent.map((d) => JSON.parse(d).text);
 
 for (const k of keys) {
   const ws = fakeWs();
-  sockets[k] = ws;
+  sockets.set(k, ws);
   await room.join(k, acceptHibernatableConnection(state as never, ws as never), {});
 }
 
@@ -1049,16 +1072,32 @@ for (const k of ["hasOwnProperty", "valueOf", "isPrototypeOf"]) {
   assert((await room.present(k, {})) === false, `get ${k}: never stored, not inherited`);
 }
 
+// get resolves each key to its own socket, and put-back keeps the entry
+for (const k of keys) await room.ping(k, {});
+for (const k of keys) {
+  assert(JSON.stringify(texts(k)) === JSON.stringify([k]), `get ${k} sends on ${k}'s socket only`);
+}
+assert((await room.count({})) === 4, "ping's put-back leaves all four entries");
+
+// remove of a never-stored inherited name is a no-op
+await room.leave("valueOf", {});
+assert((await room.count({})) === 4, "remove valueOf: never stored, nothing removed");
+
 // remove closes that entry's socket and deletes only it
 await room.leave("__proto__", {});
-assert(sockets["__proto__"].closed, "remove closes the __proto__ connection");
+assert(sock("__proto__").closed, "remove closes the __proto__ connection");
 assert((await room.has("__proto__", {})) === false, "remove deletes the __proto__ entry");
 assert((await room.count({})) === 3, "size after removing __proto__");
 await room.leave("constructor", {});
-assert(sockets["constructor"].closed, "remove closes the constructor connection");
-assert(!sockets["toString"].closed && !sockets["alice"].closed, "remove touches only its own entry");
+assert(sock("constructor").closed, "remove closes the constructor connection");
+assert(!sock("toString").closed && !sock("alice").closed, "remove touches only its own entry");
 assert((await room.present("toString", {})) === true, "toString still resolves");
 assert((await room.count({})) === 2, "size after removing constructor");
+
+// a non-entry op lifts the map over its own values: only the live entries hear it
+await room.broadcast("hi", {});
+for (const k of ["toString", "alice"]) assert(texts(k).at(-1) === "hi", `broadcast reaches ${k}`);
+for (const k of ["__proto__", "constructor"]) assert(!texts(k).includes("hi"), `broadcast skips removed ${k}`);
 
 console.log("ALL OK");
 "#;
