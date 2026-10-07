@@ -825,6 +825,12 @@ fn a_broken_manifest_is_reported_not_ignored() {
             "TOML parse error",
         ),
         ("fmt-bad-width", "[fmt]\nmax_line_width = 0\n", "at least 1"),
+        // #1665: `fmt` refuses an unknown table too, after `[fmt]` reads.
+        (
+            "fmt-unknown-table",
+            "[dependencies]\nacme-utils = \"1.2\"\n",
+            "not yet supported (#843)",
+        ),
     ] {
         let dir = scratch(name);
         write(&dir.join("bynk.toml"), section);

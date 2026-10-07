@@ -42,8 +42,11 @@ equivalent to an empty `bynk.toml`, which is equivalent to `[project]` alone.
 ## Unknown tables and keys
 
 `bynk.toml` holds the four tables below, and nothing else. An unknown table, a
-key outside any table, or an unknown key in a table is an error. `bynkc` and
-`bynk` report it, with the nearest name when there is one, and build nothing:
+key outside any table (including a table's own name given a plain value, such
+as `paths = "src"`), or an unknown key in `[project]`, `[paths]` or `[lsp]` is
+an error. `bynkc` and `bynk` report it, with the nearest name when there is
+one, and build nothing. An unknown `[fmt]` key is reported by the formatter
+(`bynkc fmt`, `bynk fmt`), which owns that table, not by `check` or `compile`:
 
 ```text
 bynkc: `bynk.toml` has no table named `[pahts]` — did you mean `[paths]`?

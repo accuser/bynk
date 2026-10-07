@@ -144,6 +144,19 @@ const PLANNED_TABLES: &[(&str, &str)] = &[
     ("deploy", "#551"),
 ];
 
+/// The manifest's tables as `` `[project]`, `[paths]`, `[fmt]` <conj> `[lsp]` ``,
+/// from [`MANIFEST_TABLES`], so a message can't fall behind it.
+fn table_list(conj: &str) -> String {
+    let names: Vec<String> = MANIFEST_TABLES
+        .iter()
+        .map(|(t, _)| format!("`[{t}]`"))
+        .collect();
+    match names.split_last() {
+        Some((last, rest)) if !rest.is_empty() => format!("{} {conj} {last}", rest.join(", ")),
+        _ => names.join(""),
+    }
+}
+
 /// The closest of `candidates` to `name`, if any is within two edits.
 fn did_you_mean<'a>(name: &str, candidates: impl IntoIterator<Item = &'a str>) -> Option<&'a str> {
     candidates
@@ -188,23 +201,25 @@ impl std::fmt::Display for ProjectPathsError {
                 {
                     write!(f, "did you mean `[{t}]`?")
                 } else {
-                    write!(
-                        f,
-                        "the tables are `[project]`, `[paths]`, `[fmt]` and `[lsp]`"
-                    )
+                    write!(f, "the tables are {}", table_list("and"))
                 }
             }
             ProjectPathsError::TopLevelKey(key) => {
+                // #1770 review: a table's own name written as a plain value
+                // (`paths = "src"`).
+                if MANIFEST_TABLES.iter().any(|(t, _)| t == key) {
+                    return write!(
+                        f,
+                        "`{key}` in `bynk.toml` must be a table — write it as `[{key}]`"
+                    );
+                }
                 write!(f, "`bynk.toml` has a key `{key}` outside any table — ")?;
                 match MANIFEST_TABLES
                     .iter()
                     .find(|(_, keys)| keys.contains(&key.as_str()))
                 {
                     Some((table, _)) => write!(f, "did you mean it under `[{table}]`?"),
-                    None => write!(
-                        f,
-                        "keys belong in `[project]`, `[paths]`, `[fmt]` or `[lsp]`"
-                    ),
+                    None => write!(f, "keys belong in {}", table_list("or")),
                 }
             }
             ProjectPathsError::UnknownTableKey { table, key } => {
@@ -253,6 +268,11 @@ pub fn check_manifest_str(content: &str) -> Result<(), ProjectPathsError> {
         .parse::<toml::Table>()
         .map_err(|_| ProjectPathsError::Malformed)?;
     for (name, value) in &doc {
+        // #1770 review: a planned table names its issue whatever shape it is
+        // written in (`[[dependencies]]`, `dependencies = [...]`).
+        if PLANNED_TABLES.iter().any(|(t, _)| t == name) {
+            return Err(ProjectPathsError::UnknownTable(name.clone()));
+        }
         let Some((table, keys)) = MANIFEST_TABLES.iter().find(|(t, _)| t == name) else {
             return Err(if value.is_table() {
                 ProjectPathsError::UnknownTable(name.clone())
@@ -260,20 +280,23 @@ pub fn check_manifest_str(content: &str) -> Result<(), ProjectPathsError> {
                 ProjectPathsError::TopLevelKey(name.clone())
             });
         };
+        // #1770 review: a known table's name holding a plain value
+        // (`paths = "src"`) would otherwise read as an absent table.
+        let Some(entries) = value.as_table() else {
+            return Err(ProjectPathsError::TopLevelKey(name.clone()));
+        };
         if keys.is_empty() {
             continue;
         }
-        if let Some(entries) = value.as_table() {
-            for key in entries.keys() {
-                if !keys.contains(&key.as_str()) {
-                    return Err(match *table {
-                        "paths" => ProjectPathsError::UnknownKey(key.clone()),
-                        _ => ProjectPathsError::UnknownTableKey {
-                            table,
-                            key: key.clone(),
-                        },
-                    });
-                }
+        for key in entries.keys() {
+            if !keys.contains(&key.as_str()) {
+                return Err(match *table {
+                    "paths" => ProjectPathsError::UnknownKey(key.clone()),
+                    _ => ProjectPathsError::UnknownTableKey {
+                        table,
+                        key: key.clone(),
+                    },
+                });
             }
         }
     }
@@ -829,6 +852,24 @@ mod manifest_tests {
     #[test]
     fn a_top_level_key_points_at_its_table() {
         assert!(err("name = \"p\"\n").contains("did you mean it under `[project]`?"));
+    }
+
+    /// #1770 review: a known table's name holding a plain value is refused,
+    /// not read as an absent table.
+    #[test]
+    fn a_table_name_with_a_plain_value_must_be_a_table() {
+        assert!(err("paths = \"src\"\n").contains("must be a table — write it as `[paths]`"));
+        assert!(err("lsp = 3\n").contains("`[lsp]`"));
+        assert!(err("fmt = true\n").contains("`[fmt]`"));
+        // An inline table is a table.
+        check_manifest_str("paths = { include = [\"src\"] }\n").expect("accepted");
+    }
+
+    /// #1770 review: a planned table keeps its issue whatever shape it takes.
+    #[test]
+    fn a_planned_table_in_any_shape_names_its_issue() {
+        assert!(err("[[dependencies]]\nname = \"acme\"\n").contains("(#843)"));
+        assert!(err("dependencies = [\"acme\"]\n").contains("(#843)"));
     }
 
     /// `[fmt]` keys are `bynk-fmt`'s to check, not this one's.
