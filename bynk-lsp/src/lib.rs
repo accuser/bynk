@@ -182,6 +182,11 @@ struct ProjectState {
     /// #1667: the newest round panicked and no round has committed since.
     /// The client is told once per such streak, not on every keystroke.
     analysis_failed: bool,
+    /// #1667: makes this project's next round panic, so a test can watch the
+    /// failure reach the client. Per project, not a global, so parallel tests'
+    /// rounds can't take it.
+    #[cfg(test)]
+    panic_next_round: bool,
 }
 
 /// #733: the client's `workspace/*/refresh` support, per pull-based decoration,
@@ -285,11 +290,6 @@ fn describe_join_error(e: tokio::task::JoinError) -> String {
         "panicked with a non-string payload".to_string()
     }
 }
-
-/// #1667: makes the next analysis round panic, so a test can watch the
-/// failure reach the client.
-#[cfg(test)]
-static PANIC_NEXT_ROUND: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 impl Backend {
     #[cfg(test)]
@@ -694,9 +694,17 @@ impl Backend {
         // open buffers — with `discovery.rs`'s disk fallback gone, a project's
         // closed files need `sweep_project_content`'s full disk sweep too, or
         // every one of them fails `bynk.project.read_failed` on every round.
+        #[cfg(test)]
+        let inject_panic = self
+            .state
+            .write()
+            .await
+            .projects
+            .get_mut(&root)
+            .is_some_and(|ps| std::mem::take(&mut ps.panic_next_round));
         let joined = tokio::task::spawn_blocking(move || {
             #[cfg(test)]
-            if PANIC_NEXT_ROUND.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            if inject_panic {
                 panic!("injected analysis panic");
             }
             let content = crate::content::sweep_project_content(&roots, &overlay);
@@ -4542,11 +4550,24 @@ mod tests {
             async move { b.state.read().await.projects[&root].analysis_failed }
         };
 
-        PANIC_NEXT_ROUND.store(true, std::sync::atomic::Ordering::SeqCst);
+        let inject = |b: &Backend| {
+            let b = b.clone();
+            let root = canonical.clone();
+            async move {
+                b.state
+                    .write()
+                    .await
+                    .projects
+                    .get_mut(&root)
+                    .unwrap()
+                    .panic_next_round = true;
+            }
+        };
+        inject(&backend).await;
         backend.run_project_diagnostics(canonical.clone()).await;
         assert!(failed(&backend).await, "the failed round is recorded");
         // A second failure in the same streak says nothing new.
-        PANIC_NEXT_ROUND.store(true, std::sync::atomic::Ordering::SeqCst);
+        inject(&backend).await;
         backend.run_project_diagnostics(canonical.clone()).await;
 
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
