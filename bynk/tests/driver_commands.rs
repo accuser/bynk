@@ -1172,3 +1172,14 @@ fn formatting_a_crlf_file_writes_lf_throughout() {
     let (code, _out, err) = run_bynk_in(&dir, &["fmt", "--check", "greeting.bynk"]);
     assert_eq!(code, 0, "stderr:\n{err}");
 }
+
+/// #1775 review: the stdin branch normalises on its own, so it gets its own
+/// test: a CRLF copy of a canonical source passes `fmt --check -`.
+#[test]
+fn a_crlf_canonical_source_on_stdin_passes_check() {
+    let dir = scratch("fmt-crlf-stdin");
+    let crlf = canonical(MESSY).replace('\n', "\r\n");
+    let (code, out, err) = run_in(&bynk(), &dir, &["fmt", "--check", "-"], Some(&crlf));
+    assert_eq!(code, 0, "stderr:\n{err}");
+    assert!(out.is_empty(), "`--check` prints nothing on stdout: {out}");
+}

@@ -6,8 +6,8 @@
 //! nothing, and reads no network — it is pure, offline file-writing, so it
 //! works before `bynkc`, Node, or `wrangler` are installed (D4).
 //!
-//! The starter, manifest, `.gitignore` and `.gitattributes` are **embedded** via `include_str!`
-//! (the first-party precedent, ADR 0086): each template carries a
+//! The starter, manifest, `.gitignore` and `.gitattributes` are **embedded**
+//! via `include_str!` (the first-party precedent, ADR 0086): each template carries a
 //! [`PLACEHOLDER`] identifier substituted for the project name at write time.
 //! A standing test (`tests/new.rs`) renders the starter with a non-default name
 //! and asserts it compiles and is `bynk-fmt`-clean, so the scaffold can never
@@ -138,12 +138,12 @@ fn target_is_nonempty(target: &Path) -> io::Result<bool> {
     Ok(false)
 }
 
-/// Create the directory tree and write the three files. Never overwrites: the
+/// Create the directory tree and write the four files. Never overwrites: the
 /// clobber check has already cleared the target of everything except
-/// [`SCAFFOLD_IGNORES`] cruft. `.gitignore` is the one member of that set the
-/// scaffold also writes — a hand-written one (e.g. in a `git init`ed target)
-/// passes the clobber check, so we write ours only when none is present rather
-/// than clobbering the user's.
+/// [`SCAFFOLD_IGNORES`] cruft. `.gitignore` and `.gitattributes` (#1763) are
+/// the members of that set the scaffold also writes — a hand-written one (e.g.
+/// in a `git init`ed target) passes the clobber check, so we write ours only
+/// when none is present rather than clobbering the user's.
 fn write_scaffold(target: &Path, name: &str) -> io::Result<()> {
     let src_dir = target.join("src");
     fs::create_dir_all(&src_dir)?;

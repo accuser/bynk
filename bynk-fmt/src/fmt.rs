@@ -153,16 +153,39 @@ pub fn format_source(source: &str, opts: &FormatOptions) -> Result<String, Forma
     Ok(output)
 }
 
-/// #1763: `source` with every CRLF turned into LF, borrowed when there is
-/// none. The canonical form uses LF, and comparing a file against it modulo
-/// line endings is what keeps a Windows checkout (`core.autocrlf=true`) of a
-/// canonical file canonical.
+/// #1763: `source` with every line ending made LF, borrowed when there is
+/// nothing to change. The canonical form uses LF, and comparing a file against
+/// it modulo line endings is what keeps a Windows checkout
+/// (`core.autocrlf=true`) of a canonical file canonical.
+///
+/// A run of CRs before an LF (`\r\n`, `\r\r\n`, …) is one line ending, so
+/// this is a fixed point: normalising its own output changes nothing (#1775
+/// review; a single `replace` turned `\r\r\n` into a `\r\n` a second pass
+/// would change again). A CR not before an LF is left alone; the lexer treats
+/// it as whitespace. Normalising can't change a program value, since a string
+/// literal can't span a line (`bynk.lex.unterminated_string`).
 pub fn normalize_line_endings(source: &str) -> std::borrow::Cow<'_, str> {
-    if source.contains("\r\n") {
-        std::borrow::Cow::Owned(source.replace("\r\n", "\n"))
-    } else {
-        std::borrow::Cow::Borrowed(source)
+    if !source.contains("\r\n") {
+        return std::borrow::Cow::Borrowed(source);
     }
+    let mut out = String::with_capacity(source.len());
+    let mut pending_crs = 0usize;
+    for c in source.chars() {
+        match c {
+            '\r' => pending_crs += 1,
+            '\n' => {
+                pending_crs = 0;
+                out.push('\n');
+            }
+            _ => {
+                out.extend(std::iter::repeat_n('\r', pending_crs));
+                pending_crs = 0;
+                out.push(c);
+            }
+        }
+    }
+    out.extend(std::iter::repeat_n('\r', pending_crs));
+    std::borrow::Cow::Owned(out)
 }
 
 /// Format every top-level unit and join with a blank line. A file may hold more
@@ -3377,6 +3400,19 @@ mod tests {
             std::borrow::Cow::Borrowed(_)
         ));
         assert_eq!(normalize_line_endings("a\r\nb\r\n"), "a\nb\n");
+    }
+
+    /// #1775 review: a run of CRs before an LF is one line ending, so the
+    /// normaliser is a fixed point; a CR not before an LF is kept.
+    #[test]
+    fn normalize_line_endings_is_a_fixed_point() {
+        for input in ["a\r\r\nb", "a\r\nb\rc\r\n", "\r\r\r\n", "x\r", "a\r\n\rb"] {
+            let once = normalize_line_endings(input).into_owned();
+            assert_eq!(normalize_line_endings(&once), once, "{input:?}");
+            assert!(!once.contains("\r\n"), "{input:?} -> {once:?}");
+        }
+        assert_eq!(normalize_line_endings("a\r\r\nb"), "a\nb");
+        assert_eq!(normalize_line_endings("a\r\nb\rc"), "a\nb\rc");
     }
 
     /// #1755 review: output that does not even tokenize is the round-trip

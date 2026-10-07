@@ -710,7 +710,7 @@ pub fn run_fmt(prog: &str, args: &FmtArgs) -> ExitCode {
                 return ExitCode::FAILURE;
             }
             // #1763: compared, and errors rendered, modulo line endings.
-            let source = bynk_fmt::normalize_line_endings(&source).into_owned();
+            let source = bynk_fmt::normalize_line_endings(&source);
             match format_source(&source, &opts) {
                 Ok(formatted) => {
                     if check {
@@ -746,7 +746,7 @@ pub fn run_fmt(prog: &str, args: &FmtArgs) -> ExitCode {
         // canonical file passes `--check` and isn't rewritten; a file that does
         // need formatting is written in the LF canonical form. Errors render
         // against the normalised text, whose spans they carry.
-        let source = bynk_fmt::normalize_line_endings(&raw).into_owned();
+        let source = bynk_fmt::normalize_line_endings(&raw);
         let filename = shown(input);
         match format_source(&source, &opts) {
             Ok(formatted) => {
