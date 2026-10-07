@@ -6,7 +6,7 @@
 //! nothing, and reads no network — it is pure, offline file-writing, so it
 //! works before `bynkc`, Node, or `wrangler` are installed (D4).
 //!
-//! The starter, manifest, and `.gitignore` are **embedded** via `include_str!`
+//! The starter, manifest, `.gitignore` and `.gitattributes` are **embedded** via `include_str!`
 //! (the first-party precedent, ADR 0086): each template carries a
 //! [`PLACEHOLDER`] identifier substituted for the project name at write time.
 //! A standing test (`tests/new.rs`) renders the starter with a non-default name
@@ -27,12 +27,15 @@ pub const PLACEHOLDER: &str = "appname";
 const STARTER_BYNK: &str = include_str!("templates/starter.bynk");
 const BYNK_TOML: &str = include_str!("templates/bynk.toml");
 const GITIGNORE: &str = include_str!("templates/gitignore");
+/// #1763: `*.bynk text eol=lf`, so a Windows checkout keeps `fmt`'s LF form.
+const GITATTRIBUTES: &str = include_str!("templates/gitattributes");
 
 /// Directory entries that don't count as "non-empty" for the clobber check
 /// (D5): VCS metadata and OS cruft a freshly-`mkdir`ed or `git init`ed
 /// directory commonly carries. Mirrors `cargo`'s look-the-other-way set.
 const SCAFFOLD_IGNORES: &[&str] = &[
     ".git",
+    ".gitattributes",
     ".gitignore",
     ".hg",
     ".hgignore",
@@ -148,6 +151,11 @@ fn write_scaffold(target: &Path, name: &str) -> io::Result<()> {
     let gitignore = target.join(".gitignore");
     if !gitignore.exists() {
         fs::write(gitignore, render(GITIGNORE, name))?;
+    }
+    // #1763: likewise, never over the user's own.
+    let gitattributes = target.join(".gitattributes");
+    if !gitattributes.exists() {
+        fs::write(gitattributes, render(GITATTRIBUTES, name))?;
     }
     fs::write(src_dir.join(format!("{name}.bynk")), starter_source(name))?;
     Ok(())

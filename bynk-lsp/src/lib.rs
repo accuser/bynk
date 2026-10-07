@@ -2841,7 +2841,10 @@ impl LanguageServer for Backend {
         let opts = self.config_for(&uri).await.format_options();
         match bynk_fmt::format_source(&text, &opts) {
             Ok(formatted) => {
-                if formatted == text {
+                // #1763: a CRLF buffer whose LF form is canonical needs no edit,
+                // as on the command line; otherwise every format-on-save would
+                // rewrite an already-canonical Windows file.
+                if formatted == bynk_fmt::normalize_line_endings(&text) {
                     Ok(Some(Vec::new()))
                 } else {
                     // Replace the entire document.

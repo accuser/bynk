@@ -55,6 +55,7 @@ bynk new <PATH> [--name NAME]
 <PATH>/
 ├── bynk.toml            # [project] name/version + optional [paths] include/exclude
 ├── .gitignore           # /.bynk
+├── .gitattributes       # *.bynk text eol=lf
 └── src/
     └── <name>.bynk      # context <name> — a GET "/" HTTP service
 ```
@@ -68,7 +69,7 @@ compiles nothing, and reads no network, so it works before `bynkc`, Node, or
    starter's context use it.
 2. Refuse to clobber: if the target exists and is non-empty, fail before writing
    anything. An empty directory is fine; VCS/OS cruft (`.git`, `.gitignore`,
-   `.DS_Store`, …) doesn't count as non-empty.
+   `.gitattributes`, `.DS_Store`, …) doesn't count as non-empty.
 3. Write the scaffold and print next steps (`cd <path> && bynk dev`).
 
 **Exit code** — `0` on a written scaffold. A non-empty target or a name that
@@ -81,6 +82,9 @@ isn't a legal identifier exits non-zero, **touching nothing**.
   repository.
 - The `.gitignore` covers only `/.bynk`, the build directory
   [`bynk dev`](#bynk-dev) writes (compiled workers and local wrangler state).
+- The `.gitattributes` keeps `.bynk` files LF on every platform, the line
+  ending [`bynk fmt`](#bynk-fmt) writes. Neither file is written over one that
+  already exists.
 
 ---
 
@@ -276,6 +280,12 @@ already canonical is left untouched. A file that does not parse is reported and
 skipped; the other inputs are still processed. A file named more than once,
 directly or through a directory, is formatted once; a directory holding no
 `.bynk` file is an error, so a mistyped path cannot pass `--check`.
+
+Line endings aren't a formatting difference. A file with CRLF line endings (a
+Windows checkout with `core.autocrlf=true`) whose LF form is canonical passes
+`--check` and is left as it is; a file that does need formatting is written
+with LF line endings throughout. [`bynk new`](#bynk-new)'s `.gitattributes`
+keeps `.bynk` files LF on every platform.
 
 The formatter never deletes your text. When a comment or a `---` documentation
 block has nowhere to go in the formatted output, the file is left unchanged and

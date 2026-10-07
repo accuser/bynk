@@ -98,6 +98,11 @@ pub struct FormatError {
 /// CLI) decide how to handle parse failure. Here we surface the errors so
 /// the caller can do so.
 pub fn format_source(source: &str, opts: &FormatOptions) -> Result<String, FormatError> {
+    // #1763: line endings are not a formatting difference. A CRLF file formats
+    // to the LF canonical form, CRs inside `---` blocks included (their text
+    // was kept verbatim, so a CR survived into the output). A caller rendering
+    // this function's errors should render them against the normalised text.
+    let source = &*normalize_line_endings(source);
     let tokens = tokenize(source).map_err(|e| FormatError { errors: vec![e] })?;
     // v0.113: a file may hold more than one top-level unit (an atomic
     // `commons` + `suite` file, DECISION S). Format each and join with a blank
@@ -146,6 +151,18 @@ pub fn format_source(source: &str, opts: &FormatOptions) -> Result<String, Forma
         });
     }
     Ok(output)
+}
+
+/// #1763: `source` with every CRLF turned into LF, borrowed when there is
+/// none. The canonical form uses LF, and comparing a file against it modulo
+/// line endings is what keeps a Windows checkout (`core.autocrlf=true`) of a
+/// canonical file canonical.
+pub fn normalize_line_endings(source: &str) -> std::borrow::Cow<'_, str> {
+    if source.contains("\r\n") {
+        std::borrow::Cow::Owned(source.replace("\r\n", "\n"))
+    } else {
+        std::borrow::Cow::Borrowed(source)
+    }
 }
 
 /// Format every top-level unit and join with a blank line. A file may hold more
@@ -3340,6 +3357,27 @@ fn stmt_to_string(s: &Statement) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #1763: a CRLF copy of a canonical file formats to the LF canonical form,
+    /// and a doc block's lines lose their CR too (its text was kept verbatim).
+    #[test]
+    fn crlf_formats_to_the_lf_canonical_form() {
+        let lf = "context greeting\n\n---\nA greeting for a name.\n---\nfn greet(name: String) -> String { name }\n";
+        assert_eq!(format_source(lf, &FormatOptions::default()).unwrap(), lf);
+        let crlf = lf.replace('\n', "\r\n");
+        let formatted = format_source(&crlf, &FormatOptions::default()).unwrap();
+        assert_eq!(formatted, lf);
+        assert!(!formatted.contains('\r'));
+    }
+
+    #[test]
+    fn normalize_line_endings_borrows_when_there_is_nothing_to_do() {
+        assert!(matches!(
+            normalize_line_endings("a\nb"),
+            std::borrow::Cow::Borrowed(_)
+        ));
+        assert_eq!(normalize_line_endings("a\r\nb\r\n"), "a\nb\n");
+    }
 
     /// #1755 review: output that does not even tokenize is the round-trip
     /// guard's to report ("no longer parses"). The doc-block guard runs first,
