@@ -44,11 +44,46 @@ fn session(tag: &str, messages: &[&str]) -> (i32, String, String) {
             std::thread::sleep(Duration::from_millis(100));
         }
     }
-    let out = child.wait_with_output().expect("the server ends");
+    // #1771 review: bounded, so a regression into a hang fails the test
+    // rather than blocking CI. The pipes are read on threads so a full one
+    // can't stall the child.
+    let read = |pipe: Option<Box<dyn std::io::Read + Send>>| {
+        std::thread::spawn(move || {
+            let mut text = String::new();
+            if let Some(mut pipe) = pipe {
+                let _ = pipe.read_to_string(&mut text);
+            }
+            text
+        })
+    };
+    let stdout = read(
+        child
+            .stdout
+            .take()
+            .map(|p| Box::new(p) as Box<dyn std::io::Read + Send>),
+    );
+    let stderr = read(
+        child
+            .stderr
+            .take()
+            .map(|p| Box::new(p) as Box<dyn std::io::Read + Send>),
+    );
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    let status = loop {
+        if let Some(status) = child.try_wait().expect("poll the server") {
+            break status;
+        }
+        if std::time::Instant::now() > deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("{tag}: the server didn't exit within 30s of its input closing");
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
     (
-        out.status.code().unwrap_or(-1),
-        String::from_utf8_lossy(&out.stdout).into_owned(),
-        String::from_utf8_lossy(&out.stderr).into_owned(),
+        status.code().unwrap_or(-1),
+        stdout.join().unwrap(),
+        stderr.join().unwrap(),
     )
 }
 

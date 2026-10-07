@@ -190,7 +190,6 @@ The crate is split into focused modules:
 | `documentation_request.rs` | `bynk/documentationModel`: the whole-file model builder and the wire-shape conversion from `bynk_ide::documentation::DocModel`. |
 | `architecture_request.rs` | `bynk/architectureModel`: the project-wide model builder and the wire-shape conversion from `bynk_ide::architecture::ArchModel`, lowering each node/member/edge's span against its own file (not just the request's document). |
 | `wire_contract_request.rs` | `bynk/wireContract`: the enclosing-handler-at-cursor lookup and the wire-shape conversion from `bynk_ide::wire_contract::WireContractModel` (and, transitively, `bynk_check::wire::WireModel`), resolving each referenced boundary type's own declaring file through the project index rather than assuming the request's document. |
-
 | `transport.rs` | The framing pump between stdin and `tower-lsp`: forwards each client message whose body parses, repairs a lone UTF-16 surrogate escape to U+FFFD, and logs and skips a body that can't be parsed, so one bad message can't end the session. |
 
 ## Logging

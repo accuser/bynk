@@ -23,6 +23,17 @@
 
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 
+/// #1771 review: the largest body [`pump`] accepts. A `Content-Length` is
+/// otherwise trusted and allocated in full before the body arrives, so one
+/// corrupted digit could abort the process. A frame over this is unrecoverable
+/// framing, like a missing `Content-Length`. 128 MiB is far above any real
+/// message (a `didOpen` carries one file's text).
+pub const MAX_BODY: usize = 128 << 20;
+
+/// The longest header line [`pump`] reads, so a client that never sends a
+/// newline can't grow the line without limit.
+pub const MAX_HEADER_LINE: u64 = 8 << 10;
+
 /// What [`pump`] does with one frame's body.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Frame {
@@ -148,7 +159,18 @@ where
         let mut saw_header = false;
         loop {
             let mut line = String::new();
-            match input.read_line(&mut line).await {
+            let read = (&mut input)
+                .take(MAX_HEADER_LINE)
+                .read_line(&mut line)
+                .await;
+            if read.as_ref().is_ok_and(|n| *n as u64 == MAX_HEADER_LINE) && !line.ends_with('\n') {
+                tracing::error!(
+                    "a client header line is over {MAX_HEADER_LINE} bytes; \
+                     the input can't be resynchronised, so it is closed"
+                );
+                return;
+            }
+            match read {
                 Ok(0) => {
                     if saw_header {
                         tracing::error!("client input ended inside a message's headers");
@@ -182,6 +204,13 @@ where
             );
             return;
         };
+        if length > MAX_BODY {
+            tracing::error!(
+                "a client message claims a {length}-byte body, over the {MAX_BODY}-byte limit; \
+                 the input can't be resynchronised, so it is closed"
+            );
+            return;
+        }
         let mut body = vec![0u8; length];
         if let Err(e) = input.read_exact(&mut body).await {
             tracing::error!(
@@ -252,6 +281,46 @@ mod tests {
     #[test]
     fn other_invalid_json_is_skipped() {
         assert!(matches!(classify(b"{not json"), Frame::Skip(_)));
+    }
+
+    #[test]
+    fn a_surrogate_escape_cut_off_at_the_end_is_skipped() {
+        assert!(matches!(classify(br#"{"t":"\ud8"#), Frame::Skip(_)));
+    }
+
+    /// Run the pump over `input` and return everything it forwarded.
+    async fn pumped(input: &[u8]) -> Vec<u8> {
+        let (mut server_side, client_side) = tokio::io::duplex(64 * 1024);
+        pump(input, client_side).await;
+        let mut out = Vec::new();
+        server_side.read_to_end(&mut out).await.unwrap();
+        out
+    }
+
+    /// #1771 review: each unrecoverable-framing path returns (the server
+    /// then sees end of input) rather than hanging, spinning or allocating.
+    #[tokio::test]
+    async fn unrecoverable_framing_ends_the_pump() {
+        // A header block with no Content-Length.
+        assert!(pumped(b"Content-Type: x\r\n\r\n{}").await.is_empty());
+        // A truncated body: 50 bytes promised, 5 sent, then end of input.
+        assert!(pumped(b"Content-Length: 50\r\n\r\nhello").await.is_empty());
+        // Only blank lines, then end of input.
+        assert!(pumped(b"\r\n\r\n\r\n").await.is_empty());
+        // A Content-Length over the limit (or past usize) allocates nothing.
+        assert!(
+            pumped(b"Content-Length: 99999999999\r\n\r\n{}")
+                .await
+                .is_empty()
+        );
+        assert!(
+            pumped(b"Content-Length: 18446744073709551615\r\n\r\n{}")
+                .await
+                .is_empty()
+        );
+        // A header line with no end.
+        let endless = vec![b'x'; (MAX_HEADER_LINE as usize) * 2];
+        assert!(pumped(&endless).await.is_empty());
     }
 
     /// The pump forwards good frames, repairs a lone surrogate, skips an

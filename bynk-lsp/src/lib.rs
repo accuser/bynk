@@ -612,10 +612,6 @@ impl Backend {
             .await;
     }
 
-    /// v0.24 (ADR 0052): one project-wide diagnostics round — overlay the
-    /// open buffers over disk, analyse off the async runtime, convert spans
-    /// against the **analysed snapshots**, and publish via the pure
-    /// publish-plan (clears included).
     /// #1667: an analysis round for `root` failed (`reason` says how). Log
     /// it, and tell the client once per failure streak: the published
     /// diagnostics are the last good round's and may be stale. The streak ends
@@ -644,6 +640,10 @@ impl Backend {
         }
     }
 
+    /// v0.24 (ADR 0052): one project-wide diagnostics round — overlay the
+    /// open buffers over disk, analyse off the async runtime, convert spans
+    /// against the **analysed snapshots**, and publish via the pure
+    /// publish-plan (clears included).
     async fn run_project_diagnostics(&self, root: PathBuf) {
         let (round, root, canonical_root, overlay, versions, previously_dirty) = {
             let mut state = self.state.write().await;
@@ -4579,6 +4579,11 @@ mod tests {
 
         backend.run_project_diagnostics(canonical.clone()).await;
         assert!(!failed(&backend).await, "a clean round ends the streak");
+        // A failure after the streak ended is a new streak, and is told.
+        inject(&backend).await;
+        backend.run_project_diagnostics(canonical.clone()).await;
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        assert_eq!(shown.lock().unwrap().len(), 2, "a new streak is told again");
         drain.abort();
     }
 
