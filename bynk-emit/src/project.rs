@@ -88,9 +88,10 @@ use tests_emit::*;
 pub use bynk_check::project_model::BuildTarget;
 pub use bynk_check::symbols::{FileDeclIndex, UnitTable};
 pub use bynk_project::{
-    AttributedError, ProjectPaths, ProjectPathsError, Roots, SchemaLock, UnitKind,
-    discover_project_files, try_read_project_paths, try_read_project_paths_with, worker_dir_name,
-    worker_handlers_output_path, worker_handlers_source_path,
+    AttributedError, ProjectPaths, ProjectPathsError, Roots, SchemaLock, UnitKind, check_manifest,
+    check_manifest_str, discover_project_files, try_read_project_paths,
+    try_read_project_paths_with, worker_dir_name, worker_handlers_output_path,
+    worker_handlers_source_path,
 };
 pub use diagnostics::{ContextBoundaryInfo, ContextSequenceInfo, ProjectAnalysis, ProjectFailure};
 
