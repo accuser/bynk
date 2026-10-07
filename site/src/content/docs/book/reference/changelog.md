@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.308**.
+written against **v0.309**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.309.0** | "`bynk.toml` refuses what it doesn't define: an unknown table, a key outside any table, or an unknown key in `[project]` or `[lsp]` is now an error from `bynkc` and `bynk`, with the nearest name suggested (`[pahts]` → did you mean `[paths]`?). A table for a planned feature (`[dependencies]`, `[workspace]`, `[deploy]`) names the issue tracking it rather than building with none of its behaviour, so a manifest that built before can now fail. The language server still reads only the tables it needs (#1665)" |
 | **v0.308.1** | "Bynk's emitted TypeScript is now verified for every positive fixture: the 133 single-file fixtures join the `tsc --strict` and Node strip-types checks, which previously ran over project-form fixtures only (#1767)" |
 | **v0.308.0** | "Checks now see inside a `match` arm's guard. The shared walk over an expression's sub-expressions skipped guards, so a guard escaped every check built on it: a `:=` whose right side reads the written cell only in a guard is now `bynk.cell.self_reference`, and constructing another context's type in a guard is now `bynk.context.external_construction`, so code that compiled before can now fail. The same walk now also sees a call-site principal's identity (`by User(who)`). The editor's extract-to-function threads a name read only in a guard or an identity as a parameter (#1760)" |
 | **v0.307.4** | A binding from an `is` test on the right of `&&` (or of `implies`, or a negated `||`) now type-checks wherever it is read. `if o is Some(v) && p is Some(w) { v + w }` emitted `p.value` outside the arrow that held `p`'s tag test, so TypeScript could not narrow it and `tsc --strict` failed with TS2339. The read now casts to the variant the checker proved (#1752) |
