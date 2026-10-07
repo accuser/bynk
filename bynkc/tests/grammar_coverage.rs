@@ -10,6 +10,9 @@
 //!   3. **Anchors** — every entry carries a `{#rule-<raw>}` heading id matching
 //!      its `{{#grammar <raw>}}`, so the diagnostics `Construct` deep-links
 //!      resolve; one per embeddable rule, unique.
+//!   4. **The spec covers the grammar** (#1780) — every embeddable rule is
+//!      embedded at least once under `book/spec/`, so a new production can't
+//!      land in the reference alone and leave the normative grammar behind.
 //!
 //! Backslash-escaped directives (`\{{#…}}`, as used to show the syntax literally
 //! in the contributor guide) are ignored.
@@ -171,4 +174,30 @@ fn every_entry_has_a_matching_anchor() {
 
     // Each entry pairs a `{{#grammar <raw>}}` with the same `{#rule-<raw>}`:
     // both sets equal `embeddable`, already asserted, so the pairing holds.
+}
+
+/// #1780: the normative spec embeds every embeddable rule somewhere under
+/// `book/spec/` (the syntactic grammar, or §3 for the lexical ones). Before this
+/// check only the reference was held to the grammar, and 29 productions reached
+/// it without reaching the spec.
+#[test]
+fn every_embeddable_rule_is_in_the_spec() {
+    let embeddable: BTreeSet<String> = bynk_grammar::embeddable_rules(&grammar_json())
+        .into_iter()
+        .collect();
+    let mut files = Vec::new();
+    gather_md(&docs_src().join("spec"), &mut files);
+    let embedded: BTreeSet<String> = files
+        .iter()
+        .flat_map(|f| directive_uses(&fs::read_to_string(f).unwrap()))
+        .filter(|(kind, _)| kind == "grammar")
+        .map(|(_, rule)| rule)
+        .collect();
+    let missing: Vec<&String> = embeddable.difference(&embedded).collect();
+    assert!(
+        missing.is_empty(),
+        "grammar rules the spec never embeds: {missing:#?}\n\
+         Add a `{{{{#grammar <rule>}}}}` entry for each to the spec's grammar chapter \
+         (`book/spec/syntactic-grammar.md`, or `lexical-grammar.md` for a token)."
+    );
 }
