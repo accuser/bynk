@@ -1,6 +1,13 @@
 # Changelog
 
-## Unreleased — project renamed from **Karn** to **Bynk**
+> **This file is no longer maintained.** The live changelog is
+> [`site/src/content/docs/book/reference/changelog.md`](site/src/content/docs/book/reference/changelog.md),
+> published as [Version compatibility & changelog](https://bynk-lang.org/book/reference/changelog/).
+> `cargo xtask stamp` writes a row there for every merged increment, from its
+> `design/pending/` file. The entries below are kept as history: the Karn → Bynk
+> rename and v0.142.0.
+
+## Karn → Bynk rename (historical)
 
 The project, its toolchain, and its in-language surface were renamed from
 **Karn** to **Bynk**. This is a **breaking** change for existing sources.
