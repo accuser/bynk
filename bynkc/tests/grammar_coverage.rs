@@ -177,9 +177,10 @@ fn every_entry_has_a_matching_anchor() {
 }
 
 /// #1780: the normative spec embeds every embeddable rule somewhere under
-/// `book/spec/` (the syntactic grammar, or §3 for the lexical ones). Before this
-/// check only the reference was held to the grammar, and 29 productions reached
-/// it without reaching the spec.
+/// `book/spec/` (the syntactic grammar, or §3 for the lexical ones), and nothing
+/// that isn't one. Before this check only the reference was held to the
+/// grammar, and 29 productions reached it without reaching the spec (8 added by
+/// #1669, the other 21 by #1780).
 #[test]
 fn every_embeddable_rule_is_in_the_spec() {
     let embeddable: BTreeSet<String> = bynk_grammar::embeddable_rules(&grammar_json())
@@ -199,5 +200,10 @@ fn every_embeddable_rule_is_in_the_spec() {
         "grammar rules the spec never embeds: {missing:#?}\n\
          Add a `{{{{#grammar <rule>}}}}` entry for each to the spec's grammar chapter \
          (`book/spec/syntactic-grammar.md`, or `lexical-grammar.md` for a token)."
+    );
+    let extra: Vec<&String> = embedded.difference(&embeddable).collect();
+    assert!(
+        extra.is_empty(),
+        "the spec embeds rules that are not embeddable (collapsed wrappers): {extra:#?}"
     );
 }

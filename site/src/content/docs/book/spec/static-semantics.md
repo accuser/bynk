@@ -1194,6 +1194,12 @@ a type that cannot be fabricated MUST be pinned (`bynk.val.needs_pin`,
 
 {{#grammar-semantics val_expr}}
 
+A `Wire(...)` raw argument
+([§4.6.24](/book/spec/syntactic-grammar/#4624-wire_expr)) MUST occur only as an
+argument of a service address in a `system`-tier `case`
+(`bynk.test.wire_needs_system`): it hands unvalidated input to the boundary,
+which only a `system` case runs.
+
 ### §5.9c Tiers (v0.118)
 
 *(ADR 0153)* A `case` runs at one of three **tiers** — `unit` | `integration` |

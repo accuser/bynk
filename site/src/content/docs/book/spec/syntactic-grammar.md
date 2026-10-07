@@ -456,8 +456,9 @@ brace-delimited list of handlers. One protocol per service. Well-formedness: §5
 ### §4.4.1a HTTP service policies (v0.131, v0.141, v0.142)
 
 A `from http` service may open with up to three policy sections, in header
-position before its handlers: `cors { }`, `security { }`, and `limits { }`. Each
-is a brace-delimited list of `name: value` fields. `cors`, `security` and
+position before its handlers and in this order: `cors { }`, then `security { }`,
+then `limits { }`, each optional (the order is `service_decl`'s). Each is a
+brace-delimited list of `name: value` fields. `cors`, `security` and
 `limits` are contextual keywords, ordinary identifiers elsewhere. The grammar
 admits any field name and any value expression; the closed field sets, their
 value types, and the `from http`-only placement are well-formedness:
@@ -986,7 +987,8 @@ A parenthesised expression, for grouping.
 `Wire(<expr>)` — a raw, unvalidated argument to a service address in a
 `system`-tier `case` (§4.9): the `String` is the wire form the boundary
 receives, a JSON body or a path segment, so a case can drive the router with
-input the type system forbids. Its placement is well-formedness: §5.9.
+input the type system forbids. Its placement is well-formedness:
+[§5.9](/book/spec/static-semantics/#59-testing-constructs).
 
 ## §4.7 Patterns & matching
 
@@ -998,14 +1000,17 @@ The patterns used in `match` arms and `is` checks.
 
 A pattern, an optional `if` guard (an arbitrary `Bool` expression over the
 pattern's bindings), `=>`, a result expression, and an optional trailing comma —
-arm separators are optional. Well-formedness: §5.
+arm separators are optional. An arm's pattern may also be a refined pattern
+([§4.7.10](#4710-refined_pattern)), which only a `match` arm admits: it is not
+one of the `_pattern` forms, so it cannot appear after `is` or as an alternative
+or sub-pattern. Well-formedness: §5.
 
 ### §4.7.2 pattern
 
 {{#grammar _pattern}}
 
 A pattern: a wildcard, a literal, a binding, a variant pattern, an
-or-pattern, a parenthesised pattern, or a refined pattern. A
+or-pattern, or a parenthesised pattern. A
 lowercase-led identifier is a binding (it matches anything and binds the
 value); an uppercase-led one is a nullary variant — in the concrete grammar
 both parse as `variant_pattern`.
@@ -1069,12 +1074,11 @@ or-pattern. It never admits a refined pattern inside.
 
 {{#grammar refined_pattern}}
 
-`p where predicate` — a runtime guard reusing the refinement-predicate
-catalogue of [§4.2.11](#4211-refinement). Only `_ where predicate` is admitted
-(`bynk.parse.refined_pattern_inner`), and a refined pattern wraps an or-pattern
-only as the whole: `(p₁ | p₂) where predicate`. Its scrutinee types, `match`-only
-placement and exhaustiveness are well-formedness:
-[§5.6](/book/spec/static-semantics/#56-pattern-matching).
+`_ where predicate` — a runtime guard on a `match` arm, reusing the
+refinement-predicate catalogue of [§4.2.11](#4211-refinement). The inner form is
+the wildcard only: any other inner pattern, `(p₁ | p₂)` included, is
+`bynk.parse.refined_pattern_inner`. Its scrutinee types and exhaustiveness are
+well-formedness: [§5.6](/book/spec/static-semantics/#56-pattern-matching).
 
 ## §4.8 Statements
 
