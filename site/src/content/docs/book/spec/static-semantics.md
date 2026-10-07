@@ -1029,6 +1029,78 @@ is no 403 path. Verification is side-effect-free and idempotent: first-wins
 short-circuits, so the set and order of verifications attempted is observable, and
 audit/logging belongs *after* resolution.
 
+## §5.7b Events (v0.238–v0.244) {#events}
+
+An **event** is a typed fact one context emits and any number of contexts
+receive. Delivery is at-least-once and fire-and-forget: an emitter never learns
+whether, or how, a subscriber ran.
+
+**Declaration.** An `event` ([§4.1.12](/book/spec/syntactic-grammar/#4112-event_decl))
+MUST be declared in a context (`bynk.event.outside_context`). Its one admitted
+annotation is `@schema(N)` (`bynk.event.unknown_annotation`), at most once, with
+`N` a single positive `Int` literal (`bynk.event.bad_schema_version`). A field
+default (`field: T = expr`) is admitted only on an event's own fields
+(`bynk.event.default_outside_event`), and `expr` MUST be a static,
+wire-representable value of `T`: a literal admitted to `T`, a sum variant,
+`Some`/`None`/`Ok`/`Err`, a record, or `T.unsafe(lit)` for an opaque `T`
+(`bynk.event.bad_field_default`). A default is used when a received payload has
+no key for the field; a present key, `None` included, decodes as sent.
+
+**Emission.** `Events` is a first-party capability of the `bynk` adapter,
+`emit[E](event: E) -> Effect[()]`, consumed with `consumes bynk { Events }` and
+required by `given Events`; its type argument is always written, never inferred.
+`E` MUST be an `event` (`bynk.event.emit_not_an_event`) declared in the emitting
+context itself (`bynk.event.emit_outside_owner`): a context that can name a
+foreign event, to subscribe to it, still cannot emit it. An emission is released
+only when the emitting handler commits ([§5.4](#54-agents--state)); a handler that
+faults, an `InvariantViolation` included, emits nothing.
+
+**Subscription.** A `from Events(E)` service
+([§4.4.7b](/book/spec/syntactic-grammar/#447b-events-subscriptions-v0238)) MUST name an
+event declared in its own context or a consumed one
+(`bynk.event.unknown_subscription`), and its handlers MUST be `on event` handlers
+(`bynk.service.mixed_protocols`). An `on event` handler takes the payload, of
+type `E` (`bynk.event.handler_param_type_mismatch`), and optionally a second
+parameter of type `EventEnvelope`; any other parameter list is
+`bynk.event.bad_params`.
+
+**Delivery filters.** A header pattern's fields MUST be fields of `E`
+(`bynk.event.pattern_unknown_field`), each listed once
+(`bynk.event.pattern_duplicate_field`), with a value compatible with the field's
+type (`bynk.event.pattern_type_mismatch`); a variant value MUST exist on the
+field's sum type (`bynk.event.pattern_unknown_variant`) and carry no payload
+(`bynk.event.pattern_variant_payload`). Listed fields combine with AND. A
+`via schema(N)` clause MUST give a single positive `Int` literal
+(`bynk.event.bad_schema_dispatch`) and matches an emission whose envelope
+`schemaVersion` equals `N`. Both filters are **deliver-and-filter**: every
+emission of `E` is delivered to every subscriber of `E`, and each subscriber
+evaluates its own filters as a guard on entry, running its body only on a
+match. A filter does not narrow the handler parameter's type, and two
+subscribers whose filters overlap are not diagnosed.
+
+**The envelope.** `EventEnvelope`, exported by `bynk`, is
+`{ eventId: String, publisherId: String, emittedAt: Instant, schemaVersion: Int }`.
+`eventId` identifies the emission: every subscriber of one emission observes the
+same value. `publisherId` is the emitting context's qualified name.
+
+**Schema versions.** Every build reconciles each event's field shape — names,
+types, and which fields carry a default — against the project's committed
+schema registry, `bynk.schema.lock`. A new event starts at version 1, or at its
+`@schema(N)`. An unchanged shape keeps its version; an additive change, in which
+every added field has a default and no field is removed, retyped, or loses a
+default, increments it by one; any other change is
+`bynk.event.non_additive_schema_change`. A declared `@schema(N)` MUST equal the
+version so computed (`bynk.event.schema_version_mismatch`). The computed version
+is the envelope's `schemaVersion`.
+
+**Idempotent handling.** `Idempotency` is a first-party capability of the `bynk`
+adapter with two operations, `dedup[T](key: String) -> Effect[Option[T]]` and
+`remember[T](key: String, value: T, expiresAfter: Duration) -> Effect[()]`; each
+call's key is scoped to the calling handler's qualified name, so two handlers
+never share a key by accident. A subscriber that must not apply one emission
+twice deduplicates on `env.eventId` with this pair: the idiom is a documented
+convention, not syntax ([ADR 0294](https://github.com/accuser/bynk/blob/main/design/decisions/0294-events-idempotency-idiom-is-documented-convention.md)).
+
 ## §5.8 Boundaries & cross-context
 
 `consumes` MUST appear only in a context or an adapter (a `commons` or `suite`
@@ -1487,3 +1559,40 @@ service stamps {
 	}
 }
 ```
+
+## §5.11 Message bundles (v0.228–v0.234) {#messages}
+
+A **message bundle** maps message codes to templates, one `messages` block
+([§4.1.13](/book/spec/syntactic-grammar/#4113-messages_decl)) per locale. A
+`messages` block MUST be declared in a commons (`bynk.messages.outside_commons`),
+and that commons MUST `uses bynk.locale` and `uses bynk.locale.types`
+(`bynk.messages.missing_locale_dependency`). The blocks of one commons, across
+all its files, form one bundle, and the following rules hold over the bundle:
+
+- Each block's tag MUST be a valid `LocaleTag`, a well-formed BCP-47 tag in
+  canonical case (`bynk.messages.invalid_locale_tag`), and no tag may be
+  declared twice (`bynk.resolve.duplicate_message_locale`).
+- Exactly one block MUST carry `@reference` (`bynk.messages.missing_reference`,
+  `bynk.messages.multiple_reference`).
+- Every other locale MUST declare every code the reference declares
+  (`bynk.messages.incomplete`).
+- A template is ICU MessageFormat and MUST parse as the supported subset of it
+  (`bynk.messages.malformed_icu_syntax`). For each code, every locale's template
+  MUST use the same set of placeholder names, in any order
+  (`bynk.messages.placeholder_mismatch`), each with the same ICU format kind
+  (`bynk.messages.format_mismatch`).
+
+The bundle gives its commons a generated
+`render(tag: LocaleTag, msg: Message) -> String`. `render` is total: it uses the
+template for `msg.code` in `tag`'s block, else in the reference block, else
+renders the code and its parameters; a placeholder with no matching parameter is
+left as its literal text. Nothing checks that a `Message` built at a call site
+supplies the parameters its code's templates name.
+
+**The `Locale` capability** (v0.221). `Locale` is a first-party capability of the
+`bynk` adapter, `current() -> Effect[LocaleTag]`. On Cloudflare, in a context
+whose direct `uses` reach exactly one message-bundle commons, it negotiates the
+request's `Accept-Language` against that bundle's locales and falls back to its
+reference locale; otherwise it returns `"en"`. A context that consumes `Locale`
+and whose direct `uses` reach two or more bundles is
+`bynk.locale.multiple_message_bundles`.

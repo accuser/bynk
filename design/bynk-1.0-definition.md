@@ -52,9 +52,11 @@ The **Foundations layer** — "core Bynk" — is defined in the design notes §2
 (*Layered surface*): bounded contexts, the service/agent split, actor declarations
 for authentication, value types with opaque/transparent visibility, handlers
 returning `Result[T, E]`, atomic-handler semantics, the core storage surface
-(`store` fields and their write forms), and cross-agent calls via `Ref[A]`. It is
-the smallest set that reaches a working HTTP-fronted service with a persistent
-agent, and most code lives there.
+(`store` fields and their write forms), and cross-agent calls — constructing an
+agent with its key and calling a handler, `Counter(id).bump()`, from a service or
+from another agent (the shipped form; the `Ref[A]` type earlier drafts named was
+never built, #1669). It is the smallest set that reaches a working HTTP-fronted
+service with a persistent agent, and most code lives there.
 
 **Stability commits to:** a 1.0 Foundations-layer program keeps **compiling** and
 keeps its **documented static and runtime semantics** across every 1.x release. A
