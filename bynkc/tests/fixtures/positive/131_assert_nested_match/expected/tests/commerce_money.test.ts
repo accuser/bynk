@@ -2,7 +2,7 @@
 // test target: commerce.money
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
-import * as commerce_money from "./../commerce/money.js";
+import * as __ns_commerce_money from "./../commerce/money.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -33,8 +33,8 @@ function __makeTestDeps() {
 async function test_nested_match_expect() {
   try {
     const deps = {};
-    const { Money } = commerce_money;
-    type Money = commerce_money.Money;
+    const { Money } = __ns_commerce_money;
+    type Money = __ns_commerce_money.Money;
     const outer = Money.fromMinorUnits(10);
     const inner = Money.fromMinorUnits(-1);
     void (((__d) => {

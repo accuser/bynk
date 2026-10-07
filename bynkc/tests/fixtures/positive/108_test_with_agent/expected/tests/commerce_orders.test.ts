@@ -2,7 +2,7 @@
 // test target: commerce.orders
 
 import { Ok, Err, Some, None, __makeTestState, type Result, type Option, type ValidationError } from "../runtime.js";
-import * as commerce_orders from "./../commerce/orders.js";
+import * as __ns_commerce_orders from "./../commerce/orders.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -32,11 +32,11 @@ function __makeTestDeps() {
 // case tier: unit
 async function test_agent_place_reports_Ok() {
   try {
-    commerce_orders.__resetAgents();
+    __ns_commerce_orders.__resetAgents();
     const deps = __makeTestDeps();
-    const { Order, OrderError, OrderId, __makeOrder } = commerce_orders;
-    type OrderError = commerce_orders.OrderError;
-    type OrderId = commerce_orders.OrderId;
+    const { Order, OrderError, OrderId, __makeOrder } = __ns_commerce_orders;
+    type OrderError = __ns_commerce_orders.OrderError;
+    type OrderId = __ns_commerce_orders.OrderId;
     const r = await __makeOrder(OrderId.unsafe("ORD-1")).place(50, deps);
     if (!(r.tag === "Ok")) { throw __bynkExpectFailure("tests/orders.test.bynk:4:12", 123, 133, "expect r is Ok(_)"); }
     return { pass: true };
@@ -51,11 +51,11 @@ async function test_agent_place_reports_Ok() {
 // case tier: unit
 async function test_agent_place_reports_NotPlaced_for_zero() {
   try {
-    commerce_orders.__resetAgents();
+    __ns_commerce_orders.__resetAgents();
     const deps = __makeTestDeps();
-    const { Order, OrderError, OrderId, __makeOrder } = commerce_orders;
-    type OrderError = commerce_orders.OrderError;
-    type OrderId = commerce_orders.OrderId;
+    const { Order, OrderError, OrderId, __makeOrder } = __ns_commerce_orders;
+    type OrderError = __ns_commerce_orders.OrderError;
+    type OrderId = __ns_commerce_orders.OrderId;
     const r = await __makeOrder(OrderId.unsafe("ORD-2")).place(0, deps);
     if (!(r.tag === "Err")) { throw __bynkExpectFailure("tests/orders.test.bynk:9:12", 253, 264, "expect r is Err(_)"); }
     return { pass: true };

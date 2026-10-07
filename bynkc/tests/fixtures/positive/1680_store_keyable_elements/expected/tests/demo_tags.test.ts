@@ -2,7 +2,7 @@
 // test target: demo.tags
 
 import { Ok, Err, Some, None, __makeTestState, type Result, type Option, type ValidationError } from "../runtime.js";
-import * as demo_tags from "./../demo/tags.js";
+import * as __ns_demo_tags from "./../demo/tags.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -32,11 +32,11 @@ function __makeTestDeps() {
 // case tier: unit
 async function test_a_Set_of_a_refined_String() {
   try {
-    demo_tags.__resetAgents();
+    __ns_demo_tags.__resetAgents();
     const deps = __makeTestDeps();
-    const { Board, Tag, UserId, __makeBoard } = demo_tags;
-    type Tag = demo_tags.Tag;
-    type UserId = demo_tags.UserId;
+    const { Board, Tag, UserId, __makeBoard } = __ns_demo_tags;
+    type Tag = __ns_demo_tags.Tag;
+    type UserId = __ns_demo_tags.UserId;
     const t: Tag = ("urgent" as any);
     const u: Tag = ("later" as any);
     await __makeBoard("b").tag(t, deps);
@@ -56,11 +56,11 @@ async function test_a_Set_of_a_refined_String() {
 // case tier: unit
 async function test_a_Map_keyed_by_an_opaque_String() {
   try {
-    demo_tags.__resetAgents();
+    __ns_demo_tags.__resetAgents();
     const deps = __makeTestDeps();
-    const { Board, Tag, UserId, __makeBoard } = demo_tags;
-    type Tag = demo_tags.Tag;
-    type UserId = demo_tags.UserId;
+    const { Board, Tag, UserId, __makeBoard } = __ns_demo_tags;
+    type Tag = __ns_demo_tags.Tag;
+    type UserId = __ns_demo_tags.UserId;
     const alice = UserId.unsafe("alice");
     const bob = UserId.unsafe("bob");
     await __makeBoard("m").own(alice, 3, deps);

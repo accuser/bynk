@@ -2,7 +2,7 @@
 // test target: demo.ledger
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, __bynkEq } from "../runtime.js";
-import * as demo_ledger from "./../demo/ledger.js";
+import * as __ns_demo_ledger from "./../demo/ledger.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -42,12 +42,12 @@ function __bynkRecordDeps(deps: any, spec: Record<string, string[]>, obs: { log:
   return deps;
 }
 
-type __Audit_note_Call = { e: demo_ledger.Entry<number> };
+type __Audit_note_Call = { e: __ns_demo_ledger.Entry<number> };
 
 class __Stub_Audit {
-  async note(e: demo_ledger.Entry<number>): globalThis.Promise<void> {
-    const { Entry } = demo_ledger;
-    type Entry<T> = demo_ledger.Entry<T>;
+  async note(e: __ns_demo_ledger.Entry<number>): globalThis.Promise<void> {
+    const { Entry } = __ns_demo_ledger;
+    type Entry<T> = __ns_demo_ledger.Entry<T>;
     if (true) {
       return undefined;
     }
@@ -76,7 +76,7 @@ function __bynkOverlay(base: unknown, stub: object, cap: string): unknown {
 }
 
 function __makeTestDeps() {
-  return { Audit: __bynkOverlay(new demo_ledger.SilentAudit(), new __Stub_Audit(), "Audit") as demo_ledger.Audit };
+  return { Audit: __bynkOverlay(new __ns_demo_ledger.SilentAudit(), new __Stub_Audit(), "Audit") as __ns_demo_ledger.Audit };
 }
 
 // case tier: unit
@@ -84,8 +84,8 @@ async function test_a_stub_over_a_capability_taking_a_generic_type() {
   try {
     const __obs = { log: {} as globalThis.Record<string, { args: unknown[]; order: number }[]>, n: 0 };
     const deps = __bynkRecordDeps(__makeTestDeps(), { Audit: ["note"] }, __obs);
-    const { Entry, post } = demo_ledger;
-    type Entry<T> = demo_ledger.Entry<T>;
+    const { Entry, post } = __ns_demo_ledger;
+    type Entry<T> = __ns_demo_ledger.Entry<T>;
     const n = await post.call(3, deps);
     if (!(__bynkEq(n, 3))) { throw __bynkExpectFailure("tests/demo/ledger.bynk:10:12", 278, 284, "expect n == 3\n  expected: n == 3\n  actual:   " + __bynkShow((n)) + " == " + __bynkShow((3))); }
     if (!(((__obs.log["Audit.note"] ?? []).length === (1)))) { throw __bynkExpectFailure("tests/demo/ledger.bynk:11:12", 296, 318, "expect Audit.note called once"); }

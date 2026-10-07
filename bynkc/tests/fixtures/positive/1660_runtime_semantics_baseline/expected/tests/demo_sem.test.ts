@@ -2,7 +2,7 @@
 // test target: demo.sem
 
 import { Ok, Err, Some, None, __makeTestState, type Result, type Option, type ValidationError } from "../runtime.js";
-import * as demo_sem from "./../demo/sem.js";
+import * as __ns_demo_sem from "./../demo/sem.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -32,11 +32,11 @@ function __makeTestDeps() {
 // case tier: unit
 async function test_a_scalar_Cell_reads_back_after_a_reload() {
   try {
-    demo_sem.__resetAgents();
+    __ns_demo_sem.__resetAgents();
     const deps = __makeTestDeps();
-    const { Bag, Gauge, Lamp, Light, Meter, Panel, Pt, __makeBag, __makeGauge, __makeLamp, __makeMeter, __makePanel, literalReplace, samePoint, sameReading, survivesJson } = demo_sem;
-    type Light = demo_sem.Light;
-    type Pt = demo_sem.Pt;
+    const { Bag, Gauge, Lamp, Light, Meter, Panel, Pt, __makeBag, __makeGauge, __makeLamp, __makeMeter, __makePanel, literalReplace, samePoint, sameReading, survivesJson } = __ns_demo_sem;
+    type Light = __ns_demo_sem.Light;
+    type Pt = __ns_demo_sem.Pt;
     await __makeGauge("scalar").setLevel(7, deps);
     const n = await __makeGauge("scalar").getLevel(deps);
     if (!(n === 7)) { throw __bynkExpectFailure("tests/demo/sem.bynk:10:10", 293, 299, "expect n == 7\n  expected: n == 7\n  actual:   " + __bynkShow((n)) + " == " + __bynkShow((7))); }
@@ -52,11 +52,11 @@ async function test_a_scalar_Cell_reads_back_after_a_reload() {
 // case tier: unit
 async function test_a_scalar_Cell_beside_an_enum_Cell_reads_back_after_a_reload() {
   try {
-    demo_sem.__resetAgents();
+    __ns_demo_sem.__resetAgents();
     const deps = __makeTestDeps();
-    const { Bag, Gauge, Lamp, Light, Meter, Panel, Pt, __makeBag, __makeGauge, __makeLamp, __makeMeter, __makePanel, literalReplace, samePoint, sameReading, survivesJson } = demo_sem;
-    type Light = demo_sem.Light;
-    type Pt = demo_sem.Pt;
+    const { Bag, Gauge, Lamp, Light, Meter, Panel, Pt, __makeBag, __makeGauge, __makeLamp, __makeMeter, __makePanel, literalReplace, samePoint, sameReading, survivesJson } = __ns_demo_sem;
+    type Light = __ns_demo_sem.Light;
+    type Pt = __ns_demo_sem.Pt;
     await __makePanel("beside").setLevel(7, deps);
     const n = await __makePanel("beside").getLevel(deps);
     if (!(n === 7)) { throw __bynkExpectFailure("tests/demo/sem.bynk:16:10", 452, 458, "expect n == 7\n  expected: n == 7\n  actual:   " + __bynkShow((n)) + " == " + __bynkShow((7))); }
@@ -72,11 +72,11 @@ async function test_a_scalar_Cell_beside_an_enum_Cell_reads_back_after_a_reload(
 // case tier: unit
 async function test_an_enum_Cell_reads_back_after_a_reload() {
   try {
-    demo_sem.__resetAgents();
+    __ns_demo_sem.__resetAgents();
     const deps = __makeTestDeps();
-    const { Bag, Gauge, Lamp, Light, Meter, Panel, Pt, __makeBag, __makeGauge, __makeLamp, __makeMeter, __makePanel, literalReplace, samePoint, sameReading, survivesJson } = demo_sem;
-    type Light = demo_sem.Light;
-    type Pt = demo_sem.Pt;
+    const { Bag, Gauge, Lamp, Light, Meter, Panel, Pt, __makeBag, __makeGauge, __makeLamp, __makeMeter, __makePanel, literalReplace, samePoint, sameReading, survivesJson } = __ns_demo_sem;
+    type Light = __ns_demo_sem.Light;
+    type Pt = __ns_demo_sem.Pt;
     await __makeLamp("enum").turnGreen(deps);
     const green = await __makeLamp("enum").isGreen(deps);
     if (!(green)) { throw __bynkExpectFailure("tests/demo/sem.bynk:22:10", 587, 592, "expect green"); }
@@ -92,11 +92,11 @@ async function test_an_enum_Cell_reads_back_after_a_reload() {
 // case tier: unit
 async function test_an_Option_Cell_reads_back_after_a_reload() {
   try {
-    demo_sem.__resetAgents();
+    __ns_demo_sem.__resetAgents();
     const deps = __makeTestDeps();
-    const { Bag, Gauge, Lamp, Light, Meter, Panel, Pt, __makeBag, __makeGauge, __makeLamp, __makeMeter, __makePanel, literalReplace, samePoint, sameReading, survivesJson } = demo_sem;
-    type Light = demo_sem.Light;
-    type Pt = demo_sem.Pt;
+    const { Bag, Gauge, Lamp, Light, Meter, Panel, Pt, __makeBag, __makeGauge, __makeLamp, __makeMeter, __makePanel, literalReplace, samePoint, sameReading, survivesJson } = __ns_demo_sem;
+    type Light = __ns_demo_sem.Light;
+    type Pt = __ns_demo_sem.Pt;
     await __makeMeter("option").note(3, deps);
     const r = await __makeMeter("option").lastReading(deps);
     if (!(r === 3)) { throw __bynkExpectFailure("tests/demo/sem.bynk:28:10", 725, 731, "expect r == 3\n  expected: r == 3\n  actual:   " + __bynkShow((r)) + " == " + __bynkShow((3))); }
@@ -112,11 +112,11 @@ async function test_an_Option_Cell_reads_back_after_a_reload() {
 // case tier: unit
 async function test_an_enum_survives_a_JSON_round_trip() {
   try {
-    demo_sem.__resetAgents();
+    __ns_demo_sem.__resetAgents();
     const deps = __makeTestDeps();
-    const { Bag, Gauge, Lamp, Light, Meter, Panel, Pt, __makeBag, __makeGauge, __makeLamp, __makeMeter, __makePanel, literalReplace, samePoint, sameReading, survivesJson } = demo_sem;
-    type Light = demo_sem.Light;
-    type Pt = demo_sem.Pt;
+    const { Bag, Gauge, Lamp, Light, Meter, Panel, Pt, __makeBag, __makeGauge, __makeLamp, __makeMeter, __makePanel, literalReplace, samePoint, sameReading, survivesJson } = __ns_demo_sem;
+    type Light = __ns_demo_sem.Light;
+    type Pt = __ns_demo_sem.Pt;
     if (!(survivesJson(Light.Green))) { throw __bynkExpectFailure("tests/demo/sem.bynk:32:10", 788, 807, "expect survivesJson(Green)"); }
     return { pass: true };
   } catch (e) {
@@ -130,11 +130,11 @@ async function test_an_enum_survives_a_JSON_round_trip() {
 // case tier: unit
 async function test_a_record_equals_an_identical_record() {
   try {
-    demo_sem.__resetAgents();
+    __ns_demo_sem.__resetAgents();
     const deps = __makeTestDeps();
-    const { Bag, Gauge, Lamp, Light, Meter, Panel, Pt, __makeBag, __makeGauge, __makeLamp, __makeMeter, __makePanel, literalReplace, samePoint, sameReading, survivesJson } = demo_sem;
-    type Light = demo_sem.Light;
-    type Pt = demo_sem.Pt;
+    const { Bag, Gauge, Lamp, Light, Meter, Panel, Pt, __makeBag, __makeGauge, __makeLamp, __makeMeter, __makePanel, literalReplace, samePoint, sameReading, survivesJson } = __ns_demo_sem;
+    type Light = __ns_demo_sem.Light;
+    type Pt = __ns_demo_sem.Pt;
     if (!(samePoint({ x: 1, y: 2 }, { x: 1, y: 2 }))) { throw __bynkExpectFailure("tests/demo/sem.bynk:36:10", 865, 912, "expect samePoint(Pt { x: 1, y: 2 }, Pt { x: 1, y: 2 })"); }
     return { pass: true };
   } catch (e) {
@@ -148,11 +148,11 @@ async function test_a_record_equals_an_identical_record() {
 // case tier: unit
 async function test_Some_1__equals_Some_1_() {
   try {
-    demo_sem.__resetAgents();
+    __ns_demo_sem.__resetAgents();
     const deps = __makeTestDeps();
-    const { Bag, Gauge, Lamp, Light, Meter, Panel, Pt, __makeBag, __makeGauge, __makeLamp, __makeMeter, __makePanel, literalReplace, samePoint, sameReading, survivesJson } = demo_sem;
-    type Light = demo_sem.Light;
-    type Pt = demo_sem.Pt;
+    const { Bag, Gauge, Lamp, Light, Meter, Panel, Pt, __makeBag, __makeGauge, __makeLamp, __makeMeter, __makePanel, literalReplace, samePoint, sameReading, survivesJson } = __ns_demo_sem;
+    type Light = __ns_demo_sem.Light;
+    type Pt = __ns_demo_sem.Pt;
     if (!(sameReading(Some(1), Some(1)))) { throw __bynkExpectFailure("tests/demo/sem.bynk:40:10", 957, 986, "expect sameReading(Some(1), Some(1))"); }
     return { pass: true };
   } catch (e) {
@@ -166,11 +166,11 @@ async function test_Some_1__equals_Some_1_() {
 // case tier: unit
 async function test_String_replace_inserts_its_replacement_literally() {
   try {
-    demo_sem.__resetAgents();
+    __ns_demo_sem.__resetAgents();
     const deps = __makeTestDeps();
-    const { Bag, Gauge, Lamp, Light, Meter, Panel, Pt, __makeBag, __makeGauge, __makeLamp, __makeMeter, __makePanel, literalReplace, samePoint, sameReading, survivesJson } = demo_sem;
-    type Light = demo_sem.Light;
-    type Pt = demo_sem.Pt;
+    const { Bag, Gauge, Lamp, Light, Meter, Panel, Pt, __makeBag, __makeGauge, __makeLamp, __makeMeter, __makePanel, literalReplace, samePoint, sameReading, survivesJson } = __ns_demo_sem;
+    type Light = __ns_demo_sem.Light;
+    type Pt = __ns_demo_sem.Pt;
     if (!(literalReplace() === "$&b$&b$&b")) { throw __bynkExpectFailure("tests/demo/sem.bynk:44:10", 1057, 1088, "expect literalReplace() == \"$&b$&b$&b\"\n  expected: literalReplace() == \"$&b$&b$&b\"\n  actual:   " + __bynkShow((literalReplace())) + " == " + __bynkShow(("$&b$&b$&b"))); }
     return { pass: true };
   } catch (e) {
@@ -184,11 +184,11 @@ async function test_String_replace_inserts_its_replacement_literally() {
 // case tier: unit
 async function test_a_store_Map_keeps_a___proto___key_like_any_other() {
   try {
-    demo_sem.__resetAgents();
+    __ns_demo_sem.__resetAgents();
     const deps = __makeTestDeps();
-    const { Bag, Gauge, Lamp, Light, Meter, Panel, Pt, __makeBag, __makeGauge, __makeLamp, __makeMeter, __makePanel, literalReplace, samePoint, sameReading, survivesJson } = demo_sem;
-    type Light = demo_sem.Light;
-    type Pt = demo_sem.Pt;
+    const { Bag, Gauge, Lamp, Light, Meter, Panel, Pt, __makeBag, __makeGauge, __makeLamp, __makeMeter, __makePanel, literalReplace, samePoint, sameReading, survivesJson } = __ns_demo_sem;
+    type Light = __ns_demo_sem.Light;
+    type Pt = __ns_demo_sem.Pt;
     await __makeBag("proto").add("__proto__", deps);
     const n = await __makeBag("proto").count(deps);
     if (!(n === 1)) { throw __bynkExpectFailure("tests/demo/sem.bynk:50:10", 1226, 1232, "expect n == 1\n  expected: n == 1\n  actual:   " + __bynkShow((n)) + " == " + __bynkShow((1))); }
@@ -204,11 +204,11 @@ async function test_a_store_Map_keeps_a___proto___key_like_any_other() {
 // case tier: unit
 async function test_a_store_Map_has_no_inherited_keys() {
   try {
-    demo_sem.__resetAgents();
+    __ns_demo_sem.__resetAgents();
     const deps = __makeTestDeps();
-    const { Bag, Gauge, Lamp, Light, Meter, Panel, Pt, __makeBag, __makeGauge, __makeLamp, __makeMeter, __makePanel, literalReplace, samePoint, sameReading, survivesJson } = demo_sem;
-    type Light = demo_sem.Light;
-    type Pt = demo_sem.Pt;
+    const { Bag, Gauge, Lamp, Light, Meter, Panel, Pt, __makeBag, __makeGauge, __makeLamp, __makeMeter, __makePanel, literalReplace, samePoint, sameReading, survivesJson } = __ns_demo_sem;
+    type Light = __ns_demo_sem.Light;
+    type Pt = __ns_demo_sem.Pt;
     const h = await __makeBag("inherited").has("constructor", deps);
     if (!(h === false)) { throw __bynkExpectFailure("tests/demo/sem.bynk:55:10", 1335, 1345, "expect h == false\n  expected: h == false\n  actual:   " + __bynkShow((h)) + " == " + __bynkShow((false))); }
     return { pass: true };

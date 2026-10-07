@@ -1,0 +1,6 @@
+-- #1759: the same for a commons whose name matches one of its declarations.
+commons tally
+
+fn tally(xs: List[Int]) -> Int {
+  xs.fold(0, (acc: Int, x: Int) => acc + x)
+}

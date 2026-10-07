@@ -2,7 +2,7 @@
 // test target: demo.registry
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, __bynkEq } from "../runtime.js";
-import * as demo_registry from "./../demo/registry.js";
+import * as __ns_demo_registry from "./../demo/registry.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -27,10 +27,10 @@ function __bynkShow(v: unknown): string {
 
 class __Stub_Clock {
   async now(): globalThis.Promise<number> {
-    const { Code, RegError, Target } = demo_registry;
-    type Code = demo_registry.Code;
-    type RegError = demo_registry.RegError;
-    type Target = demo_registry.Target;
+    const { Code, RegError, Target } = __ns_demo_registry;
+    type Code = __ns_demo_registry.Code;
+    type RegError = __ns_demo_registry.RegError;
+    type Target = __ns_demo_registry.Target;
     if (true) {
       return 7;
     }
@@ -59,17 +59,17 @@ function __bynkOverlay(base: unknown, stub: object, cap: string): unknown {
 }
 
 function __makeTestDeps() {
-  return { Clock: __bynkOverlay(new demo_registry.SystemClock(), new __Stub_Clock(), "Clock") as demo_registry.Clock };
+  return { Clock: __bynkOverlay(new __ns_demo_registry.SystemClock(), new __Stub_Clock(), "Clock") as __ns_demo_registry.Clock };
 }
 
 // case tier: unit
 async function test_create_accepts_two_args_and_threads_deps() {
   try {
     const deps = __makeTestDeps();
-    const { Code, RegError, Target, create } = demo_registry;
-    type Code = demo_registry.Code;
-    type RegError = demo_registry.RegError;
-    type Target = demo_registry.Target;
+    const { Code, RegError, Target, create } = __ns_demo_registry;
+    type Code = __ns_demo_registry.Code;
+    type RegError = __ns_demo_registry.RegError;
+    type Target = __ns_demo_registry.Target;
     void (await (async (__d) => {
         switch (__d.tag) {
           case "Err": {

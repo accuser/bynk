@@ -2,9 +2,9 @@
 // test target: demo.desk
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, __bynkEq } from "../runtime.js";
-import * as demo_desk from "./../demo/desk.js";
-import * as demo_vault from "./../demo/vault.js";
-import * as demo_shapes from "./../demo/shapes.js";
+import * as __ns_demo_desk from "./../demo/desk.js";
+import * as __ns_demo_vault from "./../demo/vault.js";
+import * as __ns_demo_shapes from "./../demo/shapes.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -28,18 +28,18 @@ function __bynkShow(v: unknown): string {
 }
 
 function __makeTestDeps() {
-  return { surface: { Vault: undefined as unknown as globalThis.ReturnType<typeof demo_vault.__makeSurface> } };
+  return { surface: { Vault: undefined as unknown as globalThis.ReturnType<typeof __ns_demo_vault.__makeSurface> } };
 }
 
 // case tier: unit
 async function test_a_generic_type_from_a_consumed_context_is_in_scope() {
   try {
     const deps = __makeTestDeps();
-    const { check, pairUp } = demo_desk;
-    const { Pair, pairOf } = demo_shapes;
-    type Pair<A, B> = demo_shapes.Pair<A, B>;
-    const { Envelope } = demo_vault;
-    type Envelope<T> = demo_vault.Envelope<T>;
+    const { check, pairUp } = __ns_demo_desk;
+    const { Pair, pairOf } = __ns_demo_shapes;
+    type Pair<A, B> = __ns_demo_shapes.Pair<A, B>;
+    const { Envelope } = __ns_demo_vault;
+    type Envelope<T> = __ns_demo_vault.Envelope<T>;
     const Vault = (deps as any).surface?.Vault;
     const n = await pairUp.call(9, deps);
     if (!(__bynkEq(n, 9))) { throw __bynkExpectFailure("tests/demo/desk.bynk:9:10", 271, 277, "expect n == 9\n  expected: n == 9\n  actual:   " + __bynkShow((n)) + " == " + __bynkShow((9))); }

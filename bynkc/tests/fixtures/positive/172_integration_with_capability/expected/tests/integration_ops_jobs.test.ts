@@ -2,10 +2,10 @@
 // system test: ops.jobs
 
 import { Ok, Err, Some, None, __callService, type Result, type Option, type ValidationError, type JsonError, type __JsonValue, type __BoundaryError, type __ServiceBinding, __responseToHttpResult, __responseToHttpOutcome, __responseToUnauthOutcome } from "../runtime.js";
-import * as ops_jobs from "../workers/ops-jobs/handlers.js";
-import worker_ops_jobs from "../workers/ops-jobs/index.js";
-import * as platform_time from "../workers/platform-time/handlers.js";
-import worker_platform_time from "../workers/platform-time/index.js";
+import * as __ns_ops_jobs from "../workers/ops-jobs/handlers.js";
+import worker___ns_ops_jobs from "../workers/ops-jobs/index.js";
+import * as __ns_platform_time from "../workers/platform-time/handlers.js";
+import worker___ns_platform_time from "../workers/platform-time/index.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -29,19 +29,19 @@ function __bynkShow(v: unknown): string {
 }
 
 function __makeHarness() {
-  const env_ops_jobs: any = {};
-  const env_platform_time: any = {};
-  env_ops_jobs.PLATFORM_TIME = { fetch: (req: globalThis.Request) => worker_platform_time.fetch(req, env_platform_time) } as __ServiceBinding;
+  const env___ns_ops_jobs: any = {};
+  const env___ns_platform_time: any = {};
+  env___ns_ops_jobs.PLATFORM_TIME = { fetch: (req: globalThis.Request) => worker___ns_platform_time.fetch(req, env___ns_platform_time) } as __ServiceBinding;
   const rootEnv: any = {};
-  rootEnv.OPS_JOBS = { fetch: (req: globalThis.Request) => worker_ops_jobs.fetch(req, env_ops_jobs) } as __ServiceBinding;
-  rootEnv.PLATFORM_TIME = { fetch: (req: globalThis.Request) => worker_platform_time.fetch(req, env_platform_time) } as __ServiceBinding;
+  rootEnv.OPS_JOBS = { fetch: (req: globalThis.Request) => worker___ns_ops_jobs.fetch(req, env___ns_ops_jobs) } as __ServiceBinding;
+  rootEnv.PLATFORM_TIME = { fetch: (req: globalThis.Request) => worker___ns_platform_time.fetch(req, env___ns_platform_time) } as __ServiceBinding;
   return { env: rootEnv };
 }
 
 async function test_tick_reads_the_clock_and_succeeds() {
   try {
     const deps = __makeHarness();
-    const r = await __callService(deps.env.OPS_JOBS, "tick", {  }, ops_jobs.__deserialise_Result_Int_TickError, "integration", "12c6f9c0fb6f00af");
+    const r = await __callService(deps.env.OPS_JOBS, "tick", {  }, __ns_ops_jobs.__deserialise_Result_Int_TickError, "integration", "12c6f9c0fb6f00af");
     if (!(r.tag === "Ok")) { throw __bynkExpectFailure("check.bynk:9:12", 318, 328, "expect r is Ok(_)"); }
     return { pass: true };
   } catch (e) {

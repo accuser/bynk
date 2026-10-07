@@ -2,7 +2,7 @@
 // test target: commerce.payment
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
-import * as commerce_payment from "./../commerce/payment.js";
+import * as __ns_commerce_payment from "./../commerce/payment.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -27,9 +27,9 @@ function __bynkShow(v: unknown): string {
 
 class __Stub_Logger {
   async log(msg: string): globalThis.Promise<void> {
-    const { AuthId, PaymentError } = commerce_payment;
-    type AuthId = commerce_payment.AuthId;
-    type PaymentError = commerce_payment.PaymentError;
+    const { AuthId, PaymentError } = __ns_commerce_payment;
+    type AuthId = __ns_commerce_payment.AuthId;
+    type PaymentError = __ns_commerce_payment.PaymentError;
     if (true) {
       return undefined;
     }
@@ -58,16 +58,16 @@ function __bynkOverlay(base: unknown, stub: object, cap: string): unknown {
 }
 
 function __makeTestDeps() {
-  return { Logger: __bynkOverlay(new commerce_payment.ConsoleLogger(), new __Stub_Logger(), "Logger") as commerce_payment.Logger };
+  return { Logger: __bynkOverlay(new __ns_commerce_payment.ConsoleLogger(), new __Stub_Logger(), "Logger") as __ns_commerce_payment.Logger };
 }
 
 // case tier: unit
 async function test_authorise_returns_Ok_for_a_small_positive_amount() {
   try {
     const deps = __makeTestDeps();
-    const { AuthId, PaymentError, authorise } = commerce_payment;
-    type AuthId = commerce_payment.AuthId;
-    type PaymentError = commerce_payment.PaymentError;
+    const { AuthId, PaymentError, authorise } = __ns_commerce_payment;
+    type AuthId = __ns_commerce_payment.AuthId;
+    type PaymentError = __ns_commerce_payment.PaymentError;
     const result = await authorise.call(100, deps);
     if (!(result.tag === "Ok")) { throw __bynkExpectFailure("tests/payment.test.bynk:6:12", 167, 182, "expect result is Ok(_)"); }
     return { pass: true };
@@ -83,9 +83,9 @@ async function test_authorise_returns_Ok_for_a_small_positive_amount() {
 async function test_authorise_returns_Err_Declined__for_zero() {
   try {
     const deps = __makeTestDeps();
-    const { AuthId, PaymentError, authorise } = commerce_payment;
-    type AuthId = commerce_payment.AuthId;
-    type PaymentError = commerce_payment.PaymentError;
+    const { AuthId, PaymentError, authorise } = __ns_commerce_payment;
+    type AuthId = __ns_commerce_payment.AuthId;
+    type PaymentError = __ns_commerce_payment.PaymentError;
     const result = await authorise.call(0, deps);
     void (((__d) => {
         if (__d.tag === "Err" && __d.error.tag === "Declined") {
@@ -108,9 +108,9 @@ async function test_authorise_returns_Err_Declined__for_zero() {
 async function test_authorise_returns_Err_InsufficientFunds__for_large_amounts() {
   try {
     const deps = __makeTestDeps();
-    const { AuthId, PaymentError, authorise } = commerce_payment;
-    type AuthId = commerce_payment.AuthId;
-    type PaymentError = commerce_payment.PaymentError;
+    const { AuthId, PaymentError, authorise } = __ns_commerce_payment;
+    type AuthId = __ns_commerce_payment.AuthId;
+    type PaymentError = __ns_commerce_payment.PaymentError;
     const result = await authorise.call(2000000, deps);
     void (((__d) => {
         if (__d.tag === "Err" && __d.error.tag === "InsufficientFunds") {

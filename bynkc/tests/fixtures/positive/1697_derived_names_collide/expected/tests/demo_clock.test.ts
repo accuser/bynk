@@ -2,7 +2,7 @@
 // test target: demo.clock
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, __bynkEq } from "../runtime.js";
-import * as demo_clock from "./../demo/clock.js";
+import * as __ns_demo_clock from "./../demo/clock.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -26,16 +26,16 @@ function __bynkShow(v: unknown): string {
 }
 
 function __makeTestDeps() {
-  return { Clock: new demo_clock.SystemClock() };
+  return { Clock: new __ns_demo_clock.SystemClock() };
 }
 
 // case tier: unit
 async function test_the_generated_names_don_t_collide() {
   try {
     const deps = __makeTestDeps();
-    const { ClockToken, DemoClockDeps, SystemClockProvider, makeSurface, makeTestDeps, time } = demo_clock;
-    type ClockToken = demo_clock.ClockToken;
-    type DemoClockDeps = demo_clock.DemoClockDeps;
+    const { ClockToken, DemoClockDeps, SystemClockProvider, makeSurface, makeTestDeps, time } = __ns_demo_clock;
+    type ClockToken = __ns_demo_clock.ClockToken;
+    type DemoClockDeps = __ns_demo_clock.DemoClockDeps;
     const t = await time.call(deps);
     if (!(__bynkEq(t, 57))) { throw __bynkExpectFailure("tests/demo/clock.bynk:5:10", 93, 100, "expect t == 57\n  expected: t == 57\n  actual:   " + __bynkShow((t)) + " == " + __bynkShow((57))); }
     return { pass: true };

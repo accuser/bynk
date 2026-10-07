@@ -2,7 +2,7 @@
 // test target: demo.codes
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
-import * as demo_codes from "./../demo/codes.js";
+import * as __ns_demo_codes from "./../demo/codes.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -33,8 +33,8 @@ function __makeTestDeps() {
 async function test_a_value_within_the_bound_and_the_pattern_is_accepted() {
   try {
     const deps = {};
-    const { Code, accepts, admits } = demo_codes;
-    type Code = demo_codes.Code;
+    const { Code, accepts, admits } = __ns_demo_codes;
+    type Code = __ns_demo_codes.Code;
     if (!(accepts("12-34"))) { throw __bynkExpectFailure("tests/demo/codes.bynk:7:10", 151, 167, "expect accepts(\"12-34\")"); }
     if (!(admits("12-34"))) { throw __bynkExpectFailure("tests/demo/codes.bynk:8:10", 177, 192, "expect admits(\"12-34\")"); }
     return { pass: true };
@@ -50,8 +50,8 @@ async function test_a_value_within_the_bound_and_the_pattern_is_accepted() {
 async function test_a_value_outside_the_pattern_is_rejected() {
   try {
     const deps = {};
-    const { Code, accepts, admits } = demo_codes;
-    type Code = demo_codes.Code;
+    const { Code, accepts, admits } = __ns_demo_codes;
+    type Code = __ns_demo_codes.Code;
     if (!(!accepts("12-ab"))) { throw __bynkExpectFailure("tests/demo/codes.bynk:12:10", 254, 271, "expect !accepts(\"12-ab\")"); }
     if (!(!admits("12-ab"))) { throw __bynkExpectFailure("tests/demo/codes.bynk:13:10", 281, 297, "expect !admits(\"12-ab\")"); }
     return { pass: true };
@@ -67,8 +67,8 @@ async function test_a_value_outside_the_pattern_is_rejected() {
 async function test_a_value_over_the_length_bound_is_rejected() {
   try {
     const deps = {};
-    const { Code, accepts, admits } = demo_codes;
-    type Code = demo_codes.Code;
+    const { Code, accepts, admits } = __ns_demo_codes;
+    type Code = __ns_demo_codes.Code;
     if (!(!accepts("12345678901234567"))) { throw __bynkExpectFailure("tests/demo/codes.bynk:17:10", 361, 390, "expect !accepts(\"12345678901234567\")"); }
     if (!(!admits("12345678901234567"))) { throw __bynkExpectFailure("tests/demo/codes.bynk:18:10", 400, 428, "expect !admits(\"12345678901234567\")"); }
     return { pass: true };
