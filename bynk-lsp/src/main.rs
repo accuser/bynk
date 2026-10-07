@@ -6,5 +6,12 @@
 
 #[tokio::main]
 async fn main() {
-    bynk_lsp::run().await;
+    let code = bynk_lsp::run().await;
+    // #1667: exit here rather than returning, so a stdin read still pending
+    // on a blocking thread can't hold the process open past `exit`.
+    std::process::exit(if code == std::process::ExitCode::SUCCESS {
+        0
+    } else {
+        1
+    });
 }
