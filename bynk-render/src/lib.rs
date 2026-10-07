@@ -43,49 +43,98 @@ pub fn print_errors(errors: &[CompileError], source: &str, filename: &str) {
     let _ = std::io::stderr().lock().write_all(&out);
 }
 
-/// The ariadne reports for `errors`. When a line of `source` is longer than
-/// [`MAX_LINE`], each report renders its own copy of the source, cut by
-/// [`cropped`].
+/// The ariadne reports for `errors`. A report whose spans touch a line
+/// longer than [`MAX_LINE`] renders its own copy of the source, cut by
+/// [`cropped`]; the rest share one view of `source`.
 fn render_all(errors: &[CompileError], source: &str, filename: &str, color: bool) -> Vec<u8> {
-    let report = |err: &CompileError, source: &str, out: &mut Vec<u8>| {
-        let mut cache = (filename, Source::from(source));
+    fn write<'a>(
+        err: &'a CompileError,
+        filename: &'a str,
+        cache: &mut (&'a str, Source<&str>),
+        color: bool,
+        out: &mut Vec<u8>,
+    ) {
+        let source = cache.1.text();
         let report = if color {
             err.report_for(filename, source)
         } else {
             err.report_plain_for(filename, source)
         };
         report
-            .write(&mut cache, out)
+            .write(&mut *cache, out)
             .expect("write to Vec<u8> cannot fail");
-    };
-    let mut out = Vec::new();
-    if !source.lines().any(|l| l.len() > MAX_LINE) {
-        for err in errors {
-            report(err, source, &mut out);
-        }
-        return out;
     }
+    let long = long_lines(source);
+    let mut cache = (filename, Source::from(source));
+    let mut index = None;
+    let mut out = Vec::new();
     for err in errors {
+        let touches_long = std::iter::once(&err.span)
+            .chain(err.labels.iter().map(|(s, _)| s))
+            .filter(|s| fits(s, source))
+            .any(|s| {
+                long.iter()
+                    .any(|&(start, end)| s.start <= end && s.end >= start)
+            });
+        if !touches_long {
+            write(err, filename, &mut cache, color, &mut out);
+            continue;
+        }
         let (shown, shown_err) = cropped(err, source);
         let mut one = Vec::new();
-        report(&shown_err, &shown, &mut one);
+        write(
+            &shown_err,
+            filename,
+            &mut (filename, Source::from(&*shown)),
+            color,
+            &mut one,
+        );
         // ariadne heads the report with the primary span's `line:col` in the
         // text it was given; on a line cut at its start that column is the cut
         // one. Put back the column in the file, as the short form reports it.
         let cut = span::line_col(&shown, shown_err.span.start);
-        let real = span::line_col(source, err.span.start);
+        let real = index
+            .get_or_insert_with(|| span::LineIndex::new(source))
+            .line_col(source, err.span.start);
         if cut != real {
-            one = String::from_utf8_lossy(&one)
-                .replacen(
-                    &format!("{filename}:{}:{}", cut.0, cut.1),
-                    &format!("{filename}:{}:{}", real.0, real.1),
-                    1,
-                )
-                .into_bytes();
+            one = fix_header(
+                &one,
+                &format!("{filename}:{}:{}", cut.0, cut.1),
+                &format!("{filename}:{}:{}", real.0, real.1),
+            );
         }
         out.extend(one);
     }
     out
+}
+
+/// The `[start, end)` byte ranges (line endings excluded) of the lines of
+/// `source` longer than [`MAX_LINE`].
+fn long_lines(source: &str) -> Vec<(usize, usize)> {
+    let mut long = Vec::new();
+    let mut start = 0;
+    for raw in source.split_inclusive('\n') {
+        let len = raw.trim_end_matches(['\n', '\r']).len();
+        if len > MAX_LINE {
+            long.push((start, start + len));
+        }
+        start += raw.len();
+    }
+    long
+}
+
+/// `report` with `cut` replaced by `real` on its header line, the first
+/// carrying ariadne's `╭`: only there, so a message that happens to quote
+/// `cut` is left alone.
+fn fix_header(report: &[u8], cut: &str, real: &str) -> Vec<u8> {
+    let text = String::from_utf8_lossy(report);
+    let Some(corner) = text.find('╭') else {
+        return report.to_vec();
+    };
+    let start = text[..corner].rfind('\n').map_or(0, |i| i + 1);
+    let end = text[corner..].find('\n').map_or(text.len(), |i| corner + i);
+    let header = text[start..end].replacen(cut, real, 1);
+    format!("{}{header}{}", &text[..start], &text[end..]).into_bytes()
 }
 
 /// #1666: a line longer than this (in bytes) is cut to a window when a report
@@ -190,8 +239,16 @@ fn cropped(err: &CompileError, source: &str) -> (String, CompileError) {
     err.span.start = map(err.span.start);
     err.span.end = map(err.span.end).max(err.span.start);
     for (span, _) in &mut err.labels {
-        let outside =
-            line_of(span.start).is_some_and(|l| span.start > l.win_end || span.end < l.win_start);
+        // Outside means no byte of the label is kept: it starts at or past a
+        // cut end, or ends at or before a cut start (an empty label, before).
+        let outside = line_of(span.start).is_some_and(|l| {
+            (span.start >= l.win_end && l.win_end < l.end)
+                || if span.start == span.end {
+                    span.start < l.win_start
+                } else {
+                    span.end <= l.win_start
+                }
+        });
         if !fits(span, source) || outside {
             // Another file's label, or one cut from its line: keep it out of
             // range of the cut text too, so the report makes it a note.
@@ -506,5 +563,116 @@ mod tests {
         );
         assert!(shown.starts_with("commons c\r\n…"), "{shown:?}");
         assert!(shown.ends_with("wbad\r\n"), "{shown:?}");
+    }
+
+    /// #1666 review: a label touching a window edge from outside keeps no
+    /// byte, so it is a note, not a caret on the `…` or on the first kept
+    /// character. The far label forces the primary span's window
+    /// `[primary - CONTEXT, primary + MAX_LINE)`.
+    #[test]
+    fn a_label_touching_the_window_edge_from_outside_is_a_note() {
+        let source = format!("commons c\n{}\n", "q".repeat(20_000));
+        let p = 10 + 1_000;
+        let err = CompileError::new("bynk.test.example", Span::new(p, p + 1), "primary")
+            .with_label(Span::new(p + MAX_LINE, p + MAX_LINE + 3), "after the cut")
+            .with_label(Span::new(p - CONTEXT - 3, p - CONTEXT), "before the cut")
+            .with_label(Span::new(p + 10_000, p + 10_003), "far away");
+        let rendered = render_errors_plain(&[err], &source, "probe.bynk");
+        for (i, label) in ["after the cut", "before the cut", "far away"]
+            .iter()
+            .enumerate()
+        {
+            let note = format!("Note {}: {label}", i + 1);
+            assert!(rendered.contains(&note), "{rendered}");
+        }
+    }
+
+    /// #1666 review: errors over one source, one on a cut line and one on a
+    /// short line, each get the right header; two long lines are cut
+    /// independently.
+    #[test]
+    fn several_errors_and_long_lines_render_independently() {
+        let pad = "x".repeat(5_000);
+        let source = format!("commons c\n{pad}one{pad}\nshort\n{pad}two{pad}\n");
+        let at = |word: &str| source.find(word).unwrap();
+        let err = |word: &str| {
+            CompileError::new("bynk.test.example", Span::new(at(word), at(word) + 3), word)
+        };
+        let errors = [
+            err("one"),
+            CompileError::new(
+                "bynk.test.example",
+                Span::new(at("short"), at("short") + 5),
+                "s",
+            ),
+            err("two"),
+        ];
+        let rendered = render_errors_plain(&errors, &source, "probe.bynk");
+        assert!(rendered.len() < 8_000, "{rendered}");
+        for header in [
+            "probe.bynk:2:5001 ",
+            "probe.bynk:3:1 ",
+            "probe.bynk:4:5001 ",
+        ] {
+            assert!(rendered.contains(header), "{header}:\n{rendered}");
+        }
+        assert!(
+            rendered
+                .lines()
+                .any(|l| l.contains("xonex") && l.ends_with('…'))
+        );
+        assert!(
+            rendered
+                .lines()
+                .any(|l| l.contains("xtwox") && l.ends_with('…'))
+        );
+    }
+
+    /// #1666 review: the coloured report's header names the column in the
+    /// file too.
+    #[test]
+    fn the_coloured_header_keeps_the_column_in_the_file() {
+        let source = format!("commons c\n{}bad\n", "x".repeat(50_000));
+        let start = source.find("bad").unwrap();
+        let err = CompileError::new("bynk.test.example", Span::new(start, start + 3), "bad");
+        let rendered = render_errors(&[err], &source, "probe.bynk");
+        assert!(rendered.contains("probe.bynk:2:50001 "), "{rendered}");
+    }
+
+    /// #1666 review: a header fix touches only the header, not a message
+    /// that quotes the same `path:line:col`.
+    #[test]
+    fn the_header_fix_leaves_the_message_alone() {
+        let source = format!("commons c\n{}bad\n", "x".repeat(1_000));
+        let start = source.find("bad").unwrap();
+        // The cut puts `bad` at column 82 of the shown line.
+        let err = CompileError::new(
+            "bynk.test.example",
+            Span::new(start, start + 3),
+            "see probe.bynk:2:82",
+        );
+        let rendered = render_errors_plain(&[err], &source, "probe.bynk");
+        assert!(
+            rendered.contains("Error: see probe.bynk:2:82"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("[ probe.bynk:2:1001 ]"), "{rendered}");
+    }
+
+    /// #1666 review: a rendered report over CRLF source numbers the cut line
+    /// as in the file.
+    #[test]
+    fn a_cut_crlf_report_keeps_line_numbers() {
+        let source = format!("commons c\r\n\r\n{}bad\r\nnext\r\n", "w".repeat(1_000));
+        let start = source.find("bad").unwrap();
+        let err = CompileError::new("bynk.test.example", Span::new(start, start + 3), "bad");
+        let rendered = render_errors_plain(&[err], &source, "probe.bynk");
+        assert!(rendered.contains("[ probe.bynk:3:1001 ]"), "{rendered}");
+        assert!(
+            rendered
+                .lines()
+                .any(|l| l.starts_with(" 3 │ …") && l.contains("wbad")),
+            "{rendered}"
+        );
     }
 }
