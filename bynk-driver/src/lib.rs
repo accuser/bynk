@@ -197,7 +197,7 @@ impl From<discovery::DiscoveryError> for ProjectOptionsError {
 /// stays here, above `bynk-render`, so there is no `render → emit` edge.
 pub fn print_project_failure(failure: &project::ProjectFailure) {
     for ae in &failure.errors {
-        match attributed_snapshot(ae, &failure.snapshots) {
+        match attributed_snapshot(ae, &failure.snapshots, &failure.display_root) {
             Some((label, text)) => {
                 bynk_render::print_errors(std::slice::from_ref(&ae.error), text, &label);
             }
@@ -224,9 +224,10 @@ pub fn print_project_failure(failure: &project::ProjectFailure) {
 pub fn print_project_warnings(
     warnings: &[project::AttributedError],
     snapshots: &[(PathBuf, String)],
+    display_root: &Path,
 ) {
     for w in warnings {
-        match attributed_snapshot(w, snapshots) {
+        match attributed_snapshot(w, snapshots, display_root) {
             Some((label, text)) => {
                 bynk_render::print_errors(std::slice::from_ref(&w.error), text, &label)
             }
@@ -257,9 +258,10 @@ pub fn print_project_warnings(
 pub fn print_project_warnings_short(
     warnings: &[project::AttributedError],
     snapshots: &[(PathBuf, String)],
+    display_root: &Path,
 ) {
     for w in warnings {
-        match attributed_snapshot(w, snapshots) {
+        match attributed_snapshot(w, snapshots, display_root) {
             Some((label, text)) => eprintln!("{}", bynk_render::short_line(&label, text, &w.error)),
             // Every entry in `warnings` is warning-severity by construction
             // (ADR 0117's own split), so `severity_word` here is always
@@ -279,16 +281,42 @@ pub fn print_project_warnings_short(
 /// to in `snapshots`, if any — the one attribution lookup every renderer in
 /// this file shares (finding #48; previously `print_project_failure` and
 /// [`project_failure_short_lines`] each hand-rolled their own copy).
+///
+/// #1772: the label is the file's path as typed from the working directory
+/// ([`display_path`]), not its identity path. `snapshots` stay keyed by
+/// identity.
 fn attributed_snapshot<'a>(
     ae: &project::AttributedError,
     snapshots: &'a [(PathBuf, String)],
+    display_root: &Path,
 ) -> Option<(String, &'a str)> {
     let path = ae.source_path.as_deref()?;
     let text = snapshots
         .iter()
         .find(|(p, _)| p.as_path() == path)
         .map(|(_, t)| t.as_str())?;
-    Some((path.to_string_lossy().replace('\\', "/"), text))
+    Some((display_path(display_root, path), text))
+}
+
+/// #1772: the path a diagnostic names, as a user would type it from the
+/// working directory: the build's root as the caller spelled it, joined with
+/// the file's identity path (relative to that root). A relative root is
+/// already relative to the working directory; an absolute one (`bynk dev`
+/// resolves the project root) is shown relative to the working directory when
+/// it lies inside it. This matches the path `fmt` reports for the same file,
+/// so a problem matcher resolving against the working directory finds it.
+/// Separators print as `/` on every platform.
+pub fn display_path(display_root: &Path, identity: &Path) -> String {
+    let joined = display_root.join(identity);
+    let shown = if joined.is_absolute() {
+        std::env::current_dir()
+            .ok()
+            .and_then(|cwd| joined.strip_prefix(cwd).ok().map(Path::to_path_buf))
+            .unwrap_or(joined)
+    } else {
+        joined
+    };
+    shown.to_string_lossy().replace('\\', "/")
 }
 
 /// The project-failure analogue of [`bynk_render::print_errors_short`]: each
@@ -317,15 +345,17 @@ pub fn project_failure_short_lines(failure: &project::ProjectFailure) -> Vec<Str
     failure
         .errors
         .iter()
-        .map(|ae| match attributed_snapshot(ae, &failure.snapshots) {
-            Some((label, text)) => bynk_render::short_line(&label, text, &ae.error),
-            None => format!(
-                "{}[{}]: {}",
-                bynk_render::severity_word(&ae.error),
-                ae.error.category,
-                ae.error.message
-            ),
-        })
+        .map(
+            |ae| match attributed_snapshot(ae, &failure.snapshots, &failure.display_root) {
+                Some((label, text)) => bynk_render::short_line(&label, text, &ae.error),
+                None => format!(
+                    "{}[{}]: {}",
+                    bynk_render::severity_word(&ae.error),
+                    ae.error.category,
+                    ae.error.message
+                ),
+            },
+        )
         .collect()
 }
 
@@ -338,7 +368,7 @@ pub fn project_failure_short_lines(failure: &project::ProjectFailure) -> Vec<Str
 /// because that list is errors-only by construction).
 pub fn print_project_check(check: &project::ProjectCheck) {
     for ae in &check.errors {
-        match attributed_snapshot(ae, &check.snapshots) {
+        match attributed_snapshot(ae, &check.snapshots, &check.display_root) {
             Some((label, text)) => {
                 bynk_render::print_errors(std::slice::from_ref(&ae.error), text, &label);
             }
@@ -366,15 +396,17 @@ pub fn project_check_short_lines(check: &project::ProjectCheck) -> Vec<String> {
     check
         .errors
         .iter()
-        .map(|ae| match attributed_snapshot(ae, &check.snapshots) {
-            Some((label, text)) => bynk_render::short_line(&label, text, &ae.error),
-            None => format!(
-                "{}[{}]: {}",
-                bynk_render::severity_word(&ae.error),
-                ae.error.category,
-                ae.error.message
-            ),
-        })
+        .map(
+            |ae| match attributed_snapshot(ae, &check.snapshots, &check.display_root) {
+                Some((label, text)) => bynk_render::short_line(&label, text, &ae.error),
+                None => format!(
+                    "{}[{}]: {}",
+                    bynk_render::severity_word(&ae.error),
+                    ae.error.category,
+                    ae.error.message
+                ),
+            },
+        )
         .collect()
 }
 

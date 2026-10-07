@@ -118,7 +118,11 @@ fn run_compile(
                 match bynkc::write_output(&out, &output) {
                     Ok(()) => {
                         // ADR 0117: surface non-failing warnings; the build succeeds.
-                        bynkc::print_project_warnings(&out.warnings, &out.snapshots);
+                        bynkc::print_project_warnings(
+                            &out.warnings,
+                            &out.snapshots,
+                            &out.display_root,
+                        );
                         ExitCode::SUCCESS
                     }
                     Err(e) => {
