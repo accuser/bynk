@@ -306,17 +306,39 @@ fn attributed_snapshot<'a>(
 /// it lies inside it. This matches the path `fmt` reports for the same file,
 /// so a problem matcher resolving against the working directory finds it.
 /// Separators print as `/` on every platform.
+///
+/// #1774 review: a `.` component is dropped (`bynk check`'s default input is
+/// `.`, and `Roots::trees` already keeps `./` out of identity paths for the
+/// same reason), and an absolute path is compared against the cwd both as
+/// given and canonicalised, since a canonical root on Windows is a verbatim
+/// `\\?\C:\…` path that a plain cwd never prefixes. One that still isn't
+/// under the cwd is shown absolute, without a verbatim prefix.
 pub fn display_path(display_root: &Path, identity: &Path) -> String {
-    let joined = display_root.join(identity);
+    use std::path::Component;
+    let joined: PathBuf = display_root
+        .join(identity)
+        .components()
+        .filter(|c| !matches!(c, Component::CurDir))
+        .collect();
     let shown = if joined.is_absolute() {
-        std::env::current_dir()
-            .ok()
-            .and_then(|cwd| joined.strip_prefix(cwd).ok().map(Path::to_path_buf))
+        let cwd = std::env::current_dir().ok();
+        let canonical_cwd = cwd.as_ref().and_then(|c| c.canonicalize().ok());
+        cwd.iter()
+            .chain(canonical_cwd.iter())
+            .find_map(|base| joined.strip_prefix(base).ok().map(Path::to_path_buf))
             .unwrap_or(joined)
     } else {
         joined
     };
-    shown.to_string_lossy().replace('\\', "/")
+    let text = shown.to_string_lossy().replace('\\', "/");
+    // A verbatim prefix (`//?/C:/…`, `//?/UNC/server/…`) is Windows-internal.
+    if let Some(unc) = text.strip_prefix("//?/UNC/") {
+        format!("//{unc}")
+    } else if let Some(rest) = text.strip_prefix("//?/") {
+        rest.to_string()
+    } else {
+        text
+    }
 }
 
 /// #1774: a path the user named directly (a `fmt` input, a single-file
@@ -1223,6 +1245,75 @@ mod tests {
         assert!(
             err.to_string().contains("not yet supported (#843)"),
             "{err}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod display_path_tests {
+    use super::display_path;
+    use std::path::Path;
+
+    #[test]
+    fn a_relative_root_is_joined_as_typed() {
+        assert_eq!(
+            display_path(Path::new("test/fixtures/x"), Path::new("src/a.bynk")),
+            "test/fixtures/x/src/a.bynk"
+        );
+    }
+
+    /// `bynk check` defaults its input to `.`; that adds no `./`.
+    #[test]
+    fn a_dot_root_adds_no_prefix() {
+        assert_eq!(
+            display_path(Path::new("."), Path::new("src/a.bynk")),
+            "src/a.bynk"
+        );
+        assert_eq!(
+            display_path(Path::new(""), Path::new("./src/a.bynk")),
+            "src/a.bynk"
+        );
+    }
+
+    /// `bynk dev` hands an absolute root; inside the cwd it shows relative.
+    #[test]
+    fn an_absolute_root_inside_the_cwd_is_shown_relative() {
+        let cwd = std::env::current_dir().unwrap();
+        assert_eq!(
+            display_path(&cwd.join("proj"), Path::new("src/a.bynk")),
+            "proj/src/a.bynk"
+        );
+        // A canonicalised root (on Windows, a verbatim `\\?\` path) too.
+        let canonical = cwd.canonicalize().unwrap();
+        assert_eq!(
+            display_path(&canonical.join("proj"), Path::new("src/a.bynk")),
+            "proj/src/a.bynk"
+        );
+    }
+
+    /// Outside the cwd, the path stays absolute, with `/` separators.
+    #[test]
+    fn an_absolute_root_outside_the_cwd_is_shown_absolute() {
+        let cwd = std::env::current_dir().unwrap();
+        let outside = cwd.parent().unwrap().join("bynk-display-path-elsewhere");
+        let shown = display_path(&outside, Path::new("src/a.bynk"));
+        assert!(
+            shown.ends_with("bynk-display-path-elsewhere/src/a.bynk"),
+            "{shown}"
+        );
+        assert!(
+            !shown.contains('\\') && !shown.starts_with("//?/"),
+            "{shown}"
+        );
+    }
+
+    /// On Windows, a verbatim root outside the cwd loses its `\\?\` prefix.
+    #[cfg(windows)]
+    #[test]
+    fn a_verbatim_root_outside_the_cwd_loses_its_prefix() {
+        assert_eq!(
+            display_path(Path::new(r"\\?\C:\elsewhere"), Path::new("src/a.bynk")),
+            "C:/elsewhere/src/a.bynk"
         );
     }
 }

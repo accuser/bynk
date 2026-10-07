@@ -83,7 +83,7 @@ fn from_inside_the_project_the_path_is_relative_to_it() {
     );
     let dot = bynkc(&project, &["check", "--format", "short", "."]);
     assert!(
-        dot.starts_with("./src/greeting.bynk:4:3: error["),
+        dot.starts_with("src/greeting.bynk:4:3: error["),
         "`check --format short .` from inside:\n{dot}"
     );
 }
