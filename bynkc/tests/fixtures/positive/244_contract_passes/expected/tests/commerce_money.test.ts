@@ -2,7 +2,7 @@
 // test target: commerce.money
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
-import * as commerce_money from "./../commerce/money.js";
+import * as __ns_commerce_money from "./../commerce/money.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -33,7 +33,7 @@ function __makeTestDeps() {
 async function test_ten_percent_off_a_hundred_is_ninety() {
   try {
     const deps = {};
-    const { discount } = commerce_money;
+    const { discount } = __ns_commerce_money;
     if (!(discount(100, 10) === 90)) { throw __bynkExpectFailure("tests/commerce/money.bynk:5:12", 228, 251, "expect discount(100, 10) == 90\n  expected: discount(100, 10) == 90\n  actual:   " + __bynkShow((discount(100, 10))) + " == " + __bynkShow((90))); }
     return { pass: true };
   } catch (e) {

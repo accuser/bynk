@@ -2,7 +2,7 @@
 // test target: commerce.money
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
-import * as commerce_money from "./../commerce/money.js";
+import * as __ns_commerce_money from "./../commerce/money.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -157,8 +157,8 @@ function __makeTestDeps() {
 
 async function __prop_test_a_sorted_pair_stays_sorted() {
     const deps = {};
-    const { Percent } = commerce_money;
-    type Percent = commerce_money.Percent;
+    const { Percent } = __ns_commerce_money;
+    type Percent = __ns_commerce_money.Percent;
     const __gens = [
       { name: "a", boundaries: [(0n as any), (100n as any)], gen: (rng: any) => (rng.int(0n, 100n) as any), shrink: (v: any) => __bynkShrinkInt(v, 0n).map((__n: bigint) => (__n as any)), show: (v: any) => __bynkShow(v) },
       { name: "b", boundaries: [(0n as any), (100n as any)], gen: (rng: any) => (rng.int(0n, 100n) as any), shrink: (v: any) => __bynkShrinkInt(v, 0n).map((__n: bigint) => (__n as any)), show: (v: any) => __bynkShow(v) },

@@ -2,8 +2,8 @@
 // test target: catalog
 
 import { Ok, Err, Some, None, __makeTestState, type Result, type Option, type ValidationError } from "../runtime.js";
-import * as catalog from "./../catalog.js";
-import * as pages from "./../pages.js";
+import * as __ns_catalog from "./../catalog.js";
+import * as __ns_pages from "./../pages.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -33,12 +33,12 @@ function __makeTestDeps() {
 // case tier: unit
 async function test_a_generic_record_built_in_a_case_reaches_the_context_s_agent() {
   try {
-    catalog.__resetAgents();
+    __ns_catalog.__resetAgents();
     const deps = __makeTestDeps();
-    const { Shelf, __makeShelf, api } = catalog;
-    const { Item, Page } = pages;
-    type Item = pages.Item;
-    type Page<T> = pages.Page<T>;
+    const { Shelf, __makeShelf, api } = __ns_catalog;
+    const { Item, Page } = __ns_pages;
+    type Item = __ns_pages.Item;
+    type Page<T> = __ns_pages.Page<T>;
     const p: Page<Item> = { items: [{ name: "a" }, { name: "b" }], next: None };
     if (!((p.items).length === 2)) { throw __bynkExpectFailure("tests/catalog.bynk:13:10", 595, 616, "expect p.items.length() == 2\n  expected: p.items.length() == 2\n  actual:   " + __bynkShow(((p.items).length)) + " == " + __bynkShow((2))); }
     const n = await __makeShelf("s").count(p, deps);

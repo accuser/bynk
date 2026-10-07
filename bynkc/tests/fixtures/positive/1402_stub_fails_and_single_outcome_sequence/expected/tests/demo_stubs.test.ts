@@ -2,7 +2,7 @@
 // test target: demo.stubs
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
-import * as demo_stubs from "./../demo/stubs.js";
+import * as __ns_demo_stubs from "./../demo/stubs.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -88,14 +88,14 @@ function __bynkOverlay(base: unknown, stub: object, cap: string): unknown {
 }
 
 function __makeTestDeps(__case?: string) {
-  return { Vault: __bynkOverlay(new demo_stubs.RealVault(), new __Stub_Vault(__case), "Vault") as demo_stubs.Vault };
+  return { Vault: __bynkOverlay(new __ns_demo_stubs.RealVault(), new __Stub_Vault(__case), "Vault") as __ns_demo_stubs.Vault };
 }
 
 // case tier: unit
 async function test_a_direct_fails_clause() {
   try {
     const deps = __makeTestDeps();
-    const { box } = demo_stubs;
+    const { box } = __ns_demo_stubs;
     const r = await box.call(deps);
     if (!(true)) { throw __bynkExpectFailure("tests/stubs.test.bynk:11:12", 431, 435, "expect true"); }
     return { pass: true };
@@ -111,7 +111,7 @@ async function test_a_direct_fails_clause() {
 async function test_returns_each_ending_in_fails() {
   try {
     const deps = __makeTestDeps("returns each ending in fails");
-    const { box } = demo_stubs;
+    const { box } = __ns_demo_stubs;
     const r = await box.call(deps);
     if (!(true)) { throw __bynkExpectFailure("tests/stubs.test.bynk:17:12", 562, 566, "expect true"); }
     return { pass: true };
@@ -127,7 +127,7 @@ async function test_returns_each_ending_in_fails() {
 async function test_a_single_outcome_returns_each() {
   try {
     const deps = __makeTestDeps("a single-outcome returns each");
-    const { box } = demo_stubs;
+    const { box } = __ns_demo_stubs;
     const r = await box.call(deps);
     if (!(true)) { throw __bynkExpectFailure("tests/stubs.test.bynk:23:12", 688, 692, "expect true"); }
     return { pass: true };

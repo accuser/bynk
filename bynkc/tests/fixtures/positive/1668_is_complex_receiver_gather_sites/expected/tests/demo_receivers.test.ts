@@ -2,7 +2,7 @@
 // test target: demo.receivers
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
-import * as demo_receivers from "./../demo/receivers.js";
+import * as __ns_demo_receivers from "./../demo/receivers.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -33,9 +33,9 @@ function __makeTestDeps() {
 async function test_a_negated____binds_both_tests_in_its_else_branch() {
   try {
     const deps = {};
-    const { Booking, Q, andChain, book, id, implication, inLambda, negatedElse, negatedOr, negatedOrRightNested, negatedOrThree, negatedOrValue, nestedReceiver, orPattern, plainAnd, plainImplies, refinement, same, stmtIf, valueIf } = demo_receivers;
-    type Booking = demo_receivers.Booking;
-    type Q = demo_receivers.Q;
+    const { Booking, Q, andChain, book, id, implication, inLambda, negatedElse, negatedOr, negatedOrRightNested, negatedOrThree, negatedOrValue, nestedReceiver, orPattern, plainAnd, plainImplies, refinement, same, stmtIf, valueIf } = __ns_demo_receivers;
+    type Booking = __ns_demo_receivers.Booking;
+    type Q = __ns_demo_receivers.Q;
     if (!(negatedOr(Some(1), Some(2)) === 3)) { throw __bynkExpectFailure("demo/receivers_test.bynk:3:12", 94, 126, "expect negatedOr(Some(1), Some(2)) == 3\n  expected: negatedOr(Some(1), Some(2)) == 3\n  actual:   " + __bynkShow((negatedOr(Some(1), Some(2)))) + " == " + __bynkShow((3))); }
     if (!(negatedOr(None, Some(2)) === 0)) { throw __bynkExpectFailure("demo/receivers_test.bynk:4:12", 138, 167, "expect negatedOr(None, Some(2)) == 0\n  expected: negatedOr(None, Some(2)) == 0\n  actual:   " + __bynkShow((negatedOr(None, Some(2)))) + " == " + __bynkShow((0))); }
     if (!(negatedOr(Some(1), None) === 0)) { throw __bynkExpectFailure("demo/receivers_test.bynk:5:12", 179, 208, "expect negatedOr(Some(1), None) == 0\n  expected: negatedOr(Some(1), None) == 0\n  actual:   " + __bynkShow((negatedOr(Some(1), None))) + " == " + __bynkShow((0))); }
@@ -54,9 +54,9 @@ async function test_a_negated____binds_both_tests_in_its_else_branch() {
 async function test_a_negated____of_three_binds_all_three() {
   try {
     const deps = {};
-    const { Booking, Q, andChain, book, id, implication, inLambda, negatedElse, negatedOr, negatedOrRightNested, negatedOrThree, negatedOrValue, nestedReceiver, orPattern, plainAnd, plainImplies, refinement, same, stmtIf, valueIf } = demo_receivers;
-    type Booking = demo_receivers.Booking;
-    type Q = demo_receivers.Q;
+    const { Booking, Q, andChain, book, id, implication, inLambda, negatedElse, negatedOr, negatedOrRightNested, negatedOrThree, negatedOrValue, nestedReceiver, orPattern, plainAnd, plainImplies, refinement, same, stmtIf, valueIf } = __ns_demo_receivers;
+    type Booking = __ns_demo_receivers.Booking;
+    type Q = __ns_demo_receivers.Q;
     if (!(negatedOrThree(Some(1), Some(2), Some(3)) === 6)) { throw __bynkExpectFailure("demo/receivers_test.bynk:11:12", 369, 415, "expect negatedOrThree(Some(1), Some(2), Some(3)) == 6\n  expected: negatedOrThree(Some(1), Some(2), Some(3)) == 6\n  actual:   " + __bynkShow((negatedOrThree(Some(1), Some(2), Some(3)))) + " == " + __bynkShow((6))); }
     if (!(negatedOrThree(Some(1), Some(2), None) === 0)) { throw __bynkExpectFailure("demo/receivers_test.bynk:12:12", 427, 470, "expect negatedOrThree(Some(1), Some(2), None) == 0\n  expected: negatedOrThree(Some(1), Some(2), None) == 0\n  actual:   " + __bynkShow((negatedOrThree(Some(1), Some(2), None))) + " == " + __bynkShow((0))); }
     return { pass: true };
@@ -72,9 +72,9 @@ async function test_a_negated____of_three_binds_all_three() {
 async function test_a_right_nested____binds_all_three() {
   try {
     const deps = {};
-    const { Booking, Q, andChain, book, id, implication, inLambda, negatedElse, negatedOr, negatedOrRightNested, negatedOrThree, negatedOrValue, nestedReceiver, orPattern, plainAnd, plainImplies, refinement, same, stmtIf, valueIf } = demo_receivers;
-    type Booking = demo_receivers.Booking;
-    type Q = demo_receivers.Q;
+    const { Booking, Q, andChain, book, id, implication, inLambda, negatedElse, negatedOr, negatedOrRightNested, negatedOrThree, negatedOrValue, nestedReceiver, orPattern, plainAnd, plainImplies, refinement, same, stmtIf, valueIf } = __ns_demo_receivers;
+    type Booking = __ns_demo_receivers.Booking;
+    type Q = __ns_demo_receivers.Q;
     if (!(negatedOrRightNested(Some(1), Some(2), Some(3)) === 6)) { throw __bynkExpectFailure("demo/receivers_test.bynk:16:12", 532, 584, "expect negatedOrRightNested(Some(1), Some(2), Some(3)) == 6\n  expected: negatedOrRightNested(Some(1), Some(2), Some(3)) == 6\n  actual:   " + __bynkShow((negatedOrRightNested(Some(1), Some(2), Some(3)))) + " == " + __bynkShow((6))); }
     if (!(negatedOrRightNested(Some(1), None, Some(3)) === 0)) { throw __bynkExpectFailure("demo/receivers_test.bynk:17:12", 596, 645, "expect negatedOrRightNested(Some(1), None, Some(3)) == 0\n  expected: negatedOrRightNested(Some(1), None, Some(3)) == 0\n  actual:   " + __bynkShow((negatedOrRightNested(Some(1), None, Some(3)))) + " == " + __bynkShow((0))); }
     return { pass: true };
@@ -90,9 +90,9 @@ async function test_a_right_nested____binds_all_three() {
 async function test_a_plain____and_implies_bind_the_right_operand() {
   try {
     const deps = {};
-    const { Booking, Q, andChain, book, id, implication, inLambda, negatedElse, negatedOr, negatedOrRightNested, negatedOrThree, negatedOrValue, nestedReceiver, orPattern, plainAnd, plainImplies, refinement, same, stmtIf, valueIf } = demo_receivers;
-    type Booking = demo_receivers.Booking;
-    type Q = demo_receivers.Q;
+    const { Booking, Q, andChain, book, id, implication, inLambda, negatedElse, negatedOr, negatedOrRightNested, negatedOrThree, negatedOrValue, nestedReceiver, orPattern, plainAnd, plainImplies, refinement, same, stmtIf, valueIf } = __ns_demo_receivers;
+    type Booking = __ns_demo_receivers.Booking;
+    type Q = __ns_demo_receivers.Q;
     if (!(plainAnd(true, Some(5)) === 5)) { throw __bynkExpectFailure("demo/receivers_test.bynk:21:12", 719, 747, "expect plainAnd(true, Some(5)) == 5\n  expected: plainAnd(true, Some(5)) == 5\n  actual:   " + __bynkShow((plainAnd(true, Some(5)))) + " == " + __bynkShow((5))); }
     if (!(plainAnd(false, Some(5)) === 0)) { throw __bynkExpectFailure("demo/receivers_test.bynk:22:12", 759, 788, "expect plainAnd(false, Some(5)) == 0\n  expected: plainAnd(false, Some(5)) == 0\n  actual:   " + __bynkShow((plainAnd(false, Some(5)))) + " == " + __bynkShow((0))); }
     if (!(plainAnd(true, None) === 0)) { throw __bynkExpectFailure("demo/receivers_test.bynk:23:12", 800, 825, "expect plainAnd(true, None) == 0\n  expected: plainAnd(true, None) == 0\n  actual:   " + __bynkShow((plainAnd(true, None))) + " == " + __bynkShow((0))); }
@@ -112,9 +112,9 @@ async function test_a_plain____and_implies_bind_the_right_operand() {
 async function test_a_lambda_s_temp_stays_in_the_lambda() {
   try {
     const deps = {};
-    const { Booking, Q, andChain, book, id, implication, inLambda, negatedElse, negatedOr, negatedOrRightNested, negatedOrThree, negatedOrValue, nestedReceiver, orPattern, plainAnd, plainImplies, refinement, same, stmtIf, valueIf } = demo_receivers;
-    type Booking = demo_receivers.Booking;
-    type Q = demo_receivers.Q;
+    const { Booking, Q, andChain, book, id, implication, inLambda, negatedElse, negatedOr, negatedOrRightNested, negatedOrThree, negatedOrValue, nestedReceiver, orPattern, plainAnd, plainImplies, refinement, same, stmtIf, valueIf } = __ns_demo_receivers;
+    type Booking = __ns_demo_receivers.Booking;
+    type Q = __ns_demo_receivers.Q;
     if (!(inLambda(false, Some(2), [1, 2, 3]))) { throw __bynkExpectFailure("demo/receivers_test.bynk:30:12", 1019, 1054, "expect inLambda(false, Some(2), [1, 2, 3])"); }
     if (!(!inLambda(false, Some(9), [1, 2, 3]))) { throw __bynkExpectFailure("demo/receivers_test.bynk:31:12", 1066, 1102, "expect !inLambda(false, Some(9), [1, 2, 3])"); }
     if (!(inLambda(true, None, []))) { throw __bynkExpectFailure("demo/receivers_test.bynk:32:12", 1114, 1138, "expect inLambda(true, None, [])"); }
@@ -131,9 +131,9 @@ async function test_a_lambda_s_temp_stays_in_the_lambda() {
 async function test_the_other_gather_sites_still_read_their_temps() {
   try {
     const deps = {};
-    const { Booking, Q, andChain, book, id, implication, inLambda, negatedElse, negatedOr, negatedOrRightNested, negatedOrThree, negatedOrValue, nestedReceiver, orPattern, plainAnd, plainImplies, refinement, same, stmtIf, valueIf } = demo_receivers;
-    type Booking = demo_receivers.Booking;
-    type Q = demo_receivers.Q;
+    const { Booking, Q, andChain, book, id, implication, inLambda, negatedElse, negatedOr, negatedOrRightNested, negatedOrThree, negatedOrValue, nestedReceiver, orPattern, plainAnd, plainImplies, refinement, same, stmtIf, valueIf } = __ns_demo_receivers;
+    type Booking = __ns_demo_receivers.Booking;
+    type Q = __ns_demo_receivers.Q;
     if (!(stmtIf(Some(4)) === 4)) { throw __bynkExpectFailure("demo/receivers_test.bynk:36:12", 1212, 1232, "expect stmtIf(Some(4)) == 4\n  expected: stmtIf(Some(4)) == 4\n  actual:   " + __bynkShow((stmtIf(Some(4)))) + " == " + __bynkShow((4))); }
     if (!(negatedElse(Some(4)) === 4)) { throw __bynkExpectFailure("demo/receivers_test.bynk:37:12", 1244, 1269, "expect negatedElse(Some(4)) == 4\n  expected: negatedElse(Some(4)) == 4\n  actual:   " + __bynkShow((negatedElse(Some(4)))) + " == " + __bynkShow((4))); }
     if (!(andChain(Booking.Held("g", 200)))) { throw __bynkExpectFailure("demo/receivers_test.bynk:38:12", 1281, 1305, "expect andChain(Held(\"g\", 200))"); }

@@ -2,7 +2,7 @@
 // test target: demo.counter
 
 import { Ok, Err, Some, None, __makeTestState, type Result, type Option, type ValidationError, __bynkEq } from "../runtime.js";
-import * as demo_counter from "./../demo/counter.js";
+import * as __ns_demo_counter from "./../demo/counter.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -32,11 +32,11 @@ function __makeTestDeps() {
 // case tier: unit
 async function test_a_fresh_counter_reads_zero() {
   try {
-    demo_counter.__resetAgents();
+    __ns_demo_counter.__resetAgents();
     const deps = __makeTestDeps();
-    const { Counter, CounterError, CounterId, __makeCounter, bump, read } = demo_counter;
-    type CounterError = demo_counter.CounterError;
-    type CounterId = demo_counter.CounterId;
+    const { Counter, CounterError, CounterId, __makeCounter, bump, read } = __ns_demo_counter;
+    type CounterError = __ns_demo_counter.CounterError;
+    type CounterId = __ns_demo_counter.CounterId;
     void (await (async (__d) => {
         switch (__d.tag) {
           case "Err": {
@@ -71,11 +71,11 @@ async function test_a_fresh_counter_reads_zero() {
 // case tier: unit
 async function test_bumping_twice_accumulates() {
   try {
-    demo_counter.__resetAgents();
+    __ns_demo_counter.__resetAgents();
     const deps = __makeTestDeps();
-    const { Counter, CounterError, CounterId, __makeCounter, bump, read } = demo_counter;
-    type CounterError = demo_counter.CounterError;
-    type CounterId = demo_counter.CounterId;
+    const { Counter, CounterError, CounterId, __makeCounter, bump, read } = __ns_demo_counter;
+    type CounterError = __ns_demo_counter.CounterError;
+    type CounterId = __ns_demo_counter.CounterId;
     void (await (async (__d) => {
         switch (__d.tag) {
           case "Err": {

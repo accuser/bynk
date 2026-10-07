@@ -1,0 +1,5 @@
+suite greet {
+  case "greets" {
+    expect greet("Bynk") == "Hello, Bynk!"
+  }
+}

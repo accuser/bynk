@@ -2,7 +2,7 @@
 // test target: demo
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
-import * as demo from "./../demo.js";
+import * as __ns_demo from "./../demo.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -33,7 +33,7 @@ function __makeTestDeps() {
 async function test_doubles() {
   try {
     const deps = {};
-    const { double } = demo;
+    const { double } = __ns_demo;
     if (!(double(2) === 4)) { throw __bynkExpectFailure("tests/demo.test.bynk:3:12", 43, 57, "expect double(2) == 4\n  expected: double(2) == 4\n  actual:   " + __bynkShow((double(2))) + " == " + __bynkShow((4))); }
     return { pass: true };
   } catch (e) {

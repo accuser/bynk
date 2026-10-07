@@ -2,7 +2,7 @@
 // test target: demo.gen
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
-import * as demo_gen from "./../demo/gen.js";
+import * as __ns_demo_gen from "./../demo/gen.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -33,7 +33,7 @@ function __makeTestDeps() {
 async function test_a_comparing_generic_on_values() {
   try {
     const deps = {};
-    const { apply, applyPicked, applyTen, countdown, dec, inc, pick, same, twice } = demo_gen;
+    const { apply, applyPicked, applyTen, countdown, dec, inc, pick, same, twice } = __ns_demo_gen;
     if (!(same(1, 1))) { throw __bynkExpectFailure("tests/demo/gen.bynk:7:10", 160, 170, "expect same(1, 1)"); }
     if (!(!same(1, 2))) { throw __bynkExpectFailure("tests/demo/gen.bynk:8:10", 180, 191, "expect !same(1, 2)"); }
     if (!(same(Some(1), Some(1)))) { throw __bynkExpectFailure("tests/demo/gen.bynk:9:10", 201, 223, "expect same(Some(1), Some(1))"); }
@@ -52,7 +52,7 @@ async function test_a_comparing_generic_on_values() {
 async function test_a_recursive_comparing_generic() {
   try {
     const deps = {};
-    const { apply, applyPicked, applyTen, countdown, dec, inc, pick, same, twice } = demo_gen;
+    const { apply, applyPicked, applyTen, countdown, dec, inc, pick, same, twice } = __ns_demo_gen;
     if (!(countdown("x", 3))) { throw __bynkExpectFailure("tests/demo/gen.bynk:15:10", 336, 353, "expect countdown(\"x\", 3)"); }
     return { pass: true };
   } catch (e) {
@@ -67,7 +67,7 @@ async function test_a_recursive_comparing_generic() {
 async function test_generics_that_never_compare_take_functions() {
   try {
     const deps = {};
-    const { apply, applyPicked, applyTen, countdown, dec, inc, pick, same, twice } = demo_gen;
+    const { apply, applyPicked, applyTen, countdown, dec, inc, pick, same, twice } = __ns_demo_gen;
     if (!(apply(inc, 1) === 2)) { throw __bynkExpectFailure("tests/demo/gen.bynk:19:10", 418, 436, "expect apply(inc, 1) == 2\n  expected: apply(inc, 1) == 2\n  actual:   " + __bynkShow((apply(inc, 1))) + " == " + __bynkShow((2))); }
     if (!(applyPicked(true) === 11)) { throw __bynkExpectFailure("tests/demo/gen.bynk:20:10", 446, 469, "expect applyPicked(true) == 11\n  expected: applyPicked(true) == 11\n  actual:   " + __bynkShow((applyPicked(true))) + " == " + __bynkShow((11))); }
     if (!(applyPicked(false) === 9)) { throw __bynkExpectFailure("tests/demo/gen.bynk:21:10", 479, 502, "expect applyPicked(false) == 9\n  expected: applyPicked(false) == 9\n  actual:   " + __bynkShow((applyPicked(false))) + " == " + __bynkShow((9))); }

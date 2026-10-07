@@ -2,7 +2,7 @@
 // test target: demo.box
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
-import * as demo_box from "./../demo/box.js";
+import * as __ns_demo_box from "./../demo/box.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -33,8 +33,8 @@ function __makeTestDeps() {
 async function test_a_method_comparing_its_receiver_s_type_parameter() {
   try {
     const deps = {};
-    const { Box, boxedFnApplied, hasThree, inc } = demo_box;
-    type Box<A> = demo_box.Box<A>;
+    const { Box, boxedFnApplied, hasThree, inc } = __ns_demo_box;
+    type Box<A> = __ns_demo_box.Box<A>;
     if (!(hasThree(3))) { throw __bynkExpectFailure("tests/demo/box.bynk:4:10", 83, 94, "expect hasThree(3)"); }
     if (!(!hasThree(4))) { throw __bynkExpectFailure("tests/demo/box.bynk:5:10", 104, 116, "expect !hasThree(4)"); }
     return { pass: true };
@@ -50,8 +50,8 @@ async function test_a_method_comparing_its_receiver_s_type_parameter() {
 async function test_a_method_not_comparing_it_accepts_a_function_payload() {
   try {
     const deps = {};
-    const { Box, boxedFnApplied, hasThree, inc } = demo_box;
-    type Box<A> = demo_box.Box<A>;
+    const { Box, boxedFnApplied, hasThree, inc } = __ns_demo_box;
+    type Box<A> = __ns_demo_box.Box<A>;
     if (!(boxedFnApplied(inc) === 0)) { throw __bynkExpectFailure("tests/demo/box.bynk:9:10", 191, 215, "expect boxedFnApplied(inc) == 0\n  expected: boxedFnApplied(inc) == 0\n  actual:   " + __bynkShow((boxedFnApplied(inc))) + " == " + __bynkShow((0))); }
     return { pass: true };
   } catch (e) {

@@ -2,7 +2,7 @@
 // test target: commerce.payment
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
-import * as commerce_payment from "./../commerce/payment.js";
+import * as __ns_commerce_payment from "./../commerce/payment.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -47,16 +47,16 @@ type __Logger_warn_Call = { msg: string };
 
 class __Stub_Logger {
   async log(msg: string): globalThis.Promise<void> {
-    const { AuthId } = commerce_payment;
-    type AuthId = commerce_payment.AuthId;
+    const { AuthId } = __ns_commerce_payment;
+    type AuthId = __ns_commerce_payment.AuthId;
     if (true) {
       return undefined;
     }
     throw new globalThis.Error("bynk: no stub clause matched for Logger.log");
   }
   async warn(msg: string): globalThis.Promise<void> {
-    const { AuthId } = commerce_payment;
-    type AuthId = commerce_payment.AuthId;
+    const { AuthId } = __ns_commerce_payment;
+    type AuthId = __ns_commerce_payment.AuthId;
     if (true) {
       return undefined;
     }
@@ -85,7 +85,7 @@ function __bynkOverlay(base: unknown, stub: object, cap: string): unknown {
 }
 
 function __makeTestDeps() {
-  return { Logger: __bynkOverlay(new commerce_payment.NoOpLogger(), new __Stub_Logger(), "Logger") as commerce_payment.Logger };
+  return { Logger: __bynkOverlay(new __ns_commerce_payment.NoOpLogger(), new __Stub_Logger(), "Logger") as __ns_commerce_payment.Logger };
 }
 
 // case tier: unit
@@ -93,8 +93,8 @@ async function test_records_the_observed_calls() {
   try {
     const __obs = { log: {} as globalThis.Record<string, { args: unknown[]; order: number }[]>, n: 0 };
     const deps = __bynkRecordDeps(__makeTestDeps(), { Logger: ["log", "warn"] }, __obs);
-    const { AuthId, authorise } = commerce_payment;
-    type AuthId = commerce_payment.AuthId;
+    const { AuthId, authorise } = __ns_commerce_payment;
+    type AuthId = __ns_commerce_payment.AuthId;
     const r = await authorise.call(100, deps);
     if (!(r.tag === "Ok")) { throw __bynkExpectFailure("tests/payment.test.bynk:7:12", 173, 183, "expect r is Ok(_)"); }
     if (!(((__obs.log["Logger.log"] ?? []).length >= 1))) { throw __bynkExpectFailure("tests/payment.test.bynk:8:12", 195, 212, "expect Logger.log called"); }
@@ -119,8 +119,8 @@ async function test_no_observation_when_the_seam_is_idle() {
   try {
     const __obs = { log: {} as globalThis.Record<string, { args: unknown[]; order: number }[]>, n: 0 };
     const deps = __bynkRecordDeps(__makeTestDeps(), { Logger: ["log", "warn"] }, __obs);
-    const { AuthId, authorise } = commerce_payment;
-    type AuthId = commerce_payment.AuthId;
+    const { AuthId, authorise } = __ns_commerce_payment;
+    type AuthId = __ns_commerce_payment.AuthId;
     if (!(((__obs.log["Logger.log"] ?? []).length === 0))) { throw __bynkExpectFailure("tests/payment.test.bynk:19:12", 564, 587, "expect Logger.log never called"); }
     return { pass: true };
   } catch (e) {

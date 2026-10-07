@@ -2,11 +2,11 @@
 // system test: demo.desk
 
 import { Ok, Err, Some, None, __callService, type Result, type Option, type ValidationError, type JsonError, type __JsonValue, type __BoundaryError, type __ServiceBinding, __responseToHttpResult, __responseToHttpOutcome, __responseToUnauthOutcome, __bynkEq } from "../runtime.js";
-import * as demo_desk from "../workers/demo-desk/handlers.js";
-import worker_demo_desk from "../workers/demo-desk/index.js";
-import * as demo_vault from "../workers/demo-vault/handlers.js";
-import worker_demo_vault from "../workers/demo-vault/index.js";
-import * as demo_shapes from "./../demo/shapes.js";
+import * as __ns_demo_desk from "../workers/demo-desk/handlers.js";
+import worker___ns_demo_desk from "../workers/demo-desk/index.js";
+import * as __ns_demo_vault from "../workers/demo-vault/handlers.js";
+import worker___ns_demo_vault from "../workers/demo-vault/index.js";
+import * as __ns_demo_shapes from "./../demo/shapes.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -30,20 +30,20 @@ function __bynkShow(v: unknown): string {
 }
 
 function __makeHarness() {
-  const env_demo_desk: any = {};
-  const env_demo_vault: any = {};
-  env_demo_desk.DEMO_VAULT = { fetch: (req: globalThis.Request) => worker_demo_vault.fetch(req, env_demo_vault) } as __ServiceBinding;
+  const env___ns_demo_desk: any = {};
+  const env___ns_demo_vault: any = {};
+  env___ns_demo_desk.DEMO_VAULT = { fetch: (req: globalThis.Request) => worker___ns_demo_vault.fetch(req, env___ns_demo_vault) } as __ServiceBinding;
   const rootEnv: any = {};
-  rootEnv.DEMO_DESK = { fetch: (req: globalThis.Request) => worker_demo_desk.fetch(req, env_demo_desk) } as __ServiceBinding;
-  rootEnv.DEMO_VAULT = { fetch: (req: globalThis.Request) => worker_demo_vault.fetch(req, env_demo_vault) } as __ServiceBinding;
+  rootEnv.DEMO_DESK = { fetch: (req: globalThis.Request) => worker___ns_demo_desk.fetch(req, env___ns_demo_desk) } as __ServiceBinding;
+  rootEnv.DEMO_VAULT = { fetch: (req: globalThis.Request) => worker___ns_demo_vault.fetch(req, env___ns_demo_vault) } as __ServiceBinding;
   return { env: rootEnv };
 }
 
 async function test_a_generic_type_crosses_the_wire() {
   try {
     const deps = __makeHarness();
-    const { Pair, pairOf } = demo_shapes;
-    type Pair<A, B> = demo_shapes.Pair<A, B>;
+    const { Pair, pairOf } = __ns_demo_shapes;
+    type Pair<A, B> = __ns_demo_shapes.Pair<A, B>;
     const p = pairOf(5, "five");
     const n = await __callService(deps.env.DEMO_DESK, "check", ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(p.first), (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j), "integration", "c4ebec6946345787");
     if (!(__bynkEq(n, 5))) { throw __bynkExpectFailure("tests/demo/desk_system.bynk:11:12", 325, 331, "expect n == 5\n  expected: n == 5\n  actual:   " + __bynkShow((n)) + " == " + __bynkShow((5))); }

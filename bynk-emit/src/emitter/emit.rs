@@ -3467,6 +3467,18 @@ pub(crate) fn qualified_to_ns(q: &str) -> String {
     q.replace('.', "_")
 }
 
+/// #1759: the identifier a generated **test** module imports a unit as
+/// (`import * as __ns_greet from …`). A test module destructures a unit's
+/// values out of this namespace (`const { greet } = __ns_greet;`), so the
+/// namespace can't take [`qualified_to_ns`]'s bare name: a context `greet`
+/// declaring `fn greet` would shadow its own import and read `greet` in its
+/// temporal dead zone. The reserved `__ns_` prefix can't be a user identifier.
+/// Every test-module namespace reference goes through this, in `tests_emit`
+/// and in lowering that runs `in_test_scaffold()`.
+pub(crate) fn test_scaffold_ns(q: &str) -> String {
+    format!("__ns_{}", qualified_to_ns(q))
+}
+
 /// The PascalCase name a context uses for its generated `Deps` interface:
 /// `shortener.links` → `ShortenerLinks`.
 fn context_pascal(name: &str) -> String {
@@ -3788,7 +3800,7 @@ pub(crate) fn lower_workers_cross_context_call(
     // codecs, so there it still reaches the callee's codecs through that value
     // namespace. `in_test_scaffold()` is exactly that discriminator.
     let ns = if cx.in_test_scaffold() {
-        format!("{}.", qualified_to_ns(consumed))
+        format!("{}.", test_scaffold_ns(consumed))
     } else {
         String::new()
     };
