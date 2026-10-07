@@ -709,6 +709,8 @@ pub fn run_fmt(prog: &str, args: &FmtArgs) -> ExitCode {
                 eprintln!("{prog} fmt: read from stdin: {e}");
                 return ExitCode::FAILURE;
             }
+            // #1763: compared, and errors rendered, modulo line endings.
+            let source = bynk_fmt::normalize_line_endings(&source);
             match format_source(&source, &opts) {
                 Ok(formatted) => {
                     if check {
@@ -732,7 +734,7 @@ pub fn run_fmt(prog: &str, args: &FmtArgs) -> ExitCode {
             }
             continue;
         }
-        let source = match std::fs::read_to_string(input) {
+        let raw = match std::fs::read_to_string(input) {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("{prog} fmt: read `{}`: {e}", shown(input));
@@ -740,6 +742,11 @@ pub fn run_fmt(prog: &str, args: &FmtArgs) -> ExitCode {
                 continue;
             }
         };
+        // #1763: line endings are not a formatting difference. A CRLF copy of a
+        // canonical file passes `--check` and isn't rewritten; a file that does
+        // need formatting is written in the LF canonical form. Errors render
+        // against the normalised text, whose spans they carry.
+        let source = bynk_fmt::normalize_line_endings(&raw);
         let filename = shown(input);
         match format_source(&source, &opts) {
             Ok(formatted) => {

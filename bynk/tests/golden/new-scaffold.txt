@@ -12,6 +12,10 @@ include = ["src", "tests"]
 --- .gitignore ---
 # Build output `bynk dev` writes (compiled workers + local wrangler state).
 /.bynk
+--- .gitattributes ---
+# `bynk fmt` writes `.bynk` files with LF line endings. Keep them LF in the
+# working tree on every platform (Git for Windows checks out CRLF by default).
+*.bynk text eol=lf
 --- src/hello.bynk ---
 context hello
 
