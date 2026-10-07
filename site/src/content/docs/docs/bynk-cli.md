@@ -248,7 +248,7 @@ bynk check [INPUT] [--format rich|short]
 | Argument | Default | Meaning |
 |---|---|---|
 | `INPUT` | `.` | A `.bynk` file, or a project root directory (a `bynk.toml` or `src/` subdir selects project mode; otherwise the directory is itself the source tree). |
-| `--format` | `rich` | `rich` is the source-context rendering; `short` emits one terse `path:line:col: severity[category]: message` line per diagnostic, for the VS Code problem-matcher, CI, and scripts. In both, `path` is the file as you'd type it from the working directory (the input you passed, joined with the file's place in it), the same path `fmt` reports. |
+| `--format` | `rich` | `rich` is the source-context rendering; `short` emits one terse `path:line:col: severity[category]: message` line per diagnostic, for the VS Code problem-matcher, CI, and scripts. In both, `path` is the file as you'd type it from the working directory (the input you passed, joined with the file's place in it), the same path `fmt` reports. `rich` is coloured only when stderr is a terminal and `NO_COLOR` is unset or empty, and cuts a source line longer than 400 bytes to a window around its labels, marked `…`. |
 
 **Exit code** — `0` when the input type-checks (warnings are surfaced but do not
 fail the build, per the [diagnostics rule](/docs/cli/#exit-codes-and-diagnostics));
