@@ -73,6 +73,8 @@ Some capabilities are designed but intentionally **deferred, not missing** — t
 are scheduled for later increments on the road to v1:
 
 - **Sagas** — coordinating multi-step workflows across contexts.
+- **Event replay** — re-delivering past events to a subscriber that joins late or
+  recovers, with ordering across concurrent publishes.
 
 Storage kinds, once on this list, have shipped: an agent's `store` fields are
 `Cell`, `Map`, `Set`, `Cache` or `Log` (see [Agents](/book/reference/agents/)).

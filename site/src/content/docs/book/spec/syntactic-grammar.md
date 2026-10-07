@@ -527,7 +527,7 @@ the tree-sitter grammar; see [Reference — grammar](/book/reference/grammar/).)
 ### §4.4.7b Events subscriptions (v0.238) {#447b-events-subscriptions-v0238}
 
 A `from Events(E)` service subscribes to the event `E`
-([§4.1.12](#4112-event_decl)) and has one handler, `on event`. Its header may
+([§4.1.12](#4112-event_decl)); its handlers are `on event` handlers. Its header may
 narrow delivery with a payload pattern, `from Events(E { field: value, .. })`
 (v0.239), and with a version clause after the closing `)`, `via schema(N)`
 (v0.244); a header carries either, both, or neither. `via` is part of the
