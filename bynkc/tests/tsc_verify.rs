@@ -1,8 +1,9 @@
 //! v0.9.1: TypeScript verification of emitted output.
 //!
 //! For every positive fixture, project-form and (#1767) single-file alike,
-//! compile to a temp directory and run `tsc --strict --noEmit` over the result. Any TypeScript error fails
-//! the fixture and surfaces the raw `tsc` output.
+//! compile to a temp directory and run `tsc --strict --noEmit` over the
+//! result. Any TypeScript error fails the fixture and surfaces the raw `tsc`
+//! output.
 //!
 //! This catches emitter bugs that visual review (and the snapshot tests)
 //! miss — it's the backstop for every emission change. Per the v0.9.1 spec
@@ -201,15 +202,23 @@ fn run_tsc_with_config(runner: &TscRunner, tsconfig: &Path) -> (bool, String) {
     (output.status.success(), combined)
 }
 
-/// #1767: stage a single-file fixture's compiled output as `main.ts` beside
-/// the shared `runtime.ts` in `fixture_root`. `Ok(false)` when `dir` holds no
-/// `input.bynk`; `Err` with a failure section when it doesn't compile or
-/// can't be written.
+/// #1767: stage a single-file fixture in `fixture_root`: its compiled output
+/// as `main.ts`, and beside it a copy of `emit_runtime_module()`'s
+/// `runtime.ts`, written here for each such fixture. `Ok(false)` when `dir`
+/// holds no `input.bynk`; `Err` with a failure section when it can't be read,
+/// doesn't compile, or can't be written.
 fn stage_single_file(dir: &Path, fixture_root: &Path) -> Result<bool, String> {
     let input = dir.join("input.bynk");
-    let Ok(source) = fs::read_to_string(&input) else {
+    if !input.is_file() {
         return Ok(false);
-    };
+    }
+    let source = fs::read_to_string(&input).map_err(|e| {
+        format!(
+            "\n=== {} ===\nfailed to read {}: {e}",
+            dir.display(),
+            input.display()
+        )
+    })?;
     let name = input.display().to_string();
     let ts = bynkc::compile(&source, &name).map_err(|errors| {
         format!(
@@ -283,7 +292,6 @@ fn emitted_typescript_passes_tsc_strict() {
     // Fixture names successfully staged into the tree — the set the single
     // `tsc` run actually type-checks.
     let mut staged: Vec<String> = Vec::new();
-    let mut staged_single = 0usize;
     for dir in &dirs {
         let name = dir
             .file_name()
@@ -296,10 +304,7 @@ fn emitted_typescript_passes_tsc_strict() {
             // nothing but `./runtime.js`, so staged beside the runtime it is a
             // complete module graph like any project's.
             match stage_single_file(dir, &root.join(&name)) {
-                Ok(true) => {
-                    staged_single += 1;
-                    staged.push(name);
-                }
+                Ok(true) => staged.push(name),
                 Ok(false) => {}
                 Err(failure) => failures.push(failure),
             }
@@ -377,16 +382,6 @@ fn emitted_typescript_passes_tsc_strict() {
         !staged.is_empty(),
         "no positive fixtures were staged for tsc"
     );
-    // #1767: every single-file fixture is staged. Until #1767 none were, and
-    // `734_is_bindings_and_chain` carried TS2339s in its golden unnoticed.
-    let single_files = dirs
-        .iter()
-        .filter(|d| d.join("input.bynk").is_file())
-        .count();
-    assert_eq!(
-        staged_single, single_files,
-        "every single-file positive fixture must be staged for tsc"
-    );
     if !failures.is_empty() {
         panic!(
             "tsc verification failed ({} fixtures staged, {} clean, {} failure section(s)):\n{}",
@@ -396,6 +391,15 @@ fn emitted_typescript_passes_tsc_strict() {
             failures.join("\n"),
         );
     }
+    // #1767: every fixture is staged, whatever its layout. Until #1767 the
+    // single-file ones were skipped, and `734_is_bindings_and_chain` carried
+    // TS2339s in its golden unnoticed. Checked after `failures`, so a fixture
+    // that failed to compile reports its errors rather than this count.
+    assert_eq!(
+        staged.len(),
+        dirs.len(),
+        "every positive fixture must be staged for tsc"
+    );
 }
 
 /// #1538: `bynk_ts::verbatim_violations` scans a `Verbatim`-tagged text blob
@@ -697,9 +701,9 @@ fn embedded_runtime_strips_types_under_node() {
 /// test scaffolding, and any user binding copied into a fixture.
 ///
 /// Every positive fixture, project-form and (#1767) single-file, is compiled
-/// and its emitted output staged into one temp root; then each `.ts` is checked with `node
-/// --experimental-strip-types --check`. Node-spawn dominates, so the per-file
-/// checks fan out across worker threads.
+/// and its emitted output staged into one temp root; then each `.ts` is
+/// checked with `node --experimental-strip-types --check`. Node-spawn
+/// dominates, so the per-file checks fan out across worker threads.
 #[test]
 fn all_emitted_typescript_strips_under_node() {
     if !node_present() {
@@ -770,6 +774,12 @@ fn all_emitted_typescript_strips_under_node() {
     assert!(
         !staged.is_empty(),
         "no positive fixtures were staged for strip verification"
+    );
+    // #1767: every fixture is staged, as in `emitted_typescript_passes_tsc_strict`.
+    assert_eq!(
+        staged.len(),
+        dirs.len(),
+        "every positive fixture must be staged for strip verification"
     );
 
     // One Node process strips the whole staged tree (see strip_check.mjs).
