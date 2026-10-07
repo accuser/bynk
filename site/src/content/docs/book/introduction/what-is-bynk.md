@@ -56,8 +56,8 @@ capability, a stateful agent, and an HTTP service — read
 
 ## What Bynk is *not* (yet)
 
-Bynk is pre-1.0. Some designed features — events, sagas, and storage kinds —
-are **deferred, not missing**, and land in later increments on the road to v1.
+Bynk is pre-1.0. Some designed features — sagas, and event replay — are
+**deferred, not missing**, and land in later increments on the road to v1.
 This book documents only what compiles today and marks planned features as
 planned. See [Versioning & roadmap](/book/about/versioning-and-roadmap/).
 

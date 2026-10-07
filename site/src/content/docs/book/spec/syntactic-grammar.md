@@ -104,6 +104,37 @@ well-formedness: §5.
 The declaration forms admitted in a `suite` body: `uses`, `stub` clauses, and
 `case` / `property` declarations.
 
+### §4.1.12 event_decl (v0.238) {#4112-event_decl}
+
+{{#grammar event_decl}}
+
+`event`, a name, zero or more `@name(args)` annotations, `=`, and a record body:
+a typed fact a context emits with the `Events` capability and other contexts
+receive with a `from Events(E)` subscription ([§4.4.7b](#447b-events-subscriptions-v0238)).
+The body is a record type only; its fields may carry a default (`field: T =
+expr`). The grammar admits an `event` in any body, and the annotation list in
+any number. Placement (contexts only), the closed annotation set (`@schema(N)`,
+at most once), field defaults, and emission are well-formedness: §5.7b.
+
+### §4.1.13 messages_decl (v0.228) {#4113-messages_decl}
+
+{{#grammar messages_decl}}
+
+A message bundle's block for one locale: `messages`, the locale tag as a string
+literal, zero or more annotations (`@reference` marks the reference locale), and
+a brace-delimited list of entries. The grammar admits it in any body;
+placement (commons only), the tag's `LocaleTag` check, and the one-`@reference`
+rule are well-formedness: §5.11.
+
+### §4.1.14 message_entry {#4114-message_entry}
+
+{{#grammar message_entry}}
+
+One `"code" => "template"` entry in a `messages` block. Both sides are plain
+string literals: an interpolated string (`"…\(x)…"`) is a parse error here. A
+template's `{name}` placeholders are ICU MessageFormat, not Bynk syntax; they
+are checked by §5.11, not parsed by the grammar.
+
 ### §4.1.15 qualified_name
 
 {{#grammar qualified_name}}
@@ -427,15 +458,17 @@ brace-delimited list of handlers. One protocol per service. Well-formedness: §5
 {{#grammar service_protocol}}
 
 The `from <protocol>` clause: `from http`, `from cron`, `from queue("name")`
-(v0.44), or `from websocket(in: I, out: O)` (v0.103). Absent ⇒ the
-contract-mediated default, which admits only `on call`. Well-formedness: §5.
+(v0.44), `from websocket(in: I, out: O)` (v0.103), or `from Events(E)` (v0.238),
+whose event may carry a delivery pattern and a `via schema(N)` clause
+([§4.4.7b](#447b-events-subscriptions-v0238)). Absent ⇒ the contract-mediated
+default, which admits only `on call`. Well-formedness: §5.
 
 ### §4.4.2a handler
 
 {{#grammar handler}}
 
-A handler: a call, HTTP, cron, or queue entry point, matching the service's
-protocol. Well-formedness: §5.
+A handler: a call, HTTP, cron, queue, WebSocket, or event entry point, matching
+the service's protocol. Well-formedness: §5.
 
 ### §4.4.3 call_handler
 
@@ -490,6 +523,53 @@ block body — and is valid only in a `from websocket` service:
 Well-formedness — exactly one `on open`, edge authentication, held-resource
 disposal: §5. *(The rendered grammar productions for these handler heads land with
 the tree-sitter grammar; see [Reference — grammar](/book/reference/grammar/).)*
+
+### §4.4.7b Events subscriptions (v0.238) {#447b-events-subscriptions-v0238}
+
+A `from Events(E)` service subscribes to the event `E`
+([§4.1.12](#4112-event_decl)) and has one handler, `on event`. Its header may
+narrow delivery with a payload pattern, `from Events(E { field: value, .. })`
+(v0.239), and with a version clause after the closing `)`, `via schema(N)`
+(v0.244); a header carries either, both, or neither. `via` is part of the
+`Events` protocol's production, so `via` on any other protocol is a syntax
+error. Well-formedness: §5.7b.
+
+#### event_handler {#447b1-event_handler}
+
+{{#grammar event_handler}}
+
+`on event`, parameters (the payload, then optionally an `EventEnvelope`), `->`, a
+return type, optional `by` and `given` clauses, and a block body.
+
+#### event_pattern {#447b2-event_pattern}
+
+{{#grammar event_pattern}}
+
+A brace-delimited list of `name: value` fields closed by a required `..`. The
+pattern lists a subset of the event's fields; `{ }` with no fields is a parse
+error (`bynk.parse.event_pattern_empty`), and the unfiltered form is the bare
+`from Events(E)`.
+
+#### event_pattern_field {#447b3-event_pattern_field}
+
+{{#grammar event_pattern_field}}
+
+One `name: value` entry in an `event_pattern`.
+
+#### event_pattern_value {#447b4-event_pattern_value}
+
+{{#grammar event_pattern_value}}
+
+The value a field is matched against: an `Int`, `String` or `Bool` literal, or
+a variant reference, bare (`Domestic`) or qualified (`Region.Domestic`).
+
+#### schema_dispatch_clause {#447b5-schema_dispatch_clause}
+
+{{#grammar schema_dispatch_clause}}
+
+`via schema(N)`. The grammar admits a signed number literal; that `N` is a
+positive `Int` is well-formedness (§5.7b). A range (`via schema(2..)`) is not
+part of the grammar.
 
 ### §4.4.8 by_clause (v0.45) {#448-by_clause}
 
