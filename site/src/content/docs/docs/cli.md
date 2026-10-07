@@ -24,7 +24,7 @@ bynkc check <INPUT> [--format <FORMAT>]
 | Argument | Required | Default | Description |
 |---|---|---|---|
 | `INPUT` | yes | — | Input `.bynk` file or project root |
-| `--format` | no | `rich` | Diagnostic output format. `rich` (default) is the ariadne source-context rendering; `short` emits one terse `path:line:col: severity[category]: message` line per diagnostic, for tooling (the VS Code problem-matcher, CI, scripts) (one of: rich, short) |
+| `--format` | no | `rich` | Diagnostic output format. `rich` (default) is the ariadne source-context rendering; `short` emits one terse `path:line:col: severity[category]: message` line per diagnostic, for tooling (the VS Code problem-matcher, CI, scripts). In both, `path` is the file as you'd type it from the working directory (the input you passed, joined with the file's place in it), the same path `fmt` reports (one of: rich, short) |
 
 ## `bynkc compile`
 

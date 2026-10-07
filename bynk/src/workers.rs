@@ -121,7 +121,11 @@ pub fn compile_once(
     }
     // ADR 0117: surface non-failing warnings — the `BYNK_BYNKC` override above
     // already does, via the shelled `bynkc compile`'s own stdout/stderr.
-    crate::diagnostics::print_project_warnings(&output.warnings, &output.snapshots);
+    crate::diagnostics::print_project_warnings(
+        &output.warnings,
+        &output.snapshots,
+        &output.display_root,
+    );
     true
 }
 
