@@ -84,7 +84,11 @@ fn project_sources(
     input: &Path,
 ) -> Result<(Option<project::ProjectPaths>, HashMap<PathBuf, String>), ProjectOptionsError> {
     if input.join("bynk.toml").exists() || input.join("src").is_dir() {
-        let paths = try_read_project_paths_with(input, &manifest_overlay(input))?;
+        let overlay = manifest_overlay(input);
+        // #1665: an unknown table is refused here, on the CLIs' path, before
+        // `[paths]` is read. (The language server reads `[paths]` alone.)
+        project::check_manifest(input, &overlay)?;
+        let paths = try_read_project_paths_with(input, &overlay)?;
         let sources = split_sources(input, &paths)?;
         Ok((Some(paths), sources))
     } else {
@@ -500,6 +504,9 @@ impl FmtArgs {
 enum FmtOptionsError {
     /// The project's `bynk.toml` `[fmt]` section is unusable.
     Manifest(PathBuf, bynk_fmt::ConfigError),
+    /// #1665: the project's `bynk.toml` has a table (or a `[project]`/`[lsp]`
+    /// key) it doesn't define.
+    ManifestTables(PathBuf, project::ProjectPathsError),
     /// The flags this run passed contradict each other or the manifest.
     Args(String),
 }
@@ -510,6 +517,7 @@ impl std::fmt::Display for FmtOptionsError {
             // Named, because the manifest governing a file is not necessarily
             // the one in the working directory.
             Self::Manifest(path, e) => write!(f, "{}: {e}", path.display()),
+            Self::ManifestTables(path, e) => write!(f, "{}: {e}", path.display()),
             Self::Args(e) => write!(f, "{e}"),
         }
     }
@@ -576,9 +584,13 @@ impl ManifestCache {
                         bynk_fmt::ConfigError::Read(e.to_string()),
                     )
                 })?;
-                bynk_fmt::FmtConfig::from_manifest_str(&text)
-                    .map_err(|e| FmtOptionsError::Manifest(manifest, e))?
-                    .apply(FormatOptions::default())
+                // `[fmt]` first: its reader owns the detailed TOML parse error
+                // and its own keys. #1665: then the manifest's table set.
+                let config = bynk_fmt::FmtConfig::from_manifest_str(&text)
+                    .map_err(|e| FmtOptionsError::Manifest(manifest.clone(), e))?;
+                project::check_manifest_str(&text)
+                    .map_err(|e| FmtOptionsError::ManifestTables(manifest, e))?;
+                config.apply(FormatOptions::default())
             }
         };
         self.by_dir.insert(start, opts);
@@ -1144,6 +1156,36 @@ mod tests {
                 ProjectOptionsError::Paths(ProjectPathsError::UnknownKey(k)) if k == "inculde"
             ),
             "expected Paths(UnknownKey(\"inculde\")), got: {err:?}"
+        );
+    }
+
+    /// #1665: an unknown table reaches the caller from the same strict path,
+    /// even with a valid `[paths]`. Before, `[dependencies]` built cleanly.
+    #[test]
+    fn try_project_options_surfaces_an_unknown_table() {
+        let dir = scratch_dir("try_project_options_unknown_table");
+        fs::write(
+            dir.0.join("bynk.toml"),
+            "[paths]\ninclude = [\"src\"]\n\n[dependencies]\nacme-utils = \"1.2\"\n",
+        )
+        .unwrap();
+        fs::create_dir_all(dir.0.join("src")).unwrap();
+        fs::write(dir.0.join("src/thing.bynk"), "context thing\n").unwrap();
+
+        let err = match try_project_options(&dir.0) {
+            Err(e) => e,
+            Ok(_) => panic!("an unknown table must be reported, not silently ignored"),
+        };
+        assert!(
+            matches!(
+                &err,
+                ProjectOptionsError::Paths(ProjectPathsError::UnknownTable(t)) if t == "dependencies"
+            ),
+            "expected Paths(UnknownTable(\"dependencies\")), got: {err:?}"
+        );
+        assert!(
+            err.to_string().contains("not yet supported (#843)"),
+            "{err}"
         );
     }
 }
