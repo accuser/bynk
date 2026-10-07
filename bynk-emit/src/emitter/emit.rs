@@ -3962,12 +3962,20 @@ pub(crate) fn flatten_emit_ident_chain(e: &Expr) -> Option<String> {
 /// type. For named types we emit `arg as <ns>.<TypeName>`. For other types
 /// (base, ()), no cast is needed. The structural compatibility check at the
 /// bynk layer guarantees the cast is sound.
+///
+/// #1773 review: `in_test_scaffold` qualifies through [`test_scaffold_ns`], the
+/// namespace a test module binds. No test body reaches this today (below
+/// `system` a case may not call another context,
+/// `bynk.tier.cross_context_needs_system`, and a `system` case lowers through
+/// the Workers path), but a test module's namespace references all go through
+/// that one helper.
 pub(crate) fn param_cast(
     consumed: &str,
     info: &bynk_check::resolver::CrossContextInfo,
     method: &Ident,
     idx: usize,
     arg: String,
+    in_test_scaffold: bool,
 ) -> String {
     let Some(svcs) = info.consumed_services.get(consumed) else {
         return arg;
@@ -3979,7 +3987,11 @@ pub(crate) fn param_cast(
         return arg;
     };
     if let Some(name) = type_ref_named_root(ptype_ref) {
-        let ns = qualified_to_ns(consumed);
+        let ns = if in_test_scaffold {
+            test_scaffold_ns(consumed)
+        } else {
+            qualified_to_ns(consumed)
+        };
         // v0.9.1: when both contexts brand the same commons type (e.g., both
         // see `Money` with their own `__ctxBrand`), a direct
         // `as <ns>.<Type>` cast is rejected by `tsc --strict` because the
