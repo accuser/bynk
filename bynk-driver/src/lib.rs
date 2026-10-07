@@ -319,6 +319,14 @@ pub fn display_path(display_root: &Path, identity: &Path) -> String {
     shown.to_string_lossy().replace('\\', "/")
 }
 
+/// #1774: a path the user named directly (a `fmt` input, a single-file
+/// `check`), shown by the same rule as [`display_path`], so `fmt` and `check`
+/// print one file identically on every platform. On Windows a directory's
+/// expansion joined `\` onto a `/`-typed input, giving mixed separators.
+fn shown(path: &Path) -> String {
+    display_path(Path::new(""), path)
+}
+
 /// The project-failure analogue of [`bynk_render::print_errors_short`]: each
 /// attributed error is positioned against its file's snapshot; an unattributed
 /// (project-level) error falls back to `<severity>[<category>]: <message>`.
@@ -705,26 +713,23 @@ pub fn run_fmt(prog: &str, args: &FmtArgs) -> ExitCode {
         let source = match std::fs::read_to_string(input) {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("{prog} fmt: read `{}`: {e}", input.display());
+                eprintln!("{prog} fmt: read `{}`: {e}", shown(input));
                 had_error = true;
                 continue;
             }
         };
-        let filename = input.display().to_string();
+        let filename = shown(input);
         match format_source(&source, &opts) {
             Ok(formatted) => {
                 if check {
                     if formatted != source {
-                        eprintln!(
-                            "{prog} fmt: {} is not canonically formatted",
-                            input.display()
-                        );
+                        eprintln!("{prog} fmt: {} is not canonically formatted", filename);
                         had_diff = true;
                     }
                 } else if formatted != source
                     && let Err(e) = atomic_write(input, &formatted)
                 {
-                    eprintln!("{prog} fmt: write `{}`: {e}", input.display());
+                    eprintln!("{prog} fmt: write `{}`: {e}", filename);
                     had_error = true;
                 }
             }
@@ -885,11 +890,11 @@ pub fn run_check(prog: &str, input: &Path, short: bool) -> ExitCode {
         let source = match std::fs::read_to_string(input) {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("{prog}: could not read `{}`: {e}", input.display());
+                eprintln!("{prog}: could not read `{}`: {e}", shown(input));
                 return ExitCode::FAILURE;
             }
         };
-        let filename = input.display().to_string();
+        let filename = shown(input);
         match bynk_emit::compile_with_warnings(&source, &filename) {
             Ok(compiled) => {
                 if !compiled.warnings.is_empty() {
