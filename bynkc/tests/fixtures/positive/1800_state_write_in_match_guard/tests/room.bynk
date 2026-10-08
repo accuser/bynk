@@ -11,3 +11,9 @@ case "a guard that does not write leaves the state alone" {
   let n <- read.call("c2")
   expect n == 0
 }
+
+case "a write in a guard that then fails is committed" {
+  let _ <- note.call("c3", 7)
+  let n <- read.call("c3")
+  expect n == 7
+}

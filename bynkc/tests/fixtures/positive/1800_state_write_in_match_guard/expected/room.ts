@@ -3,6 +3,8 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, type __DurableObjectState, type __DurableObjectNamespace, __StateRegistry, __makeAgent, __rehydrationViolation, type __JsonValue, type __BoundaryError } from "./runtime.js";
 
+import { positive } from "./shared.js";
+
 export interface CounterState {
   readonly hits: number;
 }
@@ -59,6 +61,29 @@ export class Counter {
     return __result;
   }
 
+  async note(n: number, deps: {}): globalThis.Promise<void> {
+    const __state = { ...(await this.loadState()) };
+    const __result = await (async () => {
+      const __r0 = Some(n);
+      if (__r0.tag === "Some") {
+        const x = __r0.value;
+        if ((() => {
+    if (positive(x)) {
+      __state.hits = x;
+      return false;
+    } else {
+      return false;
+    }
+  })()) {
+          return undefined;
+        }
+      }
+      return undefined;
+    })();
+    await this.commitState(__state);
+    return __result;
+  }
+
   async read(deps: {}): globalThis.Promise<number> {
     const __state = await this.loadState();
     return __state.hits;
@@ -73,6 +98,12 @@ export function __makeCounter(key: string, env?: { COUNTER?: __DurableObjectName
 export const bump = {
   async call(id: string, n: number, deps: {}): globalThis.Promise<void> {
     return __makeCounter(id).bump(n, deps);
+  },
+};
+
+export const note = {
+  async call(id: string, n: number, deps: {}): globalThis.Promise<void> {
+    return __makeCounter(id).note(n, deps);
   },
 };
 
@@ -93,6 +124,9 @@ export function __makeSurface(deps: __RoomDeps) {
   return {
     async bump(id: string, n: number): globalThis.Promise<void> {
       return bump.call(id, n, deps);
+    },
+    async note(id: string, n: number): globalThis.Promise<void> {
+      return note.call(id, n, deps);
     },
     async read(id: string): globalThis.Promise<number> {
       return read.call(id, deps);

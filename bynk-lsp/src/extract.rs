@@ -421,6 +421,12 @@ fn locate(expr: &Expr, target: Span, insertion_offset: usize) -> Site<'_> {
             if contains(discriminant.span, target) {
                 return locate(discriminant, target, insertion_offset);
             }
+            // A selection inside a guard deliberately falls through to the
+            // whole `match` below rather than descending (#1800 review): the
+            // extracted `let` goes above the enclosing statement, outside the
+            // arm, and a guard almost always reads the arm's pattern bindings,
+            // which are not in scope there. Extracting the whole `match` is
+            // sound.
             for arm in arms {
                 if !contains(arm.body.span(), target) {
                     continue;
@@ -684,7 +690,10 @@ fn find_multi_stmt_in_item(item: &CommonsItem, target: Span) -> Option<StmtRun<'
 /// first via [`find_stmt_run_in_expr`] (mirroring [`locate`]'s
 /// descend-first policy), so a run inside an `if`/`match` branch resolves
 /// there rather than at the outer level; [`align_stmt_run`] does the actual
-/// boundary check once no deeper block matches.
+/// boundary check once no deeper block matches. Unlike [`locate`], it also
+/// descends into a `match` arm's guard (#1800): a run is lifted into a `fn`
+/// whose parameters carry the guard's bindings, so nothing is hoisted out of
+/// their scope.
 fn find_stmt_run(block: &Block, target: Span) -> Option<StmtRun<'_>> {
     for stmt in &block.statements {
         let mut values = Vec::new();
@@ -1462,6 +1471,40 @@ mod tests {
                 assert_eq!(
                     edits[0].new_text,
                     format!("fn extractedFn() -> Effect[()] {{\n  {needle}\n}}\n\n")
+                );
+                assert_eq!(edits[1].new_text, "do extractedFn()");
+            }
+
+            #[test]
+            fn a_run_whose_match_guard_binds_an_effect_yields_an_effect_return() {
+                // #1800 review: the `<-` sits only in an arm's guard, so
+                // `stmts_contain_effect_stmt` must search guards for the lifted
+                // `fn` to return `Effect[()]` and the call site to be `do`.
+                let src = concat!(
+                    "context c\n\n",
+                    "fn f(o: Option[Int]) -> Effect[()] {\n",
+                    "  let a = match o {\n",
+                    "    Some(n) if if n > 0 {\n",
+                    "      let _ <- g()\n",
+                    "      true\n",
+                    "    } else {\n",
+                    "      false\n",
+                    "    } => n\n",
+                    "    _ => 0\n",
+                    "  }\n",
+                    "  ()\n",
+                    "}\n",
+                );
+                let needle = "let a = match o {\n    Some(n) if if n > 0 {\n      let _ <- g()\n      true\n    } else {\n      false\n    } => n\n    _ => 0\n  }";
+                let actions = function_actions_for(src, needle, &[], &[], &[]);
+                assert_eq!(actions.len(), 1);
+                let edits = sole_edit(&actions[0]);
+                assert!(
+                    edits[0]
+                        .new_text
+                        .starts_with("fn extractedFn() -> Effect[()] {"),
+                    "{}",
+                    edits[0].new_text
                 );
                 assert_eq!(edits[1].new_text, "do extractedFn()");
             }

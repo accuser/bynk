@@ -2373,6 +2373,11 @@ fn collect_refs_in_expr(
                 {
                     record_name_ref(&tn.name, local_to_file, ctx, out);
                 }
+                // #1800: a name used only in a guard needs its import too;
+                // skipping the guard emitted a reference `tsc` cannot find.
+                if let Some(guard) = &arm.guard {
+                    collect_refs_in_expr(guard, local_to_file, commons, ctx, out);
+                }
                 match &arm.body {
                     MatchBody::Expr(e) => collect_refs_in_expr(e, local_to_file, commons, ctx, out),
                     MatchBody::Block(b) => {
