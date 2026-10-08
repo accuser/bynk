@@ -13,7 +13,7 @@ class_name = "JobLedger"
 
 [[migrations]]
 tag = "v1"
-new_classes = ["JobLedger"]
+new_sqlite_classes = ["JobLedger"]
 
 [[queues.consumers]]
 queue = "job-intake"
