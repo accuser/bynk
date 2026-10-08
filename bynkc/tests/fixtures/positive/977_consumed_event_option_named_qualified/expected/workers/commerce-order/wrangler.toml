@@ -11,7 +11,7 @@ service = "commerce-notifications"
 name = "___EVENTS_FANOUT"
 class_name = "__EventsFanout"
 
-[[migrations]]
-tag = "v1"
-new_sqlite_classes = ["__EventsFanout"]
+[exports.__EventsFanout]
+type = "durable-object"
+storage = "sqlite"
 

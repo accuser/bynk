@@ -150,7 +150,7 @@ fn workers_events_fanout_do_and_wrangler_wiring() {
             .text()
     };
 
-    // The publisher's wrangler.toml: the fan-out DO binding + migration, and
+    // The publisher's wrangler.toml: the fan-out DO binding + export, and
     // a Service Binding reaching the subscriber it does not itself `consumes`
     // (the reverse of the ordinary `consumes` edge — nothing else wires it).
     let order_wrangler = find("workers/commerce-order/wrangler.toml");
@@ -159,9 +159,21 @@ fn workers_events_fanout_do_and_wrangler_wiring() {
             && order_wrangler.contains("class_name = \"__EventsFanout\""),
         "commerce-order's wrangler.toml must declare the fan-out DO binding:\n{order_wrangler}"
     );
+    // #1796: declared in `exports` beside the context's real agents, each
+    // SQLite-backed, with no `[[migrations]]` at all — a tagged migration
+    // would never register the fan-out class on a Worker that first deployed
+    // before it emitted.
+    for class in ["Ledger", "__EventsFanout"] {
+        assert!(
+            order_wrangler.contains(&format!(
+                "[exports.{class}]\ntype = \"durable-object\"\nstorage = \"sqlite\"\n"
+            )),
+            "{class} must be exported as a SQLite-backed Durable Object:\n{order_wrangler}"
+        );
+    }
     assert!(
-        order_wrangler.contains("new_sqlite_classes = [\"Ledger\", \"__EventsFanout\"]"),
-        "the fan-out DO must ride the same migration as the context's real agents:\n{order_wrangler}"
+        !order_wrangler.contains("[[migrations]]"),
+        "`exports` and `migrations` are mutually exclusive:\n{order_wrangler}"
     );
     assert!(
         order_wrangler.contains("binding = \"COMMERCE_NOTIFICATIONS\"")

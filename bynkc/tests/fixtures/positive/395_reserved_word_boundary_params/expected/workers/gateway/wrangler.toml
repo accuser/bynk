@@ -7,9 +7,9 @@ compatibility_date = "2026-07-01"
 name = "ROOM"
 class_name = "Room"
 
-[[migrations]]
-tag = "v1"
-new_sqlite_classes = ["Room"]
+[exports.Room]
+type = "durable-object"
+storage = "sqlite"
 
 [triggers]
 crons = ["*/5 * * * *"]

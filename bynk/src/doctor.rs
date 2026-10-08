@@ -400,10 +400,14 @@ pub fn wrangler_upgrade_remedy(probe: &Probe) -> &'static str {
 
 /// #1732: wrangler, checked against [`bynk_emit::WRANGLER_MIN`], the oldest
 /// whose `workerd` serves the [`bynk_emit::COMPATIBILITY_DATE`] every generated
-/// `wrangler.toml` pins. An older one still deploys (Cloudflare accepts any past
-/// date), but its `workerd` refuses the date, so `bynk dev` fails. That's a
-/// warning, not a failure, so `doctor --only deploy` doesn't go red on a
-/// toolchain that deploys. An npx-provisioned wrangler's version isn't known
+/// `wrangler.toml` pins. An older one's `workerd` refuses the date, so
+/// `bynk dev` fails. It also doesn't read the Durable Object `exports` map
+/// (#1796), so a project with an agent can't deploy on it, and `bynk deploy`
+/// refuses one that would push a class (`deploy::plan::wrangler_floor_refusal`).
+/// A project with no agent still deploys (Cloudflare accepts any past date).
+/// Doctor doesn't know which kind of project it is, so this stays a warning,
+/// not a failure, and `doctor --only deploy` doesn't go red on a toolchain
+/// that deploys an agent-free project. An npx-provisioned wrangler's version isn't known
 /// without running npx (which may download), so its row keeps the usual
 /// "provisionable" warning, and the remedy says to clear a stale npx cache: one
 /// older than the minimum fails the same way, because npx keys the cache on the
@@ -431,7 +435,7 @@ fn detect_wrangler(tb: &dyn Toolbox, root: Option<&std::path::Path>) -> Row {
             label: "wrangler".into(),
             level: Level::Warn,
             detail: format!(
-                "{}, below {min}: `bynk dev` can't serve compatibility date {date}",
+                "{}, below {min}: `bynk dev` can't serve compatibility date {date}, and agents can't deploy",
                 present_detail(&probe)
             ),
             remedy: Some(remedy.into()),
