@@ -1,0 +1,5 @@
+suite tally {
+  case "tallies" {
+    expect tally([1, 2, 3]) == 6
+  }
+}

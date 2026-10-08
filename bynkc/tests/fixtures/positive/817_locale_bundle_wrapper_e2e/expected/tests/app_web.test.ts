@@ -2,10 +2,10 @@
 // test target: app.web
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, __bynkEq } from "../runtime.js";
-import * as app_web from "./../app/web.js";
-import * as bynk from "./../bynk.js";
-import * as app_bundle from "./../app/bundle.js";
-import * as bynk_locale_types from "./../bynk/locale/types.js";
+import * as __ns_app_web from "./../app/web.js";
+import * as __ns_bynk from "./../bynk.js";
+import * as __ns_app_bundle from "./../app/bundle.js";
+import * as __ns_bynk_locale_types from "./../bynk/locale/types.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -29,14 +29,14 @@ function __bynkShow(v: unknown): string {
 }
 
 class __Stub_Locale {
-  async current(): globalThis.Promise<bynk_locale_types.LocaleTag> {
-    const { EventEnvelope, FetchError, Method, Request, Response, Uuid } = bynk;
-    type EventEnvelope = bynk.EventEnvelope;
-    type FetchError = bynk.FetchError;
-    type Method = bynk.Method;
-    type Request = bynk.Request;
-    type Response = bynk.Response;
-    type Uuid = bynk.Uuid;
+  async current(): globalThis.Promise<__ns_bynk_locale_types.LocaleTag> {
+    const { EventEnvelope, FetchError, Method, Request, Response, Uuid } = __ns_bynk;
+    type EventEnvelope = __ns_bynk.EventEnvelope;
+    type FetchError = __ns_bynk.FetchError;
+    type Method = __ns_bynk.Method;
+    type Request = __ns_bynk.Request;
+    type Response = __ns_bynk.Response;
+    type Uuid = __ns_bynk.Uuid;
     if (true) {
       return ("en" as any);
     }
@@ -64,7 +64,7 @@ function __bynkOverlay(base: unknown, stub: object, cap: string): unknown {
   });
 }
 
-function __bynkTest_Locale(): bynk.Locale {
+function __bynkTest_Locale(): __ns_bynk.Locale {
   return {
     async current() {
       return "en" as never;
@@ -73,26 +73,26 @@ function __bynkTest_Locale(): bynk.Locale {
 }
 
 function __makeTestDeps() {
-  return { Locale: __bynkOverlay(__bynkTest_Locale(), new __Stub_Locale(), "Locale") as bynk.Locale };
+  return { Locale: __bynkOverlay(__bynkTest_Locale(), new __Stub_Locale(), "Locale") as __ns_bynk.Locale };
 }
 
 // case tier: unit
 async function test_renders_the_bundle_s_greeting_through_the_wrapper() {
   try {
     const deps = __makeTestDeps();
-    const { greeting } = app_web;
-    const { LocaleTag, Message, MessageArg } = bynk_locale_types;
-    type LocaleTag = bynk_locale_types.LocaleTag;
-    type Message = bynk_locale_types.Message;
-    type MessageArg = bynk_locale_types.MessageArg;
-    const { greet, render } = app_bundle;
-    const { EventEnvelope, FetchError, Method, Request, Response, Uuid } = bynk;
-    type EventEnvelope = bynk.EventEnvelope;
-    type FetchError = bynk.FetchError;
-    type Method = bynk.Method;
-    type Request = bynk.Request;
-    type Response = bynk.Response;
-    type Uuid = bynk.Uuid;
+    const { greeting } = __ns_app_web;
+    const { LocaleTag, Message, MessageArg } = __ns_bynk_locale_types;
+    type LocaleTag = __ns_bynk_locale_types.LocaleTag;
+    type Message = __ns_bynk_locale_types.Message;
+    type MessageArg = __ns_bynk_locale_types.MessageArg;
+    const { greet, render } = __ns_app_bundle;
+    const { EventEnvelope, FetchError, Method, Request, Response, Uuid } = __ns_bynk;
+    type EventEnvelope = __ns_bynk.EventEnvelope;
+    type FetchError = __ns_bynk.FetchError;
+    type Method = __ns_bynk.Method;
+    type Request = __ns_bynk.Request;
+    type Response = __ns_bynk.Response;
+    type Uuid = __ns_bynk.Uuid;
     const g = await greeting.call(deps);
     if (!(__bynkEq(g, "Hello"))) { throw __bynkExpectFailure("tests/web.test.bynk:13:12", 498, 510, "expect g == \"Hello\"\n  expected: g == \"Hello\"\n  actual:   " + __bynkShow((g)) + " == " + __bynkShow(("Hello"))); }
     return { pass: true };

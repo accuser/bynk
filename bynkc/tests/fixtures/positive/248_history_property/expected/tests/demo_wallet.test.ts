@@ -2,7 +2,7 @@
 // test target: demo.wallet
 
 import { Ok, Err, Some, None, __makeTestState, type Result, type Option, type ValidationError } from "../runtime.js";
-import * as demo_wallet from "./../demo/wallet.js";
+import * as __ns_demo_wallet from "./../demo/wallet.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -243,10 +243,10 @@ function __makeTestDeps() {
 }
 
 async function __prop_test_no_accepted_spend_without_a_prior_accepted_top_up() {
-    demo_wallet.__resetAgents();
+    __ns_demo_wallet.__resetAgents();
     const deps = __makeTestDeps();
-    const { Amount, Wallet, __makeWallet } = demo_wallet;
-    type Amount = demo_wallet.Amount;
+    const { Amount, Wallet, __makeWallet } = __ns_demo_wallet;
+    type Amount = __ns_demo_wallet.Amount;
     type __History_Wallet_Step = any; type __History_Wallet_Call = any; type __History_Wallet_State = any;
     const __handlers = [
       { tag: "TopUp", gens: [{ boundaries: [(1n as any), (1000n as any)], gen: (rng: any) => (rng.int(1n, 1000n) as any), shrink: (v: any) => __bynkShrinkInt(v, 1n).map((__n: bigint) => (__n as any)), show: (v: any) => __bynkShow(v) }] },
@@ -256,7 +256,7 @@ async function __prop_test_no_accepted_spend_without_a_prior_accepted_top_up() {
       const run = __run;
       if (!((run).every((__x: __History_Wallet_Step) => ((s) => (!((s.call.tag === "Spend" && s.accepted)) || (((__xs: readonly __History_Wallet_Step[], __s: __History_Wallet_Step) => __xs.slice(0, __xs.indexOf(__s)))(run, s)).some((__x: __History_Wallet_Step) => ((p) => p.call.tag === "TopUp" && p.accepted)(__x))))(__x)))) { throw __bynkExpectFailure("tests/wallet.test.bynk:7:14", 367, 494, "expect run.all((s) =>\n        (s.call is Spend && s.accepted)\n          implies run.upTo(s).any((p) => p.call is TopUp && p.accepted))"); }
     };
-    const __drive = (seq: globalThis.Array<{ h: number, args: unknown[] }>) => (demo_wallet as any).__bynkDriveHistory_Wallet(seq, deps);
+    const __drive = (seq: globalThis.Array<{ h: number, args: unknown[] }>) => (__ns_demo_wallet as any).__bynkDriveHistory_Wallet(seq, deps);
     return await __bynkRunHistory({ seed: __bynkMix(__bynkSeed, 0), cases: 60, maxLen: 16, handlers: __handlers, drive: __drive, body: __body, name: "no accepted spend without a prior accepted top-up", location: "tests/wallet.test.bynk", file: "tests/wallet.test.bynk" });
 }
 

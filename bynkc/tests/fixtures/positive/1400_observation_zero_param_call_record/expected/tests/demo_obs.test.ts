@@ -2,7 +2,7 @@
 // test target: demo.obs
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, __bynkEq } from "../runtime.js";
-import * as demo_obs from "./../demo/obs.js";
+import * as __ns_demo_obs from "./../demo/obs.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -45,7 +45,7 @@ function __bynkRecordDeps(deps: any, spec: Record<string, string[]>, obs: { log:
 type __Clock_now_Call = {  };
 
 function __makeTestDeps() {
-  return { Clock: new demo_obs.SystemClock() };
+  return { Clock: new __ns_demo_obs.SystemClock() };
 }
 
 // case tier: unit
@@ -53,7 +53,7 @@ async function test_traces_the_zero_param_clock_read() {
   try {
     const __obs = { log: {} as globalThis.Record<string, { args: unknown[]; order: number }[]>, n: 0 };
     const deps = __bynkRecordDeps(__makeTestDeps(), { Clock: ["now"] }, __obs);
-    const { tick } = demo_obs;
+    const { tick } = __ns_demo_obs;
     const r = await tick.call(deps);
     if (!(__bynkEq(r, 0))) { throw __bynkExpectFailure("tests/obs.test.bynk:8:12", 375, 381, "expect r == 0\n  expected: r == 0\n  actual:   " + __bynkShow((r)) + " == " + __bynkShow((0))); }
     const calls = (((__obs.log["Clock.now"] ?? []).map((__c: { args: unknown[] }) => ({  }))) as __Clock_now_Call[]);

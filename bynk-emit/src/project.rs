@@ -88,9 +88,10 @@ use tests_emit::*;
 pub use bynk_check::project_model::BuildTarget;
 pub use bynk_check::symbols::{FileDeclIndex, UnitTable};
 pub use bynk_project::{
-    AttributedError, ProjectPaths, ProjectPathsError, Roots, SchemaLock, UnitKind,
-    discover_project_files, try_read_project_paths, try_read_project_paths_with, worker_dir_name,
-    worker_handlers_output_path, worker_handlers_source_path,
+    AttributedError, ProjectPaths, ProjectPathsError, Roots, SchemaLock, UnitKind, check_manifest,
+    check_manifest_str, discover_project_files, try_read_project_paths,
+    try_read_project_paths_with, worker_dir_name, worker_handlers_output_path,
+    worker_handlers_source_path,
 };
 pub use diagnostics::{ContextBoundaryInfo, ContextSequenceInfo, ProjectAnalysis, ProjectFailure};
 
@@ -180,6 +181,12 @@ pub struct ProjectOutput {
     /// `path:line:col:`) instead of the position-free `warning[category]: …`
     /// fallback a successful build previously had no way to avoid.
     pub snapshots: Vec<(PathBuf, String)>,
+    /// #1772: the project or tree root the build was given, as the caller
+    /// spelled it. `snapshots` and each error's `source_path` are keyed by
+    /// identity path, relative to this root; a renderer shows
+    /// `display_root.join(identity)`, the path as typed from the working
+    /// directory. Empty for an in-memory build.
+    pub display_root: PathBuf,
     /// v0.67: the test manifest — every discovered suite and case, retained at
     /// emit time so `bynkc test --no-run --format json` can render a discovery
     /// document without running the suite. Built from the same names + spans the
@@ -479,7 +486,7 @@ pub fn compile_project(options: &CompileOptions) -> Result<ProjectOutput, Projec
     // instead and has no revised content for a caller to persist). The
     // caller (today, `bynk-driver`'s two wiring points) does the atomic
     // write.
-    finish_build(run, options.import_ext)
+    finish_build(run, options.import_ext, options.roots.project_root())
 }
 
 /// Result of [`check_project`]: every diagnostic from a non-bailing project
@@ -490,6 +497,12 @@ pub fn compile_project(options: &CompileOptions) -> Result<ProjectOutput, Projec
 pub struct ProjectCheck {
     pub errors: Vec<AttributedError>,
     pub snapshots: Vec<(PathBuf, String)>,
+    /// #1772: the project or tree root the build was given, as the caller
+    /// spelled it. `snapshots` and each error's `source_path` are keyed by
+    /// identity path, relative to this root; a renderer shows
+    /// `display_root.join(identity)`, the path as typed from the working
+    /// directory. Empty for an in-memory build.
+    pub display_root: PathBuf,
 }
 
 impl ProjectCheck {
@@ -551,6 +564,7 @@ pub fn check_project(options: &CompileOptions) -> ProjectCheck {
         } => ProjectCheck {
             errors: errors.into_all(),
             snapshots,
+            display_root: options.roots.project_root().to_path_buf(),
         },
     }
 }
@@ -596,7 +610,7 @@ pub fn compile_in_memory(
         &root,
         tys,
     );
-    finish_build(run, ImportExt::Js)
+    finish_build(run, ImportExt::Js, Path::new(""))
 }
 
 /// Analyse a single **in-memory** Bynk source and return all diagnostics —
@@ -708,7 +722,11 @@ fn in_memory_logical_path(source: &str) -> PathBuf {
 /// Assemble a finished [`ProjectOutput`] (or a [`ProjectFailure`]) from a
 /// [`RunChecks`] result — the shared tail of `compile_project` and
 /// `compile_in_memory`.
-fn finish_build(run: RunChecks, import_ext: ImportExt) -> Result<ProjectOutput, ProjectFailure> {
+fn finish_build(
+    run: RunChecks,
+    import_ext: ImportExt,
+    display_root: &Path,
+) -> Result<ProjectOutput, ProjectFailure> {
     match run {
         RunChecks::Bailed {
             errors, snapshots, ..
@@ -717,12 +735,14 @@ fn finish_build(run: RunChecks, import_ext: ImportExt) -> Result<ProjectOutput, 
             // (the sink yields errors then warnings).
             errors: errors.into_all(),
             snapshots,
+            display_root: display_root.to_path_buf(),
         }),
         RunChecks::Checked {
             errors, snapshots, ..
         } if !errors.is_empty() => Err(ProjectFailure {
             errors: errors.into_all(),
             snapshots,
+            display_root: display_root.to_path_buf(),
         }),
         RunChecks::Checked {
             errors,
@@ -771,6 +791,7 @@ fn finish_build(run: RunChecks, import_ext: ImportExt) -> Result<ProjectOutput, 
             // (errors is empty here — the guard arm above caught any).
             out.warnings = errors.into_warnings();
             out.snapshots = snapshots;
+            out.display_root = display_root.to_path_buf();
             // #1078: the reconciled registry, if this build had one on —
             // bynk-emit computes it, the caller persists it.
             out.schema_lock = schema_registry.map(|reg| schema_registry::serialize(&reg));
@@ -2426,6 +2447,7 @@ fn build_output(
         // Populated by `finish_build` from the same `RunChecks::Checked` this
         // whole `ProjectOutput` was built from.
         snapshots: Vec::new(),
+        display_root: PathBuf::new(),
         // Likewise (#1078) — `Some` only when the registry was on.
         schema_lock: None,
     }

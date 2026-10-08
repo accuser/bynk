@@ -84,7 +84,11 @@ fn project_sources(
     input: &Path,
 ) -> Result<(Option<project::ProjectPaths>, HashMap<PathBuf, String>), ProjectOptionsError> {
     if input.join("bynk.toml").exists() || input.join("src").is_dir() {
-        let paths = try_read_project_paths_with(input, &manifest_overlay(input))?;
+        let overlay = manifest_overlay(input);
+        // #1665: an unknown table is refused here, on the CLIs' path, before
+        // `[paths]` is read. (The language server reads `[paths]` alone.)
+        project::check_manifest(input, &overlay)?;
+        let paths = try_read_project_paths_with(input, &overlay)?;
         let sources = split_sources(input, &paths)?;
         Ok((Some(paths), sources))
     } else {
@@ -193,7 +197,7 @@ impl From<discovery::DiscoveryError> for ProjectOptionsError {
 /// stays here, above `bynk-render`, so there is no `render → emit` edge.
 pub fn print_project_failure(failure: &project::ProjectFailure) {
     for ae in &failure.errors {
-        match attributed_snapshot(ae, &failure.snapshots) {
+        match attributed_snapshot(ae, &failure.snapshots, &failure.display_root) {
             Some((label, text)) => {
                 bynk_render::print_errors(std::slice::from_ref(&ae.error), text, &label);
             }
@@ -220,9 +224,10 @@ pub fn print_project_failure(failure: &project::ProjectFailure) {
 pub fn print_project_warnings(
     warnings: &[project::AttributedError],
     snapshots: &[(PathBuf, String)],
+    display_root: &Path,
 ) {
     for w in warnings {
-        match attributed_snapshot(w, snapshots) {
+        match attributed_snapshot(w, snapshots, display_root) {
             Some((label, text)) => {
                 bynk_render::print_errors(std::slice::from_ref(&w.error), text, &label)
             }
@@ -253,9 +258,10 @@ pub fn print_project_warnings(
 pub fn print_project_warnings_short(
     warnings: &[project::AttributedError],
     snapshots: &[(PathBuf, String)],
+    display_root: &Path,
 ) {
     for w in warnings {
-        match attributed_snapshot(w, snapshots) {
+        match attributed_snapshot(w, snapshots, display_root) {
             Some((label, text)) => eprintln!("{}", bynk_render::short_line(&label, text, &w.error)),
             // Every entry in `warnings` is warning-severity by construction
             // (ADR 0117's own split), so `severity_word` here is always
@@ -275,16 +281,72 @@ pub fn print_project_warnings_short(
 /// to in `snapshots`, if any — the one attribution lookup every renderer in
 /// this file shares (finding #48; previously `print_project_failure` and
 /// [`project_failure_short_lines`] each hand-rolled their own copy).
+///
+/// #1772: the label is the file's path as typed from the working directory
+/// ([`display_path`]), not its identity path. `snapshots` stay keyed by
+/// identity.
 fn attributed_snapshot<'a>(
     ae: &project::AttributedError,
     snapshots: &'a [(PathBuf, String)],
+    display_root: &Path,
 ) -> Option<(String, &'a str)> {
     let path = ae.source_path.as_deref()?;
     let text = snapshots
         .iter()
         .find(|(p, _)| p.as_path() == path)
         .map(|(_, t)| t.as_str())?;
-    Some((path.to_string_lossy().replace('\\', "/"), text))
+    Some((display_path(display_root, path), text))
+}
+
+/// #1772: the path a diagnostic names, as a user would type it from the
+/// working directory: the build's root as the caller spelled it, joined with
+/// the file's identity path (relative to that root). A relative root is
+/// already relative to the working directory; an absolute one (`bynk dev`
+/// resolves the project root) is shown relative to the working directory when
+/// it lies inside it. This matches the path `fmt` reports for the same file,
+/// so a problem matcher resolving against the working directory finds it.
+/// Separators print as `/` on every platform.
+///
+/// #1774 review: a `.` component is dropped (`bynk check`'s default input is
+/// `.`, and `Roots::trees` already keeps `./` out of identity paths for the
+/// same reason), and an absolute path is compared against the cwd both as
+/// given and canonicalised, since a canonical root on Windows is a verbatim
+/// `\\?\C:\…` path that a plain cwd never prefixes. One that still isn't
+/// under the cwd is shown absolute, without a verbatim prefix.
+pub fn display_path(display_root: &Path, identity: &Path) -> String {
+    use std::path::Component;
+    let joined: PathBuf = display_root
+        .join(identity)
+        .components()
+        .filter(|c| !matches!(c, Component::CurDir))
+        .collect();
+    let shown = if joined.is_absolute() {
+        let cwd = std::env::current_dir().ok();
+        let canonical_cwd = cwd.as_ref().and_then(|c| c.canonicalize().ok());
+        cwd.iter()
+            .chain(canonical_cwd.iter())
+            .find_map(|base| joined.strip_prefix(base).ok().map(Path::to_path_buf))
+            .unwrap_or(joined)
+    } else {
+        joined
+    };
+    let text = shown.to_string_lossy().replace('\\', "/");
+    // A verbatim prefix (`//?/C:/…`, `//?/UNC/server/…`) is Windows-internal.
+    if let Some(unc) = text.strip_prefix("//?/UNC/") {
+        format!("//{unc}")
+    } else if let Some(rest) = text.strip_prefix("//?/") {
+        rest.to_string()
+    } else {
+        text
+    }
+}
+
+/// #1774: a path the user named directly (a `fmt` input, a single-file
+/// `check`), shown by the same rule as [`display_path`], so `fmt` and `check`
+/// print one file identically on every platform. On Windows a directory's
+/// expansion joined `\` onto a `/`-typed input, giving mixed separators.
+fn shown(path: &Path) -> String {
+    display_path(Path::new(""), path)
 }
 
 /// The project-failure analogue of [`bynk_render::print_errors_short`]: each
@@ -313,15 +375,17 @@ pub fn project_failure_short_lines(failure: &project::ProjectFailure) -> Vec<Str
     failure
         .errors
         .iter()
-        .map(|ae| match attributed_snapshot(ae, &failure.snapshots) {
-            Some((label, text)) => bynk_render::short_line(&label, text, &ae.error),
-            None => format!(
-                "{}[{}]: {}",
-                bynk_render::severity_word(&ae.error),
-                ae.error.category,
-                ae.error.message
-            ),
-        })
+        .map(
+            |ae| match attributed_snapshot(ae, &failure.snapshots, &failure.display_root) {
+                Some((label, text)) => bynk_render::short_line(&label, text, &ae.error),
+                None => format!(
+                    "{}[{}]: {}",
+                    bynk_render::severity_word(&ae.error),
+                    ae.error.category,
+                    ae.error.message
+                ),
+            },
+        )
         .collect()
 }
 
@@ -334,7 +398,7 @@ pub fn project_failure_short_lines(failure: &project::ProjectFailure) -> Vec<Str
 /// because that list is errors-only by construction).
 pub fn print_project_check(check: &project::ProjectCheck) {
     for ae in &check.errors {
-        match attributed_snapshot(ae, &check.snapshots) {
+        match attributed_snapshot(ae, &check.snapshots, &check.display_root) {
             Some((label, text)) => {
                 bynk_render::print_errors(std::slice::from_ref(&ae.error), text, &label);
             }
@@ -362,15 +426,17 @@ pub fn project_check_short_lines(check: &project::ProjectCheck) -> Vec<String> {
     check
         .errors
         .iter()
-        .map(|ae| match attributed_snapshot(ae, &check.snapshots) {
-            Some((label, text)) => bynk_render::short_line(&label, text, &ae.error),
-            None => format!(
-                "{}[{}]: {}",
-                bynk_render::severity_word(&ae.error),
-                ae.error.category,
-                ae.error.message
-            ),
-        })
+        .map(
+            |ae| match attributed_snapshot(ae, &check.snapshots, &check.display_root) {
+                Some((label, text)) => bynk_render::short_line(&label, text, &ae.error),
+                None => format!(
+                    "{}[{}]: {}",
+                    bynk_render::severity_word(&ae.error),
+                    ae.error.category,
+                    ae.error.message
+                ),
+            },
+        )
         .collect()
 }
 
@@ -500,6 +566,9 @@ impl FmtArgs {
 enum FmtOptionsError {
     /// The project's `bynk.toml` `[fmt]` section is unusable.
     Manifest(PathBuf, bynk_fmt::ConfigError),
+    /// #1665: the project's `bynk.toml` has a table (or a `[project]`/`[lsp]`
+    /// key) it doesn't define.
+    ManifestTables(PathBuf, project::ProjectPathsError),
     /// The flags this run passed contradict each other or the manifest.
     Args(String),
 }
@@ -510,6 +579,7 @@ impl std::fmt::Display for FmtOptionsError {
             // Named, because the manifest governing a file is not necessarily
             // the one in the working directory.
             Self::Manifest(path, e) => write!(f, "{}: {e}", path.display()),
+            Self::ManifestTables(path, e) => write!(f, "{}: {e}", path.display()),
             Self::Args(e) => write!(f, "{e}"),
         }
     }
@@ -576,9 +646,13 @@ impl ManifestCache {
                         bynk_fmt::ConfigError::Read(e.to_string()),
                     )
                 })?;
-                bynk_fmt::FmtConfig::from_manifest_str(&text)
-                    .map_err(|e| FmtOptionsError::Manifest(manifest, e))?
-                    .apply(FormatOptions::default())
+                // `[fmt]` first: its reader owns the detailed TOML parse error
+                // and its own keys. #1665: then the manifest's table set.
+                let config = bynk_fmt::FmtConfig::from_manifest_str(&text)
+                    .map_err(|e| FmtOptionsError::Manifest(manifest.clone(), e))?;
+                project::check_manifest_str(&text)
+                    .map_err(|e| FmtOptionsError::ManifestTables(manifest, e))?;
+                config.apply(FormatOptions::default())
             }
         };
         self.by_dir.insert(start, opts);
@@ -635,6 +709,8 @@ pub fn run_fmt(prog: &str, args: &FmtArgs) -> ExitCode {
                 eprintln!("{prog} fmt: read from stdin: {e}");
                 return ExitCode::FAILURE;
             }
+            // #1763: compared, and errors rendered, modulo line endings.
+            let source = bynk_fmt::normalize_line_endings(&source);
             match format_source(&source, &opts) {
                 Ok(formatted) => {
                     if check {
@@ -658,29 +734,31 @@ pub fn run_fmt(prog: &str, args: &FmtArgs) -> ExitCode {
             }
             continue;
         }
-        let source = match std::fs::read_to_string(input) {
+        let raw = match std::fs::read_to_string(input) {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("{prog} fmt: read `{}`: {e}", input.display());
+                eprintln!("{prog} fmt: read `{}`: {e}", shown(input));
                 had_error = true;
                 continue;
             }
         };
-        let filename = input.display().to_string();
+        // #1763: line endings are not a formatting difference. A CRLF copy of a
+        // canonical file passes `--check` and isn't rewritten; a file that does
+        // need formatting is written in the LF canonical form. Errors render
+        // against the normalised text, whose spans they carry.
+        let source = bynk_fmt::normalize_line_endings(&raw);
+        let filename = shown(input);
         match format_source(&source, &opts) {
             Ok(formatted) => {
                 if check {
                     if formatted != source {
-                        eprintln!(
-                            "{prog} fmt: {} is not canonically formatted",
-                            input.display()
-                        );
+                        eprintln!("{prog} fmt: {} is not canonically formatted", filename);
                         had_diff = true;
                     }
                 } else if formatted != source
                     && let Err(e) = atomic_write(input, &formatted)
                 {
-                    eprintln!("{prog} fmt: write `{}`: {e}", input.display());
+                    eprintln!("{prog} fmt: write `{}`: {e}", filename);
                     had_error = true;
                 }
             }
@@ -841,11 +919,11 @@ pub fn run_check(prog: &str, input: &Path, short: bool) -> ExitCode {
         let source = match std::fs::read_to_string(input) {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("{prog}: could not read `{}`: {e}", input.display());
+                eprintln!("{prog}: could not read `{}`: {e}", shown(input));
                 return ExitCode::FAILURE;
             }
         };
-        let filename = input.display().to_string();
+        let filename = shown(input);
         match bynk_emit::compile_with_warnings(&source, &filename) {
             Ok(compiled) => {
                 if !compiled.warnings.is_empty() {
@@ -1144,6 +1222,105 @@ mod tests {
                 ProjectOptionsError::Paths(ProjectPathsError::UnknownKey(k)) if k == "inculde"
             ),
             "expected Paths(UnknownKey(\"inculde\")), got: {err:?}"
+        );
+    }
+
+    /// #1665: an unknown table reaches the caller from the same strict path,
+    /// even with a valid `[paths]`. Before, `[dependencies]` built cleanly.
+    #[test]
+    fn try_project_options_surfaces_an_unknown_table() {
+        let dir = scratch_dir("try_project_options_unknown_table");
+        fs::write(
+            dir.0.join("bynk.toml"),
+            "[paths]\ninclude = [\"src\"]\n\n[dependencies]\nacme-utils = \"1.2\"\n",
+        )
+        .unwrap();
+        fs::create_dir_all(dir.0.join("src")).unwrap();
+        fs::write(dir.0.join("src/thing.bynk"), "context thing\n").unwrap();
+
+        let err = match try_project_options(&dir.0) {
+            Err(e) => e,
+            Ok(_) => panic!("an unknown table must be reported, not silently ignored"),
+        };
+        assert!(
+            matches!(
+                &err,
+                ProjectOptionsError::Paths(ProjectPathsError::UnknownTable(t)) if t == "dependencies"
+            ),
+            "expected Paths(UnknownTable(\"dependencies\")), got: {err:?}"
+        );
+        assert!(
+            err.to_string().contains("not yet supported (#843)"),
+            "{err}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod display_path_tests {
+    use super::display_path;
+    use std::path::Path;
+
+    #[test]
+    fn a_relative_root_is_joined_as_typed() {
+        assert_eq!(
+            display_path(Path::new("test/fixtures/x"), Path::new("src/a.bynk")),
+            "test/fixtures/x/src/a.bynk"
+        );
+    }
+
+    /// `bynk check` defaults its input to `.`; that adds no `./`.
+    #[test]
+    fn a_dot_root_adds_no_prefix() {
+        assert_eq!(
+            display_path(Path::new("."), Path::new("src/a.bynk")),
+            "src/a.bynk"
+        );
+        assert_eq!(
+            display_path(Path::new(""), Path::new("./src/a.bynk")),
+            "src/a.bynk"
+        );
+    }
+
+    /// `bynk dev` hands an absolute root; inside the cwd it shows relative.
+    #[test]
+    fn an_absolute_root_inside_the_cwd_is_shown_relative() {
+        let cwd = std::env::current_dir().unwrap();
+        assert_eq!(
+            display_path(&cwd.join("proj"), Path::new("src/a.bynk")),
+            "proj/src/a.bynk"
+        );
+        // A canonicalised root (on Windows, a verbatim `\\?\` path) too.
+        let canonical = cwd.canonicalize().unwrap();
+        assert_eq!(
+            display_path(&canonical.join("proj"), Path::new("src/a.bynk")),
+            "proj/src/a.bynk"
+        );
+    }
+
+    /// Outside the cwd, the path stays absolute, with `/` separators.
+    #[test]
+    fn an_absolute_root_outside_the_cwd_is_shown_absolute() {
+        let cwd = std::env::current_dir().unwrap();
+        let outside = cwd.parent().unwrap().join("bynk-display-path-elsewhere");
+        let shown = display_path(&outside, Path::new("src/a.bynk"));
+        assert!(
+            shown.ends_with("bynk-display-path-elsewhere/src/a.bynk"),
+            "{shown}"
+        );
+        assert!(
+            !shown.contains('\\') && !shown.starts_with("//?/"),
+            "{shown}"
+        );
+    }
+
+    /// On Windows, a verbatim root outside the cwd loses its `\\?\` prefix.
+    #[cfg(windows)]
+    #[test]
+    fn a_verbatim_root_outside_the_cwd_loses_its_prefix() {
+        assert_eq!(
+            display_path(Path::new(r"\\?\C:\elsewhere"), Path::new("src/a.bynk")),
+            "C:/elsewhere/src/a.bynk"
         );
     }
 }

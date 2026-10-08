@@ -2,7 +2,7 @@
 // test target: shop.orders
 
 import { Ok, Err, Some, None, __makeTestState, type Result, type Option, type ValidationError } from "../runtime.js";
-import * as shop_orders from "./../shop/orders.js";
+import * as __ns_shop_orders from "./../shop/orders.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -32,11 +32,11 @@ function __makeTestDeps() {
 // case tier: unit
 async function test_a_buyer_s_cart_is_their_own() {
   try {
-    shop_orders.__resetAgents();
+    __ns_shop_orders.__resetAgents();
     const deps = __makeTestDeps();
-    const { Cart, Item, UserId, __makeCart, api, intake, sweeper } = shop_orders;
-    type Item = shop_orders.Item;
-    type UserId = shop_orders.UserId;
+    const { Cart, Item, UserId, __makeCart, api, intake, sweeper } = __ns_shop_orders;
+    type Item = __ns_shop_orders.Item;
+    type UserId = __ns_shop_orders.UserId;
     const __r0 = await api.http_POST_cart_Param_sku("widget", { ...deps, identity: (("alice" as any) as any) });
     const mine = await api.http_GET_cart_size({ ...deps, identity: (("bob" as any) as any) });
     if (!(mine.tag === "Ok")) { throw __bynkExpectFailure("shop/tests/orders.test.bynk:5:12", 191, 204, "expect mine is Ok(_)"); }
@@ -52,11 +52,11 @@ async function test_a_buyer_s_cart_is_their_own() {
 // case tier: unit
 async function test_the_sweeper_runs_clean() {
   try {
-    shop_orders.__resetAgents();
+    __ns_shop_orders.__resetAgents();
     const deps = __makeTestDeps();
-    const { Cart, Item, UserId, __makeCart, api, intake, sweeper } = shop_orders;
-    type Item = shop_orders.Item;
-    type UserId = shop_orders.UserId;
+    const { Cart, Item, UserId, __makeCart, api, intake, sweeper } = __ns_shop_orders;
+    type Item = __ns_shop_orders.Item;
+    type UserId = __ns_shop_orders.UserId;
     const r = await sweeper.cron_sweeper_0(deps);
     if (!(r.tag === "Ok")) { throw __bynkExpectFailure("shop/tests/orders.test.bynk:10:12", 298, 308, "expect r is Ok(_)"); }
     return { pass: true };
@@ -71,11 +71,11 @@ async function test_the_sweeper_runs_clean() {
 // case tier: unit
 async function test_an_intake_message_is_acked() {
   try {
-    shop_orders.__resetAgents();
+    __ns_shop_orders.__resetAgents();
     const deps = __makeTestDeps();
-    const { Cart, Item, UserId, __makeCart, api, intake, sweeper } = shop_orders;
-    type Item = shop_orders.Item;
-    type UserId = shop_orders.UserId;
+    const { Cart, Item, UserId, __makeCart, api, intake, sweeper } = __ns_shop_orders;
+    type Item = __ns_shop_orders.Item;
+    type UserId = __ns_shop_orders.UserId;
     const r = await intake.queue_intake_0({ sku: "x" }, deps);
     if (!(r.tag === "Ack")) { throw __bynkExpectFailure("shop/tests/orders.test.bynk:15:12", 410, 418, "expect r is Ack"); }
     return { pass: true };

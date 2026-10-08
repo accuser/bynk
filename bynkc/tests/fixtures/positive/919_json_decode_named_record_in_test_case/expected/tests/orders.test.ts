@@ -2,7 +2,7 @@
 // test target: orders
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, type __BoundaryError, type __JsonValue, type JsonError } from "../runtime.js";
-import * as orders from "./../orders.js";
+import * as __ns_orders from "./../orders.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -33,8 +33,8 @@ function __makeTestDeps() {
 async function test_decodes_a_named_type() {
   try {
     const deps = {};
-    const { Order } = orders;
-    type Order = orders.Order;
+    const { Order } = __ns_orders;
+    type Order = __ns_orders.Order;
     void (((__d) => {
         switch (__d.tag) {
           case "Ok": {
@@ -46,7 +46,7 @@ async function test_decodes_a_named_type() {
           }
         }
         throw new globalThis.Error("non-exhaustive match");
-      })(((__s: string): Result<orders.Order, JsonError> => { let __j: __JsonValue; try { __j = globalThis.JSON.parse(__s) as __JsonValue; } catch (__e) { return Err({ kind: "Malformed", path: "$", message: String(__e) }); } const __r = __deserialise_Order(__j, "$"); if (__r.tag === "Ok") return Ok(__r.value as orders.Order); const __be = __r.error; return Err({ kind: __be.kind, path: (__be.kind === "StructuralMismatch" || __be.kind === "RefinementViolation") ? __be.path : "$", message: __be.kind === "StructuralMismatch" ? `expected ${__be.expected}, got ${String(__be.actual)}` : __be.kind === "RefinementViolation" ? __be.violation.message : __be.details }); })("{\"id\": \"a1\", \"qty\": 2}")));
+      })(((__s: string): Result<__ns_orders.Order, JsonError> => { let __j: __JsonValue; try { __j = globalThis.JSON.parse(__s) as __JsonValue; } catch (__e) { return Err({ kind: "Malformed", path: "$", message: String(__e) }); } const __r = __deserialise_Order(__j, "$"); if (__r.tag === "Ok") return Ok(__r.value as __ns_orders.Order); const __be = __r.error; return Err({ kind: __be.kind, path: (__be.kind === "StructuralMismatch" || __be.kind === "RefinementViolation") ? __be.path : "$", message: __be.kind === "StructuralMismatch" ? `expected ${__be.expected}, got ${String(__be.actual)}` : __be.kind === "RefinementViolation" ? __be.violation.message : __be.details }); })("{\"id\": \"a1\", \"qty\": 2}")));
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -60,8 +60,8 @@ async function test_decodes_a_named_type() {
 async function test_encodes_a_named_type() {
   try {
     const deps = {};
-    const { Order } = orders;
-    type Order = orders.Order;
+    const { Order } = __ns_orders;
+    type Order = __ns_orders.Order;
     if (!(globalThis.JSON.stringify(__serialise_Order({ id: "a1", qty: 2 })) === "{\"id\":\"a1\",\"qty\":2}")) { throw __bynkExpectFailure("tests/orders.test.bynk:19:12", 847, 917, "expect Json.encode(Order { id: \"a1\", qty: 2 }) == \"{\\\"id\\\":\\\"a1\\\",\\\"qty\\\":2}\"\n  expected: Json.encode(Order { id: \"a1\", qty: 2 }) == \"{\\\"id\\\":\\\"a1\\\",\\\"qty\\\":2}\"\n  actual:   " + __bynkShow((globalThis.JSON.stringify(__serialise_Order({ id: "a1", qty: 2 })))) + " == " + __bynkShow(("{\"id\":\"a1\",\"qty\":2}"))); }
     return { pass: true };
   } catch (e) {
@@ -72,14 +72,14 @@ async function test_encodes_a_named_type() {
   }
 }
 
-export function __serialise_Order(value: orders.Order): __JsonValue {
+export function __serialise_Order(value: __ns_orders.Order): __JsonValue {
   return {
     id: value.id as __JsonValue,
     qty: ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(value.qty),
   };
 }
 
-export function __deserialise_Order(json: __JsonValue, path: string = "$"): Result<orders.Order, __BoundaryError> {
+export function __deserialise_Order(json: __JsonValue, path: string = "$"): Result<__ns_orders.Order, __BoundaryError> {
   if (typeof json !== "object" || json === null || globalThis.Array.isArray(json)) {
     return Err({ kind: "StructuralMismatch", path, expected: "object", actual: typeof json });
   }
@@ -95,7 +95,7 @@ export function __deserialise_Order(json: __JsonValue, path: string = "$"): Resu
     return Err({ kind: "StructuralMismatch", path: `${path}.qty`, expected: "safe integer", actual: String(obj["qty"]) });
   }
   const __qty = obj["qty"];
-  return Ok({ id: __id, qty: __qty } as orders.Order);
+  return Ok({ id: __id, qty: __qty } as __ns_orders.Order);
 }
 
 

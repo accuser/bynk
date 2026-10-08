@@ -47,6 +47,7 @@ pub mod sequence_request;
 mod signature_help;
 mod structure;
 pub mod symbols;
+pub mod transport;
 pub mod wire_contract_request;
 
 use std::path::PathBuf;
@@ -178,6 +179,14 @@ struct ProjectState {
     analysis_round_started: u64,
     /// The id of the newest round whose results have been committed.
     analysis_round_committed: u64,
+    /// #1667: the newest round panicked and no round has committed since.
+    /// The client is told once per such streak, not on every keystroke.
+    analysis_failed: bool,
+    /// #1667: makes this project's next round panic, so a test can watch the
+    /// failure reach the client. Per project, not a global, so parallel tests'
+    /// rounds can't take it.
+    #[cfg(test)]
+    panic_next_round: bool,
 }
 
 /// #733: the client's `workspace/*/refresh` support, per pull-based decoration,
@@ -260,14 +269,43 @@ pub struct Backend {
     /// round instead of each spawning its own. Held only across `analysis_for`'s
     /// refresh; never across a `state` lock.
     refresh_lock: Arc<tokio::sync::Mutex<()>>,
+    /// #1667: set when the client sends `shutdown`. [`run`] reads it once the
+    /// session ends, to exit 0 after an orderly shutdown and 1 otherwise, as
+    /// the LSP spec's `exit` notification prescribes.
+    shutdown_requested: Arc<std::sync::atomic::AtomicBool>,
+}
+
+/// #1667: a failed `spawn_blocking` task, described for the log: the panic's
+/// message when it panicked, else that it was cancelled.
+fn describe_join_error(e: tokio::task::JoinError) -> String {
+    if !e.is_panic() {
+        return format!("cancelled ({e})");
+    }
+    let payload = e.into_panic();
+    if let Some(s) = payload.downcast_ref::<&str>() {
+        format!("panicked: {s}")
+    } else if let Some(s) = payload.downcast_ref::<String>() {
+        format!("panicked: {s}")
+    } else {
+        "panicked with a non-string payload".to_string()
+    }
 }
 
 impl Backend {
+    #[cfg(test)]
     fn new(client: Client) -> Self {
+        Self::with_shutdown_flag(client, Arc::default())
+    }
+
+    fn with_shutdown_flag(
+        client: Client,
+        shutdown_requested: Arc<std::sync::atomic::AtomicBool>,
+    ) -> Self {
         Self {
             client,
             state: Arc::new(RwLock::new(State::default())),
             refresh_lock: Arc::new(tokio::sync::Mutex::new(())),
+            shutdown_requested,
         }
     }
 
@@ -574,6 +612,34 @@ impl Backend {
             .await;
     }
 
+    /// #1667: an analysis round for `root` failed (`reason` says how). Log
+    /// it, and tell the client once per failure streak: the published
+    /// diagnostics are the last good round's and may be stale. The streak ends
+    /// at the next committed round, which clears the flag.
+    async fn report_failed_round(&self, root: &std::path::Path, reason: String) {
+        tracing::error!("analysis of {} {reason}", root.display());
+        let first_failure = {
+            let mut state = self.state.write().await;
+            match state.projects.get_mut(root) {
+                Some(ps) => !std::mem::replace(&mut ps.analysis_failed, true),
+                None => false,
+            }
+        };
+        if first_failure {
+            self.client
+                .show_message(
+                    MessageType::ERROR,
+                    format!(
+                        "Bynk: analysing {} failed with an internal error, so its diagnostics may \
+                         be out of date until a later edit analyses cleanly. Details are in \
+                         ~/.bynk-lsp.log; please report it.",
+                        root.display()
+                    ),
+                )
+                .await;
+        }
+    }
+
     /// v0.24 (ADR 0052): one project-wide diagnostics round — overlay the
     /// open buffers over disk, analyse off the async runtime, convert spans
     /// against the **analysed snapshots**, and publish via the pure
@@ -628,13 +694,30 @@ impl Backend {
         // open buffers — with `discovery.rs`'s disk fallback gone, a project's
         // closed files need `sweep_project_content`'s full disk sweep too, or
         // every one of them fails `bynk.project.read_failed` on every round.
-        let Ok(result) = tokio::task::spawn_blocking(move || {
+        #[cfg(test)]
+        let inject_panic = self
+            .state
+            .write()
+            .await
+            .projects
+            .get_mut(&root)
+            .is_some_and(|ps| std::mem::take(&mut ps.panic_next_round));
+        let joined = tokio::task::spawn_blocking(move || {
+            #[cfg(test)]
+            if inject_panic {
+                panic!("injected analysis panic");
+            }
             let content = crate::content::sweep_project_content(&roots, &overlay);
             bynk_ide::diagnose_project_with(&roots, &content)
         })
-        .await
-        else {
-            return;
+        .await;
+        let result = match joined {
+            Ok(result) => result,
+            Err(e) => {
+                self.report_failed_round(&root, describe_join_error(e))
+                    .await;
+                return;
+            }
         };
 
         let mut new_by_uri: std::collections::HashMap<Url, Vec<Diagnostic>> =
@@ -697,6 +780,7 @@ impl Backend {
                 return;
             }
             ps.analysis_round_committed = round;
+            ps.analysis_failed = false;
             ps.analysis = Some(analysis);
         }
         // Project-level diagnostics with no single owning file surface at
@@ -844,6 +928,7 @@ impl Backend {
             Arc::new(content)
         })
         .await
+        .map_err(|e| tracing::error!("project content sweep {}", describe_join_error(e)))
         .ok()
     }
 
@@ -1129,6 +1214,7 @@ impl Backend {
             bynk_ide::diagnose_project_with(&roots, &content)
         })
         .await
+        .map_err(|e| tracing::error!("receiver-typing analysis {}", describe_join_error(e)))
         .ok()?;
         let (_, entries) = result.expr_types.iter().find(|(p, _)| **p == rel)?;
         bynk_check::expr_types::type_at_offset(entries, recv_offset)
@@ -1267,7 +1353,10 @@ impl Backend {
             roots
         })
         .await
-        .unwrap_or_default();
+        .unwrap_or_else(|e| {
+            tracing::error!("project discovery {}", describe_join_error(e));
+            Vec::new()
+        });
         for root in roots {
             let config = project::load_config(&root).unwrap_or_default();
             {
@@ -1975,6 +2064,8 @@ impl LanguageServer for Backend {
     }
 
     async fn shutdown(&self) -> JsonRpcResult<()> {
+        self.shutdown_requested
+            .store(true, std::sync::atomic::Ordering::SeqCst);
         Ok(())
     }
 
@@ -2750,7 +2841,10 @@ impl LanguageServer for Backend {
         let opts = self.config_for(&uri).await.format_options();
         match bynk_fmt::format_source(&text, &opts) {
             Ok(formatted) => {
-                if formatted == text {
+                // #1763: a CRLF buffer whose LF form is canonical needs no edit,
+                // as on the command line; otherwise every format-on-save would
+                // rewrite an already-canonical Windows file.
+                if formatted == bynk_fmt::normalize_line_endings(&text) {
                     Ok(Some(Vec::new()))
                 } else {
                     // Replace the entire document.
@@ -4255,7 +4349,11 @@ fn make_diagnostic(
 
 /// Slice C: the server's entry point, moved out of `main.rs` so the crate
 /// has a `[lib]` target. `main.rs` is now a thin shim over this.
-pub async fn run() {
+///
+/// #1667: returns the process's exit code: success after an orderly
+/// `shutdown`, failure (with a line on stderr) when the session ended any
+/// other way.
+pub async fn run() -> std::process::ExitCode {
     // Answer `--version`/`-V` and exit before entering the stdio LSP loop, so
     // tooling (e.g. the VS Code status bar) can query the version without the
     // server blocking on stdin.
@@ -4264,7 +4362,7 @@ pub async fn run() {
         .any(|a| a == "--version" || a == "-V")
     {
         println!("{SERVER_NAME} {SERVER_VERSION}");
-        return;
+        return std::process::ExitCode::SUCCESS;
     }
     // Logging to ~/.bynk-lsp.log. Default level: warn; tunable via
     // RUST_LOG or the LSP client's trace setting.
@@ -4289,19 +4387,36 @@ pub async fn run() {
         }
     }
     tracing::info!("bynkc-lsp v{} starting", SERVER_VERSION);
-    let stdin = tokio::io::stdin();
     let stdout = tokio::io::stdout();
+    // #1667: the server reads a re-framed copy of stdin, so one malformed
+    // message is skipped rather than ending the session (see `transport`).
+    let (server_input, pump_output) = tokio::io::duplex(1 << 16);
+    tokio::spawn(transport::pump(tokio::io::stdin(), pump_output));
+    let shutdown_requested = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let flag = Arc::clone(&shutdown_requested);
     // #846: this server's first custom (non-standard) request — everything
     // else is a `LanguageServer` trait method, registered automatically by
     // `LspService::new`. `bynk/sequenceModel` has no trait slot, so it needs
     // the builder's `custom_method` instead.
-    let (service, socket) = LspService::build(Backend::new)
-        .custom_method("bynk/sequenceModel", Backend::sequence_model)
-        .custom_method("bynk/documentationModel", Backend::documentation_model)
-        .custom_method("bynk/architectureModel", Backend::architecture_model)
-        .custom_method("bynk/wireContract", Backend::wire_contract)
-        .finish();
-    Server::new(stdin, stdout, socket).serve(service).await;
+    let (service, socket) =
+        LspService::build(move |client| Backend::with_shutdown_flag(client, Arc::clone(&flag)))
+            .custom_method("bynk/sequenceModel", Backend::sequence_model)
+            .custom_method("bynk/documentationModel", Backend::documentation_model)
+            .custom_method("bynk/architectureModel", Backend::architecture_model)
+            .custom_method("bynk/wireContract", Backend::wire_contract)
+            .finish();
+    Server::new(server_input, stdout, socket)
+        .serve(service)
+        .await;
+    if shutdown_requested.load(std::sync::atomic::Ordering::SeqCst) {
+        std::process::ExitCode::SUCCESS
+    } else {
+        eprintln!(
+            "bynkc-lsp: the session ended without a `shutdown` request \
+             (the client closed the connection, or sent `exit` early); see ~/.bynk-lsp.log"
+        );
+        std::process::ExitCode::FAILURE
+    }
 }
 
 #[cfg(test)]
@@ -4368,6 +4483,111 @@ mod tests {
             );
         }
         backend
+    }
+
+    /// #1667: a panic in an analysis round reaches the client once per
+    /// failure streak, as a `window/showMessage`, and the streak ends at the
+    /// next clean round. Before, the `JoinError` was dropped without a trace.
+    #[tokio::test]
+    async fn a_panicking_round_tells_the_client_once_and_clears_on_success() {
+        use futures::StreamExt;
+        use tower::{Service, ServiceExt};
+
+        let s = scratch_project(
+            "panic",
+            &[
+                ("bynk.toml", "[project]\nname = \"panic\"\n"),
+                ("src/thing.bynk", "context thing\n"),
+            ],
+        );
+        let (mut service, socket) = tower_lsp::LspService::new(Backend::new);
+        // The client sends nothing until the server is initialised.
+        let initialize = tower_lsp::jsonrpc::Request::build("initialize")
+            .params(serde_json::json!({ "capabilities": {} }))
+            .id(1)
+            .finish();
+        service
+            .ready()
+            .await
+            .unwrap()
+            .call(initialize)
+            .await
+            .unwrap();
+        let initialized = tower_lsp::jsonrpc::Request::build("initialized")
+            .params(serde_json::json!({}))
+            .finish();
+        service
+            .ready()
+            .await
+            .unwrap()
+            .call(initialized)
+            .await
+            .unwrap();
+        // Drain the client side as the server writes to it: its channel is
+        // small, so an unread socket would block the server's next
+        // notification (a `publishDiagnostics`, or the `showMessage` itself).
+        let shown = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let drain = {
+            let shown = Arc::clone(&shown);
+            tokio::spawn(socket.for_each(move |message| {
+                if message.method() == "window/showMessage" {
+                    shown
+                        .lock()
+                        .unwrap()
+                        .push(format!("{:?}", message.params()));
+                }
+                async {}
+            }))
+        };
+        let backend = service.inner().clone();
+        let canonical = s.0.canonicalize().unwrap();
+        backend
+            .state
+            .write()
+            .await
+            .projects
+            .insert(canonical.clone(), ProjectState::default());
+        let failed = |b: &Backend| {
+            let b = b.clone();
+            let root = canonical.clone();
+            async move { b.state.read().await.projects[&root].analysis_failed }
+        };
+
+        let inject = |b: &Backend| {
+            let b = b.clone();
+            let root = canonical.clone();
+            async move {
+                b.state
+                    .write()
+                    .await
+                    .projects
+                    .get_mut(&root)
+                    .unwrap()
+                    .panic_next_round = true;
+            }
+        };
+        inject(&backend).await;
+        backend.run_project_diagnostics(canonical.clone()).await;
+        assert!(failed(&backend).await, "the failed round is recorded");
+        // A second failure in the same streak says nothing new.
+        inject(&backend).await;
+        backend.run_project_diagnostics(canonical.clone()).await;
+
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        {
+            let shown = shown.lock().unwrap();
+            assert_eq!(shown.len(), 1, "told once per streak: {shown:?}");
+            assert!(shown[0].contains("internal error"), "{shown:?}");
+        }
+
+        backend.run_project_diagnostics(canonical.clone()).await;
+        assert!(!failed(&backend).await, "a clean round ends the streak");
+        // A failure after the streak ended is a new streak, and is told.
+        inject(&backend).await;
+        backend.run_project_diagnostics(canonical.clone()).await;
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        assert_eq!(shown.lock().unwrap().len(), 2, "a new streak is told again");
+        drain.abort();
     }
 
     /// Test helpers for the single-project behaviour tests (each builds exactly

@@ -2878,7 +2878,14 @@ fn lower_cross_context_service_call(
                         .enumerate()
                         .map(|(i, a)| {
                             let lowered = pre.lower(a, cx);
-                            param_cast(&consumed, cx.cross_context(), method, i, lowered)
+                            param_cast(
+                                &consumed,
+                                cx.cross_context(),
+                                method,
+                                i,
+                                lowered,
+                                cx.in_test_scaffold(),
+                            )
                         })
                         .collect();
                     Some(format!(

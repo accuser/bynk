@@ -2,7 +2,7 @@
 // test target: orders
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, type __BoundaryError, type __JsonValue, type JsonError } from "../runtime.js";
-import * as orders from "./../orders.js";
+import * as __ns_orders from "./../orders.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -33,7 +33,7 @@ function __makeTestDeps() {
 async function test_decodes_a_base_type() {
   try {
     const deps = {};
-    const { double } = orders;
+    const { double } = __ns_orders;
     void (((__d) => {
         switch (__d.tag) {
           case "Ok": {

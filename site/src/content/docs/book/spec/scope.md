@@ -4,7 +4,7 @@ title: "§1 Scope & conformance"
 ## §1.1 Scope
 
 This specification defines the Bynk language as accepted and compiled by `bynkc`
-at the **current version, v0.308**. It is maintained as the single source of
+at the **current version, v0.309**. It is maintained as the single source of
 truth: each language increment updates the affected chapters of this document,
 so its scope is always the shipped language. It is normative for shipped
 behaviour: where this document and the compiler disagree about a program that
@@ -17,8 +17,8 @@ does not specify the compiler's internals, its command-line surface beyond the
 build contract, or any particular editor tooling.
 
 > [!NOTE]
-> Planned-but-unshipped features — events, sagas, and additional storage kinds —
-> are **out of scope** and are not part of the normative language. They are
+> Planned-but-unshipped features — sagas, event replay, and the other directions
+> the appendix names — are **out of scope** and are not part of the normative language. They are
 > sketched in a planned-features appendix purely to record design intent. The
 > design decisions behind shipped increments are recorded separately in
 > `design/decisions/`. Nothing in this paragraph is normative.

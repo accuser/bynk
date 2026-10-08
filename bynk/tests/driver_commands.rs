@@ -825,6 +825,12 @@ fn a_broken_manifest_is_reported_not_ignored() {
             "TOML parse error",
         ),
         ("fmt-bad-width", "[fmt]\nmax_line_width = 0\n", "at least 1"),
+        // #1665: `fmt` refuses an unknown table too, after `[fmt]` reads.
+        (
+            "fmt-unknown-table",
+            "[dependencies]\nacme-utils = \"1.2\"\n",
+            "not yet supported (#843)",
+        ),
     ] {
         let dir = scratch(name);
         write(&dir.join("bynk.toml"), section);
@@ -1116,4 +1122,64 @@ fn fmt_directory_matches_bynkc_when_present() {
         theirs.2.replace("bynkc fmt:", "fmt:"),
         "stderr differs"
     );
+}
+
+// ---------------------------------------------------------------------------
+// bynk fmt and CRLF line endings (#1763)
+// ---------------------------------------------------------------------------
+
+const CANONICAL_WITH_DOC: &str = "context greeting\n\n---\nA greeting for a name.\n---\nfn greet(name: String) -> String { name }\n";
+
+/// A Windows checkout (`core.autocrlf=true`) of a canonical file is canonical:
+/// `--check` passes, and `fmt` leaves its bytes alone.
+#[test]
+fn a_crlf_copy_of_a_canonical_file_is_canonical() {
+    let dir = scratch("fmt-crlf-canonical");
+    let file = dir.join("greeting.bynk");
+    let crlf = CANONICAL_WITH_DOC.replace('\n', "\r\n");
+    write(&file, &crlf);
+    let (code, _out, err) = run_bynk_in(&dir, &["fmt", "--check", "greeting.bynk"]);
+    assert_eq!(
+        code, 0,
+        "line endings aren't a formatting difference; stderr:\n{err}"
+    );
+    let (code, _out, err) = run_bynk_in(&dir, &["fmt", "greeting.bynk"]);
+    assert_eq!(code, 0, "stderr:\n{err}");
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        crlf,
+        "left untouched"
+    );
+}
+
+/// A CRLF file that does need formatting is written in the LF canonical form,
+/// throughout: the doc block's lines lost their CR before.
+#[test]
+fn formatting_a_crlf_file_writes_lf_throughout() {
+    let dir = scratch("fmt-crlf-rewrite");
+    let file = dir.join("greeting.bynk");
+    let messy = CANONICAL_WITH_DOC
+        .replace("fn greet", "fn  greet")
+        .replace('\n', "\r\n");
+    write(&file, &messy);
+    let (code, _out, err) = run_bynk_in(&dir, &["fmt", "greeting.bynk"]);
+    assert_eq!(code, 0, "stderr:\n{err}");
+    let written = std::fs::read_to_string(&file).unwrap();
+    assert_eq!(
+        written, CANONICAL_WITH_DOC,
+        "no CR anywhere, doc block included"
+    );
+    let (code, _out, err) = run_bynk_in(&dir, &["fmt", "--check", "greeting.bynk"]);
+    assert_eq!(code, 0, "stderr:\n{err}");
+}
+
+/// #1775 review: the stdin branch normalises on its own, so it gets its own
+/// test: a CRLF copy of a canonical source passes `fmt --check -`.
+#[test]
+fn a_crlf_canonical_source_on_stdin_passes_check() {
+    let dir = scratch("fmt-crlf-stdin");
+    let crlf = canonical(MESSY).replace('\n', "\r\n");
+    let (code, out, err) = run_in(&bynk(), &dir, &["fmt", "--check", "-"], Some(&crlf));
+    assert_eq!(code, 0, "stderr:\n{err}");
+    assert!(out.is_empty(), "`--check` prints nothing on stdout: {out}");
 }

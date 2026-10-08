@@ -2,7 +2,7 @@
 // test target: demo.state
 
 import { Ok, Err, Some, None, __makeTestState, type Result, type Option, type ValidationError, __bynkBytesEqual, __bynkBytesToBase64, __bynkBytesFromBase64, __bynkBytesDecodeUtf8, __bynkEq } from "../runtime.js";
-import * as demo_state from "./../demo/state.js";
+import * as __ns_demo_state from "./../demo/state.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -26,19 +26,19 @@ function __bynkShow(v: unknown): string {
 }
 
 function __makeTestDeps() {
-  return { Clock: new demo_state.FixedClock() };
+  return { Clock: new __ns_demo_state.FixedClock() };
 }
 
 // case tier: unit
 async function test_an_enum_Cell() {
   try {
-    demo_state.__resetAgents();
+    __ns_demo_state.__resetAgents();
     const deps = __makeTestDeps();
-    const { Blob, Board, Figure, Gate, History, Labelled, Lamp, Light, Lights, Memo, Note, Outcome, Panel, Reading, Shape, Store, __makeBoard, __makeFigure, __makeGate, __makeHistory, __makeLamp, __makeLights, __makeMemo, __makeNote, __makeOutcome, __makePanel, __makeReading, __makeStore } = demo_state;
-    type Blob = demo_state.Blob;
-    type Labelled = demo_state.Labelled;
-    type Light = demo_state.Light;
-    type Shape = demo_state.Shape;
+    const { Blob, Board, Figure, Gate, History, Labelled, Lamp, Light, Lights, Memo, Note, Outcome, Panel, Reading, Shape, Store, __makeBoard, __makeFigure, __makeGate, __makeHistory, __makeLamp, __makeLights, __makeMemo, __makeNote, __makeOutcome, __makePanel, __makeReading, __makeStore } = __ns_demo_state;
+    type Blob = __ns_demo_state.Blob;
+    type Labelled = __ns_demo_state.Labelled;
+    type Light = __ns_demo_state.Light;
+    type Shape = __ns_demo_state.Shape;
     await __makeLamp("k").set(Light.Green, deps);
     const v = await __makeLamp("k").get(deps);
     if (!(__bynkEq(v, Light.Green))) { throw __bynkExpectFailure("tests/demo/state.bynk:9:10", 172, 182, "expect v == Green\n  expected: v == Green\n  actual:   " + __bynkShow((v)) + " == " + __bynkShow((Light.Green))); }
@@ -54,13 +54,13 @@ async function test_an_enum_Cell() {
 // case tier: unit
 async function test_an_Option_Cell() {
   try {
-    demo_state.__resetAgents();
+    __ns_demo_state.__resetAgents();
     const deps = __makeTestDeps();
-    const { Blob, Board, Figure, Gate, History, Labelled, Lamp, Light, Lights, Memo, Note, Outcome, Panel, Reading, Shape, Store, __makeBoard, __makeFigure, __makeGate, __makeHistory, __makeLamp, __makeLights, __makeMemo, __makeNote, __makeOutcome, __makePanel, __makeReading, __makeStore } = demo_state;
-    type Blob = demo_state.Blob;
-    type Labelled = demo_state.Labelled;
-    type Light = demo_state.Light;
-    type Shape = demo_state.Shape;
+    const { Blob, Board, Figure, Gate, History, Labelled, Lamp, Light, Lights, Memo, Note, Outcome, Panel, Reading, Shape, Store, __makeBoard, __makeFigure, __makeGate, __makeHistory, __makeLamp, __makeLights, __makeMemo, __makeNote, __makeOutcome, __makePanel, __makeReading, __makeStore } = __ns_demo_state;
+    type Blob = __ns_demo_state.Blob;
+    type Labelled = __ns_demo_state.Labelled;
+    type Light = __ns_demo_state.Light;
+    type Shape = __ns_demo_state.Shape;
     await __makeReading("k").set(3, deps);
     const v = await __makeReading("k").get(deps);
     if (!(__bynkEq(v, Some(3)))) { throw __bynkExpectFailure("tests/demo/state.bynk:15:10", 274, 286, "expect v == Some(3)\n  expected: v == Some(3)\n  actual:   " + __bynkShow((v)) + " == " + __bynkShow((Some(3)))); }
@@ -76,13 +76,13 @@ async function test_an_Option_Cell() {
 // case tier: unit
 async function test_a_sum_Cell_with_a_payload() {
   try {
-    demo_state.__resetAgents();
+    __ns_demo_state.__resetAgents();
     const deps = __makeTestDeps();
-    const { Blob, Board, Figure, Gate, History, Labelled, Lamp, Light, Lights, Memo, Note, Outcome, Panel, Reading, Shape, Store, __makeBoard, __makeFigure, __makeGate, __makeHistory, __makeLamp, __makeLights, __makeMemo, __makeNote, __makeOutcome, __makePanel, __makeReading, __makeStore } = demo_state;
-    type Blob = demo_state.Blob;
-    type Labelled = demo_state.Labelled;
-    type Light = demo_state.Light;
-    type Shape = demo_state.Shape;
+    const { Blob, Board, Figure, Gate, History, Labelled, Lamp, Light, Lights, Memo, Note, Outcome, Panel, Reading, Shape, Store, __makeBoard, __makeFigure, __makeGate, __makeHistory, __makeLamp, __makeLights, __makeMemo, __makeNote, __makeOutcome, __makePanel, __makeReading, __makeStore } = __ns_demo_state;
+    type Blob = __ns_demo_state.Blob;
+    type Labelled = __ns_demo_state.Labelled;
+    type Light = __ns_demo_state.Light;
+    type Shape = __ns_demo_state.Shape;
     await __makeFigure("k").set(Shape.Circle(4), deps);
     const v = await __makeFigure("k").get(deps);
     if (!(__bynkEq(v, Shape.Circle(4)))) { throw __bynkExpectFailure("tests/demo/state.bynk:21:10", 395, 409, "expect v == Circle(4)\n  expected: v == Circle(4)\n  actual:   " + __bynkShow((v)) + " == " + __bynkShow((Shape.Circle(4)))); }
@@ -98,13 +98,13 @@ async function test_a_sum_Cell_with_a_payload() {
 // case tier: unit
 async function test_a_Result_Cell() {
   try {
-    demo_state.__resetAgents();
+    __ns_demo_state.__resetAgents();
     const deps = __makeTestDeps();
-    const { Blob, Board, Figure, Gate, History, Labelled, Lamp, Light, Lights, Memo, Note, Outcome, Panel, Reading, Shape, Store, __makeBoard, __makeFigure, __makeGate, __makeHistory, __makeLamp, __makeLights, __makeMemo, __makeNote, __makeOutcome, __makePanel, __makeReading, __makeStore } = demo_state;
-    type Blob = demo_state.Blob;
-    type Labelled = demo_state.Labelled;
-    type Light = demo_state.Light;
-    type Shape = demo_state.Shape;
+    const { Blob, Board, Figure, Gate, History, Labelled, Lamp, Light, Lights, Memo, Note, Outcome, Panel, Reading, Shape, Store, __makeBoard, __makeFigure, __makeGate, __makeHistory, __makeLamp, __makeLights, __makeMemo, __makeNote, __makeOutcome, __makePanel, __makeReading, __makeStore } = __ns_demo_state;
+    type Blob = __ns_demo_state.Blob;
+    type Labelled = __ns_demo_state.Labelled;
+    type Light = __ns_demo_state.Light;
+    type Shape = __ns_demo_state.Shape;
     await __makeOutcome("k").set(7, deps);
     const v = await __makeOutcome("k").get(deps);
     const want: Result<number, string> = Ok(7);
@@ -121,13 +121,13 @@ async function test_a_Result_Cell() {
 // case tier: unit
 async function test_a_record_Cell_holding_an_Option() {
   try {
-    demo_state.__resetAgents();
+    __ns_demo_state.__resetAgents();
     const deps = __makeTestDeps();
-    const { Blob, Board, Figure, Gate, History, Labelled, Lamp, Light, Lights, Memo, Note, Outcome, Panel, Reading, Shape, Store, __makeBoard, __makeFigure, __makeGate, __makeHistory, __makeLamp, __makeLights, __makeMemo, __makeNote, __makeOutcome, __makePanel, __makeReading, __makeStore } = demo_state;
-    type Blob = demo_state.Blob;
-    type Labelled = demo_state.Labelled;
-    type Light = demo_state.Light;
-    type Shape = demo_state.Shape;
+    const { Blob, Board, Figure, Gate, History, Labelled, Lamp, Light, Lights, Memo, Note, Outcome, Panel, Reading, Shape, Store, __makeBoard, __makeFigure, __makeGate, __makeHistory, __makeLamp, __makeLights, __makeMemo, __makeNote, __makeOutcome, __makePanel, __makeReading, __makeStore } = __ns_demo_state;
+    type Blob = __ns_demo_state.Blob;
+    type Labelled = __ns_demo_state.Labelled;
+    type Light = __ns_demo_state.Light;
+    type Shape = __ns_demo_state.Shape;
     await __makeNote("k").set({ label: "a", n: Some(1) }, deps);
     const v = await __makeNote("k").get(deps);
     if (!(__bynkEq(v, { label: "a", n: Some(1) }))) { throw __bynkExpectFailure("tests/demo/state.bynk:35:10", 763, 803, "expect v == Labelled { label: \"a\", n: Some(1) }\n  expected: v == Labelled { label: \"a\", n: Some(1) }\n  actual:   " + __bynkShow((v)) + " == " + __bynkShow(({ label: "a", n: Some(1) }))); }
@@ -143,13 +143,13 @@ async function test_a_record_Cell_holding_an_Option() {
 // case tier: unit
 async function test_a_record_Cell_holding_Bytes() {
   try {
-    demo_state.__resetAgents();
+    __ns_demo_state.__resetAgents();
     const deps = __makeTestDeps();
-    const { Blob, Board, Figure, Gate, History, Labelled, Lamp, Light, Lights, Memo, Note, Outcome, Panel, Reading, Shape, Store, __makeBoard, __makeFigure, __makeGate, __makeHistory, __makeLamp, __makeLights, __makeMemo, __makeNote, __makeOutcome, __makePanel, __makeReading, __makeStore } = demo_state;
-    type Blob = demo_state.Blob;
-    type Labelled = demo_state.Labelled;
-    type Light = demo_state.Light;
-    type Shape = demo_state.Shape;
+    const { Blob, Board, Figure, Gate, History, Labelled, Lamp, Light, Lights, Memo, Note, Outcome, Panel, Reading, Shape, Store, __makeBoard, __makeFigure, __makeGate, __makeHistory, __makeLamp, __makeLights, __makeMemo, __makeNote, __makeOutcome, __makePanel, __makeReading, __makeStore } = __ns_demo_state;
+    type Blob = __ns_demo_state.Blob;
+    type Labelled = __ns_demo_state.Labelled;
+    type Light = __ns_demo_state.Light;
+    type Shape = __ns_demo_state.Shape;
     await __makeStore("k").set("hi", deps);
     const v = await __makeStore("k").get(deps);
     if (!(__bynkBytesEqual(v.data, new globalThis.TextEncoder().encode("hi")))) { throw __bynkExpectFailure("tests/demo/state.bynk:41:10", 907, 937, "expect v.data == Bytes.fromUtf8(\"hi\")\n  expected: v.data == Bytes.fromUtf8(\"hi\")\n  actual:   " + __bynkShow((v.data)) + " == " + __bynkShow((new globalThis.TextEncoder().encode("hi")))); }
@@ -165,13 +165,13 @@ async function test_a_record_Cell_holding_Bytes() {
 // case tier: unit
 async function test_a_List_of_enums() {
   try {
-    demo_state.__resetAgents();
+    __ns_demo_state.__resetAgents();
     const deps = __makeTestDeps();
-    const { Blob, Board, Figure, Gate, History, Labelled, Lamp, Light, Lights, Memo, Note, Outcome, Panel, Reading, Shape, Store, __makeBoard, __makeFigure, __makeGate, __makeHistory, __makeLamp, __makeLights, __makeMemo, __makeNote, __makeOutcome, __makePanel, __makeReading, __makeStore } = demo_state;
-    type Blob = demo_state.Blob;
-    type Labelled = demo_state.Labelled;
-    type Light = demo_state.Light;
-    type Shape = demo_state.Shape;
+    const { Blob, Board, Figure, Gate, History, Labelled, Lamp, Light, Lights, Memo, Note, Outcome, Panel, Reading, Shape, Store, __makeBoard, __makeFigure, __makeGate, __makeHistory, __makeLamp, __makeLights, __makeMemo, __makeNote, __makeOutcome, __makePanel, __makeReading, __makeStore } = __ns_demo_state;
+    type Blob = __ns_demo_state.Blob;
+    type Labelled = __ns_demo_state.Labelled;
+    type Light = __ns_demo_state.Light;
+    type Shape = __ns_demo_state.Shape;
     await __makeLights("k").set([Light.Green, Light.Red, Light.Green], deps);
     const v = await __makeLights("k").get(deps);
     if (!(__bynkEq(v, [Light.Green, Light.Red, Light.Green]))) { throw __bynkExpectFailure("tests/demo/state.bynk:47:10", 1046, 1070, "expect v == [Green, Red, Green]\n  expected: v == [Green, Red, Green]\n  actual:   " + __bynkShow((v)) + " == " + __bynkShow(([Light.Green, Light.Red, Light.Green]))); }
@@ -187,13 +187,13 @@ async function test_a_List_of_enums() {
 // case tier: unit
 async function test_a_store_Map_of_enums() {
   try {
-    demo_state.__resetAgents();
+    __ns_demo_state.__resetAgents();
     const deps = __makeTestDeps();
-    const { Blob, Board, Figure, Gate, History, Labelled, Lamp, Light, Lights, Memo, Note, Outcome, Panel, Reading, Shape, Store, __makeBoard, __makeFigure, __makeGate, __makeHistory, __makeLamp, __makeLights, __makeMemo, __makeNote, __makeOutcome, __makePanel, __makeReading, __makeStore } = demo_state;
-    type Blob = demo_state.Blob;
-    type Labelled = demo_state.Labelled;
-    type Light = demo_state.Light;
-    type Shape = demo_state.Shape;
+    const { Blob, Board, Figure, Gate, History, Labelled, Lamp, Light, Lights, Memo, Note, Outcome, Panel, Reading, Shape, Store, __makeBoard, __makeFigure, __makeGate, __makeHistory, __makeLamp, __makeLights, __makeMemo, __makeNote, __makeOutcome, __makePanel, __makeReading, __makeStore } = __ns_demo_state;
+    type Blob = __ns_demo_state.Blob;
+    type Labelled = __ns_demo_state.Labelled;
+    type Light = __ns_demo_state.Light;
+    type Shape = __ns_demo_state.Shape;
     await __makeBoard("k").set("a", Light.Green, deps);
     const v = await __makeBoard("k").get("a", deps);
     if (!(__bynkEq(v, Some(Light.Green)))) { throw __bynkExpectFailure("tests/demo/state.bynk:53:10", 1176, 1192, "expect v == Some(Green)\n  expected: v == Some(Green)\n  actual:   " + __bynkShow((v)) + " == " + __bynkShow((Some(Light.Green)))); }
@@ -209,13 +209,13 @@ async function test_a_store_Map_of_enums() {
 // case tier: unit
 async function test_a_Cache_of_Options() {
   try {
-    demo_state.__resetAgents();
+    __ns_demo_state.__resetAgents();
     const deps = __makeTestDeps();
-    const { Blob, Board, Figure, Gate, History, Labelled, Lamp, Light, Lights, Memo, Note, Outcome, Panel, Reading, Shape, Store, __makeBoard, __makeFigure, __makeGate, __makeHistory, __makeLamp, __makeLights, __makeMemo, __makeNote, __makeOutcome, __makePanel, __makeReading, __makeStore } = demo_state;
-    type Blob = demo_state.Blob;
-    type Labelled = demo_state.Labelled;
-    type Light = demo_state.Light;
-    type Shape = demo_state.Shape;
+    const { Blob, Board, Figure, Gate, History, Labelled, Lamp, Light, Lights, Memo, Note, Outcome, Panel, Reading, Shape, Store, __makeBoard, __makeFigure, __makeGate, __makeHistory, __makeLamp, __makeLights, __makeMemo, __makeNote, __makeOutcome, __makePanel, __makeReading, __makeStore } = __ns_demo_state;
+    type Blob = __ns_demo_state.Blob;
+    type Labelled = __ns_demo_state.Labelled;
+    type Light = __ns_demo_state.Light;
+    type Shape = __ns_demo_state.Shape;
     await __makeMemo("k").set("a", 5, deps);
     const v = await __makeMemo("k").get("a", deps);
     if (!(__bynkEq(v, Some(Some(5))))) { throw __bynkExpectFailure("tests/demo/state.bynk:59:10", 1290, 1308, "expect v == Some(Some(5))\n  expected: v == Some(Some(5))\n  actual:   " + __bynkShow((v)) + " == " + __bynkShow((Some(Some(5))))); }
@@ -231,13 +231,13 @@ async function test_a_Cache_of_Options() {
 // case tier: unit
 async function test_a_Log_of_sums() {
   try {
-    demo_state.__resetAgents();
+    __ns_demo_state.__resetAgents();
     const deps = __makeTestDeps();
-    const { Blob, Board, Figure, Gate, History, Labelled, Lamp, Light, Lights, Memo, Note, Outcome, Panel, Reading, Shape, Store, __makeBoard, __makeFigure, __makeGate, __makeHistory, __makeLamp, __makeLights, __makeMemo, __makeNote, __makeOutcome, __makePanel, __makeReading, __makeStore } = demo_state;
-    type Blob = demo_state.Blob;
-    type Labelled = demo_state.Labelled;
-    type Light = demo_state.Light;
-    type Shape = demo_state.Shape;
+    const { Blob, Board, Figure, Gate, History, Labelled, Lamp, Light, Lights, Memo, Note, Outcome, Panel, Reading, Shape, Store, __makeBoard, __makeFigure, __makeGate, __makeHistory, __makeLamp, __makeLights, __makeMemo, __makeNote, __makeOutcome, __makePanel, __makeReading, __makeStore } = __ns_demo_state;
+    type Blob = __ns_demo_state.Blob;
+    type Labelled = __ns_demo_state.Labelled;
+    type Light = __ns_demo_state.Light;
+    type Shape = __ns_demo_state.Shape;
     await __makeHistory("k").add(Shape.Circle(1), deps);
     await __makeHistory("k").add(Shape.Square(2), deps);
     const n = await __makeHistory("k").count(deps);
@@ -254,13 +254,13 @@ async function test_a_Log_of_sums() {
 // case tier: unit
 async function test_a_scalar_beside_an_enum() {
   try {
-    demo_state.__resetAgents();
+    __ns_demo_state.__resetAgents();
     const deps = __makeTestDeps();
-    const { Blob, Board, Figure, Gate, History, Labelled, Lamp, Light, Lights, Memo, Note, Outcome, Panel, Reading, Shape, Store, __makeBoard, __makeFigure, __makeGate, __makeHistory, __makeLamp, __makeLights, __makeMemo, __makeNote, __makeOutcome, __makePanel, __makeReading, __makeStore } = demo_state;
-    type Blob = demo_state.Blob;
-    type Labelled = demo_state.Labelled;
-    type Light = demo_state.Light;
-    type Shape = demo_state.Shape;
+    const { Blob, Board, Figure, Gate, History, Labelled, Lamp, Light, Lights, Memo, Note, Outcome, Panel, Reading, Shape, Store, __makeBoard, __makeFigure, __makeGate, __makeHistory, __makeLamp, __makeLights, __makeMemo, __makeNote, __makeOutcome, __makePanel, __makeReading, __makeStore } = __ns_demo_state;
+    type Blob = __ns_demo_state.Blob;
+    type Labelled = __ns_demo_state.Labelled;
+    type Light = __ns_demo_state.Light;
+    type Shape = __ns_demo_state.Shape;
     await __makePanel("k").setLevel(9, deps);
     const v = await __makePanel("k").getLevel(deps);
     if (!(v === 9)) { throw __bynkExpectFailure("tests/demo/state.bynk:72:10", 1555, 1561, "expect v == 9\n  expected: v == 9\n  actual:   " + __bynkShow((v)) + " == " + __bynkShow((9))); }
@@ -276,13 +276,13 @@ async function test_a_scalar_beside_an_enum() {
 // case tier: unit
 async function test_a_transition_reads_the_decoded_prior_state() {
   try {
-    demo_state.__resetAgents();
+    __ns_demo_state.__resetAgents();
     const deps = __makeTestDeps();
-    const { Blob, Board, Figure, Gate, History, Labelled, Lamp, Light, Lights, Memo, Note, Outcome, Panel, Reading, Shape, Store, __makeBoard, __makeFigure, __makeGate, __makeHistory, __makeLamp, __makeLights, __makeMemo, __makeNote, __makeOutcome, __makePanel, __makeReading, __makeStore } = demo_state;
-    type Blob = demo_state.Blob;
-    type Labelled = demo_state.Labelled;
-    type Light = demo_state.Light;
-    type Shape = demo_state.Shape;
+    const { Blob, Board, Figure, Gate, History, Labelled, Lamp, Light, Lights, Memo, Note, Outcome, Panel, Reading, Shape, Store, __makeBoard, __makeFigure, __makeGate, __makeHistory, __makeLamp, __makeLights, __makeMemo, __makeNote, __makeOutcome, __makePanel, __makeReading, __makeStore } = __ns_demo_state;
+    type Blob = __ns_demo_state.Blob;
+    type Labelled = __ns_demo_state.Labelled;
+    type Light = __ns_demo_state.Light;
+    type Shape = __ns_demo_state.Shape;
     await __makeGate("k").set(Light.Green, deps);
     await __makeGate("k").set(Light.Red, deps);
     const v = await __makeGate("k").get(deps);

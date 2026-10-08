@@ -1,6 +1,11 @@
 # Bynk — Status & Gap Audit
 
-_Refreshed 18 June 2026 for **v0.54.0** (head `9da282c`). Scope: the whole `bynk`
+_Audit taken 18 June 2026 at **v0.54.0** (head `9da282c`); individual entries
+have been updated since (the latest cite v0.220), and the deferred-surface
+statements were corrected in October 2026 (v0.309, #1669). For current status, read
+the site's [Versioning & roadmap](../site/src/content/docs/book/about/versioning-and-roadmap.md)
+and [`archive/retired-tracks.md`](archive/retired-tracks.md); this audit is a
+dated snapshot. Scope: the whole `bynk`
 repo — compiler (`bynkc`), driver (`bynk`), formatter (`bynk-fmt`), language
 server (`bynk-lsp`), tree-sitter grammar, and the VS Code extension — assessed
 against the language's own specs._
@@ -24,8 +29,9 @@ misleading verdict, so this audit keeps them separate:
 2. **The design notes** (`bynk-design-notes.md`) and **type-system spec**
    (`bynk-type-system.md`) describe an aspirational **v1** language — events,
    sagas, a query algebra, the full storage-kind catalogue, agent invariants,
-   held connections. Much of this is deliberately deferred and must **not** be
-   scored as "missing".
+   held connections. At the time of this audit much of it was deliberately
+   deferred and not scored as "missing"; since then all of it except sagas has
+   shipped (§4).
 3. **The tooling specs** (`bynk-lsp-spec.md`, `bynk-tree-sitter-spec.md`) and the
    forward roadmaps (`bynk-tooling-roadmap.md`, `bynk-engineering-roadmap.md`)
    sit alongside.
@@ -35,7 +41,7 @@ language**, with the entire surface wired end-to-end (parse → resolve → chec
 emit) and emitted TypeScript verified under `tsc --strict`. What remains
 genuinely "incomplete" is the large **v1 coordination surface** — events, sagas,
 the query algebra and rich storage kinds, agent invariants — which is scheduled,
-not broken.
+not broken. *(October 2026: of these only sagas remain unbuilt; see §4.)*
 
 > Verification note: this audit is grounded in the CI-enforced ADR index, the
 > feature-track docs, and source reading (citations are `file:line` or fixture
@@ -55,7 +61,7 @@ not broken.
 | **`bynk-lsp`** | Rich | Diagnostics, hover, definition, completion, signature help, inlay hints, semantic tokens, codeLens, call hierarchy, implementation nav, folding/selection, workspace symbols, rename/references (v0.24–v0.43). The completion overhaul + editor polish shipped (ADRs 0093–0095, [`bynk-lsp-spec.md`](bynk-lsp-spec.md)); remaining: editor-agnostic setup docs + marketplace publishing ([#257](https://github.com/accuser/bynk/issues/257)/[#258](https://github.com/accuser/bynk/issues/258)). |
 | **`tree-sitter-bynk`** | Lags the language | Strong v0–v0.5 grammar + highlights; behind on newer surface (`on http`/`from <protocol>`, `assert`-expr, `test`/`mocks`, `HttpResult`, actors). See [`bynk-engineering-roadmap.md`](bynk-engineering-roadmap.md). |
 | **`vscode-bynk`** | Solid client | LSP client + status bar + scaffolds/walkthrough (v0.38); now bundles the server (B-0). Highlighting is TextMate, not the tree-sitter grammar. |
-| **v1 coordination surface** (events, sagas, query algebra, rich storage kinds, agent invariants) | Deferred by design | Roadmap, not gap. |
+| **v1 coordination surface** (events, sagas, query algebra, rich storage kinds, agent invariants) | Shipped except sagas (October 2026) | See §4. |
 
 ---
 
@@ -105,7 +111,8 @@ formatter. The following are **fully wired end-to-end** and fixture-exercised
 - **Services & protocols** (v0.44, ADRs 0077–0079): protocol on the header
   (`from <protocol>`), method-builders, a closed protocol set, and a `from`-less
   ⇒ `call`-only default.
-- **HTTP**: `on http METHOD "/path/:id"` handlers, method routing, path-param
+- **HTTP**: `on GET("/path/:id")`-style handlers in a `service … from http`
+  (the audit-era spelling `on http METHOD "/path"` is retired), method routing, path-param
   binding, typed body deserialisation, and the `HttpResult[T]` status vocabulary
   (200/201/204/400/401/403/404/409/422/500).
 - **Queues & cron** (v0.10, ADR 0002): consumer-only `on queue` with the
@@ -184,26 +191,32 @@ increments.
 
 ## 4. Deferred by design (the published roadmap)
 
-These are **not** gaps; the specs schedule them.
+These are **not** gaps; the specs schedule them. *(Corrected October 2026: most of
+this list has since shipped, marked ✅; sagas are the remaining deferral.)*
 
-- **Events / subscriptions** — the pub-sub model in design notes §7 (event
-  emission, pattern-based subscription, fan-out). No `Events` track exists yet;
-  the actors track's deferred **Q8 (replay/ordering)** rides with it.
+- **Events / subscriptions** — ✅ the pub-sub model in design notes §7 shipped in
+  v0.238–v0.244 (events track [`tracks/events.md`](tracks/events.md), slices 0–4:
+  emission, pattern filtering, the envelope, versioning, the schema registry,
+  `via schema(N)` dispatch). Still open: range patterns (slice 4b, #990) and
+  replay/backfill with the actors **Q8**, split to a future track.
 - **Sagas / compensation** — the `Sagas` capability and LIFO compensation unwind
   in design notes §13.
-- **Query algebra** — `Query[T]`, the builder/terminal vocabulary, time-window
-  builders, and indexing in design notes §11.
-- **Rich storage-kind catalogue** — the agent-local `Map`/`Set`/`Log`/`Queue`/
-  `Cache`/`Ref`/`Held` storage model with the consistency rules in design notes
-  §10/§12. (Distinct from what ships today: `Kv` binding storage + immutable
-  `List`/`Map` collection values.)
+- **Query algebra** — ✅ shipped in v0.88–v0.94: `Query[T]`, the builder/terminal
+  vocabulary, `@indexed`, and joins & grouping in the combiner form (ADR 0120).
+  Time-window builders over `Log` remain a follow-on.
+- **Rich storage-kind catalogue** — ✅ shipped in v0.82–v0.97: `store` fields of
+  kind `Cell`/`Map`/`Set`/`Cache`/`Log`, with handler-atomic commit and
+  rehydration validation. `Queue` was ruled out as a delivery concern (ADR 0122);
+  `Ref` was never built (an agent is addressed by keyed construction); held
+  resources are their own kind (below).
 - **Agent invariants** — ✅ runtime-checked invariants attached to agent state
   (design notes §14) **shipped in v0.80** (ADR 0107), distinct from the
   *authorisation* invariants on actors that shipped in v0.53. Two follow-ons stay
   deferred: the **static provable-violation pass**, and a **general
   typed-agent-fault channel** (to make an `InvariantViolation` caller-
   distinguishable rather than a bare 500).
-- **Held resources** — `Connection`/WebSocket and a `workerd` dev server.
+- **Held resources** — ✅ `Connection[F]` and `from WebSocket` shipped in
+  v0.100–v0.107. A first-party `workerd` dev server remains optional future work.
 - **Core type-theory exclusions** (deliberate): subtyping, higher-rank/
   higher-kinded polymorphism, row polymorphism, type classes.
 
@@ -257,11 +270,11 @@ The forward plan lives in dedicated, domain-scoped docs:
   ([`bynk-1.0-definition.md`](bynk-1.0-definition.md), §7(4): 1.0 = Foundations
   stability + deploy + state migrations; ecosystem is 1.0-optional) — **Gate 2
   (`deploy`) is now satisfied.**
-- **Language vision (deferred behind the blockers)** — the next feature tracks,
-  in rough order: an **Events** track (pub-sub + the deferred actors Q8
-  replay/ordering), then **sagas/compensation**, the **query algebra + rich
+- **Language vision (deferred behind the blockers)** — as written at the audit:
+  an **Events** track, then **sagas/compensation**, the **query algebra + rich
   storage kinds**, **agent invariants**, and **held connections / WebSocket**.
-  Deferred, not cancelled. Far-reaching features run as feature tracks per ADR
+  *(October 2026: all of these have shipped except sagas; replay/ordering (the
+  actors Q8) is a future track.)* Deferred, not cancelled. Far-reaching features run as feature tracks per ADR
   0076 ([`tracks/`](tracks/README.md)); each slice becomes a `proposals/` entry.
 - **Editor tooling** — [`bynk-tooling-roadmap.md`](bynk-tooling-roadmap.md)
   (LSP + VS Code); the LSP track completed (ADRs 0093–0095,
@@ -289,9 +302,9 @@ MVP-and-beyond line: a refinement-and-effects type system, collections and
 generics, the architectural primitives (contexts, services, agents, adapters,
 providers, capabilities), HTTP/queue/cron transports, a complete boundary-auth
 **actors** story, KV storage, a rich language server, and a `tsc --strict`
-quality gate. The remaining "incomplete" surface is the **v1 coordination
-layer** — events, sagas, the query algebra and rich storage kinds, agent
-invariants, held connections — which the design notes have always scheduled for
-later tracks. The honest verdict: **substantially complete against its own
+quality gate. At the audit the remaining "incomplete" surface was the **v1
+coordination layer** — events, sagas, the query algebra and rich storage kinds,
+agent invariants, held connections — which the design notes scheduled for later
+tracks; since then all of it except sagas has shipped (§4). The honest verdict: **substantially complete against its own
 shipped scope, with a clearly-bounded and deliberately-deferred v1 vision still
 ahead.**

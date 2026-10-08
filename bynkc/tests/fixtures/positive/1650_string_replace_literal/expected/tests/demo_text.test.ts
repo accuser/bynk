@@ -2,7 +2,7 @@
 // test target: demo.text
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
-import * as demo_text from "./../demo/text.js";
+import * as __ns_demo_text from "./../demo/text.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -33,7 +33,7 @@ function __makeTestDeps() {
 async function test____is_not_the_matched_text() {
   try {
     const deps = {};
-    const { rep } = demo_text;
+    const { rep } = __ns_demo_text;
     if (!(rep("aaa", "a", "$&b") === "$&b$&b$&b")) { throw __bynkExpectFailure("tests/demo/text.bynk:7:10", 117, 154, "expect rep(\"aaa\", \"a\", \"$&b\") == \"$&b$&b$&b\"\n  expected: rep(\"aaa\", \"a\", \"$&b\") == \"$&b$&b$&b\"\n  actual:   " + __bynkShow((rep("aaa", "a", "$&b"))) + " == " + __bynkShow(("$&b$&b$&b"))); }
     if (!("aaa".replaceAll("a", () => "$&b") === "$&b$&b$&b")) { throw __bynkExpectFailure("tests/demo/text.bynk:8:10", 164, 204, "expect \"aaa\".replace(\"a\", \"$&b\") == \"$&b$&b$&b\"\n  expected: \"aaa\".replace(\"a\", \"$&b\") == \"$&b$&b$&b\"\n  actual:   " + __bynkShow(("aaa".replaceAll("a", () => "$&b"))) + " == " + __bynkShow(("$&b$&b$&b"))); }
     return { pass: true };
@@ -49,7 +49,7 @@ async function test____is_not_the_matched_text() {
 async function test__1_and___name__are_not_group_references() {
   try {
     const deps = {};
-    const { rep } = demo_text;
+    const { rep } = __ns_demo_text;
     if (!(rep("abc", "b", "$1") === "a$1c")) { throw __bynkExpectFailure("tests/demo/text.bynk:12:10", 266, 297, "expect rep(\"abc\", \"b\", \"$1\") == \"a$1c\"\n  expected: rep(\"abc\", \"b\", \"$1\") == \"a$1c\"\n  actual:   " + __bynkShow((rep("abc", "b", "$1"))) + " == " + __bynkShow(("a$1c"))); }
     if (!(rep("abc", "b", "$<x>") === "a$<x>c")) { throw __bynkExpectFailure("tests/demo/text.bynk:13:10", 307, 342, "expect rep(\"abc\", \"b\", \"$<x>\") == \"a$<x>c\"\n  expected: rep(\"abc\", \"b\", \"$<x>\") == \"a$<x>c\"\n  actual:   " + __bynkShow((rep("abc", "b", "$<x>"))) + " == " + __bynkShow(("a$<x>c"))); }
     return { pass: true };
@@ -65,7 +65,7 @@ async function test__1_and___name__are_not_group_references() {
 async function test____is_not_an_escaped_dollar() {
   try {
     const deps = {};
-    const { rep } = demo_text;
+    const { rep } = __ns_demo_text;
     if (!(rep("abc", "b", "$$") === "a$$c")) { throw __bynkExpectFailure("tests/demo/text.bynk:17:10", 392, 423, "expect rep(\"abc\", \"b\", \"$$\") == \"a$$c\"\n  expected: rep(\"abc\", \"b\", \"$$\") == \"a$$c\"\n  actual:   " + __bynkShow((rep("abc", "b", "$$"))) + " == " + __bynkShow(("a$$c"))); }
     return { pass: true };
   } catch (e) {
@@ -80,7 +80,7 @@ async function test____is_not_an_escaped_dollar() {
 async function test____and____are_not_the_surrounding_text() {
   try {
     const deps = {};
-    const { rep } = demo_text;
+    const { rep } = __ns_demo_text;
     if (!(rep("abc", "b", "$`") === "a$`c")) { throw __bynkExpectFailure("tests/demo/text.bynk:21:10", 484, 515, "expect rep(\"abc\", \"b\", \"$`\") == \"a$`c\"\n  expected: rep(\"abc\", \"b\", \"$`\") == \"a$`c\"\n  actual:   " + __bynkShow((rep("abc", "b", "$`"))) + " == " + __bynkShow(("a$`c"))); }
     if (!(rep("abc", "b", "$'") === "a$'c")) { throw __bynkExpectFailure("tests/demo/text.bynk:22:10", 525, 556, "expect rep(\"abc\", \"b\", \"$'\") == \"a$'c\"\n  expected: rep(\"abc\", \"b\", \"$'\") == \"a$'c\"\n  actual:   " + __bynkShow((rep("abc", "b", "$'"))) + " == " + __bynkShow(("a$'c"))); }
     return { pass: true };
@@ -96,7 +96,7 @@ async function test____and____are_not_the_surrounding_text() {
 async function test_a_computed_replacement_is_literal_too() {
   try {
     const deps = {};
-    const { rep } = demo_text;
+    const { rep } = __ns_demo_text;
     if (!(rep("x-y", "-", "$".concat("&")) === "x$&y")) { throw __bynkExpectFailure("tests/demo/text.bynk:26:10", 616, 658, "expect rep(\"x-y\", \"-\", \"$\".concat(\"&\")) == \"x$&y\"\n  expected: rep(\"x-y\", \"-\", \"$\".concat(\"&\")) == \"x$&y\"\n  actual:   " + __bynkShow((rep("x-y", "-", "$".concat("&")))) + " == " + __bynkShow(("x$&y"))); }
     return { pass: true };
   } catch (e) {
@@ -111,7 +111,7 @@ async function test_a_computed_replacement_is_literal_too() {
 async function test_replace_still_replaces_every_occurrence() {
   try {
     const deps = {};
-    const { rep } = demo_text;
+    const { rep } = __ns_demo_text;
     if (!(rep("a-b-c", "-", "+") === "a+b+c")) { throw __bynkExpectFailure("tests/demo/text.bynk:30:10", 720, 753, "expect rep(\"a-b-c\", \"-\", \"+\") == \"a+b+c\"\n  expected: rep(\"a-b-c\", \"-\", \"+\") == \"a+b+c\"\n  actual:   " + __bynkShow((rep("a-b-c", "-", "+"))) + " == " + __bynkShow(("a+b+c"))); }
     if (!(rep("ab", "", "-") === "-a-b-")) { throw __bynkExpectFailure("tests/demo/text.bynk:31:10", 763, 792, "expect rep(\"ab\", \"\", \"-\") == \"-a-b-\"\n  expected: rep(\"ab\", \"\", \"-\") == \"-a-b-\"\n  actual:   " + __bynkShow((rep("ab", "", "-"))) + " == " + __bynkShow(("-a-b-"))); }
     return { pass: true };
