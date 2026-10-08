@@ -1124,37 +1124,49 @@ impl<'a> Formatter<'a> {
             ExportKind::Type(Visibility::Transparent) => "transparent",
             ExportKind::Capability => "capability",
         };
-        if e.names.is_empty() {
+        // #1797: a comment anywhere in the list forces the multi-line form.
+        let has_comments = !e.trailing_comments.is_empty()
+            || e.names
+                .iter()
+                .any(|n| !n.trivia.leading.is_empty() || n.trivia.trailing.is_some());
+        if e.names.is_empty() && !has_comments {
             self.push(&format!("exports {} {{}}", vis));
             self.newline();
             return;
         }
         // Single-line form if it fits.
-        let oneline = format!(
-            "exports {} {{ {} }}",
-            vis,
-            e.names
-                .iter()
-                .map(|n| n.name.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
-        if self.fits(&oneline, 0) {
-            self.push(&oneline);
-            self.newline();
-            return;
+        if !has_comments {
+            let oneline = format!(
+                "exports {} {{ {} }}",
+                vis,
+                e.names
+                    .iter()
+                    .map(|n| n.name.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+            if self.fits(&oneline, 0) {
+                self.push(&oneline);
+                self.newline();
+                return;
+            }
         }
         // Multi-line form.
         self.push(&format!("exports {} {{", vis));
         self.newline();
         self.indented(|f| {
             for (i, n) in e.names.iter().enumerate() {
-                f.push(&n.name);
+                f.emit_leading_comments(&n.trivia.leading);
+                f.push(&n.name.name);
                 if i + 1 < e.names.len() || f.opts.trailing_comma {
                     f.push(",");
                 }
-                f.newline();
+                f.emit_trailing_comment(n.trivia.trailing.as_deref());
+                if n.trivia.trailing.is_none() {
+                    f.newline();
+                }
             }
+            f.emit_trailing_comments(&e.trailing_comments);
         });
         self.push("}");
         self.newline();
@@ -2009,44 +2021,69 @@ impl<'a> Formatter<'a> {
             } else {
                 format!("({})", args.join(", "))
             };
-            let identity = a
-                .identity
-                .as_ref()
-                .map(|id| format!(", identity = {}", type_ref_to_string(id)))
-                .unwrap_or_default();
+            let identity = a.identity.as_ref().map(type_ref_to_string);
             let oneline = format!(
-                "actor {} {{ auth = {auth}{config}{identity} }}",
-                a.name.name
+                "actor {} {{ auth = {auth}{config}{} }}",
+                a.name.name,
+                identity
+                    .as_ref()
+                    .map(|id| format!(", identity = {id}"))
+                    .unwrap_or_default()
             );
-            if args.is_empty() || self.fits(&oneline, 0) {
+            // An OIDC-style scheme carries issuer / audience / JWKS URLs that
+            // blow past any line budget on one line (#963): open the braces and
+            // give each scheme argument its own line. The test ignores comments,
+            // so commenting an actor never changes how its arguments break.
+            let break_args = !args.is_empty() && !self.fits(&oneline, 0);
+            // #1797: a comment anywhere in the body forces the multi-line form.
+            let has_comments = !a.trailing_comments.is_empty()
+                || [&a.auth_trivia, &a.identity_trivia]
+                    .iter()
+                    .any(|t| !t.leading.is_empty() || t.trailing.is_some());
+            if !break_args && !has_comments {
                 self.push(&oneline);
             } else {
-                // An OIDC-style scheme carries issuer / audience / JWKS URLs
-                // that blow past any line budget on one line (#963): open the
-                // braces and give each scheme argument its own line.
                 self.push(&format!("actor {} {{", a.name.name));
                 self.newline();
                 self.indented(|f| {
-                    f.push(&format!("auth = {auth}("));
-                    f.newline();
-                    f.indented(|f2| {
-                        for (i, arg) in args.iter().enumerate() {
-                            f2.push(arg);
-                            if i + 1 < args.len() {
-                                f2.push(",");
-                            }
-                            f2.newline();
-                        }
-                    });
-                    f.push(")");
-                    if !identity.is_empty() {
-                        // `identity` is a sibling of `auth`, so its comma stays
-                        // with `auth`'s closing paren and it starts a new line.
-                        f.push(",");
+                    f.emit_leading_comments(&a.auth_trivia.leading);
+                    if break_args {
+                        f.push(&format!("auth = {auth}("));
                         f.newline();
-                        f.push(identity.trim_start_matches(", "));
+                        f.indented(|f2| {
+                            for (i, arg) in args.iter().enumerate() {
+                                f2.push(arg);
+                                if i + 1 < args.len() {
+                                    f2.push(",");
+                                }
+                                f2.newline();
+                            }
+                        });
+                        f.push(")");
+                    } else {
+                        f.push(&format!("auth = {auth}{config}"));
                     }
-                    f.newline();
+                    if let Some(id) = &identity {
+                        // `identity` is a sibling of `auth`, so its comma stays
+                        // with `auth`'s line and it starts a new line.
+                        f.push(",");
+                        f.emit_trailing_comment(a.auth_trivia.trailing.as_deref());
+                        if a.auth_trivia.trailing.is_none() {
+                            f.newline();
+                        }
+                        f.emit_leading_comments(&a.identity_trivia.leading);
+                        f.push(&format!("identity = {id}"));
+                        f.emit_trailing_comment(a.identity_trivia.trailing.as_deref());
+                        if a.identity_trivia.trailing.is_none() {
+                            f.newline();
+                        }
+                    } else {
+                        f.emit_trailing_comment(a.auth_trivia.trailing.as_deref());
+                        if a.auth_trivia.trailing.is_none() {
+                            f.newline();
+                        }
+                    }
+                    f.emit_trailing_comments(&a.trailing_comments);
                 });
                 self.push("}");
             }

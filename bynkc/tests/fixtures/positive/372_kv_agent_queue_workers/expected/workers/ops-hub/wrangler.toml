@@ -11,9 +11,9 @@ id = "<KV_NAMESPACE_ID>" # set at deploy time
 name = "JOB_LEDGER"
 class_name = "JobLedger"
 
-[[migrations]]
-tag = "v1"
-new_sqlite_classes = ["JobLedger"]
+[exports.JobLedger]
+type = "durable-object"
+storage = "sqlite"
 
 [[queues.consumers]]
 queue = "job-intake"
