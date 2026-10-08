@@ -135,15 +135,32 @@ mod tests {
     use std::process::{Command, Stdio};
     use std::time::{Duration, Instant};
 
-    /// Wait up to ten seconds for `job` to hold `n` running processes.
-    fn await_active(job: &Job, ok: impl Fn(u32) -> bool) -> u32 {
+    /// Wait up to ten seconds for the number of running processes in `job` to
+    /// satisfy `ok`, and return it. Panics on the timeout, naming `what` and
+    /// the last count, so a condition that never held fails the test rather
+    /// than handing a stale count to a looser assertion.
+    fn await_active(job: &Job, what: &str, ok: impl Fn(u32) -> bool) -> u32 {
         let started = Instant::now();
         loop {
             let n = job.active().expect("the job can be queried");
-            if ok(n) || started.elapsed() > Duration::from_secs(10) {
+            if ok(n) {
                 return n;
             }
+            assert!(
+                started.elapsed() < Duration::from_secs(10),
+                "timed out waiting for {what}: {n} process(es) running"
+            );
             std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    /// A temp dir removed on drop, so a failing assertion does not leave it
+    /// behind.
+    struct TempDir(std::path::PathBuf);
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
         }
     }
 
@@ -157,10 +174,10 @@ mod tests {
     /// once when its stdin is not a console.
     #[test]
     fn a_killed_wrappers_orphans_are_stopped_with_the_job() {
-        let dir = std::env::temp_dir().join(format!("bynk-job-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let script = dir.join("fake-wrangler.cmd");
+        let dir = TempDir(std::env::temp_dir().join(format!("bynk-job-{}", std::process::id())));
+        let _ = std::fs::remove_dir_all(&dir.0);
+        std::fs::create_dir_all(&dir.0).unwrap();
+        let script = dir.0.join("fake-wrangler.cmd");
         std::fs::write(
             &script,
             "@echo off\r\n\
@@ -177,24 +194,20 @@ mod tests {
             .expect("the .cmd spawns");
         let job = Job::assign(&child).expect("the child is assigned to a job");
         // `cmd.exe` and its three `ping`s.
-        let running = await_active(&job, |n| n >= 4);
-        assert!(
-            running >= 4,
-            "the script never started its pings: {running}"
-        );
+        let running = await_active(&job, "the script to start its pings", |n| n >= 4);
 
         let _ = child.kill();
         let _ = child.wait();
-        let orphans = await_active(&job, |n| n < running);
+        let orphans = await_active(&job, "the wrapper to leave the job", |n| n < running);
         assert!(
             orphans >= 3,
             "the pings should outlive their parent, as the workerds do: {orphans}"
         );
 
         job.terminate();
-        let left = await_active(&job, |n| n == 0);
-        let _ = std::fs::remove_dir_all(&dir);
-        assert_eq!(left, 0, "processes survived the job's termination");
+        await_active(&job, "the job's termination to stop every process", |n| {
+            n == 0
+        });
     }
 
     /// Dropping the job stops the tree too: a context that exits on its own is
@@ -209,8 +222,7 @@ mod tests {
             .spawn()
             .expect("cmd spawns");
         let job = Job::assign(&child).expect("the child is assigned to a job");
-        let running = await_active(&job, |n| n >= 2);
-        assert!(running >= 2, "cmd never started ping: {running}");
+        await_active(&job, "cmd to start ping", |n| n >= 2);
         drop(job);
         let started = Instant::now();
         while child.try_wait().unwrap().is_none() {
