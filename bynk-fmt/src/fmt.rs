@@ -109,29 +109,30 @@ pub fn format_source(source: &str, opts: &FormatOptions) -> Result<String, Forma
     // line. Each unit's output already ends in exactly one newline, so joining
     // with `"\n"` inserts one blank line between units and leaves a single-unit
     // file byte-identical.
-    let (units, _warnings, fully_drained) =
+    let (units, _warnings, _) =
         parse_units_with_drain_check(&tokens, source).map_err(|errors| FormatError { errors })?;
     let output = render_units(&units, opts);
     // #523/#66 guard: trivia is only attached at declaration/statement
     // granularity, so a comment inside an expression subtree can be silently
     // dropped. Losing user text is worse than leaving a file unformatted — when
     // the output holds fewer comments than the input, refuse with a diagnostic
-    // pointing at the first comment that would vanish. `fully_drained` is the
-    // same parse's own answer to "did every comment reach a `Trivia` field?";
-    // when it's `true`, nothing could have been lost and `comment_loss`'s own
-    // re-tokenize-and-diff of `output` would only ever confirm that, so it is
-    // skipped outright — the common case for a file with no comment sitting
-    // inside a `match`/list/record/binop.
-    if !fully_drained && let Some(error) = comment_loss(source, &tokens, &output) {
+    // pointing at the first comment that would vanish. It runs on every format:
+    // the parse's own `fully_drained` flag only says each comment was harvested
+    // from the trivia table, not that it reached the AST, and #1756 found
+    // comments harvested then dropped (at the end of a service, agent or
+    // capability body, and inside a `cors`/`security`/`limits` policy) that the
+    // formatter deleted with no refusal.
+    if let Some(error) = comment_loss(source, &tokens, &output) {
         return Err(FormatError {
             errors: vec![error],
         });
     }
-    // #1664: a `---` doc block the parser could not attach (an orphan, separated
+    // #1664: doc blocks never enter the trivia table, so `fully_drained` says
+    // nothing about them, and the guard above counts `--` comments only. Check
+    // them separately, on every run. Since #1756 an orphan (a block separated
     // from the next declaration by a blank line, or with none to follow) is
-    // dropped from the AST with only a warning. It never enters the trivia
-    // table, so `fully_drained` says nothing about it, and the guard above
-    // counts `--` comments only. Check the doc blocks separately, on every run.
+    // kept as a `Comment::OrphanDoc` and printed in place; this is the backstop
+    // for a block some printer path still loses.
     if let Some(error) = doc_block_loss(source, &tokens, &output) {
         return Err(FormatError {
             errors: vec![error],
@@ -363,8 +364,8 @@ fn comment_loss(source: &str, tokens: &[Token], output: &str) -> Option<CompileE
 /// #1664: the `---` counterpart of [`comment_loss`]. Returns a
 /// `bynk.fmt.comment_loss` error naming the first doc block of `source` (already
 /// tokenized as `tokens`) that has no counterpart in `output`, compared by
-/// content multiset. An attached doc block is re-rendered with its content
-/// intact; the one the formatter loses is an orphan, which the parser drops.
+/// content multiset. Attached and orphaned (#1756) blocks are both re-rendered
+/// with their content intact, so this fires only on a printer gap.
 ///
 /// An `output` that does not tokenize returns `None`: that is a formatter bug
 /// the round-trip guard reports accurately ("no longer parses"), and counting
@@ -622,13 +623,36 @@ impl<'a> Formatter<'a> {
 
     // -- Line-comment trivia (v1.1) --
 
-    /// Emit a sequence of leading line-comments, each on its own line at
-    /// the current indent. Group has no blank lines between entries.
-    fn emit_leading_comments(&mut self, comments: &[String]) {
-        for body in comments {
-            self.push("--");
-            self.push(body);
-            self.newline();
+    /// Emit a sequence of leading comments, each on its own line at the
+    /// current indent. `--` lines have no blank lines between them; an orphaned
+    /// doc block (#1756) prints as a doc block and is followed by a blank line,
+    /// which is what keeps it from attaching to the declaration below.
+    fn emit_leading_comments(&mut self, comments: &[Comment]) {
+        self.emit_comments(comments, true);
+    }
+
+    /// Emit the comments that close a body or file. As
+    /// [`Self::emit_leading_comments`], except that an orphaned doc block that
+    /// is the last entry needs no blank line: nothing follows it to attach to.
+    fn emit_trailing_comments(&mut self, comments: &[Comment]) {
+        self.emit_comments(comments, false);
+    }
+
+    fn emit_comments(&mut self, comments: &[Comment], blank_after_last_orphan: bool) {
+        for (i, comment) in comments.iter().enumerate() {
+            match comment {
+                Comment::Line(body) => {
+                    self.push("--");
+                    self.push(body);
+                    self.newline();
+                }
+                Comment::OrphanDoc(doc) => {
+                    self.emit_doc(doc);
+                    if i + 1 < comments.len() || blank_after_last_orphan {
+                        self.newline();
+                    }
+                }
+            }
         }
     }
 
@@ -739,7 +763,7 @@ impl<'a> Formatter<'a> {
             if !a.items.is_empty() || any_header {
                 self.newline();
             }
-            self.emit_leading_comments(&a.trailing_comments);
+            self.emit_trailing_comments(&a.trailing_comments);
         }
     }
 
@@ -789,7 +813,7 @@ impl<'a> Formatter<'a> {
         stubs: &[StubClause],
         cases: &[Case],
         properties: &[PropertyDecl],
-        trailing_comments: &[String],
+        trailing_comments: &[Comment],
     ) {
         let mut first = true;
         for u in uses {
@@ -842,10 +866,7 @@ impl<'a> Formatter<'a> {
             self.newline();
             first = false;
         }
-        for comment in trailing_comments {
-            self.push(&format!("--{comment}"));
-            self.newline();
-        }
+        self.emit_trailing_comments(trailing_comments);
     }
 
     /// v0.118: format a `stub` clause as a suite- or case-body line, with
@@ -945,7 +966,7 @@ impl<'a> Formatter<'a> {
         &mut self,
         uses: &[UsesDecl],
         items: &[CommonsItem],
-        trailing_comments: &[String],
+        trailing_comments: &[Comment],
     ) {
         let mut any_uses = false;
         for u in uses {
@@ -974,7 +995,7 @@ impl<'a> Formatter<'a> {
             if !items.is_empty() || any_uses {
                 self.newline();
             }
-            self.emit_leading_comments(trailing_comments);
+            self.emit_trailing_comments(trailing_comments);
         }
     }
 
@@ -1050,7 +1071,7 @@ impl<'a> Formatter<'a> {
         consumes: &[ConsumesDecl],
         exports: &[ExportsDecl],
         items: &[CommonsItem],
-        trailing_comments: &[String],
+        trailing_comments: &[Comment],
     ) {
         let mut any_header = false;
         for u in uses {
@@ -1092,7 +1113,7 @@ impl<'a> Formatter<'a> {
             if !items.is_empty() || any_header {
                 self.newline();
             }
-            self.emit_leading_comments(trailing_comments);
+            self.emit_trailing_comments(trailing_comments);
         }
     }
 
@@ -1592,6 +1613,13 @@ impl<'a> Formatter<'a> {
                     f.newline();
                 }
             }
+            // #1756: the comments before the closing `}`, after a blank line.
+            if !c.trailing_comments.is_empty() {
+                if !c.ops.is_empty() {
+                    f.newline();
+                }
+                f.emit_trailing_comments(&c.trailing_comments);
+            }
         });
         self.push("}");
         self.emit_trailing_comment(c.trivia.trailing.as_deref());
@@ -1731,6 +1759,17 @@ impl<'a> Formatter<'a> {
                 }
                 f.format_handler(h);
             }
+            // #1756: the comments before the closing `}`, after a blank line.
+            if !s.trailing_comments.is_empty() {
+                if !s.handlers.is_empty()
+                    || s.cors.is_some()
+                    || s.security.is_some()
+                    || s.limits.is_some()
+                {
+                    f.newline();
+                }
+                f.emit_trailing_comments(&s.trailing_comments);
+            }
         });
         self.push("}");
         self.emit_trailing_comment(s.trivia.trailing.as_deref());
@@ -1831,6 +1870,11 @@ impl<'a> Formatter<'a> {
             for h in &a.handlers {
                 f.newline();
                 f.format_handler(h);
+            }
+            // #1756: the comments before the closing `}`, after a blank line.
+            if !a.trailing_comments.is_empty() {
+                f.newline();
+                f.emit_trailing_comments(&a.trailing_comments);
             }
         });
         self.push("}");

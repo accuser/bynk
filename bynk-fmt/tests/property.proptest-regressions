@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 0f0d77a3dd7a560918f794694156e5f59d83053f545f4fff0d297f988c0f7481 # shrinks to src = "commons gen_a\n\n---\ndoc a\n---\n-- \nfn f_a(a: Int) -> Int {\n  let x_a = 0\n  let y_a = 82 + \"\"\n  0\n}\n\n---\ndoc zlgvgtjul\n---\n"
+cc 08267669a1c4fd731e238cee92a6cf57217ab1965009600a66af36088839dd74 # shrinks to src = "commons gen_a\n\nfn f_a(a: Int) -> Int {\n  let x_a = 0 == 0 == 0\n  let y_a = 0 == 26\n  0\n}\n\n---\ndoc l\n---\n"
