@@ -1,0 +1,18 @@
+context t.web
+
+uses t.model
+
+fn listed() -> List[String] {
+  let runs = [Run { repo: "a" }, Run { repo: "b" }, Run { repo: "a" }]
+  runs.map((r) => r.repo).distinct()
+}
+
+fn loud(r: Run) -> String {
+  first(r).shout()
+}
+
+service api from http {
+  on GET("/repos") () -> Effect[HttpResult[List[String]]] by Visitor {
+    Ok(listed())
+  }
+}

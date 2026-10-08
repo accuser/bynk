@@ -866,6 +866,7 @@ struct EmitUnitCtx {
 fn build_emit_unit_ctx(
     name: &str,
     unit_info: &BTreeMap<String, UnitInfo>,
+    hidden_types: &BTreeMap<String, String>,
     target: BuildTarget,
     tys: &Arc<Types>,
 ) -> EmitUnitCtx {
@@ -895,6 +896,21 @@ fn build_emit_unit_ctx(
             let entry = imported_methods.entry(type_name.clone()).or_default();
             entry.extend(lower_attached_fn_sig_ir_from_types(mt, &used_types, tys));
         }
+    }
+    // #1807: a hidden type's methods are forwarded like a `uses` type's,
+    // resolved in its owning commons' scope.
+    for (type_name, owner) in hidden_types {
+        let Some(mt) = unit_info
+            .get(owner)
+            .and_then(|o| o.table.methods.get(type_name))
+        else {
+            continue;
+        };
+        let owner_types = bynk_check::symbols::combined_types_for_unit_info(owner, unit_info);
+        imported_methods
+            .entry(type_name.clone())
+            .or_default()
+            .extend(lower_attached_fn_sig_ir_from_types(mt, &owner_types, tys));
     }
     for decls in imported_methods.values_mut() {
         decls.sort_by_key(|sig| sig.name.clone());
@@ -926,6 +942,19 @@ fn build_emit_unit_ctx(
                 }
             }
             imported_decl_paths.insert(t.clone(), paths);
+        }
+    }
+    // #1807: a hidden type is imported from its owning commons, which this
+    // unit need not `uses` itself.
+    for (type_name, owner) in hidden_types {
+        if let Some(p) = unit_info
+            .get(owner)
+            .and_then(|o| o.file_index.types.get(type_name))
+        {
+            imported_decl_paths
+                .entry(owner.clone())
+                .or_default()
+                .insert(type_name.clone(), p.clone());
         }
     }
 
@@ -1172,6 +1201,8 @@ fn check_unit_files(
     consumed_types: &HashMap<String, ConsumedType>,
     imported_from: &HashMap<String, String>,
     imported_from_kind: &HashMap<String, UnitKind>,
+    // #1807: the types this unit reaches through imported declarations.
+    hidden_types: &BTreeMap<String, String>,
     owning_context_for_emit: &Option<String>,
     target: BuildTarget,
     import_ext: ImportExt,
@@ -1206,7 +1237,7 @@ fn check_unit_files(
 ) {
     // Emit-prologue tables invariant across every file of this unit — built
     // once here rather than once per file (see `EmitUnitCtx`).
-    let unit_ctx = build_emit_unit_ctx(name, unit_info, target, tys);
+    let unit_ctx = build_emit_unit_ctx(name, unit_info, hidden_types, target, tys);
     let check_ctx = prepare_unit_check_ctx(
         name,
         kind,
@@ -1214,6 +1245,7 @@ fn check_unit_files(
         unit_info,
         combined_types,
         imported_from_kind,
+        hidden_types,
     );
 
     for &i in indices {
@@ -1780,6 +1812,18 @@ fn run_checks(
             &mut imported_from_kind,
             &mut errors,
         );
+        // #1807: close over the types the imported declarations reach.
+        let hidden_types = project_model::close_reachable_types(
+            name,
+            &parsed,
+            &unit_info,
+            &mut combined_types,
+            &combined_fns,
+            &mut combined_methods,
+            &mut imported_from,
+            &mut imported_from_kind,
+            &mut errors,
+        );
 
         if errors.len() > group_error_baseline {
             continue;
@@ -1820,6 +1864,7 @@ fn run_checks(
             &consumed_types,
             &imported_from,
             &imported_from_kind,
+            &hidden_types,
             &owning_context_for_emit,
             target,
             import_ext,

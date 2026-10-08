@@ -131,8 +131,8 @@ use crate::hints::{FileHints, HintSink};
 use crate::index::{ProjectIndex, RefSink};
 use crate::locals::{FileLocals, LocalsSink};
 use crate::project_model::{
-    self, ErrorSink, assemble_unit_info, collect_unit_methods, compose_unit_symbols,
-    merge_consumed_exports, normalize_service_defaults,
+    self, ErrorSink, assemble_unit_info, close_reachable_types, collect_unit_methods,
+    compose_unit_symbols, merge_consumed_exports, normalize_service_defaults,
 };
 use crate::requirements::{FileRequirements, RequirementSink};
 use crate::symbols::{assemble_index, build_cross_context_info, combined_types_for};
@@ -513,6 +513,18 @@ pub fn analyse_project(roots: &Roots, overlay: &HashMap<PathBuf, String>) -> Pro
             &mut imported_from_kind,
             &mut errors,
         );
+        // #1807: close over the types the imported declarations reach.
+        let hidden_types = close_reachable_types(
+            name,
+            &parsed,
+            &unit_info,
+            &mut combined_types,
+            &combined_fns,
+            &mut combined_methods,
+            &mut imported_from,
+            &mut imported_from_kind,
+            &mut errors,
+        );
 
         if errors.len() > group_error_baseline {
             continue;
@@ -527,6 +539,7 @@ pub fn analyse_project(roots: &Roots, overlay: &HashMap<PathBuf, String>) -> Pro
             &unit_info,
             &combined_types,
             &imported_from_kind,
+            &hidden_types,
         );
 
         for &i in indices {

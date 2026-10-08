@@ -1,0 +1,5 @@
+suite t.web
+
+case "a context checks and brands a reached refined field" {
+  expect listed() == ["a", "b"]
+}

@@ -1,0 +1,8 @@
+---
+#1807: an imported fn's return type is resolved in its declaring scope, so
+`first`'s `Repo` result returned as an `Int` is rejected (it used to
+compile).
+---
+commons t.core
+
+type Repo = String where NonEmpty

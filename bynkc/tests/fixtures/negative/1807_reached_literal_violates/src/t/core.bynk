@@ -1,0 +1,8 @@
+---
+#1807: a literal for a field typed by a reached refined type is checked
+against its refinement, so an empty string for a `NonEmpty` field is
+rejected (it used to compile, unbranded).
+---
+commons t.core
+
+type Repo = String where NonEmpty

@@ -1,0 +1,10 @@
+context t.web
+
+uses t.model
+
+service api from http {
+  on GET("/x") () -> Effect[HttpResult[String]] by Visitor {
+    let a: Repo = Repo.unsafe("k")
+    Ok("y")
+  }
+}

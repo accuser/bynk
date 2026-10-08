@@ -1,0 +1,7 @@
+context t.web
+
+uses t.model
+
+fn wrong(r: Run) -> Int {
+  r.repo
+}

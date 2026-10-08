@@ -1307,6 +1307,281 @@ fn check_fn_refs(
     check_block_references(&f.body, &mut cx);
 }
 
+/// #1807: the naming gate for *hidden* types. A hidden type is one this unit's
+/// composed table carries only because an imported declaration reaches it
+/// (`crate::project_model::close_reachable_types`): resolvable here, never
+/// nameable, since `uses` is one level (ADR 0278). Every place the unit's
+/// source writes a type name is walked: type references in declarations,
+/// signatures, `let` annotations, lambda parameters and type arguments; a
+/// record, constructor or spread's type; a type used as a receiver
+/// (`Repo.of(…)`, `Status.Pending`); a method declared on a type; and a
+/// pattern's qualifier. A hidden name in any of them is
+/// `bynk.resolve.unknown_type`, the error the name gave before the closure
+/// existed, with a note naming the commons to `uses`.
+///
+/// A bare variant (`Pending`) is a value, not a type name, so it is not gated:
+/// like a literal admitted as a hidden refined type, it is typed by the
+/// position it fills.
+pub fn check_hidden_type_names(
+    items: &[CommonsItem],
+    hidden: &std::collections::BTreeMap<String, String>,
+) -> Vec<CompileError> {
+    struct Gate<'a> {
+        hidden: &'a std::collections::BTreeMap<String, String>,
+        errors: Vec<CompileError>,
+    }
+    impl Gate<'_> {
+        fn name(&mut self, id: &Ident) {
+            if let Some(owner) = self.hidden.get(&id.name) {
+                self.errors.push(unknown_type_error(id).with_note(format!(
+                    "`{}` is declared in `{owner}`, which this unit does not `uses`; \
+                         add `uses {owner}` to name it",
+                    id.name
+                )));
+            }
+        }
+        fn type_ref(&mut self, r: &TypeRef) {
+            match r {
+                TypeRef::Named(id) => self.name(id),
+                TypeRef::App { name, args, .. } => {
+                    self.name(name);
+                    for a in args {
+                        self.type_ref(a);
+                    }
+                }
+                TypeRef::Result(a, b, _) | TypeRef::Map(a, b, _) => {
+                    self.type_ref(a);
+                    self.type_ref(b);
+                }
+                TypeRef::Option(t, _)
+                | TypeRef::Effect(t, _)
+                | TypeRef::HttpResult(t, _)
+                | TypeRef::List(t, _)
+                | TypeRef::Query(t, _)
+                | TypeRef::Stream(t, _)
+                | TypeRef::Connection(t, _)
+                | TypeRef::History(t, _) => self.type_ref(t),
+                TypeRef::Fn(params, ret, _) => {
+                    for p in params {
+                        self.type_ref(p);
+                    }
+                    self.type_ref(ret);
+                }
+                TypeRef::Base(..)
+                | TypeRef::QueueResult(_)
+                | TypeRef::ValidationError(_)
+                | TypeRef::JsonError(_)
+                | TypeRef::Unit(_) => {}
+            }
+        }
+        fn type_decl(&mut self, t: &TypeDecl) {
+            match &t.body {
+                TypeBody::Record(r) => {
+                    for f in &r.fields {
+                        self.type_ref(&f.type_ref);
+                    }
+                }
+                TypeBody::Sum(s) => {
+                    for v in &s.variants {
+                        for p in &v.payload {
+                            self.type_ref(&p.type_ref);
+                        }
+                    }
+                }
+                TypeBody::Refined { .. } | TypeBody::Opaque { .. } => {}
+            }
+        }
+        fn signature(&mut self, params: &[Param], ret: &TypeRef) {
+            for p in params {
+                self.type_ref(&p.type_ref);
+            }
+            self.type_ref(ret);
+        }
+        fn pattern(&mut self, p: &Pattern) {
+            match p {
+                Pattern::Variant {
+                    type_name,
+                    bindings,
+                    ..
+                } => {
+                    if let Some(tn) = type_name {
+                        self.name(tn);
+                    }
+                    for b in bindings {
+                        match &b.kind {
+                            PatternBindingKind::Positional { pattern }
+                            | PatternBindingKind::Named { pattern, .. } => self.pattern(pattern),
+                        }
+                    }
+                }
+                Pattern::Refined { inner, .. } => self.pattern(inner),
+                Pattern::Or(alts, _) => {
+                    for a in alts {
+                        self.pattern(a);
+                    }
+                }
+                Pattern::Wildcard(_) | Pattern::Binding(_) | Pattern::Literal { .. } => {}
+            }
+        }
+        fn block(&mut self, b: &Block) {
+            for s in &b.statements {
+                if let Statement::Let(l) | Statement::EffectLet(l) = s
+                    && let Some(t) = &l.type_annot
+                {
+                    self.type_ref(t);
+                }
+            }
+            // `expr_children` of a block expression is exactly its statements'
+            // expressions and its tail.
+            for e in &b.statements {
+                let mut exprs = Vec::new();
+                statement_exprs(e, &mut exprs);
+                for x in exprs {
+                    self.expr(x);
+                }
+            }
+            self.expr(&b.tail);
+        }
+        fn expr(&mut self, e: &Expr) {
+            match &e.kind {
+                ExprKind::Block(b) => return self.block(b),
+                ExprKind::If {
+                    cond,
+                    then_block,
+                    else_block,
+                } => {
+                    self.expr(cond);
+                    self.block(then_block);
+                    return self.block(else_block);
+                }
+                ExprKind::Match { discriminant, arms } => {
+                    self.expr(discriminant);
+                    for arm in arms {
+                        self.pattern(&arm.pattern);
+                        if let Some(g) = &arm.guard {
+                            self.expr(g);
+                        }
+                        match &arm.body {
+                            MatchBody::Expr(b) => self.expr(b),
+                            MatchBody::Block(b) => self.block(b),
+                        }
+                    }
+                    return;
+                }
+                ExprKind::Is { pattern, .. } => self.pattern(pattern),
+                ExprKind::RecordConstruction { type_name, .. }
+                | ExprKind::ConstructorCall { type_name, .. } => self.name(type_name),
+                ExprKind::RecordSpread {
+                    type_name: Some(tn),
+                    ..
+                } => self.name(tn),
+                ExprKind::FieldAccess { receiver, .. } => {
+                    if let ExprKind::Ident(id) = &receiver.kind {
+                        self.name(id);
+                    }
+                }
+                ExprKind::MethodCall {
+                    receiver,
+                    type_args,
+                    ..
+                } => {
+                    if let ExprKind::Ident(id) = &receiver.kind {
+                        self.name(id);
+                    }
+                    for t in type_args {
+                        self.type_ref(t);
+                    }
+                }
+                ExprKind::Call { type_args, .. } => {
+                    for t in type_args {
+                        self.type_ref(t);
+                    }
+                }
+                ExprKind::Val { type_ref, .. } => self.type_ref(type_ref),
+                ExprKind::Lambda(l) => {
+                    for p in &l.params {
+                        if let Some(t) = &p.type_ref {
+                            self.type_ref(t);
+                        }
+                    }
+                }
+                _ => {}
+            }
+            for c in expr_children(e) {
+                self.expr(c);
+            }
+        }
+    }
+
+    let mut g = Gate {
+        hidden,
+        errors: Vec::new(),
+    };
+    if hidden.is_empty() {
+        return g.errors;
+    }
+    for item in items {
+        match item {
+            CommonsItem::Type(t) => g.type_decl(t),
+            CommonsItem::Event(e) => g.type_decl(&e.as_type_decl()),
+            CommonsItem::Fn(f) => {
+                if let FnName::Method { type_name, .. } = &f.name {
+                    g.name(type_name);
+                }
+                g.signature(&f.params, &f.return_type);
+                g.block(&f.body);
+            }
+            CommonsItem::Capability(c) => {
+                for op in &c.ops {
+                    g.signature(&op.params, &op.return_type);
+                }
+            }
+            CommonsItem::Provider(p) => {
+                for op in &p.ops {
+                    g.signature(&op.params, &op.return_type);
+                    g.block(&op.body);
+                }
+            }
+            CommonsItem::Service(s) => {
+                match &s.protocol {
+                    ServiceProtocol::WebSocket { in_type, out_type } => {
+                        g.type_ref(in_type);
+                        g.type_ref(out_type);
+                    }
+                    ServiceProtocol::Events { event_type, .. } => g.type_ref(event_type),
+                    ServiceProtocol::Call
+                    | ServiceProtocol::Http
+                    | ServiceProtocol::Cron
+                    | ServiceProtocol::Queue { .. } => {}
+                }
+                for h in &s.handlers {
+                    g.signature(&h.params, &h.return_type);
+                    g.block(&h.body);
+                }
+            }
+            CommonsItem::Agent(a) => {
+                g.type_ref(&a.key_type);
+                for f in &a.store_fields {
+                    for arg in &f.kind.args {
+                        g.type_ref(arg);
+                    }
+                }
+                for h in &a.handlers {
+                    g.signature(&h.params, &h.return_type);
+                    g.block(&h.body);
+                }
+            }
+            CommonsItem::Actor(a) => {
+                if let Some(id) = &a.identity {
+                    g.type_ref(id);
+                }
+            }
+            CommonsItem::Messages(_) => {}
+        }
+    }
+    g.errors
+}
+
 fn unknown_type_error(id: &Ident) -> CompileError {
     CompileError::new(
         "bynk.resolve.unknown_type",

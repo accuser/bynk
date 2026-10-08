@@ -1,0 +1,5 @@
+suite t.page
+
+case "a second commons maps a reached refined field" {
+  expect repos([sample(), sample()]) == ["bynk"]
+}

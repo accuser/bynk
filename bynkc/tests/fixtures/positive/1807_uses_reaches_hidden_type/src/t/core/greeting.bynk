@@ -1,0 +1,5 @@
+commons t.core
+
+fn greeting() -> String {
+  "hi"
+}

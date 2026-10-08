@@ -1,0 +1,9 @@
+context t.web
+
+uses t.model
+
+type Repo = Int
+
+fn read(r: Run) -> String {
+  r.repo
+}

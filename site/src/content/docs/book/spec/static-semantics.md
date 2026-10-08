@@ -57,6 +57,19 @@ context, and MUST NOT be self-referential or introduce a colliding name
 across context boundaries is governed by `exports` and `consumes`
 ([§5.8](#58-boundaries--cross-context)).
 
+`uses` is one level for naming: a unit names the types its `uses` targets
+declare, not the types *they* use. An imported declaration's types are still
+resolved where it was declared. If `t.web uses t.model`, and `t.model uses
+t.core` to declare `type Run = { repo: Repo }`, then in `t.web` a `Run`
+literal's `repo` is checked as a `Repo`, and `r.repo` is a `Repo`. The same
+holds for an imported function's signature, for a reached type's methods, and
+for a type that a consumed context's export reaches through that context's
+`uses`. A reached type MUST NOT be named in the unit (`bynk.resolve.unknown_type`).
+To name it, `uses` its commons. A unit's own declaration MUST NOT share a
+reached type's name when that type's commons is not one the unit `uses`
+(`bynk.uses.name_conflict`), since the imported declaration would then be typed
+by the wrong one.
+
 ## §5.2 Well-typedness
 
 Every expression MUST have the type its position requires. A function or method

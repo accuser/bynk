@@ -3279,6 +3279,285 @@ pub fn merge_consumed_exports(
     consumed_types
 }
 
+/// #1807: close a unit's composed type table over the types its *imported*
+/// declarations reach.
+///
+/// `uses` is one level for naming (ADR 0278): `t.web uses t.model` may not
+/// write `t.core`'s `Repo`. But `t.model`'s `type Run = { repo: Repo }` still
+/// carries `Repo` into `t.web`, and the checker resolves that field against
+/// `t.web`'s table. With `Repo` absent the field's type resolved to nothing,
+/// and every position it typed went unchecked: `Run { repo: 42 }` compiled,
+/// and so did `r.repo` read as an `Int`.
+///
+/// Each type an imported declaration names is resolved in that declaration's
+/// own scope: its unit's local types, then its unit's `uses`, the same
+/// precedence [`compose_unit_symbols`] gives a unit's own names. The walk
+/// covers type bodies, fn signatures and method signatures, and repeats for
+/// each type it adds. A type it reaches that this unit's table lacks is added
+/// with its owning commons as provenance and returned as *hidden*: resolvable
+/// here, never nameable. The naming gate (`crate::resolver::check_hidden_type_names`)
+/// rejects a hidden name written in this unit's source.
+///
+/// Two cases stop short:
+/// - A reached type that a context owns is not added. It can only arrive
+///   through a consumed context's export, so whether it may cross is an
+///   `exports` question.
+/// - A reached name that this unit already binds to a *different* unit's
+///   declaration (its own `type Repo`, say) is `bynk.uses.name_conflict`,
+///   when the reached type's commons is not one this unit `uses` directly.
+///   The imported field would otherwise be typed by a declaration the unit
+///   never chose to shadow. Shadowing a directly used type keeps its existing
+///   meaning. Provenance is compared by owning unit.
+///
+/// Returns each hidden name with its owning commons, which emission needs to
+/// import it.
+#[allow(clippy::too_many_arguments)]
+pub fn close_reachable_types(
+    name: &str,
+    parsed: &[ParsedFile],
+    unit_info: &BTreeMap<String, UnitInfo>,
+    combined_types: &mut HashMap<String, Arc<TypeDecl>>,
+    combined_fns: &HashMap<String, Arc<FnDecl>>,
+    combined_methods: &mut HashMap<String, ResolverMethodTable>,
+    imported_from: &mut HashMap<String, String>,
+    imported_from_kind: &mut HashMap<String, UnitKind>,
+    errors: &mut ErrorSink,
+) -> BTreeMap<String, String> {
+    /// A type name an imported declaration references: resolved in `scope`
+    /// (the declaring unit), and reached through `via` (the `uses` or
+    /// `consumes` target this unit imported the declaration from, which a
+    /// conflict points at).
+    struct Reached {
+        name: String,
+        scope: String,
+        via: String,
+    }
+    fn push_refs(names: Vec<String>, scope: &str, via: &str, queue: &mut Vec<Reached>) {
+        queue.extend(names.into_iter().map(|n| Reached {
+            name: n,
+            scope: scope.to_string(),
+            via: via.to_string(),
+        }));
+    }
+
+    let mut queue: Vec<Reached> = Vec::new();
+    let mut type_names: Vec<&String> = combined_types.keys().collect();
+    type_names.sort();
+    for n in type_names {
+        if let Some(unit) = imported_from.get(n) {
+            push_refs(
+                type_decl_ref_names(&combined_types[n]),
+                unit,
+                unit,
+                &mut queue,
+            );
+        }
+    }
+    let mut fn_names: Vec<&String> = combined_fns.keys().collect();
+    fn_names.sort();
+    for n in fn_names {
+        if let Some(unit) = imported_from.get(n) {
+            push_refs(fn_sig_ref_names(&combined_fns[n]), unit, unit, &mut queue);
+        }
+    }
+    let mut method_types: Vec<&String> = combined_methods.keys().collect();
+    method_types.sort();
+    for t in method_types {
+        if let Some(unit) = imported_from.get(t) {
+            let mt = &combined_methods[t];
+            let mut decls: Vec<&Arc<FnDecl>> =
+                mt.instance.values().chain(mt.statics.values()).collect();
+            decls.sort_by_key(|d| d.span.start);
+            for d in decls {
+                push_refs(fn_sig_ref_names(d), unit, unit, &mut queue);
+            }
+        }
+    }
+    // The walk pops from the back; reverse so names are visited in the
+    // sorted seeding order and diagnostics come out deterministically.
+    queue.reverse();
+
+    let mut hidden: BTreeMap<String, String> = BTreeMap::new();
+    let mut visited: HashSet<(String, String)> = HashSet::new();
+    let mut conflicted: HashSet<String> = HashSet::new();
+    while let Some(r) = queue.pop() {
+        if !visited.insert((r.scope.clone(), r.name.clone())) {
+            continue;
+        }
+        let Some(owner) = type_owner_in_scope(&r.scope, &r.name, unit_info) else {
+            continue;
+        };
+        if combined_types.contains_key(&r.name) {
+            let bound = imported_from
+                .get(&r.name)
+                .map(String::as_str)
+                .unwrap_or(name);
+            // Shadowing a type of a commons this unit `uses` directly is the
+            // existing, visible choice (`1697_derived_names_collide` declares
+            // its own `Message` beside `uses bynk.locale.types`), so only a
+            // shadow of a type the unit cannot name is a conflict.
+            let directly_used = unit_info[name].uses.iter().any(|u| u == owner);
+            if bound != owner && !directly_used && conflicted.insert(r.name.clone()) {
+                let site = uses_span_of(parsed, &unit_info[name].files, &r.via)
+                    .or_else(|| consumes_span_of(parsed, &unit_info[name].files, &r.via));
+                let span = site.map(|(_, s)| s).unwrap_or_default();
+                let file = site.map(|(i, _)| parsed[i].identity_path());
+                errors.push_for(
+                    file.as_deref(),
+                    CompileError::new(
+                        "bynk.uses.name_conflict",
+                        span,
+                        format!(
+                            "`{via}` brings in declarations that use type `{t}` from `{owner}`, \
+                             but `{t}` in `{name}` names `{bound}`'s type",
+                            via = r.via,
+                            t = r.name,
+                        ),
+                    )
+                    .with_note(
+                        "rename one of the two types; the imported declarations cannot be \
+                         checked against a different type of the same name",
+                    ),
+                );
+            }
+            continue;
+        }
+        let owner_info = &unit_info[owner];
+        if owner_info.kind != UnitKind::Commons {
+            continue;
+        }
+        let decl = owner_info.table.types[&r.name].clone();
+        push_refs(type_decl_ref_names(&decl), owner, &r.via, &mut queue);
+        combined_types.insert(r.name.clone(), decl);
+        imported_from.insert(r.name.clone(), owner.to_string());
+        imported_from_kind.insert(r.name.clone(), UnitKind::Commons);
+        hidden.insert(r.name.clone(), owner.to_string());
+        // The reached type's methods come along, as a direct `uses` brings
+        // them: `r.repo.isValid()` resolves in the declaring scope too.
+        if let Some(mt) = owner_info.table.methods.get(&r.name) {
+            let entry = combined_methods.entry(r.name.clone()).or_default();
+            let mut decls: Vec<(&String, &Arc<FnDecl>, bool)> = mt
+                .instance
+                .iter()
+                .map(|(m, d)| (m, d, true))
+                .chain(mt.statics.iter().map(|(m, d)| (m, d, false)))
+                .collect();
+            decls.sort_by_key(|(_, d, _)| d.span.start);
+            for (m, d, is_instance) in decls {
+                push_refs(fn_sig_ref_names(d), owner, &r.via, &mut queue);
+                let table = if is_instance {
+                    &mut entry.instance
+                } else {
+                    &mut entry.statics
+                };
+                table.entry(m.clone()).or_insert_with(|| d.clone());
+            }
+        }
+    }
+    hidden
+}
+
+/// #1807: the unit that owns type `name` as seen from `scope`: `scope` itself
+/// if it declares `name`, else the first of `scope`'s `uses` that does. This
+/// is [`compose_unit_symbols`]'s precedence, applied to another unit.
+fn type_owner_in_scope<'a>(
+    scope: &'a str,
+    name: &str,
+    unit_info: &'a BTreeMap<String, UnitInfo>,
+) -> Option<&'a str> {
+    let info = unit_info.get(scope)?;
+    if info.table.types.contains_key(name) {
+        return Some(scope);
+    }
+    info.uses
+        .iter()
+        .find(|u| {
+            unit_info
+                .get(*u)
+                .is_some_and(|i| i.table.types.contains_key(name))
+        })
+        .map(String::as_str)
+}
+
+/// #1807: the type names a type declaration's body references, its own type
+/// parameters excluded.
+fn type_decl_ref_names(d: &TypeDecl) -> Vec<String> {
+    let vars: HashSet<&str> = d.type_params.iter().map(|p| p.name.name.as_str()).collect();
+    let mut out = Vec::new();
+    match &d.body {
+        TypeBody::Record(r) => {
+            for f in &r.fields {
+                type_ref_names(&f.type_ref, &vars, &mut out);
+            }
+        }
+        TypeBody::Sum(s) => {
+            for v in &s.variants {
+                for p in &v.payload {
+                    type_ref_names(&p.type_ref, &vars, &mut out);
+                }
+            }
+        }
+        TypeBody::Refined { .. } | TypeBody::Opaque { .. } => {}
+    }
+    out
+}
+
+/// #1807: the type names a fn's signature references, its own type
+/// parameters excluded.
+fn fn_sig_ref_names(f: &FnDecl) -> Vec<String> {
+    let vars: HashSet<&str> = f.type_params.iter().map(|p| p.name.name.as_str()).collect();
+    let mut out = Vec::new();
+    for p in &f.params {
+        type_ref_names(&p.type_ref, &vars, &mut out);
+    }
+    type_ref_names(&f.return_type, &vars, &mut out);
+    out
+}
+
+/// #1807: every user type name in `r`, outside `vars`. Exhaustive over
+/// `TypeRef`, so a new compound constructor is a build failure here rather
+/// than a silently skipped name.
+fn type_ref_names(r: &TypeRef, vars: &HashSet<&str>, out: &mut Vec<String>) {
+    match r {
+        TypeRef::Named(id) => {
+            if !vars.contains(id.name.as_str()) {
+                out.push(id.name.clone());
+            }
+        }
+        TypeRef::App { name, args, .. } => {
+            if !vars.contains(name.name.as_str()) {
+                out.push(name.name.clone());
+            }
+            for a in args {
+                type_ref_names(a, vars, out);
+            }
+        }
+        TypeRef::Result(a, b, _) | TypeRef::Map(a, b, _) => {
+            type_ref_names(a, vars, out);
+            type_ref_names(b, vars, out);
+        }
+        TypeRef::Option(t, _)
+        | TypeRef::Effect(t, _)
+        | TypeRef::HttpResult(t, _)
+        | TypeRef::List(t, _)
+        | TypeRef::Query(t, _)
+        | TypeRef::Stream(t, _)
+        | TypeRef::Connection(t, _)
+        | TypeRef::History(t, _) => type_ref_names(t, vars, out),
+        TypeRef::Fn(params, ret, _) => {
+            for p in params {
+                type_ref_names(p, vars, out);
+            }
+            type_ref_names(ret, vars, out);
+        }
+        TypeRef::Base(..)
+        | TypeRef::QueueResult(_)
+        | TypeRef::ValidationError(_)
+        | TypeRef::JsonError(_)
+        | TypeRef::Unit(_) => {}
+    }
+}
+
 /// Phase 8a: compose one unit's symbol space — its local table plus a
 /// one-level `uses` mixin (commons identity preserved). Returns the combined
 /// type/fn/method tables and the `imported_from` provenance maps; the mixin

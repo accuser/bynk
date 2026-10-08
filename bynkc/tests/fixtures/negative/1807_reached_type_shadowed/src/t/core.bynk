@@ -1,0 +1,9 @@
+---
+#1807: `t.web` declares its own `Repo` while `t.model`'s `Run` reaches
+`t.core`'s. The imported field would be typed by the local declaration, so
+the clash is a name conflict. (Shadowing a type of a commons the unit uses
+directly keeps its meaning.)
+---
+commons t.core
+
+type Repo = String where NonEmpty

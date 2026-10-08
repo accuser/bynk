@@ -1,0 +1,8 @@
+---
+#1807: a reached type is resolvable but not nameable: `uses` is one level,
+so `t.web` writing `Repo` in a signature is still an unknown type, now with
+a note naming the commons to use.
+---
+commons t.core
+
+type Repo = String where NonEmpty

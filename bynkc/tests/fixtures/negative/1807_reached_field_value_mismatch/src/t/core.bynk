@@ -1,0 +1,8 @@
+---
+#1807: `t.web` reaches `Repo` only through `t.model`'s `Run`. The field is
+checked as a `Repo` all the same, so an `Int` for it is rejected (it used to
+compile).
+---
+commons t.core
+
+type Repo = String where NonEmpty

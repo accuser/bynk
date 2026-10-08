@@ -1,0 +1,7 @@
+---
+#1807: the naming gate covers handler bodies too: a `let` annotation and a
+static call naming a reached type are each an unknown type.
+---
+commons t.core
+
+type Repo = String where NonEmpty

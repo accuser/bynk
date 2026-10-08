@@ -1,0 +1,7 @@
+context t.web
+
+uses t.model
+
+fn named(r: Run) -> Repo {
+  r.repo
+}
