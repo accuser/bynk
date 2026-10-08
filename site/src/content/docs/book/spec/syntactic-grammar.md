@@ -453,6 +453,55 @@ A `service` groups the handlers that respond to calls and external triggers.
 `service`, a name, an optional `from <protocol>` header clause, and a
 brace-delimited list of handlers. One protocol per service. Well-formedness: §5.
 
+### §4.4.1a HTTP service policies (v0.131, v0.141, v0.142)
+
+A `from http` service may open with up to three policy sections, in header
+position before its handlers and in this order: `cors { }`, then `security { }`,
+then `limits { }`, each optional (the order is `service_decl`'s). Each is a
+brace-delimited list of `name: value` fields. `cors`, `security` and
+`limits` are contextual keywords, ordinary identifiers elsewhere. The grammar
+admits any field name and any value expression; the closed field sets, their
+value types, and the `from http`-only placement are well-formedness:
+[§5.7.1](/book/spec/static-semantics/#cors),
+[§5.7.3](/book/spec/static-semantics/#security) and
+[§5.7.4](/book/spec/static-semantics/#body-limits).
+
+#### cors_policy {#441a1-cors_policy}
+
+{{#grammar cors_policy}}
+
+The cross-origin policy (v0.131).
+
+#### cors_field {#441a2-cors_field}
+
+{{#grammar cors_field}}
+
+One `name: value` field of a `cors` policy.
+
+#### security_policy {#441a3-security_policy}
+
+{{#grammar security_policy}}
+
+The security-headers policy (v0.141).
+
+#### security_field {#441a4-security_field}
+
+{{#grammar security_field}}
+
+One `name: value` field of a `security` policy.
+
+#### limits_policy {#441a5-limits_policy}
+
+{{#grammar limits_policy}}
+
+The request-limits policy (v0.142).
+
+#### limits_field {#441a6-limits_field}
+
+{{#grammar limits_field}}
+
+One `name: value` field of a `limits` policy.
+
 ### §4.4.2 service_protocol
 
 {{#grammar service_protocol}}
@@ -520,9 +569,23 @@ block body — and is valid only in a `from websocket` service:
 - **`on message`** — parameters end with the decoded inbound frame of type `I`.
 - **`on close`** — the connection ended.
 
-Well-formedness — exactly one `on open`, edge authentication, held-resource
-disposal: §5. *(The rendered grammar productions for these handler heads land with
-the tree-sitter grammar; see [Reference — grammar](/book/reference/grammar/).)*
+`on message` reuses the [`queue_handler`](#447-queue_handler) production. The
+grammar admits the `by` clause on every head as optional; that `on open` names
+its actor is well-formedness. Well-formedness — exactly one `on open`, edge
+authentication, held-resource disposal: §5.
+
+#### ws_open_handler {#447a1-ws_open_handler}
+
+{{#grammar ws_open_handler}}
+
+`on open`, parameters, `->`, a return type, optional `by` and `given` clauses,
+and a block body.
+
+#### ws_close_handler {#447a2-ws_close_handler}
+
+{{#grammar ws_close_handler}}
+
+`on close`, with the same shape as `on open` (v0.106).
 
 ### §4.4.7b Events subscriptions (v0.238) {#447b-events-subscriptions-v0238}
 
@@ -615,6 +678,20 @@ and `Oidc(issuer = "<url>", audience = "<aud>", jwks = "<url>")` — parsed by t
 which keys each scheme admits). Unlike `Bearer`/`Signature`, an `Oidc` config
 names **no secret**: its trust root is the provider's public JWKS. Well-formedness: §5.
 
+### §4.4.10a scheme_config
+
+{{#grammar scheme_config}}
+
+The parenthesised, comma-separated `key = value` arguments an authenticated
+scheme carries.
+
+### §4.4.10b scheme_arg
+
+{{#grammar scheme_arg}}
+
+One `key = value` argument; the value is a string or integer literal. Which keys
+each scheme admits is well-formedness: §5.
+
 ## §4.5 Agents
 
 An `agent` is a keyed, stateful entity whose state lives in `store` fields that
@@ -657,6 +734,15 @@ catalogue is **closed** — there is no `Queue` storage kind (ADR 0122).
 A `@name(args)` annotation between the kind and the initialiser — `@ttl` (on
 `Cache`), `@retain` (on `Log`), `@indexed` (on `Map`), `@bounded`. Arguments are
 compile-time literals. Well-formedness — kind match, known name: §5 (ADR 0111).
+
+### §4.5.2d annotation_arg
+
+{{#grammar annotation_arg}}
+
+One annotation argument: an optional `label:` and a value expression, as in
+`@indexed(by: id)` (labelled) or `@ttl(5.minutes)` (positional). The grammar
+admits any expression; the checker restricts arguments to literals and the
+`@indexed` field-name labels (ADR 0111 D4).
 
 ### §4.5.3 invariant_decl (v0.80)
 
@@ -894,6 +980,16 @@ A parenthesised expression, for grouping.
 
 `self` — the receiver inside a method or agent handler. Well-formedness: §5.
 
+### §4.6.24 wire_expr
+
+{{#grammar wire_expr}}
+
+`Wire(<expr>)` — a raw, unvalidated argument to a service address in a
+`system`-tier `case` (§4.9): the `String` is the wire form the boundary
+receives, a JSON body or a path segment, so a case can drive the router with
+input the type system forbids. Its placement is well-formedness:
+[§5.9](/book/spec/static-semantics/#59-testing-constructs).
+
 ## §4.7 Patterns & matching
 
 The patterns used in `match` arms and `is` checks.
@@ -904,13 +1000,17 @@ The patterns used in `match` arms and `is` checks.
 
 A pattern, an optional `if` guard (an arbitrary `Bool` expression over the
 pattern's bindings), `=>`, a result expression, and an optional trailing comma —
-arm separators are optional. Well-formedness: §5.
+arm separators are optional. An arm's pattern may also be a refined pattern
+([§4.7.10](#4710-refined_pattern)), which only a `match` arm admits: it is not
+one of the `_pattern` forms, so it cannot appear after `is` or as an alternative
+or sub-pattern. Well-formedness: §5.
 
 ### §4.7.2 pattern
 
 {{#grammar _pattern}}
 
-A pattern: a wildcard, a literal, a binding, or a variant pattern. A
+A pattern: a wildcard, a literal, a binding, a variant pattern, an
+or-pattern, or a parenthesised pattern. A
 lowercase-led identifier is a binding (it matches anything and binds the
 value); an uppercase-led one is a nullary variant — in the concrete grammar
 both parse as `variant_pattern`.
@@ -946,6 +1046,39 @@ variant (`Err(PollClosed)`), `_` ignores it, and a nested variant recurses
 
 Binds a payload field by name, matching it against a sub-pattern: `field: name`,
 or `field: _` to ignore it.
+
+### §4.7.7 literal_pattern
+
+{{#grammar literal_pattern}}
+
+An integer (optionally negated), a string, or a boolean, matching a primitive
+scrutinee by value. Exhaustiveness: [§5.6](/book/spec/static-semantics/#56-pattern-matching).
+
+### §4.7.8 or_pattern
+
+{{#grammar or_pattern}}
+
+`p₁ | p₂`, left-associative: matches if either alternative matches. `|` here is
+a pattern operator, distinct from boolean `||`. That every alternative binds the
+same names at the same types, against one value type, is well-formedness:
+[§5.6](/book/spec/static-semantics/#56-pattern-matching).
+
+### §4.7.9 paren_pattern
+
+{{#grammar paren_pattern}}
+
+A pattern in parentheses: transparent grouping, most useful around an
+or-pattern. It never admits a refined pattern inside.
+
+### §4.7.10 refined_pattern
+
+{{#grammar refined_pattern}}
+
+`_ where predicate` — a runtime guard on a `match` arm, reusing the
+refinement-predicate catalogue of [§4.2.11](#4211-refinement). The inner form is
+the wildcard only: any other inner pattern, `(p₁ | p₂)` included, is
+`bynk.parse.refined_pattern_inner`. Its scrutinee types and exhaustiveness are
+well-formedness: [§5.6](/book/spec/static-semantics/#56-pattern-matching).
 
 ## §4.8 Statements
 
@@ -1062,3 +1195,33 @@ A per-seam provider override: `stub`, a capability, `.`, a method, a
 parenthesised argument-pattern list (`_` or a value per parameter), and a
 right-hand side — `returns <value>`, `returns each [<outcome>, …]`, or `fails`.
 Legal at suite and case scope. Well-formedness: §5.
+
+### §4.9.3 property_decl (v0.114)
+
+{{#grammar property_decl}}
+
+`property`, a description string, and a block holding one `for all` binder: the
+generative sibling of `case`, whose subjects the runner produces.
+Well-formedness: [§5.9a](/book/spec/static-semantics/#59a-generative-properties).
+
+### §4.9.4 for_all
+
+{{#grammar for_all}}
+
+`for all`, one or more comma-separated bindings, an optional `where` filter
+expression, and a block body of `expect`s.
+
+### §4.9.5 for_all_binding
+
+{{#grammar for_all_binding}}
+
+`name: Type` — binds `name` to a generated inhabitant of `Type`.
+
+### §4.9.6 call_site_actor (v0.182)
+
+{{#grammar call_site_actor}}
+
+`by <Actor>` or `by <Actor>(<identity>)` in a `case` body: the actor the case
+acts as when it drives a service handler, with its identity value. Distinct
+from the handler's [`by_clause`](#448-by_clause), which binds an actor and
+carries no identity argument. Well-formedness: §5.9.
