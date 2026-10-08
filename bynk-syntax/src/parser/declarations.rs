@@ -1366,6 +1366,7 @@ impl<'a> Parser<'a> {
                     break;
                 }
                 Some(TokenKind::Binding) => {
+                    self.keep_unattachable_doc(item_doc, &mut leading, "binding");
                     let mut b = self.parse_binding_decl()?;
                     b.trivia.leading = leading;
                     b.trivia.trailing = self.take_trailing_trivia();
@@ -1381,36 +1382,45 @@ impl<'a> Parser<'a> {
                         binding = Some(b);
                     }
                 }
-                Some(TokenKind::Uses) => match self.parse_uses_decl() {
-                    Ok(mut u) => {
-                        u.trivia.leading = leading;
-                        u.trivia.trailing = self.take_trailing_trivia();
-                        last_span = u.span;
-                        uses.push(u);
+                Some(TokenKind::Uses) => {
+                    self.keep_unattachable_doc(item_doc, &mut leading, "uses");
+                    match self.parse_uses_decl() {
+                        Ok(mut u) => {
+                            u.trivia.leading = leading;
+                            u.trivia.trailing = self.take_trailing_trivia();
+                            last_span = u.span;
+                            uses.push(u);
+                        }
+                        Err(e) => self.handle_item_err(e)?,
                     }
-                    Err(e) => self.handle_item_err(e)?,
-                },
+                }
                 // v0.18: adapter-to-adapter capability dependencies. The braced-form
                 // and adapter-target restrictions are checked semantically so the
                 // diagnostics can be precise.
-                Some(TokenKind::Consumes) => match self.parse_consumes_decl() {
-                    Ok(mut c) => {
-                        c.trivia.leading = leading;
-                        c.trivia.trailing = self.take_trailing_trivia();
-                        last_span = c.span;
-                        consumes.push(c);
+                Some(TokenKind::Consumes) => {
+                    self.keep_unattachable_doc(item_doc, &mut leading, "consumes");
+                    match self.parse_consumes_decl() {
+                        Ok(mut c) => {
+                            c.trivia.leading = leading;
+                            c.trivia.trailing = self.take_trailing_trivia();
+                            last_span = c.span;
+                            consumes.push(c);
+                        }
+                        Err(e) => self.handle_item_err(e)?,
                     }
-                    Err(e) => self.handle_item_err(e)?,
-                },
-                Some(TokenKind::Exports) => match self.parse_exports_decl() {
-                    Ok(mut e) => {
-                        e.trivia.leading = leading;
-                        e.trivia.trailing = self.take_trailing_trivia();
-                        last_span = e.span;
-                        exports.push(e);
+                }
+                Some(TokenKind::Exports) => {
+                    self.keep_unattachable_doc(item_doc, &mut leading, "exports");
+                    match self.parse_exports_decl() {
+                        Ok(mut e) => {
+                            e.trivia.leading = leading;
+                            e.trivia.trailing = self.take_trailing_trivia();
+                            last_span = e.span;
+                            exports.push(e);
+                        }
+                        Err(e) => self.handle_item_err(e)?,
                     }
-                    Err(e) => self.handle_item_err(e)?,
-                },
+                }
                 Some(TokenKind::Type) => {
                     let next_span = self.peek().unwrap().span;
                     let doc = self.finalize_doc(item_doc, next_span, &mut leading);
@@ -1693,6 +1703,8 @@ impl<'a> Parser<'a> {
         let name = self.expect_ident("after `capability`")?;
         self.expect(TokenKind::LBrace, "to open the capability body")?;
         let mut ops = Vec::new();
+        // #1756: comments (and an orphaned doc block) before the closing `}`.
+        let trailing_comments: Vec<Comment>;
         loop {
             let (mut leading, item_doc) = self.collect_item_lead();
             match self.peek_kind() {
@@ -1706,6 +1718,7 @@ impl<'a> Parser<'a> {
                         ));
                         keep_orphan(&mut leading, doc);
                     }
+                    trailing_comments = leading;
                     break;
                 }
                 Some(TokenKind::Fn) => {
@@ -1746,6 +1759,7 @@ impl<'a> Parser<'a> {
             ));
         }
         Ok(CapabilityDecl {
+            trailing_comments,
             name,
             ops,
             documentation: None,
@@ -2088,6 +2102,8 @@ impl<'a> Parser<'a> {
         let mut cors: Option<CorsPolicy> = None;
         let mut security: Option<SecurityPolicy> = None;
         let mut limits: Option<LimitsPolicy> = None;
+        // #1756: comments (and an orphaned doc block) before the closing `}`.
+        let trailing_comments: Vec<Comment>;
         loop {
             let (mut leading, item_doc) = self.collect_item_lead();
             match self.peek_kind() {
@@ -2101,6 +2117,7 @@ impl<'a> Parser<'a> {
                         ));
                         keep_orphan(&mut leading, doc);
                     }
+                    trailing_comments = leading;
                     break;
                 }
                 // `cors { … }` is a contextual keyword (like `store`/`key`): the
@@ -2214,6 +2231,7 @@ impl<'a> Parser<'a> {
             ));
         }
         Ok(ServiceDecl {
+            trailing_comments,
             name,
             protocol,
             default_by,
@@ -2246,6 +2264,27 @@ impl<'a> Parser<'a> {
     /// section.
     fn peek_is_limits_kw(&self) -> bool {
         matches!(self.peek(), Some(t) if t.kind == TokenKind::Ident && self.slice(t.span) == "limits")
+    }
+
+    /// #1756: a doc block before an adapter's `binding`/`uses`/`consumes`/
+    /// `exports` clause documents nothing, so it is an orphan: warn, and keep it
+    /// in `leading`. It used to be dropped with no warning at all.
+    fn keep_unattachable_doc(
+        &mut self,
+        doc: Option<DocLead>,
+        leading: &mut Vec<Comment>,
+        clause: &str,
+    ) {
+        if let Some(doc) = doc {
+            self.warnings.push(CompileError::new(
+                "bynk.parse.orphan_doc_block",
+                doc.span,
+                format!(
+                    "documentation block before `{clause}` is not attached; only declarations carry docs"
+                ),
+            ));
+            keep_orphan(leading, doc);
+        }
     }
 
     /// #1756: a doc block before a `cors`/`security`/`limits` policy documents
@@ -2683,6 +2722,8 @@ impl<'a> Parser<'a> {
         let mut invariants = Vec::new();
         let mut transitions = Vec::new();
         let mut handlers = Vec::new();
+        // #1756: comments (and an orphaned doc block) before the closing `}`.
+        let trailing_comments: Vec<Comment>;
         loop {
             let (mut leading, item_doc) = self.collect_item_lead();
             let storage_closed =
@@ -2698,6 +2739,7 @@ impl<'a> Parser<'a> {
                         ));
                         keep_orphan(&mut leading, doc);
                     }
+                    trailing_comments = leading;
                     break;
                 }
                 // `store` is a contextual keyword (like `key`): the literal
@@ -2817,6 +2859,7 @@ impl<'a> Parser<'a> {
             ));
         }
         Ok(AgentDecl {
+            trailing_comments,
             name,
             key_name,
             key_type,

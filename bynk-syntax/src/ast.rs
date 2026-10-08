@@ -38,16 +38,6 @@ pub enum Comment {
     OrphanDoc(String),
 }
 
-impl Comment {
-    /// The text of a `--` line comment; `None` for an orphaned doc block.
-    pub fn as_line(&self) -> Option<&str> {
-        match self {
-            Comment::Line(body) => Some(body),
-            Comment::OrphanDoc(_) => None,
-        }
-    }
-}
-
 impl Trivia {
     pub fn is_empty(&self) -> bool {
         self.leading.is_empty() && self.trailing.is_none()
@@ -596,6 +586,9 @@ pub struct CapabilityDecl {
     pub ops: Vec<CapabilityOp>,
     pub documentation: Option<String>,
     pub span: Span,
+    /// #1756: comments before the closing `}`, an orphaned doc block among
+    /// them, so the formatter keeps them.
+    pub trailing_comments: Vec<Comment>,
     pub trivia: Trivia,
 }
 
@@ -688,6 +681,9 @@ pub struct ServiceDecl {
     pub handlers: Vec<Handler>,
     pub documentation: Option<String>,
     pub span: Span,
+    /// #1756: comments before the closing `}`, an orphaned doc block among
+    /// them, so the formatter keeps them.
+    pub trailing_comments: Vec<Comment>,
     pub trivia: Trivia,
 }
 
@@ -968,6 +964,9 @@ pub struct AgentDecl {
     pub handlers: Vec<Handler>,
     pub documentation: Option<String>,
     pub span: Span,
+    /// #1756: comments before the closing `}`, an orphaned doc block among
+    /// them, so the formatter keeps them.
+    pub trailing_comments: Vec<Comment>,
     pub trivia: Trivia,
 }
 

@@ -170,6 +170,68 @@ fn keeps_a_comment_directly_under_a_doc_block() {
     );
 }
 
+/// #1756 review: a service, capability or agent body had no slot for what
+/// comes before its closing `}`, so a `--` comment there was deleted with no
+/// refusal, and an orphaned block made `fmt` refuse. Both are kept now.
+#[test]
+fn keeps_comments_and_an_orphan_at_the_end_of_a_service() {
+    expect_kept(
+        "end of service",
+        "context c\n\nservice s {\n  on call() -> Effect[()] { Effect.pure(()) }\n\n  -- keep me\n  ---\n  keep me too\n  ---\n}\n",
+    );
+    let out = format_source(
+        "context c\n\nservice s {\n  on call() -> Effect[()] { Effect.pure(()) }\n\n  -- keep me\n}\n",
+        &FormatOptions::default(),
+    )
+    .unwrap();
+    assert!(out.contains("-- keep me"), "{out}");
+}
+
+#[test]
+fn keeps_comments_and_an_orphan_at_the_end_of_a_capability() {
+    expect_kept(
+        "end of capability",
+        "context c\n\ncapability K {\n  fn op() -> Effect[Int]\n\n  ---\n  keep me\n  ---\n  -- and me\n}\n",
+    );
+}
+
+#[test]
+fn keeps_comments_and_an_orphan_at_the_end_of_an_agent() {
+    expect_kept(
+        "end of agent",
+        "context c\n\nagent A {\n  key id: String\n  store n: Cell[Int] = 0\n  on call peek() -> Effect[Int] { Effect.pure(n) }\n\n  ---\n  keep me\n  ---\n}\n",
+    );
+}
+
+/// A doc block above a service policy documents nothing: it warns as an
+/// orphan whether or not a blank line separates it, and is kept.
+#[test]
+fn keeps_an_orphan_before_a_service_policy() {
+    expect_kept(
+        "before a policy",
+        "context api\n\nservice api from http {\n  ---\n  keep me\n  ---\n  cors {\n    origins: [\"https://a.example.com\"],\n  }\n\n  on GET(\"/ping\") () -> Effect[HttpResult[String]] by v: Visitor {\n    Ok(\"pong\")\n  }\n}\n",
+    );
+}
+
+/// A doc block above an adapter's `uses` was dropped with no warning; it is an
+/// orphan like any other now.
+#[test]
+fn keeps_an_orphan_before_an_adapter_clause() {
+    let source = "adapter a\n\n---\nkeep me\n---\nuses bynk\n\ncapability K {\n  fn op() -> Effect[Int]\n}\n";
+    assert_eq!(orphan_warnings(source), 1);
+    expect_kept("before adapter uses", source);
+}
+
+/// A comment inside a policy body has no slot either. It was deleted with no
+/// refusal; the guard now runs on every format, so the file is refused.
+#[test]
+fn refuses_to_drop_a_comment_inside_a_service_policy() {
+    expect_refusal(
+        "in-policy",
+        "context api\n\nservice api from http {\n  cors {\n    -- keep me\n    origins: [\"https://a.example.com\"],\n  }\n\n  on GET(\"/ping\") () -> Effect[HttpResult[String]] by v: Visitor {\n    Ok(\"pong\")\n  }\n}\n",
+    );
+}
+
 /// The block before the unit header is kept too.
 #[test]
 fn keeps_an_orphan_doc_block_before_the_header() {

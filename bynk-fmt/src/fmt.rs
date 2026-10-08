@@ -109,20 +109,20 @@ pub fn format_source(source: &str, opts: &FormatOptions) -> Result<String, Forma
     // line. Each unit's output already ends in exactly one newline, so joining
     // with `"\n"` inserts one blank line between units and leaves a single-unit
     // file byte-identical.
-    let (units, _warnings, fully_drained) =
+    let (units, _warnings, _) =
         parse_units_with_drain_check(&tokens, source).map_err(|errors| FormatError { errors })?;
     let output = render_units(&units, opts);
     // #523/#66 guard: trivia is only attached at declaration/statement
     // granularity, so a comment inside an expression subtree can be silently
     // dropped. Losing user text is worse than leaving a file unformatted — when
     // the output holds fewer comments than the input, refuse with a diagnostic
-    // pointing at the first comment that would vanish. `fully_drained` is the
-    // same parse's own answer to "did every comment reach a `Trivia` field?";
-    // when it's `true`, nothing could have been lost and `comment_loss`'s own
-    // re-tokenize-and-diff of `output` would only ever confirm that, so it is
-    // skipped outright — the common case for a file with no comment sitting
-    // inside a `match`/list/record/binop.
-    if !fully_drained && let Some(error) = comment_loss(source, &tokens, &output) {
+    // pointing at the first comment that would vanish. It runs on every format:
+    // the parse's own `fully_drained` flag only says each comment was harvested
+    // from the trivia table, not that it reached the AST, and #1756 found
+    // comments harvested then dropped (at the end of a service, agent or
+    // capability body, and inside a `cors`/`security`/`limits` policy) that the
+    // formatter deleted with no refusal.
+    if let Some(error) = comment_loss(source, &tokens, &output) {
         return Err(FormatError {
             errors: vec![error],
         });
@@ -1613,6 +1613,13 @@ impl<'a> Formatter<'a> {
                     f.newline();
                 }
             }
+            // #1756: the comments before the closing `}`, after a blank line.
+            if !c.trailing_comments.is_empty() {
+                if !c.ops.is_empty() {
+                    f.newline();
+                }
+                f.emit_trailing_comments(&c.trailing_comments);
+            }
         });
         self.push("}");
         self.emit_trailing_comment(c.trivia.trailing.as_deref());
@@ -1752,6 +1759,17 @@ impl<'a> Formatter<'a> {
                 }
                 f.format_handler(h);
             }
+            // #1756: the comments before the closing `}`, after a blank line.
+            if !s.trailing_comments.is_empty() {
+                if !s.handlers.is_empty()
+                    || s.cors.is_some()
+                    || s.security.is_some()
+                    || s.limits.is_some()
+                {
+                    f.newline();
+                }
+                f.emit_trailing_comments(&s.trailing_comments);
+            }
         });
         self.push("}");
         self.emit_trailing_comment(s.trivia.trailing.as_deref());
@@ -1852,6 +1870,11 @@ impl<'a> Formatter<'a> {
             for h in &a.handlers {
                 f.newline();
                 f.format_handler(h);
+            }
+            // #1756: the comments before the closing `}`, after a blank line.
+            if !a.trailing_comments.is_empty() {
+                f.newline();
+                f.emit_trailing_comments(&a.trailing_comments);
             }
         });
         self.push("}");
