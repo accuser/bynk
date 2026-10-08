@@ -14,15 +14,28 @@ pub struct Ident {
 /// attaches them to nearby AST nodes so the formatter can re-emit them.
 ///
 /// - `leading` holds comments that appear immediately above the node,
-///   ordered top-to-bottom. Each entry is the body of one `--` line
-///   (the text after the marker, with its original inline whitespace
-///   preserved).
+///   ordered top-to-bottom: each a `--` line, or an orphaned `---` doc block
+///   (see [`Comment`]).
 /// - `trailing` holds a single comment that appears on the same source
 ///   line as the node's final token (e.g. `expr  -- note`).
 #[derive(Debug, Clone, Default)]
 pub struct Trivia {
-    pub leading: Vec<String>,
+    pub leading: Vec<Comment>,
     pub trailing: Option<String>,
+}
+
+/// One entry of comment trivia.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Comment {
+    /// A `--` line comment: the text after the marker, with its original
+    /// inline whitespace preserved.
+    Line(String),
+    /// #1756: a `---` doc block that attaches to no declaration (a blank line
+    /// separates it from the next one, or nothing follows it). The parser warns
+    /// `bynk.parse.orphan_doc_block` and keeps the block here, so the formatter
+    /// can print it where it was. Its content is normalised as an attached
+    /// doc's is.
+    OrphanDoc(String),
 }
 
 impl Trivia {
@@ -53,7 +66,7 @@ pub struct Commons {
     pub trivia: Trivia,
     /// Comments appearing after the last item but before the file ends
     /// (or the closing brace, for brace form). One entry per `--` line.
-    pub trailing_comments: Vec<String>,
+    pub trailing_comments: Vec<Comment>,
 }
 
 /// The two surface forms in which a commons body may be parsed (v0.3 §3.1).
@@ -97,7 +110,7 @@ pub struct Context {
     pub trivia: Trivia,
     /// Comments appearing after the last item but before the file ends
     /// (or the closing brace, for brace form). One entry per `--` line.
-    pub trailing_comments: Vec<String>,
+    pub trailing_comments: Vec<Comment>,
 }
 
 /// A `consumes other.context` declaration (v0.4 §3.2). May optionally carry
@@ -172,7 +185,7 @@ pub struct AdapterDecl {
     pub form: CommonsForm,
     pub span: Span,
     pub trivia: Trivia,
-    pub trailing_comments: Vec<String>,
+    pub trailing_comments: Vec<Comment>,
 }
 
 /// A `binding "<module>" requires { "pkg": "range", … }` clause inside an
@@ -269,7 +282,7 @@ pub struct SuiteDecl {
     pub documentation: Option<String>,
     pub span: Span,
     pub trivia: Trivia,
-    pub trailing_comments: Vec<String>,
+    pub trailing_comments: Vec<Comment>,
 }
 
 /// v0.118: the tier a `case` runs at (testing track slice 6, ADR 0153). One
@@ -573,6 +586,9 @@ pub struct CapabilityDecl {
     pub ops: Vec<CapabilityOp>,
     pub documentation: Option<String>,
     pub span: Span,
+    /// #1756: comments before the closing `}`, an orphaned doc block among
+    /// them, so the formatter keeps them.
+    pub trailing_comments: Vec<Comment>,
     pub trivia: Trivia,
 }
 
@@ -665,6 +681,9 @@ pub struct ServiceDecl {
     pub handlers: Vec<Handler>,
     pub documentation: Option<String>,
     pub span: Span,
+    /// #1756: comments before the closing `}`, an orphaned doc block among
+    /// them, so the formatter keeps them.
+    pub trailing_comments: Vec<Comment>,
     pub trivia: Trivia,
 }
 
@@ -945,6 +964,9 @@ pub struct AgentDecl {
     pub handlers: Vec<Handler>,
     pub documentation: Option<String>,
     pub span: Span,
+    /// #1756: comments before the closing `}`, an orphaned doc block among
+    /// them, so the formatter keeps them.
+    pub trailing_comments: Vec<Comment>,
     pub trivia: Trivia,
 }
 
@@ -2104,7 +2126,7 @@ pub struct Block {
     /// Line comments that appear between the last statement (or the
     /// opening brace) and the tail expression. Preserved here because
     /// expressions do not carry trivia in v1.1.
-    pub tail_leading_comments: Vec<String>,
+    pub tail_leading_comments: Vec<Comment>,
     /// `true` when the block was written with no explicit tail expression and
     /// the parser synthesised a `()` (unit) tail (v0.146, ADR 0170). The tail
     /// is a real `ExprKind::UnitLit` either way; this flag records that it was
