@@ -1059,8 +1059,8 @@ faults, an `InvariantViolation` included, emits nothing.
 ([§4.4.7b](/book/spec/syntactic-grammar/#447b-events-subscriptions-v0238)) MUST name an
 event declared in its own context or a consumed one
 (`bynk.event.unknown_subscription`), and it MUST have exactly one handler, an
-`on event` (`bynk.service.mixed_protocols` for any other kind,
-`bynk.event.duplicate_handler` for a second `on event`). An `on event` handler
+`on event` (`bynk.parse.empty_service` for none, `bynk.service.mixed_protocols`
+for any other kind, `bynk.event.duplicate_handler` for a second `on event`). An `on event` handler
 takes the payload, of type `E` (`bynk.event.handler_param_type_mismatch`), and
 optionally a second parameter of type `EventEnvelope`; any other parameter list
 is `bynk.event.bad_params`. It MUST return `Effect[()]`

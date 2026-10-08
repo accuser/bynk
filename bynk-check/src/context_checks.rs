@@ -1028,12 +1028,11 @@ fn check_service_protocols(
         // Two were emitted as one object with a duplicate `event` key, which
         // `tsc --strict` rejects and which ran only the last in the bundle.
         if matches!(service.protocol, ServiceProtocol::Events { .. }) {
-            let events: Vec<_> = service
+            let mut events = service
                 .handlers
                 .iter()
-                .filter(|h| h.kind == HandlerKind::Event)
-                .collect();
-            if let Some(second) = events.get(1) {
+                .filter(|h| h.kind == HandlerKind::Event);
+            if let (Some(first), Some(second)) = (events.next(), events.next()) {
                 errors.push(
                     CompileError::new(
                         "bynk.event.duplicate_handler",
@@ -1043,6 +1042,7 @@ fn check_service_protocols(
                             service.name.name
                         ),
                     )
+                    .with_label(first.span, "the service's `on event` handler")
                     .with_note(
                         "to react to one event in two ways, declare two services: each subscriber is delivered to independently",
                     ),
@@ -1088,7 +1088,10 @@ fn check_service_protocols(
                             CompileError::new(
                                 "bynk.event.return_not_effect_unit",
                                 handler.return_type.span(),
-                                "an `on event` handler returns `Effect[()]`",
+                                format!(
+                                    "an `on event` handler must return `Effect[()]`, but got `{}`",
+                                    ts_type_ref_display(&handler.return_type)
+                                ),
                             )
                             .with_note(
                                 "emission is fire-and-forget: nothing receives a subscriber's result",
