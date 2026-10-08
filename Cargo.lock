@@ -175,6 +175,7 @@ dependencies = [
  "serde_json",
  "toml",
  "which",
+ "windows-sys",
 ]
 
 [[package]]

@@ -1,0 +1,16 @@
+---
+level: patch
+changelog: On Windows, stopping `bynk dev` now stops each context's whole wrangler process tree, `workerd` included, by running it in a job object, so the next `bynk dev` no longer fails with `Address already in use` (#1762)
+---
+
+## ADR: bynk-dev-job-object-on-windows
+title: On Windows, `bynk dev` runs each wrangler in a job object and stops the job
+summary: A job object with kill-on-close holds each wrangler's whole tree on Windows, where the #1742 sweep cannot reach
+
+**Context.** [[0436]] stops what `bynk dev`'s wranglers leave running by process group and working directory, and ends "Windows is unchanged." On Windows every way `bynk dev` resolves wrangler is a `.cmd` shim (`npx.cmd` since #1758, or a `wrangler.cmd` on `PATH` or in the project), which runs under `cmd.exe /c`. The child `bynk dev` holds is that wrapper, and the server is the `npx` → wrangler `node` launcher → CLI → two `workerd serve` chain below it. `Child::kill` is `TerminateProcess` on the wrapper alone, which does not touch its descendants, and Windows has neither the process group nor the readable working directory the Unix sweep selects by. So stopping one context left wrangler and its `workerd`s running with their ports bound, and the next `bynk dev` failed with `bind(): Address already in use` (#1762).
+
+**Decision.** On Windows, `bynk dev` assigns each wrangler it spawns to its own job object, created with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` (`bynk::job`). Every process the child starts afterwards joins the job, including processes whose parent has since exited. Stopping a context terminates its job. Dropping it does the same, so a context whose wrangler exited on its own takes its orphaned `workerd`s with it. If the child cannot be assigned, `bynk dev` says so and stops it with `Child::kill`, as before. The Unix path, SIGTERM then the [[0436]] sweep, is unchanged.
+
+Rejected: **`taskkill /T /PID`**, which walks the tree by parent pid at teardown and cannot reach a process whose parent has already exited, the case [[0436]] exists for. **A Windows sweep by working directory**, which needs `NtQueryInformationProcess` and reading another process's PEB. **Spawning suspended** to close the assignment race: std closes the child's main-thread handle, so nothing could resume it.
+
+**Consequences.** The stop is a hard one, with no grace period: on Unix the grace exists because a SIGKILLed wrangler strands its `workerd`s, and inside a job nothing is stranded. Because `bynk dev` holds the only handle, the tree also stops when `bynk dev` exits however it exits, closing on Windows the gap [[0436]] leaves open on Unix (`bynk dev` itself killed). On a console Ctrl-C this can cut wrangler's own teardown short; the ports are freed either way. `CREATE_NEW_PROCESS_GROUP` is not set, so Ctrl-C still reaches the whole tree. A process the child starts between `spawn` and the assignment escapes the job; `cmd.exe` takes milliseconds to start `npx`, so in practice none does. `windows-sys` becomes a direct dependency of `bynk` on Windows, but clap already builds it there, so the shipped binary gains no crate. `bynk deploy`'s wrangler calls all wait for completion and are not put in a job.
