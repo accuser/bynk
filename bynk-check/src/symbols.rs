@@ -411,7 +411,7 @@ pub fn build_unit_table(
         {
             for clause in parsed[i].exports() {
                 if matches!(clause.kind, ExportKind::Capability) {
-                    for n in &clause.names {
+                    for n in clause.names.iter().map(|e| &e.name) {
                         table.exported_capabilities.insert(n.name.clone());
                     }
                 }
