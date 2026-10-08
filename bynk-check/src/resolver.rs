@@ -1315,8 +1315,9 @@ fn check_fn_refs(
 /// signatures, `let` annotations, lambda parameters and type arguments; a
 /// record, constructor or spread's type; a type used as a receiver
 /// (`Repo.of(…)`, `Status.Pending`); a method declared on a type; a
-/// pattern's qualifier; and a refinement test (`s is Repo`), in bodies and
-/// in an agent's invariants and transitions. A hidden name in any of them is
+/// pattern's qualifier; and a refinement test (`s is Repo`). Bodies are
+/// walked, and so are an agent's invariants, transitions and `store`
+/// initialisers, and an `event` field's default. A hidden name in any of them is
 /// `bynk.resolve.unknown_type`, the error the name gave before the closure
 /// existed, with a note naming the commons to `uses`.
 ///
@@ -1391,6 +1392,10 @@ pub fn check_hidden_type_names(
                 TypeBody::Record(r) => {
                     for f in &r.fields {
                         self.type_ref(&f.type_ref);
+                        // Review of #1813: an `event` field default.
+                        if let Some(init) = &f.init {
+                            self.expr(init);
+                        }
                     }
                 }
                 TypeBody::Sum(s) => {
@@ -1581,6 +1586,9 @@ pub fn check_hidden_type_names(
                 for f in &a.store_fields {
                     for arg in &f.kind.args {
                         g.type_ref(arg);
+                    }
+                    if let Some(init) = &f.init {
+                        g.expr(init);
                     }
                 }
                 for h in &a.handlers {

@@ -5,6 +5,20 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError } f
 
 import * as t_vault from "./vault.js";
 
+/**
+ * Review of #1813: `Ticket.code` is typed by `t.vault`'s own unexported `Code`.
+ * A context-owned type a consumed export reaches is not added (an `exports`
+ * question), so `t.desk` declaring its own `Code` is no conflict.
+ */
+
+export type Code = string & { readonly __brand: "t.desk.Code" };
+
+export const Code = {
+  of(value: string): Result<Code, ValidationError> {
+    return Ok(value as Code);
+  },
+};
+
 export const probe = {
   async call(deps: { surface: { Vault: globalThis.ReturnType<typeof t_vault.__makeSurface> } }): globalThis.Promise<string> {
     const t = await deps.surface.Vault.fetch();

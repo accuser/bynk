@@ -4,10 +4,12 @@ uses t.core
 
 exports transparent { Ticket }
 
-type Ticket = { repo: Repo }
+type Code = Int where NonNegative
+
+type Ticket = { repo: Repo, code: Code }
 
 service fetch {
   on call() -> Effect[Ticket] {
-    Effect.pure(Ticket { repo: "vault" })
+    Effect.pure(Ticket { repo: "vault", code: 7 })
   }
 }

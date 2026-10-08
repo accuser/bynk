@@ -1,0 +1,21 @@
+context t.web
+
+uses t.model
+
+event Seen = {
+  r: String = Repo.unsafe("x"),
+}
+
+event Seen2 = {
+  r: String = Repo.of("x"),
+}
+
+agent Tally {
+  key id: String
+
+  store s: Cell[String] = Repo.unsafe("y")
+
+  on call bump() -> Effect[()] {
+    Effect.pure(())
+  }
+}

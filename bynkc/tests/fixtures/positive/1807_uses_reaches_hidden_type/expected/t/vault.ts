@@ -11,8 +11,23 @@ export const Repo = {
   shout(self: Repo): string { return __CommonsRepo.shout(self); },
 };
 
+export type Code = number & { readonly __brand: "t.vault.Code" };
+
+export const Code = {
+  of(value: number): Result<Code, ValidationError> {
+    if (!globalThis.Number.isSafeInteger(value)) {
+      return Err({ field: "Code", message: "must be a safe integer", value });
+    }
+    if (!(value >= 0)) {
+      return Err({ field: "Code", message: "must be non-negative", value });
+    }
+    return Ok(value as Code);
+  },
+};
+
 export interface Ticket {
   readonly repo: Repo;
+  readonly code: Code;
 }
 
 export const Ticket = {
@@ -20,7 +35,7 @@ export const Ticket = {
 
 export const fetch = {
   async call(deps: {}): globalThis.Promise<Ticket> {
-    return { repo: ("vault" as Repo) };
+    return { repo: ("vault" as Repo), code: (7 as Code) };
   },
 };
 

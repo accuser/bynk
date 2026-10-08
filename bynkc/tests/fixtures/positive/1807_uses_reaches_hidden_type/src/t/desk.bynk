@@ -1,6 +1,13 @@
+---
+Review of #1813: `Ticket.code` is typed by `t.vault`'s own unexported `Code`.
+A context-owned type a consumed export reaches is not added (an `exports`
+question), so `t.desk` declaring its own `Code` is no conflict.
+---
 context t.desk
 
 consumes t.vault as Vault
+
+type Code = String
 
 service probe {
   on call() -> Effect[String] {

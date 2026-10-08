@@ -3357,7 +3357,12 @@ pub fn close_reachable_types(
     fn_names.sort();
     for n in fn_names {
         if let Some(unit) = imported_from.get(n) {
-            push_refs(fn_sig_ref_names(&combined_fns[n]), unit, unit, &mut queue);
+            push_refs(
+                fn_sig_ref_names(&combined_fns[n], &[]),
+                unit,
+                unit,
+                &mut queue,
+            );
         }
     }
     let mut method_types: Vec<&String> = combined_methods.keys().collect();
@@ -3365,11 +3370,17 @@ pub fn close_reachable_types(
     for t in method_types {
         if let Some(unit) = imported_from.get(t) {
             let mt = &combined_methods[t];
+            let attached = combined_types.get(t).map(|d| d.type_params.as_slice());
             let mut decls: Vec<&Arc<FnDecl>> =
                 mt.instance.values().chain(mt.statics.values()).collect();
             decls.sort_by_key(|d| d.span.start);
             for d in decls {
-                push_refs(fn_sig_ref_names(d), unit, unit, &mut queue);
+                push_refs(
+                    fn_sig_ref_names(d, attached.unwrap_or_default()),
+                    unit,
+                    unit,
+                    &mut queue,
+                );
             }
         }
     }
@@ -3387,6 +3398,14 @@ pub fn close_reachable_types(
         let Some(owner) = type_owner_in_scope(&r.scope, &r.name, unit_info) else {
             continue;
         };
+        // Review of #1813: before the conflict check, so a context-owned
+        // reach is skipped whether or not this unit binds the name (a
+        // consumer's own `Money` beside a consumed export's field of the
+        // exporting context's `Money` is not a conflict).
+        let owner_info = &unit_info[owner];
+        if owner_info.kind != UnitKind::Commons {
+            continue;
+        }
         if combined_types.contains_key(&r.name) {
             let bound = imported_from
                 .get(&r.name)
@@ -3422,13 +3441,9 @@ pub fn close_reachable_types(
             }
             continue;
         }
-        let owner_info = &unit_info[owner];
-        if owner_info.kind != UnitKind::Commons {
-            continue;
-        }
         let decl = owner_info.table.types[&r.name].clone();
         push_refs(type_decl_ref_names(&decl), owner, &r.via, &mut queue);
-        combined_types.insert(r.name.clone(), decl);
+        combined_types.insert(r.name.clone(), decl.clone());
         imported_from.insert(r.name.clone(), owner.to_string());
         imported_from_kind.insert(r.name.clone(), UnitKind::Commons);
         hidden.insert(r.name.clone(), owner.to_string());
@@ -3444,7 +3459,12 @@ pub fn close_reachable_types(
                 .collect();
             decls.sort_by_key(|(_, d, _)| d.span.start);
             for (m, d, is_instance) in decls {
-                push_refs(fn_sig_ref_names(d), owner, &r.via, &mut queue);
+                push_refs(
+                    fn_sig_ref_names(d, &decl.type_params),
+                    owner,
+                    &r.via,
+                    &mut queue,
+                );
                 let table = if is_instance {
                     &mut entry.instance
                 } else {
@@ -3503,9 +3523,15 @@ fn type_decl_ref_names(d: &TypeDecl) -> Vec<String> {
 }
 
 /// #1807: the type names a fn's signature references, its own type
-/// parameters excluded.
-fn fn_sig_ref_names(f: &FnDecl) -> Vec<String> {
-    let vars: HashSet<&str> = f.type_params.iter().map(|p| p.name.name.as_str()).collect();
+/// parameters excluded, and for a method its type's (`attached`):
+/// `fn Box.get(self) -> A` on `type Box[A]` declares no `[A]` of its own.
+fn fn_sig_ref_names(f: &FnDecl, attached: &[TypeParam]) -> Vec<String> {
+    let vars: HashSet<&str> = f
+        .type_params
+        .iter()
+        .chain(attached)
+        .map(|p| p.name.name.as_str())
+        .collect();
     let mut out = Vec::new();
     for p in &f.params {
         type_ref_names(&p.type_ref, &vars, &mut out);
