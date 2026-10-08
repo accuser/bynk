@@ -443,6 +443,7 @@ fn keeps_comments_in_a_record_type_and_on_an_agent_key() {
 fn keeps_comments_in_an_actor_body_and_an_exports_list() {
     let actor = "context c\n\nactor P { -- the signed-in user\n  auth = Bearer(secret = \"S\"), -- on auth\n  -- above identity\n  identity = UserId -- on identity\n  -- before close\n} -- after close\n\nactor Q {\n  auth = None -- open\n}\n";
     let oidc = "context c\n\nactor O {\n  -- the issuer\n  auth = Oidc(issuer = \"https://issuer.example.com/realms/main\", audience = \"https://api.example.com\"), -- verified\n  identity = UserId\n}\n";
+    let adapter = "adapter a {\n  binding \"./a.ts\"\n\n  exports capability { -- offered\n    Cap -- the one\n  }\n\n  capability Cap {\n    fn f() -> Effect[Int]\n  }\n}\n";
     let exports = "context c\n\nexports opaque { -- the public ids\n  P, -- the first\n  -- above Q\n  Q\n  -- before close\n} -- after close\nexports capability {\n  -- none yet\n}\n\ntype P = Int\n";
     for (name, source, lines) in [
         (
@@ -463,6 +464,11 @@ fn keeps_comments_in_an_actor_body_and_an_exports_list() {
             ][..],
         ),
         (
+            "adapter exports",
+            adapter,
+            &["\texports capability {\n\t\t-- offered\n\t\tCap,  -- the one\n\t}\n"][..],
+        ),
+        (
             "exports",
             exports,
             &[
@@ -480,4 +486,36 @@ fn keeps_comments_in_an_actor_body_and_an_exports_list() {
         let again = format_source(&out, &FormatOptions::default()).expect("reformats");
         assert_eq!(out, again, "{name}: not idempotent");
     }
+}
+
+/// #1797: without a trailing comma the last exported name drops its `,` but
+/// keeps its end-of-line comment, and the actor's `identity` line is unchanged.
+#[test]
+fn keeps_an_end_of_line_comment_on_the_last_name_without_a_trailing_comma() {
+    let source =
+        "context c\n\nexports opaque {\n  P, -- the first\n  Q -- the last\n}\n\ntype P = Int\n";
+    let opts = FormatOptions {
+        trailing_comma: false,
+        ..FormatOptions::default()
+    };
+    let out = format_source(source, &opts).expect("formats");
+    assert!(
+        out.contains("\tP,  -- the first\n\tQ  -- the last\n}\n"),
+        "last name not in place:\n{out}"
+    );
+    assert_eq!(
+        out,
+        format_source(&out, &opts).expect("reformats"),
+        "not idempotent"
+    );
+}
+
+/// #1797's boundary: the scheme's arguments carry no trivia, so a comment
+/// between two of them is still refused rather than dropped.
+#[test]
+fn refuses_to_drop_a_comment_between_actor_scheme_arguments() {
+    expect_refusal(
+        "in-scheme-args",
+        "context c\n\nactor O {\n  auth = Oidc(issuer = \"a\", -- keep me\n  audience = \"b\")\n}\n",
+    );
 }
