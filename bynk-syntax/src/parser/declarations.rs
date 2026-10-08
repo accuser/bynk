@@ -2303,33 +2303,20 @@ impl<'a> Parser<'a> {
     /// newlines separate fields, mirroring a record construction.
     fn parse_cors_policy(&mut self, leading: Vec<Comment>) -> Result<CorsPolicy, CompileError> {
         let kw = self.expect_ident("to start a `cors` policy")?;
-        self.expect(TokenKind::LBrace, "to open the `cors` policy body")?;
-        let mut fields: Vec<CorsField> = Vec::new();
-        loop {
-            self.collect_item_lead();
-            match self.peek_kind() {
-                Some(TokenKind::RBrace) => break,
-                Some(_) => {
-                    let name = self.expect_ident("as a `cors` policy field name")?;
-                    self.expect(TokenKind::Colon, "after the `cors` field name")?;
-                    let value = self.parse_expr()?;
-                    let span = name.span.merge(value.span);
-                    fields.push(CorsField { name, value, span });
-                    let _ = self.eat(TokenKind::Comma);
-                }
-                None => {
-                    return Err(CompileError::new(
-                        "bynk.parse.unexpected_eof",
-                        self.eof_span(),
-                        "expected `}` to close the `cors` policy, found end of file",
-                    ));
-                }
-            }
-        }
-        let close = self.expect(TokenKind::RBrace, "to close the `cors` policy body")?;
+        let body = self.parse_policy_body("cors")?;
         Ok(CorsPolicy {
-            fields,
-            span: kw.span.merge(close.span),
+            fields: body
+                .fields
+                .into_iter()
+                .map(|f| CorsField {
+                    name: f.name,
+                    value: f.value,
+                    span: f.span,
+                    trivia: f.trivia,
+                })
+                .collect(),
+            span: kw.span.merge(body.close),
+            trailing_comments: body.trailing_comments,
             trivia: Trivia {
                 leading,
                 trailing: self.take_trailing_trivia(),
@@ -2337,42 +2324,28 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// Parse a `security { name: value, … }` policy (v0.141, ADR 0164). Fields are
-    /// parsed leniently as `name: expr` pairs; the checker validates the field
-    /// names (closed set `hsts`/`nosniff`) and the value shapes. A trailing comma
-    /// is allowed and newlines separate fields, mirroring `parse_cors_policy`.
+    /// Parse a `security { name: value, … }` policy (v0.141, ADR 0164), as
+    /// [`Self::parse_cors_policy`]; the checker validates the closed field set
+    /// `hsts`/`nosniff` and the value shapes.
     fn parse_security_policy(
         &mut self,
         leading: Vec<Comment>,
     ) -> Result<SecurityPolicy, CompileError> {
         let kw = self.expect_ident("to start a `security` policy")?;
-        self.expect(TokenKind::LBrace, "to open the `security` policy body")?;
-        let mut fields: Vec<SecurityField> = Vec::new();
-        loop {
-            self.collect_item_lead();
-            match self.peek_kind() {
-                Some(TokenKind::RBrace) => break,
-                Some(_) => {
-                    let name = self.expect_ident("as a `security` policy field name")?;
-                    self.expect(TokenKind::Colon, "after the `security` field name")?;
-                    let value = self.parse_expr()?;
-                    let span = name.span.merge(value.span);
-                    fields.push(SecurityField { name, value, span });
-                    let _ = self.eat(TokenKind::Comma);
-                }
-                None => {
-                    return Err(CompileError::new(
-                        "bynk.parse.unexpected_eof",
-                        self.eof_span(),
-                        "expected `}` to close the `security` policy, found end of file",
-                    ));
-                }
-            }
-        }
-        let close = self.expect(TokenKind::RBrace, "to close the `security` policy body")?;
+        let body = self.parse_policy_body("security")?;
         Ok(SecurityPolicy {
-            fields,
-            span: kw.span.merge(close.span),
+            fields: body
+                .fields
+                .into_iter()
+                .map(|f| SecurityField {
+                    name: f.name,
+                    value: f.value,
+                    span: f.span,
+                    trivia: f.trivia,
+                })
+                .collect(),
+            span: kw.span.merge(body.close),
+            trailing_comments: body.trailing_comments,
             trivia: Trivia {
                 leading,
                 trailing: self.take_trailing_trivia(),
@@ -2380,44 +2353,92 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// Parse a `limits { name: value, … }` policy (v0.142, ADR 0165). Fields are
-    /// parsed leniently as `name: expr` pairs; the checker validates the field
-    /// names (closed set `maxBody`) and the value shapes (a positive `Int`). A
-    /// trailing comma is allowed and newlines separate fields, mirroring
-    /// `parse_cors_policy`/`parse_security_policy`.
+    /// Parse a `limits { name: value, … }` policy (v0.142, ADR 0165), as
+    /// [`Self::parse_cors_policy`]; the checker validates the closed field set
+    /// `maxBody` and the value shape (a positive `Int`).
     fn parse_limits_policy(&mut self, leading: Vec<Comment>) -> Result<LimitsPolicy, CompileError> {
         let kw = self.expect_ident("to start a `limits` policy")?;
-        self.expect(TokenKind::LBrace, "to open the `limits` policy body")?;
-        let mut fields: Vec<LimitsField> = Vec::new();
-        loop {
-            self.collect_item_lead();
+        let body = self.parse_policy_body("limits")?;
+        Ok(LimitsPolicy {
+            fields: body
+                .fields
+                .into_iter()
+                .map(|f| LimitsField {
+                    name: f.name,
+                    value: f.value,
+                    span: f.span,
+                    trivia: f.trivia,
+                })
+                .collect(),
+            span: kw.span.merge(body.close),
+            trailing_comments: body.trailing_comments,
+            trivia: Trivia {
+                leading,
+                trailing: self.take_trailing_trivia(),
+            },
+        })
+    }
+
+    /// The brace-delimited `name: value` fields of a `cors`/`security`/`limits`
+    /// policy (`policy` names it in errors), from `{` through `}`. #1786: each
+    /// field keeps the comments above it and its end-of-line comment, and the
+    /// comments before `}` are kept too; they used to be discarded. A doc block
+    /// documents nothing here, so it is an orphan.
+    fn parse_policy_body(&mut self, policy: &str) -> Result<PolicyBody, CompileError> {
+        self.expect(
+            TokenKind::LBrace,
+            &format!("to open the `{policy}` policy body"),
+        )?;
+        let mut fields = Vec::new();
+        let trailing_comments = loop {
+            let (mut leading, item_doc) = self.collect_item_lead();
+            if let Some(doc) = item_doc {
+                self.warnings.push(CompileError::new(
+                    "bynk.parse.orphan_doc_block",
+                    doc.span,
+                    format!("documentation block in a `{policy}` policy is not attached; policy fields carry no docs"),
+                ));
+                keep_orphan(&mut leading, doc);
+            }
             match self.peek_kind() {
-                Some(TokenKind::RBrace) => break,
+                Some(TokenKind::RBrace) => break leading,
                 Some(_) => {
-                    let name = self.expect_ident("as a `limits` policy field name")?;
-                    self.expect(TokenKind::Colon, "after the `limits` field name")?;
+                    let name = self.expect_ident(&format!("as a `{policy}` policy field name"))?;
+                    self.expect(
+                        TokenKind::Colon,
+                        &format!("after the `{policy}` field name"),
+                    )?;
                     let value = self.parse_expr()?;
                     let span = name.span.merge(value.span);
-                    fields.push(LimitsField { name, value, span });
                     let _ = self.eat(TokenKind::Comma);
+                    let trivia = Trivia {
+                        leading,
+                        trailing: self.take_trailing_trivia(),
+                    };
+                    fields.push(PolicyField {
+                        name,
+                        value,
+                        span,
+                        trivia,
+                    });
                 }
                 None => {
                     return Err(CompileError::new(
                         "bynk.parse.unexpected_eof",
                         self.eof_span(),
-                        "expected `}` to close the `limits` policy, found end of file",
+                        format!("expected `}}` to close the `{policy}` policy, found end of file"),
                     ));
                 }
             }
-        }
-        let close = self.expect(TokenKind::RBrace, "to close the `limits` policy body")?;
-        Ok(LimitsPolicy {
+        };
+        let close = self.expect(
+            TokenKind::RBrace,
+            &format!("to close the `{policy}` policy body"),
+        )?;
+        Ok(PolicyBody {
             fields,
-            span: kw.span.merge(close.span),
-            trivia: Trivia {
-                leading,
-                trailing: self.take_trailing_trivia(),
-            },
+            trailing_comments,
+            close: close.span,
         })
     }
 
@@ -3375,4 +3396,20 @@ impl<'a> Parser<'a> {
         }
         Ok(given)
     }
+}
+
+/// A parsed `cors`/`security`/`limits` policy body, before it becomes the
+/// policy's own field type ([`Parser::parse_policy_body`]).
+struct PolicyBody {
+    fields: Vec<PolicyField>,
+    trailing_comments: Vec<Comment>,
+    close: Span,
+}
+
+/// One `name: value` field of a policy body, with its comments.
+struct PolicyField {
+    name: Ident,
+    value: Expr,
+    span: Span,
+    trivia: Trivia,
 }

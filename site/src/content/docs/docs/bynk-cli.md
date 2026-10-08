@@ -289,11 +289,12 @@ keeps `.bynk` files LF on every platform.
 
 The formatter never deletes your text. When a comment or a `---` documentation
 block has nowhere to go in the formatted output, the file is left unchanged and
-reported with `bynk.fmt.comment_loss`. A `---` block separated from the next
-declaration by a blank line attaches to nothing (`bynk check` warns
-`bynk.parse.orphan_doc_block`); the formatter keeps it where it is, blank line
-included, so formatting never attaches it. Remove the blank line to attach it,
-or make it a `--` comment.
+reported with `bynk.fmt.comment_loss`. A `---` block attaches to nothing when a
+blank line separates it from the next declaration, or when what follows carries
+no doc (a `uses` or other clause, a service policy, or anything inside a
+policy): `bynk check` warns `bynk.parse.orphan_doc_block`, and the formatter
+keeps the block where it is, so formatting never attaches it. Remove the blank
+line to attach it, or make it a `--` comment.
 
 **Where the style comes from** — three layers, each overriding the one before:
 the canonical defaults, then the project's `[fmt]` section in
