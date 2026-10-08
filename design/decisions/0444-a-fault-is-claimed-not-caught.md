@@ -1,11 +1,6 @@
----
-level: minor
-changelog: "A `case` can claim that a call faults: `expect <call> faults` holds when awaiting the call throws, as a `stub … fails` does (#1706). The testing docs showed a `fails` fault surfacing as an `Err`, but it throws out of the handler and out of the case, and no `expect` could observe it. The docs now agree with the runtime, and the new claim is checked: its subject must be an effectful call (`bynk.expect.faults_not_effect`), and it is not allowed at `system` (`bynk.test.faults_needs_in_process`)"
----
+# 0444 — A stub's injected fault is a fault, and a case observes it with `expect <call> faults`
 
-## ADR: a-fault-is-claimed-not-caught
-title: A stub's injected fault is a fault, and a case observes it with `expect <call> faults`
-summary: `fails` throws and never surfaces as an `Err`; `expect <call> faults` is the test-only claim that a call throws
+- **Status:** Accepted (v0.313)
 
 **Context.** [[0152]] made observation a sugar on `expect`, and the `stub` clause added `fails` to inject a capability fault at a seam. The emitted stub throws `bynk: injected capability fault (stubs … fails)`. That exception propagates out of the handler and out of the case, so the case fails before its next `expect` runs. Four documents disagreed with this. The testing reference and the testing guide both titled an example "a fault surfaces as an error" and asserted `expect r is Err(_)` after a `fails` stub. The runtime-library spec said the fault "the seam propagates as an `Err`", and the emission spec lowered `fails` to "a thrown/`Err` capability fault". The rest of the language treats a fault as untyped and uncatchable: an invariant violation is a fault the caller cannot handle, and a faulting handler commits nothing. No `expect` form could observe a fault, so `fails` was useful only as the first outcome of a `returns each` sequence (#1706).
 

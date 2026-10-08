@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.312**.
+written against **v0.313**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.313.0** | "A `case` can claim that a call faults: `expect <call> faults` holds when awaiting the call throws, as a `stub … fails` does (#1706). The testing docs showed a `fails` fault surfacing as an `Err`, but it throws out of the handler and out of the case, and no `expect` could observe it. The docs now agree with the runtime, and the new claim is checked: its subject must be an effectful call (`bynk.expect.faults_not_effect`), and it is not allowed at `system` (`bynk.test.faults_needs_in_process`)" |
 | **v0.312.4** | "A unit that `uses` a commons now imports every type of that commons its emitted TypeScript names, not only the ones its source spells (#1778). A literal admitted as a refined type is cast to it (`(\"a\" as Repo)`), and a list kernel annotates its callback with the element type (`(__x: Repo) => …`), so a record literal or a mapped field whose type was declared in a used commons failed `tsc` with TS2304, in a context and in a second commons alike. `bynkc check` passed while `bynkc test`, `bynk dev` and `bynk deploy` failed. A name taken from a checked type is imported only when the emitted module spells it, so no unit gains an unused import or a context a new export. A refined type reached through a commons the unit does not itself `uses` is still unbranded (#1807)" |
 | **v0.312.3** | "`fmt` keeps a `--` comment inside a sum type (#1794): above a variant, at the end of its line, on the `enum {` or `=` line, before an `enum`'s closing `}`, and between a pipe-form sum's last variant and its `embeds` clause. Such a file was refused with `bynk.fmt.comment_loss`; a commented `enum` now prints multi-line. A comment inside a variant's payload list, or between two `embeds` entries, is still refused" |
 | **v0.312.2** | "`bynk fmt` output is unchanged (internal; suggested by the review of [#1799](https://github.com/accuser/bynk/pull/1799)). The formatter ends a line, with a trailing comment or a bare newline, through one helper rather than a two-statement idiom repeated at 27 sites, where writing one half without the other was an easy mistake" |
