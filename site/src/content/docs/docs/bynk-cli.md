@@ -291,8 +291,9 @@ The formatter never deletes your text. When a comment or a `---` documentation
 block has nowhere to go in the formatted output, the file is left unchanged and
 reported with `bynk.fmt.comment_loss`. A `---` block separated from the next
 declaration by a blank line attaches to nothing (`bynk check` warns
-`bynk.parse.orphan_doc_block`); remove the blank line to attach it, or make it a
-`--` comment.
+`bynk.parse.orphan_doc_block`); the formatter keeps it where it is, blank line
+included, so formatting never attaches it. Remove the blank line to attach it,
+or make it a `--` comment.
 
 **Where the style comes from** — three layers, each overriding the one before:
 the canonical defaults, then the project's `[fmt]` section in
