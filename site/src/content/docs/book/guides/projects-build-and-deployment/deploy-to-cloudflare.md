@@ -90,6 +90,18 @@ The migration line is **advisory**, and worth understanding:
 > migrations have drifted. A tool that can't tell you about drift beats one that
 > invents it.
 
+Each agent is a **SQLite-backed** Durable Object: the generated migration
+declares its classes with `new_sqlite_classes`. That's the only backend the
+Workers Free plan allows, and the one Cloudflare recommends on every plan. Your
+agent code doesn't change, because a SQLite-backed Durable Object keeps the same
+key-value storage API.
+
+A Worker you deployed with an earlier Bynk declared its agents key-value-backed
+(`new_classes`). Redeploying it is safe: Cloudflare has already applied its `v1`
+migration, so `wrangler deploy` sends no migration, and its agents keep their
+key-value storage and their data. Cloudflare can't convert a deployed class
+between backends, so only a fresh deployment gets SQLite.
+
 ## Secrets
 
 `bynk deploy` sets your secrets before it pushes, and forgets them. Values move

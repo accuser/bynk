@@ -160,7 +160,7 @@ fn workers_events_fanout_do_and_wrangler_wiring() {
         "commerce-order's wrangler.toml must declare the fan-out DO binding:\n{order_wrangler}"
     );
     assert!(
-        order_wrangler.contains("new_classes = [\"Ledger\", \"__EventsFanout\"]"),
+        order_wrangler.contains("new_sqlite_classes = [\"Ledger\", \"__EventsFanout\"]"),
         "the fan-out DO must ride the same migration as the context's real agents:\n{order_wrangler}"
     );
     assert!(
