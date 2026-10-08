@@ -1,4 +1,4 @@
 ---
 level: patch
-changelog: "`bynk fmt` ends a line through one helper, `emit_trailing_comment_or_newline`, rather than repeating a two-statement idiom at 27 sites where writing one half without the other was easy. Output is unchanged"
+changelog: "`bynk fmt` output is unchanged (internal; suggested by the review of [#1799](https://github.com/accuser/bynk/pull/1799)). The formatter ends a line, with a trailing comment or a bare newline, through one helper rather than a two-statement idiom repeated at 27 sites, where writing one half without the other was an easy mistake"
 ---
