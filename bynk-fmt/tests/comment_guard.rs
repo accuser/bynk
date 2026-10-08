@@ -434,3 +434,54 @@ fn keeps_comments_in_a_record_type_and_on_an_agent_key() {
         assert_eq!(out, again, "{name}: not idempotent");
     }
 }
+
+/// #1794: a sum-type variant had no comment slot, so `fmt` refused a comment
+/// anywhere inside an `enum { … }` or pipe-form sum. Each position keeps its
+/// comment on its line now. A payloadless pipe form prints as an `enum`, so
+/// the pipe rows give their variants a payload.
+#[test]
+fn keeps_comments_in_a_sum_type() {
+    let pipe = "commons d\n\ntype S = -- on eq\n  -- above first\n  | A(x: Int) -- same line\n  -- above\n  | B -- bare\n  | C(y: Int) -- last\n";
+    let embeds = "commons d\n\ntype S = | A(x: Int) -- before embeds\n  -- own line\n  embeds Foo as A -- after embeds\n";
+    for (name, source, lines) in [
+        (
+            "enum",
+            "commons d\n\ntype E = enum { -- brace line\n  -- above\n  A, -- same line\n  B -- last\n  -- before close\n} -- after close\n",
+            &[
+                "enum {\n\t-- brace line\n\t-- above\n\tA,  -- same line\n",
+                "\tB,  -- last\n\t-- before close\n}  -- after close\n",
+            ][..],
+        ),
+        (
+            "empty enum",
+            "commons d\n\ntype E = enum { -- keep me\n}\n",
+            &["enum {\n\t-- keep me\n}\n"][..],
+        ),
+        (
+            "pipe",
+            pipe,
+            &[
+                "type S =\n-- on eq\n-- above first\n| A(x: Int)  -- same line\n",
+                "-- above\n| B  -- bare\n| C(y: Int)  -- last\n",
+            ][..],
+        ),
+        (
+            "pipe as enum",
+            "commons d\n\ntype S = | A -- same line\n  | B\n",
+            &["enum {\n\tA,  -- same line\n\tB,\n}\n"][..],
+        ),
+        (
+            "pipe with embeds",
+            embeds,
+            &["| A(x: Int)  -- before embeds\n-- own line\nembeds Foo as A  -- after embeds\n"][..],
+        ),
+    ] {
+        let out = format_source(source, &FormatOptions::default())
+            .unwrap_or_else(|e| panic!("{name}: refused: {}", e.errors[0].message));
+        for line in lines {
+            assert!(out.contains(line), "{name}: `{line}` not in place:\n{out}");
+        }
+        let again = format_source(&out, &FormatOptions::default()).expect("reformats");
+        assert_eq!(out, again, "{name}: not idempotent");
+    }
+}

@@ -243,10 +243,24 @@ impl<'a> Parser<'a> {
 
     /// Parse a pipe-form sum body: `| Variant | Variant(field, ...)`.
     /// The leading `|` is required (spec v0.2 §3.2).
+    ///
+    /// #1794: each variant keeps the comments above it and, unless it is the
+    /// last, the one at the end of its line. The last variant's end-of-line
+    /// comment is left for `parse_type_decl` to take as the type's own, as it
+    /// always was, unless an `embeds` clause follows.
     fn parse_sum_body_pipe(&mut self) -> Result<SumBody, CompileError> {
         let mut variants = Vec::new();
         let mut span: Option<Span> = None;
+        // A comment on the `=` line trails the `=`, which nothing else
+        // collects: it leads the first variant, ahead of any above its `|`.
+        let mut eq_line: Vec<Comment> = self
+            .take_trailing_trivia()
+            .map(Comment::Line)
+            .into_iter()
+            .collect();
         while self.peek_kind() == Some(TokenKind::Pipe) {
+            let mut leading = std::mem::take(&mut eq_line);
+            leading.extend(self.take_leading_trivia());
             let bar = self.bump().unwrap();
             let name = self.expect_variant_name("after `|` in a sum variant")?;
             let mut payload = Vec::new();
@@ -267,10 +281,16 @@ impl<'a> Parser<'a> {
                 end_span = close.span;
             }
             let v_span = bar.span.merge(end_span);
+            let trailing = if self.peek_kind() == Some(TokenKind::Pipe) || self.at_embeds() {
+                self.take_trailing_trivia()
+            } else {
+                None
+            };
             variants.push(Variant {
                 name,
                 payload,
                 span: v_span,
+                trivia: Trivia { leading, trailing },
             });
             span = Some(match span {
                 Some(s) => s.merge(v_span),
@@ -278,6 +298,13 @@ impl<'a> Parser<'a> {
             });
         }
         let variants_span = span.expect("parse_sum_body_pipe called without `|`");
+        // Comments on their own lines after the last variant lead `embeds`,
+        // when it follows; otherwise they lead the next declaration.
+        let trailing_comments = if self.at_embeds() {
+            self.take_leading_trivia()
+        } else {
+            Vec::new()
+        };
         // v0.154 (ADR 0178): an optional trailing `embeds E as V, …` clause.
         let embeds = self.parse_embeds_clauses()?;
         let span = embeds
@@ -288,7 +315,14 @@ impl<'a> Parser<'a> {
             variants,
             embeds,
             span,
+            trailing_comments,
         })
+    }
+
+    /// Whether the next token is the contextual `embeds` keyword that opens a
+    /// pipe-form sum's trailing clause (v0.154, ADR 0178).
+    fn at_embeds(&self) -> bool {
+        matches!(self.peek(), Some(t) if t.kind == TokenKind::Ident && self.slice(t.span) == "embeds")
     }
 
     /// Parse the optional trailing `embeds <type> as <Variant>, …` clause of a
@@ -298,8 +332,7 @@ impl<'a> Parser<'a> {
     /// Returns an empty vec when no clause is present.
     fn parse_embeds_clauses(&mut self) -> Result<Vec<EmbedsClause>, CompileError> {
         let mut embeds = Vec::new();
-        if !matches!(self.peek(), Some(t) if t.kind == TokenKind::Ident && self.slice(t.span) == "embeds")
-        {
+        if !self.at_embeds() {
             return Ok(embeds);
         }
         self.bump(); // consume the `embeds` contextual keyword
@@ -325,22 +358,33 @@ impl<'a> Parser<'a> {
     }
 
     /// Parse an enum-shorthand sum body: `enum { Tag, Tag, Tag }`.
+    ///
+    /// #1794: as in a record body (#1788), each tag keeps the comments above
+    /// it and the one at the end of its line, after its `,`; the comments
+    /// before the `}` close the body.
     fn parse_sum_body_enum(&mut self) -> Result<SumBody, CompileError> {
         let kw = self.expect(TokenKind::Enum, "to start an enum-form sum body")?;
         self.expect(TokenKind::LBrace, "after `enum`")?;
         let mut variants = Vec::new();
         while self.peek_kind() != Some(TokenKind::RBrace) {
+            let leading = self.take_leading_trivia();
             let name = self.expect_variant_name("as an enum tag name")?;
             let span = name.span;
+            let comma = self.eat(TokenKind::Comma);
             variants.push(Variant {
                 name,
                 payload: Vec::new(),
                 span,
+                trivia: Trivia {
+                    leading,
+                    trailing: self.take_trailing_trivia(),
+                },
             });
-            if self.eat(TokenKind::Comma).is_none() {
+            if comma.is_none() {
                 break;
             }
         }
+        let trailing_comments = self.take_leading_trivia();
         let close = self.expect(TokenKind::RBrace, "to close the enum body")?;
         Ok(SumBody {
             variants,
@@ -348,6 +392,7 @@ impl<'a> Parser<'a> {
             // wrapped value — the `embeds` clause is pipe-form only.
             embeds: Vec::new(),
             span: kw.span.merge(close.span),
+            trailing_comments,
         })
     }
 
