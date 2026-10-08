@@ -245,10 +245,20 @@ pub fn merge_syntax_errors(
 /// [`parse_units_with_recovery`], also returning the names of the declarations
 /// recovery skipped (#1663).
 pub fn parse_units_recovering(tokens: &[Token], source: &str) -> Recovered {
+    parse_units_recovering_from(tokens, source, &mut 0)
+}
+
+/// [`parse_units_recovering`], continuing [`ExprId`] allocation from `next_id`
+/// rather than starting at 0 — see [`parse_unit_with_warnings_from`]. #1710:
+/// the project path checks a recovered file's surviving declarations
+/// alongside every other file's, so its ids must come from the same durable
+/// counter (`bynk_project::parse_cache`), or they would collide.
+pub fn parse_units_recovering_from(tokens: &[Token], source: &str, next_id: &mut u32) -> Recovered {
     let (filtered, trivia) = split_trivia(tokens, source);
     let mut warnings = Vec::new();
     let mut p = Parser::new(&filtered, source, trivia, &mut warnings);
     p.recover_mode = true;
+    p.next_expr_id = *next_id;
     let mut units = Vec::new();
     loop {
         match p.parse_unit() {
@@ -268,6 +278,7 @@ pub fn parse_units_recovering(tokens: &[Token], source: &str) -> Recovered {
         }
     }
     let broken_decl_names = std::mem::take(&mut p.broken_decl_names);
+    *next_id = p.next_expr_id;
     let mut all_errors = p.recovered_errors;
     all_errors.append(&mut warnings);
     Recovered {

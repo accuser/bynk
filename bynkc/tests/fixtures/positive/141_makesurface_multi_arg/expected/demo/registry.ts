@@ -43,7 +43,7 @@ export interface Clock {
   now(): globalThis.Promise<number>;
 }
 
-export const ClockToken: symbol = globalThis.Symbol("Clock");
+export const __ClockToken: symbol = globalThis.Symbol("Clock");
 
 export class SystemClock implements Clock {
   async now(): globalThis.Promise<number> {
@@ -51,7 +51,7 @@ export class SystemClock implements Clock {
   }
 }
 
-export const SystemClockProvider = { token: ClockToken, factory: () => new SystemClock() };
+export const __SystemClockProvider = { token: __ClockToken, factory: () => new SystemClock() };
 
 export const create = {
   async call(code: Code, target: Target, deps: { Clock: Clock }): globalThis.Promise<Result<number, RegError>> {
@@ -60,15 +60,14 @@ export const create = {
   },
 };
 
-export interface DemoRegistryDeps {
+export interface __DemoRegistryDeps {
   readonly Clock: Clock;
 }
 
-export function makeSurface(deps: DemoRegistryDeps) {
+export function __makeSurface(deps: __DemoRegistryDeps) {
   return {
     async create(code: Code, target: Target): globalThis.Promise<Result<number, RegError>> {
       return create.call(code, target, deps);
     },
   };
 }
-

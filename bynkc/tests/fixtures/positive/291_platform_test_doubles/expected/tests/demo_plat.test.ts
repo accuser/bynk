@@ -2,10 +2,10 @@
 // test target: demo.plat
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, __bynkEq } from "../runtime.js";
-import * as demo_plat from "./../demo/plat.js";
-import * as bynk from "./../bynk.js";
-import * as bynk_cloudflare from "./../bynk/cloudflare.js";
-import * as bynk_locale_types from "./../bynk/locale/types.js";
+import * as __ns_demo_plat from "./../demo/plat.js";
+import * as __ns_bynk from "./../bynk.js";
+import * as __ns_bynk_cloudflare from "./../bynk/cloudflare.js";
+import * as __ns_bynk_locale_types from "./../bynk/locale/types.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -46,7 +46,7 @@ function __bynkRecordDeps(deps: any, spec: Record<string, string[]>, obs: { log:
 }
 
 type __Clock_now_Call = {  };
-type __Fetch_send_Call = { req: bynk.Request };
+type __Fetch_send_Call = { req: __ns_bynk.Request };
 type __Idempotency_dedup_Call = { key: string };
 type __Idempotency_remember_Call = { key: string; value: unknown; expiresAfter: number };
 type __Kv_get_Call = { key: string };
@@ -70,14 +70,14 @@ class __Stub_Fetch {
     if (op === "send") return this.__case === "a stubbed fetch answers for the network";
     return true;
   }
-  async send(req: bynk.Request): globalThis.Promise<Result<bynk.Response, bynk.FetchError>> {
-    const { EventEnvelope, FetchError, Method, Request, Response, Uuid } = bynk;
-    type EventEnvelope = bynk.EventEnvelope;
-    type FetchError = bynk.FetchError;
-    type Method = bynk.Method;
-    type Request = bynk.Request;
-    type Response = bynk.Response;
-    type Uuid = bynk.Uuid;
+  async send(req: __ns_bynk.Request): globalThis.Promise<Result<__ns_bynk.Response, __ns_bynk.FetchError>> {
+    const { EventEnvelope, FetchError, Method, Request, Response, Uuid } = __ns_bynk;
+    type EventEnvelope = __ns_bynk.EventEnvelope;
+    type FetchError = __ns_bynk.FetchError;
+    type Method = __ns_bynk.Method;
+    type Request = __ns_bynk.Request;
+    type Response = __ns_bynk.Response;
+    type Uuid = __ns_bynk.Uuid;
     if (this.__case === "a stubbed fetch answers for the network") {
       return Ok({ status: 204, body: "" });
     }
@@ -95,13 +95,13 @@ class __Stub_Kv {
     return true;
   }
   async get(key: string): globalThis.Promise<Option<string>> {
-    const { EventEnvelope, FetchError, Method, Request, Response, Uuid } = bynk;
-    type EventEnvelope = bynk.EventEnvelope;
-    type FetchError = bynk.FetchError;
-    type Method = bynk.Method;
-    type Request = bynk.Request;
-    type Response = bynk.Response;
-    type Uuid = bynk.Uuid;
+    const { EventEnvelope, FetchError, Method, Request, Response, Uuid } = __ns_bynk;
+    type EventEnvelope = __ns_bynk.EventEnvelope;
+    type FetchError = __ns_bynk.FetchError;
+    type Method = __ns_bynk.Method;
+    type Request = __ns_bynk.Request;
+    type Response = __ns_bynk.Response;
+    type Uuid = __ns_bynk.Uuid;
     if (this.__case === "a stubbed operation answers; the rest reach the double") {
       return Some("stubbed");
     }
@@ -129,7 +129,7 @@ function __bynkOverlay(base: unknown, stub: object, cap: string): unknown {
   });
 }
 
-function __bynkTest_Clock(): bynk.Clock {
+function __bynkTest_Clock(): __ns_bynk.Clock {
   return {
     async now() {
       return 0;
@@ -137,7 +137,7 @@ function __bynkTest_Clock(): bynk.Clock {
   };
 }
 
-function __bynkTest_Fetch(): bynk.Fetch {
+function __bynkTest_Fetch(): __ns_bynk.Fetch {
   return {
     async send() {
       throw new globalThis.Error("bynk: `Fetch.send` is not stubbed, and a test never reaches the network — add `stub Fetch.send(_) returns …`");
@@ -145,7 +145,7 @@ function __bynkTest_Fetch(): bynk.Fetch {
   };
 }
 
-function __bynkTest_Idempotency(): bynk.Idempotency {
+function __bynkTest_Idempotency(): __ns_bynk.Idempotency {
   const store = new globalThis.Map<string, unknown>();
   return {
     async dedup(key) {
@@ -157,7 +157,7 @@ function __bynkTest_Idempotency(): bynk.Idempotency {
   };
 }
 
-function __bynkTest_Kv(): bynk_cloudflare.Kv {
+function __bynkTest_Kv(): __ns_bynk_cloudflare.Kv {
   const store = new globalThis.Map<string, string>();
   return {
     async get(key) {
@@ -179,7 +179,7 @@ function __bynkTest_Kv(): bynk_cloudflare.Kv {
   };
 }
 
-function __bynkTest_Locale(): bynk.Locale {
+function __bynkTest_Locale(): __ns_bynk.Locale {
   return {
     async current() {
       return "en" as never;
@@ -187,14 +187,14 @@ function __bynkTest_Locale(): bynk.Locale {
   };
 }
 
-function __bynkTest_Logger(): bynk.Logger {
+function __bynkTest_Logger(): __ns_bynk.Logger {
   return {
     async info() {},
     async error() {},
   };
 }
 
-function __bynkTest_Random(): bynk.Random {
+function __bynkTest_Random(): __ns_bynk.Random {
   let n = 0;
   let seed = 0x2545f491;
   return {
@@ -209,7 +209,7 @@ function __bynkTest_Random(): bynk.Random {
   };
 }
 
-function __bynkTest_Secrets(): bynk.Secrets {
+function __bynkTest_Secrets(): __ns_bynk.Secrets {
   return {
     async get() {
       return None;
@@ -217,26 +217,26 @@ function __bynkTest_Secrets(): bynk.Secrets {
   };
 }
 
-function makeTestDeps(__case?: string) {
-  return { Clock: __bynkTest_Clock(), Fetch: __bynkOverlay(__bynkTest_Fetch(), new __Stub_Fetch(__case), "Fetch") as bynk.Fetch, Idempotency: __bynkTest_Idempotency(), Kv: __bynkOverlay(__bynkTest_Kv(), new __Stub_Kv(__case), "Kv") as bynk_cloudflare.Kv, Locale: __bynkTest_Locale(), Logger: __bynkTest_Logger(), Random: __bynkTest_Random(), Secrets: __bynkTest_Secrets() };
+function __makeTestDeps(__case?: string) {
+  return { Clock: __bynkTest_Clock(), Fetch: __bynkOverlay(__bynkTest_Fetch(), new __Stub_Fetch(__case), "Fetch") as __ns_bynk.Fetch, Idempotency: __bynkTest_Idempotency(), Kv: __bynkOverlay(__bynkTest_Kv(), new __Stub_Kv(__case), "Kv") as __ns_bynk_cloudflare.Kv, Locale: __bynkTest_Locale(), Logger: __bynkTest_Logger(), Random: __bynkTest_Random(), Secrets: __bynkTest_Secrets() };
 }
 
 // case tier: unit
 async function test_the_clock_reads_the_epoch() {
   try {
-    const deps = makeTestDeps();
-    const { clock, draws, greet, ids, locale, lookup, once, relay, secret, store } = demo_plat;
-    const { LocaleTag, Message, MessageArg } = bynk_locale_types;
-    type LocaleTag = bynk_locale_types.LocaleTag;
-    type Message = bynk_locale_types.Message;
-    type MessageArg = bynk_locale_types.MessageArg;
-    const { EventEnvelope, FetchError, Method, Request, Response, Uuid } = bynk;
-    type EventEnvelope = bynk.EventEnvelope;
-    type FetchError = bynk.FetchError;
-    type Method = bynk.Method;
-    type Request = bynk.Request;
-    type Response = bynk.Response;
-    type Uuid = bynk.Uuid;
+    const deps = __makeTestDeps();
+    const { clock, draws, greet, ids, locale, lookup, once, relay, secret, store } = __ns_demo_plat;
+    const { LocaleTag, Message, MessageArg } = __ns_bynk_locale_types;
+    type LocaleTag = __ns_bynk_locale_types.LocaleTag;
+    type Message = __ns_bynk_locale_types.Message;
+    type MessageArg = __ns_bynk_locale_types.MessageArg;
+    const { EventEnvelope, FetchError, Method, Request, Response, Uuid } = __ns_bynk;
+    type EventEnvelope = __ns_bynk.EventEnvelope;
+    type FetchError = __ns_bynk.FetchError;
+    type Method = __ns_bynk.Method;
+    type Request = __ns_bynk.Request;
+    type Response = __ns_bynk.Response;
+    type Uuid = __ns_bynk.Uuid;
     const t = await clock.call(deps);
     if (!(__bynkEq(t, 0))) { throw __bynkExpectFailure("tests/demo/plat.bynk:8:10", 238, 244, "expect t == 0\n  expected: t == 0\n  actual:   " + __bynkShow((t)) + " == " + __bynkShow((0))); }
     return { pass: true };
@@ -251,19 +251,19 @@ async function test_the_clock_reads_the_epoch() {
 // case tier: unit
 async function test_random_integers_come_from_a_fixed_seed() {
   try {
-    const deps = makeTestDeps();
-    const { clock, draws, greet, ids, locale, lookup, once, relay, secret, store } = demo_plat;
-    const { LocaleTag, Message, MessageArg } = bynk_locale_types;
-    type LocaleTag = bynk_locale_types.LocaleTag;
-    type Message = bynk_locale_types.Message;
-    type MessageArg = bynk_locale_types.MessageArg;
-    const { EventEnvelope, FetchError, Method, Request, Response, Uuid } = bynk;
-    type EventEnvelope = bynk.EventEnvelope;
-    type FetchError = bynk.FetchError;
-    type Method = bynk.Method;
-    type Request = bynk.Request;
-    type Response = bynk.Response;
-    type Uuid = bynk.Uuid;
+    const deps = __makeTestDeps();
+    const { clock, draws, greet, ids, locale, lookup, once, relay, secret, store } = __ns_demo_plat;
+    const { LocaleTag, Message, MessageArg } = __ns_bynk_locale_types;
+    type LocaleTag = __ns_bynk_locale_types.LocaleTag;
+    type Message = __ns_bynk_locale_types.Message;
+    type MessageArg = __ns_bynk_locale_types.MessageArg;
+    const { EventEnvelope, FetchError, Method, Request, Response, Uuid } = __ns_bynk;
+    type EventEnvelope = __ns_bynk.EventEnvelope;
+    type FetchError = __ns_bynk.FetchError;
+    type Method = __ns_bynk.Method;
+    type Request = __ns_bynk.Request;
+    type Response = __ns_bynk.Response;
+    type Uuid = __ns_bynk.Uuid;
     const xs = await draws.call(deps);
     if (!(__bynkEq(xs, [156, 731]))) { throw __bynkExpectFailure("tests/demo/plat.bynk:13:10", 330, 346, "expect xs == [156, 731]\n  expected: xs == [156, 731]\n  actual:   " + __bynkShow((xs)) + " == " + __bynkShow(([156, 731]))); }
     return { pass: true };
@@ -278,19 +278,19 @@ async function test_random_integers_come_from_a_fixed_seed() {
 // case tier: unit
 async function test_random_uuids_count_up() {
   try {
-    const deps = makeTestDeps();
-    const { clock, draws, greet, ids, locale, lookup, once, relay, secret, store } = demo_plat;
-    const { LocaleTag, Message, MessageArg } = bynk_locale_types;
-    type LocaleTag = bynk_locale_types.LocaleTag;
-    type Message = bynk_locale_types.Message;
-    type MessageArg = bynk_locale_types.MessageArg;
-    const { EventEnvelope, FetchError, Method, Request, Response, Uuid } = bynk;
-    type EventEnvelope = bynk.EventEnvelope;
-    type FetchError = bynk.FetchError;
-    type Method = bynk.Method;
-    type Request = bynk.Request;
-    type Response = bynk.Response;
-    type Uuid = bynk.Uuid;
+    const deps = __makeTestDeps();
+    const { clock, draws, greet, ids, locale, lookup, once, relay, secret, store } = __ns_demo_plat;
+    const { LocaleTag, Message, MessageArg } = __ns_bynk_locale_types;
+    type LocaleTag = __ns_bynk_locale_types.LocaleTag;
+    type Message = __ns_bynk_locale_types.Message;
+    type MessageArg = __ns_bynk_locale_types.MessageArg;
+    const { EventEnvelope, FetchError, Method, Request, Response, Uuid } = __ns_bynk;
+    type EventEnvelope = __ns_bynk.EventEnvelope;
+    type FetchError = __ns_bynk.FetchError;
+    type Method = __ns_bynk.Method;
+    type Request = __ns_bynk.Request;
+    type Response = __ns_bynk.Response;
+    type Uuid = __ns_bynk.Uuid;
     const xs = await ids.call(deps);
     if (!(__bynkEq(xs, ["00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002"]))) { throw __bynkExpectFailure("tests/demo/plat.bynk:18:10", 413, 499, "expect xs == [\"00000000-0000-4000-8000-000000000001\", \"00000000-0000-4000-8000-000000000002\"]\n  expected: xs == [\"00000000-0000-4000-8000-000000000001\", \"00000000-0000-4000-8000-000000000002\"]\n  actual:   " + __bynkShow((xs)) + " == " + __bynkShow((["00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002"]))); }
     return { pass: true };
@@ -305,19 +305,19 @@ async function test_random_uuids_count_up() {
 // case tier: unit
 async function test_no_secret_is_set() {
   try {
-    const deps = makeTestDeps();
-    const { clock, draws, greet, ids, locale, lookup, once, relay, secret, store } = demo_plat;
-    const { LocaleTag, Message, MessageArg } = bynk_locale_types;
-    type LocaleTag = bynk_locale_types.LocaleTag;
-    type Message = bynk_locale_types.Message;
-    type MessageArg = bynk_locale_types.MessageArg;
-    const { EventEnvelope, FetchError, Method, Request, Response, Uuid } = bynk;
-    type EventEnvelope = bynk.EventEnvelope;
-    type FetchError = bynk.FetchError;
-    type Method = bynk.Method;
-    type Request = bynk.Request;
-    type Response = bynk.Response;
-    type Uuid = bynk.Uuid;
+    const deps = __makeTestDeps();
+    const { clock, draws, greet, ids, locale, lookup, once, relay, secret, store } = __ns_demo_plat;
+    const { LocaleTag, Message, MessageArg } = __ns_bynk_locale_types;
+    type LocaleTag = __ns_bynk_locale_types.LocaleTag;
+    type Message = __ns_bynk_locale_types.Message;
+    type MessageArg = __ns_bynk_locale_types.MessageArg;
+    const { EventEnvelope, FetchError, Method, Request, Response, Uuid } = __ns_bynk;
+    type EventEnvelope = __ns_bynk.EventEnvelope;
+    type FetchError = __ns_bynk.FetchError;
+    type Method = __ns_bynk.Method;
+    type Request = __ns_bynk.Request;
+    type Response = __ns_bynk.Response;
+    type Uuid = __ns_bynk.Uuid;
     const s = await secret.call("API_KEY", deps);
     if (!(s.tag === "None")) { throw __bynkExpectFailure("tests/demo/plat.bynk:23:10", 572, 581, "expect s is None"); }
     return { pass: true };
@@ -332,19 +332,19 @@ async function test_no_secret_is_set() {
 // case tier: unit
 async function test_the_locale_is_en() {
   try {
-    const deps = makeTestDeps();
-    const { clock, draws, greet, ids, locale, lookup, once, relay, secret, store } = demo_plat;
-    const { LocaleTag, Message, MessageArg } = bynk_locale_types;
-    type LocaleTag = bynk_locale_types.LocaleTag;
-    type Message = bynk_locale_types.Message;
-    type MessageArg = bynk_locale_types.MessageArg;
-    const { EventEnvelope, FetchError, Method, Request, Response, Uuid } = bynk;
-    type EventEnvelope = bynk.EventEnvelope;
-    type FetchError = bynk.FetchError;
-    type Method = bynk.Method;
-    type Request = bynk.Request;
-    type Response = bynk.Response;
-    type Uuid = bynk.Uuid;
+    const deps = __makeTestDeps();
+    const { clock, draws, greet, ids, locale, lookup, once, relay, secret, store } = __ns_demo_plat;
+    const { LocaleTag, Message, MessageArg } = __ns_bynk_locale_types;
+    type LocaleTag = __ns_bynk_locale_types.LocaleTag;
+    type Message = __ns_bynk_locale_types.Message;
+    type MessageArg = __ns_bynk_locale_types.MessageArg;
+    const { EventEnvelope, FetchError, Method, Request, Response, Uuid } = __ns_bynk;
+    type EventEnvelope = __ns_bynk.EventEnvelope;
+    type FetchError = __ns_bynk.FetchError;
+    type Method = __ns_bynk.Method;
+    type Request = __ns_bynk.Request;
+    type Response = __ns_bynk.Response;
+    type Uuid = __ns_bynk.Uuid;
     const l = await locale.call(deps);
     if (!(__bynkEq(l, "en"))) { throw __bynkExpectFailure("tests/demo/plat.bynk:28:10", 645, 654, "expect l == \"en\"\n  expected: l == \"en\"\n  actual:   " + __bynkShow((l)) + " == " + __bynkShow(("en"))); }
     return { pass: true };
@@ -360,19 +360,19 @@ async function test_the_locale_is_en() {
 async function test_the_logger_records_without_printing() {
   try {
     const __obs = { log: {} as globalThis.Record<string, { args: unknown[]; order: number }[]>, n: 0 };
-    const deps = __bynkRecordDeps(makeTestDeps(), { Clock: ["now"], Fetch: ["send"], Idempotency: ["dedup", "remember"], Kv: ["delete", "get", "list", "put", "putTtl"], Locale: ["current"], Logger: ["error", "info"], Random: ["int", "uuid"], Secrets: ["get"] }, __obs);
-    const { clock, draws, greet, ids, locale, lookup, once, relay, secret, store } = demo_plat;
-    const { LocaleTag, Message, MessageArg } = bynk_locale_types;
-    type LocaleTag = bynk_locale_types.LocaleTag;
-    type Message = bynk_locale_types.Message;
-    type MessageArg = bynk_locale_types.MessageArg;
-    const { EventEnvelope, FetchError, Method, Request, Response, Uuid } = bynk;
-    type EventEnvelope = bynk.EventEnvelope;
-    type FetchError = bynk.FetchError;
-    type Method = bynk.Method;
-    type Request = bynk.Request;
-    type Response = bynk.Response;
-    type Uuid = bynk.Uuid;
+    const deps = __bynkRecordDeps(__makeTestDeps(), { Clock: ["now"], Fetch: ["send"], Idempotency: ["dedup", "remember"], Kv: ["delete", "get", "list", "put", "putTtl"], Locale: ["current"], Logger: ["error", "info"], Random: ["int", "uuid"], Secrets: ["get"] }, __obs);
+    const { clock, draws, greet, ids, locale, lookup, once, relay, secret, store } = __ns_demo_plat;
+    const { LocaleTag, Message, MessageArg } = __ns_bynk_locale_types;
+    type LocaleTag = __ns_bynk_locale_types.LocaleTag;
+    type Message = __ns_bynk_locale_types.Message;
+    type MessageArg = __ns_bynk_locale_types.MessageArg;
+    const { EventEnvelope, FetchError, Method, Request, Response, Uuid } = __ns_bynk;
+    type EventEnvelope = __ns_bynk.EventEnvelope;
+    type FetchError = __ns_bynk.FetchError;
+    type Method = __ns_bynk.Method;
+    type Request = __ns_bynk.Request;
+    type Response = __ns_bynk.Response;
+    type Uuid = __ns_bynk.Uuid;
     const __r0 = await greet.call("ann", deps);
     if (!((((__obs.log["Logger.info"] ?? []).filter((__c: { args: unknown[] }) => { const { msg } = { msg: __c.args[0] } as __Logger_info_Call; return (msg === "hello ann"); }).length) === (1)))) { throw __bynkExpectFailure("tests/demo/plat.bynk:33:10", 741, 788, "expect Logger.info called once with msg == \"hello ann\""); }
     if (!(((__obs.log["Logger.error"] ?? []).length === 0))) { throw __bynkExpectFailure("tests/demo/plat.bynk:34:10", 798, 823, "expect Logger.error never called"); }
@@ -388,19 +388,19 @@ async function test_the_logger_records_without_printing() {
 // case tier: unit
 async function test_idempotency_remembers_within_a_case() {
   try {
-    const deps = makeTestDeps();
-    const { clock, draws, greet, ids, locale, lookup, once, relay, secret, store } = demo_plat;
-    const { LocaleTag, Message, MessageArg } = bynk_locale_types;
-    type LocaleTag = bynk_locale_types.LocaleTag;
-    type Message = bynk_locale_types.Message;
-    type MessageArg = bynk_locale_types.MessageArg;
-    const { EventEnvelope, FetchError, Method, Request, Response, Uuid } = bynk;
-    type EventEnvelope = bynk.EventEnvelope;
-    type FetchError = bynk.FetchError;
-    type Method = bynk.Method;
-    type Request = bynk.Request;
-    type Response = bynk.Response;
-    type Uuid = bynk.Uuid;
+    const deps = __makeTestDeps();
+    const { clock, draws, greet, ids, locale, lookup, once, relay, secret, store } = __ns_demo_plat;
+    const { LocaleTag, Message, MessageArg } = __ns_bynk_locale_types;
+    type LocaleTag = __ns_bynk_locale_types.LocaleTag;
+    type Message = __ns_bynk_locale_types.Message;
+    type MessageArg = __ns_bynk_locale_types.MessageArg;
+    const { EventEnvelope, FetchError, Method, Request, Response, Uuid } = __ns_bynk;
+    type EventEnvelope = __ns_bynk.EventEnvelope;
+    type FetchError = __ns_bynk.FetchError;
+    type Method = __ns_bynk.Method;
+    type Request = __ns_bynk.Request;
+    type Response = __ns_bynk.Response;
+    type Uuid = __ns_bynk.Uuid;
     const first = await once.call("k", deps);
     const second = await once.call("k", deps);
     if (!(__bynkEq(first, true))) { throw __bynkExpectFailure("tests/demo/plat.bynk:40:10", 942, 955, "expect first == true\n  expected: first == true\n  actual:   " + __bynkShow((first)) + " == " + __bynkShow((true))); }
@@ -417,19 +417,19 @@ async function test_idempotency_remembers_within_a_case() {
 // case tier: unit
 async function test_idempotency_is_fresh_per_case() {
   try {
-    const deps = makeTestDeps();
-    const { clock, draws, greet, ids, locale, lookup, once, relay, secret, store } = demo_plat;
-    const { LocaleTag, Message, MessageArg } = bynk_locale_types;
-    type LocaleTag = bynk_locale_types.LocaleTag;
-    type Message = bynk_locale_types.Message;
-    type MessageArg = bynk_locale_types.MessageArg;
-    const { EventEnvelope, FetchError, Method, Request, Response, Uuid } = bynk;
-    type EventEnvelope = bynk.EventEnvelope;
-    type FetchError = bynk.FetchError;
-    type Method = bynk.Method;
-    type Request = bynk.Request;
-    type Response = bynk.Response;
-    type Uuid = bynk.Uuid;
+    const deps = __makeTestDeps();
+    const { clock, draws, greet, ids, locale, lookup, once, relay, secret, store } = __ns_demo_plat;
+    const { LocaleTag, Message, MessageArg } = __ns_bynk_locale_types;
+    type LocaleTag = __ns_bynk_locale_types.LocaleTag;
+    type Message = __ns_bynk_locale_types.Message;
+    type MessageArg = __ns_bynk_locale_types.MessageArg;
+    const { EventEnvelope, FetchError, Method, Request, Response, Uuid } = __ns_bynk;
+    type EventEnvelope = __ns_bynk.EventEnvelope;
+    type FetchError = __ns_bynk.FetchError;
+    type Method = __ns_bynk.Method;
+    type Request = __ns_bynk.Request;
+    type Response = __ns_bynk.Response;
+    type Uuid = __ns_bynk.Uuid;
     const first = await once.call("k", deps);
     if (!(__bynkEq(first, true))) { throw __bynkExpectFailure("tests/demo/plat.bynk:46:10", 1062, 1075, "expect first == true\n  expected: first == true\n  actual:   " + __bynkShow((first)) + " == " + __bynkShow((true))); }
     return { pass: true };
@@ -445,19 +445,19 @@ async function test_idempotency_is_fresh_per_case() {
 async function test_kv_is_in_memory() {
   try {
     const __obs = { log: {} as globalThis.Record<string, { args: unknown[]; order: number }[]>, n: 0 };
-    const deps = __bynkRecordDeps(makeTestDeps(), { Clock: ["now"], Fetch: ["send"], Idempotency: ["dedup", "remember"], Kv: ["delete", "get", "list", "put", "putTtl"], Locale: ["current"], Logger: ["error", "info"], Random: ["int", "uuid"], Secrets: ["get"] }, __obs);
-    const { clock, draws, greet, ids, locale, lookup, once, relay, secret, store } = demo_plat;
-    const { LocaleTag, Message, MessageArg } = bynk_locale_types;
-    type LocaleTag = bynk_locale_types.LocaleTag;
-    type Message = bynk_locale_types.Message;
-    type MessageArg = bynk_locale_types.MessageArg;
-    const { EventEnvelope, FetchError, Method, Request, Response, Uuid } = bynk;
-    type EventEnvelope = bynk.EventEnvelope;
-    type FetchError = bynk.FetchError;
-    type Method = bynk.Method;
-    type Request = bynk.Request;
-    type Response = bynk.Response;
-    type Uuid = bynk.Uuid;
+    const deps = __bynkRecordDeps(__makeTestDeps(), { Clock: ["now"], Fetch: ["send"], Idempotency: ["dedup", "remember"], Kv: ["delete", "get", "list", "put", "putTtl"], Locale: ["current"], Logger: ["error", "info"], Random: ["int", "uuid"], Secrets: ["get"] }, __obs);
+    const { clock, draws, greet, ids, locale, lookup, once, relay, secret, store } = __ns_demo_plat;
+    const { LocaleTag, Message, MessageArg } = __ns_bynk_locale_types;
+    type LocaleTag = __ns_bynk_locale_types.LocaleTag;
+    type Message = __ns_bynk_locale_types.Message;
+    type MessageArg = __ns_bynk_locale_types.MessageArg;
+    const { EventEnvelope, FetchError, Method, Request, Response, Uuid } = __ns_bynk;
+    type EventEnvelope = __ns_bynk.EventEnvelope;
+    type FetchError = __ns_bynk.FetchError;
+    type Method = __ns_bynk.Method;
+    type Request = __ns_bynk.Request;
+    type Response = __ns_bynk.Response;
+    type Uuid = __ns_bynk.Uuid;
     const r = await store.call("a", "1", deps);
     if (!(__bynkEq(r, Some("1")))) { throw __bynkExpectFailure("tests/demo/plat.bynk:51:10", 1145, 1159, "expect r == Some(\"1\")\n  expected: r == Some(\"1\")\n  actual:   " + __bynkShow((r)) + " == " + __bynkShow((Some("1")))); }
     if (!((((__obs.log["Kv.put"] ?? []).filter((__c: { args: unknown[] }) => { const { key, value } = { key: __c.args[0], value: __c.args[1] } as __Kv_put_Call; return (key === "a"); }).length) === (1)))) { throw __bynkExpectFailure("tests/demo/plat.bynk:52:10", 1169, 1203, "expect Kv.put called once with key == \"a\""); }
@@ -473,19 +473,19 @@ async function test_kv_is_in_memory() {
 // case tier: unit
 async function test_kv_is_fresh_per_case() {
   try {
-    const deps = makeTestDeps();
-    const { clock, draws, greet, ids, locale, lookup, once, relay, secret, store } = demo_plat;
-    const { LocaleTag, Message, MessageArg } = bynk_locale_types;
-    type LocaleTag = bynk_locale_types.LocaleTag;
-    type Message = bynk_locale_types.Message;
-    type MessageArg = bynk_locale_types.MessageArg;
-    const { EventEnvelope, FetchError, Method, Request, Response, Uuid } = bynk;
-    type EventEnvelope = bynk.EventEnvelope;
-    type FetchError = bynk.FetchError;
-    type Method = bynk.Method;
-    type Request = bynk.Request;
-    type Response = bynk.Response;
-    type Uuid = bynk.Uuid;
+    const deps = __makeTestDeps();
+    const { clock, draws, greet, ids, locale, lookup, once, relay, secret, store } = __ns_demo_plat;
+    const { LocaleTag, Message, MessageArg } = __ns_bynk_locale_types;
+    type LocaleTag = __ns_bynk_locale_types.LocaleTag;
+    type Message = __ns_bynk_locale_types.Message;
+    type MessageArg = __ns_bynk_locale_types.MessageArg;
+    const { EventEnvelope, FetchError, Method, Request, Response, Uuid } = __ns_bynk;
+    type EventEnvelope = __ns_bynk.EventEnvelope;
+    type FetchError = __ns_bynk.FetchError;
+    type Method = __ns_bynk.Method;
+    type Request = __ns_bynk.Request;
+    type Response = __ns_bynk.Response;
+    type Uuid = __ns_bynk.Uuid;
     const r = await lookup.call("a", deps);
     if (!(r.tag === "None")) { throw __bynkExpectFailure("tests/demo/plat.bynk:57:10", 1274, 1283, "expect r is None"); }
     return { pass: true };
@@ -501,19 +501,19 @@ async function test_kv_is_fresh_per_case() {
 async function test_a_stubbed_operation_answers__the_rest_reach_the_double() {
   try {
     const __obs = { log: {} as globalThis.Record<string, { args: unknown[]; order: number }[]>, n: 0 };
-    const deps = __bynkRecordDeps(makeTestDeps("a stubbed operation answers; the rest reach the double"), { Clock: ["now"], Fetch: ["send"], Idempotency: ["dedup", "remember"], Kv: ["delete", "get", "list", "put", "putTtl"], Locale: ["current"], Logger: ["error", "info"], Random: ["int", "uuid"], Secrets: ["get"] }, __obs);
-    const { clock, draws, greet, ids, locale, lookup, once, relay, secret, store } = demo_plat;
-    const { LocaleTag, Message, MessageArg } = bynk_locale_types;
-    type LocaleTag = bynk_locale_types.LocaleTag;
-    type Message = bynk_locale_types.Message;
-    type MessageArg = bynk_locale_types.MessageArg;
-    const { EventEnvelope, FetchError, Method, Request, Response, Uuid } = bynk;
-    type EventEnvelope = bynk.EventEnvelope;
-    type FetchError = bynk.FetchError;
-    type Method = bynk.Method;
-    type Request = bynk.Request;
-    type Response = bynk.Response;
-    type Uuid = bynk.Uuid;
+    const deps = __bynkRecordDeps(__makeTestDeps("a stubbed operation answers; the rest reach the double"), { Clock: ["now"], Fetch: ["send"], Idempotency: ["dedup", "remember"], Kv: ["delete", "get", "list", "put", "putTtl"], Locale: ["current"], Logger: ["error", "info"], Random: ["int", "uuid"], Secrets: ["get"] }, __obs);
+    const { clock, draws, greet, ids, locale, lookup, once, relay, secret, store } = __ns_demo_plat;
+    const { LocaleTag, Message, MessageArg } = __ns_bynk_locale_types;
+    type LocaleTag = __ns_bynk_locale_types.LocaleTag;
+    type Message = __ns_bynk_locale_types.Message;
+    type MessageArg = __ns_bynk_locale_types.MessageArg;
+    const { EventEnvelope, FetchError, Method, Request, Response, Uuid } = __ns_bynk;
+    type EventEnvelope = __ns_bynk.EventEnvelope;
+    type FetchError = __ns_bynk.FetchError;
+    type Method = __ns_bynk.Method;
+    type Request = __ns_bynk.Request;
+    type Response = __ns_bynk.Response;
+    type Uuid = __ns_bynk.Uuid;
     const r = await store.call("a", "1", deps);
     if (!(__bynkEq(r, Some("stubbed")))) { throw __bynkExpectFailure("tests/demo/plat.bynk:65:10", 1579, 1599, "expect r == Some(\"stubbed\")\n  expected: r == Some(\"stubbed\")\n  actual:   " + __bynkShow((r)) + " == " + __bynkShow((Some("stubbed")))); }
     if (!(((__obs.log["Kv.put"] ?? []).length === (1)))) { throw __bynkExpectFailure("tests/demo/plat.bynk:66:10", 1609, 1627, "expect Kv.put called once"); }
@@ -530,19 +530,19 @@ async function test_a_stubbed_operation_answers__the_rest_reach_the_double() {
 async function test_a_stubbed_fetch_answers_for_the_network() {
   try {
     const __obs = { log: {} as globalThis.Record<string, { args: unknown[]; order: number }[]>, n: 0 };
-    const deps = __bynkRecordDeps(makeTestDeps("a stubbed fetch answers for the network"), { Clock: ["now"], Fetch: ["send"], Idempotency: ["dedup", "remember"], Kv: ["delete", "get", "list", "put", "putTtl"], Locale: ["current"], Logger: ["error", "info"], Random: ["int", "uuid"], Secrets: ["get"] }, __obs);
-    const { clock, draws, greet, ids, locale, lookup, once, relay, secret, store } = demo_plat;
-    const { LocaleTag, Message, MessageArg } = bynk_locale_types;
-    type LocaleTag = bynk_locale_types.LocaleTag;
-    type Message = bynk_locale_types.Message;
-    type MessageArg = bynk_locale_types.MessageArg;
-    const { EventEnvelope, FetchError, Method, Request, Response, Uuid } = bynk;
-    type EventEnvelope = bynk.EventEnvelope;
-    type FetchError = bynk.FetchError;
-    type Method = bynk.Method;
-    type Request = bynk.Request;
-    type Response = bynk.Response;
-    type Uuid = bynk.Uuid;
+    const deps = __bynkRecordDeps(__makeTestDeps("a stubbed fetch answers for the network"), { Clock: ["now"], Fetch: ["send"], Idempotency: ["dedup", "remember"], Kv: ["delete", "get", "list", "put", "putTtl"], Locale: ["current"], Logger: ["error", "info"], Random: ["int", "uuid"], Secrets: ["get"] }, __obs);
+    const { clock, draws, greet, ids, locale, lookup, once, relay, secret, store } = __ns_demo_plat;
+    const { LocaleTag, Message, MessageArg } = __ns_bynk_locale_types;
+    type LocaleTag = __ns_bynk_locale_types.LocaleTag;
+    type Message = __ns_bynk_locale_types.Message;
+    type MessageArg = __ns_bynk_locale_types.MessageArg;
+    const { EventEnvelope, FetchError, Method, Request, Response, Uuid } = __ns_bynk;
+    type EventEnvelope = __ns_bynk.EventEnvelope;
+    type FetchError = __ns_bynk.FetchError;
+    type Method = __ns_bynk.Method;
+    type Request = __ns_bynk.Request;
+    type Response = __ns_bynk.Response;
+    type Uuid = __ns_bynk.Uuid;
     const s = await relay.call("https://example.test", deps);
     if (!(__bynkEq(s, 204))) { throw __bynkExpectFailure("tests/demo/plat.bynk:72:10", 1803, 1811, "expect s == 204\n  expected: s == 204\n  actual:   " + __bynkShow((s)) + " == " + __bynkShow((204))); }
     if (!((((__obs.log["Fetch.send"] ?? []).filter((__c: { args: unknown[] }) => { const { req } = { req: __c.args[0] } as __Fetch_send_Call; return (req.url === "https://example.test"); }).length) === (1)))) { throw __bynkExpectFailure("tests/demo/plat.bynk:73:10", 1821, 1882, "expect Fetch.send called once with req.url == \"https://example.test\""); }
@@ -558,19 +558,19 @@ async function test_a_stubbed_fetch_answers_for_the_network() {
 // case tier: unit
 async function test_an_unstubbed_fetch_faults_rather_than_reach_the_network() {
   try {
-    const deps = makeTestDeps();
-    const { clock, draws, greet, ids, locale, lookup, once, relay, secret, store } = demo_plat;
-    const { LocaleTag, Message, MessageArg } = bynk_locale_types;
-    type LocaleTag = bynk_locale_types.LocaleTag;
-    type Message = bynk_locale_types.Message;
-    type MessageArg = bynk_locale_types.MessageArg;
-    const { EventEnvelope, FetchError, Method, Request, Response, Uuid } = bynk;
-    type EventEnvelope = bynk.EventEnvelope;
-    type FetchError = bynk.FetchError;
-    type Method = bynk.Method;
-    type Request = bynk.Request;
-    type Response = bynk.Response;
-    type Uuid = bynk.Uuid;
+    const deps = __makeTestDeps();
+    const { clock, draws, greet, ids, locale, lookup, once, relay, secret, store } = __ns_demo_plat;
+    const { LocaleTag, Message, MessageArg } = __ns_bynk_locale_types;
+    type LocaleTag = __ns_bynk_locale_types.LocaleTag;
+    type Message = __ns_bynk_locale_types.Message;
+    type MessageArg = __ns_bynk_locale_types.MessageArg;
+    const { EventEnvelope, FetchError, Method, Request, Response, Uuid } = __ns_bynk;
+    type EventEnvelope = __ns_bynk.EventEnvelope;
+    type FetchError = __ns_bynk.FetchError;
+    type Method = __ns_bynk.Method;
+    type Request = __ns_bynk.Request;
+    type Response = __ns_bynk.Response;
+    type Uuid = __ns_bynk.Uuid;
     const s = await relay.call("https://example.test", deps);
     if (!(__bynkEq(s, 0))) { throw __bynkExpectFailure("tests/demo/plat.bynk:78:10", 2006, 2012, "expect s == 0\n  expected: s == 0\n  actual:   " + __bynkShow((s)) + " == " + __bynkShow((0))); }
     return { pass: true };
@@ -585,19 +585,19 @@ async function test_an_unstubbed_fetch_faults_rather_than_reach_the_network() {
 // case tier: integration
 async function test_the_doubles_hold_at_the_integration_tier() {
   try {
-    const deps = makeTestDeps();
-    const { clock, draws, greet, ids, locale, lookup, once, relay, secret, store } = demo_plat;
-    const { LocaleTag, Message, MessageArg } = bynk_locale_types;
-    type LocaleTag = bynk_locale_types.LocaleTag;
-    type Message = bynk_locale_types.Message;
-    type MessageArg = bynk_locale_types.MessageArg;
-    const { EventEnvelope, FetchError, Method, Request, Response, Uuid } = bynk;
-    type EventEnvelope = bynk.EventEnvelope;
-    type FetchError = bynk.FetchError;
-    type Method = bynk.Method;
-    type Request = bynk.Request;
-    type Response = bynk.Response;
-    type Uuid = bynk.Uuid;
+    const deps = __makeTestDeps();
+    const { clock, draws, greet, ids, locale, lookup, once, relay, secret, store } = __ns_demo_plat;
+    const { LocaleTag, Message, MessageArg } = __ns_bynk_locale_types;
+    type LocaleTag = __ns_bynk_locale_types.LocaleTag;
+    type Message = __ns_bynk_locale_types.Message;
+    type MessageArg = __ns_bynk_locale_types.MessageArg;
+    const { EventEnvelope, FetchError, Method, Request, Response, Uuid } = __ns_bynk;
+    type EventEnvelope = __ns_bynk.EventEnvelope;
+    type FetchError = __ns_bynk.FetchError;
+    type Method = __ns_bynk.Method;
+    type Request = __ns_bynk.Request;
+    type Response = __ns_bynk.Response;
+    type Uuid = __ns_bynk.Uuid;
     const t = await clock.call(deps);
     const s = await secret.call("API_KEY", deps);
     if (!(__bynkEq(t, 0))) { throw __bynkExpectFailure("tests/demo/plat.bynk:84:10", 2148, 2154, "expect t == 0\n  expected: t == 0\n  actual:   " + __bynkShow((t)) + " == " + __bynkShow((0))); }

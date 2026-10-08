@@ -2,9 +2,9 @@
 // test target: app.bundle
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
-import * as app_bundle from "./../app/bundle.js";
-import * as bynk_locale from "./../bynk/locale.js";
-import * as bynk_locale_types from "./../bynk/locale/types.js";
+import * as __ns_app_bundle from "./../app/bundle.js";
+import * as __ns_bynk_locale from "./../bynk/locale.js";
+import * as __ns_bynk_locale_types from "./../bynk/locale/types.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -27,7 +27,7 @@ function __bynkShow(v: unknown): string {
   try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
-function makeTestDeps() {
+function __makeTestDeps() {
   return {  };
 }
 
@@ -35,12 +35,12 @@ function makeTestDeps() {
 async function test_render_still_answers_from_the_reference_block_when_a_second__non_reference_block_exists() {
   try {
     const deps = {};
-    const { render } = app_bundle;
-    const { message, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale;
-    const { LocaleTag, Message, MessageArg } = bynk_locale_types;
-    type LocaleTag = bynk_locale_types.LocaleTag;
-    type Message = bynk_locale_types.Message;
-    type MessageArg = bynk_locale_types.MessageArg;
+    const { render } = __ns_app_bundle;
+    const { message, renderArg, withMoment, withNum, withText, withWhole } = __ns_bynk_locale;
+    const { LocaleTag, Message, MessageArg } = __ns_bynk_locale_types;
+    type LocaleTag = __ns_bynk_locale_types.LocaleTag;
+    type Message = __ns_bynk_locale_types.Message;
+    type MessageArg = __ns_bynk_locale_types.MessageArg;
     const msg = withText(message("greeting"), "name", "Ada");
     if (!(render(("en" as any), msg) === "Hello, Ada!")) { throw __bynkExpectFailure("tests/bundle.test.bynk:12:12", 540, 574, "expect render(\"en\", msg) == \"Hello, Ada!\"\n  expected: render(\"en\", msg) == \"Hello, Ada!\"\n  actual:   " + __bynkShow((render(("en" as any), msg))) + " == " + __bynkShow(("Hello, Ada!"))); }
     return { pass: true };

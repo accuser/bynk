@@ -6,4 +6,3 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError } f
 export function xor(a: boolean, b: boolean): boolean {
   return (a || b) && !(a && b);
 }
-

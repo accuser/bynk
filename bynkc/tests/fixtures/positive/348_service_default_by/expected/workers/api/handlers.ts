@@ -48,4 +48,3 @@ export function __deserialise_View(json: __JsonValue, path: string = "$"): Resul
   return Ok({ ok: __ok } as View);
 }
 
-

@@ -2,7 +2,7 @@
 // test target: calc
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
-import * as calc from "./../calc.js";
+import * as __ns_calc from "./../calc.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -25,7 +25,7 @@ function __bynkShow(v: unknown): string {
   try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
-function makeTestDeps() {
+function __makeTestDeps() {
   return {  };
 }
 
@@ -33,7 +33,7 @@ function makeTestDeps() {
 async function test_doubles() {
   try {
     const deps = {};
-    const { dbl } = calc;
+    const { dbl } = __ns_calc;
     if (!(dbl(3) === 6)) { throw __bynkExpectFailure("calc.bynk:7:12", 95, 106, "expect dbl(3) == 6\n  expected: dbl(3) == 6\n  actual:   " + __bynkShow((dbl(3))) + " == " + __bynkShow((6))); }
     return { pass: true };
   } catch (e) {

@@ -6,7 +6,7 @@ import * as bynk__binding from "./bynk-browser.js";
 
 export function composeApp() {
   const app_demoDeps = { Clock: new bynk__binding.ClockProvider(), Fetch: new bynk__binding.FetchProvider(), Logger: new bynk__binding.LoggerProvider(), Random: new bynk__binding.RandomProvider(), Secrets: new bynk__binding.SecretsProvider() };
-  const app_demoSurface = app_demo.makeSurface(app_demoDeps);
+  const app_demoSurface = app_demo.__makeSurface(app_demoDeps);
 
   return {
     demo: app_demoSurface,

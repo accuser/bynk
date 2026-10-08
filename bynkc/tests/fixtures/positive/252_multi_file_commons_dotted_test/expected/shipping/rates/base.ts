@@ -19,4 +19,3 @@ export const Rate = {
     return Rate.of(n);
   },
 };
-

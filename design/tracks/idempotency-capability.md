@@ -2,7 +2,10 @@
 
 - **Status:** Slicing — slice 0 shipped ([#929](https://github.com/accuser/bynk/issues/929)),
   call-site key scoping shipped as a follow-up correction ([#934](https://github.com/accuser/bynk/issues/934)).
-  Spine issue [#921](https://github.com/accuser/bynk/issues/921) open. §3.1, §3.2, and §3.4
+  Spine issue [#921](https://github.com/accuser/bynk/issues/921) open, though nothing is
+  left to build: slice 1 was settled as documented convention by
+  [ADR 0294](../decisions/0294-events-idempotency-idiom-is-documented-convention.md) (§7),
+  so the spine is ready to retire. §3.1, §3.2, and §3.4
   were genuinely argued and settled during this doc's settling pass (§3.1 depended on
   [#926](https://github.com/accuser/bynk/issues/926)/[ADR 0281](../decisions/0281-generic-capability-methods.md),
   its cut-out sub-issue, which shipped); §3.2's settlement narrowed this track's scope and
@@ -342,9 +345,11 @@ and its shape is now concrete end to end.
   key scoping (§3.4): the qualified handler path, closing the cross-call-site collision
   risk slice 0 shipped without. Not a slice of this track (a correctness fix to the
   already-shipped mechanism, not new capability surface).
-- **Slice 1 (possible, not yet scoped) — event-subscriber sugar.** §12's `e.eventId`
-  canonical-key pattern for event subscribers; whether this deserves special syntax or is
-  just documented convention once slice 0 lands.
+- **Slice 1 (settled: not a slice) — event-subscriber sugar.** §12's `e.eventId`
+  canonical-key pattern for event subscribers. [ADR 0294](../decisions/0294-events-idempotency-idiom-is-documented-convention.md)
+  settled it as documented convention, not syntax: the shipped `dedup`/`remember` pair keyed
+  on `env.eventId` is the idiom, and call-site key scoping (#934) already keeps two
+  subscribers' keys apart.
 
 **Not slices of this track.** Provider-variant selection and the durable provider (the
 original slices 1–2) are not deferred *within* this track — they move to the future,
@@ -413,7 +418,8 @@ survival), but the mechanism and its accepted gap are the same.
 ## 7. Slice status
 
 - [x] Slice 0 — `dedup`/`remember` + the in-memory provider, shipped (#929)
-- [ ] Slice 1 — event-subscriber sugar (unscoped)
+- [x] Slice 1 — event-subscriber sugar: settled as documented convention, no syntax
+  ([ADR 0294](../decisions/0294-events-idempotency-idiom-is-documented-convention.md)); nothing to build
 - [x] Follow-up (not a slice of this track) — call-site key scoping (§3.4), shipped
   ([#934](https://github.com/accuser/bynk/issues/934))
 

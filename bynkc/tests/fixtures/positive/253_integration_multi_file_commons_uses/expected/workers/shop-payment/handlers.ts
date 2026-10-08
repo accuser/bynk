@@ -14,7 +14,7 @@ export interface Bank {
   charge(cents: number): globalThis.Promise<Result<number, PayError>>;
 }
 
-export const BankToken: symbol = globalThis.Symbol("Bank");
+export const __BankToken: symbol = globalThis.Symbol("Bank");
 
 export class StubBank implements Bank {
   async charge(cents: number): globalThis.Promise<Result<number, PayError>> {
@@ -22,7 +22,7 @@ export class StubBank implements Bank {
   }
 }
 
-export const StubBankProvider = { token: BankToken, factory: () => new StubBank() };
+export const __StubBankProvider = { token: __BankToken, factory: () => new StubBank() };
 
 export const authorise = {
   async call(cents: number, deps: { Bank: Bank }): globalThis.Promise<Result<number, PayError>> {
@@ -80,4 +80,3 @@ export function __deserialise_Result_Int_PayError(json: __JsonValue, path: strin
   }
   return Err({ kind: "StructuralMismatch", path, expected: "Ok | Err", actual: String(obj["kind"]) });
 }
-

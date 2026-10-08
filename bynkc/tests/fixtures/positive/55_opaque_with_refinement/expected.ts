@@ -22,4 +22,3 @@ export const Timestamp = {
     return Timestamp.unsafe(0);
   },
 };
-

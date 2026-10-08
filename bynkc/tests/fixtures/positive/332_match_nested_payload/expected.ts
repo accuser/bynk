@@ -39,4 +39,3 @@ export function inner(opt: Option<Result<number, FetchError>>): number {
   }
   throw new globalThis.Error("non-exhaustive match");
 }
-

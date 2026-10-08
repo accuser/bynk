@@ -24,7 +24,6 @@ version = "0.1.0"       # display only; no default
 include = ["src", "tests"]  # trees to compile; default: the conventional
                             # roots that exist, else the project root
 exclude = []                # subtrees to skip during discovery
-out = "out"
 
 [fmt]
 indent = "tab"
@@ -39,6 +38,26 @@ diagnostics_debounce_ms = 300
 
 Delete any line you are happy to leave at its default — the file above is
 equivalent to an empty `bynk.toml`, which is equivalent to `[project]` alone.
+
+## Unknown tables and keys
+
+`bynk.toml` holds the four tables below, and nothing else. An unknown table, a
+key outside any table (including a table's own name given a plain value, such
+as `paths = "src"`), or an unknown key in `[project]`, `[paths]` or `[lsp]` is
+an error. `bynkc` and `bynk` report it, with the nearest name when there is
+one, and build nothing. An unknown `[fmt]` key is reported by the formatter
+(`bynkc fmt`, `bynk fmt`), which owns that table, not by `check` or `compile`:
+
+```text
+bynkc: `bynk.toml` has no table named `[pahts]` — did you mean `[paths]`?
+bynkc: `[project]` has no key named `nmae` — did you mean `name`?
+```
+
+A table for a feature that is planned but not built (`[dependencies]`,
+`[workspace]`, `[deploy]`) gets the same error, naming the issue that tracks
+the feature, so it can't read as working. The language server doesn't refuse
+a manifest: it reads the `[paths]`, `[fmt]` and `[lsp]` it needs and ignores
+the rest, so run `bynkc check` to see what is wrong with one.
 
 ## `[project]`
 
@@ -61,11 +80,11 @@ not a source/test role split. Each path is resolved relative to the project root
 |---|---|---|---|
 | `include` | array of strings | conventional roots | Trees to compile. Defaults to the conventional roots that exist (`src`, and `tests` when present), or the project root itself when neither does. |
 | `exclude` | array of strings | `[]` | Subtrees to skip during discovery (monorepo, vendored, or generated `.bynk`). The tool's own `out`/`node_modules` caches and dot-directories are always skipped. |
-| `out` | string | `"out"` | Default output directory. Consumed by the LSP; the compiler takes its output directory from the CLI, so this key does not override `bynkc`. |
 
 A conventional `src/`(+`tests/`) project and a flat project (`.bynk` at the root)
-both need no `[paths]` at all. The legacy `src`/`tests` keys are ignored if
-present.
+both need no `[paths]` at all. Any other key is an error, including the legacy
+`src`/`tests` keys and `out`. The output directory comes from the command line
+(`bynkc compile -o`), not the manifest.
 
 ### Path consistency
 

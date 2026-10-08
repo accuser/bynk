@@ -210,7 +210,10 @@ pub(crate) fn emit_block_as_function_body_with_return(
     let prev = cx.return_ty.take();
     cx.return_ty = return_type
         .and_then(|rt| bynk_check::checker::resolve_type_ref(rt, &cx.commons().types, tys));
+    // #1750: a function body's tails `return`, whatever sink encloses it.
+    let prev_slot = cx.tail_slot.take();
     emit_block_inner(out, block, cx, indent, async_tail);
+    cx.tail_slot = prev_slot;
     cx.return_ty = prev;
 }
 
@@ -296,10 +299,13 @@ fn emit_block_inner(
                 write_line(
                     out,
                     indent,
-                    &format!(
-                        "return ({cond_expr} ? {t} : {e});",
-                        t = then_tail.expr,
-                        e = else_tail.expr
+                    &tail_stmt(
+                        cx,
+                        &format!(
+                            "({cond_expr} ? {t} : {e})",
+                            t = then_tail.expr,
+                            e = else_tail.expr
+                        ),
                     ),
                 );
             } else {
@@ -312,9 +318,9 @@ fn emit_block_inner(
                 // their tails lower as plain expressions), rebuilt from the
                 // values already in hand.
                 write_line(out, indent, &format!("if ({cond_expr}) {{"));
-                emit_pure_tail_branch(out, then_tail, indent + INDENT_STEP);
+                emit_pure_tail_branch(out, then_tail, cx, indent + INDENT_STEP);
                 write_line(out, indent, "} else {");
-                emit_pure_tail_branch(out, else_tail, indent + INDENT_STEP);
+                emit_pure_tail_branch(out, else_tail, cx, indent + INDENT_STEP);
                 write_line(out, indent, "}");
             }
         }
@@ -330,21 +336,32 @@ fn emit_block_inner(
             for s in &tail.pre {
                 write_line(out, indent, s);
             }
-            write_line(out, indent, &format!("return {};", tail.expr));
+            write_line(out, indent, &tail_stmt(cx, &tail.expr));
         }
     }
     cx.shadow_scopes.pop();
 }
 
+/// #1750: the statement that hands a block's tail value to its sink: `return
+/// value;` in a function, lambda or arrow body, or, inside a statement-form
+/// value expression ([`hoist_value_as_statement`]), the assignment to its slot
+/// followed by a `break` out of its labelled block.
+fn tail_stmt(cx: &LowerCtx, value: &str) -> String {
+    match &cx.tail_slot {
+        None => format!("return {value};"),
+        Some(TailSlot { slot, label }) => format!("{slot} = {value}; break {label};"),
+    }
+}
+
 /// Write one branch of the statement `if` above: the tail's hoisted statements
-/// followed by its `return`. Exactly the body [`emit_block_inner`]'s own `_`
-/// arm writes for a statement-free block, which is what `emit_if_tail` would
-/// have recursed into.
-fn emit_pure_tail_branch(out: &mut String, tail: Lowered, indent: usize) {
+/// followed by its `return` (or, #1750, its sink's [`tail_stmt`]). Exactly the
+/// body [`emit_block_inner`]'s own `_` arm writes for a statement-free block,
+/// which is what `emit_if_tail` would have recursed into.
+fn emit_pure_tail_branch(out: &mut String, tail: Lowered, cx: &LowerCtx, indent: usize) {
     for s in &tail.pre {
         write_line(out, indent, s);
     }
-    write_line(out, indent, &format!("return {};", tail.expr));
+    write_line(out, indent, &tail_stmt(cx, &tail.expr));
 }
 
 /// Lower an expression that's in the tail position of a returning context.
@@ -463,6 +480,93 @@ fn hoist_if_as_statement(
     pre.extend(assign_branch(else_tail, &slot));
     pre.push("}".to_string());
     slot
+}
+
+/// #1750: emit a value-position `if`, `match` or block (`e`) as a real
+/// statement, for when its branches hold a `?`. The arrow (IIFE) these forms
+/// otherwise lower to would capture the `?`'s `return`, so its `Err` became the
+/// expression's value instead of leaving the function: the same miscompile
+/// [`hoist_if_as_statement`] closes for a ternary-shaped `if`, which has only
+/// branch tails to place. Here `emit` writes the form through its ordinary
+/// statement-position emitter (`emit_if_tail`, `emit_match_tail`,
+/// `emit_block_as_function_body`) with [`LowerCtx::tail_slot`] set, so every
+/// tail, however deeply nested, assigns the slot and breaks out of the
+/// labelled block:
+///
+/// ```text
+/// let __r3: T;
+/// __r3_out: {
+///   if (cond) { …; __r3 = a; break __r3_out; } else { __r3 = b; break __r3_out; }
+/// }
+/// ```
+///
+/// The label is what makes the `break` reach past a `switch` (whose cases
+/// would otherwise fall through to its trailing `throw`) and past nested
+/// statement forms. `return_ty` is deliberately left set: the `?` now returns
+/// from the enclosing function, so ADR 0178's embedding conversion applies
+/// (#1750 corrects that ADR's "an IIFE clears it", which described the
+/// miscompile). An `await` inside lands in the enclosing function's own body,
+/// which is `async` whenever its body can `await`.
+fn hoist_value_as_statement(
+    e: &Expr,
+    cx: &mut LowerCtx,
+    emit: impl FnOnce(&mut String, &mut LowerCtx),
+) -> Lowered {
+    let slot = cx.fresh();
+    let label = slot.clone() + "_out";
+    let mut pre = Pre::new();
+    // Typed for the same reason as `hoist_if_as_statement`'s slot: inference
+    // gives up on a `let` whose assignments sit beside a `return`.
+    let annotation = checked_ty_ts(e, cx)
+        .map(|ty| ": ".to_string() + &ty)
+        .unwrap_or_default();
+    pre.push(format!("let {slot}{annotation};"));
+    pre.push(label.clone() + ": {");
+    let saved = cx.tail_slot.replace(TailSlot {
+        slot: slot.clone(),
+        label,
+    });
+    // The body is a local buffer spliced into `pre` — see `without_source_map`.
+    let mut body = String::new();
+    cx.without_source_map(|cx| emit(&mut body, cx));
+    cx.tail_slot = saved;
+    pre.extend(body.lines().map(str::to_string));
+    pre.push("}".to_string());
+    pre.finish(slot)
+}
+
+/// #1750: whether a `?` in `b` would lower to a `return` inside `b`'s own
+/// emitted body. Structural, like [`ternary_shaped`], so the route is chosen
+/// before anything is lowered. A lambda is its own return scope, so a `?`
+/// inside one doesn't count.
+fn block_contains_question(b: &Block) -> bool {
+    let mut stmt_exprs = Vec::new();
+    for s in &b.statements {
+        bynk_syntax::ast::statement_exprs(s, &mut stmt_exprs);
+    }
+    stmt_exprs.into_iter().any(expr_contains_question) || expr_contains_question(&b.tail)
+}
+
+/// [`block_contains_question`] over a `match`'s arms, guards included: a guard
+/// is evaluated inside the arrow too.
+fn arms_contain_question(arms: &[MatchArm]) -> bool {
+    arms.iter().any(|a| {
+        a.guard.as_ref().is_some_and(expr_contains_question)
+            || match &a.body {
+                MatchBody::Expr(e) => expr_contains_question(e),
+                MatchBody::Block(b) => block_contains_question(b),
+            }
+    })
+}
+
+fn expr_contains_question(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Question(_) => true,
+        ExprKind::Lambda(_) => false,
+        _ => bynk_syntax::ast::expr_children(e)
+            .into_iter()
+            .any(expr_contains_question),
+    }
 }
 
 /// One branch of the hoisted statement `if` above: the branch's own hoisted
@@ -1068,6 +1172,21 @@ pub(crate) fn lower_expr(e: &Expr, cx: &mut LowerCtx) -> Lowered {
             type_args,
             args,
         } => pre.absorb(lower_method_call(e, receiver, method, type_args, args, cx)),
+        // #1750: a value-position `if`/`match`/block that holds a `?` becomes a
+        // real statement, so the `?`'s `return` exits the function rather than
+        // an arrow. A ternary-shaped `if` is left to `lower_if`, whose own
+        // hoist already handles a branch that hoists.
+        ExprKind::If {
+            cond,
+            then_block,
+            else_block,
+        } if !ternary_shaped(cond, then_block, else_block, cx)
+            && (block_contains_question(then_block) || block_contains_question(else_block)) =>
+        {
+            pre.absorb(hoist_value_as_statement(e, cx, |out, cx| {
+                emit_if_tail(out, cond, then_block, else_block, cx, INDENT_STEP, false)
+            }))
+        }
         ExprKind::If {
             cond,
             then_block,
@@ -1080,7 +1199,21 @@ pub(crate) fn lower_expr(e: &Expr, cx: &mut LowerCtx) -> Lowered {
         // the arrow, correctly, because a `?`'s `return` there is supposed to
         // exit the lambda.
         ExprKind::Lambda(lambda) => lower_lambda(e, lambda, cx),
+        // Defensive: the parser builds `ExprKind::Block` only for a lambda body,
+        // which `lower_lambda` emits itself, so neither `Block` arm is reached
+        // today. Routed like `if`/`match` so a future value-position block
+        // with a `?` would not reintroduce the arrow miscompile.
+        ExprKind::Block(b) if block_contains_question(b) => {
+            pre.absorb(hoist_value_as_statement(e, cx, |out, cx| {
+                emit_block_as_function_body(out, b, cx, INDENT_STEP, false)
+            }))
+        }
         ExprKind::Block(b) => lower_block_as_expr(b, cx),
+        ExprKind::Match { discriminant, arms } if arms_contain_question(arms) => {
+            pre.absorb(hoist_value_as_statement(e, cx, |out, cx| {
+                emit_match_tail(out, discriminant, arms, cx, INDENT_STEP, false)
+            }))
+        }
         ExprKind::Match { discriminant, arms } => {
             pre.absorb(lower_match_as_iife(discriminant, arms, cx))
         }
@@ -2334,7 +2467,7 @@ fn lower_method_call(
     // `Call(Agent, [<key>])`. Lower to
     // `__makeAgent(<key>).method(args, deps)`. Works in service and
     // agent-handler bodies (deps is the handler's deps parameter) and
-    // test bodies (deps is the locally-built makeTestDeps record).
+    // test bodies (deps is the locally-built __makeTestDeps record).
     //
     // P6.21 (partial, continued): reads `Callee::Agent` (P6.0) instead of
     // `cx.local_agents.contains(&name.name)` — the checker's own
@@ -2745,7 +2878,14 @@ fn lower_cross_context_service_call(
                         .enumerate()
                         .map(|(i, a)| {
                             let lowered = pre.lower(a, cx);
-                            param_cast(&consumed, cx.cross_context(), method, i, lowered)
+                            param_cast(
+                                &consumed,
+                                cx.cross_context(),
+                                method,
+                                i,
+                                lowered,
+                                cx.in_test_scaffold(),
+                            )
                         })
                         .collect();
                     Some(format!(
@@ -2883,6 +3023,31 @@ fn lower_and_with_is(lhs: &Expr, rhs: &Expr, cx: &mut LowerCtx) -> Option<AndWit
     })
 }
 
+/// #1751/#1752: the receiver text to read variant `tag`'s payload fields from.
+/// When the test was emitted out of line (`unnarrowed`), TypeScript hasn't
+/// narrowed `value_text`, so the read goes through the variant the checker
+/// proved.
+fn variant_payload(value_text: &str, tag: &str, unnarrowed: bool) -> String {
+    if unnarrowed {
+        format!("({value_text} as Extract<typeof {value_text}, {{ tag: \"{tag}\" }}>)")
+    } else {
+        value_text.to_string()
+    }
+}
+
+/// #1752: record the `is` tests in `rhs`, a short-circuit right operand
+/// about to be emitted out of line (inside an arrow, or a hoisted `if`), as
+/// unable to narrow their receivers anywhere else. A test is recorded under
+/// either polarity, since an enclosing condition may gather its bindings
+/// through `!`. See [`LowerCtx::unnarrowed_is_tests`].
+fn mark_unnarrowed(rhs: &Expr, cx: &mut LowerCtx) {
+    for when_true in [true, false] {
+        for test in bynk_check::narrowing::matched_is_tests(rhs, when_true) {
+            cx.unnarrowed_is_tests.insert(test.span);
+        }
+    }
+}
+
 /// Walk an expression collecting `const name = expr.field;` strings for
 /// any `is`-pattern bindings on the truthy path. `found` indicates whether
 /// at least one `is` was seen.
@@ -2914,6 +3079,11 @@ fn emit_is_test_bindings(e: &Expr, cx: &mut LowerCtx, out: &mut Vec<String>, fou
             variant, bindings, ..
         } = pattern.as_ref()
         {
+            // #1751/#1752: a test emitted out of line (inside a short-circuit
+            // arrow) doesn't narrow its receiver here; read through the
+            // variant the checker proved instead.
+            let unnarrowed = cx.unnarrowed_is_tests.contains(&e.span);
+            let payload = variant_payload(&value_text, &variant.name, unnarrowed);
             // v0.13: refinement narrowing re-binds the value's name to the
             // branded refined type, read from the forced receiver temp.
             if bindings.is_empty()
@@ -2943,7 +3113,7 @@ fn emit_is_test_bindings(e: &Expr, cx: &mut LowerCtx, out: &mut Vec<String>, fou
                 // #1653: renamed when it shadows (`o is Some(o)`), so the
                 // declaration can't read itself in its temporal dead zone.
                 let local = cx.bind_local_name(&name.name);
-                out.push(format!("const {local} = {value_text}.{field};"));
+                out.push(format!("const {local} = {payload}.{field};"));
             }
         }
         // #474 §2.3.6: an or-pattern's shared names can live at different
@@ -2986,7 +3156,15 @@ fn emit_is_test_bindings(e: &Expr, cx: &mut LowerCtx, out: &mut Vec<String>, fou
                             let local = cx
                                 .resolved_local_name(&name.name)
                                 .unwrap_or_else(|| ts_ident(&name.name));
-                            pairs.push((local, format!("{value_text}.{field}")));
+                            // #1765 review: out of line, the dispatch below
+                            // starts from the whole union, so its last arm (a
+                            // bare `else`) isn't narrowed to this variant.
+                            let payload = variant_payload(
+                                &value_text,
+                                &variant.name,
+                                cx.unnarrowed_is_tests.contains(&e.span),
+                            );
+                            pairs.push((local, payload + "." + &field));
                         }
                         (Some(variant.name.clone()), pairs)
                     }
@@ -3027,10 +3205,19 @@ pub(crate) fn is_simple_is_receiver(value: &Expr) -> bool {
 }
 
 /// Render a *simple* `is` receiver (see `is_simple_is_receiver`) as a textual
-/// reference for binding lookups. Complex receivers never reach this function
-/// — they are lifted to a temp and resolved via the span cache in
-/// `LowerCtx::is_receiver_text` — so the final arm is a defensive backstop the
-/// `no_unknown_placeholder_in_emitted_output` test also guards against.
+/// reference for binding lookups.
+///
+/// #1668: a complex receiver never reaches this function. Its only caller,
+/// `LowerCtx::is_receiver_text`, serves the binding gatherer
+/// (`gather_is_bindings_for_emit`), and each of the gatherer's call sites
+/// (`lower_and_with_is`, the value-position `if` IIFE, `emit_if_tail`) lowers
+/// the condition first. Lowering every `is` test the gatherer visits
+/// (`bynk_check::narrowing::matched_is_tests`: through `&&`, `!` and parens)
+/// runs `is_receiver_ref`, which lifts a complex receiver into a temp cached by
+/// span, and `is_receiver_text` returns that temp. Reaching the last arm means
+/// that ordering broke. It used to emit a placeholder into the output, invalid
+/// TypeScript that surfaced as a distant `tsc` error; it now fails here, like
+/// the emitter's other broken invariants.
 pub(crate) fn value_text_for_is(value: &Expr) -> String {
     match &value.kind {
         ExprKind::Ident(id) => ts_ident(&id.name),
@@ -3038,7 +3225,12 @@ pub(crate) fn value_text_for_is(value: &Expr) -> String {
             format!("{}.{}", value_text_for_is(receiver), field.name)
         }
         ExprKind::Paren(inner) => value_text_for_is(inner),
-        _ => "(/* TODO: complex is-receiver */ )".to_string(),
+        _ => panic!(
+            "bynk internal error (#1668): the `is` receiver at {:?} is not a simple \
+             lvalue and was not lifted to a temp before its bindings were gathered \
+             — the condition must be lowered first",
+            value.span
+        ),
     }
 }
 
@@ -4361,11 +4553,14 @@ fn lower_if(
             iife.push_str(b);
             iife.push('\n');
         }
-        // v0.154 (ADR 0178): a value-position `if` lowers to an IIFE — a `return`
-        // in its arms exits the arrow, not the enclosing function — so clear the
-        // enclosing `return_ty`: an embedding `?` here behaves exactly like a
-        // plain `?` (no function-level wrap), never inheriting the outer type.
+        // v0.154 (ADR 0178): a value-position `if` lowers to an IIFE, whose
+        // `return`s exit the arrow, so clear the enclosing `return_ty`. #1750:
+        // an `if` whose branches hold a `?` no longer reaches here (it becomes a
+        // statement, `hoist_value_as_statement`, so the `?` exits the function
+        // and keeps its embedding), so nothing inside this arrow reads it.
         let saved = cx.return_ty.take();
+        // #1750: the arrow's own tails `return` from the arrow.
+        let saved_slot = cx.tail_slot.take();
         // #4 review: `iife` is a local buffer spliced into the caller's
         // output later, at an offset `record_span` has no way to learn —
         // see `without_source_map`.
@@ -4394,6 +4589,7 @@ fn lower_if(
         });
         cx.shadow_scopes.pop();
         cx.return_ty = saved;
+        cx.tail_slot = saved_slot;
         for _ in 0..(INDENT_STEP * 2) {
             iife.push(' ');
         }
@@ -4709,6 +4905,8 @@ fn lower_bin_op(op: BinOp, lhs: &Expr, rhs: &Expr, cx: &mut LowerCtx) -> Lowered
         if bindings.is_empty() {
             return pre.finish(format!("{lhs_expr} && {rhs_expr}"));
         }
+        // Every path below emits `rhs` out of line.
+        mark_unnarrowed(rhs, cx);
         // T2.3 (R6.3): `bindings` includes rhs's own hoisted statements
         // (`lower_and_with_is`'s doc comment above), so if one of those is a
         // `?`'s propagating early return, the arrow-IIFE below would capture
@@ -4774,6 +4972,8 @@ fn lower_bin_op(op: BinOp, lhs: &Expr, rhs: &Expr, cx: &mut LowerCtx) -> Lowered
         if bindings.is_empty() {
             return pre.finish(format!("(!({lhs_expr}) || {rhs_expr})"));
         }
+        // Every path below emits `rhs` out of line.
+        mark_unnarrowed(rhs, cx);
         // #1044 review: same fix as the `And` arm above — `lhs_expr` (the
         // antecedent's `is`-check) must stay in the returned text for a
         // caller's narrowing to hold, so gate `slot`'s computation on
@@ -4830,9 +5030,25 @@ fn lower_bin_op(op: BinOp, lhs: &Expr, rhs: &Expr, cx: &mut LowerCtx) -> Lowered
     // fixture pins.
     if matches!(op, BinOp::And | BinOp::Or | BinOp::Implies) {
         let saved_early_return = std::mem::take(&mut cx.emitted_early_return);
+        // #1751: `rhs` may be lowered inside an arrow (below), which would scope
+        // an `is` receiver temp it introduces away from a branch that reads it
+        // (`if !(f(a) is Some(x)) || !(f(b) is Some(y)) { … } else { x + y }`).
+        // Hoist the temps' declarations out of the arrow, as `lower_and_with_is`
+        // does for `&&` (#1654); a nested operator adds to the outermost list.
+        let outermost = cx.is_temp_hoist.is_none();
+        if outermost {
+            cx.is_temp_hoist = Some(Vec::new());
+        }
         let r = lower_expr(rhs, cx);
+        if outermost {
+            pre.extend(cx.is_temp_hoist.take().unwrap_or_default());
+        }
         let rhs_returns = cx.emitted_early_return;
         cx.emitted_early_return = saved_early_return || rhs_returns;
+        if !r.pre.is_empty() {
+            // Both paths below emit `rhs` out of line.
+            mark_unnarrowed(rhs, cx);
+        }
         if !r.pre.is_empty() && rhs_returns {
             let value = match op {
                 BinOp::And => hoist_if_as_statement(
@@ -5263,6 +5479,51 @@ mod decode_map_key_tests {
     }
 }
 
+#[cfg(test)]
+mod value_text_for_is_tests {
+    use super::*;
+    use bynk_syntax::ast::Ident;
+    use bynk_syntax::span::Span;
+
+    fn expr(kind: ExprKind) -> Expr {
+        Expr {
+            id: ExprId::SYNTHETIC,
+            kind,
+            span: Span::new(0, 0),
+        }
+    }
+
+    fn ident(name: &str) -> Ident {
+        Ident {
+            name: name.to_string(),
+            span: Span::new(0, 0),
+        }
+    }
+
+    #[test]
+    fn a_simple_receiver_renders_as_its_lvalue() {
+        let field = expr(ExprKind::FieldAccess {
+            receiver: Box::new(expr(ExprKind::Paren(Box::new(expr(ExprKind::Ident(
+                ident("b"),
+            )))))),
+            field: ident("room"),
+        });
+        assert_eq!(value_text_for_is(&field), "b.room");
+    }
+
+    // #1668 review: a complex receiver reaching here means it was not lifted
+    // to a temp before its bindings were gathered. It must fail loudly, not
+    // fall back to emitted text, which is what the arm used to do.
+    #[test]
+    #[should_panic(expected = "bynk internal error (#1668)")]
+    fn a_complex_receiver_panics_instead_of_emitting_a_placeholder() {
+        value_text_for_is(&expr(ExprKind::IntLit {
+            value: 1,
+            lexeme: "1".to_string(),
+        }));
+    }
+}
+
 fn lower_lambda(e: &Expr, lambda: &LambdaExpr, cx: &mut LowerCtx) -> String {
     let tys = cx.commons().tys();
     let is_async = matches!(
@@ -5298,6 +5559,12 @@ fn lower_lambda(e: &Expr, lambda: &LambdaExpr, cx: &mut LowerCtx) -> String {
     };
     let saved = cx.return_ty.take();
     cx.return_ty = lam_ret;
+    // #1750: the lambda's own tails `return` from the lambda.
+    let saved_slot = cx.tail_slot.take();
+    // #1764 review: an enclosing short-circuit's temp hoist stops here. A
+    // receiver temp inside the lambda is read only inside it, and hoisting its
+    // declaration out would share one slot between the lambda's invocations.
+    let saved_hoist = cx.is_temp_hoist.take();
     let result = match &lambda.body.kind {
         ExprKind::Block(b) => {
             let mut out = format!("{prefix}({params}) => {{\n");
@@ -5336,6 +5603,8 @@ fn lower_lambda(e: &Expr, lambda: &LambdaExpr, cx: &mut LowerCtx) -> String {
             }
         }
     };
+    cx.is_temp_hoist = saved_hoist;
+    cx.tail_slot = saved_slot;
     cx.return_ty = saved;
     cx.shadow_scopes.pop();
     result
@@ -5368,13 +5637,16 @@ fn lower_record_spread(base: &Expr, overrides: &[FieldInit], cx: &mut LowerCtx) 
 }
 
 fn lower_block_as_expr(b: &Block, cx: &mut LowerCtx) -> String {
+    // #1750: the arrow's own tails `return` from the arrow.
+    let saved_slot = cx.tail_slot.take();
     let mut iife = String::new();
     iife.push_str("(() => {\n");
     // IIFE is a synchronous arrow function; the surrounding expression context
     // expects a concrete value, so `Effect.pure(...)` must still wrap as
     // `Promise.resolve(...)`.
     // v0.154 (ADR 0178): a `return` here exits the arrow, not the function, so
-    // clear `return_ty` — an embedding `?` behaves like a plain `?`.
+    // clear `return_ty`. #1750: a block holding a `?` no longer reaches here
+    // (`hoist_value_as_statement`).
     let saved = cx.return_ty.take();
     // #4 review: `iife` is a local buffer spliced into the caller's output
     // later — see `without_source_map`.
@@ -5382,6 +5654,7 @@ fn lower_block_as_expr(b: &Block, cx: &mut LowerCtx) -> String {
         emit_block_as_function_body(&mut iife, b, cx, INDENT_STEP * 2, false)
     });
     cx.return_ty = saved;
+    cx.tail_slot = saved_slot;
     for _ in 0..INDENT_STEP {
         iife.push(' ');
     }
@@ -5410,10 +5683,12 @@ fn lower_match_as_iife(discriminant: &Expr, arms: &[MatchArm], cx: &mut LowerCtx
         .get(&discriminant.id)
         .map(|te| te.ty);
     let disc = pre.lower(discriminant, cx);
-    // v0.154 (ADR 0178): a value-position `match` lowers to an IIFE, so a
-    // `return` in an arm exits the arrow, not the function — clear `return_ty`
-    // so an embedding `?` behaves like a plain `?` here (no function-level wrap).
+    // v0.154 (ADR 0178): a value-position `match` lowers to an IIFE, whose
+    // `return`s exit the arrow, so clear `return_ty`. #1750: a `match` whose
+    // arms hold a `?` no longer reaches here (`hoist_value_as_statement`).
     let saved = cx.return_ty.take();
+    // #1750: the arrow's own tails `return` from the arrow.
+    let saved_slot = cx.tail_slot.take();
     // T2.2 (R6.4): isolate the effectfulness flag to just this IIFE's own
     // body — `disc` was already lowered above, so any await it needed landed
     // in `pre`, not here. Restore as `saved_await || needs_async` so an
@@ -5428,6 +5703,7 @@ fn lower_match_as_iife(discriminant: &Expr, arms: &[MatchArm], cx: &mut LowerCtx
     cx.emitted_await = saved_await || needs_async;
     let inner_iife = finish_async_iife(built, needs_async);
     cx.return_ty = saved;
+    cx.tail_slot = saved_slot;
     pre.finish(inner_iife)
 }
 
@@ -5768,7 +6044,7 @@ fn emit_match_body(
             for s in pre.stmts() {
                 write_line(out, indent, s);
             }
-            write_line(out, indent, &format!("return {v};"));
+            write_line(out, indent, &tail_stmt(cx, &v));
         }
         MatchBody::Block(b) => emit_block_as_function_body(out, b, cx, indent, async_tail),
     }

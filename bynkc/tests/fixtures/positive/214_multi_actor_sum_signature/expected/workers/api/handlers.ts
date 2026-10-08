@@ -54,4 +54,3 @@ export function __deserialise_Event(json: __JsonValue, path: string = "$"): Resu
   return Ok({ id: __id } as Event);
 }
 
-

@@ -2,10 +2,10 @@
 // system test: shop.orders
 
 import { Ok, Err, Some, None, __callService, type Result, type Option, type ValidationError, type JsonError, type __JsonValue, type __BoundaryError, type __ServiceBinding, __responseToHttpResult, __responseToHttpOutcome, __responseToUnauthOutcome, __makeIntegrationDoNamespace, type __DurableObjectState, type __DurableObjectNamespace, __bynkEq } from "../runtime.js";
-import * as shop_orders from "../workers/shop-orders/handlers.js";
-import worker_shop_orders from "../workers/shop-orders/index.js";
-import * as shop_payment from "../workers/shop-payment/handlers.js";
-import worker_shop_payment from "../workers/shop-payment/index.js";
+import * as __ns_shop_orders from "../workers/shop-orders/handlers.js";
+import worker___ns_shop_orders from "../workers/shop-orders/index.js";
+import * as __ns_shop_payment from "../workers/shop-payment/handlers.js";
+import worker___ns_shop_payment from "../workers/shop-payment/index.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -28,22 +28,22 @@ function __bynkShow(v: unknown): string {
   try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
-function makeHarness() {
-  const env_shop_orders: any = {};
-  const env_shop_payment: any = {};
-  env_shop_orders.SHOP_PAYMENT = { fetch: (req: globalThis.Request) => worker_shop_payment.fetch(req, env_shop_payment) } as __ServiceBinding;
-  env_shop_orders.LEDGER = __makeIntegrationDoNamespace((state) => new shop_orders.Ledger(state));
+function __makeHarness() {
+  const env___ns_shop_orders: any = {};
+  const env___ns_shop_payment: any = {};
+  env___ns_shop_orders.SHOP_PAYMENT = { fetch: (req: globalThis.Request) => worker___ns_shop_payment.fetch(req, env___ns_shop_payment) } as __ServiceBinding;
+  env___ns_shop_orders.LEDGER = __makeIntegrationDoNamespace((state) => new __ns_shop_orders.Ledger(state));
   const rootEnv: any = {};
-  rootEnv.SHOP_ORDERS = { fetch: (req: globalThis.Request) => worker_shop_orders.fetch(req, env_shop_orders) } as __ServiceBinding;
-  rootEnv.SHOP_PAYMENT = { fetch: (req: globalThis.Request) => worker_shop_payment.fetch(req, env_shop_payment) } as __ServiceBinding;
+  rootEnv.SHOP_ORDERS = { fetch: (req: globalThis.Request) => worker___ns_shop_orders.fetch(req, env___ns_shop_orders) } as __ServiceBinding;
+  rootEnv.SHOP_PAYMENT = { fetch: (req: globalThis.Request) => worker___ns_shop_payment.fetch(req, env___ns_shop_payment) } as __ServiceBinding;
   return { env: rootEnv };
 }
 
 async function test_successful_orders_accumulate_in_the_ledger() {
   try {
-    const deps = makeHarness();
-    const first = await __callService(deps.env.SHOP_ORDERS, "place", { id: "acct-1" as __JsonValue, cents: ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(100) }, shop_orders.__deserialise_Result_Int_OrderError, "integration", "57187b6ef9a23726");
-    const second = await __callService(deps.env.SHOP_ORDERS, "place", { id: "acct-1" as __JsonValue, cents: ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(200) }, shop_orders.__deserialise_Result_Int_OrderError, "integration", "57187b6ef9a23726");
+    const deps = __makeHarness();
+    const first = await __callService(deps.env.SHOP_ORDERS, "place", { id: "acct-1" as __JsonValue, cents: ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(100) }, __ns_shop_orders.__deserialise_Result_Int_OrderError, "integration", "57187b6ef9a23726");
+    const second = await __callService(deps.env.SHOP_ORDERS, "place", { id: "acct-1" as __JsonValue, cents: ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(200) }, __ns_shop_orders.__deserialise_Result_Int_OrderError, "integration", "57187b6ef9a23726");
     void (((__d) => {
         switch (__d.tag) {
           case "Ok": {
@@ -67,8 +67,8 @@ async function test_successful_orders_accumulate_in_the_ledger() {
 
 async function test_a_declined_payment_is_rejected_and_does_not_record() {
   try {
-    const deps = makeHarness();
-    const r = await __callService(deps.env.SHOP_ORDERS, "place", { id: "acct-2" as __JsonValue, cents: ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(50000) }, shop_orders.__deserialise_Result_Int_OrderError, "integration", "57187b6ef9a23726");
+    const deps = __makeHarness();
+    const r = await __callService(deps.env.SHOP_ORDERS, "place", { id: "acct-2" as __JsonValue, cents: ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(50000) }, __ns_shop_orders.__deserialise_Result_Int_OrderError, "integration", "57187b6ef9a23726");
     void (((__d) => {
         if (__d.tag === "Err" && __d.error.tag === "Rejected") {
           return __bynkExpect((true), "check.bynk:20:31", 723, 727, "expect true");

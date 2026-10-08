@@ -31,4 +31,3 @@ export function parseOrZero(s: string): number {
 export function parsePrice(s: string): Option<number> {
   return ((__s: string) => { if (!/^[+-]?([0-9]+(\.[0-9]*)?|\.[0-9]+)([eE][+-]?[0-9]+)?$/.test(__s)) return None; const __n = globalThis.Number(__s); return globalThis.Number.isFinite(__n) ? Some(__n) : None; })(s);
 }
-

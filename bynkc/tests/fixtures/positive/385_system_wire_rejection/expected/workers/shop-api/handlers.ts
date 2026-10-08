@@ -151,4 +151,3 @@ export function __deserialise_Sku(json: __JsonValue, path: string = "$"): Result
   return Ok(validated.value as Sku);
 }
 
-

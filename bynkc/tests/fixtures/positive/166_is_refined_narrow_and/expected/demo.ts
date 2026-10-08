@@ -22,4 +22,3 @@ export function check(s: string): boolean {
   const __r0 = s;
   return (__r0.length >= 3) && ((() => { const s = __r0 as Code; return firstChar(s); })());
 }
-

@@ -1,0 +1,11 @@
+# 0436 — `bynk dev` stops leftover processes by process group and worker-dir cwd
+
+- **Status:** Accepted (v0.306.1)
+
+**Context.** `bynk dev` stops its wranglers by signalling each child it spawned (#1742). That child is rarely the server. Via npx it is `npx`, which does not pass SIGTERM on to the `sh` → launcher → CLI → `workerd` chain below it. With any provenance, a context whose wrangler exits on its own has its `workerd`s re-parented to init before teardown begins, so nothing reachable from a child leads to them. The survivors keep their ports, and the next `bynk dev` fails with `bind(): Address already in use`. The workerd smokes had the same leak and fixed it by giving each wrangler its own process group (#1686). That fix depends on the guard signalling the group, and in a test nobody presses Ctrl-C.
+
+**Decision.** After the existing SIGTERM and reap of its children, `terminate` stops every process that is in `bynk dev`'s own process group *and* has a working directory under the build's `workers/` dir. It sends SIGTERM, then SIGKILL after the grace period (`bynk::sweep`). `bynk dev` and its ancestors are never selected. The cwd comes from `/proc` on Linux and from `lsof` on the other unixes. Windows is unchanged.
+
+Rejected: **a process group per wrangler**, as #1686 did. Wranglers would leave the terminal's foreground group, so Ctrl-C would no longer reach them, which overturns the shared-group assumption [[0096]]'s exit handling rests on. Restoring Ctrl-C needs a signal handler, which means a new dependency in the shipped binary. And with an inherited TTY, a background wrangler that touches the terminal is stopped by SIGTTIN or SIGTTOU. **Walking descendants from each child** cannot reach the exited context's orphans. **Spawning wrangler without npx** leaves the same orphans.
+
+**Consequences.** The sweep selects processes without matching names: orphans keep both the group and the cwd. The cwd filter is what spares unrelated jobs in a group that `bynk dev` does not lead (a script without job control). Ctrl-C and wrangler's interactive stdio are unchanged. The worst-case teardown grows from about 10 s to about 21 s (the reap's grace, then the sweep's, plus a 1 s settle). Still not covered: `bynk dev` itself receiving SIGTERM, which kills it before any teardown runs. Closing that would take the signal handler rejected above.

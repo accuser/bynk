@@ -15,4 +15,4 @@ export interface Kv {
   list(prefix: Option<string>): globalThis.Promise<readonly string[]>;
 }
 
-export const KvToken: symbol = globalThis.Symbol("Kv");
+export const __KvToken: symbol = globalThis.Symbol("Kv");

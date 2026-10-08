@@ -2,7 +2,7 @@
 // test target: demo.timer
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, __bynkEq } from "../runtime.js";
-import * as demo_timer from "./../demo/timer.js";
+import * as __ns_demo_timer from "./../demo/timer.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -87,15 +87,15 @@ function __bynkOverlay(base: unknown, stub: object, cap: string): unknown {
   });
 }
 
-function makeTestDeps(__case?: string) {
-  return { Clock: __bynkOverlay(new demo_timer.SystemClock(), new __Stub_Clock(__case), "Clock") as demo_timer.Clock, Rates: __bynkOverlay(new demo_timer.LiveRates(), new __Stub_Rates(), "Rates") as demo_timer.Rates };
+function __makeTestDeps(__case?: string) {
+  return { Clock: __bynkOverlay(new __ns_demo_timer.SystemClock(), new __Stub_Clock(__case), "Clock") as __ns_demo_timer.Clock, Rates: __bynkOverlay(new __ns_demo_timer.LiveRates(), new __Stub_Rates(), "Rates") as __ns_demo_timer.Rates };
 }
 
 // case tier: integration
 async function test_a_specific_argument_pattern_beats_the_fallback() {
   try {
-    const deps = makeTestDeps();
-    const { elapsed, rate } = demo_timer;
+    const deps = __makeTestDeps();
+    const { elapsed, rate } = __ns_demo_timer;
     const g = await rate.call("GBP", deps);
     if (!(__bynkEq(g, 125))) { throw __bynkExpectFailure("tests/timer.test.bynk:14:12", 521, 529, "expect g == 125\n  expected: g == 125\n  actual:   " + __bynkShow((g)) + " == " + __bynkShow((125))); }
     return { pass: true };
@@ -110,8 +110,8 @@ async function test_a_specific_argument_pattern_beats_the_fallback() {
 // case tier: integration
 async function test_the_fallback_pattern_applies_to_other_arguments() {
   try {
-    const deps = makeTestDeps();
-    const { elapsed, rate } = demo_timer;
+    const deps = __makeTestDeps();
+    const { elapsed, rate } = __ns_demo_timer;
     const u = await rate.call("USD", deps);
     if (!(__bynkEq(u, 100))) { throw __bynkExpectFailure("tests/timer.test.bynk:19:12", 635, 643, "expect u == 100\n  expected: u == 100\n  actual:   " + __bynkShow((u)) + " == " + __bynkShow((100))); }
     return { pass: true };
@@ -126,8 +126,8 @@ async function test_the_fallback_pattern_applies_to_other_arguments() {
 // case tier: integration
 async function test_an_advancing_clock_via_returns_each() {
   try {
-    const deps = makeTestDeps("an advancing clock via returns each");
-    const { elapsed, rate } = demo_timer;
+    const deps = __makeTestDeps("an advancing clock via returns each");
+    const { elapsed, rate } = __ns_demo_timer;
     const e = await elapsed.call(deps);
     if (!(__bynkEq(e, 150))) { throw __bynkExpectFailure("tests/timer.test.bynk:25:12", 780, 788, "expect e == 150\n  expected: e == 150\n  actual:   " + __bynkShow((e)) + " == " + __bynkShow((150))); }
     return { pass: true };

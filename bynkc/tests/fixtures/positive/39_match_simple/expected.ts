@@ -28,4 +28,3 @@ export function describe(s: Status): string {
   }
   throw new globalThis.Error("non-exhaustive match");
 }
-

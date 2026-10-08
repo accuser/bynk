@@ -235,6 +235,9 @@ let c = Counter(CounterId.unsafe("a"))
 let n <- c.increment()
 ```
 
+The same form works from a service handler or from another agent's handler. There
+is no separate agent-reference type to declare.
+
 ## Capabilities a handler needs
 
 An agent handler declares the capabilities its body uses with `given`, exactly

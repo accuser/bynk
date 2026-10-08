@@ -6,4 +6,3 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError, __
 export function decode(s: string): Option<globalThis.Uint8Array> {
   return __bynkBytesFromBase64(s);
 }
-

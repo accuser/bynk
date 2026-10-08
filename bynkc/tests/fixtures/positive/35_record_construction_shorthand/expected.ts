@@ -14,4 +14,3 @@ export const Pair = {
 export function make(left: number, right: number): Pair {
   return { left, right };
 }
-

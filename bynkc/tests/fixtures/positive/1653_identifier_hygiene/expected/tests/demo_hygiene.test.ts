@@ -2,7 +2,7 @@
 // test target: demo.hygiene
 
 import { Ok, Err, Some, None, __makeTestState, type Result, type Option, type ValidationError, type __BoundaryError, type __JsonValue, type JsonError, __bynkEq } from "../runtime.js";
-import * as demo_hygiene from "./../demo/hygiene.js";
+import * as __ns_demo_hygiene from "./../demo/hygiene.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -25,47 +25,47 @@ function __bynkShow(v: unknown): string {
   try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
-function makeTestDeps() {
-  return { Clock: new demo_hygiene.FixedClock() };
+function __makeTestDeps() {
+  return { Clock: new __ns_demo_hygiene.FixedClock() };
 }
 
 // case tier: unit
 async function test_functions_named_after_host_and_runtime_names() {
   try {
-    demo_hygiene.__resetAgents();
-    const deps = makeTestDeps();
-    const { Array, ArrayBuffer, Bag, BigInt, Blob, Boolean, BoundaryError, Date, DurableObjectState, Error, Headers, Intl, JSON, JsonValue, Keyword, Labelled, Map, Math, Number, Object, Parameters, Promise, Record, RegExp, Request, Response, ReturnType, Set, StateRegistry, Symbol, TextDecoder, TextEncoder, URL, Uint8Array, __makeBag, callService, console, crypto, encodeLabel, encodeURIComponent, half, keywordRoundTrip, keywordSum, labelIs, labelOf, matchPath, mkError, rebind, roundTrip, serialise_Labelled, size, unique, unwrapIs, unwrapMatch, withKey } = demo_hygiene;
-    type Array = demo_hygiene.Array;
-    type ArrayBuffer = demo_hygiene.ArrayBuffer;
-    type BigInt = demo_hygiene.BigInt;
-    type Blob = demo_hygiene.Blob;
-    type Boolean = demo_hygiene.Boolean;
-    type BoundaryError = demo_hygiene.BoundaryError;
-    type Date = demo_hygiene.Date;
-    type DurableObjectState = demo_hygiene.DurableObjectState;
-    type Error = demo_hygiene.Error;
-    type Headers = demo_hygiene.Headers;
-    type Intl = demo_hygiene.Intl;
-    type JSON = demo_hygiene.JSON;
-    type JsonValue = demo_hygiene.JsonValue;
-    type Keyword = demo_hygiene.Keyword;
-    type Labelled = demo_hygiene.Labelled;
-    type Math = demo_hygiene.Math;
-    type Number = demo_hygiene.Number;
-    type Object = demo_hygiene.Object;
-    type Parameters = demo_hygiene.Parameters;
-    type Promise = demo_hygiene.Promise;
-    type Record = demo_hygiene.Record;
-    type RegExp = demo_hygiene.RegExp;
-    type Request = demo_hygiene.Request;
-    type Response = demo_hygiene.Response;
-    type ReturnType = demo_hygiene.ReturnType;
-    type StateRegistry = demo_hygiene.StateRegistry;
-    type Symbol = demo_hygiene.Symbol;
-    type TextDecoder = demo_hygiene.TextDecoder;
-    type TextEncoder = demo_hygiene.TextEncoder;
-    type URL = demo_hygiene.URL;
-    type Uint8Array = demo_hygiene.Uint8Array;
+    __ns_demo_hygiene.__resetAgents();
+    const deps = __makeTestDeps();
+    const { Array, ArrayBuffer, Bag, BigInt, Blob, Boolean, BoundaryError, Date, DurableObjectState, Error, Headers, Intl, JSON, JsonValue, Keyword, Labelled, Map, Math, Number, Object, Parameters, Promise, Record, RegExp, Request, Response, ReturnType, Set, StateRegistry, Symbol, TextDecoder, TextEncoder, URL, Uint8Array, __makeBag, callService, console, crypto, encodeLabel, encodeURIComponent, half, keywordRoundTrip, keywordSum, labelIs, labelOf, matchPath, mkError, rebind, roundTrip, serialise_Labelled, size, unique, unwrapIs, unwrapMatch, withKey } = __ns_demo_hygiene;
+    type Array = __ns_demo_hygiene.Array;
+    type ArrayBuffer = __ns_demo_hygiene.ArrayBuffer;
+    type BigInt = __ns_demo_hygiene.BigInt;
+    type Blob = __ns_demo_hygiene.Blob;
+    type Boolean = __ns_demo_hygiene.Boolean;
+    type BoundaryError = __ns_demo_hygiene.BoundaryError;
+    type Date = __ns_demo_hygiene.Date;
+    type DurableObjectState = __ns_demo_hygiene.DurableObjectState;
+    type Error = __ns_demo_hygiene.Error;
+    type Headers = __ns_demo_hygiene.Headers;
+    type Intl = __ns_demo_hygiene.Intl;
+    type JSON = __ns_demo_hygiene.JSON;
+    type JsonValue = __ns_demo_hygiene.JsonValue;
+    type Keyword = __ns_demo_hygiene.Keyword;
+    type Labelled = __ns_demo_hygiene.Labelled;
+    type Math = __ns_demo_hygiene.Math;
+    type Number = __ns_demo_hygiene.Number;
+    type Object = __ns_demo_hygiene.Object;
+    type Parameters = __ns_demo_hygiene.Parameters;
+    type Promise = __ns_demo_hygiene.Promise;
+    type Record = __ns_demo_hygiene.Record;
+    type RegExp = __ns_demo_hygiene.RegExp;
+    type Request = __ns_demo_hygiene.Request;
+    type Response = __ns_demo_hygiene.Response;
+    type ReturnType = __ns_demo_hygiene.ReturnType;
+    type StateRegistry = __ns_demo_hygiene.StateRegistry;
+    type Symbol = __ns_demo_hygiene.Symbol;
+    type TextDecoder = __ns_demo_hygiene.TextDecoder;
+    type TextEncoder = __ns_demo_hygiene.TextEncoder;
+    type URL = __ns_demo_hygiene.URL;
+    type Uint8Array = __ns_demo_hygiene.Uint8Array;
     if (!(console(1) === 2)) { throw __bynkExpectFailure("tests/demo/hygiene.bynk:7:10", 160, 175, "expect console(1) == 2\n  expected: console(1) == 2\n  actual:   " + __bynkShow((console(1))) + " == " + __bynkShow((2))); }
     if (!(crypto(3) === 6)) { throw __bynkExpectFailure("tests/demo/hygiene.bynk:8:10", 185, 199, "expect crypto(3) == 6\n  expected: crypto(3) == 6\n  actual:   " + __bynkShow((crypto(3))) + " == " + __bynkShow((6))); }
     if (!(encodeURIComponent("a b") === "a b")) { throw __bynkExpectFailure("tests/demo/hygiene.bynk:9:10", 209, 243, "expect encodeURIComponent(\"a b\") == \"a b\"\n  expected: encodeURIComponent(\"a b\") == \"a b\"\n  actual:   " + __bynkShow((encodeURIComponent("a b"))) + " == " + __bynkShow(("a b"))); }
@@ -85,40 +85,40 @@ async function test_functions_named_after_host_and_runtime_names() {
 // case tier: unit
 async function test_Int_division_beside_a_user_type_named_Math() {
   try {
-    demo_hygiene.__resetAgents();
-    const deps = makeTestDeps();
-    const { Array, ArrayBuffer, Bag, BigInt, Blob, Boolean, BoundaryError, Date, DurableObjectState, Error, Headers, Intl, JSON, JsonValue, Keyword, Labelled, Map, Math, Number, Object, Parameters, Promise, Record, RegExp, Request, Response, ReturnType, Set, StateRegistry, Symbol, TextDecoder, TextEncoder, URL, Uint8Array, __makeBag, callService, console, crypto, encodeLabel, encodeURIComponent, half, keywordRoundTrip, keywordSum, labelIs, labelOf, matchPath, mkError, rebind, roundTrip, serialise_Labelled, size, unique, unwrapIs, unwrapMatch, withKey } = demo_hygiene;
-    type Array = demo_hygiene.Array;
-    type ArrayBuffer = demo_hygiene.ArrayBuffer;
-    type BigInt = demo_hygiene.BigInt;
-    type Blob = demo_hygiene.Blob;
-    type Boolean = demo_hygiene.Boolean;
-    type BoundaryError = demo_hygiene.BoundaryError;
-    type Date = demo_hygiene.Date;
-    type DurableObjectState = demo_hygiene.DurableObjectState;
-    type Error = demo_hygiene.Error;
-    type Headers = demo_hygiene.Headers;
-    type Intl = demo_hygiene.Intl;
-    type JSON = demo_hygiene.JSON;
-    type JsonValue = demo_hygiene.JsonValue;
-    type Keyword = demo_hygiene.Keyword;
-    type Labelled = demo_hygiene.Labelled;
-    type Math = demo_hygiene.Math;
-    type Number = demo_hygiene.Number;
-    type Object = demo_hygiene.Object;
-    type Parameters = demo_hygiene.Parameters;
-    type Promise = demo_hygiene.Promise;
-    type Record = demo_hygiene.Record;
-    type RegExp = demo_hygiene.RegExp;
-    type Request = demo_hygiene.Request;
-    type Response = demo_hygiene.Response;
-    type ReturnType = demo_hygiene.ReturnType;
-    type StateRegistry = demo_hygiene.StateRegistry;
-    type Symbol = demo_hygiene.Symbol;
-    type TextDecoder = demo_hygiene.TextDecoder;
-    type TextEncoder = demo_hygiene.TextEncoder;
-    type URL = demo_hygiene.URL;
-    type Uint8Array = demo_hygiene.Uint8Array;
+    __ns_demo_hygiene.__resetAgents();
+    const deps = __makeTestDeps();
+    const { Array, ArrayBuffer, Bag, BigInt, Blob, Boolean, BoundaryError, Date, DurableObjectState, Error, Headers, Intl, JSON, JsonValue, Keyword, Labelled, Map, Math, Number, Object, Parameters, Promise, Record, RegExp, Request, Response, ReturnType, Set, StateRegistry, Symbol, TextDecoder, TextEncoder, URL, Uint8Array, __makeBag, callService, console, crypto, encodeLabel, encodeURIComponent, half, keywordRoundTrip, keywordSum, labelIs, labelOf, matchPath, mkError, rebind, roundTrip, serialise_Labelled, size, unique, unwrapIs, unwrapMatch, withKey } = __ns_demo_hygiene;
+    type Array = __ns_demo_hygiene.Array;
+    type ArrayBuffer = __ns_demo_hygiene.ArrayBuffer;
+    type BigInt = __ns_demo_hygiene.BigInt;
+    type Blob = __ns_demo_hygiene.Blob;
+    type Boolean = __ns_demo_hygiene.Boolean;
+    type BoundaryError = __ns_demo_hygiene.BoundaryError;
+    type Date = __ns_demo_hygiene.Date;
+    type DurableObjectState = __ns_demo_hygiene.DurableObjectState;
+    type Error = __ns_demo_hygiene.Error;
+    type Headers = __ns_demo_hygiene.Headers;
+    type Intl = __ns_demo_hygiene.Intl;
+    type JSON = __ns_demo_hygiene.JSON;
+    type JsonValue = __ns_demo_hygiene.JsonValue;
+    type Keyword = __ns_demo_hygiene.Keyword;
+    type Labelled = __ns_demo_hygiene.Labelled;
+    type Math = __ns_demo_hygiene.Math;
+    type Number = __ns_demo_hygiene.Number;
+    type Object = __ns_demo_hygiene.Object;
+    type Parameters = __ns_demo_hygiene.Parameters;
+    type Promise = __ns_demo_hygiene.Promise;
+    type Record = __ns_demo_hygiene.Record;
+    type RegExp = __ns_demo_hygiene.RegExp;
+    type Request = __ns_demo_hygiene.Request;
+    type Response = __ns_demo_hygiene.Response;
+    type ReturnType = __ns_demo_hygiene.ReturnType;
+    type StateRegistry = __ns_demo_hygiene.StateRegistry;
+    type Symbol = __ns_demo_hygiene.Symbol;
+    type TextDecoder = __ns_demo_hygiene.TextDecoder;
+    type TextEncoder = __ns_demo_hygiene.TextEncoder;
+    type URL = __ns_demo_hygiene.URL;
+    type Uint8Array = __ns_demo_hygiene.Uint8Array;
     if (!(half(7, 2) === 3)) { throw __bynkExpectFailure("tests/demo/hygiene.bynk:17:10", 449, 464, "expect half(7, 2) == 3\n  expected: half(7, 2) == 3\n  actual:   " + __bynkShow((half(7, 2))) + " == " + __bynkShow((3))); }
     if (!(half(-7, 2) === -3)) { throw __bynkExpectFailure("tests/demo/hygiene.bynk:18:10", 474, 491, "expect half(-7, 2) == -3\n  expected: half(-7, 2) == -3\n  actual:   " + __bynkShow((half(-7, 2))) + " == " + __bynkShow((-3))); }
     return { pass: true };
@@ -133,40 +133,40 @@ async function test_Int_division_beside_a_user_type_named_Math() {
 // case tier: unit
 async function test_a_binding_that_shadows_the_value_it_is_read_from() {
   try {
-    demo_hygiene.__resetAgents();
-    const deps = makeTestDeps();
-    const { Array, ArrayBuffer, Bag, BigInt, Blob, Boolean, BoundaryError, Date, DurableObjectState, Error, Headers, Intl, JSON, JsonValue, Keyword, Labelled, Map, Math, Number, Object, Parameters, Promise, Record, RegExp, Request, Response, ReturnType, Set, StateRegistry, Symbol, TextDecoder, TextEncoder, URL, Uint8Array, __makeBag, callService, console, crypto, encodeLabel, encodeURIComponent, half, keywordRoundTrip, keywordSum, labelIs, labelOf, matchPath, mkError, rebind, roundTrip, serialise_Labelled, size, unique, unwrapIs, unwrapMatch, withKey } = demo_hygiene;
-    type Array = demo_hygiene.Array;
-    type ArrayBuffer = demo_hygiene.ArrayBuffer;
-    type BigInt = demo_hygiene.BigInt;
-    type Blob = demo_hygiene.Blob;
-    type Boolean = demo_hygiene.Boolean;
-    type BoundaryError = demo_hygiene.BoundaryError;
-    type Date = demo_hygiene.Date;
-    type DurableObjectState = demo_hygiene.DurableObjectState;
-    type Error = demo_hygiene.Error;
-    type Headers = demo_hygiene.Headers;
-    type Intl = demo_hygiene.Intl;
-    type JSON = demo_hygiene.JSON;
-    type JsonValue = demo_hygiene.JsonValue;
-    type Keyword = demo_hygiene.Keyword;
-    type Labelled = demo_hygiene.Labelled;
-    type Math = demo_hygiene.Math;
-    type Number = demo_hygiene.Number;
-    type Object = demo_hygiene.Object;
-    type Parameters = demo_hygiene.Parameters;
-    type Promise = demo_hygiene.Promise;
-    type Record = demo_hygiene.Record;
-    type RegExp = demo_hygiene.RegExp;
-    type Request = demo_hygiene.Request;
-    type Response = demo_hygiene.Response;
-    type ReturnType = demo_hygiene.ReturnType;
-    type StateRegistry = demo_hygiene.StateRegistry;
-    type Symbol = demo_hygiene.Symbol;
-    type TextDecoder = demo_hygiene.TextDecoder;
-    type TextEncoder = demo_hygiene.TextEncoder;
-    type URL = demo_hygiene.URL;
-    type Uint8Array = demo_hygiene.Uint8Array;
+    __ns_demo_hygiene.__resetAgents();
+    const deps = __makeTestDeps();
+    const { Array, ArrayBuffer, Bag, BigInt, Blob, Boolean, BoundaryError, Date, DurableObjectState, Error, Headers, Intl, JSON, JsonValue, Keyword, Labelled, Map, Math, Number, Object, Parameters, Promise, Record, RegExp, Request, Response, ReturnType, Set, StateRegistry, Symbol, TextDecoder, TextEncoder, URL, Uint8Array, __makeBag, callService, console, crypto, encodeLabel, encodeURIComponent, half, keywordRoundTrip, keywordSum, labelIs, labelOf, matchPath, mkError, rebind, roundTrip, serialise_Labelled, size, unique, unwrapIs, unwrapMatch, withKey } = __ns_demo_hygiene;
+    type Array = __ns_demo_hygiene.Array;
+    type ArrayBuffer = __ns_demo_hygiene.ArrayBuffer;
+    type BigInt = __ns_demo_hygiene.BigInt;
+    type Blob = __ns_demo_hygiene.Blob;
+    type Boolean = __ns_demo_hygiene.Boolean;
+    type BoundaryError = __ns_demo_hygiene.BoundaryError;
+    type Date = __ns_demo_hygiene.Date;
+    type DurableObjectState = __ns_demo_hygiene.DurableObjectState;
+    type Error = __ns_demo_hygiene.Error;
+    type Headers = __ns_demo_hygiene.Headers;
+    type Intl = __ns_demo_hygiene.Intl;
+    type JSON = __ns_demo_hygiene.JSON;
+    type JsonValue = __ns_demo_hygiene.JsonValue;
+    type Keyword = __ns_demo_hygiene.Keyword;
+    type Labelled = __ns_demo_hygiene.Labelled;
+    type Math = __ns_demo_hygiene.Math;
+    type Number = __ns_demo_hygiene.Number;
+    type Object = __ns_demo_hygiene.Object;
+    type Parameters = __ns_demo_hygiene.Parameters;
+    type Promise = __ns_demo_hygiene.Promise;
+    type Record = __ns_demo_hygiene.Record;
+    type RegExp = __ns_demo_hygiene.RegExp;
+    type Request = __ns_demo_hygiene.Request;
+    type Response = __ns_demo_hygiene.Response;
+    type ReturnType = __ns_demo_hygiene.ReturnType;
+    type StateRegistry = __ns_demo_hygiene.StateRegistry;
+    type Symbol = __ns_demo_hygiene.Symbol;
+    type TextDecoder = __ns_demo_hygiene.TextDecoder;
+    type TextEncoder = __ns_demo_hygiene.TextEncoder;
+    type URL = __ns_demo_hygiene.URL;
+    type Uint8Array = __ns_demo_hygiene.Uint8Array;
     if (!(unwrapIs(Some(4)) === 4)) { throw __bynkExpectFailure("tests/demo/hygiene.bynk:22:10", 562, 584, "expect unwrapIs(Some(4)) == 4\n  expected: unwrapIs(Some(4)) == 4\n  actual:   " + __bynkShow((unwrapIs(Some(4)))) + " == " + __bynkShow((4))); }
     if (!(unwrapIs(None) === 0)) { throw __bynkExpectFailure("tests/demo/hygiene.bynk:23:10", 594, 613, "expect unwrapIs(None) == 0\n  expected: unwrapIs(None) == 0\n  actual:   " + __bynkShow((unwrapIs(None))) + " == " + __bynkShow((0))); }
     if (!(unwrapMatch(Some(9)) === 9)) { throw __bynkExpectFailure("tests/demo/hygiene.bynk:24:10", 623, 648, "expect unwrapMatch(Some(9)) == 9\n  expected: unwrapMatch(Some(9)) == 9\n  actual:   " + __bynkShow((unwrapMatch(Some(9)))) + " == " + __bynkShow((9))); }
@@ -183,40 +183,40 @@ async function test_a_binding_that_shadows_the_value_it_is_read_from() {
 // case tier: unit
 async function test_a_payload_field_named_tag() {
   try {
-    demo_hygiene.__resetAgents();
-    const deps = makeTestDeps();
-    const { Array, ArrayBuffer, Bag, BigInt, Blob, Boolean, BoundaryError, Date, DurableObjectState, Error, Headers, Intl, JSON, JsonValue, Keyword, Labelled, Map, Math, Number, Object, Parameters, Promise, Record, RegExp, Request, Response, ReturnType, Set, StateRegistry, Symbol, TextDecoder, TextEncoder, URL, Uint8Array, __makeBag, callService, console, crypto, encodeLabel, encodeURIComponent, half, keywordRoundTrip, keywordSum, labelIs, labelOf, matchPath, mkError, rebind, roundTrip, serialise_Labelled, size, unique, unwrapIs, unwrapMatch, withKey } = demo_hygiene;
-    type Array = demo_hygiene.Array;
-    type ArrayBuffer = demo_hygiene.ArrayBuffer;
-    type BigInt = demo_hygiene.BigInt;
-    type Blob = demo_hygiene.Blob;
-    type Boolean = demo_hygiene.Boolean;
-    type BoundaryError = demo_hygiene.BoundaryError;
-    type Date = demo_hygiene.Date;
-    type DurableObjectState = demo_hygiene.DurableObjectState;
-    type Error = demo_hygiene.Error;
-    type Headers = demo_hygiene.Headers;
-    type Intl = demo_hygiene.Intl;
-    type JSON = demo_hygiene.JSON;
-    type JsonValue = demo_hygiene.JsonValue;
-    type Keyword = demo_hygiene.Keyword;
-    type Labelled = demo_hygiene.Labelled;
-    type Math = demo_hygiene.Math;
-    type Number = demo_hygiene.Number;
-    type Object = demo_hygiene.Object;
-    type Parameters = demo_hygiene.Parameters;
-    type Promise = demo_hygiene.Promise;
-    type Record = demo_hygiene.Record;
-    type RegExp = demo_hygiene.RegExp;
-    type Request = demo_hygiene.Request;
-    type Response = demo_hygiene.Response;
-    type ReturnType = demo_hygiene.ReturnType;
-    type StateRegistry = demo_hygiene.StateRegistry;
-    type Symbol = demo_hygiene.Symbol;
-    type TextDecoder = demo_hygiene.TextDecoder;
-    type TextEncoder = demo_hygiene.TextEncoder;
-    type URL = demo_hygiene.URL;
-    type Uint8Array = demo_hygiene.Uint8Array;
+    __ns_demo_hygiene.__resetAgents();
+    const deps = __makeTestDeps();
+    const { Array, ArrayBuffer, Bag, BigInt, Blob, Boolean, BoundaryError, Date, DurableObjectState, Error, Headers, Intl, JSON, JsonValue, Keyword, Labelled, Map, Math, Number, Object, Parameters, Promise, Record, RegExp, Request, Response, ReturnType, Set, StateRegistry, Symbol, TextDecoder, TextEncoder, URL, Uint8Array, __makeBag, callService, console, crypto, encodeLabel, encodeURIComponent, half, keywordRoundTrip, keywordSum, labelIs, labelOf, matchPath, mkError, rebind, roundTrip, serialise_Labelled, size, unique, unwrapIs, unwrapMatch, withKey } = __ns_demo_hygiene;
+    type Array = __ns_demo_hygiene.Array;
+    type ArrayBuffer = __ns_demo_hygiene.ArrayBuffer;
+    type BigInt = __ns_demo_hygiene.BigInt;
+    type Blob = __ns_demo_hygiene.Blob;
+    type Boolean = __ns_demo_hygiene.Boolean;
+    type BoundaryError = __ns_demo_hygiene.BoundaryError;
+    type Date = __ns_demo_hygiene.Date;
+    type DurableObjectState = __ns_demo_hygiene.DurableObjectState;
+    type Error = __ns_demo_hygiene.Error;
+    type Headers = __ns_demo_hygiene.Headers;
+    type Intl = __ns_demo_hygiene.Intl;
+    type JSON = __ns_demo_hygiene.JSON;
+    type JsonValue = __ns_demo_hygiene.JsonValue;
+    type Keyword = __ns_demo_hygiene.Keyword;
+    type Labelled = __ns_demo_hygiene.Labelled;
+    type Math = __ns_demo_hygiene.Math;
+    type Number = __ns_demo_hygiene.Number;
+    type Object = __ns_demo_hygiene.Object;
+    type Parameters = __ns_demo_hygiene.Parameters;
+    type Promise = __ns_demo_hygiene.Promise;
+    type Record = __ns_demo_hygiene.Record;
+    type RegExp = __ns_demo_hygiene.RegExp;
+    type Request = __ns_demo_hygiene.Request;
+    type Response = __ns_demo_hygiene.Response;
+    type ReturnType = __ns_demo_hygiene.ReturnType;
+    type StateRegistry = __ns_demo_hygiene.StateRegistry;
+    type Symbol = __ns_demo_hygiene.Symbol;
+    type TextDecoder = __ns_demo_hygiene.TextDecoder;
+    type TextEncoder = __ns_demo_hygiene.TextEncoder;
+    type URL = __ns_demo_hygiene.URL;
+    type Uint8Array = __ns_demo_hygiene.Uint8Array;
     if (!(labelOf(Labelled.Tagged("red", 1)) === "red")) { throw __bynkExpectFailure("tests/demo/hygiene.bynk:29:10", 720, 754, "expect labelOf(Tagged(\"red\", 1)) == \"red\"\n  expected: labelOf(Tagged(\"red\", 1)) == \"red\"\n  actual:   " + __bynkShow((labelOf(Labelled.Tagged("red", 1)))) + " == " + __bynkShow(("red"))); }
     if (!(labelIs(Labelled.Tagged("blue", 2)) === "blue")) { throw __bynkExpectFailure("tests/demo/hygiene.bynk:30:10", 764, 800, "expect labelIs(Tagged(\"blue\", 2)) == \"blue\"\n  expected: labelIs(Tagged(\"blue\", 2)) == \"blue\"\n  actual:   " + __bynkShow((labelIs(Labelled.Tagged("blue", 2)))) + " == " + __bynkShow(("blue"))); }
     if (!(labelOf(Labelled.Plain(3)) === "")) { throw __bynkExpectFailure("tests/demo/hygiene.bynk:31:10", 810, 833, "expect labelOf(Plain(3)) == \"\"\n  expected: labelOf(Plain(3)) == \"\"\n  actual:   " + __bynkShow((labelOf(Labelled.Plain(3)))) + " == " + __bynkShow((""))); }
@@ -235,40 +235,40 @@ async function test_a_payload_field_named_tag() {
 // case tier: unit
 async function test_Bytes_beside_a_user_type_named_Uint8Array() {
   try {
-    demo_hygiene.__resetAgents();
-    const deps = makeTestDeps();
-    const { Array, ArrayBuffer, Bag, BigInt, Blob, Boolean, BoundaryError, Date, DurableObjectState, Error, Headers, Intl, JSON, JsonValue, Keyword, Labelled, Map, Math, Number, Object, Parameters, Promise, Record, RegExp, Request, Response, ReturnType, Set, StateRegistry, Symbol, TextDecoder, TextEncoder, URL, Uint8Array, __makeBag, callService, console, crypto, encodeLabel, encodeURIComponent, half, keywordRoundTrip, keywordSum, labelIs, labelOf, matchPath, mkError, rebind, roundTrip, serialise_Labelled, size, unique, unwrapIs, unwrapMatch, withKey } = demo_hygiene;
-    type Array = demo_hygiene.Array;
-    type ArrayBuffer = demo_hygiene.ArrayBuffer;
-    type BigInt = demo_hygiene.BigInt;
-    type Blob = demo_hygiene.Blob;
-    type Boolean = demo_hygiene.Boolean;
-    type BoundaryError = demo_hygiene.BoundaryError;
-    type Date = demo_hygiene.Date;
-    type DurableObjectState = demo_hygiene.DurableObjectState;
-    type Error = demo_hygiene.Error;
-    type Headers = demo_hygiene.Headers;
-    type Intl = demo_hygiene.Intl;
-    type JSON = demo_hygiene.JSON;
-    type JsonValue = demo_hygiene.JsonValue;
-    type Keyword = demo_hygiene.Keyword;
-    type Labelled = demo_hygiene.Labelled;
-    type Math = demo_hygiene.Math;
-    type Number = demo_hygiene.Number;
-    type Object = demo_hygiene.Object;
-    type Parameters = demo_hygiene.Parameters;
-    type Promise = demo_hygiene.Promise;
-    type Record = demo_hygiene.Record;
-    type RegExp = demo_hygiene.RegExp;
-    type Request = demo_hygiene.Request;
-    type Response = demo_hygiene.Response;
-    type ReturnType = demo_hygiene.ReturnType;
-    type StateRegistry = demo_hygiene.StateRegistry;
-    type Symbol = demo_hygiene.Symbol;
-    type TextDecoder = demo_hygiene.TextDecoder;
-    type TextEncoder = demo_hygiene.TextEncoder;
-    type URL = demo_hygiene.URL;
-    type Uint8Array = demo_hygiene.Uint8Array;
+    __ns_demo_hygiene.__resetAgents();
+    const deps = __makeTestDeps();
+    const { Array, ArrayBuffer, Bag, BigInt, Blob, Boolean, BoundaryError, Date, DurableObjectState, Error, Headers, Intl, JSON, JsonValue, Keyword, Labelled, Map, Math, Number, Object, Parameters, Promise, Record, RegExp, Request, Response, ReturnType, Set, StateRegistry, Symbol, TextDecoder, TextEncoder, URL, Uint8Array, __makeBag, callService, console, crypto, encodeLabel, encodeURIComponent, half, keywordRoundTrip, keywordSum, labelIs, labelOf, matchPath, mkError, rebind, roundTrip, serialise_Labelled, size, unique, unwrapIs, unwrapMatch, withKey } = __ns_demo_hygiene;
+    type Array = __ns_demo_hygiene.Array;
+    type ArrayBuffer = __ns_demo_hygiene.ArrayBuffer;
+    type BigInt = __ns_demo_hygiene.BigInt;
+    type Blob = __ns_demo_hygiene.Blob;
+    type Boolean = __ns_demo_hygiene.Boolean;
+    type BoundaryError = __ns_demo_hygiene.BoundaryError;
+    type Date = __ns_demo_hygiene.Date;
+    type DurableObjectState = __ns_demo_hygiene.DurableObjectState;
+    type Error = __ns_demo_hygiene.Error;
+    type Headers = __ns_demo_hygiene.Headers;
+    type Intl = __ns_demo_hygiene.Intl;
+    type JSON = __ns_demo_hygiene.JSON;
+    type JsonValue = __ns_demo_hygiene.JsonValue;
+    type Keyword = __ns_demo_hygiene.Keyword;
+    type Labelled = __ns_demo_hygiene.Labelled;
+    type Math = __ns_demo_hygiene.Math;
+    type Number = __ns_demo_hygiene.Number;
+    type Object = __ns_demo_hygiene.Object;
+    type Parameters = __ns_demo_hygiene.Parameters;
+    type Promise = __ns_demo_hygiene.Promise;
+    type Record = __ns_demo_hygiene.Record;
+    type RegExp = __ns_demo_hygiene.RegExp;
+    type Request = __ns_demo_hygiene.Request;
+    type Response = __ns_demo_hygiene.Response;
+    type ReturnType = __ns_demo_hygiene.ReturnType;
+    type StateRegistry = __ns_demo_hygiene.StateRegistry;
+    type Symbol = __ns_demo_hygiene.Symbol;
+    type TextDecoder = __ns_demo_hygiene.TextDecoder;
+    type TextEncoder = __ns_demo_hygiene.TextEncoder;
+    type URL = __ns_demo_hygiene.URL;
+    type Uint8Array = __ns_demo_hygiene.Uint8Array;
     if (!(size(new globalThis.TextEncoder().encode("hi")) === 2)) { throw __bynkExpectFailure("tests/demo/hygiene.bynk:38:10", 1053, 1084, "expect size(Bytes.fromUtf8(\"hi\")) == 2\n  expected: size(Bytes.fromUtf8(\"hi\")) == 2\n  actual:   " + __bynkShow((size(new globalThis.TextEncoder().encode("hi")))) + " == " + __bynkShow((2))); }
     return { pass: true };
   } catch (e) {
@@ -282,40 +282,40 @@ async function test_Bytes_beside_a_user_type_named_Uint8Array() {
 // case tier: unit
 async function test_an_agent_s_store_collections_beside_a_type_named_Record_and_a_function_named_Set() {
   try {
-    demo_hygiene.__resetAgents();
-    const deps = makeTestDeps();
-    const { Array, ArrayBuffer, Bag, BigInt, Blob, Boolean, BoundaryError, Date, DurableObjectState, Error, Headers, Intl, JSON, JsonValue, Keyword, Labelled, Map, Math, Number, Object, Parameters, Promise, Record, RegExp, Request, Response, ReturnType, Set, StateRegistry, Symbol, TextDecoder, TextEncoder, URL, Uint8Array, __makeBag, callService, console, crypto, encodeLabel, encodeURIComponent, half, keywordRoundTrip, keywordSum, labelIs, labelOf, matchPath, mkError, rebind, roundTrip, serialise_Labelled, size, unique, unwrapIs, unwrapMatch, withKey } = demo_hygiene;
-    type Array = demo_hygiene.Array;
-    type ArrayBuffer = demo_hygiene.ArrayBuffer;
-    type BigInt = demo_hygiene.BigInt;
-    type Blob = demo_hygiene.Blob;
-    type Boolean = demo_hygiene.Boolean;
-    type BoundaryError = demo_hygiene.BoundaryError;
-    type Date = demo_hygiene.Date;
-    type DurableObjectState = demo_hygiene.DurableObjectState;
-    type Error = demo_hygiene.Error;
-    type Headers = demo_hygiene.Headers;
-    type Intl = demo_hygiene.Intl;
-    type JSON = demo_hygiene.JSON;
-    type JsonValue = demo_hygiene.JsonValue;
-    type Keyword = demo_hygiene.Keyword;
-    type Labelled = demo_hygiene.Labelled;
-    type Math = demo_hygiene.Math;
-    type Number = demo_hygiene.Number;
-    type Object = demo_hygiene.Object;
-    type Parameters = demo_hygiene.Parameters;
-    type Promise = demo_hygiene.Promise;
-    type Record = demo_hygiene.Record;
-    type RegExp = demo_hygiene.RegExp;
-    type Request = demo_hygiene.Request;
-    type Response = demo_hygiene.Response;
-    type ReturnType = demo_hygiene.ReturnType;
-    type StateRegistry = demo_hygiene.StateRegistry;
-    type Symbol = demo_hygiene.Symbol;
-    type TextDecoder = demo_hygiene.TextDecoder;
-    type TextEncoder = demo_hygiene.TextEncoder;
-    type URL = demo_hygiene.URL;
-    type Uint8Array = demo_hygiene.Uint8Array;
+    __ns_demo_hygiene.__resetAgents();
+    const deps = __makeTestDeps();
+    const { Array, ArrayBuffer, Bag, BigInt, Blob, Boolean, BoundaryError, Date, DurableObjectState, Error, Headers, Intl, JSON, JsonValue, Keyword, Labelled, Map, Math, Number, Object, Parameters, Promise, Record, RegExp, Request, Response, ReturnType, Set, StateRegistry, Symbol, TextDecoder, TextEncoder, URL, Uint8Array, __makeBag, callService, console, crypto, encodeLabel, encodeURIComponent, half, keywordRoundTrip, keywordSum, labelIs, labelOf, matchPath, mkError, rebind, roundTrip, serialise_Labelled, size, unique, unwrapIs, unwrapMatch, withKey } = __ns_demo_hygiene;
+    type Array = __ns_demo_hygiene.Array;
+    type ArrayBuffer = __ns_demo_hygiene.ArrayBuffer;
+    type BigInt = __ns_demo_hygiene.BigInt;
+    type Blob = __ns_demo_hygiene.Blob;
+    type Boolean = __ns_demo_hygiene.Boolean;
+    type BoundaryError = __ns_demo_hygiene.BoundaryError;
+    type Date = __ns_demo_hygiene.Date;
+    type DurableObjectState = __ns_demo_hygiene.DurableObjectState;
+    type Error = __ns_demo_hygiene.Error;
+    type Headers = __ns_demo_hygiene.Headers;
+    type Intl = __ns_demo_hygiene.Intl;
+    type JSON = __ns_demo_hygiene.JSON;
+    type JsonValue = __ns_demo_hygiene.JsonValue;
+    type Keyword = __ns_demo_hygiene.Keyword;
+    type Labelled = __ns_demo_hygiene.Labelled;
+    type Math = __ns_demo_hygiene.Math;
+    type Number = __ns_demo_hygiene.Number;
+    type Object = __ns_demo_hygiene.Object;
+    type Parameters = __ns_demo_hygiene.Parameters;
+    type Promise = __ns_demo_hygiene.Promise;
+    type Record = __ns_demo_hygiene.Record;
+    type RegExp = __ns_demo_hygiene.RegExp;
+    type Request = __ns_demo_hygiene.Request;
+    type Response = __ns_demo_hygiene.Response;
+    type ReturnType = __ns_demo_hygiene.ReturnType;
+    type StateRegistry = __ns_demo_hygiene.StateRegistry;
+    type Symbol = __ns_demo_hygiene.Symbol;
+    type TextDecoder = __ns_demo_hygiene.TextDecoder;
+    type TextEncoder = __ns_demo_hygiene.TextEncoder;
+    type URL = __ns_demo_hygiene.URL;
+    type Uint8Array = __ns_demo_hygiene.Uint8Array;
     await __makeBag("b").put("x", 1, deps);
     await __makeBag("b").put("y", 2, deps);
     const n = await __makeBag("b").count(deps);
@@ -334,40 +334,40 @@ async function test_an_agent_s_store_collections_beside_a_type_named_Record_and_
 // case tier: unit
 async function test_Set_and_Map_as_function_names_beside_the_JS_Set_and_Map() {
   try {
-    demo_hygiene.__resetAgents();
-    const deps = makeTestDeps();
-    const { Array, ArrayBuffer, Bag, BigInt, Blob, Boolean, BoundaryError, Date, DurableObjectState, Error, Headers, Intl, JSON, JsonValue, Keyword, Labelled, Map, Math, Number, Object, Parameters, Promise, Record, RegExp, Request, Response, ReturnType, Set, StateRegistry, Symbol, TextDecoder, TextEncoder, URL, Uint8Array, __makeBag, callService, console, crypto, encodeLabel, encodeURIComponent, half, keywordRoundTrip, keywordSum, labelIs, labelOf, matchPath, mkError, rebind, roundTrip, serialise_Labelled, size, unique, unwrapIs, unwrapMatch, withKey } = demo_hygiene;
-    type Array = demo_hygiene.Array;
-    type ArrayBuffer = demo_hygiene.ArrayBuffer;
-    type BigInt = demo_hygiene.BigInt;
-    type Blob = demo_hygiene.Blob;
-    type Boolean = demo_hygiene.Boolean;
-    type BoundaryError = demo_hygiene.BoundaryError;
-    type Date = demo_hygiene.Date;
-    type DurableObjectState = demo_hygiene.DurableObjectState;
-    type Error = demo_hygiene.Error;
-    type Headers = demo_hygiene.Headers;
-    type Intl = demo_hygiene.Intl;
-    type JSON = demo_hygiene.JSON;
-    type JsonValue = demo_hygiene.JsonValue;
-    type Keyword = demo_hygiene.Keyword;
-    type Labelled = demo_hygiene.Labelled;
-    type Math = demo_hygiene.Math;
-    type Number = demo_hygiene.Number;
-    type Object = demo_hygiene.Object;
-    type Parameters = demo_hygiene.Parameters;
-    type Promise = demo_hygiene.Promise;
-    type Record = demo_hygiene.Record;
-    type RegExp = demo_hygiene.RegExp;
-    type Request = demo_hygiene.Request;
-    type Response = demo_hygiene.Response;
-    type ReturnType = demo_hygiene.ReturnType;
-    type StateRegistry = demo_hygiene.StateRegistry;
-    type Symbol = demo_hygiene.Symbol;
-    type TextDecoder = demo_hygiene.TextDecoder;
-    type TextEncoder = demo_hygiene.TextEncoder;
-    type URL = demo_hygiene.URL;
-    type Uint8Array = demo_hygiene.Uint8Array;
+    __ns_demo_hygiene.__resetAgents();
+    const deps = __makeTestDeps();
+    const { Array, ArrayBuffer, Bag, BigInt, Blob, Boolean, BoundaryError, Date, DurableObjectState, Error, Headers, Intl, JSON, JsonValue, Keyword, Labelled, Map, Math, Number, Object, Parameters, Promise, Record, RegExp, Request, Response, ReturnType, Set, StateRegistry, Symbol, TextDecoder, TextEncoder, URL, Uint8Array, __makeBag, callService, console, crypto, encodeLabel, encodeURIComponent, half, keywordRoundTrip, keywordSum, labelIs, labelOf, matchPath, mkError, rebind, roundTrip, serialise_Labelled, size, unique, unwrapIs, unwrapMatch, withKey } = __ns_demo_hygiene;
+    type Array = __ns_demo_hygiene.Array;
+    type ArrayBuffer = __ns_demo_hygiene.ArrayBuffer;
+    type BigInt = __ns_demo_hygiene.BigInt;
+    type Blob = __ns_demo_hygiene.Blob;
+    type Boolean = __ns_demo_hygiene.Boolean;
+    type BoundaryError = __ns_demo_hygiene.BoundaryError;
+    type Date = __ns_demo_hygiene.Date;
+    type DurableObjectState = __ns_demo_hygiene.DurableObjectState;
+    type Error = __ns_demo_hygiene.Error;
+    type Headers = __ns_demo_hygiene.Headers;
+    type Intl = __ns_demo_hygiene.Intl;
+    type JSON = __ns_demo_hygiene.JSON;
+    type JsonValue = __ns_demo_hygiene.JsonValue;
+    type Keyword = __ns_demo_hygiene.Keyword;
+    type Labelled = __ns_demo_hygiene.Labelled;
+    type Math = __ns_demo_hygiene.Math;
+    type Number = __ns_demo_hygiene.Number;
+    type Object = __ns_demo_hygiene.Object;
+    type Parameters = __ns_demo_hygiene.Parameters;
+    type Promise = __ns_demo_hygiene.Promise;
+    type Record = __ns_demo_hygiene.Record;
+    type RegExp = __ns_demo_hygiene.RegExp;
+    type Request = __ns_demo_hygiene.Request;
+    type Response = __ns_demo_hygiene.Response;
+    type ReturnType = __ns_demo_hygiene.ReturnType;
+    type StateRegistry = __ns_demo_hygiene.StateRegistry;
+    type Symbol = __ns_demo_hygiene.Symbol;
+    type TextDecoder = __ns_demo_hygiene.TextDecoder;
+    type TextEncoder = __ns_demo_hygiene.TextEncoder;
+    type URL = __ns_demo_hygiene.URL;
+    type Uint8Array = __ns_demo_hygiene.Uint8Array;
     if (!(__bynkEq(unique([1, 2, 1, 3]), [1, 2, 3]))) { throw __bynkExpectFailure("tests/demo/hygiene.bynk:51:10", 1402, 1435, "expect unique([1, 2, 1, 3]) == [1, 2, 3]\n  expected: unique([1, 2, 1, 3]) == [1, 2, 3]\n  actual:   " + __bynkShow((unique([1, 2, 1, 3]))) + " == " + __bynkShow(([1, 2, 3]))); }
     if (!(__bynkEq(((__m: ReadonlyMap<string, number>, __k: string) => __m.has(__k) ? Some(__m.get(__k) as number) : None)(withKey(new globalThis.Map<string, number>()), "k"), Some(1)))) { throw __bynkExpectFailure("tests/demo/hygiene.bynk:52:10", 1445, 1485, "expect withKey(Map.empty()).get(\"k\") == Some(1)\n  expected: withKey(Map.empty()).get(\"k\") == Some(1)\n  actual:   " + __bynkShow((((__m: ReadonlyMap<string, number>, __k: string) => __m.has(__k) ? Some(__m.get(__k) as number) : None)(withKey(new globalThis.Map<string, number>()), "k"))) + " == " + __bynkShow((Some(1)))); }
     return { pass: true };
@@ -382,40 +382,40 @@ async function test_Set_and_Map_as_function_names_beside_the_JS_Set_and_Map() {
 // case tier: unit
 async function test_payload_fields_named_like_JS_reserved_words() {
   try {
-    demo_hygiene.__resetAgents();
-    const deps = makeTestDeps();
-    const { Array, ArrayBuffer, Bag, BigInt, Blob, Boolean, BoundaryError, Date, DurableObjectState, Error, Headers, Intl, JSON, JsonValue, Keyword, Labelled, Map, Math, Number, Object, Parameters, Promise, Record, RegExp, Request, Response, ReturnType, Set, StateRegistry, Symbol, TextDecoder, TextEncoder, URL, Uint8Array, __makeBag, callService, console, crypto, encodeLabel, encodeURIComponent, half, keywordRoundTrip, keywordSum, labelIs, labelOf, matchPath, mkError, rebind, roundTrip, serialise_Labelled, size, unique, unwrapIs, unwrapMatch, withKey } = demo_hygiene;
-    type Array = demo_hygiene.Array;
-    type ArrayBuffer = demo_hygiene.ArrayBuffer;
-    type BigInt = demo_hygiene.BigInt;
-    type Blob = demo_hygiene.Blob;
-    type Boolean = demo_hygiene.Boolean;
-    type BoundaryError = demo_hygiene.BoundaryError;
-    type Date = demo_hygiene.Date;
-    type DurableObjectState = demo_hygiene.DurableObjectState;
-    type Error = demo_hygiene.Error;
-    type Headers = demo_hygiene.Headers;
-    type Intl = demo_hygiene.Intl;
-    type JSON = demo_hygiene.JSON;
-    type JsonValue = demo_hygiene.JsonValue;
-    type Keyword = demo_hygiene.Keyword;
-    type Labelled = demo_hygiene.Labelled;
-    type Math = demo_hygiene.Math;
-    type Number = demo_hygiene.Number;
-    type Object = demo_hygiene.Object;
-    type Parameters = demo_hygiene.Parameters;
-    type Promise = demo_hygiene.Promise;
-    type Record = demo_hygiene.Record;
-    type RegExp = demo_hygiene.RegExp;
-    type Request = demo_hygiene.Request;
-    type Response = demo_hygiene.Response;
-    type ReturnType = demo_hygiene.ReturnType;
-    type StateRegistry = demo_hygiene.StateRegistry;
-    type Symbol = demo_hygiene.Symbol;
-    type TextDecoder = demo_hygiene.TextDecoder;
-    type TextEncoder = demo_hygiene.TextEncoder;
-    type URL = demo_hygiene.URL;
-    type Uint8Array = demo_hygiene.Uint8Array;
+    __ns_demo_hygiene.__resetAgents();
+    const deps = __makeTestDeps();
+    const { Array, ArrayBuffer, Bag, BigInt, Blob, Boolean, BoundaryError, Date, DurableObjectState, Error, Headers, Intl, JSON, JsonValue, Keyword, Labelled, Map, Math, Number, Object, Parameters, Promise, Record, RegExp, Request, Response, ReturnType, Set, StateRegistry, Symbol, TextDecoder, TextEncoder, URL, Uint8Array, __makeBag, callService, console, crypto, encodeLabel, encodeURIComponent, half, keywordRoundTrip, keywordSum, labelIs, labelOf, matchPath, mkError, rebind, roundTrip, serialise_Labelled, size, unique, unwrapIs, unwrapMatch, withKey } = __ns_demo_hygiene;
+    type Array = __ns_demo_hygiene.Array;
+    type ArrayBuffer = __ns_demo_hygiene.ArrayBuffer;
+    type BigInt = __ns_demo_hygiene.BigInt;
+    type Blob = __ns_demo_hygiene.Blob;
+    type Boolean = __ns_demo_hygiene.Boolean;
+    type BoundaryError = __ns_demo_hygiene.BoundaryError;
+    type Date = __ns_demo_hygiene.Date;
+    type DurableObjectState = __ns_demo_hygiene.DurableObjectState;
+    type Error = __ns_demo_hygiene.Error;
+    type Headers = __ns_demo_hygiene.Headers;
+    type Intl = __ns_demo_hygiene.Intl;
+    type JSON = __ns_demo_hygiene.JSON;
+    type JsonValue = __ns_demo_hygiene.JsonValue;
+    type Keyword = __ns_demo_hygiene.Keyword;
+    type Labelled = __ns_demo_hygiene.Labelled;
+    type Math = __ns_demo_hygiene.Math;
+    type Number = __ns_demo_hygiene.Number;
+    type Object = __ns_demo_hygiene.Object;
+    type Parameters = __ns_demo_hygiene.Parameters;
+    type Promise = __ns_demo_hygiene.Promise;
+    type Record = __ns_demo_hygiene.Record;
+    type RegExp = __ns_demo_hygiene.RegExp;
+    type Request = __ns_demo_hygiene.Request;
+    type Response = __ns_demo_hygiene.Response;
+    type ReturnType = __ns_demo_hygiene.ReturnType;
+    type StateRegistry = __ns_demo_hygiene.StateRegistry;
+    type Symbol = __ns_demo_hygiene.Symbol;
+    type TextDecoder = __ns_demo_hygiene.TextDecoder;
+    type TextEncoder = __ns_demo_hygiene.TextEncoder;
+    type URL = __ns_demo_hygiene.URL;
+    type Uint8Array = __ns_demo_hygiene.Uint8Array;
     if (!(keywordSum(Keyword.Kw(1, 2, 3)) === 6)) { throw __bynkExpectFailure("tests/demo/hygiene.bynk:56:10", 1551, 1579, "expect keywordSum(Kw(1, 2, 3)) == 6\n  expected: keywordSum(Kw(1, 2, 3)) == 6\n  actual:   " + __bynkShow((keywordSum(Keyword.Kw(1, 2, 3)))) + " == " + __bynkShow((6))); }
     if (!(globalThis.JSON.stringify(__serialise_Keyword(Keyword.Kw(1, 2, 3))) === "{\"kind\":\"Kw\",\"class\":1,\"arguments\":2,\"deps\":3}")) { throw __bynkExpectFailure("tests/demo/hygiene.bynk:57:10", 1589, 1675, "expect Json.encode(Kw(1, 2, 3)) == \"{\\\"kind\\\":\\\"Kw\\\",\\\"class\\\":1,\\\"arguments\\\":2,\\\"deps\\\":3}\"\n  expected: Json.encode(Kw(1, 2, 3)) == \"{\\\"kind\\\":\\\"Kw\\\",\\\"class\\\":1,\\\"arguments\\\":2,\\\"deps\\\":3}\"\n  actual:   " + __bynkShow((globalThis.JSON.stringify(__serialise_Keyword(Keyword.Kw(1, 2, 3))))) + " == " + __bynkShow(("{\"kind\":\"Kw\",\"class\":1,\"arguments\":2,\"deps\":3}"))); }
     if (!(keywordRoundTrip(Keyword.Kw(1, 2, 3)))) { throw __bynkExpectFailure("tests/demo/hygiene.bynk:58:10", 1685, 1714, "expect keywordRoundTrip(Kw(1, 2, 3))"); }
@@ -428,7 +428,7 @@ async function test_payload_fields_named_like_JS_reserved_words() {
   }
 }
 
-export function __serialise_Keyword(value: demo_hygiene.Keyword): __JsonValue {
+export function __serialise_Keyword(value: __ns_demo_hygiene.Keyword): __JsonValue {
   switch (value.tag) {
     case "Kw": {
       return { kind: "Kw", class: ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(value.class), arguments: ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(value.arguments), deps: ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(value.deps) };
@@ -438,7 +438,7 @@ export function __serialise_Keyword(value: demo_hygiene.Keyword): __JsonValue {
   }
 }
 
-export function __deserialise_Keyword(json: __JsonValue, path: string = "$"): Result<demo_hygiene.Keyword, __BoundaryError> {
+export function __deserialise_Keyword(json: __JsonValue, path: string = "$"): Result<__ns_demo_hygiene.Keyword, __BoundaryError> {
   if (typeof json !== "object" || json === null || globalThis.Array.isArray(json)) {
     return Err({ kind: "StructuralMismatch", path, expected: "object", actual: typeof json });
   }
@@ -467,10 +467,10 @@ export function __deserialise_Keyword(json: __JsonValue, path: string = "$"): Re
     return Err({ kind: "StructuralMismatch", path: `${path}.deps`, expected: "safe integer", actual: String(obj["deps"]) });
   }
   const __deps = obj["deps"];
-      return Ok({ tag: "Kw", class: __class, arguments: __arguments, deps: __deps } as demo_hygiene.Keyword);
+      return Ok({ tag: "Kw", class: __class, arguments: __arguments, deps: __deps } as __ns_demo_hygiene.Keyword);
     }
     case "Bare":
-      return Ok({ tag: "Bare" } as demo_hygiene.Keyword);
+      return Ok({ tag: "Bare" } as __ns_demo_hygiene.Keyword);
     default:
       return Err({ kind: "StructuralMismatch", path, expected: "sum variant kind", actual: String(kind) });
   }

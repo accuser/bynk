@@ -68,6 +68,10 @@ slices land.
    [`../archive/retired-tracks.md`](../archive/retired-tracks.md), and closes
    the spine (`Closes #<n>`). The decisions live on in the ADRs and the
    spec-in-place.
+6. **Release.** Before 1.0, a track's retirement is the release trigger
+   ([`../bynk-release-discipline.md`](../bynk-release-discipline.md), #1673):
+   once the retirement PR merges and `main` is green, the maintainer tags the
+   version on `main` (`vX.Y.Z`), and `release.yml` ships it.
 
 ## Active tracks
 
@@ -221,6 +225,14 @@ A retired track's closing summary — what shipped, which ADRs carry its
 decisions, the named follow-ons — is kept for the record in
 [`../archive/retired-tracks.md`](../archive/retired-tracks.md):
 
+- **Toolchain pins as gates** (no track doc) — spine
+  [#1670](https://github.com/accuser/bynk/issues/1670), opened from the
+  [2026-10-01 review](../reviews/2026-10-01-language-implementation-review.md): every external-tool
+  version the toolchain states to users is gated or covered by a written policy. Seven slices shipped
+  (v0.303.1–v0.303.4; ADR 0434): the Node 22 floor, TypeScript 5/7 verification, the compiler-skew
+  gate, one test harness for PR and release, the `wasm-bindgen-cli` pin guard, the compatibility-date
+  policy, and the extension's server pin decoupled from the workspace version, with the pre-1.0 release
+  cadence (a release at each track retirement). Retired 5 October 2026.
 - **`runtime-semantics.md`** — spine [#1648](https://github.com/accuser/bynk/issues/1648), opened
   from the [2026-10-01 review](../reviews/2026-10-01-language-implementation-review.md): emitted
   programs do what the spec says, and the gates check it. Sixteen correctness slices (S0–S15), #291, and four

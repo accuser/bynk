@@ -32,4 +32,3 @@ export function sumBy<A>(xs: readonly A[], f: (a0: A) => number): number {
 export function total(xs: readonly number[]): number {
   return sumBy(doubled(xs), (x) => x);
 }
-

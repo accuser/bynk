@@ -9,11 +9,10 @@ export const api = {
   },
 };
 
-export interface ProbeDeps {
+export interface __ProbeDeps {
 }
 
-export function makeSurface(deps: ProbeDeps) {
+export function __makeSurface(deps: __ProbeDeps) {
   return {
   };
 }
-

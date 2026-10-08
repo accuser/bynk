@@ -24,4 +24,3 @@ export const OrderStatus = {
   Placed: { tag: "Placed" } as OrderStatus,
   Cancelled: { tag: "Cancelled" } as OrderStatus,
 };
-

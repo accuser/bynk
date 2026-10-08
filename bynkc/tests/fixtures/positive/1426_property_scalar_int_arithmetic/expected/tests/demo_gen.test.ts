@@ -2,7 +2,7 @@
 // test target: demo.gen
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
-import * as demo_gen from "./../demo/gen.js";
+import * as __ns_demo_gen from "./../demo/gen.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -151,7 +151,7 @@ async function __bynkRunProperty(spec: { seed: number, cases: number, gens: any[
   return { pass: true };
 }
 
-function makeTestDeps() {
+function __makeTestDeps() {
   return {  };
 }
 

@@ -6,4 +6,3 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError } f
 export async function pureAnswer(n: number): globalThis.Promise<number> {
   return n;
 }
-

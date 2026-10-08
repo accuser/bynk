@@ -27,4 +27,3 @@ export const Money = {
     return self.minorUnits === 0;
   },
 };
-

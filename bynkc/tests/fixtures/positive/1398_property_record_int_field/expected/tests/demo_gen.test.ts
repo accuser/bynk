@@ -2,7 +2,7 @@
 // test target: demo.gen
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
-import * as demo_gen from "./../demo/gen.js";
+import * as __ns_demo_gen from "./../demo/gen.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -151,14 +151,14 @@ async function __bynkRunProperty(spec: { seed: number, cases: number, gens: any[
   return { pass: true };
 }
 
-function makeTestDeps() {
+function __makeTestDeps() {
   return {  };
 }
 
 async function __prop_test_record_int_field_participates_in_arithmetic() {
     const deps = {};
-    const { Point } = demo_gen;
-    type Point = demo_gen.Point;
+    const { Point } = __ns_demo_gen;
+    type Point = __ns_demo_gen.Point;
     const __gens = [
       { name: "p", boundaries: [{ x: globalThis.Number(0n), y: globalThis.Number(0n) }], gen: (rng: any) => ({ x: globalThis.Number(rng.int(-1000n, 1000n)), y: globalThis.Number(rng.int(-1000n, 1000n)) }), shrink: (v: any) => [], show: (v: any) => __bynkShow(v) },
     ];

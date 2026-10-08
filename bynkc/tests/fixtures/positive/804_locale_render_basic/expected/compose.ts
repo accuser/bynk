@@ -6,7 +6,7 @@ import * as bynk__binding from "./bynk-cloudflare.js";
 
 export function composeApp() {
   const app_greetDeps = { Locale: new bynk__binding.LocaleProvider() };
-  const app_greetSurface = app_greet.makeSurface(app_greetDeps);
+  const app_greetSurface = app_greet.__makeSurface(app_greetDeps);
 
   return {
     greet: app_greetSurface,

@@ -74,10 +74,10 @@ export function __resetAgents(): void {
   __VaultRegistry.reset();
 }
 
-export interface DocsArchiveDeps {
+export interface __DocsArchiveDeps {
 }
 
-export function makeSurface(deps: DocsArchiveDeps) {
+export function __makeSurface(deps: __DocsArchiveDeps) {
   return {
     async intake(d: Doc): globalThis.Promise<Result<number, void>> {
       return intake.call(d, deps);
@@ -111,5 +111,4 @@ export function __deserialise_Blob(json: __JsonValue, path: string = "$"): Resul
   const __bytes = __b_bytes.value;
   return Ok({ label: __label, bytes: __bytes } as Blob);
 }
-
 

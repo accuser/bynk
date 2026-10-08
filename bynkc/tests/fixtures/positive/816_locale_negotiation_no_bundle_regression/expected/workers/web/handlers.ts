@@ -16,4 +16,3 @@ export const api = {
     return HttpResult.Ok(render(tag, message("hello")));
   },
 };
-

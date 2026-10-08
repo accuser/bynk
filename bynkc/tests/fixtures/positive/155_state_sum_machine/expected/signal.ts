@@ -100,4 +100,3 @@ export function __deserialise_Light(json: __JsonValue, path: string = "$"): Resu
   }
 }
 
-

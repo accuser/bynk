@@ -7,14 +7,14 @@ export interface Logger {
   info(message: string): globalThis.Promise<void>;
 }
 
-export const LoggerToken: symbol = globalThis.Symbol("Logger");
+export const __LoggerToken: symbol = globalThis.Symbol("Logger");
 
 export interface Store {
   put(key: string): globalThis.Promise<void>;
   get(key: string): globalThis.Promise<void>;
 }
 
-export const StoreToken: symbol = globalThis.Symbol("Store");
+export const __StoreToken: symbol = globalThis.Symbol("Store");
 
 export class ConsoleLogger implements Logger {
   async info(message: string): globalThis.Promise<void> {
@@ -22,7 +22,7 @@ export class ConsoleLogger implements Logger {
   }
 }
 
-export const ConsoleLoggerProvider = { token: LoggerToken, factory: () => new ConsoleLogger() };
+export const __ConsoleLoggerProvider = { token: __LoggerToken, factory: () => new ConsoleLogger() };
 
 export class LoggingStore implements Store {
   private deps: { Logger: Logger };
@@ -37,7 +37,7 @@ export class LoggingStore implements Store {
   }
 }
 
-export const LoggingStoreProvider = { token: StoreToken, factory: (deps: { Logger: Logger }) => new LoggingStore(deps) };
+export const __LoggingStoreProvider = { token: __StoreToken, factory: (deps: { Logger: Logger }) => new LoggingStore(deps) };
 
 export const api = {
   async call(key: string, deps: { Store: Store }): globalThis.Promise<void> {
@@ -45,4 +45,3 @@ export const api = {
     return undefined;
   },
 };
-

@@ -2,7 +2,7 @@
 // test target: demo.tally
 
 import { Ok, Err, Some, None, __makeTestState, type Result, type Option, type ValidationError, __bynkEq } from "../runtime.js";
-import * as demo_tally from "./../demo/tally.js";
+import * as __ns_demo_tally from "./../demo/tally.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -25,18 +25,18 @@ function __bynkShow(v: unknown): string {
   try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
-function makeTestDeps() {
+function __makeTestDeps() {
   return {  };
 }
 
 // case tier: unit
 async function test_a_fresh_Tally_key_reads_count_as_0() {
   try {
-    demo_tally.__resetAgents();
-    const deps = makeTestDeps();
-    const { Tally, TallyError, TallyId, __makeTally, read } = demo_tally;
-    type TallyError = demo_tally.TallyError;
-    type TallyId = demo_tally.TallyId;
+    __ns_demo_tally.__resetAgents();
+    const deps = __makeTestDeps();
+    const { Tally, TallyError, TallyId, __makeTally, read } = __ns_demo_tally;
+    type TallyError = __ns_demo_tally.TallyError;
+    type TallyId = __ns_demo_tally.TallyId;
     void (await (async (__d) => {
         switch (__d.tag) {
           case "Err": {

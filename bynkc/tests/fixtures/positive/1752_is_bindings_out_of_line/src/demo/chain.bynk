@@ -1,0 +1,57 @@
+---
+#1752: an `is` test in the right operand of `&&` (or `implies`, or a negated
+`||`) is emitted inside an arrow whenever bindings flow into that operand,
+because the arrow is where they are declared. TypeScript cannot carry the
+narrowing of a test inside an arrow to a read outside it, so a binding read
+elsewhere (a later operand, or the `if`'s branch) failed `tsc --strict` with
+TS2339, e.g. `if o is Some(v) && p is Some(w) { v + w }`. Such reads now go
+through a cast to the variant the checker proved.
+
+`negated` emits no cast: both its operands lower inline, so it guards the
+inline path. The negated `||` that needs one (a hoisted receiver temp) is in
+`1668_is_complex_receiver_gather_sites`.
+---
+commons demo.chain
+
+type Booking =
+  | Held(guest: String, room: Int)
+  | Released
+
+-- Three variants, so an or-pattern's dispatch can't narrow its last
+-- alternative from the union (#1765 review).
+type Stay =
+  | Booked(guest: String, room: Int)
+  | Queued(guest: String)
+  | Gone
+
+fn two(o: Option[Int], p: Option[Int]) -> Int {
+  if o is Some(v) && p is Some(w) { v + w } else { 0 }
+}
+
+fn middle(o: Option[Int], p: Option[Int]) -> Bool {
+  o is Some(v) && p is Some(w) && v < w
+}
+
+fn four(o: Option[Int], p: Option[Int], q: Option[Int]) -> Bool {
+  o is Some(v) && p is Some(w) && q is Some(x) && v < w && w < x
+}
+
+fn rooms(b: Booking, c: Booking) -> Bool {
+  b is Held(g, r) && c is Held(h, s) && r < s && g != h
+}
+
+fn negated(o: Option[Int], p: Option[Int]) -> Int {
+  if !(o is Some(v)) || !(p is Some(w)) { 0 } else { v + w }
+}
+
+fn implied(o: Option[Int], p: Option[Int]) -> Bool {
+  o is Some(v) implies (p is Some(w) && v < w)
+}
+
+fn guestOf(o: Option[Int], s: Stay) -> String {
+  if o is Some(v) && (s is Booked(g, _) | Queued(g)) { g } else { "" }
+}
+
+fn okSum(a: Result[Int, String], b: Result[Int, String]) -> Int {
+  if a is Ok(x) && b is Ok(y) { x + y } else { 0 }
+}

@@ -22,4 +22,3 @@ export const OrderError = {
   EmptyCart: { tag: "EmptyCart" } as OrderError,
   InvalidQuantity: { tag: "InvalidQuantity" } as OrderError,
 };
-

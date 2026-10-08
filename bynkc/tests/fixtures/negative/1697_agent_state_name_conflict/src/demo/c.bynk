@@ -1,0 +1,16 @@
+---
+#1697: `BagState` is the name agent `Bag`'s handlers give its state record (its
+`Cell` fields), so a type of that name would be silently replaced there. It's
+rejected rather than renamed: unlike the compiler's other derived names, a
+program can write this one.
+---
+context demo.c
+
+type BagState = { label: String }
+
+agent Bag {
+  key id: String
+  store n: Cell[Int]
+
+  on call add(k: Int) -> Effect[Int] { k }
+}

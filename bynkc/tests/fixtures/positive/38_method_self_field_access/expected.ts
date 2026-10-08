@@ -16,4 +16,3 @@ export const Box = {
 export function use(b: Box): number {
   return Box.doubled(b);
 }
-

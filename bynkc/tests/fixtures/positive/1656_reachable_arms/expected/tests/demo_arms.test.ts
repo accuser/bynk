@@ -2,7 +2,7 @@
 // test target: demo.arms
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
-import * as demo_arms from "./../demo/arms.js";
+import * as __ns_demo_arms from "./../demo/arms.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -25,7 +25,7 @@ function __bynkShow(v: unknown): string {
   try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
-function makeTestDeps() {
+function __makeTestDeps() {
   return {  };
 }
 
@@ -33,9 +33,9 @@ function makeTestDeps() {
 async function test_a_guarded_arm_does_not_cover_the_same_pattern_after_it() {
   try {
     const deps = {};
-    const { Color, Pair, score, shade, sign, size } = demo_arms;
-    type Color = demo_arms.Color;
-    type Pair = demo_arms.Pair;
+    const { Color, Pair, score, shade, sign, size } = __ns_demo_arms;
+    type Color = __ns_demo_arms.Color;
+    type Pair = __ns_demo_arms.Pair;
     if (!(size(Some(500)) === "big")) { throw __bynkExpectFailure("tests/demo/arms.bynk:7:10", 156, 180, "expect size(Some(500)) == \"big\"\n  expected: size(Some(500)) == \"big\"\n  actual:   " + __bynkShow((size(Some(500)))) + " == " + __bynkShow(("big"))); }
     if (!(size(Some(5)) === "small")) { throw __bynkExpectFailure("tests/demo/arms.bynk:8:10", 190, 214, "expect size(Some(5)) == \"small\"\n  expected: size(Some(5)) == \"small\"\n  actual:   " + __bynkShow((size(Some(5)))) + " == " + __bynkShow(("small"))); }
     if (!(size(Some(0)) === "non-positive")) { throw __bynkExpectFailure("tests/demo/arms.bynk:9:10", 224, 255, "expect size(Some(0)) == \"non-positive\"\n  expected: size(Some(0)) == \"non-positive\"\n  actual:   " + __bynkShow((size(Some(0)))) + " == " + __bynkShow(("non-positive"))); }
@@ -53,9 +53,9 @@ async function test_a_guarded_arm_does_not_cover_the_same_pattern_after_it() {
 async function test_a_narrow_arm_precedes_a_wider_one() {
   try {
     const deps = {};
-    const { Color, Pair, score, shade, sign, size } = demo_arms;
-    type Color = demo_arms.Color;
-    type Pair = demo_arms.Pair;
+    const { Color, Pair, score, shade, sign, size } = __ns_demo_arms;
+    type Color = __ns_demo_arms.Color;
+    type Pair = __ns_demo_arms.Pair;
     if (!(shade(Some(Color.Red)) === 1)) { throw __bynkExpectFailure("tests/demo/arms.bynk:14:10", 341, 362, "expect shade(Some(Red)) == 1\n  expected: shade(Some(Red)) == 1\n  actual:   " + __bynkShow((shade(Some(Color.Red)))) + " == " + __bynkShow((1))); }
     if (!(shade(Some(Color.Blue)) === 2)) { throw __bynkExpectFailure("tests/demo/arms.bynk:15:10", 372, 394, "expect shade(Some(Blue)) == 2\n  expected: shade(Some(Blue)) == 2\n  actual:   " + __bynkShow((shade(Some(Color.Blue)))) + " == " + __bynkShow((2))); }
     if (!(shade(None) === 0)) { throw __bynkExpectFailure("tests/demo/arms.bynk:16:10", 404, 420, "expect shade(None) == 0\n  expected: shade(None) == 0\n  actual:   " + __bynkShow((shade(None))) + " == " + __bynkShow((0))); }
@@ -72,9 +72,9 @@ async function test_a_narrow_arm_precedes_a_wider_one() {
 async function test_multi_field_payloads() {
   try {
     const deps = {};
-    const { Color, Pair, score, shade, sign, size } = demo_arms;
-    type Color = demo_arms.Color;
-    type Pair = demo_arms.Pair;
+    const { Color, Pair, score, shade, sign, size } = __ns_demo_arms;
+    type Color = __ns_demo_arms.Color;
+    type Pair = __ns_demo_arms.Pair;
     if (!(score(Pair.P(1, true)) === 10)) { throw __bynkExpectFailure("tests/demo/arms.bynk:20:10", 463, 486, "expect score(P(1, true)) == 10\n  expected: score(P(1, true)) == 10\n  actual:   " + __bynkShow((score(Pair.P(1, true)))) + " == " + __bynkShow((10))); }
     if (!(score(Pair.P(2, true)) === 1)) { throw __bynkExpectFailure("tests/demo/arms.bynk:21:10", 496, 518, "expect score(P(2, true)) == 1\n  expected: score(P(2, true)) == 1\n  actual:   " + __bynkShow((score(Pair.P(2, true)))) + " == " + __bynkShow((1))); }
     if (!(score(Pair.P(1, false)) === 0)) { throw __bynkExpectFailure("tests/demo/arms.bynk:22:10", 528, 551, "expect score(P(1, false)) == 0\n  expected: score(P(1, false)) == 0\n  actual:   " + __bynkShow((score(Pair.P(1, false)))) + " == " + __bynkShow((0))); }
@@ -92,9 +92,9 @@ async function test_multi_field_payloads() {
 async function test_a_refined_arm_does_not_cover_the_arms_after_it() {
   try {
     const deps = {};
-    const { Color, Pair, score, shade, sign, size } = demo_arms;
-    type Color = demo_arms.Color;
-    type Pair = demo_arms.Pair;
+    const { Color, Pair, score, shade, sign, size } = __ns_demo_arms;
+    type Color = __ns_demo_arms.Color;
+    type Pair = __ns_demo_arms.Pair;
     if (!(sign(3) === "positive")) { throw __bynkExpectFailure("tests/demo/arms.bynk:27:10", 644, 665, "expect sign(3) == \"positive\"\n  expected: sign(3) == \"positive\"\n  actual:   " + __bynkShow((sign(3))) + " == " + __bynkShow(("positive"))); }
     if (!(sign(0) === "not positive")) { throw __bynkExpectFailure("tests/demo/arms.bynk:28:10", 675, 700, "expect sign(0) == \"not positive\"\n  expected: sign(0) == \"not positive\"\n  actual:   " + __bynkShow((sign(0))) + " == " + __bynkShow(("not positive"))); }
     if (!(sign(-2) === "not positive")) { throw __bynkExpectFailure("tests/demo/arms.bynk:29:10", 710, 736, "expect sign(-2) == \"not positive\"\n  expected: sign(-2) == \"not positive\"\n  actual:   " + __bynkShow((sign(-2))) + " == " + __bynkShow(("not positive"))); }

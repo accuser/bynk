@@ -6,4 +6,3 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError } f
 export function isOk(r: Result<number, string>): boolean {
   return r.tag === "Ok";
 }
-

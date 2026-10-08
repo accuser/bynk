@@ -22,4 +22,3 @@ export function blocky(): number {
     return doubled + 1;
   }, 4);
 }
-

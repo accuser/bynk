@@ -689,8 +689,8 @@ One operation in a capability: a name, parameters, and a return type (no body).
 {{#grammar messages_decl}}
 
 A message bundle for one locale (message-bundles track, slice 1): `messages
-<tag> @reference { "code" => "template" ... }`. `tag` is a plain identifier —
-its `LocaleTag` refinement is a checker concern, not a grammar one.
+"<tag>" @reference { "code" => "template" ... }`. `tag` is a string literal
+(v0.233) — its `LocaleTag` refinement is a checker concern, not a grammar one.
 Annotations reuse the same `@name(args)` shape as a `store` field's
 (`store_annotation`); the parser stays permissive on their count (`@reference`
 appears zero or more times syntactically) — exactly one per bundle is a

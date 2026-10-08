@@ -2,7 +2,7 @@
 // test target: commerce.payment
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
-import * as commerce_payment from "./../commerce/payment.js";
+import * as __ns_commerce_payment from "./../commerce/payment.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -27,9 +27,9 @@ function __bynkShow(v: unknown): string {
 
 class __Stub_Logger {
   async log(msg: string): globalThis.Promise<void> {
-    const { AuthId, PaymentError } = commerce_payment;
-    type AuthId = commerce_payment.AuthId;
-    type PaymentError = commerce_payment.PaymentError;
+    const { AuthId, PaymentError } = __ns_commerce_payment;
+    type AuthId = __ns_commerce_payment.AuthId;
+    type PaymentError = __ns_commerce_payment.PaymentError;
     if (true) {
       return undefined;
     }
@@ -57,17 +57,17 @@ function __bynkOverlay(base: unknown, stub: object, cap: string): unknown {
   });
 }
 
-function makeTestDeps() {
-  return { Logger: __bynkOverlay(new commerce_payment.NoOpLogger(), new __Stub_Logger(), "Logger") as commerce_payment.Logger };
+function __makeTestDeps() {
+  return { Logger: __bynkOverlay(new __ns_commerce_payment.NoOpLogger(), new __Stub_Logger(), "Logger") as __ns_commerce_payment.Logger };
 }
 
 // case tier: unit
 async function test_positive_amount_authorises() {
   try {
-    const deps = makeTestDeps();
-    const { AuthId, PaymentError, authorise } = commerce_payment;
-    type AuthId = commerce_payment.AuthId;
-    type PaymentError = commerce_payment.PaymentError;
+    const deps = __makeTestDeps();
+    const { AuthId, PaymentError, authorise } = __ns_commerce_payment;
+    type AuthId = __ns_commerce_payment.AuthId;
+    type PaymentError = __ns_commerce_payment.PaymentError;
     const result = await authorise.call(100, deps);
     if (!(result.tag === "Ok")) { throw __bynkExpectFailure("tests/payment.test.bynk:6:12", 145, 160, "expect result is Ok(_)"); }
     return { pass: true };
@@ -82,10 +82,10 @@ async function test_positive_amount_authorises() {
 // case tier: unit
 async function test_zero_amount_is_declined() {
   try {
-    const deps = makeTestDeps();
-    const { AuthId, PaymentError, authorise } = commerce_payment;
-    type AuthId = commerce_payment.AuthId;
-    type PaymentError = commerce_payment.PaymentError;
+    const deps = __makeTestDeps();
+    const { AuthId, PaymentError, authorise } = __ns_commerce_payment;
+    type AuthId = __ns_commerce_payment.AuthId;
+    type PaymentError = __ns_commerce_payment.PaymentError;
     const result = await authorise.call(0, deps);
     if (!(result.tag === "Err")) { throw __bynkExpectFailure("tests/payment.test.bynk:11:12", 248, 264, "expect result is Err(_)"); }
     return { pass: true };

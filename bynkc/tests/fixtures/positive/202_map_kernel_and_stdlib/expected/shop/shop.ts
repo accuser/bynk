@@ -17,4 +17,3 @@ export function allValues(m: ReadonlyMap<string, number>): readonly number[] {
 export function hasEntry(m: ReadonlyMap<string, number>, name: string): boolean {
   return contains(m, name);
 }
-

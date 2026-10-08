@@ -7,19 +7,19 @@ export interface A {
   a(): globalThis.Promise<void>;
 }
 
-export const AToken: symbol = globalThis.Symbol("A");
+export const __AToken: symbol = globalThis.Symbol("A");
 
 export interface B {
   b(): globalThis.Promise<void>;
 }
 
-export const BToken: symbol = globalThis.Symbol("B");
+export const __BToken: symbol = globalThis.Symbol("B");
 
 export interface C {
   c(): globalThis.Promise<void>;
 }
 
-export const CToken: symbol = globalThis.Symbol("C");
+export const __CToken: symbol = globalThis.Symbol("C");
 
 export class CImpl implements C {
   async c(): globalThis.Promise<void> {
@@ -27,7 +27,7 @@ export class CImpl implements C {
   }
 }
 
-export const CImplProvider = { token: CToken, factory: () => new CImpl() };
+export const __CImplProvider = { token: __CToken, factory: () => new CImpl() };
 
 export class BImpl implements B {
   private deps: { C: C };
@@ -38,7 +38,7 @@ export class BImpl implements B {
   }
 }
 
-export const BImplProvider = { token: BToken, factory: (deps: { C: C }) => new BImpl(deps) };
+export const __BImplProvider = { token: __BToken, factory: (deps: { C: C }) => new BImpl(deps) };
 
 export class AImpl implements A {
   private deps: { B: B };
@@ -49,7 +49,7 @@ export class AImpl implements A {
   }
 }
 
-export const AImplProvider = { token: AToken, factory: (deps: { B: B }) => new AImpl(deps) };
+export const __AImplProvider = { token: __AToken, factory: (deps: { B: B }) => new AImpl(deps) };
 
 export const run = {
   async call(deps: { A: A }): globalThis.Promise<void> {
@@ -57,4 +57,3 @@ export const run = {
     return undefined;
   },
 };
-

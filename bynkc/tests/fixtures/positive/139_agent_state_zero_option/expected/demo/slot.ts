@@ -100,10 +100,10 @@ export function __resetAgents(): void {
   __SlotRegistry.reset();
 }
 
-export interface DemoSlotDeps {
+export interface __DemoSlotDeps {
 }
 
-export function makeSurface(deps: DemoSlotDeps) {
+export function __makeSurface(deps: __DemoSlotDeps) {
   return {
     async resolve(id: Label): globalThis.Promise<Result<number, SlotError>> {
       return resolve.call(id, deps);
@@ -135,4 +135,3 @@ export function __deserialise_Option_Int(json: __JsonValue, path: string = "$"):
   }
   return Err({ kind: "StructuralMismatch", path, expected: "Some | None", actual: String(obj["kind"]) });
 }
-

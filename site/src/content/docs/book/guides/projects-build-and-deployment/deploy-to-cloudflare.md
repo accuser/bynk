@@ -33,7 +33,7 @@ bynk deploy --dry-run --format json
 Arguments after `--` go straight to `wrangler deploy`, for example:
 
 ```sh
-bynk deploy -- --compatibility-date 2025-01-01
+bynk deploy -- --minify
 ```
 
 ## What gets provisioned

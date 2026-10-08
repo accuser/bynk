@@ -21,4 +21,3 @@ export function winFor(prize: number): Outcome {
 export function nothing(): Outcome {
   return Outcome.Draw;
 }
-

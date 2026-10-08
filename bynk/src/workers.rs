@@ -17,9 +17,10 @@ use crate::probe::Provenance;
 /// One compile of the project into `build_dir`, on the same rooting rule as
 /// `bynkc compile <project_root>` (#524, via [`bynk_driver::project_options`]).
 /// Default: in-process. Escape hatch: a `BYNK_BYNKC` override shells *that*
-/// binary instead — the only path on which a second, skewable compiler enters
-/// (doctor reports its skew only here). Returns `false` on failure with the
-/// diagnostics already rendered.
+/// binary instead — the only path on which a second, skewable compiler enters.
+/// #1675: its skew is acted on (minor warns, major refuses unless
+/// `BYNK_ALLOW_SKEW` is set), not only reported by `doctor`. Returns `false` on
+/// failure with the diagnostics already rendered.
 ///
 /// `schema_registry` (#980): `true` for the real `bynk dev`/`bynk deploy`
 /// call sites — otherwise a deploy could ship a `schemaVersion` computed
@@ -38,6 +39,17 @@ pub fn compile_once(
 ) -> bool {
     let used_override = matches!(compiler.origin, Some(crate::compiler::Origin::Override));
     if let (true, Some(bynkc)) = (used_override, compiler.path.as_deref()) {
+        // #1675: the override is the one path on which `dev`/`deploy` run a
+        // second compiler, so its skew is acted on here, as `bynk test` does.
+        // This compile is shared by both commands, so the message says `bynk:`;
+        // neither takes `--allow-skew`, so only `BYNK_ALLOW_SKEW` is offered.
+        let asker = crate::compiler::SkewAsker {
+            command: None,
+            has_flag: false,
+        };
+        if !crate::compiler::skew_gate(compiler, asker, false) {
+            return false;
+        }
         let status = Command::new(bynkc)
             .arg("compile")
             .arg(project_root)
@@ -109,7 +121,11 @@ pub fn compile_once(
     }
     // ADR 0117: surface non-failing warnings — the `BYNK_BYNKC` override above
     // already does, via the shelled `bynkc compile`'s own stdout/stderr.
-    crate::diagnostics::print_project_warnings(&output.warnings, &output.snapshots);
+    crate::diagnostics::print_project_warnings(
+        &output.warnings,
+        &output.snapshots,
+        &output.display_root,
+    );
     true
 }
 
@@ -238,7 +254,8 @@ pub fn wrangler_command(provenance: &Provenance, subcommand: &str) -> Option<Com
             Some(cmd)
         }
         Provenance::Npx => {
-            let mut cmd = Command::new("npx");
+            // #1758: the resolved `npx`, so Windows runs its `npx.cmd` shim.
+            let mut cmd = Command::new(crate::probe::program_path("npx"));
             // #524: pinned provisioning, per the repo's npx convention — an
             // unpinned `wrangler` here meant the dev server could drift from
             // the wrangler the tests and deploys run.

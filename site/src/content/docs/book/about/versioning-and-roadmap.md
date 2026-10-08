@@ -10,7 +10,7 @@ Each language increment (`v0.X`) starts as a written specification, is then
 implemented behind a growing fixture suite, and only then is considered done.
 Increments are deliberately small: a slice of grammar, a refinement to the type
 checker, a new emission detail. This is why the version number moves in fine
-steps (the book is written against v0.303) rather than in large releases.
+steps (the book is written against v0.309) rather than in large releases.
 
 The discipline that keeps it honest is the fixture suite: a large body of
 positive examples (which must compile to the expected TypeScript) and negative
@@ -55,7 +55,8 @@ the planning backlogs (`bynk-tooling-proposal-queue.md`,
   `via schema(N)` version-aware dispatch, filtering delivery by the
   envelope's version. See
   [Understand events](/book/guides/events/understand-events/).
-  Range-valued `via schema(...)` patterns (a future slice 4b) and
+  Range-valued `via schema(...)` patterns (slice 4b,
+  [#990](https://github.com/accuser/bynk/issues/990)) and
   replay/backfill (split to a separate future track) are the track's only
   remaining open work.
 - **Editor tooling.** Deepening the `bynkc-lsp` experience — completion,
@@ -72,7 +73,11 @@ Some capabilities are designed but intentionally **deferred, not missing** — t
 are scheduled for later increments on the road to v1:
 
 - **Sagas** — coordinating multi-step workflows across contexts.
-- **Storage kinds** — choosing how an agent's state is persisted.
+- **Event replay** — re-delivering past events to a subscriber that joins late or
+  recovers, with ordering across concurrent publishes.
+
+Storage kinds, once on this list, have shipped: an agent's `store` fields are
+`Cell`, `Map`, `Set`, `Cache` or `Log` (see [Agents](/book/reference/agents/)).
 
 "Deferred, not missing" matters because it shapes how you read the rest of the
 book. Their absence is a roadmap decision, not an oversight; when they land, they

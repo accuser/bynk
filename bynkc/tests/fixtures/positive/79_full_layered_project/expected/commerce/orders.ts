@@ -55,4 +55,3 @@ export interface Order {
 
 export const Order = {
 };
-

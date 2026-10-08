@@ -6,9 +6,9 @@ import * as app_b from "./app/b.js";
 
 export function composeApp() {
   const app_bDeps = {  };
-  const app_bSurface = app_b.makeSurface(app_bDeps, "app.b");
-  const app_aDeps = { surface: { B: app_b.makeSurface(app_bDeps, "app.a") } };
-  const app_aSurface = app_a.makeSurface(app_aDeps);
+  const app_bSurface = app_b.__makeSurface(app_bDeps, "app.b");
+  const app_aDeps = { surface: { B: app_b.__makeSurface(app_bDeps, "app.a") } };
+  const app_aSurface = app_a.__makeSurface(app_aDeps);
 
   return {
     a: app_aSurface,

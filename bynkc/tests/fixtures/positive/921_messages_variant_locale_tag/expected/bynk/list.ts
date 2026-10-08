@@ -104,4 +104,3 @@ export async function traverse<A, B>(xs: readonly A[], f: (a0: A) => globalThis.
   });
   return reverse(rev);
 }
-

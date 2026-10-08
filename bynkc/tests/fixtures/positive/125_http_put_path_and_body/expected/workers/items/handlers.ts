@@ -93,4 +93,3 @@ export function __deserialise_UpdateItem(json: __JsonValue, path: string = "$"):
   return Ok({ name: __name } as UpdateItem);
 }
 
-

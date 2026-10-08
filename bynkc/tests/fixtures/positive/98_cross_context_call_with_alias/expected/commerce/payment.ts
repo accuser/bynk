@@ -9,14 +9,13 @@ export const authorise = {
   },
 };
 
-export interface CommercePaymentDeps {
+export interface __CommercePaymentDeps {
 }
 
-export function makeSurface(deps: CommercePaymentDeps) {
+export function __makeSurface(deps: __CommercePaymentDeps) {
   return {
     async authorise(amount: number): globalThis.Promise<Result<number, number>> {
       return authorise.call(amount, deps);
     },
   };
 }
-

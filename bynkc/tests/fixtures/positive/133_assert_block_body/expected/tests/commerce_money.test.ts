@@ -2,7 +2,7 @@
 // test target: commerce.money
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
-import * as commerce_money from "./../commerce/money.js";
+import * as __ns_commerce_money from "./../commerce/money.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -25,7 +25,7 @@ function __bynkShow(v: unknown): string {
   try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
-function makeTestDeps() {
+function __makeTestDeps() {
   return {  };
 }
 
@@ -33,8 +33,8 @@ function makeTestDeps() {
 async function test_block_arm_expect() {
   try {
     const deps = {};
-    const { Money } = commerce_money;
-    type Money = commerce_money.Money;
+    const { Money } = __ns_commerce_money;
+    type Money = __ns_commerce_money.Money;
     const m = Money.fromMinorUnits(10);
     void (((__d) => {
         switch (__d.tag) {

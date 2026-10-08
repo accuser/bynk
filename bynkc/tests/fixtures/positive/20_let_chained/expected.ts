@@ -9,4 +9,3 @@ export function compute(a: number, b: number): number {
   const combined = sum + product;
   return combined;
 }
-

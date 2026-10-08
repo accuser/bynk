@@ -25,4 +25,3 @@ export const Assets = {
     return (mode === "public" ? HttpResult.Raw(new globalThis.TextEncoder().encode("User-agent: *\nAllow: /"), "text/plain") : HttpResult.NotFound);
   },
 };
-

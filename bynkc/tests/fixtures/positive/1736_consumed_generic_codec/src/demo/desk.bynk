@@ -1,0 +1,51 @@
+---
+#1736: consumes demo.vault's generic types across the boundary, in both
+directions: returned, sent back, and built here and sent.
+---
+context demo.desk
+
+consumes demo.vault as Vault
+
+-- The consumer's own generic, structurally identical to `Envelope`: the
+-- boundary check compares it field by field at its applied argument.
+type Wrapper[T] = { item: T, note: String }
+
+service total {
+  on call(n: Int) -> Effect[Int] {
+    let e <- Vault.open(n)
+    let w <- Vault.wrapPlain(n)
+    let es <- Vault.many(n)
+    let count = es.length()
+    e.item + w.item.n + count
+  }
+}
+
+service settled {
+  on call(n: Int) -> Effect[Int] {
+    let o <- Vault.settle(n)
+    match o {
+      Done(v) => v
+      Pending(_) => 0
+    }
+  }
+}
+
+service sentBack {
+  on call(n: Int) -> Effect[Int] {
+    let e <- Vault.open(n)
+    Vault.readBack(e)
+  }
+}
+
+service sent {
+  on call(s: String) -> Effect[Int] {
+    Vault.read(Envelope { item: s, note: "out" })
+  }
+}
+
+service sentWrapper {
+  on call(n: Int) -> Effect[Int] {
+    let w: Wrapper[Int] = Wrapper { item: n, note: "mine" }
+    Vault.readBack(w)
+  }
+}

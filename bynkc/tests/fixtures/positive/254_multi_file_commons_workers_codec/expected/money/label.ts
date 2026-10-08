@@ -6,4 +6,3 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError, ty
 export function label(): string {
   return "cents";
 }
-

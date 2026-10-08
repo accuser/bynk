@@ -128,10 +128,10 @@ export function __resetAgents(): void {
   __RoomRegistry.reset();
 }
 
-export interface ChatDeps {
+export interface __ChatDeps {
 }
 
-export function makeSurface(deps: ChatDeps) {
+export function __makeSurface(deps: __ChatDeps) {
   return {
   };
 }
@@ -152,5 +152,4 @@ export function __deserialise_UserId(json: __JsonValue, path: string = "$"): Res
   }
   return Ok(validated.value as UserId);
 }
-
 

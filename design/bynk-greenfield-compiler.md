@@ -922,7 +922,7 @@ five iterator terminals, and is not called at all by the `if` IIFE path — "the
 found and patched for `match` and left unpatched for `if`, which is the giveaway that the fix was a
 local text patch rather than a property of the lowering" (#2). Note the shipped compiler *also*
 carries the right rule elsewhere: `is_effectful_return(r) = matches!(r, TypeRef::Effect(_, _))` is
-one predicate applied identically at free functions, provider ops, service handlers, `makeSurface`
+one predicate applied identically at free functions, provider ops, service handlers, `__makeSurface`
 methods, agent handlers and WebSocket DO methods. Two rules for one question, one of them a substring
 search. And the project has already made and won this argument once, in the same file:
 `runtime_use.rs` exists because deciding things by scanning generated text "over-matches … worse, it
@@ -1498,7 +1498,7 @@ there, where root `Float` loses its non-finite guard and root `Bytes` ships raw 
 
 **R8.16 — The compose root is generated from the `ProjectGraph`'s edges, and the per-consumer surface
 is built wherever a callee binds a `Caller`.**
-*Rationale:* ADR 0226. A consumer edge builds `B.makeSurface(BDeps, "<consumer>")` so the callee reads
+*Rationale:* ADR 0226. A consumer edge builds `B.__makeSurface(BDeps, "<consumer>")` so the callee reads
 the consuming context's qualified name, matching Workers' `X-Bynk-Caller`; the shared instance is kept
 only where no consumer needs a distinct caller. One shared predicate decides which providers take the
 extra argument "so the two seams cannot disagree".

@@ -2,7 +2,7 @@
 // test target: commerce.money
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
-import * as commerce_money from "./../commerce/money.js";
+import * as __ns_commerce_money from "./../commerce/money.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -25,7 +25,7 @@ function __bynkShow(v: unknown): string {
   try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
-function makeTestDeps() {
+function __makeTestDeps() {
   return {  };
 }
 
@@ -33,8 +33,8 @@ function makeTestDeps() {
 async function test_bare_mock_produces_a_default_valued_quantity() {
   try {
     const deps = {};
-    const { Quantity } = commerce_money;
-    type Quantity = commerce_money.Quantity;
+    const { Quantity } = __ns_commerce_money;
+    type Quantity = __ns_commerce_money.Quantity;
     const d = (1 as any);
     if (!(d === d)) { throw __bynkExpectFailure("tests/money.test.bynk:5:12", 189, 195, "expect d == d\n  expected: d == d\n  actual:   " + __bynkShow((d)) + " == " + __bynkShow((d))); }
     return { pass: true };
@@ -50,8 +50,8 @@ async function test_bare_mock_produces_a_default_valued_quantity() {
 async function test_pinned_mock_takes_the_given_literal() {
   try {
     const deps = {};
-    const { Quantity } = commerce_money;
-    type Quantity = commerce_money.Quantity;
+    const { Quantity } = __ns_commerce_money;
+    type Quantity = __ns_commerce_money.Quantity;
     const q = (50 as any);
     if (!(q === q)) { throw __bynkExpectFailure("tests/money.test.bynk:10:12", 289, 295, "expect q == q\n  expected: q == q\n  actual:   " + __bynkShow((q)) + " == " + __bynkShow((q))); }
     return { pass: true };

@@ -26,4 +26,3 @@ export function demo(): boolean {
   const big = 1e10;
   return isHalf(x - 2.0) && n === 2 && e > 0.0 && big >= 1.0 && area(2.0, 3.5) !== 7.5;
 }
-

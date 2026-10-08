@@ -38,16 +38,16 @@ pub use consistency::{
 };
 pub use diagnostics::AttributedError;
 pub use discovery::{
-    ParsedFile, case_effective_tier, check_file_directory_conflicts, discover_bynk_files,
-    discover_project_files, parse_sources, read_adapter_binding, read_source,
-    suite_effective_tier_is_system,
+    ParsedFile, RecoveredSources, case_effective_tier, check_file_directory_conflicts,
+    discover_bynk_files, discover_project_files, parse_sources, parse_sources_recovering,
+    read_adapter_binding, read_source, suite_effective_tier_is_system,
 };
 pub use graph::{detect_consumes_cycles, detect_provider_dependency_cycles};
 pub use json::json_string;
 pub use paths::{
-    ProjectPaths, ProjectPathsError, commons_dir_for, is_multi_file_layout, is_unpinned_range,
-    normalize_rel, renamed_unit_name, render_package_json, try_read_project_paths,
-    try_read_project_paths_with, ts_output_path, unit_path_matches, worker_dir_name,
-    worker_handlers_output_path, worker_handlers_source_path,
+    MANIFEST_TABLES, ProjectPaths, ProjectPathsError, check_manifest, check_manifest_str,
+    commons_dir_for, is_multi_file_layout, is_unpinned_range, normalize_rel, renamed_unit_name,
+    render_package_json, try_read_project_paths, try_read_project_paths_with, ts_output_path,
+    unit_path_matches, worker_dir_name, worker_handlers_output_path, worker_handlers_source_path,
 };
 pub use roots::{Roots, SchemaLock, UnitKind};

@@ -9,14 +9,13 @@ export const batch = {
   },
 };
 
-export interface CommercePaymentDeps {
+export interface __CommercePaymentDeps {
 }
 
-export function makeSurface(deps: CommercePaymentDeps) {
+export function __makeSurface(deps: __CommercePaymentDeps) {
   return {
     async batch(amounts: readonly number[]): globalThis.Promise<Result<number, number>> {
       return batch.call(amounts, deps);
     },
   };
 }
-

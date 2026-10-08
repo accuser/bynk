@@ -104,10 +104,10 @@ export function __resetAgents(): void {
   __CartRegistry.reset();
 }
 
-export interface ShopOrdersDeps {
+export interface __ShopOrdersDeps {
 }
 
-export function makeSurface(deps: ShopOrdersDeps) {
+export function __makeSurface(deps: __ShopOrdersDeps) {
   return {
   };
 }
@@ -129,5 +129,4 @@ export function __deserialise_Item(json: __JsonValue, path: string = "$"): Resul
   const __sku = obj["sku"];
   return Ok({ sku: __sku } as Item);
 }
-
 

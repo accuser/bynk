@@ -56,7 +56,7 @@
           "label": "wrangler",
           "level": "warn",
           "detail": "provisionable via npx (not installed)",
-          "remedy": "npm install -g wrangler"
+          "remedy": "npm install -g wrangler@4, or clear a stale npx cache (~/.npm/_npx)"
         }
       ]
     },

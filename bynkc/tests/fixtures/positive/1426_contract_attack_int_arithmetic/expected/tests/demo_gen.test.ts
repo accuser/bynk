@@ -2,7 +2,7 @@
 // test target: demo.gen
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
-import * as demo_gen from "./../demo/gen.js";
+import * as __ns_demo_gen from "./../demo/gen.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -25,7 +25,7 @@ function __bynkShow(v: unknown): string {
   try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
-function makeTestDeps() {
+function __makeTestDeps() {
   return {  };
 }
 
@@ -33,7 +33,7 @@ function makeTestDeps() {
 async function test_bump_adds_one() {
   try {
     const deps = {};
-    const { bump } = demo_gen;
+    const { bump } = __ns_demo_gen;
     if (!(bump(1) === 2)) { throw __bynkExpectFailure("tests/gen.test.bynk:10:12", 567, 579, "expect bump(1) == 2\n  expected: bump(1) == 2\n  actual:   " + __bynkShow((bump(1))) + " == " + __bynkShow((2))); }
     return { pass: true };
   } catch (e) {

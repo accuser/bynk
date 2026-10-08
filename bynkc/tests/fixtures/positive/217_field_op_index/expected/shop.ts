@@ -23,7 +23,7 @@ export interface Clock {
   now(): globalThis.Promise<number>;
 }
 
-export const ClockToken: symbol = globalThis.Symbol("Clock");
+export const __ClockToken: symbol = globalThis.Symbol("Clock");
 
 export const api = {
   async call(deps: { Clock: Clock }): globalThis.Promise<number> {
@@ -32,15 +32,14 @@ export const api = {
   },
 };
 
-export interface ShopDeps {
+export interface __ShopDeps {
   readonly Clock: Clock;
 }
 
-export function makeSurface(deps: ShopDeps) {
+export function __makeSurface(deps: __ShopDeps) {
   return {
     async api(): globalThis.Promise<number> {
       return api.call(deps);
     },
   };
 }
-

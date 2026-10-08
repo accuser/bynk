@@ -53,4 +53,3 @@ export const MoneyError = {
   InsufficientFunds: { tag: "InsufficientFunds" } as MoneyError,
   Overflow: { tag: "Overflow" } as MoneyError,
 };
-

@@ -2,7 +2,7 @@
 // test target: shortener.analytics
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
-import * as shortener_analytics from "./../shortener/analytics.js";
+import * as __ns_shortener_analytics from "./../shortener/analytics.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -25,7 +25,7 @@ function __bynkShow(v: unknown): string {
   try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
-function makeTestDeps() {
+function __makeTestDeps() {
   return {  };
 }
 
@@ -33,9 +33,9 @@ function makeTestDeps() {
 async function test_short_code_rejects_too_short_input() {
   try {
     const deps = {};
-    const { LongUrl, ShortCode } = shortener_analytics;
-    type LongUrl = shortener_analytics.LongUrl;
-    type ShortCode = shortener_analytics.ShortCode;
+    const { LongUrl, ShortCode } = __ns_shortener_analytics;
+    type LongUrl = __ns_shortener_analytics.LongUrl;
+    type ShortCode = __ns_shortener_analytics.ShortCode;
     const result = ShortCode.fromString("ab");
     void (((__d) => {
         switch (__d.tag) {
@@ -61,9 +61,9 @@ async function test_short_code_rejects_too_short_input() {
 async function test_short_code_accepts_valid_input() {
   try {
     const deps = {};
-    const { LongUrl, ShortCode } = shortener_analytics;
-    type LongUrl = shortener_analytics.LongUrl;
-    type ShortCode = shortener_analytics.ShortCode;
+    const { LongUrl, ShortCode } = __ns_shortener_analytics;
+    type LongUrl = __ns_shortener_analytics.LongUrl;
+    type ShortCode = __ns_shortener_analytics.ShortCode;
     const result = ShortCode.fromString("abc123");
     void (((__d) => {
         switch (__d.tag) {
@@ -89,9 +89,9 @@ async function test_short_code_accepts_valid_input() {
 async function test_long_url_accepts_a_typical_url() {
   try {
     const deps = {};
-    const { LongUrl, ShortCode } = shortener_analytics;
-    type LongUrl = shortener_analytics.LongUrl;
-    type ShortCode = shortener_analytics.ShortCode;
+    const { LongUrl, ShortCode } = __ns_shortener_analytics;
+    type LongUrl = __ns_shortener_analytics.LongUrl;
+    type ShortCode = __ns_shortener_analytics.ShortCode;
     const result = LongUrl.fromString("https://example.com/path");
     if (!(result.tag === "Ok")) { throw __bynkExpectFailure("tests/shortener/analytics.bynk:20:12", 497, 512, "expect result is Ok(_)"); }
     return { pass: true };

@@ -12,15 +12,14 @@ export const login = {
   },
 };
 
-export interface AuthSessionsDeps {
+export interface __AuthSessionsDeps {
   readonly Jwt: tokens.Jwt;
 }
 
-export function makeSurface(deps: AuthSessionsDeps) {
+export function __makeSurface(deps: __AuthSessionsDeps) {
   return {
     async login(sub: string): globalThis.Promise<string> {
       return login.call(sub, deps);
     },
   };
 }
-

@@ -24,4 +24,3 @@ export function greet(n: Name): string {
 export function size(n: Name): number {
   return (n).length;
 }
-

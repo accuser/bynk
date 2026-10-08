@@ -12,4 +12,3 @@ export interface User {
 
 export const User = {
 };
-

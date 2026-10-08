@@ -2,7 +2,7 @@
 // test target: commerce.payment
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
-import * as commerce_payment from "./../commerce/payment.js";
+import * as __ns_commerce_payment from "./../commerce/payment.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -25,16 +25,16 @@ function __bynkShow(v: unknown): string {
   try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
-function makeTestDeps() {
+function __makeTestDeps() {
   return {  };
 }
 
 // case tier: unit
 async function test_constructs_AuthId_from_inside_the_test() {
   try {
-    const deps = makeTestDeps();
-    const { AuthId } = commerce_payment;
-    type AuthId = commerce_payment.AuthId;
+    const deps = __makeTestDeps();
+    const { AuthId } = __ns_commerce_payment;
+    type AuthId = __ns_commerce_payment.AuthId;
     const id = AuthId.unsafe("AUTH-12345678");
     if (!(true)) { throw __bynkExpectFailure("tests/payment.test.bynk:6:12", 256, 260, "expect true"); }
     return { pass: true };

@@ -9,4 +9,4 @@ compiler: in-process
 ✗ deploy [fail]
     node — v22.0.0 (path)
     wrangler — missing
-      ↳ fix: npm install -g wrangler
+      ↳ fix: npm install -g wrangler@4

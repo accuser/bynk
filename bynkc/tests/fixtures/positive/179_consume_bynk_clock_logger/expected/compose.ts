@@ -6,7 +6,7 @@ import * as bynk__binding from "./bynk-cloudflare.js";
 
 export function composeApp() {
   const shop_ordersDeps = { Clock: new bynk__binding.ClockProvider(), Logger: new bynk__binding.LoggerProvider() };
-  const shop_ordersSurface = shop_orders.makeSurface(shop_ordersDeps);
+  const shop_ordersSurface = shop_orders.__makeSurface(shop_ordersDeps);
 
   return {
     orders: shop_ordersSurface,

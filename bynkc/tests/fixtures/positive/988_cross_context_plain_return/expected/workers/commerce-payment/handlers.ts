@@ -34,4 +34,3 @@ export function __deserialise_Receipt(json: __JsonValue, path: string = "$"): Re
   return Ok({ id: __id } as Receipt);
 }
 
-

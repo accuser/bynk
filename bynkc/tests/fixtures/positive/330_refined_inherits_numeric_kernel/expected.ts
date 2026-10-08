@@ -28,4 +28,3 @@ export function bounded(s: Score): number {
 export function show(s: Score): string {
   return String(s);
 }
-

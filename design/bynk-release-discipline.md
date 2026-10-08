@@ -1,10 +1,13 @@
-# Bynk — Release Discipline: Milestone Cadence & Doc-Truth Guards
+# Bynk — Release Discipline: Milestone Cadence, Doc-Truth Guards & the Compatibility Date
 
 *Decision record for [#540](https://github.com/accuser/bynk/issues/540) §7(4), the
 two bullets left after the [1.0 definition](bynk-1.0-definition.md): **monthly
-milestone cadence** and **README/about drift guards**. Fourth of the strategy
+milestone cadence** (from 1.0; Part 1 records the pre-1.0 trigger, #1673) and
+**README/about drift guards**. Fourth of the strategy
 records. A strategy record, not a language-defining call. With this, §7(4) is
-closed.*
+closed. Part 3, the Workers compatibility-date policy, was added later for
+[#1677](https://github.com/accuser/bynk/issues/1677), because it rides on the
+same releases.*
 
 ---
 
@@ -67,6 +70,47 @@ This is exactly the cadence the [1.0 definition](bynk-1.0-definition.md) leans o
 1.0 stability promise *legible*: a 1.x user upgrades milestone to milestone, reads
 one migration note, and (for anything mechanical) runs one codemod.
 
+### Before 1.0: a release at each track retirement (#1673)
+
+The monthly cadence was written down, but nothing said when a milestone was
+due, and in practice none was cut after `v0.290.0` (2026-09-04), while `main`
+moved on by more than a dozen versions.
+[#1673](https://github.com/accuser/bynk/issues/1673) asked for the cadence to
+be reaffirmed or replaced in writing.
+
+**Monthly milestones are the cadence from 1.0.** Before 1.0 a calendar trigger
+doesn't fit. The month is the right grain for an *outside* upgrader, and before
+1.0 the only Bynk source is this repo's own corpus (the reasoning ADR 0123
+applied to codemods). Work also lands in tracks, not months, and a release cut
+partway through a track ships half of a change. **So before 1.0, a release is
+cut when the work it ships is whole:**
+
+1. **When a track retires.** The retirement PR is the point at which a track's
+   slices are all merged and its spine closes, so the version on `main` after it
+   merges is a coherent unit. The maintainer tags it (`git tag vX.Y.Z` on a
+   commit whose CI is green).
+2. **When a user-facing fix needs to reach users** before the track it sits in
+   retires: a broken download, a crash in a released `bynkc`, a security fix.
+   That release is tagged from `main` as soon as the fix merges.
+3. **What the tag does.** `release.yml` does the rest from the tag: it builds
+   the binaries, cuts the GitHub Release, publishes the crates and the grammar,
+   moves the VS Code extension's server pin to the new release, and tells the
+   bynk-lang org canary, which re-runs the org's example and action
+   repositories against it.
+4. **What a release carries.** The cumulative migration note (above), covering
+   the increments since the previous release, and the Workers
+   compatibility-date review (Part 3).
+
+At 1.0 this section gives way to the monthly cadence above, unchanged.
+
+**What still depends on the cadence.** The extension's server pin used to: it
+was rewritten to the workspace version on every increment, so between releases
+it named a release that didn't exist. It now names the last shipped release, so
+a long gap between releases leaves the extension *behind* rather than broken.
+What a gap still costs is currency: the GitHub Release binaries, the crates on
+crates.io, and the server the extension downloads all stay at the last release,
+while the README's `cargo install --path` builds whatever is on `main`.
+
 ## Part 2 — Doc-truth drift guards
 
 ### The principle
@@ -123,6 +167,70 @@ The line this draws: we **compile every example**, make the **doc-delta a requir
 part of every increment** for the front-door surfaces, and **prefer checkable
 references over unguarded claims** — that is the extension of the drift-guard
 pattern the review asked for, without pretending to mechanize prose.
+
+## Part 3 — The Workers compatibility date
+
+### The bind
+
+Every generated `wrangler.toml` pins `compatibility_date` to one compile-time
+constant (`COMPATIBILITY_DATE` in `bynk-emit/src/emitter/wrangler.rs`).
+Cloudflare uses the date to fix the Workers runtime behaviour a Worker sees, so
+moving it can change how deployed Bynk code behaves without any change to the
+compiler's output. Until #1677 the only guidance was "bump cautiously", with no
+trigger for a bump. The date stayed at `2024-11-01` for 23 months, falling
+further behind the runtime that Cloudflare and the local `workerd` actually
+test. The first review under this policy, at the `v0.303.4` release, moved it
+to `2026-07-01`.
+
+### The decision
+
+**Review the date at each release (Part 1: a track retirement before 1.0, a
+monthly milestone from 1.0), and move it only once the workerd smokes pass on
+the new date.** The recommended option of #1677's Decision A.
+
+1. **Trigger.** Each release reviews the date. A review may keep the date when
+   nothing is worth taking, and the release says so. The candidate is a date no
+   later than any of:
+   - the release itself;
+   - the newest date the `workerd` behind the smokes' wrangler
+     (`bynkc/tests/wrangler/mod.rs`'s `SPEC`) supports;
+   - **the newest date supported by a wrangler released at least three months
+     before the review** (the lag rule, added at the first review, #1731).
+
+   The lag rule exists because **an older `workerd` refuses a newer date
+   outright.** It doesn't fall back: `wrangler dev` exits with "This Worker
+   requires compatibility date …, but the newest date supported by this server
+   binary is …". A developer's wrangler is often older than the newest release,
+   whether it's installed on `PATH`, pinned in the project, or extracted in the
+   `npx` cache, which is keyed on the spec `wrangler@4` rather than the version
+   it resolves to. A date only the newest wrangler supports would break
+   `bynk dev` for all of them. Three months back keeps any wrangler from the
+   last quarter working. Look the date up with `npm view wrangler time` and
+   `npm view wrangler@<v> dependencies.workerd`: the `workerd` version
+   `1.YYYYMMDD.n` names the newest date it supports.
+
+   **The review also sets the wrangler minimum** (#1732): `WRANGLER_MIN`, beside
+   `COMPATIBILITY_DATE`, is the oldest wrangler whose `workerd` serves the date.
+   It's currently `4.107.0` for `2026-07-01`. `bynk doctor` warns about an
+   installed wrangler below it, and `bynk dev` prints the same warning before
+   serving. `bynk-emit/tests/compat_date_policy.rs` fails until this section,
+   the doctor guide and the emission reference all name the current pair.
+2. **Gate.** The bump lands as its own PR. Before it merges, the full suite runs
+   with `BYNK_REQUIRE_WORKERD=1` on the new date, so the workerd smokes exercise
+   the generated Workers under the new runtime behaviour. The PR lists the
+   compatibility flags Cloudflare switched on between the two dates and says
+   which of them, if any, the runtime or the emitted code depends on.
+3. **Record.** A bump changes what every deployed Worker runs under, so it
+   carries a changelog entry. It needs an ADR only when a flag changes
+   behaviour a Bynk program can observe.
+
+### Why at releases
+
+A release is the point at which an upgrader already reads one cumulative note, so a runtime change belongs there, and not in a daily increment that
+nobody outside reads. The smokes are the gate because they are the only tests
+that run the generated Workers on the real runtime. A golden can't see a
+runtime behaviour change, since the emitted `wrangler.toml` differs only in the
+date.
 
 ## Interlocks
 

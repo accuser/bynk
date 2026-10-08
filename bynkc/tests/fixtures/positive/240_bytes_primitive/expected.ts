@@ -49,4 +49,3 @@ export function differs(a: globalThis.Uint8Array, b: globalThis.Uint8Array): boo
 export function roundTrips(): boolean {
   return __bynkBytesEqual(new globalThis.TextEncoder().encode("hi"), new globalThis.TextEncoder().encode("hi"));
 }
-

@@ -6,4 +6,3 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError } f
 export function always(n: number): Result<number, ValidationError> {
   return Ok(n);
 }
-

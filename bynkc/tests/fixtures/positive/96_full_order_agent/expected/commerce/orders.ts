@@ -44,7 +44,7 @@ export interface Inventory {
   check(productId: CustomerId): globalThis.Promise<Result<number, OrderError>>;
 }
 
-export const InventoryToken: symbol = globalThis.Symbol("Inventory");
+export const __InventoryToken: symbol = globalThis.Symbol("Inventory");
 
 export class StubInventory implements Inventory {
   async check(productId: CustomerId): globalThis.Promise<Result<number, OrderError>> {
@@ -52,7 +52,7 @@ export class StubInventory implements Inventory {
   }
 }
 
-export const StubInventoryProvider = { token: InventoryToken, factory: () => new StubInventory() };
+export const __StubInventoryProvider = { token: __InventoryToken, factory: () => new StubInventory() };
 
 export interface OrderState {
   readonly status: Option<OrderStatus>;
@@ -177,4 +177,3 @@ export function __deserialise_Option_OrderStatus(json: __JsonValue, path: string
   }
   return Err({ kind: "StructuralMismatch", path, expected: "Some | None", actual: String(obj["kind"]) });
 }
-

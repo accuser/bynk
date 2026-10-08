@@ -18,14 +18,13 @@ export const pinger = {
   },
 };
 
-export interface DemoDeps {
+export interface __DemoDeps {
 }
 
-export function makeSurface(deps: DemoDeps) {
+export function __makeSurface(deps: __DemoDeps) {
   return {
     async pinger(): globalThis.Promise<void> {
       return pinger.call(deps);
     },
   };
 }
-

@@ -14,4 +14,3 @@ export async function seqAll(xs: readonly number[]): globalThis.Promise<readonly
 export async function parAll(xs: readonly number[]): globalThis.Promise<readonly Result<number, string>[]> {
   return (async (__xs: readonly number[]) => await globalThis.Promise.all(__xs.map((__x: number) => (async (x: number) => check(x))(__x))))(xs);
 }
-

@@ -9,4 +9,3 @@ export interface ReserveOutcome {
 
 export const ReserveOutcome = {
 };
-

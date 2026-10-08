@@ -1,0 +1,13 @@
+---
+#1703 review: the system tier (the integration module), whose suite `uses` a
+commons with a generic type, across the wire into a consumed context.
+---
+suite demo.desk as system {
+  uses demo.shapes
+
+  case "a generic type crosses the wire" {
+    let p = pairOf(5, "five")
+    let n <- demo.desk.check(p.first)
+    expect n == 5
+  }
+}

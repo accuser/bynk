@@ -95,7 +95,7 @@ export const relay = {
   },
 };
 
-export interface DemoPlatDeps {
+export interface __DemoPlatDeps {
   readonly Clock: bynk.Clock;
   readonly Fetch: bynk.Fetch;
   readonly Idempotency: bynk.Idempotency;
@@ -106,7 +106,7 @@ export interface DemoPlatDeps {
   readonly Secrets: bynk.Secrets;
 }
 
-export function makeSurface(deps: DemoPlatDeps) {
+export function __makeSurface(deps: __DemoPlatDeps) {
   return {
     async clock(): globalThis.Promise<number> {
       return clock.call(deps);

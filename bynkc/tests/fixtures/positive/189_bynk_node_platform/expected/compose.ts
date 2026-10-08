@@ -6,7 +6,7 @@ import * as bynk__binding from "./bynk-node.js";
 
 export function composeApp() {
   const ids_genDeps = { Clock: new bynk__binding.ClockProvider(), Secrets: new bynk__binding.SecretsProvider() };
-  const ids_genSurface = ids_gen.makeSurface(ids_genDeps);
+  const ids_genSurface = ids_gen.__makeSurface(ids_genDeps);
 
   return {
     gen: ids_genSurface,

@@ -13,4 +13,3 @@ export const OrderId = {
     return Ok(value as OrderId);
   },
 };
-

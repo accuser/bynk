@@ -189,6 +189,21 @@ pub fn detect(tb: &dyn Toolbox, tool: &str, opts: DetectOpts<'_>) -> Probe {
     }
 }
 
+/// #1758: the program to spawn for `tool`: the path `which` resolves on
+/// `PATH`, or the bare name when it resolves nothing. Spawn tools through this
+/// rather than `Command::new("<name>")`. On Windows, `Command` looks up a bare
+/// name with `.exe` only, so an npm shim (`npx.cmd`, `tsc.cmd`) that detection
+/// finds through `PATHEXT` is never started. An explicit path to a `.cmd` is
+/// spawned correctly, with its arguments escaped.
+///
+/// Resolved through [`SystemToolbox::on_path`], the same lookup detection uses,
+/// so the spawned program is the one a probe of `tool` reports.
+pub fn program_path(tool: &str) -> PathBuf {
+    SystemToolbox
+        .on_path(tool)
+        .unwrap_or_else(|| PathBuf::from(tool))
+}
+
 /// The real host: `which`-crate lookups and a `--version` shell-out.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct SystemToolbox;

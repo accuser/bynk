@@ -2,7 +2,7 @@
 // test target: blobs
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, __bynkBytesEqual, __bynkBytesToBase64, __bynkBytesFromBase64, __bynkBytesDecodeUtf8 } from "../runtime.js";
-import * as blobs from "./../blobs.js";
+import * as __ns_blobs from "./../blobs.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -25,7 +25,7 @@ function __bynkShow(v: unknown): string {
   try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
-function makeTestDeps() {
+function __makeTestDeps() {
   return {  };
 }
 
@@ -33,7 +33,7 @@ function makeTestDeps() {
 async function test_decodes_base64() {
   try {
     const deps = {};
-    const { size } = blobs;
+    const { size } = __ns_blobs;
     void (((__d) => {
         switch (__d.tag) {
           case "Some": {
@@ -59,7 +59,7 @@ async function test_decodes_base64() {
 async function test_compares_by_content() {
   try {
     const deps = {};
-    const { size } = blobs;
+    const { size } = __ns_blobs;
     if (!(__bynkBytesEqual(new globalThis.TextEncoder().encode("hi"), new globalThis.TextEncoder().encode("hi")))) { throw __bynkExpectFailure("tests/blobs.test.bynk:14:12", 446, 490, "expect Bytes.fromUtf8(\"hi\") == Bytes.fromUtf8(\"hi\")\n  expected: Bytes.fromUtf8(\"hi\") == Bytes.fromUtf8(\"hi\")\n  actual:   " + __bynkShow((new globalThis.TextEncoder().encode("hi"))) + " == " + __bynkShow((new globalThis.TextEncoder().encode("hi")))); }
     return { pass: true };
   } catch (e) {

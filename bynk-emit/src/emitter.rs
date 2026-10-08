@@ -569,7 +569,7 @@ pub(crate) fn emit_project(
         );
         stmts.push(reset_fn);
     }
-    // v0.6: cross-context surface assembly. Emit `makeSurface` for any
+    // v0.6: cross-context surface assembly. Emit `__makeSurface` for any
     // context that declares services — the composition root references it
     // for every such context, not just those consumed by others. Skipped
     // in workers mode where each Worker has its own `compose(env)` root.
@@ -1583,6 +1583,19 @@ fn emit_consumed_context_helpers(
                 qual.insert(n.clone(), ns.clone());
             }
         }
+        // #1736: a generic type the callee owns reaches the closure only as the
+        // base of an instantiation (`Envelope[Int]`), never as a plain name, so
+        // the loop above can't see it. Without this the instantiation's codec
+        // named it bare (`Envelope<number>`), which the caller doesn't declare:
+        // `TS2304`, failing every consumer of a service that returns one.
+        for i in &cinsts {
+            if let serialisation::GenericInst::RecordInst { name, .. }
+            | serialisation::GenericInst::SumInst { name, .. } = i
+                && owned(name)
+            {
+                qual.insert(name.clone(), ns.clone());
+            }
+        }
 
         let mut to_emit: Vec<String> = names
             .iter()
@@ -1984,24 +1997,14 @@ fn collect_external_references(commons: &TypedCommons, ctx: &EmitProjectCtx) -> 
                     collect_refs_in_typeref(id, &local_to_file, ctx, &mut refs);
                 }
             }
-            // `MessageEntry.code`/`.template` are plain string literals with
-            // no TypeRefs/exprs of their own to walk — but the generated
-            // `render` (emit_messages) has a signature and body that name
-            // `LocaleTag`/`Message`/`MessageArg` even though no expression in
-            // this file's *source* does, so those three are registered here
-            // by hand, the same way a real reference would be. `render`/
-            // `renderArg` are deliberately NOT registered this way —
-            // `render` collides with the generated function of the same
-            // name, and both are instead imported together under
-            // `emit_unit`'s (project.rs) hand-written, aliased extra import
-            // line, bypassing this dedup/merge path entirely (importing
-            // `renderArg` there too, alongside the aliased `render`, avoids a
-            // duplicate import of it from here).
-            CommonsItem::Messages(_) => {
-                for name in ["LocaleTag", "Message", "MessageArg"] {
-                    record_name_ref(name, &local_to_file, ctx, &mut refs);
-                }
-            }
+            // A `messages` block's generated table and `render` name
+            // `LocaleTag`/`Message`/`MessageArg` and `render`/`renderArg`
+            // only under private aliases (#1697), imported by `emit_unit`'s
+            // (project.rs) hand-written lines, so a user declaration of the
+            // same name in this unit can't capture them. Nothing is
+            // registered here; user code that names `LocaleTag` itself
+            // imports it the ordinary way.
+            CommonsItem::Messages(_) => {}
         }
     }
     refs
@@ -2397,7 +2400,7 @@ fn record_name_ref(
 }
 
 /// Emit `import * as <ns> from "..."` for each consumed context that
-/// exposes services (so the consuming file can reference its `makeSurface`
+/// exposes services (so the consuming file can reference its `__makeSurface`
 /// return type and brand the cross-context call arguments).
 /// #1478: real-node-internally already — returns one real `TsDecl::
 /// ImportNamespace` per consumed context instead of writing into
@@ -3557,8 +3560,15 @@ pub(crate) struct LowerCtx<'a> {
     /// *declared* here (`let __rN!: T;`) and only *assigned* in place. The
     /// caller emits these declarations before the whole condition, so an `if`
     /// then-branch's binding that reads the temp (`const m = __r1 as Q;`)
-    /// finds it in scope. `None` outside such a right operand.
+    /// finds it in scope. `None` outside such a right operand. #1751: also set
+    /// around the right operand of a plain `&&`/`||`/`implies`.
     pub(crate) is_temp_hoist: Option<Vec<String>>,
+    /// #1752 (generalising #1751): the `is` tests, by span, whose tag test was
+    /// emitted out of line: inside a short-circuit right operand that lowered
+    /// to an arrow or a hoisted `if`. TypeScript cannot carry such a test's
+    /// narrowing to a binding read elsewhere, so `emit_is_test_bindings` reads
+    /// those bindings through a cast to the variant the checker proved.
+    pub(crate) unnarrowed_is_tests: HashSet<bynk_syntax::span::Span>,
     /// Variable bindings that point at agent instances. Updated by the
     /// statement emitter when it sees `let x = AgentName(key)`. Used by
     /// the method-call lowering so `x.method(args)` resolves through
@@ -3603,6 +3613,22 @@ pub(crate) struct LowerCtx<'a> {
     /// enclosing function — the residual gap `hoist_if_as_statement` (built for
     /// T2.1's `if`-hoisting) also closes here, once this flag says it's needed.
     pub(crate) emitted_early_return: bool,
+    /// #1750: where a block's tail value goes. `None` (the default) is a
+    /// `return`, the right sink for a function, lambda or arrow body. `Some` is
+    /// set while a value-position `if`/`match`/block that contains a `?` is
+    /// emitted as a real statement rather than an arrow: each tail assigns the
+    /// slot and breaks out of the labelled block wrapping the statement, so
+    /// the `?`'s own `return` still exits the enclosing function. Every arrow
+    /// and function boundary resets it to `None` for its own body.
+    pub(crate) tail_slot: Option<TailSlot>,
+}
+
+/// #1750: the slot and label a statement-form value expression's tails assign
+/// and break to. See [`LowerCtx::tail_slot`].
+#[derive(Clone)]
+pub(crate) struct TailSlot {
+    pub(crate) slot: String,
+    pub(crate) label: String,
 }
 
 /// v0.59: the source context an `assert` lowering needs to turn its span into a
@@ -3631,12 +3657,14 @@ impl<'a> LowerCtx<'a> {
             shadow_scopes: vec![HashMap::new()],
             is_receiver_temps: HashMap::new(),
             is_temp_hoist: None,
+            unnarrowed_is_tests: HashSet::new(),
             local_agent_vars: HashMap::new(),
             call_site_identity: None,
             call_site_no_credential: false,
             source_map: None,
             emitted_await: false,
             emitted_early_return: false,
+            tail_slot: None,
         }
     }
 
@@ -4214,8 +4242,8 @@ impl<'a> LowerCtx<'a> {
     /// Return a stable textual reference to an `is` receiver, used by the
     /// `.tag` check in `lower_is`. A simple, repeatable lvalue is lowered
     /// inline exactly as before (preserving rewrites such as `self.state` or
-    /// capability access). A complex receiver (anything `value_text_for_is`
-    /// could not render — e.g. a call) is evaluated once into a fresh temp
+    /// capability access). A complex receiver (anything `is_simple_is_receiver`
+    /// rejects — e.g. a call) is evaluated once into a fresh temp
     /// hoisted into the returned `Lowered` and cached by span, so the bindings
     /// gathered later reference the same evaluation rather than re-running the
     /// expression.
@@ -4299,8 +4327,10 @@ impl<'a> LowerCtx<'a> {
     /// `Lowered`, so it has nowhere to hoist and cannot lift). If the receiver was already lifted to a temp during
     /// condition lowering, reuse that temp; otherwise it must be a simple
     /// repeatable lvalue, rendered inline. The "lower the condition before
-    /// gathering its bindings" ordering in `emit_if_tail` / `lower_and_with_is`
-    /// guarantees the temp exists before this is called for complex receivers.
+    /// gathering its bindings" ordering in `emit_if_tail`, `lower_and_with_is`
+    /// and the value-position `if` IIFE guarantees the temp exists before this
+    /// is called for complex receivers; `value_text_for_is` panics if it does
+    /// not (#1668).
     fn is_receiver_text(&self, value: &Expr) -> String {
         if let Some(t) = self.is_receiver_temps.get(&value.span) {
             return t.clone();

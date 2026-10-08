@@ -40,13 +40,13 @@ export interface Payments {
   authorise(amount: Money): globalThis.Promise<Result<AuthId, PaymentError>>;
 }
 
-export const PaymentsToken: symbol = globalThis.Symbol("Payments");
+export const __PaymentsToken: symbol = globalThis.Symbol("Payments");
 
 export interface Logger {
   log(message: string): globalThis.Promise<void>;
 }
 
-export const LoggerToken: symbol = globalThis.Symbol("Logger");
+export const __LoggerToken: symbol = globalThis.Symbol("Logger");
 
 export class StubPayments implements Payments {
   async authorise(amount: Money): globalThis.Promise<Result<AuthId, PaymentError>> {
@@ -54,7 +54,7 @@ export class StubPayments implements Payments {
   }
 }
 
-export const StubPaymentsProvider = { token: PaymentsToken, factory: () => new StubPayments() };
+export const __StubPaymentsProvider = { token: __PaymentsToken, factory: () => new StubPayments() };
 
 export class ConsoleLogger implements Logger {
   async log(message: string): globalThis.Promise<void> {
@@ -62,7 +62,7 @@ export class ConsoleLogger implements Logger {
   }
 }
 
-export const ConsoleLoggerProvider = { token: LoggerToken, factory: () => new ConsoleLogger() };
+export const __ConsoleLoggerProvider = { token: __LoggerToken, factory: () => new ConsoleLogger() };
 
 export const authorise = {
   async call(amount: Money, deps: { Payments: Payments; Logger: Logger }): globalThis.Promise<Result<AuthId, PaymentError>> {
@@ -72,16 +72,15 @@ export const authorise = {
   },
 };
 
-export interface CommercePaymentDeps {
+export interface __CommercePaymentDeps {
   readonly Payments: Payments;
   readonly Logger: Logger;
 }
 
-export function makeSurface(deps: CommercePaymentDeps) {
+export function __makeSurface(deps: __CommercePaymentDeps) {
   return {
     async authorise(amount: Money): globalThis.Promise<Result<AuthId, PaymentError>> {
       return authorise.call(amount, deps);
     },
   };
 }
-

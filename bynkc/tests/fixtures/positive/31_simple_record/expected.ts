@@ -18,4 +18,3 @@ export function origin(): Point {
 export function xOf(p: Point): number {
   return p.x;
 }
-

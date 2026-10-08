@@ -6,7 +6,7 @@ import * as tokens__binding from "./tokens.binding.js";
 
 export function composeApp() {
   const auth_sessionsDeps = { Jwt: new tokens__binding.JoseJwt() };
-  const auth_sessionsSurface = auth_sessions.makeSurface(auth_sessionsDeps);
+  const auth_sessionsSurface = auth_sessions.__makeSurface(auth_sessionsDeps);
 
   return {
     sessions: auth_sessionsSurface,

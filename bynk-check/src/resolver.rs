@@ -687,6 +687,16 @@ pub fn split_broken_decl_echoes(
         "bynk.resolve.unknown_name",
         "bynk.resolve.unknown_function",
         "bynk.resolve.unknown_static_member",
+        // #1710: echoes the checker reports (so the project path splits the
+        // checker's diagnostics too), each naming a declaration recovery may
+        // skip: a consumed context's service, a method, a capability (as a
+        // provider's target, in `given`, or unused for want of one), an actor.
+        "bynk.consumes.unknown_service",
+        "bynk.types.method_not_found",
+        "bynk.provider.unknown_capability",
+        "bynk.given.unknown_capability",
+        "bynk.given.unused_capability",
+        "bynk.actor.unknown_actor",
     ];
     // The *subject* each of these diagnostics is about, spelled as the parser
     // records a broken declaration (`T`, `f`, or a method as `T.m`):
@@ -694,7 +704,11 @@ pub fn split_broken_decl_echoes(
     //   one backticked name;
     // - `method `T.m` attached to an unknown type `T``: the type, its last;
     // - `type `T` has no static method or variant named `m``: the member,
-    //   qualified by its type (`T.m`), its first and last.
+    //   qualified by its type (`T.m`), its first and last;
+    // - `context `c` has no service named `s``: the service, its last;
+    // - `type `T` has no instance method named `m``: the method, as `T.m`;
+    // - `capability `C` is declared in `given` but never used`: its first;
+    // - any other capability or actor diagnostic: its one backticked name.
     // Matching only the subject keeps a broken `fn m` from hiding an unrelated
     // `Other.m` that merely shares the name.
     let names = |message: &str| -> Vec<String> {
@@ -707,10 +721,14 @@ pub fn split_broken_decl_echoes(
     };
     let subject = |e: &CompileError| -> Option<String> {
         let ns = names(&e.message);
-        if e.category == "bynk.resolve.unknown_static_member" {
-            Some(format!("{}.{}", ns.first()?, ns.last()?))
-        } else {
-            ns.last().cloned()
+        match e.category {
+            "bynk.resolve.unknown_static_member" | "bynk.types.method_not_found" => {
+                Some(format!("{}.{}", ns.first()?, ns.last()?))
+            }
+            // `capability `C` is declared in `given` but never used`: the
+            // capability comes first (`given` is the keyword, quoted).
+            "bynk.given.unused_capability" => ns.first().cloned(),
+            _ => ns.last().cloned(),
         }
     };
     resolve_errors.into_iter().partition(|e| {

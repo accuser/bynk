@@ -20,4 +20,3 @@ export const routes = {
     return HttpResult.Raw(new globalThis.TextEncoder().encode("<svg/>"), "image/svg+xml");
   },
 };
-

@@ -62,4 +62,3 @@ export function __deserialise_Option_Int(json: __JsonValue, path: string = "$"):
   }
   return Err({ kind: "StructuralMismatch", path, expected: "Some | None", actual: String(obj["kind"]) });
 }
-

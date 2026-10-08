@@ -29,4 +29,3 @@ export function head(n: Name): string {
 export function tag(n: Name): string {
   return "user:".concat(n);
 }
-

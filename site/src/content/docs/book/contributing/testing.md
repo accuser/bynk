@@ -28,11 +28,29 @@ are checked separately).
 ### How matching works
 
 - **Positive** fixtures compare emitted files byte-for-byte against `expected/`
-  (or `expected.ts`).
+  (or `expected.ts`), trailing newlines included. A file that differs only in
+  trailing whitespace fails like any other difference; the failure says so.
 - **Negative** fixtures match by **substring**: each non-blank, non-`#` line of
   `expected_error.txt` must appear somewhere in the concatenated
   `"{code} {message}"` of the diagnostics. So a line is usually just a code, e.g.
   `bynk.refine.literal_violates`.
+
+## How CI and the release run the suite
+
+Every gate that runs the workspace suite runs it the same way:
+`cargo nextest run --workspace --locked --profile ci`. That covers the PR gate
+(`ci.yml`), the release gate (`release.yml`) and the bootstrap's verify job. The
+`ci` profile in `.config/nextest.toml` runs each test in its own process, and
+retries a failure once. A test that passes on the retry is listed as **FLAKY**
+but doesn't fail the gate, at release as on a PR. The policy is decided in that
+one file, so a test can't pass CI and then fail the release because of the
+harness. `xtask/tests/suite_harness.rs` checks that all three workflows run that
+exact command, so they can't drift apart again unnoticed.
+
+To reproduce a CI run locally, install
+[nextest](https://nexte.st) and use the same command. A plain `cargo test` also
+works, but it runs each binary's tests as threads in one process, with no
+retry.
 
 ## The bless workflow
 
@@ -46,7 +64,11 @@ BYNK_BLESS=1 cargo test -p bynkc bless_positive_fixtures
 The `bless_positive_fixtures` test is a no-op unless `BYNK_BLESS` is set; with it
 set, it recompiles each positive fixture and overwrites `expected/`. **Always
 review the resulting diff** — blessing is how a regression silently becomes the
-new "expected" if you are not careful.
+new "expected" if you are not careful. A project fixture's `expected/` is
+deleted and rewritten, so a bless also removes the goldens of files the emitter
+no longer writes. Because the comparison is byte-exact, a bless leaves the tree
+clean unless emission actually changed, in content or in which files are
+emitted.
 
 `BYNK_BLESS` is the project's shared regenerate switch: the same run also
 refreshes the generated reference pages (see [Working on the docs](/book/contributing/documentation/)).
@@ -55,11 +77,21 @@ Scope it to a specific test when you only mean to bless one thing.
 ## The `tsc` verification gate
 
 `tests/tsc_verify.rs` (`emitted_typescript_passes_tsc_strict`) compiles every
-project-form positive fixture and runs `tsc --strict --noEmit` over the output.
-It is a backstop for emitter bugs that produce TypeScript which round-trips our
-own comparison but does not actually type-check.
+positive fixture and runs `tsc --strict --noEmit` over the output. A
+single-file fixture (`input.bynk`) is staged beside the runtime it imports, so
+it is checked like a project. It is a backstop for emitter bugs that produce
+TypeScript which round-trips our own comparison but does not actually
+type-check. A golden matching the emitter byte for byte proves nothing about
+whether either one type-checks.
 
-It needs `tsc` on `PATH`, or falls back to `npx -p typescript@5 tsc`. Behaviour
+It needs `tsc` on `PATH`, or falls back to `npx -p typescript@7 tsc`. CI runs it,
+and the examples' `tsc --strict` check, under both TypeScript majors the output
+is verified against: **5**, the floor, on every test leg, and **7**, the current
+one, in a second pass on the Linux leg. The behaviour suites, which type-check
+their fixtures before running them, run under 5 only in CI. A local run without
+a global `tsc` uses 7 for them, through the fallback.
+The two are `TYPESCRIPT_MAJOR_FLOOR` and `TYPESCRIPT_MAJOR_TESTED` in
+`bynk-emit`, which `bynk doctor` and every `npx` fallback also read. Behaviour
 when neither is available:
 
 - locally — it logs a warning and passes (so a missing toolchain does not block

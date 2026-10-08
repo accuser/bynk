@@ -31,7 +31,7 @@ A fully static, client-side app. It deploys to two origins:
 ```sh
 cd playground
 npm install
-npm run build:wasm        # needs the wasm32 target + wasm-bindgen-cli (matching the crate)
+npm run build:wasm        # needs the wasm32 target + wasm-bindgen-cli at the Cargo.lock version
 npm run build             # esbuild → dist/  (production origins by default)
 ```
 

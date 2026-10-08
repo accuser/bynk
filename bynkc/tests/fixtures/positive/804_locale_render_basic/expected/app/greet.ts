@@ -33,11 +33,11 @@ export const greetingWithCountAndName = {
   },
 };
 
-export interface AppGreetDeps {
+export interface __AppGreetDeps {
   readonly Locale: bynk.Locale;
 }
 
-export function makeSurface(deps: AppGreetDeps) {
+export function __makeSurface(deps: __AppGreetDeps) {
   return {
     async greeting(): globalThis.Promise<string> {
       return greeting.call(deps);
@@ -50,4 +50,3 @@ export function makeSurface(deps: AppGreetDeps) {
     },
   };
 }
-

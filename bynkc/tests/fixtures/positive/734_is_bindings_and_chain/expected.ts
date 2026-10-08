@@ -4,15 +4,14 @@
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "./runtime.js";
 
 export function sumIfAllOk(r1: Result<number, string>, r2: Result<number, string>, r3: Result<number, string>, r4: Result<number, string>, r5: Result<number, string>): number {
-  if (r1.tag === "Ok" && ((() => { const a = r1.value; return r2.tag === "Ok"; })()) && ((() => { const a = r1.value; const b = r2.value; return r3.tag === "Ok"; })()) && ((() => { const a = r1.value; const b = r2.value; const c = r3.value; return r4.tag === "Ok"; })()) && ((() => { const a = r1.value; const b = r2.value; const c = r3.value; const d = r4.value; return r5.tag === "Ok"; })())) {
+  if (r1.tag === "Ok" && ((() => { const a = r1.value; return r2.tag === "Ok"; })()) && ((() => { const a = r1.value; const b = (r2 as Extract<typeof r2, { tag: "Ok" }>).value; return r3.tag === "Ok"; })()) && ((() => { const a = r1.value; const b = (r2 as Extract<typeof r2, { tag: "Ok" }>).value; const c = (r3 as Extract<typeof r3, { tag: "Ok" }>).value; return r4.tag === "Ok"; })()) && ((() => { const a = r1.value; const b = (r2 as Extract<typeof r2, { tag: "Ok" }>).value; const c = (r3 as Extract<typeof r3, { tag: "Ok" }>).value; const d = (r4 as Extract<typeof r4, { tag: "Ok" }>).value; return r5.tag === "Ok"; })())) {
     const a = r1.value;
-    const b = r2.value;
-    const c = r3.value;
-    const d = r4.value;
-    const e = r5.value;
+    const b = (r2 as Extract<typeof r2, { tag: "Ok" }>).value;
+    const c = (r3 as Extract<typeof r3, { tag: "Ok" }>).value;
+    const d = (r4 as Extract<typeof r4, { tag: "Ok" }>).value;
+    const e = (r5 as Extract<typeof r5, { tag: "Ok" }>).value;
     return a + b + c + d + e;
   } else {
     return 0;
   }
 }
-

@@ -2,9 +2,9 @@
 // test target: app.bundle
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
-import * as app_bundle from "./../app/bundle.js";
-import * as bynk_locale from "./../bynk/locale.js";
-import * as bynk_locale_types from "./../bynk/locale/types.js";
+import * as __ns_app_bundle from "./../app/bundle.js";
+import * as __ns_bynk_locale from "./../bynk/locale.js";
+import * as __ns_bynk_locale_types from "./../bynk/locale/types.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -27,7 +27,7 @@ function __bynkShow(v: unknown): string {
   try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
-function makeTestDeps() {
+function __makeTestDeps() {
   return {  };
 }
 
@@ -35,12 +35,12 @@ function makeTestDeps() {
 async function test_one() {
   try {
     const deps = {};
-    const { render } = app_bundle;
-    const { message, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale;
-    const { LocaleTag, Message, MessageArg } = bynk_locale_types;
-    type LocaleTag = bynk_locale_types.LocaleTag;
-    type Message = bynk_locale_types.Message;
-    type MessageArg = bynk_locale_types.MessageArg;
+    const { render } = __ns_app_bundle;
+    const { message, renderArg, withMoment, withNum, withText, withWhole } = __ns_bynk_locale;
+    const { LocaleTag, Message, MessageArg } = __ns_bynk_locale_types;
+    type LocaleTag = __ns_bynk_locale_types.LocaleTag;
+    type Message = __ns_bynk_locale_types.Message;
+    type MessageArg = __ns_bynk_locale_types.MessageArg;
     const msg = withWhole(message("cart.count"), "n", 1);
     if (!(render(("pl" as any), msg) === "Masz 1 element w koszyku")) { throw __bynkExpectFailure("tests/bundle.test.bynk:11:12", 413, 460, "expect render(\"pl\", msg) == \"Masz 1 element w koszyku\"\n  expected: render(\"pl\", msg) == \"Masz 1 element w koszyku\"\n  actual:   " + __bynkShow((render(("pl" as any), msg))) + " == " + __bynkShow(("Masz 1 element w koszyku"))); }
     return { pass: true };
@@ -56,12 +56,12 @@ async function test_one() {
 async function test_few() {
   try {
     const deps = {};
-    const { render } = app_bundle;
-    const { message, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale;
-    const { LocaleTag, Message, MessageArg } = bynk_locale_types;
-    type LocaleTag = bynk_locale_types.LocaleTag;
-    type Message = bynk_locale_types.Message;
-    type MessageArg = bynk_locale_types.MessageArg;
+    const { render } = __ns_app_bundle;
+    const { message, renderArg, withMoment, withNum, withText, withWhole } = __ns_bynk_locale;
+    const { LocaleTag, Message, MessageArg } = __ns_bynk_locale_types;
+    type LocaleTag = __ns_bynk_locale_types.LocaleTag;
+    type Message = __ns_bynk_locale_types.Message;
+    type MessageArg = __ns_bynk_locale_types.MessageArg;
     const msg = withWhole(message("cart.count"), "n", 2);
     if (!(render(("pl" as any), msg) === "Masz 2 elementy w koszyku")) { throw __bynkExpectFailure("tests/bundle.test.bynk:16:12", 547, 595, "expect render(\"pl\", msg) == \"Masz 2 elementy w koszyku\"\n  expected: render(\"pl\", msg) == \"Masz 2 elementy w koszyku\"\n  actual:   " + __bynkShow((render(("pl" as any), msg))) + " == " + __bynkShow(("Masz 2 elementy w koszyku"))); }
     return { pass: true };
@@ -77,12 +77,12 @@ async function test_few() {
 async function test_many() {
   try {
     const deps = {};
-    const { render } = app_bundle;
-    const { message, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale;
-    const { LocaleTag, Message, MessageArg } = bynk_locale_types;
-    type LocaleTag = bynk_locale_types.LocaleTag;
-    type Message = bynk_locale_types.Message;
-    type MessageArg = bynk_locale_types.MessageArg;
+    const { render } = __ns_app_bundle;
+    const { message, renderArg, withMoment, withNum, withText, withWhole } = __ns_bynk_locale;
+    const { LocaleTag, Message, MessageArg } = __ns_bynk_locale_types;
+    type LocaleTag = __ns_bynk_locale_types.LocaleTag;
+    type Message = __ns_bynk_locale_types.Message;
+    type MessageArg = __ns_bynk_locale_types.MessageArg;
     const msg = withWhole(message("cart.count"), "n", 5);
     if (!(render(("pl" as any), msg) === "Masz 5 elementow w koszyku")) { throw __bynkExpectFailure("tests/bundle.test.bynk:21:12", 683, 732, "expect render(\"pl\", msg) == \"Masz 5 elementow w koszyku\"\n  expected: render(\"pl\", msg) == \"Masz 5 elementow w koszyku\"\n  actual:   " + __bynkShow((render(("pl" as any), msg))) + " == " + __bynkShow(("Masz 5 elementow w koszyku"))); }
     return { pass: true };

@@ -4,7 +4,11 @@
 
 import * as assert from "assert";
 
-import { compareVersions, parseVersion } from "../../src/server";
+import {
+  compareVersions,
+  expectedServerVersion,
+  parseVersion,
+} from "../../src/server";
 
 describe("parseVersion", () => {
   it("extracts MAJOR.MINOR.PATCH from a `--version` line", () => {
@@ -43,5 +47,17 @@ describe("compareVersions", () => {
 
   it("returns 0 for equal versions", () => {
     assert.strictEqual(compareVersions([0, 132, 1], [0, 132, 1]), 0);
+  });
+});
+
+describe("expectedServerVersion (#1673)", () => {
+  it("holds a downloaded or cached server to the pin, the last shipped release", () => {
+    assert.strictEqual(expectedServerVersion("downloaded", "v0.290.0", "0.303.3"), "0.290.0");
+    assert.strictEqual(expectedServerVersion("cached", "v0.290.0", "0.303.3"), "0.290.0");
+  });
+
+  it("holds a server from PATH or the setting to the extension's own version", () => {
+    assert.strictEqual(expectedServerVersion("path", "v0.290.0", "0.303.3"), "0.303.3");
+    assert.strictEqual(expectedServerVersion("setting", "v0.290.0", "0.303.3"), "0.303.3");
   });
 });

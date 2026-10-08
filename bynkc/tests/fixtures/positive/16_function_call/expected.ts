@@ -10,4 +10,3 @@ export function double(x: number): number {
 export function quadruple(x: number): number {
   return double(double(x));
 }
-

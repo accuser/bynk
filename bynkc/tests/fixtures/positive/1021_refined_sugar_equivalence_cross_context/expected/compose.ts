@@ -6,9 +6,9 @@ import * as boundary_provider from "./boundary/provider.js";
 
 export function composeApp() {
   const boundary_providerDeps = {  };
-  const boundary_providerSurface = boundary_provider.makeSurface(boundary_providerDeps);
+  const boundary_providerSurface = boundary_provider.__makeSurface(boundary_providerDeps);
   const boundary_consumerDeps = { surface: { Provider: boundary_providerSurface } };
-  const boundary_consumerSurface = boundary_consumer.makeSurface(boundary_consumerDeps);
+  const boundary_consumerSurface = boundary_consumer.__makeSurface(boundary_consumerDeps);
 
   return {
     consumer: boundary_consumerSurface,

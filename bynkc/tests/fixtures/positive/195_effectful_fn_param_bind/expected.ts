@@ -7,4 +7,3 @@ export async function run(f: (a0: number) => globalThis.Promise<number>, x: numb
   const y = await f(x);
   return y + 1;
 }
-

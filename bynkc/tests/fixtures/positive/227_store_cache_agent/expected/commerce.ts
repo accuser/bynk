@@ -7,7 +7,7 @@ export interface Clock {
   now(): globalThis.Promise<number>;
 }
 
-export const ClockToken: symbol = globalThis.Symbol("Clock");
+export const __ClockToken: symbol = globalThis.Symbol("Clock");
 
 export class SystemClock implements Clock {
   async now(): globalThis.Promise<number> {
@@ -15,7 +15,7 @@ export class SystemClock implements Clock {
   }
 }
 
-export const SystemClockProvider = { token: ClockToken, factory: () => new SystemClock() };
+export const __SystemClockProvider = { token: __ClockToken, factory: () => new SystemClock() };
 
 export interface SessionsState {
   readonly live: globalThis.Record<string, { v: number; exp: number }>;
@@ -81,4 +81,3 @@ export function __makeSessions(key: string, env?: { SESSIONS?: __DurableObjectNa
 export function __resetAgents(): void {
   __SessionsRegistry.reset();
 }
-
