@@ -423,7 +423,9 @@ mod tests {
         // Events track slice 4 (spine #936) added: schema_dispatch_clause
         // (the `via schema(N)` envelope-version dispatch clause; nested
         // inside `service_protocol`'s Events arm, extended in place). Net +1.
-        assert_eq!(rules.len(), 151);
+        // #1706 added: faults_expr (the `expect <call> faults` fault claim).
+        // Net +1.
+        assert_eq!(rules.len(), 152);
         assert!(rules.iter().any(|r| r == "http_handler"));
         assert!(rules.iter().any(|r| r == "_type_ref"));
         // The two trivial wrappers the display layer collapses are excluded.

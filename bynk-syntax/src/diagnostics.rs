@@ -634,6 +634,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A `from Events(E)` subscription named `E`, which is not a declared event in this context or any consumed context.",
     ),
     dg(
+        "bynk.expect.faults_not_effect",
+        "A fault claim's subject (`expect <call> faults`) is not an effectful call: a value, or a call whose type is not `Effect[_]`.",
+        &["faults_expr"],
+    ),
+    dg(
         "bynk.expect.not_bool",
         "`expect` was given a non-`Bool` predicate.",
         &["expect_expr"],
@@ -1759,6 +1764,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     dg(
         "bynk.test.credential_needs_system",
         "A case drives `by Nobody` (the no-credential principal, which tests the auth seam's 401) outside a `system`-tier case, where there is no real seam to reject it.",
+        &["case"],
+    ),
+    dg(
+        "bynk.test.faults_needs_in_process",
+        "A `system`-tier case claims a fault with `expect <call> faults`; at `system` a fault reaches the case as an error response from the deployed Worker, never a throw, so the claim belongs at `unit` or `integration`.",
         &["case"],
     ),
     dg(

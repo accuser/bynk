@@ -481,6 +481,7 @@ fn locate(expr: &Expr, target: Span, insertion_offset: usize) -> Site<'_> {
         | ExprKind::Wire(_)
         | ExprKind::ListLit(_)
         | ExprKind::Observation(_)
+        | ExprKind::Faults(_)
         | ExprKind::Trace { .. } => {
             let children = expr_children(expr);
             match children.into_iter().find(|c| contains(c.span, target)) {
@@ -762,6 +763,7 @@ fn find_stmt_run_in_expr(e: &Expr, target: Span) -> Option<StmtRun<'_>> {
         | ExprKind::Wire(_)
         | ExprKind::ListLit(_)
         | ExprKind::Observation(_)
+        | ExprKind::Faults(_)
         | ExprKind::Trace { .. } => expr_children(e)
             .into_iter()
             .find_map(|c| find_stmt_run_in_expr(c, target)),
@@ -932,6 +934,7 @@ fn expr_matches(e: &Expr, pred: &impl Fn(&Statement) -> bool) -> bool {
         | ExprKind::Wire(_)
         | ExprKind::ListLit(_)
         | ExprKind::Observation(_)
+        | ExprKind::Faults(_)
         | ExprKind::Trace { .. } => expr_children(e).into_iter().any(|c| expr_matches(c, pred)),
     }
 }

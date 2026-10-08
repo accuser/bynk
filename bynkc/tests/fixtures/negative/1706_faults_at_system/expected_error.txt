@@ -1,0 +1,2 @@
+bynk.test.faults_needs_in_process case `"a fault at system"` claims a fault with `faults`, but is a `system`-tier case
+# exact

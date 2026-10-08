@@ -96,6 +96,11 @@
           "match": "(?<=\\bcalled\\s|\\btimes\\s)\\bwith\\b"
         },
         {
+          "comment": "#1706: the fault-claim word is CONTEXTUAL — `expect <call> faults` ends the line with it, so it is matched only there; an ordinary `faults` identifier mid-expression is left untouched.",
+          "name": "keyword.operator.bynk",
+          "match": "\\bfaults\\b(?=\\s*(--.*)?$)"
+        },
+        {
           "comment": "v0.118: the test-tier words on a `suite`/`case` header are CONTEXTUAL — a tier only after `as` (a `<name> as tier` classifier), so ordinary identifiers or `consumes … as Alias` are left untouched.",
           "name": "keyword.operator.bynk",
           "match": "(?<=\\bas\\s)\\b(unit|integration|system)\\b"

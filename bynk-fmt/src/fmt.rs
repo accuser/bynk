@@ -3295,6 +3295,8 @@ fn expr_with_prec(e: &Expr, parent_prec: u8) -> String {
         }
         ExprKind::Wire(inner) => format!("Wire({})", expr_with_prec(inner, 0)),
         ExprKind::Trace { cap, op } => format!("trace({}.{})", cap.name, op.name),
+        // #1706: the fault claim — the call, then the contextual `faults`.
+        ExprKind::Faults(call) => format!("{} faults", expr_with_prec(call, 0)),
         ExprKind::Observation(o) => {
             let subject = format!("{}.{}", o.cap.name, o.op.name);
             match &o.matcher {

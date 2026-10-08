@@ -630,6 +630,7 @@ pub fn phase_integration_bodies(
                     refs,
                     tys,
                 );
+                check_faults_tier(case, case_effective_tier(case, d), &mut body_errs);
                 // Slice C: `Wire(…)` is a `system`-only raw argument (it drives the
                 // real wire); in a non-`system` case it has no wire to be raw
                 // about, so lowering it would silently pass raw text to a direct
@@ -936,6 +937,7 @@ fn check_test_bodies(
                 tys,
             );
             let tier = case_effective_tier(case, test_decl);
+            check_faults_tier(case, tier, &mut errors);
             if tier != bynk_syntax::ast::TestTier::System {
                 crossing.check_case(target_name, case, tier, &mut errors);
             }
@@ -1407,6 +1409,49 @@ fn blocks_deep(block: &Block) -> Vec<&Block> {
         }
     }
     out
+}
+
+/// #1706: whether a `case` body claims a fault anywhere (`expect <call>
+/// faults`). The claim observes a call *throwing*, which only an in-process
+/// call does: at `system` a handler's fault crosses the real Worker boundary
+/// as an error response, never a throw at the harness, so the claim could
+/// never hold there (`bynk.test.faults_needs_in_process`).
+fn block_uses_faults(block: &Block) -> bool {
+    fn contains_faults(e: &Expr) -> bool {
+        matches!(e.kind, ExprKind::Faults(_))
+            || bynk_syntax::ast::expr_children(e)
+                .into_iter()
+                .any(contains_faults)
+    }
+    let mut exprs = Vec::new();
+    for s in &block.statements {
+        bynk_syntax::ast::statement_exprs(s, &mut exprs);
+    }
+    exprs.into_iter().any(contains_faults) || contains_faults(&block.tail)
+}
+
+/// #1706: report a `system`-tier case that claims a fault — see
+/// [`block_uses_faults`].
+fn check_faults_tier(
+    case: &Case,
+    tier: bynk_syntax::ast::TestTier,
+    errors: &mut Vec<CompileError>,
+) {
+    if tier == bynk_syntax::ast::TestTier::System && block_uses_faults(&case.body) {
+        errors.push(
+            CompileError::new(
+                "bynk.test.faults_needs_in_process",
+                case.name_span,
+                format!(
+                    "case `\"{}\"` claims a fault with `faults`, but is a `system`-tier case",
+                    case.name
+                ),
+            )
+            .with_note(
+                "at `system` a handler's fault reaches the case as an error response from the deployed Worker, not a throw; claim the fault at `unit` or `integration`, or assert the response at `system`",
+            ),
+        );
+    }
 }
 
 /// #706: whether a `case` body drives an effect-let `by Nobody` — the "no

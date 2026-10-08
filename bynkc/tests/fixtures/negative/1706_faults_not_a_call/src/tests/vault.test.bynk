@@ -1,0 +1,7 @@
+suite demo.vault {
+  case "a bound result cannot fault" {
+    stub Vault.open() fails
+    let r <- box.call()
+    expect r faults
+  }
+}

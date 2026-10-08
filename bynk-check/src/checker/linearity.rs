@@ -290,6 +290,7 @@ impl Lin<'_> {
             | ExprKind::Val { .. }
             | ExprKind::ListLit(_)
             | ExprKind::Observation(_)
+            | ExprKind::Faults(_)
             | ExprKind::Trace { .. } => {
                 for c in bynk_syntax::ast::expr_children(e) {
                     self.walk_expr(c, state);

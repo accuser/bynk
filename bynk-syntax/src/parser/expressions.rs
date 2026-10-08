@@ -82,10 +82,12 @@ impl<'a> Parser<'a> {
 
     /// The subject of an `expect` (v0.117): either an observation over a
     /// consumed capability's recorded calls (`Cap.op called …`, `Cap.op never
-    /// called`, `A.op before B.op`) or an ordinary `Bool` predicate. The
+    /// called`, `A.op before B.op`), a fault claim over an effectful call
+    /// (`<call> faults`, #1706), or an ordinary `Bool` predicate. The
     /// observation shape is detected by a `Cap . op` prefix followed by one of
-    /// the contextual words `called` / `never` / `before` — which stay ordinary
-    /// identifiers everywhere else.
+    /// the contextual words `called` / `never` / `before`; the fault claim by
+    /// the contextual word `faults` trailing the parsed subject. All of them
+    /// stay ordinary identifiers everywhere else.
     pub(crate) fn parse_expect_body(&mut self) -> Result<Expr, CompileError> {
         if self.peek_kind() == Some(TokenKind::Ident)
             && self.nth_kind(1) == Some(TokenKind::Dot)
@@ -95,7 +97,20 @@ impl<'a> Parser<'a> {
         {
             return self.parse_observation();
         }
-        self.parse_expr()
+        let subject = self.parse_expr()?;
+        // #1706: `expect <call> faults`. An expression is never followed by a
+        // bare identifier, so a trailing `faults` is unambiguous here — the
+        // same contextual-word reading as the observation's `with`/`times`.
+        if self.peek_kind() == Some(TokenKind::Ident) && self.nth_text(0) == "faults" {
+            self.bump(); // `faults`
+            let span = subject.span.merge(self.prev_span());
+            return Ok(Expr {
+                id: self.alloc_expr_id(),
+                kind: ExprKind::Faults(Box::new(subject)),
+                span,
+            });
+        }
+        Ok(subject)
     }
 
     /// Parse an observation clause (v0.117): `Cap.op` followed by a matcher —

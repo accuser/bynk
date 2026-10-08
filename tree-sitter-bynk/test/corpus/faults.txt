@@ -1,0 +1,37 @@
+================================================================================
+Fault claim — expect <call> faults (#1706)
+================================================================================
+
+suite demo.vault {
+  case "a fails stub faults the call" {
+    stub Vault.open() fails
+    expect box.call() faults
+    let faults = 1
+    expect faults == 1
+  }
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (suite_decl
+    (qualified_name
+      (identifier)
+      (identifier))
+    (case
+      (string_literal)
+      (stub_clause
+        (identifier)
+        (identifier))
+      (expect_expr
+        (faults_expr
+          (method_call
+            (identifier)
+            (identifier))))
+      (let_stmt
+        (identifier)
+        (number_literal))
+      (expect_expr
+        (binary_expr
+          (identifier)
+          (number_literal))))))

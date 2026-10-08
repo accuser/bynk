@@ -734,6 +734,7 @@ pub(crate) fn block_uses_send(b: &Block) -> bool {
             | ExprKind::Wire(_)
             | ExprKind::ListLit(_)
             | ExprKind::Observation(_)
+            | ExprKind::Faults(_)
             | ExprKind::Trace { .. } => expr_children(e).into_iter().any(expr),
         }
     }
@@ -2179,7 +2180,7 @@ fn collect_refs_in_expr(
         ExprKind::EffectPure(inner) => {
             collect_refs_in_expr(inner, local_to_file, commons, ctx, out);
         }
-        ExprKind::Expect(inner) => {
+        ExprKind::Expect(inner) | ExprKind::Faults(inner) => {
             collect_refs_in_expr(inner, local_to_file, commons, ctx, out);
         }
         ExprKind::Val { args, .. } => {

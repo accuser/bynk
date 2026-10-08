@@ -1,0 +1,2 @@
+bynk.expect.faults_not_effect `faults` claims that an effectful call throws, but this is not a call
+# exact
