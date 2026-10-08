@@ -3,9 +3,15 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, HttpResult, type __JsonValue, type __BoundaryError, type __ServiceBinding, __callService, __boundaryError } from "../../runtime.js";
 
+import { LocaleTag as __CommonsLocaleTag } from "../../bynk/locale/types.js";
 import { greet } from "../../greeter/messages.js";
 
 import * as bynk from "../../bynk.js";
+
+export type LocaleTag = __CommonsLocaleTag & { readonly __ctxBrand?: "greeter.web" };
+export const LocaleTag = {
+  of(value: string): Result<LocaleTag, ValidationError> { return __CommonsLocaleTag.of(value); },
+};
 
 export const api = {
   async http_GET_hello_Param_name(name: string, deps: { Locale: bynk.Locale }): globalThis.Promise<HttpResult<string>> {

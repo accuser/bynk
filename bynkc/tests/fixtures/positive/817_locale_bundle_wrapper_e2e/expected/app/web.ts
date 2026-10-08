@@ -4,8 +4,14 @@
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
 
 import { greet } from "./bundle.js";
+import { LocaleTag as __CommonsLocaleTag } from "../bynk/locale/types.js";
 
 import * as bynk from "../bynk.js";
+
+export type LocaleTag = __CommonsLocaleTag & { readonly __ctxBrand?: "app.web" };
+export const LocaleTag = {
+  of(value: string): Result<LocaleTag, ValidationError> { return __CommonsLocaleTag.of(value); },
+};
 
 export const greeting = {
   async call(deps: { Locale: bynk.Locale }): globalThis.Promise<string> {

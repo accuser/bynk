@@ -4,9 +4,15 @@
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
 
 import { Method, Request } from "../bynk.js";
+import { LocaleTag as __CommonsLocaleTag } from "../bynk/locale/types.js";
 
 import * as bynk from "../bynk.js";
 import * as bynk_cloudflare from "../bynk/cloudflare.js";
+
+export type LocaleTag = __CommonsLocaleTag & { readonly __ctxBrand?: "demo.plat" };
+export const LocaleTag = {
+  of(value: string): Result<LocaleTag, ValidationError> { return __CommonsLocaleTag.of(value); },
+};
 
 export const clock = {
   async call(deps: { Clock: bynk.Clock }): globalThis.Promise<number> {

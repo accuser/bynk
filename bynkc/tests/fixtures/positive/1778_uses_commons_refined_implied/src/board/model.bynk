@@ -1,0 +1,14 @@
+---
+#1778: a refined type declared in a used commons, named by the emitted
+TypeScript but never spelled in the using unit's source. A literal admitted
+as the refined type is cast to it (`("a" as Repo)`), and a list kernel
+annotates its callback with the element type (`(__x: Repo) => …`). The using
+unit imported only the names its source spelled, so `tsc` rejected the
+output with TS2304. Every name in an expression's checked type is now
+imported, in a context (aliased and rebranded) and in a commons (plainly).
+---
+commons board.model
+
+type Repo = String where NonEmpty
+
+type Run = { repo: Repo }

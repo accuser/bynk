@@ -2140,6 +2140,14 @@ fn collect_refs_in_expr(
     ctx: &EmitProjectCtx,
     out: &mut ExternalReferences,
 ) {
+    // #1778: the lowering also names types the source never spells. A
+    // literal admitted as a refined type is cast to it (`("a" as Name)`),
+    // and the collection kernels, `if` slots and `List.empty` annotate with
+    // the `ts_ty` of checked types (`(__x: Name) => …`). So every name in
+    // this expression's checked type is imported too.
+    if let Some(te) = commons.expr_types.get(&e.id) {
+        record_ty_refs(te.ty, local_to_file, commons, ctx, out);
+    }
     match &e.kind {
         // A bare ident the checker typed as a sum is a nullary variant
         // constructor — the lowering qualifies it to `Type.Variant`, so the
@@ -2360,6 +2368,59 @@ fn sum_owner_of_variant(name: &str, id: ExprId, commons: &TypedCommons) -> Optio
         return Some(type_name.clone());
     }
     None
+}
+
+/// #1778: record every named type reachable in `ty`, the checked type of an
+/// expression, for import. A name a consumed *context* declares is skipped:
+/// the lowering never names one through a checked type unqualified, and under
+/// Workers a context's value cannot be imported across its Worker boundary.
+fn record_ty_refs(
+    ty: TyId,
+    local_to_file: &HashSet<String>,
+    commons: &TypedCommons,
+    ctx: &EmitProjectCtx,
+    out: &mut ExternalReferences,
+) {
+    match &*commons.tys().get(ty) {
+        Ty::Named { name, args, .. } => {
+            if ctx.imported_from_kind.get(name) != Some(&UnitKind::Context) {
+                record_name_ref(name, local_to_file, ctx, out);
+            }
+            for a in args {
+                record_ty_refs(*a, local_to_file, commons, ctx, out);
+            }
+        }
+        Ty::Option(t)
+        | Ty::Effect(t)
+        | Ty::HttpResult(t)
+        | Ty::List(t)
+        | Ty::Query(t)
+        | Ty::Stream(t)
+        | Ty::Connection(t)
+        | Ty::Actor(t) => record_ty_refs(*t, local_to_file, commons, ctx, out),
+        Ty::Result(a, b) | Ty::Map(a, b) => {
+            record_ty_refs(*a, local_to_file, commons, ctx, out);
+            record_ty_refs(*b, local_to_file, commons, ctx, out);
+        }
+        Ty::Fn { params, ret } => {
+            for p in params {
+                record_ty_refs(*p, local_to_file, commons, ctx, out);
+            }
+            record_ty_refs(*ret, local_to_file, commons, ctx, out);
+        }
+        Ty::ActorSum(members) => {
+            for (_, t) in members {
+                record_ty_refs(*t, local_to_file, commons, ctx, out);
+            }
+        }
+        Ty::Error
+        | Ty::Base(_)
+        | Ty::QueueResult
+        | Ty::ValidationError
+        | Ty::JsonError
+        | Ty::Unit
+        | Ty::Var(_) => {}
+    }
 }
 
 fn record_name_ref(

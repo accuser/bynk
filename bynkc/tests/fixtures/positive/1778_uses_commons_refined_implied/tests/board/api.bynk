@@ -1,0 +1,5 @@
+suite board.api {
+  case "a record literal's refined field is mapped out" {
+    expect listed() == ["a", "b"]
+  }
+}

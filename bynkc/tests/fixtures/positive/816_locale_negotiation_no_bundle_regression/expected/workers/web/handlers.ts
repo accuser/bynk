@@ -4,10 +4,14 @@
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, HttpResult, type __JsonValue, type __BoundaryError, type __ServiceBinding, __callService, __boundaryError } from "../../runtime.js";
 
 import { message, render } from "../../bynk/locale.js";
-import { Message as __CommonsMessage } from "../../bynk/locale/types.js";
+import { LocaleTag as __CommonsLocaleTag, Message as __CommonsMessage } from "../../bynk/locale/types.js";
 
 import * as bynk from "../../bynk.js";
 
+export type LocaleTag = __CommonsLocaleTag & { readonly __ctxBrand?: "web" };
+export const LocaleTag = {
+  of(value: string): Result<LocaleTag, ValidationError> { return __CommonsLocaleTag.of(value); },
+};
 export type Message = __CommonsMessage & { readonly __ctxBrand?: "web" };
 
 export const api = {
