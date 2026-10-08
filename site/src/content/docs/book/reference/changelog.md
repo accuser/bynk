@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.310**.
+written against **v0.312**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,9 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.312.0** | "A `match` arm's `if` guard borrows held values, and a `~>` send inside a guard threads the execution context (#1769). The linearity pass never looked inside a guard, so a guard could transfer a held connection unseen; a consuming use in a guard is now `bynk.held.consume_on_borrow`. And a send in a guard's `if` block emitted `deps.__exec.waitUntil(…)` for a context that never threaded `__exec`, so its output failed to type-check" |
+| **v0.311.1** | "`fmt` keeps `--` comments inside an `actor { … }` body and an `exports … { … }` list (#1797): on the `{` line, above an `auth`/`identity` entry or an exported name, at the end of its line, and before the `}`. A commented actor or list prints in its multi-line form. These used to be refused with `bynk.fmt.comment_loss` wherever they sat. A comment inside an `if`/`else` block is still refused (#523)" |
+| **v0.311.0** | "A `from Events` service has exactly one `on event` handler, which returns `Effect[()]` (#1781). A second `on event` is now `bynk.event.duplicate_handler`; it used to compile to an object with a duplicate `event` key, which `tsc --strict` rejected and which ran only the last handler in the bundle. A return other than `Effect[()]` is now `bynk.event.return_not_effect_unit`; the value was discarded, since emission is fire-and-forget. To react to one event two ways, declare two subscriber services" |
 | **v0.310.0** | "A service's `cors`, `security` and `limits` policies must open its body in that order, before any handler (#1784). The compiler accepted them anywhere, even after a handler, while the editor's tree-sitter grammar and the specification required this order, and `fmt` silently rewrote a file into it. A policy out of order or after a handler is now the parse error `bynk.parse.policy_order`; move it up" |
 | **v0.309.13** | "`fmt` keeps a `--` comment on the same line as an opening `{` (#1788), moving it onto its own line under the brace. It used to refuse such a file with `bynk.fmt.comment_loss`; now the comment is kept on a unit, service, agent, capability, provider or adapter body, a policy, a `fn` block and a record type. Comments inside a record `type` (or `event`) body, and above or at the end of an agent's `key` line, are kept too; those were refused wherever they sat" |
 | **v0.309.12** | On Windows, stopping `bynk dev` now stops each context's whole wrangler process tree, `workerd` included, by running it in a job object, so the next `bynk dev` no longer fails with `Address already in use` (#1762) |

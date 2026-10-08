@@ -1024,6 +1024,31 @@ fn check_service_protocols(
                 }
             }
         }
+        // #1781: a `from Events` service has exactly one `on event` handler.
+        // Two were emitted as one object with a duplicate `event` key, which
+        // `tsc --strict` rejects and which ran only the last in the bundle.
+        if matches!(service.protocol, ServiceProtocol::Events { .. }) {
+            let mut events = service
+                .handlers
+                .iter()
+                .filter(|h| h.kind == HandlerKind::Event);
+            if let (Some(first), Some(second)) = (events.next(), events.next()) {
+                errors.push(
+                    CompileError::new(
+                        "bynk.event.duplicate_handler",
+                        second.span,
+                        format!(
+                            "the `from Events` service `{}` has more than one `on event` handler — it needs exactly one",
+                            service.name.name
+                        ),
+                    )
+                    .with_label(first.span, "the service's `on event` handler")
+                    .with_note(
+                        "to react to one event in two ways, declare two services: each subscriber is delivered to independently",
+                    ),
+                );
+            }
+        }
         for handler in &service.handlers {
             let matches_protocol = matches!(
                 (&service.protocol, &handler.kind),
@@ -1053,6 +1078,26 @@ fn check_service_protocols(
                 if let ServiceProtocol::Events { event_type, .. } = &service.protocol
                     && handler.kind == HandlerKind::Event
                 {
+                    // #1781: emission is fire-and-forget, so a subscriber's
+                    // result has nowhere to go; it returns `Effect[()]`. A
+                    // non-`Effect` return is `bynk.service.return_not_effect`'s.
+                    if let TypeRef::Effect(inner, _) = &handler.return_type
+                        && !matches!(inner.as_ref(), TypeRef::Unit(_))
+                    {
+                        errors.push(
+                            CompileError::new(
+                                "bynk.event.return_not_effect_unit",
+                                handler.return_type.span(),
+                                format!(
+                                    "an `on event` handler must return `Effect[()]`, but got `{}`",
+                                    ts_type_ref_display(&handler.return_type)
+                                ),
+                            )
+                            .with_note(
+                                "emission is fire-and-forget: nothing receives a subscriber's result",
+                            ),
+                        );
+                    }
                     if let Some(param) = handler.params.first() {
                         let header_name = type_ref_named(event_type);
                         let param_name = type_ref_named(&param.type_ref);
