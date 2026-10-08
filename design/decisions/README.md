@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0440](0440-service-policy-order-is-enforced.md) | **A service's policies open its body in the order cors, security, limits, and the compiler enforces it** (v0.310) — bynk.parse.policy_order rejects a cors/security/limits policy that is out of order or follows a handler | Accepted (v0.310) |
 | [0439](0439-bynk-dev-job-object-on-windows.md) | **On Windows, `bynk dev` runs each wrangler in a job object and stops the job** (v0.309.12) — A job object with kill-on-close holds each wrangler's whole tree on Windows, where the #1742 sweep cannot reach | Accepted (v0.309.12) |
 | [0438](0438-agents-sqlite-durable-objects.md) | **Agents are SQLite-backed Durable Objects** (v0.309.11) — The generated migration declares agent classes with new_sqlite_classes; deployed key-value Workers are untouched | Accepted (v0.309.11) |
 | [0437](0437-question-in-value-position-returns-from-the-function.md) | **A `?` in a value-position `if`, `match` or block returns from the enclosing function** (v0.307.1) — Such forms lower to a labelled statement whose tails assign a slot, not to an arrow; corrects ADR 0178 §E | Accepted (v0.307.1) |

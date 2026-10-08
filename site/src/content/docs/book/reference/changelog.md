@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.309**.
+written against **v0.310**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.310.0** | "A service's `cors`, `security` and `limits` policies must open its body in that order, before any handler (#1784). The compiler accepted them anywhere, even after a handler, while the editor's tree-sitter grammar and the specification required this order, and `fmt` silently rewrote a file into it. A policy out of order or after a handler is now the parse error `bynk.parse.policy_order`; move it up" |
 | **v0.309.13** | "`fmt` keeps a `--` comment on the same line as an opening `{` (#1788), moving it onto its own line under the brace. It used to refuse such a file with `bynk.fmt.comment_loss`; now the comment is kept on a unit, service, agent, capability, provider or adapter body, a policy, a `fn` block and a record type. Comments inside a record `type` (or `event`) body, and above or at the end of an agent's `key` line, are kept too; those were refused wherever they sat" |
 | **v0.309.12** | On Windows, stopping `bynk dev` now stops each context's whole wrangler process tree, `workerd` included, by running it in a job object, so the next `bynk dev` no longer fails with `Address already in use` (#1762) |
 | **v0.309.11** | "**Agents deploy as SQLite-backed Durable Objects** (emitter/tooling; closes [#1779](https://github.com/accuser/bynk/issues/1779)). The generated `wrangler.toml` declared every agent class, and the events fan-out class, with a `new_classes` migration, which creates key-value-backed Durable Objects. The Workers Free plan allows only SQLite-backed ones, so `bynk deploy` of any project with an `agent` failed there (`code: 10097`). The migration now uses `new_sqlite_classes`, which Cloudflare also recommends for new classes on every plan. Agent code and generated runtime are unchanged: a SQLite-backed Durable Object keeps the key-value storage API, and the emitted agent uses only `storage.get`/`storage.put` on one key. A Worker already deployed with a key-value `v1` keeps it: Wrangler sends only migrations after the deployed tag, so redeploying sends none." |
