@@ -358,52 +358,12 @@ pub(crate) fn emit_project(
     // Compute which names this file actually references that live elsewhere
     // (sibling file in the same commons/context, or a used commons / consumed
     // context).
-    let references = collect_external_references(commons, ctx);
-    let mut project_imports = emit_project_imports(commons, ctx, &references);
-    let mut cross_context_imports = emit_cross_context_namespace_imports(commons, ctx);
-    // #1486: the boundary between `emit_project_imports`'s own last
-    // statement and `emit_cross_context_namespace_imports`'s own first
-    // (when non-empty) must reproduce the pre-#1486 code's own unconditional
-    // rule exactly — no blank, *except* when `references` is non-empty,
-    // which wants exactly one separating "this file's own sibling imports"
-    // from "this file's cross-context namespace imports" — regardless of
-    // either side's real `TsStmtKind`, which the printer's automatic
-    // "no blank between adjacent imports" exemption cannot see through:
-    // `emit_project_imports`'s own last statement is not always a real
-    // import decl (its own `extra_import_lines` tail is pre-formatted `Raw`
-    // text that *reads* as an import but isn't classified as one —
-    // `328_agent_given_workers`'s own real fixture output: a `Raw`
-    // adapter-binding import directly followed by a real `ImportNamespace`,
-    // no blank between them despite neither side of the exemption matching).
-    if !cross_context_imports.is_empty() {
-        if references.is_empty() {
-            // Force the "no blank" default explicitly — the automatic
-            // exemption only reliably suppresses it when *both* sides are a
-            // real import decl, which is not guaranteed here.
-            cross_context_imports[0].no_blank_before = true;
-        } else {
-            // Force exactly one blank regardless of whether the automatic
-            // exemption would otherwise suppress it (both sides real import
-            // decls) or already supply it for free (either side `Raw`) —
-            // `no_blank_before` on both the spacer and the statement right
-            // after it suppresses the automatic policy on both sides,
-            // leaving only the spacer's own single rendered blank line.
-            let mut spacer = bynk_ts::TsStmt::blank(None);
-            spacer.no_blank_before = true;
-            project_imports.push(spacer);
-            cross_context_imports[0].no_blank_before = true;
-        }
-    }
-    stmts.extend(project_imports);
-    stmts.extend(cross_context_imports);
-    // For contexts: emit per-context nominal rebrand aliases for each type
-    // imported via `uses` that this file references. The structural shape is
-    // inherited from the original commons type; the brand makes the
-    // rebranded type nominally distinct (v0.4 §6.2).
-    if ctx.unit_kind == UnitKind::Context {
-        stmts.extend(emit_context_rebrands(&references, commons, ctx));
-    }
-    stmts.extend(write_commons_doc(commons));
+    // #1778: `mut` — the implied names settle against the body built below.
+    let mut references = collect_external_references(commons, ctx);
+    // #1778: the body first, so the implied references can settle against
+    // what it spells before the imports and rebrands are built from them.
+    let mut body: Vec<bynk_ts::TsStmt> = Vec::new();
+    body.extend(write_commons_doc(commons));
     for item in &commons.commons.items {
         if let CommonsItem::Type(t) = item {
             let shape = type_shape_for(t, program);
@@ -411,7 +371,7 @@ pub(crate) fn emit_project(
             if let Some(first) = item_stmts.first_mut() {
                 first.span = Some(t.span);
             }
-            stmts.extend(item_stmts);
+            body.extend(item_stmts);
         }
     }
     // Events track, slice 0 (spine #936): an `event` is checker-visible as
@@ -430,7 +390,7 @@ pub(crate) fn emit_project(
             if let Some(first) = item_stmts.first_mut() {
                 first.span = Some(t.span);
             }
-            stmts.extend(item_stmts);
+            body.extend(item_stmts);
         }
     }
     for item in &commons.commons.items {
@@ -441,7 +401,7 @@ pub(crate) fn emit_project(
             if let Some(first) = item_stmts.first_mut() {
                 first.span = Some(f.span);
             }
-            stmts.extend(item_stmts);
+            body.extend(item_stmts);
         }
     }
     // message-bundles slice 2 (#874): every `messages` block in the commons
@@ -468,7 +428,7 @@ pub(crate) fn emit_project(
         if let Some(first) = item_stmts.first_mut() {
             first.span = Some(reference.span);
         }
-        stmts.extend(item_stmts);
+        body.extend(item_stmts);
     }
     // v0.5: behavioural items follow the type/fn declarations.
     for item in &commons.commons.items {
@@ -483,12 +443,12 @@ pub(crate) fn emit_project(
                 if let Some(first) = item_stmts.first_mut() {
                     first.span = Some(c.span);
                 }
-                stmts.extend(item_stmts);
+                body.extend(item_stmts);
             }
             CommonsItem::Provider(p) => {
                 if let Some(mut stmt) = emit_provider(p, commons, ctx) {
                     stmt.span = Some(p.span);
-                    stmts.push(stmt);
+                    body.push(stmt);
                 }
             }
             CommonsItem::Service(s) => {
@@ -508,7 +468,7 @@ pub(crate) fn emit_project(
                     .collect();
                 let mut stmt = emit_service(s, &protocol, &signatures, commons, ctx);
                 stmt.span = Some(s.span);
-                stmts.push(stmt);
+                body.push(stmt);
             }
             CommonsItem::Agent(a) => {
                 let state: Vec<_> = a
@@ -520,7 +480,7 @@ pub(crate) fn emit_project(
                 if let Some(first) = item_stmts.first_mut() {
                     first.span = Some(a.span);
                 }
-                stmts.extend(item_stmts);
+                body.extend(item_stmts);
             }
             _ => {}
         }
@@ -567,7 +527,7 @@ pub(crate) fn emit_project(
             })),
             None,
         );
-        stmts.push(reset_fn);
+        body.push(reset_fn);
     }
     // v0.6: cross-context surface assembly. Emit `__makeSurface` for any
     // context that declares services — the composition root references it
@@ -580,7 +540,7 @@ pub(crate) fn emit_project(
             .iter()
             .any(|i| matches!(i, CommonsItem::Service(_)));
         if has_services {
-            stmts.extend(emit_make_surface(commons, ctx));
+            body.extend(emit_make_surface(commons, ctx));
         }
     }
     // v0.8: in workers mode, the context module also exports per-type
@@ -591,15 +551,61 @@ pub(crate) fn emit_project(
     // agent-rehydration boundary helpers; bundle emits only the agent-rehydration
     // ones (the gate's deserialisers), since in-process calls need no wire codec.
     let (boundary_stmts, boundary_names, boundary_insts) = emit_boundary_helpers(program, ctx);
-    stmts.extend(boundary_stmts);
+    body.extend(boundary_stmts);
     // v0.22b: module-local codec helpers for this file's Json.encode/decode
     // targets, deduped against the workers boundary helpers above.
-    stmts.extend(emit_json_codec_helpers(
+    body.extend(emit_json_codec_helpers(
         commons,
         ctx,
         &boundary_names,
         &boundary_insts,
     ));
+    references.settle_implied(&body);
+    let mut project_imports = emit_project_imports(commons, ctx, &references);
+    let mut cross_context_imports = emit_cross_context_namespace_imports(commons, ctx);
+    // #1486: the boundary between `emit_project_imports`'s own last
+    // statement and `emit_cross_context_namespace_imports`'s own first
+    // (when non-empty) must reproduce the pre-#1486 code's own unconditional
+    // rule exactly — no blank, *except* when `references` is non-empty,
+    // which wants exactly one separating "this file's own sibling imports"
+    // from "this file's cross-context namespace imports" — regardless of
+    // either side's real `TsStmtKind`, which the printer's automatic
+    // "no blank between adjacent imports" exemption cannot see through:
+    // `emit_project_imports`'s own last statement is not always a real
+    // import decl (its own `extra_import_lines` tail is pre-formatted `Raw`
+    // text that *reads* as an import but isn't classified as one —
+    // `328_agent_given_workers`'s own real fixture output: a `Raw`
+    // adapter-binding import directly followed by a real `ImportNamespace`,
+    // no blank between them despite neither side of the exemption matching).
+    if !cross_context_imports.is_empty() {
+        if references.is_empty() {
+            // Force the "no blank" default explicitly — the automatic
+            // exemption only reliably suppresses it when *both* sides are a
+            // real import decl, which is not guaranteed here.
+            cross_context_imports[0].no_blank_before = true;
+        } else {
+            // Force exactly one blank regardless of whether the automatic
+            // exemption would otherwise suppress it (both sides real import
+            // decls) or already supply it for free (either side `Raw`) —
+            // `no_blank_before` on both the spacer and the statement right
+            // after it suppresses the automatic policy on both sides,
+            // leaving only the spacer's own single rendered blank line.
+            let mut spacer = bynk_ts::TsStmt::blank(None);
+            spacer.no_blank_before = true;
+            project_imports.push(spacer);
+            cross_context_imports[0].no_blank_before = true;
+        }
+    }
+    stmts.extend(project_imports);
+    stmts.extend(cross_context_imports);
+    // For contexts: emit per-context nominal rebrand aliases for each type
+    // imported via `uses` that this file references. The structural shape is
+    // inherited from the original commons type; the brand makes the
+    // rebranded type nominally distinct (v0.4 §6.2).
+    if ctx.unit_kind == UnitKind::Context {
+        stmts.extend(emit_context_rebrands(&references, commons, ctx));
+    }
+    stmts.append(&mut body);
     // #1476: `ctx.runtime_use` is fully populated now — every producer above has
     // had its chance to note `bytes()`/`icu()` (`emitter::runtime_use`'s own doc:
     // this used to key on `out.contains("<helper name>")`, wrong in both
@@ -1920,11 +1926,46 @@ struct ExternalReferences {
     by_commons: HashMap<String, HashSet<String>>,
     /// `sibling source path` → set of names to import (same-commons).
     by_sibling: HashMap<PathBuf, HashSet<String>>,
+    /// #1778: names found only in an expression's checked type, keyed like
+    /// `by_commons`/`by_sibling`. The lowering spells only some of them, so
+    /// each is held here until [`ExternalReferences::settle_implied`] sees the
+    /// emitted body. Importing the rest would add an unused import, and in a
+    /// context a rebrand the module exports for nothing.
+    implied_by_commons: HashMap<String, HashSet<String>>,
+    implied_by_sibling: HashMap<PathBuf, HashSet<String>>,
 }
 
 impl ExternalReferences {
     fn is_empty(&self) -> bool {
         self.by_commons.is_empty() && self.by_sibling.is_empty()
+    }
+
+    /// #1778: promote each implied name the emitted body spells, as a whole
+    /// TypeScript identifier, to a real import, and drop the rest. Called
+    /// once the body is built and before the imports and rebrands are, which
+    /// read only `by_commons`/`by_sibling`.
+    fn settle_implied(&mut self, body: &[bynk_ts::TsStmt]) {
+        let mut spelled: HashSet<String> = HashSet::new();
+        for stmt in body {
+            let text = bynk_ts::print_stmt(stmt, 0);
+            spelled.extend(
+                text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '$'))
+                    .filter(|w| !w.is_empty())
+                    .map(str::to_string),
+            );
+        }
+        for (unit, names) in std::mem::take(&mut self.implied_by_commons) {
+            let kept: HashSet<String> = names.intersection(&spelled).cloned().collect();
+            if !kept.is_empty() {
+                self.by_commons.entry(unit).or_default().extend(kept);
+            }
+        }
+        for (path, names) in std::mem::take(&mut self.implied_by_sibling) {
+            let kept: HashSet<String> = names.intersection(&spelled).cloned().collect();
+            if !kept.is_empty() {
+                self.by_sibling.entry(path).or_default().extend(kept);
+            }
+        }
     }
 }
 
@@ -2151,6 +2192,15 @@ fn collect_refs_in_expr(
     ctx: &EmitProjectCtx,
     out: &mut ExternalReferences,
 ) {
+    // #1778: the lowering also names types the source never spells. A
+    // literal admitted as a refined type is cast to it (`("a" as Name)`),
+    // and the collection kernels, `if` slots and `List.empty` annotate with
+    // the `ts_ty` of checked types (`(__x: Name) => …`). So every name in
+    // this expression's checked type is a candidate import, kept if the
+    // emitted body spells it (`ExternalReferences::settle_implied`).
+    if let Some(te) = commons.expr_types.get(&e.id) {
+        record_ty_refs(te.ty, local_to_file, commons, ctx, out);
+    }
     match &e.kind {
         // A bare ident the checker typed as a sum is a nullary variant
         // constructor — the lowering qualifies it to `Type.Variant`, so the
@@ -2371,6 +2421,73 @@ fn sum_owner_of_variant(name: &str, id: ExprId, commons: &TypedCommons) -> Optio
         return Some(type_name.clone());
     }
     None
+}
+
+/// #1778: record every named type reachable in `ty`, the checked type of an
+/// expression, as an *implied* import, which `settle_implied` keeps only if
+/// the emitted body spells it. A name a consumed *context* declares is skipped:
+/// the lowering never names one through a checked type unqualified, and under
+/// Workers a context's value cannot be imported across its Worker boundary.
+fn record_ty_refs(
+    ty: TyId,
+    local_to_file: &HashSet<String>,
+    commons: &TypedCommons,
+    ctx: &EmitProjectCtx,
+    out: &mut ExternalReferences,
+) {
+    match &*commons.tys().get(ty) {
+        Ty::Named { name, args, .. } => {
+            if ctx.imported_from_kind.get(name) != Some(&UnitKind::Context) {
+                let mut found = ExternalReferences::default();
+                record_name_ref(name, local_to_file, ctx, &mut found);
+                for (unit, names) in found.by_commons {
+                    out.implied_by_commons
+                        .entry(unit)
+                        .or_default()
+                        .extend(names);
+                }
+                for (path, names) in found.by_sibling {
+                    out.implied_by_sibling
+                        .entry(path)
+                        .or_default()
+                        .extend(names);
+                }
+            }
+            for a in args {
+                record_ty_refs(*a, local_to_file, commons, ctx, out);
+            }
+        }
+        Ty::Option(t)
+        | Ty::Effect(t)
+        | Ty::HttpResult(t)
+        | Ty::List(t)
+        | Ty::Query(t)
+        | Ty::Stream(t)
+        | Ty::Connection(t)
+        | Ty::Actor(t) => record_ty_refs(*t, local_to_file, commons, ctx, out),
+        Ty::Result(a, b) | Ty::Map(a, b) => {
+            record_ty_refs(*a, local_to_file, commons, ctx, out);
+            record_ty_refs(*b, local_to_file, commons, ctx, out);
+        }
+        Ty::Fn { params, ret } => {
+            for p in params {
+                record_ty_refs(*p, local_to_file, commons, ctx, out);
+            }
+            record_ty_refs(*ret, local_to_file, commons, ctx, out);
+        }
+        Ty::ActorSum(members) => {
+            for (_, t) in members {
+                record_ty_refs(*t, local_to_file, commons, ctx, out);
+            }
+        }
+        Ty::Error
+        | Ty::Base(_)
+        | Ty::QueueResult
+        | Ty::ValidationError
+        | Ty::JsonError
+        | Ty::Unit
+        | Ty::Var(_) => {}
+    }
 }
 
 fn record_name_ref(
