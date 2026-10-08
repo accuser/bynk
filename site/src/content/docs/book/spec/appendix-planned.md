@@ -10,10 +10,12 @@ title: "Appendix A — Planned features"
 
 Two directions are designed but not yet shipped:
 
-- **Events** — first-class domain events a context can publish and others react
-  to, beyond the present synchronous `consumes` call.
 - **Sagas** — long-running, multi-step workflows with compensation, coordinating
   effects across contexts.
+- **Event replay** — re-delivering past events to a subscriber that joins late or
+  recovers, with ordering across concurrent publishes. Events themselves have
+  shipped ([§5.7b](/book/spec/static-semantics/#events)); replay, and range
+  patterns in a `via schema(...)` clause, have not.
 
 Two named follow-ons extend [agent invariants](/book/spec/static-semantics/#541-invariants-v080)
 (shipped runtime-checked in v0.80):

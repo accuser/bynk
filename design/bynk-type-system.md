@@ -2,21 +2,32 @@
 
 *Working draft — 13 May 2026*
 
-> **Implementation status (18 June 2026, v0.54).** This is an aspirational
-> specification and runs ahead of the compiler in places. Most notably, the
-> `PrimType` set in §1.1 (`Int | Decimal | String | Bool | Bytes | Timestamp |
-> Duration | Unit`) is the *intended* set; the language as shipped provides
-> `Int`, `Float`, `String`, `Bool`, and `()` (unit). `Float` is a distinct base
-> type erased to `number`, finite at the boundary (ADR 0040) — it stands in for
-> the spec's `Decimal`, which is not built. `Duration` (ADR 0112), `Instant`
-> (ADR 0114 — the spec's `Timestamp`), and `Bytes` (ADR 0142 — erased to
-> `Uint8Array`, base64 on the wire, content equality) are now built; `Decimal`
-> and `Timestamp` remain the only unbuilt spec primitives. The architectural
-> extensions describing storage type
-> kinds, held resources, and the query algebra are likewise deferred (see
-> `bynk-status-and-roadmap.md` §4). Treat "Settled" here as
-> "settled in design", and the status doc plus the decision records
-> (`decisions/`) as the authority on what compiles today.
+> **Implementation status (refreshed October 2026, v0.309).** This is an
+> aspirational specification and runs ahead of, or apart from, the compiler in
+> places. The normative definition of what compiles is the language
+> specification (`site/src/content/docs/book/spec/`), with the decision records
+> (`decisions/`) behind it; treat "Settled" here as "settled in design". Where
+> this document's names differ from what was built:
+>
+> - **Primitives.** The `PrimType` set in §1.1 (`Int | Decimal | String | Bool |
+>   Bytes | Timestamp | Duration | Unit`) is the *intended* set. Built are
+>   `Int`, `Float`, `String`, `Bool`, `Bytes` (ADR 0142), `Duration` (ADR 0112),
+>   `Instant` (ADR 0114) and `()`. `Float` (ADR 0040) stands in for `Decimal`,
+>   which is not built; `Instant` is this document's `Timestamp`, and `()` its
+>   `Unit`.
+> - **Held resources.** `Held[T]` is a closed kind, not a type you write; its one
+>   built instance is `Connection[F]` (ADR 0130).
+> - **Agent references.** `Ref[A]` is not built. An agent is addressed by
+>   constructing it with its key and calling a handler, `Counter(id).bump()`,
+>   from a service or from another agent.
+> - **Tuples.** §2.7.6's tuples are not built and are not planned: bynk stays
+>   nominal (ADR 0120 D1), and joins and grouping take an `into:` combiner.
+> - **Effect inference.** Named declarations are declared, not inferred; only an
+>   unannotated lambda's effect is read off its body (§2.8.4).
+>
+> Storage kinds (`Cell`/`Map`/`Set`/`Cache`/`Log`, v0.82–v0.97), the query
+> algebra (v0.88–v0.94) and held connections (v0.100–v0.107) have shipped; see
+> `archive/retired-tracks.md`.
 
 ## Status and scope
 
@@ -695,7 +706,6 @@ p ::= x                                         -- variable binding
    |  Tag(name₁: p₁, ..., nameₙ: pₙ)            -- variant with named patterns
    |  { x₁: p₁, ..., xₙ: pₙ }                   -- record pattern
    |  { x₁: p₁, ..., xₙ: pₙ, .. }               -- record pattern with rest
-   |  (p₁, ..., pₙ)                             -- tuple pattern
    |  p 'where' refinement-predicate            -- refined pattern
    |  p '|' p                                   -- or-pattern (left-associative)
 
@@ -776,7 +786,7 @@ For an or-pattern `p₁ | p₂ | ... | pₙ` to be well-typed, three rules apply
 
 - *Same set of bindings.* Each alternative must bind the same names. `Held(g, r, _, _, _) | Confirmed(_, r, _, rsv, _)` is a compile error because `g` is only bound in the first alternative and `rsv` only in the second.
 - *Same type for each shared binding.* A name bound in multiple alternatives must have the same type across all of them, including refinement. Different refinements (`Int where InRange(0, 100)` in one alternative versus `Int` in another) are a compile error; the user resolves either by widening to a wildcard or by splitting into separate arms. The rule rejects silent refinement loss.
-- *Same value type.* The pattern matches a single type, typically a sum type whose alternatives cover multiple variants. Primitive patterns, record patterns, and tuple patterns also compose under `|`.
+- *Same value type.* The pattern matches a single type, typically a sum type whose alternatives cover multiple variants. Primitive patterns and record patterns also compose under `|`.
 
 Wildcards don't bind, so they can appear in different positions across alternatives. This is the canonical use case: two or more variants with similar shapes where only some fields are needed.
 
@@ -1312,7 +1322,7 @@ The `?` operator (§2.8.3) propagates `Err` from `Result[T, E]` in any function 
 
 *`List[T]`* — an ordered, immutable in-memory sequence with the query and effectful-iteration vocabulary documented in §11 of design notes. Builders return `Query[T]` (lazy); terminals execute. Effectful iteration (`traverse`, `parTraverse`, `traverseAll`, `parTraverseAll`) is in scope.
 
-*Tuples* — `(T₁, T₂, ..., Tₙ)` for fixed-arity heterogeneous products. Destructured by tuple patterns including in lambda parameters.
+*Tuples* — **not part of the language** (#1530). Bynk stays nominal: [ADR 0120](decisions/0120-join-group-combiner-form.md) D1 introduces no pair or tuple type, and a general n-ary tuple is a named deferral, not a settled built-in. The place tuples were meant for, the query algebra's join and group results, takes an `into:` combiner that names the result instead (ADR 0120 D2/D3). `(1, "a")`, `(Int, String)` and `let (a, b) = …` are parse errors.
 
 *Primitive value types* (per §1.1) — `Int`, `Decimal`, `String`, `Bool`, `Bytes`, `Timestamp`, `Duration`, `Unit` — carry standard operations: arithmetic on numerics; comparison on totally-ordered types; string operations (length, slice, concatenation `++`, etc.); boolean logic (`&&`, `||`, `!`); temporal arithmetic where `Timestamp + Duration = Timestamp`, `Timestamp - Timestamp = Duration`, `Duration + Duration = Duration`, and `Duration * Int = Duration`.
 
@@ -1408,11 +1418,14 @@ The `?` operator is postfix on the value produced by `<-`. Parsing precedence pl
 
 Open: whether the parsing-level ambiguity should be made explicit in the grammar (forcing a single reading) or left to the type system (current approach).
 
-#### 2.8.4 Effect inference — Open
+#### 2.8.4 Effect inference — Settled
 
-Functions without `<-` and without storage operations are effect-free (pure or effect-typed only by their `given` clauses). The checker can infer `Effect[T]` return types where they're not annotated. Provisional position: inferable on internal helpers, explicit at handler boundaries.
+Effects are **declared on named declarations and inferred only on lambdas** (#1529):
 
-Open: the precise rules for effect inference and where annotations are mandatory.
+- A `fn`, a handler, and a capability or provider operation state their return type, `Effect[T]` included; a `fn` without `->` is a parse error. Their capabilities are declared by `given` and checked against the body, never inferred from it.
+- An unannotated lambda's effect is read off its body: a lambda whose body binds with `<-` or calls a capability is effectful, and its type is `(…) -> Effect[T]`. Where an expected function type is present, the lambda is checked against it instead.
+
+This is design notes §15's "declared, not inferred" for everything with a name. The lambda carve-out does not breach the stability firewall ([`bynk-greenfield-compiler.md`](bynk-greenfield-compiler.md) R3.14): a lambda has no signature that any other declaration depends on, so editing its body can change only the type of the expression it sits in, never a named declaration's signature.
 
 ### 2.9 Held resources
 

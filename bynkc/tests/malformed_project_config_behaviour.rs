@@ -49,6 +49,27 @@ fn a_typo_d_paths_key_fails_loudly_instead_of_being_silently_ignored() {
     );
 }
 
+/// #1665: an unknown table (here one for the planned packaging feature) used
+/// to build cleanly with none of its behaviour. It now fails, naming the issue.
+#[test]
+fn an_unknown_table_fails_loudly_instead_of_being_silently_ignored() {
+    let (ok, out) = check("tests/fixtures/behaviour/unknown_manifest_table");
+    assert!(!ok, "expected failure, but the build succeeded:\n{out}");
+    assert!(
+        out.contains("[dependencies]") && out.contains("not yet supported (#843)"),
+        "expected the table named and its issue cited, got:\n{out}"
+    );
+}
+
+/// #1770 review: a table's name holding a plain value (`paths = "src"`) used
+/// to read as an absent `[paths]` and fall back to the conventional layout.
+#[test]
+fn a_table_name_with_a_plain_value_fails_loudly() {
+    let (ok, out) = check("tests/fixtures/behaviour/table_name_as_plain_value");
+    assert!(!ok, "expected failure, but the build succeeded:\n{out}");
+    assert!(out.contains("write it as `[paths]`"), "got:\n{out}");
+}
+
 /// R3.9 (#1113): a three-entry `[paths] include` used to be rejected
 /// (`ProjectPathsError::TooManyIncludeRoots`) — now every entry is a real
 /// tree `Roots::trees` walks, so a well-formed three-root project must

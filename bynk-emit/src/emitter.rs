@@ -3560,8 +3560,15 @@ pub(crate) struct LowerCtx<'a> {
     /// *declared* here (`let __rN!: T;`) and only *assigned* in place. The
     /// caller emits these declarations before the whole condition, so an `if`
     /// then-branch's binding that reads the temp (`const m = __r1 as Q;`)
-    /// finds it in scope. `None` outside such a right operand.
+    /// finds it in scope. `None` outside such a right operand. #1751: also set
+    /// around the right operand of a plain `&&`/`||`/`implies`.
     pub(crate) is_temp_hoist: Option<Vec<String>>,
+    /// #1752 (generalising #1751): the `is` tests, by span, whose tag test was
+    /// emitted out of line: inside a short-circuit right operand that lowered
+    /// to an arrow or a hoisted `if`. TypeScript cannot carry such a test's
+    /// narrowing to a binding read elsewhere, so `emit_is_test_bindings` reads
+    /// those bindings through a cast to the variant the checker proved.
+    pub(crate) unnarrowed_is_tests: HashSet<bynk_syntax::span::Span>,
     /// Variable bindings that point at agent instances. Updated by the
     /// statement emitter when it sees `let x = AgentName(key)`. Used by
     /// the method-call lowering so `x.method(args)` resolves through
@@ -3606,6 +3613,22 @@ pub(crate) struct LowerCtx<'a> {
     /// enclosing function — the residual gap `hoist_if_as_statement` (built for
     /// T2.1's `if`-hoisting) also closes here, once this flag says it's needed.
     pub(crate) emitted_early_return: bool,
+    /// #1750: where a block's tail value goes. `None` (the default) is a
+    /// `return`, the right sink for a function, lambda or arrow body. `Some` is
+    /// set while a value-position `if`/`match`/block that contains a `?` is
+    /// emitted as a real statement rather than an arrow: each tail assigns the
+    /// slot and breaks out of the labelled block wrapping the statement, so
+    /// the `?`'s own `return` still exits the enclosing function. Every arrow
+    /// and function boundary resets it to `None` for its own body.
+    pub(crate) tail_slot: Option<TailSlot>,
+}
+
+/// #1750: the slot and label a statement-form value expression's tails assign
+/// and break to. See [`LowerCtx::tail_slot`].
+#[derive(Clone)]
+pub(crate) struct TailSlot {
+    pub(crate) slot: String,
+    pub(crate) label: String,
 }
 
 /// v0.59: the source context an `assert` lowering needs to turn its span into a
@@ -3634,12 +3657,14 @@ impl<'a> LowerCtx<'a> {
             shadow_scopes: vec![HashMap::new()],
             is_receiver_temps: HashMap::new(),
             is_temp_hoist: None,
+            unnarrowed_is_tests: HashSet::new(),
             local_agent_vars: HashMap::new(),
             call_site_identity: None,
             call_site_no_credential: false,
             source_map: None,
             emitted_await: false,
             emitted_early_return: false,
+            tail_slot: None,
         }
     }
 

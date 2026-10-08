@@ -2636,9 +2636,13 @@ pub enum ExprKind {
 /// (block statements and match-arm bodies were skipped, so e.g. the `:=`
 /// self-reference rule was bypassable through a match arm).
 ///
-/// Descends one level: block *statements* and the tail, match-arm bodies,
-/// lambda bodies, interpolation holes, record-field values, and observation
-/// predicates are all children. Callers recurse for a deep walk.
+/// Exhaustive over [`ExprKind`] *and* over the expressions each variant holds
+/// (#1760: match-arm guards were once missed, and every walk built on this one
+/// missed them with it).
+///
+/// Descends one level: block *statements* and the tail, match-arm guards and
+/// bodies, lambda bodies, interpolation holes, record-field values, and
+/// observation predicates are all children. Callers recurse for a deep walk.
 pub fn expr_children(e: &Expr) -> Vec<&Expr> {
     fn block_children<'a>(b: &'a Block, out: &mut Vec<&'a Expr>) {
         for s in &b.statements {
@@ -2703,6 +2707,11 @@ pub fn expr_children(e: &Expr) -> Vec<&Expr> {
         ExprKind::Match { discriminant, arms } => {
             out.push(discriminant.as_ref());
             for arm in arms {
+                // #1760: the guard, in evaluation order before the body. It is
+                // an ordinary expression, checked like any other.
+                if let Some(guard) = &arm.guard {
+                    out.push(guard);
+                }
                 match &arm.body {
                     MatchBody::Expr(e) => out.push(e),
                     MatchBody::Block(b) => block_children(b, &mut out),
@@ -2733,10 +2742,19 @@ pub fn expr_children(e: &Expr) -> Vec<&Expr> {
 
 /// The expressions directly contained in a statement — the statement half of
 /// [`expr_children`]'s total walk. Exhaustive over [`Statement`] for the same
-/// reason.
+/// reason, and over each statement's expressions: a `let`'s call-site
+/// principal identity included.
 pub fn statement_exprs<'a>(s: &'a Statement, out: &mut Vec<&'a Expr>) {
     match s {
-        Statement::Let(l) | Statement::EffectLet(l) => out.push(&l.value),
+        Statement::Let(l) | Statement::EffectLet(l) => {
+            // #1766 review: a call-site principal's identity (`by User(who)`)
+            // is a full expression. It is evaluated first, as an argument to
+            // the addressed call.
+            if let Some(identity) = l.principal.as_ref().and_then(|p| p.identity.as_deref()) {
+                out.push(identity);
+            }
+            out.push(&l.value)
+        }
         Statement::Expect(a) => out.push(&a.value),
         Statement::Send(snd) => out.push(&snd.value),
         Statement::Do(d) => out.push(&d.value),
@@ -3058,5 +3076,52 @@ mod size_tests {
             std::mem::size_of::<Expr>() < 176,
             "Expr should be smaller than its pre-#31 size of 176 bytes"
         );
+    }
+}
+
+#[cfg(test)]
+mod expr_children_tests {
+    use super::*;
+
+    /// #1760: a match arm's guard is a child, between the discriminant and
+    /// the arm's body, in evaluation order.
+    #[test]
+    fn a_match_arms_guard_is_a_child_in_evaluation_order() {
+        let source = "commons d\n\nfn f(n: Int, lim: Int) -> Int {\n  match n {\n    k if k > lim => 1\n    _ => 0\n  }\n}\n";
+        let tokens = crate::lexer::tokenize(source).unwrap();
+        let units = crate::parser::parse_units(&tokens, source).unwrap();
+        let SourceUnit::Commons(c) = &units[0] else {
+            panic!("a commons");
+        };
+        let CommonsItem::Fn(f) = &c.items[0] else {
+            panic!("a fn");
+        };
+        let ExprKind::Match { .. } = &f.body.tail.kind else {
+            panic!("a match tail");
+        };
+        let children: Vec<&str> = expr_children(&f.body.tail)
+            .into_iter()
+            .map(|e| &source[e.span.start..e.span.end])
+            .collect();
+        assert_eq!(children, ["n", "k > lim", "1", "0"]);
+    }
+
+    /// #1766 review: a `let`'s call-site principal identity is a statement
+    /// expression, before the value it addresses.
+    #[test]
+    fn a_principal_identity_is_a_statement_expression() {
+        let source = "suite demo.s {\n  case \"c\" {\n    let who = \"alice\"\n    let item <- api.get() by User(who)\n    expect item\n  }\n}\n";
+        let tokens = crate::lexer::tokenize(source).unwrap();
+        let units = crate::parser::parse_units(&tokens, source).unwrap();
+        let SourceUnit::Suite(t) = &units[0] else {
+            panic!("a suite");
+        };
+        let mut exprs = Vec::new();
+        statement_exprs(&t.cases[0].body.statements[1], &mut exprs);
+        let texts: Vec<&str> = exprs
+            .into_iter()
+            .map(|e| &source[e.span.start..e.span.end])
+            .collect();
+        assert_eq!(texts, ["who", "api.get()"]);
     }
 }

@@ -98,6 +98,11 @@ pub struct FormatError {
 /// CLI) decide how to handle parse failure. Here we surface the errors so
 /// the caller can do so.
 pub fn format_source(source: &str, opts: &FormatOptions) -> Result<String, FormatError> {
+    // #1763: line endings are not a formatting difference. A CRLF file formats
+    // to the LF canonical form, CRs inside `---` blocks included (their text
+    // was kept verbatim, so a CR survived into the output). A caller rendering
+    // this function's errors should render them against the normalised text.
+    let source = &*normalize_line_endings(source);
     let tokens = tokenize(source).map_err(|e| FormatError { errors: vec![e] })?;
     // v0.113: a file may hold more than one top-level unit (an atomic
     // `commons` + `suite` file, DECISION S). Format each and join with a blank
@@ -122,6 +127,16 @@ pub fn format_source(source: &str, opts: &FormatOptions) -> Result<String, Forma
             errors: vec![error],
         });
     }
+    // #1664: a `---` doc block the parser could not attach (an orphan, separated
+    // from the next declaration by a blank line, or with none to follow) is
+    // dropped from the AST with only a warning. It never enters the trivia
+    // table, so `fully_drained` says nothing about it, and the guard above
+    // counts `--` comments only. Check the doc blocks separately, on every run.
+    if let Some(error) = doc_block_loss(source, &tokens, &output) {
+        return Err(FormatError {
+            errors: vec![error],
+        });
+    }
     // #735 guard: the printer is hand-written and dodges several parse traps by
     // convention (a tail `()` re-attaching as a call, a trailing comma making a
     // param list unparseable). A shape the corpus misses that the printer
@@ -136,6 +151,41 @@ pub fn format_source(source: &str, opts: &FormatOptions) -> Result<String, Forma
         });
     }
     Ok(output)
+}
+
+/// #1763: `source` with every line ending made LF, borrowed when there is
+/// nothing to change. The canonical form uses LF, and comparing a file against
+/// it modulo line endings is what keeps a Windows checkout
+/// (`core.autocrlf=true`) of a canonical file canonical.
+///
+/// A run of CRs before an LF (`\r\n`, `\r\r\n`, …) is one line ending, so
+/// this is a fixed point: normalising its own output changes nothing (#1775
+/// review; a single `replace` turned `\r\r\n` into a `\r\n` a second pass
+/// would change again). A CR not before an LF is left alone; the lexer treats
+/// it as whitespace. Normalising can't change a program value, since a string
+/// literal can't span a line (`bynk.lex.unterminated_string`).
+pub fn normalize_line_endings(source: &str) -> std::borrow::Cow<'_, str> {
+    if !source.contains("\r\n") {
+        return std::borrow::Cow::Borrowed(source);
+    }
+    let mut out = String::with_capacity(source.len());
+    let mut pending_crs = 0usize;
+    for c in source.chars() {
+        match c {
+            '\r' => pending_crs += 1,
+            '\n' => {
+                pending_crs = 0;
+                out.push('\n');
+            }
+            _ => {
+                out.extend(std::iter::repeat_n('\r', pending_crs));
+                pending_crs = 0;
+                out.push(c);
+            }
+        }
+    }
+    out.extend(std::iter::repeat_n('\r', pending_crs));
+    std::borrow::Cow::Owned(out)
 }
 
 /// Format every top-level unit and join with a blank line. A file may hold more
@@ -304,6 +354,79 @@ fn comment_loss(source: &str, tokens: &[Token], output: &str) -> Option<CompileE
         notes: vec![
             "comments inside expression subtrees are not yet preserved; move the comment onto \
              its own line before the enclosing statement to format this file"
+                .to_string(),
+        ],
+        suggestions: Vec::new(),
+    })
+}
+
+/// #1664: the `---` counterpart of [`comment_loss`]. Returns a
+/// `bynk.fmt.comment_loss` error naming the first doc block of `source` (already
+/// tokenized as `tokens`) that has no counterpart in `output`, compared by
+/// content multiset. An attached doc block is re-rendered with its content
+/// intact; the one the formatter loses is an orphan, which the parser drops.
+///
+/// An `output` that does not tokenize returns `None`: that is a formatter bug
+/// the round-trip guard reports accurately ("no longer parses"), and counting
+/// every block as lost would point the user at an innocent one instead.
+fn doc_block_loss(source: &str, tokens: &[Token], output: &str) -> Option<CompileError> {
+    use bynk_syntax::lexer::doc_block_content;
+    let in_docs: Vec<Span> = tokens
+        .iter()
+        .filter(|t| t.kind == TokenKind::DocBlock)
+        .map(|t| t.span)
+        .collect();
+    if in_docs.is_empty() {
+        return None;
+    }
+    // Compare content line by line with surrounding whitespace removed, so the
+    // formatter's re-indentation of an attached block is not mistaken for loss.
+    let normalise = |content: String| {
+        content
+            .lines()
+            .map(str::trim)
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let out_tokens = tokenize(output).ok()?;
+    let mut out_docs: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for t in &out_tokens {
+        if t.kind == TokenKind::DocBlock {
+            *out_docs
+                .entry(normalise(doc_block_content(output, t.span)))
+                .or_insert(0) += 1;
+        }
+    }
+    let mut lost = 0usize;
+    let mut first_lost: Option<Span> = None;
+    for span in &in_docs {
+        match out_docs.get_mut(&normalise(doc_block_content(source, *span))) {
+            Some(n) if *n > 0 => *n -= 1,
+            _ => {
+                lost += 1;
+                first_lost.get_or_insert(*span);
+            }
+        }
+    }
+    let span = first_lost?;
+    Some(CompileError {
+        category: "bynk.fmt.comment_loss",
+        span,
+        message: format!(
+            "formatting would lose {lost} documentation block{} — the file was left unchanged",
+            if lost == 1 { "" } else { "s" }
+        ),
+        labels: vec![(
+            span,
+            "this documentation block has no counterpart in the formatted output".to_string(),
+        )],
+        notes: vec![
+            "a `---` block attaches to the declaration directly below it; one separated from \
+             it by a blank line, or with no declaration after it, attaches to nothing. Remove \
+             the blank line to attach it, or make it a `--` comment if it documents nothing"
+                .to_string(),
+            "if the block is already directly above a declaration, this is a formatter bug; \
+             please report it with the file that triggered it"
                 .to_string(),
         ],
         suggestions: Vec::new(),
@@ -3257,6 +3380,54 @@ fn stmt_to_string(s: &Statement) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #1763: a CRLF copy of a canonical file formats to the LF canonical form,
+    /// and a doc block's lines lose their CR too (its text was kept verbatim).
+    #[test]
+    fn crlf_formats_to_the_lf_canonical_form() {
+        let lf = "context greeting\n\n---\nA greeting for a name.\n---\nfn greet(name: String) -> String { name }\n";
+        assert_eq!(format_source(lf, &FormatOptions::default()).unwrap(), lf);
+        let crlf = lf.replace('\n', "\r\n");
+        let formatted = format_source(&crlf, &FormatOptions::default()).unwrap();
+        assert_eq!(formatted, lf);
+        assert!(!formatted.contains('\r'));
+    }
+
+    #[test]
+    fn normalize_line_endings_borrows_when_there_is_nothing_to_do() {
+        assert!(matches!(
+            normalize_line_endings("a\nb"),
+            std::borrow::Cow::Borrowed(_)
+        ));
+        assert_eq!(normalize_line_endings("a\r\nb\r\n"), "a\nb\n");
+    }
+
+    /// #1775 review: a run of CRs before an LF is one line ending, so the
+    /// normaliser is a fixed point; a CR not before an LF is kept.
+    #[test]
+    fn normalize_line_endings_is_a_fixed_point() {
+        for input in ["a\r\r\nb", "a\r\nb\rc\r\n", "\r\r\r\n", "x\r", "a\r\n\rb"] {
+            let once = normalize_line_endings(input).into_owned();
+            assert_eq!(normalize_line_endings(&once), once, "{input:?}");
+            assert!(!once.contains("\r\n"), "{input:?} -> {once:?}");
+        }
+        assert_eq!(normalize_line_endings("a\r\r\nb"), "a\nb");
+        assert_eq!(normalize_line_endings("a\r\nb\rc"), "a\nb\rc");
+    }
+
+    /// #1755 review: output that does not even tokenize is the round-trip
+    /// guard's to report ("no longer parses"). The doc-block guard runs first,
+    /// so it must stay silent rather than blame every doc block as lost.
+    #[test]
+    fn doc_block_loss_leaves_an_untokenizable_output_to_the_roundtrip_guard() {
+        let source = "commons d\n\n---\nattached\n---\nfn f() -> Int { 1 }\n";
+        let tokens = tokenize(source).unwrap();
+        assert!(tokenize("commons d\n\"unterminated").is_err());
+        assert!(
+            doc_block_loss(source, &tokens, "commons d\n\"unterminated").is_none(),
+            "an untokenizable output was reported as doc-block loss"
+        );
+    }
 
     fn fmt(src: &str) -> String {
         format_source(src, &FormatOptions::default()).expect("format failed")

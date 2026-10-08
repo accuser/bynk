@@ -44,6 +44,12 @@ pub(crate) enum Mode {
 pub struct ProjectFailure {
     pub errors: Vec<AttributedError>,
     pub snapshots: Vec<(PathBuf, String)>,
+    /// #1772: the project or tree root the build was given, as the caller
+    /// spelled it. `snapshots` and each error's `source_path` are keyed by
+    /// identity path, relative to this root; a renderer shows
+    /// `display_root.join(identity)`, the path as typed from the working
+    /// directory. Empty for an in-memory build.
+    pub display_root: PathBuf,
 }
 
 impl ProjectFailure {

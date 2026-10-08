@@ -2,9 +2,9 @@
 // test target: demo.bundle
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
-import * as demo_bundle from "./../demo/bundle.js";
-import * as bynk_locale from "./../bynk/locale.js";
-import * as bynk_locale_types from "./../bynk/locale/types.js";
+import * as __ns_demo_bundle from "./../demo/bundle.js";
+import * as __ns_bynk_locale from "./../bynk/locale.js";
+import * as __ns_bynk_locale_types from "./../bynk/locale/types.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -35,12 +35,12 @@ function __makeTestDeps() {
 async function test_a_bundle_beside_user_names_for_its_tables_and_types() {
   try {
     const deps = {};
-    const { Message, MessageArg, greetAll, messagesByLocale, messagesLocales, messagesReferenceLocale, rawOf, render, shout, tally, withText } = demo_bundle;
-    type Message = demo_bundle.Message;
-    type MessageArg = demo_bundle.MessageArg;
-    const { message, renderArg, withMoment, withNum, withWhole } = bynk_locale;
-    const { LocaleTag } = bynk_locale_types;
-    type LocaleTag = bynk_locale_types.LocaleTag;
+    const { Message, MessageArg, greetAll, messagesByLocale, messagesLocales, messagesReferenceLocale, rawOf, render, shout, tally, withText } = __ns_demo_bundle;
+    type Message = __ns_demo_bundle.Message;
+    type MessageArg = __ns_demo_bundle.MessageArg;
+    const { message, renderArg, withMoment, withNum, withWhole } = __ns_bynk_locale;
+    const { LocaleTag } = __ns_bynk_locale_types;
+    type LocaleTag = __ns_bynk_locale_types.LocaleTag;
     if (!(tally() === 6)) { throw __bynkExpectFailure("tests/demo/bundle.bynk:4:10", 89, 101, "expect tally() == 6\n  expected: tally() == 6\n  actual:   " + __bynkShow((tally())) + " == " + __bynkShow((6))); }
     if (!(shout({ text: "hi" }) === "hi")) { throw __bynkExpectFailure("tests/demo/bundle.bynk:5:10", 111, 148, "expect shout(Message { text: \"hi\" }) == \"hi\"\n  expected: shout(Message { text: \"hi\" }) == \"hi\"\n  actual:   " + __bynkShow((shout({ text: "hi" }))) + " == " + __bynkShow(("hi"))); }
     if (!(rawOf({ raw: "r" }) === "r")) { throw __bynkExpectFailure("tests/demo/bundle.bynk:6:10", 158, 195, "expect rawOf(MessageArg { raw: \"r\" }) == \"r\"\n  expected: rawOf(MessageArg { raw: \"r\" }) == \"r\"\n  actual:   " + __bynkShow((rawOf({ raw: "r" }))) + " == " + __bynkShow(("r"))); }

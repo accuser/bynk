@@ -121,7 +121,11 @@ pub fn compile_once(
     }
     // ADR 0117: surface non-failing warnings — the `BYNK_BYNKC` override above
     // already does, via the shelled `bynkc compile`'s own stdout/stderr.
-    crate::diagnostics::print_project_warnings(&output.warnings, &output.snapshots);
+    crate::diagnostics::print_project_warnings(
+        &output.warnings,
+        &output.snapshots,
+        &output.display_root,
+    );
     true
 }
 
@@ -250,7 +254,8 @@ pub fn wrangler_command(provenance: &Provenance, subcommand: &str) -> Option<Com
             Some(cmd)
         }
         Provenance::Npx => {
-            let mut cmd = Command::new("npx");
+            // #1758: the resolved `npx`, so Windows runs its `npx.cmd` shim.
+            let mut cmd = Command::new(crate::probe::program_path("npx"));
             // #524: pinned provisioning, per the repo's npx convention — an
             // unpinned `wrangler` here meant the dev server could drift from
             // the wrangler the tests and deploys run.

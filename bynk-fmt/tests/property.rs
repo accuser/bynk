@@ -141,6 +141,57 @@ fn commons() -> impl Strategy<Value = String> {
     )
 }
 
+/// #1664: an optional `---` doc block before an item, and whether it is an
+/// orphan: none, attached (directly above the item), or orphaned (a blank line
+/// between, so the parser attaches it to nothing).
+fn doc() -> impl Strategy<Value = (String, bool)> {
+    prop_oneof![
+        Just((String::new(), false)),
+        "[a-z]{1,12}".prop_map(|s| (format!("---\ndoc {s}\n---\n"), false)),
+        "[a-z]{1,12}".prop_map(|s| (format!("---\ndoc {s}\n---\n\n"), true)),
+    ]
+}
+
+/// A commons whose items may carry doc blocks, attached or orphaned, plus an
+/// optional doc block at the end of the file (always an orphan), with whether
+/// any orphan was generated.
+fn commons_with_docs() -> impl Strategy<Value = (String, bool)> {
+    (
+        ident(),
+        proptest::collection::vec((doc(), item()), 1..5),
+        "[a-z]{0,12}",
+    )
+        .prop_map(|(name, items, tail)| {
+            let mut orphan = false;
+            let body: Vec<String> = items
+                .into_iter()
+                .map(|((doc, is_orphan), item)| {
+                    orphan |= is_orphan;
+                    format!("{doc}{item}")
+                })
+                .collect();
+            let tail = if tail.is_empty() {
+                String::new()
+            } else {
+                orphan = true;
+                format!("\n---\ndoc {tail}\n---\n")
+            };
+            (
+                format!("commons gen_{name}\n\n{}{tail}", body.join("\n")),
+                orphan,
+            )
+        })
+}
+
+fn doc_lines(source: &str) -> Vec<String> {
+    source
+        .lines()
+        .map(str::trim)
+        .filter(|l| l.starts_with("doc "))
+        .map(str::to_string)
+        .collect()
+}
+
 fn comment_lines(source: &str) -> Vec<String> {
     source
         .lines()
@@ -217,6 +268,36 @@ proptest! {
         // 1. Idempotency.
         let twice = format_source(&once, &opts).expect("formatted output reformats");
         prop_assert_eq!(&twice, &once, "fmt(fmt(s)) != fmt(s)");
+    }
+
+    /// #1664: the formatter never deletes a `---` doc block. Either every block
+    /// survives into the output, or the formatter refuses with
+    /// `bynk.fmt.comment_loss`, and it refuses only when a block is an orphan.
+    #[test]
+    fn doc_blocks_are_kept_or_refused((src, has_orphan) in commons_with_docs()) {
+        let opts = FormatOptions::default();
+        match format_source(&src, &opts) {
+            Ok(formatted) => {
+                let after = doc_lines(&formatted);
+                for d in doc_lines(&src) {
+                    prop_assert!(
+                        after.contains(&d),
+                        "doc block `{}` was dropped by the formatter\n--- input ---\n{}\n--- output ---\n{}",
+                        d, src, formatted
+                    );
+                }
+            }
+            Err(e) => {
+                let refused_a_doc = e.errors.iter().any(|x| {
+                    x.category == "bynk.fmt.comment_loss" && x.message.contains("documentation block")
+                });
+                prop_assert!(
+                    !refused_a_doc || has_orphan,
+                    "refused a doc block with no orphan in the input\n--- input ---\n{}",
+                    src
+                );
+            }
+        }
     }
 
     #[test]

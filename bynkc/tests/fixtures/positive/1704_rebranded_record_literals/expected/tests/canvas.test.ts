@@ -2,8 +2,8 @@
 // test target: canvas
 
 import { Ok, Err, Some, None, __makeTestState, type Result, type Option, type ValidationError, __bynkEq } from "../runtime.js";
-import * as canvas from "./../canvas.js";
-import * as shapes from "./../shapes.js";
+import * as __ns_canvas from "./../canvas.js";
+import * as __ns_shapes from "./../shapes.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -33,12 +33,12 @@ function __makeTestDeps() {
 // case tier: unit
 async function test_a_test_builds_a_rebranded_record_for_a_handler() {
   try {
-    canvas.__resetAgents();
+    __ns_canvas.__resetAgents();
     const deps = __makeTestDeps();
-    const { Board, __makeBoard, api } = canvas;
-    const { Line, Point, origin } = shapes;
-    type Line = shapes.Line;
-    type Point = shapes.Point;
+    const { Board, __makeBoard, api } = __ns_canvas;
+    const { Line, Point, origin } = __ns_shapes;
+    type Line = __ns_shapes.Line;
+    type Point = __ns_shapes.Point;
     const n = await __makeBoard("t").add({ x: 1, y: 2 }, deps);
     if (!(n === 3)) { throw __bynkExpectFailure("tests/canvas.bynk:5:10", 127, 133, "expect n == 3\n  expected: n == 3\n  actual:   " + __bynkShow((n)) + " == " + __bynkShow((3))); }
     return { pass: true };
@@ -53,12 +53,12 @@ async function test_a_test_builds_a_rebranded_record_for_a_handler() {
 // case tier: unit
 async function test_a_nested_rebranded_record_crosses_the_state_boundary() {
   try {
-    canvas.__resetAgents();
+    __ns_canvas.__resetAgents();
     const deps = __makeTestDeps();
-    const { Board, __makeBoard, api } = canvas;
-    const { Line, Point, origin } = shapes;
-    type Line = shapes.Line;
-    type Point = shapes.Point;
+    const { Board, __makeBoard, api } = __ns_canvas;
+    const { Line, Point, origin } = __ns_shapes;
+    type Line = __ns_shapes.Line;
+    type Point = __ns_shapes.Point;
     const w = await __makeBoard("t").draw({ start: { x: 1, y: 0 }, end: { x: 4, y: 0 } }, deps);
     const w2 = await __makeBoard("t").draw({ start: { x: 2, y: 0 }, end: { x: 7, y: 0 } }, deps);
     if (!(w === 3)) { throw __bynkExpectFailure("tests/canvas.bynk:13:10", 549, 555, "expect w == 3\n  expected: w == 3\n  actual:   " + __bynkShow((w)) + " == " + __bynkShow((3))); }
@@ -75,12 +75,12 @@ async function test_a_nested_rebranded_record_crosses_the_state_boundary() {
 // case tier: unit
 async function test_a_context_builds_them_with_literals__a_spread_and_a_commons_fn() {
   try {
-    canvas.__resetAgents();
+    __ns_canvas.__resetAgents();
     const deps = __makeTestDeps();
-    const { Board, __makeBoard, api } = canvas;
-    const { Line, Point, origin } = shapes;
-    type Line = shapes.Line;
-    type Point = shapes.Point;
+    const { Board, __makeBoard, api } = __ns_canvas;
+    const { Line, Point, origin } = __ns_shapes;
+    type Line = __ns_shapes.Line;
+    type Point = __ns_shapes.Point;
     const w = await api.call(deps);
     if (!(__bynkEq(w, 8))) { throw __bynkExpectFailure("tests/canvas.bynk:19:10", 679, 685, "expect w == 8\n  expected: w == 8\n  actual:   " + __bynkShow((w)) + " == " + __bynkShow((8))); }
     return { pass: true };

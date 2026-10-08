@@ -2,7 +2,7 @@
 // test target: demo.keys
 
 import { Ok, Err, Some, None, __makeTestState, type Result, type Option, type ValidationError, __bynkEq } from "../runtime.js";
-import * as demo_keys from "./../demo/keys.js";
+import * as __ns_demo_keys from "./../demo/keys.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -26,20 +26,20 @@ function __bynkShow(v: unknown): string {
 }
 
 function __makeTestDeps() {
-  return { Clock: new demo_keys.FixedClock() };
+  return { Clock: new __ns_demo_keys.FixedClock() };
 }
 
 // case tier: unit
 async function test_a_store_Map_stores__reads__counts_and_removes_prototype_named_keys() {
   try {
-    demo_keys.__resetAgents();
+    __ns_demo_keys.__resetAgents();
     const deps = __makeTestDeps();
-    const { Bag, Entry, Ledger, Line, Memo, Order, Points, Pt, Sales, Tags, Total, __makeBag, __makeLedger, __makeMemo, __makePoints, __makeSales, __makeTags } = demo_keys;
-    type Entry = demo_keys.Entry;
-    type Line = demo_keys.Line;
-    type Order = demo_keys.Order;
-    type Pt = demo_keys.Pt;
-    type Total = demo_keys.Total;
+    const { Bag, Entry, Ledger, Line, Memo, Order, Points, Pt, Sales, Tags, Total, __makeBag, __makeLedger, __makeMemo, __makePoints, __makeSales, __makeTags } = __ns_demo_keys;
+    type Entry = __ns_demo_keys.Entry;
+    type Line = __ns_demo_keys.Line;
+    type Order = __ns_demo_keys.Order;
+    type Pt = __ns_demo_keys.Pt;
+    type Total = __ns_demo_keys.Total;
     await __makeBag("m").put("__proto__", 1, deps);
     await __makeBag("m").put("constructor", 2, deps);
     await __makeBag("m").put("toString", 3, deps);
@@ -66,14 +66,14 @@ async function test_a_store_Map_stores__reads__counts_and_removes_prototype_name
 // case tier: unit
 async function test_a_store_Map_has_no_inherited_keys() {
   try {
-    demo_keys.__resetAgents();
+    __ns_demo_keys.__resetAgents();
     const deps = __makeTestDeps();
-    const { Bag, Entry, Ledger, Line, Memo, Order, Points, Pt, Sales, Tags, Total, __makeBag, __makeLedger, __makeMemo, __makePoints, __makeSales, __makeTags } = demo_keys;
-    type Entry = demo_keys.Entry;
-    type Line = demo_keys.Line;
-    type Order = demo_keys.Order;
-    type Pt = demo_keys.Pt;
-    type Total = demo_keys.Total;
+    const { Bag, Entry, Ledger, Line, Memo, Order, Points, Pt, Sales, Tags, Total, __makeBag, __makeLedger, __makeMemo, __makePoints, __makeSales, __makeTags } = __ns_demo_keys;
+    type Entry = __ns_demo_keys.Entry;
+    type Line = __ns_demo_keys.Line;
+    type Order = __ns_demo_keys.Order;
+    type Pt = __ns_demo_keys.Pt;
+    type Total = __ns_demo_keys.Total;
     const c = await __makeBag("empty").has("constructor", deps);
     if (!(c === false)) { throw __bynkExpectFailure("tests/demo/keys.bynk:25:10", 662, 672, "expect c == false\n  expected: c == false\n  actual:   " + __bynkShow((c)) + " == " + __bynkShow((false))); }
     const t = await __makeBag("empty").get("toString", deps);
@@ -94,14 +94,14 @@ async function test_a_store_Map_has_no_inherited_keys() {
 // case tier: unit
 async function test_upsert_on_an_inherited_name_starts_from_the_default() {
   try {
-    demo_keys.__resetAgents();
+    __ns_demo_keys.__resetAgents();
     const deps = __makeTestDeps();
-    const { Bag, Entry, Ledger, Line, Memo, Order, Points, Pt, Sales, Tags, Total, __makeBag, __makeLedger, __makeMemo, __makePoints, __makeSales, __makeTags } = demo_keys;
-    type Entry = demo_keys.Entry;
-    type Line = demo_keys.Line;
-    type Order = demo_keys.Order;
-    type Pt = demo_keys.Pt;
-    type Total = demo_keys.Total;
+    const { Bag, Entry, Ledger, Line, Memo, Order, Points, Pt, Sales, Tags, Total, __makeBag, __makeLedger, __makeMemo, __makePoints, __makeSales, __makeTags } = __ns_demo_keys;
+    type Entry = __ns_demo_keys.Entry;
+    type Line = __ns_demo_keys.Line;
+    type Order = __ns_demo_keys.Order;
+    type Pt = __ns_demo_keys.Pt;
+    type Total = __ns_demo_keys.Total;
     await __makeBag("u").bump("constructor", deps);
     await __makeBag("u").bump("__proto__", deps);
     const c = await __makeBag("u").get("constructor", deps);
@@ -120,14 +120,14 @@ async function test_upsert_on_an_inherited_name_starts_from_the_default() {
 // case tier: unit
 async function test_an_object_value_under___proto___adds_no_phantom_keys() {
   try {
-    demo_keys.__resetAgents();
+    __ns_demo_keys.__resetAgents();
     const deps = __makeTestDeps();
-    const { Bag, Entry, Ledger, Line, Memo, Order, Points, Pt, Sales, Tags, Total, __makeBag, __makeLedger, __makeMemo, __makePoints, __makeSales, __makeTags } = demo_keys;
-    type Entry = demo_keys.Entry;
-    type Line = demo_keys.Line;
-    type Order = demo_keys.Order;
-    type Pt = demo_keys.Pt;
-    type Total = demo_keys.Total;
+    const { Bag, Entry, Ledger, Line, Memo, Order, Points, Pt, Sales, Tags, Total, __makeBag, __makeLedger, __makeMemo, __makePoints, __makeSales, __makeTags } = __ns_demo_keys;
+    type Entry = __ns_demo_keys.Entry;
+    type Line = __ns_demo_keys.Line;
+    type Order = __ns_demo_keys.Order;
+    type Pt = __ns_demo_keys.Pt;
+    type Total = __ns_demo_keys.Total;
     await __makePoints("o").put("__proto__", 7, deps);
     const n = await __makePoints("o").count(deps);
     if (!(n === 1)) { throw __bynkExpectFailure("tests/demo/keys.bynk:46:10", 1235, 1241, "expect n == 1\n  expected: n == 1\n  actual:   " + __bynkShow((n)) + " == " + __bynkShow((1))); }
@@ -145,14 +145,14 @@ async function test_an_object_value_under___proto___adds_no_phantom_keys() {
 // case tier: unit
 async function test_a_store_Set_handles_prototype_named_members() {
   try {
-    demo_keys.__resetAgents();
+    __ns_demo_keys.__resetAgents();
     const deps = __makeTestDeps();
-    const { Bag, Entry, Ledger, Line, Memo, Order, Points, Pt, Sales, Tags, Total, __makeBag, __makeLedger, __makeMemo, __makePoints, __makeSales, __makeTags } = demo_keys;
-    type Entry = demo_keys.Entry;
-    type Line = demo_keys.Line;
-    type Order = demo_keys.Order;
-    type Pt = demo_keys.Pt;
-    type Total = demo_keys.Total;
+    const { Bag, Entry, Ledger, Line, Memo, Order, Points, Pt, Sales, Tags, Total, __makeBag, __makeLedger, __makeMemo, __makePoints, __makeSales, __makeTags } = __ns_demo_keys;
+    type Entry = __ns_demo_keys.Entry;
+    type Line = __ns_demo_keys.Line;
+    type Order = __ns_demo_keys.Order;
+    type Pt = __ns_demo_keys.Pt;
+    type Total = __ns_demo_keys.Total;
     const before = await __makeTags("s").has("constructor", deps);
     if (!(before === false)) { throw __bynkExpectFailure("tests/demo/keys.bynk:53:10", 1404, 1419, "expect before == false\n  expected: before == false\n  actual:   " + __bynkShow((before)) + " == " + __bynkShow((false))); }
     await __makeTags("s").add("__proto__", deps);
@@ -176,14 +176,14 @@ async function test_a_store_Set_handles_prototype_named_members() {
 // case tier: unit
 async function test_a_store_Cache_handles_prototype_named_keys() {
   try {
-    demo_keys.__resetAgents();
+    __ns_demo_keys.__resetAgents();
     const deps = __makeTestDeps();
-    const { Bag, Entry, Ledger, Line, Memo, Order, Points, Pt, Sales, Tags, Total, __makeBag, __makeLedger, __makeMemo, __makePoints, __makeSales, __makeTags } = demo_keys;
-    type Entry = demo_keys.Entry;
-    type Line = demo_keys.Line;
-    type Order = demo_keys.Order;
-    type Pt = demo_keys.Pt;
-    type Total = demo_keys.Total;
+    const { Bag, Entry, Ledger, Line, Memo, Order, Points, Pt, Sales, Tags, Total, __makeBag, __makeLedger, __makeMemo, __makePoints, __makeSales, __makeTags } = __ns_demo_keys;
+    type Entry = __ns_demo_keys.Entry;
+    type Line = __ns_demo_keys.Line;
+    type Order = __ns_demo_keys.Order;
+    type Pt = __ns_demo_keys.Pt;
+    type Total = __ns_demo_keys.Total;
     const before = await __makeMemo("c").has("toString", deps);
     if (!(before === false)) { throw __bynkExpectFailure("tests/demo/keys.bynk:67:10", 1768, 1783, "expect before == false\n  expected: before == false\n  actual:   " + __bynkShow((before)) + " == " + __bynkShow((false))); }
     await __makeMemo("c").put("__proto__", 4, deps);
@@ -207,14 +207,14 @@ async function test_a_store_Cache_handles_prototype_named_keys() {
 // case tier: unit
 async function test_an__indexed_map_indexes_prototype_named_field_values() {
   try {
-    demo_keys.__resetAgents();
+    __ns_demo_keys.__resetAgents();
     const deps = __makeTestDeps();
-    const { Bag, Entry, Ledger, Line, Memo, Order, Points, Pt, Sales, Tags, Total, __makeBag, __makeLedger, __makeMemo, __makePoints, __makeSales, __makeTags } = demo_keys;
-    type Entry = demo_keys.Entry;
-    type Line = demo_keys.Line;
-    type Order = demo_keys.Order;
-    type Pt = demo_keys.Pt;
-    type Total = demo_keys.Total;
+    const { Bag, Entry, Ledger, Line, Memo, Order, Points, Pt, Sales, Tags, Total, __makeBag, __makeLedger, __makeMemo, __makePoints, __makeSales, __makeTags } = __ns_demo_keys;
+    type Entry = __ns_demo_keys.Entry;
+    type Line = __ns_demo_keys.Line;
+    type Order = __ns_demo_keys.Order;
+    type Pt = __ns_demo_keys.Pt;
+    type Total = __ns_demo_keys.Total;
     const none = await __makeLedger("i").countTag("constructor", deps);
     if (!(none === 0)) { throw __bynkExpectFailure("tests/demo/keys.bynk:81:10", 2162, 2171, "expect none == 0\n  expected: none == 0\n  actual:   " + __bynkShow((none)) + " == " + __bynkShow((0))); }
     await __makeLedger("i").add("a", "constructor", deps);
@@ -239,14 +239,14 @@ async function test_an__indexed_map_indexes_prototype_named_field_values() {
 // case tier: unit
 async function test_groupBy_and_joinOn_group_by_prototype_named_keys() {
   try {
-    demo_keys.__resetAgents();
+    __ns_demo_keys.__resetAgents();
     const deps = __makeTestDeps();
-    const { Bag, Entry, Ledger, Line, Memo, Order, Points, Pt, Sales, Tags, Total, __makeBag, __makeLedger, __makeMemo, __makePoints, __makeSales, __makeTags } = demo_keys;
-    type Entry = demo_keys.Entry;
-    type Line = demo_keys.Line;
-    type Order = demo_keys.Order;
-    type Pt = demo_keys.Pt;
-    type Total = demo_keys.Total;
+    const { Bag, Entry, Ledger, Line, Memo, Order, Points, Pt, Sales, Tags, Total, __makeBag, __makeLedger, __makeMemo, __makePoints, __makeSales, __makeTags } = __ns_demo_keys;
+    type Entry = __ns_demo_keys.Entry;
+    type Line = __ns_demo_keys.Line;
+    type Order = __ns_demo_keys.Order;
+    type Pt = __ns_demo_keys.Pt;
+    type Total = __ns_demo_keys.Total;
     await __makeSales("q").order("constructor", "ann", deps);
     await __makeSales("q").line("l1", "constructor", 2, deps);
     await __makeSales("q").line("l2", "constructor", 3, deps);
@@ -267,14 +267,14 @@ async function test_groupBy_and_joinOn_group_by_prototype_named_keys() {
 // case tier: unit
 async function test_update_rewrites_an_existing___proto___entry_in_place() {
   try {
-    demo_keys.__resetAgents();
+    __ns_demo_keys.__resetAgents();
     const deps = __makeTestDeps();
-    const { Bag, Entry, Ledger, Line, Memo, Order, Points, Pt, Sales, Tags, Total, __makeBag, __makeLedger, __makeMemo, __makePoints, __makeSales, __makeTags } = demo_keys;
-    type Entry = demo_keys.Entry;
-    type Line = demo_keys.Line;
-    type Order = demo_keys.Order;
-    type Pt = demo_keys.Pt;
-    type Total = demo_keys.Total;
+    const { Bag, Entry, Ledger, Line, Memo, Order, Points, Pt, Sales, Tags, Total, __makeBag, __makeLedger, __makeMemo, __makePoints, __makeSales, __makeTags } = __ns_demo_keys;
+    type Entry = __ns_demo_keys.Entry;
+    type Line = __ns_demo_keys.Line;
+    type Order = __ns_demo_keys.Order;
+    type Pt = __ns_demo_keys.Pt;
+    type Total = __ns_demo_keys.Total;
     await __makeBag("up").put("__proto__", 1, deps);
     await __makeBag("up").add10("__proto__", deps);
     const p = await __makeBag("up").get("__proto__", deps);
@@ -299,14 +299,14 @@ async function test_update_rewrites_an_existing___proto___entry_in_place() {
 // case tier: unit
 async function test_an__indexed_update_re_indexes_a___proto___entry() {
   try {
-    demo_keys.__resetAgents();
+    __ns_demo_keys.__resetAgents();
     const deps = __makeTestDeps();
-    const { Bag, Entry, Ledger, Line, Memo, Order, Points, Pt, Sales, Tags, Total, __makeBag, __makeLedger, __makeMemo, __makePoints, __makeSales, __makeTags } = demo_keys;
-    type Entry = demo_keys.Entry;
-    type Line = demo_keys.Line;
-    type Order = demo_keys.Order;
-    type Pt = demo_keys.Pt;
-    type Total = demo_keys.Total;
+    const { Bag, Entry, Ledger, Line, Memo, Order, Points, Pt, Sales, Tags, Total, __makeBag, __makeLedger, __makeMemo, __makePoints, __makeSales, __makeTags } = __ns_demo_keys;
+    type Entry = __ns_demo_keys.Entry;
+    type Line = __ns_demo_keys.Line;
+    type Order = __ns_demo_keys.Order;
+    type Pt = __ns_demo_keys.Pt;
+    type Total = __ns_demo_keys.Total;
     await __makeLedger("up").add("__proto__", "constructor", deps);
     await __makeLedger("up").retag("__proto__", "__proto__", deps);
     const c = await __makeLedger("up").countTag("constructor", deps);

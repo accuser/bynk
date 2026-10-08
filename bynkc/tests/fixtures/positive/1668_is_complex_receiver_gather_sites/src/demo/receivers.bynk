@@ -6,6 +6,11 @@ receiver is now an internal error, so each way bindings are gathered is
 exercised here with a complex receiver: a statement `if`, a value-position
 `if`, `&&`, `implies`, the else-branch of a negated test, a refinement test, an
 or-pattern, and an `if` nested as another `is`'s receiver.
+
+#1751: and a negated `||`, whose right operand lowers inside an arrow. Its
+receiver temp is declared before the condition, so the else-branch reading its
+binding finds it in scope (it was a `ReferenceError`), and the read casts to
+the matched variant, since the tag test's narrowing stays inside the arrow.
 ---
 commons demo.receivers
 
@@ -53,4 +58,38 @@ fn orPattern(b: Booking) -> String {
 
 fn nestedReceiver(o: Option[Option[Int]], d: Option[Int]) -> Int {
   if (if o is Some(i) { i } else { d }) is Some(v) { v } else { 0 }
+}
+
+fn negatedOr(a: Option[Int], b: Option[Int]) -> Int {
+  if !(id(a) is Some(x)) || !(id(b) is Some(y)) { 0 } else { x + y }
+}
+
+fn negatedOrValue(a: Option[Int], b: Option[Int]) -> Int {
+  let n = if !(id(a) is Some(x)) || !(id(b) is Some(y)) { 0 } else { x + y }
+  n
+}
+
+fn negatedOrThree(a: Option[Int], b: Option[Int], c: Option[Int]) -> Int {
+  if !(id(a) is Some(x)) || !(id(b) is Some(y)) || !(id(c) is Some(z)) { 0 } else { x + y + z }
+}
+
+-- #1764 review: an operator in the *right* operand adds its temp to the
+-- outermost list.
+fn negatedOrRightNested(a: Option[Int], b: Option[Int], c: Option[Int]) -> Int {
+  if !(id(a) is Some(x)) || (!(id(b) is Some(y)) || !(id(c) is Some(z))) { 0 } else { x + y + z }
+}
+
+-- A plain `&&` and an `implies`, neither with an `is` on the left, hoist the
+-- right operand's temp the same way.
+fn plainAnd(c: Bool, b: Option[Int]) -> Int {
+  if c && id(b) is Some(y) { y } else { 0 }
+}
+
+fn plainImplies(c: Bool, b: Option[Int]) -> Int {
+  if c implies !(id(b) is Some(y)) { 0 } else { y }
+}
+
+-- A temp inside a lambda stays inside it: the hoist stops at the lambda.
+fn inLambda(c: Bool, b: Option[Int], xs: List[Int]) -> Bool {
+  c || xs.any((e: Int) => id(b) is Some(y) && y == e)
 }

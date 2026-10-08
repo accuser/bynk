@@ -2,7 +2,7 @@
 // test target: demo.nums
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, __bynkEq } from "../runtime.js";
-import * as demo_nums from "./../demo/nums.js";
+import * as __ns_demo_nums from "./../demo/nums.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -33,7 +33,7 @@ function __makeTestDeps() {
 async function test_Int_parse_accepts_a_signed_decimal() {
   try {
     const deps = {};
-    const { decodesInt, float, int } = demo_nums;
+    const { decodesInt, float, int } = __ns_demo_nums;
     if (!(__bynkEq(int("42"), Some(42)))) { throw __bynkExpectFailure("tests/demo/nums.bynk:7:10", 122, 143, "expect int(\"42\") == Some(42)\n  expected: int(\"42\") == Some(42)\n  actual:   " + __bynkShow((int("42"))) + " == " + __bynkShow((Some(42)))); }
     if (!(__bynkEq(int("+7"), Some(7)))) { throw __bynkExpectFailure("tests/demo/nums.bynk:8:10", 153, 173, "expect int(\"+7\") == Some(7)\n  expected: int(\"+7\") == Some(7)\n  actual:   " + __bynkShow((int("+7"))) + " == " + __bynkShow((Some(7)))); }
     if (!(__bynkEq(int("-13"), Some(-13)))) { throw __bynkExpectFailure("tests/demo/nums.bynk:9:10", 183, 206, "expect int(\"-13\") == Some(-13)\n  expected: int(\"-13\") == Some(-13)\n  actual:   " + __bynkShow((int("-13"))) + " == " + __bynkShow((Some(-13)))); }
@@ -52,7 +52,7 @@ async function test_Int_parse_accepts_a_signed_decimal() {
 async function test_Int_parse_rejects_hex__exponents__whitespace_and_fractions() {
   try {
     const deps = {};
-    const { decodesInt, float, int } = demo_nums;
+    const { decodesInt, float, int } = __ns_demo_nums;
     if (!(!(int("0x10").tag === "Some"))) { throw __bynkExpectFailure("tests/demo/nums.bynk:15:10", 348, 369, "expect !int(\"0x10\").isSome()"); }
     if (!(!(int("0b11").tag === "Some"))) { throw __bynkExpectFailure("tests/demo/nums.bynk:16:10", 379, 400, "expect !int(\"0b11\").isSome()"); }
     if (!(!(int("0o7").tag === "Some"))) { throw __bynkExpectFailure("tests/demo/nums.bynk:17:10", 410, 430, "expect !int(\"0o7\").isSome()"); }
@@ -76,7 +76,7 @@ async function test_Int_parse_rejects_hex__exponents__whitespace_and_fractions()
 async function test_Int_parse_rejects_a_value_outside_the_safe_range() {
   try {
     const deps = {};
-    const { decodesInt, float, int } = demo_nums;
+    const { decodesInt, float, int } = __ns_demo_nums;
     if (!(__bynkEq(int("9007199254740991"), Some(9007199254740991)))) { throw __bynkExpectFailure("tests/demo/nums.bynk:28:10", 704, 753, "expect int(\"9007199254740991\") == Some(9007199254740991)\n  expected: int(\"9007199254740991\") == Some(9007199254740991)\n  actual:   " + __bynkShow((int("9007199254740991"))) + " == " + __bynkShow((Some(9007199254740991)))); }
     if (!(__bynkEq(int("-9007199254740991"), Some(-9007199254740991)))) { throw __bynkExpectFailure("tests/demo/nums.bynk:29:10", 763, 814, "expect int(\"-9007199254740991\") == Some(-9007199254740991)\n  expected: int(\"-9007199254740991\") == Some(-9007199254740991)\n  actual:   " + __bynkShow((int("-9007199254740991"))) + " == " + __bynkShow((Some(-9007199254740991)))); }
     if (!(!(int("9007199254740992").tag === "Some"))) { throw __bynkExpectFailure("tests/demo/nums.bynk:30:10", 824, 857, "expect !int(\"9007199254740992\").isSome()"); }
@@ -94,7 +94,7 @@ async function test_Int_parse_rejects_a_value_outside_the_safe_range() {
 async function test_Float_parse_accepts_a_decimal_with_an_optional_exponent() {
   try {
     const deps = {};
-    const { decodesInt, float, int } = demo_nums;
+    const { decodesInt, float, int } = __ns_demo_nums;
     if (!(__bynkEq(float("2.5"), Some(2.5)))) { throw __bynkExpectFailure("tests/demo/nums.bynk:35:10", 982, 1007, "expect float(\"2.5\") == Some(2.5)\n  expected: float(\"2.5\") == Some(2.5)\n  actual:   " + __bynkShow((float("2.5"))) + " == " + __bynkShow((Some(2.5)))); }
     if (!(__bynkEq(float("-2.5"), Some(0.0 - 2.5)))) { throw __bynkExpectFailure("tests/demo/nums.bynk:36:10", 1017, 1049, "expect float(\"-2.5\") == Some(0.0 - 2.5)\n  expected: float(\"-2.5\") == Some(0.0 - 2.5)\n  actual:   " + __bynkShow((float("-2.5"))) + " == " + __bynkShow((Some(0.0 - 2.5)))); }
     if (!(__bynkEq(float("5."), Some(5.0)))) { throw __bynkExpectFailure("tests/demo/nums.bynk:37:10", 1059, 1083, "expect float(\"5.\") == Some(5.0)\n  expected: float(\"5.\") == Some(5.0)\n  actual:   " + __bynkShow((float("5."))) + " == " + __bynkShow((Some(5.0)))); }
@@ -114,7 +114,7 @@ async function test_Float_parse_accepts_a_decimal_with_an_optional_exponent() {
 async function test_Float_parse_rejects_whitespace__prefixes_and_non_finite_values() {
   try {
     const deps = {};
-    const { decodesInt, float, int } = demo_nums;
+    const { decodesInt, float, int } = __ns_demo_nums;
     if (!(!(float(" 7 ").tag === "Some"))) { throw __bynkExpectFailure("tests/demo/nums.bynk:44:10", 1273, 1295, "expect !float(\" 7 \").isSome()"); }
     if (!(!(float("0x10").tag === "Some"))) { throw __bynkExpectFailure("tests/demo/nums.bynk:45:10", 1305, 1328, "expect !float(\"0x10\").isSome()"); }
     if (!(!(float("0b11").tag === "Some"))) { throw __bynkExpectFailure("tests/demo/nums.bynk:46:10", 1338, 1361, "expect !float(\"0b11\").isSome()"); }
@@ -135,7 +135,7 @@ async function test_Float_parse_rejects_whitespace__prefixes_and_non_finite_valu
 async function test_the_JSON_boundary_accepts_exactly_the_safe_integers() {
   try {
     const deps = {};
-    const { decodesInt, float, int } = demo_nums;
+    const { decodesInt, float, int } = __ns_demo_nums;
     if (!(decodesInt("9007199254740991"))) { throw __bynkExpectFailure("tests/demo/nums.bynk:54:10", 1565, 1595, "expect decodesInt(\"9007199254740991\")"); }
     if (!(decodesInt("-9007199254740991"))) { throw __bynkExpectFailure("tests/demo/nums.bynk:55:10", 1605, 1636, "expect decodesInt(\"-9007199254740991\")"); }
     if (!(!decodesInt("9007199254740992"))) { throw __bynkExpectFailure("tests/demo/nums.bynk:56:10", 1646, 1677, "expect !decodesInt(\"9007199254740992\")"); }

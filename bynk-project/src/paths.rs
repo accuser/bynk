@@ -113,6 +113,74 @@ pub enum ProjectPathsError {
     /// `[paths]` has a key other than `include`/`exclude` — most likely a typo
     /// (`inculde`) that was silently read as "no include list".
     UnknownKey(String),
+    /// #1665: a top-level entry that isn't one of the manifest's tables
+    /// ([`MANIFEST_TABLES`]): a typo (`[pahts]`), or a table for a planned
+    /// feature (`[dependencies]`) that would otherwise read as working.
+    UnknownTable(String),
+    /// #1665: a key at the top level of `bynk.toml`, outside any table.
+    TopLevelKey(String),
+    /// #1665: a key in `[project]` or `[lsp]` that the table doesn't have.
+    /// (`[paths]` reports [`Self::UnknownKey`]; `[fmt]` is checked by its own
+    /// reader, which owns its keys.)
+    UnknownTableKey { table: &'static str, key: String },
+}
+
+/// #1665: the tables `bynk.toml` may hold, each with the keys it accepts.
+/// `[fmt]`'s keys are `bynk-fmt`'s to check (`FmtConfig`, `deny_unknown_fields`),
+/// so its list here is empty and unchecked.
+pub const MANIFEST_TABLES: &[(&str, &[&str])] = &[
+    ("project", &["name", "version"]),
+    ("paths", &["include", "exclude"]),
+    ("fmt", &[]),
+    ("lsp", &["diagnostics_mode", "diagnostics_debounce_ms"]),
+];
+
+/// Tables a user might write for a feature that is designed but not built,
+/// with the issue that tracks it.
+const PLANNED_TABLES: &[(&str, &str)] = &[
+    ("dependencies", "#843"),
+    ("dev-dependencies", "#843"),
+    ("workspace", "#843"),
+    ("deploy", "#551"),
+];
+
+/// The manifest's tables as `` `[project]`, `[paths]`, `[fmt]` <conj> `[lsp]` ``,
+/// from [`MANIFEST_TABLES`], so a message can't fall behind it.
+fn table_list(conj: &str) -> String {
+    let names: Vec<String> = MANIFEST_TABLES
+        .iter()
+        .map(|(t, _)| format!("`[{t}]`"))
+        .collect();
+    match names.split_last() {
+        Some((last, rest)) if !rest.is_empty() => format!("{} {conj} {last}", rest.join(", ")),
+        _ => names.join(""),
+    }
+}
+
+/// The closest of `candidates` to `name`, if any is within two edits.
+fn did_you_mean<'a>(name: &str, candidates: impl IntoIterator<Item = &'a str>) -> Option<&'a str> {
+    candidates
+        .into_iter()
+        .map(|c| (edit_distance(name, c), c))
+        .filter(|(d, _)| *d <= 2)
+        .min_by_key(|(d, _)| *d)
+        .map(|(_, c)| c)
+}
+
+/// Levenshtein distance over chars.
+fn edit_distance(a: &str, b: &str) -> usize {
+    let b: Vec<char> = b.chars().collect();
+    let mut row: Vec<usize> = (0..=b.len()).collect();
+    for (i, ca) in a.chars().enumerate() {
+        let mut prev = row[0];
+        row[0] = i + 1;
+        for (j, cb) in b.iter().enumerate() {
+            let cur = row[j + 1];
+            row[j + 1] = (prev + usize::from(ca != *cb)).min(row[j] + 1).min(cur + 1);
+            prev = cur;
+        }
+    }
+    row[b.len()]
 }
 
 impl std::fmt::Display for ProjectPathsError {
@@ -125,8 +193,114 @@ impl std::fmt::Display for ProjectPathsError {
                     "`[paths]` has no key named `{k}` — did you mean `include` or `exclude`?"
                 )
             }
+            ProjectPathsError::UnknownTable(name) => {
+                write!(f, "`bynk.toml` has no table named `[{name}]` — ")?;
+                if let Some((_, issue)) = PLANNED_TABLES.iter().find(|(t, _)| *t == name) {
+                    write!(f, "it is planned but not yet supported ({issue})")
+                } else if let Some(t) = did_you_mean(name, MANIFEST_TABLES.iter().map(|(t, _)| *t))
+                {
+                    write!(f, "did you mean `[{t}]`?")
+                } else {
+                    write!(f, "the tables are {}", table_list("and"))
+                }
+            }
+            ProjectPathsError::TopLevelKey(key) => {
+                // #1770 review: a table's own name written as a plain value
+                // (`paths = "src"`).
+                if MANIFEST_TABLES.iter().any(|(t, _)| t == key) {
+                    return write!(
+                        f,
+                        "`{key}` in `bynk.toml` must be a table — write it as `[{key}]`"
+                    );
+                }
+                write!(f, "`bynk.toml` has a key `{key}` outside any table — ")?;
+                match MANIFEST_TABLES
+                    .iter()
+                    .find(|(_, keys)| keys.contains(&key.as_str()))
+                {
+                    Some((table, _)) => write!(f, "did you mean it under `[{table}]`?"),
+                    None => write!(f, "keys belong in {}", table_list("or")),
+                }
+            }
+            ProjectPathsError::UnknownTableKey { table, key } => {
+                let keys = MANIFEST_TABLES
+                    .iter()
+                    .find(|(t, _)| t == table)
+                    .map(|(_, k)| *k)
+                    .unwrap_or_default();
+                write!(f, "`[{table}]` has no key named `{key}` — ")?;
+                match did_you_mean(key, keys.iter().copied()) {
+                    Some(k) => write!(f, "did you mean `{k}`?"),
+                    None => {
+                        let list: Vec<String> = keys.iter().map(|k| format!("`{k}`")).collect();
+                        write!(f, "its keys are {}", list.join(", "))
+                    }
+                }
+            }
         }
     }
+}
+
+/// #1665: check `bynk.toml`'s table set and the keys of `[project]` and
+/// `[lsp]` ([`MANIFEST_TABLES`]). Every other reader takes only its own table
+/// and ignores the rest, so an unknown table (`[dependencies]`, a typo'd
+/// `[pahts]`) used to build cleanly with none of its intended behaviour.
+///
+/// Kept apart from [`try_read_project_paths_with`] on purpose: the CLIs call
+/// both and refuse an unknown table, while the language server reads `[paths]`
+/// alone and keeps serving, so an extra table can't cost an editor its
+/// `include` layout. `Ok` when there is no `bynk.toml`. A manifest that doesn't
+/// parse is [`ProjectPathsError::Malformed`].
+pub fn check_manifest(
+    project_root: &Path,
+    overlay: &HashMap<PathBuf, String>,
+) -> Result<(), ProjectPathsError> {
+    let toml_path = project_root.join("bynk.toml");
+    let Ok(content) = read_source(&toml_path, overlay) else {
+        return Ok(());
+    };
+    check_manifest_str(&content)
+}
+
+/// [`check_manifest`] over a manifest's text.
+pub fn check_manifest_str(content: &str) -> Result<(), ProjectPathsError> {
+    let doc = content
+        .parse::<toml::Table>()
+        .map_err(|_| ProjectPathsError::Malformed)?;
+    for (name, value) in &doc {
+        // #1770 review: a planned table names its issue whatever shape it is
+        // written in (`[[dependencies]]`, `dependencies = [...]`).
+        if PLANNED_TABLES.iter().any(|(t, _)| t == name) {
+            return Err(ProjectPathsError::UnknownTable(name.clone()));
+        }
+        let Some((table, keys)) = MANIFEST_TABLES.iter().find(|(t, _)| t == name) else {
+            return Err(if value.is_table() {
+                ProjectPathsError::UnknownTable(name.clone())
+            } else {
+                ProjectPathsError::TopLevelKey(name.clone())
+            });
+        };
+        // #1770 review: a known table's name holding a plain value
+        // (`paths = "src"`) would otherwise read as an absent table.
+        let Some(entries) = value.as_table() else {
+            return Err(ProjectPathsError::TopLevelKey(name.clone()));
+        };
+        if keys.is_empty() {
+            continue;
+        }
+        for key in entries.keys() {
+            if !keys.contains(&key.as_str()) {
+                return Err(match *table {
+                    "paths" => ProjectPathsError::UnknownKey(key.clone()),
+                    _ => ProjectPathsError::UnknownTableKey {
+                        table,
+                        key: key.clone(),
+                    },
+                });
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Read `bynk.toml`'s `[paths]` section, surfacing a malformed manifest — a
@@ -619,5 +793,96 @@ mod tests {
             ),
             Some("a.b.renamed".to_string())
         );
+    }
+}
+
+#[cfg(test)]
+mod manifest_tests {
+    use super::*;
+
+    fn err(manifest: &str) -> String {
+        check_manifest_str(manifest)
+            .expect_err("the manifest is refused")
+            .to_string()
+    }
+
+    /// #1665: every table the docs describe, with every key, is accepted.
+    #[test]
+    fn the_documented_tables_are_accepted() {
+        check_manifest_str(
+            "[project]\nname = \"p\"\nversion = \"0.1.0\"\n\n[paths]\ninclude = [\"src\"]\nexclude = []\n\n\
+             [fmt]\nindent = \"tab\"\nmax_line_width = 100\n\n[lsp]\ndiagnostics_mode = \"live\"\n\
+             diagnostics_debounce_ms = 300\n",
+        )
+        .expect("accepted");
+        check_manifest_str("").expect("an empty manifest is accepted");
+    }
+
+    #[test]
+    fn a_planned_table_names_its_issue() {
+        assert!(err("[dependencies]\nx = \"1\"\n").contains("not yet supported (#843)"));
+        assert!(err("[deploy]\ngroups = []\n").contains("not yet supported (#551)"));
+        assert!(err("[workspace]\nmembers = []\n").contains("(#843)"));
+    }
+
+    #[test]
+    fn a_typod_table_suggests_the_nearest() {
+        assert!(err("[pahts]\n").contains("did you mean `[paths]`?"));
+        assert!(err("[fnt]\n").contains("did you mean `[fmt]`?"));
+        assert!(err("[zzzzzz]\n").contains("the tables are"));
+    }
+
+    #[test]
+    fn an_unknown_key_in_project_or_lsp_suggests_the_nearest() {
+        assert!(err("[project]\nnmae = \"p\"\n").contains("did you mean `name`?"));
+        assert!(
+            err("[lsp]\ndiagnostics_mod = \"live\"\n").contains("did you mean `diagnostics_mode`?")
+        );
+        assert!(err("[project]\nlicense = \"MIT\"\n").contains("its keys are `name`, `version`"));
+    }
+
+    #[test]
+    fn a_paths_key_keeps_its_own_error() {
+        assert!(matches!(
+            check_manifest_str("[paths]\nout = \"out\"\n"),
+            Err(ProjectPathsError::UnknownKey(k)) if k == "out"
+        ));
+    }
+
+    #[test]
+    fn a_top_level_key_points_at_its_table() {
+        assert!(err("name = \"p\"\n").contains("did you mean it under `[project]`?"));
+    }
+
+    /// #1770 review: a known table's name holding a plain value is refused,
+    /// not read as an absent table.
+    #[test]
+    fn a_table_name_with_a_plain_value_must_be_a_table() {
+        assert!(err("paths = \"src\"\n").contains("must be a table — write it as `[paths]`"));
+        assert!(err("lsp = 3\n").contains("`[lsp]`"));
+        assert!(err("fmt = true\n").contains("`[fmt]`"));
+        // An inline table is a table.
+        check_manifest_str("paths = { include = [\"src\"] }\n").expect("accepted");
+    }
+
+    /// #1770 review: a planned table keeps its issue whatever shape it takes.
+    #[test]
+    fn a_planned_table_in_any_shape_names_its_issue() {
+        assert!(err("[[dependencies]]\nname = \"acme\"\n").contains("(#843)"));
+        assert!(err("dependencies = [\"acme\"]\n").contains("(#843)"));
+    }
+
+    /// `[fmt]` keys are `bynk-fmt`'s to check, not this one's.
+    #[test]
+    fn fmt_keys_are_left_to_the_formatter() {
+        check_manifest_str("[fmt]\nanything = 1\n").expect("not this check's concern");
+    }
+
+    #[test]
+    fn a_malformed_manifest_is_malformed() {
+        assert!(matches!(
+            check_manifest_str("[project\n"),
+            Err(ProjectPathsError::Malformed)
+        ));
     }
 }

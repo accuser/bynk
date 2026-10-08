@@ -17,17 +17,17 @@ Track slice T0.0 (#999); `ts_writes`/`ts_any` added by P7.0 (#1296); `verbatim_o
 | `ide_emit_edge` | yes | absent |
 | `ast_importers` | yes | 5 |
 | `emit_abi_shapes` | yes | 1 (bynk-cloudflare.ts:negotiateLocale) |
-| `ts_writes` | yes | 822 |
+| `ts_writes` | yes | 823 |
 | `ts_any` | yes | 26 |
 | `verbatim_origins` | yes | 2 |
 | `verbatim_sites` | yes | 11 |
 | `incremental_query_types` | yes | unit_signature present; shared_cache migrated; stability_test present; definition/project levels absent (deleted by #1537) |
 | `unconsumed_ir_items` | yes | 0 |
 | `diagnostic_coverage` | yes | unasserted=4 (asserted 463/467) |
-| `wildcard_arms` | no (trend) | 318 |
+| `wildcard_arms` | no (trend) | 319 |
 | `keep_in_sync` | no (trend) | 202 |
-| `test_density` | no (trend) | bynk=14.4%, bynk-check=9.8%, bynk-driver=22.2%, bynk-emit=11.5%, bynk-fmt=15.6%, bynk-grammar=33.2%, bynk-ide=41.0%, bynk-ir=0.0%, bynk-lower=66.2%, bynk-lsp=35.7%, bynk-project=37.7%, bynk-render=41.8%, bynk-strip=53.5%, bynk-syntax=11.0%, bynk-testkit=0.0%, bynk-ts=57.2%, bynk-wasm=45.1%, bynkc=0.0%, xtask=40.1% |
-| `fixture_kinds` | no (trend) | contains=3, absent=2, diagnostics=7, error=611, warnings=6, run=94 |
+| `test_density` | no (trend) | bynk=15.6%, bynk-check=9.8%, bynk-driver=22.0%, bynk-emit=11.6%, bynk-fmt=15.5%, bynk-grammar=33.2%, bynk-ide=41.0%, bynk-ir=0.0%, bynk-lower=66.2%, bynk-lsp=35.9%, bynk-project=37.4%, bynk-render=41.8%, bynk-strip=53.5%, bynk-syntax=11.2%, bynk-testkit=0.0%, bynk-ts=57.2%, bynk-wasm=45.1%, bynkc=0.0%, xtask=40.1% |
+| `fixture_kinds` | no (trend) | contains=3, absent=2, diagnostics=7, error=613, warnings=6, run=98 |
 | `keystroke_latency` | no (trend) | not measured — no scheduler exists yet (R3.15, deferred whole this phase) |
 
 ## Rules closed

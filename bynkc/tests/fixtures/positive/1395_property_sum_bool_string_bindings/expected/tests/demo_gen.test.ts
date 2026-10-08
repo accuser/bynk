@@ -2,7 +2,7 @@
 // test target: demo.gen
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
-import * as demo_gen from "./../demo/gen.js";
+import * as __ns_demo_gen from "./../demo/gen.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -157,9 +157,9 @@ function __makeTestDeps() {
 
 async function __prop_test_generated_bindings_satisfy_their_own_trivial_shape() {
     const deps = {};
-    const { Label, Outcome } = demo_gen;
-    type Label = demo_gen.Label;
-    type Outcome = demo_gen.Outcome;
+    const { Label, Outcome } = __ns_demo_gen;
+    type Label = __ns_demo_gen.Label;
+    type Outcome = __ns_demo_gen.Outcome;
     const __gens = [
       { name: "o", boundaries: [Outcome.Hit(true)], gen: (rng: any) => rng.pick([() => Outcome.Hit(rng.bool()), () => Outcome.Miss]), shrink: (v: any) => [Outcome.Hit(true)], show: (v: any) => __bynkShow(v) },
       { name: "flag", boundaries: [true, false], gen: (rng: any) => rng.bool(), shrink: (v: any) => (v ? [false] : []), show: (v: any) => __bynkShow(v) },

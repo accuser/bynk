@@ -55,6 +55,7 @@ bynk new <PATH> [--name NAME]
 <PATH>/
 ├── bynk.toml            # [project] name/version + optional [paths] include/exclude
 ├── .gitignore           # /.bynk
+├── .gitattributes       # *.bynk text eol=lf
 └── src/
     └── <name>.bynk      # context <name> — a GET "/" HTTP service
 ```
@@ -68,7 +69,7 @@ compiles nothing, and reads no network, so it works before `bynkc`, Node, or
    starter's context use it.
 2. Refuse to clobber: if the target exists and is non-empty, fail before writing
    anything. An empty directory is fine; VCS/OS cruft (`.git`, `.gitignore`,
-   `.DS_Store`, …) doesn't count as non-empty.
+   `.gitattributes`, `.DS_Store`, …) doesn't count as non-empty.
 3. Write the scaffold and print next steps (`cd <path> && bynk dev`).
 
 **Exit code** — `0` on a written scaffold. A non-empty target or a name that
@@ -81,6 +82,9 @@ isn't a legal identifier exits non-zero, **touching nothing**.
   repository.
 - The `.gitignore` covers only `/.bynk`, the build directory
   [`bynk dev`](#bynk-dev) writes (compiled workers and local wrangler state).
+- The `.gitattributes` keeps `.bynk` files LF on every platform, the line
+  ending [`bynk fmt`](#bynk-fmt) writes. Neither file is written over one that
+  already exists.
 
 ---
 
@@ -244,7 +248,7 @@ bynk check [INPUT] [--format rich|short]
 | Argument | Default | Meaning |
 |---|---|---|
 | `INPUT` | `.` | A `.bynk` file, or a project root directory (a `bynk.toml` or `src/` subdir selects project mode; otherwise the directory is itself the source tree). |
-| `--format` | `rich` | `rich` is the source-context rendering; `short` emits one terse `path:line:col: severity[category]: message` line per diagnostic, for the VS Code problem-matcher, CI, and scripts. |
+| `--format` | `rich` | `rich` is the source-context rendering; `short` emits one terse `path:line:col: severity[category]: message` line per diagnostic, for the VS Code problem-matcher, CI, and scripts. In both, `path` is the file as you'd type it from the working directory (the input you passed, joined with the file's place in it), the same path `fmt` reports. `rich` is coloured only when stderr is a terminal and `NO_COLOR` is unset or empty, and cuts a source line longer than 400 bytes to a window around its labels, marked `…`. |
 
 **Exit code** — `0` when the input type-checks (warnings are surfaced but do not
 fail the build, per the [diagnostics rule](/docs/cli/#exit-codes-and-diagnostics));
@@ -263,7 +267,7 @@ bynk fmt <INPUTS>... [--check] [--indent tab|spaces] [--indent-width N] [--max-l
 
 | Argument | Default | Meaning |
 |---|---|---|
-| `INPUTS` | *(required)* | Files to format. Pass `-` to read from stdin and write the formatted result to stdout. |
+| `INPUTS` | *(required)* | Files or directories to format. A directory formats the `.bynk` files [`bynk check`](#bynk-check) reads for it: a project root's `[paths] include` trees minus `exclude`, or any other directory walked recursively (hidden directories skipped). Pass `-` to read from stdin and write the formatted result to stdout. |
 | `--check` | off | Report files that are not already canonically formatted **without writing changes**. Exits non-zero if any file would change. For CI. |
 | `--indent` | `[fmt] indent`, else `tab` | Indent with tabs or spaces. Tabs are the default so each reader sets their own width in their editor. |
 | `--indent-width N` | `[fmt] indent_width`, else `2` | Spaces per nesting level. Rejected when the run resolves to tabs, where it would have no effect. |
@@ -273,7 +277,22 @@ bynk fmt <INPUTS>... [--check] [--indent tab|spaces] [--indent-width N] [--max-l
 
 **Behaviour** — each file is formatted and rewritten only when it changes; a file
 already canonical is left untouched. A file that does not parse is reported and
-skipped; the other inputs are still processed.
+skipped; the other inputs are still processed. A file named more than once,
+directly or through a directory, is formatted once; a directory holding no
+`.bynk` file is an error, so a mistyped path cannot pass `--check`.
+
+Line endings aren't a formatting difference. A file with CRLF line endings (a
+Windows checkout with `core.autocrlf=true`) whose LF form is canonical passes
+`--check` and is left as it is; a file that does need formatting is written
+with LF line endings throughout. [`bynk new`](#bynk-new)'s `.gitattributes`
+keeps `.bynk` files LF on every platform.
+
+The formatter never deletes your text. When a comment or a `---` documentation
+block has nowhere to go in the formatted output, the file is left unchanged and
+reported with `bynk.fmt.comment_loss`. A `---` block separated from the next
+declaration by a blank line attaches to nothing (`bynk check` warns
+`bynk.parse.orphan_doc_block`); remove the blank line to attach it, or make it a
+`--` comment.
 
 **Where the style comes from** — three layers, each overriding the one before:
 the canonical defaults, then the project's `[fmt]` section in

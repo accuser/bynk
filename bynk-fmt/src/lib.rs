@@ -12,7 +12,7 @@
 mod config;
 mod fmt;
 
-pub use fmt::{FormatError, FormatOptions, IndentStyle, format_source};
+pub use fmt::{FormatError, FormatOptions, IndentStyle, format_source, normalize_line_endings};
 // v0.123 (editor-currency slice 2): the surface renderers for an expression and
 // a refinement, exposed so `bynk-lsp` hover renders predicates / `where`
 // clauses through the formatter's own logic rather than a copy that could drift.

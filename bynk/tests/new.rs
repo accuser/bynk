@@ -72,6 +72,10 @@ fn golden_scaffold_tree() {
             ".gitignore",
             new::render(include_str!("../src/templates/gitignore"), "hello"),
         ),
+        (
+            ".gitattributes",
+            new::render(include_str!("../src/templates/gitattributes"), "hello"),
+        ),
         ("src/hello.bynk", new::starter_source("hello")),
     ] {
         out.push_str(&format!("--- {label} ---\n{body}"));
@@ -214,6 +218,44 @@ fn scaffold_preserves_a_hand_written_gitignore() {
         "the user's hand-written `.gitignore` must be preserved, not clobbered"
     );
 
+    fs::remove_dir_all(&dir).ok();
+}
+
+/// #1763: the same two arms for `.gitattributes`: a user's own survives, and a
+/// target without one gets the template's `*.bynk text eol=lf`.
+#[test]
+fn scaffold_writes_gitattributes_but_never_over_the_users() {
+    use bynk::new::{NewOptions, run};
+
+    let dir = std::env::temp_dir().join(format!("bynk-new-gitattributes-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join(".git")).unwrap();
+    let user = "* text=auto\n";
+    fs::write(dir.join(".gitattributes"), user).unwrap();
+    run(&NewOptions {
+        path: dir.clone(),
+        name: Some("demo".to_string()),
+    });
+    assert!(
+        dir.join("bynk.toml").exists(),
+        "a `.gitattributes` is tolerated cruft"
+    );
+    assert_eq!(
+        fs::read_to_string(dir.join(".gitattributes")).unwrap(),
+        user
+    );
+    fs::remove_dir_all(&dir).ok();
+
+    fs::create_dir_all(&dir).unwrap();
+    run(&NewOptions {
+        path: dir.clone(),
+        name: Some("demo".to_string()),
+    });
+    assert!(
+        fs::read_to_string(dir.join(".gitattributes"))
+            .unwrap()
+            .contains("*.bynk text eol=lf")
+    );
     fs::remove_dir_all(&dir).ok();
 }
 
