@@ -1,11 +1,6 @@
----
-level: minor
-changelog: "A `match` arm's `if` guard borrows held values, and a `~>` send inside a guard threads the execution context (#1769). The linearity pass never looked inside a guard, so a guard could transfer a held connection unseen; a consuming use in a guard is now `bynk.held.consume_on_borrow`. And a send in a guard's `if` block emitted `deps.__exec.waitUntil(…)` for a context that never threaded `__exec`, so its output failed to type-check"
----
+# 0442 — A match-arm guard borrows the held values it can see
 
-## ADR: match-guards-borrow-held-values
-title: A match-arm guard borrows the held values it can see
-summary: a consuming use of a held value inside a match-arm guard is bynk.held.consume_on_borrow; the guard changes no ownership state
+- **Status:** Accepted (v0.312)
 
 **Context.** [[0218]] made the held-resource linearity pass govern the held values a `match` arm's pattern binds. It built each arm from the pattern and the body and never looked at the arm's `if` guard ([[0169]]). After #1760 made the shared `expr_children` iterator visit guards, this was one of the last walks that still skipped them. A guard could transfer a held value, either the arm's own pattern binding or one in scope from outside, and the pass recorded nothing. A guard is a `Bool`, evaluated before its arm is chosen, so it may run for an arm that is then not taken (#1769).
 

@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0442](0442-match-guards-borrow-held-values.md) | **A match-arm guard borrows the held values it can see** (v0.312) — a consuming use of a held value inside a match-arm guard is bynk.held.consume_on_borrow; the guard changes no ownership state | Accepted (v0.312) |
 | [0441](0441-events-subscriber-has-one-unit-handler.md) | **A `from Events` service has exactly one `on event` handler, returning `Effect[()]`** (v0.311) — bynk.event.duplicate_handler and bynk.event.return_not_effect_unit pin a subscriber's shape | Accepted (v0.311) |
 | [0440](0440-service-policy-order-is-enforced.md) | **A service's policies open its body in the order cors, security, limits, and the compiler enforces it** (v0.310) — bynk.parse.policy_order rejects a cors/security/limits policy that is out of order or follows a handler | Accepted (v0.310) |
 | [0439](0439-bynk-dev-job-object-on-windows.md) | **On Windows, `bynk dev` runs each wrangler in a job object and stops the job** (v0.309.12) — A job object with kill-on-close holds each wrangler's whole tree on Windows, where the #1742 sweep cannot reach | Accepted (v0.309.12) |
