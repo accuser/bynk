@@ -560,6 +560,10 @@ enforces (ADR 0130):
   parameter of a `forEach`/`parTraverse` over a `Map[K, Connection]` — admits only
   non-consuming operations; a consuming op on a borrow is
   `bynk.held.consume_on_borrow`.
+- **Guards borrow.** A `match` arm's `if` guard runs before its arm is chosen, so
+  it borrows every held binding it can see, the arm's own pattern bindings
+  included. A consuming use inside a guard is `bynk.held.consume_on_borrow`, and
+  the guard leaves every binding's ownership state unchanged.
 
 A held value is **non-boundary and not value-comparable** (§6.5,
 `bynk.types.held_at_boundary` / `bynk.types.held_not_comparable`). It may be stored

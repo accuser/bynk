@@ -1534,6 +1534,18 @@ if cond {
 
 The compiler errors with a diagnostic pointing at the branch that doesn't consume, and suggests either adding an else-branch consume or making both branches consistent.
 
+**Guards.** A `match` arm's `if` guard is a **borrow scope** over every held binding it can see: the arm's own pattern bindings and any held binding in scope from outside (#1769). A guard runs before its arm is chosen, so it may run for an arm that is then not taken; a consume inside it would happen on a path where the value is still owned. A guard may therefore use a held value only in a non-consuming way. A consuming use (a transfer, `close`) is `bynk.held.consume_on_borrow`, and naming a value already consumed is `bynk.held.use_after_consume`. The borrow ends with the guard, so the guard changes no ownership state: the arm body, later arms, and the unification after the `match` all see the state from before it.
+
+```
+match slot {
+  Some(conn) if ready => conn.close()        -- OK: the guard names no held value
+  Some(conn) if Some(conn) is Some(_) => …   -- error: `conn` is transferred inside a guard
+  …
+}
+```
+
+Two other rules were rejected. Counting a guard's use as a transfer on the path where its arm is taken is unsound, because the guard has already run on the paths where the arm is not. Forbidding held values in guards outright is the borrow rule without the non-consuming uses. It would need a new diagnostic and would reject a future `Bool`-returning non-consuming operation for no reason.
+
 **Loops.** A held value cannot meaningfully cross loop iteration boundaries — once consumed, it can't be re-consumed; if borrowed inside, the borrow must end before the next iteration. Two valid patterns:
 
 - *Per-iteration acquisition.* Each iteration acquires a held value via storage iteration (borrows), operates, and lets the borrow end naturally at the iteration boundary. This is the canonical pattern: `connections.values.parTraverse(c => c.send(msg))`.
