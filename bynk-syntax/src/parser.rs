@@ -30,7 +30,8 @@ struct TriviaTable {
     leading: Vec<Vec<String>>,
     /// `trailing[i]` holds an optional comment on the same source line as
     /// content token `i`. Only one trailing comment is recorded per token
-    /// because a single `--` consumes the rest of the line.
+    /// because a single `--` consumes the rest of the line. A doc block or an
+    /// opening `{` never has one: see [`split_trivia`].
     trailing: Vec<Option<String>>,
     /// Any pending leading comments at end-of-file (no content token
     /// followed). Used to preserve file-trailing comments.
@@ -90,8 +91,8 @@ impl TriviaTable {
 /// Remove `Comment` trivia tokens from `tokens` and bin them into a
 /// [`TriviaTable`] keyed against the surviving content tokens. A comment
 /// on the same source line as the preceding content token is recorded as
-/// that token's *trailing* trivia; everything else is *leading* for the
-/// next content token.
+/// that token's *trailing* trivia, unless that token is a doc block or an
+/// opening `{`; everything else is *leading* for the next content token.
 fn split_trivia(tokens: &[Token], source: &str) -> (Vec<Token>, TriviaTable) {
     let mut filtered: Vec<Token> = Vec::with_capacity(tokens.len());
     let mut table = TriviaTable::default();
@@ -106,10 +107,13 @@ fn split_trivia(tokens: &[Token], source: &str) -> (Vec<Token>, TriviaTable) {
             // trailing comment: its token ends past the newline after the
             // closing `---`, so a `--` line directly under it would otherwise
             // look same-line and be binned where nothing collects it (#1756).
+            // Nor does an opening `{`: no parser collects trivia right after
+            // one, so its comment leads whatever follows instead, the first
+            // item or the `}` of an empty body (#1788).
             if pending_leading.is_empty()
                 && filtered
                     .last()
-                    .is_some_and(|t| t.kind != TokenKind::DocBlock)
+                    .is_some_and(|t| !matches!(t.kind, TokenKind::DocBlock | TokenKind::LBrace))
                 && let Some(prev_end) = last_content_end
                 && !source[prev_end..tok.span.start].contains('\n')
             {

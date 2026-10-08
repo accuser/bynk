@@ -1446,6 +1446,7 @@ pub fn register_call_record_types(
                 .params
                 .iter()
                 .map(|p| RecordField {
+                    trivia: Default::default(),
                     name: p.name.clone(),
                     type_ref: p.type_ref.clone(),
                     refinement: None,
@@ -1463,6 +1464,7 @@ pub fn register_call_record_types(
                         span: op.name.span,
                     },
                     body: TypeBody::Record(RecordBody {
+                        trailing_comments: Default::default(),
                         fields,
                         span: op.name.span,
                     }),
@@ -2282,6 +2284,7 @@ pub fn check_history_binding(
         .iter()
         .filter(|f| f.kind.head.name == "Cell" && f.kind.args.len() == 1)
         .map(|f| RecordField {
+            trivia: Default::default(),
             name: f.name.clone(),
             type_ref: f.kind.args[0].clone(),
             refinement: None,
@@ -2298,6 +2301,7 @@ pub fn check_history_binding(
                 span,
             },
             body: TypeBody::Record(RecordBody {
+                trailing_comments: Default::default(),
                 fields: state_fields,
                 span,
             }),
@@ -2354,6 +2358,7 @@ pub fn check_history_binding(
     // (`.accepted`), and the committed `old` → `new` state pair.
     let step_fields = vec![
         RecordField {
+            trivia: Default::default(),
             name: Ident {
                 name: "call".to_string(),
                 span,
@@ -2367,6 +2372,7 @@ pub fn check_history_binding(
             span,
         },
         RecordField {
+            trivia: Default::default(),
             name: Ident {
                 name: "accepted".to_string(),
                 span,
@@ -2377,6 +2383,7 @@ pub fn check_history_binding(
             span,
         },
         RecordField {
+            trivia: Default::default(),
             name: Ident {
                 name: "old".to_string(),
                 span,
@@ -2390,6 +2397,7 @@ pub fn check_history_binding(
             span,
         },
         RecordField {
+            trivia: Default::default(),
             name: Ident {
                 name: "new".to_string(),
                 span,
@@ -2412,6 +2420,7 @@ pub fn check_history_binding(
                 span,
             },
             body: TypeBody::Record(RecordBody {
+                trailing_comments: Default::default(),
                 fields: step_fields,
                 span,
             }),

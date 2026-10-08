@@ -308,3 +308,129 @@ fn an_attached_doc_block_formats() {
     let out = format_source(src, &FormatOptions::default()).expect("an attached doc formats");
     assert!(out.contains("keep me"), "{out}");
 }
+
+/// #1788: a comment on the same line as an opening `{` was filed as the `{`'s
+/// trailing trivia, which no parser collected, so the file was refused. It now
+/// leads whatever follows the brace: the first item, or the `}` of an empty
+/// body. `fmt` moves it onto its own line under the brace.
+#[test]
+fn keeps_a_comment_on_the_line_of_an_opening_brace() {
+    let policy = |name: &str, field: &str| {
+        format!(
+            "context api\n\nservice api from http {{\n  {name} {{ -- keep me\n    {field}\n  }}\n\n  on GET(\"/ping\") () -> Effect[HttpResult[String]] by v: Visitor {{\n    Ok(\"pong\")\n  }}\n}}\n"
+        )
+    };
+    for (name, source) in [
+        (
+            "commons",
+            "commons d { -- keep me\n  fn f() -> Int { 1 }\n}\n".to_string(),
+        ),
+        (
+            "context",
+            "context c { -- keep me\n  fn f() -> Int { 1 }\n}\n".to_string(),
+        ),
+        (
+            "suite",
+            "suite demo.wallet { -- keep me\n  property \"p\" {\n    for all n: Int { expect n == n }\n  }\n}\n"
+                .to_string(),
+        ),
+        (
+            "service",
+            "context c\n\nservice s { -- keep me\n  on call() -> Effect[()] { Effect.pure(()) }\n}\n"
+                .to_string(),
+        ),
+        (
+            "agent",
+            "context c\n\nagent A { -- keep me\n  key id: String\n  store n: Cell[Int]\n\n  on call get() -> Effect[Int] {\n    n\n  }\n}\n"
+                .to_string(),
+        ),
+        (
+            "capability",
+            "context c\n\ncapability K { -- keep me\n  fn op() -> Effect[Int]\n}\n".to_string(),
+        ),
+        ("cors", policy("cors", "origins: [\"https://a.example.com\"],")),
+        ("security", policy("security", "hsts: 180.days,")),
+        ("limits", policy("limits", "maxBody: 1_048_576,")),
+        (
+            "fn",
+            "commons d\n\nfn f() -> Int { -- keep me\n  let x = 1\n  x\n}\n".to_string(),
+        ),
+        (
+            "fn tail",
+            "commons d\n\nfn f() -> Int { -- keep me\n  1\n}\n".to_string(),
+        ),
+        (
+            "record",
+            "commons d\n\ntype P = { -- keep me\n  x: Int,\n}\n".to_string(),
+        ),
+        (
+            "doc block after the brace",
+            "context c\n\nservice s { -- keep me\n  ---\n  doc\n  ---\n  on call() -> Effect[()] { Effect.pure(()) }\n}\n"
+                .to_string(),
+        ),
+        (
+            "provider",
+            "context c\n\ncapability K {\n  fn op() -> Effect[Int]\n}\n\nprovides K = Fixed { -- keep me\n  fn op() -> Effect[Int] {\n    Effect.pure(1)\n  }\n}\n"
+                .to_string(),
+        ),
+        (
+            "adapter",
+            "adapter a { -- keep me\n  binding \"./a.binding.ts\"\n\n  capability K {\n    fn op() -> Effect[Int]\n  }\n}\n"
+                .to_string(),
+        ),
+        (
+            "event",
+            "context c\n\nevent E = { -- keep me\n  x: Int,\n}\n".to_string(),
+        ),
+        (
+            "event with a comment after its brace",
+            "context c\n\nevent E = { -- keep me\n  x: Int,\n} -- after close\n".to_string(),
+        ),
+        ("empty commons", "commons d { -- keep me\n}\n".to_string()),
+        (
+            "empty record",
+            "commons d\n\ntype P = { -- keep me\n}\n".to_string(),
+        ),
+        (
+            "empty policy",
+            policy("cors", ""),
+        ),
+    ] {
+        expect_kept(name, &source);
+        let out = format_source(&source, &FormatOptions::default()).unwrap();
+        let line = out.lines().find(|l| l.contains("keep me")).unwrap();
+        assert_eq!(line.trim(), "-- keep me", "{name}: moved onto its own line:\n{out}");
+    }
+}
+
+/// #1788: the brace-line comment of a record type and of an agent had nowhere
+/// to go, because a record field and an agent's `key` had no comment slot.
+/// Now every position in either keeps its comment there.
+#[test]
+fn keeps_comments_in_a_record_type_and_on_an_agent_key() {
+    let record = "commons d\n\ntype P = {\n  -- above\n  x: Int, -- same line\n  y: Int -- last\n  -- before close\n} -- after close\n";
+    let agent = "context c\n\nagent A {\n  -- above key\n  key id: String -- on key\n  store n: Cell[Int]\n\n  on call get() -> Effect[Int] {\n    n\n  }\n}\n";
+    for (name, source, lines) in [
+        (
+            "record",
+            record,
+            &[
+                "\t-- above\n\tx: Int,  -- same line\n",
+                "\ty: Int,  -- last\n\t-- before close\n}  -- after close\n",
+            ][..],
+        ),
+        (
+            "agent key",
+            agent,
+            &["\t-- above key\n\tkey id: String  -- on key\n"][..],
+        ),
+    ] {
+        let out = format_source(source, &FormatOptions::default())
+            .unwrap_or_else(|e| panic!("{name}: refused: {}", e.errors[0].message));
+        for line in lines {
+            assert!(out.contains(line), "{name}: `{line}` not in place:\n{out}");
+        }
+        let again = format_source(&out, &FormatOptions::default()).expect("reformats");
+        assert_eq!(out, again, "{name}: not idempotent");
+    }
+}
