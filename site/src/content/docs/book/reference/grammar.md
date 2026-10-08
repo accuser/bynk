@@ -1680,7 +1680,9 @@ write form; `.update(fn)` is the read-modify-write form. ADR 0108.
 
 {{#grammar expect_expr}}
 
-`expect` — checks a `Bool` predicate in a `case`.
+`expect` — checks a `Bool` predicate in a `case`, observes a capability seam
+([`observation_expr`](#rule-observation_expr)), or claims a fault
+([`faults_expr`](#rule-faults_expr)).
 
 **Static semantics.**
 {{#grammar-semantics expect_expr}}
