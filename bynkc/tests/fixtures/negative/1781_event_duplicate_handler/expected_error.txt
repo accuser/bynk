@@ -1,0 +1,2 @@
+bynk.event.duplicate_handler
+the `from Events` service `onPaid` has more than one `on event` handler — it needs exactly one

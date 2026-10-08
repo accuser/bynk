@@ -1,0 +1,10 @@
+context demo
+
+-- #1781: a subscriber's result has nowhere to go; it returns `Effect[()]`.
+event Paid = { id: String }
+
+service onPaid from Events(Paid) {
+  on event(e: Paid) -> Effect[Int] {
+    Effect.pure(1)
+  }
+}
