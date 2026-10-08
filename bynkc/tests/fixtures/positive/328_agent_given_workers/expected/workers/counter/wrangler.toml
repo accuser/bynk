@@ -9,5 +9,5 @@ class_name = "Tally"
 
 [[migrations]]
 tag = "v1"
-new_classes = ["Tally"]
+new_sqlite_classes = ["Tally"]
 

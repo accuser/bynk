@@ -34,6 +34,18 @@ serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true
 
+# #1762: `bynk dev` puts each wrangler in a job object on Windows, so stopping it
+# stops the whole `cmd.exe` → `npx` → wrangler → `workerd` tree. No new crate
+# in the shipped binary: clap already builds `windows-sys` on Windows (through
+# anstream), so this only turns on the job-object features.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }
+
 [dev-dependencies]
 # (bynk-fmt is a normal dependency as of v0.133 — `bynk fmt` and the `new`
 # starter-rot test both use it.)

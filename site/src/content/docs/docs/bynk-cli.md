@@ -294,7 +294,8 @@ blank line separates it from the next declaration, or when what follows carries
 no doc (a `uses` or other clause, a service policy, or anything inside a
 policy): `bynk check` warns `bynk.parse.orphan_doc_block`, and the formatter
 keeps the block where it is, so formatting never attaches it. Remove the blank
-line to attach it, or make it a `--` comment.
+line to attach it, or make it a `--` comment. A `--` comment on the same line as
+an opening `{` moves onto its own line under the brace.
 
 **Where the style comes from** — three layers, each overriding the one before:
 the canonical defaults, then the project's `[fmt]` section in

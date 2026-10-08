@@ -329,9 +329,10 @@ pub(crate) fn env_qualify(environment: &str, name: &str) -> String {
 /// `bynk deploy`. So this parses the config only to *read* the values it
 /// needs (via `toml::Table`, not the narrow read-only `WranglerConfig`/
 /// `ServiceBinding`/`QueueConsumer` structs above, which drop fields — e.g.
-/// `ServiceBinding` has no `binding`, `Migration` has no `new_classes` — that
-/// must be copied byte-for-byte), builds a *separate* `{ env: { <name>: … } }`
-/// table, serialises only that fragment (so TOML string-escaping is the
+/// `ServiceBinding` has no `binding`, `Migration` has no
+/// `new_sqlite_classes` — that must be copied byte-for-byte), builds a
+/// *separate* `{ env: { <name>: … } }` table, serialises only that
+/// fragment (so TOML string-escaping is the
 /// `toml` crate's job, not a hand-rolled duplicate of
 /// `bynk-emit`'s private `escape_toml_basic_string`), and appends the result
 /// as text. The original bytes are never touched.
@@ -522,7 +523,7 @@ class_name = "OrderEntity"
 
 [[migrations]]
 tag = "v1"
-new_classes = ["OrderEntity"]
+new_sqlite_classes = ["OrderEntity"]
 
 [triggers]
 crons = ["*/5 * * * *"]
@@ -592,9 +593,9 @@ max_batch_size = 10
         );
         assert_eq!(env["migrations"][0]["tag"].as_str(), Some("v1"));
         assert_eq!(
-            env["migrations"][0]["new_classes"][0].as_str(),
+            env["migrations"][0]["new_sqlite_classes"][0].as_str(),
             Some("OrderEntity"),
-            "new_classes is exactly the field the narrow Migration struct drops"
+            "new_sqlite_classes is exactly the field the narrow Migration struct drops"
         );
         assert_eq!(
             env["triggers"]["crons"][0].as_str(),
@@ -703,7 +704,7 @@ class_name = "CartEntity"
 
 [[migrations]]
 tag = "v1"
-new_classes = ["CartEntity"]
+new_sqlite_classes = ["CartEntity"]
 "#,
             ),
             Resources::default().migrates("v1"),
@@ -734,7 +735,7 @@ class_name = "JobLedger"
 
 [[migrations]]
 tag = "v1"
-new_classes = ["JobLedger"]
+new_sqlite_classes = ["JobLedger"]
 
 [[queues.consumers]]
 queue = "job-intake"
@@ -762,11 +763,11 @@ main = "index.ts"
 
 [[migrations]]
 tag = "v1"
-new_classes = ["CartEntity"]
+new_sqlite_classes = ["CartEntity"]
 
 [[migrations]]
 tag = "v2"
-new_classes = ["BasketEntity"]
+new_sqlite_classes = ["BasketEntity"]
 "#,
             )
             .migration,

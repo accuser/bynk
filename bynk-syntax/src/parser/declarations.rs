@@ -2137,6 +2137,15 @@ impl<'a> Parser<'a> {
                             "a service declares at most one `cors { }` policy",
                         ));
                     }
+                    self.check_policy_order(
+                        "cors",
+                        policy.span,
+                        &[
+                            ("security", security.is_some()),
+                            ("limits", limits.is_some()),
+                        ],
+                        !handlers.is_empty(),
+                    )?;
                     cors = Some(policy);
                 }
                 // `security { … }` is a contextual keyword like `cors` (v0.141,
@@ -2157,6 +2166,12 @@ impl<'a> Parser<'a> {
                             "a service declares at most one `security { }` policy",
                         ));
                     }
+                    self.check_policy_order(
+                        "security",
+                        policy.span,
+                        &[("limits", limits.is_some())],
+                        !handlers.is_empty(),
+                    )?;
                     security = Some(policy);
                 }
                 // `limits { … }` is a contextual keyword like `cors`/`security`
@@ -2177,6 +2192,7 @@ impl<'a> Parser<'a> {
                             "a service declares at most one `limits { }` policy",
                         ));
                     }
+                    self.check_policy_order("limits", policy.span, &[], !handlers.is_empty())?;
                     limits = Some(policy);
                 }
                 // A leading `@name(args)` introduces a handler-position annotation
@@ -2285,6 +2301,40 @@ impl<'a> Parser<'a> {
             ));
             keep_orphan(leading, doc);
         }
+    }
+
+    /// #1784: a service's policies come before its handlers, in the order
+    /// `cors`, `security`, `limits`, each optional: the order `service_decl` has
+    /// in the tree-sitter grammar and the spec (§4.4.1a), and the one `fmt`
+    /// writes. This parser used to accept them anywhere in the body. `later`
+    /// names the policies that must follow `keyword`, with whether each has
+    /// already been seen.
+    fn check_policy_order(
+        &self,
+        keyword: &str,
+        span: Span,
+        later: &[(&str, bool)],
+        handlers_seen: bool,
+    ) -> Result<(), CompileError> {
+        if handlers_seen {
+            return Err(CompileError::new(
+                "bynk.parse.policy_order",
+                span,
+                format!("`{keyword} {{ }}` must come before the service's handlers"),
+            )
+            .with_note(
+                "a service's policies open its body, before any handler, in the order `cors`, `security`, `limits`",
+            ));
+        }
+        if let Some((after, _)) = later.iter().find(|(_, seen)| *seen) {
+            return Err(CompileError::new(
+                "bynk.parse.policy_order",
+                span,
+                format!("`{keyword} {{ }}` must come before `{after} {{ }}`"),
+            )
+            .with_note("a service's policies come in the order `cors`, `security`, `limits`"));
+        }
+        Ok(())
     }
 
     /// #1756: a doc block before a `cors`/`security`/`limits` policy documents
@@ -2714,6 +2764,7 @@ impl<'a> Parser<'a> {
         let kw = self.expect(TokenKind::Agent, "to start an agent declaration")?;
         let name = self.expect_ident("after `agent`")?;
         self.expect(TokenKind::LBrace, "to open the agent body")?;
+        let key_leading = self.take_leading_trivia();
         // key id: Type
         // The `key` keyword is recognised as an identifier with the literal
         // name "key" — we don't have a dedicated keyword so it can be a
@@ -2732,6 +2783,10 @@ impl<'a> Parser<'a> {
         let key_name = self.expect_ident("as the agent key field name")?;
         self.expect(TokenKind::Colon, "after the agent key field name")?;
         let key_type = self.parse_type_ref("as the agent key type")?;
+        let key_trivia = Trivia {
+            leading: key_leading,
+            trailing: self.take_trailing_trivia(),
+        };
         // Agent body — a pinned four-phase parse (identity → storage → contracts
         // → behaviour). v0.81 (storage track): the storage phase is the legacy
         // `state { }` block and/or the successor `store` fields, which coexist
@@ -2884,6 +2939,7 @@ impl<'a> Parser<'a> {
             name,
             key_name,
             key_type,
+            key_trivia,
             store_fields,
             invariants,
             transitions,
