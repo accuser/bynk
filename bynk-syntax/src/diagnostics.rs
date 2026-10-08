@@ -1211,6 +1211,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A documentation block is not attached to a declaration (warning).",
     )),
     dg(
+        "bynk.parse.policy_order",
+        "A service's `cors`/`security`/`limits` policy is out of order or follows a handler; they open the body in the order `cors`, `security`, `limits`.",
+        &["service_decl"],
+    ),
+    dg(
         "bynk.parse.refined_pattern_inner",
         "A refined pattern's inner form is something other than `_`.",
         &["refined_pattern"],

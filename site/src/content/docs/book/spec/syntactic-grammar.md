@@ -457,7 +457,9 @@ brace-delimited list of handlers. One protocol per service. Well-formedness: §5
 
 A `from http` service may open with up to three policy sections, in header
 position before its handlers and in this order: `cors { }`, then `security { }`,
-then `limits { }`, each optional (the order is `service_decl`'s). Each is a
+then `limits { }`, each optional (the order is `service_decl`'s). A policy
+out of that order, or after a handler, is a parse error
+(`bynk.parse.policy_order`). Each is a
 brace-delimited list of `name: value` fields. `cors`, `security` and
 `limits` are contextual keywords, ordinary identifiers elsewhere. The grammar
 admits any field name and any value expression; the closed field sets, their
