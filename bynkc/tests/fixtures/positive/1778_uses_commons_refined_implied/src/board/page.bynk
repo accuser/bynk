@@ -1,0 +1,11 @@
+commons board.page
+
+uses board.model
+
+fn sample() -> Run {
+  Run { repo: "bynk" }
+}
+
+fn repos(runs: List[Run]) -> List[String] {
+  runs.map((r) => r.repo).map((n) => n).distinct()
+}

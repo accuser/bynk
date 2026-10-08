@@ -1,0 +1,5 @@
+suite board.page {
+  case "a second commons maps a refined field" {
+    expect repos([sample(), sample()]) == ["bynk"]
+  }
+}

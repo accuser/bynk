@@ -1,0 +1,17 @@
+context board.api
+
+uses board.model
+
+fn listed() -> List[String] {
+  let runs = [Run { repo: "a" }, Run { repo: "b" }, Run { repo: "a" }]
+  runs.map((r) => r.repo).map((n) => n).distinct()
+}
+
+service api from http {
+  on GET("/repos") () -> Effect[HttpResult[List[String]]] by Visitor {
+    Ok(listed())
+  }
+  on POST("/runs") (body: Run) -> Effect[HttpResult[String]] by Visitor {
+    Ok(body.repo)
+  }
+}

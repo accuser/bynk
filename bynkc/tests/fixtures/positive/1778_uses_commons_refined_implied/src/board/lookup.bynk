@@ -1,0 +1,7 @@
+commons board.lookup
+
+uses board.model
+
+fn has_repo(index: Index, name: String) -> Bool {
+  index.by_name.get(name).isSome()
+}
