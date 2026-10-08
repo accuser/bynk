@@ -330,8 +330,9 @@ pub(crate) fn env_qualify(environment: &str, name: &str) -> String {
 /// needs (via `toml::Table`, not the narrow read-only `WranglerConfig`/
 /// `ServiceBinding`/`QueueConsumer` structs above, which drop fields — e.g.
 /// `ServiceBinding` has no `binding`, `Migration` has no
-/// `new_sqlite_classes` — that must be copied byte-for-byte), builds a *separate* `{ env: { <name>: … } }`
-/// table, serialises only that fragment (so TOML string-escaping is the
+/// `new_sqlite_classes` — that must be copied byte-for-byte), builds a
+/// *separate* `{ env: { <name>: … } }` table, serialises only that
+/// fragment (so TOML string-escaping is the
 /// `toml` crate's job, not a hand-rolled duplicate of
 /// `bynk-emit`'s private `escape_toml_basic_string`), and appends the result
 /// as text. The original bytes are never touched.

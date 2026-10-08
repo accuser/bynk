@@ -158,12 +158,12 @@ pub(crate) fn emit_wrangler_toml(
     // *after* the deployed tag, so a config whose last tag is that same `v1`
     // sends none, and the class keeps its key-value backend.
     if !class_names.is_empty() {
-        let new_classes = class_names.iter().map(TomlValue::str).collect();
+        let sqlite_classes = class_names.iter().map(TomlValue::str).collect();
         doc.push_block(TomlBlock::array_table(
             "migrations",
             vec![
                 TomlEntry::kv("tag", TomlValue::str("v1")),
-                TomlEntry::kv("new_sqlite_classes", TomlValue::Array(new_classes)),
+                TomlEntry::kv("new_sqlite_classes", TomlValue::Array(sqlite_classes)),
             ],
         ));
     }
