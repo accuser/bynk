@@ -256,10 +256,38 @@ fn keeps_comments_in_every_policy_position() {
             "`{before}` should precede `{after}`:\n{out}"
         );
     }
+    // The whole line, so a comment hoisted onto a line of its own fails.
+    for line in [
+        "origins: [\"https://a.example.com\"],  -- same line\n",
+        "hsts: 180.days,  -- on security\n",
+    ] {
+        assert!(
+            out.contains(line),
+            "`{line}` stays on its field's line:\n{out}"
+        );
+    }
+}
+
+/// #1786 review: an orphan as the last thing before a policy's `}` (it ends the
+/// policy's `trailing_comments`, so no blank line follows it), and a policy
+/// holding nothing but a comment.
+#[test]
+fn keeps_an_orphan_closing_a_policy_and_a_comment_only_policy() {
+    let wrap = |cors: &str| {
+        format!(
+            "context api\n\nservice api from http {{\n  cors {{\n{cors}  }}\n\n  on GET(\"/ping\") () -> Effect[HttpResult[String]] by v: Visitor {{\n    Ok(\"pong\")\n  }}\n}}\n"
+        )
+    };
+    let closing =
+        wrap("    origins: [\"https://a.example.com\"],\n    ---\n    keep me\n    ---\n");
+    assert_eq!(orphan_warnings(&closing), 1);
+    expect_kept("orphan closing a policy", &closing);
+    let out = format_source(&closing, &FormatOptions::default()).unwrap();
     assert!(
-        out.contains("-- same line\n"),
-        "stays on its field's line:\n{out}"
+        out.contains("keep me\n\t\t---\n\t}"),
+        "no blank line before `}}`:\n{out}"
     );
+    expect_kept("comment-only policy", &wrap("    -- keep me\n"));
 }
 
 /// The block before the unit header is kept too.

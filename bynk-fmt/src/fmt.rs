@@ -121,7 +121,8 @@ pub fn format_source(source: &str, opts: &FormatOptions) -> Result<String, Forma
     // from the trivia table, not that it reached the AST, and #1756 found
     // comments harvested then dropped (at the end of a service, agent or
     // capability body, and inside a `cors`/`security`/`limits` policy) that the
-    // formatter deleted with no refusal.
+    // formatter deleted with no refusal. Both places keep their comments now
+    // (#1756, #1786); the guard stays for whatever the next gap is.
     if let Some(error) = comment_loss(source, &tokens, &output) {
         return Err(FormatError {
             errors: vec![error],
