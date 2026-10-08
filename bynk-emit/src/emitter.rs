@@ -670,6 +670,13 @@ pub(crate) fn emit_project(
 /// the same reason. Both now also enumerate `ExprKind` explicitly instead of
 /// ending in a `_` arm, so that drift is a build failure rather than a silent
 /// miss.
+///
+/// A `match` arm's guard is walked too (#1769). A guard is an expression, so
+/// it cannot hold a `~>` itself, but it can hold an `if` whose branch blocks
+/// do (`Some(x) if if x > 0 { … } else { false } => …`, a `then` block that
+/// sends and then yields `true`): the handler is effectful, so the send
+/// type-checks, and missing it emitted
+/// `deps.__exec.waitUntil(…)` against a `deps` that had no `__exec`.
 pub(crate) fn block_uses_send(b: &Block) -> bool {
     fn stmt(s: &Statement) -> bool {
         match s {
@@ -690,9 +697,12 @@ pub(crate) fn block_uses_send(b: &Block) -> bool {
             } => expr(cond) || block_uses_send(then_block) || block_uses_send(else_block),
             ExprKind::Match { discriminant, arms } => {
                 expr(discriminant)
-                    || arms.iter().any(|a| match &a.body {
-                        MatchBody::Expr(e) => expr(e),
-                        MatchBody::Block(b) => block_uses_send(b),
+                    || arms.iter().any(|a| {
+                        a.guard.as_ref().is_some_and(expr)
+                            || match &a.body {
+                                MatchBody::Expr(e) => expr(e),
+                                MatchBody::Block(b) => block_uses_send(b),
+                            }
                     })
             }
             // No variant below carries a `Block` *field*, so `expr_children`'s

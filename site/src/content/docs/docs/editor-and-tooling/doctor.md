@@ -61,18 +61,24 @@ newer one. `bynkc test --inspect` checks its own minor floor on top of that: Nod
 An installed `wrangler` older than **4.107.0** is a warning too:
 
 ```text
-    wrangler — v4.100.0 (path), below 4.107.0: `bynk dev` can't serve compatibility date 2026-07-01
+    wrangler — v4.100.0 (path), below 4.107.0: `bynk dev` can't serve compatibility date 2026-07-01, and agents can't deploy
       ↳ fix: npm install -g wrangler@4
 ```
 
 Every generated `wrangler.toml` pins a `compatibility_date`, and an older
 wrangler's runtime refuses a newer date outright. It doesn't fall back, so
-`bynk dev` would fail. Deploying still works, since Cloudflare accepts the date,
-so this doesn't fail `--only deploy`. `bynk dev` prints the same warning before
-it serves. A wrangler that `doctor` would fetch with `npx` can't be versioned
-without running it. If `bynk dev` then fails with "This Worker requires
+`bynk dev` would fail. `bynk dev` prints the same warning before it serves. A
+wrangler that `doctor` would fetch with `npx` can't be versioned without running
+it. If `bynk dev` then fails with "This Worker requires
 compatibility date …", the npx cache holds an older wrangler: clear
 `~/.npm/_npx`, or install one with `npm install -g wrangler@4`.
+
+An older wrangler also can't deploy an agent. Every generated `wrangler.toml`
+declares its Durable Object classes in an `exports` map, which wrangler reads
+from 4.107.0, so `bynk deploy` refuses to push a context with an agent on an
+older one, naming the version and the fix. A project with no agent still
+deploys, which is why `doctor` keeps this a warning rather than failing
+`--only deploy`.
 
 The emitted TypeScript is verified under **TypeScript 5** (the oldest supported
 major) and **7** (the current one, what `npm install -g typescript` installs). A

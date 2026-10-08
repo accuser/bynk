@@ -7,7 +7,7 @@ title: Diagnostic index
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](/book/troubleshooting/).
 
-There are **470** codes in total.
+There are **472** codes in total.
 
 ## Agents
 
@@ -238,6 +238,7 @@ There are **470** codes in total.
 | `bynk.event.bad_schema_dispatch` | A `via schema(...)` dispatch clause's argument is malformed — it must be a single, positive, positional `Int` literal. |  | — |
 | `bynk.event.bad_schema_version` | An event's `@schema(N)` annotation is malformed — `N` must be a single, positive, positional `Int` literal, and `@schema` may appear at most once on an event. |  | — |
 | `bynk.event.default_outside_event` | A field default (`field: T = expr`) was written on a record field outside an `event` declaration — a default is only meaningful on an event's own field, since it exists to let an older wire event missing this key still deserialise. |  | — |
+| `bynk.event.duplicate_handler` | A `from Events` service declares more than one `on event` handler; it has exactly one. | [`event_handler`](/book/reference/grammar/#rule-event_handler) | — |
 | `bynk.event.emit_not_an_event` | `Events.emit[E]` named a type `E` that is declared in this context, but is not itself an `event` — only an `event` type may be emitted. |  | — |
 | `bynk.event.emit_outside_owner` | `Events.emit[E]` named an event `E` not declared in the emitting context — only an event's declaring context may emit it. |  | — |
 | `bynk.event.handler_param_type_mismatch` | An `on event(e: T)` handler's declared parameter type does not match its `from Events(E)` header's event type. |  | — |
@@ -248,6 +249,7 @@ There are **470** codes in total.
 | `bynk.event.pattern_unknown_field` | A `from Events(E { ... })` subscription pattern named a field that `E` does not declare. |  | — |
 | `bynk.event.pattern_unknown_variant` | A `from Events(E { ... })` subscription pattern's variant value names a variant that does not exist on the field's declared sum type. |  | — |
 | `bynk.event.pattern_variant_payload` | A `from Events(E { ... })` subscription pattern's variant value names a variant that carries a payload — only nullary variants are admitted, since testing the tag alone would silently ignore the payload. |  | — |
+| `bynk.event.return_not_effect_unit` | An `on event` handler returns an `Effect` of something other than `()`; emission is fire-and-forget, so it returns `Effect[()]`. | [`event_handler`](/book/reference/grammar/#rule-event_handler) | — |
 | `bynk.event.schema_version_mismatch` | An event's `@schema(N)` annotation disagrees with the version the schema registry computes from the event's build history. |  | — |
 | `bynk.event.unknown_annotation` | An `event` declaration carried an `@`-annotation other than `@schema` — event annotations are a closed set. |  | — |
 | `bynk.event.unknown_subscription` | A `from Events(E)` subscription named `E`, which is not a declared event in this context or any consumed context. |  | — |

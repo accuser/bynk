@@ -244,10 +244,13 @@ context's closure, so the config always matches what the code actually reaches:
   (`commerce.payment` → `COMMERCE_PAYMENT`).
 - **`[[kv_namespaces]]`** — emitted only if the closure reaches the `bynk.cloudflare`
   KV adapter. The `id` is a deploy-time placeholder.
-- **`[[durable_objects.bindings]]`** and **`[[migrations]]`** — one binding per agent
-  (binding name is the class in screaming-snake-case, e.g. `OrderEntity` →
-  `ORDER_ENTITY`), plus a migration registering the new Durable Object classes as
-  SQLite-backed (`new_sqlite_classes`).
+- **`[[durable_objects.bindings]]`** and **`[exports.<Class>]`** — one binding per
+  agent (binding name is the class in screaming-snake-case, e.g. `OrderEntity` →
+  `ORDER_ENTITY`), plus an `exports` entry declaring each class a SQLite-backed
+  Durable Object (`type = "durable-object"`, `storage = "sqlite"`). A context whose
+  handlers emit events gets one more of each, for the `__EventsFanout` class. There
+  is no `[[migrations]]` block: Cloudflare reconciles the declared `exports` against
+  the Worker's namespaces on every deploy, so an agent added later is registered too.
 - **`[triggers] crons`** — every `on cron` schedule in the context, aggregated.
 - **`[[queues.consumers]]`** — one consumer per `on queue` service.
 

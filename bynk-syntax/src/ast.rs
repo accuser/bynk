@@ -133,8 +133,19 @@ pub struct ConsumesDecl {
 #[derive(Debug, Clone)]
 pub struct ExportsDecl {
     pub kind: ExportKind,
-    pub names: Vec<Ident>,
+    pub names: Vec<ExportName>,
     pub span: Span,
+    pub trivia: Trivia,
+    /// #1797: comments before the closing `}`.
+    pub trailing_comments: Vec<Comment>,
+}
+
+/// One name in an `exports` list, with its comments (#1797).
+#[derive(Debug, Clone)]
+pub struct ExportName {
+    pub name: Ident,
+    /// #1797: comments above the name and at the end of its line. A comment
+    /// on the list's `{` line leads the first name.
     pub trivia: Trivia,
 }
 
@@ -1139,6 +1150,15 @@ pub struct ActorDecl {
     pub documentation: Option<String>,
     pub span: Span,
     pub trivia: Trivia,
+    /// #1797: comments above the `auth` entry and at the end of its line. A
+    /// comment on the actor's `{` line leads `auth` too. Empty for the
+    /// refinement form.
+    pub auth_trivia: Trivia,
+    /// #1797: comments above the `identity` entry and at the end of its line.
+    /// Empty when there is no `identity`.
+    pub identity_trivia: Trivia,
+    /// #1797: comments before the actor body's closing `}`.
+    pub trailing_comments: Vec<Comment>,
 }
 
 impl ActorDecl {

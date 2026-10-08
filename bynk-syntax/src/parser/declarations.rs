@@ -492,11 +492,22 @@ impl<'a> Parser<'a> {
             ExportKind::Type(_) => "as an exported type name",
         };
         while self.peek_kind() != Some(TokenKind::RBrace) {
-            names.push(self.expect_ident(name_role)?);
-            if self.eat(TokenKind::Comma).is_none() {
+            // #1797: a name's end-of-line comment sits after its `,`.
+            let leading = self.take_leading_trivia();
+            let name = self.expect_ident(name_role)?;
+            let comma = self.eat(TokenKind::Comma);
+            names.push(ExportName {
+                name,
+                trivia: Trivia {
+                    leading,
+                    trailing: self.take_trailing_trivia(),
+                },
+            });
+            if comma.is_none() {
                 break;
             }
         }
+        let trailing_comments = self.take_leading_trivia();
         let close = self.expect(TokenKind::RBrace, "to close the exports list")?;
         let span = kw.span.merge(close.span);
         Ok(ExportsDecl {
@@ -504,6 +515,7 @@ impl<'a> Parser<'a> {
             names,
             span,
             trivia: Trivia::default(),
+            trailing_comments,
         })
     }
 
@@ -1971,11 +1983,15 @@ impl<'a> Parser<'a> {
                 documentation: None,
                 span,
                 trivia: Trivia::default(),
+                auth_trivia: Trivia::default(),
+                identity_trivia: Trivia::default(),
+                trailing_comments: Vec::new(),
             });
         }
 
         // Normal form: `actor Name { auth = Scheme (, identity = Type)? }`.
         self.expect(TokenKind::LBrace, "to open the actor body")?;
+        let auth_leading = self.take_leading_trivia();
         let auth_kw = self.expect_ident("(`auth`) to start the actor body")?;
         if auth_kw.name != "auth" {
             return Err(CompileError::new(
@@ -2058,8 +2074,16 @@ impl<'a> Parser<'a> {
             self.expect(TokenKind::RParen, "to close the scheme config")?;
         }
 
+        // #1797: `auth`'s end-of-line comment sits after its `,`, if any.
+        let comma = self.eat(TokenKind::Comma);
+        let auth_trivia = Trivia {
+            leading: auth_leading,
+            trailing: self.take_trailing_trivia(),
+        };
         let mut identity = None;
-        if self.eat(TokenKind::Comma).is_some() {
+        let mut identity_trivia = Trivia::default();
+        if comma.is_some() {
+            identity_trivia.leading = self.take_leading_trivia();
             let id_kw = self.expect_ident("(`identity`) after `,`")?;
             if id_kw.name != "identity" {
                 return Err(CompileError::new(
@@ -2071,8 +2095,10 @@ impl<'a> Parser<'a> {
             }
             self.expect(TokenKind::Eq, "after `identity`")?;
             identity = Some(self.parse_type_ref("as the actor identity type")?);
+            identity_trivia.trailing = self.take_trailing_trivia();
         }
 
+        let trailing_comments = self.take_leading_trivia();
         let close = self.expect(TokenKind::RBrace, "to close the actor body")?;
         let span = kw.span.merge(close.span);
         Ok(ActorDecl {
@@ -2084,6 +2110,9 @@ impl<'a> Parser<'a> {
             documentation: None,
             span,
             trivia: Trivia::default(),
+            auth_trivia,
+            identity_trivia,
+            trailing_comments,
         })
     }
 

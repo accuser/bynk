@@ -7,7 +7,7 @@ compatibility_date = "2026-07-01"
 name = "TALLY"
 class_name = "Tally"
 
-[[migrations]]
-tag = "v1"
-new_sqlite_classes = ["Tally"]
+[exports.Tally]
+type = "durable-object"
+storage = "sqlite"
 

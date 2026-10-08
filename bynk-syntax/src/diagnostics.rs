@@ -581,6 +581,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.event.default_outside_event",
         "A field default (`field: T = expr`) was written on a record field outside an `event` declaration — a default is only meaningful on an event's own field, since it exists to let an older wire event missing this key still deserialise.",
     ),
+    dg(
+        "bynk.event.duplicate_handler",
+        "A `from Events` service declares more than one `on event` handler; it has exactly one.",
+        &["event_handler"],
+    ),
     d(
         "bynk.event.emit_not_an_event",
         "`Events.emit[E]` named a type `E` that is declared in this context, but is not itself an `event` — only an `event` type may be emitted.",
@@ -620,6 +625,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     d(
         "bynk.event.pattern_variant_payload",
         "A `from Events(E { ... })` subscription pattern's variant value names a variant that carries a payload — only nullary variants are admitted, since testing the tag alone would silently ignore the payload.",
+    ),
+    dg(
+        "bynk.event.return_not_effect_unit",
+        "An `on event` handler returns an `Effect` of something other than `()`; emission is fire-and-forget, so it returns `Effect[()]`.",
+        &["event_handler"],
     ),
     d(
         "bynk.event.schema_version_mismatch",

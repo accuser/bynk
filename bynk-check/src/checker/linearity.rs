@@ -239,7 +239,9 @@ impl Lin<'_> {
                 // over `Result[Connection, _]`). Register those bindings as
                 // owned for the arm and require the arm to dispose them —
                 // consistent with `let`-binding handling. Without this the held
-                // value escapes the pass entirely (#719).
+                // value escapes the pass entirely (#719). An arm's guard is
+                // carried alongside its body and walked as a borrow scope over
+                // the arm's state (#1769, see `walk_guard`).
                 let branches: Vec<Branch> = arms
                     .iter()
                     .map(|a| {
@@ -249,6 +251,7 @@ impl Lin<'_> {
                         };
                         Branch {
                             body,
+                            guard: a.guard.as_ref(),
                             bindings: self.held_pattern_bindings(&a.pattern),
                         }
                     })
@@ -475,6 +478,42 @@ impl Lin<'_> {
             .collect()
     }
 
+    /// #1769: walk a `match` arm's `if` guard as a **borrow scope** (§2.9.5,
+    /// "Guards"). A guard is evaluated before its arm is chosen, so it may run
+    /// for an arm that is then not taken — a consume there would happen on a
+    /// path the pass records as still owning the value. Every held binding the
+    /// guard can see (the arm's own pattern bindings and any outer one) is
+    /// therefore lent to it, exactly as a `forEach` closure borrows its
+    /// element: a non-consuming use is admitted, a consuming one (a transfer, a
+    /// `close`) is `bynk.held.consume_on_borrow`, and a value already disposed
+    /// stays disposed, so a guard naming it is `bynk.held.use_after_consume`.
+    ///
+    /// The walk runs over a copy of `state` that is then dropped: a borrow ends
+    /// with its scope, so the guard leaves no ownership change behind for the
+    /// arm body, the next arm, or the unification after the `match`.
+    fn walk_guard(&mut self, guard: &Expr, state: &State) {
+        let mut lent: State = state
+            .iter()
+            .map(|(name, held)| {
+                let held = match held {
+                    Held::Owned => Held::Borrowed,
+                    other => *other,
+                };
+                (name.clone(), held)
+            })
+            .collect();
+        let first = self.errors.len();
+        self.walk_expr(guard, &mut lent);
+        for err in &mut self.errors[first..] {
+            if err.category == "bynk.held.consume_on_borrow" {
+                err.notes.push(
+                    "a match-arm guard only borrows held values: it runs before its arm is chosen, so it may run for an arm that is not taken"
+                        .to_string(),
+                );
+            }
+        }
+    }
+
     /// Walk a set of branch bodies from a shared pre-branch `state`, then unify:
     /// every outer held binding must end each branch in the same state, else the
     /// branches diverge. Branch-local bindings are leak-checked within each body.
@@ -495,6 +534,11 @@ impl Lin<'_> {
                 .collect();
             for id in &br.bindings {
                 branch.insert(id.name.clone(), Held::Owned);
+            }
+            // #1769: the guard sees the arm's bindings, and runs before the arm
+            // is chosen, so it is walked against the arm's entry state.
+            if let Some(guard) = br.guard {
+                self.walk_guard(guard, &branch);
             }
             match &br.body {
                 BranchBody::Block(b) => self.walk_block(b, &mut branch),
@@ -556,11 +600,13 @@ enum BranchBody<'a> {
     Expr(&'a Expr),
 }
 
-/// One arm of a branching construct: its body, plus the held-typed pattern
-/// bindings it introduces into scope (empty for an `if`/`else` block, which
-/// binds nothing).
+/// One arm of a branching construct: its body, its `match`-arm guard (#1769;
+/// walked as a borrow scope, see `Lin::walk_guard`), plus the held-typed
+/// pattern bindings it introduces into scope (an `if`/`else` block has no
+/// guard and binds nothing).
 struct Branch<'a> {
     body: BranchBody<'a>,
+    guard: Option<&'a Expr>,
     bindings: Vec<&'a Ident>,
 }
 
@@ -569,6 +615,7 @@ impl<'a> Branch<'a> {
     fn block(b: &'a Block) -> Self {
         Branch {
             body: BranchBody::Block(b),
+            guard: None,
             bindings: Vec::new(),
         }
     }
