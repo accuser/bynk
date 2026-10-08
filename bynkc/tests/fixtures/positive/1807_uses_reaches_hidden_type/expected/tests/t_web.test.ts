@@ -34,8 +34,9 @@ function __makeTestDeps() {
 async function test_a_context_checks_and_brands_a_reached_refined_field() {
   try {
     const deps = __makeTestDeps();
-    const { api, listed, loud } = __ns_t_web;
-    const { Run, first } = __ns_t_model;
+    const { api, finished, listed, loud } = __ns_t_web;
+    const { Job, Run, first } = __ns_t_model;
+    type Job = __ns_t_model.Job;
     type Run = __ns_t_model.Run;
     if (!(__bynkEq(listed(), ["a", "b"]))) { throw __bynkExpectFailure("tests/t/web.bynk:4:10", 83, 105, "expect listed() == [\"a\", \"b\"]\n  expected: listed() == [\"a\", \"b\"]\n  actual:   " + __bynkShow((listed())) + " == " + __bynkShow((["a", "b"]))); }
     return { pass: true };

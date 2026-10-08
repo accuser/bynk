@@ -26,3 +26,12 @@ export const Repo = {
     return `${String(self)}!`;
   },
 };
+
+export type Status =
+    { readonly tag: "Pending" }
+  | { readonly tag: "Done" };
+
+export const Status = {
+  Pending: { tag: "Pending" } as Status,
+  Done: { tag: "Done" } as Status,
+};

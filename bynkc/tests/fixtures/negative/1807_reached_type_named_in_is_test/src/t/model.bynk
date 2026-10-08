@@ -7,5 +7,3 @@ type Run = { repo: Repo }
 fn first(r: Run) -> Repo {
   r.repo
 }
-
-type Job = { status: Status }

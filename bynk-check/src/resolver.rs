@@ -1314,14 +1314,16 @@ fn check_fn_refs(
 /// source writes a type name is walked: type references in declarations,
 /// signatures, `let` annotations, lambda parameters and type arguments; a
 /// record, constructor or spread's type; a type used as a receiver
-/// (`Repo.of(…)`, `Status.Pending`); a method declared on a type; and a
-/// pattern's qualifier. A hidden name in any of them is
+/// (`Repo.of(…)`, `Status.Pending`); a method declared on a type; a
+/// pattern's qualifier; and a refinement test (`s is Repo`), in bodies and
+/// in an agent's invariants and transitions. A hidden name in any of them is
 /// `bynk.resolve.unknown_type`, the error the name gave before the closure
 /// existed, with a note naming the commons to `uses`.
 ///
 /// A bare variant (`Pending`) is a value, not a type name, so it is not gated:
 /// like a literal admitted as a hidden refined type, it is typed by the
-/// position it fills.
+/// position it fills. (A context still cannot construct one: the rebrand
+/// construction check covers a hidden commons sum like a `uses`d one.)
 pub fn check_hidden_type_names(
     items: &[CommonsItem],
     hidden: &std::collections::BTreeMap<String, String>,
@@ -1333,11 +1335,21 @@ pub fn check_hidden_type_names(
     impl Gate<'_> {
         fn name(&mut self, id: &Ident) {
             if let Some(owner) = self.hidden.get(&id.name) {
-                self.errors.push(unknown_type_error(id).with_note(format!(
-                    "`{}` is declared in `{owner}`, which this unit does not `uses`; \
-                         add `uses {owner}` to name it",
-                    id.name
-                )));
+                // Not `unknown_type_error`: its note lists what is in scope,
+                // which a hidden type, reached but unnameable, is not.
+                self.errors.push(
+                    CompileError::new(
+                        "bynk.resolve.unknown_type",
+                        id.span,
+                        format!("unknown type `{}`", id.name),
+                    )
+                    .with_note(format!(
+                        "`{}` reaches this unit only through an imported declaration. It is \
+                         declared in `{owner}`, which this unit does not `uses`; add `uses \
+                         {owner}` to name it",
+                        id.name
+                    )),
+                );
             }
         }
         fn type_ref(&mut self, r: &TypeRef) {
@@ -1401,11 +1413,16 @@ pub fn check_hidden_type_names(
             match p {
                 Pattern::Variant {
                     type_name,
+                    variant,
                     bindings,
                     ..
                 } => {
                     if let Some(tn) = type_name {
                         self.name(tn);
+                    } else if bindings.is_empty() {
+                        // A bare, payload-less pattern may name a refined type
+                        // rather than a variant: `s is Repo` tests a refinement.
+                        self.name(variant);
                     }
                     for b in bindings {
                         match &b.kind {
@@ -1569,6 +1586,12 @@ pub fn check_hidden_type_names(
                 for h in &a.handlers {
                     g.signature(&h.params, &h.return_type);
                     g.block(&h.body);
+                }
+                for inv in &a.invariants {
+                    g.expr(&inv.predicate);
+                }
+                for t in &a.transitions {
+                    g.expr(&t.predicate);
                 }
             }
             CommonsItem::Actor(a) => {

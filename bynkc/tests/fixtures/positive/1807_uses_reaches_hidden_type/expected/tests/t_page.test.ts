@@ -34,10 +34,29 @@ function __makeTestDeps() {
 async function test_a_second_commons_maps_a_reached_refined_field() {
   try {
     const deps = {};
-    const { repos, sample } = __ns_t_page;
-    const { Run, first } = __ns_t_model;
+    const { label, queued, repos, sample } = __ns_t_page;
+    const { Job, Run, first } = __ns_t_model;
+    type Job = __ns_t_model.Job;
     type Run = __ns_t_model.Run;
     if (!(__bynkEq(repos([sample(), sample()]), ["bynk"]))) { throw __bynkExpectFailure("tests/t/page.bynk:4:10", 78, 117, "expect repos([sample(), sample()]) == [\"bynk\"]\n  expected: repos([sample(), sample()]) == [\"bynk\"]\n  actual:   " + __bynkShow((repos([sample(), sample()]))) + " == " + __bynkShow((["bynk"]))); }
+    return { pass: true };
+  } catch (e) {
+    if (e instanceof ExpectationError) {
+      return { pass: false, error: { message: e.message, location: e.location } };
+    }
+    return { pass: false, error: { message: String(e), location: "unknown" } };
+  }
+}
+
+// case tier: unit
+async function test_a_second_commons_builds_and_matches_a_reached_sum() {
+  try {
+    const deps = {};
+    const { label, queued, repos, sample } = __ns_t_page;
+    const { Job, Run, first } = __ns_t_model;
+    type Job = __ns_t_model.Job;
+    type Run = __ns_t_model.Run;
+    if (!(label(queued()) === "pending")) { throw __bynkExpectFailure("tests/t/page.bynk:8:10", 189, 217, "expect label(queued()) == \"pending\"\n  expected: label(queued()) == \"pending\"\n  actual:   " + __bynkShow((label(queued()))) + " == " + __bynkShow(("pending"))); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -51,5 +70,6 @@ export async function run(only?: string) {
   const results = [];
   const want = (n: string): boolean => only === undefined || only === n;
   if (want("a second commons maps a reached refined field")) results.push({ name: "a second commons maps a reached refined field", ...(await test_a_second_commons_maps_a_reached_refined_field()) });
+  if (want("a second commons builds and matches a reached sum")) results.push({ name: "a second commons builds and matches a reached sum", ...(await test_a_second_commons_builds_and_matches_a_reached_sum()) });
   return results;
 }

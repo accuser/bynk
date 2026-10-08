@@ -4,8 +4,9 @@
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, HttpResult } from "../runtime.js";
 
 import { Repo as __CommonsRepo } from "./core/repo.js";
-import { Run as __CommonsRun, first } from "./model.js";
+import { Job as __CommonsJob, Run as __CommonsRun, first } from "./model.js";
 
+export type Job = __CommonsJob & { readonly __ctxBrand?: "t.web" };
 export type Repo = __CommonsRepo & { readonly __ctxBrand?: "t.web" };
 export const Repo = {
   of(value: string): Result<Repo, ValidationError> { return __CommonsRepo.of(value); },
@@ -20,6 +21,18 @@ export function listed(): readonly string[] {
 
 export function loud(r: Run): string {
   return Repo.shout(first(r));
+}
+
+export function finished(j: Job): boolean {
+  switch (j.status.tag) {
+    case "Pending": {
+      return false;
+    }
+    case "Done": {
+      return true;
+    }
+  }
+  throw new globalThis.Error("non-exhaustive match");
 }
 
 export const api = {

@@ -14,3 +14,5 @@ type Repo = String where NonEmpty
 fn Repo.shout(self) -> String {
   "\(self)!"
 }
+
+type Status = enum { Pending, Done }

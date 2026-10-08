@@ -3,13 +3,20 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
 
-import { Repo } from "./core/repo.js";
+import { Repo, Status } from "./core/repo.js";
 
 export interface Run {
   readonly repo: Repo;
 }
 
 export const Run = {
+};
+
+export interface Job {
+  readonly status: Status;
+}
+
+export const Job = {
 };
 
 export function first(r: Run): Repo {

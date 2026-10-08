@@ -3,3 +3,7 @@ suite t.page
 case "a second commons maps a reached refined field" {
   expect repos([sample(), sample()]) == ["bynk"]
 }
+
+case "a second commons builds and matches a reached sum" {
+  expect label(queued()) == "pending"
+}

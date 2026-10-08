@@ -3,8 +3,8 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
 
-import { Repo } from "./core/repo.js";
-import { Run } from "./model.js";
+import { Repo, Status } from "./core/repo.js";
+import { Job, Run } from "./model.js";
 
 export function sample(): Run {
   return { repo: ("bynk" as Repo) };
@@ -12,4 +12,20 @@ export function sample(): Run {
 
 export function repos(runs: readonly Run[]): readonly string[] {
   return [...new globalThis.Set(((runs).map((__x: Run) => ((r) => r.repo)(__x))).map((__x: Repo) => ((n) => n)(__x)))];
+}
+
+export function queued(): Job {
+  return { status: Status.Pending };
+}
+
+export function label(j: Job): string {
+  switch (j.status.tag) {
+    case "Pending": {
+      return "pending";
+    }
+    case "Done": {
+      return "done";
+    }
+  }
+  throw new globalThis.Error("non-exhaustive match");
 }

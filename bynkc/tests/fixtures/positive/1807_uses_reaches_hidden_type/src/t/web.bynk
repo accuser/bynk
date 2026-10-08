@@ -16,3 +16,10 @@ service api from http {
     Ok(listed())
   }
 }
+
+fn finished(j: Job) -> Bool {
+  match j.status {
+    Pending => false,
+    Done => true,
+  }
+}
