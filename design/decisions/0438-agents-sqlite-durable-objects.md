@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "**Agents deploy as SQLite-backed Durable Objects** (emitter/tooling; closes [#1779](https://github.com/accuser/bynk/issues/1779)). The generated `wrangler.toml` declared every agent class, and the events fan-out class, with a `new_classes` migration, which creates key-value-backed Durable Objects. The Workers Free plan allows only SQLite-backed ones, so `bynk deploy` of any project with an `agent` failed there (`code: 10097`). The migration now uses `new_sqlite_classes`, which Cloudflare also recommends for new classes on every plan. Agent code and generated runtime are unchanged: a SQLite-backed Durable Object keeps the key-value storage API, and the emitted agent uses only `storage.get`/`storage.put` on one key. A Worker already deployed with a key-value `v1` keeps it: Wrangler sends only migrations after the deployed tag, so redeploying sends none."
----
+# 0438 — Agents are SQLite-backed Durable Objects
 
-## ADR: agents-sqlite-durable-objects
-title: Agents are SQLite-backed Durable Objects
-summary: The generated migration declares agent classes with new_sqlite_classes; deployed key-value Workers are untouched
+- **Status:** Accepted (v0.309.11)
 
 **Context.** Every agent compiles to a Durable Object class, and the events
 fan-out (ADR 0284) adds one more. The generated `wrangler.toml` registered them
