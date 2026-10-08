@@ -127,11 +127,12 @@ pub fn format_source(source: &str, opts: &FormatOptions) -> Result<String, Forma
             errors: vec![error],
         });
     }
-    // #1664: a `---` doc block the parser could not attach (an orphan, separated
+    // #1664: doc blocks never enter the trivia table, so `fully_drained` says
+    // nothing about them, and the guard above counts `--` comments only. Check
+    // them separately, on every run. Since #1756 an orphan (a block separated
     // from the next declaration by a blank line, or with none to follow) is
-    // dropped from the AST with only a warning. It never enters the trivia
-    // table, so `fully_drained` says nothing about it, and the guard above
-    // counts `--` comments only. Check the doc blocks separately, on every run.
+    // kept as a `Comment::OrphanDoc` and printed in place; this is the backstop
+    // for a block some printer path still loses.
     if let Some(error) = doc_block_loss(source, &tokens, &output) {
         return Err(FormatError {
             errors: vec![error],
@@ -363,8 +364,8 @@ fn comment_loss(source: &str, tokens: &[Token], output: &str) -> Option<CompileE
 /// #1664: the `---` counterpart of [`comment_loss`]. Returns a
 /// `bynk.fmt.comment_loss` error naming the first doc block of `source` (already
 /// tokenized as `tokens`) that has no counterpart in `output`, compared by
-/// content multiset. An attached doc block is re-rendered with its content
-/// intact; the one the formatter loses is an orphan, which the parser drops.
+/// content multiset. Attached and orphaned (#1756) blocks are both re-rendered
+/// with their content intact, so this fires only on a printer gap.
 ///
 /// An `output` that does not tokenize returns `None`: that is a formatter bug
 /// the round-trip guard reports accurately ("no longer parses"), and counting
@@ -622,13 +623,36 @@ impl<'a> Formatter<'a> {
 
     // -- Line-comment trivia (v1.1) --
 
-    /// Emit a sequence of leading line-comments, each on its own line at
-    /// the current indent. Group has no blank lines between entries.
-    fn emit_leading_comments(&mut self, comments: &[String]) {
-        for body in comments {
-            self.push("--");
-            self.push(body);
-            self.newline();
+    /// Emit a sequence of leading comments, each on its own line at the
+    /// current indent. `--` lines have no blank lines between them; an orphaned
+    /// doc block (#1756) prints as a doc block and is followed by a blank line,
+    /// which is what keeps it from attaching to the declaration below.
+    fn emit_leading_comments(&mut self, comments: &[Comment]) {
+        self.emit_comments(comments, true);
+    }
+
+    /// Emit the comments that close a body or file. As
+    /// [`Self::emit_leading_comments`], except that an orphaned doc block that
+    /// is the last entry needs no blank line: nothing follows it to attach to.
+    fn emit_trailing_comments(&mut self, comments: &[Comment]) {
+        self.emit_comments(comments, false);
+    }
+
+    fn emit_comments(&mut self, comments: &[Comment], blank_after_last_orphan: bool) {
+        for (i, comment) in comments.iter().enumerate() {
+            match comment {
+                Comment::Line(body) => {
+                    self.push("--");
+                    self.push(body);
+                    self.newline();
+                }
+                Comment::OrphanDoc(doc) => {
+                    self.emit_doc(doc);
+                    if i + 1 < comments.len() || blank_after_last_orphan {
+                        self.newline();
+                    }
+                }
+            }
         }
     }
 
@@ -739,7 +763,7 @@ impl<'a> Formatter<'a> {
             if !a.items.is_empty() || any_header {
                 self.newline();
             }
-            self.emit_leading_comments(&a.trailing_comments);
+            self.emit_trailing_comments(&a.trailing_comments);
         }
     }
 
@@ -789,7 +813,7 @@ impl<'a> Formatter<'a> {
         stubs: &[StubClause],
         cases: &[Case],
         properties: &[PropertyDecl],
-        trailing_comments: &[String],
+        trailing_comments: &[Comment],
     ) {
         let mut first = true;
         for u in uses {
@@ -842,10 +866,7 @@ impl<'a> Formatter<'a> {
             self.newline();
             first = false;
         }
-        for comment in trailing_comments {
-            self.push(&format!("--{comment}"));
-            self.newline();
-        }
+        self.emit_trailing_comments(trailing_comments);
     }
 
     /// v0.118: format a `stub` clause as a suite- or case-body line, with
@@ -945,7 +966,7 @@ impl<'a> Formatter<'a> {
         &mut self,
         uses: &[UsesDecl],
         items: &[CommonsItem],
-        trailing_comments: &[String],
+        trailing_comments: &[Comment],
     ) {
         let mut any_uses = false;
         for u in uses {
@@ -974,7 +995,7 @@ impl<'a> Formatter<'a> {
             if !items.is_empty() || any_uses {
                 self.newline();
             }
-            self.emit_leading_comments(trailing_comments);
+            self.emit_trailing_comments(trailing_comments);
         }
     }
 
@@ -1050,7 +1071,7 @@ impl<'a> Formatter<'a> {
         consumes: &[ConsumesDecl],
         exports: &[ExportsDecl],
         items: &[CommonsItem],
-        trailing_comments: &[String],
+        trailing_comments: &[Comment],
     ) {
         let mut any_header = false;
         for u in uses {
@@ -1092,7 +1113,7 @@ impl<'a> Formatter<'a> {
             if !items.is_empty() || any_header {
                 self.newline();
             }
-            self.emit_leading_comments(trailing_comments);
+            self.emit_trailing_comments(trailing_comments);
         }
     }
 

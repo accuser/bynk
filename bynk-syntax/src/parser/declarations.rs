@@ -10,15 +10,11 @@ impl<'a> Parser<'a> {
     pub(crate) fn parse_unit(&mut self) -> Result<SourceUnit, CompileError> {
         // Optional doc block describing the declaration itself, plus any
         // line comments that lead the file.
-        let (header_leading, leading_doc) = self.collect_item_lead();
-        let header_trivia = Trivia {
-            leading: header_leading,
-            trailing: None,
-        };
+        let (mut header_leading, leading_doc) = self.collect_item_lead();
         match self.peek_kind() {
             Some(TokenKind::Commons) => {
                 let start = self.expect(TokenKind::Commons, "to start the commons declaration")?;
-                let doc = self.finalize_doc(leading_doc, start.span);
+                let doc = self.finalize_doc(leading_doc, start.span, &mut header_leading);
                 let name = self.parse_qualified_name()?;
                 let mut c = match self.peek_kind() {
                     Some(TokenKind::LBrace) => {
@@ -26,12 +22,15 @@ impl<'a> Parser<'a> {
                     }
                     _ => self.parse_commons_body(start.span, name, doc, false)?,
                 };
-                c.trivia = header_trivia;
+                c.trivia = Trivia {
+                    leading: header_leading,
+                    trailing: None,
+                };
                 Ok(SourceUnit::Commons(c))
             }
             Some(TokenKind::Context) => {
                 let start = self.expect(TokenKind::Context, "to start the context declaration")?;
-                let doc = self.finalize_doc(leading_doc, start.span);
+                let doc = self.finalize_doc(leading_doc, start.span, &mut header_leading);
                 let name = self.parse_qualified_name()?;
                 let mut c = match self.peek_kind() {
                     Some(TokenKind::LBrace) => {
@@ -39,12 +38,15 @@ impl<'a> Parser<'a> {
                     }
                     _ => self.parse_context_body(start.span, name, doc, false)?,
                 };
-                c.trivia = header_trivia;
+                c.trivia = Trivia {
+                    leading: header_leading,
+                    trailing: None,
+                };
                 Ok(SourceUnit::Context(c))
             }
             Some(TokenKind::Adapter) => {
                 let start = self.expect(TokenKind::Adapter, "to start the adapter declaration")?;
-                let doc = self.finalize_doc(leading_doc, start.span);
+                let doc = self.finalize_doc(leading_doc, start.span, &mut header_leading);
                 let name = self.parse_qualified_name()?;
                 let mut a = match self.peek_kind() {
                     Some(TokenKind::LBrace) => {
@@ -52,12 +54,15 @@ impl<'a> Parser<'a> {
                     }
                     _ => self.parse_adapter_body(start.span, name, doc, false)?,
                 };
-                a.trivia = header_trivia;
+                a.trivia = Trivia {
+                    leading: header_leading,
+                    trailing: None,
+                };
                 Ok(SourceUnit::Adapter(a))
             }
             Some(TokenKind::Suite) => {
                 let start = self.expect(TokenKind::Suite, "to start the suite declaration")?;
-                let doc = self.finalize_doc(leading_doc, start.span);
+                let doc = self.finalize_doc(leading_doc, start.span, &mut header_leading);
                 let name = self.parse_qualified_name()?;
                 // v0.118: an optional `as <tier>` sets the suite's default tier,
                 // which its `case` members inherit and override (a `property`
@@ -75,12 +80,15 @@ impl<'a> Parser<'a> {
                     }
                     _ => self.parse_test_body(start.span, name, doc, tier, false)?,
                 };
-                t.trivia = header_trivia;
+                t.trivia = Trivia {
+                    leading: header_leading,
+                    trailing: None,
+                };
                 Ok(SourceUnit::Suite(t))
             }
             Some(_) => {
                 let t = self.peek().unwrap();
-                if let Some((_, doc_span)) = leading_doc {
+                if let Some(DocLead { span: doc_span, .. }) = leading_doc {
                     self.warnings.push(CompileError::new(
                         "bynk.parse.orphan_doc_block",
                         doc_span,
@@ -100,7 +108,7 @@ impl<'a> Parser<'a> {
                 ))
             }
             None => {
-                if let Some((_, doc_span)) = leading_doc {
+                if let Some(DocLead { span: doc_span, .. }) = leading_doc {
                     self.warnings.push(CompileError::new(
                         "bynk.parse.orphan_doc_block",
                         doc_span,
@@ -145,7 +153,7 @@ impl<'a> Parser<'a> {
         // own closing `}` instead.
         let mut last_span = start.merge(name.span);
         let mut seen_item = false;
-        let trailing_comments: Vec<String>;
+        let trailing_comments: Vec<Comment>;
         loop {
             // Optional doc block and leading line comments before the next item.
             let (mut leading, item_doc) = self.collect_item_lead();
@@ -155,33 +163,38 @@ impl<'a> Parser<'a> {
                     // Doc not attachable; treat as orphan if present. Any
                     // leading comments at this position end up as the
                     // body's trailing comments.
-                    if let Some((_, doc_span)) = item_doc {
+                    if let Some(doc) = item_doc {
+                        let doc_span = doc.span;
                         self.warnings.push(CompileError::new(
                             "bynk.parse.orphan_doc_block",
                             doc_span,
                             "documentation block has no following declaration to attach to",
                         ));
+                        keep_orphan(&mut leading, doc);
                     }
                     trailing_comments = std::mem::take(&mut leading);
                     break;
                 }
                 None if !brace => {
-                    if let Some((_, doc_span)) = item_doc {
+                    if let Some(doc) = item_doc {
+                        let doc_span = doc.span;
                         self.warnings.push(CompileError::new(
                             "bynk.parse.orphan_doc_block",
                             doc_span,
                             "documentation block has no following declaration to attach to",
                         ));
+                        keep_orphan(&mut leading, doc);
                     }
                     // Comments we held as leading for the next item, plus
                     // any held in the trivia table's epilogue, become the
                     // commons body's trailing comments.
-                    leading.extend(self.trivia.take_epilogue());
+                    leading.extend(self.take_epilogue_trivia());
                     trailing_comments = leading;
                     break;
                 }
                 Some(TokenKind::Uses) => {
-                    if let Some((_, doc_span)) = item_doc {
+                    if let Some(doc) = item_doc {
+                        let doc_span = doc.span;
                         self.warnings.push(
                             CompileError::new(
                                 "bynk.parse.orphan_doc_block",
@@ -189,6 +202,7 @@ impl<'a> Parser<'a> {
                                 "documentation block before `uses` is not allowed; only `type` and `fn` declarations carry docs",
                             ),
                         );
+                        keep_orphan(&mut leading, doc);
                     }
                     if !brace && seen_item {
                         let t = self.peek().unwrap();
@@ -213,7 +227,7 @@ impl<'a> Parser<'a> {
                 }
                 Some(TokenKind::Type) => {
                     let next_span = self.peek().unwrap().span;
-                    let doc = self.finalize_doc(item_doc, next_span);
+                    let doc = self.finalize_doc(item_doc, next_span, &mut leading);
                     match self.parse_type_decl() {
                         Ok(mut t) => {
                             t.documentation = doc;
@@ -228,7 +242,7 @@ impl<'a> Parser<'a> {
                 }
                 Some(TokenKind::Fn) => {
                     let next_span = self.peek().unwrap().span;
-                    let doc = self.finalize_doc(item_doc, next_span);
+                    let doc = self.finalize_doc(item_doc, next_span, &mut leading);
                     match self.parse_fn_decl() {
                         Ok(mut f) => {
                             f.documentation = doc;
@@ -243,7 +257,7 @@ impl<'a> Parser<'a> {
                 }
                 Some(TokenKind::Messages) => {
                     let next_span = self.peek().unwrap().span;
-                    let doc = self.finalize_doc(item_doc, next_span);
+                    let doc = self.finalize_doc(item_doc, next_span, &mut leading);
                     match self.parse_messages_decl() {
                         Ok(mut m) => {
                             m.documentation = doc;
@@ -262,7 +276,7 @@ impl<'a> Parser<'a> {
                 // `messages` above, mirrored to the opposite placement.
                 Some(TokenKind::Event) => {
                     let next_span = self.peek().unwrap().span;
-                    let doc = self.finalize_doc(item_doc, next_span);
+                    let doc = self.finalize_doc(item_doc, next_span, &mut leading);
                     match self.parse_event_decl() {
                         Ok(mut e) => {
                             e.documentation = doc;
@@ -359,7 +373,7 @@ impl<'a> Parser<'a> {
             // declaration in the file) is a no-op `take_epilogue` unless it
             // truly is the last content in the file — see the fragment-form
             // break arm's matching call above.
-            trailing_comments.extend(self.trivia.take_epilogue());
+            trailing_comments.extend(self.take_epilogue_trivia());
             start.merge(end.span)
         } else {
             self.exit_item_loop();
@@ -518,41 +532,47 @@ impl<'a> Parser<'a> {
         // fragment form (see `parse_commons_body`).
         let mut last_span = start.merge(target.span);
         let mut seen_non_uses = false;
-        let trailing_comments: Vec<String>;
+        let trailing_comments: Vec<Comment>;
         loop {
             let (mut leading, item_doc) = self.collect_item_lead();
             self.item_start = Some(self.pos);
             match self.peek_kind() {
                 Some(TokenKind::RBrace) if brace => {
-                    if let Some((_, doc_span)) = item_doc {
+                    if let Some(doc) = item_doc {
+                        let doc_span = doc.span;
                         self.warnings.push(CompileError::new(
                             "bynk.parse.orphan_doc_block",
                             doc_span,
                             "documentation block has no following declaration to attach to",
                         ));
+                        keep_orphan(&mut leading, doc);
                     }
                     trailing_comments = std::mem::take(&mut leading);
                     break;
                 }
                 None if !brace => {
-                    if let Some((_, doc_span)) = item_doc {
+                    if let Some(doc) = item_doc {
+                        let doc_span = doc.span;
                         self.warnings.push(CompileError::new(
                             "bynk.parse.orphan_doc_block",
                             doc_span,
                             "documentation block has no following declaration to attach to",
                         ));
+                        keep_orphan(&mut leading, doc);
                     }
-                    leading.extend(self.trivia.take_epilogue());
+                    leading.extend(self.take_epilogue_trivia());
                     trailing_comments = leading;
                     break;
                 }
                 Some(TokenKind::Uses) => {
-                    if let Some((_, doc_span)) = item_doc {
+                    if let Some(doc) = item_doc {
+                        let doc_span = doc.span;
                         self.warnings.push(CompileError::new(
                             "bynk.parse.orphan_doc_block",
                             doc_span,
                             "documentation block before `uses` is not allowed",
                         ));
+                        keep_orphan(&mut leading, doc);
                     }
                     if !brace && seen_non_uses {
                         let t = self.peek().unwrap();
@@ -574,7 +594,7 @@ impl<'a> Parser<'a> {
                 }
                 Some(TokenKind::Stub) => {
                     let next_span = self.peek().unwrap().span;
-                    let doc = self.finalize_doc(item_doc, next_span);
+                    let doc = self.finalize_doc(item_doc, next_span, &mut leading);
                     match self.parse_stub_clause() {
                         Ok(mut p) => {
                             p.documentation = doc;
@@ -589,7 +609,7 @@ impl<'a> Parser<'a> {
                 }
                 Some(TokenKind::Case) => {
                     let next_span = self.peek().unwrap().span;
-                    let doc = self.finalize_doc(item_doc, next_span);
+                    let doc = self.finalize_doc(item_doc, next_span, &mut leading);
                     match self.parse_test_case() {
                         Ok(mut c) => {
                             c.documentation = doc;
@@ -604,7 +624,7 @@ impl<'a> Parser<'a> {
                 }
                 Some(TokenKind::Property) => {
                     let next_span = self.peek().unwrap().span;
-                    let doc = self.finalize_doc(item_doc, next_span);
+                    let doc = self.finalize_doc(item_doc, next_span, &mut leading);
                     match self.parse_property() {
                         Ok(mut p) => {
                             p.documentation = doc;
@@ -657,7 +677,7 @@ impl<'a> Parser<'a> {
             let end = self.expect(TokenKind::RBrace, "to close the test body")?;
             self.exit_item_loop();
             // See `parse_commons_body`'s matching call.
-            trailing_comments.extend(self.trivia.take_epilogue());
+            trailing_comments.extend(self.take_epilogue_trivia());
             start.merge(end.span)
         } else {
             self.exit_item_loop();
@@ -824,9 +844,9 @@ impl<'a> Parser<'a> {
         let open = self.expect(TokenKind::LBrace, "to open the test case body")?;
         let mut stubs = Vec::new();
         while self.peek_kind() == Some(TokenKind::Stub) {
-            let (leading, item_doc) = self.collect_item_lead();
+            let (mut leading, item_doc) = self.collect_item_lead();
             let next_span = self.peek().unwrap().span;
-            let doc = self.finalize_doc(item_doc, next_span);
+            let doc = self.finalize_doc(item_doc, next_span, &mut leading);
             let mut p = self.parse_stub_clause()?;
             p.documentation = doc;
             p.trivia.leading = leading;
@@ -949,41 +969,47 @@ impl<'a> Parser<'a> {
         // fragment form (see `parse_commons_body`).
         let mut last_span = start.merge(name.span);
         let mut seen_item = false;
-        let trailing_comments: Vec<String>;
+        let trailing_comments: Vec<Comment>;
         loop {
             let (mut leading, item_doc) = self.collect_item_lead();
             self.item_start = Some(self.pos);
             match self.peek_kind() {
                 Some(TokenKind::RBrace) if brace => {
-                    if let Some((_, doc_span)) = item_doc {
+                    if let Some(doc) = item_doc {
+                        let doc_span = doc.span;
                         self.warnings.push(CompileError::new(
                             "bynk.parse.orphan_doc_block",
                             doc_span,
                             "documentation block has no following declaration to attach to",
                         ));
+                        keep_orphan(&mut leading, doc);
                     }
                     trailing_comments = std::mem::take(&mut leading);
                     break;
                 }
                 None if !brace => {
-                    if let Some((_, doc_span)) = item_doc {
+                    if let Some(doc) = item_doc {
+                        let doc_span = doc.span;
                         self.warnings.push(CompileError::new(
                             "bynk.parse.orphan_doc_block",
                             doc_span,
                             "documentation block has no following declaration to attach to",
                         ));
+                        keep_orphan(&mut leading, doc);
                     }
-                    leading.extend(self.trivia.take_epilogue());
+                    leading.extend(self.take_epilogue_trivia());
                     trailing_comments = leading;
                     break;
                 }
                 Some(TokenKind::Uses) => {
-                    if let Some((_, doc_span)) = item_doc {
+                    if let Some(doc) = item_doc {
+                        let doc_span = doc.span;
                         self.warnings.push(CompileError::new(
                             "bynk.parse.orphan_doc_block",
                             doc_span,
                             "documentation block before `uses` is not allowed; only `type` and `fn` declarations carry docs",
                         ));
+                        keep_orphan(&mut leading, doc);
                     }
                     if !brace && seen_item {
                         let t = self.peek().unwrap();
@@ -1007,12 +1033,14 @@ impl<'a> Parser<'a> {
                     }
                 }
                 Some(TokenKind::Consumes) => {
-                    if let Some((_, doc_span)) = item_doc {
+                    if let Some(doc) = item_doc {
+                        let doc_span = doc.span;
                         self.warnings.push(CompileError::new(
                             "bynk.parse.orphan_doc_block",
                             doc_span,
                             "documentation block before `consumes` is not allowed; only `type` and `fn` declarations carry docs",
                         ));
+                        keep_orphan(&mut leading, doc);
                     }
                     if !brace && seen_item {
                         let t = self.peek().unwrap();
@@ -1044,12 +1072,14 @@ impl<'a> Parser<'a> {
                     }
                 }
                 Some(TokenKind::Exports) => {
-                    if let Some((_, doc_span)) = item_doc {
+                    if let Some(doc) = item_doc {
+                        let doc_span = doc.span;
                         self.warnings.push(CompileError::new(
                             "bynk.parse.orphan_doc_block",
                             doc_span,
                             "documentation block before `exports` is not allowed; only `type` and `fn` declarations carry docs",
                         ));
+                        keep_orphan(&mut leading, doc);
                     }
                     if !brace && seen_item {
                         let t = self.peek().unwrap();
@@ -1082,7 +1112,7 @@ impl<'a> Parser<'a> {
                 }
                 Some(TokenKind::Type) => {
                     let next_span = self.peek().unwrap().span;
-                    let doc = self.finalize_doc(item_doc, next_span);
+                    let doc = self.finalize_doc(item_doc, next_span, &mut leading);
                     match self.parse_type_decl() {
                         Ok(mut t) => {
                             t.documentation = doc;
@@ -1097,7 +1127,7 @@ impl<'a> Parser<'a> {
                 }
                 Some(TokenKind::Fn) => {
                     let next_span = self.peek().unwrap().span;
-                    let doc = self.finalize_doc(item_doc, next_span);
+                    let doc = self.finalize_doc(item_doc, next_span, &mut leading);
                     match self.parse_fn_decl() {
                         Ok(mut f) => {
                             f.documentation = doc;
@@ -1112,7 +1142,7 @@ impl<'a> Parser<'a> {
                 }
                 Some(TokenKind::Capability) => {
                     let next_span = self.peek().unwrap().span;
-                    let doc = self.finalize_doc(item_doc, next_span);
+                    let doc = self.finalize_doc(item_doc, next_span, &mut leading);
                     match self.parse_capability_decl() {
                         Ok(mut c) => {
                             c.documentation = doc;
@@ -1127,7 +1157,7 @@ impl<'a> Parser<'a> {
                 }
                 Some(TokenKind::Provides) => {
                     let next_span = self.peek().unwrap().span;
-                    let doc = self.finalize_doc(item_doc, next_span);
+                    let doc = self.finalize_doc(item_doc, next_span, &mut leading);
                     match self.parse_provider_decl() {
                         Ok(mut p) => {
                             p.documentation = doc;
@@ -1142,7 +1172,7 @@ impl<'a> Parser<'a> {
                 }
                 Some(TokenKind::Service) => {
                     let next_span = self.peek().unwrap().span;
-                    let doc = self.finalize_doc(item_doc, next_span);
+                    let doc = self.finalize_doc(item_doc, next_span, &mut leading);
                     match self.parse_service_decl() {
                         Ok(mut s) => {
                             s.documentation = doc;
@@ -1157,7 +1187,7 @@ impl<'a> Parser<'a> {
                 }
                 Some(TokenKind::Agent) => {
                     let next_span = self.peek().unwrap().span;
-                    let doc = self.finalize_doc(item_doc, next_span);
+                    let doc = self.finalize_doc(item_doc, next_span, &mut leading);
                     match self.parse_agent_decl() {
                         Ok(mut a) => {
                             a.documentation = doc;
@@ -1172,7 +1202,7 @@ impl<'a> Parser<'a> {
                 }
                 Some(TokenKind::Actor) => {
                     let next_span = self.peek().unwrap().span;
-                    let doc = self.finalize_doc(item_doc, next_span);
+                    let doc = self.finalize_doc(item_doc, next_span, &mut leading);
                     match self.parse_actor_decl() {
                         Ok(mut a) => {
                             a.documentation = doc;
@@ -1192,7 +1222,7 @@ impl<'a> Parser<'a> {
                 // rather than the parser rejecting it per unit kind.
                 Some(TokenKind::Messages) => {
                     let next_span = self.peek().unwrap().span;
-                    let doc = self.finalize_doc(item_doc, next_span);
+                    let doc = self.finalize_doc(item_doc, next_span, &mut leading);
                     match self.parse_messages_decl() {
                         Ok(mut m) => {
                             m.documentation = doc;
@@ -1207,7 +1237,7 @@ impl<'a> Parser<'a> {
                 }
                 Some(TokenKind::Event) => {
                     let next_span = self.peek().unwrap().span;
-                    let doc = self.finalize_doc(item_doc, next_span);
+                    let doc = self.finalize_doc(item_doc, next_span, &mut leading);
                     match self.parse_event_decl() {
                         Ok(mut e) => {
                             e.documentation = doc;
@@ -1254,7 +1284,7 @@ impl<'a> Parser<'a> {
             let end = self.expect(TokenKind::RBrace, "to close the context body")?;
             self.exit_item_loop();
             // See `parse_commons_body`'s matching call.
-            trailing_comments.extend(self.trivia.take_epilogue());
+            trailing_comments.extend(self.take_epilogue_trivia());
             start.merge(end.span)
         } else {
             self.exit_item_loop();
@@ -1303,31 +1333,35 @@ impl<'a> Parser<'a> {
         // Cover the header (`adapter <name>`) so the unit span stays valid even
         // when every item is dropped by error recovery (see commons fragment).
         let mut last_span = start.merge(name.span);
-        let trailing_comments: Vec<String>;
+        let trailing_comments: Vec<Comment>;
         loop {
             let (mut leading, item_doc) = self.collect_item_lead();
             self.item_start = Some(self.pos);
             match self.peek_kind() {
                 Some(TokenKind::RBrace) if brace => {
-                    if let Some((_, doc_span)) = item_doc {
+                    if let Some(doc) = item_doc {
+                        let doc_span = doc.span;
                         self.warnings.push(CompileError::new(
                             "bynk.parse.orphan_doc_block",
                             doc_span,
                             "documentation block has no following declaration to attach to",
                         ));
+                        keep_orphan(&mut leading, doc);
                     }
                     trailing_comments = std::mem::take(&mut leading);
                     break;
                 }
                 None if !brace => {
-                    if let Some((_, doc_span)) = item_doc {
+                    if let Some(doc) = item_doc {
+                        let doc_span = doc.span;
                         self.warnings.push(CompileError::new(
                             "bynk.parse.orphan_doc_block",
                             doc_span,
                             "documentation block has no following declaration to attach to",
                         ));
+                        keep_orphan(&mut leading, doc);
                     }
-                    leading.extend(self.trivia.take_epilogue());
+                    leading.extend(self.take_epilogue_trivia());
                     trailing_comments = leading;
                     break;
                 }
@@ -1379,7 +1413,7 @@ impl<'a> Parser<'a> {
                 },
                 Some(TokenKind::Type) => {
                     let next_span = self.peek().unwrap().span;
-                    let doc = self.finalize_doc(item_doc, next_span);
+                    let doc = self.finalize_doc(item_doc, next_span, &mut leading);
                     match self.parse_type_decl() {
                         Ok(mut t) => {
                             t.documentation = doc;
@@ -1393,7 +1427,7 @@ impl<'a> Parser<'a> {
                 }
                 Some(TokenKind::Fn) => {
                     let next_span = self.peek().unwrap().span;
-                    let doc = self.finalize_doc(item_doc, next_span);
+                    let doc = self.finalize_doc(item_doc, next_span, &mut leading);
                     match self.parse_fn_decl() {
                         Ok(mut f) => {
                             f.documentation = doc;
@@ -1407,7 +1441,7 @@ impl<'a> Parser<'a> {
                 }
                 Some(TokenKind::Capability) => {
                     let next_span = self.peek().unwrap().span;
-                    let doc = self.finalize_doc(item_doc, next_span);
+                    let doc = self.finalize_doc(item_doc, next_span, &mut leading);
                     match self.parse_capability_decl() {
                         Ok(mut c) => {
                             c.documentation = doc;
@@ -1421,7 +1455,7 @@ impl<'a> Parser<'a> {
                 }
                 Some(TokenKind::Provides) => {
                     let next_span = self.peek().unwrap().span;
-                    let doc = self.finalize_doc(item_doc, next_span);
+                    let doc = self.finalize_doc(item_doc, next_span, &mut leading);
                     match self.parse_provider_decl() {
                         Ok(mut p) => {
                             p.documentation = doc;
@@ -1437,7 +1471,7 @@ impl<'a> Parser<'a> {
                 // reject them precisely (`bynk.adapter.disallowed_item`).
                 Some(TokenKind::Service) => {
                     let next_span = self.peek().unwrap().span;
-                    let doc = self.finalize_doc(item_doc, next_span);
+                    let doc = self.finalize_doc(item_doc, next_span, &mut leading);
                     match self.parse_service_decl() {
                         Ok(mut s) => {
                             s.documentation = doc;
@@ -1451,7 +1485,7 @@ impl<'a> Parser<'a> {
                 }
                 Some(TokenKind::Agent) => {
                     let next_span = self.peek().unwrap().span;
-                    let doc = self.finalize_doc(item_doc, next_span);
+                    let doc = self.finalize_doc(item_doc, next_span, &mut leading);
                     match self.parse_agent_decl() {
                         Ok(mut a) => {
                             a.documentation = doc;
@@ -1465,7 +1499,7 @@ impl<'a> Parser<'a> {
                 }
                 Some(TokenKind::Actor) => {
                     let next_span = self.peek().unwrap().span;
-                    let doc = self.finalize_doc(item_doc, next_span);
+                    let doc = self.finalize_doc(item_doc, next_span, &mut leading);
                     match self.parse_actor_decl() {
                         Ok(mut a) => {
                             a.documentation = doc;
@@ -1482,7 +1516,7 @@ impl<'a> Parser<'a> {
                 // reasoning as `service`/`agent` above.
                 Some(TokenKind::Messages) => {
                     let next_span = self.peek().unwrap().span;
-                    let doc = self.finalize_doc(item_doc, next_span);
+                    let doc = self.finalize_doc(item_doc, next_span, &mut leading);
                     match self.parse_messages_decl() {
                         Ok(mut m) => {
                             m.documentation = doc;
@@ -1496,7 +1530,7 @@ impl<'a> Parser<'a> {
                 }
                 Some(TokenKind::Event) => {
                     let next_span = self.peek().unwrap().span;
-                    let doc = self.finalize_doc(item_doc, next_span);
+                    let doc = self.finalize_doc(item_doc, next_span, &mut leading);
                     match self.parse_event_decl() {
                         Ok(mut e) => {
                             e.documentation = doc;
@@ -1546,7 +1580,7 @@ impl<'a> Parser<'a> {
             // file-trailing comment — the fragment path just above already
             // does (`None if !brace`'s own `take_epilogue` call), so only an
             // `adapter … { … }` (not `adapter …\n\n…`) lost its last comment.
-            trailing_comments.extend(self.trivia.take_epilogue());
+            trailing_comments.extend(self.take_epilogue_trivia());
             start.merge(end.span)
         } else {
             self.exit_item_loop();
@@ -1660,21 +1694,23 @@ impl<'a> Parser<'a> {
         self.expect(TokenKind::LBrace, "to open the capability body")?;
         let mut ops = Vec::new();
         loop {
-            let (leading, item_doc) = self.collect_item_lead();
+            let (mut leading, item_doc) = self.collect_item_lead();
             match self.peek_kind() {
                 Some(TokenKind::RBrace) => {
-                    if let Some((_, doc_span)) = item_doc {
+                    if let Some(doc) = item_doc {
+                        let doc_span = doc.span;
                         self.warnings.push(CompileError::new(
                             "bynk.parse.orphan_doc_block",
                             doc_span,
                             "documentation block has no following operation to attach to",
                         ));
+                        keep_orphan(&mut leading, doc);
                     }
                     break;
                 }
                 Some(TokenKind::Fn) => {
                     let next_span = self.peek().unwrap().span;
-                    let doc = self.finalize_doc(item_doc, next_span);
+                    let doc = self.finalize_doc(item_doc, next_span, &mut leading);
                     let mut op = self.parse_capability_op()?;
                     op.documentation = doc;
                     op.trivia.leading = leading;
@@ -2053,15 +2089,17 @@ impl<'a> Parser<'a> {
         let mut security: Option<SecurityPolicy> = None;
         let mut limits: Option<LimitsPolicy> = None;
         loop {
-            let (leading, item_doc) = self.collect_item_lead();
+            let (mut leading, item_doc) = self.collect_item_lead();
             match self.peek_kind() {
                 Some(TokenKind::RBrace) => {
-                    if let Some((_, doc_span)) = item_doc {
+                    if let Some(doc) = item_doc {
+                        let doc_span = doc.span;
                         self.warnings.push(CompileError::new(
                             "bynk.parse.orphan_doc_block",
                             doc_span,
                             "documentation block has no following handler to attach to",
                         ));
+                        keep_orphan(&mut leading, doc);
                     }
                     break;
                 }
@@ -2070,6 +2108,10 @@ impl<'a> Parser<'a> {
                 // CORS policy, so it stays usable as an ordinary identifier
                 // elsewhere. At most one per service.
                 Some(TokenKind::Ident) if self.peek_is_cors_kw() => {
+                    if let Some(doc) = item_doc {
+                        self.warn_orphan_before_policy(doc.span);
+                        keep_orphan(&mut leading, doc);
+                    }
                     let policy = self.parse_cors_policy(leading)?;
                     if cors.is_some() {
                         return Err(CompileError::new(
@@ -2086,6 +2128,10 @@ impl<'a> Parser<'a> {
                 // usable as an ordinary identifier elsewhere. At most one per
                 // service.
                 Some(TokenKind::Ident) if self.peek_is_security_kw() => {
+                    if let Some(doc) = item_doc {
+                        self.warn_orphan_before_policy(doc.span);
+                        keep_orphan(&mut leading, doc);
+                    }
                     let policy = self.parse_security_policy(leading)?;
                     if security.is_some() {
                         return Err(CompileError::new(
@@ -2102,6 +2148,10 @@ impl<'a> Parser<'a> {
                 // usable as an ordinary identifier elsewhere. At most one per
                 // service.
                 Some(TokenKind::Ident) if self.peek_is_limits_kw() => {
+                    if let Some(doc) = item_doc {
+                        self.warn_orphan_before_policy(doc.span);
+                        keep_orphan(&mut leading, doc);
+                    }
                     let policy = self.parse_limits_policy(leading)?;
                     if limits.is_some() {
                         return Err(CompileError::new(
@@ -2119,7 +2169,7 @@ impl<'a> Parser<'a> {
                 Some(TokenKind::At) => {
                     let annotations = self.parse_handler_annotations()?;
                     let next_span = self.peek().unwrap().span;
-                    let doc = self.finalize_doc(item_doc, next_span);
+                    let doc = self.finalize_doc(item_doc, next_span, &mut leading);
                     let mut h = self.parse_handler(false, annotations)?;
                     h.documentation = doc;
                     h.trivia.leading = leading;
@@ -2128,7 +2178,7 @@ impl<'a> Parser<'a> {
                 }
                 Some(TokenKind::On) => {
                     let next_span = self.peek().unwrap().span;
-                    let doc = self.finalize_doc(item_doc, next_span);
+                    let doc = self.finalize_doc(item_doc, next_span, &mut leading);
                     let mut h = self.parse_handler(false, Vec::new())?;
                     h.documentation = doc;
                     h.trivia.leading = leading;
@@ -2198,11 +2248,21 @@ impl<'a> Parser<'a> {
         matches!(self.peek(), Some(t) if t.kind == TokenKind::Ident && self.slice(t.span) == "limits")
     }
 
+    /// #1756: a doc block before a `cors`/`security`/`limits` policy documents
+    /// nothing (a policy carries no doc), so it is an orphan.
+    fn warn_orphan_before_policy(&mut self, doc_span: Span) {
+        self.warnings.push(CompileError::new(
+            "bynk.parse.orphan_doc_block",
+            doc_span,
+            "documentation block before a service policy is not attached; only handlers in a service body carry docs",
+        ));
+    }
+
     /// Parse a `cors { name: value, … }` policy (v0.131, ADR 0159). Fields are
     /// parsed leniently as `name: expr` pairs; the checker validates the field
     /// names (closed set) and the value shapes. A trailing comma is allowed and
     /// newlines separate fields, mirroring a record construction.
-    fn parse_cors_policy(&mut self, leading: Vec<String>) -> Result<CorsPolicy, CompileError> {
+    fn parse_cors_policy(&mut self, leading: Vec<Comment>) -> Result<CorsPolicy, CompileError> {
         let kw = self.expect_ident("to start a `cors` policy")?;
         self.expect(TokenKind::LBrace, "to open the `cors` policy body")?;
         let mut fields: Vec<CorsField> = Vec::new();
@@ -2244,7 +2304,7 @@ impl<'a> Parser<'a> {
     /// is allowed and newlines separate fields, mirroring `parse_cors_policy`.
     fn parse_security_policy(
         &mut self,
-        leading: Vec<String>,
+        leading: Vec<Comment>,
     ) -> Result<SecurityPolicy, CompileError> {
         let kw = self.expect_ident("to start a `security` policy")?;
         self.expect(TokenKind::LBrace, "to open the `security` policy body")?;
@@ -2286,7 +2346,7 @@ impl<'a> Parser<'a> {
     /// names (closed set `maxBody`) and the value shapes (a positive `Int`). A
     /// trailing comma is allowed and newlines separate fields, mirroring
     /// `parse_cors_policy`/`parse_security_policy`.
-    fn parse_limits_policy(&mut self, leading: Vec<String>) -> Result<LimitsPolicy, CompileError> {
+    fn parse_limits_policy(&mut self, leading: Vec<Comment>) -> Result<LimitsPolicy, CompileError> {
         let kw = self.expect_ident("to start a `limits` policy")?;
         self.expect(TokenKind::LBrace, "to open the `limits` policy body")?;
         let mut fields: Vec<LimitsField> = Vec::new();
@@ -2624,17 +2684,19 @@ impl<'a> Parser<'a> {
         let mut transitions = Vec::new();
         let mut handlers = Vec::new();
         loop {
-            let (leading, item_doc) = self.collect_item_lead();
+            let (mut leading, item_doc) = self.collect_item_lead();
             let storage_closed =
                 !invariants.is_empty() || !transitions.is_empty() || !handlers.is_empty();
             match self.peek_kind() {
                 Some(TokenKind::RBrace) => {
-                    if let Some((_, doc_span)) = item_doc {
+                    if let Some(doc) = item_doc {
+                        let doc_span = doc.span;
                         self.warnings.push(CompileError::new(
                             "bynk.parse.orphan_doc_block",
                             doc_span,
                             "documentation block has no following declaration to attach to",
                         ));
+                        keep_orphan(&mut leading, doc);
                     }
                     break;
                 }
@@ -2647,7 +2709,7 @@ impl<'a> Parser<'a> {
                         return Err(self.storage_after_phase_err());
                     }
                     let next_span = self.peek().unwrap().span;
-                    let doc = self.finalize_doc(item_doc, next_span);
+                    let doc = self.finalize_doc(item_doc, next_span, &mut leading);
                     let mut sf = self.parse_store_field()?;
                     sf.documentation = doc;
                     sf.trivia.leading = leading;
@@ -2668,7 +2730,7 @@ impl<'a> Parser<'a> {
                         ));
                     }
                     let next_span = self.peek().unwrap().span;
-                    let doc = self.finalize_doc(item_doc, next_span);
+                    let doc = self.finalize_doc(item_doc, next_span, &mut leading);
                     let mut inv = self.parse_invariant()?;
                     inv.documentation = doc;
                     inv.trivia.leading = leading;
@@ -2690,7 +2752,7 @@ impl<'a> Parser<'a> {
                         ));
                     }
                     let next_span = self.peek().unwrap().span;
-                    let doc = self.finalize_doc(item_doc, next_span);
+                    let doc = self.finalize_doc(item_doc, next_span, &mut leading);
                     let mut tr = self.parse_transition()?;
                     tr.documentation = doc;
                     tr.trivia.leading = leading;
@@ -2703,7 +2765,7 @@ impl<'a> Parser<'a> {
                 Some(TokenKind::At) => {
                     let annotations = self.parse_handler_annotations()?;
                     let next_span = self.peek().unwrap().span;
-                    let doc = self.finalize_doc(item_doc, next_span);
+                    let doc = self.finalize_doc(item_doc, next_span, &mut leading);
                     let mut h = self.parse_handler(true, annotations)?;
                     h.documentation = doc;
                     h.trivia.leading = leading;
@@ -2712,7 +2774,7 @@ impl<'a> Parser<'a> {
                 }
                 Some(TokenKind::On) => {
                     let next_span = self.peek().unwrap().span;
-                    let doc = self.finalize_doc(item_doc, next_span);
+                    let doc = self.finalize_doc(item_doc, next_span, &mut leading);
                     let mut h = self.parse_handler(true, Vec::new())?;
                     h.documentation = doc;
                     h.trivia.leading = leading;
