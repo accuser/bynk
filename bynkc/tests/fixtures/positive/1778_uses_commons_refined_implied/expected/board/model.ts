@@ -9,8 +9,10 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError } f
  * as the refined type is cast to it (`("a" as Repo)`), and a list kernel
  * annotates its callback with the element type (`(__x: Repo) => …`). The using
  * unit imported only the names its source spelled, so `tsc` rejected the
- * output with TS2304. Every name in an expression's checked type is now
- * imported, in a context (aliased and rebranded) and in a commons (plainly).
+ * output with TS2304. Every name in an expression's checked type is now a
+ * candidate import, kept when the emitted module spells it: aliased and
+ * rebranded in a context, plain in a commons. `board.lookup` names `Repo` only
+ * inside a `Map` and an `Option`, never as a bare expression type.
  */
 
 export type Repo = string & { readonly __brand: "Repo" };
@@ -29,4 +31,11 @@ export interface Run {
 }
 
 export const Run = {
+};
+
+export interface Index {
+  readonly by_name: ReadonlyMap<string, Repo>;
+}
+
+export const Index = {
 };

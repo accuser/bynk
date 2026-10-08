@@ -4,7 +4,7 @@
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
 
 import { message } from "../bynk/locale.js";
-import { LocaleTag, Message } from "../bynk/locale/types.js";
+import { LocaleTag } from "../bynk/locale/types.js";
 import { render as __bynkLocaleRender, renderArg as __bynkRenderArg } from "../bynk/locale.js";
 import type { LocaleTag as __bynkLocaleTag, Message as __bynkMessage, MessageArg as __bynkMessageArg } from "../bynk/locale/types.js";
 

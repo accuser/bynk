@@ -35,7 +35,8 @@ async function test_a_second_commons_maps_a_refined_field() {
   try {
     const deps = {};
     const { repos, sample } = __ns_board_page;
-    const { Repo, Run } = __ns_board_model;
+    const { Index, Repo, Run } = __ns_board_model;
+    type Index = __ns_board_model.Index;
     type Repo = __ns_board_model.Repo;
     type Run = __ns_board_model.Run;
     if (!(__bynkEq(repos([sample(), sample()]), ["bynk"]))) { throw __bynkExpectFailure("tests/board/page.bynk:3:12", 79, 118, "expect repos([sample(), sample()]) == [\"bynk\"]\n  expected: repos([sample(), sample()]) == [\"bynk\"]\n  actual:   " + __bynkShow((repos([sample(), sample()]))) + " == " + __bynkShow((["bynk"]))); }

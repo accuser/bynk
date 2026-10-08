@@ -35,7 +35,8 @@ async function test_a_record_literal_s_refined_field_is_mapped_out() {
   try {
     const deps = __makeTestDeps();
     const { api, listed } = __ns_board_api;
-    const { Repo, Run } = __ns_board_model;
+    const { Index, Repo, Run } = __ns_board_model;
+    type Index = __ns_board_model.Index;
     type Repo = __ns_board_model.Repo;
     type Run = __ns_board_model.Run;
     if (!(__bynkEq(listed(), ["a", "b"]))) { throw __bynkExpectFailure("tests/board/api.bynk:3:12", 87, 109, "expect listed() == [\"a\", \"b\"]\n  expected: listed() == [\"a\", \"b\"]\n  actual:   " + __bynkShow((listed())) + " == " + __bynkShow((["a", "b"]))); }

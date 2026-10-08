@@ -4,14 +4,10 @@
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
 
 import { message, render, withText, withWhole } from "../bynk/locale.js";
-import { LocaleTag as __CommonsLocaleTag, Message as __CommonsMessage } from "../bynk/locale/types.js";
+import { Message as __CommonsMessage } from "../bynk/locale/types.js";
 
 import * as bynk from "../bynk.js";
 
-export type LocaleTag = __CommonsLocaleTag & { readonly __ctxBrand?: "app.greet" };
-export const LocaleTag = {
-  of(value: string): Result<LocaleTag, ValidationError> { return __CommonsLocaleTag.of(value); },
-};
 export type Message = __CommonsMessage & { readonly __ctxBrand?: "app.greet" };
 
 export const greeting = {
