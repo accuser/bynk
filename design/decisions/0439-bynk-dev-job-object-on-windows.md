@@ -1,11 +1,6 @@
----
-level: patch
-changelog: On Windows, stopping `bynk dev` now stops each context's whole wrangler process tree, `workerd` included, by running it in a job object, so the next `bynk dev` no longer fails with `Address already in use` (#1762)
----
+# 0439 — On Windows, `bynk dev` runs each wrangler in a job object and stops the job
 
-## ADR: bynk-dev-job-object-on-windows
-title: On Windows, `bynk dev` runs each wrangler in a job object and stops the job
-summary: A job object with kill-on-close holds each wrangler's whole tree on Windows, where the #1742 sweep cannot reach
+- **Status:** Accepted (v0.309.12)
 
 **Context.** [[0436]] stops what `bynk dev`'s wranglers leave running by process group and working directory, and ends "Windows is unchanged." On Windows every way `bynk dev` resolves wrangler is a `.cmd` shim (`npx.cmd` since #1758, or a `wrangler.cmd` on `PATH` or in the project), which runs under `cmd.exe /c`. The child `bynk dev` holds is that wrapper, and the server is the `npx` → wrangler `node` launcher → CLI → two `workerd serve` chain below it. `Child::kill` is `TerminateProcess` on the wrapper alone, which does not touch its descendants, and Windows has neither the process group nor the readable working directory the Unix sweep selects by. So stopping one context left wrangler and its `workerd`s running with their ports bound, and the next `bynk dev` failed with `bind(): Address already in use` (#1762).
 

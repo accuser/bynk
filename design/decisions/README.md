@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0439](0439-bynk-dev-job-object-on-windows.md) | **On Windows, `bynk dev` runs each wrangler in a job object and stops the job** (v0.309.12) — A job object with kill-on-close holds each wrangler's whole tree on Windows, where the #1742 sweep cannot reach | Accepted (v0.309.12) |
 | [0438](0438-agents-sqlite-durable-objects.md) | **Agents are SQLite-backed Durable Objects** (v0.309.11) — The generated migration declares agent classes with new_sqlite_classes; deployed key-value Workers are untouched | Accepted (v0.309.11) |
 | [0437](0437-question-in-value-position-returns-from-the-function.md) | **A `?` in a value-position `if`, `match` or block returns from the enclosing function** (v0.307.1) — Such forms lower to a labelled statement whose tails assign a slot, not to an arrow; corrects ADR 0178 §E | Accepted (v0.307.1) |
 | [0436](0436-bynk-dev-sweeps-its-worker-dirs.md) | **`bynk dev` stops leftover processes by process group and worker-dir cwd** (v0.306.1) — Teardown sweeps the shared group for processes under the build's worker dirs, rather than giving each wrangler its own group | Accepted (v0.306.1) |
