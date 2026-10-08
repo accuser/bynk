@@ -956,6 +956,10 @@
       "summary": "A `service` body is empty."
     },
     {
+      "code": "bynk.parse.policy_order",
+      "summary": "A service's `cors`/`security`/`limits` policy is out of order or follows a handler; they open the body in the order `cors`, `security`, `limits`."
+    },
+    {
       "code": "bynk.resolve.duplicate_service",
       "summary": "Two services share a name."
     },

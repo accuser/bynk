@@ -7,7 +7,7 @@ title: Diagnostic index
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](/book/troubleshooting/).
 
-There are **467** codes in total.
+There are **468** codes in total.
 
 ## Agents
 
@@ -373,6 +373,7 @@ There are **467** codes in total.
 | `bynk.parse.nesting_too_deep` | An expression or type nests deeper than the parser's fixed limit. |  | — |
 | `bynk.parse.non_associative` | A non-associative operator was chained (e.g. `a == b == c`). | [`binary_expr`](/book/reference/grammar/#rule-binary_expr) | — |
 | `bynk.parse.orphan_doc_block` | A documentation block is not attached to a declaration (warning). |  | Warning |
+| `bynk.parse.policy_order` | A service's `cors`/`security`/`limits` policy is out of order or follows a handler; they open the body in the order `cors`, `security`, `limits`. | [`service_decl`](/book/reference/grammar/#rule-service_decl) | — |
 | `bynk.parse.refined_pattern_inner` | A refined pattern's inner form is something other than `_`. | [`refined_pattern`](/book/reference/grammar/#rule-refined_pattern) | — |
 | `bynk.parse.reserved_keyword` | A reserved keyword was used as an identifier. | [`identifier`](/book/reference/grammar/#rule-identifier) | — |
 | `bynk.parse.self_outside_method` | `self` used outside a method or handler. | [`self_expr`](/book/reference/grammar/#rule-self_expr) | — |
