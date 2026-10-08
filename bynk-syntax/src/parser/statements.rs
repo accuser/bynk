@@ -130,7 +130,7 @@ impl<'a> Parser<'a> {
         // Loop: parse statements until we hit something that's not a statement.
         // v0.1: `let`. v0.5: `let ... <-` is also a statement.
         // v0.7: `assert` is a statement form inside test bodies.
-        let tail_leading: Vec<String>;
+        let tail_leading: Vec<Comment>;
         loop {
             let leading = self.take_leading_trivia();
             // v0.81: `name := expr` is a statement led by an identifier, so it is
