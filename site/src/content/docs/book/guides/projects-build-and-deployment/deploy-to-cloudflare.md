@@ -45,7 +45,7 @@ nothing speculative. If it isn't in the generated `wrangler.toml`, it isn't
 | In your context | What `bynk deploy` does |
 |---|---|
 | `consumes bynk.cloudflare { Kv }` | Creates a KV namespace and records its id |
-| An `agent` | Applies the Durable Object migration that registers its class |
+| An `agent` | Nothing to create — the config declares its Durable Object class, and Cloudflare registers it |
 | `service … from queue("n")` | Creates the queue `n` before pushing |
 | An `on cron` handler | Nothing to create — the schedule rides the config |
 | `consumes` another context | Nothing to create — it sets the deploy order |
@@ -56,7 +56,7 @@ A context using all three of the first kinds plans like this:
 ```
 kv create ops-hub
 queue create job-intake
-migration v1 (advisory — wrangler deploy applies it)
+durable object JobLedger (sqlite; advisory — Cloudflare reconciles it)
 deploy ops-hub
 ```
 
@@ -72,35 +72,55 @@ work: `wrangler deploy` does **not** create a queue for you — it checks, and
 fails with `Queue "n" does not exist. To create it, run: wrangler queues create n`.
 Creating them is what makes a queue-consuming context deployable in one command.
 
-### Durable Object migrations
+### Durable Objects
 
-The migration line is **advisory**, and worth understanding:
+Each agent compiles to a Durable Object class, and so does the events fan-out
+of a context whose handlers `emit`. The generated `wrangler.toml` declares every
+one of them in Cloudflare's `exports` map:
 
-> **Understand — Cloudflare owns your migration state, not Bynk.** The migration
-> is applied by `wrangler deploy` itself, from the same config it is already
-> reading, and Cloudflare records which tags have been applied. `bynk.deploy.lock`
-> deliberately keeps **no** record of it.
->
-> The reason is that a second record could disagree with the account — the lock
-> file says `v2`, but a reset left Cloudflare at `v1` — and you'd be debugging
-> Bynk's memory instead of your deployment. So the plan tells you which tag the
-> push will *ask for*, and never claims to know what is already applied.
->
-> The trade-off is real and deliberate: `bynk deploy` cannot warn you that your
-> migrations have drifted. A tool that can't tell you about drift beats one that
-> invents it.
+```toml
+[exports.JobLedger]
+type = "durable-object"
+storage = "sqlite"
+```
 
-Each agent is a **SQLite-backed** Durable Object: the generated migration
-declares its classes with `new_sqlite_classes`. That's the only backend the
+There's no `[[migrations]]` block and no migration tag. On every deploy,
+Cloudflare compares the classes your config declares with the Durable Object
+namespaces the Worker already has, and creates whichever are missing. So adding
+an agent to a context you've already deployed just works: the next
+`bynk deploy` registers it. The same goes for the first `emit` in a context that
+already has agents.
+
+The plan's Durable Object lines are **advisory**, and worth understanding:
+
+> **Understand — Cloudflare owns your Durable Object namespaces, not Bynk.** The
+> plan lists the classes the push will *declare*, and never claims to know which
+> namespaces already exist. `bynk.deploy.lock` deliberately keeps **no** record of
+> them. A second record could disagree with the account (a class deleted outside
+> Bynk, an account reset), and you'd be debugging Bynk's memory instead of your
+> deployment.
+
+Removing an agent is **loud on purpose**. Cloudflare refuses a deploy that leaves
+a namespace behind with no class in the code and no entry in `exports`. Bynk
+never declares a class deleted or renamed for you, because either one destroys
+or moves that agent's data. That decision stays yours.
+
+Each agent is a **SQLite-backed** Durable Object. That's the only backend the
 Workers Free plan allows, and the one Cloudflare recommends on every plan. Your
 agent code doesn't change, because a SQLite-backed Durable Object keeps the same
 key-value storage API.
 
-A Worker you deployed with an earlier Bynk declared its agents key-value-backed
-(`new_classes`). Redeploying it is safe: Cloudflare has already applied its `v1`
-migration, so `wrangler deploy` sends no migration, and its agents keep their
-key-value storage and their data. Cloudflare can't convert a deployed class
-between backends, so only a fresh deployment gets SQLite.
+> **Breaking — Workers deployed by Bynk 0.309.10 or earlier.** Those versions
+> created agents as **key-value-backed** Durable Objects. Cloudflare can't change
+> a class's backend in place, so redeploying such a Worker now fails. Delete the
+> Worker (`wrangler delete`) and run `bynk deploy` again. **Deleting the Worker deletes its agents' stored state**,
+> so if you need that state, read it out through your own handlers first and
+> write it back after the redeploy. A Worker first deployed by 0.309.11 or later
+> already has SQLite-backed agents and redeploys as it is.
+>
+> This can't be undone either: once a Worker has deployed with `exports`,
+> Cloudflare won't accept a `[[migrations]]` config for it again, so an older
+> Bynk can't redeploy it.
 
 ## Secrets
 

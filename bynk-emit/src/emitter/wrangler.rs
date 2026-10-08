@@ -2,7 +2,7 @@
 //!
 //! Each context becomes a Cloudflare Worker with its own wrangler config.
 //! Service Bindings are declared for every consumed context. Durable
-//! Object bindings + migrations are declared for every agent.
+//! Object bindings + `exports` entries are declared for every agent.
 
 use crate::emitter::toml_doc::{TomlBlock, TomlDocument, TomlEntry, TomlValue};
 use crate::project::{UnitTable, worker_dir_name};
@@ -126,9 +126,9 @@ pub(crate) fn emit_wrangler_toml(
         ));
     }
 
-    // Agents → Durable Object bindings + migrations. Events track, slice 0
+    // Agents → Durable Object bindings + exports. Events track, slice 0
     // (spine #936, ADR 0284): a context whose handlers emit gets its own
-    // fan-out DO folded into the same bindings/migration blocks — Cloudflare
+    // fan-out DO folded into the same bindings/exports blocks — Cloudflare
     // only cares that `index.ts` (this Worker's `main`) exports a class with
     // this name, not which generated file it came from.
     let mut class_names: Vec<String> = table.agents.keys().cloned().collect();
@@ -146,24 +146,36 @@ pub(crate) fn emit_wrangler_toml(
             ],
         ));
     }
-    // #1779: the classes are declared SQLite-backed (`new_sqlite_classes`),
-    // not key-value-backed (`new_classes`). The Workers Free plan only allows
-    // SQLite-backed Durable Objects — a `new_classes` migration fails there
-    // with code 10097 — and Cloudflare recommends SQLite for every new class
-    // on any plan. No runtime change rides with it: a SQLite-backed class
-    // keeps the key-value storage API, and the emitted agent uses only
-    // `storage.get`/`storage.put` on its single `"state"` key (the fan-out
-    // class uses no storage at all). A Worker already deployed with a
-    // key-value `v1` is unaffected: Wrangler uploads only the migrations
-    // *after* the deployed tag, so a config whose last tag is that same `v1`
-    // sends none, and the class keeps its key-value backend.
-    if !class_names.is_empty() {
-        let sqlite_classes = class_names.iter().map(TomlValue::str).collect();
-        doc.push_block(TomlBlock::array_table(
-            "migrations",
+    // #1796: each class is declared in Cloudflare's declarative `exports`
+    // map, not a `[[migrations]]` list. Migrations are picked by tag: Wrangler
+    // uploads only the ones after the Worker's applied tag, so the single
+    // fixed `v1` this used to emit registered the classes of the *first*
+    // deploy and no class added after it (a new agent, or the fan-out class
+    // arriving with a context's first `emit`). `exports` has no tag. On every
+    // deploy Cloudflare compares the declared set with the Worker's
+    // namespaces and creates what's missing, so the config stays a pure
+    // function of the source and the ledger still records nothing (ADR 0194
+    // D1's principle). Wrangler reads `exports` from 4.107.0, which is
+    // [`WRANGLER_MIN`], and `wrangler dev` takes each class's backend from
+    // it too.
+    //
+    // Every class is SQLite-backed (#1779, ADR 0438): the emitted agent uses
+    // only `storage.get`/`storage.put` on its single `"state"` key, which a
+    // SQLite-backed class supports unchanged, and the fan-out class uses no
+    // storage at all. A Worker whose classes an older Bynk created
+    // key-value-backed (`new_classes`, ≤ 0.309.10) is refused
+    // (`storage_type_mismatch`, per Cloudflare's `exports` docs), because
+    // Cloudflare can't change a backend in place. That is a documented pre-1.0 break: such a Worker is torn down
+    // and redeployed. No `deleted`/`renamed` tombstone is ever emitted —
+    // destroying or moving a class's data is #539's decision, so removing an
+    // agent stays a loud deploy failure.
+    for class_name in &class_names {
+        doc.push_block(TomlBlock::keyed_table(
+            "exports",
+            class_name.clone(),
             vec![
-                TomlEntry::kv("tag", TomlValue::str("v1")),
-                TomlEntry::kv("new_sqlite_classes", TomlValue::Array(sqlite_classes)),
+                TomlEntry::kv("type", TomlValue::str("durable-object")),
+                TomlEntry::kv("storage", TomlValue::str("sqlite")),
             ],
         ));
     }
@@ -337,9 +349,9 @@ id = \"<KV_NAMESPACE_ID>\" # set at deploy time
 name = \"JOB_LEDGER\"
 class_name = \"JobLedger\"
 
-[[migrations]]
-tag = \"v1\"
-new_sqlite_classes = [\"JobLedger\"]
+[exports.JobLedger]
+type = \"durable-object\"
+storage = \"sqlite\"
 
 [[queues.consumers]]
 queue = \"job-intake\"

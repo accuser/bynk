@@ -68,8 +68,10 @@ struct ContextPlan<'a> {
     kv: Option<PlanKv<'a>>,
     /// One line per queue this context consumes, in name order.
     queues: Vec<PlanQueue<'a>>,
-    /// The migration the push will apply, if the context has an agent.
-    migration: Option<PlanMigration<'a>>,
+    /// #1796: one line per Durable Object class the push declares in
+    /// `exports`, in class-name order. Empty for a context with no agent and
+    /// no events fan-out.
+    durable_objects: Vec<PlanDurableObject<'a>>,
     /// One line per secret this run will set on this context, in name order.
     secrets: Vec<PlanSecret>,
     /// False when this context names at least one secret with a computed
@@ -125,14 +127,21 @@ struct PlanSecret {
     action: &'static str,
 }
 
+/// One Durable Object class the push declares (#1796). It replaces the
+/// migration-tag line ADR 0194 D1 described: with `exports` there is no tag,
+/// only a declared set that Cloudflare reconciles on every deploy.
 #[derive(Debug, Serialize)]
-struct PlanMigration<'a> {
-    tag: &'a str,
-    /// Always `wrangler deploy`, and that is the point: the field names an
-    /// owner other than `bynk`, which is the whole content of the advisory
-    /// (ADR 0194 D1). A consumer reading the plan learns that this line is not
-    /// a claim about the account's state, without having to know the ADR.
-    applied_by: &'static str,
+struct PlanDurableObject<'a> {
+    class: &'a str,
+    /// The backend the config declares (`sqlite`), read from the file rather
+    /// than assumed, so the plan and the upload can't disagree.
+    storage: &'a str,
+    /// Always `Cloudflare`, and that is the point: the field names an owner
+    /// other than `bynk`, which is the whole content of the advisory (ADR 0194
+    /// D1's principle). A consumer reading the plan learns that this line is
+    /// not a claim that the namespace exists or doesn't, without having to
+    /// know the ADR.
+    reconciled_by: &'static str,
 }
 
 /// The `--` passthrough argument that conflicts with the driver's own
@@ -534,14 +543,15 @@ pub(crate) fn plan_report(plan: &Plan<'_>, format: DeployFormat) -> String {
                     out.push_str(&format!("queue {} {}\n", queue.action, queue.queue));
                 }
                 // Between the provisioning lines and the push, because that is
-                // where it happens: the migration rides the config `wrangler
-                // deploy` reads rather than being a step of its own. Flagged
-                // advisory in place — a reader must not take it for a claim
-                // that the tag is not yet applied (ADR 0194 D1).
-                if let Some(migration) = &context.migration {
+                // where it happens: the `exports` declaration rides the config
+                // `wrangler deploy` reads rather than being a step of its own.
+                // Flagged advisory in place — a reader must not take it for a
+                // claim that the namespace does or doesn't exist yet (#1796,
+                // ADR 0194 D1's principle).
+                for object in &context.durable_objects {
                     out.push_str(&format!(
-                        "migration {} (advisory — {} applies it)\n",
-                        migration.tag, migration.applied_by
+                        "durable object {} ({}; advisory — {} reconciles it)\n",
+                        object.class, object.storage, object.reconciled_by
                     ));
                 }
                 // Before the lines it qualifies, not after: a reader who takes
@@ -634,10 +644,15 @@ pub(crate) fn derive_plan<'a>(
                             queue,
                         })
                         .collect(),
-                    migration: declared.migration.as_deref().map(|tag| PlanMigration {
-                        tag,
-                        applied_by: "wrangler deploy",
-                    }),
+                    durable_objects: declared
+                        .durable_objects
+                        .iter()
+                        .map(|object| PlanDurableObject {
+                            class: &object.class,
+                            storage: &object.storage,
+                            reconciled_by: "Cloudflare",
+                        })
+                        .collect(),
                     secrets: wanted_secrets(
                         &declared.declared_secrets,
                         &declared.read_secrets,
@@ -802,7 +817,7 @@ pub(crate) mod tests {
         );
     }
 
-    // ---- #600 slice 1: queues and DO migrations ------------------------
+    // ---- #600 slice 1: queues and Durable Objects ----------------------
 
     #[test]
     fn plan_creates_or_reuses_a_queue_by_its_name() {
@@ -835,26 +850,34 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn the_migration_line_is_advisory_in_every_ledger_state() {
-        // D1: Cloudflare owns the applied-migration record, so the plan says
-        // what the push will *ask for* and never what is already true. A ledger
-        // that has deployed this context before must not change the line —
-        // there is no state here for the ledger to have an opinion about.
+    fn the_durable_object_lines_are_advisory_in_every_ledger_state() {
+        // #1796, ADR 0194 D1's principle: Cloudflare reconciles the declared
+        // `exports` against the Worker's namespaces, so the plan says what the
+        // push will *declare* and never what already exists. A ledger that has
+        // deployed this context before must not change the lines — there is no
+        // state here for the ledger to have an opinion about.
         let order = names(&["jobs"]);
-        let declared = project(vec![("jobs", Resources::default().migrates("v1"))]);
+        let declared = project(vec![(
+            "jobs",
+            Resources::default().exports(&["JobLedger", "__EventsFanout"]),
+        )]);
         for lock in [DeployLock::default(), lock_with_deployed(&["jobs"])] {
             let plan = plan_of(&order, &declared, &lock);
-            let migration = plan.contexts[0]
-                .migration
-                .as_ref()
-                .expect("a context with an agent has a migration line");
-            assert_eq!(migration.tag, "v1");
+            let objects = &plan.contexts[0].durable_objects;
             assert_eq!(
-                migration.applied_by, "wrangler deploy",
-                "the plan names an owner other than bynk — that is the advisory"
+                objects.iter().map(|o| o.class).collect::<Vec<_>>(),
+                ["JobLedger", "__EventsFanout"],
+                "every declared class gets a line, the fan-out class included"
             );
+            for object in objects {
+                assert_eq!(object.storage, "sqlite");
+                assert_eq!(
+                    object.reconciled_by, "Cloudflare",
+                    "the plan names an owner other than bynk — that is the advisory"
+                );
+            }
         }
-        // No agent, no migration line.
+        // No agent, no Durable Object line.
         assert!(
             plan_of(
                 &names(&["api"]),
@@ -862,8 +885,8 @@ pub(crate) mod tests {
                 &DeployLock::default(),
             )
             .contexts[0]
-                .migration
-                .is_none()
+                .durable_objects
+                .is_empty()
         );
     }
 

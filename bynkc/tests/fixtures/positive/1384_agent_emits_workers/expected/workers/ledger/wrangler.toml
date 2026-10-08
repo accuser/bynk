@@ -11,7 +11,11 @@ class_name = "Ledger"
 name = "___EVENTS_FANOUT"
 class_name = "__EventsFanout"
 
-[[migrations]]
-tag = "v1"
-new_sqlite_classes = ["Ledger", "__EventsFanout"]
+[exports.Ledger]
+type = "durable-object"
+storage = "sqlite"
+
+[exports.__EventsFanout]
+type = "durable-object"
+storage = "sqlite"
 
