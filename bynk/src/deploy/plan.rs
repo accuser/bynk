@@ -366,6 +366,11 @@ pub fn run(
             allow_npx: true,
         },
     );
+    // #1796: before authenticating, so the refusal costs no network call.
+    if let Some(refusal) = wrangler_floor_refusal(&probe, &order, &resources) {
+        eprintln!("{refusal}");
+        return ExitCode::FAILURE;
+    }
     if !whoami(&probe.provenance) {
         eprintln!(
             "bynk: Cloudflare authentication is unavailable; run `wrangler login` or set CLOUDFLARE_API_TOKEN"
@@ -485,6 +490,38 @@ pub fn run(
         }
     }
     ExitCode::SUCCESS
+}
+
+/// #1796: the refusal a deploy gets when a context it pushes declares a
+/// Durable Object class and the wrangler that would push it is older than
+/// [`bynk_emit::WRANGLER_MIN`].
+///
+/// Below that floor wrangler doesn't read the `exports` map the emitter
+/// declares every class in, so the push would carry Durable Object bindings
+/// with no namespace behind them and fail with Cloudflare's own error, which
+/// says nothing about the version. `doctor`'s wrangler row only *warns* about
+/// the floor, because a project with no agent still deploys on an older
+/// wrangler. This is where the project is known, so this is where the floor
+/// becomes a hard requirement. `None` when nothing pushed declares a class, or
+/// when the version can't be judged without running npx
+/// ([`doctor::wrangler_below_min`]'s own rule).
+pub(crate) fn wrangler_floor_refusal(
+    probe: &probe::Probe,
+    order: &[String],
+    resources: &BTreeMap<String, Resources>,
+) -> Option<String> {
+    let version = probe
+        .version
+        .filter(|_| doctor::wrangler_below_min(probe))?;
+    let worker = order
+        .iter()
+        .find(|worker| !resources[*worker].durable_objects.is_empty())?;
+    Some(format!(
+        "bynk: wrangler {version} is older than {}, the first that reads the Durable Object \
+         `exports` `{worker}` declares; the push would fail. Upgrade with `{}`.",
+        bynk_emit::WRANGLER_MIN,
+        doctor::wrangler_upgrade_remedy(probe)
+    ))
 }
 
 pub fn preflight_failure_message(report: &Report) -> String {
@@ -847,6 +884,70 @@ pub(crate) mod tests {
                 .queues
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn a_wrangler_below_the_floor_refuses_only_a_push_that_declares_a_durable_object() {
+        // #1796: `exports` is read from WRANGLER_MIN on, so below it a context
+        // with an agent can't deploy; one without still can.
+        let min = probe::Version::parse(bynk_emit::WRANGLER_MIN).unwrap();
+        let wrangler = |version: probe::Version| probe::Probe {
+            tool: "wrangler".to_string(),
+            version: Some(version),
+            provenance: probe::Provenance::Path("/usr/bin/wrangler".into()),
+        };
+        // The newest version strictly below the floor, whatever the floor is.
+        let old = if min.patch > 0 {
+            probe::Version {
+                patch: min.patch - 1,
+                ..min
+            }
+        } else if min.minor > 0 {
+            probe::Version {
+                minor: min.minor - 1,
+                patch: 999,
+                ..min
+            }
+        } else {
+            probe::Version {
+                major: min.major - 1,
+                minor: 999,
+                patch: 999,
+            }
+        };
+        let resources = project(vec![
+            ("api", Resources::default()),
+            ("jobs", Resources::default().exports(&["JobLedger"])),
+        ]);
+        let both = names(&["api", "jobs"]);
+
+        let refusal = wrangler_floor_refusal(&wrangler(old), &both, &resources)
+            .expect("an agent-bearing push below the floor is refused");
+        for part in [
+            format!("wrangler {old}"),
+            bynk_emit::WRANGLER_MIN.to_string(),
+            "`jobs`".to_string(),
+            "npm install -g wrangler@4".to_string(),
+        ] {
+            assert!(refusal.contains(&part), "missing {part:?} in: {refusal}");
+        }
+
+        // No class in what's pushed (`--context api`), the floor itself, or an
+        // unversioned npx wrangler: nothing to refuse.
+        assert_eq!(
+            wrangler_floor_refusal(&wrangler(old), &names(&["api"]), &resources),
+            None
+        );
+        assert_eq!(
+            wrangler_floor_refusal(&wrangler(min), &both, &resources),
+            None
+        );
+        let npx = probe::Probe {
+            tool: "wrangler".to_string(),
+            version: None,
+            provenance: probe::Provenance::Npx,
+        };
+        assert_eq!(wrangler_floor_refusal(&npx, &both, &resources), None);
     }
 
     #[test]

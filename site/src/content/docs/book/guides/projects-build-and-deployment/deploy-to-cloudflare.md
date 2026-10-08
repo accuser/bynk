@@ -100,9 +100,10 @@ The plan's Durable Object lines are **advisory**, and worth understanding:
 > Bynk, an account reset), and you'd be debugging Bynk's memory instead of your
 > deployment.
 
-Removing an agent is **loud on purpose**. Cloudflare refuses a deploy that leaves
-a namespace behind with no class in the code and no entry in `exports`. Bynk
-never declares a class deleted or renamed for you, because either one destroys
+Removing an agent should be **loud**. Cloudflare's documentation says it refuses a
+deploy that leaves a namespace behind with no class in the code and no entry in
+`exports`. Bynk hasn't yet confirmed this against a live account. Bynk never
+declares a class deleted or renamed for you, because either one destroys
 or moves that agent's data. That decision stays yours.
 
 Each agent is a **SQLite-backed** Durable Object. That's the only backend the

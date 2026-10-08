@@ -217,28 +217,30 @@ fn read_resources(config: &Path) -> Result<Resources, String> {
     // rather than an emitter detail deploy happens to inherit.
     queues.sort();
     queues.dedup();
+    // A `BTreeMap`, so already in class-name order. A live class always has
+    // a backend: Wrangler's schema requires `storage` unless `state` is a
+    // tombstone. One without is refused, not skipped (review of #1803):
+    // skipping it would let the plan say the push declares nothing while the
+    // config still declares the class.
+    let mut durable_objects = Vec::new();
+    for (class, export) in parsed.exports {
+        let live = export.kind == "durable-object"
+            && export
+                .state
+                .as_deref()
+                .is_none_or(|state| state == "created");
+        if !live {
+            continue;
+        }
+        let storage = export.storage.ok_or_else(|| {
+            format!("`exports.{class}` declares a Durable Object with no `storage`")
+        })?;
+        durable_objects.push(DurableObject { class, storage });
+    }
     Ok(Resources {
         binds_to: parsed.services.into_iter().map(|s| s.service).collect(),
         queues,
-        // A `BTreeMap`, so already in class-name order. A live class always
-        // has a backend (Wrangler's schema requires `storage` unless `state`
-        // is a tombstone), so one without is a malformed entry, not a class.
-        durable_objects: parsed
-            .exports
-            .into_iter()
-            .filter(|(_, export)| {
-                export.kind == "durable-object"
-                    && export
-                        .state
-                        .as_deref()
-                        .is_none_or(|state| state == "created")
-            })
-            .filter_map(|(class, export)| {
-                export
-                    .storage
-                    .map(|storage| DurableObject { class, storage })
-            })
-            .collect(),
+        durable_objects,
         needs_kv: !parsed.kv_namespaces.is_empty(),
         declared_secrets: secrets.declared,
         read_secrets: secrets.read,
@@ -810,8 +812,8 @@ max_batch_size = 10
     #[test]
     fn only_live_durable_object_exports_are_read() {
         // #1796: `exports` is Cloudflare's map for more than Durable Objects
-        // (a `type = "worker"` entrypoint), and a tombstone names a class the
-        // push *retires*. Neither is a class the plan may claim is declared.
+        // (a `type = "worker"` entrypoint), and a tombstone (`deleted`,
+        // `renamed`) names a class the push *retires*. Neither is a class the plan may claim is declared.
         // The emitter writes only the first kind today; the rule is written
         // for the file, not for the emitter's current habit. The storage is
         // read, not assumed, so a hand-edited `legacy-kv` shows as one.
@@ -835,6 +837,11 @@ storage = "sqlite"
 type = "durable-object"
 state = "deleted"
 
+[exports.Old]
+type = "durable-object"
+state = "renamed"
+renamed_to = "Cart"
+
 [exports.Entry]
 type = "worker"
 "#,
@@ -850,6 +857,25 @@ type = "worker"
                     storage: "sqlite".to_string(),
                 },
             ],
+        );
+    }
+
+    #[test]
+    fn a_live_durable_object_export_without_storage_is_refused() {
+        // Review of #1803: dropping it would understate the plan. The config
+        // is the one the push sends, so a malformed entry stops the deploy
+        // here, naming the class, before wrangler is ever asked.
+        let path = temp_config("exports-no-storage");
+        std::fs::write(
+            &path,
+            "name = \"cart\"\n\n[exports.Cart]\ntype = \"durable-object\"\n",
+        )
+        .unwrap();
+        let err = read_resources(&path).expect_err("a live class with no backend is refused");
+        let _ = std::fs::remove_file(&path);
+        assert!(
+            err.contains("`exports.Cart`") && err.contains("`storage`"),
+            "{err}"
         );
     }
 

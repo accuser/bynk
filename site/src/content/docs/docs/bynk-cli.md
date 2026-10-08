@@ -208,7 +208,7 @@ Per context, the plan carries one line per resource it declares:
 |---|---|
 | `kv create\|reuse <namespace>` | A KV namespace is created, or its recorded id reused. |
 | `queue create\|reuse <name>` | A queue is provisioned before the push, which `wrangler deploy` will not do for you. `reuse` forecasts that it already exists; existence is checked against Cloudflare at provision time regardless, so a queue deleted out-of-band is restored. |
-| `migration <tag> (advisory — wrangler deploy applies it)` | The Durable Object migration the push will apply. **Advisory**: Cloudflare owns the applied-migration record and `bynk` keeps none, so this states what will be asked for, never what is already applied. In `--format json` it is `{"tag": …, "applied_by": "wrangler deploy"}`. |
+| `durable object <Class> (<storage>; advisory — Cloudflare reconciles it)` | One line per Durable Object class (each agent, and a context's events fan-out) the push declares in the config's `exports` map. **Advisory**: Cloudflare compares the declared classes with the Worker's namespaces on every deploy and creates what's missing, and `bynk` keeps no record of them, so this states what the push will declare, never which namespaces already exist. In `--format json` it is `"durable_objects": [{"class": …, "storage": "sqlite", "reconciled_by": "Cloudflare"}]`. |
 | `deploy\|redeploy <worker>` | The Worker is pushed; `redeploy` when the ledger has pushed it before. |
 
 Each context's Cloudflare ids and its deployed state are recorded in the

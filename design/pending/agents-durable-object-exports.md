@@ -58,7 +58,8 @@ hand), and the workerd smokes pass on `wrangler@4` (4.148.0 when checked).
    SQLite-backed classes and redeploy unchanged.
 3. *No tombstones.* The emitter never writes `state = "deleted"` or
    `"renamed"`. Either one destroys or moves an agent's data, and that is the
-   durable-state migration's decision (#539). Removing an agent stays a loud
+   durable-state migration's decision (#539). Per Cloudflare's docs, removing
+   an agent then fails the deploy (an orphaned namespace), which keeps it a loud
    deploy failure.
 4. *The plan names the declared set and its owner.* Each class gets one
    advisory line, `durable object <Class> (<storage>; advisory — Cloudflare
@@ -70,6 +71,17 @@ hand), and the workerd smokes pass on `wrangler@4` (4.148.0 when checked).
    It's copied so the `[env.<name>]` block states every Durable Object fact
    that its non-inheritable bindings rely on.
 
+6. *Below `WRANGLER_MIN`, an agent-bearing deploy is refused.* Before this,
+   the floor only mattered to `bynk dev`, and `doctor` says so with a
+   warning. A wrangler older than 4.107.0 doesn't read `exports`, so its push
+   would carry Durable Object bindings with no namespace and fail with
+   Cloudflare's own error. `bynk deploy` knows the project, so it refuses to
+   push a context that declares a class on such a wrangler, before
+   authenticating, naming the version and the upgrade. `doctor` doesn't know
+   the project and keeps the row a warning, since an agent-free project
+   still deploys. An npx wrangler can't be versioned without running it, so
+   it isn't refused.
+
 This supersedes ADR 0194 D1's migration-tag mechanics (the advisory
 `migration v1` line and its JSON form). D1's principle, that the ledger records
 nothing where another tool owns the state, is unchanged and now has nothing
@@ -79,6 +91,7 @@ left to decline: there is no tag.
 now deploys. The change is one-way: once a Worker has deployed with `exports`,
 Cloudflare won't accept a `[[migrations]]` config for it, so an older Bynk can't
 redeploy it. This can't be reverted in a patch. Live confirmation against a
-Cloudflare account (redeploy after adding a second agent, and the old emitter's
-failure) can't run in CI and is recorded on #1796. When #539 needs to rename or
+Cloudflare account can't run in CI and is recorded on #1796. That covers a
+redeploy after adding a second agent, the old emitter's failure, and the
+removed-agent refusal Decision 3 relies on. When #539 needs to rename or
 delete a class, `exports` tombstones give it a declarative mechanism.

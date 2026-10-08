@@ -165,10 +165,13 @@ pub(crate) fn emit_wrangler_toml(
     // storage at all. A Worker whose classes an older Bynk created
     // key-value-backed (`new_classes`, ≤ 0.309.10) is refused
     // (`storage_type_mismatch`, per Cloudflare's `exports` docs), because
-    // Cloudflare can't change a backend in place. That is a documented pre-1.0 break: such a Worker is torn down
-    // and redeployed. No `deleted`/`renamed` tombstone is ever emitted —
-    // destroying or moving a class's data is #539's decision, so removing an
-    // agent stays a loud deploy failure.
+    // Cloudflare can't change a backend in place. That is a documented
+    // pre-1.0 break: such a Worker is torn down and redeployed. No
+    // `deleted`/`renamed` tombstone is ever emitted — destroying or moving a
+    // class's data is #539's decision. Per Cloudflare's docs, removing an
+    // agent then fails the deploy (`orphaned_provisioned_namespace`), which
+    // is the loud outcome wanted; that is not yet confirmed against a live
+    // account (#1796).
     for class_name in &class_names {
         doc.push_block(TomlBlock::keyed_table(
             "exports",
