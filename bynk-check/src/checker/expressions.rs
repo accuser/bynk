@@ -545,6 +545,74 @@ pub(crate) fn check_observation(o: &ObservationExpr, _span: Span, ctx: &mut Ctx)
     Some(tys.intern(Ty::Base(BaseType::Bool)))
 }
 
+/// Type-check a fault claim, `expect <call> faults` (#1706). The subject must
+/// be an `Effect[_]` — the call the claim awaits — and the claim itself is a
+/// `Bool`: whether awaiting it threw. Like the observation surface it parses
+/// only as an `expect`'s subject, so outside a test body
+/// `bynk.expect.outside_case` has already been reported and the subject is not
+/// re-diagnosed here.
+///
+/// Awaiting is an effect, so the claim needs an effectful body, as `<-` does
+/// (`bynk.effect.bind_in_pure_context`). A call-site principal has no slot in
+/// the claim, so an identity-carrying handler is validated as an absent `by`
+/// (`check_effect_let_principal`), rather than silently driven with no
+/// identity.
+pub(crate) fn check_faults(call: &Expr, span: Span, ctx: &mut Ctx) -> Option<TyId> {
+    let tys = ctx.tys;
+    let bool_ty = tys.intern(Ty::Base(BaseType::Bool));
+    if !ctx.in_test_body {
+        return Some(bool_ty);
+    }
+    if !ctx.effectful {
+        ctx.errors.push(
+            CompileError::new(
+                "bynk.effect.bind_in_pure_context",
+                span,
+                "`faults` awaits its call, so it can only be used inside an effectful body",
+            )
+            .with_note("a fault claim belongs in a `case` body, not inside a pure lambda"),
+        );
+    }
+    let call_ty = type_of(call, None, ctx);
+    super::calls::check_effect_let_principal(call, None, ctx);
+    let note = "only an effectful call can fault; give `faults` the call itself (`expect svc.call(x) faults`), not a value already bound from it";
+    // The subject must be a call *syntactically* as well as an `Effect` by
+    // type: a case-body binding from an address call is deliberately untyped
+    // (`let r <- svc.call()`), so the type test alone would let
+    // `expect r faults` through to await a settled value that never throws.
+    if !matches!(
+        call.kind,
+        ExprKind::Call { .. } | ExprKind::MethodCall { .. } | ExprKind::ConstructorCall { .. }
+    ) {
+        ctx.errors.push(
+            CompileError::new(
+                "bynk.expect.faults_not_effect",
+                call.span,
+                "`faults` claims that an effectful call throws, but this is not a call",
+            )
+            .with_note(note),
+        );
+        return Some(bool_ty);
+    }
+    match call_ty.map(|t| tys.get(t)).as_deref() {
+        Some(Ty::Effect(_)) | None => {}
+        Some(other) => {
+            ctx.errors.push(
+                CompileError::new(
+                    "bynk.expect.faults_not_effect",
+                    call.span,
+                    format!(
+                        "`faults` claims that an effectful call throws, but this call has type `{}`, not `Effect[_]`",
+                        other.display(tys)
+                    ),
+                )
+                .with_note(note),
+            );
+        }
+    }
+    Some(bool_ty)
+}
+
 /// Type-check `trace(Cap.op)` (v0.117). Resolves the seam and yields
 /// `List[<CallRecord>]`, where `<CallRecord>` is the synthetic per-operation
 /// record (registered in the test-body type table) whose fields are the
@@ -1350,6 +1418,8 @@ fn body_performs_effects(e: &Expr, ctx: &Ctx) -> bool {
         | ExprKind::Some(i)
         | ExprKind::Question(i)
         | ExprKind::Expect(i) => body_performs_effects(i, ctx),
+        // #1706: a fault claim awaits its call — always an effect.
+        ExprKind::Faults(_) => true,
         ExprKind::RecordConstruction { fields, .. } => fields.iter().any(|f| {
             f.value
                 .as_ref()

@@ -98,6 +98,10 @@
   "fails"
 ] @keyword.operator
 
+; #1706: the fault-claim word — contextual, like the observation words: the
+; token exists only inside a `faults_expr`.
+"faults" @keyword.operator
+
 ; v0.117: the `trace(Cap.op)` escape hatch — a test-only builtin.
 "trace" @keyword
 

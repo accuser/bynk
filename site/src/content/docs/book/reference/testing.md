@@ -149,6 +149,49 @@ Ok(_)`. When the predicate is a top-level comparison (`==`, `!=`, `<`, `<=`, `>`
 `>=`), a failure reports the predicate and its **expected-vs-actual** operands, not
 just a location.
 
+### Claiming a fault — `expect <call> faults` {#faults}
+
+A **fault** is not a value. A capability that fails (a [`stub … fails`](#stub), or a
+real provider's failure) and an invariant violation both *throw*: the fault
+propagates out of the handler, and out of the case, failing it before its next
+`expect` runs. A fault is untyped, and no caller can handle it, so it never
+surfaces as an `Err`. To test that a call faults, claim it:
+
+```bynk,fragment
+case "a store fault faults the quote" {
+  stub Kv.get(_) fails
+  expect Prices(Val[AcctId]).quote("GBP") faults
+}
+```
+
+`expect <call> faults` awaits the call and holds when it **throws**. When the call
+returns instead, the case fails with `the call returned without faulting`. Any
+fault satisfies the claim, whatever raised it; a failed `expect` inside the call is
+the case failing, not the call faulting, and propagates as usual.
+
+- **The subject is the call itself**, an `Effect[_]`, not a value bound from it.
+  `let r <- svc.call()` has already run the call, so `expect r faults` is
+  `bynk.expect.faults_not_effect`.
+- **The claim is a test's observation, not a handler.** It exists only in a `case`
+  (`bynk.expect.outside_case`); production code still cannot catch a fault.
+- **It needs an in-process call.** At `system` a fault reaches the case as an error
+  response from the deployed Worker, never a throw, so a `system`-tier case cannot
+  claim one (`bynk.test.faults_needs_in_process`); assert the response instead.
+- **It takes no `by` clause**, so it claims faults only on a handler that needs no
+  caller identity; addressing one that does is `bynk.test.principal_required`.
+
+A [sequenced stub](#sequenced-stub--returns-each) makes a fault and a later success
+observable in one case:
+
+```bynk,fragment
+case "the store recovers" {
+  stub Kv.get(_) returns each [fails, Some(row)]
+  expect Prices(Val[AcctId]).quote("GBP") faults    -- the first call faults
+  let r <- Prices(Val[AcctId]).quote("GBP")          -- the second returns
+  expect r is Ok(_)
+}
+```
+
 ## Tiers — the `as <tier>` clause {#tiers-the-as-tier-clause}
 
 A `case` runs at one of three **tiers**, declared with an `as <tier>` clause in its
@@ -223,10 +266,9 @@ suite pricing {
   stub Rates.lookup("GBP") returns 1.25        -- suite-scoped: applies to every case
   stub Rates.lookup(_)     returns 1.0         -- fallback; first matching clause wins
 
-  case "a fault surfaces as an error" {
+  case "a store fault faults the quote" {
     stub Kv.get(_) fails                        -- case-scoped: overrides for this case
-    let r <- Prices(Val[AcctId]).quote("GBP")
-    expect r is Err(_)
+    expect Prices(Val[AcctId]).quote("GBP") faults
   }
 }
 ```
@@ -241,10 +283,12 @@ production `provides`).
   surface](/book/reference/testing/#expect): a literal (`"GBP"`, `1000`), `_`
   (any), or an `is` narrowing. Clauses for the same method are tried **top to
   bottom, first match wins**, so put specific before fallback.
-- **The right is `returns <value>` or `fails`** — a *value* or a *fault* (an `Err`
-  is an in-band outcome asserted in the case; `fails` injects a capability
-  *fault*). It is never a block: a double that needs logic is the signal to promote
-  the tier.
+- **The right is `returns <value>` or `fails`** — a *value* or a *fault*. An `Err`
+  is an in-band outcome: stub it with `returns Err(…)` and assert it with `expect r
+  is Err(_)`. `fails` injects a capability *fault*: the operation throws, as a real
+  provider's failure would, and the fault propagates out of the handler and out of
+  the case unless the case [claims it with `faults`](#faults). It is never a
+  block: a double that needs logic is the signal to promote the tier.
 - **`stub` is capability-only.** An agent's realness is the tier's job, not a
   provider's, so `stub` targets a *capability* seam only. Overriding a
   capability the unit does not `consumes` is `bynk.stub.not_a_seam`; naming an

@@ -1,0 +1,32 @@
+suite demo.vault {
+  -- #1706: a `stub … fails` fault is a fault, not an in-band `Err`. It throws
+  -- out of the handler, and `expect <call> faults` is how a case observes it.
+
+  case "a fails stub faults the call" {
+    stub Vault.open() fails
+    expect box.call() faults
+  }
+
+  case "a sequence serves a fault, then a value" {
+    stub Vault.open() returns each [fails, 41]
+    expect box.call() faults
+    let r <- box.call()
+    expect r == 42
+  }
+
+  case "a call that returns does not fault" {
+    stub Vault.open() returns 1
+    expect box.call() faults
+  }
+
+  case "an unclaimed fault fails the case" {
+    stub Vault.open() fails
+    let r <- box.call()
+    expect true
+  }
+
+  case "faults is an ordinary name elsewhere" {
+    let faults = 2
+    expect faults == 2
+  }
+}

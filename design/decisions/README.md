@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0444](0444-a-fault-is-claimed-not-caught.md) | **A stub's injected fault is a fault, and a case observes it with `expect <call> faults`** (v0.313) — `fails` throws and never surfaces as an `Err`; `expect <call> faults` is the test-only claim that a call throws | Accepted (v0.313) |
 | [0443](0443-agents-declared-as-durable-object-exports.md) | **Durable Object classes are declared in `exports`, not migrations** (v0.312.1) — The generated config declares every agent and fan-out class in Cloudflare's tagless `exports` map; key-value-backed Workers from ≤ 0.309.10 are a documented pre-1.0 break | Accepted (v0.312.1) |
 | [0442](0442-match-guards-borrow-held-values.md) | **A match-arm guard borrows the held values it can see** (v0.312) — a consuming use of a held value inside a match-arm guard is bynk.held.consume_on_borrow; the guard changes no ownership state | Accepted (v0.312) |
 | [0441](0441-events-subscriber-has-one-unit-handler.md) | **A `from Events` service has exactly one `on event` handler, returning `Effect[()]`** (v0.311) — bynk.event.duplicate_handler and bynk.event.return_not_effect_unit pin a subscriber's shape | Accepted (v0.311) |

@@ -1,0 +1,7 @@
+suite demo.vault {
+  case "a bound value cannot fault" {
+    stub Vault.open() fails
+    let r = "sealed"
+    expect r.length() faults
+  }
+}

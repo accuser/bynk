@@ -377,9 +377,12 @@ and the **first match wins** (a `_` pattern matches anything; a literal / value
 pattern compares by equality). The matched clause yields the operation's result:
 
 - a **`returns <value>`** clause yields the constant value;
-- a **`fails`** clause raises the capability-fault the seam propagates as an `Err`
-  (the same fault path a real provider's failure takes), distinct from an in-band
-  `Result` a case asserts directly;
+- a **`fails`** clause raises a capability **fault**: the operation throws, taking
+  the same path a real provider's failure takes. The fault is untyped, never an
+  `Err`: it propagates out of the handler and out of the case, failing it, unless
+  the case claims it with `expect <call> faults` (§7.4.12a). It is distinct from an
+  in-band `Result`, which a `returns Err(…)` clause stubs and a case asserts
+  directly;
 - a **`returns each [<outcome>, …]`** clause is backed by a **per-call cursor**: the
   stub holds an index that advances on each call, serving `outcomes[min(i, n-1)]` —
   so the **last outcome repeats** once the sequence is exhausted (steady state) and
@@ -392,3 +395,22 @@ the sequence cursor's advance; a stub is scoped to its case (a suite-scoped
 cases, and precedence (case > suite > tier default) is resolved at emission, not at
 run time. The stub is emitted only under `bynkc test`; the deploy build carries none
 of it.
+
+## §7.4.12a The fault claim
+
+A fault claim, `expect <call> faults`
+([§5.9e](/book/spec/static-semantics/#59e-fault-claim)), awaits the call and
+**holds when it throws**. The contract:
+
+- any thrown value is a fault: an injected `fails`, a real provider's failure, an
+  invariant violation. A fault is untyped, so the claim does not discriminate
+  between them;
+- the case's own expectation failure is **not** a fault. A failed `expect` raised
+  while the call is evaluated propagates and fails the case, as it would anywhere
+  else;
+- a call that **returns** fails the claim, reported as `expect <call> faults` with
+  the note `the call returned without faulting`; the returned value is discarded.
+
+The claim runs only in-process, at `unit` and `integration`. At `system` a fault
+reaches the harness as the deployed Worker's error response, which the claim
+cannot observe (`bynk.test.faults_needs_in_process`).

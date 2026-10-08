@@ -2693,6 +2693,16 @@ pub enum ExprKind {
     /// the size of every `ExprKind` for the one variant that records a
     /// capability-call observation.
     Observation(Box<ObservationExpr>),
+    /// `<call> faults` — the claim that an effectful call **faults** (#1706).
+    /// The direct subject of an `expect` in a `case` body —
+    /// `expect quote.call("GBP") faults`. The boxed expression is the call
+    /// itself, an `Effect[_]` the claim awaits; the claim types as `Bool` and
+    /// holds when awaiting the call throws (a capability fault, an injected
+    /// `stub … fails`, an invariant violation) rather than returning a value.
+    /// A fault is untyped and uncatchable by the caller, so this is a test's
+    /// observation of the fault, not a handler for it: no production code can
+    /// write it.
+    Faults(Box<Expr>),
     /// `trace(Cap.op)` — the bound-trace escape hatch (v0.117, testing track
     /// slice 5). Yields the recorded calls of `Cap.op` as a `List[<CallRecord>]`
     /// (a synthetic record of the operation's parameters), asserted over with the
@@ -2759,7 +2769,8 @@ pub fn expr_children(e: &Expr) -> Vec<&Expr> {
         | ExprKind::Question(inner)
         | ExprKind::Some(inner)
         | ExprKind::EffectPure(inner)
-        | ExprKind::Expect(inner) => out.push(inner.as_ref()),
+        | ExprKind::Expect(inner)
+        | ExprKind::Faults(inner) => out.push(inner.as_ref()),
         ExprKind::Block(b) => block_children(b, &mut out),
         ExprKind::If {
             cond,

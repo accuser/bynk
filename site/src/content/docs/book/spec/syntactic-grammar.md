@@ -1147,8 +1147,8 @@ read it: §5 (ADR 0108).
 
 {{#grammar expect_expr}}
 
-`expect` and a `Bool` predicate, or — inside a `case` — an `observation_expr`.
-Well-formedness: §5.
+`expect` and a `Bool` predicate, or — inside a `case` — an `observation_expr`
+or a `faults_expr`. Well-formedness: §5.
 
 ### §4.8.9 observation_expr (v0.117)
 
@@ -1161,6 +1161,15 @@ or `before Cap.op`. The matcher words `called`, `never`, `once`, `times`, `with`
 `before` are contextual: outside an observation clause they are ordinary
 identifiers. A `with` predicate reads the operation's parameters by their declared
 names. Well-formedness — seam resolution, `with` scope and purity: §5.
+
+### §4.8.9a faults_expr
+
+{{#grammar faults_expr}}
+
+A fault claim (#1706): an effectful call followed by `faults`, claiming that
+awaiting the call throws rather than returns. `faults` is contextual: outside an
+`expect` subject it is an ordinary identifier. Well-formedness — the subject is a
+call of type `Effect[_]`, and the claim is not made at the `system` tier: §5.
 
 ### §4.8.9 trace_expr (v0.117)
 
