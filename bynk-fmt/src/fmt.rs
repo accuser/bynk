@@ -672,6 +672,18 @@ impl<'a> Formatter<'a> {
         }
     }
 
+    /// End the current line: with the trailing comment when there is one
+    /// (which [`Self::emit_trailing_comment`] closes with its own newline),
+    /// otherwise with a bare newline. A site that splices the comment onto a
+    /// line something else already ended calls `emit_trailing_comment` alone.
+    fn emit_trailing_comment_or_newline(&mut self, trailing: Option<&str>) {
+        if trailing.is_some() {
+            self.emit_trailing_comment(trailing);
+        } else {
+            self.newline();
+        }
+    }
+
     // -- Top level --
 
     fn format_unit(&mut self, unit: &SourceUnit) {
@@ -722,19 +734,13 @@ impl<'a> Formatter<'a> {
                     .collect();
                 self.push(&format!(" requires {{ {} }}", entries.join(", ")));
             }
-            self.emit_trailing_comment(b.trivia.trailing.as_deref());
-            if b.trivia.trailing.is_none() {
-                self.newline();
-            }
+            self.emit_trailing_comment_or_newline(b.trivia.trailing.as_deref());
             any_header = true;
         }
         for u in &a.uses {
             self.emit_leading_comments(&u.trivia.leading);
             self.push(&format!("uses {}", u.target.joined()));
-            self.emit_trailing_comment(u.trivia.trailing.as_deref());
-            if u.trivia.trailing.is_none() {
-                self.newline();
-            }
+            self.emit_trailing_comment_or_newline(u.trivia.trailing.as_deref());
             any_header = true;
         }
         for c in &a.consumes {
@@ -879,10 +885,7 @@ impl<'a> Formatter<'a> {
             self.emit_doc(doc);
         }
         self.push(&stub_clause_to_string(pv));
-        self.emit_trailing_comment(pv.trivia.trailing.as_deref());
-        if pv.trivia.trailing.is_none() {
-            self.newline();
-        }
+        self.emit_trailing_comment_or_newline(pv.trivia.trailing.as_deref());
     }
 
     /// v0.118: format a `case` body, emitting its case-scoped `stub` clauses
@@ -903,10 +906,7 @@ impl<'a> Formatter<'a> {
                 let trivia = statement_trivia(stmt);
                 f.emit_leading_comments(&trivia.leading);
                 f.format_statement(stmt);
-                f.emit_trailing_comment(trivia.trailing.as_deref());
-                if trivia.trailing.is_none() {
-                    f.newline();
-                }
+                f.emit_trailing_comment_or_newline(trivia.trailing.as_deref());
             }
             f.emit_leading_comments(&b.tail_leading_comments);
             // See `format_block` / #981: any `()` tail is omitted, not just an
@@ -973,10 +973,7 @@ impl<'a> Formatter<'a> {
         for u in uses {
             self.emit_leading_comments(&u.trivia.leading);
             self.push(&format!("uses {}", u.target.joined()));
-            self.emit_trailing_comment(u.trivia.trailing.as_deref());
-            if u.trivia.trailing.is_none() {
-                self.newline();
-            }
+            self.emit_trailing_comment_or_newline(u.trivia.trailing.as_deref());
             any_uses = true;
         }
         if any_uses && !items.is_empty() {
@@ -1060,10 +1057,7 @@ impl<'a> Formatter<'a> {
             }
             (None, None) => self.push(&format!("consumes {}", c.target.joined())),
         }
-        self.emit_trailing_comment(c.trivia.trailing.as_deref());
-        if c.trivia.trailing.is_none() {
-            self.newline();
-        }
+        self.emit_trailing_comment_or_newline(c.trivia.trailing.as_deref());
     }
 
     fn format_context_body(
@@ -1078,10 +1072,7 @@ impl<'a> Formatter<'a> {
         for u in uses {
             self.emit_leading_comments(&u.trivia.leading);
             self.push(&format!("uses {}", u.target.joined()));
-            self.emit_trailing_comment(u.trivia.trailing.as_deref());
-            if u.trivia.trailing.is_none() {
-                self.newline();
-            }
+            self.emit_trailing_comment_or_newline(u.trivia.trailing.as_deref());
             any_header = true;
         }
         for c in consumes {
@@ -1229,10 +1220,7 @@ impl<'a> Formatter<'a> {
         }
         self.push(" = ");
         self.format_record_body(&e.body);
-        self.emit_trailing_comment(e.trivia.trailing.as_deref());
-        if e.trivia.trailing.is_none() {
-            self.newline();
-        }
+        self.emit_trailing_comment_or_newline(e.trivia.trailing.as_deref());
     }
 
     fn format_messages(&mut self, m: &MessagesDecl) {
@@ -1258,10 +1246,7 @@ impl<'a> Formatter<'a> {
             }
         });
         self.push("}");
-        self.emit_trailing_comment(m.trivia.trailing.as_deref());
-        if m.trivia.trailing.is_none() {
-            self.newline();
-        }
+        self.emit_trailing_comment_or_newline(m.trivia.trailing.as_deref());
     }
 
     // -- Type declarations --
@@ -1284,10 +1269,7 @@ impl<'a> Formatter<'a> {
         };
         self.push(&format!("type {}{} = ", t.name.name, params));
         self.format_type_body(&t.body);
-        self.emit_trailing_comment(t.trivia.trailing.as_deref());
-        if t.trivia.trailing.is_none() {
-            self.newline();
-        }
+        self.emit_trailing_comment_or_newline(t.trivia.trailing.as_deref());
     }
 
     fn format_type_body(&mut self, body: &TypeBody) {
@@ -1371,10 +1353,7 @@ impl<'a> Formatter<'a> {
                 if i + 1 < r.fields.len() || f.opts.trailing_comma {
                     f.push(",");
                 }
-                f.emit_trailing_comment(field.trivia.trailing.as_deref());
-                if field.trivia.trailing.is_none() {
-                    f.newline();
-                }
+                f.emit_trailing_comment_or_newline(field.trivia.trailing.as_deref());
             }
             f.emit_trailing_comments(&r.trailing_comments);
         });
@@ -1532,10 +1511,7 @@ impl<'a> Formatter<'a> {
             });
         }
         self.format_block(&f.body);
-        self.emit_trailing_comment(f.trivia.trailing.as_deref());
-        if f.trivia.trailing.is_none() {
-            self.newline();
-        }
+        self.emit_trailing_comment_or_newline(f.trivia.trailing.as_deref());
     }
 
     /// Emit a parameter list. `reserve` is the width of the signature tail that
@@ -1620,10 +1596,7 @@ impl<'a> Formatter<'a> {
                 f.format_params(&op.params, false, reserve);
                 f.push(" -> ");
                 f.format_type_ref(&op.return_type);
-                f.emit_trailing_comment(op.trivia.trailing.as_deref());
-                if op.trivia.trailing.is_none() {
-                    f.newline();
-                }
+                f.emit_trailing_comment_or_newline(op.trivia.trailing.as_deref());
             }
             // #1756: the comments before the closing `}`, after a blank line.
             if !c.trailing_comments.is_empty() {
@@ -1634,10 +1607,7 @@ impl<'a> Formatter<'a> {
             }
         });
         self.push("}");
-        self.emit_trailing_comment(c.trivia.trailing.as_deref());
-        if c.trivia.trailing.is_none() {
-            self.newline();
-        }
+        self.emit_trailing_comment_or_newline(c.trivia.trailing.as_deref());
     }
 
     fn format_provider(&mut self, p: &ProviderDecl) {
@@ -1656,10 +1626,7 @@ impl<'a> Formatter<'a> {
         }
         // v0.17: an external provider (inside an adapter) has no body.
         if p.external {
-            self.emit_trailing_comment(p.trivia.trailing.as_deref());
-            if p.trivia.trailing.is_none() {
-                self.newline();
-            }
+            self.emit_trailing_comment_or_newline(p.trivia.trailing.as_deref());
             return;
         }
         self.push(" {");
@@ -1678,17 +1645,11 @@ impl<'a> Formatter<'a> {
                 f.format_type_ref(&op.return_type);
                 f.push(" ");
                 f.format_block(&op.body);
-                f.emit_trailing_comment(op.trivia.trailing.as_deref());
-                if op.trivia.trailing.is_none() {
-                    f.newline();
-                }
+                f.emit_trailing_comment_or_newline(op.trivia.trailing.as_deref());
             }
         });
         self.push("}");
-        self.emit_trailing_comment(p.trivia.trailing.as_deref());
-        if p.trivia.trailing.is_none() {
-            self.newline();
-        }
+        self.emit_trailing_comment_or_newline(p.trivia.trailing.as_deref());
     }
 
     fn format_service(&mut self, s: &ServiceDecl) {
@@ -1784,10 +1745,7 @@ impl<'a> Formatter<'a> {
             }
         });
         self.push("}");
-        self.emit_trailing_comment(s.trivia.trailing.as_deref());
-        if s.trivia.trailing.is_none() {
-            self.newline();
-        }
+        self.emit_trailing_comment_or_newline(s.trivia.trailing.as_deref());
     }
 
     /// Format a `cors { }` policy section (v0.131). One `name: value` field per
@@ -1847,18 +1805,12 @@ impl<'a> Formatter<'a> {
                 f.push(&format!("{}: ", name.name));
                 f.format_expr_at(value, 0, 1);
                 f.push(",");
-                f.emit_trailing_comment(field_trivia.trailing.as_deref());
-                if field_trivia.trailing.is_none() {
-                    f.newline();
-                }
+                f.emit_trailing_comment_or_newline(field_trivia.trailing.as_deref());
             }
             f.emit_trailing_comments(trailing_comments);
         });
         self.push("}");
-        self.emit_trailing_comment(trivia.trailing.as_deref());
-        if trivia.trailing.is_none() {
-            self.newline();
-        }
+        self.emit_trailing_comment_or_newline(trivia.trailing.as_deref());
     }
 
     fn format_agent(&mut self, a: &AgentDecl) {
@@ -1876,10 +1828,7 @@ impl<'a> Formatter<'a> {
                 a.key_name.name,
                 type_ref_to_string(&a.key_type)
             ));
-            f.emit_trailing_comment(a.key_trivia.trailing.as_deref());
-            if a.key_trivia.trailing.is_none() {
-                f.newline();
-            }
+            f.emit_trailing_comment_or_newline(a.key_trivia.trailing.as_deref());
             f.newline();
             // storage (v0.81, storage track): the agent's `store` fields.
             for sf in &a.store_fields {
@@ -1910,10 +1859,7 @@ impl<'a> Formatter<'a> {
             }
         });
         self.push("}");
-        self.emit_trailing_comment(a.trivia.trailing.as_deref());
-        if a.trivia.trailing.is_none() {
-            self.newline();
-        }
+        self.emit_trailing_comment_or_newline(a.trivia.trailing.as_deref());
     }
 
     /// Format a `store` field (v0.81): `store <name>: <Kind> [= <init>]`, with
@@ -1952,10 +1898,7 @@ impl<'a> Formatter<'a> {
         self.indented(|f| {
             f.format_expr(&inv.predicate);
         });
-        self.emit_trailing_comment(inv.trivia.trailing.as_deref());
-        if inv.trivia.trailing.is_none() {
-            self.newline();
-        }
+        self.emit_trailing_comment_or_newline(inv.trivia.trailing.as_deref());
     }
 
     /// Format an agent step invariant (v0.116): `transition <name>:` with the
@@ -1970,10 +1913,7 @@ impl<'a> Formatter<'a> {
         self.indented(|f| {
             f.format_expr(&tr.predicate);
         });
-        self.emit_trailing_comment(tr.trivia.trailing.as_deref());
-        if tr.trivia.trailing.is_none() {
-            self.newline();
-        }
+        self.emit_trailing_comment_or_newline(tr.trivia.trailing.as_deref());
     }
 
     fn format_actor(&mut self, a: &ActorDecl) {
@@ -2051,10 +1991,7 @@ impl<'a> Formatter<'a> {
                 self.push("}");
             }
         }
-        self.emit_trailing_comment(a.trivia.trailing.as_deref());
-        if a.trivia.trailing.is_none() {
-            self.newline();
-        }
+        self.emit_trailing_comment_or_newline(a.trivia.trailing.as_deref());
     }
 
     fn format_handler(&mut self, h: &Handler) {
@@ -2123,10 +2060,7 @@ impl<'a> Formatter<'a> {
         self.push(&tail);
         self.push(" ");
         self.format_block(&h.body);
-        self.emit_trailing_comment(h.trivia.trailing.as_deref());
-        if h.trivia.trailing.is_none() {
-            self.newline();
-        }
+        self.emit_trailing_comment_or_newline(h.trivia.trailing.as_deref());
     }
 
     // -- Blocks, statements, expressions --
@@ -2168,10 +2102,7 @@ impl<'a> Formatter<'a> {
                 let trivia = statement_trivia(stmt);
                 f.emit_leading_comments(&trivia.leading);
                 f.format_statement(stmt);
-                f.emit_trailing_comment(trivia.trailing.as_deref());
-                if trivia.trailing.is_none() {
-                    f.newline();
-                }
+                f.emit_trailing_comment_or_newline(trivia.trailing.as_deref());
             }
             f.emit_leading_comments(&b.tail_leading_comments);
             if !omit_unit_tail(b) {
