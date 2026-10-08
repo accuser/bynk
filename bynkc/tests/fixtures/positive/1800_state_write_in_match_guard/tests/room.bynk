@@ -1,0 +1,13 @@
+suite room
+
+case "a write in a match guard is committed" {
+  let _ <- bump.call("c1", 5)
+  let n <- read.call("c1")
+  expect n == 5
+}
+
+case "a guard that does not write leaves the state alone" {
+  let _ <- bump.call("c2", 0)
+  let n <- read.call("c2")
+  expect n == 0
+}

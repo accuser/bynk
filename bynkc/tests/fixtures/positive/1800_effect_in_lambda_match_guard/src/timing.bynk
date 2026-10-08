@@ -1,0 +1,24 @@
+context timing
+
+consumes bynk { Clock }
+
+-- #1800: an effect in a match-arm guard makes the enclosing lambda effectful,
+-- exactly as one in an arm body does. The lambda-effectfulness pre-scan skipped
+-- guards, so `stamp` was typed pure and its `<-` rejected as
+-- `bynk.effect.bind_in_pure_context`.
+service stamp {
+  on call(n: Int) -> Effect[Int] given Clock {
+    let f = (m: Int) => {
+      match Some(m) {
+        Some(x) if if x > 0 {
+          let _ <- Clock.now()
+          true
+        } else {
+          false
+        } => x
+        _ => 0
+      }
+    }
+    f(n)
+  }
+}

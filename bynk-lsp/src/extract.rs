@@ -718,11 +718,18 @@ fn find_stmt_run_in_expr(e: &Expr, target: Span) -> Option<StmtRun<'_>> {
         } => find_stmt_run_in_expr(cond, target)
             .or_else(|| find_stmt_run(then_block, target))
             .or_else(|| find_stmt_run(else_block, target)),
+        // #1800: a guard is searched too, so a run inside one
+        // (`Some(x) if if x > 0 { … } else { … } =>`) can be extracted.
         ExprKind::Match { discriminant, arms } => find_stmt_run_in_expr(discriminant, target)
             .or_else(|| {
-                arms.iter().find_map(|arm| match &arm.body {
-                    MatchBody::Expr(e) => find_stmt_run_in_expr(e, target),
-                    MatchBody::Block(b) => find_stmt_run(b, target),
+                arms.iter().find_map(|arm| {
+                    arm.guard
+                        .as_ref()
+                        .and_then(|g| find_stmt_run_in_expr(g, target))
+                        .or_else(|| match &arm.body {
+                            MatchBody::Expr(e) => find_stmt_run_in_expr(e, target),
+                            MatchBody::Block(b) => find_stmt_run(b, target),
+                        })
                 })
             }),
         // No variant below carries a `Block` *field*, so `expr_children`'s
@@ -889,11 +896,17 @@ fn expr_matches(e: &Expr, pred: &impl Fn(&Statement) -> bool) -> bool {
                 || block_matches(then_block, pred)
                 || block_matches(else_block, pred)
         }
+        // #1800: a guard's statements count too. Skipping it let a run whose
+        // guard held a `<-` be lifted to a `()`-returning fn, and one holding
+        // a `:=` be lifted at all; neither typechecks.
         ExprKind::Match { discriminant, arms } => {
             expr_matches(discriminant, pred)
-                || arms.iter().any(|arm| match &arm.body {
-                    MatchBody::Expr(e) => expr_matches(e, pred),
-                    MatchBody::Block(b) => block_matches(b, pred),
+                || arms.iter().any(|arm| {
+                    arm.guard.as_ref().is_some_and(|g| expr_matches(g, pred))
+                        || match &arm.body {
+                            MatchBody::Expr(e) => expr_matches(e, pred),
+                            MatchBody::Block(b) => block_matches(b, pred),
+                        }
                 })
         }
         // No variant below carries a `Block` *field*, so `expr_children`'s
@@ -1499,6 +1512,60 @@ mod tests {
                 let needle = "let a = if cond {\n    cell := 1\n    0\n  } else {\n    1\n  }";
                 let actions = function_actions_for(src, needle, &[], &[], &[]);
                 assert!(actions.is_empty());
+            }
+
+            #[test]
+            fn a_run_containing_a_cell_write_in_a_match_guard_declines() {
+                // #1800: the `:=` sits in an arm's guard, which
+                // `stmts_contain_assign_stmt` must search like an arm body.
+                let src = concat!(
+                    "context c\n\n",
+                    "fn f(o: Option[Int]) -> Int {\n",
+                    "  let a = match o {\n",
+                    "    Some(x) if if x > 0 {\n",
+                    "      cell := x\n",
+                    "      true\n",
+                    "    } else {\n",
+                    "      false\n",
+                    "    } => x\n",
+                    "    _ => 0\n",
+                    "  }\n",
+                    "  a\n",
+                    "}\n",
+                );
+                let needle = "let a = match o {\n    Some(x) if if x > 0 {\n      cell := x\n      true\n    } else {\n      false\n    } => x\n    _ => 0\n  }";
+                let actions = function_actions_for(src, needle, &[], &[], &[]);
+                assert!(actions.is_empty());
+            }
+
+            #[test]
+            fn a_run_found_inside_a_match_guard() {
+                // #1800: the run sits in the `then` block of a guard's `if`.
+                // The guard's tail reads only `num`, so lifting the run
+                // strands nothing.
+                let src = concat!(
+                    "context c\n\n",
+                    "fn f(o: Option[Int]) -> Int {\n",
+                    "  match o {\n",
+                    "    Some(num) if if num > 0 {\n",
+                    "      let valA = num * 2\n",
+                    "      let valB = valA + 1\n",
+                    "      num > 3\n",
+                    "    } else {\n",
+                    "      false\n",
+                    "    } => num\n",
+                    "    _ => 0\n",
+                    "  }\n",
+                    "}\n",
+                );
+                let locals = vec![
+                    param(src, "num", "Int"),
+                    let_binding(src, "valA", "Int"),
+                    let_binding(src, "valB", "Int"),
+                ];
+                let needle = "let valA = num * 2\n      let valB = valA + 1";
+                let actions = function_actions_for(src, needle, &[], &locals, &[]);
+                assert_eq!(actions.len(), 1, "a run in a guard is extractable");
             }
 
             #[test]

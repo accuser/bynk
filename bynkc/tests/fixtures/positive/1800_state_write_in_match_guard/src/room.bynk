@@ -1,0 +1,37 @@
+context room
+
+-- #1800: a `:=` inside a match-arm guard runs like any other write, so the
+-- handler must commit it. `body_writes_state` skipped guards, so `bump` got
+-- no commit wrapper and the write was lost.
+agent Counter {
+  key id: String
+  store hits: Cell[Int] = 0
+
+  on call bump(n: Int) -> Effect[()] {
+    match Some(n) {
+      Some(x) if if x > 0 {
+        hits := x
+        true
+      } else {
+        false
+      } => Effect.pure(())
+      _ => Effect.pure(())
+    }
+  }
+
+  on call read() -> Effect[Int] {
+    Effect.pure(hits)
+  }
+}
+
+service bump {
+  on call(id: String, n: Int) -> Effect[()] {
+    Counter(id).bump(n)
+  }
+}
+
+service read {
+  on call(id: String) -> Effect[Int] {
+    Counter(id).read()
+  }
+}
