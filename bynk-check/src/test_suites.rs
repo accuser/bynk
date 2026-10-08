@@ -2363,6 +2363,7 @@ pub fn check_history_binding(
         .map(|h| {
             let hname = h.method_name.as_ref().expect("call handler has a name");
             Variant {
+                trivia: Default::default(),
                 name: Ident {
                     name: history_variant_name(&hname.name),
                     span: hname.span,
@@ -2389,6 +2390,7 @@ pub fn check_history_binding(
                 span,
             },
             body: TypeBody::Sum(SumBody {
+                trailing_comments: Default::default(),
                 variants,
                 embeds: Vec::new(),
                 span,

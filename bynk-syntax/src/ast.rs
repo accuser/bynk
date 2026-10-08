@@ -1859,6 +1859,10 @@ pub struct SumBody {
     /// `.mapErr`. Empty for a sum with no embeddings.
     pub embeds: Vec<EmbedsClause>,
     pub span: Span,
+    /// #1794: comments before the closing `}` of an `enum { … }` body, or, in
+    /// the pipe form, on their own lines between the last variant and its
+    /// `embeds` clause.
+    pub trailing_comments: Vec<Comment>,
 }
 
 /// One `embeds <source_type> as <variant>` mapping in a sum body (v0.154, ADR
@@ -1878,6 +1882,12 @@ pub struct Variant {
     pub name: Ident,
     pub payload: Vec<VariantField>,
     pub span: Span,
+    /// #1794: comments above the variant and at the end of its line. A comment
+    /// on an `enum {` line leads the first variant, and so does one on the `=`
+    /// line of a pipe-form sum. The last pipe-form variant's end-of-line
+    /// comment is the type's own trailing comment unless an `embeds` clause
+    /// follows it.
+    pub trivia: Trivia,
 }
 
 /// One payload field of a sum variant. Variant payload fields use named

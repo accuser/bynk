@@ -6472,10 +6472,12 @@ mod tests {
                             })
                             .collect(),
                         span: Span::default(),
+                        trivia: Default::default(),
                     })
                     .collect(),
                 embeds: Vec::new(),
                 span: Span::default(),
+                trailing_comments: Default::default(),
             }),
             documentation: None,
             span: Span::default(),

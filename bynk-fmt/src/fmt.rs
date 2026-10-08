@@ -1405,32 +1405,53 @@ impl<'a> Formatter<'a> {
         // payloadless variants — round-trip preserves semantics either way.
         let any_payload = s.variants.iter().any(|v| !v.payload.is_empty());
         if !any_payload {
-            // Enum-style.
-            let names: Vec<&str> = s.variants.iter().map(|v| v.name.name.as_str()).collect();
-            let oneline = format!("enum {{ {} }}", names.join(", "));
-            if self.fits(&oneline, 0) {
-                self.push(&oneline);
-                return;
+            // Enum-style. #1794: a comment forces the multi-line form, as in
+            // a record body.
+            let has_comments = !s.trailing_comments.is_empty()
+                || s.variants
+                    .iter()
+                    .any(|v| !v.trivia.leading.is_empty() || v.trivia.trailing.is_some());
+            if !has_comments {
+                let names: Vec<&str> = s.variants.iter().map(|v| v.name.name.as_str()).collect();
+                let oneline = format!("enum {{ {} }}", names.join(", "));
+                if self.fits(&oneline, 0) {
+                    self.push(&oneline);
+                    return;
+                }
             }
             self.push("enum {");
             self.newline();
             self.indented(|f| {
                 for (i, v) in s.variants.iter().enumerate() {
+                    f.emit_leading_comments(&v.trivia.leading);
                     f.push(&v.name.name);
                     if i + 1 < s.variants.len() || f.opts.trailing_comma {
                         f.push(",");
                     }
-                    f.newline();
+                    f.emit_trailing_comment(v.trivia.trailing.as_deref());
+                    if v.trivia.trailing.is_none() {
+                        f.newline();
+                    }
                 }
+                f.emit_trailing_comments(&s.trailing_comments);
             });
             self.push("}");
             return;
         }
-        // Pipe form, multi-line.
+        // Pipe form, multi-line. #1794: a variant's end-of-line comment ends
+        // its line, so the next variant needs no newline of its own.
         for (i, v) in s.variants.iter().enumerate() {
-            if i > 0 {
+            if i == 0 && !v.trivia.leading.is_empty() {
+                // A comment printed after `type S = ` would trail the `=`:
+                // break the line after it instead.
+                while self.out.ends_with(' ') {
+                    self.out.pop();
+                }
+                self.newline();
+            } else if i > 0 && s.variants[i - 1].trivia.trailing.is_none() {
                 self.newline();
             }
+            self.emit_leading_comments(&v.trivia.leading);
             self.push("| ");
             self.push(&v.name.name);
             if !v.payload.is_empty() {
@@ -1443,11 +1464,19 @@ impl<'a> Formatter<'a> {
                 self.push(&parts.join(", "));
                 self.push(")");
             }
+            self.emit_trailing_comment(v.trivia.trailing.as_deref());
         }
         // v0.154 (ADR 0178): the trailing `embeds E as V, …` clause, on its own
-        // line under the variants.
+        // line under the variants and the comments above it (#1794). Only a
+        // variant followed by `embeds` can be last with a comment on its line.
         if !s.embeds.is_empty() {
-            self.newline();
+            if s.variants
+                .last()
+                .is_none_or(|v| v.trivia.trailing.is_none())
+            {
+                self.newline();
+            }
+            self.emit_trailing_comments(&s.trailing_comments);
             let parts: Vec<String> = s
                 .embeds
                 .iter()
