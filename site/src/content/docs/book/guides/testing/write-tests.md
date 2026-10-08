@@ -139,13 +139,19 @@ suite pricing {
   stub Rates.lookup("GBP") returns 1.25    -- suite-scoped; applies to every case
   stub Rates.lookup(_)     returns 1.0     -- fallback; first matching clause wins
 
-  case "a fault surfaces as an error" {
+  case "a store fault faults the quote" {
     stub Kv.get(_) fails                    -- case-scoped; overrides for this case
-    let r <- Prices(Val[AcctId]).quote("GBP")
-    expect r is Err(_)
+    expect Prices(Val[AcctId]).quote("GBP") faults
   }
 }
 ```
+
+`fails` injects a *fault*, not an `Err`: the operation throws, as a real provider
+failure would, and the fault propagates out of the handler. Left unclaimed it
+fails the case, so a case that expects one says so with `expect <call> faults`,
+giving the call itself rather than a value bound from it. To test an in-band
+error instead, stub the `Err` as a value (`returns Err(…)`) and assert `expect r
+is Err(_)`. See [Claiming a fault](/book/reference/testing/#faults).
 
 The right-hand side is a *value* or `fails`, **never a block** — a double that
 needs logic is the signal to promote the tier instead. For a collaborator whose

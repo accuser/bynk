@@ -503,7 +503,8 @@ default** ([§5.9d](/book/spec/static-semantics/#59d-test-double-provision--stub
   clauses become an ordered match over the recorded arguments (the predicate
   surface lowered as in observation's `with`), **first match wins**:
   - `returns <value>` lowers to a constant return of the lowered value;
-  - `fails` lowers to a thrown/`Err` capability fault;
+  - `fails` lowers to a thrown capability fault (never an `Err`), which a case
+    observes with `expect <call> faults`;
   - `returns each [<outcome>, …]` lowers to a **per-call cursor** over the lowered
     outcomes with **last-outcome-repeat** exhaustion (see
     [§7.4.12](/book/spec/runtime-library/#7412-the-stub-clause-v0118)).
@@ -511,6 +512,13 @@ default** ([§5.9d](/book/spec/static-semantics/#59d-test-double-provision--stub
 Provision is resolved once per case; the stub, the cursor, and the match table are
 emitted only under `bynkc test`. A module with no `suite` emits byte-for-byte
 unchanged.
+
+A **fault claim** `expect <call> faults` lowers to an async IIFE inside the
+expectation check: it awaits the lowered call (with no call-site principal) in a
+`try`, yields `false` when the call returns, re-throws an `ExpectationError`, and
+yields `true` for any other thrown value
+([§7.4.12a](/book/spec/runtime-library/#7412a-the-fault-claim)). The check reports
+`the call returned without faulting` when it fails.
 
 ### §7.3.5a Functions as values (v0.20a)
 

@@ -1285,8 +1285,17 @@ module.exports = grammar({
     expect_expr: ($) =>
       prec.right(
         PREC.expect,
-        seq("expect", field("cond", choice($.observation_expr, $._expression))),
+        seq(
+          "expect",
+          field("cond", choice($.observation_expr, $.faults_expr, $._expression)),
+        ),
       ),
+
+    // #1706: a fault claim — `expect <call> faults` holds when awaiting the
+    // call throws. `faults` is contextual (an ordinary identifier elsewhere),
+    // mirroring the compiler's trailing-word parse; an expression is never
+    // followed by a bare identifier, so the word alone decides.
+    faults_expr: ($) => seq(field("call", $._expression), "faults"),
 
     // v0.117: an observation — a `Cap.op` seam reference followed by one of the
     // sugar matchers. `called` / `never` / `once` / `times` / `with` / `before`

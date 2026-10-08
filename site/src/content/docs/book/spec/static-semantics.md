@@ -1339,6 +1339,29 @@ the way a fabricated agent-state record is. It types as an ordinary `List`
 test-build-only* — no source declares it, and the deploy build carries none of it
 (see [emission](/book/spec/emission/)).
 
+### §5.9e Fault claim
+
+A **fault claim**, `expect <call> faults` (#1706), asserts that awaiting an
+effectful call throws rather than returns. A fault is untyped and no caller can
+handle it ([§7.4.12](/book/spec/runtime-library/#7412-the-stub-clause-v0118)), so
+the claim is how a `case` observes one, not a way to catch it. Well-formedness:
+
+- the claim MUST occur inside a `case` body — it is an `expect`, so outside a test
+  body it is rejected as one (`bynk.expect.outside_case`);
+- the subject MUST be a call expression whose type is `Effect[_]`
+  (`bynk.expect.faults_not_effect`) — a value bound from a call has already run it;
+- awaiting is an effect, so the claim MUST sit in an effectful body, as `<-` does
+  (`bynk.effect.bind_in_pure_context`);
+- the claim has no call-site principal slot: an addressed handler that requires an
+  identity is reported as for an absent `by` (`bynk.test.principal_required`);
+- the case MUST NOT be `system`-tier (`bynk.test.faults_needs_in_process`): at
+  `system` a handler's fault crosses the deployed Worker's boundary as an error
+  response, never a throw.
+
+The claim types as `Bool`.
+
+{{#grammar-semantics faults_expr}}
+
 ## §5.10 Collections
 
 *(v0.20b)* `List[T]` and `Map[K, V]` are built-in generic types

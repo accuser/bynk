@@ -743,6 +743,9 @@ fn emit_statement(out: &mut String, stmt: &Statement, cx: &mut LowerCtx, indent:
                 format!(
                     "\"expect {src}\\n  expected: {src}\\n  actual:   \" + __bynkShow(({lv})) + \" {sym} \" + __bynkShow(({rv}))"
                 )
+            } else if matches!(a.value.kind, ExprKind::Faults(_)) {
+                // #1706: the claim's only failure is a call that returned.
+                format!("\"expect {src}\\n  the call returned without faulting\"")
             } else {
                 format!("\"expect {src}\"")
             };
@@ -1245,6 +1248,7 @@ pub(crate) fn lower_expr(e: &Expr, cx: &mut LowerCtx) -> Lowered {
         }
         ExprKind::Val { type_ref, args } => pre.absorb(lower_val(type_ref, args, cx)),
         ExprKind::Observation(o) => lower_observation(o, cx),
+        ExprKind::Faults(call) => lower_faults(call, cx),
         ExprKind::Trace { cap, op } => {
             // `trace(Cap.op)` → the recorded calls mapped to per-call records
             // whose fields are the operation's parameters (positionally).
@@ -1292,6 +1296,35 @@ fn cap_op_param_names(cx: &LowerCtx, cap: &str, op: &str) -> Vec<String> {
     bynk_lower::capability_op_sig_from_commons(cx.commons(), cap, op)
         .map(|sig| sig.params.into_iter().map(|(name, _)| name).collect())
         .unwrap_or_default()
+}
+
+/// Lower a fault claim, `<call> faults` (#1706), to a `Bool` JavaScript
+/// expression: an async IIFE that awaits the call and yields `true` when it
+/// threw. An `ExpectationError` is re-thrown, not counted — a failed `expect`
+/// inside the call's own evaluation is the case failing, not the call
+/// faulting. Every other throw counts: an injected `stub … fails`, a real
+/// provider's failure, an invariant violation. A fault is untyped, so the
+/// claim does not discriminate between them.
+///
+/// The call is lowered as an `<-` subject is, with no call-site principal
+/// (a fault claim has no `by` slot), so an enclosing principal never leaks
+/// into it. Whatever the call hoists is placed inside the `try`, not in the
+/// enclosing statement's prelude: a fault raised while evaluating the call's
+/// arguments is the call faulting too, and must not escape the claim.
+fn lower_faults(call: &Expr, cx: &mut LowerCtx) -> String {
+    let saved_identity = cx.call_site_identity.take();
+    let saved_no_credential = std::mem::replace(&mut cx.call_site_no_credential, false);
+    let mut inner = Pre::new();
+    let value = inner.lower(call, cx);
+    cx.call_site_identity = saved_identity;
+    cx.call_site_no_credential = saved_no_credential;
+    // The literal `await` below is a real source of effectfulness for any
+    // synchronous-looking IIFE further out — see `emitted_await`.
+    cx.emitted_await = true;
+    let hoisted: String = inner.stmts().iter().map(|s| format!("{s} ")).collect();
+    format!(
+        "(await (async () => {{ try {{ {hoisted}await ({value}); return false; }} catch (__e) {{ if (__e instanceof ExpectationError) {{ throw __e; }} return true; }} }})())"
+    )
 }
 
 /// Lower an observation (v0.117) to a `Bool` JavaScript expression over the

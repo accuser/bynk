@@ -172,6 +172,10 @@
       "summary": "A case drives `by Nobody` (the no-credential principal, which tests the auth seam's 401) outside a `system`-tier case, where there is no real seam to reject it."
     },
     {
+      "code": "bynk.test.faults_needs_in_process",
+      "summary": "A `system`-tier case claims a fault with `expect <call> faults`; at `system` a fault reaches the case as an error response from the deployed Worker, never a throw, so the claim belongs at `unit` or `integration`."
+    },
+    {
       "code": "bynk.test.nobody_needs_secured_route",
       "summary": "A case drives `by Nobody` at a route that is not Bearer-secured (e.g. a public `Visitor` route) — there is no auth seam to reject the missing credential."
     },
@@ -404,6 +408,12 @@
     {
       "code": "bynk.parse.exports_after_decls",
       "summary": "`exports` appears after other declarations."
+    }
+  ],
+  "faults_expr": [
+    {
+      "code": "bynk.expect.faults_not_effect",
+      "summary": "A fault claim's subject (`expect <call> faults`) is not an effectful call: a value, or a call whose type is not `Effect[_]`."
     }
   ],
   "field_access": [

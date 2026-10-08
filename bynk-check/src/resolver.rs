@@ -1840,7 +1840,7 @@ fn check_expr_references(expr: &Expr, cx: &mut RefCheckCtx) {
         ExprKind::EffectPure(inner) => {
             check_expr_references(inner, cx);
         }
-        ExprKind::Expect(inner) => {
+        ExprKind::Expect(inner) | ExprKind::Faults(inner) => {
             check_expr_references(inner, cx);
         }
         ExprKind::Val { args, .. } => {

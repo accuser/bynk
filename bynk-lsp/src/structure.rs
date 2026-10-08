@@ -201,7 +201,8 @@ fn walk_expr(e: &Expr, out: &mut Vec<(Span, bool)>) {
         | ExprKind::Some(x)
         | ExprKind::Wire(x)
         | ExprKind::EffectPure(x)
-        | ExprKind::Expect(x) => walk_expr(x, out),
+        | ExprKind::Expect(x)
+        | ExprKind::Faults(x) => walk_expr(x, out),
         ExprKind::Call { args, .. } | ExprKind::ConstructorCall { args, .. } => {
             args.iter().for_each(|a| walk_expr(a, out))
         }

@@ -1680,7 +1680,9 @@ write form; `.update(fn)` is the read-modify-write form. ADR 0108.
 
 {{#grammar expect_expr}}
 
-`expect` — checks a `Bool` predicate in a `case`.
+`expect` — checks a `Bool` predicate in a `case`, observes a capability seam
+([`observation_expr`](#rule-observation_expr)), or claims a fault
+([`faults_expr`](#rule-faults_expr)).
 
 **Static semantics.**
 {{#grammar-semantics expect_expr}}
@@ -1696,6 +1698,17 @@ automatically at the seam in the test build, so no setup is needed. The matcher
 words are contextual keywords.
 
 **See also.** [Observation](/book/reference/testing/#observation).
+
+### faults_expr {#rule-faults_expr}
+
+{{#grammar faults_expr}}
+
+A fault claim, inside a `case`: `expect <call> faults` holds when awaiting the
+call throws (an injected `stub … fails`, a real provider's failure, an invariant
+violation) rather than returns. The subject is the call itself, not a value bound
+from it. `faults` is a contextual keyword.
+
+**See also.** [Claiming a fault](/book/reference/testing/#faults).
 
 ### trace_expr {#rule-trace_expr}
 

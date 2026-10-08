@@ -1,0 +1,5 @@
+# #1706: `faults` holds only when the call throws, so a returning call fails
+# the claim; a fault no `faults` claims propagates out and fails its case.
+passed=3 failed=2
+fail a call that returns does not fault
+fail an unclaimed fault fails the case
