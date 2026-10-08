@@ -598,7 +598,8 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
-          node-version: "20"
+          # @vscode/vsce 4 (the packaging step below) requires Node >= 22.
+          node-version: "22"
       - name: Install deps
         run: npm ci
       - name: Type-check
@@ -608,7 +609,9 @@ jobs:
       - name: Smoke — no unbundled external requires
         run: node scripts/check-bundle.mjs
       - name: Package the VSIX
-        run: npx --yes @vscode/vsce@3.9.2 package --no-dependencies --skip-license
+        # The devDependency `npm ci` installed, so the version lives only in
+        # package.json; `--no` refuses to fetch a different one from the registry.
+        run: npx --no vsce package --no-dependencies --skip-license
 
   server-pin:
     # #1673: the VS Code extension's `bynkServerVersion` names the GitHub
