@@ -23,6 +23,8 @@
 //! - [`diagnostics`] — shared flatten-then-delegate rendering for in-process
 //!   compiles; [`shell`] — shelling the resolved `bynkc`.
 //! - [`sweep`] — stopping what `bynk dev`'s wranglers leave running (#1742).
+//! - `job` — on Windows, the job object that stops a wrangler's whole process
+//!   tree (#1762).
 
 pub mod check;
 pub mod cli;
@@ -33,6 +35,8 @@ pub mod diagnostics;
 pub mod doctor;
 pub mod explain;
 pub mod fmt;
+#[cfg(windows)]
+pub mod job;
 pub mod new;
 
 // The shared detection probe (Wave 5 §5.4, findings #40/#72) moved down into

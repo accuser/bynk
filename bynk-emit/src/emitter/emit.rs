@@ -4410,6 +4410,7 @@ pub(crate) fn emit_agent(
             )
         })
         .map(|f| RecordField {
+            trivia: Default::default(),
             name: f.name.clone(),
             type_ref: f.kind.args[0].clone(),
             refinement: None,

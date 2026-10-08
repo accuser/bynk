@@ -248,7 +248,7 @@ bynk check [INPUT] [--format rich|short]
 | Argument | Default | Meaning |
 |---|---|---|
 | `INPUT` | `.` | A `.bynk` file, or a project root directory (a `bynk.toml` or `src/` subdir selects project mode; otherwise the directory is itself the source tree). |
-| `--format` | `rich` | `rich` is the source-context rendering; `short` emits one terse `path:line:col: severity[category]: message` line per diagnostic, for the VS Code problem-matcher, CI, and scripts. In both, `path` is the file as you'd type it from the working directory (the input you passed, joined with the file's place in it), the same path `fmt` reports. `rich` is coloured only when stderr is a terminal and `NO_COLOR` is unset or empty, and cuts a source line longer than 400 bytes to a window around its labels, marked `…`. |
+| `--format` | `rich` | `rich` is the source-context rendering; `short` emits one terse `path:line:col: severity[category]: message` line per diagnostic, for the VS Code problem-matcher, CI, and scripts. In both, `path` is the file as you'd type it from the working directory (the input you passed, joined with the file's place in it), the same path `fmt` reports. `rich` is coloured only when stderr is a terminal and `NO_COLOR` is unset or empty; `FORCE_COLOR` or `CLICOLOR_FORCE` set to anything but empty or `0` colours it without a terminal (for `less -R` or a CI log); `0` doesn't turn colour off on a terminal, `NO_COLOR` does, and it wins over both. `rich` cuts a source line longer than 400 bytes to a window around its labels, marked `…`. |
 
 **Exit code** — `0` when the input type-checks (warnings are surfaced but do not
 fail the build, per the [diagnostics rule](/docs/cli/#exit-codes-and-diagnostics));
@@ -294,7 +294,8 @@ blank line separates it from the next declaration, or when what follows carries
 no doc (a `uses` or other clause, a service policy, or anything inside a
 policy): `bynk check` warns `bynk.parse.orphan_doc_block`, and the formatter
 keeps the block where it is, so formatting never attaches it. Remove the blank
-line to attach it, or make it a `--` comment.
+line to attach it, or make it a `--` comment. A `--` comment on the same line as
+an opening `{` moves onto its own line under the brace.
 
 **Where the style comes from** — three layers, each overriding the one before:
 the canonical defaults, then the project's `[fmt]` section in

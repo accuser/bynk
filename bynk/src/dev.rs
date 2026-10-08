@@ -24,7 +24,7 @@
 //! error.
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitCode};
+use std::process::ExitCode;
 use std::time::Duration;
 
 use bynk_emit::project::{ProjectPaths, try_read_project_paths};
@@ -241,7 +241,7 @@ pub fn run(
     // and the wranglers share the terminal's foreground process group, so a
     // Ctrl-C SIGINT reaches them all — we must not bail before reaping; we reap
     // in the watch loop and propagate the first exit code (ADR 0096 §Exit).
-    let mut children: Vec<(String, std::process::Child)> = Vec::new();
+    let mut children: Vec<(String, Served)> = Vec::new();
     for s in &serving {
         let Some(mut cmd) = wrangler_command(&probe.provenance, "dev") else {
             eprintln!("bynk: wrangler not found (run `bynk doctor --only deploy`)");
@@ -256,7 +256,7 @@ pub fn run(
             cmd.arg(arg);
         }
         match cmd.spawn() {
-            Ok(child) => children.push((s.worker.clone(), child)),
+            Ok(child) => children.push((s.worker.clone(), Served::new(child))),
             Err(e) => {
                 eprintln!("bynk: could not run wrangler for `{}`: {e}", s.worker);
                 terminate(&mut children, &workers_dir);
@@ -282,7 +282,7 @@ pub fn run(
         // in a way that looks like a code bug. Stop them and propagate the
         // first exit code.
         for i in 0..children.len() {
-            let status = match children[i].1.try_wait() {
+            let status = match children[i].1.child.try_wait() {
                 Ok(status) => status,
                 Err(e) => {
                     eprintln!("bynk: could not poll wrangler: {e}");
@@ -291,6 +291,8 @@ pub fn run(
                 }
             };
             if let Some(status) = status {
+                // Dropped here. On Windows that stops its job (#1762), and
+                // with it the `workerd`s the exited wrangler left running.
                 let (name, _) = children.remove(i);
                 if !children.is_empty() {
                     eprintln!("bynk dev: `{name}` exited — stopping the other contexts.");
@@ -313,6 +315,38 @@ pub fn run(
     }
 }
 
+/// One `wrangler dev` that `bynk dev` is serving: the child it spawned and, on
+/// Windows, the job object that holds the child's whole process tree (#1762).
+struct Served {
+    child: std::process::Child,
+    /// `None` when the child could not be put in a job. It is then stopped
+    /// with `Child::kill` alone, as before #1762, which leaves its descendants
+    /// running.
+    #[cfg(windows)]
+    job: Option<crate::job::Job>,
+}
+
+impl Served {
+    fn new(child: std::process::Child) -> Served {
+        #[cfg(windows)]
+        {
+            let job = match crate::job::Job::assign(&child) {
+                Ok(job) => Some(job),
+                Err(e) => {
+                    eprintln!(
+                        "bynk dev: could not put wrangler in a job object ({e}); \
+                         stopping it may leave its workerd processes running."
+                    );
+                    None
+                }
+            };
+            Served { child, job }
+        }
+        #[cfg(not(windows))]
+        Served { child }
+    }
+}
+
 /// Stop every remaining `wrangler dev` and reap it, so a session that ends on
 /// one worker's exit does not strand the others — each holds a port and a
 /// `workerd` child, and a stranded one makes the *next* `bynk dev` fail on a
@@ -321,13 +355,14 @@ pub fn run(
 /// Then [`sweep`](crate::sweep::sweep) what is still running under
 /// `workers_dir` (#1742). Signalling the children is not enough: via npx the
 /// child is `npx`, which does not pass the signal on, and a worker that exited
-/// on its own has already orphaned its `workerd`s.
-fn terminate(children: &mut Vec<(String, std::process::Child)>, workers_dir: &Path) {
-    for (_, child) in children.iter_mut() {
-        request_stop(child);
+/// on its own has already orphaned its `workerd`s. On Windows the sweep does
+/// nothing, and each child's job object stops its tree instead (#1762).
+fn terminate(children: &mut Vec<(String, Served)>, workers_dir: &Path) {
+    for (_, served) in children.iter_mut() {
+        request_stop(served);
     }
-    for (_, child) in children.iter_mut() {
-        reap(child);
+    for (_, served) in children.iter_mut() {
+        reap(&mut served.child);
     }
     children.clear();
     crate::sweep::sweep(workers_dir, STOP_GRACE);
@@ -339,11 +374,21 @@ fn terminate(children: &mut Vec<(String, std::process::Child)>, workers_dir: &Pa
 /// and tears down the `node` and `workerd` processes it spawned, whereas SIGKILL
 /// is untrappable — verified, a SIGKILLed wrangler strands an orphaned `workerd
 /// serve` still holding the port. std exposes no SIGTERM, so we go through POSIX
-/// `kill(1)`; off unix, SIGKILL is the only thing std offers.
-fn request_stop(child: &mut std::process::Child) {
+/// `kill(1)`.
+///
+/// On Windows the child is a `cmd.exe` wrapper, and `Child::kill` stops only
+/// that. Terminating the child's job object stops the whole tree instead
+/// (#1762). It is a hard stop, but inside a job nothing is stranded by one.
+fn request_stop(served: &mut Served) {
+    #[cfg(windows)]
+    if let Some(job) = &served.job {
+        job.terminate();
+        return;
+    }
+    let child = &mut served.child;
     #[cfg(unix)]
     {
-        let sent = Command::new("kill")
+        let sent = std::process::Command::new("kill")
             .arg("-TERM")
             .arg(child.id().to_string())
             .status()

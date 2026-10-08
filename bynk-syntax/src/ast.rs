@@ -959,6 +959,9 @@ pub struct AgentDecl {
     /// `key id: Type` — the identifier-typed value identifying instances.
     pub key_name: Ident,
     pub key_type: TypeRef,
+    /// #1788: comments above the `key` line and at its end. A comment on the
+    /// agent's `{` line leads the key too.
+    pub key_trivia: Trivia,
     /// `store` fields (v0.81, storage track) — each an access-pattern slot of a
     /// declared storage kind (`Cell`/`Map`/…). The successor to the removed
     /// `state { }` record (ADR 0108); every agent declares its state this way.
@@ -1806,6 +1809,8 @@ pub enum TypeBody {
 pub struct RecordBody {
     pub fields: Vec<RecordField>,
     pub span: Span,
+    /// #1788: comments before the closing `}`.
+    pub trailing_comments: Vec<Comment>,
 }
 
 /// One field of a record type declaration. Each field may carry inline
@@ -1820,6 +1825,8 @@ pub struct RecordField {
     /// record-type fields by the checker.
     pub init: Option<Expr>,
     pub span: Span,
+    /// #1788: comments above the field and at the end of its line.
+    pub trivia: Trivia,
 }
 
 /// Body of a sum-type declaration (v0.2 §3.2).

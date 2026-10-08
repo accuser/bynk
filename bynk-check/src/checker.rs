@@ -5012,6 +5012,7 @@ mod pure_helper_pins {
             name: ident(name),
             type_params: Vec::new(),
             body: TypeBody::Record(bynk_syntax::ast::RecordBody {
+                trailing_comments: Default::default(),
                 fields: vec![],
                 span: sp(),
             }),
