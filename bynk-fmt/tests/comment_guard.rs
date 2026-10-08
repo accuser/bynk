@@ -222,13 +222,43 @@ fn keeps_an_orphan_before_an_adapter_clause() {
     expect_kept("before adapter uses", source);
 }
 
-/// A comment inside a policy body has no slot either. It was deleted with no
-/// refusal; the guard now runs on every format, so the file is refused.
+/// #1786: a comment inside a `cors`/`security`/`limits` policy had no slot. It
+/// was deleted with no refusal, then (#1785) refused. It is kept now.
 #[test]
-fn refuses_to_drop_a_comment_inside_a_service_policy() {
-    expect_refusal(
+fn keeps_a_comment_inside_a_service_policy() {
+    expect_kept(
         "in-policy",
         "context api\n\nservice api from http {\n  cors {\n    -- keep me\n    origins: [\"https://a.example.com\"],\n  }\n\n  on GET(\"/ping\") () -> Effect[HttpResult[String]] by v: Visitor {\n    Ok(\"pong\")\n  }\n}\n",
+    );
+}
+
+/// #1786: every place a comment can sit in a policy keeps it there: above a
+/// field, at the end of a field's line, before `}`, after `}`, and an orphaned
+/// doc block between fields, which also warns.
+#[test]
+fn keeps_comments_in_every_policy_position() {
+    let source = "context api\n\nservice api from http {\n  cors {\n    -- above\n    origins: [\"https://a.example.com\"], -- same line\n    ---\n    keep me\n    ---\n\n    credentials: false\n    -- before close\n  } -- after close\n  security {\n    hsts: 180.days, -- on security\n  }\n  limits {\n    -- on limits\n    maxBody: 1_048_576,\n  }\n\n  on GET(\"/ping\") () -> Effect[HttpResult[String]] by v: Visitor {\n    Ok(\"pong\")\n  }\n}\n";
+    assert_eq!(orphan_warnings(source), 1);
+    expect_kept("policy positions", source);
+    let out = format_source(source, &FormatOptions::default()).unwrap();
+    for (before, after) in [
+        ("-- above", "origins:"),
+        ("origins:", "-- same line"),
+        ("-- same line", "keep me"),
+        ("keep me", "credentials:"),
+        ("credentials:", "-- before close"),
+        ("-- before close", "-- after close"),
+        ("hsts:", "-- on security"),
+        ("-- on limits", "maxBody:"),
+    ] {
+        assert!(
+            out.find(before).unwrap() < out.find(after).unwrap(),
+            "`{before}` should precede `{after}`:\n{out}"
+        );
+    }
+    assert!(
+        out.contains("-- same line\n"),
+        "stays on its field's line:\n{out}"
     );
 }
 

@@ -705,6 +705,9 @@ pub struct CorsPolicy {
     /// `maxAge`) by the checker, not the parser.
     pub fields: Vec<CorsField>,
     pub span: Span,
+    /// #1786: comments before the closing `}`, an orphaned doc block among
+    /// them.
+    pub trailing_comments: Vec<Comment>,
     pub trivia: Trivia,
 }
 
@@ -714,6 +717,8 @@ pub struct CorsField {
     pub name: Ident,
     pub value: Expr,
     pub span: Span,
+    /// #1786: the field's own comments, above it and at the end of its line.
+    pub trivia: Trivia,
 }
 
 impl CorsPolicy {
@@ -801,6 +806,9 @@ pub struct SecurityPolicy {
     /// the parser.
     pub fields: Vec<SecurityField>,
     pub span: Span,
+    /// #1786: comments before the closing `}`, an orphaned doc block among
+    /// them.
+    pub trailing_comments: Vec<Comment>,
     pub trivia: Trivia,
 }
 
@@ -810,6 +818,8 @@ pub struct SecurityField {
     pub name: Ident,
     pub value: Expr,
     pub span: Span,
+    /// #1786: the field's own comments, above it and at the end of its line.
+    pub trivia: Trivia,
 }
 
 impl SecurityPolicy {
@@ -863,6 +873,9 @@ pub struct LimitsPolicy {
     /// parser.
     pub fields: Vec<LimitsField>,
     pub span: Span,
+    /// #1786: comments before the closing `}`, an orphaned doc block among
+    /// them.
+    pub trailing_comments: Vec<Comment>,
     pub trivia: Trivia,
 }
 
@@ -872,6 +885,8 @@ pub struct LimitsField {
     pub name: Ident,
     pub value: Expr,
     pub span: Span,
+    /// #1786: the field's own comments, above it and at the end of its line.
+    pub trivia: Trivia,
 }
 
 impl LimitsPolicy {

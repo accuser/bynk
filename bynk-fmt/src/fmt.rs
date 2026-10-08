@@ -1781,56 +1781,72 @@ impl<'a> Formatter<'a> {
     /// Format a `cors { }` policy section (v0.131). One `name: value` field per
     /// line, with a trailing comma, mirroring a record construction.
     fn format_cors_policy(&mut self, cors: &CorsPolicy) {
-        self.emit_leading_comments(&cors.trivia.leading);
-        self.push("cors {");
-        self.newline();
-        self.indented(|f| {
-            for field in &cors.fields {
-                f.push(&format!("{}: ", field.name.name));
-                f.format_expr_at(&field.value, 0, 1);
-                f.push(",");
-                f.newline();
-            }
-        });
-        self.push("}");
-        self.newline();
+        let fields: Vec<_> = cors
+            .fields
+            .iter()
+            .map(|f| (&f.name, &f.value, &f.trivia))
+            .collect();
+        self.format_policy("cors", &cors.trivia, &fields, &cors.trailing_comments);
     }
 
-    /// Format a `security { }` policy section (v0.141). One `name: value` field
-    /// per line, with a trailing comma, mirroring `format_cors_policy`.
+    /// Format a `security { }` policy section (v0.141), as `format_cors_policy`.
     fn format_security_policy(&mut self, security: &SecurityPolicy) {
-        self.emit_leading_comments(&security.trivia.leading);
-        self.push("security {");
-        self.newline();
-        self.indented(|f| {
-            for field in &security.fields {
-                f.push(&format!("{}: ", field.name.name));
-                f.format_expr_at(&field.value, 0, 1);
-                f.push(",");
-                f.newline();
-            }
-        });
-        self.push("}");
-        self.newline();
+        let fields: Vec<_> = security
+            .fields
+            .iter()
+            .map(|f| (&f.name, &f.value, &f.trivia))
+            .collect();
+        self.format_policy(
+            "security",
+            &security.trivia,
+            &fields,
+            &security.trailing_comments,
+        );
     }
 
-    /// Format a `limits { }` policy section (v0.142). One `name: value` field per
-    /// line, with a trailing comma, mirroring `format_cors_policy`. A `maxBody`
-    /// value keeps its as-written `_` digit separators (the `IntLit` lexeme).
+    /// Format a `limits { }` policy section (v0.142), as `format_cors_policy`. A
+    /// `maxBody` value keeps its as-written `_` digit separators (the `IntLit`
+    /// lexeme).
     fn format_limits_policy(&mut self, limits: &LimitsPolicy) {
-        self.emit_leading_comments(&limits.trivia.leading);
-        self.push("limits {");
+        let fields: Vec<_> = limits
+            .fields
+            .iter()
+            .map(|f| (&f.name, &f.value, &f.trivia))
+            .collect();
+        self.format_policy("limits", &limits.trivia, &fields, &limits.trailing_comments);
+    }
+
+    /// A `cors`/`security`/`limits` policy: `keyword {`, one `name: value,` field
+    /// per line, `}`. #1786: each field's comments, the comments before `}`, and
+    /// the comment after it are printed in place.
+    fn format_policy(
+        &mut self,
+        keyword: &str,
+        trivia: &Trivia,
+        fields: &[(&Ident, &Expr, &Trivia)],
+        trailing_comments: &[Comment],
+    ) {
+        self.emit_leading_comments(&trivia.leading);
+        self.push(&format!("{keyword} {{"));
         self.newline();
         self.indented(|f| {
-            for field in &limits.fields {
-                f.push(&format!("{}: ", field.name.name));
-                f.format_expr_at(&field.value, 0, 1);
+            for (name, value, field_trivia) in fields {
+                f.emit_leading_comments(&field_trivia.leading);
+                f.push(&format!("{}: ", name.name));
+                f.format_expr_at(value, 0, 1);
                 f.push(",");
-                f.newline();
+                f.emit_trailing_comment(field_trivia.trailing.as_deref());
+                if field_trivia.trailing.is_none() {
+                    f.newline();
+                }
             }
+            f.emit_trailing_comments(trailing_comments);
         });
         self.push("}");
-        self.newline();
+        self.emit_trailing_comment(trivia.trailing.as_deref());
+        if trivia.trailing.is_none() {
+            self.newline();
+        }
     }
 
     fn format_agent(&mut self, a: &AgentDecl) {
