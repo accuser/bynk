@@ -1,0 +1,2 @@
+bynk.event.return_not_effect_unit
+an `on event` handler returns `Effect[()]`

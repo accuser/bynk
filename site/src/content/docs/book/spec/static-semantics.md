@@ -1058,11 +1058,13 @@ faults, an `InvariantViolation` included, emits nothing.
 **Subscription.** A `from Events(E)` service
 ([§4.4.7b](/book/spec/syntactic-grammar/#447b-events-subscriptions-v0238)) MUST name an
 event declared in its own context or a consumed one
-(`bynk.event.unknown_subscription`), and its handlers MUST be `on event` handlers
-(`bynk.service.mixed_protocols`). An `on event` handler takes the payload, of
-type `E` (`bynk.event.handler_param_type_mismatch`), and optionally a second
-parameter of type `EventEnvelope`; any other parameter list is
-`bynk.event.bad_params`.
+(`bynk.event.unknown_subscription`), and it MUST have exactly one handler, an
+`on event` (`bynk.service.mixed_protocols` for any other kind,
+`bynk.event.duplicate_handler` for a second `on event`). An `on event` handler
+takes the payload, of type `E` (`bynk.event.handler_param_type_mismatch`), and
+optionally a second parameter of type `EventEnvelope`; any other parameter list
+is `bynk.event.bad_params`. It MUST return `Effect[()]`
+(`bynk.event.return_not_effect_unit`): nothing receives a subscriber's result.
 
 **Delivery filters.** A header pattern's fields MUST be fields of `E`
 (`bynk.event.pattern_unknown_field`), each listed once
