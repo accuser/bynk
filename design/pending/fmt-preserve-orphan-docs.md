@@ -1,4 +1,0 @@
----
-level: patch
-changelog: "`fmt` keeps an orphaned `---` doc block where it is, followed by its blank line, and formats the rest of the file, where since #1664 it refused the whole file (and format-on-save did nothing). A block before a declaration, between two, before the unit header, at the end of a file or of a commons, context, adapter, suite, service, agent or capability body, or before a service policy or an adapter's `binding`/`uses`/`consumes`/`exports` is kept, and `bynk check` still warns `bynk.parse.orphan_doc_block` on the output: formatting never attaches it. The last two shapes used to be dropped with no warning at all. Also fixed: `fmt` silently deleted a `--` comment before the closing `}` of a service, agent or capability (now kept) or inside a `cors`/`security`/`limits` policy (now refused with `bynk.fmt.comment_loss`), and refused a file with a `--` comment directly under a doc block's closing `---` (now kept) (#1756)"
----
