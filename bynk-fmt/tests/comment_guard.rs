@@ -434,3 +434,50 @@ fn keeps_comments_in_a_record_type_and_on_an_agent_key() {
         assert_eq!(out, again, "{name}: not idempotent");
     }
 }
+
+/// #1797: a comment inside an actor body or an `exports` list is kept: on the
+/// `{` line, above an entry, at the end of its line, and before the `}`. The
+/// OIDC actor keeps its arguments one per line (#963), so the comments ride
+/// that form too, and the empty `exports` list stays open for its comment.
+#[test]
+fn keeps_comments_in_an_actor_body_and_an_exports_list() {
+    let actor = "context c\n\nactor P { -- the signed-in user\n  auth = Bearer(secret = \"S\"), -- on auth\n  -- above identity\n  identity = UserId -- on identity\n  -- before close\n} -- after close\n\nactor Q {\n  auth = None -- open\n}\n";
+    let oidc = "context c\n\nactor O {\n  -- the issuer\n  auth = Oidc(issuer = \"https://issuer.example.com/realms/main\", audience = \"https://api.example.com\"), -- verified\n  identity = UserId\n}\n";
+    let exports = "context c\n\nexports opaque { -- the public ids\n  P, -- the first\n  -- above Q\n  Q\n  -- before close\n} -- after close\nexports capability {\n  -- none yet\n}\n\ntype P = Int\n";
+    for (name, source, lines) in [
+        (
+            "actor",
+            actor,
+            &[
+                "actor P {\n\t-- the signed-in user\n\tauth = Bearer(secret = \"S\"),  -- on auth\n",
+                "\t-- above identity\n\tidentity = UserId  -- on identity\n\t-- before close\n}  -- after close\n",
+                "actor Q {\n\tauth = None  -- open\n}\n",
+            ][..],
+        ),
+        (
+            "oidc actor",
+            oidc,
+            &[
+                "actor O {\n\t-- the issuer\n\tauth = Oidc(\n",
+                "\t),  -- verified\n\tidentity = UserId\n}\n",
+            ][..],
+        ),
+        (
+            "exports",
+            exports,
+            &[
+                "exports opaque {\n\t-- the public ids\n\tP,  -- the first\n",
+                "\t-- above Q\n\tQ,\n\t-- before close\n}  -- after close\n",
+                "exports capability {\n\t-- none yet\n}\n",
+            ][..],
+        ),
+    ] {
+        let out = format_source(source, &FormatOptions::default())
+            .unwrap_or_else(|e| panic!("{name}: refused: {}", e.errors[0].message));
+        for line in lines {
+            assert!(out.contains(line), "{name}: `{line}` not in place:\n{out}");
+        }
+        let again = format_source(&out, &FormatOptions::default()).expect("reformats");
+        assert_eq!(out, again, "{name}: not idempotent");
+    }
+}

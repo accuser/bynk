@@ -1616,7 +1616,7 @@ fn capabilities_of_unit(
         found = true;
         for clause in exports {
             if clause.kind == ExportKind::Capability {
-                for n in &clause.names {
+                for n in clause.names.iter().map(|e| &e.name) {
                     out.insert(n.name.clone());
                 }
             }
