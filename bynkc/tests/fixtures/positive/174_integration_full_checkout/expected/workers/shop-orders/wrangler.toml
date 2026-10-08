@@ -11,7 +11,7 @@ service = "shop-payment"
 name = "LEDGER"
 class_name = "Ledger"
 
-[[migrations]]
-tag = "v1"
-new_sqlite_classes = ["Ledger"]
+[exports.Ledger]
+type = "durable-object"
+storage = "sqlite"
 

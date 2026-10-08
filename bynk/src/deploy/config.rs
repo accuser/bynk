@@ -17,8 +17,10 @@ struct WranglerConfig {
     services: Vec<ServiceBinding>,
     #[serde(default)]
     queues: QueueBindings,
+    /// #1796: Cloudflare's declarative `exports` map, keyed by class name —
+    /// what replaced the `[[migrations]]` this struct used to read.
     #[serde(default)]
-    migrations: Vec<Migration>,
+    exports: BTreeMap<String, Export>,
     // P7.4 (#1305): read structurally alongside everything else this struct
     // already deserialises, replacing `needs_kv`'s own former
     // `text.contains(KV_NAMESPACE_ID_PLACEHOLDER)` whole-file substring
@@ -52,9 +54,25 @@ struct QueueConsumer {
     queue: String,
 }
 
+/// One `[exports.<Class>]` entry. Only the fields that say whether it is a
+/// live Durable Object, and on which backend, are read: the map can also hold
+/// `type = "worker"` entrypoints, and tombstones (`state = "deleted"` and the
+/// like) that the emitter never writes but a reader must not mistake for a
+/// class the push registers.
 #[derive(Debug, Deserialize)]
-struct Migration {
-    tag: String,
+struct Export {
+    #[serde(rename = "type")]
+    kind: String,
+    /// Absent means `"created"` — Cloudflare's default, a live class.
+    state: Option<String>,
+    storage: Option<String>,
+}
+
+/// One Durable Object class the push declares, and its storage backend.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct DurableObject {
+    pub(crate) class: String,
+    pub(crate) storage: String,
 }
 
 /// The provisioning surface one context's closure locks it to.
@@ -68,11 +86,13 @@ pub(crate) struct Resources {
     /// (ADR 0194 D3): a `[[queues.consumers]]` binding whose queue does not
     /// exist fails the deploy.
     pub(crate) queues: Vec<String>,
-    /// The migration tag `wrangler deploy` will apply, if the context has an
-    /// agent. **Advisory** — Cloudflare owns the applied-migration record, so
-    /// this says what will be asked for, never what is already true
-    /// (ADR 0194 D1).
-    pub(crate) migration: Option<String>,
+    /// #1796: the Durable Object classes the config declares in `exports`
+    /// (each agent, plus the events fan-out class), in class-name order.
+    /// **Advisory** — Cloudflare reconciles the declared set against the
+    /// Worker's namespaces on every deploy and owns the result, so this says
+    /// what the push will declare, never which namespaces already exist (the
+    /// principle of ADR 0194 D1).
+    pub(crate) durable_objects: Vec<DurableObject>,
     /// Still carries the KV placeholder, i.e. needs a namespace.
     pub(crate) needs_kv: bool,
     /// Slice 3: the secret names this context's handlers will read from `env` —
@@ -101,7 +121,7 @@ impl Default for Resources {
         Self {
             binds_to: Vec::new(),
             queues: Vec::new(),
-            migration: None,
+            durable_objects: Vec::new(),
             needs_kv: false,
             declared_secrets: Vec::new(),
             read_secrets: Vec::new(),
@@ -197,14 +217,30 @@ fn read_resources(config: &Path) -> Result<Resources, String> {
     // rather than an emitter detail deploy happens to inherit.
     queues.sort();
     queues.dedup();
+    // A `BTreeMap`, so already in class-name order. A live class always has
+    // a backend: Wrangler's schema requires `storage` unless `state` is a
+    // tombstone. One without is refused, not skipped (review of #1803):
+    // skipping it would let the plan say the push declares nothing while the
+    // config still declares the class.
+    let mut durable_objects = Vec::new();
+    for (class, export) in parsed.exports {
+        let live = export.kind == "durable-object"
+            && export
+                .state
+                .as_deref()
+                .is_none_or(|state| state == "created");
+        if !live {
+            continue;
+        }
+        let storage = export.storage.ok_or_else(|| {
+            format!("`exports.{class}` declares a Durable Object with no `storage`")
+        })?;
+        durable_objects.push(DurableObject { class, storage });
+    }
     Ok(Resources {
         binds_to: parsed.services.into_iter().map(|s| s.service).collect(),
         queues,
-        // Wrangler applies a config's migrations in order, so the *last* tag is
-        // the state a successful push leaves behind. v1 emits exactly one block
-        // (`tag = "v1"`), which makes this the same answer by a rule that still
-        // holds if that ever changes.
-        migration: parsed.migrations.into_iter().next_back().map(|m| m.tag),
+        durable_objects,
         needs_kv: !parsed.kv_namespaces.is_empty(),
         declared_secrets: secrets.declared,
         read_secrets: secrets.read,
@@ -329,8 +365,8 @@ pub(crate) fn env_qualify(environment: &str, name: &str) -> String {
 /// `bynk deploy`. So this parses the config only to *read* the values it
 /// needs (via `toml::Table`, not the narrow read-only `WranglerConfig`/
 /// `ServiceBinding`/`QueueConsumer` structs above, which drop fields — e.g.
-/// `ServiceBinding` has no `binding`, `Migration` has no
-/// `new_sqlite_classes` — that must be copied byte-for-byte), builds a
+/// `ServiceBinding` has no `binding` — that must be copied byte-for-byte),
+/// builds a
 /// *separate* `{ env: { <name>: … } }` table, serialises only that
 /// fragment (so TOML string-escaping is the
 /// `toml` crate's job, not a hand-rolled duplicate of
@@ -339,8 +375,15 @@ pub(crate) fn env_qualify(environment: &str, name: &str) -> String {
 ///
 /// Queue names and Service Binding targets are environment-qualified
 /// ([`env_qualify`]); KV gets the resolved id for this environment; Durable
-/// Object bindings, migrations, and cron triggers carry no per-environment
+/// Object bindings, `exports`, and cron triggers carry no per-environment
 /// identity and are copied verbatim.
+///
+/// #1796: unlike the bindings, `exports` *is* inheritable — Wrangler 4.107's
+/// `normalizeAndValidateEnvironment` reads it with `inheritable(…)`, as it
+/// did `migrations` — so copying it is not what makes it apply. It is copied
+/// anyway, so the `[env.<name>]` block states every Durable Object fact its
+/// bindings rely on rather than leaning on an inheritance rule the bindings
+/// beside it don't follow. The two can't disagree: the copy is verbatim.
 pub(crate) fn synthesise_environment_block(
     config_text: &str,
     environment: &str,
@@ -403,7 +446,7 @@ pub(crate) fn synthesise_environment_block(
         env_block.insert("services".to_string(), toml::Value::Array(services));
     }
 
-    for key in ["durable_objects", "migrations", "triggers"] {
+    for key in ["durable_objects", "exports", "triggers"] {
         if let Some(value) = doc.get(key) {
             env_block.insert(key.to_string(), value.clone());
         }
@@ -434,7 +477,7 @@ pub(crate) mod tests {
     }
 
     /// A fluent literal for what one context declares, so a test names only the
-    /// resources it is about: `Resources::default().needs_kv().migrates("v1")`.
+    /// resources it is about: `Resources::default().needs_kv().exports(&["Cart"])`.
     impl Resources {
         pub(crate) fn binds(mut self, targets: &[&str]) -> Self {
             self.binds_to = names(targets);
@@ -444,8 +487,16 @@ pub(crate) mod tests {
             self.queues = names(queues);
             self
         }
-        pub(crate) fn migrates(mut self, tag: &str) -> Self {
-            self.migration = Some(tag.to_string());
+        /// SQLite-backed Durable Object classes — the only backend the
+        /// emitter declares (#1796, ADR 0438).
+        pub(crate) fn exports(mut self, classes: &[&str]) -> Self {
+            self.durable_objects = classes
+                .iter()
+                .map(|class| DurableObject {
+                    class: class.to_string(),
+                    storage: "sqlite".to_string(),
+                })
+                .collect();
             self
         }
         pub(crate) fn needs_kv(mut self) -> Self {
@@ -521,9 +572,9 @@ id = "<KV_NAMESPACE_ID>" # set at deploy time
 name = "ORDER_ENTITY"
 class_name = "OrderEntity"
 
-[[migrations]]
-tag = "v1"
-new_sqlite_classes = ["OrderEntity"]
+[exports.OrderEntity]
+type = "durable-object"
+storage = "sqlite"
 
 [triggers]
 crons = ["*/5 * * * *"]
@@ -591,11 +642,20 @@ max_batch_size = 10
             Some("OrderEntity"),
             "DO bindings carry no per-environment identity — copied verbatim"
         );
-        assert_eq!(env["migrations"][0]["tag"].as_str(), Some("v1"));
+        // #1796: Wrangler would inherit `exports` into the environment anyway,
+        // but the block states it beside the bindings that rely on it.
         assert_eq!(
-            env["migrations"][0]["new_sqlite_classes"][0].as_str(),
-            Some("OrderEntity"),
-            "new_sqlite_classes is exactly the field the narrow Migration struct drops"
+            env["exports"]["OrderEntity"]["type"].as_str(),
+            Some("durable-object"),
+            "exports carry no per-environment identity — copied verbatim"
+        );
+        assert_eq!(
+            env["exports"]["OrderEntity"]["storage"].as_str(),
+            Some("sqlite")
+        );
+        assert!(
+            env.get("migrations").is_none(),
+            "`migrations` and `exports` are mutually exclusive in one environment"
         );
         assert_eq!(
             env["triggers"]["crons"][0].as_str(),
@@ -687,9 +747,9 @@ max_batch_size = 10
     }
 
     #[test]
-    fn a_do_only_context_declares_the_tag_the_push_will_apply() {
+    fn a_do_only_context_declares_the_classes_the_push_will_export() {
         // `bynkc/tests/fixtures/positive/121_workers_with_agent` — an agent, so
-        // a DO binding and the migration that registers its class.
+        // a DO binding and the `exports` entry that registers its class.
         assert_eq!(
             parse_config(
                 "durable-objects",
@@ -702,19 +762,19 @@ compatibility_date = "2026-07-01"
 name = "CART_ENTITY"
 class_name = "CartEntity"
 
-[[migrations]]
-tag = "v1"
-new_sqlite_classes = ["CartEntity"]
+[exports.CartEntity]
+type = "durable-object"
+storage = "sqlite"
 "#,
             ),
-            Resources::default().migrates("v1"),
+            Resources::default().exports(&["CartEntity"]),
         );
     }
 
     #[test]
     fn a_context_declaring_every_v1_resource_is_read_whole() {
         // `bynkc/tests/fixtures/positive/372_kv_agent_queue_workers` — the
-        // combination slice 1 completes: KV (slice 0), an agent's migration and
+        // combination slice 1 completes: KV (slice 0), an agent's export and
         // a queue, in one context. Each kind is read independently, so one
         // present must not mask another.
         assert_eq!(
@@ -733,9 +793,9 @@ id = "<KV_NAMESPACE_ID>" # set at deploy time
 name = "JOB_LEDGER"
 class_name = "JobLedger"
 
-[[migrations]]
-tag = "v1"
-new_sqlite_classes = ["JobLedger"]
+[exports.JobLedger]
+type = "durable-object"
+storage = "sqlite"
 
 [[queues.consumers]]
 queue = "job-intake"
@@ -744,34 +804,78 @@ max_batch_size = 10
             ),
             Resources::default()
                 .needs_kv()
-                .migrates("v1")
+                .exports(&["JobLedger"])
                 .consumes(&["job-intake"]),
         );
     }
 
     #[test]
-    fn the_migration_read_is_the_state_a_push_leaves_behind() {
-        // Wrangler applies a config's migrations in order, so the last tag is
-        // what the account ends at. v1 emits one block; the rule is written for
-        // the file, not for the emitter's current habit.
+    fn only_live_durable_object_exports_are_read() {
+        // #1796: `exports` is Cloudflare's map for more than Durable Objects
+        // (a `type = "worker"` entrypoint), and a tombstone (`deleted`,
+        // `renamed`) names a class the push *retires*. Neither is a class the plan may claim is declared.
+        // The emitter writes only the first kind today; the rule is written
+        // for the file, not for the emitter's current habit. The storage is
+        // read, not assumed, so a hand-edited `legacy-kv` shows as one.
         assert_eq!(
             parse_config(
-                "migration-chain",
+                "exports-kinds",
                 r#"
 name = "cart"
 main = "index.ts"
 
-[[migrations]]
-tag = "v1"
-new_sqlite_classes = ["CartEntity"]
+[exports.Basket]
+type = "durable-object"
+state = "created"
+storage = "legacy-kv"
 
-[[migrations]]
-tag = "v2"
-new_sqlite_classes = ["BasketEntity"]
+[exports.Cart]
+type = "durable-object"
+storage = "sqlite"
+
+[exports.Gone]
+type = "durable-object"
+state = "deleted"
+
+[exports.Old]
+type = "durable-object"
+state = "renamed"
+renamed_to = "Cart"
+
+[exports.Entry]
+type = "worker"
 "#,
             )
-            .migration,
-            Some("v2".to_string()),
+            .durable_objects,
+            vec![
+                DurableObject {
+                    class: "Basket".to_string(),
+                    storage: "legacy-kv".to_string(),
+                },
+                DurableObject {
+                    class: "Cart".to_string(),
+                    storage: "sqlite".to_string(),
+                },
+            ],
+        );
+    }
+
+    #[test]
+    fn a_live_durable_object_export_without_storage_is_refused() {
+        // Review of #1803: dropping it would understate the plan. The config
+        // is the one the push sends, so a malformed entry stops the deploy
+        // here, naming the class, before wrangler is ever asked.
+        let path = temp_config("exports-no-storage");
+        std::fs::write(
+            &path,
+            "name = \"cart\"\n\n[exports.Cart]\ntype = \"durable-object\"\n",
+        )
+        .unwrap();
+        let err = read_resources(&path).expect_err("a live class with no backend is refused");
+        let _ = std::fs::remove_file(&path);
+        assert!(
+            err.contains("`exports.Cart`") && err.contains("`storage`"),
+            "{err}"
         );
     }
 

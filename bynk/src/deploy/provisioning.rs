@@ -60,9 +60,10 @@ fn wrangler_outcome(
 ///
 /// The phase order is the contract (ADR 0194 D3): everything the upload needs
 /// to already exist — the KV namespace, the queues a `[[queues.consumers]]`
-/// binding would otherwise fail against — is provisioned first; the DO
-/// migration is not provisioned at all, because `wrangler deploy` applies it
-/// from the same config it is reading.
+/// binding would otherwise fail against — is provisioned first; Durable
+/// Object namespaces are not provisioned at all, because Cloudflare creates
+/// them from the `exports` declaration in the same config `wrangler deploy`
+/// is pushing (#1796).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn deploy_one(
     provenance: &Provenance,

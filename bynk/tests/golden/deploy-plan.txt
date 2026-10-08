@@ -17,13 +17,13 @@ order commerce-payment → commerce-orders
 # slice 1: an agent and a queue, first deploy
 kv create jobs
 queue create job-intake
-migration v1 (advisory — wrangler deploy applies it)
+durable object JobLedger (sqlite; advisory — Cloudflare reconciles it)
 deploy jobs
 
 # slice 1: the same context, already provisioned
 kv reuse jobs
 queue reuse job-intake
-migration v1 (advisory — wrangler deploy applies it)
+durable object JobLedger (sqlite; advisory — Cloudflare reconciles it)
 redeploy jobs
 
 # slice 3: a declared auth secret, and one the user supplied
@@ -70,7 +70,7 @@ deploy api
         "namespace": "commerce-payment"
       },
       "queues": [],
-      "migration": null,
+      "durable_objects": [],
       "secrets": [],
       "secrets_complete": true,
       "action": "deploy",
@@ -80,7 +80,7 @@ deploy api
       "worker": "commerce-orders",
       "kv": null,
       "queues": [],
-      "migration": null,
+      "durable_objects": [],
       "secrets": [],
       "secrets_complete": true,
       "action": "deploy",
@@ -107,7 +107,7 @@ deploy api
       "worker": "api",
       "kv": null,
       "queues": [],
-      "migration": null,
+      "durable_objects": [],
       "secrets": [
         {
           "name": "WELL_KNOWN",
@@ -138,7 +138,7 @@ deploy api
       "worker": "api",
       "kv": null,
       "queues": [],
-      "migration": null,
+      "durable_objects": [],
       "secrets": [
         {
           "name": "AUTH_JWT_SECRET",
@@ -168,7 +168,7 @@ deploy api
   ]
 }
 
-# --format json, with a queue and a migration
+# --format json, with a queue and a durable object
 {
   "environment": "default",
   "orphans": {
@@ -189,10 +189,13 @@ deploy api
           "queue": "job-intake"
         }
       ],
-      "migration": {
-        "tag": "v1",
-        "applied_by": "wrangler deploy"
-      },
+      "durable_objects": [
+        {
+          "class": "JobLedger",
+          "storage": "sqlite",
+          "reconciled_by": "Cloudflare"
+        }
+      ],
       "secrets": [],
       "secrets_complete": true,
       "action": "deploy",
