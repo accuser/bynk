@@ -25,7 +25,8 @@
 //! `bynk dev` itself nor its ancestors are ever selected.
 //!
 //! Unix only. Windows has neither process groups nor a working directory to
-//! read, and keeps `Child::kill` on the direct children.
+//! read. There, `bynk dev` puts each wrangler in a job object instead, which
+//! holds the whole tree, orphans included, and stops it as one (#1762).
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -83,6 +84,7 @@ pub fn sweep(root: &Path, grace: Duration) {
             std::thread::sleep(Duration::from_millis(100));
         }
     }
+    // Windows: each wrangler's job object has already stopped its tree (#1762).
     #[cfg(not(unix))]
     let _ = (root, grace);
 }
