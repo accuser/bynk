@@ -1,11 +1,6 @@
----
-level: minor
-changelog: "A `from Events` service has exactly one `on event` handler, which returns `Effect[()]` (#1781). A second `on event` is now `bynk.event.duplicate_handler`; it used to compile to an object with a duplicate `event` key, which `tsc --strict` rejected and which ran only the last handler in the bundle. A return other than `Effect[()]` is now `bynk.event.return_not_effect_unit`; the value was discarded, since emission is fire-and-forget. To react to one event two ways, declare two subscriber services"
----
+# 0441 — A `from Events` service has exactly one `on event` handler, returning `Effect[()]`
 
-## ADR: events-subscriber-has-one-unit-handler
-title: A `from Events` service has exactly one `on event` handler, returning `Effect[()]`
-summary: bynk.event.duplicate_handler and bynk.event.return_not_effect_unit pin a subscriber's shape
+- **Status:** Accepted (v0.311)
 
 **Context.** The events guide and the grammar reference both described a `from Events(E)` service as having one handler, `on event(e: E) -> Effect[()]`, but the checker enforced neither half (#1781). A second `on event` passed every check and was emitted as a second `event` member of one object literal: `tsc --strict` rejects that (`TS2300: Duplicate identifier 'event'`), and on the bundle path, which does not type-check, the later member silently replaced the earlier, so the first handler never ran. A return of `Effect[Int]` compiled, and its value was discarded: `Events.emit` is fire-and-forget, and the fan-out ignores what a subscriber returns.
 
