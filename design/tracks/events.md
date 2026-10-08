@@ -1,6 +1,8 @@
 # The Events protocol — in-system pub-sub for cross-context decoupling
 
-- **Status:** Settling (draft). This is a settling-draft doc per
+- **Status:** Slicing — slices 0–4 have shipped (§7); slice 4b, range
+  patterns in `via schema(...)`, is open as [#990](https://github.com/accuser/bynk/issues/990). This began as a
+  settling-draft doc per
   [ADR 0167](../decisions/0167-feature-tracks-run-github-native.md): the
   **spine issue** is
   [#936](https://github.com/accuser/bynk/issues/936); this doc lands via a
@@ -439,7 +441,7 @@ MVP-first. Each slice is an ordinary increment proposal, a sub-issue of the spin
   `queue`/`websocket` is a syntax error, not a checker diagnostic.
   **Narrowed at proposal time:** range patterns (`via schema(2..)`,
   `..v`, `v1..v2`) and the generalised `via <field>(pattern)` grammar are
-  split to an unfiled slice 4b — no range-pattern or range-literal syntax
+  split to slice 4b ([#990](https://github.com/accuser/bynk/issues/990)) — no range-pattern or range-literal syntax
   exists anywhere in bynk (the `..` token exists only as a record-pattern
   rest marker), so ranges are a full new grammar/AST/parser/checker/
   emitter surface, disproportionate to bundle with the literal case. No
@@ -641,7 +643,7 @@ receives *exactly* the emissions its pattern admits.
 - [x] Slice 4 — `via schema(N)` version-aware dispatch, literal only
   (#985). Nested inside the `Events` protocol's grammar arm; no cross-
   subscriber ambiguity check (same policy as slice 1's payload pattern);
-  range patterns split to unfiled slice 4b (see §4).
+  range patterns split to slice 4b ([#990](https://github.com/accuser/bynk/issues/990), see §4).
 - [ ] (Not a slice of this track) Replay / backfill + actors Q8 — future track (§3.6)
 
 ## 8. Done when
@@ -728,8 +730,8 @@ receives *exactly* the emissions its pattern admits.
   each version's single emission reaching only its matching `via`
   clause — with the matching subscriber for version 1 declaring no `env`
   at all, the only way to prove the synthetic-parameter plumbing actually
-  threads the value through. Range patterns (`via schema(2..)`) are an
-  unfiled future slice 4b.
+  threads the value through. Range patterns (`via schema(2..)`) are
+  slice 4b ([#990](https://github.com/accuser/bynk/issues/990)).
 - [ ] The doc is explicit that **replay/backfill and the actors Q8**
   ([#260](https://github.com/accuser/bynk/issues/260)) are **not** delivered by
   this track — named as a future track with its durable-`Idempotency` dependency,

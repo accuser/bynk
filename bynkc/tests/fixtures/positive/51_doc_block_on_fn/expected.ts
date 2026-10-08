@@ -9,4 +9,3 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError } f
 export function add(a: number, b: number): number {
   return a + b;
 }
-

@@ -16,4 +16,3 @@ export const Counter = {
 export function step(c: Counter): Counter {
   return Counter.increment(c);
 }
-

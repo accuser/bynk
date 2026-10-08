@@ -1,0 +1,6 @@
+[project]
+name = "suite-over-generic-types"
+version = "0.1.0"
+
+[paths]
+include = ["src", "tests"]

@@ -13,4 +13,3 @@ export const OrderError = {
   TooManyItems: { tag: "TooManyItems" } as OrderError,
   PaymentDeclined: { tag: "PaymentDeclined" } as OrderError,
 };
-

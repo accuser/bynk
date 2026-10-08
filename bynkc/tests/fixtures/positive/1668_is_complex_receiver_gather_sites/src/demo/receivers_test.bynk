@@ -1,0 +1,41 @@
+suite demo.receivers {
+  case "a negated || binds both tests in its else-branch" {
+    expect negatedOr(Some(1), Some(2)) == 3
+    expect negatedOr(None, Some(2)) == 0
+    expect negatedOr(Some(1), None) == 0
+    expect negatedOrValue(Some(1), Some(2)) == 3
+    expect negatedOrValue(Some(1), None) == 0
+  }
+
+  case "a negated || of three binds all three" {
+    expect negatedOrThree(Some(1), Some(2), Some(3)) == 6
+    expect negatedOrThree(Some(1), Some(2), None) == 0
+  }
+
+  case "a right-nested || binds all three" {
+    expect negatedOrRightNested(Some(1), Some(2), Some(3)) == 6
+    expect negatedOrRightNested(Some(1), None, Some(3)) == 0
+  }
+
+  case "a plain && and implies bind the right operand" {
+    expect plainAnd(true, Some(5)) == 5
+    expect plainAnd(false, Some(5)) == 0
+    expect plainAnd(true, None) == 0
+    expect plainImplies(true, Some(5)) == 5
+    expect plainImplies(false, Some(5)) == 0
+    expect plainImplies(true, None) == 0
+  }
+
+  case "a lambda's temp stays in the lambda" {
+    expect inLambda(false, Some(2), [1, 2, 3])
+    expect !inLambda(false, Some(9), [1, 2, 3])
+    expect inLambda(true, None, [])
+  }
+
+  case "the other gather sites still read their temps" {
+    expect stmtIf(Some(4)) == 4
+    expect negatedElse(Some(4)) == 4
+    expect andChain(Held("g", 200))
+    expect orPattern(Waitlisted("w")) == "w"
+  }
+}

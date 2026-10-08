@@ -48,4 +48,3 @@ export const Timestamp = {
     return (result < 0 ? None : Some(Timestamp.unsafe(result)));
   },
 };
-

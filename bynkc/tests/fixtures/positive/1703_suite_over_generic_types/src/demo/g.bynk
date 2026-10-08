@@ -1,0 +1,24 @@
+---
+#1703: a suite targeting a unit that declares a generic type, directly
+(`Box`, `Tagged`) and through `uses` (`Pair`), type-checks and runs. The test
+module aliases each type into scope with its parameters.
+---
+commons demo.g
+
+uses demo.shapes
+
+type Box[A] = { value: A }
+
+type Tagged[T, U] = { tag: T, body: U }
+
+type Plain = { n: Int }
+
+fn one() -> Int { 1 }
+
+fn boxed(n: Int) -> Box[Int] { Box { value: n } }
+
+fn tagged(n: Int) -> Tagged[String, Int] { Tagged { tag: "t", body: n } }
+
+fn swapped(p: Pair[Int, String]) -> Pair[String, Int] {
+  Pair { first: p.second, second: p.first }
+}

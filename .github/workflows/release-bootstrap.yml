@@ -86,9 +86,25 @@ jobs:
           test "$ts" = "$ver" || { echo "::error::tree-sitter-bynk version $ts does not match workspace version $ver"; fail=1; }
           echo "::notice::token bootstrap from $GITHUB_REF_NAME — manifest version $ver"
           exit "$fail"
+      # #1676: the same harness and profile as ci.yml's and release.yml's test
+      # legs (.config/nextest.toml's `ci` profile), pinned the same way.
+      - uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2
+        if: ${{ inputs.run_tests }}
+        with:
+          tool: nextest@0.9
+      # Pre-warm the npx cache for wrangler, as ci.yml and release.yml do (see
+      # the long note there). Under nextest the workerd smokes run as separate
+      # processes, so they would race on a cold `~/.npm/_npx` install. Here the
+      # workerd gate is off, so that race would make each smoke skip after its
+      # 180s boot window rather than fail. Not fatal for the same reason:
+      # wrangler is optional in this job.
+      - name: Pre-warm the npx cache for wrangler
+        if: ${{ inputs.run_tests }}
+        run: npx -y wrangler@4 --version
+        continue-on-error: true
       - name: Run tests
         if: ${{ inputs.run_tests }}
-        run: cargo test --workspace --locked
+        run: cargo nextest run --workspace --locked --profile ci
         env:
           BYNK_REQUIRE_TSC: "1"
 

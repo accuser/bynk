@@ -146,4 +146,3 @@ export function __deserialise_Map_String_Int(json: __JsonValue, path: string = "
   }
   return Ok(out);
 }
-

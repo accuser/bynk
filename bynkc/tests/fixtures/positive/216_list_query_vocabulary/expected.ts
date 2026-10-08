@@ -39,4 +39,3 @@ export function demo(): number {
   const xs = [1, 2, 3, 4];
   return howMany(bigDoubled(xs)) + headOrZero(window(fanOut(xs)));
 }
-

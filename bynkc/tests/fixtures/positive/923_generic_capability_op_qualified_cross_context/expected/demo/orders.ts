@@ -19,15 +19,14 @@ export const reserve = {
   },
 };
 
-export interface DemoOrdersDeps {
+export interface __DemoOrdersDeps {
   readonly Idempotency: idempotency.Idempotency;
 }
 
-export function makeSurface(deps: DemoOrdersDeps) {
+export function __makeSurface(deps: __DemoOrdersDeps) {
   return {
     async reserve(): globalThis.Promise<Option<ReserveOutcome>> {
       return reserve.call(deps);
     },
   };
 }
-

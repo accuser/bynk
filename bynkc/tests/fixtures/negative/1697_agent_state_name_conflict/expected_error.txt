@@ -1,0 +1,2 @@
+bynk.agent.state_name_conflict type `BagState` has the name of agent `Bag`'s state record
+# exact

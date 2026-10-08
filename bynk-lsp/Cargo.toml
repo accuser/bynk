@@ -72,6 +72,10 @@ serde_json.workspace = true
 toml.workspace = true
 
 [dev-dependencies]
+# #1667: initialise an `LspService` and read the notifications on its
+# `ClientSocket` (a panicked analysis round must reach the client).
+tower.workspace = true
+futures.workspace = true
 # Content-ownership track (#1086) slice 3: the diagnose_project(&root,
 # &HashMap::new()) replacement for tests/*.rs's fixtures. Dev-only — this
 # crate's own production-code dependency-exclusion comment above is

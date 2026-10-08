@@ -1,0 +1,54 @@
+---
+#1736: a context whose services take and return generic types it exports, a
+generic record and a generic sum, alone, nested in a `List`, and
+instantiated at another exported type. A consumer generates their boundary
+codecs locally, so it must name each one through this context's namespace.
+---
+context demo.vault
+
+exports transparent { Envelope, Outcome, Plain }
+
+type Envelope[T] = { item: T, note: String }
+
+type Outcome[T] =
+  | Done(value: T)
+  | Pending(reason: String)
+
+type Plain = { n: Int }
+
+service open {
+  on call(n: Int) -> Effect[Envelope[Int]] {
+    Envelope { item: n, note: "sealed" }
+  }
+}
+
+service wrapPlain {
+  on call(n: Int) -> Effect[Envelope[Plain]] {
+    Envelope { item: Plain { n: n }, note: "plain" }
+  }
+}
+
+service many {
+  on call(n: Int) -> Effect[List[Envelope[Int]]] {
+    [Envelope { item: n, note: "a" }, Envelope { item: n + 1, note: "b" }]
+  }
+}
+
+service settle {
+  on call(n: Int) -> Effect[Outcome[Int]] {
+    let o: Outcome[Int] = if n > 0 { Done(n) } else { Pending("not yet") }
+    o
+  }
+}
+
+service readBack {
+  on call(e: Envelope[Int]) -> Effect[Int] {
+    e.item
+  }
+}
+
+service read {
+  on call(e: Envelope[String]) -> Effect[Int] {
+    e.item.length()
+  }
+}

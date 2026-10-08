@@ -30,4 +30,3 @@ export function ofInt(n: number): number {
 export function everyUnit(): number {
   return 100 + 1000 + 60000 + 3600000 + 86400000;
 }
-

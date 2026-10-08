@@ -3,10 +3,10 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
 
-import { LocaleTag, Message, MessageArg } from "../bynk/locale/types.js";
-import { render as __bynkLocaleRender, renderArg } from "../bynk/locale.js";
+import { render as __bynkLocaleRender, renderArg as __bynkRenderArg } from "../bynk/locale.js";
+import type { LocaleTag as __bynkLocaleTag, Message as __bynkMessage, MessageArg as __bynkMessageArg } from "../bynk/locale/types.js";
 
-const messagesByLocale: globalThis.Record<string, globalThis.Record<string, (params: ReadonlyMap<string, MessageArg>) => string>> = {
+const __messagesByLocale: globalThis.Record<string, globalThis.Record<string, (params: ReadonlyMap<string, __bynkMessageArg>) => string>> = {
   /**
    * message-bundles track, slice 2 (#874): a real second locale — `render`
    * now actually reads `tag` to select `fr`'s own translations, not just
@@ -15,25 +15,24 @@ const messagesByLocale: globalThis.Record<string, globalThis.Record<string, (par
    * placeholder agreement compares sets, not sequences.
    */
   "en": {
-    "greeting": (params: ReadonlyMap<string, MessageArg>): string => "Hello, " + (params.get("name") !== undefined ? renderArg(params.get("name") as MessageArg) : "{name}") + ", you are " + (params.get("age") !== undefined ? renderArg(params.get("age") as MessageArg) : "{age}"),
-    "farewell": (params: ReadonlyMap<string, MessageArg>): string => "Bye",
+    "greeting": (params: ReadonlyMap<string, __bynkMessageArg>): string => "Hello, " + (params.get("name") !== undefined ? __bynkRenderArg(params.get("name") as __bynkMessageArg) : "{name}") + ", you are " + (params.get("age") !== undefined ? __bynkRenderArg(params.get("age") as __bynkMessageArg) : "{age}"),
+    "farewell": (params: ReadonlyMap<string, __bynkMessageArg>): string => "Bye",
   },
   "fr": {
-    "greeting": (params: ReadonlyMap<string, MessageArg>): string => (params.get("age") !== undefined ? renderArg(params.get("age") as MessageArg) : "{age}") + " ans, bonjour " + (params.get("name") !== undefined ? renderArg(params.get("name") as MessageArg) : "{name}"),
-    "farewell": (params: ReadonlyMap<string, MessageArg>): string => "Au revoir",
+    "greeting": (params: ReadonlyMap<string, __bynkMessageArg>): string => (params.get("age") !== undefined ? __bynkRenderArg(params.get("age") as __bynkMessageArg) : "{age}") + " ans, bonjour " + (params.get("name") !== undefined ? __bynkRenderArg(params.get("name") as __bynkMessageArg) : "{name}"),
+    "farewell": (params: ReadonlyMap<string, __bynkMessageArg>): string => "Au revoir",
   },
 };
 
-export const messagesReferenceLocale: LocaleTag = ("en" as string) as LocaleTag;
-export const messagesLocales: readonly LocaleTag[] = [("en" as string) as LocaleTag, ("fr" as string) as LocaleTag];
+export const __messagesReferenceLocale: __bynkLocaleTag = ("en" as string) as __bynkLocaleTag;
+export const __messagesLocales: readonly __bynkLocaleTag[] = [("en" as string) as __bynkLocaleTag, ("fr" as string) as __bynkLocaleTag];
 
-export function render(tag: LocaleTag, msg: Message): string {
-  const __localeTable = messagesByLocale[tag];
-  const __referenceTable = messagesByLocale[messagesReferenceLocale];
+export function render(tag: __bynkLocaleTag, msg: __bynkMessage): string {
+  const __localeTable = __messagesByLocale[tag];
+  const __referenceTable = __messagesByLocale[__messagesReferenceLocale];
   const __entry = (__localeTable !== undefined ? __localeTable[msg.code] : undefined) ?? __referenceTable[msg.code];
   if (__entry !== undefined) {
     return __entry(msg.params);
   }
   return __bynkLocaleRender(tag, msg);
 }
-

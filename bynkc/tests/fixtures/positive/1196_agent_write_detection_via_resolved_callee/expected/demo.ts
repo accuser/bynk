@@ -62,4 +62,3 @@ export function __makeWidget(key: string, env?: { WIDGET?: __DurableObjectNamesp
 export function __resetAgents(): void {
   __WidgetRegistry.reset();
 }
-

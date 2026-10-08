@@ -15,4 +15,3 @@ export function handle(r: Result<number, string>): number {
   }
   throw new globalThis.Error("non-exhaustive match");
 }
-

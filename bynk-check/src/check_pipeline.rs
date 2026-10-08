@@ -88,12 +88,21 @@ pub struct UnitCheckCtx {
     /// which `imported_from_kind` tags `UnitKind::Context` in
     /// `merge_consumed_exports` and which the emitter never rebrands).
     pub uses_commons_type_names: HashSet<String>,
+    /// #1710: the declarations recovery skipped in the files this unit can see
+    /// (its own, and the units it `uses` and `consumes`). A reference to one is
+    /// a known name, not an unknown one (#1663's Decision B), so its
+    /// unknown-name echo is not reported. One level of `uses`, matching
+    /// `compose_unit_symbols`. A suite sees its target's skipped names because
+    /// it carries its target's unit name; it is in no unit's `uses`/`consumes`.
+    pub visible_broken_names: Vec<String>,
 }
 
 /// Build the per-unit prelude [`check_file_core`] shares across every file
 /// in the unit — see [`UnitCheckCtx`]'s own doc comment.
 pub fn prepare_unit_check_ctx(
+    name: &str,
     kind: UnitKind,
+    broken: &crate::project_model::BrokenDeclNames,
     unit_info: &BTreeMap<String, UnitInfo>,
     combined_types: &HashMap<String, Arc<TypeDecl>>,
     imported_from_kind: &HashMap<String, UnitKind>,
@@ -126,9 +135,21 @@ pub fn prepare_unit_check_ctx(
         })
         .cloned()
         .collect();
+    let visible_broken_names: Vec<String> = std::iter::once(name)
+        .chain(
+            unit_info
+                .get(name)
+                .into_iter()
+                .flat_map(|i| i.uses.iter().chain(i.consumes.iter()).map(String::as_str)),
+        )
+        .filter_map(|u| broken.get(u))
+        .flatten()
+        .cloned()
+        .collect();
     UnitCheckCtx {
         cross_context_views,
         uses_commons_type_names,
+        visible_broken_names,
     }
 }
 
@@ -344,11 +365,26 @@ pub fn check_file_core(
     let own_file = resolved.commons.span.file;
     let rc = checker::check_record_in(resolved, tys, refs, hints, locals, requirements);
     if let Some(resolve_errors) = &resolve_errors {
-        errors.extend_for(Some(&pf.identity_path()), resolve_errors.clone());
+        // #1710: a reference to a declaration recovery skipped (here or in a
+        // file this unit can see) is a known name; its echo isn't reported. It
+        // still counts as a resolve error below (Decision A).
+        let (shown, _hidden) =
+            resolver::split_broken_decl_echoes(resolve_errors.clone(), &ctx.visible_broken_names);
+        errors.extend_for(Some(&pf.identity_path()), shown);
     }
-    let unechoed = |errs: Vec<bynk_syntax::CompileError>| match &resolve_errors {
-        Some(r) => resolver::without_resolve_echoes(errs, r, &item_spans),
-        None => errs,
+    // Every diagnostic past the resolver goes out through this: the checker's
+    // errors and warnings, and the declaration stages' (`ours`, below).
+    // Decision A drops the checker's follow-ons inside a declaration the
+    // resolver rejected; #1710 then drops echoes of a declaration recovery
+    // skipped (a method, a capability, an actor, a consumed context's service)
+    // that this unit can see. The checker reports those under its own codes,
+    // in any unit kind, so the split runs here, not only in the stages.
+    let unechoed = |errs: Vec<bynk_syntax::CompileError>| {
+        let errs = match &resolve_errors {
+            Some(r) => resolver::without_resolve_echoes(errs, r, &item_spans),
+            None => errs,
+        };
+        resolver::split_broken_decl_echoes(errs, &ctx.visible_broken_names).0
     };
     // #1663: the declaration stages walk the whole unit's handlers, so a file's
     // pass also meets another file's faults — and attributes them to this
@@ -372,7 +408,7 @@ pub fn check_file_core(
             // non-failing warnings — push them into the (severity-aware)
             // sink, where they are classified as warnings and never gate.
             if !t.warnings.is_empty() {
-                errors.extend_for(Some(&pf.identity_path()), t.warnings.clone());
+                errors.extend_for(Some(&pf.identity_path()), unechoed(t.warnings.clone()));
             }
             t
         }

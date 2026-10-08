@@ -2,7 +2,7 @@
 // test target: demo.gen
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
-import * as demo_gen from "./../demo/gen.js";
+import * as __ns_demo_gen from "./../demo/gen.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -151,14 +151,14 @@ async function __bynkRunProperty(spec: { seed: number, cases: number, gens: any[
   return { pass: true };
 }
 
-function makeTestDeps() {
+function __makeTestDeps() {
   return {  };
 }
 
 async function __prop_test_for_all_body_matches_a_locally_constructed_sum() {
     const deps = {};
-    const { Outcome } = demo_gen;
-    type Outcome = demo_gen.Outcome;
+    const { Outcome } = __ns_demo_gen;
+    type Outcome = __ns_demo_gen.Outcome;
     const __gens = [
       { name: "n", boundaries: [0n, 1000n, -1000n], gen: (rng: any) => rng.int(-1000n, 1000n), shrink: (v: any) => __bynkShrinkInt(v, 0n), show: (v: any) => __bynkShow(v) },
     ];

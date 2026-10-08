@@ -1,0 +1,15 @@
+---
+#1737/#1738: the in-process tiers for `demo.desk`. A case here stays inside
+the context (`local`); crossing into `demo.vault` is the `system` suite's job.
+---
+suite demo.desk
+
+case "a unit case stays in the context" {
+  let n <- local.call(5)
+  expect n == 6
+}
+
+case "an integration case stays in the context" as integration {
+  let n <- local.call(1)
+  expect n == 2
+}

@@ -30,19 +30,19 @@ export interface Logger {
   info(message: string): globalThis.Promise<void>;
 }
 
-export const LoggerToken: symbol = globalThis.Symbol("Logger");
+export const __LoggerToken: symbol = globalThis.Symbol("Logger");
 
 export interface Http {
   post(path: string): globalThis.Promise<Result<AuthId, PaymentError>>;
 }
 
-export const HttpToken: symbol = globalThis.Symbol("Http");
+export const __HttpToken: symbol = globalThis.Symbol("Http");
 
 export interface Payments {
   authorise(amount: number): globalThis.Promise<Result<AuthId, PaymentError>>;
 }
 
-export const PaymentsToken: symbol = globalThis.Symbol("Payments");
+export const __PaymentsToken: symbol = globalThis.Symbol("Payments");
 
 export class ConsoleLogger implements Logger {
   async info(message: string): globalThis.Promise<void> {
@@ -50,7 +50,7 @@ export class ConsoleLogger implements Logger {
   }
 }
 
-export const ConsoleLoggerProvider = { token: LoggerToken, factory: () => new ConsoleLogger() };
+export const __ConsoleLoggerProvider = { token: __LoggerToken, factory: () => new ConsoleLogger() };
 
 export class FetchHttp implements Http {
   async post(path: string): globalThis.Promise<Result<AuthId, PaymentError>> {
@@ -58,7 +58,7 @@ export class FetchHttp implements Http {
   }
 }
 
-export const FetchHttpProvider = { token: HttpToken, factory: () => new FetchHttp() };
+export const __FetchHttpProvider = { token: __HttpToken, factory: () => new FetchHttp() };
 
 export class StripePayments implements Payments {
   private deps: { Http: Http; Logger: Logger };
@@ -70,7 +70,7 @@ export class StripePayments implements Payments {
   }
 }
 
-export const StripePaymentsProvider = { token: PaymentsToken, factory: (deps: { Http: Http; Logger: Logger }) => new StripePayments(deps) };
+export const __StripePaymentsProvider = { token: __PaymentsToken, factory: (deps: { Http: Http; Logger: Logger }) => new StripePayments(deps) };
 
 export const authorise = {
   async call(amount: number, deps: { Payments: Payments }): globalThis.Promise<Result<AuthId, PaymentError>> {
@@ -145,4 +145,3 @@ export function __deserialise_Result_AuthId_PaymentError(json: __JsonValue, path
   }
   return Err({ kind: "StructuralMismatch", path, expected: "Ok | Err", actual: String(obj["kind"]) });
 }
-

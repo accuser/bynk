@@ -27,7 +27,7 @@ export interface Logger {
   log(msg: string): globalThis.Promise<void>;
 }
 
-export const LoggerToken: symbol = globalThis.Symbol("Logger");
+export const __LoggerToken: symbol = globalThis.Symbol("Logger");
 
 export class ConsoleLogger implements Logger {
   async log(msg: string): globalThis.Promise<void> {
@@ -35,7 +35,7 @@ export class ConsoleLogger implements Logger {
   }
 }
 
-export const ConsoleLoggerProvider = { token: LoggerToken, factory: () => new ConsoleLogger() };
+export const __ConsoleLoggerProvider = { token: __LoggerToken, factory: () => new ConsoleLogger() };
 
 export const authorise = {
   async call(amount: number, deps: { Logger: Logger }): globalThis.Promise<Result<AuthId, PaymentError>> {
@@ -44,15 +44,14 @@ export const authorise = {
   },
 };
 
-export interface CommercePaymentDeps {
+export interface __CommercePaymentDeps {
   readonly Logger: Logger;
 }
 
-export function makeSurface(deps: CommercePaymentDeps) {
+export function __makeSurface(deps: __CommercePaymentDeps) {
   return {
     async authorise(amount: number): globalThis.Promise<Result<AuthId, PaymentError>> {
       return authorise.call(amount, deps);
     },
   };
 }
-

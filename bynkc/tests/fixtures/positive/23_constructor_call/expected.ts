@@ -20,4 +20,3 @@ export const Reps = {
 export function make(n: number): Result<Reps, ValidationError> {
   return Reps.of(n);
 }
-

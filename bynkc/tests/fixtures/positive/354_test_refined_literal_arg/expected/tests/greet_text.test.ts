@@ -2,7 +2,7 @@
 // test target: greet.text
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
-import * as greet_text from "./../greet/text.js";
+import * as __ns_greet_text from "./../greet/text.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -25,7 +25,7 @@ function __bynkShow(v: unknown): string {
   try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
-function makeTestDeps() {
+function __makeTestDeps() {
   return {  };
 }
 
@@ -33,8 +33,8 @@ function makeTestDeps() {
 async function test_greets_a_bare_literal() {
   try {
     const deps = {};
-    const { Subject, greeting } = greet_text;
-    type Subject = greet_text.Subject;
+    const { Subject, greeting } = __ns_greet_text;
+    type Subject = __ns_greet_text.Subject;
     if (!(greeting(("World" as any)) === "Hello, World!")) { throw __bynkExpectFailure("tests/text.test.bynk:8:12", 477, 513, "expect greeting(\"World\") == \"Hello, World!\"\n  expected: greeting(\"World\") == \"Hello, World!\"\n  actual:   " + __bynkShow((greeting(("World" as any)))) + " == " + __bynkShow(("Hello, World!"))); }
     return { pass: true };
   } catch (e) {

@@ -24,11 +24,11 @@ export const greeting = {
   },
 };
 
-export interface AppGreetDeps {
+export interface __AppGreetDeps {
   readonly Locale: bynk.Locale;
 }
 
-export function makeSurface(deps: AppGreetDeps) {
+export function __makeSurface(deps: __AppGreetDeps) {
   return {
     async currentTag(): globalThis.Promise<string> {
       return currentTag.call(deps);
@@ -38,4 +38,3 @@ export function makeSurface(deps: AppGreetDeps) {
     },
   };
 }
-

@@ -77,6 +77,22 @@ export function targetTriple(
   }
 }
 
+/** The version a resolved server is judged against (#1673). The pin
+ *  (`bynkServerVersion`) names the last *shipped* release, which is what a
+ *  download fetches, so a downloaded or cached server is held to it. A server
+ *  the user supplies (`PATH`, or the `bynk.executablePath` setting) is held to
+ *  this extension build's own version instead. That is the compiler the build
+ *  came from, so a contributor running a `bynkc-lsp` built from the same tree
+ *  matches by construction, though it is newer than the pin. */
+export function expectedServerVersion(
+  source: ResolvedServer["source"],
+  pin: string,
+  extensionVersion: string,
+): string {
+  const v = source === "downloaded" || source === "cached" ? pin : extensionVersion;
+  return v.replace(/^v/, "");
+}
+
 /** The release asset basename for the raw server binary on `target`. */
 export function serverAssetName(target: string): string {
   const exe = target.includes("windows") ? ".exe" : "";

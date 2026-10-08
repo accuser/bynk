@@ -94,22 +94,25 @@ fn check_file(path: &Path, opts: &FormatOptions) -> Result<(), String> {
     Ok(())
 }
 
+/// A fixture's `.bynk` files, in either layout: a lone `input.bynk`, or a
+/// `src/` tree.
+fn fixture_files(dir: &Path) -> Vec<PathBuf> {
+    let input = dir.join("input.bynk");
+    if input.exists() {
+        vec![input]
+    } else {
+        collect_bynk_files(&dir.join("src"))
+    }
+}
+
 #[test]
 fn round_trip_positive_corpus() {
     let opts = FormatOptions::default();
     let mut failures = Vec::new();
     for dir in fixture_dirs() {
-        let input = dir.join("input.bynk");
-        let src_dir = dir.join("src");
-        if input.exists() {
-            if let Err(e) = check_file(&input, &opts) {
+        for f in fixture_files(&dir) {
+            if let Err(e) = check_file(&f, &opts) {
                 failures.push(e);
-            }
-        } else if src_dir.is_dir() {
-            for f in collect_bynk_files(&src_dir) {
-                if let Err(e) = check_file(&f, &opts) {
-                    failures.push(e);
-                }
             }
         }
     }

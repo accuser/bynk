@@ -2,7 +2,7 @@
 // test target: thing
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
-import * as thing from "./../thing.js";
+import * as __ns_thing from "./../thing.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -25,7 +25,7 @@ function __bynkShow(v: unknown): string {
   try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
-function makeTestDeps() {
+function __makeTestDeps() {
   return {  };
 }
 
@@ -33,8 +33,8 @@ function makeTestDeps() {
 async function test_widget_rejects_negative() {
   try {
     const deps = {};
-    const { Widget } = thing;
-    type Widget = thing.Widget;
+    const { Widget } = __ns_thing;
+    type Widget = __ns_thing.Widget;
     const w = Widget.fromInt(-1);
     if (!(w.tag === "Err")) { throw __bynkExpectFailure("tests/thing.test.bynk:4:12", 91, 102, "expect w is Err(_)"); }
     return { pass: true };
@@ -50,8 +50,8 @@ async function test_widget_rejects_negative() {
 async function test_widget_accepts_non_negative() {
   try {
     const deps = {};
-    const { Widget } = thing;
-    type Widget = thing.Widget;
+    const { Widget } = __ns_thing;
+    type Widget = __ns_thing.Widget;
     const w = Widget.fromInt(7);
     if (!(w.tag === "Ok")) { throw __bynkExpectFailure("tests/thing.test.bynk:9:12", 188, 198, "expect w is Ok(_)"); }
     return { pass: true };

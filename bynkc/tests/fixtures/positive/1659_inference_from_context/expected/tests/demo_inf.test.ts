@@ -2,7 +2,7 @@
 // test target: demo.inf
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, __bynkEq } from "../runtime.js";
-import * as demo_inf from "./../demo/inf.js";
+import * as __ns_demo_inf from "./../demo/inf.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -25,7 +25,7 @@ function __bynkShow(v: unknown): string {
   try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
-function makeTestDeps() {
+function __makeTestDeps() {
   return {  };
 }
 
@@ -33,8 +33,8 @@ function makeTestDeps() {
 async function test_o____None_and_None____o() {
   try {
     const deps = {};
-    const { Qty, emptyVsList, isNone, isNoneFlipped, isSeven, isZero, none, noneVsSome, notBad, seven } = demo_inf;
-    type Qty = demo_inf.Qty;
+    const { Qty, emptyVsList, isNone, isNoneFlipped, isSeven, isZero, none, noneVsSome, notBad, seven } = __ns_demo_inf;
+    type Qty = __ns_demo_inf.Qty;
     if (!(isNone(None))) { throw __bynkExpectFailure("tests/demo/inf.bynk:7:10", 146, 158, "expect isNone(None)"); }
     if (!(!isNone(Some(1)))) { throw __bynkExpectFailure("tests/demo/inf.bynk:8:10", 168, 184, "expect !isNone(Some(1))"); }
     if (!(isNoneFlipped(None))) { throw __bynkExpectFailure("tests/demo/inf.bynk:9:10", 194, 213, "expect isNoneFlipped(None)"); }
@@ -52,8 +52,8 @@ async function test_o____None_and_None____o() {
 async function test_r____Ok____and_r____Err___() {
   try {
     const deps = {};
-    const { Qty, emptyVsList, isNone, isNoneFlipped, isSeven, isZero, none, noneVsSome, notBad, seven } = demo_inf;
-    type Qty = demo_inf.Qty;
+    const { Qty, emptyVsList, isNone, isNoneFlipped, isSeven, isZero, none, noneVsSome, notBad, seven } = __ns_demo_inf;
+    type Qty = __ns_demo_inf.Qty;
     if (!(isSeven(Ok(7)))) { throw __bynkExpectFailure("tests/demo/inf.bynk:14:10", 299, 313, "expect isSeven(Ok(7))"); }
     if (!(!isSeven(Ok(8)))) { throw __bynkExpectFailure("tests/demo/inf.bynk:15:10", 323, 338, "expect !isSeven(Ok(8))"); }
     if (!(notBad(Ok(1)))) { throw __bynkExpectFailure("tests/demo/inf.bynk:16:10", 348, 361, "expect notBad(Ok(1))"); }
@@ -71,8 +71,8 @@ async function test_r____Ok____and_r____Err___() {
 async function test_a_suite_compares_against_a_bare_constructor() {
   try {
     const deps = {};
-    const { Qty, emptyVsList, isNone, isNoneFlipped, isSeven, isZero, none, noneVsSome, notBad, seven } = demo_inf;
-    type Qty = demo_inf.Qty;
+    const { Qty, emptyVsList, isNone, isNoneFlipped, isSeven, isZero, none, noneVsSome, notBad, seven } = __ns_demo_inf;
+    type Qty = __ns_demo_inf.Qty;
     if (!(__bynkEq(none(), None))) { throw __bynkExpectFailure("tests/demo/inf.bynk:21:10", 456, 470, "expect none() == None\n  expected: none() == None\n  actual:   " + __bynkShow((none())) + " == " + __bynkShow((None))); }
     if (!(__bynkEq(seven(), Ok(7)))) { throw __bynkExpectFailure("tests/demo/inf.bynk:22:10", 480, 496, "expect seven() == Ok(7)\n  expected: seven() == Ok(7)\n  actual:   " + __bynkShow((seven())) + " == " + __bynkShow((Ok(7)))); }
     if (!(!__bynkEq(seven(), Err("x")))) { throw __bynkExpectFailure("tests/demo/inf.bynk:23:10", 506, 525, "expect seven() != Err(\"x\")\n  expected: seven() != Err(\"x\")\n  actual:   " + __bynkShow((seven())) + " != " + __bynkShow((Err("x")))); }
@@ -89,8 +89,8 @@ async function test_a_suite_compares_against_a_bare_constructor() {
 async function test_either_order__and_a_literal_against_a_refined_value() {
   try {
     const deps = {};
-    const { Qty, emptyVsList, isNone, isNoneFlipped, isSeven, isZero, none, noneVsSome, notBad, seven } = demo_inf;
-    type Qty = demo_inf.Qty;
+    const { Qty, emptyVsList, isNone, isNoneFlipped, isSeven, isZero, none, noneVsSome, notBad, seven } = __ns_demo_inf;
+    type Qty = __ns_demo_inf.Qty;
     if (!(!noneVsSome())) { throw __bynkExpectFailure("tests/demo/inf.bynk:27:10", 599, 612, "expect !noneVsSome()"); }
     if (!(!emptyVsList())) { throw __bynkExpectFailure("tests/demo/inf.bynk:28:10", 622, 636, "expect !emptyVsList()"); }
     const q: Qty = (3 as any);

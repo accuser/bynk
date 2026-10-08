@@ -13,4 +13,3 @@ export const Beta = {
     return Ok(value as Beta);
   },
 };
-

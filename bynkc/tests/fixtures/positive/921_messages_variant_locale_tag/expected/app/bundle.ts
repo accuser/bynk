@@ -3,10 +3,10 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
 
-import { LocaleTag, Message, MessageArg } from "../bynk/locale/types.js";
-import { render as __bynkLocaleRender, renderArg } from "../bynk/locale.js";
+import { render as __bynkLocaleRender, renderArg as __bynkRenderArg } from "../bynk/locale.js";
+import type { LocaleTag as __bynkLocaleTag, Message as __bynkMessage, MessageArg as __bynkMessageArg } from "../bynk/locale/types.js";
 
-const messagesByLocale: globalThis.Record<string, globalThis.Record<string, (params: ReadonlyMap<string, MessageArg>) => string>> = {
+const __messagesByLocale: globalThis.Record<string, globalThis.Record<string, (params: ReadonlyMap<string, __bynkMessageArg>) => string>> = {
   /**
    * #909: a BCP-47 variant-subtagged locale tag (`"ca-valencia"`) is now
    * declarable — `LocaleTag`'s pattern widened past `language[-Script][-REGION]`
@@ -14,23 +14,22 @@ const messagesByLocale: globalThis.Record<string, globalThis.Record<string, (par
    * to the emitted `messagesLocales` set and renders like any other locale.
    */
   "ca": {
-    "greeting": (params: ReadonlyMap<string, MessageArg>): string => "Hola, " + (params.get("name") !== undefined ? renderArg(params.get("name") as MessageArg) : "{name}") + "!",
+    "greeting": (params: ReadonlyMap<string, __bynkMessageArg>): string => "Hola, " + (params.get("name") !== undefined ? __bynkRenderArg(params.get("name") as __bynkMessageArg) : "{name}") + "!",
   },
   "ca-valencia": {
-    "greeting": (params: ReadonlyMap<string, MessageArg>): string => "Bon dia, " + (params.get("name") !== undefined ? renderArg(params.get("name") as MessageArg) : "{name}") + "!",
+    "greeting": (params: ReadonlyMap<string, __bynkMessageArg>): string => "Bon dia, " + (params.get("name") !== undefined ? __bynkRenderArg(params.get("name") as __bynkMessageArg) : "{name}") + "!",
   },
 };
 
-export const messagesReferenceLocale: LocaleTag = ("ca" as string) as LocaleTag;
-export const messagesLocales: readonly LocaleTag[] = [("ca" as string) as LocaleTag, ("ca-valencia" as string) as LocaleTag];
+export const __messagesReferenceLocale: __bynkLocaleTag = ("ca" as string) as __bynkLocaleTag;
+export const __messagesLocales: readonly __bynkLocaleTag[] = [("ca" as string) as __bynkLocaleTag, ("ca-valencia" as string) as __bynkLocaleTag];
 
-export function render(tag: LocaleTag, msg: Message): string {
-  const __localeTable = messagesByLocale[tag];
-  const __referenceTable = messagesByLocale[messagesReferenceLocale];
+export function render(tag: __bynkLocaleTag, msg: __bynkMessage): string {
+  const __localeTable = __messagesByLocale[tag];
+  const __referenceTable = __messagesByLocale[__messagesReferenceLocale];
   const __entry = (__localeTable !== undefined ? __localeTable[msg.code] : undefined) ?? __referenceTable[msg.code];
   if (__entry !== undefined) {
     return __entry(msg.params);
   }
   return __bynkLocaleRender(tag, msg);
 }
-

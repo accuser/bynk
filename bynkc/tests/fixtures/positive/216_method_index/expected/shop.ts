@@ -30,4 +30,3 @@ export function run(c: Counter): Counter {
 export function tick(g: Gauge): Gauge {
   return Gauge.bump(g);
 }
-

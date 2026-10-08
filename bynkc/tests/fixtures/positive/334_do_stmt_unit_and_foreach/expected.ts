@@ -25,4 +25,3 @@ export async function run(): globalThis.Promise<void> {
   await noop();
   return undefined;
 }
-

@@ -47,4 +47,3 @@ export function __deserialise_Order(json: __JsonValue, path: string = "$"): Resu
   return Ok({ sku: __sku, placedAt: __placedAt } as Order);
 }
 
-

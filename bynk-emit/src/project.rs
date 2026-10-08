@@ -88,9 +88,10 @@ use tests_emit::*;
 pub use bynk_check::project_model::BuildTarget;
 pub use bynk_check::symbols::{FileDeclIndex, UnitTable};
 pub use bynk_project::{
-    AttributedError, ProjectPaths, ProjectPathsError, Roots, SchemaLock, UnitKind,
-    discover_project_files, try_read_project_paths, try_read_project_paths_with, worker_dir_name,
-    worker_handlers_output_path, worker_handlers_source_path,
+    AttributedError, ProjectPaths, ProjectPathsError, Roots, SchemaLock, UnitKind, check_manifest,
+    check_manifest_str, discover_project_files, try_read_project_paths,
+    try_read_project_paths_with, worker_dir_name, worker_handlers_output_path,
+    worker_handlers_source_path,
 };
 pub use diagnostics::{ContextBoundaryInfo, ContextSequenceInfo, ProjectAnalysis, ProjectFailure};
 
@@ -180,6 +181,12 @@ pub struct ProjectOutput {
     /// `path:line:col:`) instead of the position-free `warning[category]: …`
     /// fallback a successful build previously had no way to avoid.
     pub snapshots: Vec<(PathBuf, String)>,
+    /// #1772: the project or tree root the build was given, as the caller
+    /// spelled it. `snapshots` and each error's `source_path` are keyed by
+    /// identity path, relative to this root; a renderer shows
+    /// `display_root.join(identity)`, the path as typed from the working
+    /// directory. Empty for an in-memory build.
+    pub display_root: PathBuf,
     /// v0.67: the test manifest — every discovered suite and case, retained at
     /// emit time so `bynkc test --no-run --format json` can render a discovery
     /// document without running the suite. Built from the same names + spans the
@@ -479,7 +486,7 @@ pub fn compile_project(options: &CompileOptions) -> Result<ProjectOutput, Projec
     // instead and has no revised content for a caller to persist). The
     // caller (today, `bynk-driver`'s two wiring points) does the atomic
     // write.
-    finish_build(run, options.import_ext)
+    finish_build(run, options.import_ext, options.roots.project_root())
 }
 
 /// Result of [`check_project`]: every diagnostic from a non-bailing project
@@ -490,6 +497,12 @@ pub fn compile_project(options: &CompileOptions) -> Result<ProjectOutput, Projec
 pub struct ProjectCheck {
     pub errors: Vec<AttributedError>,
     pub snapshots: Vec<(PathBuf, String)>,
+    /// #1772: the project or tree root the build was given, as the caller
+    /// spelled it. `snapshots` and each error's `source_path` are keyed by
+    /// identity path, relative to this root; a renderer shows
+    /// `display_root.join(identity)`, the path as typed from the working
+    /// directory. Empty for an in-memory build.
+    pub display_root: PathBuf,
 }
 
 impl ProjectCheck {
@@ -551,6 +564,7 @@ pub fn check_project(options: &CompileOptions) -> ProjectCheck {
         } => ProjectCheck {
             errors: errors.into_all(),
             snapshots,
+            display_root: options.roots.project_root().to_path_buf(),
         },
     }
 }
@@ -596,7 +610,7 @@ pub fn compile_in_memory(
         &root,
         tys,
     );
-    finish_build(run, ImportExt::Js)
+    finish_build(run, ImportExt::Js, Path::new(""))
 }
 
 /// Analyse a single **in-memory** Bynk source and return all diagnostics —
@@ -708,7 +722,11 @@ fn in_memory_logical_path(source: &str) -> PathBuf {
 /// Assemble a finished [`ProjectOutput`] (or a [`ProjectFailure`]) from a
 /// [`RunChecks`] result — the shared tail of `compile_project` and
 /// `compile_in_memory`.
-fn finish_build(run: RunChecks, import_ext: ImportExt) -> Result<ProjectOutput, ProjectFailure> {
+fn finish_build(
+    run: RunChecks,
+    import_ext: ImportExt,
+    display_root: &Path,
+) -> Result<ProjectOutput, ProjectFailure> {
     match run {
         RunChecks::Bailed {
             errors, snapshots, ..
@@ -717,12 +735,14 @@ fn finish_build(run: RunChecks, import_ext: ImportExt) -> Result<ProjectOutput, 
             // (the sink yields errors then warnings).
             errors: errors.into_all(),
             snapshots,
+            display_root: display_root.to_path_buf(),
         }),
         RunChecks::Checked {
             errors, snapshots, ..
         } if !errors.is_empty() => Err(ProjectFailure {
             errors: errors.into_all(),
             snapshots,
+            display_root: display_root.to_path_buf(),
         }),
         RunChecks::Checked {
             errors,
@@ -771,6 +791,7 @@ fn finish_build(run: RunChecks, import_ext: ImportExt) -> Result<ProjectOutput, 
             // (errors is empty here — the guard arm above caught any).
             out.warnings = errors.into_warnings();
             out.snapshots = snapshots;
+            out.display_root = display_root.to_path_buf();
             // #1078: the reconciled registry, if this build had one on —
             // bynk-emit computes it, the caller persists it.
             out.schema_lock = schema_registry.map(|reg| schema_registry::serialize(&reg));
@@ -787,7 +808,7 @@ fn finish_build(run: RunChecks, import_ext: ImportExt) -> Result<ProjectOutput, 
 /// v0.54 (#655): whether a context's services declare an `on call … by c: Caller`
 /// handler, whose emitted `deps` carries the calling context's qualified name as
 /// its `CallerId` identity (ADR 0092); in bundle mode the compose root supplies
-/// that name to `makeSurface`, mirroring the `X-Bynk-Caller` header a Worker
+/// that name to `__makeSurface`, mirroring the `X-Bynk-Caller` header a Worker
 /// reads at its entry. Delegates to the *same*
 /// [`any_service_binds_caller`](crate::emitter::any_service_binds_caller) the
 /// emitter's `emit_make_surface` calls, so the compose root and the surface can
@@ -1006,8 +1027,23 @@ fn emit_unit(
             &render_path,
             import_ext,
         );
+        // #1697: the generated table and `render` name the `bynk.locale.types`
+        // types under private aliases too, so a user's own `Message` or
+        // `LocaleTag` in this unit (local shadows `uses`) can't capture them.
+        let types_path = unit_ctx
+            .imported_decl_paths_emit
+            .get("bynk.locale.types")
+            .and_then(|m| m.get("LocaleTag"))
+            .cloned()
+            .unwrap_or_else(|| EmitProjectCtx::commons_path("bynk.locale.types"));
+        let types_import = emitter::cross_commons_import_specifier_for_path(
+            &emit_source_path,
+            &types_path,
+            import_ext,
+        );
         extra_import_lines.push(format!(
-            "import {{ render as __bynkLocaleRender, renderArg }} from \"{import}\";"
+            "import {{ render as __bynkLocaleRender, renderArg as __bynkRenderArg }} from \"{import}\";\n\
+             import type {{ LocaleTag as __bynkLocaleTag, Message as __bynkMessage, MessageArg as __bynkMessageArg }} from \"{types_import}\";"
         ));
     }
 
@@ -1123,6 +1159,8 @@ fn emit_unit(
 fn check_unit_files(
     name: &str,
     kind: UnitKind,
+    // #1710: each unit's declarations recovery skipped (`phase_parse`).
+    broken: &project_model::BrokenDeclNames,
     indices: &[usize],
     parsed: &[ParsedFile],
     unit_info: &BTreeMap<String, UnitInfo>,
@@ -1169,7 +1207,14 @@ fn check_unit_files(
     // Emit-prologue tables invariant across every file of this unit — built
     // once here rather than once per file (see `EmitUnitCtx`).
     let unit_ctx = build_emit_unit_ctx(name, unit_info, target, tys);
-    let check_ctx = prepare_unit_check_ctx(kind, unit_info, combined_types, imported_from_kind);
+    let check_ctx = prepare_unit_check_ctx(
+        name,
+        kind,
+        broken,
+        unit_info,
+        combined_types,
+        imported_from_kind,
+    );
 
     for &i in indices {
         let pf = &parsed[i];
@@ -1438,7 +1483,7 @@ fn run_checks(
     }
 
     // -- 2. Parse every file. --
-    let (mut parsed, consumes_bynk, consumes_cloudflare) = match project_model::phase_parse(
+    let (mut parsed, consumes_bynk, consumes_cloudflare, broken) = match project_model::phase_parse(
         trees,
         &file_lists,
         overlay,
@@ -1603,7 +1648,14 @@ fn run_checks(
     );
 
     // -- 6c. Validate that providers match their capabilities exactly. --
-    project_model::phase_validate_providers(&unit_tables, &groups, &parsed, &mut errors, tys);
+    project_model::phase_validate_providers(
+        &unit_tables,
+        &groups,
+        &parsed,
+        &broken,
+        &mut errors,
+        tys,
+    );
 
     // -- 6d. Events track, slice 3c (#980): reconcile every event's shape
     //        against the committed schema registry. `schema_registry` is
@@ -1756,6 +1808,7 @@ fn run_checks(
         check_unit_files(
             name,
             kind,
+            &broken,
             indices,
             &parsed,
             &unit_info,
@@ -2394,6 +2447,7 @@ fn build_output(
         // Populated by `finish_build` from the same `RunChecks::Checked` this
         // whole `ProjectOutput` was built from.
         snapshots: Vec::new(),
+        display_root: PathBuf::new(),
         // Likewise (#1078) — `Some` only when the registry was on.
         schema_lock: None,
     }
@@ -3029,7 +3083,7 @@ fn emit_composition_root(
         let Some(table) = unit_tables.get(ctx_name.as_str()) else {
             continue;
         };
-        // A context's deps object exists only to feed its `makeSurface`; a
+        // A context's deps object exists only to feed its `__makeSurface`; a
         // capability-only context (no services) needs neither (v0.15).
         if table.services.is_empty() {
             continue;
@@ -3221,7 +3275,7 @@ fn emit_composition_root(
                 let entry = if context_binds_caller(other) {
                     method_call(
                         ident(t_ns.clone()),
-                        "makeSurface",
+                        "__makeSurface",
                         vec![ident(format!("{t_ns}Deps")), str_lit(ctx_name.as_str())],
                     )
                 } else {
@@ -3260,7 +3314,7 @@ fn emit_composition_root(
             }
             body.push(const_(
                 format!("{ns}Surface"),
-                method_call(ident(ns.clone()), "makeSurface", make_surface_args),
+                method_call(ident(ns.clone()), "__makeSurface", make_surface_args),
             ));
         }
     }

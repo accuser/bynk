@@ -6,4 +6,3 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError } f
 export async function classify(n: number): globalThis.Promise<number> {
   return (n === 0 ? 0 : n);
 }
-

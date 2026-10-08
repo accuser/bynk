@@ -285,7 +285,7 @@ pub fn analyse_project(roots: &Roots, overlay: &HashMap<PathBuf, String>) -> Pro
     }
 
     // -- 2. Parse. --
-    let (mut parsed, consumes_bynk, consumes_cloudflare) =
+    let (mut parsed, consumes_bynk, consumes_cloudflare, broken) =
         match project_model::phase_parse(&trees, &file_lists, overlay, &mut errors, &mut snapshots)
         {
             Ok(out) => out,
@@ -423,7 +423,14 @@ pub fn analyse_project(roots: &Roots, overlay: &HashMap<PathBuf, String>) -> Pro
     );
 
     // -- 6c. Provider matching. --
-    project_model::phase_validate_providers(&unit_tables, &groups, &parsed, &mut errors, tys);
+    project_model::phase_validate_providers(
+        &unit_tables,
+        &groups,
+        &parsed,
+        &broken,
+        &mut errors,
+        tys,
+    );
 
     // -- 6d. Events track, slice 3c (#980): schema-registry reconciliation.
     //        P5.3: closes category 1 of this module's own residual-gap
@@ -513,7 +520,14 @@ pub fn analyse_project(roots: &Roots, overlay: &HashMap<PathBuf, String>) -> Pro
 
         let local_names: HashSet<String> = local_table.types.keys().cloned().collect();
         let local_methods_for_type = collect_unit_methods(indices, &parsed);
-        let ctx = prepare_unit_check_ctx(kind, &unit_info, &combined_types, &imported_from_kind);
+        let ctx = prepare_unit_check_ctx(
+            name,
+            kind,
+            &broken,
+            &unit_info,
+            &combined_types,
+            &imported_from_kind,
+        );
 
         for &i in indices {
             let pf = &parsed[i];

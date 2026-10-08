@@ -78,4 +78,3 @@ export function __makeRoom(key: string, env?: { ROOM?: __DurableObjectNamespace 
 export function __resetAgents(): void {
   __RoomRegistry.reset();
 }
-

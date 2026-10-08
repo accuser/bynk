@@ -45,4 +45,3 @@ export function viaLambda(r: Result<number, string>): Result<number, string> {
 export function orZero(r: Result<number, string>): number {
   return ((__r: Result<number, string>, __d: number) => __r.tag === "Ok" ? __r.value : __d)(r, 0);
 }
-

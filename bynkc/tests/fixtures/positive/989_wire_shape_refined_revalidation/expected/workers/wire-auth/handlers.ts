@@ -177,4 +177,3 @@ export function __deserialise_Result_Session_LoginError(json: __JsonValue, path:
   }
   return Err({ kind: "StructuralMismatch", path, expected: "Ok | Err", actual: String(obj["kind"]) });
 }
-

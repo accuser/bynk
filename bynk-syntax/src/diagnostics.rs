@@ -369,6 +369,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "An agent handler's return type is not an `Effect`.",
         &["agent_decl"],
     ),
+    d(
+        "bynk.agent.state_name_conflict",
+        "A type is named `<Agent>State` beside agent `<Agent>`; that name is the agent's state record (its `Cell` fields), which its handlers and invariants see in place of the type.",
+    ),
     dg(
         "bynk.agents.bad_state_initialiser",
         "An agent `store` field initialiser is not a static value of the field's type.",
@@ -1800,6 +1804,16 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     dg(
         "bynk.test.wire_needs_system",
         "A `Wire(...)` raw argument is used outside a `system`-tier service address; `Wire` hands pre-validation input to the boundary and is meaningless at `unit` or in any other position.",
+        &["case"],
+    ),
+    dg(
+        "bynk.tier.cross_context_needs_system",
+        "A `unit` or `integration` case, or a `property`, reaches another context's service, directly or through a target service or agent handler that calls one; below `system` no other context is stood up to call, so the flow belongs in a `suite … as system`.",
+        &["case"],
+    ),
+    dg(
+        "bynk.tier.mixed_system_suite",
+        "A suite mixes `system` cases with `unit` or `integration` ones; a `system` case runs against deployed Workers and addresses services by context path, so it needs a `suite … as system` of its own.",
         &["case"],
     ),
     d(

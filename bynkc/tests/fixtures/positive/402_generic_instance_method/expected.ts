@@ -27,4 +27,3 @@ export function label_len(b: Box<number>): number {
 export function first(b: Box<readonly number[]>): Option<number> {
   return ((__xs: readonly number[]) => __xs.length > 0 ? Some(__xs[0]) : None)(Box.get(b));
 }
-

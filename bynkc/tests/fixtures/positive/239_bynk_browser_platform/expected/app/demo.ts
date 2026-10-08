@@ -29,7 +29,7 @@ export const demo = {
   },
 };
 
-export interface AppDemoDeps {
+export interface __AppDemoDeps {
   readonly Clock: bynk.Clock;
   readonly Fetch: bynk.Fetch;
   readonly Logger: bynk.Logger;
@@ -37,11 +37,10 @@ export interface AppDemoDeps {
   readonly Secrets: bynk.Secrets;
 }
 
-export function makeSurface(deps: AppDemoDeps) {
+export function __makeSurface(deps: __AppDemoDeps) {
   return {
     async demo(url: string): globalThis.Promise<number> {
       return demo.call(url, deps);
     },
   };
 }
-

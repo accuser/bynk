@@ -1,0 +1,9 @@
+context demo.vault
+
+service open {
+  on call(n: Int) -> Effect[Int] { n + }
+}
+
+service count {
+  on call() -> Effect[Int] { "zero" }
+}

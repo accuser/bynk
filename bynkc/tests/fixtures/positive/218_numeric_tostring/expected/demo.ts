@@ -10,4 +10,3 @@ export function fromInt(n: number): string {
 export function fromFloat(f: number): string {
   return String(f);
 }
-

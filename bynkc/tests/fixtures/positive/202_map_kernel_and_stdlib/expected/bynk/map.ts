@@ -57,4 +57,3 @@ export function getOr<K, V>(m: ReadonlyMap<K, V>, key: K, fallback: V): V {
   }
   throw new globalThis.Error("non-exhaustive match");
 }
-

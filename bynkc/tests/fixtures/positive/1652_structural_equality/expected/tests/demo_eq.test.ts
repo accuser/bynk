@@ -2,7 +2,7 @@
 // test target: demo.eq
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, __bynkEq } from "../runtime.js";
-import * as demo_eq from "./../demo/eq.js";
+import * as __ns_demo_eq from "./../demo/eq.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -25,7 +25,7 @@ function __bynkShow(v: unknown): string {
   try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
-function makeTestDeps() {
+function __makeTestDeps() {
   return {  };
 }
 
@@ -33,12 +33,12 @@ function makeTestDeps() {
 async function test_records_compare_by_field() {
   try {
     const deps = {};
-    const { Blob, Light, Pt, Shape, Token, blob, decodedGreen, nan, same, sameToken, scores, token } = demo_eq;
-    type Blob = demo_eq.Blob;
-    type Light = demo_eq.Light;
-    type Pt = demo_eq.Pt;
-    type Shape = demo_eq.Shape;
-    type Token = demo_eq.Token;
+    const { Blob, Light, Pt, Shape, Token, blob, decodedGreen, nan, same, sameToken, scores, token } = __ns_demo_eq;
+    type Blob = __ns_demo_eq.Blob;
+    type Light = __ns_demo_eq.Light;
+    type Pt = __ns_demo_eq.Pt;
+    type Shape = __ns_demo_eq.Shape;
+    type Token = __ns_demo_eq.Token;
     if (!(__bynkEq({ x: 1, y: 2 }, { x: 1, y: 2 }))) { throw __bynkExpectFailure("tests/demo/eq.bynk:7:10", 113, 151, "expect Pt { x: 1, y: 2 } == Pt { x: 1, y: 2 }\n  expected: Pt { x: 1, y: 2 } == Pt { x: 1, y: 2 }\n  actual:   " + __bynkShow(({ x: 1, y: 2 })) + " == " + __bynkShow(({ x: 1, y: 2 }))); }
     if (!(!__bynkEq({ x: 1, y: 2 }, { x: 1, y: 3 }))) { throw __bynkExpectFailure("tests/demo/eq.bynk:8:10", 161, 199, "expect Pt { x: 1, y: 2 } != Pt { x: 1, y: 3 }\n  expected: Pt { x: 1, y: 2 } != Pt { x: 1, y: 3 }\n  actual:   " + __bynkShow(({ x: 1, y: 2 })) + " != " + __bynkShow(({ x: 1, y: 3 }))); }
     return { pass: true };
@@ -54,12 +54,12 @@ async function test_records_compare_by_field() {
 async function test_sums_compare_by_variant_and_payload() {
   try {
     const deps = {};
-    const { Blob, Light, Pt, Shape, Token, blob, decodedGreen, nan, same, sameToken, scores, token } = demo_eq;
-    type Blob = demo_eq.Blob;
-    type Light = demo_eq.Light;
-    type Pt = demo_eq.Pt;
-    type Shape = demo_eq.Shape;
-    type Token = demo_eq.Token;
+    const { Blob, Light, Pt, Shape, Token, blob, decodedGreen, nan, same, sameToken, scores, token } = __ns_demo_eq;
+    type Blob = __ns_demo_eq.Blob;
+    type Light = __ns_demo_eq.Light;
+    type Pt = __ns_demo_eq.Pt;
+    type Shape = __ns_demo_eq.Shape;
+    type Token = __ns_demo_eq.Token;
     if (!(__bynkEq(Shape.Circle(1), Shape.Circle(1)))) { throw __bynkExpectFailure("tests/demo/eq.bynk:12:10", 257, 279, "expect Circle(1) == Circle(1)\n  expected: Circle(1) == Circle(1)\n  actual:   " + __bynkShow((Shape.Circle(1))) + " == " + __bynkShow((Shape.Circle(1)))); }
     if (!(!__bynkEq(Shape.Circle(1), Shape.Circle(2)))) { throw __bynkExpectFailure("tests/demo/eq.bynk:13:10", 289, 311, "expect Circle(1) != Circle(2)\n  expected: Circle(1) != Circle(2)\n  actual:   " + __bynkShow((Shape.Circle(1))) + " != " + __bynkShow((Shape.Circle(2)))); }
     if (!(!__bynkEq(Shape.Circle(1), Shape.Square(1)))) { throw __bynkExpectFailure("tests/demo/eq.bynk:14:10", 321, 343, "expect Circle(1) != Square(1)\n  expected: Circle(1) != Square(1)\n  actual:   " + __bynkShow((Shape.Circle(1))) + " != " + __bynkShow((Shape.Square(1)))); }
@@ -76,12 +76,12 @@ async function test_sums_compare_by_variant_and_payload() {
 async function test_a_nullary_variant_decoded_from_JSON_equals_the_constant() {
   try {
     const deps = {};
-    const { Blob, Light, Pt, Shape, Token, blob, decodedGreen, nan, same, sameToken, scores, token } = demo_eq;
-    type Blob = demo_eq.Blob;
-    type Light = demo_eq.Light;
-    type Pt = demo_eq.Pt;
-    type Shape = demo_eq.Shape;
-    type Token = demo_eq.Token;
+    const { Blob, Light, Pt, Shape, Token, blob, decodedGreen, nan, same, sameToken, scores, token } = __ns_demo_eq;
+    type Blob = __ns_demo_eq.Blob;
+    type Light = __ns_demo_eq.Light;
+    type Pt = __ns_demo_eq.Pt;
+    type Shape = __ns_demo_eq.Shape;
+    type Token = __ns_demo_eq.Token;
     if (!(__bynkEq(decodedGreen(), Light.Green))) { throw __bynkExpectFailure("tests/demo/eq.bynk:18:10", 421, 444, "expect decodedGreen() == Green\n  expected: decodedGreen() == Green\n  actual:   " + __bynkShow((decodedGreen())) + " == " + __bynkShow((Light.Green))); }
     return { pass: true };
   } catch (e) {
@@ -96,12 +96,12 @@ async function test_a_nullary_variant_decoded_from_JSON_equals_the_constant() {
 async function test_Option_and_Result_compare_structurally() {
   try {
     const deps = {};
-    const { Blob, Light, Pt, Shape, Token, blob, decodedGreen, nan, same, sameToken, scores, token } = demo_eq;
-    type Blob = demo_eq.Blob;
-    type Light = demo_eq.Light;
-    type Pt = demo_eq.Pt;
-    type Shape = demo_eq.Shape;
-    type Token = demo_eq.Token;
+    const { Blob, Light, Pt, Shape, Token, blob, decodedGreen, nan, same, sameToken, scores, token } = __ns_demo_eq;
+    type Blob = __ns_demo_eq.Blob;
+    type Light = __ns_demo_eq.Light;
+    type Pt = __ns_demo_eq.Pt;
+    type Shape = __ns_demo_eq.Shape;
+    type Token = __ns_demo_eq.Token;
     if (!(__bynkEq(Some(1), Some(1)))) { throw __bynkExpectFailure("tests/demo/eq.bynk:22:10", 505, 523, "expect Some(1) == Some(1)\n  expected: Some(1) == Some(1)\n  actual:   " + __bynkShow((Some(1))) + " == " + __bynkShow((Some(1)))); }
     if (!(!__bynkEq(Some(1), Some(2)))) { throw __bynkExpectFailure("tests/demo/eq.bynk:23:10", 533, 551, "expect Some(1) != Some(2)\n  expected: Some(1) != Some(2)\n  actual:   " + __bynkShow((Some(1))) + " != " + __bynkShow((Some(2)))); }
     if (!(__bynkEq(Some({ x: 1, y: 1 }), Some({ x: 1, y: 1 })))) { throw __bynkExpectFailure("tests/demo/eq.bynk:24:10", 561, 611, "expect Some(Pt { x: 1, y: 1 }) == Some(Pt { x: 1, y: 1 })\n  expected: Some(Pt { x: 1, y: 1 }) == Some(Pt { x: 1, y: 1 })\n  actual:   " + __bynkShow((Some({ x: 1, y: 1 }))) + " == " + __bynkShow((Some({ x: 1, y: 1 })))); }
@@ -121,12 +121,12 @@ async function test_Option_and_Result_compare_structurally() {
 async function test_lists_compare_element_wise() {
   try {
     const deps = {};
-    const { Blob, Light, Pt, Shape, Token, blob, decodedGreen, nan, same, sameToken, scores, token } = demo_eq;
-    type Blob = demo_eq.Blob;
-    type Light = demo_eq.Light;
-    type Pt = demo_eq.Pt;
-    type Shape = demo_eq.Shape;
-    type Token = demo_eq.Token;
+    const { Blob, Light, Pt, Shape, Token, blob, decodedGreen, nan, same, sameToken, scores, token } = __ns_demo_eq;
+    type Blob = __ns_demo_eq.Blob;
+    type Light = __ns_demo_eq.Light;
+    type Pt = __ns_demo_eq.Pt;
+    type Shape = __ns_demo_eq.Shape;
+    type Token = __ns_demo_eq.Token;
     if (!(__bynkEq([1, 2, 3], [1, 2, 3]))) { throw __bynkExpectFailure("tests/demo/eq.bynk:31:10", 759, 781, "expect [1, 2, 3] == [1, 2, 3]\n  expected: [1, 2, 3] == [1, 2, 3]\n  actual:   " + __bynkShow(([1, 2, 3])) + " == " + __bynkShow(([1, 2, 3]))); }
     if (!(__bynkEq([[1], [2]], [[1], [2]]))) { throw __bynkExpectFailure("tests/demo/eq.bynk:32:10", 791, 815, "expect [[1], [2]] == [[1], [2]]\n  expected: [[1], [2]] == [[1], [2]]\n  actual:   " + __bynkShow(([[1], [2]])) + " == " + __bynkShow(([[1], [2]]))); }
     if (!(!__bynkEq([1, 2], [1, 2, 3]))) { throw __bynkExpectFailure("tests/demo/eq.bynk:33:10", 825, 844, "expect [1, 2] != [1, 2, 3]\n  expected: [1, 2] != [1, 2, 3]\n  actual:   " + __bynkShow(([1, 2])) + " != " + __bynkShow(([1, 2, 3]))); }
@@ -143,12 +143,12 @@ async function test_lists_compare_element_wise() {
 async function test_maps_compare_by_key_and_value() {
   try {
     const deps = {};
-    const { Blob, Light, Pt, Shape, Token, blob, decodedGreen, nan, same, sameToken, scores, token } = demo_eq;
-    type Blob = demo_eq.Blob;
-    type Light = demo_eq.Light;
-    type Pt = demo_eq.Pt;
-    type Shape = demo_eq.Shape;
-    type Token = demo_eq.Token;
+    const { Blob, Light, Pt, Shape, Token, blob, decodedGreen, nan, same, sameToken, scores, token } = __ns_demo_eq;
+    type Blob = __ns_demo_eq.Blob;
+    type Light = __ns_demo_eq.Light;
+    type Pt = __ns_demo_eq.Pt;
+    type Shape = __ns_demo_eq.Shape;
+    type Token = __ns_demo_eq.Token;
     if (!(__bynkEq(scores("a", 1), scores("a", 1)))) { throw __bynkExpectFailure("tests/demo/eq.bynk:37:10", 896, 928, "expect scores(\"a\", 1) == scores(\"a\", 1)\n  expected: scores(\"a\", 1) == scores(\"a\", 1)\n  actual:   " + __bynkShow((scores("a", 1))) + " == " + __bynkShow((scores("a", 1)))); }
     if (!(!__bynkEq(scores("a", 1), scores("a", 2)))) { throw __bynkExpectFailure("tests/demo/eq.bynk:38:10", 938, 970, "expect scores(\"a\", 1) != scores(\"a\", 2)\n  expected: scores(\"a\", 1) != scores(\"a\", 2)\n  actual:   " + __bynkShow((scores("a", 1))) + " != " + __bynkShow((scores("a", 2)))); }
     if (!(!__bynkEq(scores("a", 1), scores("b", 1)))) { throw __bynkExpectFailure("tests/demo/eq.bynk:39:10", 980, 1012, "expect scores(\"a\", 1) != scores(\"b\", 1)\n  expected: scores(\"a\", 1) != scores(\"b\", 1)\n  actual:   " + __bynkShow((scores("a", 1))) + " != " + __bynkShow((scores("b", 1)))); }
@@ -165,12 +165,12 @@ async function test_maps_compare_by_key_and_value() {
 async function test_Bytes_compare_by_content__inside_records_and_behind_opaque_types() {
   try {
     const deps = {};
-    const { Blob, Light, Pt, Shape, Token, blob, decodedGreen, nan, same, sameToken, scores, token } = demo_eq;
-    type Blob = demo_eq.Blob;
-    type Light = demo_eq.Light;
-    type Pt = demo_eq.Pt;
-    type Shape = demo_eq.Shape;
-    type Token = demo_eq.Token;
+    const { Blob, Light, Pt, Shape, Token, blob, decodedGreen, nan, same, sameToken, scores, token } = __ns_demo_eq;
+    type Blob = __ns_demo_eq.Blob;
+    type Light = __ns_demo_eq.Light;
+    type Pt = __ns_demo_eq.Pt;
+    type Shape = __ns_demo_eq.Shape;
+    type Token = __ns_demo_eq.Token;
     if (!(__bynkEq(blob("a"), blob("a")))) { throw __bynkExpectFailure("tests/demo/eq.bynk:43:10", 1099, 1121, "expect blob(\"a\") == blob(\"a\")\n  expected: blob(\"a\") == blob(\"a\")\n  actual:   " + __bynkShow((blob("a"))) + " == " + __bynkShow((blob("a")))); }
     if (!(!__bynkEq(blob("a"), blob("b")))) { throw __bynkExpectFailure("tests/demo/eq.bynk:44:10", 1131, 1153, "expect blob(\"a\") != blob(\"b\")\n  expected: blob(\"a\") != blob(\"b\")\n  actual:   " + __bynkShow((blob("a"))) + " != " + __bynkShow((blob("b")))); }
     if (!(sameToken("a", "a"))) { throw __bynkExpectFailure("tests/demo/eq.bynk:45:10", 1163, 1182, "expect sameToken(\"a\", \"a\")"); }
@@ -188,12 +188,12 @@ async function test_Bytes_compare_by_content__inside_records_and_behind_opaque_t
 async function test_a_generic_type_parameter_compares_structurally() {
   try {
     const deps = {};
-    const { Blob, Light, Pt, Shape, Token, blob, decodedGreen, nan, same, sameToken, scores, token } = demo_eq;
-    type Blob = demo_eq.Blob;
-    type Light = demo_eq.Light;
-    type Pt = demo_eq.Pt;
-    type Shape = demo_eq.Shape;
-    type Token = demo_eq.Token;
+    const { Blob, Light, Pt, Shape, Token, blob, decodedGreen, nan, same, sameToken, scores, token } = __ns_demo_eq;
+    type Blob = __ns_demo_eq.Blob;
+    type Light = __ns_demo_eq.Light;
+    type Pt = __ns_demo_eq.Pt;
+    type Shape = __ns_demo_eq.Shape;
+    type Token = __ns_demo_eq.Token;
     if (!(same({ x: 1, y: 2 }, { x: 1, y: 2 }))) { throw __bynkExpectFailure("tests/demo/eq.bynk:50:10", 1289, 1331, "expect same(Pt { x: 1, y: 2 }, Pt { x: 1, y: 2 })"); }
     if (!(same(Some("a"), Some("a")))) { throw __bynkExpectFailure("tests/demo/eq.bynk:51:10", 1341, 1367, "expect same(Some(\"a\"), Some(\"a\"))"); }
     return { pass: true };
@@ -209,12 +209,12 @@ async function test_a_generic_type_parameter_compares_structurally() {
 async function test_Float_keeps_IEEE_semantics() {
   try {
     const deps = {};
-    const { Blob, Light, Pt, Shape, Token, blob, decodedGreen, nan, same, sameToken, scores, token } = demo_eq;
-    type Blob = demo_eq.Blob;
-    type Light = demo_eq.Light;
-    type Pt = demo_eq.Pt;
-    type Shape = demo_eq.Shape;
-    type Token = demo_eq.Token;
+    const { Blob, Light, Pt, Shape, Token, blob, decodedGreen, nan, same, sameToken, scores, token } = __ns_demo_eq;
+    type Blob = __ns_demo_eq.Blob;
+    type Light = __ns_demo_eq.Light;
+    type Pt = __ns_demo_eq.Pt;
+    type Shape = __ns_demo_eq.Shape;
+    type Token = __ns_demo_eq.Token;
     if (!(nan() !== nan())) { throw __bynkExpectFailure("tests/demo/eq.bynk:55:10", 1416, 1430, "expect nan() != nan()\n  expected: nan() != nan()\n  actual:   " + __bynkShow((nan())) + " != " + __bynkShow((nan()))); }
     return { pass: true };
   } catch (e) {

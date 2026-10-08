@@ -2,7 +2,7 @@
 // test target: demo.narrow
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, __bynkEq } from "../runtime.js";
-import * as demo_narrow from "./../demo/narrow.js";
+import * as __ns_demo_narrow from "./../demo/narrow.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -25,7 +25,7 @@ function __bynkShow(v: unknown): string {
   try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
-function makeTestDeps() {
+function __makeTestDeps() {
   return {  };
 }
 
@@ -33,9 +33,9 @@ function makeTestDeps() {
 async function test_both_operands_of____narrow_a_refined_Int() {
   try {
     const deps = {};
-    const { Booking, Q, bigRoom, both, dbl, either, eitherOr, nonNegativeIfSome, orZero, positive, sumOrZero } = demo_narrow;
-    type Booking = demo_narrow.Booking;
-    type Q = demo_narrow.Q;
+    const { Booking, Q, bigRoom, both, dbl, either, eitherOr, nonNegativeIfSome, orZero, positive, sumOrZero } = __ns_demo_narrow;
+    type Booking = __ns_demo_narrow.Booking;
+    type Q = __ns_demo_narrow.Q;
     if (!(both(2, 3) === 10)) { throw __bynkExpectFailure("tests/demo/narrow.bynk:7:10", 159, 175, "expect both(2, 3) == 10\n  expected: both(2, 3) == 10\n  actual:   " + __bynkShow((both(2, 3))) + " == " + __bynkShow((10))); }
     if (!(both(2, 0) === 0)) { throw __bynkExpectFailure("tests/demo/narrow.bynk:8:10", 185, 200, "expect both(2, 0) == 0\n  expected: both(2, 0) == 0\n  actual:   " + __bynkShow((both(2, 0))) + " == " + __bynkShow((0))); }
     if (!(both(0, 3) === 0)) { throw __bynkExpectFailure("tests/demo/narrow.bynk:9:10", 210, 225, "expect both(0, 3) == 0\n  expected: both(0, 3) == 0\n  actual:   " + __bynkShow((both(0, 3))) + " == " + __bynkShow((0))); }
@@ -52,9 +52,9 @@ async function test_both_operands_of____narrow_a_refined_Int() {
 async function test_the_right_operand_of____sees_the_left_s_binding() {
   try {
     const deps = {};
-    const { Booking, Q, bigRoom, both, dbl, either, eitherOr, nonNegativeIfSome, orZero, positive, sumOrZero } = demo_narrow;
-    type Booking = demo_narrow.Booking;
-    type Q = demo_narrow.Q;
+    const { Booking, Q, bigRoom, both, dbl, either, eitherOr, nonNegativeIfSome, orZero, positive, sumOrZero } = __ns_demo_narrow;
+    type Booking = __ns_demo_narrow.Booking;
+    type Q = __ns_demo_narrow.Q;
     if (!(positive(Some(4)))) { throw __bynkExpectFailure("tests/demo/narrow.bynk:13:10", 295, 312, "expect positive(Some(4))"); }
     if (!(!positive(Some(0)))) { throw __bynkExpectFailure("tests/demo/narrow.bynk:14:10", 322, 340, "expect !positive(Some(0))"); }
     if (!(!positive(None))) { throw __bynkExpectFailure("tests/demo/narrow.bynk:15:10", 350, 365, "expect !positive(None)"); }
@@ -71,9 +71,9 @@ async function test_the_right_operand_of____sees_the_left_s_binding() {
 async function test_a_variant_payload_binds_into_the_right_operand() {
   try {
     const deps = {};
-    const { Booking, Q, bigRoom, both, dbl, either, eitherOr, nonNegativeIfSome, orZero, positive, sumOrZero } = demo_narrow;
-    type Booking = demo_narrow.Booking;
-    type Q = demo_narrow.Q;
+    const { Booking, Q, bigRoom, both, dbl, either, eitherOr, nonNegativeIfSome, orZero, positive, sumOrZero } = __ns_demo_narrow;
+    type Booking = __ns_demo_narrow.Booking;
+    type Q = __ns_demo_narrow.Q;
     if (!(bigRoom(Booking.Held("ann", 101)))) { throw __bynkExpectFailure("tests/demo/narrow.bynk:19:10", 434, 459, "expect bigRoom(Held(\"ann\", 101))"); }
     if (!(!bigRoom(Booking.Held("ann", 7)))) { throw __bynkExpectFailure("tests/demo/narrow.bynk:20:10", 469, 493, "expect !bigRoom(Held(\"ann\", 7))"); }
     if (!(!bigRoom(Booking.Released))) { throw __bynkExpectFailure("tests/demo/narrow.bynk:21:10", 503, 521, "expect !bigRoom(Released)"); }
@@ -90,9 +90,9 @@ async function test_a_variant_payload_binds_into_the_right_operand() {
 async function test_implies_binds_into_its_consequent() {
   try {
     const deps = {};
-    const { Booking, Q, bigRoom, both, dbl, either, eitherOr, nonNegativeIfSome, orZero, positive, sumOrZero } = demo_narrow;
-    type Booking = demo_narrow.Booking;
-    type Q = demo_narrow.Q;
+    const { Booking, Q, bigRoom, both, dbl, either, eitherOr, nonNegativeIfSome, orZero, positive, sumOrZero } = __ns_demo_narrow;
+    type Booking = __ns_demo_narrow.Booking;
+    type Q = __ns_demo_narrow.Q;
     if (!(nonNegativeIfSome(Some(1)))) { throw __bynkExpectFailure("tests/demo/narrow.bynk:25:10", 577, 603, "expect nonNegativeIfSome(Some(1))"); }
     if (!(!nonNegativeIfSome(Some(-1)))) { throw __bynkExpectFailure("tests/demo/narrow.bynk:26:10", 613, 641, "expect !nonNegativeIfSome(Some(-1))"); }
     if (!(nonNegativeIfSome(None))) { throw __bynkExpectFailure("tests/demo/narrow.bynk:27:10", 651, 674, "expect nonNegativeIfSome(None)"); }
@@ -109,9 +109,9 @@ async function test_implies_binds_into_its_consequent() {
 async function test_a_negated_test_binds_into_the_else_branch() {
   try {
     const deps = {};
-    const { Booking, Q, bigRoom, both, dbl, either, eitherOr, nonNegativeIfSome, orZero, positive, sumOrZero } = demo_narrow;
-    type Booking = demo_narrow.Booking;
-    type Q = demo_narrow.Q;
+    const { Booking, Q, bigRoom, both, dbl, either, eitherOr, nonNegativeIfSome, orZero, positive, sumOrZero } = __ns_demo_narrow;
+    type Booking = __ns_demo_narrow.Booking;
+    type Q = __ns_demo_narrow.Q;
     if (!(orZero(Some(7)) === 7)) { throw __bynkExpectFailure("tests/demo/narrow.bynk:31:10", 738, 758, "expect orZero(Some(7)) == 7\n  expected: orZero(Some(7)) == 7\n  actual:   " + __bynkShow((orZero(Some(7)))) + " == " + __bynkShow((7))); }
     if (!(orZero(None) === 0)) { throw __bynkExpectFailure("tests/demo/narrow.bynk:32:10", 768, 785, "expect orZero(None) == 0\n  expected: orZero(None) == 0\n  actual:   " + __bynkShow((orZero(None))) + " == " + __bynkShow((0))); }
     return { pass: true };
@@ -127,9 +127,9 @@ async function test_a_negated_test_binds_into_the_else_branch() {
 async function test_a_negated_disjunction_binds_both_into_the_else_branch() {
   try {
     const deps = {};
-    const { Booking, Q, bigRoom, both, dbl, either, eitherOr, nonNegativeIfSome, orZero, positive, sumOrZero } = demo_narrow;
-    type Booking = demo_narrow.Booking;
-    type Q = demo_narrow.Q;
+    const { Booking, Q, bigRoom, both, dbl, either, eitherOr, nonNegativeIfSome, orZero, positive, sumOrZero } = __ns_demo_narrow;
+    type Booking = __ns_demo_narrow.Booking;
+    type Q = __ns_demo_narrow.Q;
     if (!(sumOrZero(Some(2), Some(3)) === 5)) { throw __bynkExpectFailure("tests/demo/narrow.bynk:36:10", 861, 893, "expect sumOrZero(Some(2), Some(3)) == 5\n  expected: sumOrZero(Some(2), Some(3)) == 5\n  actual:   " + __bynkShow((sumOrZero(Some(2), Some(3)))) + " == " + __bynkShow((5))); }
     if (!(sumOrZero(Some(2), None) === 0)) { throw __bynkExpectFailure("tests/demo/narrow.bynk:37:10", 903, 932, "expect sumOrZero(Some(2), None) == 0\n  expected: sumOrZero(Some(2), None) == 0\n  actual:   " + __bynkShow((sumOrZero(Some(2), None))) + " == " + __bynkShow((0))); }
     if (!(sumOrZero(None, Some(3)) === 0)) { throw __bynkExpectFailure("tests/demo/narrow.bynk:38:10", 942, 971, "expect sumOrZero(None, Some(3)) == 0\n  expected: sumOrZero(None, Some(3)) == 0\n  actual:   " + __bynkShow((sumOrZero(None, Some(3)))) + " == " + __bynkShow((0))); }
@@ -146,9 +146,9 @@ async function test_a_negated_disjunction_binds_both_into_the_else_branch() {
 async function test_a_non_negated____narrows_nothing_but_still_tests() {
   try {
     const deps = {};
-    const { Booking, Q, bigRoom, both, dbl, either, eitherOr, nonNegativeIfSome, orZero, positive, sumOrZero } = demo_narrow;
-    type Booking = demo_narrow.Booking;
-    type Q = demo_narrow.Q;
+    const { Booking, Q, bigRoom, both, dbl, either, eitherOr, nonNegativeIfSome, orZero, positive, sumOrZero } = __ns_demo_narrow;
+    type Booking = __ns_demo_narrow.Booking;
+    type Q = __ns_demo_narrow.Q;
     if (!(either(Some(1), None) === 1)) { throw __bynkExpectFailure("tests/demo/narrow.bynk:42:10", 1042, 1068, "expect either(Some(1), None) == 1\n  expected: either(Some(1), None) == 1\n  actual:   " + __bynkShow((either(Some(1), None))) + " == " + __bynkShow((1))); }
     if (!(either(None, Some(1)) === 1)) { throw __bynkExpectFailure("tests/demo/narrow.bynk:43:10", 1078, 1104, "expect either(None, Some(1)) == 1\n  expected: either(None, Some(1)) == 1\n  actual:   " + __bynkShow((either(None, Some(1)))) + " == " + __bynkShow((1))); }
     if (!(either(None, None) === 0)) { throw __bynkExpectFailure("tests/demo/narrow.bynk:44:10", 1114, 1137, "expect either(None, None) == 0\n  expected: either(None, None) == 0\n  actual:   " + __bynkShow((either(None, None))) + " == " + __bynkShow((0))); }

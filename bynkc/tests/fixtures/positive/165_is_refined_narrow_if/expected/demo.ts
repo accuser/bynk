@@ -30,4 +30,3 @@ export function classify(n: number): number {
     return 0;
   }
 }
-

@@ -228,6 +228,9 @@ pub fn run(
     if matches!(probe.provenance, Provenance::Npx) {
         eprintln!("bynk: wrangler resolved via npx — it will download on first run.");
     }
+    if let Some(notice) = wrangler_age_notice(&probe) {
+        eprintln!("{notice}");
+    }
     if matches!(probe.provenance, Provenance::Missing) {
         // The pre-flight gate should have caught this; defensive only.
         eprintln!("bynk: wrangler not found (run `bynk doctor --only deploy`)");
@@ -242,7 +245,7 @@ pub fn run(
     for s in &serving {
         let Some(mut cmd) = wrangler_command(&probe.provenance, "dev") else {
             eprintln!("bynk: wrangler not found (run `bynk doctor --only deploy`)");
-            terminate(&mut children);
+            terminate(&mut children, &workers_dir);
             return ExitCode::FAILURE;
         };
         cmd.current_dir(workers_dir.join(&s.worker));
@@ -256,7 +259,7 @@ pub fn run(
             Ok(child) => children.push((s.worker.clone(), child)),
             Err(e) => {
                 eprintln!("bynk: could not run wrangler for `{}`: {e}", s.worker);
-                terminate(&mut children);
+                terminate(&mut children, &workers_dir);
                 return ExitCode::FAILURE;
             }
         }
@@ -283,7 +286,7 @@ pub fn run(
                 Ok(status) => status,
                 Err(e) => {
                     eprintln!("bynk: could not poll wrangler: {e}");
-                    terminate(&mut children);
+                    terminate(&mut children, &workers_dir);
                     return ExitCode::FAILURE;
                 }
             };
@@ -292,7 +295,7 @@ pub fn run(
                 if !children.is_empty() {
                     eprintln!("bynk dev: `{name}` exited — stopping the other contexts.");
                 }
-                terminate(&mut children);
+                terminate(&mut children, &workers_dir);
                 return ExitCode::from(exit_status_byte(&status));
             }
         }
@@ -314,7 +317,12 @@ pub fn run(
 /// one worker's exit does not strand the others — each holds a port and a
 /// `workerd` child, and a stranded one makes the *next* `bynk dev` fail on a
 /// port clash. Signal them all first, then reap, so the shutdowns overlap.
-fn terminate(children: &mut Vec<(String, std::process::Child)>) {
+///
+/// Then [`sweep`](crate::sweep::sweep) what is still running under
+/// `workers_dir` (#1742). Signalling the children is not enough: via npx the
+/// child is `npx`, which does not pass the signal on, and a worker that exited
+/// on its own has already orphaned its `workerd`s.
+fn terminate(children: &mut Vec<(String, std::process::Child)>, workers_dir: &Path) {
     for (_, child) in children.iter_mut() {
         request_stop(child);
     }
@@ -322,6 +330,7 @@ fn terminate(children: &mut Vec<(String, std::process::Child)>) {
         reap(child);
     }
     children.clear();
+    crate::sweep::sweep(workers_dir, STOP_GRACE);
 }
 
 /// Ask one `wrangler dev` to stop **and take its own process tree with it**.
@@ -347,15 +356,17 @@ fn request_stop(child: &mut std::process::Child) {
     let _ = child.kill();
 }
 
+/// How long a stopping wrangler gets to run its own teardown before SIGKILL.
+const STOP_GRACE: Duration = Duration::from_secs(10);
+
 /// Reap a signalled child, giving it a moment to run wrangler's own teardown
 /// before escalating to SIGKILL. Without the escalation a wrangler wedged in
 /// shutdown would hang `bynk dev` forever; without the grace period we would be
 /// back to stranding `workerd`.
 fn reap(child: &mut std::process::Child) {
-    const GRACE: Duration = Duration::from_secs(10);
     const TICK: Duration = Duration::from_millis(50);
     let mut waited = Duration::ZERO;
-    while waited < GRACE {
+    while waited < STOP_GRACE {
         match child.try_wait() {
             Ok(Some(_)) => return,
             Ok(None) => {}
@@ -432,6 +443,26 @@ fn collect_bynk_files(dir: &Path, excludes: &[PathBuf], visit: &mut dyn FnMut(&P
             visit(&path);
         }
     }
+}
+
+/// #1732: the warning `bynk dev` prints before serving with a wrangler older
+/// than [`bynk_emit::WRANGLER_MIN`]. Its `workerd` refuses the pinned
+/// compatibility date outright, and wrangler's own error says nothing about
+/// Bynk, so this names the cause and the fix first. A warning, not a refusal:
+/// the version is `doctor`'s judgement, and the wrangler itself has the last
+/// word. `None` when the wrangler is new enough, or can't be versioned (npx).
+pub fn wrangler_age_notice(probe: &probe::Probe) -> Option<String> {
+    let v = probe
+        .version
+        .filter(|_| doctor::wrangler_below_min(probe))?;
+    Some(format!(
+        "bynk: warning: wrangler {v} is older than {}, the first whose runtime serves \
+         compatibility date {}; `wrangler dev` will refuse it. Upgrade with \
+         `{}`.",
+        bynk_emit::WRANGLER_MIN,
+        bynk_emit::COMPATIBILITY_DATE,
+        doctor::wrangler_upgrade_remedy(probe)
+    ))
 }
 
 /// The text `bynk dev` prints when the deploy pre-flight fails: a lead line plus

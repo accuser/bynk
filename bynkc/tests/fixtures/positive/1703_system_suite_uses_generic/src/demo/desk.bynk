@@ -1,0 +1,23 @@
+---
+#1703 review: consumes a context with a generic type, and `uses` a commons
+with one, so its suite reaches both through the consumed-context branch and,
+at the integration tier, the integration module's `uses` scope.
+---
+context demo.desk
+
+uses demo.shapes
+consumes demo.vault as Vault
+
+service check {
+  on call(n: Int) -> Effect[Int] {
+    let e <- Vault.open(n)
+    e.item
+  }
+}
+
+service pairUp {
+  on call(n: Int) -> Effect[Int] {
+    let p = pairOf(n, "x")
+    p.first
+  }
+}

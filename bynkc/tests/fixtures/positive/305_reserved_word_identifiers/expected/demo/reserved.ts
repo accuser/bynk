@@ -21,4 +21,3 @@ export function g(__id_package: Wrapped): Wrapped {
   const value = __id_package.value + 1;
   return { value, label: __id_package.label };
 }
-

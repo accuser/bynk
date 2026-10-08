@@ -19,4 +19,3 @@ export function describe(r: Result<number, Fault>): string {
     return (r.tag === "Ok" ? "ok" : "other");
   }
 }
-

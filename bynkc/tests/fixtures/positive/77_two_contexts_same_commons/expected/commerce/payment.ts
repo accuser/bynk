@@ -13,4 +13,3 @@ export interface Payment {
 
 export const Payment = {
 };
-

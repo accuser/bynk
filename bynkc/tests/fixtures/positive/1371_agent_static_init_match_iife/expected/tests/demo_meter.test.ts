@@ -2,7 +2,7 @@
 // test target: demo.meter
 
 import { Ok, Err, Some, None, __makeTestState, type Result, type Option, type ValidationError, __bynkEq } from "../runtime.js";
-import * as demo_meter from "./../demo/meter.js";
+import * as __ns_demo_meter from "./../demo/meter.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -25,18 +25,18 @@ function __bynkShow(v: unknown): string {
   try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
-function makeTestDeps() {
+function __makeTestDeps() {
   return {  };
 }
 
 // case tier: unit
 async function test_a_fresh_Meter_key_reads_its_match_shaped_zero() {
   try {
-    demo_meter.__resetAgents();
-    const deps = makeTestDeps();
-    const { Meter, MeterError, MeterId, __makeMeter, hits } = demo_meter;
-    type MeterError = demo_meter.MeterError;
-    type MeterId = demo_meter.MeterId;
+    __ns_demo_meter.__resetAgents();
+    const deps = __makeTestDeps();
+    const { Meter, MeterError, MeterId, __makeMeter, hits } = __ns_demo_meter;
+    type MeterError = __ns_demo_meter.MeterError;
+    type MeterId = __ns_demo_meter.MeterId;
     void (await (async (__d) => {
         switch (__d.tag) {
           case "Err": {

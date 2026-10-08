@@ -11,4 +11,3 @@ export const tick = {
     return t;
   },
 };
-

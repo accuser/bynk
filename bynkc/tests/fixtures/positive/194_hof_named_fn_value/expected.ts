@@ -14,4 +14,3 @@ export function apply(f: (a0: number) => number, x: number): number {
 export function quadruple(x: number): number {
   return apply(double, apply(double, x));
 }
-

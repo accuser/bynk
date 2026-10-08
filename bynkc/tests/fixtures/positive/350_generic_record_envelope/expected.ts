@@ -35,4 +35,3 @@ export function empty_page(): Paginated<User> {
   const page: Paginated<User> = { items: [], cursor: Some("start") };
   return page;
 }
-

@@ -2,7 +2,7 @@
 // test target: signal
 
 import { Ok, Err, Some, None, __makeTestState, type Result, type Option, type ValidationError } from "../runtime.js";
-import * as signal from "./../signal.js";
+import * as __ns_signal from "./../signal.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -25,17 +25,17 @@ function __bynkShow(v: unknown): string {
   try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
-function makeTestDeps() {
+function __makeTestDeps() {
   return {  };
 }
 
 // case tier: unit
 async function test_a_written_colour_reads_back_after_a_reload() {
   try {
-    signal.__resetAgents();
-    const deps = makeTestDeps();
-    const { Light, Signal, __makeSignal } = signal;
-    type Light = signal.Light;
+    __ns_signal.__resetAgents();
+    const deps = __makeTestDeps();
+    const { Light, Signal, __makeSignal } = __ns_signal;
+    type Light = __ns_signal.Light;
     await __makeSignal("s").turnGreen(deps);
     const green = await __makeSignal("s").isGreen(deps);
     if (!(green)) { throw __bynkExpectFailure("tests/signal.test.bynk:6:12", 210, 215, "expect green"); }

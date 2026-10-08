@@ -7,5 +7,4 @@ export interface Idempotency {
   dedup<T>(key: string): globalThis.Promise<Option<T>>;
 }
 
-export const IdempotencyToken: symbol = globalThis.Symbol("Idempotency");
-
+export const __IdempotencyToken: symbol = globalThis.Symbol("Idempotency");

@@ -21,4 +21,3 @@ export interface Money {
 
 export const Money = {
 };
-

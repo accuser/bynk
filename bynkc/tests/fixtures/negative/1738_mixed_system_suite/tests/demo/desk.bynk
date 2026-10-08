@@ -1,0 +1,15 @@
+---
+#1738: a `system` case can't share a suite with lower-tier cases. Here one case
+steps up to `system` in an otherwise-`unit` suite.
+---
+suite demo.desk
+
+case "a unit case" {
+  let n <- local.call(5)
+  expect n == 6
+}
+
+case "a case stepping up to system" as system {
+  let n <- demo.desk.check(5)
+  expect n == 5
+}

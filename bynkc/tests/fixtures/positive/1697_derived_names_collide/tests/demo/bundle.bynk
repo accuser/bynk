@@ -1,0 +1,7 @@
+suite demo.bundle
+
+case "a bundle beside user names for its tables and types" {
+  expect tally() == 6
+  expect shout(Message { text: "hi" }) == "hi"
+  expect rawOf(MessageArg { raw: "r" }) == "r"
+}

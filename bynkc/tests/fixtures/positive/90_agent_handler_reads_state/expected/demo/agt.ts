@@ -74,4 +74,3 @@ export function __makeCounter(key: Id, env?: { COUNTER?: __DurableObjectNamespac
 export function __resetAgents(): void {
   __CounterRegistry.reset();
 }
-

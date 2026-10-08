@@ -1,0 +1,10 @@
+suite demo.box
+
+case "a method comparing its receiver's type parameter" {
+  expect hasThree(3)
+  expect !hasThree(4)
+}
+
+case "a method not comparing it accepts a function payload" {
+  expect boxedFnApplied(inc) == 0
+}

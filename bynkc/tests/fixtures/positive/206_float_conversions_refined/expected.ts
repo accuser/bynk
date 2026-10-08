@@ -65,4 +65,3 @@ export function demo(): boolean {
   }
   throw new globalThis.Error("non-exhaustive match");
 }
-

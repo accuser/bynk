@@ -2,7 +2,7 @@
 // test target: demo.gen
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
-import * as demo_gen from "./../demo/gen.js";
+import * as __ns_demo_gen from "./../demo/gen.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -151,14 +151,14 @@ async function __bynkRunProperty(spec: { seed: number, cases: number, gens: any[
   return { pass: true };
 }
 
-function makeTestDeps() {
+function __makeTestDeps() {
   return {  };
 }
 
 async function __prop_test_recursive_sum_with_int_base_generates() {
     const deps = {};
-    const { T } = demo_gen;
-    type T = demo_gen.T;
+    const { T } = __ns_demo_gen;
+    type T = __ns_demo_gen.T;
     const __gens = [
       { name: "t", boundaries: [T.Base(globalThis.Number(0n))], gen: (rng: any) => rng.pick([() => T.Base(globalThis.Number(rng.int(-1000n, 1000n))), () => T.Cons(rng.pick([() => T.Base(globalThis.Number(rng.int(-1000n, 1000n))), () => T.Cons(rng.pick([() => T.Base(globalThis.Number(rng.int(-1000n, 1000n))), () => T.Cons(rng.pick([() => T.Base(globalThis.Number(rng.int(-1000n, 1000n))), () => T.Cons(rng.pick([() => T.Base(globalThis.Number(rng.int(-1000n, 1000n))), () => T.Cons(rng.pick([() => T.Base(globalThis.Number(rng.int(-1000n, 1000n))), () => T.Cons(rng.pick([() => T.Base(globalThis.Number(rng.int(-1000n, 1000n))), () => T.Cons(rng.pick([() => T.Base(globalThis.Number(rng.int(-1000n, 1000n))), () => T.Cons(rng.pick([() => T.Base(globalThis.Number(rng.int(-1000n, 1000n))), () => T.Cons(rng.pick([() => T.Base(globalThis.Number(rng.int(-1000n, 1000n))), () => T.Cons(rng.pick([() => T.Base(globalThis.Number(rng.int(-1000n, 1000n))), () => T.Cons(rng.pick([() => T.Base(globalThis.Number(0n)), () => T.Cons(T.Base(globalThis.Number(0n)))]))]))]))]))]))]))]))]))]))]))]))]), shrink: (v: any) => [T.Base(globalThis.Number(0n))], show: (v: any) => __bynkShow(v) },
     ];

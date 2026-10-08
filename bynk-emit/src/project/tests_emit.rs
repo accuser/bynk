@@ -23,6 +23,8 @@
 
 use super::*;
 use crate::emitter::RuntimeUse;
+// #1759: every namespace a test module imports, from one definition.
+use crate::emitter::emit::test_scaffold_ns as test_ns;
 use bynk_check::checker::Types;
 use bynk_check::test_suites::{self, ResolvedStub};
 use bynk_syntax::ast::{
@@ -59,7 +61,7 @@ pub(crate) fn process_tests(
     // v0.17 (Locale capability track, slice 1, #844): capability name -> owning
     // unit, per target, for capabilities flattened in via `consumes U { Cap }`
     // (this never includes anything a target declares itself). Needed so
-    // `makeTestDeps()` wires an adapter-flattened capability (real *or*
+    // `__makeTestDeps()` wires an adapter-flattened capability (real *or*
     // stubbed) — it is not in `UnitTable.capabilities`, which holds only
     // locally-declared capabilities.
     unit_flattened: &HashMap<String, HashMap<String, String>>,
@@ -397,7 +399,7 @@ fn emit_integration_module(
 
     // Per-participant: workers handler namespace + Worker entry default export.
     for p in participants {
-        let ns = p.replace('.', "_");
+        let ns = test_ns(p);
         let dir = worker_dir_name(p);
         stmts.push(TsStmt::decl(
             TsDecl::ImportNamespace {
@@ -419,7 +421,7 @@ fn emit_integration_module(
     // `uses` commons (for constructing arguments).
     let mut uses_imports: Vec<(String, String)> = Vec::new();
     for u in uses_targets {
-        let ns = u.replace('.', "_");
+        let ns = test_ns(u);
         let path = relative_import_for_test(&commons_dir_for(u));
         uses_imports.push((ns, path));
     }
@@ -488,10 +490,10 @@ fn emit_integration_module(
         // hand-templated text spliced straight into the module.
         let mut case_out = String::new();
         case_out.push_str("  try {\n");
-        case_out.push_str("    const deps = makeHarness();\n");
+        case_out.push_str("    const deps = __makeHarness();\n");
         // Bring `uses` commons names into scope for argument construction.
         for u in uses_targets {
-            let ns = u.replace('.', "_");
+            let ns = test_ns(u);
             if let Some(table) = unit_tables.get(u) {
                 let mut names: Vec<String> = table
                     .types
@@ -501,9 +503,7 @@ fn emit_integration_module(
                     .collect();
                 names.sort();
                 names.dedup();
-                let mut type_names: Vec<String> = table.types.keys().cloned().collect();
-                type_names.sort();
-                type_names.dedup();
+                let type_names = aliased_types(table, |_| true);
                 crate::emitter::extend_printed_at(
                     &mut case_out,
                     emit_ns_destructure(&ns, &names, &type_names),
@@ -701,7 +701,7 @@ fn emit_system_http_support(
             type_ns: String::new(),
         };
     };
-    let ns = target.replace('.', "_");
+    let ns = test_ns(target);
     let binding = crate::emitter::wrangler::consumed_binding_name(target);
     let type_ns = format!("{ns}.");
 
@@ -1011,7 +1011,7 @@ fn emit_system_http_support(
                     TsStmt::const_stmt(
                         TsBindingName::Ident("__h".to_string()),
                         None,
-                        call(ident("makeHarness"), vec![]),
+                        call(ident("__makeHarness"), vec![]),
                         None,
                     ),
                     TsStmt::const_stmt(
@@ -1213,7 +1213,7 @@ fn service_binding_forward(worker_ident: &str, env_ident: &str) -> TsExpr {
     }
 }
 
-/// Emit the `makeHarness()` factory: an in-process env per participant whose
+/// Emit the `__makeHarness()` factory: an in-process env per participant whose
 /// Service Bindings call the sibling participants' real Worker `fetch` and whose
 /// Durable-Object namespaces back the participant's own agents in memory, plus a
 /// root env binding every participant (the test cases call in through it). A
@@ -1239,7 +1239,7 @@ fn emit_integration_harness(
     // harness scope needs its own naming/qualification scheme this slice hasn't
     // worked out. Left as `any`, named here rather than guessed at.
     for p in participants {
-        let ns = p.replace('.', "_");
+        let ns = test_ns(p);
         body.push(TsStmt::const_stmt(
             TsBindingName::Ident(format!("env_{ns}")),
             Some(TsType::named("any")),
@@ -1250,12 +1250,12 @@ fn emit_integration_harness(
     // Wire each participant's consumed Service Bindings to its sibling Workers,
     // and back its own agents with in-memory Durable Object namespaces.
     for p in participants {
-        let ns = p.replace('.', "_");
+        let ns = test_ns(p);
         if let Some(deps) = unit_consumes.get(p) {
             let mut deps_sorted = deps.clone();
             deps_sorted.sort();
             for d in &deps_sorted {
-                let dns = d.replace('.', "_");
+                let dns = test_ns(d);
                 let binding = crate::emitter::wrangler::consumed_binding_name(d);
                 body.push(TsStmt::assign(
                     member(ident(format!("env_{ns}")), binding),
@@ -1302,7 +1302,7 @@ fn emit_integration_harness(
         None,
     ));
     for p in participants {
-        let ns = p.replace('.', "_");
+        let ns = test_ns(p);
         let binding = crate::emitter::wrangler::consumed_binding_name(p);
         body.push(TsStmt::assign(
             member(ident("rootEnv"), binding),
@@ -1316,7 +1316,7 @@ fn emit_integration_harness(
     ));
     TsStmt::decl(
         TsDecl::Function {
-            name: "makeHarness".to_string(),
+            name: "__makeHarness".to_string(),
             generics: Vec::new(),
             params: Vec::new(),
             return_type: None,
@@ -1660,7 +1660,7 @@ fn json_codec_qual_for_target(
     let mut qual = HashMap::new();
     if let Some(used) = unit_uses.get(target_name) {
         for u in used {
-            let ns = u.replace('.', "_");
+            let ns = test_ns(u);
             if let Some(table) = unit_tables.get(u) {
                 for n in table.types.keys() {
                     qual.entry(n.clone()).or_insert_with(|| format!("{ns}."));
@@ -1668,7 +1668,7 @@ fn json_codec_qual_for_target(
             }
         }
     }
-    let target_ns = target_name.replace('.', "_");
+    let target_ns = test_ns(target_name);
     if let Some(table) = unit_tables.get(target_name) {
         for n in table.types.keys() {
             qual.insert(n.clone(), format!("{target_ns}."));
@@ -1719,7 +1719,7 @@ fn emit_test_module(
     // below) and merged there via that case's own top-level
     // `nested_map_source_id`.
     let mut map = SourceMapBuilder::new();
-    let target_ns = target_name.replace('.', "_");
+    let target_ns = test_ns(target_name);
     let target_dir = commons_dir_for(target_name);
     // Output file: tests/<sanitised-target>.test.ts
     let module_path = PathBuf::from(format!("tests/{}.test.ts", target_name.replace('.', "_")));
@@ -1774,7 +1774,7 @@ fn emit_test_module(
     let mut consumed_imports: Vec<(String, String)> = Vec::new();
     if let Some(consumed) = unit_consumes.get(target_name) {
         for q in consumed {
-            let ns = q.replace('.', "_");
+            let ns = test_ns(q);
             let dir = commons_dir_for(q);
             let import_path = relative_import_for_test(&dir);
             consumed_imports.push((ns, import_path));
@@ -1797,7 +1797,7 @@ fn emit_test_module(
     let mut uses_imports: Vec<(String, String)> = Vec::new();
     if let Some(used) = unit_uses.get(target_name) {
         for u in used {
-            let ns = u.replace('.', "_");
+            let ns = test_ns(u);
             let dir = commons_dir_for(u);
             let import_path = relative_import_for_test(&dir);
             uses_imports.push((ns, import_path));
@@ -1961,7 +1961,7 @@ fn emit_test_module(
             .unwrap_or_default();
         flattened.sort_by_key(|(cap, _)| cap.as_str());
         for (cap, owner) in flattened {
-            if let Some(def) = platform_double(owner, cap, &owner.replace('.', "_")) {
+            if let Some(def) = platform_double(owner, cap, &test_ns(owner)) {
                 stmts.push(TsStmt::raw(def, None));
             }
         }
@@ -2450,7 +2450,7 @@ fn emit_stub_class(
     // Value expressions are lowered in the target context's privileged view, so
     // its types, variants and `uses` vocabulary resolve unqualified.
     let owning_unit = target_name.to_string();
-    let scope_ns = owning_unit.replace('.', "_");
+    let scope_ns = test_ns(&owning_unit);
     // Each in-scope type name's *owning* namespace — the target's own for a
     // locally-declared type, but the specific `uses`d commons' for one reached
     // only through it (never the target's), since `emit_context_rebrands`
@@ -2470,7 +2470,7 @@ fn emit_stub_class(
     if let Some(used) = unit_uses.get(&owning_unit) {
         for u in used {
             if let Some(table) = unit_tables.get(u) {
-                let uns = u.replace('.', "_");
+                let uns = test_ns(u);
                 for n in table.types.keys() {
                     type_ns.entry(n.clone()).or_insert_with(|| uns.clone());
                 }
@@ -2486,7 +2486,7 @@ fn emit_stub_class(
         .filter(|u| unit_tables.get(*u).and_then(|t| t.kind) == Some(UnitKind::Adapter))
         .collect();
     for u in &adapters {
-        let uns = u.replace('.', "_");
+        let uns = test_ns(u);
         for n in unit_tables[*u].types.keys() {
             type_ns.entry(n.clone()).or_insert_with(|| uns.clone());
         }
@@ -2504,14 +2504,9 @@ fn emit_stub_class(
     } else {
         Vec::new()
     };
-    let scope_type_names: Vec<String> = unit_tables
+    let scope_type_names: Vec<(String, Vec<String>)> = unit_tables
         .get(&owning_unit)
-        .map(|t| {
-            let mut v: Vec<String> = t.types.keys().cloned().collect();
-            v.sort();
-            v.dedup();
-            v
-        })
+        .map(|t| aliased_types(t, |_| true))
         .unwrap_or_default();
 
     // Group clause indices by method, preserving resolution order (case-scoped
@@ -2547,7 +2542,7 @@ fn emit_stub_class(
         }
     }
     // #291: a case-scoped clause applies only while its own case runs, so a
-    // class with one carries the running case's name (`makeTestDeps`'s
+    // class with one carries the running case's name (`__makeTestDeps`'s
     // argument), and `__applies` tells `__bynkOverlay` which operations this
     // case stubs at all — an operation stubbed only by other cases reaches the
     // tier default instead.
@@ -2621,9 +2616,10 @@ fn emit_stub_class(
                 continue;
             }
             names.sort();
+            let types = aliased_types(&unit_tables[*u], |n| names.contains(n));
             crate::emitter::extend_printed_at(
                 &mut body_text,
-                emit_ns_destructure(&u.replace('.', "_"), &names, &names),
+                emit_ns_destructure(&test_ns(u), &names, &types),
                 2,
             );
         }
@@ -3020,7 +3016,7 @@ fn platform_seams<'a>(
     out
 }
 
-/// #291: a stubbed capability's `makeTestDeps` entry — its `__Stub_<Cap>`
+/// #291: a stubbed capability's `__makeTestDeps` entry — its `__Stub_<Cap>`
 /// layered over `base`, the tier default (the context's own provider, a
 /// platform capability's test double, or nothing). A stubbed operation answers
 /// from the stub; every other operation reaches the base, so `stub` overrides
@@ -3082,7 +3078,7 @@ function __bynkOverlay(base: unknown, stub: object, cap: string): unknown {
 /// from a fixed-seed generator, `Secrets` has none, `Locale` is `"en"`,
 /// `Idempotency` and `Kv` are in-memory (a TTL or `expiresAfter` is accepted
 /// and ignored: expiry is not modelled), and `Fetch` faults — a test never
-/// reaches the network, so it must `stub Fetch.send`. `makeTestDeps` builds
+/// reaches the network, so it must `stub Fetch.send`. `__makeTestDeps` builds
 /// fresh ones per case.
 fn platform_double(owner: &str, cap: &str, ns: &str) -> Option<String> {
     let body = match (owner, cap) {
@@ -3119,8 +3115,8 @@ fn emit_test_deps(
     if target_kind == UnitKind::Context
         && let Some(table) = unit_tables.get(target_name)
     {
-        let ns = target_name.replace('.', "_");
-        // Sorted so `makeTestDeps` field order is deterministic across the
+        let ns = test_ns(target_name);
+        // Sorted so `__makeTestDeps` field order is deterministic across the
         // capability map's hash iteration order.
         let mut caps: Vec<&String> = table.capabilities.keys().collect();
         caps.sort();
@@ -3157,7 +3153,7 @@ fn emit_test_deps(
             .unwrap_or_default();
         flattened.sort_by_key(|(cap, _)| cap.as_str());
         for (cap, owner) in flattened {
-            let owner_ns = owner.replace('.', "_");
+            let owner_ns = test_ns(owner);
             // #291: a platform capability's tier default is its deterministic
             // test double (`platform_double`), never an `undefined` placeholder.
             let base = platform_double(owner, cap, &owner_ns)
@@ -3174,7 +3170,7 @@ fn emit_test_deps(
         // (v0.118 `stub` is capability-only — a consumed-context capability
         // flattened via `consumes U { Cap }` is folded in via `unit_flattened`
         // above). An `adapter` target (e.g. `consumes bynk { Locale }`) has no
-        // `makeSurface` at all — so it must not get a surface entry either
+        // `__makeSurface` at all — so it must not get a surface entry either
         // (Locale capability track, slice 1, #844).
         let consumed: Vec<String> = unit_consumes
             .get(target_name)
@@ -3202,11 +3198,11 @@ fn emit_test_deps(
                 .get(q)
                 .cloned()
                 .unwrap_or_else(|| q.rsplit('.').next().unwrap_or(q.as_str()).to_string());
-            let other_ns = q.replace('.', "_");
+            let other_ns = test_ns(q);
             surface_entries.push((
                 key,
                 undefined_as_unknown_as(format!(
-                    "globalThis.ReturnType<typeof {other_ns}.makeSurface>"
+                    "globalThis.ReturnType<typeof {other_ns}.__makeSurface>"
                 )),
             ));
         }
@@ -3233,7 +3229,7 @@ fn emit_test_deps(
     };
     TsStmt::decl(
         TsDecl::Function {
-            name: "makeTestDeps".to_string(),
+            name: "__makeTestDeps".to_string(),
             generics: Vec::new(),
             // #291: the running case's name, when some `stub` is case-scoped.
             params: if case_scoped {
@@ -3270,7 +3266,16 @@ fn emit_test_deps(
 /// #1479: returns real [`TsStmt`]s (was `out: &mut String`) — every caller
 /// now appends via `crate::emitter::extend_printed_at(out, stmts, 2)`, the
 /// same depth-2 this scaffold body's own statements always printed at.
-fn emit_ns_destructure(ns: &str, value_names: &[String], type_names: &[String]) -> Vec<TsStmt> {
+/// #1703: each type name carries its type parameters, so a generic type's
+/// alias is generic too (`type Box<A> = ns.Box<A>;`). A bare alias of a generic
+/// type is `TS2314` under `tsc`, which failed every suite whose target declared
+/// or `uses` one, whether or not a case mentioned it. Build the list with
+/// [`aliased_types`].
+fn emit_ns_destructure(
+    ns: &str,
+    value_names: &[String],
+    type_names: &[(String, Vec<String>)],
+) -> Vec<TsStmt> {
     let mut stmts = Vec::new();
     if !value_names.is_empty() {
         stmts.push(TsStmt::const_stmt(
@@ -3280,17 +3285,43 @@ fn emit_ns_destructure(ns: &str, value_names: &[String], type_names: &[String]) 
             None,
         ));
     }
-    for t in type_names {
+    for (t, params) in type_names {
+        let target = format!("{ns}.{t}");
+        let ty = if params.is_empty() {
+            TsType::named(target)
+        } else {
+            TsType::named_with_args(target, params.iter().map(TsType::named).collect())
+        };
         stmts.push(TsStmt::decl(
             TsDecl::TypeAlias {
                 name: t.clone(),
-                type_params: Vec::new(),
-                ty: TsType::named(format!("{ns}.{t}")),
+                type_params: params.clone(),
+                ty,
             },
             None,
         ));
     }
     stmts
+}
+
+/// #1703: the types of `table` that `keep` admits, each with its type
+/// parameters, sorted by name: the `type_names` [`emit_ns_destructure`] aliases.
+fn aliased_types(table: &UnitTable, keep: impl Fn(&String) -> bool) -> Vec<(String, Vec<String>)> {
+    let mut types: Vec<(String, Vec<String>)> = table
+        .types
+        .iter()
+        .filter(|(name, _)| keep(name))
+        .map(|(name, decl)| {
+            let params = decl
+                .type_params
+                .iter()
+                .map(|p| p.name.name.clone())
+                .collect();
+            (name.clone(), params)
+        })
+        .collect();
+    types.sort();
+    types
 }
 
 /// Emit the shared per-runner scope setup — agent reset, the `deps` factory, and
@@ -3310,12 +3341,12 @@ fn emit_test_scope_setup(
     // `deps` with the recording proxy and declare the per-case trace `__obs`. Off
     // for bodies that don't observe, so their emitted output is unchanged.
     record_calls: bool,
-    // #291: the running case's name, passed to `makeTestDeps` when the case
+    // #291: the running case's name, passed to `__makeTestDeps` when the case
     // has its own `stub` clauses (so they apply to it and no other case).
     case_name: Option<&str>,
 ) {
     let deps_args: Vec<TsExpr> = case_name.map(str_lit).into_iter().collect();
-    let target_ns = target_name.replace('.', "_");
+    let target_ns = test_ns(target_name);
     // v0.9.2: reset the target context's agent registries so each test sees a
     // fresh per-key state (finding #10's "fresh per test" half).
     let target_has_agents = unit_tables
@@ -3407,7 +3438,7 @@ fn emit_test_scope_setup(
                 call(
                     ident("__bynkRecordDeps"),
                     vec![
-                        call(ident("makeTestDeps"), deps_args.clone()),
+                        call(ident("__makeTestDeps"), deps_args.clone()),
                         spec,
                         ident("__obs"),
                     ],
@@ -3419,7 +3450,7 @@ fn emit_test_scope_setup(
             let deps_stmt = TsStmt::const_stmt(
                 TsBindingName::Ident("deps".to_string()),
                 None,
-                call(ident("makeTestDeps"), deps_args.clone()),
+                call(ident("__makeTestDeps"), deps_args.clone()),
                 None,
             );
             out.push_str(&bynk_ts::print_stmt(&deps_stmt, 2));
@@ -3458,9 +3489,7 @@ fn emit_test_scope_setup(
         }
         names.sort();
         names.dedup();
-        let mut type_names: Vec<String> = table.types.keys().cloned().collect();
-        type_names.sort();
-        type_names.dedup();
+        let type_names = aliased_types(table, |_| true);
         crate::emitter::extend_printed_at(
             out,
             emit_ns_destructure(&target_ns, &names, &type_names),
@@ -3484,7 +3513,7 @@ fn emit_test_scope_setup(
         .unwrap_or_default();
     if let Some(used) = unit_uses.get(target_name) {
         for u in used {
-            let ns = u.replace('.', "_");
+            let ns = test_ns(u);
             if let Some(table) = unit_tables.get(u) {
                 let mut names: Vec<String> = table
                     .types
@@ -3495,14 +3524,7 @@ fn emit_test_scope_setup(
                     .collect();
                 names.sort();
                 names.dedup();
-                let mut type_names: Vec<String> = table
-                    .types
-                    .keys()
-                    .filter(|n| !target_local.contains(n))
-                    .cloned()
-                    .collect();
-                type_names.sort();
-                type_names.dedup();
+                let type_names = aliased_types(table, |n| !target_local.contains(n));
                 crate::emitter::extend_printed_at(
                     out,
                     emit_ns_destructure(&ns, &names, &type_names),
@@ -3523,18 +3545,17 @@ fn emit_test_scope_setup(
             alias_for.insert(q.clone(), alias.clone());
         }
         for q in consumed {
-            let ns = q.replace('.', "_");
+            let ns = test_ns(q);
             let is_adapter = matches!(
                 unit_tables.get(q).and_then(|t| t.kind),
                 Some(UnitKind::Adapter)
             );
             if let Some(table) = unit_tables.get(q) {
-                let mut names: Vec<String> = table.types.keys().cloned().collect();
-                names.sort();
-                names.dedup();
-                crate::emitter::extend_printed_at(out, emit_ns_destructure(&ns, &names, &names), 2);
+                let types = aliased_types(table, |_| true);
+                let names: Vec<String> = types.iter().map(|(n, _)| n.clone()).collect();
+                crate::emitter::extend_printed_at(out, emit_ns_destructure(&ns, &names, &types), 2);
             }
-            // An `adapter` target has no `makeSurface`/`deps.surface` entry —
+            // An `adapter` target has no `__makeSurface`/`deps.surface` entry —
             // its capabilities are already flattened onto `deps` directly
             // (Locale capability track, slice 1, #844).
             if is_adapter {
@@ -3786,7 +3807,7 @@ fn observation_call_record_types(
     // Named/opaque parameter types are re-exported under the target's namespace,
     // so qualify them (`AuthId` → `commerce_payment.AuthId`); base types are
     // unaffected. Matches the mock-signature qualification.
-    let scope_ns = target_name.replace('.', "_");
+    let scope_ns = test_ns(target_name);
     let mut type_ns: HashMap<String, String> = table
         .types
         .keys()
@@ -3797,7 +3818,7 @@ fn observation_call_record_types(
     let mut caps: std::collections::BTreeMap<&String, &bynk_syntax::ast::CapabilityDecl> =
         table.capabilities.iter().collect();
     for (cap, decl, owner) in platform_seams(target_name, unit_tables) {
-        let uns = owner.replace('.', "_");
+        let uns = test_ns(owner);
         for n in unit_tables[owner].types.keys() {
             type_ns.entry(n.clone()).or_insert_with(|| uns.clone());
         }
@@ -5144,7 +5165,7 @@ fn emit_test_history_property_function(
 
     // Drive a generated sequence through the real handlers via the agent module's
     // exported test driver, threading the test `deps` (real or `stub`-stubbed).
-    let target_ns = target_name.replace('.', "_");
+    let target_ns = test_ns(target_name);
     // P7.2: `seq` matches `__bynkDriveHistory_*`'s own real param type
     // (`emit.rs`'s own driver-signature narrowing). `(target_ns as any)` and
     // `deps` stay deferred — the callee's own `deps: any` param is itself
@@ -5460,7 +5481,7 @@ fn template(text: impl Into<String>) -> TsExpr {
 
 /// One `async function __sysdrive_*` driver: an optional lead statement
 /// (`const __body = JSON.stringify(...)`, typed/no-auth drivers only), `const
-/// __h = makeHarness();`, `const __req = new Request(<url>, <options>);`,
+/// __h = __makeHarness();`, `const __req = new Request(<url>, <options>);`,
 /// `const __res = await __h.env.<binding>.fetch(__req);`, then `return
 /// <decode_fn>(__res, <payload>);`. Slice F (#1407): the one real shape
 /// shared by all four per-route `__sysdrive_{,raw_,noauth_,rawnoauth_}*`
@@ -5495,7 +5516,7 @@ fn sysdrive_driver(
     body.push(TsStmt::const_stmt(
         TsBindingName::Ident("__h".to_string()),
         None,
-        call(ident("makeHarness"), vec![]),
+        call(ident("__makeHarness"), vec![]),
         None,
     ));
     body.push(TsStmt::const_stmt(

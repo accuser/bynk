@@ -72,6 +72,12 @@ with none is the plain string literal above. The hole rule and emission are
 specified in [§5.2 well-typedness](/book/spec/static-semantics/#52-well-typedness) and
 [§7 emission](/book/spec/emission/).
 
+### §3.2.2a string_interpolation
+
+{{#grammar string_interpolation}}
+
+One interpolation hole, `\(expr)`, inside a string literal (v0.43).
+
 ### §3.2.3 boolean_literal
 
 {{#grammar boolean_literal}}

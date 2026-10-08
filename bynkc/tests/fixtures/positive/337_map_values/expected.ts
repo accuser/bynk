@@ -10,4 +10,3 @@ export function totals(m: ReadonlyMap<string, number>): readonly number[] {
 export function names(m: ReadonlyMap<string, number>): readonly string[] {
   return [...(m).keys()];
 }
-

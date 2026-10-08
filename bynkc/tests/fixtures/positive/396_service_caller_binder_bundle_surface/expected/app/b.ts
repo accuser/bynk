@@ -9,14 +9,13 @@ export const whoami = {
   },
 };
 
-export interface AppBDeps {
+export interface __AppBDeps {
 }
 
-export function makeSurface(deps: AppBDeps, __caller: string) {
+export function __makeSurface(deps: __AppBDeps, __caller: string) {
   return {
     async whoami(ping: string): globalThis.Promise<Result<string, string>> {
       return whoami.call(ping, { ...deps, identity: __caller });
     },
   };
 }
-

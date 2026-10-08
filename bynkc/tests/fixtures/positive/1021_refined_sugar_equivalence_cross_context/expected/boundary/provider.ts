@@ -20,14 +20,13 @@ export const verify = {
   },
 };
 
-export interface BoundaryProviderDeps {
+export interface __BoundaryProviderDeps {
 }
 
-export function makeSurface(deps: BoundaryProviderDeps) {
+export function __makeSurface(deps: __BoundaryProviderDeps) {
   return {
     async verify(token: Token): globalThis.Promise<Result<number, number>> {
       return verify.call(token, deps);
     },
   };
 }
-

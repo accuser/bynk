@@ -3,33 +3,32 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
 
-import { LocaleTag, Message, MessageArg } from "../bynk/locale/types.js";
-import { render as __bynkLocaleRender, renderArg } from "../bynk/locale.js";
+import { render as __bynkLocaleRender, renderArg as __bynkRenderArg } from "../bynk/locale.js";
+import type { LocaleTag as __bynkLocaleTag, Message as __bynkMessage, MessageArg as __bynkMessageArg } from "../bynk/locale/types.js";
 
-const messagesByLocale: globalThis.Record<string, globalThis.Record<string, (params: ReadonlyMap<string, MessageArg>) => string>> = {
+const __messagesByLocale: globalThis.Record<string, globalThis.Record<string, (params: ReadonlyMap<string, __bynkMessageArg>) => string>> = {
   /**
    * message-bundles track, slice 1 (#859): a single-locale bundle wired to
    * `bynk.locale`'s bundle-free `render` (ADR 0256) as its fallback for a
    * code this bundle doesn't declare.
    */
   "en": {
-    "greeting": (params: ReadonlyMap<string, MessageArg>): string => "Hello, " + (params.get("name") !== undefined ? renderArg(params.get("name") as MessageArg) : "{name}") + "!",
-    "farewell": (params: ReadonlyMap<string, MessageArg>): string => "Bye",
-    "unmatched_placeholder": (params: ReadonlyMap<string, MessageArg>): string => "Value: " + (params.get("oops") !== undefined ? renderArg(params.get("oops") as MessageArg) : "{oops}"),
-    "quantity": (params: ReadonlyMap<string, MessageArg>): string => (params.get("count") !== undefined ? renderArg(params.get("count") as MessageArg) : "{count}") + " at " + (params.get("price") !== undefined ? renderArg(params.get("price") as MessageArg) : "{price}"),
+    "greeting": (params: ReadonlyMap<string, __bynkMessageArg>): string => "Hello, " + (params.get("name") !== undefined ? __bynkRenderArg(params.get("name") as __bynkMessageArg) : "{name}") + "!",
+    "farewell": (params: ReadonlyMap<string, __bynkMessageArg>): string => "Bye",
+    "unmatched_placeholder": (params: ReadonlyMap<string, __bynkMessageArg>): string => "Value: " + (params.get("oops") !== undefined ? __bynkRenderArg(params.get("oops") as __bynkMessageArg) : "{oops}"),
+    "quantity": (params: ReadonlyMap<string, __bynkMessageArg>): string => (params.get("count") !== undefined ? __bynkRenderArg(params.get("count") as __bynkMessageArg) : "{count}") + " at " + (params.get("price") !== undefined ? __bynkRenderArg(params.get("price") as __bynkMessageArg) : "{price}"),
   },
 };
 
-export const messagesReferenceLocale: LocaleTag = ("en" as string) as LocaleTag;
-export const messagesLocales: readonly LocaleTag[] = [("en" as string) as LocaleTag];
+export const __messagesReferenceLocale: __bynkLocaleTag = ("en" as string) as __bynkLocaleTag;
+export const __messagesLocales: readonly __bynkLocaleTag[] = [("en" as string) as __bynkLocaleTag];
 
-export function render(tag: LocaleTag, msg: Message): string {
-  const __localeTable = messagesByLocale[tag];
-  const __referenceTable = messagesByLocale[messagesReferenceLocale];
+export function render(tag: __bynkLocaleTag, msg: __bynkMessage): string {
+  const __localeTable = __messagesByLocale[tag];
+  const __referenceTable = __messagesByLocale[__messagesReferenceLocale];
   const __entry = (__localeTable !== undefined ? __localeTable[msg.code] : undefined) ?? __referenceTable[msg.code];
   if (__entry !== undefined) {
     return __entry(msg.params);
   }
   return __bynkLocaleRender(tag, msg);
 }
-

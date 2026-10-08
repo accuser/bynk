@@ -29,4 +29,3 @@ export function from_items_first(): Box<number> {
 export function replace_head(b: Box<User>, u: User): Box<User> {
   return { ...b, head: u };
 }
-

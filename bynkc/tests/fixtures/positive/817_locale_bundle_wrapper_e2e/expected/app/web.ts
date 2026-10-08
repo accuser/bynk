@@ -14,15 +14,14 @@ export const greeting = {
   },
 };
 
-export interface AppWebDeps {
+export interface __AppWebDeps {
   readonly Locale: bynk.Locale;
 }
 
-export function makeSurface(deps: AppWebDeps) {
+export function __makeSurface(deps: __AppWebDeps) {
   return {
     async greeting(): globalThis.Promise<string> {
       return greeting.call(deps);
     },
   };
 }
-

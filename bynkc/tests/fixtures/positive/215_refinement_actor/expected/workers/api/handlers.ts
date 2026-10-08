@@ -37,4 +37,3 @@ export function __deserialise_UserId(json: __JsonValue, path: string = "$"): Res
   return Ok(validated.value as UserId);
 }
 
-

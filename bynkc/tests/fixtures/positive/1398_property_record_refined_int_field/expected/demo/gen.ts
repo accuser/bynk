@@ -24,4 +24,3 @@ export interface Point {
 
 export const Point = {
 };
-

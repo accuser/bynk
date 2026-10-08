@@ -18,7 +18,7 @@ use std::io::Read;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use bynk::compiler::Compiler;
+use bynk::compiler::{Compiler, Origin, Skew};
 use bynk::dev::compile_once;
 
 static STDERR_REDIRECT: Mutex<()> = Mutex::new(());
@@ -107,4 +107,42 @@ fn compile_once_surfaces_non_failing_warnings() {
         stderr.contains("bynk.given.unused_capability"),
         "expected the unused-`given`-capability warning to be printed, got:\n{stderr}"
     );
+}
+
+/// #1675: under a `BYNK_BYNKC` override, `compile_once` (the `dev`/`deploy`
+/// build) refuses a major-skewed `bynkc` before spawning it. The refusal's
+/// wording (a bare `bynk:` prefix, only the variable as the way past) is pinned
+/// by `compiler.rs`'s `refusal_advice_matches_the_command`: it is printed with
+/// `eprintln!`, which libtest captures before it reaches fd 2.
+#[test]
+#[cfg(unix)]
+fn compile_once_refuses_a_major_skewed_override_without_running_it() {
+    use std::os::unix::fs::PermissionsExt;
+
+    if std::env::var_os(bynk::compiler::ALLOW_SKEW_ENV).is_some_and(|v| !v.is_empty()) {
+        eprintln!("skipped: BYNK_ALLOW_SKEW is set in this environment");
+        return;
+    }
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("compile-once-skew");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let ran = dir.join("ran");
+    let bynkc = dir.join("bynkc");
+    std::fs::write(&bynkc, format!("#!/bin/sh\ntouch '{}'\n", ran.display())).unwrap();
+    std::fs::set_permissions(&bynkc, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let compiler = Compiler {
+        path: Some(bynkc),
+        origin: Some(Origin::Override),
+        version: Some(bynk::probe::Version {
+            major: 9999,
+            minor: 0,
+            patch: 0,
+        }),
+        skew: Some(Skew::Major),
+    };
+
+    let ok = compile_once(&compiler, &fixture(), &dir.join("out"), false);
+
+    assert!(!ok, "a major skew fails the build");
+    assert!(!ran.exists(), "the skewed `bynkc` is never spawned");
 }

@@ -22,7 +22,9 @@ fn workflow(name: &str) -> PathBuf {
 /// The two workflows that run `--workspace` with `BYNK_REQUIRE_WORKERD` set on
 /// Linux, i.e. the two where a failed provisioning is a red build rather than a
 /// skip. `release-bootstrap.yml` also runs the suite but never sets the gate, so
-/// wrangler there is genuinely optional.
+/// wrangler there is genuinely optional. It pre-warms too (#1676: under nextest
+/// its smokes run as concurrent processes), but a stale spec there costs a
+/// skip, not a red build, so it is not pinned here.
 const GATED_WORKFLOWS: [&str; 2] = ["ci.yml", "release.yml"];
 
 fn assert_prewarms(path: &Path) {

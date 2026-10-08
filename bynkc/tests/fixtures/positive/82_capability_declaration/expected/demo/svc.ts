@@ -8,5 +8,4 @@ export interface Logger {
   error(message: string): globalThis.Promise<void>;
 }
 
-export const LoggerToken: symbol = globalThis.Symbol("Logger");
-
+export const __LoggerToken: symbol = globalThis.Symbol("Logger");

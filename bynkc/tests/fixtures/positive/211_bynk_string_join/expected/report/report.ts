@@ -12,4 +12,3 @@ export function csvLine(cells: readonly string[]): string {
 export function roundTrip(line: string): string {
   return join(line.split(","), ",");
 }
-

@@ -2,7 +2,7 @@
 // test target: receipts
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, type __BoundaryError, type __JsonValue, type JsonError } from "../runtime.js";
-import * as receipts from "./../receipts.js";
+import * as __ns_receipts from "./../receipts.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -25,7 +25,7 @@ function __bynkShow(v: unknown): string {
   try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
-function makeTestDeps() {
+function __makeTestDeps() {
   return {  };
 }
 
@@ -33,8 +33,8 @@ function makeTestDeps() {
 async function test_encodes_a_named_type() {
   try {
     const deps = {};
-    const { Receipt } = receipts;
-    type Receipt = receipts.Receipt;
+    const { Receipt } = __ns_receipts;
+    type Receipt = __ns_receipts.Receipt;
     if (!(globalThis.JSON.stringify(__serialise_Receipt({ code: "A1", total: 42 })) === "{\"code\":\"A1\",\"total\":42}")) { throw __bynkExpectFailure("tests/receipts.test.bynk:12:12", 731, 813, "expect Json.encode(Receipt { code: \"A1\", total: 42 }) == \"{\\\"code\\\":\\\"A1\\\",\\\"total\\\":42}\"\n  expected: Json.encode(Receipt { code: \"A1\", total: 42 }) == \"{\\\"code\\\":\\\"A1\\\",\\\"total\\\":42}\"\n  actual:   " + __bynkShow((globalThis.JSON.stringify(__serialise_Receipt({ code: "A1", total: 42 })))) + " == " + __bynkShow(("{\"code\":\"A1\",\"total\":42}"))); }
     return { pass: true };
   } catch (e) {
@@ -45,14 +45,14 @@ async function test_encodes_a_named_type() {
   }
 }
 
-export function __serialise_Receipt(value: receipts.Receipt): __JsonValue {
+export function __serialise_Receipt(value: __ns_receipts.Receipt): __JsonValue {
   return {
     code: value.code as __JsonValue,
     total: ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(value.total),
   };
 }
 
-export function __deserialise_Receipt(json: __JsonValue, path: string = "$"): Result<receipts.Receipt, __BoundaryError> {
+export function __deserialise_Receipt(json: __JsonValue, path: string = "$"): Result<__ns_receipts.Receipt, __BoundaryError> {
   if (typeof json !== "object" || json === null || globalThis.Array.isArray(json)) {
     return Err({ kind: "StructuralMismatch", path, expected: "object", actual: typeof json });
   }
@@ -68,7 +68,7 @@ export function __deserialise_Receipt(json: __JsonValue, path: string = "$"): Re
     return Err({ kind: "StructuralMismatch", path: `${path}.total`, expected: "safe integer", actual: String(obj["total"]) });
   }
   const __total = obj["total"];
-  return Ok({ code: __code, total: __total } as receipts.Receipt);
+  return Ok({ code: __code, total: __total } as __ns_receipts.Receipt);
 }
 
 

@@ -6,7 +6,7 @@ import * as bynk__binding from "./bynk-cloudflare.js";
 
 export function composeApp() {
   const shop_reserveDeps = { Idempotency: new bynk__binding.IdempotencyProvider({ Clock: new bynk__binding.ClockProvider() }) };
-  const shop_reserveSurface = shop_reserve.makeSurface(shop_reserveDeps);
+  const shop_reserveSurface = shop_reserve.__makeSurface(shop_reserveDeps);
 
   return {
     reserve: shop_reserveSurface,

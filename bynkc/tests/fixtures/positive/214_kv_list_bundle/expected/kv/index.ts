@@ -56,11 +56,11 @@ export const allKeys = {
   },
 };
 
-export interface KvIndexDeps {
+export interface __KvIndexDeps {
   readonly Kv: bynk_cloudflare.Kv;
 }
 
-export function makeSurface(deps: KvIndexDeps) {
+export function __makeSurface(deps: __KvIndexDeps) {
   return {
     async scan(prefix: string): globalThis.Promise<Result<readonly string[], void>> {
       return scan.call(prefix, deps);
@@ -107,5 +107,4 @@ export function __deserialise_Entry(json: __JsonValue, path: string = "$"): Resu
   const __qty = obj["qty"];
   return Ok({ sku: __sku, price: __price, qty: __qty } as Entry);
 }
-
 

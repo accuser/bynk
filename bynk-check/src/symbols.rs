@@ -1240,7 +1240,7 @@ pub struct MessageBundleInfo {
     /// The commons's qualified unit name (e.g. `"app.msgs"`).
     pub commons: String,
     /// Project-relative path of the file carrying the `@reference` block —
-    /// the import target for `messagesLocales`/`messagesReferenceLocale`.
+    /// the import target for `__messagesLocales`/`__messagesReferenceLocale`.
     /// (A bundle genuinely split across multiple files, per the track doc's
     /// own §4.1, is not correctly merged by `emit_messages_bundle` today —
     /// each file emits independently, `bynk-emit/src/project.rs`'s per-file

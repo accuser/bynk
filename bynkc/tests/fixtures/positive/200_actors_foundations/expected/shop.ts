@@ -28,14 +28,13 @@ export const rpc = {
   },
 };
 
-export interface ShopDeps {
+export interface __ShopDeps {
 }
 
-export function makeSurface(deps: ShopDeps) {
+export function __makeSurface(deps: __ShopDeps) {
   return {
     async rpc(): globalThis.Promise<Result<void, string>> {
       return rpc.call(deps);
     },
   };
 }
-

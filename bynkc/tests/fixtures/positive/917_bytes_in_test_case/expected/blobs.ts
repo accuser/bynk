@@ -6,4 +6,3 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError } f
 export function size(b: globalThis.Uint8Array): number {
   return (b).length;
 }
-

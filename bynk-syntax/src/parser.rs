@@ -102,8 +102,14 @@ fn split_trivia(tokens: &[Token], source: &str) -> (Vec<Token>, TriviaTable) {
             let body = comment_body(source, tok.span).to_string();
             // If nothing has been buffered as leading for the next token and
             // there is no newline between the previous content token and
-            // this comment, it trails that token.
+            // this comment, it trails that token. A doc block never has a
+            // trailing comment: its token ends past the newline after the
+            // closing `---`, so a `--` line directly under it would otherwise
+            // look same-line and be binned where nothing collects it (#1756).
             if pending_leading.is_empty()
+                && filtered
+                    .last()
+                    .is_some_and(|t| t.kind != TokenKind::DocBlock)
                 && let Some(prev_end) = last_content_end
                 && !source[prev_end..tok.span.start].contains('\n')
             {
@@ -245,10 +251,20 @@ pub fn merge_syntax_errors(
 /// [`parse_units_with_recovery`], also returning the names of the declarations
 /// recovery skipped (#1663).
 pub fn parse_units_recovering(tokens: &[Token], source: &str) -> Recovered {
+    parse_units_recovering_from(tokens, source, &mut 0)
+}
+
+/// [`parse_units_recovering`], continuing [`ExprId`] allocation from `next_id`
+/// rather than starting at 0 — see [`parse_unit_with_warnings_from`]. #1710:
+/// the project path checks a recovered file's surviving declarations
+/// alongside every other file's, so its ids must come from the same durable
+/// counter (`bynk_project::parse_cache`), or they would collide.
+pub fn parse_units_recovering_from(tokens: &[Token], source: &str, next_id: &mut u32) -> Recovered {
     let (filtered, trivia) = split_trivia(tokens, source);
     let mut warnings = Vec::new();
     let mut p = Parser::new(&filtered, source, trivia, &mut warnings);
     p.recover_mode = true;
+    p.next_expr_id = *next_id;
     let mut units = Vec::new();
     loop {
         match p.parse_unit() {
@@ -268,6 +284,7 @@ pub fn parse_units_recovering(tokens: &[Token], source: &str) -> Recovered {
         }
     }
     let broken_decl_names = std::mem::take(&mut p.broken_decl_names);
+    *next_id = p.next_expr_id;
     let mut all_errors = p.recovered_errors;
     all_errors.append(&mut warnings);
     Recovered {
@@ -680,8 +697,21 @@ impl<'a> Parser<'a> {
     /// Comments immediately preceding the current peek position. Consumed
     /// (the table entry is cleared) so the same comments are not attached
     /// to two nodes.
-    fn take_leading_trivia(&mut self) -> Vec<String> {
-        self.trivia.take_leading(self.pos)
+    fn take_leading_trivia(&mut self) -> Vec<Comment> {
+        self.trivia
+            .take_leading(self.pos)
+            .into_iter()
+            .map(Comment::Line)
+            .collect()
+    }
+
+    /// The comments after the last token, as [`Comment::Line`]s.
+    fn take_epilogue_trivia(&mut self) -> Vec<Comment> {
+        self.trivia
+            .take_epilogue()
+            .into_iter()
+            .map(Comment::Line)
+            .collect()
     }
 
     /// Trailing comment, if any, on the same source line as the most
@@ -990,9 +1020,16 @@ impl<'a> Parser<'a> {
     /// the optional doc block. Comments may appear both *before* and
     /// *between* the doc and the declaration; the spec canonicalises both
     /// groups above the doc, so we concatenate them.
-    fn collect_item_lead(&mut self) -> (Vec<String>, Option<(String, Span)>) {
+    ///
+    /// The doc comes back as a [`DocLead`], which records where it sat among
+    /// the comments, so an orphan can be kept in place ([`keep_orphan`]).
+    fn collect_item_lead(&mut self) -> (Vec<Comment>, Option<DocLead>) {
         let mut leading = self.take_leading_trivia();
-        let doc = self.take_doc_block();
+        let doc = self.take_doc_block().map(|(content, span)| DocLead {
+            content,
+            span,
+            at: leading.len(),
+        });
         if doc.is_some() {
             leading.extend(self.take_leading_trivia());
         }
@@ -1000,9 +1037,16 @@ impl<'a> Parser<'a> {
     }
 
     /// Attach a parsed doc block to a following declaration unless a blank
-    /// line separates them, in which case the doc is orphaned (warning).
-    fn finalize_doc(&mut self, doc: Option<(String, Span)>, next_span: Span) -> Option<String> {
-        let (content, doc_span) = doc?;
+    /// line separates them, in which case the doc is orphaned: a warning, and
+    /// the block is kept in `leading` where it sat (#1756).
+    fn finalize_doc(
+        &mut self,
+        doc: Option<DocLead>,
+        next_span: Span,
+        leading: &mut Vec<Comment>,
+    ) -> Option<String> {
+        let doc = doc?;
+        let doc_span = doc.span;
         // A blank line between the doc and the next decl orphans the doc.
         if has_blank_line_between(self.source, doc_span.end, next_span.start) {
             self.warnings.push(
@@ -1016,10 +1060,28 @@ impl<'a> Parser<'a> {
                      or remove the doc block if it is not meant to document anything",
                 ),
             );
+            keep_orphan(leading, doc);
             return None;
         }
-        Some(content)
+        Some(doc.content)
     }
+}
+
+/// A doc block read ahead of a declaration, before it is known to attach: its
+/// normalised content, its span, and its index among the leading comments
+/// collected with it.
+pub(crate) struct DocLead {
+    pub(crate) content: String,
+    pub(crate) span: Span,
+    pub(crate) at: usize,
+}
+
+/// #1756: keep an orphaned doc block in `leading`, at the place it was written
+/// among those comments, so the formatter prints it where it was rather than
+/// dropping it.
+fn keep_orphan(leading: &mut Vec<Comment>, doc: DocLead) {
+    let at = doc.at.min(leading.len());
+    leading.insert(at, Comment::OrphanDoc(doc.content));
 }
 
 /// Parse the body of a lexed double-quoted string literal (the lexeme,
@@ -1886,7 +1948,10 @@ mod tests {
         let CommonsItem::Type(t) = &c.items[0] else {
             panic!()
         };
-        assert_eq!(t.trivia.leading, vec![" explain the type".to_string()]);
+        assert_eq!(
+            t.trivia.leading,
+            vec![Comment::Line(" explain the type".to_string())]
+        );
         assert!(t.trivia.trailing.is_none());
     }
 
@@ -1910,7 +1975,11 @@ mod tests {
         };
         assert_eq!(
             t.trivia.leading,
-            vec![" one".to_string(), " two".to_string(), " three".to_string()],
+            vec![
+                Comment::Line(" one".to_string()),
+                Comment::Line(" two".to_string()),
+                Comment::Line(" three".to_string())
+            ],
         );
     }
 
@@ -1922,7 +1991,7 @@ mod tests {
         let CommonsItem::Type(t) = &c.items[0] else {
             panic!()
         };
-        assert_eq!(t.trivia.leading, vec![" intro".to_string()]);
+        assert_eq!(t.trivia.leading, vec![Comment::Line(" intro".to_string())]);
         assert_eq!(t.documentation.as_deref(), Some("docs"));
     }
 
@@ -1964,7 +2033,7 @@ mod tests {
         assert_eq!(m.entries[0].template, "Hello, {name}!");
         assert_eq!(m.entries[1].code, "farewell");
         assert_eq!(m.entries[1].template, "Bye");
-        assert_eq!(m.trivia.leading, vec![" intro".to_string()]);
+        assert_eq!(m.trivia.leading, vec![Comment::Line(" intro".to_string())]);
         assert_eq!(m.documentation.as_deref(), Some("docs"));
         assert_eq!(m.trivia.trailing.as_deref(), Some(" trailing"));
     }
@@ -2013,7 +2082,10 @@ mod tests {
         let Statement::Let(l) = &f.body.statements[0] else {
             panic!()
         };
-        assert_eq!(l.trivia.leading, vec![" pick a value".to_string()]);
+        assert_eq!(
+            l.trivia.leading,
+            vec![Comment::Line(" pick a value".to_string())]
+        );
     }
 
     #[test]
@@ -2023,7 +2095,10 @@ mod tests {
         let CommonsItem::Fn(f) = &c.items[0] else {
             panic!()
         };
-        assert_eq!(f.body.tail_leading_comments, vec![" result".to_string()],);
+        assert_eq!(
+            f.body.tail_leading_comments,
+            vec![Comment::Line(" result".to_string())],
+        );
     }
 
     /// #637 Gap A: the contextual keywords `on` / `suite` / `case` are lexer
@@ -2150,7 +2225,10 @@ mod tests {
         // can preserve it.
         let src = "commons x\n\ntype T = Int where Positive\n-- afterword\n";
         let c = parse_str(src).unwrap();
-        assert_eq!(c.trailing_comments, vec![" afterword".to_string()]);
+        assert_eq!(
+            c.trailing_comments,
+            vec![Comment::Line(" afterword".to_string())]
+        );
     }
 
     #[test]
@@ -2163,7 +2241,10 @@ mod tests {
         // `bynk-fmt`).
         let src = "commons x {\n  type T = Int where Positive\n}\n-- afterword\n";
         let c = parse_str(src).unwrap();
-        assert_eq!(c.trailing_comments, vec![" afterword".to_string()]);
+        assert_eq!(
+            c.trailing_comments,
+            vec![Comment::Line(" afterword".to_string())]
+        );
     }
 
     #[test]
@@ -2173,7 +2254,10 @@ mod tests {
         let SourceUnit::Context(c) = parse_unit_str(src).unwrap() else {
             panic!("expected context");
         };
-        assert_eq!(c.trailing_comments, vec![" afterword".to_string()]);
+        assert_eq!(
+            c.trailing_comments,
+            vec![Comment::Line(" afterword".to_string())]
+        );
     }
 
     #[test]
@@ -2183,7 +2267,10 @@ mod tests {
         let SourceUnit::Suite(s) = parse_unit_str(src).unwrap() else {
             panic!("expected suite");
         };
-        assert_eq!(s.trailing_comments, vec![" afterword".to_string()]);
+        assert_eq!(
+            s.trailing_comments,
+            vec![Comment::Line(" afterword".to_string())]
+        );
     }
 
     /// Finding #30: unlike the three regressions just above,
@@ -2198,7 +2285,10 @@ mod tests {
         let SourceUnit::Adapter(a) = parse_unit_str(src).unwrap() else {
             panic!("expected adapter");
         };
-        assert_eq!(a.trailing_comments, vec![" afterword".to_string()]);
+        assert_eq!(
+            a.trailing_comments,
+            vec![Comment::Line(" afterword".to_string())]
+        );
     }
 
     // -- Six-fold unification (review Part 3): the fragment-only ordering

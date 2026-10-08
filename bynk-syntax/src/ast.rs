@@ -14,15 +14,28 @@ pub struct Ident {
 /// attaches them to nearby AST nodes so the formatter can re-emit them.
 ///
 /// - `leading` holds comments that appear immediately above the node,
-///   ordered top-to-bottom. Each entry is the body of one `--` line
-///   (the text after the marker, with its original inline whitespace
-///   preserved).
+///   ordered top-to-bottom: each a `--` line, or an orphaned `---` doc block
+///   (see [`Comment`]).
 /// - `trailing` holds a single comment that appears on the same source
 ///   line as the node's final token (e.g. `expr  -- note`).
 #[derive(Debug, Clone, Default)]
 pub struct Trivia {
-    pub leading: Vec<String>,
+    pub leading: Vec<Comment>,
     pub trailing: Option<String>,
+}
+
+/// One entry of comment trivia.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Comment {
+    /// A `--` line comment: the text after the marker, with its original
+    /// inline whitespace preserved.
+    Line(String),
+    /// #1756: a `---` doc block that attaches to no declaration (a blank line
+    /// separates it from the next one, or nothing follows it). The parser warns
+    /// `bynk.parse.orphan_doc_block` and keeps the block here, so the formatter
+    /// can print it where it was. Its content is normalised as an attached
+    /// doc's is.
+    OrphanDoc(String),
 }
 
 impl Trivia {
@@ -53,7 +66,7 @@ pub struct Commons {
     pub trivia: Trivia,
     /// Comments appearing after the last item but before the file ends
     /// (or the closing brace, for brace form). One entry per `--` line.
-    pub trailing_comments: Vec<String>,
+    pub trailing_comments: Vec<Comment>,
 }
 
 /// The two surface forms in which a commons body may be parsed (v0.3 §3.1).
@@ -97,7 +110,7 @@ pub struct Context {
     pub trivia: Trivia,
     /// Comments appearing after the last item but before the file ends
     /// (or the closing brace, for brace form). One entry per `--` line.
-    pub trailing_comments: Vec<String>,
+    pub trailing_comments: Vec<Comment>,
 }
 
 /// A `consumes other.context` declaration (v0.4 §3.2). May optionally carry
@@ -172,7 +185,7 @@ pub struct AdapterDecl {
     pub form: CommonsForm,
     pub span: Span,
     pub trivia: Trivia,
-    pub trailing_comments: Vec<String>,
+    pub trailing_comments: Vec<Comment>,
 }
 
 /// A `binding "<module>" requires { "pkg": "range", … }` clause inside an
@@ -269,7 +282,7 @@ pub struct SuiteDecl {
     pub documentation: Option<String>,
     pub span: Span,
     pub trivia: Trivia,
-    pub trailing_comments: Vec<String>,
+    pub trailing_comments: Vec<Comment>,
 }
 
 /// v0.118: the tier a `case` runs at (testing track slice 6, ADR 0153). One
@@ -573,6 +586,9 @@ pub struct CapabilityDecl {
     pub ops: Vec<CapabilityOp>,
     pub documentation: Option<String>,
     pub span: Span,
+    /// #1756: comments before the closing `}`, an orphaned doc block among
+    /// them, so the formatter keeps them.
+    pub trailing_comments: Vec<Comment>,
     pub trivia: Trivia,
 }
 
@@ -665,6 +681,9 @@ pub struct ServiceDecl {
     pub handlers: Vec<Handler>,
     pub documentation: Option<String>,
     pub span: Span,
+    /// #1756: comments before the closing `}`, an orphaned doc block among
+    /// them, so the formatter keeps them.
+    pub trailing_comments: Vec<Comment>,
     pub trivia: Trivia,
 }
 
@@ -945,6 +964,9 @@ pub struct AgentDecl {
     pub handlers: Vec<Handler>,
     pub documentation: Option<String>,
     pub span: Span,
+    /// #1756: comments before the closing `}`, an orphaned doc block among
+    /// them, so the formatter keeps them.
+    pub trailing_comments: Vec<Comment>,
     pub trivia: Trivia,
 }
 
@@ -2104,7 +2126,7 @@ pub struct Block {
     /// Line comments that appear between the last statement (or the
     /// opening brace) and the tail expression. Preserved here because
     /// expressions do not carry trivia in v1.1.
-    pub tail_leading_comments: Vec<String>,
+    pub tail_leading_comments: Vec<Comment>,
     /// `true` when the block was written with no explicit tail expression and
     /// the parser synthesised a `()` (unit) tail (v0.146, ADR 0170). The tail
     /// is a real `ExprKind::UnitLit` either way; this flag records that it was
@@ -2636,9 +2658,13 @@ pub enum ExprKind {
 /// (block statements and match-arm bodies were skipped, so e.g. the `:=`
 /// self-reference rule was bypassable through a match arm).
 ///
-/// Descends one level: block *statements* and the tail, match-arm bodies,
-/// lambda bodies, interpolation holes, record-field values, and observation
-/// predicates are all children. Callers recurse for a deep walk.
+/// Exhaustive over [`ExprKind`] *and* over the expressions each variant holds
+/// (#1760: match-arm guards were once missed, and every walk built on this one
+/// missed them with it).
+///
+/// Descends one level: block *statements* and the tail, match-arm guards and
+/// bodies, lambda bodies, interpolation holes, record-field values, and
+/// observation predicates are all children. Callers recurse for a deep walk.
 pub fn expr_children(e: &Expr) -> Vec<&Expr> {
     fn block_children<'a>(b: &'a Block, out: &mut Vec<&'a Expr>) {
         for s in &b.statements {
@@ -2703,6 +2729,11 @@ pub fn expr_children(e: &Expr) -> Vec<&Expr> {
         ExprKind::Match { discriminant, arms } => {
             out.push(discriminant.as_ref());
             for arm in arms {
+                // #1760: the guard, in evaluation order before the body. It is
+                // an ordinary expression, checked like any other.
+                if let Some(guard) = &arm.guard {
+                    out.push(guard);
+                }
                 match &arm.body {
                     MatchBody::Expr(e) => out.push(e),
                     MatchBody::Block(b) => block_children(b, &mut out),
@@ -2733,10 +2764,19 @@ pub fn expr_children(e: &Expr) -> Vec<&Expr> {
 
 /// The expressions directly contained in a statement — the statement half of
 /// [`expr_children`]'s total walk. Exhaustive over [`Statement`] for the same
-/// reason.
+/// reason, and over each statement's expressions: a `let`'s call-site
+/// principal identity included.
 pub fn statement_exprs<'a>(s: &'a Statement, out: &mut Vec<&'a Expr>) {
     match s {
-        Statement::Let(l) | Statement::EffectLet(l) => out.push(&l.value),
+        Statement::Let(l) | Statement::EffectLet(l) => {
+            // #1766 review: a call-site principal's identity (`by User(who)`)
+            // is a full expression. It is evaluated first, as an argument to
+            // the addressed call.
+            if let Some(identity) = l.principal.as_ref().and_then(|p| p.identity.as_deref()) {
+                out.push(identity);
+            }
+            out.push(&l.value)
+        }
         Statement::Expect(a) => out.push(&a.value),
         Statement::Send(snd) => out.push(&snd.value),
         Statement::Do(d) => out.push(&d.value),
@@ -3058,5 +3098,52 @@ mod size_tests {
             std::mem::size_of::<Expr>() < 176,
             "Expr should be smaller than its pre-#31 size of 176 bytes"
         );
+    }
+}
+
+#[cfg(test)]
+mod expr_children_tests {
+    use super::*;
+
+    /// #1760: a match arm's guard is a child, between the discriminant and
+    /// the arm's body, in evaluation order.
+    #[test]
+    fn a_match_arms_guard_is_a_child_in_evaluation_order() {
+        let source = "commons d\n\nfn f(n: Int, lim: Int) -> Int {\n  match n {\n    k if k > lim => 1\n    _ => 0\n  }\n}\n";
+        let tokens = crate::lexer::tokenize(source).unwrap();
+        let units = crate::parser::parse_units(&tokens, source).unwrap();
+        let SourceUnit::Commons(c) = &units[0] else {
+            panic!("a commons");
+        };
+        let CommonsItem::Fn(f) = &c.items[0] else {
+            panic!("a fn");
+        };
+        let ExprKind::Match { .. } = &f.body.tail.kind else {
+            panic!("a match tail");
+        };
+        let children: Vec<&str> = expr_children(&f.body.tail)
+            .into_iter()
+            .map(|e| &source[e.span.start..e.span.end])
+            .collect();
+        assert_eq!(children, ["n", "k > lim", "1", "0"]);
+    }
+
+    /// #1766 review: a `let`'s call-site principal identity is a statement
+    /// expression, before the value it addresses.
+    #[test]
+    fn a_principal_identity_is_a_statement_expression() {
+        let source = "suite demo.s {\n  case \"c\" {\n    let who = \"alice\"\n    let item <- api.get() by User(who)\n    expect item\n  }\n}\n";
+        let tokens = crate::lexer::tokenize(source).unwrap();
+        let units = crate::parser::parse_units(&tokens, source).unwrap();
+        let SourceUnit::Suite(t) = &units[0] else {
+            panic!("a suite");
+        };
+        let mut exprs = Vec::new();
+        statement_exprs(&t.cases[0].body.statements[1], &mut exprs);
+        let texts: Vec<&str> = exprs
+            .into_iter()
+            .map(|e| &source[e.span.start..e.span.end])
+            .collect();
+        assert_eq!(texts, ["who", "api.get()"]);
     }
 }

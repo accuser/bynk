@@ -6,4 +6,3 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError, __
 export function formula(a: number, b: number): number {
   return __bynkIntDiv((a + b) * (a - b), 2);
 }
-

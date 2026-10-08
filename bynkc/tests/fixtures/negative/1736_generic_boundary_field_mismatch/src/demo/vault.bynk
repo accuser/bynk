@@ -1,0 +1,20 @@
+---
+#1736 review: the structural check compares a generic type's fields at its
+applied arguments. Here the arguments match (`[Int]` on both sides) but the
+fields don't (`note: String` here, `note: Int` in the consumer's `Wrapper`),
+so the rejection comes from that field-level comparison, not from the
+argument list. (The consumer can't redeclare `Envelope` itself:
+`bynk.consumes.name_conflict`. Structural compatibility ignores record names,
+so a differently named generic reaches the same comparison.)
+---
+context demo.vault
+
+exports transparent { Envelope }
+
+type Envelope[T] = { item: T, note: String }
+
+service readBack {
+  on call(e: Envelope[Int]) -> Effect[Int] {
+    e.item
+  }
+}

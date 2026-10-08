@@ -77,4 +77,3 @@ export function __makeToggle(key: Id, env?: { TOGGLE?: __DurableObjectNamespace 
 export function __resetAgents(): void {
   __ToggleRegistry.reset();
 }
-

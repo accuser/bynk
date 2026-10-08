@@ -17,4 +17,3 @@ export const Subject = {
 export function greeting(subject: Subject, count: number): string {
   return `Hello, ${String(subject)}! You are visitor #${String(count)} — cost \$0 \`free\`.`;
 }
-

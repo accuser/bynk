@@ -185,6 +185,9 @@ pub enum Command {
         /// source-context rendering; `short` emits one terse
         /// `path:line:col: severity[category]: message` line per diagnostic,
         /// for tooling (the VS Code problem-matcher, CI, scripts).
+        /// In both, `path` is the file as you'd type it from the working
+        /// directory (the input you passed, joined with the file's place in
+        /// it), the same path `fmt` reports.
         #[arg(long, value_enum, default_value = "rich")]
         format: CheckFormatArg,
     },
@@ -212,6 +215,11 @@ pub enum Command {
     Test {
         #[command(flatten)]
         args: bynk_driver::test_runner::TestArgs,
+        /// Run even when the resolved `bynkc` is a different *major* version
+        /// from `bynk` (#1675). A minor skew only warns. Also settable as
+        /// `BYNK_ALLOW_SKEW=1`.
+        #[arg(long)]
+        allow_skew: bool,
     },
     /// Explain a diagnostic code — the longer-form "what the rule is, why it
     /// exists, and how to fix it" behind a `bynk.*` error code (#853).

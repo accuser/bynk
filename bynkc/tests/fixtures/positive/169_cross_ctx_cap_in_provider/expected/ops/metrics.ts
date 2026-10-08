@@ -9,7 +9,7 @@ export interface Stamp {
   make(): globalThis.Promise<number>;
 }
 
-export const StampToken: symbol = globalThis.Symbol("Stamp");
+export const __StampToken: symbol = globalThis.Symbol("Stamp");
 
 export class ClockStamp implements Stamp {
   private deps: { Clock: platform_time.Clock };
@@ -20,7 +20,7 @@ export class ClockStamp implements Stamp {
   }
 }
 
-export const ClockStampProvider = { token: StampToken, factory: (deps: { Clock: platform_time.Clock }) => new ClockStamp(deps) };
+export const __ClockStampProvider = { token: __StampToken, factory: (deps: { Clock: platform_time.Clock }) => new ClockStamp(deps) };
 
 export const report = {
   async call(deps: { Stamp: Stamp }): globalThis.Promise<number> {
@@ -29,15 +29,14 @@ export const report = {
   },
 };
 
-export interface OpsMetricsDeps {
+export interface __OpsMetricsDeps {
   readonly Stamp: Stamp;
 }
 
-export function makeSurface(deps: OpsMetricsDeps) {
+export function __makeSurface(deps: __OpsMetricsDeps) {
   return {
     async report(): globalThis.Promise<number> {
       return report.call(deps);
     },
   };
 }
-

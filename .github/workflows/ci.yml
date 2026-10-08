@@ -278,10 +278,10 @@ jobs:
       # nextest runs one process pool across every test binary at once (the
       # fixture corpus is dozens of separate binaries `cargo test` would run
       # serially), cutting this leg's wall-clock. Prebuilt binary — no compile.
-      # Pinned to the 0.9 line (like typescript@5 / wasm-bindgen-cli): this now
+      # Pinned to the 0.9 line (like typescript@5): this now
       # gates every test run, so a future 0.10 with changed behaviour must not
       # turn CI red with no repo change.
-      - uses: taiki-e/install-action@4cef1412cce204788f482e778a0b9187f9626a29 # v2
+      - uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2
         with:
           tool: nextest@0.9
       # #1671: Node 22 (the floor, NODE_MAJOR_FLOOR) so tsc_verify's strip-types
@@ -290,8 +290,9 @@ jobs:
         with:
           node-version: "22"
       # `tsc` is needed by the tsc-verify stage and the `bynkc test` fixtures.
-      # Pinned to v5: an unpinned `typescript` could turn CI red on a new TS
-      # major with no repo change, and the tsc_verify fallback already pins @5.
+      # Pinned to the verified floor, v5 (TYPESCRIPT_MAJOR_FLOOR): an unpinned
+      # `typescript` could turn CI red on a new TS major with no repo change.
+      # The verified current major, v7, runs as a second pass below (#1672).
       - name: Install TypeScript
         run: npm install -g typescript@5
       # Provision wrangler ONCE, serially, before the suite. The three workerd
@@ -301,13 +302,14 @@ jobs:
       # single test. Concurrent `npx -y wrangler@4` installs all land in the
       # SAME `~/.npm/_npx/<hash>` directory (the hash is of the package spec,
       # not the argv), and npm does not lock it. On the v0.245.0 release run
-      # (release.yml, same tests, no nextest retries) they raced on a cold
-      # cache: npm tore down its own half-extracted tree (`ENOTEMPTY` on rmdir,
-      # then a fan of `TAR_ENTRY_ERROR ENOENT`), neither wrangler ever served,
-      # and both tests burned the full 180s boot window before failing under
-      # BYNK_REQUIRE_WORKERD. This leg's `retries = 1` was hiding the same race
-      # here as a FLAKY line rather than a failure. Warming the cache means
-      # every test finds a complete cache and installs nothing.
+      # (release.yml, same tests, then on `cargo test` with no retries) they
+      # raced on a cold cache: npm tore down its own half-extracted tree
+      # (`ENOTEMPTY` on rmdir, then a fan of `TAR_ENTRY_ERROR ENOENT`),
+      # neither wrangler ever served, and both tests burned the full 180s boot
+      # window before failing under BYNK_REQUIRE_WORKERD. This leg's
+      # `retries = 1` was hiding the same race here as a FLAKY line rather than
+      # a failure. Warming the cache means every test finds a complete cache
+      # and installs nothing.
       #
       # The spec must stay in step with the tests' own; a drift guard
       # (bynkc/tests/wrangler/mod.rs) fails if it doesn't.
@@ -352,6 +354,28 @@ jobs:
           # resolvable, and several `bynkc test` runner paths branch on exactly
           # that. Not worth the risk on the OS we just put on the PR gate.
           BYNK_REQUIRE_WORKERD: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
+      # #1672: the emitted output is verified under both TypeScript majors it
+      # supports — the floor (v5, the main run above) and the current one users
+      # get from `npm install -g typescript` (v7, here). Linux only: the type-
+      # check is OS-independent, and the corpus takes seconds. The version check
+      # keeps a failed install from silently re-running the suite under v5.
+      # Scope: the two whole-corpus type-check suites. The behaviour suites,
+      # which also type-check before running, stay on v5 in CI (re-running them
+      # here would roughly double this leg's wall-clock).
+      - name: Install TypeScript 7 (the tested major)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          npm install -g typescript@7
+          v="$(tsc --version 2>/dev/null || true)"
+          case "$v" in
+            "Version 7."*) echo "$v" ;;
+            *) echo "::error::expected TypeScript 7, got: ${v:-no tsc on PATH}"; exit 1 ;;
+          esac
+      - name: Type-check emitted output under TypeScript 7
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo nextest run --locked --profile ci -p bynkc --test tsc_verify --test examples
+        env:
+          BYNK_REQUIRE_TSC: "1"
 
   msrv:
     # Verify the declared rust-version (Cargo.toml) actually builds, rather than
@@ -448,7 +472,7 @@ jobs:
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
       # Prebuilt binary — avoids recompiling cargo-llvm-cov from source on every
       # run (minutes of pure build cost on a report-only, continue-on-error job).
-      - uses: taiki-e/install-action@4cef1412cce204788f482e778a0b9187f9626a29 # v2
+      - uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2
         with:
           tool: cargo-llvm-cov
       - name: Coverage summary
@@ -499,9 +523,11 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
-      - uses: taiki-e/install-action@4cef1412cce204788f482e778a0b9187f9626a29 # v2
+      # Same version as the wasm-bindgen crate in Cargo.lock, like
+      # deploy-playground.yml; xtask/tests/wasm_bindgen_pin.rs checks both.
+      - uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2
         with:
-          tool: wasm-bindgen-cli@0.2.126
+          tool: wasm-bindgen-cli@0.2.127
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
           node-version: "20"
@@ -583,6 +609,26 @@ jobs:
         run: node scripts/check-bundle.mjs
       - name: Package the VSIX
         run: npx --yes @vscode/vsce@3.9.2 package --no-dependencies --skip-license
+
+  server-pin:
+    # #1673: the VS Code extension's `bynkServerVersion` names the GitHub
+    # Release a freshly packaged VSIX downloads `bynkc-lsp` from (the last
+    # shipped release; release.yml's `server-pin` job moves it). Unlike the
+    # other jobs this one has no path filter: the release can stop being valid
+    # without any change in the repo (deleted, flipped to draft, an asset
+    # removed), so it runs on every CI run, the weekly schedule included. It is
+    # one API call. A failure to reach GitHub is a warning, not a red build.
+    name: Extension server pin (release exists)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: The pin names a downloadable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/check-server-pin.sh
 
   extension-tests:
     # Launch a real VS Code instance with the extension + a fixture workspace
@@ -775,7 +821,7 @@ jobs:
       # trigger an implicit download when `cargo audit` dispatches in-repo).
       - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
       # Prebuilt binary — avoids compiling cargo-audit from source on every run.
-      - uses: taiki-e/install-action@4cef1412cce204788f482e778a0b9187f9626a29 # v2
+      - uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2
         with:
           tool: cargo-audit
       - name: Audit dependencies
@@ -903,6 +949,7 @@ jobs:
       - playground
       - site
       - extension
+      - server-pin
       - grammar
       - runtime
       - drift
@@ -948,6 +995,7 @@ jobs:
       - playground
       - site
       - extension
+      - server-pin
       - extension-tests
       - grammar
       - runtime

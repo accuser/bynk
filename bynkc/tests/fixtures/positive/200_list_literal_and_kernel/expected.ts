@@ -41,4 +41,3 @@ export function demo(): number {
 export function keyList(m: ReadonlyMap<string, number>): readonly string[] {
   return [...(m).keys()];
 }
-

@@ -8,4 +8,3 @@ import { Height, Width } from "./types.js";
 export function area(w: Width, h: Height): number {
   return w * h;
 }
-

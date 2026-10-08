@@ -19,7 +19,7 @@ use proptest::prelude::*;
 
 use bynk_fmt::{FormatOptions, format_source};
 use bynk_syntax::lexer::tokenize;
-use bynk_syntax::parser::parse_units;
+use bynk_syntax::parser::{parse_unit_with_warnings, parse_units};
 
 /// A lowercase identifier that is not a keyword or contextual word the
 /// grammar treats specially.
@@ -141,6 +141,59 @@ fn commons() -> impl Strategy<Value = String> {
     )
 }
 
+/// #1664: an optional `---` doc block before an item: none, attached (directly
+/// above the item), or orphaned (a blank line between, so the parser attaches
+/// it to nothing).
+fn doc() -> impl Strategy<Value = String> {
+    prop_oneof![
+        Just(String::new()),
+        "[a-z]{1,12}".prop_map(|s| format!("---\ndoc {s}\n---\n")),
+        "[a-z]{1,12}".prop_map(|s| format!("---\ndoc {s}\n---\n\n")),
+    ]
+}
+
+/// A commons whose items may carry doc blocks, attached or orphaned, plus an
+/// optional doc block at the end of the file (always an orphan).
+fn commons_with_docs() -> impl Strategy<Value = String> {
+    (
+        ident(),
+        proptest::collection::vec((doc(), item()), 1..5),
+        "[a-z]{0,12}",
+    )
+        .prop_map(|(name, items, tail)| {
+            let body: Vec<String> = items
+                .into_iter()
+                .map(|(doc, item)| format!("{doc}{item}"))
+                .collect();
+            let tail = if tail.is_empty() {
+                String::new()
+            } else {
+                format!("\n---\ndoc {tail}\n---\n")
+            };
+            format!("commons gen_{name}\n\n{}{tail}", body.join("\n"))
+        })
+}
+
+/// The number of `bynk.parse.orphan_doc_block` warnings a parse of `source`
+/// reports.
+fn orphan_warnings(source: &str) -> usize {
+    let tokens = tokenize(source).expect("tokenises");
+    let (_, warnings) = parse_unit_with_warnings(&tokens, source).expect("parses");
+    warnings
+        .iter()
+        .filter(|w| w.category == "bynk.parse.orphan_doc_block")
+        .count()
+}
+
+fn doc_lines(source: &str) -> Vec<String> {
+    source
+        .lines()
+        .map(str::trim)
+        .filter(|l| l.starts_with("doc "))
+        .map(str::to_string)
+        .collect()
+}
+
 fn comment_lines(source: &str) -> Vec<String> {
     source
         .lines()
@@ -217,6 +270,42 @@ proptest! {
         // 1. Idempotency.
         let twice = format_source(&once, &opts).expect("formatted output reformats");
         prop_assert_eq!(&twice, &once, "fmt(fmt(s)) != fmt(s)");
+    }
+
+    /// #1664, #1756: the formatter keeps every `---` doc block, an orphan
+    /// included, and never changes which blocks are orphans: formatting must
+    /// not attach an orphan to the declaration below it, or detach an attached
+    /// block.
+    #[test]
+    fn doc_blocks_are_always_kept(src in commons_with_docs()) {
+        let opts = FormatOptions::default();
+        // Not every generated source parses; the property quantifies over the
+        // rest, and of those the formatter may refuse none for a doc block.
+        let formatted = match format_source(&src, &opts) {
+            Ok(formatted) => formatted,
+            Err(e) => {
+                let refused_a_doc = e.errors.iter().any(|x| {
+                    x.category == "bynk.fmt.comment_loss" && x.message.contains("documentation block")
+                });
+                prop_assert!(!refused_a_doc, "refused a doc block\n--- input ---\n{}", src);
+                return Ok(());
+            }
+        };
+        let after = doc_lines(&formatted);
+        for d in doc_lines(&src) {
+            prop_assert!(
+                after.contains(&d),
+                "doc block `{}` was dropped by the formatter\n--- input ---\n{}\n--- output ---\n{}",
+                d, src, formatted
+            );
+        }
+        prop_assert_eq!(
+            orphan_warnings(&formatted),
+            orphan_warnings(&src),
+            "formatting changed which doc blocks are orphans\n--- input ---\n{}\n--- output ---\n{}",
+            src,
+            formatted
+        );
     }
 
     #[test]

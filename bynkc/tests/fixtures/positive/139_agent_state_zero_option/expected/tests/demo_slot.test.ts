@@ -2,7 +2,7 @@
 // test target: demo.slot
 
 import { Ok, Err, Some, None, __makeTestState, type Result, type Option, type ValidationError, __bynkEq } from "../runtime.js";
-import * as demo_slot from "./../demo/slot.js";
+import * as __ns_demo_slot from "./../demo/slot.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -25,18 +25,18 @@ function __bynkShow(v: unknown): string {
   try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
-function makeTestDeps() {
+function __makeTestDeps() {
   return {  };
 }
 
 // case tier: unit
 async function test_a_fresh_Slot_key_resolves_to_Empty() {
   try {
-    demo_slot.__resetAgents();
-    const deps = makeTestDeps();
-    const { Label, Slot, SlotError, __makeSlot, resolve } = demo_slot;
-    type Label = demo_slot.Label;
-    type SlotError = demo_slot.SlotError;
+    __ns_demo_slot.__resetAgents();
+    const deps = __makeTestDeps();
+    const { Label, Slot, SlotError, __makeSlot, resolve } = __ns_demo_slot;
+    type Label = __ns_demo_slot.Label;
+    type SlotError = __ns_demo_slot.SlotError;
     void (await (async (__d) => {
         switch (__d.tag) {
           case "Err": {
@@ -78,11 +78,11 @@ async function test_a_fresh_Slot_key_resolves_to_Empty() {
 // case tier: unit
 async function test_a_written_Slot_key_reads_back_after_a_reload() {
   try {
-    demo_slot.__resetAgents();
-    const deps = makeTestDeps();
-    const { Label, Slot, SlotError, __makeSlot, resolve } = demo_slot;
-    type Label = demo_slot.Label;
-    type SlotError = demo_slot.SlotError;
+    __ns_demo_slot.__resetAgents();
+    const deps = __makeTestDeps();
+    const { Label, Slot, SlotError, __makeSlot, resolve } = __ns_demo_slot;
+    type Label = __ns_demo_slot.Label;
+    type SlotError = __ns_demo_slot.SlotError;
     void (await (async (__d) => {
         switch (__d.tag) {
           case "Err": {

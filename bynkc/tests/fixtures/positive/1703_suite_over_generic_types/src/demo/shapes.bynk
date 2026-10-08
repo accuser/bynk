@@ -1,0 +1,10 @@
+---
+#1703: a commons whose generic types reach a suite's scope through `uses`.
+---
+commons demo.shapes
+
+type Pair[A, B] = { first: A, second: B }
+
+fn pairOf(a: Int, b: String) -> Pair[Int, String] {
+  Pair { first: a, second: b }
+}

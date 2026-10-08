@@ -108,7 +108,7 @@ export interface Clock {
   now(): globalThis.Promise<number>;
 }
 
-export const ClockToken: symbol = globalThis.Symbol("Clock");
+export const __ClockToken: symbol = globalThis.Symbol("Clock");
 
 /**
  * A source of randomness — fresh UUIDs and bounded integers.
@@ -118,7 +118,7 @@ export interface Random {
   int(lo: number, hi: number): globalThis.Promise<number>;
 }
 
-export const RandomToken: symbol = globalThis.Symbol("Random");
+export const __RandomToken: symbol = globalThis.Symbol("Random");
 
 /**
  * Structured logging at info and error levels.
@@ -128,7 +128,7 @@ export interface Logger {
   error(msg: string): globalThis.Promise<void>;
 }
 
-export const LoggerToken: symbol = globalThis.Symbol("Logger");
+export const __LoggerToken: symbol = globalThis.Symbol("Logger");
 
 /**
  * Performs outbound HTTP requests.
@@ -137,7 +137,7 @@ export interface Fetch {
   send(req: Request): globalThis.Promise<Result<Response, FetchError>>;
 }
 
-export const FetchToken: symbol = globalThis.Symbol("Fetch");
+export const __FetchToken: symbol = globalThis.Symbol("Fetch");
 
 /**
  * Reads named secrets from the platform's secret store.
@@ -146,7 +146,7 @@ export interface Secrets {
   get(name: string): globalThis.Promise<Option<string>>;
 }
 
-export const SecretsToken: symbol = globalThis.Symbol("Secrets");
+export const __SecretsToken: symbol = globalThis.Symbol("Secrets");
 
 /**
  * Reads the current locale for this request/session. Slice 1: always
@@ -156,7 +156,7 @@ export interface Locale {
   current(): globalThis.Promise<LocaleTag>;
 }
 
-export const LocaleToken: symbol = globalThis.Symbol("Locale");
+export const __LocaleToken: symbol = globalThis.Symbol("Locale");
 
 /**
  * Mechanical dedup for at-least-once delivery (design notes §12). `dedup`
@@ -173,7 +173,7 @@ export interface Idempotency {
   remember<T>(key: string, value: T, expiresAfter: number): globalThis.Promise<void>;
 }
 
-export const IdempotencyToken: symbol = globalThis.Symbol("Idempotency");
+export const __IdempotencyToken: symbol = globalThis.Symbol("Idempotency");
 
 /**
  * Emits an event declared by the calling context (Events track, slice 0;
@@ -191,5 +191,4 @@ export interface Events {
   emit<E>(event: E): globalThis.Promise<void>;
 }
 
-export const EventsToken: symbol = globalThis.Symbol("Events");
-
+export const __EventsToken: symbol = globalThis.Symbol("Events");

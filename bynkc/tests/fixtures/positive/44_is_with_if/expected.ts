@@ -11,4 +11,3 @@ export function useValue(r: Result<number, string>): number {
     return 0;
   }
 }
-

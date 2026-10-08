@@ -20,4 +20,3 @@ export const ordering = {
     throw new globalThis.Error("non-exhaustive match");
   },
 };
-

@@ -14,4 +14,3 @@ export const Money = {
 export function build(units: number, cur: string): Money {
   return { minorUnits: units, currency: cur };
 }
-

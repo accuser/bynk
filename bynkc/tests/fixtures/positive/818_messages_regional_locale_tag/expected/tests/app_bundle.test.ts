@@ -2,9 +2,9 @@
 // test target: app.bundle
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
-import * as app_bundle from "./../app/bundle.js";
-import * as bynk_locale from "./../bynk/locale.js";
-import * as bynk_locale_types from "./../bynk/locale/types.js";
+import * as __ns_app_bundle from "./../app/bundle.js";
+import * as __ns_bynk_locale from "./../bynk/locale.js";
+import * as __ns_bynk_locale_types from "./../bynk/locale/types.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -27,7 +27,7 @@ function __bynkShow(v: unknown): string {
   try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
-function makeTestDeps() {
+function __makeTestDeps() {
   return {  };
 }
 
@@ -35,12 +35,12 @@ function makeTestDeps() {
 async function test_the_region_subtagged_locale_renders_its_own_translation() {
   try {
     const deps = {};
-    const { render } = app_bundle;
-    const { message, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale;
-    const { LocaleTag, Message, MessageArg } = bynk_locale_types;
-    type LocaleTag = bynk_locale_types.LocaleTag;
-    type Message = bynk_locale_types.Message;
-    type MessageArg = bynk_locale_types.MessageArg;
+    const { render } = __ns_app_bundle;
+    const { message, renderArg, withMoment, withNum, withText, withWhole } = __ns_bynk_locale;
+    const { LocaleTag, Message, MessageArg } = __ns_bynk_locale_types;
+    type LocaleTag = __ns_bynk_locale_types.LocaleTag;
+    type Message = __ns_bynk_locale_types.Message;
+    type MessageArg = __ns_bynk_locale_types.MessageArg;
     if (!(render(("pt-BR" as any), withText(message("greeting"), "name", "Ana")) === "Olá, Ana!")) { throw __bynkExpectFailure("tests/bundle.test.bynk:8:12", 323, 400, "expect render(\"pt-BR\", withText(message(\"greeting\"), \"name\", \"Ana\")) == \"Olá, Ana!\"\n  expected: render(\"pt-BR\", withText(message(\"greeting\"), \"name\", \"Ana\")) == \"Olá, Ana!\"\n  actual:   " + __bynkShow((render(("pt-BR" as any), withText(message("greeting"), "name", "Ana")))) + " == " + __bynkShow(("Olá, Ana!"))); }
     return { pass: true };
   } catch (e) {
@@ -55,12 +55,12 @@ async function test_the_region_subtagged_locale_renders_its_own_translation() {
 async function test_the_reference_locale_still_renders_its_own() {
   try {
     const deps = {};
-    const { render } = app_bundle;
-    const { message, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale;
-    const { LocaleTag, Message, MessageArg } = bynk_locale_types;
-    type LocaleTag = bynk_locale_types.LocaleTag;
-    type Message = bynk_locale_types.Message;
-    type MessageArg = bynk_locale_types.MessageArg;
+    const { render } = __ns_app_bundle;
+    const { message, renderArg, withMoment, withNum, withText, withWhole } = __ns_bynk_locale;
+    const { LocaleTag, Message, MessageArg } = __ns_bynk_locale_types;
+    type LocaleTag = __ns_bynk_locale_types.LocaleTag;
+    type Message = __ns_bynk_locale_types.Message;
+    type MessageArg = __ns_bynk_locale_types.MessageArg;
     if (!(render(("en" as any), withText(message("greeting"), "name", "Ada")) === "Hello, Ada!")) { throw __bynkExpectFailure("tests/bundle.test.bynk:12:12", 471, 546, "expect render(\"en\", withText(message(\"greeting\"), \"name\", \"Ada\")) == \"Hello, Ada!\"\n  expected: render(\"en\", withText(message(\"greeting\"), \"name\", \"Ada\")) == \"Hello, Ada!\"\n  actual:   " + __bynkShow((render(("en" as any), withText(message("greeting"), "name", "Ada")))) + " == " + __bynkShow(("Hello, Ada!"))); }
     return { pass: true };
   } catch (e) {
@@ -75,12 +75,12 @@ async function test_the_reference_locale_still_renders_its_own() {
 async function test_an_undeclared_locale_falls_back_to_the_reference() {
   try {
     const deps = {};
-    const { render } = app_bundle;
-    const { message, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale;
-    const { LocaleTag, Message, MessageArg } = bynk_locale_types;
-    type LocaleTag = bynk_locale_types.LocaleTag;
-    type Message = bynk_locale_types.Message;
-    type MessageArg = bynk_locale_types.MessageArg;
+    const { render } = __ns_app_bundle;
+    const { message, renderArg, withMoment, withNum, withText, withWhole } = __ns_bynk_locale;
+    const { LocaleTag, Message, MessageArg } = __ns_bynk_locale_types;
+    type LocaleTag = __ns_bynk_locale_types.LocaleTag;
+    type Message = __ns_bynk_locale_types.Message;
+    type MessageArg = __ns_bynk_locale_types.MessageArg;
     if (!(render(("de" as any), withText(message("greeting"), "name", "Ada")) === "Hello, Ada!")) { throw __bynkExpectFailure("tests/bundle.test.bynk:16:12", 623, 698, "expect render(\"de\", withText(message(\"greeting\"), \"name\", \"Ada\")) == \"Hello, Ada!\"\n  expected: render(\"de\", withText(message(\"greeting\"), \"name\", \"Ada\")) == \"Hello, Ada!\"\n  actual:   " + __bynkShow((render(("de" as any), withText(message("greeting"), "name", "Ada")))) + " == " + __bynkShow(("Hello, Ada!"))); }
     return { pass: true };
   } catch (e) {
