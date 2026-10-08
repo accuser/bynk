@@ -368,6 +368,24 @@ fn keeps_a_comment_on_the_line_of_an_opening_brace() {
             "context c\n\nservice s { -- keep me\n  ---\n  doc\n  ---\n  on call() -> Effect[()] { Effect.pure(()) }\n}\n"
                 .to_string(),
         ),
+        (
+            "provider",
+            "context c\n\ncapability K {\n  fn op() -> Effect[Int]\n}\n\nprovides K = Fixed { -- keep me\n  fn op() -> Effect[Int] {\n    Effect.pure(1)\n  }\n}\n"
+                .to_string(),
+        ),
+        (
+            "adapter",
+            "adapter a { -- keep me\n  binding \"./a.binding.ts\"\n\n  capability K {\n    fn op() -> Effect[Int]\n  }\n}\n"
+                .to_string(),
+        ),
+        (
+            "event",
+            "context c\n\nevent E = { -- keep me\n  x: Int,\n}\n".to_string(),
+        ),
+        (
+            "event with a comment after its brace",
+            "context c\n\nevent E = { -- keep me\n  x: Int,\n} -- after close\n".to_string(),
+        ),
         ("empty commons", "commons d { -- keep me\n}\n".to_string()),
         (
             "empty record",

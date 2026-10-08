@@ -1349,15 +1349,17 @@ impl<'a> Formatter<'a> {
             return;
         }
         // Try single-line first; a comment forces the multi-line form.
-        let oneline_fields: Vec<String> = r
-            .fields
-            .iter()
-            .map(|f| self.format_record_field_oneline(f))
-            .collect();
-        let oneline = format!("{{ {} }}", oneline_fields.join(", "));
-        if !has_comments && self.fits(&oneline, 0) {
-            self.push(&oneline);
-            return;
+        if !has_comments {
+            let oneline_fields: Vec<String> = r
+                .fields
+                .iter()
+                .map(|f| self.format_record_field_oneline(f))
+                .collect();
+            let oneline = format!("{{ {} }}", oneline_fields.join(", "));
+            if self.fits(&oneline, 0) {
+                self.push(&oneline);
+                return;
+            }
         }
         // Multi-line.
         self.push("{");

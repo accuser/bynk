@@ -205,6 +205,8 @@ impl<'a> Parser<'a> {
             refinement,
             init,
             span: name.span.merge(end_span),
+            // The caller harvests a field's comments: the end-of-line one sits
+            // after the `,` this function does not consume.
             trivia: Trivia::default(),
         })
     }
