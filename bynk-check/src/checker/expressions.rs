@@ -1403,11 +1403,18 @@ fn body_performs_effects(e: &Expr, ctx: &Ctx) -> bool {
                 || block_performs(then_block, ctx)
                 || block_performs(else_block, ctx)
         }
+        // #1800: a guard runs like any arm body, so an effect in one (`if x > 0
+        // { let t <- Clock.now(); true } …`) makes the lambda effectful too.
         ExprKind::Match { discriminant, arms } => {
             body_performs_effects(discriminant, ctx)
-                || arms.iter().any(|a| match &a.body {
-                    MatchBody::Expr(e) => body_performs_effects(e, ctx),
-                    MatchBody::Block(b) => block_performs(b, ctx),
+                || arms.iter().any(|a| {
+                    a.guard
+                        .as_ref()
+                        .is_some_and(|g| body_performs_effects(g, ctx))
+                        || match &a.body {
+                            MatchBody::Expr(e) => body_performs_effects(e, ctx),
+                            MatchBody::Block(b) => block_performs(b, ctx),
+                        }
                 })
         }
         ExprKind::BinOp(_, l, r) => body_performs_effects(l, ctx) || body_performs_effects(r, ctx),

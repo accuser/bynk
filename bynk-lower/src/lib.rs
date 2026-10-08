@@ -515,11 +515,17 @@ pub fn body_writes_state(body: &Block, program: &TypedCommons) -> bool {
                     || body_writes_state(then_block, program)
                     || body_writes_state(else_block, program)
             }
+            // #1800: a guard is evaluated like any other expression, so a
+            // write in one (`Some(x) if if x > 0 { hits := x; true } …`) runs
+            // and must be committed. Skipping it dropped the commit wrapper.
             ExprKind::Match { discriminant, arms } => {
                 expr(discriminant, program)
-                    || arms.iter().any(|a| match &a.body {
-                        MatchBody::Expr(e) => expr(e, program),
-                        MatchBody::Block(b) => body_writes_state(b, program),
+                    || arms.iter().any(|a| {
+                        a.guard.as_ref().is_some_and(|g| expr(g, program))
+                            || match &a.body {
+                                MatchBody::Expr(e) => expr(e, program),
+                                MatchBody::Block(b) => body_writes_state(b, program),
+                            }
                     })
             }
             _ => expr_children(e).into_iter().any(|c| expr(c, program)),
