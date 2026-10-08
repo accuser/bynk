@@ -1,6 +1,10 @@
 # 0194 — The deploy ledger owns the ids it mints, and defers for state another tool owns
 
-- **Status:** Accepted (v0.171)
+- **Status:** Accepted (v0.171). **D1's migration-tag mechanics are superseded
+  by the `exports` ADR from #1796** (agents-declared-as-durable-object-exports):
+  the generated config declares Durable Object classes in Cloudflare's `exports`
+  map, so there is no tag to delegate or record. D1's principle, that the ledger
+  records nothing where another tool owns the state, stands.
 - **Provenance:** #600, deploy track slice 1 (spine #558). Builds on slice 0
   (#583, v0.154) and slice 2 (#601, v0.170).
 - **Relates:** [[0179]] (provisioning state — the ledger this extends), [[0180]]

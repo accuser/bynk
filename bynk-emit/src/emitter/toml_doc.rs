@@ -87,6 +87,12 @@ pub(crate) struct TomlBlock {
 enum TomlHeader {
     Table(&'static str),
     ArrayTable(&'static str),
+    /// #1796: `[parent.key]`, where `key` is chosen at emit time rather than
+    /// fixed by the generator (a Durable Object class name under `exports`).
+    /// The printer renders `key` bare when it is a TOML bare key and as an
+    /// escaped basic string otherwise, so a key, like a value, can't break
+    /// out of its header whatever it contains.
+    KeyedTable(&'static str, String),
 }
 
 impl TomlBlock {
@@ -100,6 +106,19 @@ impl TomlBlock {
     pub(crate) fn array_table(path: &'static str, entries: Vec<TomlEntry>) -> Self {
         Self {
             header: TomlHeader::ArrayTable(path),
+            entries,
+        }
+    }
+
+    /// `[parent.key]` — one entry of a table keyed by a runtime name, such as
+    /// `[exports.Alpha]` (#1796).
+    pub(crate) fn keyed_table(
+        parent: &'static str,
+        key: impl Into<String>,
+        entries: Vec<TomlEntry>,
+    ) -> Self {
+        Self {
+            header: TomlHeader::KeyedTable(parent, key.into()),
             entries,
         }
     }
@@ -167,6 +186,9 @@ pub fn print_toml_document(doc: &TomlDocument) -> String {
             TomlHeader::ArrayTable(path) => {
                 let _ = writeln!(out, "[[{path}]]");
             }
+            TomlHeader::KeyedTable(parent, key) => {
+                let _ = writeln!(out, "[{parent}.{}]", render_key(key));
+            }
         }
         print_entries(&mut out, &block.entries);
         let _ = writeln!(out);
@@ -185,6 +207,21 @@ fn print_entries(out: &mut String, entries: &[TomlEntry]) {
                 let _ = writeln!(out, "{} = {value}", entry.key);
             }
         }
+    }
+}
+
+/// A key segment, bare when TOML allows it (`A-Za-z0-9_-`, non-empty) and a
+/// quoted basic string otherwise — the same escaping [`render_value`] gives
+/// every string value.
+fn render_key(key: &str) -> String {
+    let bare = !key.is_empty()
+        && key
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+    if bare {
+        key.to_string()
+    } else {
+        format!("\"{}\"", escape_toml_basic_string(key))
     }
 }
 
@@ -406,5 +443,32 @@ mod tests {
         // Every block, including the last, is followed by exactly one blank
         // line — the shape every current golden `wrangler.toml` fixture has.
         assert!(text.ends_with("\n\n"));
+    }
+
+    #[test]
+    fn keyed_table_keys_are_bare_when_they_can_be_and_quoted_otherwise() {
+        // #1796: `[exports.<Class>]`. A Bynk class name is always a bare key
+        // (`__EventsFanout` included), but the printer, not the caller, owns
+        // that guarantee, so a hostile key must stay inside its header too.
+        let hostile = "a.b]\nx = \"y";
+        let mut doc = TomlDocument::new("t", vec![]);
+        for key in ["Alpha", "__EventsFanout", hostile] {
+            doc.push_block(TomlBlock::keyed_table(
+                "exports",
+                key,
+                vec![TomlEntry::kv("type", TomlValue::str("durable-object"))],
+            ));
+        }
+        let text = print_toml_document(&doc);
+        assert!(text.contains("[exports.Alpha]\n"), "{text}");
+        assert!(text.contains("[exports.__EventsFanout]\n"), "{text}");
+
+        let parsed: toml::Table = text
+            .parse()
+            .unwrap_or_else(|e| panic!("printer produced invalid TOML: {e}\n{text}"));
+        assert_eq!(parsed.len(), 1, "a key escaped its header: {parsed:?}");
+        let exports = parsed["exports"].as_table().expect("exports table");
+        assert_eq!(exports.len(), 3);
+        assert_eq!(exports[hostile]["type"].as_str(), Some("durable-object"));
     }
 }

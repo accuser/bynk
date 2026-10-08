@@ -115,7 +115,8 @@ mod tests {
 
     /// #601/#600: the plan is what `--dry-run` shows and the deploy guide
     /// quotes, so it is pinned exactly — the `order` line (slice 2's
-    /// load-bearing claim), the queue and migration lines (slice 1's), and the
+    /// load-bearing claim), the queue and Durable Object lines (slice 1's, the
+    /// latter reshaped by #1796), and the
     /// JSON shape, which is a documented machine-readable surface.
     #[test]
     fn golden_deploy_plan() {
@@ -159,7 +160,7 @@ mod tests {
             DeployFormat::Short,
         ));
 
-        // Slice 1's kinds. The migration line is advisory in both states, so it
+        // Slice 1's kinds. The Durable Object line is advisory in both states, so it
         // reads the same before and after — that sameness is the point, and the
         // golden is where it is visible.
         out.push_str("\n# slice 1: an agent and a queue, first deploy\n");
@@ -171,7 +172,7 @@ mod tests {
                     Resources::default()
                         .needs_kv()
                         .consumes(&["job-intake"])
-                        .migrates("v1"),
+                        .exports(&["JobLedger"]),
                 )]),
                 &DeployLock::default(),
             ),
@@ -187,7 +188,7 @@ mod tests {
                     Resources::default()
                         .needs_kv()
                         .consumes(&["job-intake"])
-                        .migrates("v1"),
+                        .exports(&["JobLedger"]),
                 )]),
                 &with_queue(with_kv(lock_with_deployed(&["jobs"]), "jobs"), "job-intake"),
             ),
@@ -315,8 +316,8 @@ mod tests {
         ));
 
         // The JSON shape of slice 1's kinds — the surface a CI job reads to
-        // learn that the migration is not ours to claim.
-        out.push_str("\n# --format json, with a queue and a migration\n");
+        // learn that the Durable Object namespaces are not ours to claim.
+        out.push_str("\n# --format json, with a queue and a durable object\n");
         out.push_str(&plan_report(
             &plan_of(
                 &names(&["jobs"]),
@@ -324,7 +325,7 @@ mod tests {
                     "jobs",
                     Resources::default()
                         .consumes(&["job-intake"])
-                        .migrates("v1"),
+                        .exports(&["JobLedger"]),
                 )]),
                 &DeployLock::default(),
             ),

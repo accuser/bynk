@@ -2317,7 +2317,7 @@ pub fn phase_validate_type_exports(
                     continue;
                 };
                 let mut within: HashMap<String, Span> = HashMap::new();
-                for n in &clause.names {
+                for n in clause.names.iter().map(|e| &e.name) {
                     if let Some(prev) = within.get(&n.name) {
                         errors.push_for(
                             Some(&parsed[i].identity_path()),
@@ -2419,7 +2419,7 @@ pub fn phase_validate_capability_exports(
                 if !matches!(clause.kind, ExportKind::Capability) {
                     continue;
                 }
-                for n in &clause.names {
+                for n in clause.names.iter().map(|e| &e.name) {
                     if let Some(prev) = seen.get(&n.name) {
                         errors.push_for(
                             Some(&parsed[i].identity_path()),
