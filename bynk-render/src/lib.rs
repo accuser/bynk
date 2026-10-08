@@ -293,8 +293,10 @@ fn ceil_char(s: &str, mut i: usize) -> usize {
 /// #1777: `FORCE_COLOR` (<https://force-color.org>) or `CLICOLOR_FORCE`
 /// (<https://bixense.com/clicolors/>), set to anything but the empty string or
 /// `0`, turns colour on without a terminal, for `less -R` or a CI log that
-/// renders ANSI. `NO_COLOR` still wins over both: clap's own help and errors
-/// make the same choice, so one binary has one colour rule.
+/// renders ANSI. `0` means "don't force", not "force off": `NO_COLOR` is the
+/// off switch, and it wins over both. That is clap's order for `NO_COLOR` and
+/// `CLICOLOR_FORCE`; clap doesn't read `FORCE_COLOR`, so only
+/// `CLICOLOR_FORCE` also colours clap's own help and errors.
 pub fn stderr_color() -> bool {
     use std::io::IsTerminal;
     color_allowed(std::io::stderr().is_terminal(), |name| {
