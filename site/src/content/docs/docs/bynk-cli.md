@@ -295,7 +295,8 @@ no doc (a `uses` or other clause, a service policy, or anything inside a
 policy): `bynk check` warns `bynk.parse.orphan_doc_block`, and the formatter
 keeps the block where it is, so formatting never attaches it. Remove the blank
 line to attach it, or make it a `--` comment. A `--` comment on the same line as
-an opening `{` moves onto its own line under the brace.
+an opening `{` moves onto its own line under the brace, and one on the `=` line
+of a sum type moves onto its own line above the first variant.
 
 **Where the style comes from** — three layers, each overriding the one before:
 the canonical defaults, then the project's `[fmt]` section in

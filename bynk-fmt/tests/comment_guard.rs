@@ -458,6 +458,16 @@ fn keeps_comments_in_a_sum_type() {
             &["enum {\n\t-- keep me\n}\n"][..],
         ),
         (
+            "enum on eq",
+            "commons d\n\ntype E = -- on eq\n  enum { A, B }\n",
+            &["enum {\n\t-- on eq\n\tA,\n"][..],
+        ),
+        (
+            "empty enum on eq",
+            "commons d\n\ntype E = -- on eq\n  enum {}\n",
+            &["enum {\n\t-- on eq\n}\n"][..],
+        ),
+        (
             "pipe",
             pipe,
             &[

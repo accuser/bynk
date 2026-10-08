@@ -361,13 +361,20 @@ impl<'a> Parser<'a> {
     ///
     /// #1794: as in a record body (#1788), each tag keeps the comments above
     /// it and the one at the end of its line, after its `,`; the comments
-    /// before the `}` close the body.
+    /// before the `}` close the body. A comment on the `=` line leads the first
+    /// tag, as in the pipe form, or closes an empty body.
     fn parse_sum_body_enum(&mut self) -> Result<SumBody, CompileError> {
+        let mut eq_line: Vec<Comment> = self
+            .take_trailing_trivia()
+            .map(Comment::Line)
+            .into_iter()
+            .collect();
         let kw = self.expect(TokenKind::Enum, "to start an enum-form sum body")?;
         self.expect(TokenKind::LBrace, "after `enum`")?;
         let mut variants = Vec::new();
         while self.peek_kind() != Some(TokenKind::RBrace) {
-            let leading = self.take_leading_trivia();
+            let mut leading = std::mem::take(&mut eq_line);
+            leading.extend(self.take_leading_trivia());
             let name = self.expect_variant_name("as an enum tag name")?;
             let span = name.span;
             let comma = self.eat(TokenKind::Comma);
@@ -384,7 +391,8 @@ impl<'a> Parser<'a> {
                 break;
             }
         }
-        let trailing_comments = self.take_leading_trivia();
+        eq_line.extend(self.take_leading_trivia());
+        let trailing_comments = eq_line;
         let close = self.expect(TokenKind::RBrace, "to close the enum body")?;
         Ok(SumBody {
             variants,
