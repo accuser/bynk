@@ -1,11 +1,6 @@
----
-level: patch
-changelog: Agents are declared in Cloudflare's `exports` map instead of a `v1` migration, so an agent added after the first deploy is registered (#1796). **Breaking:** a Worker whose agents Bynk 0.309.10 or earlier created key-value-backed must be deleted and redeployed
----
+# 0443 — Durable Object classes are declared in `exports`, not migrations
 
-## ADR: agents-declared-as-durable-object-exports
-title: Durable Object classes are declared in `exports`, not migrations
-summary: The generated config declares every agent and fan-out class in Cloudflare's tagless `exports` map; key-value-backed Workers from ≤ 0.309.10 are a documented pre-1.0 break
+- **Status:** Accepted (v0.312.1)
 
 **Context.** Every agent compiles to a Durable Object class, and a context that
 emits gets one more for the events fan-out (ADR 0284). The generated
