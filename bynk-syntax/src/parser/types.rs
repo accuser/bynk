@@ -158,15 +158,24 @@ impl<'a> Parser<'a> {
         let open = self.expect(TokenKind::LBrace, "to open the record body")?;
         let mut fields = Vec::new();
         while self.peek_kind() != Some(TokenKind::RBrace) {
-            fields.push(self.parse_record_field()?);
-            if self.eat(TokenKind::Comma).is_none() {
+            let leading = self.take_leading_trivia();
+            let mut field = self.parse_record_field()?;
+            let comma = self.eat(TokenKind::Comma);
+            field.trivia = Trivia {
+                leading,
+                trailing: self.take_trailing_trivia(),
+            };
+            fields.push(field);
+            if comma.is_none() {
                 break;
             }
         }
+        let trailing_comments = self.take_leading_trivia();
         let close = self.expect(TokenKind::RBrace, "to close the record body")?;
         Ok(RecordBody {
             fields,
             span: open.span.merge(close.span),
+            trailing_comments,
         })
     }
 
@@ -196,6 +205,7 @@ impl<'a> Parser<'a> {
             refinement,
             init,
             span: name.span.merge(end_span),
+            trivia: Trivia::default(),
         })
     }
 

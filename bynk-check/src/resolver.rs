@@ -69,6 +69,7 @@ mod compute_is_uses_commons_type_tests {
                 span: Span::default(),
             },
             body: TypeBody::Record(RecordBody {
+                trailing_comments: Default::default(),
                 fields: Vec::new(),
                 span: Span::default(),
             }),

@@ -2714,6 +2714,7 @@ impl<'a> Parser<'a> {
         let kw = self.expect(TokenKind::Agent, "to start an agent declaration")?;
         let name = self.expect_ident("after `agent`")?;
         self.expect(TokenKind::LBrace, "to open the agent body")?;
+        let key_leading = self.take_leading_trivia();
         // key id: Type
         // The `key` keyword is recognised as an identifier with the literal
         // name "key" — we don't have a dedicated keyword so it can be a
@@ -2732,6 +2733,10 @@ impl<'a> Parser<'a> {
         let key_name = self.expect_ident("as the agent key field name")?;
         self.expect(TokenKind::Colon, "after the agent key field name")?;
         let key_type = self.parse_type_ref("as the agent key type")?;
+        let key_trivia = Trivia {
+            leading: key_leading,
+            trailing: self.take_trailing_trivia(),
+        };
         // Agent body — a pinned four-phase parse (identity → storage → contracts
         // → behaviour). v0.81 (storage track): the storage phase is the legacy
         // `state { }` block and/or the successor `store` fields, which coexist
@@ -2884,6 +2889,7 @@ impl<'a> Parser<'a> {
             name,
             key_name,
             key_type,
+            key_trivia,
             store_fields,
             invariants,
             transitions,

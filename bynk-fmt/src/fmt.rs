@@ -1340,18 +1340,22 @@ impl<'a> Formatter<'a> {
     }
 
     fn format_record_body(&mut self, r: &RecordBody) {
-        if r.fields.is_empty() {
+        let has_comments = !r.trailing_comments.is_empty()
+            || r.fields
+                .iter()
+                .any(|f| !f.trivia.leading.is_empty() || f.trivia.trailing.is_some());
+        if r.fields.is_empty() && !has_comments {
             self.push("{}");
             return;
         }
-        // Try single-line first.
+        // Try single-line first; a comment forces the multi-line form.
         let oneline_fields: Vec<String> = r
             .fields
             .iter()
             .map(|f| self.format_record_field_oneline(f))
             .collect();
         let oneline = format!("{{ {} }}", oneline_fields.join(", "));
-        if self.fits(&oneline, 0) {
+        if !has_comments && self.fits(&oneline, 0) {
             self.push(&oneline);
             return;
         }
@@ -1360,12 +1364,17 @@ impl<'a> Formatter<'a> {
         self.newline();
         self.indented(|f| {
             for (i, field) in r.fields.iter().enumerate() {
+                f.emit_leading_comments(&field.trivia.leading);
                 f.format_record_field(field);
                 if i + 1 < r.fields.len() || f.opts.trailing_comma {
                     f.push(",");
                 }
-                f.newline();
+                f.emit_trailing_comment(field.trivia.trailing.as_deref());
+                if field.trivia.trailing.is_none() {
+                    f.newline();
+                }
             }
+            f.emit_trailing_comments(&r.trailing_comments);
         });
         self.push("}");
     }
@@ -1859,12 +1868,16 @@ impl<'a> Formatter<'a> {
         self.newline();
         self.indented(|f| {
             // key
+            f.emit_leading_comments(&a.key_trivia.leading);
             f.push(&format!(
                 "key {}: {}",
                 a.key_name.name,
                 type_ref_to_string(&a.key_type)
             ));
-            f.newline();
+            f.emit_trailing_comment(a.key_trivia.trailing.as_deref());
+            if a.key_trivia.trailing.is_none() {
+                f.newline();
+            }
             f.newline();
             // storage (v0.81, storage track): the agent's `store` fields.
             for sf in &a.store_fields {
