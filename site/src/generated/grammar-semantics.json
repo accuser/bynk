@@ -352,6 +352,16 @@
       "summary": "An `Err` payload has the wrong type."
     }
   ],
+  "event_handler": [
+    {
+      "code": "bynk.event.duplicate_handler",
+      "summary": "A `from Events` service declares more than one `on event` handler; it has exactly one."
+    },
+    {
+      "code": "bynk.event.return_not_effect_unit",
+      "summary": "An `on event` handler returns an `Effect` of something other than `()`; emission is fire-and-forget, so it returns `Effect[()]`."
+    }
+  ],
   "expect_expr": [
     {
       "code": "bynk.expect.not_bool",
