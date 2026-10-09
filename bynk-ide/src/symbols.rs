@@ -513,7 +513,7 @@ pub fn describe_self_at(
     if !on_self {
         return None;
     }
-    let ty = bynk_check::expr_types::type_at_offset(expr_types, offset)?;
+    let ty = bynk_check::expr_types::type_at_offset(expr_types, offset, tys)?;
     let display = ty.display(tys);
     let name = display
         .strip_prefix("__")

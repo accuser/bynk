@@ -122,6 +122,11 @@ pub fn extract_variable(
 /// - two distinct outer-scope bindings share a free variable's name (a rare
 ///   nested-shadow collision) — threading either one as the parameter would
 ///   silently pick the wrong variable for the other occurrence.
+/// - any expression inside the selection failed to type (its recorded type
+///   is `Ty::Error`) — the selection's own type would render as
+///   `<type error>`, and a binding whose value failed to type is never
+///   recorded in `locals`, so a read of one would not be threaded as a
+///   parameter and the lifted `fn` would name an unbound variable.
 ///
 /// Free variables are the selection's `Ident` references (walked via
 /// [`expr_children`], the same exhaustive child iterator `locate` uses) whose
@@ -158,6 +163,12 @@ pub fn extract_function(
         return Vec::new();
     };
     if requirements.iter().any(|r| contains(site.span, r.site)) {
+        return Vec::new();
+    }
+    if expr_types
+        .iter()
+        .any(|(s, t)| contains(site.span, *s) && t.is_error(tys))
+    {
         return Vec::new();
     }
 
@@ -1001,8 +1012,15 @@ fn collect_idents<'a>(expr: &'a Expr, out: &mut Vec<&'a Ident>) {
 /// The recorded type of the expression whose span is exactly `span` — an
 /// exact match, not [`bynk_check::expr_types::type_at_offset`]'s tightest-
 /// containing-offset search, since the caller already knows the precise node.
+///
+/// Matches on position only: `span` comes from this module's own reparse,
+/// which carries no file identity, while the analysis's spans carry the
+/// file's real `FileId` (T3.5) — a whole-`Span` comparison never matches.
 fn ty_at_span(entries: &[(Span, TyId)], span: Span) -> Option<TyId> {
-    entries.iter().find(|(s, _)| *s == span).map(|(_, t)| *t)
+    entries
+        .iter()
+        .find(|(s, _)| s.start == span.start && s.end == span.end)
+        .map(|(_, t)| *t)
 }
 
 /// The whitespace-only run from `offset`'s line start up to `offset` — empty
@@ -1682,6 +1700,131 @@ mod tests {
                 assert_eq!(actions.len(), 1);
                 let edits = sole_edit(&actions[0]);
                 assert_eq!(edits[1].new_text, "let _ = extractedFn(num)");
+            }
+        }
+
+        /// Fixtures run through the real analysis rather than hand-built
+        /// tables, so `expr_types`/`locals` carry exactly what the
+        /// `code_action` handler sees — real `FileId`s on every span, and
+        /// (ADR 0094) best-effort partial types for a file with errors, where
+        /// an expression whose typing failed is recorded as `Ty::Error`.
+        mod analysed_fixtures {
+            use super::*;
+            use std::path::Path;
+            use std::sync::Arc;
+
+            /// `src`'s `(expr_types, locals, tys)` as the single-file context
+            /// `c.bynk` of a fresh on-disk project, asserting the file's
+            /// diagnostic categories are exactly `expected`.
+            fn analysed(
+                test_name: &str,
+                src: &str,
+                expected: &[&str],
+            ) -> (Vec<(Span, TyId)>, Vec<LocalBinding>, Arc<Types>) {
+                let root = std::env::temp_dir().join(format!(
+                    "bynk-lsp-extract-{test_name}-{}",
+                    std::process::id()
+                ));
+                let _ = std::fs::remove_dir_all(&root);
+                std::fs::create_dir_all(&root).expect("create test root");
+                std::fs::write(root.join("c.bynk"), src).expect("write file");
+                let root = root.canonicalize().expect("canonical root");
+                let overlay = HashMap::from([(root.join("c.bynk"), src.to_string())]);
+                let result = bynk_ide::diagnose_project(&root, &overlay);
+                let _ = std::fs::remove_dir_all(&root);
+                let rel = Path::new("c.bynk");
+                let categories: Vec<&str> = result
+                    .files
+                    .iter()
+                    .filter(|f| f.source_path == rel)
+                    .flat_map(|f| f.diagnostics.iter().map(|d| d.error.category))
+                    .collect();
+                assert_eq!(categories, expected);
+                (
+                    result.expr_types.get(rel).cloned().unwrap_or_default(),
+                    result.locals.get(rel).cloned().unwrap_or_default(),
+                    Arc::clone(&result.ty_intern),
+                )
+            }
+
+            /// The new `fn` each offered action would insert.
+            fn offered(test_name: &str, src: &str, needle: &str, expected: &[&str]) -> Vec<String> {
+                let (types, locals, tys) = analysed(test_name, src, expected);
+                let start = src.find(needle).expect("needle present");
+                let uri = Url::parse("file:///c.bynk").unwrap();
+                extract_function(
+                    src,
+                    Span::new(start, start + needle.len()),
+                    &uri,
+                    Some(3),
+                    &[],
+                    &locals,
+                    &types,
+                    &tys,
+                )
+                .iter()
+                .map(|a| sole_edit(a)[0].new_text.clone())
+                .collect()
+            }
+
+            /// The handler reparses the buffer (spans with no file identity)
+            /// but the analysis's spans carry the file's real `FileId` (T3.5),
+            /// so matching a recorded type must compare positions only — an
+            /// exact `Span` match never found one, and the action was never
+            /// offered against real analysis output.
+            #[test]
+            fn a_clean_file_offers_the_action() {
+                let src = "context c\n\nfn f(num: Int) -> Int {\n  num * 2\n}\n";
+                assert_eq!(
+                    offered("clean", src, "num * 2", &[]),
+                    ["fn extractedFn(num: Int) -> Int {\n  num * 2\n}\n\n"]
+                );
+            }
+
+            /// The selection itself failed to type: its recorded type is
+            /// `Ty::Error`, which must decline, not render `-> <type error>`.
+            #[test]
+            fn an_error_typed_selection_declines() {
+                let src = "context c\n\nfn f(num: Int) -> Int {\n  num + \"s\"\n}\n";
+                let offered = offered(
+                    "error-typed-selection",
+                    src,
+                    "num + \"s\"",
+                    &["bynk.types.type_mismatch"],
+                );
+                assert!(offered.is_empty(), "expected no action; got {offered:?}");
+            }
+
+            /// A well-typed selection that reads an error-typed binding: the
+            /// checker records no local for a `let` whose value failed to
+            /// type, so `z` would not be threaded as a parameter and the
+            /// lifted `fn` would read an unbound name.
+            #[test]
+            fn a_selection_reading_an_error_typed_binding_declines() {
+                let src = "context c\n\nfn f(num: Int) -> Int {\n  let z = num + \"s\"\n  let w = if num > 0 {\n    let q = z\n    1\n  } else {\n    2\n  }\n  w\n}\n";
+                let offered = offered(
+                    "error-typed-binding",
+                    src,
+                    "if num > 0 {\n    let q = z\n    1\n  } else {\n    2\n  }",
+                    &["bynk.types.type_mismatch"],
+                );
+                assert!(offered.is_empty(), "expected no action; got {offered:?}");
+            }
+
+            /// An error elsewhere in the file doesn't block a selection that
+            /// typed cleanly (ADR 0094's partial map).
+            #[test]
+            fn an_error_elsewhere_still_offers_the_action() {
+                let src = "context c\n\nfn f(num: Int) -> Int {\n  num * 2\n}\n\nfn g(num: Int) -> Int {\n  num + \"s\"\n}\n";
+                assert_eq!(
+                    offered(
+                        "error-elsewhere",
+                        src,
+                        "num * 2",
+                        &["bynk.types.type_mismatch"]
+                    ),
+                    ["fn extractedFn(num: Int) -> Int {\n  num * 2\n}\n\n"]
+                );
             }
         }
     }
