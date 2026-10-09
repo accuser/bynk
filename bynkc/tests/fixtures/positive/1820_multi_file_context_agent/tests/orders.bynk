@@ -1,0 +1,26 @@
+---
+#1820: a service in one file of the context drives an agent declared in another.
+---
+suite shop.orders
+
+case "a sibling file's agent is constructed and called" {
+  match OrderId.of("o-1") {
+    Err(_) => expect false
+    Ok(id) => {
+      let first <- place.call(id, 2)
+      let second <- place.call(id, 3)
+      expect second == 5
+    }
+  }
+}
+
+case "an agent and a service in two more files" {
+  let a <- count.call("t")
+  let b <- count.call("t")
+  expect b == 2
+}
+
+case "every file's agents are reset between cases" {
+  let a <- count.call("t")
+  expect a == 1
+}

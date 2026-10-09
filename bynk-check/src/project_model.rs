@@ -3160,6 +3160,7 @@ pub fn assemble_unit_info(
                         types: HashMap::new(),
                         fns: HashMap::new(),
                         methods: HashMap::new(),
+                        agents: HashMap::new(),
                     }),
                 files: indices.clone(),
             };
