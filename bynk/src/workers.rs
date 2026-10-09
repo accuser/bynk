@@ -85,7 +85,11 @@ pub fn compile_once(
         SchemaLock::Off
     };
     let options = match bynk_driver::try_project_options(project_root) {
-        Ok(o) => o.target(BuildTarget::Workers).schema_registry(schema_lock),
+        // #1821 (ADR 0147 D3): the deployable carries no `suite`.
+        Ok(o) => o
+            .target(BuildTarget::Workers)
+            .schema_registry(schema_lock)
+            .tests(false),
         Err(e) => {
             eprintln!("bynk: {e}");
             return false;
