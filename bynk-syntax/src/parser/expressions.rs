@@ -1457,7 +1457,11 @@ impl<'a> Parser<'a> {
         // binding (ADR 0169) — `Some(user)`, or a top-level `n if n > 0`. An
         // uppercase-led identifier (or one carrying a payload list) is a variant
         // constructor. Built-in variants are keyword tokens, handled above.
-        let has_payload = self.peek_kind() == Some(TokenKind::LParen);
+        // #1858: the `(` must sit on the variant's line, as a call's does. A
+        // `(` opening a new line starts the next statement: `expect r is None`
+        // above a `()` tail is a pattern and a unit, not `None()`.
+        let has_payload = self.peek_kind() == Some(TokenKind::LParen)
+            && !self.next_token_on_new_line(variant.span);
         if type_name.is_none()
             && !has_payload
             && variant
@@ -1556,7 +1560,9 @@ impl<'a> Parser<'a> {
         };
         let mut bindings = Vec::new();
         let mut end_span = variant.span;
-        if self.peek_kind() == Some(TokenKind::LParen) {
+        // #1858: a payload list starts on the variant's line.
+        if self.peek_kind() == Some(TokenKind::LParen) && !self.next_token_on_new_line(variant.span)
+        {
             self.bump();
             if self.peek_kind() != Some(TokenKind::RParen) {
                 bindings.push(self.parse_pattern_binding()?);
