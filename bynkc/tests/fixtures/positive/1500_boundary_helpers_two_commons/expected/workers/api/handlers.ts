@@ -5,6 +5,8 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError, ty
 
 import { A as __CommonsA } from "../../alpha.js";
 import { B as __CommonsB } from "../../beta.js";
+import { __serialise_A, __deserialise_A } from "../../alpha.js";
+import { __serialise_B, __deserialise_B } from "../../beta.js";
 
 export type A = __CommonsA & { readonly __ctxBrand?: "api" };
 export const A = {
@@ -20,8 +22,5 @@ export const check = {
     return 0;
   },
 };
-
-import { __serialise_A, __deserialise_A } from "../../alpha.js";
 export { __serialise_A, __deserialise_A };
-import { __serialise_B, __deserialise_B } from "../../beta.js";
 export { __serialise_B, __deserialise_B };

@@ -551,6 +551,14 @@ pub(crate) fn emit_project(
     // agent-rehydration boundary helpers; bundle emits only the agent-rehydration
     // ones (the gate's deserialisers), since in-process calls need no wire codec.
     let (boundary_stmts, boundary_names, boundary_insts) = emit_boundary_helpers(program, ctx);
+    // #1817: a boundary helper's `import` goes in the module's import block,
+    // not where the helpers are. A top-level use above the helpers (an agent's
+    // wire table names its codecs) otherwise ran before the import bound them
+    // once compiled to CommonJS: `ReferenceError: Cannot access … before
+    // initialization`.
+    let (mut boundary_imports, boundary_stmts): (Vec<_>, Vec<_>) = boundary_stmts
+        .into_iter()
+        .partition(|s| s.is_named_import());
     body.extend(boundary_stmts);
     // v0.22b: module-local codec helpers for this file's Json.encode/decode
     // targets, deduped against the workers boundary helpers above.
@@ -598,6 +606,10 @@ pub(crate) fn emit_project(
     }
     stmts.extend(project_imports);
     stmts.extend(cross_context_imports);
+    if let Some(first) = boundary_imports.first_mut() {
+        first.no_blank_before = true;
+    }
+    stmts.extend(boundary_imports);
     // For contexts: emit per-context nominal rebrand aliases for each type
     // imported via `uses` that this file references. The structural shape is
     // inherited from the original commons type; the brand makes the
@@ -1370,9 +1382,12 @@ fn emit_boundary_helpers(
                 emitted_names.extend(names.iter().cloned());
             }
             let mut emitted_insts: HashSet<String> = insts.iter().map(|i| i.ts_name()).collect();
-            let (consumed_stmts, consumed_names, consumed_insts) =
+            let (consumed_stmts, consumed_names, consumed_insts, foreign_names) =
                 emit_consumed_context_helpers(program, ctx, &mut emitted_names, &mut emitted_insts);
             stmts.extend(consumed_stmts);
+            // #1823: codecs of commons types a call to another context needs,
+            // beyond those this context's own boundary already imports.
+            stmts.extend(commons_codec_imports(foreign_names, &emitted_names, ctx));
             (consumed_names, consumed_insts)
         } else {
             (Vec::new(), Vec::new())
@@ -1413,6 +1428,22 @@ fn emit_boundary_helpers(
             .collect();
         locally.sort();
         let mut stmts: Vec<bynk_ts::TsStmt> = Vec::new();
+        // #1815: a local type's codec calls the codec of each type its fields
+        // reach. One owned by another commons (`Repo` in `t.core`, reached from
+        // `t.model`'s `Run`) is imported from that commons, which exports it.
+        let roots: Vec<TypeRef> = locally
+            .iter()
+            .map(|n| {
+                TypeRef::Named(Ident {
+                    name: n.clone(),
+                    span: Default::default(),
+                })
+            })
+            .collect();
+        let reached =
+            collect_boundary_types(&commons.types, &HashMap::new(), &HashMap::new(), &roots);
+        let declared: HashSet<String> = locally.iter().cloned().collect();
+        stmts.extend(commons_codec_imports(reached, &declared, ctx));
         stmts.extend(serialisation::decls_as_stmts_block(emit_helpers_for_owner(
             &locally,
             &commons.types,
@@ -1437,6 +1468,60 @@ fn emit_boundary_helpers(
             insts.iter().map(|i| i.ts_name()).collect(),
         )
     }
+}
+
+/// #1815/#1823: `import { __serialise_X, __deserialise_X } from "<commons>"`
+/// for each type in `names` owned by a commons this module uses, skipping any
+/// in `already` (declared here, or already imported). Grouped by commons, in
+/// name order. The module assembler hoists these into the import block
+/// (#1817).
+fn commons_codec_imports(
+    names: impl IntoIterator<Item = String>,
+    already: &HashSet<String>,
+    ctx: &EmitProjectCtx,
+) -> Vec<bynk_ts::TsStmt> {
+    let mut by_commons: std::collections::BTreeMap<String, std::collections::BTreeSet<String>> =
+        std::collections::BTreeMap::new();
+    for n in names {
+        if already.contains(&n) {
+            continue;
+        }
+        if matches!(ctx.imported_from_kind.get(&n), Some(UnitKind::Commons))
+            && let Some(commons_name) = ctx.imported_from.get(&n)
+        {
+            by_commons
+                .entry(commons_name.clone())
+                .or_default()
+                .insert(n);
+        }
+    }
+    by_commons
+        .into_iter()
+        .map(|(commons_name, names)| {
+            let target_path = ctx
+                .imported_decl_paths
+                .get(&commons_name)
+                .and_then(|m| names.iter().find_map(|n| m.get(n).cloned()))
+                .unwrap_or_else(|| EmitProjectCtx::commons_path(&commons_name));
+            let from = cross_commons_import_specifier_for_path(
+                &ctx.source_path,
+                &target_path,
+                ctx.import_ext,
+            );
+            let parts = names
+                .iter()
+                .flat_map(|n| [format!("__serialise_{n}"), format!("__deserialise_{n}")])
+                .collect();
+            bynk_ts::TsStmt::decl(
+                bynk_ts::TsDecl::Import {
+                    type_only: false,
+                    names: parts,
+                    from,
+                },
+                None,
+            )
+        })
+        .collect()
 }
 
 /// #661: emit the caller's own `serialise_*`/`deserialise_*` for every
@@ -1466,7 +1551,7 @@ fn emit_consumed_context_helpers(
     ctx: &EmitProjectCtx,
     emitted_names: &mut HashSet<String>,
     emitted_insts: &mut HashSet<String>,
-) -> (Vec<bynk_ts::TsStmt>, Vec<String>, Vec<String>) {
+) -> (Vec<bynk_ts::TsStmt>, Vec<String>, Vec<String>, Vec<String>) {
     use serialisation::{
         collect_codec_closure, emit_generic_helpers_qualified, emit_helpers_for_owner_qualified,
     };
@@ -1477,6 +1562,7 @@ fn emit_consumed_context_helpers(
     let mut stmts: Vec<bynk_ts::TsStmt> = Vec::new();
     let mut consumed_names_out: Vec<String> = Vec::new();
     let mut consumed_insts_out: Vec<String> = Vec::new();
+    let mut foreign_names_out: Vec<String> = Vec::new();
 
     // Only the services this context actually **calls** — not the callee's whole
     // provided surface. `consumed_services` carries every service the dependency
@@ -1619,6 +1705,11 @@ fn emit_consumed_context_helpers(
             }
         }
 
+        // #1823: a closure type the callee does not own is a commons type
+        // (`Cents`); the caller imports its codec from the commons. Before,
+        // that was assumed done by the caller's own boundary path, which only
+        // covers types in the caller's own signatures.
+        foreign_names_out.extend(names.iter().filter(|n| !owned(n)).cloned());
         let mut to_emit: Vec<String> = names
             .iter()
             .filter(|n| owned(n) && emitted_names.insert((*n).clone()))
@@ -1648,7 +1739,12 @@ fn emit_consumed_context_helpers(
         ));
     }
 
-    (stmts, consumed_names_out, consumed_insts_out)
+    (
+        stmts,
+        consumed_names_out,
+        consumed_insts_out,
+        foreign_names_out,
+    )
 }
 
 /// #661: the cross-context services this unit actually **calls**, as `consumed

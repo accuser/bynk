@@ -1,0 +1,9 @@
+commons shop.model
+
+uses shop.values
+
+-- #1815: `Line`'s codec calls `Cents`'s, which `shop.values` owns. It was
+-- called without being imported (TS2552).
+type Line = { price: Cents }
+
+fn priced() -> Line { Line { price: standardPrice() } }

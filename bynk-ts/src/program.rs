@@ -742,6 +742,12 @@ impl TsStmt {
         }
     }
 
+    /// Whether this is a named `import { … } from "…"` declaration (#1817): a
+    /// module assembler hoists those into its import block.
+    pub fn is_named_import(&self) -> bool {
+        matches!(self.kind, TsStmtKind::Decl(TsDecl::Import { .. }))
+    }
+
     pub fn decl(decl: TsDecl, span: Option<Span>) -> Self {
         Self {
             kind: TsStmtKind::Decl(decl),

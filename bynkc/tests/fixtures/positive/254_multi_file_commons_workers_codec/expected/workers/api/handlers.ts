@@ -4,6 +4,7 @@
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, type __JsonValue, type __BoundaryError, type __ServiceBinding, __callService, __boundaryError } from "../../runtime.js";
 
 import { Cents as __CommonsCents } from "../../money/cents.js";
+import { __serialise_Cents, __deserialise_Cents } from "../../money/cents.js";
 
 export type Cents = __CommonsCents & { readonly __ctxBrand?: "api" };
 export const Cents = {
@@ -24,6 +25,4 @@ export const check = {
     return 0;
   },
 };
-
-import { __serialise_Cents, __deserialise_Cents } from "../../money/cents.js";
 export { __serialise_Cents, __deserialise_Cents };

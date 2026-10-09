@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "provides": {
+    "place": "3a1dda0cc2000672"
+  },
+  "expects": {
+    "shop.payment": {
+      "authorise": "64c4101e9bac5424"
+    }
+  }
+}
