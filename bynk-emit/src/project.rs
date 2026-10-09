@@ -288,7 +288,9 @@ pub struct CompileOptions {
     /// #1821 (ADR 0147 D3): whether `suite`s are type-checked and emitted (the
     /// `tests/` modules and `tests/main.ts`). On by default; `bynkc compile`
     /// and the driver's dev/deploy build turn it off, so a suite never reaches
-    /// the deployable. `bynkc test` leaves it on.
+    /// the deployable. `bynkc test` leaves it on. Off strips suites after
+    /// parsing: a file that does not parse still fails the build, since it
+    /// cannot be told apart from production source.
     pub tests: bool,
     /// #57 (testing track): when `Some`, every file `roots` would otherwise
     /// discover on disk is instead read from here — keyed the same way
@@ -1601,6 +1603,16 @@ fn run_checks(
     //        them all. The parsed AST that `bynk fmt` produces is untouched (it
     //        parses independently), so the terse inheriting source round-trips.
     project_model::normalize_service_defaults(&mut parsed);
+    // #1821 (ADR 0147 D3): a deployable build strips every suite, here, right
+    // after parsing, so no later pass (the reserved-namespace and
+    // function-type checks walk every parsed unit) sees one: never
+    // type-checked for the build, never emitted. A file holding a unit and
+    // its suite is two parsed units, so the unit stays. A file that does not
+    // parse at all has already failed above: it cannot be told apart from
+    // production source.
+    if !tests {
+        parsed.retain(|pf| !matches!(pf.kind(), UnitKind::Test | UnitKind::Integration));
+    }
     let parsed = parsed;
 
     // -- 3. Group by (name, kind) and validate per-directory consistency.
@@ -1618,14 +1630,6 @@ fn run_checks(
             overlay,
             &mut errors,
         );
-    // #1821 (ADR 0147 D3): a deployable build strips every suite: never
-    // type-checked for the build, never emitted.
-    let (test_groups, integration_groups) = if tests {
-        (test_groups, integration_groups)
-    } else {
-        (Default::default(), Default::default())
-    };
-
     // -- 4. Build per-unit combined symbol tables. --
     let unit_tables = project_model::phase_symbol_tables(&groups, &kinds, &parsed, &mut errors);
 
