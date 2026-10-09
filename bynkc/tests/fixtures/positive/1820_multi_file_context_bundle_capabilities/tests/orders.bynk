@@ -14,4 +14,10 @@ suite shop.orders {
     let n <- place.call(2)
     expect n == 3
   }
+
+  case "a commons record two files share" {
+    let n <- note.call(Note { text: "hi" })
+    let l <- length.call(n)
+    expect l == 2
+  }
 }

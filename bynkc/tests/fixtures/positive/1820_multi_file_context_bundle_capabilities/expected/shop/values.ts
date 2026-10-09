@@ -16,3 +16,10 @@ export const Money = {
     return Ok(value as Money);
   },
 };
+
+export interface Note {
+  readonly text: string;
+}
+
+export const Note = {
+};

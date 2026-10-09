@@ -5,16 +5,23 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError } f
 
 import { __makeBook } from "./book.js";
 import type { Stamp } from "./stamp.js";
-import { Money as __CommonsMoney } from "../values.js";
+import { Money as __CommonsMoney, Note as __CommonsNote } from "../values.js";
 
 export type Money = __CommonsMoney & { readonly __ctxBrand?: "shop.orders" };
 export const Money = {
   of(value: number): Result<Money, ValidationError> { return __CommonsMoney.of(value); },
 };
+export type Note = __CommonsNote & { readonly __ctxBrand?: "shop.orders" };
 
 export const place = {
   async call(m: Money, deps: { Stamp: Stamp }): globalThis.Promise<number> {
     return __makeBook("o1").add(m, deps);
+  },
+};
+
+export const length = {
+  async call(n: Note, deps: {}): globalThis.Promise<number> {
+    return (n.text).length;
   },
 };
 
@@ -26,6 +33,9 @@ export function __makeSurface(deps: __ShopOrdersDeps) {
   return {
     async place(m: Money): globalThis.Promise<number> {
       return place.call(m, deps);
+    },
+    async length(n: Note): globalThis.Promise<number> {
+      return length.call(n, deps);
     },
   };
 }

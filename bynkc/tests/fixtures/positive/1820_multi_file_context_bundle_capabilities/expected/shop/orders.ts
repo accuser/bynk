@@ -6,6 +6,8 @@ export * from "./orders/stamp.js";
 
 export { Money } from "./orders/book.js";
 
+export { type Note } from "./orders/echo.js";
+
 import * as __file0 from "./orders/echo.js";
 import * as __file1 from "./orders/place.js";
 

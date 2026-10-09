@@ -4,16 +4,23 @@
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../../runtime.js";
 
 import type { Stamp } from "./stamp.js";
-import { Money as __CommonsMoney } from "../values.js";
+import { Money as __CommonsMoney, Note as __CommonsNote } from "../values.js";
 
 export type Money = __CommonsMoney & { readonly __ctxBrand?: "shop.orders" };
 export const Money = {
   of(value: number): Result<Money, ValidationError> { return __CommonsMoney.of(value); },
 };
+export type Note = __CommonsNote & { readonly __ctxBrand?: "shop.orders" };
 
 export const echo = {
   async call(m: Money, deps: {}): globalThis.Promise<Money> {
     return m;
+  },
+};
+
+export const note = {
+  async call(n: Note, deps: {}): globalThis.Promise<Note> {
+    return n;
   },
 };
 
@@ -25,6 +32,9 @@ export function __makeSurface(deps: __ShopOrdersDeps) {
   return {
     async echo(m: Money): globalThis.Promise<Money> {
       return echo.call(m, deps);
+    },
+    async note(n: Note): globalThis.Promise<Note> {
+      return note.call(n, deps);
     },
   };
 }

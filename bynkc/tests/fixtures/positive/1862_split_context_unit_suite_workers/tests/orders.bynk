@@ -1,0 +1,14 @@
+---
+#1862 review: a unit suite against a split context, built for workers. No
+unit test module is emitted on workers, and the context's barrel is its
+Worker's `handlers.ts`, so the test pass emits no bundle-layout
+`shop/orders.ts` for it. It used to, re-exporting `./orders/*.js` modules
+that don't exist there (TS2307).
+---
+suite shop.orders {
+  case "a commons record crosses two files of the context" {
+    let n <- note.call(Note { text: "hi" })
+    let l <- length.call(n)
+    expect l == 2
+  }
+}

@@ -78,9 +78,10 @@ async function test_a_service_reaches_a_sibling_file_s_agent_and_its_provider() 
   try {
     __ns_shop_orders.__resetAgents();
     const deps = __makeTestDeps();
-    const { Book, __makeBook, echo, place } = __ns_shop_orders;
-    const { Money } = __ns_shop_values;
+    const { Book, __makeBook, echo, length, note, place } = __ns_shop_orders;
+    const { Money, Note } = __ns_shop_values;
     type Money = __ns_shop_values.Money;
+    type Note = __ns_shop_values.Note;
     const n = await place.call((2 as any), deps);
     if (!(__bynkEq(n, 102))) { throw __bynkExpectFailure("tests/orders.bynk:4:12", 127, 135, "expect n == 102\n  expected: n == 102\n  actual:   " + __bynkShow((n)) + " == " + __bynkShow((102))); }
     return { pass: true };
@@ -97,9 +98,10 @@ async function test_a_service_that_needs_no_capability() {
   try {
     __ns_shop_orders.__resetAgents();
     const deps = __makeTestDeps();
-    const { Book, __makeBook, echo, place } = __ns_shop_orders;
-    const { Money } = __ns_shop_values;
+    const { Book, __makeBook, echo, length, note, place } = __ns_shop_orders;
+    const { Money, Note } = __ns_shop_values;
     type Money = __ns_shop_values.Money;
+    type Note = __ns_shop_values.Note;
     const m = await echo.call((5 as any), deps);
     if (!(__bynkEq(m, 5))) { throw __bynkExpectFailure("tests/orders.bynk:9:12", 224, 230, "expect m == 5\n  expected: m == 5\n  actual:   " + __bynkShow((m)) + " == " + __bynkShow((5))); }
     return { pass: true };
@@ -116,11 +118,33 @@ async function test_a_stub_replaces_a_sibling_file_s_provider() {
   try {
     __ns_shop_orders.__resetAgents();
     const deps = __makeTestDeps("a stub replaces a sibling file's provider");
-    const { Book, __makeBook, echo, place } = __ns_shop_orders;
-    const { Money } = __ns_shop_values;
+    const { Book, __makeBook, echo, length, note, place } = __ns_shop_orders;
+    const { Money, Note } = __ns_shop_values;
     type Money = __ns_shop_values.Money;
+    type Note = __ns_shop_values.Note;
     const n = await place.call((2 as any), deps);
     if (!(__bynkEq(n, 3))) { throw __bynkExpectFailure("tests/orders.bynk:15:12", 366, 372, "expect n == 3\n  expected: n == 3\n  actual:   " + __bynkShow((n)) + " == " + __bynkShow((3))); }
+    return { pass: true };
+  } catch (e) {
+    if (e instanceof ExpectationError) {
+      return { pass: false, error: { message: e.message, location: e.location } };
+    }
+    return { pass: false, error: { message: String(e), location: "unknown" } };
+  }
+}
+
+// case tier: unit
+async function test_a_commons_record_two_files_share() {
+  try {
+    __ns_shop_orders.__resetAgents();
+    const deps = __makeTestDeps();
+    const { Book, __makeBook, echo, length, note, place } = __ns_shop_orders;
+    const { Money, Note } = __ns_shop_values;
+    type Money = __ns_shop_values.Money;
+    type Note = __ns_shop_values.Note;
+    const n = await note.call({ text: "hi" }, deps);
+    const l = await length.call(n, deps);
+    if (!(__bynkEq(l, 2))) { throw __bynkExpectFailure("tests/orders.bynk:21:12", 505, 511, "expect l == 2\n  expected: l == 2\n  actual:   " + __bynkShow((l)) + " == " + __bynkShow((2))); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -136,5 +160,6 @@ export async function run(only?: string) {
   if (want("a service reaches a sibling file's agent and its provider")) results.push({ name: "a service reaches a sibling file's agent and its provider", ...(await test_a_service_reaches_a_sibling_file_s_agent_and_its_provider()) });
   if (want("a service that needs no capability")) results.push({ name: "a service that needs no capability", ...(await test_a_service_that_needs_no_capability()) });
   if (want("a stub replaces a sibling file's provider")) results.push({ name: "a stub replaces a sibling file's provider", ...(await test_a_stub_replaces_a_sibling_file_s_provider()) });
+  if (want("a commons record two files share")) results.push({ name: "a commons record two files share", ...(await test_a_commons_record_two_files_share()) });
   return results;
 }

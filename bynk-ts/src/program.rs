@@ -287,6 +287,17 @@ fn walk_expr<'a>(expr: &'a TsExpr, out: &mut Vec<(VerbatimOrigin, &'a str)>) {
     }
 }
 
+/// One name a statement exports ([`TsStmt::exported_names`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExportedName<'a> {
+    /// The exported name (an `X as Y` entry's `Y`).
+    pub name: &'a str,
+    /// Whether the statement exports a value under the name, as a `const`,
+    /// `function` or `class` does, or only a type, as an `interface`, a
+    /// `type` alias or a `type X` list entry does.
+    pub has_value: bool,
+}
+
 /// One statement — a `Verbatim`-tagged escape hatch (still constructible
 /// only via [`TsStmt::verbatim`], per #1307's Decision D — the
 /// `verbatim_sites` probe needs exactly one string to line-scan for), or,
@@ -754,20 +765,42 @@ impl TsStmt {
     /// module assembler re-exporting another module's names reads them here.
     /// A `Raw` or `Verbatim` statement's text is not parsed, so an export
     /// written that way is not reported.
-    pub fn exported_names(&self) -> Vec<&str> {
+    ///
+    /// Each name says whether this statement exports a value under it (#1862
+    /// review): an `interface` or `type` alias exports only a type, and under
+    /// `isolatedModules` a type-only name is re-exported only as `type X`
+    /// (TS1205). A list entry follows [`TsDecl::Import`]'s spelling: `type X`
+    /// is type-only, and `X as Y` exports `Y`. Every other entry is taken to
+    /// carry a value, the form that re-exports both meanings.
+    pub fn exported_names(&self) -> Vec<ExportedName<'_>> {
         let TsStmtKind::Decl(decl) = &self.kind else {
             return Vec::new();
         };
         match decl {
-            TsDecl::ReExport { names, .. } | TsDecl::ExportNames { names } => {
-                names.iter().map(String::as_str).collect()
-            }
+            TsDecl::ReExport { names, .. } | TsDecl::ExportNames { names } => names
+                .iter()
+                .map(|spec| {
+                    let (spec, has_value) = match spec.trim().strip_prefix("type ") {
+                        Some(rest) => (rest, false),
+                        None => (spec.trim(), true),
+                    };
+                    let name = spec.rsplit(" as ").next().unwrap_or(spec).trim();
+                    ExportedName { name, has_value }
+                })
+                .collect(),
             TsDecl::Export(inner) => match inner.as_ref() {
-                TsDecl::Interface { name, .. }
-                | TsDecl::ConstDecl { name, .. }
+                TsDecl::Interface { name, .. } | TsDecl::TypeAlias { name, .. } => {
+                    vec![ExportedName {
+                        name,
+                        has_value: false,
+                    }]
+                }
+                TsDecl::ConstDecl { name, .. }
                 | TsDecl::Class { name, .. }
-                | TsDecl::Function { name, .. }
-                | TsDecl::TypeAlias { name, .. } => vec![name.as_str()],
+                | TsDecl::Function { name, .. } => vec![ExportedName {
+                    name,
+                    has_value: true,
+                }],
                 _ => Vec::new(),
             },
             _ => Vec::new(),

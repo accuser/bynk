@@ -8,6 +8,8 @@ export * from "./handlers/types.js";
 
 export { __deserialise_Line, __serialise_Line } from "./handlers/book.js";
 
+export { type Note, __deserialise_Note, __serialise_Note } from "./handlers/hits.js";
+
 import * as __file0 from "./handlers/book.js";
 import * as __file1 from "./handlers/tally.js";
 

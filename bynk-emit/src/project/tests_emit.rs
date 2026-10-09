@@ -2328,7 +2328,12 @@ fn emit_test_module(
 ///
 /// #1820: a multi-file *context*'s barrel is also part of a production bundle
 /// build, emitted by `run_checks` ahead of the test passes, since its
-/// composition root imports the context from `out/<name>.ts` too.
+/// composition root imports the context from `out/<name>.ts` too; on workers,
+/// `run_checks` claims its path, since the context's modules are the Worker's.
+/// `run_checks` alone passes `modules_out`, this unit's staged modules, for
+/// [`duplicated_export_reexports`]; the test passes, which only ever reach a
+/// commons here, pass none. A commons' files repeat no generated export: it
+/// has no boundary codecs, and only a context rebrands a `uses`d type.
 pub(super) fn emit_commons_barrel(
     name: &str,
     groups: &BTreeMap<String, Vec<usize>>,
@@ -2440,6 +2445,10 @@ pub(super) fn merged_unit_helpers(
     with_agents.sort();
     with_services.sort();
     let mut stmts = Vec::new();
+    // The names defined below, pushed in the branch that defines each, so
+    // `duplicated_export_reexports` never also re-exports one file's copy.
+    // Unlike a codec or a rebrand, each file's copy differs (it covers that
+    // file's agents or services), so re-exporting one would be wrong.
     let mut defined = Vec::new();
     let mut aliases: BTreeMap<PathBuf, String> = BTreeMap::new();
     let mut alias_of = |file: &PathBuf, stmts: &mut Vec<TsStmt>| -> String {
@@ -2520,6 +2529,10 @@ pub(super) fn merged_unit_helpers(
 /// read with [`TsStmt::exported_names`], which sees structured exports only;
 /// every generated name that repeats across files is exported structurally
 /// (the commons codec re-export is [`TsDecl::ExportNames`] for this reason).
+/// A name the chosen module exports only as a type (a rebrand of a commons
+/// type with no `of` constructor is a bare `type` alias) is re-exported as
+/// `type X`: under the build's `isolatedModules`, `export { X }` of a
+/// type-only name is TS1205 (#1862 review).
 pub(super) fn duplicated_export_reexports(
     modules: &[PathBuf],
     emitted: &[StagedFile],
@@ -2527,7 +2540,9 @@ pub(super) fn duplicated_export_reexports(
     barrel_loc: &Path,
     import_ext: ImportExt,
 ) -> Vec<TsStmt> {
-    let mut exporters: BTreeMap<&str, Vec<&PathBuf>> = BTreeMap::new();
+    // Per name, each exporting module and whether it exports a value under
+    // the name.
+    let mut exporters: BTreeMap<&str, Vec<(&PathBuf, bool)>> = BTreeMap::new();
     for module in modules {
         let output = ts_output_path(module);
         let Some(Document::Ts(program)) = emitted
@@ -2538,22 +2553,31 @@ pub(super) fn duplicated_export_reexports(
             continue;
         };
         for stmt in &program.stmts {
-            for name in stmt.exported_names() {
+            for exported in stmt.exported_names() {
                 // A type is often both an `interface` and a `const` of one
-                // name: one module, counted once.
-                let modules = exporters.entry(name).or_default();
-                if modules.last() != Some(&module) {
-                    modules.push(module);
+                // name: one module, counted once, with a value if either
+                // statement exports one. This loop visits one module's
+                // statements at a time, so a module's earlier entry for the
+                // name, if any, is the last one.
+                let modules = exporters.entry(exported.name).or_default();
+                match modules.last_mut() {
+                    Some((m, has_value)) if *m == module => *has_value |= exported.has_value,
+                    _ => modules.push((module, exported.has_value)),
                 }
             }
         }
     }
     let mut chosen: BTreeMap<&PathBuf, Vec<String>> = BTreeMap::new();
     for (name, modules) in &exporters {
-        if let [first, _, ..] = modules.as_slice()
+        if let [(first, has_value), _, ..] = modules.as_slice()
             && !merged.iter().any(|m| m == name)
         {
-            chosen.entry(first).or_default().push(name.to_string());
+            let spec = if *has_value {
+                name.to_string()
+            } else {
+                format!("type {name}")
+            };
+            chosen.entry(first).or_default().push(spec);
         }
     }
     chosen

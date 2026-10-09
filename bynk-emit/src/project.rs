@@ -2081,21 +2081,27 @@ fn run_checks(
     // #1820: a context split across files emits a module per file and none at
     // `out/<name>.ts`, which the bundle's composition root imports it from.
     // Its barrel is part of the build, not only of a test build; a suite that
-    // imports the context reuses it.
-    if mode == Mode::Build && target == BuildTarget::Bundle {
-        for (name, kind) in &kinds {
-            if *kind == UnitKind::Context
-                && let Some(barrel) = emit_commons_barrel(
-                    name,
-                    &groups,
-                    &parsed,
-                    import_ext,
-                    &mut emitted_barrels,
-                    &compiled,
-                )
-            {
+    // imports the context reuses it. On workers the context's barrel is its
+    // Worker's `handlers.ts` (`emit_worker_handlers_barrel`), and its files
+    // aren't at `out/<name>/`, so its path here is claimed and none is
+    // emitted: the test passes below emit only a commons' barrel.
+    for (name, kind) in &kinds {
+        if *kind != UnitKind::Context {
+            continue;
+        }
+        if mode == Mode::Build && target == BuildTarget::Bundle {
+            if let Some(barrel) = emit_commons_barrel(
+                name,
+                &groups,
+                &parsed,
+                import_ext,
+                &mut emitted_barrels,
+                &compiled,
+            ) {
                 compiled.push(barrel);
             }
+        } else if target == BuildTarget::Workers {
+            emitted_barrels.insert(commons_dir_for(name).with_extension("ts"));
         }
     }
     let (test_outputs, runnable_tests) = process_tests(

@@ -7,9 +7,13 @@ import { __makeBook } from "./book.js";
 import { __makeTally } from "./tally.js";
 import { Line } from "./types.js";
 import type { Stamp } from "./stamp.js";
+import { Note as __CommonsNote } from "../../../shop/values.js";
 
 import type * as shop_fees from "../../shop-fees/handlers.js";
 import type * as shop_payment from "../../shop-payment/handlers.js";
+import { __serialise_Note, __deserialise_Note } from "../../../shop/values.js";
+
+export type Note = __CommonsNote & { readonly __ctxBrand?: "shop.orders" };
 
 export const place = {
   async call(line: Line, deps: { Fees: shop_fees.Fees; Stamp: Stamp; env: { SHOP_FEES: __ServiceBinding; SHOP_PAYMENT: __ServiceBinding; BOOK: __DurableObjectNamespace; TALLY: __DurableObjectNamespace } }): globalThis.Promise<number> {
@@ -17,6 +21,12 @@ export const place = {
     const n = await __makeBook(line.sku, deps.env).add(line, deps);
     const h = await __makeTally("all", deps.env).hit(deps);
     return (ok ? n + h : 0);
+  },
+};
+
+export const length = {
+  async call(n: Note, deps: {}): globalThis.Promise<number> {
+    return (n.text).length;
   },
 };
 
@@ -46,3 +56,5 @@ export function __deserialise_Line(json: __JsonValue, path: string = "$"): Resul
   return Ok({ sku: __sku, qty: __qty } as Line);
 }
 
+
+export { __serialise_Note, __deserialise_Note };
