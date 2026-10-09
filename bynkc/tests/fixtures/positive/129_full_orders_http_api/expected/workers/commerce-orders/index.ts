@@ -12,11 +12,13 @@ export default {
     const method = request.method;
     const surface = compose(env);
     const __security_orders: __SecurityPolicy = { nosniff: true, hstsMaxAgeSecs: null };
+    let __route: string = "request";
     try {
       if (path.startsWith("/_bynk/call/")) {
         const servicePath = path.slice("/_bynk/call/".length);
         switch (servicePath) {
           case "placement": {
+            __route = "call placement";
             const __contract = request.headers.get("X-Bynk-Contract");
             if (__contract !== "76925704cff4e061") return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "placement", expected: "76925704cff4e061", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
             const args = await request.json() as __JsonValue;
@@ -34,6 +36,7 @@ export default {
 
       {
         if (method === "POST" && path === "/orders") {
+          __route = "POST /orders";
           let __body_json: __JsonValue;
           try {
             __body_json = (await request.json()) as __JsonValue;
@@ -53,7 +56,8 @@ export default {
         return __applySecurityHeaders(__res, __security_orders);
       }
       return new globalThis.Response("Not Found", { status: 404 });
-    } catch {
+    } catch (e) {
+      globalThis.console.error(`commerce.orders ${__route} faulted`, e);
       return new globalThis.Response("Internal Server Error", { status: 500 });
     }
   },

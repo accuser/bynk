@@ -55,6 +55,22 @@ npx wrangler dev
 > A stateful agent compiles to a Durable Object there; on `bundle` the same agent
 > uses an in-process state registry instead.
 
+## When a handler faults
+
+A fault in an HTTP route, an `on call` service, an event delivery or a
+WebSocket upgrade answers a `500 Internal Server Error`. The client never sees the error. The Worker logs it first, with
+`console.error`, so it shows in `wrangler tail` and the Workers logs:
+
+```text
+shop.api GET /shout/:word faulted Error: provider exploded for boom
+```
+
+The line names the context and the dispatch that faulted: the route's
+*pattern*, `call <service>` for a service call, `event <service>` for an event
+delivery, or `ws <service>` for a WebSocket upgrade. It never names the
+request, so no key or value from the URL reaches the log. A queue consumer
+logs `queue <name> threw` and retries the message.
+
 ## Related
 
 - Tutorial: [Build a small HTTP service](/book/tutorials/02-http-service/).

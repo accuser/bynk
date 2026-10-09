@@ -2559,6 +2559,78 @@ mod tests {
         );
     }
 
+    /// #1858: a variant pattern's `(` must sit on the variant's line too. An
+    /// `is` test ending in a nullary variant, above a `()` tail on its own
+    /// line, is a pattern and a unit, not `Paid()`/`None()`: `fmt` writes that
+    /// tail after a comment, and its reparse must not absorb it.
+    #[test]
+    fn variant_pattern_followed_by_unit_tail_does_not_take_it_as_bindings() {
+        for (name, pat) in [("user variant", "Paid"), ("built-in variant", "None")] {
+            let src = format!("commons c\n\nfn f() -> () {{\n  let b = r is {pat}\n  ()\n}}\n");
+            let c = parse_str(&src).unwrap_or_else(|e| panic!("{name}: parse failed: {e:?}"));
+            let CommonsItem::Fn(f) = &c.items[0] else {
+                panic!("expected fn, got {:?}", c.items[0]);
+            };
+            let Statement::Let(l) = &f.body.statements[0] else {
+                panic!("{name}: expected a Let, got {:?}", f.body.statements[0]);
+            };
+            let ExprKind::Is { pattern, .. } = &l.value.kind else {
+                panic!("{name}: expected an `is` test, got {:?}", l.value.kind);
+            };
+            let Pattern::Variant { variant, span, .. } = pattern.as_ref() else {
+                panic!("{name}: expected a variant pattern, got {pattern:?}");
+            };
+            assert_eq!(
+                span.end, variant.span.end,
+                "{name}: the pattern must end at `{pat}`, not take the `()` below it"
+            );
+            assert!(
+                matches!(f.body.tail.kind, ExprKind::UnitLit),
+                "{name}: the `()` must remain the block's own tail, got {:?}",
+                f.body.tail.kind
+            );
+        }
+    }
+
+    /// #1858's boundary: a `(` on the variant's line still opens its payload
+    /// list, and the list itself may span lines.
+    #[test]
+    fn variant_pattern_payload_on_the_same_line_still_binds() {
+        for (name, pat) in [
+            ("user variant", "Paid(\n    x\n  )"),
+            ("built-in variant", "Some(x)"),
+        ] {
+            let src = format!("commons c\n\nfn f() -> Bool {{\n  r is {pat}\n}}\n");
+            let c = parse_str(&src).unwrap_or_else(|e| panic!("{name}: parse failed: {e:?}"));
+            let CommonsItem::Fn(f) = &c.items[0] else {
+                panic!("expected fn, got {:?}", c.items[0]);
+            };
+            let ExprKind::Is { pattern, .. } = &f.body.tail.kind else {
+                panic!("{name}: expected an `is` tail, got {:?}", f.body.tail.kind);
+            };
+            assert!(
+                matches!(pattern.as_ref(), Pattern::Variant { bindings, .. } if bindings.len() == 1),
+                "{name}: expected one binding, got {pattern:?}"
+            );
+        }
+    }
+
+    /// #1858, chosen uniformly: a match arm's pattern is followed only by `if`
+    /// or `=>`, so a next-line `(` there could not be the next statement, but
+    /// the same-line rule holds in every pattern position anyway. One lexical
+    /// rule, wherever a pattern appears, is the one a reader can apply without
+    /// knowing the position. The arm is rejected, not misparsed.
+    #[test]
+    fn match_arm_pattern_payload_on_a_later_line_is_rejected() {
+        let src = "commons c\n\nfn f() -> Int {\n  match m {\n    Settled\n      (amount) => 1,\n    _ => 0,\n  }\n}\n";
+        assert!(
+            parse_str(src).is_err(),
+            "a next-line `(` after an arm's variant must not open its payload list"
+        );
+        let same_line = src.replace("Settled\n      (amount)", "Settled(amount)");
+        parse_str(&same_line).unwrap_or_else(|e| panic!("same-line form must parse: {e:?}"));
+    }
+
     /// #981: the same same-line rule extends to a method call's parens — a
     /// `.method` immediately followed, on its own line, by a standalone `()`
     /// must not merge into `.method()`.

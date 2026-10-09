@@ -1369,7 +1369,10 @@ the claim is how a `case` observes one, not a way to catch it. Well-formedness:
   identity is reported as for an absent `by` (`bynk.test.principal_required`);
 - the case MUST NOT be `system`-tier (`bynk.test.faults_needs_in_process`): at
   `system` a handler's fault crosses the deployed Worker's boundary as an error
-  response, never a throw.
+  response, never a throw. The restriction is deliberate (#1811): a fault is an
+  in-process concept, and at `system` the observable is the response. A `system`
+  case asserts `r is ServerError(_)`, which does not distinguish a fault from a
+  handler's deliberate `ServerError`.
 
 The claim types as `Bool`.
 

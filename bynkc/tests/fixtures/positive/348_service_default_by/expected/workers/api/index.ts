@@ -12,6 +12,7 @@ export default {
     const method = request.method;
     const surface = compose(env);
     const __security_api: __SecurityPolicy = { nosniff: true, hstsMaxAgeSecs: null };
+    let __route: string = "request";
     try {
       if (path.startsWith("/_bynk/call/")) {
         const servicePath = path.slice("/_bynk/call/".length);
@@ -23,6 +24,7 @@ export default {
 
       {
         if ((method === "GET" || method === "HEAD") && path === "/healthz") {
+          __route = "GET /healthz";
           const result = await surface.http_GET_healthz(request);
           const __response = __applySecurityHeaders(__notModifiedIfMatch(__httpResultToResponse(result, handlers.__serialise_View, { weakEtag: true }), request), __security_api);
           return method === "HEAD" ? __headResponse(__response) : __response;
@@ -30,6 +32,7 @@ export default {
       }
       {
         if ((method === "GET" || method === "HEAD") && path === "/ping") {
+          __route = "GET /ping";
           const result = await surface.http_GET_ping();
           const __response = __applySecurityHeaders(__notModifiedIfMatch(__httpResultToResponse(result, handlers.__serialise_View, { weakEtag: true }), request), __security_api);
           return method === "HEAD" ? __headResponse(__response) : __response;
@@ -46,7 +49,8 @@ export default {
         return __applySecurityHeaders(__res, __security_api);
       }
       return new globalThis.Response("Not Found", { status: 404 });
-    } catch {
+    } catch (e) {
+      globalThis.console.error(`api ${__route} faulted`, e);
       return new globalThis.Response("Internal Server Error", { status: 500 });
     }
   },
