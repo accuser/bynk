@@ -2255,6 +2255,11 @@ fn render_decl_body(
             out.push_str(from);
             out.push_str("\";\n");
         }
+        TsDecl::ExportNames { names } => {
+            out.push_str("export { ");
+            out.push_str(&names.join(", "));
+            out.push_str(" };\n");
+        }
         TsDecl::ReExportAll { from } => {
             out.push_str("export * from \"");
             out.push_str(from);

@@ -1306,10 +1306,10 @@ fn emit_boundary_helpers(
             // Arc C, slice 30 (#1392): the import is a real `TsDecl::Import`.
             // The re-export is a BARE `export { ... };` — already-bound
             // local names, no `from` clause — which `TsDecl::ReExport`
-            // cannot represent (it always carries one); this one real site
-            // stays opaque `TsStmt::raw` rather than a new variant for a
-            // single call site, the established "odd, one-off shape stays
-            // opaque text" posture.
+            // cannot represent (it always carries one). #1820: it was opaque
+            // `TsStmt::raw`, but a split context's `handlers.ts` must see
+            // what each file exports (two files can both re-export a
+            // commons type's codecs), so it is `TsDecl::ExportNames`.
             //
             // #1817: the module assembler hoists the import into the import
             // block; the re-export stays here with the helpers. Every import
@@ -1324,8 +1324,10 @@ fn emit_boundary_helpers(
             );
             import_stmt.no_blank_before = group_index > 0;
             stmts.push(import_stmt);
-            stmts.push(bynk_ts::TsStmt::raw(
-                format!("export {{ {} }};\n", parts.join(", ")),
+            stmts.push(bynk_ts::TsStmt::decl(
+                bynk_ts::TsDecl::ExportNames {
+                    names: parts.clone(),
+                },
                 None,
             ));
         }

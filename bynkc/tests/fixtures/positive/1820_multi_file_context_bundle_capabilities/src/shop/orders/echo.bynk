@@ -1,0 +1,9 @@
+context shop.orders
+
+uses shop.values
+
+-- #1820: a second file using `Money`, so each emits the context's rebrand
+-- of it, which the barrel re-exports from one of them.
+service echo {
+  on call(m: Money) -> Effect[Money] { m }
+}

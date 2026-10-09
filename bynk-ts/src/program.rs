@@ -176,6 +176,7 @@ fn walk_decl<'a>(decl: &'a TsDecl, out: &mut Vec<(VerbatimOrigin, &'a str)>) {
         | TsDecl::ImportNamespace { .. }
         | TsDecl::ImportDefault { .. }
         | TsDecl::ReExport { .. }
+        | TsDecl::ExportNames { .. }
         | TsDecl::ReExportAll { .. }
         | TsDecl::Interface { .. }
         | TsDecl::TypeAlias { .. }
@@ -748,21 +749,28 @@ impl TsStmt {
         matches!(self.kind, TsStmtKind::Decl(TsDecl::Import { .. }))
     }
 
-    /// The name this statement exports, when it is an `export` of a named
-    /// declaration (#1820): a module assembler re-exporting another module's
-    /// names reads them here. A `Verbatim` statement's text is not parsed,
-    /// so an export written that way is not reported.
-    pub fn exported_name(&self) -> Option<&str> {
-        let TsStmtKind::Decl(TsDecl::Export(inner)) = &self.kind else {
-            return None;
+    /// The names this statement exports (#1820): an `export` of a named
+    /// declaration, or an `export { … }` list, with or without `from`. A
+    /// module assembler re-exporting another module's names reads them here.
+    /// A `Raw` or `Verbatim` statement's text is not parsed, so an export
+    /// written that way is not reported.
+    pub fn exported_names(&self) -> Vec<&str> {
+        let TsStmtKind::Decl(decl) = &self.kind else {
+            return Vec::new();
         };
-        match inner.as_ref() {
-            TsDecl::Interface { name, .. }
-            | TsDecl::ConstDecl { name, .. }
-            | TsDecl::Class { name, .. }
-            | TsDecl::Function { name, .. }
-            | TsDecl::TypeAlias { name, .. } => Some(name),
-            _ => None,
+        match decl {
+            TsDecl::ReExport { names, .. } | TsDecl::ExportNames { names } => {
+                names.iter().map(String::as_str).collect()
+            }
+            TsDecl::Export(inner) => match inner.as_ref() {
+                TsDecl::Interface { name, .. }
+                | TsDecl::ConstDecl { name, .. }
+                | TsDecl::Class { name, .. }
+                | TsDecl::Function { name, .. }
+                | TsDecl::TypeAlias { name, .. } => vec![name.as_str()],
+                _ => Vec::new(),
+            },
+            _ => Vec::new(),
         }
     }
 
@@ -2051,6 +2059,13 @@ pub enum TsDecl {
     /// No `type_only` form — nothing in the grounding file re-exports a
     /// type-only name.
     ReExport { names: Vec<String>, from: String },
+    /// `export { a, b };` — exports names already bound in this module (an
+    /// import's, typically), with no `from` clause, which [`TsDecl::ReExport`]
+    /// always carries. A Workers context re-exports the boundary codecs it
+    /// imports from a `uses`d commons this way. #1820: a structured variant,
+    /// not opaque text, so [`TsStmt::exported_names`] reports what the module
+    /// exports to a barrel that must find the names two modules both export.
+    ExportNames { names: Vec<String> },
     /// `export * from "spec";` — a wildcard re-export, structurally distinct
     /// from [`TsDecl::ReExport`] (which always carries a braced name list —
     /// an empty `names` there would render the ill-formed `export {  }
