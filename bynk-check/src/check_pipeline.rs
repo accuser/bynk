@@ -434,29 +434,12 @@ pub fn check_file_core(
             // hide the next stage's checks of the others (a service handler's
             // body is typed in `check_context_declarations`).
             failed = true;
-            match rc.typed_despite_errors {
-                // Checking goes on: every exit below records this file's
-                // types, so recording the partial map here as well would
-                // put each expression in the sink twice. The later map
-                // holds every partial entry plus the handler bodies typed
-                // since.
-                Some(t) => t,
-                None => {
-                    // ADR 0094: surface the best-effort partial types the
-                    // checker computed so `.`-member completion / signature
-                    // help work on a buffer with an unrelated error.
-                    // Unconditional now (this module's own doc comment) — a
-                    // `Mode::Build` caller simply never reads the sink this
-                    // lands in.
-                    record_analyse_types(
-                        exprs,
-                        &pf.identity_path(),
-                        pf.is_synthetic(),
-                        &rc.partial_expr_types,
-                    );
-                    return None;
-                }
-            }
+            // ADR 0094: the program as checked so far carries the
+            // best-effort types of every expression that did check. It is
+            // not recorded here: checking goes on, and whichever exit below
+            // the file reaches records it once, with the handler bodies
+            // `check_context_declarations` types in the meantime.
+            rc.typed_despite_errors?
         }
     };
 

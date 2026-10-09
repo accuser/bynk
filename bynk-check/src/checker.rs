@@ -673,8 +673,7 @@ pub struct TypedCommons {
     /// Named `ty_intern` rather than `types` only because `types` above is
     /// already this struct's *declaration* table (`TypeDecl` by name); the two
     /// are unrelated. `Rc` so [`RecordCheck`] can hand the same table out
-    /// alongside `partial_expr_types` on the error path, where no
-    /// `TypedCommons` is built to own it.
+    /// beside its `result` whichever way the check went.
     pub ty_intern: Arc<Types>,
     /// #1170: a service handler's own resolved `by <binder>: <Actor>` actor
     /// binding — `handler_actor_binding`'s own return value
@@ -795,16 +794,15 @@ pub struct TypedExpr {
 }
 
 /// The outcome of [`check_record`]: the typed model (`Err` if the file had any
-/// error) and, on the error path, the best-effort partial `expr_types` the
-/// checker computed before bailing. Analyse mode surfaces that partial map for
-/// `.`-member completion and signature help even on a broken buffer (ADR 0094);
-/// on the Ok path the types live in the `TypedCommons`, so this is empty.
+/// error) and, on the error path, the program as checked so far
+/// (`typed_despite_errors`), whose `expr_types` are the best-effort types the
+/// checker computed. Analyse mode surfaces those for `.`-member completion and
+/// signature help even on a broken buffer (ADR 0094).
 pub struct RecordCheck {
     pub result: Result<TypedCommons, Vec<CompileError>>,
-    pub partial_expr_types: HashMap<ExprId, TypedExpr>,
-    /// T3.6b (R4.1): the table `partial_expr_types`' `TyId`s resolve against.
-    /// The same `Rc` the `Ok` path's `TypedCommons::ty_intern` carries, so a
-    /// caller that reads either map has the table either way.
+    /// T3.6b (R4.1): the table every `TyId` in `result` or
+    /// `typed_despite_errors` resolves against — the same `Rc` either
+    /// `TypedCommons::ty_intern` carries.
     pub ty_intern: Arc<Types>,
     /// #1663 (Decision A): on the `Err` path, the program as checked so far —
     /// every declaration was still checked, so a later stage (context
@@ -990,7 +988,6 @@ pub fn check_record_in(
                 ty_intern: Arc::clone(&ty_intern),
                 actor_bindings: HashMap::new(),
             }),
-            partial_expr_types: HashMap::new(),
             ty_intern,
             typed_despite_errors: None,
         }
@@ -1001,7 +998,6 @@ pub fn check_record_in(
         all.extend(warnings);
         RecordCheck {
             result: Err(all),
-            partial_expr_types: expr_types.clone(),
             typed_despite_errors: Some(TypedCommons {
                 commons: input.commons,
                 types: input.types,

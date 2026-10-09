@@ -3,7 +3,8 @@
 //! The checker computes `expr_types: HashMap<ExprId, TypedExpr>` per file as
 //! it types each expression (T3.4, R2.4 — keyed by node identity, not
 //! position). On the Ok path that map rides inside the `TypedCommons`; on the
-//! error path `check_record` hands it out as `RecordCheck::partial_expr_types`.
+//! error path inside `RecordCheck::typed_despite_errors`, the program as
+//! checked so far.
 //! This sink carries it out to the analysis so completion can ask *"what is
 //! the type of the expression at this offset?"* (the receiver before a `.`),
 //! mirroring [`HintSink`](crate::hints::HintSink).
@@ -178,6 +179,11 @@ mod tests {
     /// `check_record` but keeps being checked (#1663) used to be recorded at
     /// the `Err` exit and again at the final `failed` exit, doubling every
     /// entry.
+    ///
+    /// The assertion is that no two entries share a span, which is stronger
+    /// than "recorded once": the checker does not guarantee that two typed
+    /// nodes never share a span (see `check_record_in`'s finding #28, bug
+    /// #844 and the else-less `if`). A fixture here must avoid such pairs.
     #[test]
     fn each_expression_is_recorded_once() {
         for src in [
