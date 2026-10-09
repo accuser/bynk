@@ -1,0 +1,7 @@
+-- #1829: the same shape across the files of one context. `shelf.bynk`'s
+-- agent stores a `Crate`, and only the agent-state codec names `Size`.
+context app.store
+
+type Size = Int where NonNegative
+
+type Crate = { label: String, size: Size }
