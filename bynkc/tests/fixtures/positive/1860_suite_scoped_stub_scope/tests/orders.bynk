@@ -1,0 +1,50 @@
+---
+#1860: three suites target `shop.orders`, so all of them are emitted into
+one test module. A suite-scoped `stub` used to apply to every suite's runs:
+the first suite's case saw the third suite's stub. Each now applies to its
+own suite's cases and properties only.
+---
+suite shop.orders {
+  case "a suite without a stub reaches the provider" {
+    let n <- place.call()
+    expect n == 100
+  }
+
+  property "a property without a stub reaches the provider" {
+    for all b: Bool {
+      let n <- place.call()
+      expect n == 100
+    }
+  }
+}
+
+suite shop.orders as integration {
+  stub Stamp.next() returns 1
+
+  case "a suite's stub applies to its case" {
+    let n <- place.call()
+    expect n == 1
+  }
+
+  property "a suite's stub applies to its property" {
+    for all b: Bool {
+      let n <- place.call()
+      expect n == 1
+    }
+  }
+}
+
+suite shop.orders as integration {
+  stub Stamp.next() returns 2
+
+  case "another suite's stub applies to its own case" {
+    let n <- place.call()
+    expect n == 2
+  }
+
+  case "a case's own stub beats its suite's" {
+    stub Stamp.next() returns each [3]
+    let n <- place.call()
+    expect n == 3
+  }
+}

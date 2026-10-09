@@ -26,7 +26,7 @@ use crate::emitter::RuntimeUse;
 // #1759: every namespace a test module imports, from one definition.
 use crate::emitter::emit::test_scaffold_ns as test_ns;
 use bynk_check::checker::Types;
-use bynk_check::test_suites::{self, ResolvedStub};
+use bynk_check::test_suites::{self, ResolvedStub, StubScope};
 use bynk_syntax::ast::{
     ArgPattern, BaseType, BinOp, Block, CapabilityOp, Case, Commons, CommonsForm, CommonsItem,
     Expr, ExprKind, FnDecl, FnName, Ident, Param, PredKind, PropertyDecl, QualifiedName,
@@ -1980,6 +1980,15 @@ fn emit_test_module(
     }
     stmts.push(deps_stmt);
 
+    // #1860: each run's suite ordinal, for a suite-scoped `stub` — `None`
+    // when no clause is one, so the runs pass none.
+    let suite_scoped = stubs.values().any(stub_is_suite_scoped);
+    let run_suite = |i: usize| {
+        suite_scoped
+            .then(|| test_suites::suite_ordinal(i, indices, parsed))
+            .flatten()
+    };
+
     // Emit one async function per test case. Capture each case's name + source
     // location for `--no-run` discovery as we go (same order the runner reports).
     let mut case_runners: Vec<String> = Vec::new();
@@ -1990,6 +1999,7 @@ fn emit_test_module(
         };
         let rel_path = parsed[i].identity_path();
         let rel_path = rel_path.to_string_lossy();
+        let suite = run_suite(i);
         for case in &test_decl.cases {
             discovered.push(DiscoveredCase {
                 name: case.name.clone(),
@@ -2024,6 +2034,7 @@ fn emit_test_module(
                 parsed[i].source(),
                 &rel_path,
                 &runtime_use,
+                suite,
                 tys,
             );
             // v0.70: merge this case's body checkpoints into the module map under
@@ -2056,6 +2067,7 @@ fn emit_test_module(
         };
         let rel_path = parsed[i].identity_path();
         let rel_path = rel_path.to_string_lossy();
+        let suite = run_suite(i);
         for prop in &test_decl.properties {
             discovered.push(DiscoveredCase {
                 name: prop.name.clone(),
@@ -2085,6 +2097,7 @@ fn emit_test_module(
                     parsed[i].source(),
                     &rel_path,
                     &runtime_use,
+                    suite,
                     tys,
                 )
             } else {
@@ -2101,6 +2114,7 @@ fn emit_test_module(
                     parsed[i].source(),
                     &rel_path,
                     &runtime_use,
+                    suite,
                     tys,
                 )
             };
@@ -2760,36 +2774,32 @@ fn emit_stub_class(
     // class with one carries the running case's name (`__makeTestDeps`'s
     // argument), and `__applies` tells `__bynkOverlay` which operations this
     // case stubs at all — an operation stubbed only by other cases reaches the
-    // tier default instead.
-    let case_scoped = rp.clause_cases.iter().any(Option::is_some);
+    // tier default instead. #1860: a suite-scoped clause, when another suite
+    // shares the module, applies only while its own suite's runs do, so the
+    // class also carries the running suite's ordinal.
+    let case_scoped = stub_is_scoped(rp);
     if case_scoped {
         out.push_str("  __case: string | undefined;\n");
-        out.push_str("  constructor(c?: string) {\n    this.__case = c;\n  }\n");
+        if stub_is_suite_scoped(rp) {
+            out.push_str("  __suite: number | undefined;\n");
+            out.push_str(
+                "  constructor(c?: string, s?: number) {\n    this.__case = c;\n    this.__suite = s;\n  }\n",
+            );
+        } else {
+            out.push_str("  constructor(c?: string) {\n    this.__case = c;\n  }\n");
+        }
         out.push_str("  __applies(op: string): boolean {\n");
         for (method, clause_idxs) in &by_method {
-            let cases: Vec<&String> = clause_idxs
-                .iter()
-                .map(|&i| rp.clause_cases[i].as_ref())
-                .collect::<Option<Vec<_>>>()
-                .unwrap_or_default();
-            if cases.is_empty() {
+            let scopes: Vec<&StubScope> =
+                clause_idxs.iter().map(|&i| &rp.clause_scopes[i]).collect();
+            // An operation with any clause for every run is always stubbed.
+            if scopes.contains(&&StubScope::Every) {
                 continue;
             }
-            let tests: Vec<String> = cases
-                .iter()
-                .collect::<std::collections::BTreeSet<_>>()
-                .into_iter()
-                .map(|c| {
-                    format!(
-                        "this.__case === {}",
-                        bynk_ts::print_expr(&str_lit(c.as_str()))
-                    )
-                })
-                .collect();
             out.push_str(&format!(
                 "    if (op === {}) return {};\n",
                 bynk_ts::print_expr(&str_lit(method.as_str())),
-                tests.join(" || ")
+                scopes_test(&scopes),
             ));
         }
         out.push_str("    return true;\n  }\n");
@@ -2871,14 +2881,9 @@ fn emit_stub_class(
                     cond_parts.push(format!("__bynkEq({}, {vname})", param.name.name));
                 }
             }
-            if let Some(case) = &rp.clause_cases[idx] {
-                cond_parts.insert(
-                    0,
-                    format!(
-                        "this.__case === {}",
-                        bynk_ts::print_expr(&str_lit(case.as_str()))
-                    ),
-                );
+            let scope = &rp.clause_scopes[idx];
+            if *scope != StubScope::Every {
+                cond_parts.insert(0, scopes_test(&[scope]));
             }
             let cond = if cond_parts.is_empty() {
                 "true".to_string()
@@ -3231,6 +3236,50 @@ fn platform_seams<'a>(
     out
 }
 
+/// #291: does any of `rp`'s clauses apply to some runs only? Its stub class
+/// then carries the running case's name, and the deps factory passes it.
+fn stub_is_scoped(rp: &ResolvedStub) -> bool {
+    rp.clause_scopes.iter().any(|s| *s != StubScope::Every)
+}
+
+/// #1860: does any of `rp`'s clauses apply to one suite's runs? Its stub
+/// class then also carries the running suite's ordinal.
+fn stub_is_suite_scoped(rp: &ResolvedStub) -> bool {
+    rp.clause_scopes
+        .iter()
+        .any(|s| matches!(s, StubScope::Suite(_)))
+}
+
+/// #291/#1860: a stub class's test that the running case or suite is one of
+/// `scopes` (none of them [`StubScope::Every`]): `this.__case === "a" ||
+/// this.__suite === 1`, cases in name order and then suites.
+fn scopes_test(scopes: &[&StubScope]) -> String {
+    let mut cases: BTreeSet<&String> = BTreeSet::new();
+    let mut suites: BTreeSet<usize> = BTreeSet::new();
+    for scope in scopes {
+        match scope {
+            StubScope::Case(c) => {
+                cases.insert(c);
+            }
+            StubScope::Suite(n) => {
+                suites.insert(*n);
+            }
+            StubScope::Every => {}
+        }
+    }
+    cases
+        .into_iter()
+        .map(|c| {
+            format!(
+                "this.__case === {}",
+                bynk_ts::print_expr(&str_lit(c.as_str()))
+            )
+        })
+        .chain(suites.into_iter().map(|n| format!("this.__suite === {n}")))
+        .collect::<Vec<_>>()
+        .join(" || ")
+}
+
 /// #291: a stubbed capability's `__makeTestDeps` entry — its `__Stub_<Cap>`
 /// layered over `base`, the tier default (the context's own provider, a
 /// platform capability's test double, or nothing). A stubbed operation answers
@@ -3239,12 +3288,15 @@ fn platform_seams<'a>(
 /// `stub` > the tier default).
 fn stub_overlay(rp: &ResolvedStub, ty: &str, base: Option<TsExpr>) -> TsExpr {
     let cap = &rp.cap;
-    // A class with case-scoped clauses is told which case is running.
-    let args = if rp.clause_cases.iter().any(Option::is_some) {
-        vec![ident("__case")]
-    } else {
-        Vec::new()
-    };
+    // A class with case-scoped clauses is told which case is running, and one
+    // with suite-scoped clauses which suite (#1860).
+    let mut args = Vec::new();
+    if stub_is_scoped(rp) {
+        args.push(ident("__case"));
+    }
+    if stub_is_suite_scoped(rp) {
+        args.push(ident("__suite"));
+    }
     TsExpr::As {
         expr: Box::new(call(
             ident("__bynkOverlay"),
@@ -3534,9 +3586,8 @@ fn emit_test_deps(
     // produced a double space, not the tight `"{}"` `TsExpr::object`'s own
     // empty-entries shortcut renders — a real, reachable shape (an
     // integration target's own non-`Context` participants all hit it).
-    let case_scoped = stubs
-        .values()
-        .any(|rp| rp.clause_cases.iter().any(Option::is_some));
+    let case_scoped = stubs.values().any(stub_is_scoped);
+    let suite_scoped = stubs.values().any(stub_is_suite_scoped);
     let return_value = if entries.is_empty() {
         ident("{  }")
     } else {
@@ -3547,16 +3598,20 @@ fn emit_test_deps(
         TsDecl::Function {
             name: "__makeTestDeps".to_string(),
             generics: Vec::new(),
-            // #291: the running case's name, when some `stub` is case-scoped.
-            params: if case_scoped {
-                vec![TsParam {
-                    name: "__case".to_string(),
-                    ty: Some(TsType::named("string")),
-                    optional: true,
-                }]
-            } else {
-                Vec::new()
-            },
+            // #291: the running case's name, when some `stub` is case-scoped,
+            // and #1860 the running suite's ordinal, when one is suite-scoped.
+            params: [
+                ("__case", "string", case_scoped),
+                ("__suite", "number", suite_scoped),
+            ]
+            .into_iter()
+            .filter(|(_, _, on)| *on)
+            .map(|(name, ty, _)| TsParam {
+                name: name.to_string(),
+                ty: Some(TsType::named(ty)),
+                optional: true,
+            })
+            .collect(),
             return_type: None,
             body,
             is_async: false,
@@ -3707,11 +3762,20 @@ fn emit_test_scope_setup(
     // `deps` with the recording proxy and declare the per-case trace `__obs`. Off
     // for bodies that don't observe, so their emitted output is unchanged.
     record_calls: bool,
-    // #291: the running case's name, passed to `__makeTestDeps` when the case
-    // has its own `stub` clauses (so they apply to it and no other case).
+    // #291: the running case's name, passed to `__makeTestDeps` when some
+    // `stub` clause is scoped to the case (so it applies to it and no other).
     case_name: Option<&str>,
+    // #1860: the running suite's ordinal, passed when some `stub` clause is
+    // scoped to a suite.
+    suite: Option<usize>,
 ) {
-    let deps_args: Vec<TsExpr> = case_name.map(str_lit).into_iter().collect();
+    let deps_args: Vec<TsExpr> = match suite {
+        Some(n) => vec![
+            case_name.map_or_else(|| ident("undefined"), str_lit),
+            TsExpr::Lit(TsLit::Num(n.to_string())),
+        ],
+        None => case_name.map(str_lit).into_iter().collect(),
+    };
     let target_ns = test_ns(target_name);
     // v0.9.2: reset the target context's agent registries so each test sees a
     // fresh per-key state (finding #10's "fresh per test" half).
@@ -4019,9 +4083,17 @@ fn emit_test_case_function(
     source: &str,
     rel_path: &str,
     runtime_use: &RuntimeUse,
+    // #1860: the run's suite ordinal, when some `stub` is suite-scoped.
+    suite: Option<usize>,
     tys: &Arc<Types>,
 ) -> TsStmt {
-    let _ = stubs;
+    // #291: a case some `stub` clause is scoped to passes its name to
+    // `__makeTestDeps`, so the clause applies to it.
+    let scoped = stubs.values().any(|rp| {
+        rp.clause_scopes
+            .iter()
+            .any(|s| matches!(s, StubScope::Case(c) if *c == case.name))
+    });
     let mut out = String::new();
     out.push_str("  try {\n");
     emit_test_scope_setup(
@@ -4033,7 +4105,8 @@ fn emit_test_case_function(
         unit_consumes,
         unit_consumes_aliases,
         block_uses_observation(&case.body),
-        (!case.stubs.is_empty()).then_some(case.name.as_str()),
+        scoped.then_some(case.name.as_str()),
+        suite,
     );
     let mut typed =
         synthetic_typed_commons_for_target(target_name, unit_tables, unit_uses, unit_consumes, tys);
@@ -5109,6 +5182,8 @@ fn emit_test_property_function(
     source: &str,
     rel_path: &str,
     runtime_use: &RuntimeUse,
+    // #1860: the run's suite ordinal, when some `stub` is suite-scoped.
+    suite: Option<usize>,
     tys: &Arc<Types>,
 ) -> TsStmt {
     let mut out = String::new();
@@ -5122,6 +5197,7 @@ fn emit_test_property_function(
         unit_consumes_aliases,
         false,
         None,
+        suite,
     );
 
     // Generator descriptors, one per binding, over the target's privileged type
@@ -5367,6 +5443,8 @@ fn emit_test_history_property_function(
     source: &str,
     rel_path: &str,
     runtime_use: &RuntimeUse,
+    // #1860: the run's suite ordinal, when some `stub` is suite-scoped.
+    suite: Option<usize>,
     tys: &Arc<Types>,
 ) -> TsStmt {
     let mut out = String::new();
@@ -5380,6 +5458,7 @@ fn emit_test_history_property_function(
         unit_consumes_aliases,
         false,
         None,
+        suite,
     );
 
     let Some((run_var, agent_name)) = prop_history_binding(prop) else {
@@ -5636,6 +5715,7 @@ fn emit_contract_attack_function(
         unit_consumes,
         unit_consumes_aliases,
         false,
+        None,
         None,
     );
     let _ = target_kind;
