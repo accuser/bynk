@@ -475,11 +475,18 @@ struct ResponseWalk<'a> {
 }
 
 impl<'a> ResponseWalk<'a> {
+    /// The checker-recorded type at `span`, matched by byte range only.
+    /// `expr_types` spans carry the analysis round's real `FileId` (T3.5,
+    /// #1062) while [`wire_contract_at`]'s reparse stamps
+    /// `FileId::UNKNOWN`, so `Span`'s derived `PartialEq` (which compares
+    /// `file` too) would never match. A recorded `Ty::Error` is "no type",
+    /// so it degrades to the same fallback as a missing entry.
     fn expr_ty(&self, span: Span) -> Option<std::sync::Arc<Ty>> {
         self.expr_types
             .iter()
-            .find(|(s, _)| *s == span)
+            .find(|(s, _)| s.start == span.start && s.end == span.end)
             .map(|(_, t)| self.tys.get(*t))
+            .filter(|t| !matches!(**t, Ty::Error))
     }
 
     /// Whether `span`'s expression checked as `HttpResult[_]` — the same
@@ -600,6 +607,7 @@ impl<'a> ResponseWalk<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bynk_syntax::span::FileId;
     use std::path::PathBuf;
 
     /// Same convention as `sequence.rs`/`architecture.rs`'s `setup_project`:
@@ -755,6 +763,57 @@ service api from http {
         assert!(model.contract.is_none());
     }
 
+    /// How many expressions in the handler at `offset` (reparsed the same
+    /// way [`wire_contract_at`] reparses) [`ResponseWalk::expr_ty`] resolves
+    /// to a recorded type — the probe that the walk's primary, checker-typed
+    /// path is actually taken rather than the declared-return fallback.
+    fn typed_expr_count(
+        text: &str,
+        offset: usize,
+        expr_types: &[(Span, TyId)],
+        tys: &Types,
+    ) -> usize {
+        fn collect<'e>(e: &'e Expr, out: &mut Vec<&'e Expr>) {
+            out.push(e);
+            for c in expr_children(e) {
+                collect(c, out);
+            }
+        }
+        let tokens = bynk_syntax::lexer::tokenize(text).expect("lexes");
+        let (parsed, _) = bynk_syntax::parser::parse_unit_with_recovery(&tokens, text);
+        let Some(SourceUnit::Context(c)) = parsed else {
+            panic!("fixture is a context");
+        };
+        let handler = c
+            .items
+            .iter()
+            .find_map(|i| match i {
+                CommonsItem::Service(s) => handler_at(&s.handlers, offset),
+                _ => None,
+            })
+            .expect("a handler at offset");
+        let mut exprs = Vec::new();
+        for s in &handler.body.statements {
+            statement_exprs(s, &mut exprs);
+        }
+        exprs.push(&handler.body.tail);
+        let mut all = Vec::new();
+        for e in exprs {
+            collect(e, &mut all);
+        }
+        let walk = ResponseWalk {
+            expr_types,
+            tys,
+            declared_is_http_result: true,
+            seen: Default::default(),
+            saw_option_question: false,
+            out: Vec::new(),
+        };
+        all.iter()
+            .filter(|e| walk.expr_ty(e.span).is_some())
+            .count()
+    }
+
     #[test]
     fn rate_limiter_response_set_has_declared_constructed_and_boundary_implicit() {
         let root = setup_project("ratelimit-responses", &[("ratelimit.bynk", RATELIMIT_SRC)]);
@@ -779,7 +838,16 @@ service api from http {
             .map(|v| v.as_slice())
             .unwrap_or(&[]);
 
+        assert!(
+            !expr_types.is_empty(),
+            "the clean fixture recorded no expr types"
+        );
         let offset = find_offset(RATELIMIT_SRC, "GET(\"/check/:client\")");
+        assert!(
+            typed_expr_count(RATELIMIT_SRC, offset, expr_types, &diag.ty_intern) > 0,
+            "no reparsed handler expression resolved against the round's \
+             expr_types — the walk only ever took the degraded fallback"
+        );
         let model = wire_contract_at(
             "ratelimit",
             RATELIMIT_SRC,
@@ -1000,5 +1068,94 @@ service api from http {
              without a recorded expr type: {:?}",
             model.responses
         );
+    }
+
+    // -- A bare-`Ident` variant never falls back to the declared-return
+    // -- heuristic, so it is reported only when `expr_ty` finds the
+    // -- checker's recorded type. That lookup used to compare whole `Span`s,
+    // -- `FileId` included: the round's spans carry a real `FileId` (T3.5,
+    // -- #1062), the reparse's carry `FileId::UNKNOWN`, so it never matched
+    // -- and a tail `NoContent` silently dropped out of the response set.
+    #[test]
+    fn bare_ident_variant_is_reported_from_real_expr_types() {
+        const SRC: &str = r#"context flags
+
+service api from http {
+  on DELETE("/flags/:name") (name: String) -> Effect[HttpResult[String]] by Visitor {
+    NoContent
+  }
+}
+"#;
+        let root = setup_project("bare-ident-variant", &[("flags.bynk", SRC)]);
+        let diag = crate::testkit::diagnose_project(&root);
+        let info = diag.boundary_info.get("flags").expect("entry");
+        let expr_types: &[(Span, TyId)] = diag
+            .files
+            .iter()
+            .find(|f| f.source_path.file_name().is_some_and(|n| n == "flags.bynk"))
+            .and_then(|f| diag.expr_types.get(&f.source_path))
+            .map(|v| v.as_slice())
+            .expect("flags.bynk's recorded expr types");
+        assert!(
+            expr_types.iter().all(|(s, _)| s.file != FileId::UNKNOWN),
+            "the premise: analysis spans carry a real FileId"
+        );
+
+        let offset = find_offset(SRC, "DELETE(");
+        let model = wire_contract_at(
+            "flags",
+            SRC,
+            offset,
+            info,
+            expr_types,
+            &diag.ty_intern,
+            real_context_count(&diag),
+        )
+        .expect("a wire contract at the DELETE handler");
+
+        assert!(
+            model
+                .responses
+                .iter()
+                .any(|r| r.status == 204 && r.variant == "NoContent"),
+            "a tail `NoContent` must be reported as constructed: {:?}",
+            model.responses
+        );
+    }
+
+    /// A recorded `Ty::Error` is "no type": it must degrade to the
+    /// declared-return fallback exactly like a missing entry, not count as a
+    /// definite non-`HttpResult` answer.
+    #[test]
+    fn expr_ty_matches_by_range_and_treats_error_as_no_type() {
+        let tys = Types::new();
+        let file = FileId(0);
+        let error = tys.intern(Ty::Error);
+        let http = tys.intern(Ty::HttpResult(error));
+        let expr_types = [
+            (Span::new_in(file, 10, 20), http),
+            (Span::new_in(file, 30, 40), error),
+        ];
+        let walk = ResponseWalk {
+            expr_types: &expr_types,
+            tys: &tys,
+            declared_is_http_result: true,
+            seen: Default::default(),
+            saw_option_question: false,
+            out: Vec::new(),
+        };
+
+        // A reparsed span (`FileId::UNKNOWN`) over the same range matches.
+        assert!(matches!(
+            walk.expr_ty(Span::new(10, 20)).as_deref(),
+            Some(Ty::HttpResult(_))
+        ));
+        assert!(walk.is_http_result_ident(Span::new(10, 20)));
+
+        // `Ty::Error` is no type: the ident check stays unknown, the expr
+        // check takes the declared-return fallback.
+        assert!(walk.expr_ty(Span::new(30, 40)).is_none());
+        assert!(!walk.is_http_result_ident(Span::new(30, 40)));
+        assert!(walk.is_http_result_expr(Span::new(30, 40)));
     }
 }
