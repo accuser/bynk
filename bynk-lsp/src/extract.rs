@@ -116,9 +116,10 @@ pub fn extract_variable(
 ///   covered or not — the settled capability-free-only surface; a plain `fn`
 ///   has no `given` to cover it once lifted.
 /// - the selection's expression type, or any free variable's type, isn't
-///   available — both `expr_types` and the rendered `locals` types are
-///   Ok-path captures (ADR 0063's clean-file ceiling), so a file with an
-///   unrelated error elsewhere yields no action rather than a guessed type.
+///   recorded in `expr_types`/the rendered `locals` types — no action rather
+///   than a guessed type. Since ADR 0094 a file with an unrelated error
+///   elsewhere still records both (best-effort partial types), so the action
+///   is offered there too.
 /// - two distinct outer-scope bindings share a free variable's name (a rare
 ///   nested-shadow collision) — threading either one as the parameter would
 ///   silently pick the wrong variable for the other occurrence.
@@ -1378,8 +1379,8 @@ mod tests {
         #[test]
         fn a_dirty_file_with_no_recorded_type_offers_nothing() {
             let src = "context c\n\nfn f() -> Int {\n  1 + 2\n}\n";
-            // No expr_types entries at all — the clean-file ceiling (ADR 0063):
-            // a file with an unrelated error elsewhere yields none.
+            // No expr_types entry for the selection — an expression the
+            // checker never typed.
             let actions = function_actions_for(src, "1 + 2", &[], &[], &[]);
             assert!(actions.is_empty());
         }
