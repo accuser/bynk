@@ -1,0 +1,9 @@
+---
+Review of #1813: an initialiser names a type too. An `event` field default and
+an agent `store` initialiser that call a static on `Repo`, a type `t.web` only
+reaches through `t.model`, are each an unknown type. They used to resolve, and
+fail later on the initialiser's shape.
+---
+commons t.core
+
+type Repo = String where NonEmpty

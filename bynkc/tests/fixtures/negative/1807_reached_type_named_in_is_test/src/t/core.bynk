@@ -1,0 +1,8 @@
+---
+#1807: a refinement test names a type too. `s is Repo`, in a fn, an agent
+invariant and an agent transition, names a type `t.web` only reaches through
+`t.model`, so each is an unknown type.
+---
+commons t.core
+
+type Repo = String where NonEmpty

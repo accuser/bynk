@@ -1,0 +1,22 @@
+commons t.page
+
+uses t.model
+
+fn sample() -> Run {
+  Run { repo: "bynk" }
+}
+
+fn repos(runs: List[Run]) -> List[String] {
+  runs.map((r) => r.repo).map((n) => n).distinct()
+}
+
+fn queued() -> Job {
+  Job { status: Pending }
+}
+
+fn label(j: Job) -> String {
+  match j.status {
+    Pending => "pending",
+    Done => "done",
+  }
+}

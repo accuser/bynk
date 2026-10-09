@@ -1,0 +1,24 @@
+context t.web
+
+uses t.model
+
+fn ok(s: String) -> Bool {
+  s is Repo
+}
+
+agent Tally {
+  key id: String
+
+  store n: Cell[Int] = 0
+
+  invariant named:
+    "x" is Repo
+
+  transition moved:
+    old.n == old.n && "y" is Repo
+
+  on call bump() -> Effect[()] {
+    n := 1
+    Effect.pure(())
+  }
+}

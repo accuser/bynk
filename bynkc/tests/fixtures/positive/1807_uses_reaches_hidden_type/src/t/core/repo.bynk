@@ -1,0 +1,18 @@
+---
+#1807: `t.core` declares `Repo`; `t.model` uses it in a record and a fn
+signature; `t.web`, `t.page` and `t.vault` reach `Repo` only through those
+declarations. `uses` is one level for naming, so none of them may write
+`Repo`, but each imported declaration is resolved in its own scope: a
+literal for `Run.repo` is checked and branded as a `Repo`, `r.repo` is typed
+`Repo`, and `first(r)` returns one. They were typed by nothing before, so a
+wrong value in any of these positions compiled.
+---
+commons t.core
+
+type Repo = String where NonEmpty
+
+fn Repo.shout(self) -> String {
+  "\(self)!"
+}
+
+type Status = enum { Pending, Done }

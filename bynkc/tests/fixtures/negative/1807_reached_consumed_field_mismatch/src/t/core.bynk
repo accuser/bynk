@@ -1,0 +1,8 @@
+---
+#1807: a consumed context's exported record carries a type from a commons
+the context uses. The consumer reaches it the same way, so returning the
+field as an `Int` is rejected (it used to compile).
+---
+commons t.core
+
+type Repo = String where NonEmpty

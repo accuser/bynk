@@ -1,0 +1,7 @@
+---
+#1807: a field typed by a reached type is typed `Repo` when read, so
+returning it as an `Int` is rejected (it used to compile).
+---
+commons t.core
+
+type Repo = String where NonEmpty

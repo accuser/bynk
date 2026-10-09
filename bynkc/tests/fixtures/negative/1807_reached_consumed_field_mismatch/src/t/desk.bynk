@@ -1,0 +1,10 @@
+context t.desk
+
+consumes t.vault as Vault
+
+service probe {
+  on call() -> Effect[Int] {
+    let t <- Vault.fetch()
+    Effect.pure(t.repo)
+  }
+}

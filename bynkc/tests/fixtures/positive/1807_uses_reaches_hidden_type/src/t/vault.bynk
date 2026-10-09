@@ -1,0 +1,15 @@
+context t.vault
+
+uses t.core
+
+exports transparent { Ticket }
+
+type Code = Int where NonNegative
+
+type Ticket = { repo: Repo, code: Code }
+
+service fetch {
+  on call() -> Effect[Ticket] {
+    Effect.pure(Ticket { repo: "vault", code: 7 })
+  }
+}

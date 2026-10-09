@@ -1,0 +1,13 @@
+context t.vault
+
+uses t.core
+
+exports transparent { Ticket }
+
+type Ticket = { repo: Repo }
+
+service fetch {
+  on call() -> Effect[Ticket] {
+    Effect.pure(Ticket { repo: "vault" })
+  }
+}

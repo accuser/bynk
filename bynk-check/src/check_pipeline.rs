@@ -95,6 +95,11 @@ pub struct UnitCheckCtx {
     /// `compose_unit_symbols`. A suite sees its target's skipped names because
     /// it carries its target's unit name; it is in no unit's `uses`/`consumes`.
     pub visible_broken_names: Vec<String>,
+    /// #1807: the types this unit's table carries only because an imported
+    /// declaration reaches them (`close_reachable_types`), each with its
+    /// owning commons. Resolvable, never nameable: the naming gate
+    /// (`resolver::check_hidden_type_names`) runs beside the resolver.
+    pub hidden_types: BTreeMap<String, String>,
 }
 
 /// Build the per-unit prelude [`check_file_core`] shares across every file
@@ -106,6 +111,7 @@ pub fn prepare_unit_check_ctx(
     unit_info: &BTreeMap<String, UnitInfo>,
     combined_types: &HashMap<String, Arc<TypeDecl>>,
     imported_from_kind: &HashMap<String, UnitKind>,
+    hidden_types: &BTreeMap<String, String>,
 ) -> UnitCheckCtx {
     let cross_context_views = if kind == UnitKind::Context || kind == UnitKind::Adapter {
         let unit_tables: HashMap<String, UnitTable> = unit_info
@@ -150,6 +156,7 @@ pub fn prepare_unit_check_ctx(
         cross_context_views,
         uses_commons_type_names,
         visible_broken_names,
+        hidden_types: hidden_types.clone(),
     }
 }
 
@@ -357,7 +364,16 @@ pub fn check_file_core(
     // checker. Every declaration is still checked; the checker's diagnostics
     // in a declaration the resolver rejected are its echoes and are dropped
     // (`without_resolve_echoes`), and the file still fails here.
-    let resolve_errors = resolver::resolve_file_record(&resolved, refs).err();
+    let mut resolve_errors = resolver::resolve_file_record(&resolved, refs).err();
+    // #1807: a hidden type written in this file is an unknown type, and is a
+    // resolve error like any other (Decision A drops the checker's echoes).
+    let hidden_named =
+        resolver::check_hidden_type_names(&resolved.commons.items, &ctx.hidden_types);
+    if !hidden_named.is_empty() {
+        resolve_errors
+            .get_or_insert_with(Vec::new)
+            .extend(hidden_named);
+    }
     let item_spans: Vec<bynk_syntax::span::Span> =
         resolved.commons.items.iter().map(|i| i.span()).collect();
     // The unit's own span is this file's, even when it has no items of its own
