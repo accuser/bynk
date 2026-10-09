@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.314.6** | "`bynkc compile`, and the build behind `bynk dev` and `bynk deploy`, strip every `suite`, as the project-layout guide and ADR 0147 say (#1821). They used to type-check and emit the project's suites into `out/tests/`, so the deployable carried test code, a broken suite failed the build, and a bundle build of a project with a `system` suite failed `tsc` (its test module imports the workers layout). `bynkc test` still compiles and runs them, and `bynk check` still checks them" |
 | **v0.314.5** | The wire-contract hover's response set now uses the checker's recorded expression types — it matched spans including their `FileId`, which the editor's reparse never carries, so it always fell back to the declared-return guess and dropped bare variants like `NoContent` |
 | **v0.314.4** | Extract-function is offered again, and editor consumers of recorded expression types read `Ty::Error` as no type — no `-> <type error>` signature or `<type error>` hover |
 | **v0.314.3** | The `expr_types` docs across `bynk-check`, `bynk-emit`, `bynk-ide` and `bynk-lsp` (receiver typing, completion, hover, extract-function) describe ADR 0094's partial recording on error, not the retired clean-file ceiling |
