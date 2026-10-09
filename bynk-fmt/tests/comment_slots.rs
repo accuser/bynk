@@ -55,11 +55,13 @@ use bynk_syntax::parser::parse_units;
 
 /// Refusals in the default sample, per insertion kind: `(trailing, own line,
 /// split)`.
-const REFUSED: (usize, usize, usize) = (784, 501, 448);
+const REFUSED: (usize, usize, usize) = (784, 499, 448);
 
 /// Where a comment was inserted: the line it went on or before, the line
 /// above that, and the construct a closing line ends (the nearest line above
-/// at the same indentation; the line itself otherwise).
+/// at the same indentation; the line itself otherwise). A [`KNOWN`] rule
+/// reads whichever it needs, so while no defect is open none is read.
+#[allow(dead_code)]
 struct Site<'a> {
     line: &'a str,
     prev: &'a str,
@@ -78,16 +80,6 @@ const KNOWN: &[Rule] = &[
     // ... and on an agent `store` field, single- or multi-line.
     (1859, Outcome::Perturbed, Kind::Trailing, |s| {
         s.opener.trim().starts_with("store ")
-    }),
-    // A comment before `}` after a statement ending in a bare variant pattern
-    // (`expect r is Ack`): `fmt` adds a `()` tail the parser absorbs into the
-    // pattern.
-    (1858, Outcome::NotIdempotent, Kind::OwnLine, |s| {
-        s.line.trim() == "}"
-            && s.prev
-                .trim()
-                .rsplit_once(" is ")
-                .is_some_and(|(_, pat)| pat.chars().all(|c| c.is_alphanumeric() || c == '_'))
     }),
 ];
 
