@@ -256,7 +256,8 @@ impl TyId {
 
     /// True if this is [`Ty::Error`] — the type T3.3b records for an
     /// expression whose typing failed. An editor reading `expr_types` treats
-    /// it as "no type": it renders as `<type error>`, never a Bynk type.
+    /// it as "no type" and shows nothing, rather than displaying it — its
+    /// display string is a diagnostic placeholder, not a Bynk type.
     pub fn is_error(self, tys: &Types) -> bool {
         matches!(*tys.get(self), Ty::Error)
     }

@@ -40,6 +40,7 @@
 //! reference.
 
 use bynk_check::checker::{TyId, Types};
+use bynk_check::expr_types::type_at_span;
 use bynk_check::locals::{LocalBinding, locals_at};
 use bynk_check::requirements::Requirement;
 use bynk_syntax::ast::*;
@@ -176,7 +177,7 @@ pub fn extract_function(
     let mut exprs: Vec<&Expr> = Vec::new();
     let (ret_ty_display, call_site_form): (String, CallSiteForm) = match &site.selection {
         FunctionSelection::Expr(expr) => {
-            let Some(ret_ty) = ty_at_span(expr_types, site.span) else {
+            let Some(ret_ty) = type_at_span(expr_types, site.span) else {
                 return Vec::new();
             };
             exprs.push(expr);
@@ -198,7 +199,7 @@ pub fn extract_function(
             }
             match tail {
                 Some(t) => {
-                    let Some(ret_ty) = ty_at_span(expr_types, t.span) else {
+                    let Some(ret_ty) = type_at_span(expr_types, t.span) else {
                         return Vec::new();
                     };
                     exprs.push(t);
@@ -1010,20 +1011,6 @@ fn collect_idents<'a>(expr: &'a Expr, out: &mut Vec<&'a Ident>) {
     }
 }
 
-/// The recorded type of the expression whose span is exactly `span` — an
-/// exact match, not [`bynk_check::expr_types::type_at_offset`]'s tightest-
-/// containing-offset search, since the caller already knows the precise node.
-///
-/// Matches on position only: `span` comes from this module's own reparse,
-/// which carries no file identity, while the analysis's spans carry the
-/// file's real `FileId` (T3.5) — a whole-`Span` comparison never matches.
-fn ty_at_span(entries: &[(Span, TyId)], span: Span) -> Option<TyId> {
-    entries
-        .iter()
-        .find(|(s, _)| s.start == span.start && s.end == span.end)
-        .map(|(_, t)| *t)
-}
-
 /// The whitespace-only run from `offset`'s line start up to `offset` — empty
 /// if that run isn't pure whitespace (e.g. a single-line body has no
 /// indentation to mirror; `bynk fmt` cleans up the result, the same
@@ -1807,6 +1794,22 @@ mod tests {
                     "error-typed-binding",
                     src,
                     "if num > 0 {\n    let q = z\n    1\n  } else {\n    2\n  }",
+                    &["bynk.types.type_mismatch"],
+                );
+                assert!(offered.is_empty(), "expected no action; got {offered:?}");
+            }
+
+            /// A tail-less statement run synthesises its `()` return type and
+            /// never looks one up, so the `Ty::Error` gate is its only guard:
+            /// `z`'s `let` is unrecorded in `locals`, so without the gate the
+            /// run would lift with `z` unbound.
+            #[test]
+            fn a_statement_run_reading_an_error_typed_binding_declines() {
+                let src = "context c\n\nfn f(num: Int) -> Int {\n  let z = num + \"s\"\n  let q = z\n  num\n}\n";
+                let offered = offered(
+                    "error-typed-stmts",
+                    src,
+                    "let q = z",
                     &["bynk.types.type_mismatch"],
                 );
                 assert!(offered.is_empty(), "expected no action; got {offered:?}");

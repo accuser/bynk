@@ -89,13 +89,34 @@ impl ExprTypeSink {
 /// [`Ty::Error`](crate::checker::Ty::Error)). The search does not skip past it
 /// to an enclosing expression: that is a *different* expression, and its type
 /// would answer the question confidently wrong.
+///
+/// The innermost span's type is read through [`type_at_span`], so entries
+/// that disagree at that exact position also answer `None`.
 pub fn type_at_offset(entries: &[(Span, TyId)], offset: usize, tys: &Types) -> Option<TyId> {
-    entries
+    let (innermost, _) = entries
         .iter()
         .filter(|(span, _)| span.start <= offset && offset <= span.end)
-        .min_by_key(|(span, _)| span.end - span.start)
-        .map(|(_, ty)| *ty)
-        .filter(|ty| !ty.is_error(tys))
+        .min_by_key(|(span, _)| span.end - span.start)?;
+    type_at_span(entries, *innermost).filter(|ty| !ty.is_error(tys))
+}
+
+/// The type recorded for the expression at exactly `span`'s position, or
+/// `None` if nothing is recorded there or the entries there disagree.
+///
+/// Compares `start`/`end` only, never the `FileId`: an editor reparses the
+/// buffer into spans with no file identity, while these entries carry the
+/// file's real one (T3.5). Several entries can share one position (the same
+/// expression recorded more than once, or two nodes sharing a source span),
+/// and their order follows the checker's `HashMap`, so picking the first
+/// would vary from run to run. Disagreeing entries are ambiguous, and
+/// ambiguity answers "no type" rather than an arbitrary one.
+pub fn type_at_span(entries: &[(Span, TyId)], span: Span) -> Option<TyId> {
+    let mut at = entries
+        .iter()
+        .filter(|(s, _)| s.start == span.start && s.end == span.end)
+        .map(|(_, ty)| *ty);
+    let first = at.next()?;
+    at.all(|ty| ty == first).then_some(first)
 }
 
 #[cfg(test)]
@@ -118,6 +139,26 @@ mod tests {
         assert_eq!(type_at_offset(&entries, 3, &tys), Some(int)); // inside the inner span
         assert_eq!(type_at_offset(&entries, 7, &tys), Some(string)); // outer span only
         assert_eq!(type_at_offset(&entries, 20, &tys), None); // outside everything
+    }
+
+    #[test]
+    fn disagreeing_entries_at_one_position_are_no_type() {
+        let tys = Types::new();
+        let int = tys.intern(Ty::Base(BaseType::Int));
+        let string = tys.intern(Ty::Base(BaseType::String));
+        // A repeated identical entry is still one answer...
+        let agreeing = vec![(span(0, 10), int), (span(0, 10), int)];
+        assert_eq!(type_at_span(&agreeing, span(0, 10)), Some(int));
+        assert_eq!(type_at_offset(&agreeing, 3, &tys), Some(int));
+        // ...but two types recorded at one position are ambiguous, in
+        // either order.
+        for entries in [
+            vec![(span(0, 10), int), (span(0, 10), string)],
+            vec![(span(0, 10), string), (span(0, 10), int)],
+        ] {
+            assert_eq!(type_at_span(&entries, span(0, 10)), None);
+            assert_eq!(type_at_offset(&entries, 3, &tys), None);
+        }
     }
 
     #[test]
