@@ -71,6 +71,18 @@ pub fn extract_variable(
     let Some(site) = find_site(&unit, requested) else {
         return Vec::new();
     };
+    // #1819: the `let` goes above the enclosing statement, outside any arm
+    // pattern or lambda parameter the descent passed. A selection reading one
+    // of those would bind it out of scope, so offer nothing, as
+    // extract-function declines what it can't lift soundly.
+    let mut read = Vec::new();
+    collect_idents(site.expr, &mut read);
+    if read
+        .iter()
+        .any(|id| site.binders.contains(&id.name.as_str()))
+    {
+        return Vec::new();
+    }
 
     let selected = &text[site.expr_span.start..site.expr_span.end];
     let name = fresh_name(text);
@@ -316,6 +328,12 @@ struct Site<'a> {
     insertion_offset: usize,
     expr_span: Span,
     expr: &'a Expr,
+    /// #1819: the names bound between `insertion_offset` and the selection,
+    /// by an expression-bodied arm's pattern or a lambda's parameters: in
+    /// scope at the selection, not at the insertion point. A descent into a
+    /// block resets them along with the offset, since the `let` then goes
+    /// inside the scope that binds them.
+    binders: Vec<&'a str>,
 }
 
 /// Closed containment over half-open spans: `outer` fully contains `inner`.
@@ -379,11 +397,16 @@ fn find_in_block(block: &Block, target: Span) -> Option<Site<'_>> {
         let mut exprs = Vec::new();
         statement_exprs(stmt, &mut exprs);
         if let Some(e) = exprs.into_iter().find(|e| contains(e.span, target)) {
-            return Some(locate(e, target, stmt.span().start));
+            return Some(locate(e, target, stmt.span().start, Vec::new()));
         }
     }
     if contains(block.tail.span, target) {
-        return Some(locate(&block.tail, target, block.tail.span.start));
+        return Some(locate(
+            &block.tail,
+            target,
+            block.tail.span.start,
+            Vec::new(),
+        ));
     }
     None
 }
@@ -399,12 +422,18 @@ fn find_in_block(block: &Block, target: Span) -> Option<Site<'_>> {
 /// silently falling through the extraction path — and a variant carrying a
 /// `Block` field needs hand-matching above rather than appending to that
 /// list, for the reason recorded at the arm itself.
-fn locate(expr: &Expr, target: Span, insertion_offset: usize) -> Site<'_> {
+fn locate<'a>(
+    expr: &'a Expr,
+    target: Span,
+    insertion_offset: usize,
+    mut binders: Vec<&'a str>,
+) -> Site<'a> {
     match &expr.kind {
         ExprKind::Block(b) => find_in_block(b, target).unwrap_or(Site {
             insertion_offset,
             expr_span: expr.span,
             expr,
+            binders,
         }),
         ExprKind::If {
             cond,
@@ -412,7 +441,7 @@ fn locate(expr: &Expr, target: Span, insertion_offset: usize) -> Site<'_> {
             else_block,
         } => {
             if contains(cond.span, target) {
-                return locate(cond, target, insertion_offset);
+                return locate(cond, target, insertion_offset, binders);
             }
             if contains(then_block.span, target)
                 && let Some(site) = find_in_block(then_block, target)
@@ -428,11 +457,12 @@ fn locate(expr: &Expr, target: Span, insertion_offset: usize) -> Site<'_> {
                 insertion_offset,
                 expr_span: expr.span,
                 expr,
+                binders,
             }
         }
         ExprKind::Match { discriminant, arms } => {
             if contains(discriminant.span, target) {
-                return locate(discriminant, target, insertion_offset);
+                return locate(discriminant, target, insertion_offset, binders);
             }
             // A selection inside a guard deliberately falls through to the
             // whole `match` below rather than descending (#1800 review): the
@@ -445,11 +475,18 @@ fn locate(expr: &Expr, target: Span, insertion_offset: usize) -> Site<'_> {
                     continue;
                 }
                 return match &arm.body {
-                    MatchBody::Expr(e) => locate(e, target, insertion_offset),
+                    MatchBody::Expr(e) => {
+                        // #1819: an expression body has no block to insert
+                        // into, so the arm's bindings stay out of scope at the
+                        // insertion point.
+                        binders.extend(arm.pattern.bound_names().iter().map(|id| id.name.as_str()));
+                        locate(e, target, insertion_offset, binders)
+                    }
                     MatchBody::Block(b) => find_in_block(b, target).unwrap_or(Site {
                         insertion_offset,
                         expr_span: expr.span,
                         expr,
+                        binders,
                     }),
                 };
             }
@@ -457,6 +494,7 @@ fn locate(expr: &Expr, target: Span, insertion_offset: usize) -> Site<'_> {
                 insertion_offset,
                 expr_span: expr.span,
                 expr,
+                binders,
             }
         }
         // No variant below carries a `Block` *field*, so `expr_children`'s
@@ -503,11 +541,19 @@ fn locate(expr: &Expr, target: Span, insertion_offset: usize) -> Site<'_> {
         | ExprKind::Trace { .. } => {
             let children = expr_children(expr);
             match children.into_iter().find(|c| contains(c.span, target)) {
-                Some(child) => locate(child, target, insertion_offset),
+                Some(child) => {
+                    // #1819: a lambda's parameters are in scope in its body
+                    // only; an expression body bubbles the outer offset.
+                    if let ExprKind::Lambda(l) = &expr.kind {
+                        binders.extend(l.params.iter().map(|p| p.name.name.as_str()));
+                    }
+                    locate(child, target, insertion_offset, binders)
+                }
                 None => Site {
                     insertion_offset,
                     expr_span: expr.span,
                     expr,
+                    binders,
                 },
             }
         }
@@ -1122,6 +1168,88 @@ mod tests {
         let insert_line = edits[0].range.start.line;
         let let_z_line = crate::position::offset_to_position(src, src.find("let z").unwrap()).line;
         assert_eq!(insert_line, let_z_line);
+    }
+
+    /// #1819: the `let` goes above the enclosing statement, where an
+    /// expression arm's pattern bindings and a lambda's parameters are not in
+    /// scope, so a selection reading one is declined, not hoisted unbound.
+    #[test]
+    fn declines_a_selection_reading_an_arm_or_lambda_binding() {
+        let arm = concat!(
+            "context c\n\n",
+            "fn f(o: Option[Int]) -> Int {\n",
+            "  let a = match o {\n",
+            "    Some(x) => x + 1\n",
+            "    _ => 0\n",
+            "  }\n",
+            "  a\n",
+            "}\n",
+        );
+        assert!(actions_for(arm, "x + 1").is_empty(), "arm binding hoisted");
+        let lambda = concat!(
+            "context c\n\n",
+            "fn f(xs: List[Int]) -> List[Int] {\n",
+            "  let ys = xs.map((v) => v * 2)\n",
+            "  ys\n",
+            "}\n",
+        );
+        assert!(
+            actions_for(lambda, "v * 2").is_empty(),
+            "lambda parameter hoisted"
+        );
+        // A guard extracts the whole `match` (#1800 review), never the guard
+        // alone, so the `let` never reads the arm's binding out of scope.
+        let guard = concat!(
+            "context c\n\n",
+            "fn f(o: Option[Int]) -> Int {\n",
+            "  let a = match o {\n",
+            "    Some(x) if x > 1 => 1\n",
+            "    _ => 0\n",
+            "  }\n",
+            "  a\n",
+            "}\n",
+        );
+        let guard_actions = actions_for(guard, "x > 1");
+        assert_eq!(
+            guard_actions.len(),
+            1,
+            "a guard selection extracts the match"
+        );
+        {
+            let edits = sole_edit(&guard_actions[0]);
+            assert!(
+                edits[0].new_text.starts_with("let extracted = match o {"),
+                "a guard selection must extract the whole match: {:?}",
+                edits[0].new_text
+            );
+        }
+    }
+
+    /// #1819's boundary: inside an arm or a lambda, a selection that reads no
+    /// binding of theirs still extracts above the statement.
+    #[test]
+    fn still_extracts_inside_an_arm_or_lambda_when_no_binding_is_read() {
+        let arm = concat!(
+            "context c\n\n",
+            "fn f(o: Option[Int], n: Int) -> Int {\n",
+            "  let a = match o {\n",
+            "    Some(x) => n + 1\n",
+            "    _ => 0\n",
+            "  }\n",
+            "  a\n",
+            "}\n",
+        );
+        let edits = sole_edit(&actions_for(arm, "n + 1")[0]);
+        assert!(edits[0].new_text.starts_with("let extracted = n + 1\n"));
+        let lambda = concat!(
+            "context c\n\n",
+            "fn f(xs: List[Int], k: Int) -> List[Int] {\n",
+            "  let ys = xs.map((v) => k * 2)\n",
+            "  ys\n",
+            "}\n",
+        );
+        let edits = sole_edit(&actions_for(lambda, "k * 2")[0]);
+        assert!(edits[0].new_text.starts_with("let extracted = k * 2\n"));
     }
 
     #[test]
