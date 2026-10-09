@@ -3,6 +3,15 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, type __JsonValue, type __BoundaryError, type __ServiceBinding, __callService, __boundaryError } from "../../runtime.js";
 
+import { CurrencyCode as __CommonsCurrencyCode, Money as __CommonsMoney } from "../../t/money.js";
+import { __serialise_CurrencyCode, __deserialise_CurrencyCode, __serialise_Money, __deserialise_Money } from "../../t/money.js";
+
+export type CurrencyCode = __CommonsCurrencyCode & { readonly __ctxBrand?: "t.vault" };
+export const CurrencyCode = {
+  of(value: string): Result<CurrencyCode, ValidationError> { return __CommonsCurrencyCode.of(value); },
+};
+export type Money = __CommonsMoney & { readonly __ctxBrand?: "t.vault" };
+
 export type Code = number & { readonly __brand: "t.vault.Code" };
 
 export const Code = {
@@ -17,10 +26,29 @@ export const Code = {
   },
 };
 
+export interface Envelope<T> {
+  readonly item: T;
+}
+
+export const Envelope = {
+};
+
+export type Choice<T> =
+    { readonly tag: "Has"; readonly v: T }
+  | { readonly tag: "Nope" };
+
+export const Choice = {
+  Has: <T>(v: T): Choice<T> => ({ tag: "Has", v }),
+  Nope: { tag: "Nope" } as Choice<never>,
+};
+
 export interface Ticket {
   readonly label: string;
   readonly code: Code;
   readonly spare: Option<Code>;
+  readonly env: Envelope<Code>;
+  readonly pick: Choice<Code>;
+  readonly fee: Money;
 }
 
 export const Ticket = {
@@ -28,7 +56,7 @@ export const Ticket = {
 
 export const fetch = {
   async call(deps: {}): globalThis.Promise<Ticket> {
-    return { label: "vault", code: (7 as Code), spare: None };
+    return { label: "vault", code: (7 as Code), spare: None, env: { item: (1 as Code) }, pick: Choice.Nope, fee: { amount: 3, currency: ("EUR" as CurrencyCode) } };
   },
 };
 
@@ -54,6 +82,9 @@ export function __serialise_Ticket(value: Ticket): __JsonValue {
     label: value.label as __JsonValue,
     code: __serialise_Code(value.code),
     spare: __serialise_Option_Code(value.spare),
+    env: __serialise_Envelope_Code(value.env),
+    pick: __serialise_Choice_Code(value.pick),
+    fee: __serialise_Money(value.fee),
   };
 }
 
@@ -72,9 +103,20 @@ export function __deserialise_Ticket(json: __JsonValue, path: string = "$"): Res
   const __r_spare = __deserialise_Option_Code(obj["spare"], `${path}.spare`);
   if (__r_spare.tag === "Err") return __r_spare;
   const __spare = __r_spare.value;
-  return Ok({ label: __label, code: __code, spare: __spare } as Ticket);
+  const __r_env = __deserialise_Envelope_Code(obj["env"], `${path}.env`);
+  if (__r_env.tag === "Err") return __r_env;
+  const __env = __r_env.value;
+  const __r_pick = __deserialise_Choice_Code(obj["pick"], `${path}.pick`);
+  if (__r_pick.tag === "Err") return __r_pick;
+  const __pick = __r_pick.value;
+  const __r_fee = __deserialise_Money(obj["fee"], `${path}.fee`);
+  if (__r_fee.tag === "Err") return __r_fee;
+  const __fee = __r_fee.value;
+  return Ok({ label: __label, code: __code, spare: __spare, env: __env, pick: __pick, fee: __fee } as Ticket);
 }
 
+
+export { __serialise_CurrencyCode, __deserialise_CurrencyCode, __serialise_Money, __deserialise_Money };
 
 export function __serialise_Option_Code(value: Option<Code>): __JsonValue {
   if (value.tag === "Some") return { kind: "Some", value: __serialise_Code(value.value) };
@@ -95,4 +137,51 @@ export function __deserialise_Option_Code(json: __JsonValue, path: string = "$")
     return Ok(None as Option<Code>);
   }
   return Err({ kind: "StructuralMismatch", path, expected: "Some | None", actual: String(obj["kind"]) });
+}
+
+export function __serialise_Envelope_Code(value: Envelope<Code>): __JsonValue {
+  return {
+    item: __serialise_Code(value.item),
+  };
+}
+
+export function __deserialise_Envelope_Code(json: __JsonValue, path: string = "$"): Result<Envelope<Code>, __BoundaryError> {
+  if (typeof json !== "object" || json === null || globalThis.Array.isArray(json)) {
+    return Err({ kind: "StructuralMismatch", path, expected: "object", actual: typeof json });
+  }
+  const obj = json as { [k: string]: __JsonValue };
+  const __r_item = __deserialise_Code(obj["item"], `${path}.item`);
+  if (__r_item.tag === "Err") return __r_item;
+  const __item = __r_item.value;
+  return Ok({ item: __item } as Envelope<Code>);
+}
+
+export function __serialise_Choice_Code(value: Choice<Code>): __JsonValue {
+  switch (value.tag) {
+    case "Has": {
+      return { kind: "Has", v: __serialise_Code(value.v) };
+    }
+    case "Nope":
+      return { kind: "Nope" };
+  }
+}
+
+export function __deserialise_Choice_Code(json: __JsonValue, path: string = "$"): Result<Choice<Code>, __BoundaryError> {
+  if (typeof json !== "object" || json === null || globalThis.Array.isArray(json)) {
+    return Err({ kind: "StructuralMismatch", path, expected: "object", actual: typeof json });
+  }
+  const obj = json as { [k: string]: __JsonValue };
+  const kind = obj["kind"];
+  switch (kind) {
+    case "Has": {
+  const __r_v = __deserialise_Code(obj["v"], `${path}.v`);
+  if (__r_v.tag === "Err") return __r_v;
+  const __v = __r_v.value;
+      return Ok({ tag: "Has", v: __v } as Choice<Code>);
+    }
+    case "Nope":
+      return Ok({ tag: "Nope" } as Choice<Code>);
+    default:
+      return Err({ kind: "StructuralMismatch", path, expected: "sum variant kind", actual: String(kind) });
+  }
 }

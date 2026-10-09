@@ -1713,7 +1713,7 @@ fn emit_consumed_context_helpers(
         }
         let roots: Vec<bynk_syntax::ast::TypeRef> = roots
             .iter()
-            .map(|r| serialisation::subst_type_ref(r, &hidden_subst))
+            .map(|r| serialisation::rename_type_ref(r, &hidden_subst))
             .collect();
         let (names, cinsts) = collect_codec_closure(&roots, types_table);
 
@@ -1820,55 +1820,41 @@ fn rename_unexported_types(
     let renamed = types_table
         .iter()
         .map(|(n, d)| {
-            let name = subst
-                .get(n)
-                .and_then(|t| match t {
-                    TypeRef::Named(id) => Some(id.name.clone()),
-                    _ => None,
-                })
-                .unwrap_or_else(|| n.clone());
+            let name = subst.get(n).cloned().unwrap_or_else(|| n.clone());
             (name, Arc::new(rename_in_decl(d, &subst)))
         })
         .collect();
     (renamed, hidden)
 }
 
-/// #1846: `original → renamed` as a [`serialisation::subst_type_ref`] map.
-fn hidden_subst(hidden: &std::collections::BTreeMap<String, String>) -> HashMap<String, TypeRef> {
+/// #1846: `original → renamed`, as [`serialisation::rename_type_ref`] takes it.
+fn hidden_subst(hidden: &std::collections::BTreeMap<String, String>) -> HashMap<String, String> {
     hidden
         .iter()
-        .map(|(renamed, original)| {
-            (
-                original.clone(),
-                TypeRef::Named(Ident {
-                    name: renamed.clone(),
-                    span: bynk_syntax::span::Span::new(0, 0),
-                }),
-            )
-        })
+        .map(|(renamed, original)| (original.clone(), renamed.clone()))
         .collect()
 }
 
 /// #1846: `decl` with every type it names, and its own name, renamed by `subst`.
-fn rename_in_decl(decl: &TypeDecl, subst: &HashMap<String, TypeRef>) -> TypeDecl {
+fn rename_in_decl(decl: &TypeDecl, subst: &HashMap<String, String>) -> TypeDecl {
     let mut out = decl.clone();
-    if let Some(TypeRef::Named(id)) = subst.get(&decl.name.name) {
-        out.name.name = id.name.clone();
+    if let Some(to) = subst.get(&decl.name.name) {
+        out.name.name = to.clone();
     }
     match &mut out.body {
         TypeBody::Record(r) => {
             for f in &mut r.fields {
-                f.type_ref = serialisation::subst_type_ref(&f.type_ref, subst);
+                f.type_ref = serialisation::rename_type_ref(&f.type_ref, subst);
             }
         }
         TypeBody::Sum(sum) => {
             for v in &mut sum.variants {
                 for f in &mut v.payload {
-                    f.type_ref = serialisation::subst_type_ref(&f.type_ref, subst);
+                    f.type_ref = serialisation::rename_type_ref(&f.type_ref, subst);
                 }
             }
             for e in &mut sum.embeds {
-                e.source_type = serialisation::subst_type_ref(&e.source_type, subst);
+                e.source_type = serialisation::rename_type_ref(&e.source_type, subst);
             }
         }
         TypeBody::Refined { .. } | TypeBody::Opaque { .. } => {}

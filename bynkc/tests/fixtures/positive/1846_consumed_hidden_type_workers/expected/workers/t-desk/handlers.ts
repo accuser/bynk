@@ -4,6 +4,7 @@
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, type __JsonValue, type __BoundaryError, type __ServiceBinding, __callService, __boundaryError } from "../../runtime.js";
 
 import type * as t_vault from "../t-vault/handlers.js";
+import { __serialise_CurrencyCode, __deserialise_CurrencyCode, __serialise_Money, __deserialise_Money } from "../../t/money.js";
 
 export type Code = string & { readonly __brand: "t.desk.Code" };
 
@@ -18,7 +19,7 @@ export const Code = {
 
 export const probe = {
   async call(c: Code, deps: { env: { T_VAULT: __ServiceBinding } }): globalThis.Promise<Option<Code>> {
-    const t = await __callService(deps.env.T_VAULT, "fetch", {  }, __deserialise_Ticket, "t.desk", "2d89ccd302e05e41");
+    const t = await __callService(deps.env.T_VAULT, "fetch", {  }, __deserialise_Ticket, "t.desk", "b6c615871c2a456a");
     return (t.label === "vault" ? Some(c) : None);
   },
 };
@@ -67,6 +68,9 @@ export function __serialise_Ticket(value: t_vault.Ticket): __JsonValue {
     label: value.label as __JsonValue,
     code: __serialise_t_vault__Code(value.code),
     spare: __serialise_Option_t_vault__Code(value.spare),
+    env: __serialise_t_vault__Envelope_t_vault__Code(value.env),
+    pick: __serialise_t_vault__Choice_t_vault__Code(value.pick),
+    fee: __serialise_Money(value.fee),
   };
 }
 
@@ -85,7 +89,16 @@ export function __deserialise_Ticket(json: __JsonValue, path: string = "$"): Res
   const __r_spare = __deserialise_Option_t_vault__Code(obj["spare"], `${path}.spare`);
   if (__r_spare.tag === "Err") return __r_spare;
   const __spare = __r_spare.value;
-  return Ok({ label: __label, code: __code, spare: __spare } as t_vault.Ticket);
+  const __r_env = __deserialise_t_vault__Envelope_t_vault__Code(obj["env"], `${path}.env`);
+  if (__r_env.tag === "Err") return __r_env;
+  const __env = __r_env.value;
+  const __r_pick = __deserialise_t_vault__Choice_t_vault__Code(obj["pick"], `${path}.pick`);
+  if (__r_pick.tag === "Err") return __r_pick;
+  const __pick = __r_pick.value;
+  const __r_fee = __deserialise_Money(obj["fee"], `${path}.fee`);
+  if (__r_fee.tag === "Err") return __r_fee;
+  const __fee = __r_fee.value;
+  return Ok({ label: __label, code: __code, spare: __spare, env: __env, pick: __pick, fee: __fee } as t_vault.Ticket);
 }
 
 export function __serialise_t_vault__Code(value: t_vault.Code): __JsonValue {
@@ -125,4 +138,51 @@ export function __deserialise_Option_t_vault__Code(json: __JsonValue, path: stri
     return Ok(None as Option<t_vault.Code>);
   }
   return Err({ kind: "StructuralMismatch", path, expected: "Some | None", actual: String(obj["kind"]) });
+}
+
+export function __serialise_t_vault__Envelope_t_vault__Code(value: t_vault.Envelope<t_vault.Code>): __JsonValue {
+  return {
+    item: __serialise_t_vault__Code(value.item),
+  };
+}
+
+export function __deserialise_t_vault__Envelope_t_vault__Code(json: __JsonValue, path: string = "$"): Result<t_vault.Envelope<t_vault.Code>, __BoundaryError> {
+  if (typeof json !== "object" || json === null || globalThis.Array.isArray(json)) {
+    return Err({ kind: "StructuralMismatch", path, expected: "object", actual: typeof json });
+  }
+  const obj = json as { [k: string]: __JsonValue };
+  const __r_item = __deserialise_t_vault__Code(obj["item"], `${path}.item`);
+  if (__r_item.tag === "Err") return __r_item;
+  const __item = __r_item.value;
+  return Ok({ item: __item } as t_vault.Envelope<t_vault.Code>);
+}
+
+export function __serialise_t_vault__Choice_t_vault__Code(value: t_vault.Choice<t_vault.Code>): __JsonValue {
+  switch (value.tag) {
+    case "Has": {
+      return { kind: "Has", v: __serialise_t_vault__Code(value.v) };
+    }
+    case "Nope":
+      return { kind: "Nope" };
+  }
+}
+
+export function __deserialise_t_vault__Choice_t_vault__Code(json: __JsonValue, path: string = "$"): Result<t_vault.Choice<t_vault.Code>, __BoundaryError> {
+  if (typeof json !== "object" || json === null || globalThis.Array.isArray(json)) {
+    return Err({ kind: "StructuralMismatch", path, expected: "object", actual: typeof json });
+  }
+  const obj = json as { [k: string]: __JsonValue };
+  const kind = obj["kind"];
+  switch (kind) {
+    case "Has": {
+  const __r_v = __deserialise_t_vault__Code(obj["v"], `${path}.v`);
+  if (__r_v.tag === "Err") return __r_v;
+  const __v = __r_v.value;
+      return Ok({ tag: "Has", v: __v } as t_vault.Choice<t_vault.Code>);
+    }
+    case "Nope":
+      return Ok({ tag: "Nope" } as t_vault.Choice<t_vault.Code>);
+    default:
+      return Err({ kind: "StructuralMismatch", path, expected: "sum variant kind", actual: String(kind) });
+  }
 }

@@ -397,23 +397,15 @@ pub(crate) fn qualified_ts_type(t: &TypeRef, qual: &Qual) -> bynk_ts::TsType {
         })
         .collect();
     // #1846: a whole-name entry replaces the name outright (see [`qual_type`]).
-    let whole: std::collections::HashMap<String, TypeRef> = qual
+    let whole: std::collections::HashMap<String, String> = qual
         .iter()
         .filter(|(_, v)| !v.is_empty() && !v.ends_with('.'))
-        .map(|(k, v)| {
-            (
-                k.clone(),
-                TypeRef::Named(bynk_syntax::ast::Ident {
-                    name: v.clone(),
-                    span: bynk_syntax::span::Span::new(0, 0),
-                }),
-            )
-        })
+        .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
     if whole.is_empty() {
         crate::emitter::ts_type_ref_qualified_multi_ts_type(t, &bare)
     } else {
-        crate::emitter::ts_type_ref_qualified_multi_ts_type(&subst_type_ref(t, &whole), &bare)
+        crate::emitter::ts_type_ref_qualified_multi_ts_type(&rename_type_ref(t, &whole), &bare)
     }
 }
 
@@ -502,14 +494,13 @@ fn qual_provenance(qual: &Qual, name: &str) -> Provenance {
 // module's doc comment for the seam. Re-exported here under their original
 // names (and, for `app_ts_name`, its original signature under an alias to
 // its new `inst_codec_suffix` name) so every call site in this file and
-// elsewhere in `bynk-emit` keeps compiling unchanged; `recursive_generic_names`
-// and `collect_type_names` had no callers outside the functions that moved
-// with them, so they are not re-exported. `subst_type_ref` is, since #1846
-// renames a consumed context's unexported types with it.
+// elsewhere in `bynk-emit` keeps compiling unchanged; `recursive_generic_names`,
+// `collect_type_names`, and `subst_type_ref` had no callers outside the
+// functions that moved with them, so they are not re-exported.
 pub(crate) use bynk_check::wire::collect_boundary_types;
 pub(crate) use bynk_check::wire::inst_codec_suffix as app_ts_name;
 pub(crate) use bynk_check::wire::record_inst_fields;
-pub(crate) use bynk_check::wire::subst_type_ref;
+pub(crate) use bynk_check::wire::rename_type_ref;
 pub(crate) use bynk_check::wire::sum_inst_variants;
 
 // #855 (Phase 2 step 5): the scalar-codec decision vocabulary — which TS

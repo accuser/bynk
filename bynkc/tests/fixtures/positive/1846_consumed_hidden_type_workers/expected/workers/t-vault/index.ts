@@ -17,7 +17,7 @@ export default {
         switch (servicePath) {
           case "fetch": {
             const __contract = request.headers.get("X-Bynk-Contract");
-            if (__contract !== "2d89ccd302e05e41") return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "fetch", expected: "2d89ccd302e05e41", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            if (__contract !== "b6c615871c2a456a") return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "fetch", expected: "b6c615871c2a456a", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
             const args = await request.json() as __JsonValue;
             if (typeof args !== "object" || args === null || globalThis.Array.isArray(args)) return new globalThis.Response(globalThis.JSON.stringify({ kind: "StructuralMismatch", path: "$", expected: "object", actual: typeof args }), { status: 400, headers: { "content-type": "application/json" } });
             const argsObj = args as { [k: string]: __JsonValue };
