@@ -748,6 +748,24 @@ impl TsStmt {
         matches!(self.kind, TsStmtKind::Decl(TsDecl::Import { .. }))
     }
 
+    /// The name this statement exports, when it is an `export` of a named
+    /// declaration (#1820): a module assembler re-exporting another module's
+    /// names reads them here. A `Verbatim` statement's text is not parsed,
+    /// so an export written that way is not reported.
+    pub fn exported_name(&self) -> Option<&str> {
+        let TsStmtKind::Decl(TsDecl::Export(inner)) = &self.kind else {
+            return None;
+        };
+        match inner.as_ref() {
+            TsDecl::Interface { name, .. }
+            | TsDecl::ConstDecl { name, .. }
+            | TsDecl::Class { name, .. }
+            | TsDecl::Function { name, .. }
+            | TsDecl::TypeAlias { name, .. } => Some(name),
+            _ => None,
+        }
+    }
+
     pub fn decl(decl: TsDecl, span: Option<Span>) -> Self {
         Self {
             kind: TsStmtKind::Decl(decl),

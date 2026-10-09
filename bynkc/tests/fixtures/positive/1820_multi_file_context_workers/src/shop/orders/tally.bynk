@@ -1,0 +1,14 @@
+context shop.orders
+
+-- #1820: an agent in a second file, so `handlers.ts` merges each file's
+-- `__resetAgents`.
+agent Tally {
+  key id: String
+
+  store hits: Cell[Int] = 0
+
+  on call hit() -> Effect[Int] {
+    let _ <- hits.update((h) => h + 1)
+    Effect.pure(hits)
+  }
+}

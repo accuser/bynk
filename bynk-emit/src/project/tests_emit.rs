@@ -2325,7 +2325,11 @@ fn emit_test_module(
 /// the multi-file predicate and the re-exported file set both read from there, so
 /// the barrel can never drop a file that declares nothing type/fn/method-shaped
 /// (which `FileDeclIndex` would omit).
-fn emit_commons_barrel(
+///
+/// #1820: a multi-file *context*'s barrel is also part of a production bundle
+/// build, emitted by `run_checks` ahead of the test passes, since its
+/// composition root imports the context from `out/<name>.ts` too.
+pub(super) fn emit_commons_barrel(
     name: &str,
     groups: &BTreeMap<String, Vec<usize>>,
     parsed: &[ParsedFile],
@@ -2371,6 +2375,8 @@ fn emit_commons_barrel(
         parsed,
         &barrel_loc,
         import_ext,
+        |file| file.to_path_buf(),
+        true,
     ));
     Some(StagedFile {
         output_path,
@@ -2391,12 +2397,21 @@ fn emit_commons_barrel(
 /// the barrel exports a merged definition, which takes precedence over the
 /// star exports: reset every file's agents; combine every file's surface over
 /// the intersection of their deps.
-fn merged_unit_helpers(
+///
+/// `module_of` maps a file's source path to the path its module is emitted
+/// at, relative to which `barrel_loc` imports it: the identity for a bundle
+/// barrel, the file's own module under `handlers/` for a Worker's
+/// `handlers.ts` (#1820). `surface` says whether each file exports a
+/// surface at all: a Worker's files do not, since its composition root
+/// (`compose.ts`) builds the surface over the whole context.
+pub(super) fn merged_unit_helpers(
     name: &str,
     indices: &[usize],
     parsed: &[ParsedFile],
     barrel_loc: &Path,
     import_ext: ImportExt,
+    module_of: impl Fn(&Path) -> PathBuf,
+    surface: bool,
 ) -> Vec<TsStmt> {
     let mut with_agents: Vec<PathBuf> = Vec::new();
     let mut with_services: Vec<PathBuf> = Vec::new();
@@ -2407,10 +2422,10 @@ fn merged_unit_helpers(
         }
         let items = pf.items();
         if items.iter().any(|it| matches!(it, CommonsItem::Agent(_))) {
-            with_agents.push(pf.source_path());
+            with_agents.push(module_of(&pf.source_path()));
         }
         if items.iter().any(|it| matches!(it, CommonsItem::Service(_))) {
-            with_services.push(pf.source_path());
+            with_services.push(module_of(&pf.source_path()));
         }
     }
     with_agents.sort();
@@ -2448,7 +2463,7 @@ fn merged_unit_helpers(
             None,
         ));
     }
-    if with_services.len() > 1 {
+    if surface && with_services.len() > 1 {
         let deps = format!("__{}Deps", emitter::emit::context_pascal(name));
         let files: Vec<String> = with_services
             .iter()
