@@ -223,7 +223,15 @@ pub(crate) fn process_integration_tests(
         // target's transitive `consumes` closure (no `wires` list).
         let suite_target = decl.target.joined();
         let suite_name = suite_target.clone();
-        let participants = test_suites::infer_participants(&suite_target, unit_consumes);
+        // #1856: only a context is stood up as a Worker. A unit consumed for
+        // its capabilities alone (`consumes bynk { Clock }`, an adapter) is
+        // provided in-process by the composition root, emits no Worker, and
+        // has no Service Binding to wire.
+        let participants: Vec<String> =
+            test_suites::infer_participants(&suite_target, unit_consumes)
+                .into_iter()
+                .filter(|p| kinds.get(p) == Some(&UnitKind::Context))
+                .collect();
         // `ready` only contains groups `phase_integration_bodies` built a
         // harness cross-context view for — this lookup cannot miss.
         let cross_context = ready
@@ -1253,7 +1261,9 @@ fn emit_integration_harness(
         if let Some(deps) = unit_consumes.get(p) {
             let mut deps_sorted = deps.clone();
             deps_sorted.sort();
-            for d in &deps_sorted {
+            // #1856: a consumed unit that is no participant (no Worker) has
+            // no Service Binding to wire.
+            for d in deps_sorted.iter().filter(|d| participants.contains(d)) {
                 let dns = test_ns(d);
                 let binding = crate::emitter::wrangler::consumed_binding_name(d);
                 body.push(TsStmt::assign(
