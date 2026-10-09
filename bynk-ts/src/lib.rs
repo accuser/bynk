@@ -31,11 +31,13 @@
 //! (`bynk-strip`'s own carve is the control case cited for this).
 
 mod lint;
+mod name_closure;
 mod printer;
 mod program;
 mod source_map;
 
 pub use lint::{Violation, verbatim_violations};
+pub use name_closure::unbound_names;
 pub use printer::{
     Printed, print, print_class_method, print_class_method_and_merge, print_expr,
     print_multi_source, print_object_entry, print_object_entry_and_merge, print_stmt,
