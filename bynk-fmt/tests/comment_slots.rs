@@ -55,7 +55,7 @@ use bynk_syntax::parser::parse_units;
 
 /// Refusals in the default sample, per insertion kind: `(trailing, own line,
 /// split)`.
-const REFUSED: (usize, usize, usize) = (789, 501, 451);
+const REFUSED: (usize, usize, usize) = (787, 501, 451);
 
 /// Where a comment was inserted: the line it went on or before, the line
 /// above that, and the construct a closing line ends (the nearest line above
@@ -63,6 +63,8 @@ const REFUSED: (usize, usize, usize) = (789, 501, 451);
 struct Site<'a> {
     line: &'a str,
     prev: &'a str,
+    // No rule reads it while no open defect needs it (#1859 did).
+    #[allow(dead_code)]
     opener: &'a str,
 }
 
@@ -71,14 +73,6 @@ struct Site<'a> {
 type Rule = (u32, Outcome, Kind, fn(&Site) -> bool);
 
 const KNOWN: &[Rule] = &[
-    // A trailing comment on a suite `uses` adds a blank line after it.
-    (1808, Outcome::Perturbed, Kind::Trailing, |s| {
-        s.line.trim().starts_with("uses ")
-    }),
-    // ... and on an agent `store` field, single- or multi-line.
-    (1859, Outcome::Perturbed, Kind::Trailing, |s| {
-        s.opener.trim().starts_with("store ")
-    }),
     // A comment before `}` after a statement ending in a bare variant pattern
     // (`expect r is Ack`): `fmt` adds a `()` tail the parser absorbs into the
     // pattern.
@@ -92,11 +86,7 @@ const KNOWN: &[Rule] = &[
 ];
 
 /// Minimal programs for defects whose shape the corpus lacks.
-const REPROS: &[(&str, &str)] = &[(
-    // #1808: a trailing comment on a suite `uses` adds a blank line.
-    "repro_1808_suite_uses.bynk",
-    "suite demo.gen {\n  uses demo.a\n  uses demo.b\n\n  case \"x\" {\n    expect 1 == 1\n  }\n}\n",
-)];
+const REPROS: &[(&str, &str)] = &[];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Kind {
