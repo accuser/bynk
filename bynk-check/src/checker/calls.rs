@@ -4056,3 +4056,157 @@ fn check_cross_context_call(
     let rebranded = rebrand_return_type(raw_ret, &ctx.input.types, tys);
     Some(rebranded)
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::testkit::analyse;
+
+    /// A single-file `commons demo` project.
+    fn commons(body: &str) -> crate::testkit::Analysed {
+        analyse(&[("demo.bynk", &format!("commons demo\n\n{body}"))])
+    }
+
+    /// A single-file `context demo` project.
+    fn context(body: &str) -> crate::testkit::Analysed {
+        analyse(&[("demo.bynk", &format!("context demo\n\n{body}"))])
+    }
+
+    const CLOCK: &str = "capability Clock {\n  fn now() -> Effect[Int]\n}\n\n\
+                         provides Clock = FixedClock {\n  fn now() -> Effect[Int] {\n    Effect.pure(0)\n  }\n}\n";
+
+    #[test]
+    fn a_call_to_a_declared_fn_has_its_return_type() {
+        let a = commons("fn double(x: Int) -> Int { x * 2 }\n\nfn four() -> Int { double(2) }\n");
+        a.assert_clean();
+        assert_eq!(a.type_at("demo.bynk", "double(2)"), "Int");
+    }
+
+    #[test]
+    fn an_argument_of_the_wrong_type_is_a_mismatch() {
+        let a = commons(
+            "fn double(x: Int) -> Int { x * 2 }\n\nfn bad(s: String) -> Int { double(s) }\n",
+        );
+        a.assert_reports("bynk.types.argument_mismatch");
+    }
+
+    #[test]
+    fn a_fn_called_with_too_many_arguments_is_an_arity_error() {
+        let a = commons("fn double(x: Int) -> Int { x * 2 }\n\nfn bad() -> Int { double(1, 2) }\n");
+        a.assert_reports("bynk.resolve.arity_mismatch");
+    }
+
+    #[test]
+    fn a_fn_value_called_with_too_many_arguments_is_a_call_arity_error() {
+        let a = commons("fn f(g: (Int) -> Int) -> Int { g(1, 2) }\n");
+        a.assert_reports("bynk.types.call_arity");
+    }
+
+    #[test]
+    fn a_fn_value_call_has_the_value_s_return_type() {
+        let a = commons("fn f(g: (Int) -> String) -> String { g(1) }\n");
+        a.assert_clean();
+        assert_eq!(a.type_at("demo.bynk", "g(1)"), "String");
+    }
+
+    #[test]
+    fn a_generic_call_infers_its_type_argument_from_the_argument() {
+        let a = commons("fn id[A](x: A) -> A { x }\n\nfn s() -> String { id(\"s\") }\n");
+        a.assert_clean();
+        assert_eq!(a.type_at("demo.bynk", "id(\"s\")"), "String");
+    }
+
+    #[test]
+    fn a_generic_call_binding_one_type_argument_two_ways_is_a_conflict() {
+        let a =
+            commons("fn both[A](x: A, y: A) -> A { x }\n\nfn bad() -> Int { both(1, \"two\") }\n");
+        a.assert_reports("bynk.generics.type_arg_mismatch");
+    }
+
+    #[test]
+    fn a_type_argument_no_parameter_mentions_is_uninferable() {
+        let a = commons(
+            "fn first_of[A](x: Int) -> A { identity_helper(x) }\n\n\
+             fn identity_helper[A](x: A) -> A { x }\n\n\
+             fn misuse() -> Int { first_of(5) }\n",
+        );
+        a.assert_reports("bynk.generics.uninferable_type_arg");
+    }
+
+    #[test]
+    fn calling_an_undeclared_name_is_an_unknown_function() {
+        let a = commons("fn bad() -> Int { nope(1) }\n");
+        a.assert_reports("bynk.resolve.unknown_function");
+    }
+
+    #[test]
+    fn calling_a_record_type_like_a_function_is_rejected() {
+        let a = commons("type P = { a: Int }\n\nfn f() -> P { P(1) }\n");
+        a.assert_reports("bynk.resolve.type_as_function");
+    }
+
+    #[test]
+    fn a_capability_op_call_has_the_op_s_return_type() {
+        let a = context(&format!(
+            "{CLOCK}\nservice probe {{\n  on call() -> Effect[Int] given Clock {{\n    Clock.now()\n  }}\n}}\n"
+        ));
+        a.assert_clean();
+        assert_eq!(a.type_at("demo.bynk", "Clock.now()"), "Effect[Int]");
+    }
+
+    #[test]
+    fn a_capability_op_called_with_an_extra_argument_is_an_arity_error() {
+        let a = context(&format!(
+            "{CLOCK}\nservice probe {{\n  on call() -> Effect[Int] given Clock {{\n    Clock.now(1)\n  }}\n}}\n"
+        ));
+        a.assert_reports("bynk.capability.op_arity");
+    }
+
+    #[test]
+    fn a_capability_called_inside_a_pure_lambda_is_rejected() {
+        let a = context(&format!(
+            "{CLOCK}\nservice probe {{\n  on call() -> Effect[Int] given Clock {{\n    \
+             let f: (Int) -> Int = (n) => Clock.now()\n    Effect.pure(1)\n  }}\n}}\n"
+        ));
+        a.assert_reports("bynk.effect.capability_in_pure_context");
+    }
+
+    #[test]
+    fn an_unknown_cell_op_is_rejected() {
+        let a = context(
+            "agent Counter {\n  key id: String\n  store n: Cell[Int] = 0\n\n  \
+             on call bad() -> Effect[()] {\n    let _ <- n.foo()\n    Effect.pure(())\n  }\n}\n",
+        );
+        a.assert_reports("bynk.store.unknown_op");
+    }
+
+    #[test]
+    fn a_cell_update_is_an_effect_of_unit() {
+        let a = context(
+            "agent Counter {\n  key id: String\n  store n: Cell[Int] = 0\n\n  \
+             on call bump() -> Effect[()] {\n    n.update((c) => c + 1)\n  }\n}\n",
+        );
+        a.assert_clean();
+        assert_eq!(
+            a.type_at("demo.bynk", "n.update((c) => c + 1)"),
+            "Effect[()]"
+        );
+    }
+
+    #[test]
+    fn a_cell_update_whose_function_returns_another_type_is_a_mismatch() {
+        let a = context(
+            "agent Counter {\n  key id: String\n  store n: Cell[Int] = 0\n\n  \
+             on call bad() -> Effect[()] {\n    n.update((c) => \"x\")\n  }\n}\n",
+        );
+        a.assert_reports("bynk.types.lambda_mismatch");
+    }
+
+    #[test]
+    fn a_cell_update_with_no_function_is_a_call_arity_error() {
+        let a = context(
+            "agent Counter {\n  key id: String\n  store n: Cell[Int] = 0\n\n  \
+             on call bad() -> Effect[()] {\n    n.update()\n  }\n}\n",
+        );
+        a.assert_reports("bynk.types.call_arity");
+    }
+}

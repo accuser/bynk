@@ -557,3 +557,52 @@ pub fn check_file_core(
         cross_context: cross_context_for_file,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::testkit::analyse;
+
+    #[test]
+    fn a_file_with_a_type_error_still_records_its_other_expression_types() {
+        // ADR 0094: completion and signature help need a receiver's type even
+        // when another declaration in the same file fails to check.
+        let a = analyse(&[(
+            "demo.bynk",
+            "commons demo\n\nfn good(s: String) -> Int { s.length() }\n\nfn bad() -> Int { \"x\" }\n",
+        )]);
+        assert!(
+            !a.error_categories().is_empty(),
+            "the fixture must fail to check"
+        );
+        assert_eq!(a.type_at("demo.bynk", "s.length()"), "Int");
+    }
+
+    #[test]
+    fn a_call_to_a_declaration_that_failed_to_parse_is_not_an_unknown_name() {
+        // #1710: a broken declaration stays a known name, so its callers report
+        // nothing extra; only the parse error itself is reported.
+        let a = analyse(&[(
+            "demo.bynk",
+            "commons demo\n\nfn broken() -> Int { 1 + }\n\nfn user() -> Int { broken() }\n",
+        )]);
+        assert!(
+            !a.error_categories().is_empty(),
+            "the parse error is reported"
+        );
+        assert!(
+            !a.categories().contains(&"bynk.resolve.unknown_function"),
+            "a broken declaration's caller must not report it unknown:\n{}",
+            a.render()
+        );
+    }
+
+    #[test]
+    fn a_clean_file_s_types_are_recorded_on_the_clean_path() {
+        let a = analyse(&[(
+            "demo.bynk",
+            "commons demo\n\nfn f(s: String) -> Int { s.length() }\n",
+        )]);
+        a.assert_clean();
+        assert_eq!(a.type_at("demo.bynk", "s.length()"), "Int");
+    }
+}
