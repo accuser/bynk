@@ -1472,12 +1472,10 @@ fn check_unit_files(
 /// would leave ambiguous: only `__resetAgents`, since a Worker's files export
 /// no surface.
 ///
-/// A file also emits the boundary codecs of each type its own handlers carry
-/// across the wire, wherever that type is declared, so two files can each
-/// export `__serialise_Line`. The copies are the same function of the same
-/// type, so the barrel re-exports each such name from the first module
-/// (`emitted`, this unit's modules) that exports it; an explicit re-export
-/// takes precedence over `export *`.
+/// Each file also emits its own copy of what its declarations need from
+/// outside it (a boundary type's codecs, a `uses`d commons type's rebrand), so
+/// two files can both export one name; the barrel re-exports each such name
+/// from one module of `emitted`, this unit's (`duplicated_export_reexports`).
 fn emit_worker_handlers_barrel(
     name: &str,
     indices: &[usize],
@@ -1502,36 +1500,7 @@ fn emit_worker_handlers_barrel(
             emitter::cross_commons_import_specifier_for_path(&barrel_loc, module, import_ext);
         stmts.push(TsStmt::decl(TsDecl::ReExportAll { from: spec }, None));
     }
-    let mut codec_exporters: BTreeMap<&str, Vec<&Path>> = BTreeMap::new();
-    for module in &modules {
-        let output = ts_output_path(module);
-        let Some(Document::Ts(program)) = emitted
-            .iter()
-            .find(|f| f.output_path == output)
-            .map(|f| &f.document)
-        else {
-            continue;
-        };
-        for stmt in &program.stmts {
-            if let Some(n) = stmt.exported_name()
-                && (n.starts_with("__serialise_") || n.starts_with("__deserialise_"))
-            {
-                codec_exporters.entry(n).or_default().push(module);
-            }
-        }
-    }
-    let mut chosen: BTreeMap<&Path, Vec<String>> = BTreeMap::new();
-    for (codec, exporters) in &codec_exporters {
-        if let [first, _, ..] = exporters.as_slice() {
-            chosen.entry(first).or_default().push(codec.to_string());
-        }
-    }
-    for (module, names) in chosen {
-        let from =
-            emitter::cross_commons_import_specifier_for_path(&barrel_loc, module, import_ext);
-        stmts.push(TsStmt::decl(TsDecl::ReExport { names, from }, None));
-    }
-    stmts.extend(merged_unit_helpers(
+    let (merged, defined) = merged_unit_helpers(
         name,
         indices,
         parsed,
@@ -1539,7 +1508,15 @@ fn emit_worker_handlers_barrel(
         import_ext,
         module_of,
         false,
+    );
+    stmts.extend(duplicated_export_reexports(
+        &modules,
+        emitted,
+        &defined,
+        &barrel_loc,
+        import_ext,
     ));
+    stmts.extend(merged);
     StagedFile {
         output_path: worker_handlers_output_path(name),
         document: Document::Ts(TsProgram { stmts }),
@@ -2104,15 +2081,27 @@ fn run_checks(
     // #1820: a context split across files emits a module per file and none at
     // `out/<name>.ts`, which the bundle's composition root imports it from.
     // Its barrel is part of the build, not only of a test build; a suite that
-    // imports the context reuses it.
-    if target == BuildTarget::Bundle {
-        for (name, kind) in &kinds {
-            if *kind == UnitKind::Context
-                && let Some(barrel) =
-                    emit_commons_barrel(name, &groups, &parsed, import_ext, &mut emitted_barrels)
-            {
+    // imports the context reuses it. On workers the context's barrel is its
+    // Worker's `handlers.ts` (`emit_worker_handlers_barrel`), and its files
+    // aren't at `out/<name>/`, so its path here is claimed and none is
+    // emitted: the test passes below emit only a commons' barrel.
+    for (name, kind) in &kinds {
+        if *kind != UnitKind::Context {
+            continue;
+        }
+        if mode == Mode::Build && target == BuildTarget::Bundle {
+            if let Some(barrel) = emit_commons_barrel(
+                name,
+                &groups,
+                &parsed,
+                import_ext,
+                &mut emitted_barrels,
+                &compiled,
+            ) {
                 compiled.push(barrel);
             }
+        } else if target == BuildTarget::Workers {
+            emitted_barrels.insert(commons_dir_for(name).with_extension("ts"));
         }
     }
     let (test_outputs, runnable_tests) = process_tests(
@@ -2751,7 +2740,7 @@ fn native_platforms_of_context(
             unit_consumes,
             unit_consumes_aliases,
             unit_flattened,
-            false,
+            ProviderNamespaces::Bundle,
             None,
             None,
             &mut referenced,
@@ -2768,7 +2757,7 @@ fn native_platforms_of_context(
             unit_consumes,
             unit_consumes_aliases,
             unit_flattened,
-            false,
+            ProviderNamespaces::Bundle,
             None,
             None,
             &mut referenced,
@@ -2894,7 +2883,7 @@ fn plan_agent_given_deps(
                     &unit_consumes,
                     &unit_consumes_aliases,
                     &unit_flattened,
-                    true,
+                    ProviderNamespaces::Workers,
                     Some("env"),
                     None,
                     &mut referenced,
@@ -2964,6 +2953,28 @@ pub(crate) struct LocaleNegotiationArgs {
     pub(crate) reference_locale_expr: String,
 }
 
+/// Where [`instantiate_provider_ts_expr`]'s expression finds each unit's
+/// provider classes: the module that constructs it imports each unit under a
+/// different namespace.
+#[derive(Clone, Copy)]
+pub(crate) enum ProviderNamespaces<'a> {
+    /// The bundle's `compose.ts`: `{ns}`.
+    Bundle,
+    /// A Worker's `compose.ts` or `handlers.ts`: `handlers_{ns}`.
+    Workers,
+    /// A test module (#1863): `__ns_{ns}`, the test scaffold's own.
+    ///
+    /// `prebuilt` names, by `(unit, capability)`, the local that holds a
+    /// capability the test deps build at the top level: a provider's `given`
+    /// that resolves to one is that local, not a fresh construction, so a
+    /// `stub` overlaid on it reaches every provider built over it (#1864
+    /// review). Each one so used is recorded in `used`.
+    Test {
+        prebuilt: &'a HashMap<(String, String), String>,
+        used: &'a std::cell::RefCell<BTreeSet<(String, String)>>,
+    },
+}
+
 /// `new {ns}.{class}({args})` as a real [`bynk_ts::TsExpr::New`] node.
 fn new_call_ts_expr(ns: &str, class: &str, args: Vec<bynk_ts::TsExpr>) -> bynk_ts::TsExpr {
     bynk_ts::TsExpr::New {
@@ -2975,11 +2986,12 @@ fn new_call_ts_expr(ns: &str, class: &str, args: Vec<bynk_ts::TsExpr>) -> bynk_t
     }
 }
 
-/// `workers_ns` selects the namespace convention: a bodied provider's class
-/// lives in `{ns}` under the bundle root but `handlers_{ns}` in a Worker
-/// compose; external (binding) classes are `{ns}__binding` in both. When
-/// `env_ident` is set (workers), env-taking first-party providers receive it
-/// as a constructor argument.
+/// `namespaces` selects the namespace convention ([`ProviderNamespaces`]): a
+/// bodied provider's class lives in `{ns}` under the bundle root,
+/// `handlers_{ns}` in a Worker compose and `__ns_{ns}` in a test module;
+/// external (binding) classes are `{ns}__binding` in the first two, and a
+/// test module has none. When `env_ident` is set (workers), env-taking
+/// first-party providers receive it as a constructor argument.
 ///
 /// Locale capability track, slice 2 (#882): `locale_negotiation`, when
 /// `Some`, is threaded to exactly the `(bynk, LocaleProvider)` pair, the same
@@ -3013,22 +3025,34 @@ pub(crate) fn instantiate_provider_ts_expr(
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
     unit_flattened: &HashMap<String, HashMap<String, String>>,
-    workers_ns: bool,
+    namespaces: ProviderNamespaces<'_>,
     env_ident: Option<&str>,
     locale_negotiation: Option<&LocaleNegotiationArgs>,
     referenced_units: &mut BTreeSet<String>,
 ) -> bynk_ts::TsExpr {
     let ns = provider_ctx.replace('.', "_");
-    let bodied_ns = if workers_ns {
-        format!("handlers_{ns}")
-    } else {
-        ns.clone()
+    let bodied_ns = match namespaces {
+        ProviderNamespaces::Bundle => ns.clone(),
+        ProviderNamespaces::Workers => format!("handlers_{ns}"),
+        ProviderNamespaces::Test { .. } => crate::emitter::emit::test_scaffold_ns(provider_ctx),
     };
-    referenced_units.insert(provider_ctx.to_string());
-    let Some(provider) = unit_tables
+    let provider = unit_tables
         .get(provider_ctx)
-        .and_then(|t| t.providers.get(cap))
-    else {
+        .and_then(|t| t.providers.get(cap));
+    // #1863: a test module imports no binding module, so an external
+    // provider is the same placeholder as a capability with no provider.
+    if matches!(namespaces, ProviderNamespaces::Test { .. }) && provider.is_none_or(|p| p.external)
+    {
+        return bynk_ts::TsExpr::As {
+            expr: Box::new(bynk_ts::TsExpr::As {
+                expr: Box::new(bynk_ts::TsExpr::Ident("undefined".to_string())),
+                ty: bynk_ts::TsType::named("unknown"),
+            }),
+            ty: bynk_ts::TsType::named("never"),
+        };
+    }
+    referenced_units.insert(provider_ctx.to_string());
+    let Some(provider) = provider else {
         return new_call_ts_expr(&bodied_ns, cap, vec![]);
     };
     // Build the by-name deps object from the provider's `given`, if any.
@@ -3060,6 +3084,13 @@ pub(crate) fn instantiate_provider_ts_expr(
                         .cloned()
                         .unwrap_or_else(|| provider_ctx.to_string()),
                 };
+                if let ProviderNamespaces::Test { prebuilt, used } = namespaces {
+                    let key = (target_ctx.clone(), g.name.clone());
+                    if let Some(local) = prebuilt.get(&key) {
+                        used.borrow_mut().insert(key);
+                        return (g.name.clone(), bynk_ts::TsExpr::Ident(local.clone()));
+                    }
+                }
                 let expr = instantiate_provider_ts_expr(
                     &target_ctx,
                     &g.name,
@@ -3067,7 +3098,7 @@ pub(crate) fn instantiate_provider_ts_expr(
                     unit_consumes,
                     unit_consumes_aliases,
                     unit_flattened,
-                    workers_ns,
+                    namespaces,
                     env_ident,
                     locale_negotiation,
                     referenced_units,
@@ -3378,7 +3409,7 @@ fn emit_composition_root(
                     unit_consumes,
                     unit_consumes_aliases,
                     unit_flattened,
-                    false,
+                    ProviderNamespaces::Bundle,
                     env_ident,
                     None, // Bundle mode has no inbound request (Decision A)
                     &mut referenced_units,
@@ -3409,7 +3440,7 @@ fn emit_composition_root(
                     unit_consumes,
                     unit_consumes_aliases,
                     unit_flattened,
-                    false,
+                    ProviderNamespaces::Bundle,
                     env_ident,
                     None, // Bundle mode has no inbound request (Decision A)
                     &mut referenced_units,

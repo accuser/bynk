@@ -1,0 +1,23 @@
+suite shop.orders {
+  case "a service reaches a sibling file's agent and its provider" {
+    let n <- place.call(2)
+    expect n == 102
+  }
+
+  case "a service that needs no capability" {
+    let m <- echo.call(5)
+    expect m == 5
+  }
+
+  case "a stub replaces a sibling file's provider" {
+    stub Stamp.next() returns each [1]
+    let n <- place.call(2)
+    expect n == 3
+  }
+
+  case "a commons record two files share" {
+    let n <- note.call(Note { text: "hi" })
+    let l <- length.call(n)
+    expect l == 2
+  }
+}

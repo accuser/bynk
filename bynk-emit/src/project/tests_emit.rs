@@ -147,7 +147,7 @@ pub(crate) fn process_tests(
             }
             for name in imported {
                 if let Some(barrel) =
-                    emit_commons_barrel(name, groups, parsed, import_ext, emitted_barrels)
+                    emit_commons_barrel(name, groups, parsed, import_ext, emitted_barrels, &[])
                 {
                     outputs.push(barrel);
                 }
@@ -285,7 +285,7 @@ pub(crate) fn process_integration_tests(
             // Emit one (deduped) for each that is a multi-file commons.
             for name in &uses_targets {
                 if let Some(barrel) =
-                    emit_commons_barrel(name, groups, parsed, ImportExt::Js, emitted_barrels)
+                    emit_commons_barrel(name, groups, parsed, ImportExt::Js, emitted_barrels, &[])
                 {
                     outputs.push(barrel);
                 }
@@ -1767,17 +1767,33 @@ fn emit_test_module(
         None,
     ));
 
-    // Consumed contexts (for the target context, if any).
+    // The deps factory, built here for the units its providers name (#1863),
+    // which are imported with the consumed contexts below.
+    let deps = emit_test_deps(
+        target_name,
+        target_kind,
+        stubs,
+        unit_tables,
+        unit_consumes,
+        unit_consumes_aliases,
+        unit_flattened,
+    );
+
+    // Consumed contexts (for the target context, if any), and any other unit
+    // a provider in the deps factory names.
     let mut consumed_imports: Vec<(String, String)> = Vec::new();
-    if let Some(consumed) = unit_consumes.get(target_name) {
-        for q in consumed {
-            let ns = test_ns(q);
-            let dir = commons_dir_for(q);
-            let import_path = relative_import_for_test(&dir);
-            consumed_imports.push((ns, import_path));
+    let consumed = unit_consumes.get(target_name).into_iter().flatten();
+    for q in consumed.chain(deps.units.iter()) {
+        if q == target_name {
+            continue;
         }
+        let ns = test_ns(q);
+        let dir = commons_dir_for(q);
+        let import_path = relative_import_for_test(&dir);
+        consumed_imports.push((ns, import_path));
     }
     consumed_imports.sort();
+    consumed_imports.dedup();
     for (ns, path) in &consumed_imports {
         stmts.push(TsStmt::decl(
             TsDecl::ImportNamespace {
@@ -1951,29 +1967,14 @@ fn emit_test_module(
     if !stubs.is_empty() {
         stmts.push(TsStmt::raw(STUB_OVERLAY_TS.to_string(), None));
     }
-    if target_kind == UnitKind::Context {
-        let mut flattened: Vec<(&String, &String)> = unit_flattened
-            .get(target_name)
-            .map(|m| m.iter().collect())
-            .unwrap_or_default();
-        flattened.sort_by_key(|(cap, _)| cap.as_str());
-        for (cap, owner) in flattened {
-            if let Some(def) = platform_double(owner, cap, &test_ns(owner)) {
-                stmts.push(TsStmt::raw(def, None));
-            }
+    for (owner, cap) in &deps.doubles {
+        if let Some(def) = platform_double(owner, cap, &test_ns(owner)) {
+            stmts.push(TsStmt::raw(def, None));
         }
     }
 
-    // Emit the deps factory.
-    let mut deps_stmt = emit_test_deps(
-        target_name,
-        target_kind,
-        stubs,
-        unit_tables,
-        unit_consumes,
-        unit_consumes_aliases,
-        unit_flattened,
-    );
+    // Emit the deps factory, built above.
+    let mut deps_stmt = deps.stmt;
     if suppress_next_blank {
         deps_stmt.no_blank_before = true;
     }
@@ -2328,13 +2329,19 @@ fn emit_test_module(
 ///
 /// #1820: a multi-file *context*'s barrel is also part of a production bundle
 /// build, emitted by `run_checks` ahead of the test passes, since its
-/// composition root imports the context from `out/<name>.ts` too.
+/// composition root imports the context from `out/<name>.ts` too; on workers,
+/// `run_checks` claims its path, since the context's modules are the Worker's.
+/// `run_checks` alone passes `modules_out`, this unit's staged modules, for
+/// [`duplicated_export_reexports`]; the test passes, which only ever reach a
+/// commons here, pass none. A commons' files repeat no generated export: it
+/// has no boundary codecs, and only a context rebrands a `uses`d type.
 pub(super) fn emit_commons_barrel(
     name: &str,
     groups: &BTreeMap<String, Vec<usize>>,
     parsed: &[ParsedFile],
     import_ext: ImportExt,
     emitted: &mut HashSet<PathBuf>,
+    modules_out: &[StagedFile],
 ) -> Option<StagedFile> {
     let indices = groups.get(name)?;
     // Multi-file only: *every* file must sit under a `<name>/` directory, the
@@ -2369,7 +2376,7 @@ pub(super) fn emit_commons_barrel(
         let spec = emitter::cross_commons_import_specifier_for_path(&barrel_loc, file, import_ext);
         stmts.push(TsStmt::decl(TsDecl::ReExportAll { from: spec }, None));
     }
-    stmts.extend(merged_unit_helpers(
+    let (merged, defined) = merged_unit_helpers(
         name,
         indices,
         parsed,
@@ -2377,7 +2384,15 @@ pub(super) fn emit_commons_barrel(
         import_ext,
         |file| file.to_path_buf(),
         true,
+    );
+    stmts.extend(duplicated_export_reexports(
+        &files,
+        modules_out,
+        &defined,
+        &barrel_loc,
+        import_ext,
     ));
+    stmts.extend(merged);
     Some(StagedFile {
         output_path,
         document: Document::Ts(TsProgram { stmts }),
@@ -2412,7 +2427,7 @@ pub(super) fn merged_unit_helpers(
     import_ext: ImportExt,
     module_of: impl Fn(&Path) -> PathBuf,
     surface: bool,
-) -> Vec<TsStmt> {
+) -> (Vec<TsStmt>, Vec<String>) {
     let mut with_agents: Vec<PathBuf> = Vec::new();
     let mut with_services: Vec<PathBuf> = Vec::new();
     for &i in indices {
@@ -2431,6 +2446,11 @@ pub(super) fn merged_unit_helpers(
     with_agents.sort();
     with_services.sort();
     let mut stmts = Vec::new();
+    // The names defined below, pushed in the branch that defines each, so
+    // `duplicated_export_reexports` never also re-exports one file's copy.
+    // Unlike a codec or a rebrand, each file's copy differs (it covers that
+    // file's agents or services), so re-exporting one would be wrong.
+    let mut defined = Vec::new();
     let mut aliases: BTreeMap<PathBuf, String> = BTreeMap::new();
     let mut alias_of = |file: &PathBuf, stmts: &mut Vec<TsStmt>| -> String {
         if let Some(a) = aliases.get(file) {
@@ -2462,6 +2482,7 @@ pub(super) fn merged_unit_helpers(
             ),
             None,
         ));
+        defined.push("__resetAgents".to_string());
     }
     if surface && with_services.len() > 1 {
         let deps = format!("__{}Deps", emitter::emit::context_pascal(name));
@@ -2486,8 +2507,88 @@ pub(super) fn merged_unit_helpers(
             ),
             None,
         ));
+        defined.push("__makeSurface".to_string());
+        defined.push(deps);
     }
-    stmts
+    (stmts, defined)
+}
+
+/// #1820: the explicit re-exports a multi-file context's barrel needs where
+/// two or more of its files' modules export one name. User names are unique
+/// across a unit, but each file emits its own copy of what its declarations
+/// need from outside it: the context's rebrand of a `uses`d commons type, that
+/// commons type's codecs re-exported, a boundary type's codecs (wherever the
+/// type is declared). Each copy is a function of the type alone, so the
+/// barrel re-exports the name from the first module (sorted by path) that
+/// exports it, which takes precedence over `export *`; without it, `export *`
+/// is ambiguous (TS2308) and drops the name at runtime. `merged` names the
+/// helpers the barrel defines itself (`merged_unit_helpers`), which are
+/// skipped.
+///
+/// `modules` is each file's module path; `emitted`, the staged output in
+/// which each is found at its [`ts_output_path`]. What a module exports is
+/// read with [`TsStmt::exported_names`], which sees structured exports only;
+/// every generated name that repeats across files is exported structurally
+/// (the commons codec re-export is [`TsDecl::ExportNames`] for this reason).
+/// A name the chosen module exports only as a type (a rebrand of a commons
+/// type with no `of` constructor is a bare `type` alias) is re-exported as
+/// `type X`: under the build's `isolatedModules`, `export { X }` of a
+/// type-only name is TS1205 (#1862 review).
+pub(super) fn duplicated_export_reexports(
+    modules: &[PathBuf],
+    emitted: &[StagedFile],
+    merged: &[String],
+    barrel_loc: &Path,
+    import_ext: ImportExt,
+) -> Vec<TsStmt> {
+    // Per name, each exporting module and whether it exports a value under
+    // the name.
+    let mut exporters: BTreeMap<&str, Vec<(&PathBuf, bool)>> = BTreeMap::new();
+    for module in modules {
+        let output = ts_output_path(module);
+        let Some(Document::Ts(program)) = emitted
+            .iter()
+            .find(|f| f.output_path == output)
+            .map(|f| &f.document)
+        else {
+            continue;
+        };
+        for stmt in &program.stmts {
+            for exported in stmt.exported_names() {
+                // A type is often both an `interface` and a `const` of one
+                // name: one module, counted once, with a value if either
+                // statement exports one. This loop visits one module's
+                // statements at a time, so a module's earlier entry for the
+                // name, if any, is the last one.
+                let modules = exporters.entry(exported.name).or_default();
+                match modules.last_mut() {
+                    Some((m, has_value)) if *m == module => *has_value |= exported.has_value,
+                    _ => modules.push((module, exported.has_value)),
+                }
+            }
+        }
+    }
+    let mut chosen: BTreeMap<&PathBuf, Vec<String>> = BTreeMap::new();
+    for (name, modules) in &exporters {
+        if let [(first, has_value), _, ..] = modules.as_slice()
+            && !merged.iter().any(|m| m == name)
+        {
+            let spec = if *has_value {
+                name.to_string()
+            } else {
+                format!("type {name}")
+            };
+            chosen.entry(first).or_default().push(spec);
+        }
+    }
+    chosen
+        .into_iter()
+        .map(|(module, names)| {
+            let from =
+                emitter::cross_commons_import_specifier_for_path(barrel_loc, module, import_ext);
+            TsStmt::decl(TsDecl::ReExport { names, from }, None)
+        })
+        .collect()
 }
 
 /// Render the relative import path from the `tests/` output directory to the
@@ -3216,6 +3317,17 @@ fn platform_double(owner: &str, cap: &str, ns: &str) -> Option<String> {
 /// one real declaration this function ever built; its caller now prints it
 /// directly via `bynk_ts::print_stmt`, the same shape it always used, just
 /// one call further out.
+///
+/// #1863: a provider is built as the composition root builds it
+/// ([`instantiate_provider_ts_expr`]), its own `given` capabilities wired in,
+/// whether the context declares it or a context it consumes does. The units
+/// that construction names are returned, for the test module to import: a
+/// provider's `given` can reach a unit the target doesn't consume itself.
+///
+/// Unlike the composition root, a provider's `given` that is also one of the
+/// deps' own entries is that entry, held in a local, not a second copy: in a
+/// test a `stub` overlays the entry, and a copy would escape it (#1864
+/// review).
 fn emit_test_deps(
     target_name: &str,
     target_kind: UnitKind,
@@ -3224,12 +3336,16 @@ fn emit_test_deps(
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
     unit_flattened: &HashMap<String, HashMap<String, String>>,
-) -> TsStmt {
-    let mut entries: Vec<(String, TsExpr)> = Vec::new();
+) -> TestDeps {
+    let mut units: BTreeSet<String> = BTreeSet::new();
+    let mut doubles: Vec<(String, String)> = Vec::new();
+    // Each top-level entry: its deps key, the `(unit, capability)` it is, and
+    // how its value is built.
+    let mut tops: Vec<(String, (String, String), TopDep)> = Vec::new();
+    let mut surface_entries: Vec<(String, TsExpr)> = Vec::new();
     if target_kind == UnitKind::Context
         && let Some(table) = unit_tables.get(target_name)
     {
-        let ns = test_ns(target_name);
         // Sorted so `__makeTestDeps` field order is deterministic across the
         // capability map's hash iteration order.
         let mut caps: Vec<&String> = table.capabilities.keys().collect();
@@ -3238,76 +3354,67 @@ fn emit_test_deps(
             // v0.118: a capability with a `stub` override plugs its
             // `__Stub_<Cap>` stub; otherwise the declared provider (its real
             // implementation) is used, as an un-overridden seam.
-            let base = table.providers.get(cap).map(|provider| TsExpr::New {
-                callee: Box::new(member(
-                    ident(ns.clone()),
-                    provider.provider_name.name.clone(),
-                )),
-                args: Vec::new(),
-            });
-            let ty = format!("{ns}.{cap}");
-            let value = if let Some(rp) = stubs.get(cap) {
-                stub_overlay(rp, &ty, base)
+            let how = if table.providers.contains_key(cap) {
+                TopDep::Provider
             } else {
-                base.unwrap_or_else(|| undefined_as_unknown_as(ty))
+                TopDep::Placeholder
             };
-            entries.push((cap.clone(), value));
+            tops.push((cap.clone(), (target_name.to_string(), cap.clone()), how));
         }
         // v0.17 (Locale capability track, slice 1, #844): a capability
         // flattened in via `consumes U { Cap }` (e.g. an adapter's `Locale`)
         // is never in `table.capabilities` above — that holds only
         // capabilities this unit declares itself. Its real implementation is
         // wired by production `compose()` from a platform binding the test
-        // module never imports, so an un-stubbed one is always the
-        // placeholder, exactly like a locally-declared capability with no
-        // provider.
-        let mut flattened: Vec<(&String, &String)> = unit_flattened
+        // module never imports, so an un-stubbed one is the placeholder,
+        // exactly like a locally-declared capability with no provider — or,
+        // #291, a platform capability's deterministic test double.
+        let flattened = unit_flattened.get(target_name).cloned().unwrap_or_default();
+        let mut flat: Vec<(&String, &String)> = flattened.iter().collect();
+        flat.sort_by_key(|(cap, _)| cap.as_str());
+        for (cap, owner) in flat {
+            tops.push((
+                cap.clone(),
+                (owner.clone(), cap.clone()),
+                platform_or_placeholder(owner, cap),
+            ));
+        }
+        // #1863: a capability another context provides, named with that
+        // context's prefix (`given Fees.Fees`), as the composition root wires
+        // it (`handler_cross_caps`, which also lists the flattened ones
+        // above): that context's provider, keyed by the capability's name,
+        // or a first-party platform capability's test double.
+        let consumed_all: Vec<String> = unit_consumes.get(target_name).cloned().unwrap_or_default();
+        let aliases = unit_consumes_aliases
             .get(target_name)
-            .map(|m| m.iter().collect())
+            .cloned()
             .unwrap_or_default();
-        flattened.sort_by_key(|(cap, _)| cap.as_str());
-        for (cap, owner) in flattened {
-            let owner_ns = test_ns(owner);
-            // #291: a platform capability's tier default is its deterministic
-            // test double (`platform_double`), never an `undefined` placeholder.
-            let base = platform_double(owner, cap, &owner_ns)
-                .map(|_| call(ident(format!("__bynkTest_{cap}")), Vec::new()));
-            let ty = format!("{owner_ns}.{cap}");
-            let value = if let Some(rp) = stubs.get(cap) {
-                stub_overlay(rp, &ty, base)
-            } else {
-                base.unwrap_or_else(|| undefined_as_unknown_as(ty))
+        for (cap, owner) in handler_cross_caps(table, &consumed_all, &aliases, &flattened) {
+            if tops.iter().any(|(k, _, _)| *k == cap) {
+                continue;
+            }
+            let how = match platform_or_placeholder(&owner, &cap) {
+                TopDep::Placeholder => TopDep::Provider,
+                double => double,
             };
-            entries.push((cap.clone(), value));
+            tops.push((cap.clone(), (owner, cap), how));
         }
         // Cross-context surface: consumed contexts run with their real surface
         // (v0.118 `stub` is capability-only — a consumed-context capability
         // flattened via `consumes U { Cap }` is folded in via `unit_flattened`
         // above). An `adapter` target (e.g. `consumes bynk { Locale }`) has no
         // `__makeSurface` at all — so it must not get a surface entry either
-        // (Locale capability track, slice 1, #844).
-        let consumed: Vec<String> = unit_consumes
-            .get(target_name)
-            .cloned()
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|q| {
-                !matches!(
-                    unit_tables.get(q).and_then(|t| t.kind),
-                    Some(UnitKind::Adapter)
-                )
-            })
-            .collect();
-        let aliases = unit_consumes_aliases
-            .get(target_name)
-            .cloned()
-            .unwrap_or_default();
+        // (Locale capability track, slice 1, #844), nor does a context with
+        // no services, consumed only for a capability (#1863).
         let mut alias_for_target: HashMap<String, String> = HashMap::new();
         for (alias, q) in &aliases {
             alias_for_target.insert(q.clone(), alias.clone());
         }
-        let mut surface_entries: Vec<(String, TsExpr)> = Vec::new();
-        for q in &consumed {
+        for q in consumed_all.iter().filter(|q| {
+            unit_tables
+                .get(*q)
+                .is_some_and(|t| t.kind != Some(UnitKind::Adapter) && !t.services.is_empty())
+        }) {
             let key = alias_for_target
                 .get(q)
                 .cloned()
@@ -3320,9 +3427,103 @@ fn emit_test_deps(
                 )),
             ));
         }
-        if !surface_entries.is_empty() {
-            entries.push(("surface".to_string(), TsExpr::object(surface_entries)));
+    }
+
+    // #1864 review: build every top-level value with each top-level
+    // capability named by a local, so a provider whose `given` reaches one
+    // takes that local, stub and all, rather than a fresh copy. The locals a
+    // construction used become `const`s ahead of the `return`, each after
+    // the ones its own construction used; every other value stays inline.
+    let prebuilt: HashMap<(String, String), String> = tops
+        .iter()
+        .map(|(key, id, _)| (id.clone(), format!("__dep_{key}")))
+        .collect();
+    let mut built: Vec<BuiltDep> = Vec::new();
+    for (key, (unit, cap), how) in &tops {
+        let used = std::cell::RefCell::new(BTreeSet::new());
+        let ty = format!("{}.{cap}", test_ns(unit));
+        let base = match how {
+            TopDep::Provider => Some(instantiate_provider_ts_expr(
+                unit,
+                cap,
+                unit_tables,
+                unit_consumes,
+                unit_consumes_aliases,
+                unit_flattened,
+                ProviderNamespaces::Test {
+                    prebuilt: &prebuilt,
+                    used: &used,
+                },
+                None,
+                None,
+                &mut units,
+            )),
+            TopDep::Double => {
+                doubles.push((unit.clone(), cap.clone()));
+                Some(call(ident(format!("__bynkTest_{cap}")), Vec::new()))
+            }
+            TopDep::Placeholder => None,
+        };
+        let value = match stubs.get(key) {
+            Some(rp) => stub_overlay(rp, &ty, base),
+            None => base.unwrap_or_else(|| undefined_as_unknown_as(ty)),
+        };
+        let id = (unit.clone(), cap.clone());
+        built.push(BuiltDep {
+            key: key.clone(),
+            local: prebuilt[&id].clone(),
+            id,
+            value,
+            used: used.into_inner(),
+        });
+    }
+    let shared: BTreeSet<(String, String)> =
+        built.iter().flat_map(|b| b.used.iter().cloned()).collect();
+    let mut body: Vec<TsStmt> = Vec::new();
+    let mut declared: BTreeSet<(String, String)> = BTreeSet::new();
+    // Dependencies first: no provider chain is cyclic (the checker rejects
+    // one), so this terminates.
+    fn declare(
+        id: &(String, String),
+        built: &[BuiltDep],
+        declared: &mut BTreeSet<(String, String)>,
+        body: &mut Vec<TsStmt>,
+    ) {
+        if declared.contains(id) {
+            return;
         }
+        let Some(dep) = built.iter().find(|b| b.id == *id) else {
+            return;
+        };
+        for used in &dep.used {
+            declare(used, built, declared, body);
+        }
+        declared.insert(id.clone());
+        body.push(TsStmt::const_stmt(
+            TsBindingName::Ident(dep.local.clone()),
+            None,
+            dep.value.clone(),
+            None,
+        ));
+    }
+    for dep in &built {
+        if shared.contains(&dep.id) {
+            declare(&dep.id, &built, &mut declared, &mut body);
+        }
+    }
+    let mut entries: Vec<(String, TsExpr)> = built
+        .into_iter()
+        .map(|dep| {
+            let value = if shared.contains(&dep.id) {
+                ident(dep.local)
+            } else {
+                dep.value
+            };
+            (dep.key, value)
+        })
+        .collect();
+    if !surface_entries.is_empty() {
+        entries.push(("surface".to_string(), TsExpr::object(surface_entries)));
     }
     // The same `"{  }"` double-space quirk `workers.rs`/`project.rs`/
     // `emit.rs`/`gen_ts_for_ty` (this file, Arc C slice 31) already carry as
@@ -3341,7 +3542,8 @@ fn emit_test_deps(
     } else {
         TsExpr::object(entries)
     };
-    TsStmt::decl(
+    body.push(TsStmt::return_stmt(Some(return_value), None));
+    let stmt = TsStmt::decl(
         TsDecl::Function {
             name: "__makeTestDeps".to_string(),
             generics: Vec::new(),
@@ -3356,12 +3558,62 @@ fn emit_test_deps(
                 Vec::new()
             },
             return_type: None,
-            body: vec![TsStmt::return_stmt(Some(return_value), None)],
+            body,
             is_async: false,
             inline: false,
         },
         None,
-    )
+    );
+    TestDeps {
+        stmt,
+        units,
+        doubles,
+    }
+}
+
+/// What [`emit_test_deps`] built (#1863).
+struct TestDeps {
+    /// The `__makeTestDeps` declaration.
+    stmt: TsStmt,
+    /// The units its providers name, which the test module imports.
+    units: BTreeSet<String>,
+    /// Each `(owner, capability)` whose `__bynkTest_<Cap>` test double it
+    /// calls, which the test module defines (`platform_double`).
+    doubles: Vec<(String, String)>,
+}
+
+/// One top-level test dep, built ([`emit_test_deps`]).
+struct BuiltDep {
+    /// Its deps key: the capability's name.
+    key: String,
+    /// The `(unit, capability)` it is.
+    id: (String, String),
+    /// The local that holds it, when another dep is built over it.
+    local: String,
+    /// Its value, `stub` overlay included.
+    value: TsExpr,
+    /// The other deps' locals its construction names.
+    used: BTreeSet<(String, String)>,
+}
+
+/// How a top-level test dep's value is built, before any `stub` overlay.
+enum TopDep {
+    /// Its provider, through [`instantiate_provider_ts_expr`].
+    Provider,
+    /// A platform capability's deterministic test double (#291).
+    Double,
+    /// The `undefined` placeholder: no provider the test module can build.
+    Placeholder,
+}
+
+/// A capability of `owner` with a platform test double is [`TopDep::Double`];
+/// any other, the placeholder, whatever provides it in production.
+fn platform_or_placeholder(owner: &str, cap: &str) -> TopDep {
+    if platform_double(owner, cap, &test_ns(owner)).is_some() {
+        TopDep::Double
+    } else {
+        TopDep::Placeholder
+    }
 }
 
 /// #18 (testing-track infra): a real value destructure plus a per-type alias,
@@ -6404,8 +6656,9 @@ mod tests {
         let mut groups = BTreeMap::new();
         groups.insert("thing".to_string(), vec![0, 1]);
         let mut emitted = HashSet::new();
-        let staged = emit_commons_barrel("thing", &groups, &parsed, ImportExt::Js, &mut emitted)
-            .expect("a multi-file commons must produce a barrel");
+        let staged =
+            emit_commons_barrel("thing", &groups, &parsed, ImportExt::Js, &mut emitted, &[])
+                .expect("a multi-file commons must produce a barrel");
         let Document::Ts(program) = staged.document else {
             panic!("emit_commons_barrel must build a TsProgram");
         };

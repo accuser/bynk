@@ -1,0 +1,7 @@
+context shop.orders
+
+uses shop.values
+
+service length {
+  on call(n: Note) -> Effect[Int] { n.text.length() }
+}
