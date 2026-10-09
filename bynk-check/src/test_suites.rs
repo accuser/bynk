@@ -72,6 +72,34 @@ use bynk_syntax::ast::*;
 use bynk_syntax::error::CompileError;
 use bynk_syntax::span::Span;
 
+/// Which runs of a target's test module a `stub` clause applies to (#291).
+/// Every suite targeting a unit is emitted into one module, so a clause's
+/// scope is narrowed to its own suite whenever another suite shares the
+/// module (#1860).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StubScope {
+    /// Every run: a suite-scoped clause of the target's only suite.
+    Every,
+    /// The run of the case of this name (a case-scoped clause). Case names
+    /// are unique across a target's suites (`bynk.suite.duplicate_case_name`).
+    Case(String),
+    /// Every run of the suite with this ordinal among the target's suites
+    /// ([`suite_ordinal`]): its cases and its properties. A suite-scoped
+    /// clause, when the target has more than one suite.
+    Suite(usize),
+}
+
+/// #1860: the ordinal of the suite at `parsed[i]` among the suites in
+/// `indices` (each index whose file is a suite), or `None` when `i` is not
+/// one. [`StubScope::Suite`] is keyed by it, so emission computes it the same
+/// way for each run.
+pub fn suite_ordinal(i: usize, indices: &[usize], parsed: &[ParsedFile]) -> Option<usize> {
+    indices
+        .iter()
+        .filter(|&&j| parsed[j].test().is_some())
+        .position(|&j| j == i)
+}
+
 /// v0.118: a capability seam with one or more `stub` overrides applied
 /// (testing track slice 6). Groups every `stub Cap.method(…)` clause — both
 /// suite-scoped and case-scoped — targeting the same capability `cap`. The
@@ -86,10 +114,8 @@ pub struct ResolvedStub {
     /// The `stub` clauses for this capability, in match order (case-scoped
     /// first so they take precedence over suite-scoped in the emitted if-chain).
     pub clauses: Vec<StubClause>,
-    /// #291: parallel to `clauses` — the name of the case each clause is scoped
-    /// to, or `None` for a suite-scoped clause. A case-scoped clause applies only
-    /// while its own case runs.
-    pub clause_cases: Vec<Option<String>>,
+    /// #291: parallel to `clauses` — which runs each clause applies to.
+    pub clause_scopes: Vec<StubScope>,
     /// The test file declaring the first clause — the recording context for
     /// edges in its value expressions (v0.25).
     ///
@@ -186,8 +212,8 @@ pub fn phase_test_bodies(
         // Both suite-scoped and case-scoped `stub` fold into one per-seam
         // override map. Case-scoped clauses are collected first so they take
         // precedence over suite-scoped ones in the emitted first-match if-chain
-        // (the case > suite > default order; a first-cut global merge — a
-        // case-scoped clause is not yet re-scoped to its own case). Runs
+        // (the case > suite > default order). Each clause applies only to its
+        // own case's run, or its own suite's cases (#291, #1860). Runs
         // unconditionally, even when `had_dup` — its own diagnostics still
         // fire, matching `process_tests`'s original Phase 2/3 ordering.
         let target_stubs = resolve_stubs(
@@ -253,25 +279,37 @@ fn resolve_stubs(
     let target_table = unit_tables.get(target_name);
     let target_consumed = unit_consumes.get(target_name).cloned().unwrap_or_default();
 
-    // Collect clauses tagged with the declaring file. Case-scoped first so they
-    // precede suite-scoped clauses in each capability's match order.
-    let mut collected: Vec<(StubClause, Option<String>, PathBuf)> = Vec::new();
+    // Collect clauses tagged with the declaring file and the cases each
+    // applies to. Case-scoped first so they precede suite-scoped clauses in
+    // each capability's match order.
+    let mut collected: Vec<(StubClause, StubScope, PathBuf)> = Vec::new();
     for &i in indices {
         let Some(t) = parsed[i].test() else { continue };
         for case in &t.cases {
             for pc in &case.stubs {
                 collected.push((
                     pc.clone(),
-                    Some(case.name.clone()),
+                    StubScope::Case(case.name.clone()),
                     parsed[i].identity_path(),
                 ));
             }
         }
     }
+    // #1860: a suite-scoped clause applies to its own suite's runs, which
+    // matters only when another suite targets the same unit: all of them are
+    // emitted into one module.
+    let suites = indices
+        .iter()
+        .filter(|&&i| parsed[i].test().is_some())
+        .count();
     for &i in indices {
         let Some(t) = parsed[i].test() else { continue };
+        let scope = match suite_ordinal(i, indices, parsed) {
+            Some(n) if suites > 1 => StubScope::Suite(n),
+            _ => StubScope::Every,
+        };
         for pc in &t.stubs {
-            collected.push((pc.clone(), None, parsed[i].identity_path()));
+            collected.push((pc.clone(), scope.clone(), parsed[i].identity_path()));
         }
     }
 
@@ -291,7 +329,7 @@ fn resolve_stubs(
     };
 
     let mut out: HashMap<String, ResolvedStub> = HashMap::new();
-    for (pc, case, identity_path) in collected {
+    for (pc, scope, identity_path) in collected {
         let cap_name = pc.capability.name.clone();
         let Some(cap_decl) = resolve_cap(&cap_name) else {
             // Commons have no seams at all; contexts may still name a
@@ -362,11 +400,11 @@ fn resolve_stubs(
             cap: cap_name.clone(),
             cap_decl: cap_decl.clone(),
             clauses: Vec::new(),
-            clause_cases: Vec::new(),
+            clause_scopes: Vec::new(),
             identity_path: identity_path.clone(),
         });
         entry.clauses.push(pc);
-        entry.clause_cases.push(case);
+        entry.clause_scopes.push(scope);
     }
     out
 }
