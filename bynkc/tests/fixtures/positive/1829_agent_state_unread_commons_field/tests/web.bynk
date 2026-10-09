@@ -1,0 +1,6 @@
+suite app.web {
+  case "stores an item" {
+    let ok <- Shelf("main").put(Item { name: "a", note: "n" })
+    expect ok
+  }
+}
