@@ -1,0 +1,14 @@
+context shop.fees
+
+-- #1820: a context consumed only for a capability, which an agent of a split
+-- context is `given`. A sibling file that calls the agent names the
+-- capability in its `deps`, so it imports this context's namespace too.
+exports capability { Fees }
+
+capability Fees {
+  fn fee() -> Effect[Int]
+}
+
+provides Fees = FlatFees {
+  fn fee() -> Effect[Int] { 10 }
+}

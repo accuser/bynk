@@ -48,6 +48,7 @@ pub use paths::{
     MANIFEST_TABLES, ProjectPaths, ProjectPathsError, check_manifest, check_manifest_str,
     commons_dir_for, is_multi_file_layout, is_unpinned_range, normalize_rel, renamed_unit_name,
     render_package_json, try_read_project_paths, try_read_project_paths_with, ts_output_path,
-    unit_path_matches, worker_dir_name, worker_handlers_output_path, worker_handlers_source_path,
+    unit_path_matches, worker_dir_name, worker_file_source_path, worker_handlers_output_path,
+    worker_handlers_source_path,
 };
 pub use roots::{Roots, SchemaLock, UnitKind};

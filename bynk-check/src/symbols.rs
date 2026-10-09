@@ -768,6 +768,10 @@ pub struct FileDeclIndex {
     /// #1820: an agent's declaring file. A sibling file that constructs it
     /// calls its factory, `__make<Agent>`, which that file exports.
     pub agents: HashMap<String, PathBuf>,
+    /// #1820: a capability's declaring file. A sibling file names the
+    /// capability's interface in a handler's `deps` and a provider's
+    /// `implements`, so it imports the type from there.
+    pub capabilities: HashMap<String, PathBuf>,
 }
 
 /// **Tree-relative, deliberately.** This is an *emit* structure, not an index:
@@ -783,6 +787,7 @@ pub fn build_file_decl_index(indices: &[usize], parsed: &[ParsedFile]) -> FileDe
         fns: HashMap::new(),
         methods: HashMap::new(),
         agents: HashMap::new(),
+        capabilities: HashMap::new(),
     };
     for &i in indices {
         let path = parsed[i].source_path();
@@ -824,8 +829,12 @@ pub fn build_file_decl_index(indices: &[usize], parsed: &[ParsedFile]) -> FileDe
                         .entry(a.name.name.clone())
                         .or_insert_with(|| path.clone());
                 }
-                CommonsItem::Capability(_)
-                | CommonsItem::Provider(_)
+                CommonsItem::Capability(c) => {
+                    idx.capabilities
+                        .entry(c.name.name.clone())
+                        .or_insert_with(|| path.clone());
+                }
+                CommonsItem::Provider(_)
                 | CommonsItem::Service(_)
                 | CommonsItem::Actor(_)
                 // `messages` bundles aren't cross-file-imported by name in

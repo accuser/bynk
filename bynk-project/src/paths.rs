@@ -397,6 +397,30 @@ pub fn worker_handlers_output_path(context: &str) -> PathBuf {
     PathBuf::from(format!("workers/{}/handlers.ts", worker_dir_name(context)))
 }
 
+/// #1820: project-relative synthetic source path of one file's module in a
+/// context split across files, on Workers. Each file is its own module under
+/// `workers/<dir>/handlers/`, and `handlers.ts` re-exports them all, so the
+/// Worker's entry point and composition root, and every consumer, still
+/// import the context from `handlers.ts`. A file in the `<name>/` directory
+/// keeps its stem (`shop/orders/place.bynk` → `handlers/place.bynk`); a file
+/// at `<name>.bynk` beside them becomes `handlers/__unit.bynk`, a name no
+/// Bynk file in the directory can take, since a Bynk name cannot start
+/// with `_`. The emitted module is [`ts_output_path`] of this path.
+pub fn worker_file_source_path(context: &str, source: &Path) -> PathBuf {
+    let stem = if is_multi_file_layout(source, context) {
+        source
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    } else {
+        "__unit".to_string()
+    };
+    PathBuf::from(format!(
+        "workers/{}/handlers/{stem}.bynk",
+        worker_dir_name(context)
+    ))
+}
+
 /// The src-stripped stem components of a path (`learner/uln.bynk` → `["learner",
 /// "uln"]`), dropping the extension and any non-`Normal` components.
 fn stem_parts(rel_path: &Path) -> Vec<String> {
@@ -674,6 +698,18 @@ mod tests {
         assert_eq!(
             worker_handlers_output_path("commerce.payment"),
             PathBuf::from("workers/commerce-payment/handlers.ts")
+        );
+    }
+
+    #[test]
+    fn a_split_context_file_has_its_own_module_under_handlers() {
+        assert_eq!(
+            worker_file_source_path("shop.orders", Path::new("shop/orders/place.bynk")),
+            PathBuf::from("workers/shop-orders/handlers/place.bynk")
+        );
+        assert_eq!(
+            worker_file_source_path("shop.orders", Path::new("shop/orders.bynk")),
+            PathBuf::from("workers/shop-orders/handlers/__unit.bynk")
         );
     }
 
