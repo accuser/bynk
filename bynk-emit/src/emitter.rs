@@ -1262,9 +1262,7 @@ fn emit_boundary_helpers(
             if !workers || locally_declared.contains(n) {
                 continue;
             }
-            if matches!(ctx.imported_from_kind.get(n), Some(UnitKind::Commons))
-                && let Some(commons_name) = ctx.imported_from.get(n)
-            {
+            if let Some(commons_name) = codec_owner(ctx, n) {
                 by_commons
                     .entry(commons_name.clone())
                     .or_default()
@@ -1476,6 +1474,21 @@ fn emit_boundary_helpers(
 /// The file declaring `name` in the commons `commons_name`, as a module
 /// imports it: the declaring file of a multi-file commons, or the commons'
 /// single-file path.
+/// The unit whose module exports `name`'s codecs for this one to import: a
+/// commons it `uses`, or (#1845) an adapter it consumes. An adapter is
+/// recorded in `imported_from_kind` as a consumed *context*, but unlike one it
+/// is linked into each consuming Worker, so its module and codecs are in
+/// reach. A consumed context's types get their codecs from
+/// `emit_consumed_context_helpers` instead.
+fn codec_owner<'a>(ctx: &'a EmitProjectCtx, name: &str) -> Option<&'a String> {
+    let owner = ctx.imported_from.get(name)?;
+    match ctx.imported_from_kind.get(name) {
+        Some(UnitKind::Commons) => Some(owner),
+        Some(UnitKind::Context) if ctx.consumed_adapters.contains(owner) => Some(owner),
+        _ => None,
+    }
+}
+
 fn commons_decl_path(ctx: &EmitProjectCtx, commons_name: &str, name: &str) -> PathBuf {
     ctx.imported_decl_paths
         .get(commons_name)
@@ -1502,9 +1515,7 @@ fn commons_codec_imports(
         if already.contains(&n) {
             continue;
         }
-        let path = if matches!(ctx.imported_from_kind.get(&n), Some(UnitKind::Commons))
-            && let Some(commons_name) = ctx.imported_from.get(&n)
-        {
+        let path = if let Some(commons_name) = codec_owner(ctx, &n) {
             commons_decl_path(ctx, commons_name, &n)
         } else if siblings
             && let Some(path) = ctx.file_decl_index.types.get(&n)

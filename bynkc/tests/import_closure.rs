@@ -32,13 +32,6 @@ use bynkc::BuildTarget;
 /// directory name or a [`repros`] name.
 const KNOWN: &[(&str, &str, &str, &[&str], u32)] = &[
     (
-        "183_weather_fetch_adapter",
-        "workers",
-        "workers/forecast-lookup/handlers.ts",
-        &["__serialise_Report", "__serialise_WeatherError"],
-        1845,
-    ),
-    (
         "1807_uses_reaches_hidden_type",
         "workers",
         "workers/t-desk/handlers.ts",

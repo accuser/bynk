@@ -1,0 +1,10 @@
+context forecast.lookup
+
+consumes weather { Weather }
+
+service lookup {
+  on call(city: String) -> Effect[Result[Report, WeatherError]] given Weather {
+    let r <- Weather.current(city)
+    r
+  }
+}
