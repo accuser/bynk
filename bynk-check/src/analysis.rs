@@ -616,6 +616,7 @@ pub fn analyse_project(roots: &Roots, overlay: &HashMap<PathBuf, String>) -> Pro
     let _ready_integration = crate::test_suites::phase_integration_bodies(
         &integration_groups,
         &parsed,
+        &kinds,
         &unit_tables,
         &unit_consumes,
         &unit_consumes_aliases,

@@ -195,11 +195,10 @@ pub(crate) fn process_integration_tests(
     let mut outputs: Vec<StagedFile> = Vec::new();
     let mut runnables: Vec<RunnableTest> = Vec::new();
 
-    let _ = kinds;
-
     let ready = test_suites::phase_integration_bodies(
         integration_groups,
         parsed,
+        kinds,
         unit_tables,
         unit_consumes,
         unit_consumes_aliases,
@@ -223,15 +222,8 @@ pub(crate) fn process_integration_tests(
         // target's transitive `consumes` closure (no `wires` list).
         let suite_target = decl.target.joined();
         let suite_name = suite_target.clone();
-        // #1856: only a context is stood up as a Worker. A unit consumed for
-        // its capabilities alone (`consumes bynk { Clock }`, an adapter) is
-        // provided in-process by the composition root, emits no Worker, and
-        // has no Service Binding to wire.
-        let participants: Vec<String> =
-            test_suites::infer_participants(&suite_target, unit_consumes)
-                .into_iter()
-                .filter(|p| kinds.get(p) == Some(&UnitKind::Context))
-                .collect();
+        // #1856: contexts only; a capability-only unit is provided in-process.
+        let participants = test_suites::infer_participants(&suite_target, unit_consumes, kinds);
         // `ready` only contains groups `phase_integration_bodies` built a
         // harness cross-context view for — this lookup cannot miss.
         let cross_context = ready
