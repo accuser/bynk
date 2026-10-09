@@ -3,7 +3,8 @@
 //! The checker computes `expr_types: HashMap<ExprId, TypedExpr>` per file as
 //! it types each expression (T3.4, R2.4 — keyed by node identity, not
 //! position). On the Ok path that map rides inside the `TypedCommons`; on the
-//! error path `check_record` hands it out as `RecordCheck::partial_expr_types`.
+//! error path inside `RecordCheck::typed_despite_errors`, the program as
+//! checked so far.
 //! This sink carries it out to the analysis so completion can ask *"what is
 //! the type of the expression at this offset?"* (the receiver before a `.`),
 //! mirroring [`HintSink`](crate::hints::HintSink).
@@ -172,5 +173,50 @@ mod tests {
         let entries = vec![(span(0, 10), string), (span(2, 4), error)];
         assert_eq!(type_at_offset(&entries, 3, &tys), None);
         assert_eq!(type_at_offset(&entries, 7, &tys), Some(string));
+    }
+
+    /// Each expression is recorded once per file. A file that fails
+    /// `check_record` but keeps being checked (#1663) used to be recorded at
+    /// the `Err` exit and again at the final `failed` exit, doubling every
+    /// entry.
+    ///
+    /// The assertion is that no two entries share a span, which is stronger
+    /// than "recorded once": the checker does not guarantee that two typed
+    /// nodes never share a span (see `check_record_in`'s finding #28, bug
+    /// #844 and the else-less `if`). A fixture here must avoid such pairs.
+    #[test]
+    fn each_expression_is_recorded_once() {
+        for src in [
+            "context c\n\nfn f(num: Int) -> Int {\n  num * 2\n}\n",
+            "context c\n\nfn f(num: Int) -> Int {\n  num + \"s\"\n}\n",
+            // A record error, then a handler body typed by the declaration
+            // checks, which also fails.
+            "context c\n\nfn f(num: Int) -> Int {\n  num + \"s\"\n}\n\n\
+             service api from http {\n  on GET(\"/x\") () -> Effect[HttpResult[String]] by Visitor {\n    Ok(1 + \"s\")\n  }\n}\n",
+        ] {
+            let a = crate::testkit::analyse(&[("c.bynk", src)]);
+            let (_, entries) = a
+                .analysis
+                .expr_types
+                .iter()
+                .find(|(path, _)| path.ends_with("c.bynk"))
+                .expect("types recorded for c.bynk");
+            let mut spans: Vec<_> = entries
+                .iter()
+                .map(|(span, _)| (span.start, span.end))
+                .collect();
+            assert!(!spans.is_empty(), "no types recorded for {src:?}");
+            let total = spans.len();
+            spans.dedup();
+            assert_eq!(
+                spans.len(),
+                total,
+                "duplicate spans for {src:?}: {entries:?}"
+            );
+            if src.contains("service") {
+                // The handler body was typed and recorded, not just `f`.
+                assert_eq!(a.type_at("c.bynk", "1"), "Int");
+            }
+        }
     }
 }
