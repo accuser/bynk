@@ -430,21 +430,15 @@ pub fn check_file_core(
         }
         Err(errs) => {
             errors.extend_for(Some(&pf.identity_path()), unechoed(errs));
-            // ADR 0094: surface the best-effort partial types the checker
-            // computed so `.`-member completion / signature help work on a
-            // buffer with an unrelated error. Unconditional now (this
-            // module's own doc comment) — a `Mode::Build` caller simply
-            // never reads the sink this lands in.
-            record_analyse_types(
-                exprs,
-                &pf.identity_path(),
-                pf.is_synthetic(),
-                &rc.partial_expr_types,
-            );
             // #1663 (Decision A): a type error in one declaration must not
             // hide the next stage's checks of the others (a service handler's
             // body is typed in `check_context_declarations`).
             failed = true;
+            // ADR 0094: the program as checked so far carries the
+            // best-effort types of every expression that did check. It is
+            // not recorded here: checking goes on, and whichever exit below
+            // the file reaches records it once, with the handler bodies
+            // `check_context_declarations` types in the meantime.
             rc.typed_despite_errors?
         }
     };
