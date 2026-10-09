@@ -1,0 +1,10 @@
+commons shop.values
+
+-- #1815/#1823/#1817: commons types whose workers codecs other modules import.
+type Cents = Int where Positive
+
+type CustomerId = opaque String where NonEmpty
+
+fn standardPrice() -> Cents { 2500 }
+
+fn someone() -> CustomerId { CustomerId.unsafe("someone") }

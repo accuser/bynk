@@ -49,6 +49,8 @@ pub mod secrets;
 pub mod store_ops;
 pub mod symbols;
 pub mod test_suites;
+#[cfg(test)]
+pub(crate) mod testkit;
 pub mod unit_signature;
 pub mod websocket;
 pub mod wire;

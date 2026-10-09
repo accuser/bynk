@@ -1,0 +1,7 @@
+context shop.payment
+
+uses shop.values
+
+service authorise {
+  on call(cents: Cents) -> Effect[Bool] { true }
+}

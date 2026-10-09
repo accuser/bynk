@@ -737,3 +737,118 @@ pub fn analyse_project(roots: &Roots, overlay: &HashMap<PathBuf, String>) -> Pro
         doc_scope,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::testkit::analyse;
+
+    const MONEY: &str = "commons demo.money\n\ntype Cents = Int where NonNegative\n";
+
+    const PAYMENT: &str = "context demo.payment\n\n\
+exports transparent { Receipt }\n\n\
+type Receipt = { id: String }\n\n\
+service authorise {\n  on call(id: String) -> Effect[Result[Receipt, Int]] {\n    Ok(Receipt { id: id })\n  }\n}\n";
+
+    const CHECKOUT: &str = "context demo.checkout\n\n\
+uses demo.money\n\nconsumes demo.payment\n\n\
+fn price() -> Cents { 100 }\n\n\
+service pay {\n  on call(id: String) -> Effect[Result[Receipt, Int]] {\n    demo.payment.authorise(id)\n  }\n}\n";
+
+    #[test]
+    fn a_consuming_context_checks_clean_against_its_uses_and_consumes() {
+        let a = analyse(&[
+            ("demo/money.bynk", MONEY),
+            ("demo/payment.bynk", PAYMENT),
+            ("demo/checkout.bynk", CHECKOUT),
+        ]);
+        a.assert_clean();
+        assert_eq!(
+            a.type_at("demo/checkout.bynk", "demo.payment.authorise(id)"),
+            "Effect[Result[Receipt, Int]]"
+        );
+    }
+
+    #[test]
+    fn doc_scope_is_the_unit_then_its_uses_then_its_consumes() {
+        let a = analyse(&[
+            ("demo/money.bynk", MONEY),
+            ("demo/payment.bynk", PAYMENT),
+            ("demo/checkout.bynk", CHECKOUT),
+        ]);
+        assert_eq!(
+            a.analysis.doc_scope["demo.checkout"],
+            ["demo.checkout", "demo.money", "demo.payment"]
+        );
+        assert_eq!(a.analysis.doc_scope["demo.money"], ["demo.money"]);
+    }
+
+    #[test]
+    fn unit_sources_name_each_unit_s_own_files_and_no_synthetic_unit() {
+        let a = analyse(&[("demo/money.bynk", MONEY), ("demo/payment.bynk", PAYMENT)]);
+        let mut units: Vec<&str> = a.analysis.unit_sources.keys().map(String::as_str).collect();
+        units.sort();
+        assert_eq!(units, ["demo.money", "demo.payment"]);
+        assert!(a.analysis.unit_sources["demo.money"][0].ends_with("demo/money.bynk"));
+    }
+
+    #[test]
+    fn sequence_and_boundary_info_cover_contexts_only() {
+        let a = analyse(&[
+            ("demo/money.bynk", MONEY),
+            ("demo/payment.bynk", PAYMENT),
+            ("demo/checkout.bynk", CHECKOUT),
+        ]);
+        for info in [
+            a.analysis.sequence_info.keys().collect::<Vec<_>>(),
+            a.analysis.boundary_info.keys().collect::<Vec<_>>(),
+        ] {
+            let mut units: Vec<&str> = info.into_iter().map(String::as_str).collect();
+            units.sort();
+            assert_eq!(units, ["demo.checkout", "demo.payment"]);
+        }
+    }
+
+    #[test]
+    fn a_broken_unit_does_not_stop_an_independent_unit_from_checking() {
+        let a = analyse(&[
+            ("demo/money.bynk", MONEY),
+            (
+                "demo/broken.bynk",
+                "commons demo.broken\n\nfn f() -> Int { \"not an int\" }\n",
+            ),
+            (
+                "demo/fine.bynk",
+                "commons demo.fine\n\nuses demo.money\n\nfn price() -> Cents { 100 }\n",
+            ),
+        ]);
+        assert!(
+            a.analysis.errors.iter().all(|e| e
+                .source_path
+                .as_deref()
+                .is_some_and(|p| p.ends_with("demo/broken.bynk"))),
+            "only the broken unit reports:\n{}",
+            a.render()
+        );
+        assert_eq!(a.type_at("demo/fine.bynk", "100"), "Cents");
+    }
+
+    #[test]
+    fn every_file_read_is_snapshotted_clean_or_not() {
+        let a = analyse(&[
+            ("demo/money.bynk", MONEY),
+            (
+                "demo/broken.bynk",
+                "commons demo.broken\n\nfn f() -> Int { \"x\" }\n",
+            ),
+        ]);
+        let mut paths: Vec<&std::path::Path> = a
+            .analysis
+            .snapshots
+            .iter()
+            .map(|(p, _)| p.as_path())
+            .collect();
+        paths.sort();
+        assert_eq!(paths.len(), 2, "{paths:?}");
+        assert!(paths[0].ends_with("demo/broken.bynk") && paths[1].ends_with("demo/money.bynk"));
+    }
+}

@@ -613,6 +613,43 @@ pub fn compile_in_memory(
     finish_build(run, ImportExt::Js, Path::new(""))
 }
 
+/// [`compile_in_memory`] for several files (#1830): each `(path, source)` pair
+/// is one project file, its path relative to a single-tree root exactly as on
+/// disk (`demo/shop.bynk` for `context demo.shop`, `tests/shop.bynk` for a
+/// suite). Test-only, so a unit test can build a multi-unit project, or a
+/// unit with its suite, without a fixture directory; reach it through
+/// `crate::testkit`.
+#[cfg(test)]
+pub(crate) fn compile_files_in_memory(
+    files: &[(&str, &str)],
+    target: BuildTarget,
+    platform: Platform,
+) -> Result<ProjectOutput, ProjectFailure> {
+    let tys = &Arc::new(Types::new());
+    let root = PathBuf::from(".");
+    let paths: Vec<PathBuf> = files.iter().map(|(p, _)| PathBuf::from(p)).collect();
+    let overlay: HashMap<PathBuf, String> = files
+        .iter()
+        .map(|(p, src)| (PathBuf::from(p), (*src).to_string()))
+        .collect();
+    let trees = vec![(root.clone(), PathBuf::new())];
+    let run = run_checks(
+        &trees,
+        target,
+        platform,
+        ImportExt::Js,
+        Mode::Build,
+        &overlay,
+        &[],
+        Some(vec![paths]),
+        false,
+        &SchemaLock::Off,
+        &root,
+        tys,
+    );
+    finish_build(run, ImportExt::Js, Path::new(""))
+}
+
 /// Analyse a single **in-memory** Bynk source and return all diagnostics —
 /// non-bailing, no emission (in-browser track, slice 5d). The editor calls this
 /// on every (debounced) keystroke for live diagnostics: unlike [`compile_in_memory`]

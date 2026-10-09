@@ -2605,3 +2605,99 @@ pub(crate) fn check_map_kernel_method(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::testkit::analyse;
+
+    /// Each kernel call is bound by an unannotated `let`, so its type is
+    /// whatever the kernel's own dispatch decided, not something a declared
+    /// type pushed onto it.
+    const PROBE: &str = "commons demo\n\n\
+fn probe(s: String, n: Int, xs: List[Int], m: Map[String, Int], o: Option[Int], r: Result[Int, String]) -> Int {
+  let a = s.length()
+  let b = s.split(\",\")
+  let c = s.indexOf(\"x\")
+  let d = xs.get(0)
+  let e = xs.fold(0, (acc, x) => acc + x)
+  let f = xs.prepend(1)
+  let g = m.keys()
+  let h = m.get(\"k\")
+  let i = m.insert(\"k\", 1)
+  let j = o.map((x) => x.toString())
+  let k = o.okOr(\"none\")
+  let l = r.mapErr((err) => err.length())
+  let p = n.clamp(0, 10)
+  let q = n.toFloat()
+  0
+}
+";
+
+    #[test]
+    fn each_kernel_method_has_its_registered_result_type() {
+        let a = analyse(&[("demo.bynk", PROBE)]);
+        let cases = [
+            ("s.length()", "Int"),
+            ("s.split(\",\")", "List[String]"),
+            ("s.indexOf(\"x\")", "Option[Int]"),
+            ("xs.get(0)", "Option[Int]"),
+            ("xs.fold(0, (acc, x) => acc + x)", "Int"),
+            ("xs.prepend(1)", "List[Int]"),
+            ("m.keys()", "List[String]"),
+            ("m.get(\"k\")", "Option[Int]"),
+            ("m.insert(\"k\", 1)", "Map[String, Int]"),
+            ("o.map((x) => x.toString())", "Option[String]"),
+            ("o.okOr(\"none\")", "Result[Int, String]"),
+            ("r.mapErr((err) => err.length())", "Result[Int, Int]"),
+            ("n.clamp(0, 10)", "Int"),
+            ("n.toFloat()", "Float"),
+        ];
+        for (expr, want) in cases {
+            assert_eq!(a.type_at("demo.bynk", expr), want, "type of `{expr}`");
+        }
+    }
+
+    fn reports(body: &str, category: &str) {
+        analyse(&[("demo.bynk", &format!("commons demo\n\n{body}"))]).assert_reports(category);
+    }
+
+    #[test]
+    fn an_unknown_kernel_method_is_not_found() {
+        reports(
+            "fn f(s: String) -> Int { s.nope() }\n",
+            "bynk.types.method_not_found",
+        );
+    }
+
+    #[test]
+    fn a_kernel_method_with_the_wrong_argument_count_is_an_arity_error() {
+        reports(
+            "fn f(s: String) -> String { s.trim(1) }\n",
+            "bynk.types.method_arity",
+        );
+    }
+
+    #[test]
+    fn a_kernel_method_argument_of_the_wrong_type_is_a_mismatch() {
+        reports(
+            "fn f(s: String) -> Bool { s.contains(1) }\n",
+            "bynk.types.type_mismatch",
+        );
+    }
+
+    #[test]
+    fn an_and_then_step_that_does_not_return_an_option_is_rejected() {
+        reports(
+            "fn f(o: Option[Int]) -> Option[Int] { o.andThen((x) => x) }\n",
+            "bynk.types.combinator_return_mismatch",
+        );
+    }
+
+    #[test]
+    fn a_result_and_then_step_that_does_not_return_a_result_is_rejected() {
+        reports(
+            "fn f(r: Result[Int, String]) -> Result[Int, String] { r.andThen((x) => x) }\n",
+            "bynk.types.combinator_return_mismatch",
+        );
+    }
+}
