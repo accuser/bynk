@@ -91,6 +91,7 @@ export const place = {
 export function __resetAgents(): void {
   __OrderRegistry.reset();
 }
+
 export { __serialise_CustomerId, __deserialise_CustomerId };
 
 export function __serialise_Option_CustomerId(value: Option<CustomerId>): __JsonValue {

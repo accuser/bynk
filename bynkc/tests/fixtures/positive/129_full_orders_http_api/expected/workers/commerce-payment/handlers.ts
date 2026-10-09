@@ -108,6 +108,7 @@ export function __deserialise_PaymentError(json: __JsonValue, path: string = "$"
   }
 }
 
+
 export { __serialise_CurrencyCode, __deserialise_CurrencyCode, __serialise_Money, __deserialise_Money };
 
 export function __serialise_Result_AuthId_PaymentError(value: Result<AuthId, PaymentError>): __JsonValue {

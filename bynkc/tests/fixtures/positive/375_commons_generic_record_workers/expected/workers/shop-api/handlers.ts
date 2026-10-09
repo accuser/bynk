@@ -14,6 +14,7 @@ export const users = {
     return Ok(page);
   },
 };
+
 export { __serialise_User, __deserialise_User };
 
 export function __serialise_Paginated_User(value: Paginated<User>): __JsonValue {

@@ -201,6 +201,7 @@ export function __deserialise_OrderView(json: __JsonValue, path: string = "$"): 
   return Ok({ status: __status, totalMinor: __totalMinor } as OrderView);
 }
 
+
 export { __serialise_CurrencyCode, __deserialise_CurrencyCode, __serialise_Money, __deserialise_Money };
 
 export function __serialise_Result_Unit_OrderError(value: Result<void, OrderError>): __JsonValue {
