@@ -169,6 +169,12 @@ fn block(stmts: Vec<TsStmt>) -> TsStmt {
     TsStmt::block(stmts, None)
 }
 
+/// #1825: `__route = "<what>";`, naming the dispatch `fetch`'s fault log
+/// reports.
+fn set_fault_route(what: String) -> TsStmt {
+    TsStmt::assign(ident("__route"), str_lit(what), None)
+}
+
 fn try_catch_stmt(
     try_stmts: Vec<TsStmt>,
     catch_param: Option<&str>,
@@ -692,7 +698,8 @@ pub(crate) fn emit_worker_entry(
             continue;
         };
 
-        let mut case_body: Vec<TsStmt> = Vec::new();
+        // #1825: names the dispatch for the fault log below.
+        let mut case_body: Vec<TsStmt> = vec![set_fault_route(format!("call {sname}"))];
         // v0.177 (#643): the deploy-skew check runs **before the body is read**.
         //
         // The caller stamps a hash of its compiled view of this contract; this
@@ -1110,10 +1117,35 @@ pub(crate) fn emit_worker_entry(
 
     try_body.push(return_(Some(text_response("Not Found", 404))));
 
+    // #1825: a fault answers a bare 500, never leaking the error to the
+    // client (#184), but it is logged here first, with the context and the
+    // dispatch that faulted: the route *pattern* or `call <service>`, never
+    // the request, so no key or value reaches the log. Caught, it is no
+    // uncaught exception the platform would record, so without this a fault
+    // left no trace at all.
+    fetch_body.push(TsStmt::let_stmt(
+        TsBindingName::Ident("__route".to_string()),
+        Some(TsType::named("string")),
+        Some(str_lit("request")),
+        None,
+    ));
     fetch_body.push(try_catch_stmt(
         try_body,
-        None,
-        vec![return_(Some(text_response("Internal Server Error", 500)))],
+        Some("e"),
+        vec![
+            expr_stmt(method_call(
+                ident("globalThis.console"),
+                "error",
+                vec![
+                    TsExpr::template_lit(
+                        vec![format!("{context} "), " faulted".to_string()],
+                        vec![ident("__route")],
+                    ),
+                    ident("e"),
+                ],
+            )),
+            return_(Some(text_response("Internal Server Error", 500))),
+        ],
     ));
 
     let mut default_entries: Vec<TsObjectEntry> = vec![TsObjectEntry::Method {
@@ -1820,7 +1852,12 @@ fn emit_http_route_dispatch(
         )
     };
 
-    let mut guarded: Vec<TsStmt> = Vec::new();
+    // #1825: names the route, by its pattern, for the fault log.
+    let mut guarded: Vec<TsStmt> = vec![set_fault_route(format!(
+        "{} {}",
+        route.method.as_str(),
+        route.path
+    ))];
 
     // v0.142 (ADR 0165): the request-body ceiling. A route with an effective cap
     // rejects an oversized body with a synthesised `413` derived from the declared

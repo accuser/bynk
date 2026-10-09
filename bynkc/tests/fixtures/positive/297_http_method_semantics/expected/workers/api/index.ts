@@ -12,6 +12,7 @@ export default {
     const method = request.method;
     const surface = compose(env);
     const __security_routes: __SecurityPolicy = { nosniff: true, hstsMaxAgeSecs: null };
+    let __route: string = "request";
     try {
       if (path.startsWith("/_bynk/call/")) {
         const servicePath = path.slice("/_bynk/call/".length);
@@ -23,6 +24,7 @@ export default {
 
       {
         if ((method === "GET" || method === "HEAD") && path === "/logo") {
+          __route = "GET /logo";
           const result = await surface.http_GET_logo();
           const __response = __applySecurityHeaders(__notModifiedIfMatch(__httpResultToResponse(result, (__v: void) => null, { weakEtag: true }), request), __security_routes);
           return method === "HEAD" ? __headResponse(__response) : __response;
@@ -30,6 +32,7 @@ export default {
       }
       {
         if ((method === "GET" || method === "HEAD") && path === "/notes") {
+          __route = "GET /notes";
           const result = await surface.http_GET_notes();
           const __response = __applySecurityHeaders(__notModifiedIfMatch(__httpResultToResponse(result, (__v: string) => __v as __JsonValue, { weakEtag: true }), request), __security_routes);
           return method === "HEAD" ? __headResponse(__response) : __response;
@@ -37,6 +40,7 @@ export default {
       }
       {
         if ((method === "GET" || method === "HEAD") && path === "/ticks") {
+          __route = "GET /ticks";
           const result = await surface.http_GET_ticks();
           const __response = __applySecurityHeaders(__notModifiedIfMatch(__httpResultToResponse(result, (__v: void) => null, { weakEtag: true }), request), __security_routes);
           return method === "HEAD" ? __headResponse(__response) : __response;
@@ -44,6 +48,7 @@ export default {
       }
       {
         if (method === "POST" && path === "/notes") {
+          __route = "POST /notes";
           let __body_json: __JsonValue;
           try {
             __body_json = (await request.json()) as __JsonValue;
@@ -60,6 +65,7 @@ export default {
       {
         const __m = __matchPath("/notes/:id", path);
         if ((method === "GET" || method === "HEAD") && __m) {
+          __route = "GET /notes/:id";
           const __raw_id = __m.params["id"];
           const id = __raw_id;
           const result = await surface.http_GET_notes_Param_id(id);
@@ -88,7 +94,8 @@ export default {
         return __applySecurityHeaders(__res, __security_routes);
       }
       return new globalThis.Response("Not Found", { status: 404 });
-    } catch {
+    } catch (e) {
+      globalThis.console.error(`api ${__route} faulted`, e);
       return new globalThis.Response("Internal Server Error", { status: 500 });
     }
   },

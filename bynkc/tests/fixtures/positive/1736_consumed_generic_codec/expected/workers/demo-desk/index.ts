@@ -11,11 +11,13 @@ export default {
     const path = url.pathname;
     const method = request.method;
     const surface = compose(env);
+    let __route: string = "request";
     try {
       if (path.startsWith("/_bynk/call/")) {
         const servicePath = path.slice("/_bynk/call/".length);
         switch (servicePath) {
           case "sent": {
+            __route = "call sent";
             const __contract = request.headers.get("X-Bynk-Contract");
             if (__contract !== "d79765324db9916a") return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "sent", expected: "d79765324db9916a", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
             const args = await request.json() as __JsonValue;
@@ -27,6 +29,7 @@ export default {
             return new globalThis.Response(globalThis.JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
           }
           case "sentBack": {
+            __route = "call sentBack";
             const __contract = request.headers.get("X-Bynk-Contract");
             if (__contract !== "f6096134bb9f5caa") return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "sentBack", expected: "f6096134bb9f5caa", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
             const args = await request.json() as __JsonValue;
@@ -38,6 +41,7 @@ export default {
             return new globalThis.Response(globalThis.JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
           }
           case "sentWrapper": {
+            __route = "call sentWrapper";
             const __contract = request.headers.get("X-Bynk-Contract");
             if (__contract !== "ecc5773a401f9fc0") return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "sentWrapper", expected: "ecc5773a401f9fc0", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
             const args = await request.json() as __JsonValue;
@@ -49,6 +53,7 @@ export default {
             return new globalThis.Response(globalThis.JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
           }
           case "settled": {
+            __route = "call settled";
             const __contract = request.headers.get("X-Bynk-Contract");
             if (__contract !== "81322e527698e854") return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "settled", expected: "81322e527698e854", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
             const args = await request.json() as __JsonValue;
@@ -60,6 +65,7 @@ export default {
             return new globalThis.Response(globalThis.JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
           }
           case "total": {
+            __route = "call total";
             const __contract = request.headers.get("X-Bynk-Contract");
             if (__contract !== "26a626d0a1391c3d") return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "total", expected: "26a626d0a1391c3d", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
             const args = await request.json() as __JsonValue;
@@ -76,7 +82,8 @@ export default {
       }
 
       return new globalThis.Response("Not Found", { status: 404 });
-    } catch {
+    } catch (e) {
+      globalThis.console.error(`demo.desk ${__route} faulted`, e);
       return new globalThis.Response("Internal Server Error", { status: 500 });
     }
   },

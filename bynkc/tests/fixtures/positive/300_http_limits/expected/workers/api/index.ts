@@ -13,6 +13,7 @@ export default {
     const surface = compose(env);
     const __cors_api: __CorsPolicy = { origins: ["https://app.example.com"], allowMethods: ["GET", "HEAD", "OPTIONS", "POST"], allowHeaders: ["content-type"], credentials: false, maxAgeSecs: 3600 };
     const __security_api: __SecurityPolicy = { nosniff: true, hstsMaxAgeSecs: null };
+    let __route: string = "request";
     try {
       if (path.startsWith("/_bynk/call/")) {
         const servicePath = path.slice("/_bynk/call/".length);
@@ -27,6 +28,7 @@ export default {
       }
       {
         if ((method === "GET" || method === "HEAD") && path === "/status") {
+          __route = "GET /status";
           const result = await surface.http_GET_status();
           const __response = __applySecurityHeaders(__applyCors(__notModifiedIfMatch(__httpResultToResponse(result, (__v: string) => __v as __JsonValue, { weakEtag: true }), request), __cors_api, request.headers.get("origin")), __security_api);
           return method === "HEAD" ? __headResponse(__response) : __response;
@@ -34,6 +36,7 @@ export default {
       }
       {
         if (method === "POST" && path === "/bulk") {
+          __route = "POST /bulk";
           const __contentLength = request.headers.get("content-length");
           if (__contentLength !== null && globalThis.Number(__contentLength) > 26214400) {
             return __applySecurityHeaders(__applyCors(new globalThis.Response(globalThis.JSON.stringify({ kind: "PayloadTooLarge", details: "request body exceeds 26214400 bytes" }), { status: 413, headers: { "content-type": "application/json" } }), __cors_api, request.headers.get("origin")), __security_api);
@@ -53,6 +56,7 @@ export default {
       }
       {
         if (method === "POST" && path === "/upload") {
+          __route = "POST /upload";
           const __contentLength = request.headers.get("content-length");
           if (__contentLength !== null && globalThis.Number(__contentLength) > 1048576) {
             return __applySecurityHeaders(__applyCors(new globalThis.Response(globalThis.JSON.stringify({ kind: "PayloadTooLarge", details: "request body exceeds 1048576 bytes" }), { status: 413, headers: { "content-type": "application/json" } }), __cors_api, request.headers.get("origin")), __security_api);
@@ -86,7 +90,8 @@ export default {
         return __applySecurityHeaders(__applyCors(__res, __cors_api, request.headers.get("origin")), __security_api);
       }
       return new globalThis.Response("Not Found", { status: 404 });
-    } catch {
+    } catch (e) {
+      globalThis.console.error(`api ${__route} faulted`, e);
       return new globalThis.Response("Internal Server Error", { status: 500 });
     }
   },
