@@ -4,6 +4,7 @@
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, type __JsonValue, type __BoundaryError, type __ServiceBinding, __callService, __boundaryError } from "../../runtime.js";
 
 import { Money as __CommonsMoney } from "../../commerce/money.js";
+import { __serialise_CurrencyCode, __deserialise_CurrencyCode, __serialise_Money, __deserialise_Money } from "../../commerce/money.js";
 
 export type Money = __CommonsMoney & { readonly __ctxBrand?: "commerce.payment" };
 
@@ -108,7 +109,6 @@ export function __deserialise_PaymentError(json: __JsonValue, path: string = "$"
 }
 
 
-import { __serialise_CurrencyCode, __deserialise_CurrencyCode, __serialise_Money, __deserialise_Money } from "../../commerce/money.js";
 export { __serialise_CurrencyCode, __deserialise_CurrencyCode, __serialise_Money, __deserialise_Money };
 
 export function __serialise_Result_AuthId_PaymentError(value: Result<AuthId, PaymentError>): __JsonValue {

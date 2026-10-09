@@ -4,6 +4,7 @@
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, type Connection, type __DurableObjectState, type __DurableObjectNamespace, __StateRegistry, __makeAgent, type __AgentWire, __decodeAgentArgs, __encodeAgentResult, __AGENT_WIRE_PASS, __rehydrationViolation, __resolveConnection, __connIdOf, __acceptHibernatableConnection, __newWebSocketPair, __webSocketUpgradeResponse, type __JsonValue, type __BoundaryError, type __ServiceBinding, __callService, __boundaryError } from "../../runtime.js";
 
 import { RoomId as __CommonsRoomId } from "../../ids.js";
+import { __serialise_RoomId, __deserialise_RoomId } from "../../ids.js";
 
 export type RoomId = __CommonsRoomId & { readonly __ctxBrand?: "chat" };
 export const RoomId = {
@@ -146,5 +147,4 @@ export function __deserialise_UserId(json: __JsonValue, path: string = "$"): Res
 }
 
 
-import { __serialise_RoomId, __deserialise_RoomId } from "../../ids.js";
 export { __serialise_RoomId, __deserialise_RoomId };
