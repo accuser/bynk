@@ -3,10 +3,12 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, type __JsonValue, type __BoundaryError, type __ServiceBinding, __callService, __boundaryError } from "../../../runtime.js";
 
+import type * as shop_clock from "../../shop-clock/handlers.js";
 import type * as shop_payment from "../../shop-payment/handlers.js";
 
 export const refund = {
-  async call(qty: number, deps: { env: { SHOP_PAYMENT: __ServiceBinding } }): globalThis.Promise<boolean> {
+  async call(qty: number, deps: { Clock: shop_clock.Clock; env: { SHOP_PAYMENT: __ServiceBinding } }): globalThis.Promise<boolean> {
+    const __r0 = await deps.Clock.now();
     return __callService(deps.env.SHOP_PAYMENT, "authorise", ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(0 - qty), (__j: __JsonValue) => ((__v) => typeof __v === "boolean" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "boolean", actual: typeof __v } as __BoundaryError))(__j), "shop.orders", "b5e747de6448afda");
   },
 };

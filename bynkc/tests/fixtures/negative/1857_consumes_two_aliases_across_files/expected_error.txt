@@ -1,1 +1,1 @@
-bynk.consumes.alias_conflict
+bynk.consumes.alias_conflict `consumes shop.payment as Pay` conflicts with another `consumes` clause in context `shop.orders`: `shop.payment` is already consumed as `Payment` (first stated in `shop/orders/place.bynk`)

@@ -1,9 +1,14 @@
 -- #1857: each file of a context split across files states what it
--- consumes. The same aliased clause, repeated, is one clause.
+-- consumes. The same aliased clause, or the same `{ Cap }` selection,
+-- repeated, is one clause.
 context shop.orders
 
 consumes shop.payment as Payment
+consumes shop.clock { Clock }
 
 service place {
-  on call(qty: Int) -> Effect[Bool] { Payment.authorise(qty) }
+  on call(qty: Int) -> Effect[Bool] given Clock {
+    let _ <- Clock.now()
+    Payment.authorise(qty)
+  }
 }

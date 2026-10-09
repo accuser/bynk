@@ -1,0 +1,1 @@
+bynk.consumes.alias_conflict `consumes shop.payment as Payment` conflicts with another `consumes` clause in context `shop.orders`: the same clause appears earlier in this file

@@ -3,13 +3,16 @@
 
 import { type __ServiceBinding } from "../../runtime.js";
 import * as handlers from "./handlers.js";
+import * as handlers_shop_clock from "../shop-clock/handlers.js";
 
 export interface Env {
+  SHOP_CLOCK: __ServiceBinding;
   SHOP_PAYMENT: __ServiceBinding;
 }
 
 export function compose(env: Env) {
-  const deps = { env };
+  const Clock = new handlers_shop_clock.FixedClock();
+  const deps = { Clock, env };
   return {
     async place(qty: number) {
       return handlers.place.call(qty, deps);

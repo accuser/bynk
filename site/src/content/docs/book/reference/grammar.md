@@ -290,10 +290,12 @@ capabilities — whole and qualified, aliased (`as`), or with selected
 capabilities flattened to bare names (`{ Cap, … }`).
 
 A context's `consumes` clauses apply to all its files. In a context split across
-files, each file may state what it consumes, repeating a clause another file
-states. An alias names one unit, and a unit is consumed under one alias:
+files, each file may state what it consumes, repeating an aliased clause or a
+`{ Cap }` selection another file states; the same clause twice in one file is
+still an error. An alias names one unit, and a unit is consumed under one alias:
 `consumes shop.payment as Payment` in one file and `as Pay` in another is
-`bynk.consumes.alias_conflict`.
+`bynk.consumes.alias_conflict`. A unit may also be consumed unaliased, by its
+qualified name, beside its alias.
 
 **Static semantics.**
 {{#grammar-semantics consumes_decl}}

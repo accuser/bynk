@@ -1226,6 +1226,9 @@ pub fn phase_resolve_consumes(
         let kind = *kinds.get(name).unwrap();
         let mut consumes_targets: Vec<String> = Vec::new();
         let mut flattened: HashMap<String, String> = HashMap::new();
+        // #1857: the file that first selected each flattened capability, so a
+        // file of a split context may repeat another file's selection.
+        let mut flattened_in: HashMap<String, usize> = HashMap::new();
         let local_caps: HashSet<String> = unit_tables
             .get(name)
             .map(|t| t.capabilities.keys().cloned().collect())
@@ -1354,6 +1357,17 @@ pub fn phase_resolve_consumes(
                             continue;
                         }
                         if let Some(prev) = flattened.get(&cap.name) {
+                            // #1857: the same selection, repeated in another
+                            // file of the context, is one selection.
+                            if *prev == target && flattened_in.get(&cap.name) != Some(&i) {
+                                refs.record_in_unit(
+                                    cap.span,
+                                    SymbolKind::Capability,
+                                    &cap.name,
+                                    &target,
+                                );
+                                continue;
+                            }
                             errors.push_for(Some(&parsed[i].identity_path()), CompileError::new(
                                 "bynk.consumes.capability_name_clash",
                                 cap.span,
@@ -1368,6 +1382,7 @@ pub fn phase_resolve_consumes(
                         // the consumed unit (clause-position reference).
                         refs.record_in_unit(cap.span, SymbolKind::Capability, &cap.name, &target);
                         flattened.insert(cap.name.clone(), target.clone());
+                        flattened_in.insert(cap.name.clone(), i);
                     }
                 }
                 if !consumes_targets.contains(&target) {
@@ -1414,15 +1429,18 @@ pub fn phase_consumes_aliases(
                     // Already reported as unknown context above.
                     continue;
                 }
+                // #1857: a repeat is fine in *another* file; twice in one file
+                // is still a conflict.
                 let first = by_alias
                     .get(&alias.name)
-                    .filter(|(t, _, _)| *t != target)
+                    .filter(|(t, f, _)| *t != target || *f == i)
                     .map(|(t, f, sp)| {
-                        (
-                            format!("alias `{}` already names `{t}`", alias.name),
-                            *f,
-                            *sp,
-                        )
+                        let what = if *t == target {
+                            "the same clause appears earlier in this file".to_string()
+                        } else {
+                            format!("alias `{}` already names `{t}`", alias.name)
+                        };
+                        (what, *f, *sp)
                     })
                     .or_else(|| {
                         by_target
@@ -1433,24 +1451,27 @@ pub fn phase_consumes_aliases(
                             })
                     });
                 if let Some((what, prev_file, prev_span)) = first {
+                    // A label can point only into this file; another file's
+                    // clause is named in the message.
+                    let where_ = if prev_file == i {
+                        String::new()
+                    } else {
+                        format!(
+                            " (first stated in `{}`)",
+                            parsed[prev_file].identity_path().display()
+                        )
+                    };
                     let mut err = CompileError::new(
                         "bynk.consumes.alias_conflict",
                         alias.span,
                         format!(
-                            "`consumes {target} as {}` conflicts with another `consumes` clause in context `{name}`: {what}",
+                            "`consumes {target} as {}` conflicts with another `consumes` clause in context `{name}`: {what}{where_}",
                             alias.name
                         ),
                     );
-                    // A label can point only into this file; another file's
-                    // clause is named in a note.
-                    err = if prev_file == i {
-                        err.with_label(prev_span, "previously defined here")
-                    } else {
-                        err.with_note(format!(
-                            "previously defined in `{}`",
-                            parsed[prev_file].identity_path().display()
-                        ))
-                    };
+                    if prev_file == i {
+                        err = err.with_label(prev_span, "previously defined here");
+                    }
                     errors.push_for(
                         Some(&parsed[i].identity_path()),
                         err.with_note(

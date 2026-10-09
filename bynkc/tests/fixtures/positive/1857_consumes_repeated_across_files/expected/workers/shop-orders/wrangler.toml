@@ -4,6 +4,10 @@ main = "index.ts"
 compatibility_date = "2026-07-01"
 
 [[services]]
+binding = "SHOP_CLOCK"
+service = "shop-clock"
+
+[[services]]
 binding = "SHOP_PAYMENT"
 service = "shop-payment"
 
