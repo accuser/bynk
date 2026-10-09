@@ -7,10 +7,12 @@ import {
   makeIntegrationDoNamespace,
   makeWorkersAgent,
   decodeAgentArgs,
+  decodeAgentKey,
   encodeAgentResult,
   AGENT_WIRE_PASS,
   type AgentWire,
   type DurableObjectNamespace,
+  type WireCodec,
 } from "../src/agent.ts";
 import type { BoundaryError, JsonValue } from "../src/boundary.ts";
 import { Ok, Err } from "../src/result.ts";
@@ -166,6 +168,42 @@ test("#1678 workers proxy: a result that fails to decode throws a boundary error
   }
   const agent = makeWorkersAgent<Echo>(ns, "k", hexWire);
   await assert.rejects(agent.echo(new Uint8Array([1]), {}), /BoundaryError: StructuralMismatch/);
+});
+
+// #1818: an Int key's codec, so the sent key is distinguishable from the
+// stringified `idFromName` name.
+const intKeyCodec: WireCodec = {
+  enc: ((v: number) => ({ n: v })) as (v: never) => JsonValue,
+  dec: (j: JsonValue) =>
+    typeof j === "object" && j !== null && "n" in j && typeof j.n === "number"
+      ? Ok(j.n)
+      : Err({ kind: "StructuralMismatch", path: "$", expected: "{ n }", actual: typeof j } as BoundaryError),
+};
+
+test("#1818 workers proxy: an agent that reads its key is sent it, encoded", async () => {
+  const bodies: unknown[] = [];
+  const ns: DurableObjectNamespace = {
+    idFromName: (n) => n,
+    get: () => ({
+      fetch: async (_url: string, init?: RequestInit) => {
+        bodies.push(JSON.parse(String(init?.body)));
+        return Response.json(null);
+      },
+    }),
+  };
+  interface Reader {
+    read(deps: unknown): Promise<unknown>;
+  }
+  await makeWorkersAgent<Reader>(ns, 7, undefined, intKeyCodec).read({});
+  assert.deepEqual(bodies[0], { args: [], deps: {}, key: { n: 7 } });
+  assert.equal(decodeAgentKey(intKeyCodec, (bodies[0] as { key: JsonValue }).key), 7);
+  // An agent that does not read its key sends the body it always did.
+  await makeWorkersAgent<Reader>(ns, 7).read({});
+  assert.deepEqual(bodies[1], { args: [], deps: {} });
+});
+
+test("#1818 the DO side rejects a key that fails to decode", () => {
+  assert.throws(() => decodeAgentKey(intKeyCodec, "7"), /BoundaryError: StructuralMismatch/);
 });
 
 test("#1678 a method absent from the wire table throws, including an inherited name", async () => {

@@ -4,7 +4,7 @@
 // importing module can collide with an imported runtime name (a user
 // `type JsonValue` beside an import of `JsonValue` would not compile).
 // The plain names stay exported for the runtime's own tests.
-import { AGENT_WIRE_PASS, StateRegistry, decodeAgentArgs, dispatchToEventsFanout, encodeAgentResult, makeAgent, makeIntegrationDoNamespace, serialiseAgentKey, type AgentWire, type DurableObjectNamespace } from "./agent.ts";
+import { AGENT_WIRE_PASS, StateRegistry, decodeAgentArgs, decodeAgentKey, dispatchToEventsFanout, encodeAgentResult, makeAgent, makeIntegrationDoNamespace, serialiseAgentKey, type AgentWire, type DurableObjectNamespace } from "./agent.ts";
 import { verifyBearerJwtHs256, verifyOidcJwt, verifySignatureHmacSha256 } from "./auth.ts";
 import { boundaryError, callService, deliverEvent, deserialiseEventEnvelope, rehydrationViolation, type BoundaryError, type JsonValue, type ServiceBinding } from "./boundary.ts";
 import { WorkersConnection, acceptHibernatableConnection, connIdOf, newWebSocketPair, resolveConnection, webSocketUpgradeResponse } from "./connection.ts";
@@ -26,6 +26,7 @@ export {
   connIdOf as __connIdOf,
   corsPreflightResponse as __corsPreflightResponse,
   decodeAgentArgs as __decodeAgentArgs,
+  decodeAgentKey as __decodeAgentKey,
   deliverEvent as __deliverEvent,
   deserialiseEventEnvelope as __deserialiseEventEnvelope,
   dispatchToEventsFanout as __dispatchToEventsFanout,
