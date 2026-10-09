@@ -763,16 +763,17 @@ service api from http {
         assert!(model.contract.is_none());
     }
 
-    /// How many expressions in the handler at `offset` (reparsed the same
-    /// way [`wire_contract_at`] reparses) [`ResponseWalk::expr_ty`] resolves
-    /// to a recorded type — the probe that the walk's primary, checker-typed
-    /// path is actually taken rather than the declared-return fallback.
-    fn typed_expr_count(
+    /// [`ResponseWalk::expr_ty`]'s answer for every expression in the
+    /// handler at `offset`, keyed by its source text — reparsed the same way
+    /// [`wire_contract_at`] reparses, so the probe of whether the walk's
+    /// primary, checker-typed path is actually taken rather than the
+    /// declared-return fallback.
+    fn walk_expr_tys(
         text: &str,
         offset: usize,
         expr_types: &[(Span, TyId)],
         tys: &Types,
-    ) -> usize {
+    ) -> Vec<(String, Option<std::sync::Arc<Ty>>)> {
         fn collect<'e>(e: &'e Expr, out: &mut Vec<&'e Expr>) {
             out.push(e);
             for c in expr_children(e) {
@@ -810,8 +811,13 @@ service api from http {
             out: Vec::new(),
         };
         all.iter()
-            .filter(|e| walk.expr_ty(e.span).is_some())
-            .count()
+            .map(|e| {
+                (
+                    text[e.span.start..e.span.end].to_string(),
+                    walk.expr_ty(e.span),
+                )
+            })
+            .collect()
     }
 
     #[test]
@@ -843,11 +849,22 @@ service api from http {
             "the clean fixture recorded no expr types"
         );
         let offset = find_offset(RATELIMIT_SRC, "GET(\"/check/:client\")");
-        assert!(
-            typed_expr_count(RATELIMIT_SRC, offset, expr_types, &diag.ty_intern) > 0,
-            "no reparsed handler expression resolved against the round's \
-             expr_types — the walk only ever took the degraded fallback"
-        );
+        // The constructed responses themselves resolve to `HttpResult`, not
+        // just some incidental sub-expression — otherwise the walk took the
+        // degraded fallback for exactly the expressions it classifies.
+        let walked = walk_expr_tys(RATELIMIT_SRC, offset, expr_types, &diag.ty_intern);
+        for src in ["Ok(view)", "TooManyRequests(\"rate limit exceeded\")"] {
+            let ty = walked
+                .iter()
+                .find(|(t, _)| t == src)
+                .unwrap_or_else(|| panic!("`{src}` not walked: {walked:?}"))
+                .1
+                .as_deref();
+            assert!(
+                matches!(ty, Some(Ty::HttpResult(_))),
+                "`{src}` should resolve to a recorded HttpResult, got {ty:?}"
+            );
+        }
         let model = wire_contract_at(
             "ratelimit",
             RATELIMIT_SRC,
