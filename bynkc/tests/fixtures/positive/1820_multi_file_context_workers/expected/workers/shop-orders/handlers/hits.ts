@@ -4,12 +4,24 @@
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, type __DurableObjectNamespace, type __JsonValue, type __BoundaryError, type __ServiceBinding, __callService, __boundaryError } from "../../../runtime.js";
 
 import { __makeTally } from "./tally.js";
+import { Note as __CommonsNote } from "../../../shop/values.js";
 
 import type * as shop_fees from "../../shop-fees/handlers.js";
 import type * as shop_payment from "../../shop-payment/handlers.js";
+import { __serialise_Note, __deserialise_Note } from "../../../shop/values.js";
+
+export type Note = __CommonsNote & { readonly __ctxBrand?: "shop.orders" };
 
 export const hits = {
   async call(deps: { env: { SHOP_FEES: __ServiceBinding; SHOP_PAYMENT: __ServiceBinding; BOOK: __DurableObjectNamespace; TALLY: __DurableObjectNamespace } }): globalThis.Promise<number> {
     return __makeTally("all", deps.env).hit(deps);
   },
 };
+
+export const note = {
+  async call(n: Note, deps: {}): globalThis.Promise<Note> {
+    return n;
+  },
+};
+
+export { __serialise_Note, __deserialise_Note };

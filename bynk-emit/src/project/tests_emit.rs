@@ -147,7 +147,7 @@ pub(crate) fn process_tests(
             }
             for name in imported {
                 if let Some(barrel) =
-                    emit_commons_barrel(name, groups, parsed, import_ext, emitted_barrels)
+                    emit_commons_barrel(name, groups, parsed, import_ext, emitted_barrels, &[])
                 {
                     outputs.push(barrel);
                 }
@@ -285,7 +285,7 @@ pub(crate) fn process_integration_tests(
             // Emit one (deduped) for each that is a multi-file commons.
             for name in &uses_targets {
                 if let Some(barrel) =
-                    emit_commons_barrel(name, groups, parsed, ImportExt::Js, emitted_barrels)
+                    emit_commons_barrel(name, groups, parsed, ImportExt::Js, emitted_barrels, &[])
                 {
                     outputs.push(barrel);
                 }
@@ -2328,13 +2328,19 @@ fn emit_test_module(
 ///
 /// #1820: a multi-file *context*'s barrel is also part of a production bundle
 /// build, emitted by `run_checks` ahead of the test passes, since its
-/// composition root imports the context from `out/<name>.ts` too.
+/// composition root imports the context from `out/<name>.ts` too; on workers,
+/// `run_checks` claims its path, since the context's modules are the Worker's.
+/// `run_checks` alone passes `modules_out`, this unit's staged modules, for
+/// [`duplicated_export_reexports`]; the test passes, which only ever reach a
+/// commons here, pass none. A commons' files repeat no generated export: it
+/// has no boundary codecs, and only a context rebrands a `uses`d type.
 pub(super) fn emit_commons_barrel(
     name: &str,
     groups: &BTreeMap<String, Vec<usize>>,
     parsed: &[ParsedFile],
     import_ext: ImportExt,
     emitted: &mut HashSet<PathBuf>,
+    modules_out: &[StagedFile],
 ) -> Option<StagedFile> {
     let indices = groups.get(name)?;
     // Multi-file only: *every* file must sit under a `<name>/` directory, the
@@ -2369,7 +2375,7 @@ pub(super) fn emit_commons_barrel(
         let spec = emitter::cross_commons_import_specifier_for_path(&barrel_loc, file, import_ext);
         stmts.push(TsStmt::decl(TsDecl::ReExportAll { from: spec }, None));
     }
-    stmts.extend(merged_unit_helpers(
+    let (merged, defined) = merged_unit_helpers(
         name,
         indices,
         parsed,
@@ -2377,7 +2383,15 @@ pub(super) fn emit_commons_barrel(
         import_ext,
         |file| file.to_path_buf(),
         true,
+    );
+    stmts.extend(duplicated_export_reexports(
+        &files,
+        modules_out,
+        &defined,
+        &barrel_loc,
+        import_ext,
     ));
+    stmts.extend(merged);
     Some(StagedFile {
         output_path,
         document: Document::Ts(TsProgram { stmts }),
@@ -2412,7 +2426,7 @@ pub(super) fn merged_unit_helpers(
     import_ext: ImportExt,
     module_of: impl Fn(&Path) -> PathBuf,
     surface: bool,
-) -> Vec<TsStmt> {
+) -> (Vec<TsStmt>, Vec<String>) {
     let mut with_agents: Vec<PathBuf> = Vec::new();
     let mut with_services: Vec<PathBuf> = Vec::new();
     for &i in indices {
@@ -2431,6 +2445,11 @@ pub(super) fn merged_unit_helpers(
     with_agents.sort();
     with_services.sort();
     let mut stmts = Vec::new();
+    // The names defined below, pushed in the branch that defines each, so
+    // `duplicated_export_reexports` never also re-exports one file's copy.
+    // Unlike a codec or a rebrand, each file's copy differs (it covers that
+    // file's agents or services), so re-exporting one would be wrong.
+    let mut defined = Vec::new();
     let mut aliases: BTreeMap<PathBuf, String> = BTreeMap::new();
     let mut alias_of = |file: &PathBuf, stmts: &mut Vec<TsStmt>| -> String {
         if let Some(a) = aliases.get(file) {
@@ -2462,6 +2481,7 @@ pub(super) fn merged_unit_helpers(
             ),
             None,
         ));
+        defined.push("__resetAgents".to_string());
     }
     if surface && with_services.len() > 1 {
         let deps = format!("__{}Deps", emitter::emit::context_pascal(name));
@@ -2486,8 +2506,88 @@ pub(super) fn merged_unit_helpers(
             ),
             None,
         ));
+        defined.push("__makeSurface".to_string());
+        defined.push(deps);
     }
-    stmts
+    (stmts, defined)
+}
+
+/// #1820: the explicit re-exports a multi-file context's barrel needs where
+/// two or more of its files' modules export one name. User names are unique
+/// across a unit, but each file emits its own copy of what its declarations
+/// need from outside it: the context's rebrand of a `uses`d commons type, that
+/// commons type's codecs re-exported, a boundary type's codecs (wherever the
+/// type is declared). Each copy is a function of the type alone, so the
+/// barrel re-exports the name from the first module (sorted by path) that
+/// exports it, which takes precedence over `export *`; without it, `export *`
+/// is ambiguous (TS2308) and drops the name at runtime. `merged` names the
+/// helpers the barrel defines itself (`merged_unit_helpers`), which are
+/// skipped.
+///
+/// `modules` is each file's module path; `emitted`, the staged output in
+/// which each is found at its [`ts_output_path`]. What a module exports is
+/// read with [`TsStmt::exported_names`], which sees structured exports only;
+/// every generated name that repeats across files is exported structurally
+/// (the commons codec re-export is [`TsDecl::ExportNames`] for this reason).
+/// A name the chosen module exports only as a type (a rebrand of a commons
+/// type with no `of` constructor is a bare `type` alias) is re-exported as
+/// `type X`: under the build's `isolatedModules`, `export { X }` of a
+/// type-only name is TS1205 (#1862 review).
+pub(super) fn duplicated_export_reexports(
+    modules: &[PathBuf],
+    emitted: &[StagedFile],
+    merged: &[String],
+    barrel_loc: &Path,
+    import_ext: ImportExt,
+) -> Vec<TsStmt> {
+    // Per name, each exporting module and whether it exports a value under
+    // the name.
+    let mut exporters: BTreeMap<&str, Vec<(&PathBuf, bool)>> = BTreeMap::new();
+    for module in modules {
+        let output = ts_output_path(module);
+        let Some(Document::Ts(program)) = emitted
+            .iter()
+            .find(|f| f.output_path == output)
+            .map(|f| &f.document)
+        else {
+            continue;
+        };
+        for stmt in &program.stmts {
+            for exported in stmt.exported_names() {
+                // A type is often both an `interface` and a `const` of one
+                // name: one module, counted once, with a value if either
+                // statement exports one. This loop visits one module's
+                // statements at a time, so a module's earlier entry for the
+                // name, if any, is the last one.
+                let modules = exporters.entry(exported.name).or_default();
+                match modules.last_mut() {
+                    Some((m, has_value)) if *m == module => *has_value |= exported.has_value,
+                    _ => modules.push((module, exported.has_value)),
+                }
+            }
+        }
+    }
+    let mut chosen: BTreeMap<&PathBuf, Vec<String>> = BTreeMap::new();
+    for (name, modules) in &exporters {
+        if let [(first, has_value), _, ..] = modules.as_slice()
+            && !merged.iter().any(|m| m == name)
+        {
+            let spec = if *has_value {
+                name.to_string()
+            } else {
+                format!("type {name}")
+            };
+            chosen.entry(first).or_default().push(spec);
+        }
+    }
+    chosen
+        .into_iter()
+        .map(|(module, names)| {
+            let from =
+                emitter::cross_commons_import_specifier_for_path(barrel_loc, module, import_ext);
+            TsStmt::decl(TsDecl::ReExport { names, from }, None)
+        })
+        .collect()
 }
 
 /// Render the relative import path from the `tests/` output directory to the
@@ -6404,8 +6504,9 @@ mod tests {
         let mut groups = BTreeMap::new();
         groups.insert("thing".to_string(), vec![0, 1]);
         let mut emitted = HashSet::new();
-        let staged = emit_commons_barrel("thing", &groups, &parsed, ImportExt::Js, &mut emitted)
-            .expect("a multi-file commons must produce a barrel");
+        let staged =
+            emit_commons_barrel("thing", &groups, &parsed, ImportExt::Js, &mut emitted, &[])
+                .expect("a multi-file commons must produce a barrel");
         let Document::Ts(program) = staged.document else {
             panic!("emit_commons_barrel must build a TsProgram");
         };

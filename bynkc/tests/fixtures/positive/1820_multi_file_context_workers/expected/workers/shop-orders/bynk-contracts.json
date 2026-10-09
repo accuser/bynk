@@ -2,6 +2,8 @@
   "version": 1,
   "provides": {
     "hits": "295c6455d9ef7692",
+    "length": "208465506c3dedfe",
+    "note": "d3e0cfcbb5ac1fd1",
     "place": "79c966765bfd2c72"
   },
   "expects": {

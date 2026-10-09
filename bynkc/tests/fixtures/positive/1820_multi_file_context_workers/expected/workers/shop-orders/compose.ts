@@ -22,6 +22,12 @@ export function compose(env: Env) {
     async hits() {
       return handlers.hits.call(deps);
     },
+    async length(n: handlers.Note) {
+      return handlers.length.call(n, deps);
+    },
+    async note(n: handlers.Note) {
+      return handlers.note.call(n, deps);
+    },
     async place(line: handlers.Line) {
       return handlers.place.call(line, deps);
     },

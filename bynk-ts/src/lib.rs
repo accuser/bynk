@@ -44,8 +44,8 @@ pub use printer::{
     print_stmt_and_merge, print_type,
 };
 pub use program::{
-    TsArrowBody, TsBinaryOp, TsBindingName, TsClassCtor, TsClassField, TsClassMethod, TsDecl,
-    TsExpr, TsLit, TsObjectEntry, TsParam, TsProgram, TsStmt, TsSwitchCase, TsType, TsTypeMember,
-    TsUnaryOp, VerbatimOrigin,
+    ExportedName, TsArrowBody, TsBinaryOp, TsBindingName, TsClassCtor, TsClassField, TsClassMethod,
+    TsDecl, TsExpr, TsLit, TsObjectEntry, TsParam, TsProgram, TsStmt, TsSwitchCase, TsType,
+    TsTypeMember, TsUnaryOp, VerbatimOrigin,
 };
 pub use source_map::SourceMapBuilder;

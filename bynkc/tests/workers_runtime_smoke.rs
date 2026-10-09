@@ -316,8 +316,14 @@ fn agent_calls_use_the_boundary_codec_on_workerd() {
 /// `handlers.ts` re-exports. The route calls an agent declared in another
 /// file, with a third file's type, and the agent is `given` a provider
 /// declared in a fourth: its Durable Object rebuilds the provider through
-/// `handlers.ts`, an import cycle that must still load.
+/// `handlers.ts`, an import cycle that must still load. Two files also use one
+/// commons record, so `handlers.ts` re-exports its rebrand as `type Tag`,
+/// which stripping to JavaScript must erase (#1862 review).
 const SPLIT_CONTEXT_FILES: &[(&str, &str)] = &[
+    (
+        "tags.bynk",
+        "commons tags\n\ntype Tag = { label: String }\n",
+    ),
     (
         "smoke/types.bynk",
         "context smoke\n\ntype Line = { sku: String, qty: Int }\n",
@@ -339,6 +345,8 @@ provides Stamp = FixedStamp {
         "smoke/book.bynk",
         r#"context smoke
 
+uses tags
+
 agent Book {
   key id: String
   store last: Cell[Option[Line]]
@@ -350,12 +358,16 @@ agent Book {
     let _ <- count.update((c) => c + line.qty)
     Effect.pure(count + s)
   }
+
+  on call label(t: Tag) -> Effect[String] { t.label }
 }
 "#,
     ),
     (
         "smoke/api.bynk",
         r#"context smoke
+
+uses tags
 
 service api from http {
   on GET("/") () -> Effect[HttpResult[String]] by v: Visitor {
@@ -365,6 +377,11 @@ service api from http {
   on GET("/add") () -> Effect[HttpResult[String]] by v: Visitor {
     let n <- Book("o1").add(Line { sku: "o1", qty: 2 })
     Ok("total=\(n)")
+  }
+
+  on GET("/label") () -> Effect[HttpResult[String]] by v: Visitor {
+    let l <- Book("o1").label(Tag { label: "x" })
+    Ok("label=\(l)")
   }
 }
 "#,
@@ -385,6 +402,11 @@ fn a_context_split_across_files_serves_on_workerd() {
     assert!(
         second.contains("total=104"),
         "the agent's state persists across calls: {second}"
+    );
+    let label = fetch(&served.url, "/label").expect("GET /label passes a commons record");
+    assert!(
+        label.contains("label=x"),
+        "a commons record two files share crosses to the agent: {label}"
     );
 }
 
