@@ -1472,12 +1472,10 @@ fn check_unit_files(
 /// would leave ambiguous: only `__resetAgents`, since a Worker's files export
 /// no surface.
 ///
-/// A file also emits the boundary codecs of each type its own handlers carry
-/// across the wire, wherever that type is declared, so two files can each
-/// export `__serialise_Line`. The copies are the same function of the same
-/// type, so the barrel re-exports each such name from the first module
-/// (`emitted`, this unit's modules) that exports it; an explicit re-export
-/// takes precedence over `export *`.
+/// Each file also emits its own copy of what its declarations need from
+/// outside it (a boundary type's codecs, a `uses`d commons type's rebrand), so
+/// two files can both export one name; the barrel re-exports each such name
+/// from one module of `emitted`, this unit's (`duplicated_export_reexports`).
 fn emit_worker_handlers_barrel(
     name: &str,
     indices: &[usize],
@@ -1502,36 +1500,7 @@ fn emit_worker_handlers_barrel(
             emitter::cross_commons_import_specifier_for_path(&barrel_loc, module, import_ext);
         stmts.push(TsStmt::decl(TsDecl::ReExportAll { from: spec }, None));
     }
-    let mut codec_exporters: BTreeMap<&str, Vec<&Path>> = BTreeMap::new();
-    for module in &modules {
-        let output = ts_output_path(module);
-        let Some(Document::Ts(program)) = emitted
-            .iter()
-            .find(|f| f.output_path == output)
-            .map(|f| &f.document)
-        else {
-            continue;
-        };
-        for stmt in &program.stmts {
-            if let Some(n) = stmt.exported_name()
-                && (n.starts_with("__serialise_") || n.starts_with("__deserialise_"))
-            {
-                codec_exporters.entry(n).or_default().push(module);
-            }
-        }
-    }
-    let mut chosen: BTreeMap<&Path, Vec<String>> = BTreeMap::new();
-    for (codec, exporters) in &codec_exporters {
-        if let [first, _, ..] = exporters.as_slice() {
-            chosen.entry(first).or_default().push(codec.to_string());
-        }
-    }
-    for (module, names) in chosen {
-        let from =
-            emitter::cross_commons_import_specifier_for_path(&barrel_loc, module, import_ext);
-        stmts.push(TsStmt::decl(TsDecl::ReExport { names, from }, None));
-    }
-    stmts.extend(merged_unit_helpers(
+    let (merged, defined) = merged_unit_helpers(
         name,
         indices,
         parsed,
@@ -1539,7 +1508,15 @@ fn emit_worker_handlers_barrel(
         import_ext,
         module_of,
         false,
+    );
+    stmts.extend(duplicated_export_reexports(
+        &modules,
+        emitted,
+        &defined,
+        &barrel_loc,
+        import_ext,
     ));
+    stmts.extend(merged);
     StagedFile {
         output_path: worker_handlers_output_path(name),
         document: Document::Ts(TsProgram { stmts }),
@@ -2105,11 +2082,17 @@ fn run_checks(
     // `out/<name>.ts`, which the bundle's composition root imports it from.
     // Its barrel is part of the build, not only of a test build; a suite that
     // imports the context reuses it.
-    if target == BuildTarget::Bundle {
+    if mode == Mode::Build && target == BuildTarget::Bundle {
         for (name, kind) in &kinds {
             if *kind == UnitKind::Context
-                && let Some(barrel) =
-                    emit_commons_barrel(name, &groups, &parsed, import_ext, &mut emitted_barrels)
+                && let Some(barrel) = emit_commons_barrel(
+                    name,
+                    &groups,
+                    &parsed,
+                    import_ext,
+                    &mut emitted_barrels,
+                    &compiled,
+                )
             {
                 compiled.push(barrel);
             }

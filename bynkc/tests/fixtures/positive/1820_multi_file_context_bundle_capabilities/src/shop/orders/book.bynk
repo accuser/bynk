@@ -1,0 +1,15 @@
+context shop.orders
+
+uses shop.values
+
+agent Book {
+  key id: String
+
+  store total: Cell[Int] = 0
+
+  on call add(m: Money) -> Effect[Int] given Stamp {
+    let s <- Stamp.next()
+    let _ <- total.update((t) => t + m)
+    Effect.pure(total + s)
+  }
+}
