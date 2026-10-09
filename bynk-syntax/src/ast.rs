@@ -3210,3 +3210,528 @@ mod expr_children_tests {
         assert_eq!(texts, ["who", "api.get()"]);
     }
 }
+
+/// #1832: [`expr_children`] and [`statement_exprs`] reach every child slot of
+/// every expression, so every walk built on them does too.
+///
+/// The guard is in two parts:
+///
+/// - **An oracle that cannot fall behind the AST.** [`oracle_children`] and
+///   [`oracle_statement`] destructure every field of every `ExprKind` variant
+///   and of every expression-bearing struct with no `..`, so adding a variant
+///   or a field anywhere an expression can hide is a compile error here until
+///   the oracle names the new slot.
+/// - **A program that uses every slot.** [`COVERAGE`] is parsed (never
+///   checked, so it only has to be syntactically valid), and two tests run
+///   over it: every slot the oracle knows is used at least once, and at every
+///   node `expr_children`/`statement_exprs` return exactly the oracle's
+///   children. A new slot therefore fails the first test until the program
+///   uses it, and the second until `expr_children` walks it.
+///
+/// The hand-rolled walks that cannot be built on `expr_children` (they carry
+/// scopes, ownership or position) are tested where they live (#1832's
+/// triage: the resolver, structure, linearity, effects and emit walks).
+#[cfg(test)]
+mod slot_coverage_tests {
+    use super::*;
+    use std::collections::BTreeSet;
+
+    /// Every slot, used at least once. `p` is a commons for the production
+    /// forms; the suite holds the test-only ones (`Val`, `Wire`,
+    /// observations, `faults`, `trace`, call-site principals).
+    const COVERAGE: &str = r#"commons p
+
+fn f(x: Int) -> Int {
+  let a = "s \(x) t"
+  let b = g(x)
+  let c = (y) => y
+  let d = x + 1
+  let e = -x
+  let h = (x)
+  let i = (z) => {
+    let q = z
+    q
+  }
+  let j = if x > 0 {
+    let q = 1
+    q
+  } else {
+    let w = 2
+    w
+  }
+  let k = Ok(x)
+  let l = Err(x)
+  let n = r?
+  let o = Some(x)
+  let u = R { a: x }
+  let v = r.a
+  let w = r.m(x)
+  let y = match x {
+    z if z > 0 => z
+    0 => expect x
+    _ => {
+      let s = 1
+      s
+    }
+  }
+  let aa = x is Some(v)
+  let bb = R { ...r, a: x }
+  let cc = Effect.pure(x)
+  let dd = [x]
+  ~> L.log(x)
+  do s.put(x)
+  cell := x
+  x
+}
+"#;
+
+    const COVERAGE_SUITE: &str = r#"suite p {
+  case "c" {
+    let who = "alice"
+    let a <- api.get(x) by User(who)
+    let b = Val[T](x)
+    let c = Wire(x)
+    expect L.log called 2 times with msg == x
+    expect box.call() faults
+    let t = trace(L.log)
+    expect x
+  }
+}
+"#;
+
+    type Slots<'a> = Vec<(&'static str, &'a Expr)>;
+
+    fn oracle_block<'a>(owner: &'static str, b: &'a Block, out: &mut Slots<'a>) {
+        let Block {
+            statements,
+            tail,
+            span: _,
+            tail_leading_comments: _,
+            implicit_tail: _,
+        } = b;
+        for s in statements {
+            for (slot, e) in oracle_statement(s) {
+                out.push((slot, e));
+            }
+        }
+        out.push((owner, tail));
+    }
+
+    /// A statement's expressions, each tagged with its slot.
+    fn oracle_statement(s: &Statement) -> Slots<'_> {
+        fn let_slots<'a>(kind: &'static str, l: &'a LetStmt, out: &mut Slots<'a>) {
+            let LetStmt {
+                name: _,
+                type_annot: _,
+                value,
+                principal,
+                span: _,
+                trivia: _,
+            } = l;
+            if let Some(CallSiteActor {
+                actor: _,
+                identity,
+                span: _,
+            }) = principal
+                && let Some(identity) = identity
+            {
+                out.push((
+                    if kind == "let" {
+                        "let.identity"
+                    } else {
+                        "let<-.identity"
+                    },
+                    identity,
+                ));
+            }
+            out.push((
+                if kind == "let" {
+                    "let.value"
+                } else {
+                    "let<-.value"
+                },
+                value,
+            ));
+        }
+        let mut out = Vec::new();
+        match s {
+            Statement::Let(l) => let_slots("let", l, &mut out),
+            Statement::EffectLet(l) => let_slots("let<-", l, &mut out),
+            Statement::Expect(ExpectStmt {
+                value,
+                span: _,
+                trivia: _,
+            }) => out.push(("expect.value", value)),
+            Statement::Send(SendStmt {
+                value,
+                span: _,
+                trivia: _,
+            }) => out.push(("send.value", value)),
+            Statement::Do(DoStmt {
+                value,
+                span: _,
+                trivia: _,
+            }) => out.push(("do.value", value)),
+            Statement::Assign(AssignStmt {
+                target: _,
+                value,
+                span: _,
+                trivia: _,
+            }) => out.push(("assign.value", value)),
+        }
+        out
+    }
+
+    /// An expression's children, each tagged with its slot.
+    fn oracle_children(e: &Expr) -> Slots<'_> {
+        let Expr {
+            id: _,
+            kind,
+            span: _,
+        } = e;
+        let mut out = Vec::new();
+        match kind {
+            ExprKind::IntLit {
+                value: _,
+                lexeme: _,
+            }
+            | ExprKind::FloatLit {
+                value: _,
+                lexeme: _,
+            }
+            | ExprKind::DurationLit {
+                value: _,
+                unit: _,
+                millis: _,
+            }
+            | ExprKind::StrLit(_)
+            | ExprKind::BoolLit(_)
+            | ExprKind::Ident(_)
+            | ExprKind::None
+            | ExprKind::UnitLit
+            | ExprKind::Trace { cap: _, op: _ } => {}
+            ExprKind::InterpStr(parts) => {
+                for p in parts {
+                    match p {
+                        InterpPart::Chunk(_) => {}
+                        InterpPart::Hole(h) => out.push(("interp.hole", h.as_ref())),
+                    }
+                }
+            }
+            ExprKind::Call {
+                name: _,
+                type_args: _,
+                args,
+            } => args.iter().for_each(|a| out.push(("call.arg", a))),
+            ExprKind::Lambda(LambdaExpr {
+                params: _,
+                body,
+                span: _,
+            }) => out.push(("lambda.body", body)),
+            ExprKind::BinOp(_, l, r) => {
+                out.push(("binop.left", l));
+                out.push(("binop.right", r));
+            }
+            ExprKind::UnaryOp(_, x) => out.push(("unary.operand", x)),
+            ExprKind::Paren(x) => out.push(("paren.inner", x)),
+            ExprKind::Block(b) => oracle_block("block.tail", b, &mut out),
+            ExprKind::If {
+                cond,
+                then_block,
+                else_block,
+            } => {
+                out.push(("if.cond", cond));
+                oracle_block("if.then.tail", then_block, &mut out);
+                oracle_block("if.else.tail", else_block, &mut out);
+            }
+            ExprKind::Ok(x) => out.push(("ok.inner", x)),
+            ExprKind::Err(x) => out.push(("err.inner", x)),
+            ExprKind::Question(x) => out.push(("question.inner", x)),
+            ExprKind::ConstructorCall {
+                type_name: _,
+                method: _,
+                args,
+            } => args.iter().for_each(|a| out.push(("ctor.arg", a))),
+            ExprKind::RecordConstruction {
+                type_name: _,
+                fields,
+            } => {
+                for FieldInit {
+                    name: _,
+                    value,
+                    span: _,
+                } in fields
+                {
+                    if let Some(v) = value {
+                        out.push(("record.field", v));
+                    }
+                }
+            }
+            ExprKind::FieldAccess { receiver, field: _ } => out.push(("field.receiver", receiver)),
+            ExprKind::MethodCall {
+                receiver,
+                method: _,
+                type_args: _,
+                args,
+            } => {
+                out.push(("method.receiver", receiver));
+                args.iter().for_each(|a| out.push(("method.arg", a)));
+            }
+            ExprKind::Match { discriminant, arms } => {
+                out.push(("match.discriminant", discriminant));
+                for MatchArm {
+                    pattern: _,
+                    guard,
+                    body,
+                    span: _,
+                } in arms
+                {
+                    if let Some(g) = guard {
+                        out.push(("match.guard", g));
+                    }
+                    match body {
+                        MatchBody::Expr(x) => out.push(("match.body", x)),
+                        MatchBody::Block(b) => oracle_block("match.block.tail", b, &mut out),
+                    }
+                }
+            }
+            ExprKind::Is { value, pattern: _ } => out.push(("is.value", value)),
+            ExprKind::Some(x) => out.push(("some.inner", x)),
+            ExprKind::RecordSpread {
+                type_name: _,
+                base,
+                overrides,
+            } => {
+                out.push(("spread.base", base));
+                for FieldInit {
+                    name: _,
+                    value,
+                    span: _,
+                } in overrides
+                {
+                    if let Some(v) = value {
+                        out.push(("spread.override", v));
+                    }
+                }
+            }
+            ExprKind::EffectPure(x) => out.push(("effect_pure.inner", x)),
+            ExprKind::Expect(x) => out.push(("expect_expr.inner", x)),
+            ExprKind::Val { type_ref: _, args } => {
+                args.iter().for_each(|a| out.push(("val.arg", a)))
+            }
+            ExprKind::Wire(x) => out.push(("wire.inner", x)),
+            ExprKind::ListLit(items) => items.iter().for_each(|i| out.push(("list.item", i))),
+            ExprKind::Observation(obs) => {
+                let ObservationExpr {
+                    cap: _,
+                    op: _,
+                    matcher,
+                } = obs.as_ref();
+                match matcher {
+                    ObservationMatcher::Called { count, with_pred } => {
+                        if let Some(c) = count {
+                            out.push(("observation.count", c));
+                        }
+                        if let Some(p) = with_pred {
+                            out.push(("observation.with", p));
+                        }
+                    }
+                    ObservationMatcher::NeverCalled
+                    | ObservationMatcher::Before { cap: _, op: _ } => {}
+                }
+            }
+            ExprKind::Faults(x) => out.push(("faults.inner", x)),
+        }
+        out
+    }
+
+    /// Every slot [`oracle_children`] and [`oracle_statement`] can name.
+    const ALL_SLOTS: &[&str] = &[
+        "interp.hole",
+        "call.arg",
+        "lambda.body",
+        "binop.left",
+        "binop.right",
+        "unary.operand",
+        "paren.inner",
+        "block.tail",
+        "if.cond",
+        "if.then.tail",
+        "if.else.tail",
+        "ok.inner",
+        "err.inner",
+        "question.inner",
+        "ctor.arg",
+        "record.field",
+        "field.receiver",
+        "method.receiver",
+        "method.arg",
+        "match.discriminant",
+        "match.guard",
+        "match.body",
+        "match.block.tail",
+        "is.value",
+        "some.inner",
+        "spread.base",
+        "spread.override",
+        "effect_pure.inner",
+        "expect_expr.inner",
+        "val.arg",
+        "wire.inner",
+        "list.item",
+        "observation.count",
+        "observation.with",
+        "faults.inner",
+        "let.value",
+        "let<-.value",
+        "let<-.identity",
+        "expect.value",
+        "send.value",
+        "do.value",
+        "assign.value",
+    ];
+
+    /// `ConstructorCall` has no parser production today (`T.of(x)` parses as
+    /// a `MethodCall` the resolver treats as static), so its slot is covered
+    /// by a hand-built node instead of [`COVERAGE`].
+    fn hand_built_constructor_call() -> Expr {
+        let ident = |name: &str| Ident {
+            name: name.to_string(),
+            span: Span::new(0, 0),
+        };
+        let arg = Expr {
+            id: ExprId(1),
+            kind: ExprKind::Ident(ident("x")),
+            span: Span::new(5, 6),
+        };
+        Expr {
+            id: ExprId(0),
+            kind: ExprKind::ConstructorCall {
+                type_name: ident("T"),
+                method: ident("of"),
+                args: vec![arg],
+            },
+            span: Span::new(0, 7),
+        }
+    }
+
+    /// Every top-level block of the coverage program: fn bodies and case
+    /// bodies.
+    fn bodies(units: &[SourceUnit]) -> Vec<&Block> {
+        let mut out = Vec::new();
+        for u in units {
+            match u {
+                SourceUnit::Commons(c) => {
+                    for item in &c.items {
+                        if let CommonsItem::Fn(f) = item {
+                            out.push(&f.body);
+                        }
+                    }
+                }
+                SourceUnit::Suite(t) => out.extend(t.cases.iter().map(|c| &c.body)),
+                _ => {}
+            }
+        }
+        out
+    }
+
+    fn parse(source: &str) -> Vec<SourceUnit> {
+        let tokens = crate::lexer::tokenize(source).expect("lex");
+        crate::parser::parse_units(&tokens, source).expect("the coverage program parses")
+    }
+
+    /// Visit every expression under `b` through the oracle, depth first.
+    fn visit<'a>(b: &'a Block, f: &mut impl FnMut(&'a Expr)) {
+        fn go<'a>(e: &'a Expr, f: &mut impl FnMut(&'a Expr)) {
+            f(e);
+            for (_, c) in oracle_children(e) {
+                go(c, f);
+            }
+        }
+        let mut top = Vec::new();
+        oracle_block("body.tail", b, &mut top);
+        for (_, e) in top {
+            go(e, f);
+        }
+    }
+
+    #[test]
+    fn the_coverage_program_uses_every_slot() {
+        let mut used = BTreeSet::new();
+        for source in [COVERAGE, COVERAGE_SUITE] {
+            let units = parse(source);
+            for b in bodies(&units) {
+                for s in &b.statements {
+                    used.extend(oracle_statement(s).into_iter().map(|(slot, _)| slot));
+                }
+                visit(b, &mut |e| {
+                    used.extend(oracle_children(e).into_iter().map(|(slot, _)| slot));
+                    if let ExprKind::Block(b) = &e.kind {
+                        for s in &b.statements {
+                            used.extend(oracle_statement(s).into_iter().map(|(slot, _)| slot));
+                        }
+                    }
+                });
+            }
+        }
+        let ctor = hand_built_constructor_call();
+        used.extend(oracle_children(&ctor).into_iter().map(|(slot, _)| slot));
+        let missing: Vec<&str> = ALL_SLOTS
+            .iter()
+            .copied()
+            .filter(|s| !used.contains(s))
+            .collect();
+        let unknown: Vec<&str> = used
+            .iter()
+            .copied()
+            .filter(|s| !ALL_SLOTS.contains(s))
+            .collect();
+        assert!(
+            missing.is_empty() && unknown.is_empty(),
+            "slots the coverage program never uses: {missing:?}; slots missing from ALL_SLOTS: {unknown:?}"
+        );
+    }
+
+    #[test]
+    fn expr_children_returns_exactly_the_oracle_s_children_at_every_node() {
+        let key = |e: &Expr| (e.span.start, e.span.end, e.id);
+        let mut checked = 0;
+        for source in [COVERAGE, COVERAGE_SUITE] {
+            let units = parse(source);
+            for b in bodies(&units) {
+                for s in &b.statements {
+                    let mut got = Vec::new();
+                    statement_exprs(s, &mut got);
+                    let got: Vec<_> = got.into_iter().map(key).collect();
+                    let want: Vec<_> = oracle_statement(s)
+                        .into_iter()
+                        .map(|(_, e)| key(e))
+                        .collect();
+                    assert_eq!(got, want, "statement_exprs at {:?}", s.span());
+                }
+                visit(b, &mut |e| {
+                    let got: Vec<_> = expr_children(e).into_iter().map(key).collect();
+                    let want: Vec<_> = oracle_children(e)
+                        .into_iter()
+                        .map(|(_, c)| key(c))
+                        .collect();
+                    assert_eq!(
+                        got,
+                        want,
+                        "expr_children of `{}`",
+                        &source[e.span.start..e.span.end]
+                    );
+                    checked += 1;
+                });
+            }
+        }
+        let ctor = hand_built_constructor_call();
+        let got: Vec<_> = expr_children(&ctor).into_iter().map(key).collect();
+        let want: Vec<_> = oracle_children(&ctor)
+            .into_iter()
+            .map(|(_, c)| key(c))
+            .collect();
+        assert_eq!(got, want, "expr_children of a ConstructorCall");
+        assert!(checked > 50, "only {checked} nodes checked");
+    }
+}

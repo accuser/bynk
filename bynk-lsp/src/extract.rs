@@ -367,19 +367,19 @@ fn find_in_items(items: &[CommonsItem], target: Span) -> Option<Site<'_>> {
     None
 }
 
-/// Finds the statement (or the tail) whose value fully contains `target`,
+/// Finds the statement expression (or the tail) that fully contains `target`,
 /// then narrows within it via [`locate`]. `None` when `target` doesn't sit
 /// fully inside any single statement/tail (e.g. it spans the whole block,
 /// braces included, or crosses a statement boundary).
 fn find_in_block(block: &Block, target: Span) -> Option<Site<'_>> {
     for stmt in &block.statements {
-        let mut values = Vec::new();
-        statement_exprs(stmt, &mut values);
-        let Some(value) = values.first() else {
-            continue;
-        };
-        if contains(value.span, target) {
-            return Some(locate(value, target, stmt.span().start));
+        // #1851: whichever of the statement's expressions holds the selection.
+        // Not the first: since #1766 a principal's identity comes before the
+        // value it addresses.
+        let mut exprs = Vec::new();
+        statement_exprs(stmt, &mut exprs);
+        if let Some(e) = exprs.into_iter().find(|e| contains(e.span, target)) {
+            return Some(locate(e, target, stmt.span().start));
         }
     }
     if contains(block.tail.span, target) {
@@ -893,13 +893,11 @@ fn stmts_match(stmts: &[Statement], pred: &impl Fn(&Statement) -> bool) -> bool 
 }
 
 fn stmt_value_matches(s: &Statement, pred: &impl Fn(&Statement) -> bool) -> bool {
-    match s {
-        Statement::Let(l) | Statement::EffectLet(l) => expr_matches(&l.value, pred),
-        Statement::Expect(a) => expr_matches(&a.value, pred),
-        Statement::Send(snd) => expr_matches(&snd.value, pred),
-        Statement::Do(d) => expr_matches(&d.value, pred),
-        Statement::Assign(a) => expr_matches(&a.value, pred),
-    }
+    // #1851: every expression of the statement, a principal's identity
+    // included.
+    let mut exprs = Vec::new();
+    statement_exprs(s, &mut exprs);
+    exprs.into_iter().any(|e| expr_matches(e, pred))
 }
 
 fn block_matches(b: &Block, pred: &impl Fn(&Statement) -> bool) -> bool {
@@ -1831,5 +1829,13 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn extracts_inside_the_value_of_a_let_with_a_call_site_principal() {
+        // #1766 put a principal's identity first in `statement_exprs`; the
+        // value is the statement's last expression, not its first.
+        let src = "suite demo.s {\n  case \"c\" {\n    let who = \"alice\"\n    let item <- api.get(1 + 2) by User(who)\n    expect item\n  }\n}\n";
+        assert_eq!(actions_for(src, "1 + 2").len(), 1);
     }
 }
