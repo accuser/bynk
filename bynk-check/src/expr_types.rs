@@ -16,7 +16,7 @@
 //! Unlike hints, **test/integration files are not muted** (completion runs in
 //! them); only synthetic toolchain-injected files are.
 
-use crate::checker::{TyId, TypedExpr};
+use crate::checker::{TyId, TypedExpr, Types};
 use bynk_syntax::ast::ExprId;
 use bynk_syntax::span::Span;
 use std::collections::HashMap;
@@ -84,12 +84,39 @@ impl ExprTypeSink {
 
 /// The type of the **innermost** expression whose span contains `offset`, if
 /// any — the receiver-typing query for `.`-member completion.
-pub fn type_at_offset(entries: &[(Span, TyId)], offset: usize) -> Option<TyId> {
-    entries
+///
+/// `None` when that innermost expression failed to type (its entry is
+/// [`Ty::Error`](crate::checker::Ty::Error)). The search does not skip past it
+/// to an enclosing expression: that is a *different* expression, and its type
+/// would answer the question confidently wrong.
+///
+/// The innermost span's type is read through [`type_at_span`], so entries
+/// that disagree at that exact position also answer `None`.
+pub fn type_at_offset(entries: &[(Span, TyId)], offset: usize, tys: &Types) -> Option<TyId> {
+    let (innermost, _) = entries
         .iter()
         .filter(|(span, _)| span.start <= offset && offset <= span.end)
-        .min_by_key(|(span, _)| span.end - span.start)
-        .map(|(_, ty)| *ty)
+        .min_by_key(|(span, _)| span.end - span.start)?;
+    type_at_span(entries, *innermost).filter(|ty| !ty.is_error(tys))
+}
+
+/// The type recorded for the expression at exactly `span`'s position, or
+/// `None` if nothing is recorded there or the entries there disagree.
+///
+/// Compares `start`/`end` only, never the `FileId`: an editor reparses the
+/// buffer into spans with no file identity, while these entries carry the
+/// file's real one (T3.5). Several entries can share one position (the same
+/// expression recorded more than once, or two nodes sharing a source span),
+/// and their order follows the checker's `HashMap`, so picking the first
+/// would vary from run to run. Disagreeing entries are ambiguous, and
+/// ambiguity answers "no type" rather than an arbitrary one.
+pub fn type_at_span(entries: &[(Span, TyId)], span: Span) -> Option<TyId> {
+    let mut at = entries
+        .iter()
+        .filter(|(s, _)| s.start == span.start && s.end == span.end)
+        .map(|(_, ty)| *ty);
+    let first = at.next()?;
+    at.all(|ty| ty == first).then_some(first)
 }
 
 #[cfg(test)]
@@ -109,8 +136,41 @@ mod tests {
         let string = tys.intern(Ty::Base(BaseType::String));
         // An outer `String` expression 0..10 with an inner `Int` 2..4.
         let entries = vec![(span(0, 10), string), (span(2, 4), int)];
-        assert_eq!(type_at_offset(&entries, 3), Some(int)); // inside the inner span
-        assert_eq!(type_at_offset(&entries, 7), Some(string)); // outer span only
-        assert_eq!(type_at_offset(&entries, 20), None); // outside everything
+        assert_eq!(type_at_offset(&entries, 3, &tys), Some(int)); // inside the inner span
+        assert_eq!(type_at_offset(&entries, 7, &tys), Some(string)); // outer span only
+        assert_eq!(type_at_offset(&entries, 20, &tys), None); // outside everything
+    }
+
+    #[test]
+    fn disagreeing_entries_at_one_position_are_no_type() {
+        let tys = Types::new();
+        let int = tys.intern(Ty::Base(BaseType::Int));
+        let string = tys.intern(Ty::Base(BaseType::String));
+        // A repeated identical entry is still one answer...
+        let agreeing = vec![(span(0, 10), int), (span(0, 10), int)];
+        assert_eq!(type_at_span(&agreeing, span(0, 10)), Some(int));
+        assert_eq!(type_at_offset(&agreeing, 3, &tys), Some(int));
+        // ...but two types recorded at one position are ambiguous, in
+        // either order.
+        for entries in [
+            vec![(span(0, 10), int), (span(0, 10), string)],
+            vec![(span(0, 10), string), (span(0, 10), int)],
+        ] {
+            assert_eq!(type_at_span(&entries, span(0, 10)), None);
+            assert_eq!(type_at_offset(&entries, 3, &tys), None);
+        }
+    }
+
+    #[test]
+    fn an_error_typed_innermost_span_is_no_type_not_its_parent() {
+        let tys = Types::new();
+        let string = tys.intern(Ty::Base(BaseType::String));
+        let error = tys.intern(Ty::Error);
+        // A well-typed outer expression 0..10 around an inner one 2..4 whose
+        // typing failed: the inner offset has no type, rather than the
+        // outer expression's.
+        let entries = vec![(span(0, 10), string), (span(2, 4), error)];
+        assert_eq!(type_at_offset(&entries, 3, &tys), None);
+        assert_eq!(type_at_offset(&entries, 7, &tys), Some(string));
     }
 }

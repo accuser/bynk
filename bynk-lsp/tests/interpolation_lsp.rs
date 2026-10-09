@@ -120,7 +120,7 @@ fn hover_type_is_recorded_for_a_hole_expression() {
         .expect("file is analysed");
     // 2nd "name": the use inside the hole (1st is the parameter declaration).
     let use_off = offset_of(SRC, "name", 1) + 1;
-    let ty = bynk_check::expr_types::type_at_offset(entries, use_off)
+    let ty = bynk_check::expr_types::type_at_offset(entries, use_off, &result.ty_intern)
         .expect("the hole expression `name` has a recorded type");
     // T3.6b: `expr_types` hands out a `TyId` — resolve it through the round's
     // intern table before asking what shape it is.

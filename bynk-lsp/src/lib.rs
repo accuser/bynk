@@ -1208,8 +1208,12 @@ impl Backend {
             && analysis.snapshots.get(&rel).map(String::as_str) == Some(rewritten.as_str())
             && let Some((_, entries)) = analysis.expr_types.iter().find(|(p, _)| **p == rel)
         {
-            return bynk_check::expr_types::type_at_offset(entries, recv_offset)
-                .map(|t| (t, std::sync::Arc::clone(&analysis.ty_intern)));
+            return bynk_check::expr_types::type_at_offset(
+                entries,
+                recv_offset,
+                &analysis.ty_intern,
+            )
+            .map(|t| (t, std::sync::Arc::clone(&analysis.ty_intern)));
         }
         // Content-ownership track (#1086) slice 5: same complete-content
         // requirement as `run_project_diagnostics` — `overlay` here is only
@@ -1222,7 +1226,7 @@ impl Backend {
         .map_err(|e| tracing::error!("receiver-typing analysis {}", describe_join_error(e)))
         .ok()?;
         let (_, entries) = result.expr_types.iter().find(|(p, _)| **p == rel)?;
-        bynk_check::expr_types::type_at_offset(entries, recv_offset)
+        bynk_check::expr_types::type_at_offset(entries, recv_offset, &result.ty_intern)
             .map(|t| (t, std::sync::Arc::clone(&result.ty_intern)))
     }
 
@@ -2502,7 +2506,7 @@ impl LanguageServer for Backend {
         let Some(entries) = analysis.expr_types.get(&rel) else {
             return Ok(None);
         };
-        let Some(ty) = bynk_check::expr_types::type_at_offset(entries, offset) else {
+        let Some(ty) = bynk_check::expr_types::type_at_offset(entries, offset, tys) else {
             return Ok(None);
         };
         let Some(name) = crate::index_queries::named_type_target(ty, tys) else {
