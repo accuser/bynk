@@ -30,13 +30,7 @@ use bynkc::BuildTarget;
 
 /// `(source, target, module, unbound names, issue)`. `source` is a fixture
 /// directory name or a [`repros`] name.
-const KNOWN: &[(&str, &str, &str, &[&str], u32)] = &[(
-    "183_weather_fetch_adapter",
-    "workers",
-    "workers/forecast-lookup/handlers.ts",
-    &["__serialise_Report", "__serialise_WeatherError"],
-    1845,
-)];
+const KNOWN: &[(&str, &str, &str, &[&str], u32)] = &[];
 
 /// Minimal projects for open defects no positive fixture exhibits:
 /// `(name, [(path, source)])`, compiled for bundle.
