@@ -1,0 +1,12 @@
+context app.store
+
+agent Bin {
+  key id: String
+
+  store items: Map[String, Crate]
+
+  on call put(c: Crate) -> Effect[Bool] {
+    let _ <- items.put(c.label, c)
+    true
+  }
+}
