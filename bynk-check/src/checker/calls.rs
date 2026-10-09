@@ -327,7 +327,7 @@ pub fn check_state_initialiser(
 ///
 /// One admission `check_static_initialiser` doesn't cover on its own: an
 /// opaque type's `T.unsafe(lit)` is, by design (ADR 0182), a bypass of its
-/// own refinement — `type_of`'s ordinary `ConstructorCall` handling only
+/// own refinement — `type_of`'s ordinary static-call handling only
 /// checks `lit`'s *base* type, not the refinement, since that's the whole
 /// point of `unsafe`. An event field default is different: it becomes part
 /// of the wire codec (slice 3a lowers it to its *wire* JSON form and splices
@@ -368,8 +368,7 @@ pub fn check_event_field_default(
     // `T.unsafe(lit)` parses as `ExprKind::MethodCall { receiver: Ident(T),
     // method: "unsafe", .. }` — confirmed by direct AST inspection; the
     // parser never distinguishes a type-qualified call from an ordinary
-    // instance method call (that's a resolver-time decision), so
-    // `ExprKind::ConstructorCall` is not what this actually produces.
+    // instance method call (that's a resolver-time decision).
     if let ExprKind::MethodCall {
         receiver,
         method,
@@ -1084,10 +1083,8 @@ pub(crate) fn check_static_call(
     // #593: threaded to `check_variant_construction` so a qualified generic
     // variant (`Opt.Nil`) can ground its arguments from the binding's type.
     expected: Option<TyId>,
-    // P6.0 (#1139): the outer expression's identity — the `ConstructorCall`/
-    // `MethodCall` node this dispatch is checking on behalf of (this
-    // function is also reached from inside `check_method_call`, not only
-    // from `type_of` directly).
+    // P6.0 (#1139): the outer expression's identity — the `MethodCall` node
+    // `check_method_call` is dispatching on behalf of.
     expr_id: ExprId,
     ctx: &mut Ctx,
 ) -> Option<TyId> {

@@ -1976,9 +1976,6 @@ fn predicate_cross_agent_ref(e: &Expr, input: &ResolvedCommons) -> Option<Span> 
     match &e.kind {
         ExprKind::Ident(id) if is_agent(&id.name) => Some(id.span),
         ExprKind::Call { name, .. } if is_agent(&name.name) => Some(name.span),
-        ExprKind::ConstructorCall { type_name, .. } if is_agent(&type_name.name) => {
-            Some(type_name.span)
-        }
         ExprKind::RecordConstruction { type_name, .. } if is_agent(&type_name.name) => {
             Some(type_name.span)
         }
@@ -3703,63 +3700,6 @@ pub(crate) fn type_of(expr: &Expr, expected: Option<TyId>, ctx: &mut Ctx) -> Opt
         ExprKind::Some(inner) => check_some(inner, expr.span, expected, ctx),
         ExprKind::None => check_none(expr.span, expected, ctx),
         ExprKind::Question(inner) => check_question(inner, expr.span, ctx),
-        ExprKind::ConstructorCall {
-            type_name,
-            method,
-            args,
-        } => {
-            if type_name.name == HTTP_RESULT {
-                if let Some(v) = http_variant(&method.name) {
-                    ctx.callees.insert(
-                        expr.id,
-                        Callee::Intrinsic {
-                            ns: HTTP_RESULT,
-                            op: v.name.to_string(),
-                        },
-                    );
-                    check_http_variant(expr.span, v, args, expected, ctx)
-                } else {
-                    ctx.errors.push(CompileError::new(
-                        "bynk.types.unknown_static_member",
-                        method.span,
-                        format!("`HttpResult` has no variant named `{}`", method.name),
-                    ));
-                    None
-                }
-            } else if type_name.name == QUEUE_RESULT {
-                if let Some(qv) = queue_variant(&method.name) {
-                    ctx.callees.insert(
-                        expr.id,
-                        Callee::Intrinsic {
-                            ns: QUEUE_RESULT,
-                            op: qv.name.to_string(),
-                        },
-                    );
-                    check_queue_variant(expr.span, qv, args, ctx)
-                } else {
-                    ctx.errors.push(CompileError::new(
-                        "bynk.types.unknown_static_member",
-                        method.span,
-                        format!("`QueueResult` has no variant named `{}`", method.name),
-                    ));
-                    None
-                }
-            } else {
-                // `ConstructorCall` has no type-argument slot — qualified
-                // variant construction (`Opt.Some(x)`), never a capability
-                // call, so `type_args` is always empty here.
-                check_static_call(
-                    type_name,
-                    method,
-                    &[],
-                    args,
-                    expr.span,
-                    expected,
-                    expr.id,
-                    ctx,
-                )
-            }
-        }
         ExprKind::RecordConstruction { type_name, fields } => {
             check_record_construction(type_name, fields, expected, expr.span, ctx)
         }
@@ -4113,11 +4053,9 @@ fn check_unbound_effects(e: &Expr, allowed: bool, ctx: &mut Ctx) {
         }
         // A variant constructor in every spelling: `Loaded(x)` is a `Call`;
         // the qualified `ApiResult.Loaded(x)` parses as a `MethodCall` on the
-        // type name, or a `ConstructorCall`. All resolve to `Callee::Ctor` on
-        // their own expression (review of #1694).
-        ExprKind::Call { args, .. }
-        | ExprKind::MethodCall { args, .. }
-        | ExprKind::ConstructorCall { args, .. }
+        // type name. Both resolve to `Callee::Ctor` on their own expression
+        // (review of #1694).
+        ExprKind::Call { args, .. } | ExprKind::MethodCall { args, .. }
             if matches!(ctx.callees.get(&e.id), Some(Callee::Ctor { .. })) =>
         {
             for a in args {

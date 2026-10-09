@@ -190,33 +190,6 @@ fn walk_expr_for_constraints(
                 );
             }
         }
-        ExprKind::ConstructorCall {
-            type_name, method, ..
-        } => {
-            if let Some(ct) = consumed.get(&type_name.name) {
-                let is_construct = method.name == OF
-                    || method.name == UNSAFE
-                    || matches!(
-                        typed.types.get(&type_name.name).map(|d| &d.body),
-                        Some(TypeBody::Sum(s)) if s.variants.iter().any(|v| v.name.name == method.name),
-                    );
-                if is_construct {
-                    errors.push(
-                        CompileError::new(
-                            "bynk.context.external_construction",
-                            type_name.span.merge(method.span),
-                            format!(
-                                "cannot construct `{}.{}` here — `{}` is owned by context `{}`",
-                                type_name.name, method.name, type_name.name, ct.owning_context,
-                            ),
-                        )
-                        .with_note(
-                            "values of an externally-owned type can only be created inside the owning context",
-                        ),
-                    );
-                }
-            }
-        }
         // `T.method(...)` written as MethodCall with receiver Ident(T).
         ExprKind::MethodCall {
             receiver, method, ..

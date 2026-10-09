@@ -2596,14 +2596,6 @@ pub enum ExprKind {
     Err(Box<Expr>),
     /// `expr?` — propagation operator (v0.1).
     Question(Box<Expr>),
-    /// `TypeName.method(args)` — qualified static call on a type
-    /// (v0.1: only refined-type `of`; v0.2: any static method or variant
-    /// constructor for sum types). The resolver decides which.
-    ConstructorCall {
-        type_name: Ident,
-        method: Ident,
-        args: Vec<Expr>,
-    },
     /// `TypeName { field: value, ... }` — record construction (v0.2).
     RecordConstruction {
         type_name: Ident,
@@ -2752,10 +2744,9 @@ pub fn expr_children(e: &Expr) -> Vec<&Expr> {
                 }
             }
         }
-        ExprKind::Call { args, .. }
-        | ExprKind::ConstructorCall { args, .. }
-        | ExprKind::Val { args, .. }
-        | ExprKind::ListLit(args) => out.extend(args.iter()),
+        ExprKind::Call { args, .. } | ExprKind::Val { args, .. } | ExprKind::ListLit(args) => {
+            out.extend(args.iter())
+        }
         ExprKind::Wire(inner) => out.push(inner.as_ref()),
         ExprKind::Lambda(l) => out.push(l.body.as_ref()),
         ExprKind::BinOp(_, l, r) => {
@@ -3447,11 +3438,6 @@ fn f(x: Int) -> Int {
             ExprKind::Ok(x) => out.push(("ok.inner", x)),
             ExprKind::Err(x) => out.push(("err.inner", x)),
             ExprKind::Question(x) => out.push(("question.inner", x)),
-            ExprKind::ConstructorCall {
-                type_name: _,
-                method: _,
-                args,
-            } => args.iter().for_each(|a| out.push(("ctor.arg", a))),
             ExprKind::RecordConstruction {
                 type_name: _,
                 fields,
@@ -3561,7 +3547,6 @@ fn f(x: Int) -> Int {
         "ok.inner",
         "err.inner",
         "question.inner",
-        "ctor.arg",
         "record.field",
         "field.receiver",
         "method.receiver",
@@ -3590,30 +3575,6 @@ fn f(x: Int) -> Int {
         "do.value",
         "assign.value",
     ];
-
-    /// `ConstructorCall` has no parser production today (`T.of(x)` parses as
-    /// a `MethodCall` the resolver treats as static), so its slot is covered
-    /// by a hand-built node instead of [`COVERAGE`].
-    fn hand_built_constructor_call() -> Expr {
-        let ident = |name: &str| Ident {
-            name: name.to_string(),
-            span: Span::new(0, 0),
-        };
-        let arg = Expr {
-            id: ExprId(1),
-            kind: ExprKind::Ident(ident("x")),
-            span: Span::new(5, 6),
-        };
-        Expr {
-            id: ExprId(0),
-            kind: ExprKind::ConstructorCall {
-                type_name: ident("T"),
-                method: ident("of"),
-                args: vec![arg],
-            },
-            span: Span::new(0, 7),
-        }
-    }
 
     /// Every top-level block of the coverage program: fn bodies and case
     /// bodies.
@@ -3674,8 +3635,6 @@ fn f(x: Int) -> Int {
                 });
             }
         }
-        let ctor = hand_built_constructor_call();
-        used.extend(oracle_children(&ctor).into_iter().map(|(slot, _)| slot));
         let missing: Vec<&str> = ALL_SLOTS
             .iter()
             .copied()
@@ -3725,13 +3684,6 @@ fn f(x: Int) -> Int {
                 });
             }
         }
-        let ctor = hand_built_constructor_call();
-        let got: Vec<_> = expr_children(&ctor).into_iter().map(key).collect();
-        let want: Vec<_> = oracle_children(&ctor)
-            .into_iter()
-            .map(|(_, c)| key(c))
-            .collect();
-        assert_eq!(got, want, "expr_children of a ConstructorCall");
         assert!(checked > 50, "only {checked} nodes checked");
     }
 }

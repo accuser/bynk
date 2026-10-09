@@ -1086,6 +1086,8 @@ concrete consequences of the current arrangement, all of which R6.10 removes:
 `ExprKind::ConstructorCall`; they produce `MethodCall` with an `Ident` receiver, and the source
 carries a comment saying so because someone got it wrong. Two AST nodes funnel into one checker
 function on a rule no name expresses.
+*(2026-10-09: `ExprKind::ConstructorCall` has since been deleted. The parser had not built it since
+grammar v0.2, so a qualified call now has exactly one AST shape, `MethodCall`.)*
 
 **Precedence is expressed as guard clauses that both crates must repeat.** The refined-inherits-kernel
 rule (ADR 0168) is a *fallback after* the type's declared methods in the checker; the emitter mirrors
