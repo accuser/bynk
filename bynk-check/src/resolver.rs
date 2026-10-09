@@ -2676,6 +2676,12 @@ fn check_expr_references(expr: &Expr, cx: &mut RefCheckCtx) {
                 let mut arm_scope = HashMap::new();
                 collect_pattern_bindings(&arm.pattern, &mut arm_scope);
                 cx.scopes.push(arm_scope);
+                // #1848: the guard, in the arm's pattern scope and before the
+                // body, as the checker types it (ADR 0169). Its `is` bindings
+                // stay in the guard; they do not flow into the body.
+                if let Some(guard) = &arm.guard {
+                    check_expr_references(guard, cx);
+                }
                 match &arm.body {
                     MatchBody::Expr(e) => check_expr_references(e, cx),
                     MatchBody::Block(b) => check_block_references(b, cx),
@@ -2764,4 +2770,42 @@ fn find_ambiguous_variant_owners<'a>(
         }
     }
     out
+}
+
+/// #1848: a match-arm guard is resolved like every other expression, in its
+/// arm's pattern scope.
+#[cfg(test)]
+mod guard_resolution_tests {
+    use crate::testkit::analyse;
+
+    #[test]
+    fn an_unknown_variant_in_a_guard_is_reported_by_the_resolver() {
+        analyse(&[(
+            "d.bynk",
+            "commons d\n\ntype T = enum { A, B }\n\nfn g(n: Int, t: T) -> Int {\n  match n {\n    x if t == T.Zzz => 1\n    _ => 0\n  }\n}\n",
+        )])
+        .assert_reports("bynk.resolve.unknown_static_member");
+    }
+
+    /// True before #1848 too (the checker records it). Pinned so resolving
+    /// guards cannot drop or double the reference.
+    #[test]
+    fn a_function_named_only_in_a_guard_is_a_recorded_reference() {
+        let a = analyse(&[(
+            "d.bynk",
+            "commons d\n\nfn big(n: Int) -> Bool { n > 9 }\n\nfn g(n: Int) -> Int {\n  match n {\n    x if big(x) => 1\n    _ => 0\n  }\n}\n",
+        )]);
+        a.assert_clean();
+        let key = a.resolves_to("d.bynk", "big(x)");
+        assert_eq!((key.unit.as_str(), key.name.as_str()), ("d", "big"));
+    }
+
+    #[test]
+    fn a_guard_reads_its_arm_s_pattern_bindings() {
+        analyse(&[(
+            "d.bynk",
+            "commons d\n\nfn g(o: Option[Int]) -> Int {\n  match o {\n    Some(v) if v > 0 => v\n    _ => 0\n  }\n}\n",
+        )])
+        .assert_clean();
+    }
 }

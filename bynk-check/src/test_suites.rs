@@ -1034,20 +1034,13 @@ fn block_uses_wire(block: &Block) -> bool {
                 .into_iter()
                 .any(contains_wire)
     }
+    // #1851: every expression of a statement, a principal's identity
+    // included, not a hand-picked value.
+    let mut exprs = Vec::new();
     for s in &block.statements {
-        let e = match s {
-            Statement::Let(l) => &l.value,
-            Statement::EffectLet(l) => &l.value,
-            Statement::Expect(x) => &x.value,
-            Statement::Send(x) => &x.value,
-            Statement::Do(d) => &d.value,
-            Statement::Assign(a) => &a.value,
-        };
-        if contains_wire(e) {
-            return true;
-        }
+        bynk_syntax::ast::statement_exprs(s, &mut exprs);
     }
-    contains_wire(&block.tail)
+    exprs.into_iter().any(contains_wire) || contains_wire(&block.tail)
 }
 
 /// A cross-context service call: `(context, service)`.
@@ -1457,11 +1450,15 @@ fn check_faults_tier(
 /// #706: whether a `case` body drives an effect-let `by Nobody` — the "no
 /// credential" principal. It is only meaningful at `system` (there is no auth
 /// seam to reject a missing credential at `unit`), so a non-`system` case using
-/// it is `bynk.test.credential_needs_system`.
+/// it is `bynk.test.credential_needs_system`. Every block of the body counts,
+/// not just its top level (#1849): a `by Nobody` inside an `if` or a match arm
+/// is the same credential-less call.
 fn block_uses_nobody(block: &Block) -> bool {
-    block.statements.iter().any(|s| {
-        matches!(s, Statement::EffectLet(l)
-            if l.principal.as_ref().is_some_and(|p| p.actor.name == "Nobody"))
+    blocks_deep(block).into_iter().any(|b| {
+        b.statements.iter().any(|s| {
+            matches!(s, Statement::EffectLet(l)
+                if l.principal.as_ref().is_some_and(|p| p.actor.name == "Nobody"))
+        })
     })
 }
 
@@ -2909,5 +2906,49 @@ mod tests {
             .collect();
         assert!(lets.contains(&"c".to_string()), "{lets:?}");
         assert!(lets.contains(&"a".to_string()) && lets.contains(&"b".to_string()));
+    }
+
+    /// The context of negative fixture `388_credential_needs_system`.
+    const CART_API: &str = "context shop.api
+
+type UserId = String where NonEmpty
+actor User { auth = Bearer(secret = \"AUTH_SECRET\"), identity = UserId }
+
+type Item = { sku: String }
+
+service api from http {
+  on POST(\"/cart\") (body: Item) -> Effect[HttpResult[Item]] by u: User {
+    Created(body)
+  }
+}
+";
+
+    fn nobody_case(body: &str) -> crate::testkit::Analysed {
+        crate::testkit::analyse(&[
+            ("shop/api.bynk", CART_API),
+            (
+                "shop/tests/api.test.bynk",
+                &format!(
+                    "suite shop.api as system {{\n  case \"c\" as unit {{\n{body}\n  }}\n}}\n"
+                ),
+            ),
+        ])
+    }
+
+    #[test]
+    fn a_unit_case_calling_by_nobody_needs_system() {
+        nobody_case(
+            "    let r <- api.POST(\"/cart\", Item { sku: \"w\" }) by Nobody\n    expect r is Rejected(Unauthorized)",
+        )
+        .assert_reports("bynk.test.credential_needs_system");
+    }
+
+    #[test]
+    fn a_by_nobody_nested_in_a_block_needs_system_too() {
+        // #1849: only the top-level statements used to be searched.
+        nobody_case(
+            "    let ok = if true {\n      let r <- api.POST(\"/cart\", Item { sku: \"w\" }) by Nobody\n      r is Rejected(Unauthorized)\n    } else { false }\n    expect ok",
+        )
+        .assert_reports("bynk.test.credential_needs_system");
     }
 }
