@@ -620,3 +620,34 @@ impl<'a> Branch<'a> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::testkit::analyse;
+
+    fn room(handler: &str) -> crate::testkit::Analysed {
+        analyse(&[(
+            "room.bynk",
+            &format!(
+                "context room\n\ntype ServerFrame = {{ text: String }}\n\nagent Room {{\n  key id: String\n  store conns: Map[String, Connection[ServerFrame]]\n\n{handler}\n}}\n"
+            ),
+        )])
+    }
+
+    #[test]
+    fn a_guard_that_consumes_a_held_value_is_a_consume_on_borrow() {
+        // #1769: a guard runs before its arm is chosen, so it only borrows.
+        room(
+            "  on call f(conn: Connection[ServerFrame], n: Int) -> Effect[()] {\n    match n {\n      0 if Some(conn) is Some(_) => conn.close(),\n      _ => conn.close()\n    }\n  }",
+        )
+        .assert_reports("bynk.held.consume_on_borrow");
+    }
+
+    #[test]
+    fn a_guard_that_only_reads_a_held_value_is_fine() {
+        let a = room(
+            "  on call f(conn: Connection[ServerFrame], n: Int) -> Effect[()] {\n    match n {\n      0 if n > 0 => conn.close(),\n      _ => conn.close()\n    }\n  }",
+        );
+        a.assert_clean();
+    }
+}

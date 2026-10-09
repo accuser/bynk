@@ -30,8 +30,7 @@ use bynk_check::test_suites::{self, ResolvedStub};
 use bynk_syntax::ast::{
     ArgPattern, BaseType, BinOp, Block, CapabilityOp, Case, Commons, CommonsForm, CommonsItem,
     Expr, ExprKind, FnDecl, FnName, Ident, Param, PredKind, PropertyDecl, QualifiedName,
-    Refinement, SeqOutcome, Statement, StubClause, StubRhs, Trivia, TypeBody, TypeDecl, TypeRef,
-    Visibility,
+    Refinement, SeqOutcome, StubClause, StubRhs, Trivia, TypeBody, TypeDecl, TypeRef, Visibility,
 };
 use bynk_syntax::span::Span;
 use bynk_ts::{
@@ -1484,15 +1483,13 @@ fn block_uses_observation(block: &Block) -> bool {
             found = true;
         }
     };
+    // #1851: every expression of a statement, a principal's identity
+    // included, not a hand-picked value.
+    let mut exprs = Vec::new();
     for s in &block.statements {
-        let e = match s {
-            Statement::Let(l) => &l.value,
-            Statement::EffectLet(l) => &l.value,
-            Statement::Expect(x) => &x.value,
-            Statement::Send(x) => &x.value,
-            Statement::Do(d) => &d.value,
-            Statement::Assign(a) => &a.value,
-        };
+        bynk_syntax::ast::statement_exprs(s, &mut exprs);
+    }
+    for e in exprs {
         bynk_ir::walk_exprs(e, &mut check);
     }
     bynk_ir::walk_exprs(&block.tail, &mut check);
