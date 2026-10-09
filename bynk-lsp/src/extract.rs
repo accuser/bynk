@@ -72,15 +72,15 @@ pub fn extract_variable(
         return Vec::new();
     };
     // #1819: the `let` goes above the enclosing statement, outside any arm
-    // pattern or lambda parameter the descent passed. A selection reading one
-    // of those would bind it out of scope, so offer nothing, as
-    // extract-function declines what it can't lift soundly.
+    // pattern, lambda parameter or `is` binding the descent passed. A
+    // selection reading one of those would bind it out of scope, so offer
+    // nothing, as extract-function declines what it can't lift soundly. The
+    // match is by name, deliberately conservative: a selection that rebinds
+    // the name, or reads an outer binding sharing it, is declined too, never
+    // hoisted wrongly.
     let mut read = Vec::new();
     collect_idents(site.expr, &mut read);
-    if read
-        .iter()
-        .any(|id| site.binders.contains(&id.name.as_str()))
-    {
+    if read.iter().any(|id| site.binders.binds(&id.name)) {
         return Vec::new();
     }
 
@@ -333,7 +333,48 @@ struct Site<'a> {
     /// scope at the selection, not at the insertion point. A descent into a
     /// block resets them along with the offset, since the `let` then goes
     /// inside the scope that binds them.
-    binders: Vec<&'a str>,
+    binders: Binders<'a>,
+}
+
+/// #1819: what is bound between a [`Site`]'s insertion point and its
+/// selection, so out of scope where the `let` goes.
+#[derive(Default)]
+struct Binders<'a> {
+    names: Vec<&'a str>,
+    /// Inside an observation's `with` predicate, whose names are the observed
+    /// operation's parameters: declared on the capability, not in the tree,
+    /// so every name read there is treated as bound (#1880 review).
+    opaque: bool,
+}
+
+impl<'a> Binders<'a> {
+    fn extend(&mut self, names: impl IntoIterator<Item = &'a str>) {
+        self.names.extend(names);
+    }
+
+    fn binds(&self, name: &str) -> bool {
+        self.opaque || self.names.contains(&name)
+    }
+}
+
+/// The names an `is` test binds for the operand to its right: `r is Ok(n)`
+/// binds `n` on the right of `&&` / `implies`, through a chain of them and
+/// parentheses, as the checker scopes them (#1880 review).
+fn is_bindings(e: &Expr) -> Vec<&str> {
+    match &e.kind {
+        ExprKind::Is { pattern, .. } => pattern
+            .bound_names()
+            .into_iter()
+            .map(|id| id.name.as_str())
+            .collect(),
+        ExprKind::BinOp(BinOp::And | BinOp::Implies, l, r) => {
+            let mut names = is_bindings(l);
+            names.extend(is_bindings(r));
+            names
+        }
+        ExprKind::Paren(inner) => is_bindings(inner),
+        _ => Vec::new(),
+    }
 }
 
 /// Closed containment over half-open spans: `outer` fully contains `inner`.
@@ -397,7 +438,7 @@ fn find_in_block(block: &Block, target: Span) -> Option<Site<'_>> {
         let mut exprs = Vec::new();
         statement_exprs(stmt, &mut exprs);
         if let Some(e) = exprs.into_iter().find(|e| contains(e.span, target)) {
-            return Some(locate(e, target, stmt.span().start, Vec::new()));
+            return Some(locate(e, target, stmt.span().start, Binders::default()));
         }
     }
     if contains(block.tail.span, target) {
@@ -405,7 +446,7 @@ fn find_in_block(block: &Block, target: Span) -> Option<Site<'_>> {
             &block.tail,
             target,
             block.tail.span.start,
-            Vec::new(),
+            Binders::default(),
         ));
     }
     None
@@ -426,7 +467,7 @@ fn locate<'a>(
     expr: &'a Expr,
     target: Span,
     insertion_offset: usize,
-    mut binders: Vec<&'a str>,
+    mut binders: Binders<'a>,
 ) -> Site<'a> {
     match &expr.kind {
         ExprKind::Block(b) => find_in_block(b, target).unwrap_or(Site {
@@ -546,6 +587,22 @@ fn locate<'a>(
                     // only; an expression body bubbles the outer offset.
                     if let ExprKind::Lambda(l) = &expr.kind {
                         binders.extend(l.params.iter().map(|p| p.name.name.as_str()));
+                    }
+                    // #1880 review: an `is` on the left of `&&` / `implies`
+                    // binds for the right operand only.
+                    if let ExprKind::BinOp(BinOp::And | BinOp::Implies, lhs, rhs) = &expr.kind
+                        && std::ptr::eq(child, rhs.as_ref())
+                    {
+                        binders.extend(is_bindings(lhs));
+                    }
+                    if let ExprKind::Observation(o) = &expr.kind
+                        && let ObservationMatcher::Called {
+                            with_pred: Some(pred),
+                            ..
+                        } = &o.matcher
+                        && std::ptr::eq(child, pred.as_ref())
+                    {
+                        binders.opaque = true;
                     }
                     locate(child, target, insertion_offset, binders)
                 }
@@ -1250,6 +1307,101 @@ mod tests {
         );
         let edits = sole_edit(&actions_for(lambda, "k * 2")[0]);
         assert!(edits[0].new_text.starts_with("let extracted = k * 2\n"));
+    }
+
+    /// #1880 review: the same scope rule for the other binders. An `is` on the
+    /// left of `&&` / `implies` binds for the right operand only, and an
+    /// observation's `with` predicate reads the observed operation's
+    /// parameters, which the tree doesn't bind.
+    #[test]
+    fn declines_a_selection_reading_an_is_binding_or_an_observed_parameter() {
+        let and = concat!(
+            "context c\n\n",
+            "fn f(r: Result[Int, String]) -> Bool {\n",
+            "  let ok = r is Ok(n) && n > 0\n",
+            "  ok\n",
+            "}\n",
+        );
+        assert!(actions_for(and, "n > 0").is_empty(), "`&&` binding hoisted");
+        let implies = concat!(
+            "context c\n\n",
+            "fn f(r: Result[Int, String]) -> Bool {\n",
+            "  let ok = r is Ok(n) implies n > 0\n",
+            "  ok\n",
+            "}\n",
+        );
+        assert!(
+            actions_for(implies, "n > 0").is_empty(),
+            "`implies` binding hoisted"
+        );
+        let condition = concat!(
+            "context c\n\n",
+            "fn f(r: Result[Int, String]) -> Int {\n",
+            "  if r is Ok(n) && n > 0 {\n",
+            "    1\n",
+            "  } else {\n",
+            "    0\n",
+            "  }\n",
+            "}\n",
+        );
+        assert!(
+            actions_for(condition, "n > 0").is_empty(),
+            "`if` condition binding hoisted"
+        );
+        let observed = concat!(
+            "suite c {\n",
+            "  case \"logs\" {\n",
+            "    expect Logger.log called with msg == \"start\"\n",
+            "  }\n",
+            "}\n",
+        );
+        assert!(
+            actions_for(observed, "msg == \"start\"").is_empty(),
+            "observed parameter hoisted"
+        );
+        // The left operand is outside the `is` scope, so it still extracts.
+        let lhs = concat!(
+            "context c\n\n",
+            "fn f(r: Result[Int, String], k: Int) -> Bool {\n",
+            "  let ok = k > 1 && r is Ok(n)\n",
+            "  ok\n",
+            "}\n",
+        );
+        let edits = sole_edit(&actions_for(lhs, "k > 1")[0]);
+        assert!(edits[0].new_text.starts_with("let extracted = k > 1\n"));
+    }
+
+    /// #1880 review: a block body puts the `let` inside the binding's scope,
+    /// so a selection reading the binding still extracts there.
+    #[test]
+    fn still_extracts_a_binding_read_inside_a_block_body() {
+        let arm = concat!(
+            "context c\n\n",
+            "fn f(o: Option[Int]) -> Int {\n",
+            "  let a = match o {\n",
+            "    Some(x) => {\n",
+            "      let b = x + 1\n",
+            "      b\n",
+            "    }\n",
+            "    _ => 0\n",
+            "  }\n",
+            "  a\n",
+            "}\n",
+        );
+        let edits = sole_edit(&actions_for(arm, "x + 1")[0]);
+        assert!(edits[0].new_text.starts_with("let extracted = x + 1\n"));
+        let lambda = concat!(
+            "context c\n\n",
+            "fn f(xs: List[Int]) -> List[Int] {\n",
+            "  let ys = xs.map((v) => {\n",
+            "    let w = v * 2\n",
+            "    w\n",
+            "  })\n",
+            "  ys\n",
+            "}\n",
+        );
+        let edits = sole_edit(&actions_for(lambda, "v * 2")[0]);
+        assert!(edits[0].new_text.starts_with("let extracted = v * 2\n"));
     }
 
     #[test]
