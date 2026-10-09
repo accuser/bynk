@@ -1491,8 +1491,7 @@ pub fn check_hidden_type_names(
                     return;
                 }
                 ExprKind::Is { pattern, .. } => self.pattern(pattern),
-                ExprKind::RecordConstruction { type_name, .. }
-                | ExprKind::ConstructorCall { type_name, .. } => self.name(type_name),
+                ExprKind::RecordConstruction { type_name, .. } => self.name(type_name),
                 ExprKind::RecordSpread {
                     type_name: Some(tn),
                     ..
@@ -2383,67 +2382,6 @@ fn check_expr_references(expr: &Expr, cx: &mut RefCheckCtx) {
         ExprKind::Some(inner) => {
             check_expr_references(inner, cx);
         }
-        ExprKind::ConstructorCall {
-            type_name,
-            method,
-            args,
-        } => {
-            // The expression `T.name(args)` may be:
-            //   - a static method call (or refined-type `of`),
-            //   - a qualified variant constructor on a sum,
-            //   - a qualified HttpResult variant (v0.9).
-            // The resolver only needs to ensure that *something* matches.
-            if type_name.name == "HttpResult" {
-                if http_variant(&method.name).is_none() {
-                    cx.errors.push(CompileError::new(
-                        "bynk.resolve.unknown_static_member",
-                        method.span,
-                        format!("`HttpResult` has no variant named `{}`", method.name),
-                    ));
-                }
-                for a in args {
-                    check_expr_references(a, cx);
-                }
-                return;
-            }
-            if let Some(decl) = cx.types.get(&type_name.name) {
-                cx.errors
-                    .refs
-                    .record(type_name.span, SymbolKind::Type, &type_name.name);
-                let table = cx.methods.get(&type_name.name).cloned().unwrap_or_default();
-                let is_static_method = table.statics.contains_key(&method.name);
-                let is_of_constructor = method.name == "of"
-                    && matches!(
-                        decl.body,
-                        TypeBody::Refined { .. } | TypeBody::Opaque { .. }
-                    );
-                let is_unsafe_constructor =
-                    method.name == "unsafe" && matches!(decl.body, TypeBody::Opaque { .. });
-                let is_variant = match &decl.body {
-                    TypeBody::Sum(s) => s.variants.iter().any(|v| v.name.name == method.name),
-                    _ => false,
-                };
-                if !(is_static_method || is_of_constructor || is_unsafe_constructor || is_variant) {
-                    cx.errors.push(
-                        CompileError::new(
-                            "bynk.resolve.unknown_static_member",
-                            method.span,
-                            format!(
-                                "type `{}` has no static method or variant named `{}`",
-                                type_name.name, method.name
-                            ),
-                        )
-                        // Finding #46: cross-file table lookup — see resolver.rs:1029.
-                        .with_note("type declared here"),
-                    );
-                }
-            } else {
-                cx.errors.push(unknown_type_error(type_name));
-            }
-            for a in args {
-                check_expr_references(a, cx);
-            }
-        }
         ExprKind::RecordConstruction { type_name, fields } => {
             match cx.types.get(&type_name.name) {
                 Some(decl) => {
@@ -2624,9 +2562,8 @@ fn check_expr_references(expr: &Expr, cx: &mut RefCheckCtx) {
             }
             // If the receiver is a bare ident of a declared type (and not a
             // local binding), this is a static call: `T.method(args)`.
-            // Validate the type/method/variant resolution here, mirroring
-            // ConstructorCall's resolver path. Otherwise recurse into the
-            // receiver as a value expression.
+            // Validate the type/method/variant resolution here. Otherwise
+            // recurse into the receiver as a value expression.
             if let ExprKind::Ident(id) = &receiver.kind
                 && !name_in_scope(&id.name, cx.params, &cx.scopes)
                 && let Some(decl) = cx.types.get(&id.name)

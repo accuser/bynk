@@ -1158,11 +1158,6 @@ pub(crate) fn lower_expr(e: &Expr, cx: &mut LowerCtx) -> Lowered {
             cx.emitted_early_return = true;
             format!("{tmp}.value")
         }
-        ExprKind::ConstructorCall {
-            type_name,
-            method,
-            args,
-        } => pre.absorb(lower_constructor_call(type_name, method, args, cx)),
         ExprKind::RecordConstruction { type_name, fields } => {
             pre.absorb(lower_record_construction(type_name, fields, cx))
         }
@@ -5247,20 +5242,6 @@ fn equality_lowering(ty: TyId, tys: &Types) -> EqualityLowering {
         | Ty::Stream(_)
         | Ty::Connection(_) => EqualityLowering::Structural,
     }
-}
-
-fn lower_constructor_call(
-    type_name: &Ident,
-    method: &Ident,
-    args: &[Expr],
-    cx: &mut LowerCtx,
-) -> Lowered {
-    let mut pre = Pre::new();
-    let args: Vec<String> = args.iter().map(|a| pre.lower(a, cx)).collect();
-    let text = // Nullary variant qualified construction: `T.V` (no parens) at the
-    // source level wouldn't reach here, so `T.V()` always means call.
-    format!("{}.{}({})", type_name.name, method.name, args.join(", "));
-    pre.finish(text)
 }
 
 fn lower_record_construction(

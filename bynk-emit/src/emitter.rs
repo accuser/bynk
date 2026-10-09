@@ -749,7 +749,6 @@ pub(crate) fn block_uses_send(b: &Block) -> bool {
             | ExprKind::Ok(_)
             | ExprKind::Err(_)
             | ExprKind::Question(_)
-            | ExprKind::ConstructorCall { .. }
             | ExprKind::RecordConstruction { .. }
             | ExprKind::FieldAccess { .. }
             | ExprKind::MethodCall { .. }
@@ -2484,16 +2483,6 @@ fn collect_refs_in_expr(
             collect_refs_in_expr(cond, local_to_file, commons, ctx, out);
             collect_refs_in_block(then_block, local_to_file, commons, ctx, out);
             collect_refs_in_block(else_block, local_to_file, commons, ctx, out);
-        }
-        ExprKind::ConstructorCall {
-            type_name,
-            method: _,
-            args,
-        } => {
-            record_name_ref(&type_name.name, local_to_file, ctx, out);
-            for a in args {
-                collect_refs_in_expr(a, local_to_file, commons, ctx, out);
-            }
         }
         ExprKind::RecordConstruction { type_name, fields } => {
             record_name_ref(&type_name.name, local_to_file, ctx, out);
