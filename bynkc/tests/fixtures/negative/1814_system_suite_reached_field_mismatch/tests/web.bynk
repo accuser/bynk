@@ -1,0 +1,14 @@
+---
+#1814: the system tier's harness view merges the suite's `uses` one level
+deep, so `Run`'s `Repo` field resolved to nothing there too. It is closed
+over reached types like a unit suite's view, and an `Int` for it is rejected.
+---
+suite t.web as system {
+  uses t.model
+
+  case "builds" {
+    let r = Run { repo: 42 }
+    let p <- api.GET("/ping")
+    expect p is Ok(_)
+  }
+}

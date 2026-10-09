@@ -300,6 +300,46 @@ const ROWS: &[Row] = &[
             },
         ],
     },
+    // #1814: a suite's view is closed over reached types like its target's.
+    Row {
+        name: "a suite rejects the wrong base for a type reached two uses deep",
+        files: &[
+            ("t/core.bynk", CORE),
+            ("t/model.bynk", MODEL),
+            ("t/web.bynk", WEB),
+            (
+                "tests/web.bynk",
+                "suite t.web\n\ncase \"reads\" {\n  let r = Run { repo: 42 }\n  expect r.repo == r.repo\n}\n",
+            ),
+        ],
+        expect: &[Expect::Reports("bynk.types.field_value_mismatch")],
+    },
+    Row {
+        name: "a suite reads a reached field as its reached type",
+        files: &[
+            ("t/core.bynk", CORE),
+            ("t/model.bynk", MODEL),
+            ("t/web.bynk", WEB),
+            (
+                "tests/web.bynk",
+                "suite t.web\n\ncase \"reads\" {\n  let r = Run { repo: \"x\" }\n  let n: Int = r.repo\n  expect n == 1\n}\n",
+            ),
+        ],
+        expect: &[Expect::Reports("bynk.types.let_annotation_mismatch")],
+    },
+    Row {
+        name: "a suite may not name a type its target only reaches",
+        files: &[
+            ("t/core.bynk", CORE),
+            ("t/model.bynk", MODEL),
+            ("t/web.bynk", WEB),
+            (
+                "tests/web.bynk",
+                "suite t.web\n\ncase \"names\" {\n  let r = Run { repo: \"x\" }\n  let n: Repo = r.repo\n  expect n == r.repo\n}\n",
+            ),
+        ],
+        expect: &[Expect::Reports("bynk.resolve.unknown_type")],
+    },
     Row {
         name: "a context's rebranded uses type resolves to the commons",
         files: &[("geo.bynk", GEO), ("left.bynk", LEFT)],
@@ -385,25 +425,5 @@ fn known_defect_1824_shadowing_local_retypes_an_imported_declaration() {
                 kind: STRING_REPO,
             },
         ],
-    });
-}
-
-/// #1814: a suite composes a one-level type table, so a value of the wrong
-/// base for a type its target reaches two `uses` deep goes unchecked in a case.
-#[test]
-#[should_panic(expected = "row `a suite rejects the wrong base for a type reached two uses deep`")]
-fn known_defect_1814_suite_leaves_a_reached_type_unchecked() {
-    check(&Row {
-        name: "a suite rejects the wrong base for a type reached two uses deep",
-        files: &[
-            ("t/core.bynk", CORE),
-            ("t/model.bynk", MODEL),
-            ("t/web.bynk", WEB),
-            (
-                "tests/web.bynk",
-                "suite t.web\n\ncase \"reads\" {\n  let r = Run { repo: 42 }\n  expect r.repo == r.repo\n}\n",
-            ),
-        ],
-        expect: &[Expect::Reports("bynk.types.field_value_mismatch")],
     });
 }

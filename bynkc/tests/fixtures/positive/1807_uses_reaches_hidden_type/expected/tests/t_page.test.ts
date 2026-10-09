@@ -3,6 +3,7 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, __bynkEq } from "../runtime.js";
 import * as __ns_t_page from "./../t/page.js";
+import * as __ns_t_core from "./../t/core.js";
 import * as __ns_t_model from "./../t/model.js";
 
 class ExpectationError extends Error {
@@ -38,6 +39,9 @@ async function test_a_second_commons_maps_a_reached_refined_field() {
     const { Job, Run, first } = __ns_t_model;
     type Job = __ns_t_model.Job;
     type Run = __ns_t_model.Run;
+    const { Repo, Status } = __ns_t_core;
+    type Repo = __ns_t_core.Repo;
+    type Status = __ns_t_core.Status;
     if (!(__bynkEq(repos([sample(), sample()]), ["bynk"]))) { throw __bynkExpectFailure("tests/t/page.bynk:4:10", 78, 117, "expect repos([sample(), sample()]) == [\"bynk\"]\n  expected: repos([sample(), sample()]) == [\"bynk\"]\n  actual:   " + __bynkShow((repos([sample(), sample()]))) + " == " + __bynkShow((["bynk"]))); }
     return { pass: true };
   } catch (e) {
@@ -56,6 +60,9 @@ async function test_a_second_commons_builds_and_matches_a_reached_sum() {
     const { Job, Run, first } = __ns_t_model;
     type Job = __ns_t_model.Job;
     type Run = __ns_t_model.Run;
+    const { Repo, Status } = __ns_t_core;
+    type Repo = __ns_t_core.Repo;
+    type Status = __ns_t_core.Status;
     if (!(label(queued()) === "pending")) { throw __bynkExpectFailure("tests/t/page.bynk:8:10", 189, 217, "expect label(queued()) == \"pending\"\n  expected: label(queued()) == \"pending\"\n  actual:   " + __bynkShow((label(queued()))) + " == " + __bynkShow(("pending"))); }
     return { pass: true };
   } catch (e) {

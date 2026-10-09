@@ -1,0 +1,9 @@
+context t.web
+
+uses t.model
+
+service api from http {
+  on GET("/first") () -> Effect[HttpResult[String]] by Visitor {
+    Ok("web")
+  }
+}

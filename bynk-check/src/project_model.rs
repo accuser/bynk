@@ -3325,23 +3325,165 @@ pub fn close_reachable_types(
     imported_from_kind: &mut HashMap<String, UnitKind>,
     errors: &mut ErrorSink,
 ) -> BTreeMap<String, String> {
-    /// A type name an imported declaration references: resolved in `scope`
-    /// (the declaring unit), and reached through `via` (the `uses` or
-    /// `consumes` target this unit imported the declaration from, which a
-    /// conflict points at).
-    struct Reached {
-        name: String,
-        scope: String,
-        via: String,
-    }
-    fn push_refs(names: Vec<String>, scope: &str, via: &str, queue: &mut Vec<Reached>) {
-        queue.extend(names.into_iter().map(|n| Reached {
-            name: n,
-            scope: scope.to_string(),
-            via: via.to_string(),
-        }));
-    }
+    let mut conflicted: HashSet<String> = HashSet::new();
+    close_imported(
+        unit_info,
+        combined_types,
+        combined_fns,
+        combined_methods,
+        imported_from,
+        imported_from_kind,
+        |r, owner, bound| {
+            let bound = bound.unwrap_or(name);
+            // Shadowing a type of a commons this unit `uses` directly is the
+            // existing, visible choice (`1697_derived_names_collide` declares
+            // its own `Message` beside `uses bynk.locale.types`), so only a
+            // shadow of a type the unit cannot name is a conflict.
+            let directly_used = unit_info[name].uses.iter().any(|u| u == owner);
+            if bound != owner && !directly_used && conflicted.insert(r.name.clone()) {
+                let site = uses_span_of(parsed, &unit_info[name].files, &r.via)
+                    .or_else(|| consumes_span_of(parsed, &unit_info[name].files, &r.via));
+                let span = site.map(|(_, s)| s).unwrap_or_default();
+                let file = site.map(|(i, _)| parsed[i].identity_path());
+                errors.push_for(
+                    file.as_deref(),
+                    CompileError::new(
+                        "bynk.uses.name_conflict",
+                        span,
+                        format!(
+                            "`{via}` brings in declarations that use type `{t}` from `{owner}`, \
+                             but `{t}` in `{name}` names `{bound}`'s type",
+                            via = r.via,
+                            t = r.name,
+                        ),
+                    )
+                    .with_note(
+                        "rename one of the two types; the imported declarations cannot be \
+                         checked against a different type of the same name",
+                    ),
+                );
+            }
+        },
+    )
+}
 
+/// #1814: close a test suite's composed view over the types its imported
+/// declarations reach, as [`close_reachable_types`] closes a unit's table.
+///
+/// A suite's view is not a unit's: a unit suite's privileged view and a
+/// `system` case's harness table each merge their own `imported` units (the
+/// target's `uses` and consumed contexts; the suite's `uses` and the
+/// participants) one level deep. A declaration of `imported` that won its
+/// name in the view (the same `Arc`, first in merge order) seeds the walk, in
+/// its declaring unit's scope. What the walk adds is returned as hidden, for
+/// the naming gate and for the test scaffold to import from its owning
+/// commons.
+///
+/// A reached name the view already binds to a different declaration is left
+/// as it is, with no diagnostic: a unit suite's target already reported it as
+/// `bynk.uses.name_conflict` from its own closure, and a harness's
+/// first-wins merge of its `uses` and participants has always let one name
+/// stand for one declaration.
+pub fn close_view_types(
+    imported: &[String],
+    unit_tables: &HashMap<String, UnitTable>,
+    unit_uses: &HashMap<String, Vec<String>>,
+    types: &mut HashMap<String, Arc<TypeDecl>>,
+    fns: &HashMap<String, Arc<FnDecl>>,
+    methods: &mut HashMap<String, ResolverMethodTable>,
+) -> BTreeMap<String, String> {
+    let mut imported_from: HashMap<String, String> = HashMap::new();
+    for u in imported {
+        let Some(t) = unit_tables.get(u) else {
+            continue;
+        };
+        for (n, d) in &t.types {
+            if types.get(n).is_some_and(|v| Arc::ptr_eq(v, d)) {
+                imported_from.entry(n.clone()).or_insert_with(|| u.clone());
+            }
+        }
+        for (n, d) in &t.fns {
+            if fns.get(n).is_some_and(|v| Arc::ptr_eq(v, d)) {
+                imported_from.entry(n.clone()).or_insert_with(|| u.clone());
+            }
+        }
+    }
+    close_imported(
+        &TableScopes {
+            tables: unit_tables,
+            uses: unit_uses,
+        },
+        types,
+        fns,
+        methods,
+        &mut imported_from,
+        &mut HashMap::new(),
+        |_, _, _| {},
+    )
+}
+
+/// #1814: what the reachable-type walk reads of a unit: its declared table,
+/// its `uses`, and its kind. A unit's own closure reads the assembled
+/// [`UnitInfo`]s; a suite view's reads the per-unit maps the suite phases
+/// carry.
+trait ScopeTables {
+    fn scope(&self, unit: &str) -> Option<(&UnitTable, &[String], UnitKind)>;
+}
+
+impl ScopeTables for BTreeMap<String, UnitInfo> {
+    fn scope(&self, unit: &str) -> Option<(&UnitTable, &[String], UnitKind)> {
+        self.get(unit)
+            .map(|i| (&i.table, i.uses.as_slice(), i.kind))
+    }
+}
+
+/// #1814: [`ScopeTables`] over the suite phases' per-unit maps.
+struct TableScopes<'a> {
+    tables: &'a HashMap<String, UnitTable>,
+    uses: &'a HashMap<String, Vec<String>>,
+}
+
+impl ScopeTables for TableScopes<'_> {
+    fn scope(&self, unit: &str) -> Option<(&UnitTable, &[String], UnitKind)> {
+        let table = self.tables.get(unit)?;
+        let uses = self.uses.get(unit).map(Vec::as_slice).unwrap_or_default();
+        Some((table, uses, table.kind?))
+    }
+}
+
+/// #1807: a type name an imported declaration references: resolved in
+/// `scope` (the declaring unit), and reached through `via` (the `uses` or
+/// `consumes` target the declaration was imported from, which a conflict
+/// points at).
+struct Reached {
+    name: String,
+    scope: String,
+    via: String,
+}
+
+fn push_refs(names: Vec<String>, scope: &str, via: &str, queue: &mut Vec<Reached>) {
+    queue.extend(names.into_iter().map(|n| Reached {
+        name: n,
+        scope: scope.to_string(),
+        via: via.to_string(),
+    }));
+}
+
+/// #1807, #1814: the walk [`close_reachable_types`] and [`close_view_types`]
+/// share. Seeds from every entry `imported_from` attributes to another unit,
+/// adds each reached commons type the table lacks (with its methods), and
+/// calls `on_bound(reached, owner, bound)` for a reached commons type whose
+/// name the table already binds, `bound` being that binding's provenance
+/// (`None` for the table's own declaration).
+fn close_imported<S: ScopeTables + ?Sized>(
+    scopes: &S,
+    combined_types: &mut HashMap<String, Arc<TypeDecl>>,
+    combined_fns: &HashMap<String, Arc<FnDecl>>,
+    combined_methods: &mut HashMap<String, ResolverMethodTable>,
+    imported_from: &mut HashMap<String, String>,
+    imported_from_kind: &mut HashMap<String, UnitKind>,
+    mut on_bound: impl FnMut(&Reached, &str, Option<&str>),
+) -> BTreeMap<String, String> {
     let mut queue: Vec<Reached> = Vec::new();
     let mut type_names: Vec<&String> = combined_types.keys().collect();
     type_names.sort();
@@ -3392,58 +3534,28 @@ pub fn close_reachable_types(
 
     let mut hidden: BTreeMap<String, String> = BTreeMap::new();
     let mut visited: HashSet<(String, String)> = HashSet::new();
-    let mut conflicted: HashSet<String> = HashSet::new();
     while let Some(r) = queue.pop() {
         if !visited.insert((r.scope.clone(), r.name.clone())) {
             continue;
         }
-        let Some(owner) = type_owner_in_scope(&r.scope, &r.name, unit_info) else {
+        let Some(owner) = type_owner_in_scope(&r.scope, &r.name, scopes) else {
             continue;
         };
         // Review of #1813: before the conflict check, so a context-owned
         // reach is skipped whether or not this unit binds the name (a
         // consumer's own `Money` beside a consumed export's field of the
         // exporting context's `Money` is not a conflict).
-        let owner_info = &unit_info[owner];
-        if owner_info.kind != UnitKind::Commons {
+        let Some((owner_table, _, owner_kind)) = scopes.scope(owner) else {
+            continue;
+        };
+        if owner_kind != UnitKind::Commons {
             continue;
         }
         if combined_types.contains_key(&r.name) {
-            let bound = imported_from
-                .get(&r.name)
-                .map(String::as_str)
-                .unwrap_or(name);
-            // Shadowing a type of a commons this unit `uses` directly is the
-            // existing, visible choice (`1697_derived_names_collide` declares
-            // its own `Message` beside `uses bynk.locale.types`), so only a
-            // shadow of a type the unit cannot name is a conflict.
-            let directly_used = unit_info[name].uses.iter().any(|u| u == owner);
-            if bound != owner && !directly_used && conflicted.insert(r.name.clone()) {
-                let site = uses_span_of(parsed, &unit_info[name].files, &r.via)
-                    .or_else(|| consumes_span_of(parsed, &unit_info[name].files, &r.via));
-                let span = site.map(|(_, s)| s).unwrap_or_default();
-                let file = site.map(|(i, _)| parsed[i].identity_path());
-                errors.push_for(
-                    file.as_deref(),
-                    CompileError::new(
-                        "bynk.uses.name_conflict",
-                        span,
-                        format!(
-                            "`{via}` brings in declarations that use type `{t}` from `{owner}`, \
-                             but `{t}` in `{name}` names `{bound}`'s type",
-                            via = r.via,
-                            t = r.name,
-                        ),
-                    )
-                    .with_note(
-                        "rename one of the two types; the imported declarations cannot be \
-                         checked against a different type of the same name",
-                    ),
-                );
-            }
+            on_bound(&r, owner, imported_from.get(&r.name).map(String::as_str));
             continue;
         }
-        let decl = owner_info.table.types[&r.name].clone();
+        let decl = owner_table.types[&r.name].clone();
         push_refs(type_decl_ref_names(&decl), owner, &r.via, &mut queue);
         combined_types.insert(r.name.clone(), decl.clone());
         imported_from.insert(r.name.clone(), owner.to_string());
@@ -3451,7 +3563,7 @@ pub fn close_reachable_types(
         hidden.insert(r.name.clone(), owner.to_string());
         // The reached type's methods come along, as a direct `uses` brings
         // them: `r.repo.isValid()` resolves in the declaring scope too.
-        if let Some(mt) = owner_info.table.methods.get(&r.name) {
+        if let Some(mt) = owner_table.methods.get(&r.name) {
             let entry = combined_methods.entry(r.name.clone()).or_default();
             let mut decls: Vec<(&String, &Arc<FnDecl>, bool)> = mt
                 .instance
@@ -3482,21 +3594,20 @@ pub fn close_reachable_types(
 /// #1807: the unit that owns type `name` as seen from `scope`: `scope` itself
 /// if it declares `name`, else the first of `scope`'s `uses` that does. This
 /// is [`compose_unit_symbols`]'s precedence, applied to another unit.
-fn type_owner_in_scope<'a>(
+fn type_owner_in_scope<'a, S: ScopeTables + ?Sized>(
     scope: &'a str,
     name: &str,
-    unit_info: &'a BTreeMap<String, UnitInfo>,
+    scopes: &'a S,
 ) -> Option<&'a str> {
-    let info = unit_info.get(scope)?;
-    if info.table.types.contains_key(name) {
+    let (table, uses, _) = scopes.scope(scope)?;
+    if table.types.contains_key(name) {
         return Some(scope);
     }
-    info.uses
-        .iter()
+    uses.iter()
         .find(|u| {
-            unit_info
-                .get(*u)
-                .is_some_and(|i| i.table.types.contains_key(name))
+            scopes
+                .scope(u)
+                .is_some_and(|(t, _, _)| t.types.contains_key(name))
         })
         .map(String::as_str)
 }

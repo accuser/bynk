@@ -1,0 +1,17 @@
+---
+#1814: `t.core` declares `Repo` and `Status`; `t.model` uses them in `Run`.
+The suites below target units that reach them only through `t.model`, so a
+suite may not write either name, but a case's view resolves both: a literal
+for `Run.repo` is checked and branded as a `Repo`, `r.repo` is typed `Repo`,
+and the test scaffold imports each from `t.core` so a lowered case can spell
+it.
+---
+commons t.core
+
+type Repo = String where NonEmpty
+
+fn Repo.shout(self) -> String {
+  "\(self)!"
+}
+
+type Status = enum { Pending, Done }
