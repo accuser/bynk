@@ -1,11 +1,6 @@
----
-level: minor
-changelog: "An imported declaration's types now resolve where it was declared, so a type it reaches through its own `uses` is checked in the unit that imports it (#1807). If `t.web uses t.model`, and `t.model uses t.core` for `type Run = { repo: Repo }`, `t.web` used to type `Run.repo` by nothing: `Run { repo: 42 }`, `\"\"` for a `NonEmpty` field, and `r.repo` returned as an `Int` all compiled, and so did an imported fn returning `Repo`, even across `consumes`. The literal also went unbranded, so `tsc` rejected the output. Such a type is now resolvable but still not nameable: writing `Repo` in `t.web` is `bynk.resolve.unknown_type`, with a note to `uses t.core`. A unit's own type that shares the name is `bynk.uses.name_conflict`, unless the unit `uses` that type's commons directly. Programs that relied on the leniency stop compiling. Test suites still compose their own one-level view (#1814)"
----
+# 0445 — An imported declaration's types resolve in its declaring scope; a type reached only that way is resolvable but not nameable
 
-## ADR: uses-reaches-hidden-types
-title: An imported declaration's types resolve in its declaring scope; a type reached only that way is resolvable but not nameable
-summary: close_reachable_types adds the types imported declarations reach as hidden types; a naming gate keeps uses one level for naming
+- **Status:** Accepted (v0.314)
 
 **Context.** `uses` is one level, by design ([[0277]], [[0278]]): a unit names the types its `uses` targets declare, not theirs. But a unit's composed table (`compose_unit_symbols`) was also its only table for *resolution*, and the checker resolved an imported declaration's types against it. A type the declaration reached through its own `uses` was absent, resolved to nothing, and a missing type is permissive. So every position it typed went unchecked: a record literal's field, a field read, an imported fn's return, a method's signature, and the same through a consumed context's export. The emitter then branded nothing, so `tsc` rejected output that `bynkc check` had passed (#1807, found after #1778).
 
