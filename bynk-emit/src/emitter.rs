@@ -6036,3 +6036,30 @@ mod type_ref_mentions_tests {
         assert!(!type_ref_mentions(&t, TypeRefMarker::Connection));
     }
 }
+
+/// #1832: the import collector reaches a match-arm guard, so a function named
+/// only in a guard is imported.
+#[cfg(test)]
+mod guard_import_tests {
+    use crate::testkit::emit_project;
+
+    #[test]
+    fn a_function_named_only_in_a_guard_is_imported() {
+        let out = emit_project(
+            &[
+                ("d/lim.bynk", "commons d.lim\n\nfn lim() -> Int { 9 }\n"),
+                (
+                    "d/app.bynk",
+                    "commons d.app\n\nuses d.lim\n\nfn g(n: Int) -> Int {\n  match n {\n    k if k > lim() => 1\n    _ => 0\n  }\n}\n",
+                ),
+            ],
+            crate::project::BuildTarget::Bundle,
+        );
+        let app = out.text("d/app.ts");
+        assert!(
+            app.lines()
+                .any(|l| l.starts_with("import") && l.contains("lim") && l.contains("./lim.js")),
+            "{app}"
+        );
+    }
+}

@@ -112,19 +112,28 @@ fn walk_item(item: &CommonsItem, out: &mut Vec<(Span, bool)>) {
 
 fn walk_block(b: &Block, out: &mut Vec<(Span, bool)>) {
     out.push((b.span, true));
+    walk_statements(b, out);
+}
+
+/// A block's statements (each a selection level, then its expressions,
+/// principal identity included) and its tail.
+fn walk_statements(b: &Block, out: &mut Vec<(Span, bool)>) {
     for s in &b.statements {
         out.push((s.span(), false));
-        match s {
-            Statement::Let(l) | Statement::EffectLet(l) => walk_expr(&l.value, out),
-            Statement::Expect(a) => walk_expr(&a.value, out),
-            Statement::Send(s) => walk_expr(&s.value, out),
-            Statement::Do(d) => walk_expr(&d.value, out),
-            Statement::Assign(a) => walk_expr(&a.value, out),
+        let mut exprs = Vec::new();
+        statement_exprs(s, &mut exprs);
+        for e in exprs {
+            walk_expr(e, out);
         }
     }
     walk_expr(&b.tail, out);
 }
 
+/// Every expression is a selection level; the multi-line constructs also fold.
+/// `Block`, `If` and `Match` are walked by hand because they add spans of
+/// their own (statements, branch blocks, arms). Every other kind recurses
+/// through [`expr_children`], so no child slot is skipped (#1850: match-arm
+/// guards and observation predicates once were).
 fn walk_expr(e: &Expr, out: &mut Vec<(Span, bool)>) {
     let foldable = matches!(
         e.kind,
@@ -138,19 +147,7 @@ fn walk_expr(e: &Expr, out: &mut Vec<(Span, bool)>) {
     );
     out.push((e.span, foldable));
     match &e.kind {
-        ExprKind::Block(b) => {
-            for s in &b.statements {
-                out.push((s.span(), false));
-                match s {
-                    Statement::Let(l) | Statement::EffectLet(l) => walk_expr(&l.value, out),
-                    Statement::Expect(a) => walk_expr(&a.value, out),
-                    Statement::Send(s) => walk_expr(&s.value, out),
-                    Statement::Do(d) => walk_expr(&d.value, out),
-                    Statement::Assign(a) => walk_expr(&a.value, out),
-                }
-            }
-            walk_expr(&b.tail, out);
-        }
+        ExprKind::Block(b) => walk_statements(b, out),
         ExprKind::If {
             cond,
             then_block,
@@ -164,73 +161,16 @@ fn walk_expr(e: &Expr, out: &mut Vec<(Span, bool)>) {
             walk_expr(discriminant, out);
             for arm in arms {
                 out.push((arm.span, true));
+                if let Some(guard) = &arm.guard {
+                    walk_expr(guard, out);
+                }
                 match &arm.body {
                     MatchBody::Expr(ex) => walk_expr(ex, out),
                     MatchBody::Block(bl) => walk_block(bl, out),
                 }
             }
         }
-        ExprKind::RecordConstruction { fields, .. } => {
-            for f in fields {
-                if let Some(v) = &f.value {
-                    walk_expr(v, out);
-                }
-            }
-        }
-        ExprKind::RecordSpread {
-            base, overrides, ..
-        } => {
-            walk_expr(base, out);
-            for f in overrides {
-                if let Some(v) = &f.value {
-                    walk_expr(v, out);
-                }
-            }
-        }
-        ExprKind::ListLit(elems) => elems.iter().for_each(|el| walk_expr(el, out)),
-        ExprKind::Lambda(l) => walk_expr(&l.body, out),
-        ExprKind::BinOp(_, a, b) => {
-            walk_expr(a, out);
-            walk_expr(b, out);
-        }
-        ExprKind::UnaryOp(_, x)
-        | ExprKind::Paren(x)
-        | ExprKind::Ok(x)
-        | ExprKind::Err(x)
-        | ExprKind::Question(x)
-        | ExprKind::Some(x)
-        | ExprKind::Wire(x)
-        | ExprKind::EffectPure(x)
-        | ExprKind::Expect(x)
-        | ExprKind::Faults(x) => walk_expr(x, out),
-        ExprKind::Call { args, .. } | ExprKind::ConstructorCall { args, .. } => {
-            args.iter().for_each(|a| walk_expr(a, out))
-        }
-        ExprKind::MethodCall { receiver, args, .. } => {
-            walk_expr(receiver, out);
-            args.iter().for_each(|a| walk_expr(a, out));
-        }
-        ExprKind::FieldAccess { receiver, .. } => walk_expr(receiver, out),
-        ExprKind::Is { value, .. } => walk_expr(value, out),
-        ExprKind::Val { args, .. } => args.iter().for_each(|a| walk_expr(a, out)),
-        // v0.43: walk each interpolation hole's expression.
-        ExprKind::InterpStr(parts) => parts.iter().for_each(|part| {
-            if let InterpPart::Hole(hole) = part {
-                walk_expr(hole, out);
-            }
-        }),
-        // Leaves carry no foldable children.
-        ExprKind::IntLit { .. }
-        | ExprKind::FloatLit { .. }
-        | ExprKind::DurationLit { .. }
-        | ExprKind::StrLit(_)
-        | ExprKind::BoolLit(_)
-        | ExprKind::Ident(_)
-        | ExprKind::None
-        | ExprKind::UnitLit
-        // v0.117: observation forms carry no foldable children.
-        | ExprKind::Observation(_)
-        | ExprKind::Trace { .. } => {}
+        _ => expr_children(e).into_iter().for_each(|c| walk_expr(c, out)),
     }
 }
 
@@ -458,5 +398,24 @@ mod tests {
         // Selection at the top of the file is well-formed too.
         let sel = selection_ranges(src, &[Position::new(3, 4)]);
         assert_eq!(sel.len(), 1);
+    }
+
+    #[test]
+    fn selection_inside_a_match_guard_includes_the_guard() {
+        let src = "commons d\n\nfn f(n: Int, lim: Int) -> Int {\n  match n {\n    k if k + 1 > lim => 1\n    _ => 0\n  }\n}\n";
+        let guard = "k + 1 > lim";
+        let start = src.find(guard).unwrap();
+        let (gs, ge) = (
+            offset_to_position(src, start),
+            offset_to_position(src, start + guard.len()),
+        );
+        let ranges = selection_ranges(src, &[offset_to_position(src, start + 4)]);
+        let mut cur = Some(&ranges[0]);
+        let mut found = false;
+        while let Some(node) = cur {
+            found |= node.range.start == gs && node.range.end == ge;
+            cur = node.parent.as_deref();
+        }
+        assert!(found, "the guard `{guard}` is a selection level");
     }
 }
