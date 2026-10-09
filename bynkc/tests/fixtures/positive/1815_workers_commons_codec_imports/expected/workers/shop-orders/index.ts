@@ -22,7 +22,7 @@ export default {
             __route = "call place";
             const __contract = request.headers.get("X-Bynk-Contract");
             if (__contract !== "3a1dda0cc2000672") {
-              globalThis.console.error("ContractMismatch shop.orders call place", { service: "place", expected: "3a1dda0cc2000672", actual: __contract });
+              globalThis.console.error("ContractMismatch shop.orders call place", { service: "place", expected: "3a1dda0cc2000672", actual: globalThis.String(__contract).slice(0, 16) });
               return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "place", expected: "3a1dda0cc2000672", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
             }
             const args = await request.json() as __JsonValue;

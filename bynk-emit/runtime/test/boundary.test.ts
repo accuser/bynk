@@ -227,4 +227,23 @@ test("rehydrationViolation: logs the agent, path and kind, never the value", () 
   ]);
   assert.ok(!JSON.stringify(logged).includes("secret-key"));
   assert.match(e.message, /^RehydrationViolation: Tracking RefinementViolation at connections$/);
+  // #1825 review: readable, but not enumerable, so logging `e` hides `detail`.
+  assert.equal((e as { rehydrationViolation?: { agent: string } }).rehydrationViolation?.agent, "Tracking");
+  assert.ok(!Object.keys(e).includes("rehydrationViolation"));
+});
+
+// #1825 review: a fault's payload is non-enumerable, so logging the error
+// object (a Worker's fault catch) prints neither a callee's body nor a value.
+test("boundaryError: the payload is readable but not enumerable", async () => {
+  const { inspect } = await import("node:util");
+  const binding = { fetch: async () => new Response("secret-body", { status: 502 }) };
+  await assert.rejects(
+    () => callService(binding, "svc", null, deser<number, string>()),
+    (e: Error) => {
+      assert.equal((e as { boundaryError?: { kind: string } }).boundaryError?.kind, "Transport");
+      assert.ok(!Object.keys(e).includes("boundaryError"));
+      assert.ok(!inspect(e).includes("secret-body"), inspect(e));
+      return true;
+    },
+  );
 });

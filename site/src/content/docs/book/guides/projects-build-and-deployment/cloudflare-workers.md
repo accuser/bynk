@@ -57,8 +57,8 @@ npx wrangler dev
 
 ## When a handler faults
 
-A fault in an HTTP route or an `on call` service answers a bare `500 Internal
-Server Error`. The client never sees the error. The Worker logs it first, with
+A fault in an HTTP route, an `on call` service, an event delivery or a
+WebSocket upgrade answers a `500 Internal Server Error`. The client never sees the error. The Worker logs it first, with
 `console.error`, so it shows in `wrangler tail` and the Workers logs:
 
 ```text
@@ -66,7 +66,8 @@ shop.api GET /shout/:word faulted Error: provider exploded for boom
 ```
 
 The line names the context and the dispatch that faulted: the route's
-*pattern*, or `call <service>` for a service call. It never names the
+*pattern*, `call <service>` for a service call, `event <service>` for an event
+delivery, or `ws <service>` for a WebSocket upgrade. It never names the
 request, so no key or value from the URL reaches the log. A queue consumer
 logs `queue <name> threw` and retries the message. A refused cross-context
 call is also logged by name on both sides: see

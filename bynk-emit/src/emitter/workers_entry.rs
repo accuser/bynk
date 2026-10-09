@@ -737,13 +737,23 @@ pub(crate) fn emit_worker_entry(
             // #1826: the callee decides, so it logs the skew, by name and with
             // both hashes, before refusing: otherwise the diagnosis existed only
             // in a response body passed between two Workers.
-            let skew = || {
+            let skew = |actual: TsExpr| {
                 vec![
                     ("service".to_string(), str_lit(sname.to_string())),
                     ("expected".to_string(), str_lit(expected.clone())),
-                    ("actual".to_string(), ident("__contract")),
+                    ("actual".to_string(), actual),
                 ]
             };
+            // #1826 review: `/_bynk/call/` is reachable from outside, and
+            // nothing about the request is trusted yet, so the header is
+            // logged bounded to a hash's 16 characters: an operator loses
+            // nothing, and a sender can't write arbitrary text to the log.
+            // The 409 body echoes it unbounded, to the sender who sent it.
+            let logged_actual = method_call(
+                call(ident("globalThis.String"), vec![ident("__contract")]),
+                "slice",
+                vec![num_lit("0"), num_lit("16")],
+            );
             case_body.push(if_(
                 strict_neq(ident("__contract"), str_lit(expected.clone())),
                 block(vec![
@@ -752,11 +762,11 @@ pub(crate) fn emit_worker_entry(
                         "error",
                         vec![
                             str_lit(format!("ContractMismatch {context} call {sname}")),
-                            TsExpr::object(skew()),
+                            TsExpr::object(skew(logged_actual)),
                         ],
                     )),
                     return_(Some(json_response(
-                        json_error_kind("ContractMismatch", skew()),
+                        json_error_kind("ContractMismatch", skew(ident("__contract"))),
                         409,
                     ))),
                 ]),
@@ -805,6 +815,9 @@ pub(crate) fn emit_worker_entry(
     if !ws_open_routes.is_empty() {
         let mut ws_body: Vec<TsStmt> = Vec::new();
         for (sname, h) in &ws_open_routes {
+            // #1825 review: the auth seam and the DO forward run in the `try`
+            // too, so name the dispatch for the fault log.
+            ws_body.push(set_fault_route(format!("ws {sname}")));
             let mut args: Vec<TsExpr> = vec![ident("request")];
             for p in &h.params {
                 let pn = &p.name.name;
@@ -939,6 +952,9 @@ pub(crate) fn emit_worker_entry(
             let dser_payload =
                 deserialise_call(&h.params[0].type_ref, "payload", "$.payload", &runtime_use);
             let case_body = vec![
+                // #1825 review: a subscriber that throws is a fault the
+                // publisher's fan-out retries; name it for the log.
+                set_fault_route(format!("event {sname}")),
                 const_("__r_payload", dser_payload),
                 if_(
                     strict_eq(member(ident("__r_payload"), "tag"), str_lit("Err")),
@@ -2600,6 +2616,15 @@ service calc {
             "{ts}"
         );
         assert!(ts.contains("{ status: 409,"), "{ts}");
+        // #1826: logged before the refusal, the sender's header bounded.
+        assert!(
+            ts.contains("globalThis.console.error(\"ContractMismatch demo.shop call calc\""),
+            "{ts}"
+        );
+        assert!(
+            ts.contains("actual: globalThis.String(__contract).slice(0, 16)"),
+            "{ts}"
+        );
     }
 
     #[test]

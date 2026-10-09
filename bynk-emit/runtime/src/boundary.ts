@@ -54,7 +54,16 @@ export function boundaryError(error: CallError): Error {
   const e = new Error(`BoundaryError: ${error.kind}`) as Error & {
     boundaryError?: CallError;
   };
-  e.boundaryError = error;
+  // #1825 review: non-enumerable, so a logged error (`console.error(..., e)`
+  // in a Worker's fault catch) doesn't print the payload, which can carry a
+  // value: a callee's response body, a refinement's offending value. Reading
+  // `e.boundaryError` is unchanged.
+  globalThis.Object.defineProperty(e, "boundaryError", {
+    value: error,
+    enumerable: false,
+    writable: true,
+    configurable: true,
+  });
   return e;
 }
 
@@ -82,12 +91,19 @@ export function rehydrationViolation(agent: string, detail: BoundaryError): Erro
   // offending value (a `RefinementViolation`'s `violation.value`).
   globalThis.console.error(`RehydrationViolation ${agent}`, { agent, path, kind: detail.kind });
   const e = new Error(`RehydrationViolation: ${agent} ${detail.kind} at ${path}`);
-  (e as { rehydrationViolation?: RehydrationViolation }).rehydrationViolation = {
-    kind: "RehydrationViolation",
-    agent,
-    path,
-    detail,
-  };
+  // #1825 review: non-enumerable, as `boundaryError`'s, so a logged error
+  // doesn't print `detail` (it can carry the offending value).
+  globalThis.Object.defineProperty(e, "rehydrationViolation", {
+    value: {
+      kind: "RehydrationViolation",
+      agent,
+      path,
+      detail,
+    } satisfies RehydrationViolation,
+    enumerable: false,
+    writable: true,
+    configurable: true,
+  });
   return e;
 }
 

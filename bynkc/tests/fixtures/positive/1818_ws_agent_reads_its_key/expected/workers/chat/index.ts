@@ -24,6 +24,7 @@ export default {
       }
 
       if (request.headers.get("Upgrade") === "websocket") {
+        __route = "ws ChatGateway";
         const __ws_roomId = url.searchParams.get("roomId");
         if (__ws_roomId === null) return new globalThis.Response("Missing parameter: roomId", { status: 400 });
         return surface.ws_ChatGateway_open(request, __ws_roomId);
