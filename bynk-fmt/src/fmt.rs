@@ -829,8 +829,7 @@ impl<'a> Formatter<'a> {
             }
             self.emit_leading_comments(&u.trivia.leading);
             self.push(&format!("uses {}", u.target.joined()));
-            self.emit_trailing_comment(u.trivia.trailing.as_deref());
-            self.newline();
+            self.emit_trailing_comment_or_newline(u.trivia.trailing.as_deref());
             first = false;
         }
         for pv in stubs {
@@ -1152,10 +1151,7 @@ impl<'a> Formatter<'a> {
                 if i + 1 < e.names.len() || f.opts.trailing_comma {
                     f.push(",");
                 }
-                f.emit_trailing_comment(n.trivia.trailing.as_deref());
-                if n.trivia.trailing.is_none() {
-                    f.newline();
-                }
+                f.emit_trailing_comment_or_newline(n.trivia.trailing.as_deref());
             }
             f.emit_trailing_comments(&e.trailing_comments);
         });
@@ -1428,10 +1424,7 @@ impl<'a> Formatter<'a> {
                     if i + 1 < s.variants.len() || f.opts.trailing_comma {
                         f.push(",");
                     }
-                    f.emit_trailing_comment(v.trivia.trailing.as_deref());
-                    if v.trivia.trailing.is_none() {
-                        f.newline();
-                    }
+                    f.emit_trailing_comment_or_newline(v.trivia.trailing.as_deref());
                 }
                 f.emit_trailing_comments(&s.trailing_comments);
             });
@@ -1874,7 +1867,6 @@ impl<'a> Formatter<'a> {
             // storage (v0.81, storage track): the agent's `store` fields.
             for sf in &a.store_fields {
                 f.format_store_field(sf);
-                f.newline();
             }
             // v0.80: invariants form a phase between the storage fields and the
             // handlers.
@@ -1904,8 +1896,8 @@ impl<'a> Formatter<'a> {
     }
 
     /// Format a `store` field (v0.81): `store <name>: <Kind> [= <init>]`, with
-    /// its leading comments / doc and trailing comment. The enclosing loop adds
-    /// the line break.
+    /// its leading comments / doc, ending its line with the trailing comment
+    /// or a bare newline, never both (#1859).
     fn format_store_field(&mut self, sf: &StoreField) {
         self.emit_leading_comments(&sf.trivia.leading);
         if let Some(doc) = &sf.documentation {
@@ -1924,7 +1916,7 @@ impl<'a> Formatter<'a> {
             self.push(" = ");
             self.format_expr(init);
         }
-        self.emit_trailing_comment(sf.trivia.trailing.as_deref());
+        self.emit_trailing_comment_or_newline(sf.trivia.trailing.as_deref());
     }
 
     /// Format an agent invariant (v0.80): the name on one line, the predicate
@@ -2036,21 +2028,12 @@ impl<'a> Formatter<'a> {
                         // `identity` is a sibling of `auth`, so its comma stays
                         // with `auth`'s line and it starts a new line.
                         f.push(",");
-                        f.emit_trailing_comment(a.auth_trivia.trailing.as_deref());
-                        if a.auth_trivia.trailing.is_none() {
-                            f.newline();
-                        }
+                        f.emit_trailing_comment_or_newline(a.auth_trivia.trailing.as_deref());
                         f.emit_leading_comments(&a.identity_trivia.leading);
                         f.push(&format!("identity = {id}"));
-                        f.emit_trailing_comment(a.identity_trivia.trailing.as_deref());
-                        if a.identity_trivia.trailing.is_none() {
-                            f.newline();
-                        }
+                        f.emit_trailing_comment_or_newline(a.identity_trivia.trailing.as_deref());
                     } else {
-                        f.emit_trailing_comment(a.auth_trivia.trailing.as_deref());
-                        if a.auth_trivia.trailing.is_none() {
-                            f.newline();
-                        }
+                        f.emit_trailing_comment_or_newline(a.auth_trivia.trailing.as_deref());
                     }
                     f.emit_trailing_comments(&a.trailing_comments);
                 });
