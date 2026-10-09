@@ -582,7 +582,7 @@ pub(crate) fn check_faults(call: &Expr, span: Span, ctx: &mut Ctx) -> Option<TyI
     // `expect r faults` through to await a settled value that never throws.
     if !matches!(
         call.kind,
-        ExprKind::Call { .. } | ExprKind::MethodCall { .. } | ExprKind::ConstructorCall { .. }
+        ExprKind::Call { .. } | ExprKind::MethodCall { .. }
     ) {
         ctx.errors.push(
             CompileError::new(
@@ -1389,9 +1389,6 @@ fn body_performs_effects(e: &Expr, ctx: &Ctx) -> bool {
             {
                 return true;
             }
-            args.iter().any(|a| body_performs_effects(a, ctx))
-        }
-        ExprKind::ConstructorCall { args, .. } => {
             args.iter().any(|a| body_performs_effects(a, ctx))
         }
         ExprKind::If {

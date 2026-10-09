@@ -213,7 +213,7 @@ impl Lin<'_> {
                 args,
                 ..
             } => self.walk_method_call(receiver, method.name.as_str(), method.span, args, state),
-            ExprKind::Call { args, .. } | ExprKind::ConstructorCall { args, .. } => {
+            ExprKind::Call { args, .. } => {
                 for a in args {
                     self.walk_expr(a, state);
                 }

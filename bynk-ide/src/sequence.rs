@@ -408,9 +408,7 @@ impl<'a> Builder<'a> {
                 self.walk_match(inner.span, arms, current_block, depth, ret)
             }
             ExprKind::Block(b) => self.walk_block(b, current_block, depth, ret),
-            ExprKind::Call { .. }
-            | ExprKind::ConstructorCall { .. }
-            | ExprKind::MethodCall { .. } => {
+            ExprKind::Call { .. } | ExprKind::MethodCall { .. } => {
                 if let Some(arrow) = arrow {
                     self.classify_call(inner, arrow, current_block);
                 }
@@ -607,8 +605,7 @@ impl<'a> Builder<'a> {
     /// identical to an ordinary instance method call — the parser has no
     /// static-vs-instance distinction at the receiver, so *every* qualified
     /// call parses uniformly as `ExprKind::MethodCall` with an `Ident`
-    /// receiver (`ExprKind::ConstructorCall` is unreachable from the parser
-    /// today; the resolver/checker make the static-vs-instance call from
+    /// receiver (the resolver/checker make the static-vs-instance call from
     /// context, which this classifier reimplements against `given`/`agents`/
     /// `cross_context` instead). `Agent(key).method(args)` is the one
     /// receiver shape that differs structurally: the receiver is itself an
@@ -630,13 +627,6 @@ impl<'a> Builder<'a> {
                 ExprKind::Ident(id) => self.classify_static(&id.name, &method.name, args, id.span),
                 _ => None,
             },
-            // Kept for exhaustiveness against a possible future parser
-            // change; unreachable today (see the doc comment above).
-            ExprKind::ConstructorCall {
-                type_name,
-                method,
-                args,
-            } => self.classify_static(&type_name.name, &method.name, args, type_name.span),
             _ => None,
         }
     }

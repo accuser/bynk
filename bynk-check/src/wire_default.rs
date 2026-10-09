@@ -124,8 +124,7 @@ pub fn lower_field_default_wire(
 /// actually parses as. Confirmed empirically (`OrderId.unsafe("x")` parses to
 /// `ExprKind::MethodCall { receiver: Ident("OrderId"), method: "unsafe", .. }`
 /// — the parser never distinguishes a type-qualified call from an ordinary
-/// instance method call; that's a resolver-time decision) — `ConstructorCall`
-/// is handled too, defensively, in case some other path still produces it.
+/// instance method call; that's a resolver-time decision).
 fn qualified_call(e: &Expr) -> Option<(&str, &str, &[Expr])> {
     match &e.kind {
         ExprKind::MethodCall {
@@ -139,15 +138,6 @@ fn qualified_call(e: &Expr) -> Option<(&str, &str, &[Expr])> {
             };
             Some((recv.name.as_str(), method.name.as_str(), args.as_slice()))
         }
-        ExprKind::ConstructorCall {
-            type_name,
-            method,
-            args,
-        } => Some((
-            type_name.name.as_str(),
-            method.name.as_str(),
-            args.as_slice(),
-        )),
         _ => None,
     }
 }

@@ -485,7 +485,6 @@ fn locate(expr: &Expr, target: Span, insertion_offset: usize) -> Site<'_> {
         | ExprKind::Ok(_)
         | ExprKind::Err(_)
         | ExprKind::Question(_)
-        | ExprKind::ConstructorCall { .. }
         | ExprKind::RecordConstruction { .. }
         | ExprKind::FieldAccess { .. }
         | ExprKind::MethodCall { .. }
@@ -777,7 +776,6 @@ fn find_stmt_run_in_expr(e: &Expr, target: Span) -> Option<StmtRun<'_>> {
         | ExprKind::Ok(_)
         | ExprKind::Err(_)
         | ExprKind::Question(_)
-        | ExprKind::ConstructorCall { .. }
         | ExprKind::RecordConstruction { .. }
         | ExprKind::FieldAccess { .. }
         | ExprKind::MethodCall { .. }
@@ -952,7 +950,6 @@ fn expr_matches(e: &Expr, pred: &impl Fn(&Statement) -> bool) -> bool {
         | ExprKind::Ok(_)
         | ExprKind::Err(_)
         | ExprKind::Question(_)
-        | ExprKind::ConstructorCall { .. }
         | ExprKind::RecordConstruction { .. }
         | ExprKind::FieldAccess { .. }
         | ExprKind::MethodCall { .. }
