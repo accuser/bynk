@@ -1471,9 +1471,6 @@ fn emit_boundary_helpers(
     }
 }
 
-/// The file declaring `name` in the commons `commons_name`, as a module
-/// imports it: the declaring file of a multi-file commons, or the commons'
-/// single-file path.
 /// The unit whose module exports `name`'s codecs for this one to import: a
 /// commons it `uses`, or (#1845) an adapter it consumes. An adapter is
 /// recorded in `imported_from_kind` as a consumed *context*, but unlike one it
@@ -1484,11 +1481,18 @@ fn codec_owner<'a>(ctx: &'a EmitProjectCtx, name: &str) -> Option<&'a String> {
     let owner = ctx.imported_from.get(name)?;
     match ctx.imported_from_kind.get(name) {
         Some(UnitKind::Commons) => Some(owner),
-        Some(UnitKind::Context) if ctx.consumed_adapters.contains(owner) => Some(owner),
+        // `Adapter` too, should the checker ever record an adapter's types as
+        // its own kind.
+        Some(UnitKind::Context | UnitKind::Adapter) if ctx.consumed_adapters.contains(owner) => {
+            Some(owner)
+        }
         _ => None,
     }
 }
 
+/// The file declaring `name` in the commons `commons_name`, as a module
+/// imports it: the declaring file of a multi-file commons, or the commons'
+/// single-file path.
 fn commons_decl_path(ctx: &EmitProjectCtx, commons_name: &str, name: &str) -> PathBuf {
     ctx.imported_decl_paths
         .get(commons_name)
