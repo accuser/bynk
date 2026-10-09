@@ -4386,6 +4386,7 @@ mod tests {
                 types: HashMap::new(),
                 fns: HashMap::new(),
                 methods: HashMap::new(),
+                agents: HashMap::new(),
             },
         );
         // `a.context` is absent from the file index → its `file_index` defaults.

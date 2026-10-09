@@ -3481,7 +3481,7 @@ pub(crate) fn test_scaffold_ns(q: &str) -> String {
 
 /// The PascalCase name a context uses for its generated `Deps` interface:
 /// `shortener.links` → `ShortenerLinks`.
-fn context_pascal(name: &str) -> String {
+pub(crate) fn context_pascal(name: &str) -> String {
     name.split('.')
         .map(|seg| {
             let mut chars = seg.chars();
