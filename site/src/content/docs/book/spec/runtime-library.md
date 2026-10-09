@@ -413,7 +413,9 @@ A fault claim, `expect <call> faults`
 
 The claim runs only in-process, at `unit` and `integration`. At `system` a fault
 reaches the harness as the deployed Worker's error response, which the claim
-cannot observe (`bynk.test.faults_needs_in_process`). The driver decodes that
-`500` as `ServerError`, the same outcome a handler's deliberate `ServerError(...)`
-produces, and no marker on the response tells them apart: by design (#1811), a
-`system` case observes responses, not faults.
+cannot observe (`bynk.test.faults_needs_in_process`). The fault's `500` carries
+no `error` payload, so the driver decodes it as `ServerError("")`; a handler's
+deliberate `ServerError(m)` decodes as `ServerError(m)`. An empty message is the
+only difference, and `ServerError("")` is itself a legal return, so it does not
+reliably tell the two apart: by design (#1811), a `system` case observes
+responses, not faults.
