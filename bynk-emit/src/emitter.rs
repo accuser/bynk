@@ -562,6 +562,11 @@ pub(crate) fn emit_project(
         .into_iter()
         .partition(|s| s.is_named_import());
     body.extend(boundary_stmts);
+    // #1829: a boundary helper this module emits for a commons type names the
+    // types that type reaches, and the source may never mention one (an agent
+    // stores a used commons' `Item` and nothing reads its `note`). Each is
+    // implied, so `settle_implied` imports it when a helper spells it.
+    references.imply_names(boundary_names.iter(), commons, ctx);
     // v0.22b: module-local codec helpers for this file's Json.encode/decode
     // targets, deduped against the workers boundary helpers above.
     body.extend(emit_json_codec_helpers(
@@ -2068,6 +2073,42 @@ struct ExternalReferences {
 impl ExternalReferences {
     fn is_empty(&self) -> bool {
         self.by_commons.is_empty() && self.by_sibling.is_empty() && self.types_by_sibling.is_empty()
+    }
+
+    /// #1829: record each of `names`, the types a module's emitted helpers
+    /// name, as an *implied* import, resolved the way a source reference is.
+    /// A name this file declares, or a consumed context declares, is skipped,
+    /// as [`record_ty_refs`] skips it.
+    fn imply_names<'a>(
+        &mut self,
+        names: impl Iterator<Item = &'a String>,
+        commons: &TypedCommons,
+        ctx: &EmitProjectCtx,
+    ) {
+        let local_to_file: HashSet<String> = commons
+            .commons
+            .items
+            .iter()
+            .filter_map(|i| i.name().map(|n| n.name.clone()))
+            .collect();
+        let mut found = ExternalReferences::default();
+        for name in names {
+            if ctx.imported_from_kind.get(name) != Some(&UnitKind::Context) {
+                record_name_ref(name, &local_to_file, ctx, &mut found);
+            }
+        }
+        for (unit, names) in found.by_commons {
+            self.implied_by_commons
+                .entry(unit)
+                .or_default()
+                .extend(names);
+        }
+        for (path, names) in found.by_sibling {
+            self.implied_by_sibling
+                .entry(path)
+                .or_default()
+                .extend(names);
+        }
     }
 
     /// #1778: promote each implied name the emitted body spells, as a whole

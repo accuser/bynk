@@ -1,0 +1,10 @@
+-- #1829: `Note` is reached only through `Item`, which the context's agent
+-- stores. The context never reads `item.note`, so only the agent-state codec
+-- names `Note`, and the context module must still import it.
+commons app.model
+
+type Name = String where NonEmpty
+
+type Note = String where MaxLength(20)
+
+type Item = { name: Name, note: Note }

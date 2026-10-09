@@ -1,0 +1,14 @@
+context app.web
+
+uses app.model
+
+agent Shelf {
+  key id: String
+
+  store items: Map[String, Item]
+
+  on call put(item: Item) -> Effect[Bool] {
+    let _ <- items.put(item.name, item)
+    true
+  }
+}
