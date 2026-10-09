@@ -60,6 +60,7 @@ export default {
       }
 
       if (request.headers.get("Upgrade") === "websocket") {
+        __route = "ws ChatGateway";
         const __ws_export = url.searchParams.get("export");
         if (__ws_export === null) return new globalThis.Response("Missing parameter: export", { status: 400 });
         return surface.ws_ChatGateway_open(request, __ws_export);

@@ -815,6 +815,9 @@ pub(crate) fn emit_worker_entry(
     if !ws_open_routes.is_empty() {
         let mut ws_body: Vec<TsStmt> = Vec::new();
         for (sname, h) in &ws_open_routes {
+            // #1825 review: the auth seam and the DO forward run in the `try`
+            // too, so name the dispatch for the fault log.
+            ws_body.push(set_fault_route(format!("ws {sname}")));
             let mut args: Vec<TsExpr> = vec![ident("request")];
             for p in &h.params {
                 let pn = &p.name.name;
@@ -949,6 +952,9 @@ pub(crate) fn emit_worker_entry(
             let dser_payload =
                 deserialise_call(&h.params[0].type_ref, "payload", "$.payload", &runtime_use);
             let case_body = vec![
+                // #1825 review: a subscriber that throws is a fault the
+                // publisher's fan-out retries; name it for the log.
+                set_fault_route(format!("event {sname}")),
                 const_("__r_payload", dser_payload),
                 if_(
                     strict_eq(member(ident("__r_payload"), "tag"), str_lit("Err")),
