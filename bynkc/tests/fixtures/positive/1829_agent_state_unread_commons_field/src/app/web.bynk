@@ -2,6 +2,10 @@ context app.web
 
 uses app.model
 
+fn label_json(l: Label) -> String {
+  Json.encode(l)
+}
+
 agent Shelf {
   key id: String
 

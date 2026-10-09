@@ -35,11 +35,13 @@ async function test_stores_an_item() {
   try {
     __ns_app_web.__resetAgents();
     const deps = __makeTestDeps();
-    const { Shelf, __makeShelf } = __ns_app_web;
-    const { Item, Name, Note } = __ns_app_model;
+    const { Shelf, __makeShelf, label_json } = __ns_app_web;
+    const { Item, Label, Name, Note, Tag } = __ns_app_model;
     type Item = __ns_app_model.Item;
+    type Label = __ns_app_model.Label;
     type Name = __ns_app_model.Name;
     type Note = __ns_app_model.Note;
+    type Tag = __ns_app_model.Tag;
     const ok = await __makeShelf("main").put({ name: ("a" as any), note: ("n" as any) }, deps);
     if (!(ok)) { throw __bynkExpectFailure("tests/web.bynk:4:12", 116, 118, "expect ok"); }
     return { pass: true };

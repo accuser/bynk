@@ -32,3 +32,22 @@ export interface Item {
 
 export const Item = {
 };
+
+export type Tag = string & { readonly __brand: "Tag" };
+
+export const Tag = {
+  of(value: string): Result<Tag, ValidationError> {
+    if (!(value.length <= 8)) {
+      return Err({ field: "Tag", message: "length must be at most 8", value });
+    }
+    return Ok(value as Tag);
+  },
+};
+
+export interface Label {
+  readonly text: string;
+  readonly tag: Tag;
+}
+
+export const Label = {
+};
