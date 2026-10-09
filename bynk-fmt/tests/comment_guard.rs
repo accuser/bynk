@@ -584,6 +584,10 @@ fn refuses_to_drop_a_comment_between_actor_scheme_arguments() {
 /// #1808, #1859: a trailing comment ends its line and changes no vertical
 /// spacing. A suite `uses` and an agent `store` field each added a second
 /// newline after the comment: a blank line the uncommented form doesn't have.
+/// A suite body separates every item with one blank line, `uses` included
+/// (unlike a context's header `uses`), and #1808 keeps that: the defect was
+/// the second one. A multi-line `store` initialiser takes its comment on
+/// its closing line.
 #[test]
 fn a_trailing_comment_adds_no_blank_line() {
     for (name, source, expected) in [
@@ -596,6 +600,11 @@ fn a_trailing_comment_adds_no_blank_line() {
             "store field",
             "context c\n\nagent Meter {\n  key id: String\n\n  store totals: Cell[Int] -- c\n  store active: Cell[Bool]\n\n  on call get() -> Effect[Int] {\n    totals.get()\n  }\n}\n",
             "\tstore totals: Cell[Int]  -- c\n\tstore active: Cell[Bool]\n",
+        ),
+        (
+            "multi-line store field",
+            "context c\n\nagent Meter {\n  key id: String\n\n  store active: Cell[Int] = match true {\n    true => 1\n    false => 0\n  } -- c\n  store on: Cell[Bool]\n\n  on call get() -> Effect[Int] {\n    active.get()\n  }\n}\n",
+            "\t}  -- c\n\tstore on: Cell[Bool]\n",
         ),
     ] {
         let out = format_source(source, &FormatOptions::default())
