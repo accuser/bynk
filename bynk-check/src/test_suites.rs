@@ -658,7 +658,7 @@ pub fn phase_integration_bodies(
                 parsed[i].is_synthetic(),
             );
             for case in &d.cases {
-                check_integration_case_body(
+                let _ = typecheck_integration_case_body(
                     &participants,
                     &uses_targets,
                     case,
@@ -727,8 +727,14 @@ pub fn phase_integration_bodies(
 /// (`ctx.service(args)`) are therefore ordinary cross-context calls. The body
 /// has type `Effect[Result[(), ExpectationError]]` (modelled as
 /// `Effect[Result[(), ValidationError]]`, as in unit tests).
+///
+/// Returns the body's `expr_types` and `Callee` classification. As
+/// [`typecheck_case_body`] does for the unit tier, the **check** path feeds
+/// real sinks and the **emit** path reuses it with throwaway ones. #1855: the
+/// emit path once lowered with no types at all, so a literal at a refined
+/// record field was never branded and the test module failed `tsc`.
 #[allow(clippy::too_many_arguments)]
-fn check_integration_case_body(
+pub fn typecheck_integration_case_body(
     participants: &[String],
     uses_targets: &[String],
     case: &Case,
@@ -737,6 +743,9 @@ fn check_integration_case_body(
     errors: &mut Vec<CompileError>,
     refs: &mut RefSink,
     tys: &Arc<Types>,
+) -> (
+    HashMap<ExprId, checker::TypedExpr>,
+    HashMap<ExprId, checker::Callee>,
 ) {
     // Names in scope: types/fns/methods from `uses` commons (for constructing
     // arguments) plus each participant's types/methods (so return types rebrand
@@ -855,6 +864,7 @@ fn check_integration_case_body(
             callees: &mut callees,
         },
     );
+    (expr_types, callees)
 }
 
 fn first_test_target_span(indices: &[usize], parsed: &[ParsedFile]) -> Span {

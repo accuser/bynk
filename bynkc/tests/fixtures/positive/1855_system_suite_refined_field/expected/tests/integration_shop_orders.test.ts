@@ -6,7 +6,6 @@ import * as __ns_shop_orders from "../workers/shop-orders/handlers.js";
 import worker___ns_shop_orders from "../workers/shop-orders/index.js";
 import * as __ns_shop_payment from "../workers/shop-payment/handlers.js";
 import worker___ns_shop_payment from "../workers/shop-payment/index.js";
-import * as __ns_money from "./../money.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -39,14 +38,11 @@ function __makeHarness() {
   return { env: rootEnv };
 }
 
-async function test_small_order_authorises_across_the_wire() {
+async function test_places() {
   try {
     const deps = __makeHarness();
-    const { cents, withFee } = __ns_money;
-    const total = withFee(cents(1));
-    if (!(total === 105)) { throw __bynkExpectFailure("checkout.bynk:15:12", 701, 713, "expect total == 105\n  expected: total == 105\n  actual:   " + __bynkShow((total)) + " == " + __bynkShow((105))); }
-    const r = await __callService(deps.env.SHOP_ORDERS, "place", ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(total), __ns_shop_orders.__deserialise_Result_Int_OrderError, "integration", "3a273aec9f70d0b4");
-    if (!(r.tag === "Ok")) { throw __bynkExpectFailure("checkout.bynk:17:12", 763, 773, "expect r is Ok(_)"); }
+    const n = await __callService(deps.env.SHOP_ORDERS, "place", __ns_shop_orders.__serialise_Line({ sku: ("o1" as any), qty: 2 }), (__j: __JsonValue) => ((__v) => typeof __v === "boolean" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "boolean", actual: typeof __v } as __BoundaryError))(__j), "integration", "f717b344c20d2ecb");
+    if (!(n)) { throw __bynkExpectFailure("tests/orders.bynk:4:12", 118, 119, "expect n"); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -56,12 +52,12 @@ async function test_small_order_authorises_across_the_wire() {
   }
 }
 
-async function test_large_order_is_rejected_end_to_end() {
+async function test_places_a_bound_line() {
   try {
     const deps = __makeHarness();
-    const { cents, withFee } = __ns_money;
-    const r = await __callService(deps.env.SHOP_ORDERS, "place", ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(50000), __ns_shop_orders.__deserialise_Result_Int_OrderError, "integration", "3a273aec9f70d0b4");
-    if (!(r.tag === "Err")) { throw __bynkExpectFailure("checkout.bynk:22:12", 874, 885, "expect r is Err(_)"); }
+    const l = { sku: ("o2" as any), qty: 3 };
+    const n = await __callService(deps.env.SHOP_ORDERS, "place", __ns_shop_orders.__serialise_Line(l), (__j: __JsonValue) => ((__v) => typeof __v === "boolean" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "boolean", actual: typeof __v } as __BoundaryError))(__j), "integration", "f717b344c20d2ecb");
+    if (!(n)) { throw __bynkExpectFailure("tests/orders.bynk:10:12", 240, 241, "expect n"); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -74,7 +70,7 @@ async function test_large_order_is_rejected_end_to_end() {
 export async function run(only?: string) {
   const results = [];
   const want = (n: string): boolean => only === undefined || only === n;
-  if (want("small order authorises across the wire")) results.push({ name: "small order authorises across the wire", ...(await test_small_order_authorises_across_the_wire()) });
-  if (want("large order is rejected end to end")) results.push({ name: "large order is rejected end to end", ...(await test_large_order_is_rejected_end_to_end()) });
+  if (want("places")) results.push({ name: "places", ...(await test_places()) });
+  if (want("places a bound line")) results.push({ name: "places a bound line", ...(await test_places_a_bound_line()) });
   return results;
 }
