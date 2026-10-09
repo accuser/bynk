@@ -502,6 +502,13 @@ impl Walk {
                 self.bind(alias)
             }
             TsDecl::ReExport { .. } | TsDecl::ReExportAll { .. } => {}
+            // `export { a, b };` exports names this module binds (#1852),
+            // so each is a use: one never imported or declared is unbound.
+            TsDecl::ExportNames { names } => {
+                for n in names {
+                    self.use_value(n);
+                }
+            }
             TsDecl::Export(inner) => self.decl(inner),
             TsDecl::Interface {
                 name,
@@ -709,6 +716,25 @@ mod tests {
             codec("__serialise_Quote", "Amount", "__serialise_Amount"),
         ]);
         assert_eq!(unbound_names(&p), ["__serialise_Amount"]);
+    }
+
+    #[test]
+    fn a_bare_export_list_uses_each_name_it_exports() {
+        // #1852: a Workers context's `export { … };` of the commons codecs it
+        // imports. A name exported without being imported is unbound.
+        let p = program(vec![
+            import(&["__serialise_Money"]),
+            TsStmt::decl(
+                TsDecl::ExportNames {
+                    names: vec![
+                        "__serialise_Money".to_string(),
+                        "__deserialise_Money".to_string(),
+                    ],
+                },
+                None,
+            ),
+        ]);
+        assert_eq!(unbound_names(&p), ["__deserialise_Money"]);
     }
 
     #[test]
