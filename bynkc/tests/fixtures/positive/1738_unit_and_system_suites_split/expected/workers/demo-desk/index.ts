@@ -20,7 +20,7 @@ export default {
             __route = "call check";
             const __contract = request.headers.get("X-Bynk-Contract");
             if (__contract !== "c4ebec6946345787") {
-              globalThis.console.error("ContractMismatch demo.desk call check", { service: "check", expected: "c4ebec6946345787", actual: __contract });
+              globalThis.console.error("ContractMismatch demo.desk call check", { service: "check", expected: "c4ebec6946345787", actual: globalThis.String(__contract).slice(0, 16) });
               return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "check", expected: "c4ebec6946345787", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
             }
             const args = await request.json() as __JsonValue;
@@ -35,7 +35,7 @@ export default {
             __route = "call local";
             const __contract = request.headers.get("X-Bynk-Contract");
             if (__contract !== "ca5abcc7749b379a") {
-              globalThis.console.error("ContractMismatch demo.desk call local", { service: "local", expected: "ca5abcc7749b379a", actual: __contract });
+              globalThis.console.error("ContractMismatch demo.desk call local", { service: "local", expected: "ca5abcc7749b379a", actual: globalThis.String(__contract).slice(0, 16) });
               return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "local", expected: "ca5abcc7749b379a", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
             }
             const args = await request.json() as __JsonValue;

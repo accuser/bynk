@@ -20,7 +20,7 @@ export default {
             __route = "call orders";
             const __contract = request.headers.get("X-Bynk-Contract");
             if (__contract !== "e0b68a63b531655d") {
-              globalThis.console.error("ContractMismatch catalog call orders", { service: "orders", expected: "e0b68a63b531655d", actual: __contract });
+              globalThis.console.error("ContractMismatch catalog call orders", { service: "orders", expected: "e0b68a63b531655d", actual: globalThis.String(__contract).slice(0, 16) });
               return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "orders", expected: "e0b68a63b531655d", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
             }
             const args = await request.json() as __JsonValue;

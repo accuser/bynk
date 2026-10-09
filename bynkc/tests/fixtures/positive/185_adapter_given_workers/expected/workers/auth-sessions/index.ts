@@ -20,7 +20,7 @@ export default {
             __route = "call login";
             const __contract = request.headers.get("X-Bynk-Contract");
             if (__contract !== "fbb749b9f985aa9a") {
-              globalThis.console.error("ContractMismatch auth.sessions call login", { service: "login", expected: "fbb749b9f985aa9a", actual: __contract });
+              globalThis.console.error("ContractMismatch auth.sessions call login", { service: "login", expected: "fbb749b9f985aa9a", actual: globalThis.String(__contract).slice(0, 16) });
               return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "login", expected: "fbb749b9f985aa9a", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
             }
             const args = await request.json() as __JsonValue;

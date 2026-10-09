@@ -20,7 +20,7 @@ export default {
             __route = "call users";
             const __contract = request.headers.get("X-Bynk-Contract");
             if (__contract !== "4609d108b9d32be2") {
-              globalThis.console.error("ContractMismatch shop.api call users", { service: "users", expected: "4609d108b9d32be2", actual: __contract });
+              globalThis.console.error("ContractMismatch shop.api call users", { service: "users", expected: "4609d108b9d32be2", actual: globalThis.String(__contract).slice(0, 16) });
               return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "users", expected: "4609d108b9d32be2", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
             }
             const args = await request.json() as __JsonValue;
