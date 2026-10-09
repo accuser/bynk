@@ -1,0 +1,20 @@
+---
+#1818: the workers target, where each call carries the key to the Durable
+Object, encoded by the key's codec.
+---
+suite shop.front as system {
+  case "a Durable Object reads its string key" {
+    let got <- shop.front.label("o-9")
+    expect got == "o-9"
+  }
+
+  case "a Durable Object reads its int key" {
+    let n <- shop.front.doubled(5)
+    expect n == 10
+  }
+
+  case "a Durable Object reads its record key" {
+    let n <- shop.front.sum(2, 3)
+    expect n == 5
+  }
+}
