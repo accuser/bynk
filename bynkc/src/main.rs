@@ -76,10 +76,13 @@ fn run_compile(
             // and writes `bynk.schema.lock` — the Cargo.lock model. Every
             // other `compile_project` caller (in-memory builds, `bynkc/
             // tests/e2e.rs`'s in-place fixtures, the LSP) leaves this off.
+            // #1821 (ADR 0147 D3): a build strips every `suite`; only
+            // `bynkc test` compiles them.
             Ok(o) => o
                 .target(target)
                 .platform(platform)
-                .schema_registry(schema_lock),
+                .schema_registry(schema_lock)
+                .tests(false),
             Err(e) => {
                 eprintln!("bynkc: {e}");
                 return ExitCode::FAILURE;

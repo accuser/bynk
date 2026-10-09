@@ -285,6 +285,13 @@ pub struct CompileOptions {
     /// `fn`; `false` (release/deploy) strips it entirely for zero runtime cost.
     /// `bynkc test` and `--inspect` set it on; `bynkc compile` leaves it off.
     pub contracts: bool,
+    /// #1821 (ADR 0147 D3): whether `suite`s are type-checked and emitted (the
+    /// `tests/` modules and `tests/main.ts`). On by default; `bynkc compile`
+    /// and the driver's dev/deploy build turn it off, so a suite never reaches
+    /// the deployable. `bynkc test` leaves it on. Off strips suites after
+    /// parsing: a file that does not parse still fails the build, since it
+    /// cannot be told apart from production source.
+    pub tests: bool,
     /// #57 (testing track): when `Some`, every file `roots` would otherwise
     /// discover on disk is instead read from here — keyed the same way
     /// `discovery::read_source`'s overlay is (a canonicalised absolute path,
@@ -330,6 +337,7 @@ impl CompileOptions {
             roots: Roots::Single(root.into()),
             import_ext: ImportExt::default(),
             contracts: false,
+            tests: true,
             sources: None,
             schema_registry: SchemaLock::Off,
         }
@@ -348,6 +356,7 @@ impl CompileOptions {
             },
             import_ext: ImportExt::default(),
             contracts: false,
+            tests: true,
             sources: None,
             schema_registry: SchemaLock::Off,
         }
@@ -372,6 +381,14 @@ impl CompileOptions {
     /// contract checks never reach production (DECISION J).
     pub fn contracts(mut self, on: bool) -> Self {
         self.contracts = on;
+        self
+    }
+
+    /// #1821 (ADR 0147 D3): whether to type-check and emit `suite`s. A build
+    /// that produces a deployable (`bynkc compile`, `bynk dev`/`deploy`) turns
+    /// it off; a suite is test-only.
+    pub fn tests(mut self, on: bool) -> Self {
+        self.tests = on;
         self
     }
 
@@ -473,6 +490,7 @@ pub fn compile_project(options: &CompileOptions) -> Result<ProjectOutput, Projec
         &excludes,
         discovered,
         options.contracts,
+        options.tests,
         &options.schema_registry,
         options.roots.project_root(),
         tys,
@@ -548,6 +566,7 @@ pub fn check_project(options: &CompileOptions) -> ProjectCheck {
         &excludes,
         discovered,
         options.contracts,
+        options.tests,
         // `bynk check` never reconciles the schema registry, regardless of
         // `options.schema_registry` — pre-existing behaviour (finding #64's
         // own era), preserved as-is by #1078, not introduced by it.
@@ -606,6 +625,7 @@ pub fn compile_in_memory(
         &[],
         Some(vec![vec![path]]),
         false,
+        true,
         &SchemaLock::Off,
         &root,
         tys,
@@ -643,6 +663,7 @@ pub(crate) fn compile_files_in_memory(
         &[],
         Some(vec![paths]),
         false,
+        true,
         &SchemaLock::Off,
         &root,
         tys,
@@ -712,6 +733,7 @@ pub fn analyse_in_memory_with_types(
         &[],
         Some(vec![vec![path.clone()]]),
         false,
+        true,
         &SchemaLock::Off,
         &root,
         tys,
@@ -1488,6 +1510,8 @@ fn run_checks(
     discovered: Option<Vec<Vec<PathBuf>>>,
     // v0.115: emit the function-contract call-site guard (dev/test profile).
     contracts: bool,
+    // #1821 (ADR 0147 D3): check and emit `suite`s. Off for a deployable build.
+    tests: bool,
     // Events track, slice 3c (#980): `On` turns on `bynk.schema.lock`
     // reconciliation, with its pre-read content; `Off` (every in-memory/
     // test/LSP caller) skips it entirely. See `CompileOptions::schema_registry`
@@ -1579,6 +1603,16 @@ fn run_checks(
     //        them all. The parsed AST that `bynk fmt` produces is untouched (it
     //        parses independently), so the terse inheriting source round-trips.
     project_model::normalize_service_defaults(&mut parsed);
+    // #1821 (ADR 0147 D3): a deployable build strips every suite, here, right
+    // after parsing, so no later pass (the reserved-namespace and
+    // function-type checks walk every parsed unit) sees one: never
+    // type-checked for the build, never emitted. A file holding a unit and
+    // its suite is two parsed units, so the unit stays. A file that does not
+    // parse at all has already failed above: it cannot be told apart from
+    // production source.
+    if !tests {
+        parsed.retain(|pf| !matches!(pf.kind(), UnitKind::Test | UnitKind::Integration));
+    }
     let parsed = parsed;
 
     // -- 3. Group by (name, kind) and validate per-directory consistency.
@@ -1596,7 +1630,6 @@ fn run_checks(
             overlay,
             &mut errors,
         );
-
     // -- 4. Build per-unit combined symbol tables. --
     let unit_tables = project_model::phase_symbol_tables(&groups, &kinds, &parsed, &mut errors);
 
@@ -3920,6 +3953,7 @@ mod tests {
             &roots.excludes(),
             None,
             false,
+            true,
             &SchemaLock::Off,
             roots.project_root(),
             &Arc::new(Types::new()),
@@ -4193,6 +4227,7 @@ mod tests {
             &roots.excludes(),
             None,
             false,
+            true,
             &SchemaLock::Off,
             roots.project_root(),
             &Arc::new(Types::new()),
