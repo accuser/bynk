@@ -55,16 +55,17 @@ use bynk_syntax::parser::parse_units;
 
 /// Refusals in the default sample, per insertion kind: `(trailing, own line,
 /// split)`.
-const REFUSED: (usize, usize, usize) = (787, 501, 453);
+const REFUSED: (usize, usize, usize) = (791, 499, 457);
 
 /// Where a comment was inserted: the line it went on or before, the line
 /// above that, and the construct a closing line ends (the nearest line above
-/// at the same indentation; the line itself otherwise).
+/// at the same indentation; the line itself otherwise). With no defect open,
+/// [`KNOWN`] is empty and no rule reads a field: the last rules read `line`
+/// (#1808), `opener` (#1859) and `prev` (#1858).
+#[allow(dead_code)]
 struct Site<'a> {
     line: &'a str,
     prev: &'a str,
-    // No rule reads it while no open defect needs it (#1859 did).
-    #[allow(dead_code)]
     opener: &'a str,
 }
 
@@ -72,18 +73,7 @@ struct Site<'a> {
 /// the shape that triggers it rather than by file, so it covers every instance.
 type Rule = (u32, Outcome, Kind, fn(&Site) -> bool);
 
-const KNOWN: &[Rule] = &[
-    // A comment before `}` after a statement ending in a bare variant pattern
-    // (`expect r is Ack`): `fmt` adds a `()` tail the parser absorbs into the
-    // pattern.
-    (1858, Outcome::NotIdempotent, Kind::OwnLine, |s| {
-        s.line.trim() == "}"
-            && s.prev
-                .trim()
-                .rsplit_once(" is ")
-                .is_some_and(|(_, pat)| pat.chars().all(|c| c.is_alphanumeric() || c == '_'))
-    }),
-];
+const KNOWN: &[Rule] = &[];
 
 /// Minimal programs for defects whose shape the corpus lacks.
 const REPROS: &[(&str, &str)] = &[];

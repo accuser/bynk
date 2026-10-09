@@ -177,6 +177,11 @@ the case failing, not the call faulting, and propagates as usual.
 - **It needs an in-process call.** At `system` a fault reaches the case as an error
   response from the deployed Worker, never a throw, so a `system`-tier case cannot
   claim one (`bynk.test.faults_needs_in_process`); assert the response instead.
+  The Worker answers a fault with a `500` that carries no `error` payload, which
+  the driver decodes as `ServerError("")`, so `expect r is ServerError(_)` is the
+  closest assertion. It cannot tell a fault from a handler that returns
+  `ServerError(...)` on purpose (even an empty message is a legal return): at
+  `system`, the response is all there is to observe.
 - **It takes a call-site `by` clause** between the call and `faults`, as `let r <-`
   does, so a handler that reads a caller identity can be claimed against (#1812):
 

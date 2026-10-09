@@ -13,7 +13,7 @@
 //! in memory through the project pipeline (its own path has no tree to walk).
 //!
 //! **Combinations no fixture has.** [`repros`] holds minimal programs for open
-//! defects whose shape the corpus lacks (#1829).
+//! defects whose shape the corpus lacks.
 //!
 //! **Known defects** are listed in [`KNOWN`] with their issue, strictly: an
 //! unlisted report fails, and so does a listed one that no longer reports.
@@ -30,55 +30,19 @@ use bynkc::BuildTarget;
 
 /// `(source, target, module, unbound names, issue)`. `source` is a fixture
 /// directory name or a [`repros`] name.
-const KNOWN: &[(&str, &str, &str, &[&str], u32)] = &[
-    (
-        "183_weather_fetch_adapter",
-        "workers",
-        "workers/forecast-lookup/handlers.ts",
-        &["__serialise_Report", "__serialise_WeatherError"],
-        1845,
-    ),
-    (
-        "1807_uses_reaches_hidden_type",
-        "workers",
-        "workers/t-desk/handlers.ts",
-        &["__deserialise_Code", "__serialise_Code"],
-        1846,
-    ),
-    (
-        "repro_1829_agent_state_unread_field",
-        "bundle",
-        "app/web.ts",
-        &["Note"],
-        1829,
-    ),
-];
+const KNOWN: &[(&str, &str, &str, &[&str], u32)] = &[(
+    "1807_uses_reaches_hidden_type",
+    "workers",
+    "workers/t-desk/handlers.ts",
+    &["__deserialise_Code", "__serialise_Code"],
+    1846,
+)];
 
 /// Minimal projects for open defects no positive fixture exhibits:
 /// `(name, [(path, source)])`, compiled for bundle.
 fn repros() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)> {
-    vec![(
-        // #1829: an agent stores a used-commons record and the context never
-        // reads its `note` field, so `Note` is never imported, yet the
-        // agent-state codec names it.
-        "repro_1829_agent_state_unread_field",
-        vec![
-            (
-                "src/app/model.bynk",
-                "commons app.model\n\n\
-                 type Name = String where NonEmpty\n\n\
-                 type Note = String where MaxLength(20)\n\n\
-                 type Item = { name: Name, note: Note }\n",
-            ),
-            (
-                "src/app/web.bynk",
-                "context app.web\n\nuses app.model\n\n\
-                 agent Shelf {\n  key id: String\n\n  store items: Map[String, Item]\n\n  \
-                 on call put(item: Item) -> Effect[Bool] {\n    \
-                 let _ <- items.put(item.name, item)\n    true\n  }\n}\n",
-            ),
-        ],
-    )]
+    // #1829's repro became `1829_agent_state_unread_commons_field`.
+    Vec::new()
 }
 
 fn target_name(target: BuildTarget) -> &'static str {
