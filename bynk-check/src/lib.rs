@@ -45,6 +45,8 @@ pub mod recovery;
 pub mod requirements;
 pub mod resolver;
 pub mod schema_registry;
+#[cfg(test)]
+mod scope_tests;
 pub mod secrets;
 pub mod store_ops;
 pub mod symbols;
