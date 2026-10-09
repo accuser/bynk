@@ -518,7 +518,7 @@ pub fn analyse_project(roots: &Roots, overlay: &HashMap<PathBuf, String>) -> Pro
             &mut errors,
         );
         // #1807: close over the types the imported declarations reach.
-        let hidden_types = close_reachable_types(
+        let reached_types = close_reachable_types(
             name,
             &parsed,
             &unit_info,
@@ -543,7 +543,7 @@ pub fn analyse_project(roots: &Roots, overlay: &HashMap<PathBuf, String>) -> Pro
             &unit_info,
             &combined_types,
             &imported_from_kind,
-            &hidden_types,
+            &reached_types,
         );
 
         for &i in indices {
