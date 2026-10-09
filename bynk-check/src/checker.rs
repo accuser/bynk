@@ -3962,7 +3962,7 @@ pub(crate) fn type_of(expr: &Expr, expected: Option<TyId>, ctx: &mut Ctx) -> Opt
         ExprKind::Expect(inner) => check_expect(inner, expr.span, ctx),
         ExprKind::Val { type_ref, args } => check_val(type_ref, args, expr.span, ctx),
         ExprKind::Observation(o) => check_observation(o, expr.span, ctx),
-        ExprKind::Faults(call) => check_faults(call, expr.span, ctx),
+        ExprKind::Faults(f) => check_faults(f, expr.span, ctx),
         ExprKind::Trace { cap, op } => check_trace(cap, op, expr.span, ctx),
         // Slice C: a `Wire(<String>)` reached through the ordinary expression
         // checker is *misplaced* — a valid `Wire` is intercepted by the service-

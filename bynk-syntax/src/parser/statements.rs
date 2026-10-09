@@ -217,8 +217,9 @@ impl<'a> Parser<'a> {
     /// v0.182 (#664): parse an optional call-site actor clause after an
     /// effect-let value — `by <Actor>` (unit identity) or `by <Actor>(<expr>)`.
     /// Distinct from the handler `by` clause (`parse_by_clause`), which admits a
-    /// binder and an actor *sum* but no identity argument.
-    fn parse_call_site_actor(&mut self) -> Result<Option<CallSiteActor>, CompileError> {
+    /// binder and an actor *sum* but no identity argument. #1812: also read
+    /// after a fault claim's subject (`expect <call> by User("bob") faults`).
+    pub(crate) fn parse_call_site_actor(&mut self) -> Result<Option<CallSiteActor>, CompileError> {
         if self.peek_kind() != Some(TokenKind::By) {
             return Ok(None);
         }

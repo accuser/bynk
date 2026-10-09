@@ -2687,14 +2687,19 @@ pub enum ExprKind {
     Observation(Box<ObservationExpr>),
     /// `<call> faults` — the claim that an effectful call **faults** (#1706).
     /// The direct subject of an `expect` in a `case` body —
-    /// `expect quote.call("GBP") faults`. The boxed expression is the call
+    /// `expect quote.call("GBP") faults`. The claim's `call` is the call
     /// itself, an `Effect[_]` the claim awaits; the claim types as `Bool` and
     /// holds when awaiting the call throws (a capability fault, an injected
     /// `stub … fails`, an invariant violation) rather than returning a value.
     /// A fault is untyped and uncatchable by the caller, so this is a test's
     /// observation of the fault, not a handler for it: no production code can
     /// write it.
-    Faults(Box<Expr>),
+    ///
+    /// #1812: the claim may carry a call-site principal (`expect
+    /// api.POST(…) by User("bob") faults`), so an identity-carrying handler's
+    /// fault path is testable; see [`FaultsExpr`]. Boxed, as `Observation` is,
+    /// so the principal does not widen every `ExprKind`.
+    Faults(Box<FaultsExpr>),
     /// `trace(Cap.op)` — the bound-trace escape hatch (v0.117, testing track
     /// slice 5). Yields the recorded calls of `Cap.op` as a `List[<CallRecord>]`
     /// (a synthetic record of the operation's parameters), asserted over with the
@@ -2760,8 +2765,16 @@ pub fn expr_children(e: &Expr) -> Vec<&Expr> {
         | ExprKind::Question(inner)
         | ExprKind::Some(inner)
         | ExprKind::EffectPure(inner)
-        | ExprKind::Expect(inner)
-        | ExprKind::Faults(inner) => out.push(inner.as_ref()),
+        | ExprKind::Expect(inner) => out.push(inner.as_ref()),
+        ExprKind::Faults(f) => {
+            // #1812: a call-site principal's identity is evaluated first, as
+            // an argument to the claimed call — the same order as an
+            // effect-let's in `statement_exprs`.
+            if let Some(identity) = f.principal.as_ref().and_then(|p| p.identity.as_deref()) {
+                out.push(identity);
+            }
+            out.push(&f.call);
+        }
         ExprKind::Block(b) => block_children(b, &mut out),
         ExprKind::If {
             cond,
@@ -2836,6 +2849,16 @@ pub fn statement_exprs<'a>(s: &'a Statement, out: &mut Vec<&'a Expr>) {
         Statement::Do(d) => out.push(&d.value),
         Statement::Assign(a) => out.push(&a.value),
     }
+}
+
+/// A fault claim, `<call> [by <Actor>(<identity>)] faults` (#1706, #1812).
+/// `call` is the effectful call the claim awaits; `principal` is the optional
+/// call-site `by` clause, read exactly as on an effect-let (`let r <- call by
+/// User("bob")`): it supplies the identity the addressed handler reads.
+#[derive(Debug, Clone)]
+pub struct FaultsExpr {
+    pub call: Expr,
+    pub principal: Option<CallSiteActor>,
 }
 
 /// An observation of a capability operation's recorded calls (v0.117, testing
@@ -3284,6 +3307,7 @@ fn f(x: Int) -> Int {
     let c = Wire(x)
     expect L.log called 2 times with msg == x
     expect box.call() faults
+    expect api.post(x) by User(who) faults
     let t = trace(L.log)
     expect x
   }
@@ -3526,7 +3550,19 @@ fn f(x: Int) -> Int {
                     | ObservationMatcher::Before { cap: _, op: _ } => {}
                 }
             }
-            ExprKind::Faults(x) => out.push(("faults.inner", x)),
+            ExprKind::Faults(f) => {
+                let FaultsExpr { call, principal } = f.as_ref();
+                if let Some(CallSiteActor {
+                    actor: _,
+                    identity,
+                    span: _,
+                }) = principal
+                    && let Some(identity) = identity
+                {
+                    out.push(("faults.identity", identity));
+                }
+                out.push(("faults.inner", call));
+            }
         }
         out
     }
@@ -3566,6 +3602,7 @@ fn f(x: Int) -> Int {
         "list.item",
         "observation.count",
         "observation.with",
+        "faults.identity",
         "faults.inner",
         "let.value",
         "let<-.value",

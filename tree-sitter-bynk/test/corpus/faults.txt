@@ -35,3 +35,46 @@ suite demo.vault {
         (binary_expr
           (identifier)
           (number_literal))))))
+
+================================================================================
+Fault claim with a call-site principal — expect <call> by <Actor> faults (#1812)
+================================================================================
+
+suite shop.orders {
+  case "a ledger fault faults bob's order" {
+    expect api.POST("/orders", Order { sku: "w" }) by Buyer("bob") faults
+    expect api.GET("/a") by Nobody faults
+  }
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (suite_decl
+    target: (qualified_name
+      (identifier)
+      (identifier))
+    (case
+      name: (string_literal)
+      (expect_expr
+        cond: (faults_expr
+          call: (method_call
+            receiver: (identifier)
+            method: (identifier)
+            arg: (string_literal)
+            arg: (record_construction
+              type: (identifier)
+              (field_init
+                name: (identifier)
+                value: (string_literal))))
+          principal: (call_site_actor
+            actor: (identifier)
+            identity: (string_literal))))
+      (expect_expr
+        cond: (faults_expr
+          call: (method_call
+            receiver: (identifier)
+            method: (identifier)
+            arg: (string_literal))
+          principal: (call_site_actor
+            actor: (identifier)))))))

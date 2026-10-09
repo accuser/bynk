@@ -177,8 +177,22 @@ the case failing, not the call faulting, and propagates as usual.
 - **It needs an in-process call.** At `system` a fault reaches the case as an error
   response from the deployed Worker, never a throw, so a `system`-tier case cannot
   claim one (`bynk.test.faults_needs_in_process`); assert the response instead.
-- **It takes no `by` clause**, so it claims faults only on a handler that needs no
-  caller identity; addressing one that does is `bynk.test.principal_required`.
+- **It takes a call-site `by` clause** between the call and `faults`, as `let r <-`
+  does, so a handler that reads a caller identity can be claimed against (#1812):
+
+  ```bynk,fragment
+  case "a store fault faults bob's order" {
+    stub Kv.put(_, _) fails
+    expect api.POST("/orders", Order { sku: "w" }) by User("bob") faults
+  }
+  ```
+
+  The principal is checked against the addressed handler exactly as an effect-let's
+  is, so leaving it off a handler that needs an identity is still
+  `bynk.test.principal_required`. `by Nobody` is the exception: it exercises the
+  `system`-tier auth seam, where no fault can be claimed, so a fault claim driven
+  `by Nobody` is `bynk.test.faults_needs_in_process` at any tier; assert its
+  `Rejected(Unauthorized)` response with `let r <- … by Nobody` instead.
 
 A [sequenced stub](#sequenced-stub--returns-each) makes a fault and a later success
 observable in one case:

@@ -8,9 +8,9 @@ use std::sync::Arc;
 
 use bynk_check::checker::{Callee, NamedKind, Ty, TyId, TypedCommons};
 use bynk_syntax::ast::{
-    BaseType, BinOp, Block, Expr, ExprKind, FieldInit, Ident, InterpPart, LambdaExpr, LiteralValue,
-    MatchArm, MatchBody, ObservationExpr, ObservationMatcher, Pattern, PatternBindingKind,
-    PredKind, Refinement, Statement, TypeBody, TypeDecl, TypeRef, UnaryOp,
+    BaseType, BinOp, Block, Expr, ExprKind, FaultsExpr, FieldInit, Ident, InterpPart, LambdaExpr,
+    LiteralValue, MatchArm, MatchBody, ObservationExpr, ObservationMatcher, Pattern,
+    PatternBindingKind, PredKind, Refinement, Statement, TypeBody, TypeDecl, TypeRef, UnaryOp,
 };
 
 use bynk_ir::{ConstVal, EventPatternIr, EventPatternValueIr, IrHttpMethod};
@@ -1243,7 +1243,7 @@ pub(crate) fn lower_expr(e: &Expr, cx: &mut LowerCtx) -> Lowered {
         }
         ExprKind::Val { type_ref, args } => pre.absorb(lower_val(type_ref, args, cx)),
         ExprKind::Observation(o) => lower_observation(o, cx),
-        ExprKind::Faults(call) => lower_faults(call, cx),
+        ExprKind::Faults(f) => lower_faults(f, cx),
         ExprKind::Trace { cap, op } => {
             // `trace(Cap.op)` → the recorded calls mapped to per-call records
             // whose fields are the operation's parameters (positionally).
@@ -1301,15 +1301,28 @@ fn cap_op_param_names(cx: &LowerCtx, cap: &str, op: &str) -> Vec<String> {
 /// provider's failure, an invariant violation. A fault is untyped, so the
 /// claim does not discriminate between them.
 ///
-/// The call is lowered as an `<-` subject is, with no call-site principal
-/// (a fault claim has no `by` slot), so an enclosing principal never leaks
-/// into it. Whatever the call hoists is placed inside the `try`, not in the
-/// enclosing statement's prelude: a fault raised while evaluating the call's
-/// arguments is the call faulting too, and must not escape the claim.
-fn lower_faults(call: &Expr, cx: &mut LowerCtx) -> String {
+/// The call is lowered as an `<-` subject is, under the claim's own call-site
+/// principal (#1812) set exactly as the effect-let arm sets it — the
+/// identity the addressed handler reads, or `by Nobody`'s no-credential
+/// driver — and never an enclosing one. Whatever the call (or the identity)
+/// hoists is placed inside the `try`, not in the enclosing statement's
+/// prelude: a fault raised while evaluating the call's arguments is the call
+/// faulting too, and must not escape the claim.
+fn lower_faults(faults: &FaultsExpr, cx: &mut LowerCtx) -> String {
+    let FaultsExpr { call, principal } = faults;
     let saved_identity = cx.call_site_identity.take();
     let saved_no_credential = std::mem::replace(&mut cx.call_site_no_credential, false);
     let mut inner = Pre::new();
+    if let Some(principal) = principal {
+        // `by Nobody … faults` is rejected before emit
+        // (`bynk.test.faults_needs_in_process`); mirrored here so the claim
+        // lowers as the effect-let arm does regardless.
+        if principal.actor.name == "Nobody" {
+            cx.call_site_no_credential = true;
+        } else {
+            cx.call_site_identity = principal.identity.as_ref().map(|id| inner.lower(id, cx));
+        }
+    }
     let value = inner.lower(call, cx);
     cx.call_site_identity = saved_identity;
     cx.call_site_no_credential = saved_no_credential;

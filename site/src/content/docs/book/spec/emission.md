@@ -514,8 +514,9 @@ emitted only under `bynkc test`. A module with no `suite` emits byte-for-byte
 unchanged.
 
 A **fault claim** `expect <call> faults` lowers to an async IIFE inside the
-expectation check: it awaits the lowered call (with no call-site principal) in a
-`try`, yields `false` when the call returns, re-throws an `ExpectationError`, and
+expectation check: it awaits the lowered call in a `try`, under the claim's own
+call-site principal (#1812) supplied exactly as an effect-let's is and never an
+enclosing one, yields `false` when the call returns, re-throws an `ExpectationError`, and
 yields `true` for any other thrown value
 ([§7.4.12a](/book/spec/runtime-library/#7412a-the-fault-claim)). The check reports
 `the call returned without faulting` when it fails.

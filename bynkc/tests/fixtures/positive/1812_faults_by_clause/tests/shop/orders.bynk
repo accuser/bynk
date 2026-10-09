@@ -1,0 +1,23 @@
+---
+#1812: a fault claim carries a call-site principal. The ledger faults for
+bob's orders only, so a claim driven `by Buyer("bob")` holds only if bob's
+identity reaches the handler, and alice's order still goes through.
+---
+suite shop.orders {
+  stub Ledger.post("bob", _) fails
+  stub Ledger.post(_, _)     returns 7
+
+  case "a ledger fault faults bob's order" {
+    expect api.POST("/orders", Order { sku: "w" }) by Buyer("bob") faults
+  }
+
+  case "alice's order does not fault" {
+    let r <- api.POST("/orders", Order { sku: "w" }) by Buyer("alice")
+    expect r is Created(7)
+  }
+
+  case "the principal's identity may be any expression" {
+    let who: UserId = "bob"
+    expect api.POST("/orders", Order { sku: "w" }) by Buyer(who) faults
+  }
+}

@@ -2384,8 +2384,15 @@ fn collect_refs_in_expr(
         ExprKind::EffectPure(inner) => {
             collect_refs_in_expr(inner, local_to_file, commons, ctx, out);
         }
-        ExprKind::Expect(inner) | ExprKind::Faults(inner) => {
+        ExprKind::Expect(inner) => {
             collect_refs_in_expr(inner, local_to_file, commons, ctx, out);
+        }
+        // #1812: a fault claim's call-site identity is an expression too.
+        ExprKind::Faults(f) => {
+            if let Some(identity) = f.principal.as_ref().and_then(|p| p.identity.as_deref()) {
+                collect_refs_in_expr(identity, local_to_file, commons, ctx, out);
+            }
+            collect_refs_in_expr(&f.call, local_to_file, commons, ctx, out);
         }
         ExprKind::Val { args, .. } => {
             for a in args {

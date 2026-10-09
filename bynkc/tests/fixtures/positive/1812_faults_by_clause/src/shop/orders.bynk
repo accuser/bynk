@@ -1,0 +1,23 @@
+context shop.orders
+
+type UserId = String where NonEmpty
+actor Buyer { auth = Bearer(secret = "AUTH_SECRET"), identity = UserId }
+
+type Order = { sku: String }
+
+capability Ledger {
+  fn post(owner: String, sku: String) -> Effect[Int]
+}
+
+provides Ledger = RealLedger {
+  fn post(owner: String, sku: String) -> Effect[Int] {
+    1
+  }
+}
+
+service api from http {
+  on POST("/orders") (body: Order) -> Effect[HttpResult[Int]] by u: Buyer given Ledger {
+    let n <- Ledger.post(u.identity, body.sku)
+    Created(n)
+  }
+}
