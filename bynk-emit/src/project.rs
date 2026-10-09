@@ -2740,7 +2740,7 @@ fn native_platforms_of_context(
             unit_consumes,
             unit_consumes_aliases,
             unit_flattened,
-            false,
+            ProviderNamespaces::Bundle,
             None,
             None,
             &mut referenced,
@@ -2757,7 +2757,7 @@ fn native_platforms_of_context(
             unit_consumes,
             unit_consumes_aliases,
             unit_flattened,
-            false,
+            ProviderNamespaces::Bundle,
             None,
             None,
             &mut referenced,
@@ -2883,7 +2883,7 @@ fn plan_agent_given_deps(
                     &unit_consumes,
                     &unit_consumes_aliases,
                     &unit_flattened,
-                    true,
+                    ProviderNamespaces::Workers,
                     Some("env"),
                     None,
                     &mut referenced,
@@ -2953,6 +2953,19 @@ pub(crate) struct LocaleNegotiationArgs {
     pub(crate) reference_locale_expr: String,
 }
 
+/// Where [`instantiate_provider_ts_expr`]'s expression finds each unit's
+/// provider classes: the module that constructs it imports each unit under a
+/// different namespace.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ProviderNamespaces {
+    /// The bundle's `compose.ts`: `{ns}`.
+    Bundle,
+    /// A Worker's `compose.ts` or `handlers.ts`: `handlers_{ns}`.
+    Workers,
+    /// A test module (#1863): `__ns_{ns}`, the test scaffold's own.
+    Test,
+}
+
 /// `new {ns}.{class}({args})` as a real [`bynk_ts::TsExpr::New`] node.
 fn new_call_ts_expr(ns: &str, class: &str, args: Vec<bynk_ts::TsExpr>) -> bynk_ts::TsExpr {
     bynk_ts::TsExpr::New {
@@ -2964,11 +2977,12 @@ fn new_call_ts_expr(ns: &str, class: &str, args: Vec<bynk_ts::TsExpr>) -> bynk_t
     }
 }
 
-/// `workers_ns` selects the namespace convention: a bodied provider's class
-/// lives in `{ns}` under the bundle root but `handlers_{ns}` in a Worker
-/// compose; external (binding) classes are `{ns}__binding` in both. When
-/// `env_ident` is set (workers), env-taking first-party providers receive it
-/// as a constructor argument.
+/// `namespaces` selects the namespace convention ([`ProviderNamespaces`]): a
+/// bodied provider's class lives in `{ns}` under the bundle root,
+/// `handlers_{ns}` in a Worker compose and `__ns_{ns}` in a test module;
+/// external (binding) classes are `{ns}__binding` in the first two, and a
+/// test module has none. When `env_ident` is set (workers), env-taking
+/// first-party providers receive it as a constructor argument.
 ///
 /// Locale capability track, slice 2 (#882): `locale_negotiation`, when
 /// `Some`, is threaded to exactly the `(bynk, LocaleProvider)` pair, the same
@@ -3002,22 +3016,33 @@ pub(crate) fn instantiate_provider_ts_expr(
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
     unit_flattened: &HashMap<String, HashMap<String, String>>,
-    workers_ns: bool,
+    namespaces: ProviderNamespaces,
     env_ident: Option<&str>,
     locale_negotiation: Option<&LocaleNegotiationArgs>,
     referenced_units: &mut BTreeSet<String>,
 ) -> bynk_ts::TsExpr {
     let ns = provider_ctx.replace('.', "_");
-    let bodied_ns = if workers_ns {
-        format!("handlers_{ns}")
-    } else {
-        ns.clone()
+    let bodied_ns = match namespaces {
+        ProviderNamespaces::Bundle => ns.clone(),
+        ProviderNamespaces::Workers => format!("handlers_{ns}"),
+        ProviderNamespaces::Test => crate::emitter::emit::test_scaffold_ns(provider_ctx),
     };
-    referenced_units.insert(provider_ctx.to_string());
-    let Some(provider) = unit_tables
+    let provider = unit_tables
         .get(provider_ctx)
-        .and_then(|t| t.providers.get(cap))
-    else {
+        .and_then(|t| t.providers.get(cap));
+    // #1863: a test module imports no binding module, so an external
+    // provider is the same placeholder as a capability with no provider.
+    if namespaces == ProviderNamespaces::Test && provider.is_none_or(|p| p.external) {
+        return bynk_ts::TsExpr::As {
+            expr: Box::new(bynk_ts::TsExpr::As {
+                expr: Box::new(bynk_ts::TsExpr::Ident("undefined".to_string())),
+                ty: bynk_ts::TsType::named("unknown"),
+            }),
+            ty: bynk_ts::TsType::named("never"),
+        };
+    }
+    referenced_units.insert(provider_ctx.to_string());
+    let Some(provider) = provider else {
         return new_call_ts_expr(&bodied_ns, cap, vec![]);
     };
     // Build the by-name deps object from the provider's `given`, if any.
@@ -3056,7 +3081,7 @@ pub(crate) fn instantiate_provider_ts_expr(
                     unit_consumes,
                     unit_consumes_aliases,
                     unit_flattened,
-                    workers_ns,
+                    namespaces,
                     env_ident,
                     locale_negotiation,
                     referenced_units,
@@ -3367,7 +3392,7 @@ fn emit_composition_root(
                     unit_consumes,
                     unit_consumes_aliases,
                     unit_flattened,
-                    false,
+                    ProviderNamespaces::Bundle,
                     env_ident,
                     None, // Bundle mode has no inbound request (Decision A)
                     &mut referenced_units,
@@ -3398,7 +3423,7 @@ fn emit_composition_root(
                     unit_consumes,
                     unit_consumes_aliases,
                     unit_flattened,
-                    false,
+                    ProviderNamespaces::Bundle,
                     env_ident,
                     None, // Bundle mode has no inbound request (Decision A)
                     &mut referenced_units,

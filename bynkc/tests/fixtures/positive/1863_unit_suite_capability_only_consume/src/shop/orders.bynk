@@ -1,0 +1,50 @@
+context shop.orders
+
+consumes shop.fees as Fees
+
+-- #1863: a unit suite against a context consuming `shop.fees` only for its
+-- capability. Its test deps called `shop.fees`'s nonexistent `__makeSurface`
+-- (TS2339) and never built `Fees`'s provider (TS2345).
+
+-- A local provider `given` the consumed capability: built with its deps.
+capability Stamp {
+  fn next() -> Effect[Int]
+}
+
+provides Stamp = FeeStamp given Fees.Fees {
+  fn next() -> Effect[Int] {
+    let f <- Fees.Fees.fee()
+    Effect.pure(f + 1)
+  }
+}
+
+service charge {
+  on call() -> Effect[Int] given Fees.Fees {
+    Fees.Fees.fee()
+  }
+}
+
+service stamp {
+  on call() -> Effect[Int] given Stamp {
+    Stamp.next()
+  }
+}
+
+-- An agent `given` a consumed capability no service is.
+agent Till {
+  key id: String
+
+  store total: Cell[Int] = 0
+
+  on call add() -> Effect[Int] given Fees.Tax {
+    let t <- Fees.Tax.tax()
+    let _ <- total.update((n) => n + t)
+    Effect.pure(total)
+  }
+}
+
+service till {
+  on call() -> Effect[Int] {
+    Till("t").add()
+  }
+}

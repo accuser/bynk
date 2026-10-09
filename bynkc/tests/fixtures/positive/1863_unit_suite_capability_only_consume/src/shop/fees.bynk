@@ -1,0 +1,27 @@
+context shop.fees
+
+consumes shop.rates as Rates
+
+-- #1863: a context with no services, consumed only for its capability. Its
+-- provider is itself `given` another context's capability.
+exports capability { Fees, Tax }
+
+capability Fees {
+  fn fee() -> Effect[Int]
+}
+
+provides Fees = FlatFees given Rates.Rates {
+  fn fee() -> Effect[Int] {
+    let r <- Rates.Rates.rate()
+    Effect.pure(10 * r)
+  }
+}
+
+-- Given only to an agent of `shop.orders`, no service.
+capability Tax {
+  fn tax() -> Effect[Int]
+}
+
+provides Tax = FlatTax {
+  fn tax() -> Effect[Int] { 5 }
+}

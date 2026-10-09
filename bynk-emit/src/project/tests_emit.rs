@@ -1767,17 +1767,33 @@ fn emit_test_module(
         None,
     ));
 
-    // Consumed contexts (for the target context, if any).
+    // The deps factory, built here for the units its providers name (#1863),
+    // which are imported with the consumed contexts below.
+    let (deps_stmt, deps_units) = emit_test_deps(
+        target_name,
+        target_kind,
+        stubs,
+        unit_tables,
+        unit_consumes,
+        unit_consumes_aliases,
+        unit_flattened,
+    );
+
+    // Consumed contexts (for the target context, if any), and any other unit
+    // a provider in the deps factory names.
     let mut consumed_imports: Vec<(String, String)> = Vec::new();
-    if let Some(consumed) = unit_consumes.get(target_name) {
-        for q in consumed {
-            let ns = test_ns(q);
-            let dir = commons_dir_for(q);
-            let import_path = relative_import_for_test(&dir);
-            consumed_imports.push((ns, import_path));
+    let consumed = unit_consumes.get(target_name).into_iter().flatten();
+    for q in consumed.chain(deps_units.iter()) {
+        if q == target_name {
+            continue;
         }
+        let ns = test_ns(q);
+        let dir = commons_dir_for(q);
+        let import_path = relative_import_for_test(&dir);
+        consumed_imports.push((ns, import_path));
     }
     consumed_imports.sort();
+    consumed_imports.dedup();
     for (ns, path) in &consumed_imports {
         stmts.push(TsStmt::decl(
             TsDecl::ImportNamespace {
@@ -1964,16 +1980,8 @@ fn emit_test_module(
         }
     }
 
-    // Emit the deps factory.
-    let mut deps_stmt = emit_test_deps(
-        target_name,
-        target_kind,
-        stubs,
-        unit_tables,
-        unit_consumes,
-        unit_consumes_aliases,
-        unit_flattened,
-    );
+    // Emit the deps factory, built above.
+    let mut deps_stmt = deps_stmt;
     if suppress_next_blank {
         deps_stmt.no_blank_before = true;
     }
@@ -3316,6 +3324,12 @@ fn platform_double(owner: &str, cap: &str, ns: &str) -> Option<String> {
 /// one real declaration this function ever built; its caller now prints it
 /// directly via `bynk_ts::print_stmt`, the same shape it always used, just
 /// one call further out.
+///
+/// #1863: a provider is built as the composition root builds it
+/// ([`instantiate_provider_ts_expr`]), its own `given` capabilities wired in,
+/// whether the context declares it or a context it consumes does. The units
+/// that construction names are returned, for the test module to import: a
+/// provider's `given` can reach a unit the target doesn't consume itself.
 fn emit_test_deps(
     target_name: &str,
     target_kind: UnitKind,
@@ -3324,12 +3338,27 @@ fn emit_test_deps(
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
     unit_flattened: &HashMap<String, HashMap<String, String>>,
-) -> TsStmt {
+) -> (TsStmt, BTreeSet<String>) {
     let mut entries: Vec<(String, TsExpr)> = Vec::new();
+    let mut referenced: BTreeSet<String> = BTreeSet::new();
     if target_kind == UnitKind::Context
         && let Some(table) = unit_tables.get(target_name)
     {
         let ns = test_ns(target_name);
+        let provider = |unit: &str, cap: &str, referenced: &mut BTreeSet<String>| {
+            instantiate_provider_ts_expr(
+                unit,
+                cap,
+                unit_tables,
+                unit_consumes,
+                unit_consumes_aliases,
+                unit_flattened,
+                ProviderNamespaces::Test,
+                None,
+                None,
+                referenced,
+            )
+        };
         // Sorted so `__makeTestDeps` field order is deterministic across the
         // capability map's hash iteration order.
         let mut caps: Vec<&String> = table.capabilities.keys().collect();
@@ -3338,13 +3367,10 @@ fn emit_test_deps(
             // v0.118: a capability with a `stub` override plugs its
             // `__Stub_<Cap>` stub; otherwise the declared provider (its real
             // implementation) is used, as an un-overridden seam.
-            let base = table.providers.get(cap).map(|provider| TsExpr::New {
-                callee: Box::new(member(
-                    ident(ns.clone()),
-                    provider.provider_name.name.clone(),
-                )),
-                args: Vec::new(),
-            });
+            let base = table
+                .providers
+                .contains_key(cap)
+                .then(|| provider(target_name, cap, &mut referenced));
             let ty = format!("{ns}.{cap}");
             let value = if let Some(rp) = stubs.get(cap) {
                 stub_overlay(rp, &ty, base)
@@ -3380,28 +3406,41 @@ fn emit_test_deps(
             };
             entries.push((cap.clone(), value));
         }
+        // #1863: a capability another context provides, named with that
+        // context's prefix (`given Fees.Fees`), as the composition root wires
+        // it: that context's provider, keyed by the capability's name.
+        let consumed_all: Vec<String> = unit_consumes.get(target_name).cloned().unwrap_or_default();
+        let aliases = unit_consumes_aliases
+            .get(target_name)
+            .cloned()
+            .unwrap_or_default();
+        for (cap, owner) in cross_context_caps(table, &consumed_all, &aliases) {
+            if entries.iter().any(|(k, _)| *k == cap) {
+                continue;
+            }
+            let ty = format!("{}.{cap}", test_ns(&owner));
+            let base = provider(&owner, &cap, &mut referenced);
+            let value = match stubs.get(&cap) {
+                Some(rp) => stub_overlay(rp, &ty, Some(base)),
+                None => base,
+            };
+            entries.push((cap, value));
+        }
         // Cross-context surface: consumed contexts run with their real surface
         // (v0.118 `stub` is capability-only — a consumed-context capability
         // flattened via `consumes U { Cap }` is folded in via `unit_flattened`
         // above). An `adapter` target (e.g. `consumes bynk { Locale }`) has no
         // `__makeSurface` at all — so it must not get a surface entry either
-        // (Locale capability track, slice 1, #844).
-        let consumed: Vec<String> = unit_consumes
-            .get(target_name)
-            .cloned()
-            .unwrap_or_default()
+        // (Locale capability track, slice 1, #844), nor does a context with
+        // no services, consumed only for a capability (#1863).
+        let consumed: Vec<String> = consumed_all
             .into_iter()
             .filter(|q| {
-                !matches!(
-                    unit_tables.get(q).and_then(|t| t.kind),
-                    Some(UnitKind::Adapter)
-                )
+                unit_tables
+                    .get(q)
+                    .is_some_and(|t| t.kind != Some(UnitKind::Adapter) && !t.services.is_empty())
             })
             .collect();
-        let aliases = unit_consumes_aliases
-            .get(target_name)
-            .cloned()
-            .unwrap_or_default();
         let mut alias_for_target: HashMap<String, String> = HashMap::new();
         for (alias, q) in &aliases {
             alias_for_target.insert(q.clone(), alias.clone());
@@ -3441,7 +3480,7 @@ fn emit_test_deps(
     } else {
         TsExpr::object(entries)
     };
-    TsStmt::decl(
+    let decl = TsStmt::decl(
         TsDecl::Function {
             name: "__makeTestDeps".to_string(),
             generics: Vec::new(),
@@ -3461,7 +3500,37 @@ fn emit_test_deps(
             inline: false,
         },
         None,
-    )
+    );
+    (decl, referenced)
+}
+
+/// #1863: each capability a context's handlers are `given` from a context it
+/// consumes (`given Fees.Fees`), with that context, sorted by capability. The
+/// unit-wide twin of the emitter's per-file `cross_context_caps_used`, over the
+/// unit table, since a test module has no one file's checked program. A bare
+/// flattened capability (`consumes U { Cap }`) is not one: `unit_flattened`
+/// covers those.
+fn cross_context_caps(
+    table: &UnitTable,
+    consumed: &[String],
+    aliases: &HashMap<String, String>,
+) -> Vec<(String, String)> {
+    let handlers = table
+        .services
+        .values()
+        .flat_map(|s| &s.handlers)
+        .chain(table.agents.values().flat_map(|a| &a.handlers));
+    let mut out: BTreeMap<String, String> = BTreeMap::new();
+    for h in handlers {
+        for c in bynk_lower::lower_handler_given_ir(h) {
+            if let Some(prefix) = &c.context
+                && let Some(owner) = resolve_consume_prefix(prefix, consumed, aliases)
+            {
+                out.entry(c.name.clone()).or_insert(owner);
+            }
+        }
+    }
+    out.into_iter().collect()
 }
 
 /// #18 (testing-track infra): a real value destructure plus a per-type alias,

@@ -1,0 +1,4 @@
+---
+level: patch
+changelog: "A unit suite against a context that consumes another context for a capability builds and runs (#1863). Its test deps gave every consumed context a `surface` entry typed by that context's `__makeSurface`, which a context with no services doesn't export (TS2339), and never built the capability a handler is `given` from the consumed context (TS2345). Test deps now follow the composition root: only a consumed context with services contributes a surface; a capability from a consumed context (`given Fees.Fees`), given to a service or an agent, is that context's provider, built with its own `given` capabilities and overlaid by a suite's `stub`; and a provider the context declares is built with its `given` capabilities too, where it was constructed with none. The test module imports any further unit those providers name"
+---

@@ -354,7 +354,7 @@ pub(crate) fn emit_worker_compose(
             unit_consumes,
             unit_consumes_aliases,
             unit_flattened,
-            true,
+            crate::project::ProviderNamespaces::Workers,
             Some("env"),
             locale_negotiation_args.as_ref(),
             &mut referenced_units,

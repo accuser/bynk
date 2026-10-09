@@ -1,0 +1,22 @@
+suite shop.orders {
+  case "a service is given the consumed context's provider" {
+    let n <- charge.call()
+    expect n == 30
+  }
+
+  case "a local provider is built with the consumed capability" {
+    let n <- stamp.call()
+    expect n == 31
+  }
+
+  case "an agent is given the consumed context's provider" {
+    let n <- till.call()
+    expect n == 5
+  }
+
+  case "a stub replaces the consumed context's provider" {
+    stub Fees.fee() returns each [7]
+    let n <- charge.call()
+    expect n == 7
+  }
+}
