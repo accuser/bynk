@@ -1683,6 +1683,16 @@ fn emit_consumed_context_helpers(
         // hand out, so the caller never regenerates it under the callee's ns.
         let exports = ctx.exports_for_consumed.get(c);
         let owned = |n: &str| exports.is_some_and(|e| e.contains_key(n));
+        // #1846: a type the callee declares but does not export (`Code`, a
+        // field of its exported `Ticket`) is the callee's too, though the
+        // caller can't name it and may declare its own `Code`. It is renamed
+        // in this copy of the callee's table (`t_vault__Code`), so its codecs
+        // and instantiations can't collide with the caller's, and generated
+        // here like an owned type, its TS type still the callee's own.
+        let (renamed_table, hidden) =
+            rename_unexported_types(c, types_table, &owned, &commons.types, ctx);
+        let types_table = &renamed_table;
+        let hidden_subst = hidden_subst(&hidden);
 
         // Roots: every called service's parameter and return types, plus (#973)
         // any event type this context subscribes to from `c` — a subscriber
@@ -1701,6 +1711,10 @@ fn emit_consumed_context_helpers(
             }
             roots.push(svc.return_type.clone());
         }
+        let roots: Vec<bynk_syntax::ast::TypeRef> = roots
+            .iter()
+            .map(|r| serialisation::subst_type_ref(r, &hidden_subst))
+            .collect();
         let (names, cinsts) = collect_codec_closure(&roots, types_table);
 
         let ns = format!("{}.", qualified_to_ns(c));
@@ -1709,6 +1723,10 @@ fn emit_consumed_context_helpers(
             if owned(n) {
                 qual.insert(n.clone(), ns.clone());
             }
+        }
+        // #1846: the whole TS name, `t_vault.Code` (see `serialisation::qual_type`).
+        for (renamed, original) in &hidden {
+            qual.insert(renamed.clone(), format!("{ns}{original}"));
         }
         // #1736: a generic type the callee owns reaches the closure only as the
         // base of an instantiation (`Envelope[Int]`), never as a plain name, so
@@ -1728,10 +1746,11 @@ fn emit_consumed_context_helpers(
         // (`Cents`); the caller imports its codec from the commons. Before,
         // that was assumed done by the caller's own boundary path, which only
         // covers types in the caller's own signatures.
-        foreign_names_out.extend(names.iter().filter(|n| !owned(n)).cloned());
+        let generated = |n: &str| owned(n) || hidden.contains_key(n);
+        foreign_names_out.extend(names.iter().filter(|n| !generated(n)).cloned());
         let mut to_emit: Vec<String> = names
             .iter()
-            .filter(|n| owned(n) && emitted_names.insert((*n).clone()))
+            .filter(|n| generated(n) && emitted_names.insert((*n).clone()))
             .cloned()
             .collect();
         to_emit.sort();
@@ -1764,6 +1783,97 @@ fn emit_consumed_context_helpers(
         consumed_insts_out,
         foreign_names_out,
     )
+}
+
+/// #1846: `types_table`, a consumed context `c`'s type table, with each type
+/// `c` declares but does not export renamed `<ns>__<Name>` (`t_vault__Code`),
+/// wherever it is declared or named; and those types, renamed to original.
+/// A type that isn't `c`'s own (a commons type it `uses`, whose codecs the
+/// caller imports, [`commons_codec_imports`]) keeps its name: it is the
+/// caller's same declaration, under a codec owner.
+fn rename_unexported_types(
+    c: &str,
+    types_table: &HashMap<String, Arc<TypeDecl>>,
+    owned: &dyn Fn(&str) -> bool,
+    caller_types: &HashMap<String, Arc<TypeDecl>>,
+    ctx: &EmitProjectCtx,
+) -> (
+    HashMap<String, Arc<TypeDecl>>,
+    std::collections::BTreeMap<String, String>,
+) {
+    let shared = |n: &str, d: &Arc<TypeDecl>| {
+        matches!(ctx.imported_from_kind.get(n), Some(UnitKind::Commons))
+            && caller_types
+                .get(n)
+                .is_some_and(|mine| Arc::ptr_eq(mine, d) || mine.span == d.span)
+    };
+    let prefix = qualified_to_ns(c);
+    let hidden: std::collections::BTreeMap<String, String> = types_table
+        .iter()
+        .filter(|(n, d)| !owned(n) && !shared(n, d))
+        .map(|(n, _)| (format!("{prefix}__{n}"), n.clone()))
+        .collect();
+    if hidden.is_empty() {
+        return (types_table.clone(), hidden);
+    }
+    let subst = hidden_subst(&hidden);
+    let renamed = types_table
+        .iter()
+        .map(|(n, d)| {
+            let name = subst
+                .get(n)
+                .and_then(|t| match t {
+                    TypeRef::Named(id) => Some(id.name.clone()),
+                    _ => None,
+                })
+                .unwrap_or_else(|| n.clone());
+            (name, Arc::new(rename_in_decl(d, &subst)))
+        })
+        .collect();
+    (renamed, hidden)
+}
+
+/// #1846: `original → renamed` as a [`serialisation::subst_type_ref`] map.
+fn hidden_subst(hidden: &std::collections::BTreeMap<String, String>) -> HashMap<String, TypeRef> {
+    hidden
+        .iter()
+        .map(|(renamed, original)| {
+            (
+                original.clone(),
+                TypeRef::Named(Ident {
+                    name: renamed.clone(),
+                    span: bynk_syntax::span::Span::new(0, 0),
+                }),
+            )
+        })
+        .collect()
+}
+
+/// #1846: `decl` with every type it names, and its own name, renamed by `subst`.
+fn rename_in_decl(decl: &TypeDecl, subst: &HashMap<String, TypeRef>) -> TypeDecl {
+    let mut out = decl.clone();
+    if let Some(TypeRef::Named(id)) = subst.get(&decl.name.name) {
+        out.name.name = id.name.clone();
+    }
+    match &mut out.body {
+        TypeBody::Record(r) => {
+            for f in &mut r.fields {
+                f.type_ref = serialisation::subst_type_ref(&f.type_ref, subst);
+            }
+        }
+        TypeBody::Sum(sum) => {
+            for v in &mut sum.variants {
+                for f in &mut v.payload {
+                    f.type_ref = serialisation::subst_type_ref(&f.type_ref, subst);
+                }
+            }
+            for e in &mut sum.embeds {
+                e.source_type = serialisation::subst_type_ref(&e.source_type, subst);
+            }
+        }
+        TypeBody::Refined { .. } | TypeBody::Opaque { .. } => {}
+    }
+    out
 }
 
 /// #661: the cross-context services this unit actually **calls**, as `consumed

@@ -1,0 +1,16 @@
+-- #1846: `Ticket` is exported, but the `Code` its fields reach is not. A
+-- Worker that consumes `t.vault` decodes a `Ticket`, so it generates `Code`'s
+-- codecs itself, under a name that can't meet its own `Code`'s.
+context t.vault
+
+exports transparent { Ticket }
+
+type Code = Int where NonNegative
+
+type Ticket = { label: String, code: Code, spare: Option[Code] }
+
+service fetch {
+  on call() -> Effect[Ticket] {
+    Effect.pure(Ticket { label: "vault", code: 7, spare: None })
+  }
+}

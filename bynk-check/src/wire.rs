@@ -485,8 +485,10 @@ fn collect_type_names(
 /// v0.174 (#592): substitute a generic record's declared field type — replacing
 /// each type-parameter name with the concrete argument type-ref — so a
 /// per-instantiation codec sees fully concrete field types.
-/// `Paginated[User]`'s `items: List[T]` becomes `items: List[User]`.
-fn subst_type_ref(t: &TypeRef, subst: &HashMap<String, TypeRef>) -> TypeRef {
+/// `Paginated[User]`'s `items: List[T]` becomes `items: List[User]`. #1846:
+/// also renames a type wherever it is named (`bynk-emit`'s consumed-context
+/// codecs).
+pub fn subst_type_ref(t: &TypeRef, subst: &HashMap<String, TypeRef>) -> TypeRef {
     match t {
         TypeRef::Named(id) => match subst.get(&id.name) {
             Some(replacement) => replacement.clone(),

@@ -39,13 +39,6 @@ const KNOWN: &[(&str, &str, &str, &[&str], u32)] = &[
         1845,
     ),
     (
-        "1807_uses_reaches_hidden_type",
-        "workers",
-        "workers/t-desk/handlers.ts",
-        &["__deserialise_Code", "__serialise_Code"],
-        1846,
-    ),
-    (
         "repro_1829_agent_state_unread_field",
         "bundle",
         "app/web.ts",

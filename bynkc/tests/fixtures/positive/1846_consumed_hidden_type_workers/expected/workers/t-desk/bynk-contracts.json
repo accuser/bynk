@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "provides": {
+    "probe": "889ebeb7fd4a518b"
+  },
+  "expects": {
+    "t.vault": {
+      "fetch": "2d89ccd302e05e41"
+    }
+  }
+}
