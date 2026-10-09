@@ -28,6 +28,7 @@ export default {
         if (__r_envelope.tag === "Err") return new globalThis.Response(globalThis.JSON.stringify(__r_envelope.error), { status: 400, headers: { "content-type": "application/json" } });
         switch (servicePath) {
           case "OnPayment": {
+            __route = "event OnPayment";
             const __r_payload = handlers.__deserialise_PaymentConfirmed(payload, "$.payload");
             if (__r_payload.tag === "Err") return new globalThis.Response(globalThis.JSON.stringify(__r_payload.error), { status: 400, headers: { "content-type": "application/json" } });
             await surface.OnPayment(__r_payload.value, __r_envelope.value);
