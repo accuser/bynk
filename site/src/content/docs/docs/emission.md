@@ -179,8 +179,9 @@ part integrators most need to understand:
   instance a refinement tightened across a deploy, orphaning previously-valid data)
   it raises a `rehydrationViolation(agent, detail)`. This is an internal fault, not
   a caller-facing `BoundaryError`: the supplier is trusted past-self, so the failure
-  is logged with the agent type and field path only — never the key or the offending
-  value.
+  is logged with the agent type, the field path and the kind of failure only
+  (`RehydrationViolation <Agent>`, `{ agent, path, kind }`) — never the key or the
+  offending value.
 - **`commitState(state)`** checks every invariant predicate *before* writing. If an
   invariant fails, it throws `invariantViolation(agent, name)` and does **not**
   persist the offending state — so a rejected write leaves the stored state exactly

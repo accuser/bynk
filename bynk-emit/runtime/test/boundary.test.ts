@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { callService, deserialiseEventEnvelope, type BoundaryError, type ServiceBinding } from "../src/boundary.ts";
+import { callService, deserialiseEventEnvelope, rehydrationViolation, type BoundaryError, type ServiceBinding } from "../src/boundary.ts";
 import { Ok, Err, type Result } from "../src/result.ts";
 
 function bindingReturning(body: unknown, init?: ResponseInit): ServiceBinding {
@@ -202,4 +202,29 @@ test("deserialiseEventEnvelope: rejects a missing schemaVersion", () => {
 test("deserialiseEventEnvelope: reports the custom path prefix on failure", () => {
   const r = deserialiseEventEnvelope("nope", "$.envelope");
   assert.equal((r as { error: BoundaryError & { path: string } }).error.path, "$.envelope");
+});
+
+// #1827: a rehydration violation is logged with the agent, the field path and
+// the failure's kind, never the offending value.
+test("rehydrationViolation: logs the agent, path and kind, never the value", () => {
+  const logged: unknown[][] = [];
+  const original = globalThis.console.error;
+  globalThis.console.error = (...args: unknown[]) => {
+    logged.push(args);
+  };
+  let e: Error;
+  try {
+    e = rehydrationViolation("Tracking", {
+      kind: "RefinementViolation",
+      path: "connections",
+      violation: { field: "CustomerId", message: "must be non-empty", value: "secret-key" },
+    } as BoundaryError);
+  } finally {
+    globalThis.console.error = original;
+  }
+  assert.deepEqual(logged, [
+    ["RehydrationViolation Tracking", { agent: "Tracking", path: "connections", kind: "RefinementViolation" }],
+  ]);
+  assert.ok(!JSON.stringify(logged).includes("secret-key"));
+  assert.match(e.message, /^RehydrationViolation: Tracking RefinementViolation at connections$/);
 });
