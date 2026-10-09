@@ -510,6 +510,32 @@ fn emit_integration_module(
                 );
             }
         }
+        // #1855: the lowering reads the case's checked types (a literal at a
+        // refined record field is branded only when its type says so), so
+        // type the body here as the check pass did, into throwaway sinks.
+        let mut throwaway_errors: Vec<CompileError> = Vec::new();
+        let mut throwaway_refs = RefSink::new();
+        (typed.expr_types, typed.callees) = test_suites::typecheck_integration_case_body(
+            participants,
+            uses_targets,
+            case,
+            cross_context,
+            unit_tables,
+            &mut throwaway_errors,
+            &mut throwaway_refs,
+            tys,
+        );
+        // #1875 review: the check pass accepted this body from the same
+        // inputs, so an error here means the two have drifted, and the
+        // lowering would silently fall back to untyped output.
+        debug_assert!(
+            throwaway_errors.is_empty(),
+            "a system case re-typed for emission reported errors the check pass did not: {:?}",
+            throwaway_errors
+                .iter()
+                .map(|e| e.category)
+                .collect::<Vec<_>>()
+        );
         let (body_src, body_smb) = emitter::lower_integration_case_body(
             &case.body,
             &mut typed,
@@ -4136,6 +4162,15 @@ fn emit_test_case_function(
             &mut throwaway_refs,
             HashMap::new(),
             tys,
+        );
+        // #1875 review: as at the system tier, an error here is drift.
+        debug_assert!(
+            throwaway_errors.is_empty(),
+            "a unit case re-typed for emission reported errors the check pass did not: {:?}",
+            throwaway_errors
+                .iter()
+                .map(|e| e.category)
+                .collect::<Vec<_>>()
         );
     }
     let cross = bynk_check::resolver::CrossContextInfo::default();
