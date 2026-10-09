@@ -135,7 +135,7 @@ async function __sysdrive_wrongmethod_api(method: string, path: string) {
 async function test_a_typed_create_returns_Created_over_the_real_wire() {
   try {
     const deps = __makeHarness();
-    const item = await __sysdrive_api_http_POST_cart({ sku: "widget" }, "alice");
+    const item = await __sysdrive_api_http_POST_cart({ sku: ("widget" as any) }, ("alice" as any));
     if (!(item.tag === "Created")) { throw __bynkExpectFailure("shop/tests/api.test.bynk:4:12", 174, 192, "expect item is Created(_)"); }
     return { pass: true };
   } catch (e) {
@@ -149,7 +149,7 @@ async function test_a_typed_create_returns_Created_over_the_real_wire() {
 async function test_an_empty_sku_is_rejected_at_the_boundary_before_the_handler() {
   try {
     const deps = __makeHarness();
-    const r = await __sysdrive_raw_api_http_POST_cart("{\"sku\": \"\"}", "alice");
+    const r = await __sysdrive_raw_api_http_POST_cart("{\"sku\": \"\"}", ("alice" as any));
     if (!(r.tag === "Rejected" && r.value.tag === "RefinementViolation")) { throw __bynkExpectFailure("shop/tests/api.test.bynk:8:12", 352, 389, "expect r is Rejected(RefinementViolation(_))"); }
     return { pass: true };
   } catch (e) {
@@ -163,7 +163,7 @@ async function test_an_empty_sku_is_rejected_at_the_boundary_before_the_handler(
 async function test_malformed_json_is_rejected_at_the_boundary() {
   try {
     const deps = __makeHarness();
-    const r = await __sysdrive_raw_api_http_POST_cart("{not json", "alice");
+    const r = await __sysdrive_raw_api_http_POST_cart("{not json", ("alice" as any));
     if (!(r.tag === "Rejected" && r.value.tag === "MalformedJson")) { throw __bynkExpectFailure("shop/tests/api.test.bynk:12:12", 526, 557, "expect r is Rejected(MalformedJson(_))"); }
     return { pass: true };
   } catch (e) {
@@ -177,7 +177,7 @@ async function test_malformed_json_is_rejected_at_the_boundary() {
 async function test_valid_raw_input_passes_the_boundary_to_the_handler() {
   try {
     const deps = __makeHarness();
-    const r = await __sysdrive_raw_api_http_POST_cart("{\"sku\": \"raw-ok\"}", "alice");
+    const r = await __sysdrive_raw_api_http_POST_cart("{\"sku\": \"raw-ok\"}", ("alice" as any));
     if (!(r.tag === "Handled")) { throw __bynkExpectFailure("shop/tests/api.test.bynk:16:12", 714, 729, "expect r is Handled(_)"); }
     return { pass: true };
   } catch (e) {
@@ -191,7 +191,7 @@ async function test_valid_raw_input_passes_the_boundary_to_the_handler() {
 async function test_no_credential_is_rejected_at_the_seam() {
   try {
     const deps = __makeHarness();
-    const r = await __sysdrive_noauth_api_http_POST_cart({ sku: "widget" }, "");
+    const r = await __sysdrive_noauth_api_http_POST_cart({ sku: ("widget" as any) }, "");
     if (!(r.tag === "Rejected" && r.value.tag === "Unauthorized")) { throw __bynkExpectFailure("shop/tests/api.test.bynk:20:12", 859, 886, "expect r is Rejected(Unauthorized)"); }
     return { pass: true };
   } catch (e) {
@@ -219,7 +219,7 @@ async function test_no_credential_combined_with_a_raw_body_is_rejected_at_the_se
 async function test_no_credential_combined_with_a_raw_path_and_a_typed_body_is_rejected_at_the_seam() {
   try {
     const deps = __makeHarness();
-    const r = await __sysdrive_rawnoauth_api_http_PUT_cart_Param_sku("widget", globalThis.JSON.stringify(__ns_shop_api.__serialise_Item(({ sku: "widget" } as any))), "");
+    const r = await __sysdrive_rawnoauth_api_http_PUT_cart_Param_sku("widget", globalThis.JSON.stringify(__ns_shop_api.__serialise_Item(({ sku: ("widget" as any) } as any))), "");
     if (!(r.tag === "Rejected" && r.value.tag === "Unauthorized")) { throw __bynkExpectFailure("shop/tests/api.test.bynk:28:12", 1267, 1294, "expect r is Rejected(Unauthorized)"); }
     return { pass: true };
   } catch (e) {
@@ -247,7 +247,7 @@ async function test_the_wrong_method_is_a_405_fall_through() {
 async function test_a_handler_returned_400_is_Handled__not_a_boundary_rejection() {
   try {
     const deps = __makeHarness();
-    const r = await __sysdrive_raw_api_http_POST_reject("{\"sku\": \"ok\"}", "alice");
+    const r = await __sysdrive_raw_api_http_POST_reject("{\"sku\": \"ok\"}", ("alice" as any));
     if (!(r.tag === "Handled")) { throw __bynkExpectFailure("shop/tests/api.test.bynk:36:12", 1588, 1603, "expect r is Handled(_)"); }
     return { pass: true };
   } catch (e) {
@@ -261,7 +261,7 @@ async function test_a_handler_returned_400_is_Handled__not_a_boundary_rejection(
 async function test_a_raw_path_segment_with_a_typed_body_passes_both_through_the_boundary() {
   try {
     const deps = __makeHarness();
-    const r = await __sysdrive_raw_api_http_PUT_cart_Param_sku("widget", globalThis.JSON.stringify(__ns_shop_api.__serialise_Item(({ sku: "widget" } as any))), "alice");
+    const r = await __sysdrive_raw_api_http_PUT_cart_Param_sku("widget", globalThis.JSON.stringify(__ns_shop_api.__serialise_Item(({ sku: ("widget" as any) } as any))), ("alice" as any));
     if (!(r.tag === "Handled")) { throw __bynkExpectFailure("shop/tests/api.test.bynk:40:12", 1792, 1807, "expect r is Handled(_)"); }
     return { pass: true };
   } catch (e) {
@@ -275,7 +275,7 @@ async function test_a_raw_path_segment_with_a_typed_body_passes_both_through_the
 async function test_a_raw_path_segment_failing_refinement_is_rejected_even_with_a_typed_body() {
   try {
     const deps = __makeHarness();
-    const r = await __sysdrive_raw_api_http_PUT_cart_Param_sku("far-too-long-sku", globalThis.JSON.stringify(__ns_shop_api.__serialise_Item(({ sku: "widget" } as any))), "alice");
+    const r = await __sysdrive_raw_api_http_PUT_cart_Param_sku("far-too-long-sku", globalThis.JSON.stringify(__ns_shop_api.__serialise_Item(({ sku: ("widget" as any) } as any))), ("alice" as any));
     if (!(r.tag === "Rejected" && r.value.tag === "RefinementViolation")) { throw __bynkExpectFailure("shop/tests/api.test.bynk:49:12", 2360, 2397, "expect r is Rejected(RefinementViolation(_))"); }
     return { pass: true };
   } catch (e) {
@@ -289,7 +289,7 @@ async function test_a_raw_path_segment_failing_refinement_is_rejected_even_with_
 async function test_an_empty_raw_path_segment_does_not_route_and_falls_through() {
   try {
     const deps = __makeHarness();
-    const r = await __sysdrive_raw_api_http_PUT_cart_Param_sku("", globalThis.JSON.stringify(__ns_shop_api.__serialise_Item(({ sku: "widget" } as any))), "alice");
+    const r = await __sysdrive_raw_api_http_PUT_cart_Param_sku("", globalThis.JSON.stringify(__ns_shop_api.__serialise_Item(({ sku: ("widget" as any) } as any))), ("alice" as any));
     if (!(r.tag === "Handled")) { throw __bynkExpectFailure("shop/tests/api.test.bynk:58:12", 2952, 2967, "expect r is Handled(_)"); }
     return { pass: true };
   } catch (e) {
@@ -303,7 +303,7 @@ async function test_an_empty_raw_path_segment_does_not_route_and_falls_through()
 async function test_a_typed_path_segment_with_a_raw_body_passes_both_through_the_boundary() {
   try {
     const deps = __makeHarness();
-    const r = await __sysdrive_raw_api_http_PUT_cart_Param_sku(String("widget"), "{\"sku\": \"widget\"}", "alice");
+    const r = await __sysdrive_raw_api_http_PUT_cart_Param_sku(String(("widget" as any)), "{\"sku\": \"widget\"}", ("alice" as any));
     if (!(r.tag === "Handled")) { throw __bynkExpectFailure("shop/tests/api.test.bynk:62:12", 3157, 3172, "expect r is Handled(_)"); }
     return { pass: true };
   } catch (e) {
