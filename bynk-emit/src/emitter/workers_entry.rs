@@ -734,19 +734,32 @@ pub(crate) fn emit_worker_entry(
                     vec![str_lit("X-Bynk-Contract")],
                 ),
             ));
+            // #1826: the callee decides, so it logs the skew, by name and with
+            // both hashes, before refusing: otherwise the diagnosis existed only
+            // in a response body passed between two Workers.
+            let skew = || {
+                vec![
+                    ("service".to_string(), str_lit(sname.to_string())),
+                    ("expected".to_string(), str_lit(expected.clone())),
+                    ("actual".to_string(), ident("__contract")),
+                ]
+            };
             case_body.push(if_(
                 strict_neq(ident("__contract"), str_lit(expected.clone())),
-                return_(Some(json_response(
-                    json_error_kind(
-                        "ContractMismatch",
+                block(vec![
+                    expr_stmt(method_call(
+                        ident("globalThis.console"),
+                        "error",
                         vec![
-                            ("service".to_string(), str_lit(sname.to_string())),
-                            ("expected".to_string(), str_lit(expected.clone())),
-                            ("actual".to_string(), ident("__contract")),
+                            str_lit(format!("ContractMismatch {context} call {sname}")),
+                            TsExpr::object(skew()),
                         ],
-                    ),
-                    409,
-                ))),
+                    )),
+                    return_(Some(json_response(
+                        json_error_kind("ContractMismatch", skew()),
+                        409,
+                    ))),
+                ]),
             ));
         }
         case_body.push(const_(

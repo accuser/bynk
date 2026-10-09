@@ -19,7 +19,10 @@ export default {
           case "check": {
             __route = "call check";
             const __contract = request.headers.get("X-Bynk-Contract");
-            if (__contract !== "8e3ec8b0e36482a7") return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "check", expected: "8e3ec8b0e36482a7", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            if (__contract !== "8e3ec8b0e36482a7") {
+              globalThis.console.error("ContractMismatch inventory call check", { service: "check", expected: "8e3ec8b0e36482a7", actual: __contract });
+              return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "check", expected: "8e3ec8b0e36482a7", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            }
             const args = await request.json() as __JsonValue;
             const __r_sku = handlers.__deserialise_Sku(args, "$");
             if (__r_sku.tag === "Err") return new globalThis.Response(globalThis.JSON.stringify(__r_sku.error), { status: 400, headers: { "content-type": "application/json" } });

@@ -19,7 +19,10 @@ export default {
           case "stamp": {
             __route = "call stamp";
             const __contract = request.headers.get("X-Bynk-Contract");
-            if (__contract !== "2011778f541d8436") return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "stamp", expected: "2011778f541d8436", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            if (__contract !== "2011778f541d8436") {
+              globalThis.console.error("ContractMismatch timing call stamp", { service: "stamp", expected: "2011778f541d8436", actual: __contract });
+              return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "stamp", expected: "2011778f541d8436", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            }
             const args = await request.json() as __JsonValue;
             const __r_n = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(args);
             if (__r_n.tag === "Err") return new globalThis.Response(globalThis.JSON.stringify(__r_n.error), { status: 400, headers: { "content-type": "application/json" } });

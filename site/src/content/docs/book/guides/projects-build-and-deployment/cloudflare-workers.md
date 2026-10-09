@@ -68,7 +68,9 @@ shop.api GET /shout/:word faulted Error: provider exploded for boom
 The line names the context and the dispatch that faulted: the route's
 *pattern*, or `call <service>` for a service call. It never names the
 request, so no key or value from the URL reaches the log. A queue consumer
-logs `queue <name> threw` and retries the message.
+logs `queue <name> threw` and retries the message. A refused cross-context
+call is also logged by name on both sides: see
+[Contract skew](/book/guides/projects-build-and-deployment/contract-skew/).
 
 ## Related
 

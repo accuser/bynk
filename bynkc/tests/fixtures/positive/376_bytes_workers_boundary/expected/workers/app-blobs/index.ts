@@ -19,7 +19,10 @@ export default {
           case "objects": {
             __route = "call objects";
             const __contract = request.headers.get("X-Bynk-Contract");
-            if (__contract !== "b27f41b7d9f34c77") return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "objects", expected: "b27f41b7d9f34c77", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            if (__contract !== "b27f41b7d9f34c77") {
+              globalThis.console.error("ContractMismatch app.blobs call objects", { service: "objects", expected: "b27f41b7d9f34c77", actual: __contract });
+              return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "objects", expected: "b27f41b7d9f34c77", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            }
             const args = await request.json() as __JsonValue;
             const __r_payload = ((__v) => typeof __v === "string" ? ((__b) => __b.tag === "Some" ? Ok(__b.value) : Err({ kind: "StructuralMismatch", path: "$", expected: "base64 string", actual: "invalid base64" } as __BoundaryError))(__bynkBytesFromBase64(__v)) : Err({ kind: "StructuralMismatch", path: "$", expected: "base64 string", actual: typeof __v } as __BoundaryError))(args);
             if (__r_payload.tag === "Err") return new globalThis.Response(globalThis.JSON.stringify(__r_payload.error), { status: 400, headers: { "content-type": "application/json" } });

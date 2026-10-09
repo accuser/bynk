@@ -19,7 +19,10 @@ export default {
           case "ordering": {
             __route = "call ordering";
             const __contract = request.headers.get("X-Bynk-Contract");
-            if (__contract !== "5936c1010679f67c") return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "ordering", expected: "5936c1010679f67c", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            if (__contract !== "5936c1010679f67c") {
+              globalThis.console.error("ContractMismatch shop.orders call ordering", { service: "ordering", expected: "5936c1010679f67c", actual: __contract });
+              return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "ordering", expected: "5936c1010679f67c", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            }
             const args = await request.json() as __JsonValue;
             const __r_sku = ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "string", actual: typeof __v } as __BoundaryError))(args);
             if (__r_sku.tag === "Err") return new globalThis.Response(globalThis.JSON.stringify(__r_sku.error), { status: 400, headers: { "content-type": "application/json" } });

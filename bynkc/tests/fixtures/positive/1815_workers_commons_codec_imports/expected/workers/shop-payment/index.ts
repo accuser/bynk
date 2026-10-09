@@ -19,7 +19,10 @@ export default {
           case "authorise": {
             __route = "call authorise";
             const __contract = request.headers.get("X-Bynk-Contract");
-            if (__contract !== "64c4101e9bac5424") return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "authorise", expected: "64c4101e9bac5424", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            if (__contract !== "64c4101e9bac5424") {
+              globalThis.console.error("ContractMismatch shop.payment call authorise", { service: "authorise", expected: "64c4101e9bac5424", actual: __contract });
+              return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "authorise", expected: "64c4101e9bac5424", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            }
             const args = await request.json() as __JsonValue;
             const __r_cents = handlers.__deserialise_Cents(args, "$");
             if (__r_cents.tag === "Err") return new globalThis.Response(globalThis.JSON.stringify(__r_cents.error), { status: 400, headers: { "content-type": "application/json" } });

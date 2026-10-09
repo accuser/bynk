@@ -19,7 +19,10 @@ export default {
           case "check": {
             __route = "call check";
             const __contract = request.headers.get("X-Bynk-Contract");
-            if (__contract !== "c4ebec6946345787") return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "check", expected: "c4ebec6946345787", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            if (__contract !== "c4ebec6946345787") {
+              globalThis.console.error("ContractMismatch demo.desk call check", { service: "check", expected: "c4ebec6946345787", actual: __contract });
+              return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "check", expected: "c4ebec6946345787", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            }
             const args = await request.json() as __JsonValue;
             const __r_n = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(args);
             if (__r_n.tag === "Err") return new globalThis.Response(globalThis.JSON.stringify(__r_n.error), { status: 400, headers: { "content-type": "application/json" } });
@@ -31,7 +34,10 @@ export default {
           case "local": {
             __route = "call local";
             const __contract = request.headers.get("X-Bynk-Contract");
-            if (__contract !== "ca5abcc7749b379a") return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "local", expected: "ca5abcc7749b379a", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            if (__contract !== "ca5abcc7749b379a") {
+              globalThis.console.error("ContractMismatch demo.desk call local", { service: "local", expected: "ca5abcc7749b379a", actual: __contract });
+              return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "local", expected: "ca5abcc7749b379a", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            }
             const args = await request.json() as __JsonValue;
             const __r_n = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(args);
             if (__r_n.tag === "Err") return new globalThis.Response(globalThis.JSON.stringify(__r_n.error), { status: 400, headers: { "content-type": "application/json" } });

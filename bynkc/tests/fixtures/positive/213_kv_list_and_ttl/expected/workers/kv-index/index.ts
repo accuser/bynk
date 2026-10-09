@@ -19,7 +19,10 @@ export default {
           case "allKeys": {
             __route = "call allKeys";
             const __contract = request.headers.get("X-Bynk-Contract");
-            if (__contract !== "4ca5743dc330a4ac") return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "allKeys", expected: "4ca5743dc330a4ac", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            if (__contract !== "4ca5743dc330a4ac") {
+              globalThis.console.error("ContractMismatch kv.index call allKeys", { service: "allKeys", expected: "4ca5743dc330a4ac", actual: __contract });
+              return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "allKeys", expected: "4ca5743dc330a4ac", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            }
             const args = await request.json() as __JsonValue;
             const __r_unused = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(args);
             if (__r_unused.tag === "Err") return new globalThis.Response(globalThis.JSON.stringify(__r_unused.error), { status: 400, headers: { "content-type": "application/json" } });
@@ -31,7 +34,10 @@ export default {
           case "cache": {
             __route = "call cache";
             const __contract = request.headers.get("X-Bynk-Contract");
-            if (__contract !== "5c2188409f152319") return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "cache", expected: "5c2188409f152319", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            if (__contract !== "5c2188409f152319") {
+              globalThis.console.error("ContractMismatch kv.index call cache", { service: "cache", expected: "5c2188409f152319", actual: __contract });
+              return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "cache", expected: "5c2188409f152319", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            }
             const args = await request.json() as __JsonValue;
             if (typeof args !== "object" || args === null || globalThis.Array.isArray(args)) return new globalThis.Response(globalThis.JSON.stringify({ kind: "StructuralMismatch", path: "$", expected: "object", actual: typeof args }), { status: 400, headers: { "content-type": "application/json" } });
             const argsObj = args as { [k: string]: __JsonValue };
@@ -48,7 +54,10 @@ export default {
           case "scan": {
             __route = "call scan";
             const __contract = request.headers.get("X-Bynk-Contract");
-            if (__contract !== "6f9f79a650dc3db6") return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "scan", expected: "6f9f79a650dc3db6", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            if (__contract !== "6f9f79a650dc3db6") {
+              globalThis.console.error("ContractMismatch kv.index call scan", { service: "scan", expected: "6f9f79a650dc3db6", actual: __contract });
+              return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "scan", expected: "6f9f79a650dc3db6", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            }
             const args = await request.json() as __JsonValue;
             const __r_prefix = ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "string", actual: typeof __v } as __BoundaryError))(args);
             if (__r_prefix.tag === "Err") return new globalThis.Response(globalThis.JSON.stringify(__r_prefix.error), { status: 400, headers: { "content-type": "application/json" } });

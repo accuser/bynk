@@ -19,7 +19,10 @@ export default {
           case "length": {
             __route = "call length";
             const __contract = request.headers.get("X-Bynk-Contract");
-            if (__contract !== "208465506c3dedfe") return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "length", expected: "208465506c3dedfe", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            if (__contract !== "208465506c3dedfe") {
+              globalThis.console.error("ContractMismatch shop.orders call length", { service: "length", expected: "208465506c3dedfe", actual: __contract });
+              return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "length", expected: "208465506c3dedfe", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            }
             const args = await request.json() as __JsonValue;
             const __r_n = handlers.__deserialise_Note(args, "$");
             if (__r_n.tag === "Err") return new globalThis.Response(globalThis.JSON.stringify(__r_n.error), { status: 400, headers: { "content-type": "application/json" } });
@@ -31,7 +34,10 @@ export default {
           case "note": {
             __route = "call note";
             const __contract = request.headers.get("X-Bynk-Contract");
-            if (__contract !== "d3e0cfcbb5ac1fd1") return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "note", expected: "d3e0cfcbb5ac1fd1", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            if (__contract !== "d3e0cfcbb5ac1fd1") {
+              globalThis.console.error("ContractMismatch shop.orders call note", { service: "note", expected: "d3e0cfcbb5ac1fd1", actual: __contract });
+              return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "note", expected: "d3e0cfcbb5ac1fd1", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            }
             const args = await request.json() as __JsonValue;
             const __r_n = handlers.__deserialise_Note(args, "$");
             if (__r_n.tag === "Err") return new globalThis.Response(globalThis.JSON.stringify(__r_n.error), { status: 400, headers: { "content-type": "application/json" } });
