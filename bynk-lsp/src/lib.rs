@@ -1005,8 +1005,9 @@ impl Backend {
     /// Re-analyses the buffer rewritten so the receiver parses (the trailing
     /// `.partial` dropped), types the receiver via the retained `expr_types`,
     /// and maps its type to kernel methods + record fields. Silent (not
-    /// necessarily empty — see below) when the receiver can't be typed (the
-    /// file has errors — the clean-file ceiling).
+    /// necessarily empty — see below) when the receiver itself has no
+    /// recorded type; an error elsewhere in the file no longer silences it
+    /// (ADR 0094's partial types lifted the clean-file ceiling).
     ///
     /// #596: additionally merges a bare `store` field receiver's own
     /// vocabulary (entry ops, and for `Map` the `.entries`/`.keys`/`.values`
@@ -1015,10 +1016,12 @@ impl Backend {
     /// local (a bare store `Map` widens to `Ty::Query` too, ADR 0120). This
     /// half runs **independently of whether `type_receiver` succeeded**: it
     /// re-parses the buffer itself and needs no typed `ty` at all, so a `store`
-    /// field still offers its entry ops/accessors even when an unresolved name
-    /// *elsewhere* in the file bails the checker before it runs (the one
-    /// clean-file-ceiling gap ADR 0094 didn't close) — a review on #812 flagged
-    /// the earlier draft's single early return as undercutting that motivation.
+    /// field still offers its entry ops/accessors even when the receiver goes
+    /// untyped. (Its original motivation — an unresolved name *elsewhere* in
+    /// the file bailing the checker before it ran, the one clean-file-ceiling
+    /// gap ADR 0094 didn't close — has gone since #1663 let the checker run
+    /// past a resolve error.) A review on #812 flagged the earlier draft's
+    /// single early return as undercutting that motivation.
     async fn value_member_completions(
         &self,
         uri: &Url,
@@ -1107,8 +1110,9 @@ impl Backend {
 
     /// The variants of the scrutinee whose last character is at `scrut_off` — the
     /// shared tail of `is`/`match` pattern completion. Types the scrutinee via
-    /// `expr_types` (the clean-file ceiling; silent, never wrong, on a broken
-    /// buffer) and offers its variants; empty for a non-sum, non-`Result`/`Option`
+    /// `expr_types` (ADR 0094's partial types on a broken buffer; silent when
+    /// the scrutinee itself has no recorded type) and offers its variants;
+    /// empty for a non-sum, non-`Result`/`Option`
     /// scrutinee. v0.145 (ADR 0169): `Result`/`Option` scrutinees now fire too
     /// (`variants_for_ty`), not only user-declared sums.
     async fn scrutinee_variant_completions(
@@ -1132,7 +1136,7 @@ impl Backend {
     /// `Option[Result[…]]` scrutinee. `match_scrutinee_offset` deliberately bails
     /// on a nested constructor; `nested_pattern_offset` targets exactly it,
     /// yielding the scrutinee offset and the outer variant. Types the scrutinee
-    /// via the same clean-file ceiling and resolves the payload type.
+    /// via the same `type_receiver` path and resolves the payload type.
     async fn nested_pattern_completions(
         &self,
         uri: &Url,
@@ -1155,7 +1159,8 @@ impl Backend {
     /// v0.32 (ADR 0065): the type of a receiver expression at `recv_offset` in a
     /// buffer `rewritten` so it parses — re-analyse the overlay and query the
     /// retained `expr_types`. Shared by value-member completion and signature
-    /// help; `None` when the file doesn't check clean (the clean-file ceiling).
+    /// help; `None` when the receiver has no recorded type. A file with errors
+    /// elsewhere still types it (ADR 0094's best-effort partial types).
     async fn type_receiver(
         &self,
         uri: &Url,
@@ -1203,8 +1208,12 @@ impl Backend {
             && analysis.snapshots.get(&rel).map(String::as_str) == Some(rewritten.as_str())
             && let Some((_, entries)) = analysis.expr_types.iter().find(|(p, _)| **p == rel)
         {
-            return bynk_check::expr_types::type_at_offset(entries, recv_offset)
-                .map(|t| (t, std::sync::Arc::clone(&analysis.ty_intern)));
+            return bynk_check::expr_types::type_at_offset(
+                entries,
+                recv_offset,
+                &analysis.ty_intern,
+            )
+            .map(|t| (t, std::sync::Arc::clone(&analysis.ty_intern)));
         }
         // Content-ownership track (#1086) slice 5: same complete-content
         // requirement as `run_project_diagnostics` — `overlay` here is only
@@ -1217,7 +1226,7 @@ impl Backend {
         .map_err(|e| tracing::error!("receiver-typing analysis {}", describe_join_error(e)))
         .ok()?;
         let (_, entries) = result.expr_types.iter().find(|(p, _)| **p == rel)?;
-        bynk_check::expr_types::type_at_offset(entries, recv_offset)
+        bynk_check::expr_types::type_at_offset(entries, recv_offset, &result.ty_intern)
             .map(|t| (t, std::sync::Arc::clone(&result.ty_intern)))
     }
 
@@ -2497,7 +2506,7 @@ impl LanguageServer for Backend {
         let Some(entries) = analysis.expr_types.get(&rel) else {
             return Ok(None);
         };
-        let Some(ty) = bynk_check::expr_types::type_at_offset(entries, offset) else {
+        let Some(ty) = bynk_check::expr_types::type_at_offset(entries, offset, tys) else {
             return Ok(None);
         };
         let Some(name) = crate::index_queries::named_type_target(ty, tys) else {

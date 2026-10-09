@@ -130,6 +130,22 @@ impl Analysed {
     /// check (ADR 0094, `check_pipeline::record_analyse_types`), so this works
     /// on a broken file too, for expressions outside the broken declaration.
     pub(crate) fn type_at(&self, file: &str, needle: &str) -> String {
+        self.analysis.ty_intern.display(self.ty_id_at(file, needle))
+    }
+
+    /// [`type_at`](Self::type_at)'s type itself rather than its display, for
+    /// a test that must tell apart two same-named types (a local `type Repo`
+    /// and a used commons' `Repo` both display as `Repo`; their
+    /// [`NamedKind`](crate::checker::NamedKind)s differ).
+    pub(crate) fn ty_at(&self, file: &str, needle: &str) -> crate::checker::Ty {
+        self.analysis
+            .ty_intern
+            .get(self.ty_id_at(file, needle))
+            .as_ref()
+            .clone()
+    }
+
+    fn ty_id_at(&self, file: &str, needle: &str) -> crate::checker::TyId {
         let (start, end) = self.locate(file, needle);
         let types = self
             .analysis
@@ -143,12 +159,11 @@ impl Analysed {
                     self.render()
                 )
             });
-        let id = types
+        types
             .iter()
             .find(|(span, _)| span.start == start && span.end == end)
             .map(|(_, id)| *id)
-            .unwrap_or_else(|| panic!("no expression spans exactly `{needle}` in `{file}`"));
-        self.analysis.ty_intern.display(id)
+            .unwrap_or_else(|| panic!("no expression spans exactly `{needle}` in `{file}`"))
     }
 
     /// The declaration the reference spelled by the first occurrence of

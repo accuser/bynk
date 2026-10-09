@@ -40,7 +40,7 @@ use bynk_check::contract;
 use bynk_check::resolver::CrossContextService;
 use bynk_check::wire::{self, WireModel, WireRef};
 use bynk_syntax::ast::*;
-use bynk_syntax::span::Span;
+use bynk_syntax::span::{FileId, Span};
 
 const HTTP_RESULT: &str = bynk_check::builtin_names::types::HTTP_RESULT;
 
@@ -314,7 +314,7 @@ pub fn wire_contract_for_service(
     };
 
     let responses = if matches!(kind, BoundaryKind::Http { .. }) {
-        http_responses(handler, expr_types, tys)
+        http_responses(handler, real.span.file, expr_types, tys)
     } else {
         Vec::new()
     };
@@ -384,8 +384,13 @@ fn contract_form(
 /// cases the body never names (400 on any param, 404 on an `Option?`
 /// short-circuit — ADR 0177). 401 on a caller binding is deferred (plan
 /// risk 8; needs actor/`by` resolution this phase does not do).
+///
+/// `file` is the handler's own file — the retained service declaration's
+/// `FileId`, since a service lives in one file — which scopes the
+/// `expr_types` lookup (see `ResponseWalk::file`).
 fn http_responses(
     handler: &Handler,
+    file: FileId,
     expr_types: &[(Span, TyId)],
     tys: &Types,
 ) -> Vec<HttpResponse> {
@@ -403,6 +408,7 @@ fn http_responses(
 
     let mut walk = ResponseWalk {
         expr_types,
+        file,
         tys,
         declared_is_http_result,
         seen: out.iter().map(|r| r.variant.clone()).collect(),
@@ -456,12 +462,18 @@ fn strip_effect(t: &TypeRef) -> &TypeRef {
 /// position.
 struct ResponseWalk<'a> {
     expr_types: &'a [(Span, TyId)],
+    /// The handler's own file. A file's `expr_types` is not only its own
+    /// spans: `check_pipeline` merges a sibling file's methods on a type
+    /// declared here into this file's checked view, so their bodies' spans
+    /// (byte offsets into the *sibling's* text) land in this vector too.
+    /// Only entries stamped with this `FileId` are this file's.
+    file: FileId,
     /// T3.6b (R4.1): the table `expr_types`' ids resolve against.
     tys: &'a Types,
     /// #855 risk 7 ("the `Ok` overload"): the declared-return-type fallback
-    /// used whenever `expr_types` has no entry for a span (a file with
-    /// errors, ADR 0063's clean-file ceiling) — mirrors
-    /// `bynk-emit/src/emitter/lower.rs`'s own `Ok`/`HttpResult` overload
+    /// used whenever `expr_types` has no entry for a span (an expression the
+    /// checker never typed — ADR 0094's partial types still miss those) —
+    /// mirrors `bynk-emit/src/emitter/lower.rs`'s own `Ok`/`HttpResult` overload
     /// disambiguation, which has the identical ambiguity and the identical
     /// (checker-backed, so never actually degraded there) resolution.
     /// Applied to `Ok` and bare `Call` (see `is_http_result_expr` below) but
@@ -475,11 +487,19 @@ struct ResponseWalk<'a> {
 }
 
 impl<'a> ResponseWalk<'a> {
+    /// The checker-recorded type at `span`: an entry in [`Self::file`] over
+    /// the same byte range. `span`'s own `FileId` is ignored — the handler
+    /// may come from [`wire_contract_at`]'s reparse, which stamps
+    /// `FileId::UNKNOWN`, while `expr_types` carries the analysis round's
+    /// real ids (T3.5, #1062), so `Span`'s derived `PartialEq` would never
+    /// match. A recorded `Ty::Error` is "no type", so it degrades to the
+    /// same fallback as a missing entry.
     fn expr_ty(&self, span: Span) -> Option<std::sync::Arc<Ty>> {
         self.expr_types
             .iter()
-            .find(|(s, _)| *s == span)
+            .find(|(s, _)| s.file == self.file && s.start == span.start && s.end == span.end)
             .map(|(_, t)| self.tys.get(*t))
+            .filter(|t| !matches!(**t, Ty::Error))
     }
 
     /// Whether `span`'s expression checked as `HttpResult[_]` — the same
@@ -755,6 +775,65 @@ service api from http {
         assert!(model.contract.is_none());
     }
 
+    /// [`ResponseWalk::expr_ty`]'s answer for every expression in the
+    /// handler at `offset`, keyed by its source text — reparsed the same way
+    /// [`wire_contract_at`] reparses, so the probe of whether the walk's
+    /// primary, checker-typed path is actually taken rather than the
+    /// declared-return fallback.
+    fn walk_expr_tys(
+        text: &str,
+        offset: usize,
+        file: FileId,
+        expr_types: &[(Span, TyId)],
+        tys: &Types,
+    ) -> Vec<(String, Option<std::sync::Arc<Ty>>)> {
+        fn collect<'e>(e: &'e Expr, out: &mut Vec<&'e Expr>) {
+            out.push(e);
+            for c in expr_children(e) {
+                collect(c, out);
+            }
+        }
+        let tokens = bynk_syntax::lexer::tokenize(text).expect("lexes");
+        let (parsed, _) = bynk_syntax::parser::parse_unit_with_recovery(&tokens, text);
+        let Some(SourceUnit::Context(c)) = parsed else {
+            panic!("fixture is a context");
+        };
+        let handler = c
+            .items
+            .iter()
+            .find_map(|i| match i {
+                CommonsItem::Service(s) => handler_at(&s.handlers, offset),
+                _ => None,
+            })
+            .expect("a handler at offset");
+        let mut exprs = Vec::new();
+        for s in &handler.body.statements {
+            statement_exprs(s, &mut exprs);
+        }
+        exprs.push(&handler.body.tail);
+        let mut all = Vec::new();
+        for e in exprs {
+            collect(e, &mut all);
+        }
+        let walk = ResponseWalk {
+            expr_types,
+            file,
+            tys,
+            declared_is_http_result: true,
+            seen: Default::default(),
+            saw_option_question: false,
+            out: Vec::new(),
+        };
+        all.iter()
+            .map(|e| {
+                (
+                    text[e.span.start..e.span.end].to_string(),
+                    walk.expr_ty(e.span),
+                )
+            })
+            .collect()
+    }
+
     #[test]
     fn rate_limiter_response_set_has_declared_constructed_and_boundary_implicit() {
         let root = setup_project("ratelimit-responses", &[("ratelimit.bynk", RATELIMIT_SRC)]);
@@ -779,7 +858,33 @@ service api from http {
             .map(|v| v.as_slice())
             .unwrap_or(&[]);
 
+        assert!(
+            !expr_types.is_empty(),
+            "the clean fixture recorded no expr types"
+        );
         let offset = find_offset(RATELIMIT_SRC, "GET(\"/check/:client\")");
+        // The constructed responses themselves resolve to `HttpResult`, not
+        // just some incidental sub-expression — otherwise the walk took the
+        // degraded fallback for exactly the expressions it classifies.
+        let walked = walk_expr_tys(
+            RATELIMIT_SRC,
+            offset,
+            info.services["api"].span.file,
+            expr_types,
+            &diag.ty_intern,
+        );
+        for src in ["Ok(view)", "TooManyRequests(\"rate limit exceeded\")"] {
+            let ty = walked
+                .iter()
+                .find(|(t, _)| t == src)
+                .unwrap_or_else(|| panic!("`{src}` not walked: {walked:?}"))
+                .1
+                .as_deref();
+            assert!(
+                matches!(ty, Some(Ty::HttpResult(_))),
+                "`{src}` should resolve to a recorded HttpResult, got {ty:?}"
+            );
+        }
         let model = wire_contract_at(
             "ratelimit",
             RATELIMIT_SRC,
@@ -980,9 +1085,10 @@ service api from http {
             .expect("boundary_info entry for oddnames");
 
         let offset = find_offset(SRC, "GET(\"/x\")");
-        // Deliberately pass an empty `expr_types` — the degraded path (a
-        // file with errors, ADR 0063's clean-file ceiling) this fixture is
-        // standing in for, even though it type-checks cleanly on its own.
+        // Deliberately pass an empty `expr_types` — the degraded path (an
+        // expression the checker never typed, see `expr_types` above) this
+        // fixture is standing in for, even though it type-checks cleanly on
+        // its own.
         let model = wire_contract_at(
             "oddnames",
             SRC,
@@ -998,6 +1104,275 @@ service api from http {
             model.responses.iter().all(|r| r.variant != "Found"),
             "a bare `Found` local must not be misreported as HttpResult.Found \
              without a recorded expr type: {:?}",
+            model.responses
+        );
+    }
+
+    // -- A bare-`Ident` variant never falls back to the declared-return
+    // -- heuristic, so it is reported only when `expr_ty` finds the
+    // -- checker's recorded type. That lookup used to compare whole `Span`s,
+    // -- `FileId` included: the round's spans carry a real `FileId` (T3.5,
+    // -- #1062), the reparse's carry `FileId::UNKNOWN`, so it never matched
+    // -- and a tail `NoContent` silently dropped out of the response set.
+    #[test]
+    fn bare_ident_variant_is_reported_from_real_expr_types() {
+        const SRC: &str = r#"context flags
+
+service api from http {
+  on DELETE("/flags/:name") (name: String) -> Effect[HttpResult[String]] by Visitor {
+    NoContent
+  }
+}
+"#;
+        let root = setup_project("bare-ident-variant", &[("flags.bynk", SRC)]);
+        let diag = crate::testkit::diagnose_project(&root);
+        let info = diag.boundary_info.get("flags").expect("entry");
+        let expr_types: &[(Span, TyId)] = diag
+            .files
+            .iter()
+            .find(|f| f.source_path.file_name().is_some_and(|n| n == "flags.bynk"))
+            .and_then(|f| diag.expr_types.get(&f.source_path))
+            .map(|v| v.as_slice())
+            .expect("flags.bynk's recorded expr types");
+        assert!(
+            expr_types.iter().all(|(s, _)| s.file != FileId::UNKNOWN),
+            "the premise: analysis spans carry a real FileId"
+        );
+
+        let offset = find_offset(SRC, "DELETE(");
+        let model = wire_contract_at(
+            "flags",
+            SRC,
+            offset,
+            info,
+            expr_types,
+            &diag.ty_intern,
+            real_context_count(&diag),
+        )
+        .expect("a wire contract at the DELETE handler");
+
+        assert!(
+            model
+                .responses
+                .iter()
+                .any(|r| r.status == 204 && r.variant == "NoContent"),
+            "a tail `NoContent` must be reported as constructed: {:?}",
+            model.responses
+        );
+    }
+
+    /// A recorded `Ty::Error` is "no type": it must degrade to the
+    /// declared-return fallback exactly like a missing entry, not count as a
+    /// definite non-`HttpResult` answer.
+    #[test]
+    fn expr_ty_matches_by_range_and_treats_error_as_no_type() {
+        let tys = Types::new();
+        let file = FileId(0);
+        let error = tys.intern(Ty::Error);
+        let http = tys.intern(Ty::HttpResult(error));
+        let expr_types = [
+            (Span::new_in(file, 10, 20), http),
+            (Span::new_in(file, 30, 40), error),
+            (Span::new_in(FileId(1), 50, 60), http),
+        ];
+        let walk = ResponseWalk {
+            expr_types: &expr_types,
+            file,
+            tys: &tys,
+            declared_is_http_result: true,
+            seen: Default::default(),
+            saw_option_question: false,
+            out: Vec::new(),
+        };
+
+        // A reparsed span (`FileId::UNKNOWN`) over the same range matches.
+        assert!(matches!(
+            walk.expr_ty(Span::new(10, 20)).as_deref(),
+            Some(Ty::HttpResult(_))
+        ));
+        assert!(walk.is_http_result_ident(Span::new(10, 20)));
+
+        // `Ty::Error` is no type: the ident check stays unknown, the expr
+        // check takes the declared-return fallback.
+        assert!(walk.expr_ty(Span::new(30, 40)).is_none());
+        assert!(!walk.is_http_result_ident(Span::new(30, 40)));
+        assert!(walk.is_http_result_expr(Span::new(30, 40)));
+
+        // Another file's entry over the same range is not this file's type.
+        assert!(walk.expr_ty(Span::new(50, 60)).is_none());
+    }
+
+    /// `name`'s recorded expr types from a round that must be error-free —
+    /// so a fixture that stops type-checking fails loudly here rather than
+    /// silently degrading the walk to its fallback.
+    fn clean_expr_types<'d>(diag: &'d crate::ProjectDiagnostics, name: &str) -> &'d [(Span, TyId)] {
+        for f in &diag.files {
+            assert!(
+                f.diagnostics.is_empty(),
+                "{:?} has diagnostics: {:?}",
+                f.source_path,
+                f.diagnostics
+            );
+        }
+        diag.files
+            .iter()
+            .find(|f| f.source_path.file_name().is_some_and(|n| n == name))
+            .and_then(|f| diag.expr_types.get(&f.source_path))
+            .map(|v| v.as_slice())
+            .unwrap_or_else(|| panic!("{name}'s recorded expr types"))
+    }
+
+    // -- The primary-path twin of the degraded-path collision test above:
+    // -- with the real `expr_types` (so the fixture must check cleanly,
+    // -- hence `Ok(Found)`), `Found` is recorded as `Int`, and that recorded
+    // -- type is what keeps it out of the response set.
+    #[test]
+    fn bare_ident_collision_with_a_variant_name_is_rejected_by_its_recorded_type() {
+        const SRC: &str = r#"context oddnames
+
+service api from http {
+  on GET("/x") () -> Effect[HttpResult[Int]] by Visitor {
+    let Found = 1
+    Ok(Found)
+  }
+}
+"#;
+        let root = setup_project("ident-collision-typed", &[("oddnames.bynk", SRC)]);
+        let diag = crate::testkit::diagnose_project(&root);
+        let info = diag.boundary_info.get("oddnames").expect("entry");
+        let expr_types = clean_expr_types(&diag, "oddnames.bynk");
+
+        let offset = find_offset(SRC, "GET(\"/x\")");
+        let walked = walk_expr_tys(
+            SRC,
+            offset,
+            info.services["api"].span.file,
+            expr_types,
+            &diag.ty_intern,
+        );
+        assert!(
+            walked.iter().any(|(t, ty)| t == "Found"
+                && ty
+                    .as_deref()
+                    .is_some_and(|ty| !matches!(ty, Ty::HttpResult(_)))),
+            "the tail `Found` should resolve to its recorded non-HttpResult type: {walked:?}"
+        );
+
+        let model = wire_contract_at(
+            "oddnames",
+            SRC,
+            offset,
+            info,
+            expr_types,
+            &diag.ty_intern,
+            real_context_count(&diag),
+        )
+        .expect("a wire contract at the GET handler");
+        assert!(
+            model.responses.iter().all(|r| r.variant != "Found"),
+            "a bare `Found` local must not be reported as HttpResult.Found: {:?}",
+            model.responses
+        );
+    }
+
+    // -- `classify`'s `Option?` arm has no fallback, so — like the bare
+    // -- `Ident` arm — the boundary-implicit 404 (ADR 0177) was unreachable
+    // -- while `expr_ty` never matched.
+    #[test]
+    fn option_question_in_a_handler_adds_the_boundary_implicit_404() {
+        const SRC: &str = r#"context lookup
+
+fn find(n: String) -> Option[Int] {
+  Some(1)
+}
+
+service api from http {
+  on GET("/x/:n") (n: String) -> Effect[HttpResult[Int]] by Visitor {
+    let v = find(n)?
+    Ok(v)
+  }
+}
+"#;
+        let root = setup_project("option-question", &[("lookup.bynk", SRC)]);
+        let diag = crate::testkit::diagnose_project(&root);
+        let info = diag.boundary_info.get("lookup").expect("entry");
+        let expr_types = clean_expr_types(&diag, "lookup.bynk");
+
+        let model = wire_contract_at(
+            "lookup",
+            SRC,
+            find_offset(SRC, "GET("),
+            info,
+            expr_types,
+            &diag.ty_intern,
+            real_context_count(&diag),
+        )
+        .expect("a wire contract at the GET handler");
+        assert!(
+            model.responses.iter().any(|r| r.status == 404
+                && r.variant == "NotFound"
+                && matches!(r.origin, ResponseOrigin::BoundaryImplicit { .. })),
+            "an `Option?` short-circuit must add the boundary-implicit 404: {:?}",
+            model.responses
+        );
+    }
+
+    // -- A file's `expr_types` also carries a sibling file's spans: the
+    // -- checker merges `b.bynk`'s methods on a type declared in `a.bynk`
+    // -- into `a.bynk`'s checked view. `b.bynk` is padded so its `Ok(1)`
+    // -- (an `HttpResult`) sits at exactly the byte range of `a.bynk`'s
+    // -- `Found` local; a range-only match would mint a 302 the handler never
+    // -- constructs.
+    #[test]
+    fn a_sibling_files_span_at_the_same_range_is_not_this_files_type() {
+        const A: &str = r#"context shop
+
+type Q = { n: Int }
+
+service api from http {
+  on GET("/x") () -> Effect[HttpResult[Int]] by Visitor {
+    let Found = 1
+    Ok(Found)
+  }
+}
+"#;
+        let target = find_offset(A, "Ok(Found)") + "Ok(".len();
+        let head = "context shop\n\nfn Q.r(self) -> HttpResult[Int] {\n";
+        let pad = target
+            .checked_sub(head.len())
+            .expect("a.bynk's `Found` sits past b.bynk's header");
+        let b = format!("{head}{}Ok(1)\n}}\n", " ".repeat(pad));
+        assert_eq!(
+            b.find("Ok(1)"),
+            Some(target),
+            "the padding lines the spans up"
+        );
+
+        let root = setup_project("sibling-span", &[("shop/a.bynk", A), ("shop/b.bynk", &b)]);
+        let diag = crate::testkit::diagnose_project(&root);
+        let info = diag.boundary_info.get("shop").expect("entry");
+        let expr_types = clean_expr_types(&diag, "a.bynk");
+        let file = info.services["api"].span.file;
+        assert!(
+            expr_types.iter().any(|(s, t)| s.file != file
+                && (s.start, s.end) == (target, target + 5)
+                && matches!(*diag.ty_intern.get(*t), Ty::HttpResult(_))),
+            "the premise: a.bynk's expr types hold b.bynk's `Ok(1)` at the same range"
+        );
+
+        let model = wire_contract_at(
+            "shop",
+            A,
+            find_offset(A, "GET("),
+            info,
+            expr_types,
+            &diag.ty_intern,
+            real_context_count(&diag),
+        )
+        .expect("a wire contract at the GET handler");
+        assert!(
+            model.responses.iter().all(|r| r.variant != "Found"),
+            "b.bynk's `Ok(1)` must not type a.bynk's `Found`: {:?}",
             model.responses
         );
     }
