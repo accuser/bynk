@@ -920,6 +920,13 @@ struct EmitUnitCtx {
     imported_decl_paths_emit: HashMap<String, HashMap<String, PathBuf>>,
     exports_for_consumed: HashMap<String, HashMap<String, Visibility>>,
     file_decl_index: FileDeclIndex,
+    /// #1820: a context split across files, built for Workers. Each file is
+    /// emitted as its own module ([`worker_file_source_path`]) and
+    /// `handlers.ts` re-exports them ([`emit_worker_handlers_barrel`]), rather
+    /// than every file being written to `handlers.ts` in turn, each
+    /// overwriting the last. `file_decl_index` then names each declaration's
+    /// module, so one file imports what it uses from another.
+    split_worker: bool,
 }
 
 fn build_emit_unit_ctx(
@@ -928,6 +935,7 @@ fn build_emit_unit_ctx(
     hidden_types: &BTreeMap<String, String>,
     target: BuildTarget,
     tys: &Arc<Types>,
+    split_worker: bool,
 ) -> EmitUnitCtx {
     let info = &unit_info[name];
     // v0.132.1 (#481): gather the attached methods of every `uses`-imported type
@@ -1048,11 +1056,26 @@ fn build_emit_unit_ctx(
         }
     }
 
+    let mut file_decl_index = info.file_index.clone();
+    if split_worker {
+        let module = |p: &mut PathBuf| *p = worker_file_source_path(name, p);
+        file_decl_index.types.values_mut().for_each(module);
+        file_decl_index.fns.values_mut().for_each(module);
+        file_decl_index.agents.values_mut().for_each(module);
+        file_decl_index.capabilities.values_mut().for_each(module);
+        file_decl_index
+            .methods
+            .values_mut()
+            .flat_map(HashMap::values_mut)
+            .for_each(module);
+    }
+
     EmitUnitCtx {
         imported_methods,
         imported_decl_paths_emit,
         exports_for_consumed,
-        file_decl_index: info.file_index.clone(),
+        file_decl_index,
+        split_worker,
     }
 }
 
@@ -1086,7 +1109,9 @@ fn emit_unit(
     // source_path so the emitter's depth/relative-path logic and
     // imported_decl_paths produce correct relative imports.
     let workers_mode = matches!(target, BuildTarget::Workers);
-    let emit_source_path = if workers_mode && kind == UnitKind::Context {
+    let emit_source_path = if unit_ctx.split_worker {
+        worker_file_source_path(name, &pf.source_path())
+    } else if workers_mode && kind == UnitKind::Context {
         worker_handlers_source_path(name)
     } else {
         pf.source_path()
@@ -1100,7 +1125,15 @@ fn emit_unit(
     // collection path (`collect_external_references`/`record_name_ref`),
     // which has no per-name aliasing of its own and would emit a colliding,
     // unaliased `render`.
+    // #1820: in a split context, only a file declaring one of the plan's
+    // agents builds its deps, so only that file imports what they need.
     let mut extra_import_lines: Vec<String> = agent_deps_plan
+        .filter(|p| {
+            !unit_ctx.split_worker
+                || p.exprs.keys().any(|agent| {
+                    unit_ctx.file_decl_index.agents.get(agent) == Some(&emit_source_path)
+                })
+        })
         .map(|p| p.imports.clone())
         .unwrap_or_default();
     if pf.declares_messages() {
@@ -1217,7 +1250,9 @@ fn emit_unit(
     // Slice 3: the handler-label sidecar for this unit (ADR 0105) — names stack
     // frames by their Bynk operation. `None` for units with no handlers.
     let debug_metadata = emitter::collect_handler_labels(typed);
-    let output_path = if workers_mode && kind == UnitKind::Context {
+    let output_path = if unit_ctx.split_worker {
+        ts_output_path(&worker_file_source_path(name, &pf.source_path()))
+    } else if workers_mode && kind == UnitKind::Context {
         worker_handlers_output_path(name)
     } else {
         ts_output_path(&pf.source_path())
@@ -1296,7 +1331,10 @@ fn check_unit_files(
 ) {
     // Emit-prologue tables invariant across every file of this unit — built
     // once here rather than once per file (see `EmitUnitCtx`).
-    let unit_ctx = build_emit_unit_ctx(name, unit_info, hidden_types, target, tys);
+    let split_worker =
+        target == BuildTarget::Workers && kind == UnitKind::Context && indices.len() > 1;
+    let unit_ctx = build_emit_unit_ctx(name, unit_info, hidden_types, target, tys, split_worker);
+    let first_emitted = compiled.len();
     let check_ctx = prepare_unit_check_ctx(
         name,
         kind,
@@ -1412,6 +1450,101 @@ fn check_unit_files(
             compiled,
             schema_effective_versions,
         );
+    }
+    if mode == Mode::Build && split_worker {
+        let barrel = emit_worker_handlers_barrel(
+            name,
+            indices,
+            parsed,
+            &compiled[first_emitted..],
+            import_ext,
+        );
+        compiled.push(barrel);
+    }
+}
+
+/// #1820: `handlers.ts` for a context split across files, on Workers. It
+/// re-exports each file's module, so the Worker's entry point, its composition
+/// root and every consuming context see the context as one module, as they do
+/// a single-file context's `handlers.ts`. Like a multi-file unit's test barrel
+/// (`emit_commons_barrel`), it also defines the merged helpers each file
+/// generates for itself (`merged_unit_helpers`), which `export *` alone
+/// would leave ambiguous: only `__resetAgents`, since a Worker's files export
+/// no surface.
+///
+/// A file also emits the boundary codecs of each type its own handlers carry
+/// across the wire, wherever that type is declared, so two files can each
+/// export `__serialise_Line`. The copies are the same function of the same
+/// type, so the barrel re-exports each such name from the first module
+/// (`emitted`, this unit's modules) that exports it; an explicit re-export
+/// takes precedence over `export *`.
+fn emit_worker_handlers_barrel(
+    name: &str,
+    indices: &[usize],
+    parsed: &[ParsedFile],
+    emitted: &[StagedFile],
+    import_ext: ImportExt,
+) -> StagedFile {
+    let barrel_loc = worker_handlers_source_path(name);
+    let module_of = |file: &Path| worker_file_source_path(name, file);
+    let mut modules: Vec<PathBuf> = indices
+        .iter()
+        .map(|&i| module_of(&parsed[i].source_path()))
+        .collect();
+    modules.sort();
+    modules.dedup();
+    let mut stmts = vec![TsStmt::comment(
+        "Generated by bynkc — do not edit by hand.",
+        None,
+    )];
+    for module in &modules {
+        let spec =
+            emitter::cross_commons_import_specifier_for_path(&barrel_loc, module, import_ext);
+        stmts.push(TsStmt::decl(TsDecl::ReExportAll { from: spec }, None));
+    }
+    let mut codec_exporters: BTreeMap<&str, Vec<&Path>> = BTreeMap::new();
+    for module in &modules {
+        let output = ts_output_path(module);
+        let Some(Document::Ts(program)) = emitted
+            .iter()
+            .find(|f| f.output_path == output)
+            .map(|f| &f.document)
+        else {
+            continue;
+        };
+        for stmt in &program.stmts {
+            if let Some(n) = stmt.exported_name()
+                && (n.starts_with("__serialise_") || n.starts_with("__deserialise_"))
+            {
+                codec_exporters.entry(n).or_default().push(module);
+            }
+        }
+    }
+    let mut chosen: BTreeMap<&Path, Vec<String>> = BTreeMap::new();
+    for (codec, exporters) in &codec_exporters {
+        if let [first, _, ..] = exporters.as_slice() {
+            chosen.entry(first).or_default().push(codec.to_string());
+        }
+    }
+    for (module, names) in chosen {
+        let from =
+            emitter::cross_commons_import_specifier_for_path(&barrel_loc, module, import_ext);
+        stmts.push(TsStmt::decl(TsDecl::ReExport { names, from }, None));
+    }
+    stmts.extend(merged_unit_helpers(
+        name,
+        indices,
+        parsed,
+        &barrel_loc,
+        import_ext,
+        module_of,
+        false,
+    ));
+    StagedFile {
+        output_path: worker_handlers_output_path(name),
+        document: Document::Ts(TsProgram { stmts }),
+        source_map: None,
+        debug_metadata: None,
     }
 }
 
@@ -1915,7 +2048,7 @@ fn run_checks(
         // `given` capabilities (the wire cannot carry providers).
         let agent_deps_plan = if matches!(target, BuildTarget::Workers) && kind == UnitKind::Context
         {
-            plan_agent_given_deps(name, &unit_info, &adapter_bindings)
+            plan_agent_given_deps(name, &unit_info, &adapter_bindings, indices.len() > 1)
         } else {
             None
         };
@@ -1968,6 +2101,20 @@ fn run_checks(
     // integration-test passes so a multi-file commons imported by both is
     // aggregated into `out/<name>.ts` exactly once.
     let mut emitted_barrels: HashSet<PathBuf> = HashSet::new();
+    // #1820: a context split across files emits a module per file and none at
+    // `out/<name>.ts`, which the bundle's composition root imports it from.
+    // Its barrel is part of the build, not only of a test build; a suite that
+    // imports the context reuses it.
+    if target == BuildTarget::Bundle {
+        for (name, kind) in &kinds {
+            if *kind == UnitKind::Context
+                && let Some(barrel) =
+                    emit_commons_barrel(name, &groups, &parsed, import_ext, &mut emitted_barrels)
+            {
+                compiled.push(barrel);
+            }
+        }
+    }
     let (test_outputs, runnable_tests) = process_tests(
         &test_groups,
         &parsed,
@@ -2652,10 +2799,19 @@ pub struct AgentDepsPlan {
 
 /// Build the [`AgentDepsPlan`] for context `name`, or `None` when no local
 /// agent has `given` capabilities.
+///
+/// `split`: the context spans several files, each emitted as its own module
+/// under `handlers/` (#1820, [`worker_file_source_path`]). The imports are
+/// then one directory deeper, and this context's own providers are no longer
+/// in the agent's module, so they are reached through `handlers.ts` like
+/// another context's. That import is circular (`handlers.ts` re-exports the
+/// agent's module), which is safe: the expressions are evaluated in the
+/// Durable Object's fetch dispatch, never while the modules load.
 fn plan_agent_given_deps(
     name: &str,
     unit_info: &BTreeMap<String, UnitInfo>,
     adapter_bindings: &HashMap<String, AdapterBinding>,
+    split: bool,
 ) -> Option<AgentDepsPlan> {
     let info = unit_info.get(name)?;
     info.table.agents.values().next()?;
@@ -2755,24 +2911,29 @@ fn plan_agent_given_deps(
         return None;
     }
     // Providers of *this* context live in the same module (`handlers.ts`), so
-    // their compose-namespace prefix drops.
+    // their compose-namespace prefix drops. Not for a split context: there
+    // they are imported from `handlers.ts` like any other context's (`../`
+    // up from `handlers/` to the Worker's own directory, then back down).
     let self_ns = format!("handlers_{}.", name.replace('.', "_"));
-    for e in exprs.values_mut() {
-        *e = e.replace(&self_ns, "");
+    if !split {
+        for e in exprs.values_mut() {
+            *e = e.replace(&self_ns, "");
+        }
+        referenced.remove(name);
     }
-    referenced.remove(name);
+    let up = if split { "../" } else { "" };
     let mut imports = Vec::new();
     for u in &referenced {
         let ns = u.replace('.', "_");
         if let Some(b) = adapter_bindings.get(u) {
             let module = crate::emitter::ts_specifier(&b.output_path.with_extension("js"));
             imports.push(format!(
-                "import * as {ns}__binding from \"../../{module}\";"
+                "import * as {ns}__binding from \"{up}../../{module}\";"
             ));
         } else {
             let dir = worker_dir_name(u);
             imports.push(format!(
-                "import * as handlers_{ns} from \"../{dir}/handlers.js\";"
+                "import * as handlers_{ns} from \"{up}../{dir}/handlers.js\";"
             ));
         }
     }
@@ -4387,6 +4548,7 @@ mod tests {
                 fns: HashMap::new(),
                 methods: HashMap::new(),
                 agents: HashMap::new(),
+                capabilities: HashMap::new(),
             },
         );
         // `a.context` is absent from the file index → its `file_index` defaults.

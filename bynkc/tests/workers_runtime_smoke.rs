@@ -310,6 +310,84 @@ fn agent_calls_use_the_boundary_codec_on_workerd() {
     );
 }
 
+/// #1820: a context split across files. On Workers each file used to be
+/// written to `handlers.ts` in turn, each overwriting the last, so the Worker
+/// kept only one file's declarations. Each file is now its own module, which
+/// `handlers.ts` re-exports. The route calls an agent declared in another
+/// file, with a third file's type, and the agent is `given` a provider
+/// declared in a fourth: its Durable Object rebuilds the provider through
+/// `handlers.ts`, an import cycle that must still load.
+const SPLIT_CONTEXT_FILES: &[(&str, &str)] = &[
+    (
+        "smoke/types.bynk",
+        "context smoke\n\ntype Line = { sku: String, qty: Int }\n",
+    ),
+    (
+        "smoke/stamp.bynk",
+        r#"context smoke
+
+capability Stamp {
+  fn next() -> Effect[Int]
+}
+
+provides Stamp = FixedStamp {
+  fn next() -> Effect[Int] { 100 }
+}
+"#,
+    ),
+    (
+        "smoke/book.bynk",
+        r#"context smoke
+
+agent Book {
+  key id: String
+  store last: Cell[Option[Line]]
+  store count: Cell[Int] = 0
+
+  on call add(line: Line) -> Effect[Int] given Stamp {
+    let s <- Stamp.next()
+    last := Some(line)
+    let _ <- count.update((c) => c + line.qty)
+    Effect.pure(count + s)
+  }
+}
+"#,
+    ),
+    (
+        "smoke/api.bynk",
+        r#"context smoke
+
+service api from http {
+  on GET("/") () -> Effect[HttpResult[String]] by v: Visitor {
+    Ok("up")
+  }
+
+  on GET("/add") () -> Effect[HttpResult[String]] by v: Visitor {
+    let n <- Book("o1").add(Line { sku: "o1", qty: 2 })
+    Ok("total=\(n)")
+  }
+}
+"#,
+    ),
+];
+
+#[test]
+fn a_context_split_across_files_serves_on_workerd() {
+    let Some(served) = serve_smoke_files(SPLIT_CONTEXT_FILES, "split", 50000) else {
+        return;
+    };
+    let first = fetch(&served.url, "/add").expect("GET /add reaches the sibling file's agent");
+    assert!(
+        first.contains("total=102"),
+        "the agent adds the line and its provider's stamp: {first}"
+    );
+    let second = fetch(&served.url, "/add").expect("GET /add again");
+    assert!(
+        second.contains("total=104"),
+        "the agent's state persists across calls: {second}"
+    );
+}
+
 /// A compiled smoke worker served by `wrangler dev`. Dropping it stops wrangler
 /// (and its workerd) and removes the scratch directory.
 struct Served {
@@ -335,6 +413,12 @@ impl Drop for Served {
 /// skipped: no `npx`/`node`, or wrangler did not boot (`skip` panics instead
 /// when `BYNK_REQUIRE_WORKERD` is set).
 fn serve_smoke(source: &str, tag: &str, port_base: u16) -> Option<Served> {
+    serve_smoke_files(&[("smoke.bynk", source)], tag, port_base)
+}
+
+/// [`serve_smoke`] over several source files, each `(path under src/,
+/// source)`, which together declare the `smoke` context (#1820).
+fn serve_smoke_files(files: &[(&str, &str)], tag: &str, port_base: u16) -> Option<Served> {
     if !tool_exists("npx") && skip("`npx` is not on PATH") {
         return None;
     }
@@ -345,8 +429,11 @@ fn serve_smoke(source: &str, tag: &str, port_base: u16) -> Option<Served> {
     let tmp = std::env::temp_dir().join(format!("bynk-workerd-{tag}-{}", std::process::id()));
     let _ = fs::remove_dir_all(&tmp);
     let src = tmp.join("src");
-    fs::create_dir_all(&src).unwrap();
-    fs::write(src.join("smoke.bynk"), source).unwrap();
+    for (path, source) in files {
+        let path = src.join(path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, source).unwrap();
+    }
     let out = bynkc::compile_project(
         &bynk_testkit::compile_options_single(src).target(bynkc::BuildTarget::Workers),
     )

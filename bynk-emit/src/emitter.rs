@@ -307,6 +307,7 @@ fn single_file_ctx() -> EmitProjectCtx {
             fns: HashMap::new(),
             methods: HashMap::new(),
             agents: HashMap::new(),
+            capabilities: HashMap::new(),
         },
         imported_from: HashMap::new(),
         imported_from_kind: HashMap::new(),
@@ -2051,11 +2052,21 @@ struct ExternalReferences {
     /// context a rebrand the module exports for nothing.
     implied_by_commons: HashMap<String, HashSet<String>>,
     implied_by_sibling: HashMap<PathBuf, HashSet<String>>,
+    /// #1820: names imported from a sibling file as types only: a capability
+    /// is an `interface`, which has no value to import once the module is
+    /// stripped to JavaScript.
+    types_by_sibling: HashMap<PathBuf, HashSet<String>>,
+    /// #1820: every capability a sibling file declares, settled like
+    /// `implied_by_sibling` into `types_by_sibling`. A handler's `deps` type
+    /// names the capabilities it needs, and those include what the agents
+    /// and services it calls need, so which a file spells is known only
+    /// once its body is emitted.
+    implied_types_by_sibling: HashMap<PathBuf, HashSet<String>>,
 }
 
 impl ExternalReferences {
     fn is_empty(&self) -> bool {
-        self.by_commons.is_empty() && self.by_sibling.is_empty()
+        self.by_commons.is_empty() && self.by_sibling.is_empty() && self.types_by_sibling.is_empty()
     }
 
     /// #1778: promote each implied name the emitted body spells, as a whole
@@ -2082,6 +2093,12 @@ impl ExternalReferences {
             let kept: HashSet<String> = names.intersection(&spelled).cloned().collect();
             if !kept.is_empty() {
                 self.by_sibling.entry(path).or_default().extend(kept);
+            }
+        }
+        for (path, names) in std::mem::take(&mut self.implied_types_by_sibling) {
+            let kept: HashSet<String> = names.intersection(&spelled).cloned().collect();
+            if !kept.is_empty() {
+                self.types_by_sibling.entry(path).or_default().extend(kept);
             }
         }
     }
@@ -2127,8 +2144,8 @@ fn collect_external_references(commons: &TypedCommons, ctx: &EmitProjectCtx) -> 
                 }
             }
             CommonsItem::Provider(p) => {
-                // Reference to the capability so we can import it (locally
-                // declared, so usually no extra work).
+                // Reference to the capability so we can import it: a sibling
+                // file's is implied, below (#1820).
                 let _ = &p.capability;
                 for op in &p.ops {
                     for param in &op.params {
@@ -2175,6 +2192,14 @@ fn collect_external_references(commons: &TypedCommons, ctx: &EmitProjectCtx) -> 
             // registered here; user code that names `LocaleTag` itself
             // imports it the ordinary way.
             CommonsItem::Messages(_) => {}
+        }
+    }
+    for (cap, path) in &ctx.file_decl_index.capabilities {
+        if !local_to_file.contains(cap) && path != &ctx.source_path {
+            refs.implied_types_by_sibling
+                .entry(path.clone())
+                .or_default()
+                .insert(cap.clone());
         }
     }
     refs
@@ -2688,7 +2713,7 @@ fn emit_cross_context_namespace_imports(
         .filter(|(_, svcs)| !svcs.is_empty())
         .map(|(q, _)| q.clone())
         .collect();
-    needed.extend(cross_context_cap_namespaces(commons, info));
+    needed.extend(cross_context_cap_namespaces(commons, ctx));
     if needed.is_empty() {
         return Vec::new();
     }
@@ -2815,6 +2840,20 @@ fn emit_project_imports(
                 type_only: false,
                 names: sorted.iter().map(|s| ts_ident(s)).collect(),
                 from: import,
+            },
+            None,
+        ));
+    }
+    let mut type_paths: Vec<(&PathBuf, &HashSet<String>)> = refs.types_by_sibling.iter().collect();
+    type_paths.sort_by(|a, b| a.0.cmp(b.0));
+    for (path, names) in type_paths {
+        let mut sorted: Vec<&String> = names.iter().collect();
+        sorted.sort();
+        stmts.push(bynk_ts::TsStmt::decl(
+            bynk_ts::TsDecl::Import {
+                type_only: true,
+                names: sorted.iter().map(|s| ts_ident(s)).collect(),
+                from: sibling_import_specifier(&ctx.source_path, path, ctx.import_ext),
             },
             None,
         ));
@@ -3098,6 +3137,16 @@ fn write_header(commons: &TypedCommons, ctx: &EmitProjectCtx) -> Vec<bynk_ts::Ts
             parts.push("type __DurableObjectNamespace");
             parts.push("__StateRegistry");
             parts.push("__makeAgent");
+        } else if workers
+            && commons
+                .callees
+                .values()
+                .any(|c| matches!(c, bynk_check::checker::Callee::AgentInit(_)))
+        {
+            // #1820: a file of a split context that constructs only a
+            // sibling file's agents passes `env` to its factory, so its
+            // handlers' `deps.env` names the agents' namespaces too.
+            parts.push("type __DurableObjectNamespace");
         }
         if has_agent_invariants {
             parts.push("__invariantViolation");

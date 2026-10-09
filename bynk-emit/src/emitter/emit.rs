@@ -3186,36 +3186,41 @@ pub(crate) fn commons_uses_emit(commons: &TypedCommons) -> bool {
 /// instead, so they are excluded here.
 pub(crate) fn cross_context_caps_used(
     commons: &TypedCommons,
-    info: &bynk_check::resolver::CrossContextInfo,
+    ctx: &EmitProjectCtx,
 ) -> Vec<(String, String)> {
+    let info = &ctx.cross_context;
     let mut seen: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
-    for item in &commons.commons.items {
-        let handlers = match item {
-            CommonsItem::Service(s) => &s.handlers,
-            CommonsItem::Agent(a) => &a.handlers,
-            _ => continue,
-        };
-        for h in handlers {
-            for c in bynk_lower::lower_handler_given_ir(h) {
-                // Events track, slice 0 (spine #936): `Events.emit` is
-                // intercepted entirely at the call site (release-at-commit
-                // buffering) and never calls through a constructed provider
-                // — unlike every other capability, there is no
-                // `EventsProvider` for compose to build, so the first-party
-                // `Events` must not appear in any context's deps interface.
-                let is_first_party_events = c.name == "Events"
-                    && info.flattened_caps.get(&c.name).map(String::as_str) == Some("bynk");
-                if is_first_party_events {
-                    continue;
+    let givens = commons
+        .commons
+        .items
+        .iter()
+        .flat_map(|item| match item {
+            CommonsItem::Service(s) => s.handlers.as_slice(),
+            CommonsItem::Agent(a) => a.handlers.as_slice(),
+            _ => &[],
+        })
+        .map(bynk_lower::lower_handler_given_ir)
+        .chain(std::iter::once(sibling_agent_givens(commons, ctx)));
+    for given in givens {
+        for c in given {
+            // Events track, slice 0 (spine #936): `Events.emit` is
+            // intercepted entirely at the call site (release-at-commit
+            // buffering) and never calls through a constructed provider
+            // — unlike every other capability, there is no
+            // `EventsProvider` for compose to build, so the first-party
+            // `Events` must not appear in any context's deps interface.
+            let is_first_party_events = c.name == "Events"
+                && info.flattened_caps.get(&c.name).map(String::as_str) == Some("bynk");
+            if is_first_party_events {
+                continue;
+            }
+            if let Some(prefix) = &c.context {
+                if let Some(consumed) = info.resolve_prefix(prefix) {
+                    seen.entry(c.name.clone()).or_insert(consumed);
                 }
-                if let Some(prefix) = &c.context {
-                    if let Some(consumed) = info.resolve_prefix(prefix) {
-                        seen.entry(c.name.clone()).or_insert(consumed);
-                    }
-                } else if let Some(unit) = info.flattened_caps.get(&c.name) {
-                    // v0.17: a bare flattened capability is a cross-unit dep too.
-                    seen.entry(c.name.clone()).or_insert_with(|| unit.clone());
-                }
+            } else if let Some(unit) = info.flattened_caps.get(&c.name) {
+                // v0.17: a bare flattened capability is a cross-unit dep too.
+                seen.entry(c.name.clone()).or_insert_with(|| unit.clone());
             }
         }
     }
@@ -3227,8 +3232,9 @@ pub(crate) fn cross_context_caps_used(
 /// imported for the capability interface types.
 pub(crate) fn cross_context_cap_namespaces(
     commons: &TypedCommons,
-    info: &bynk_check::resolver::CrossContextInfo,
+    ctx: &EmitProjectCtx,
 ) -> std::collections::BTreeSet<String> {
+    let info = &ctx.cross_context;
     let mut out = std::collections::BTreeSet::new();
     let mut collect = |given: Vec<bynk_ir::CapRefIr>| {
         for c in given {
@@ -3257,6 +3263,46 @@ pub(crate) fn cross_context_cap_namespaces(
                 .for_each(|h| collect(bynk_lower::lower_handler_given_ir(h))),
             CommonsItem::Provider(p) => collect(bynk_lower::lower_provider_given_ir(p)),
             _ => {}
+        }
+    }
+    collect(sibling_agent_givens(commons, ctx));
+    out
+}
+
+/// #1820: the `given` capabilities of every agent this file constructs that
+/// a sibling file of its context declares. A handler here forwards its `deps`
+/// to that agent (`effective_given`), so its `deps` name them although no
+/// declaration in this file does. Empty unless the context is split across
+/// files: an agent this file declares is walked with the file's own items.
+fn sibling_agent_givens(commons: &TypedCommons, ctx: &EmitProjectCtx) -> Vec<bynk_ir::CapRefIr> {
+    let declared_here: HashSet<&str> = commons
+        .commons
+        .items
+        .iter()
+        .filter_map(|i| match i {
+            CommonsItem::Agent(a) => Some(a.name.name.as_str()),
+            _ => None,
+        })
+        .collect();
+    let constructed: std::collections::BTreeSet<&str> = commons
+        .callees
+        .values()
+        .filter_map(|c| match c {
+            bynk_check::checker::Callee::AgentInit(a) if !declared_here.contains(a.as_str()) => {
+                Some(a.as_str())
+            }
+            _ => None,
+        })
+        .collect();
+    let mut out = Vec::new();
+    for agent in constructed {
+        let Some(methods) = ctx.agent_method_givens.get(agent) else {
+            continue;
+        };
+        let mut methods: Vec<_> = methods.iter().collect();
+        methods.sort_by_key(|(m, _)| *m);
+        for (_, caps) in methods {
+            out.extend(caps.iter().cloned());
         }
     }
     out
@@ -3344,9 +3390,11 @@ fn build_deps_object_ty_with_surface(
 }
 
 /// Local agent names in this commons, sorted — the DO bindings `env` exposes
-/// in workers mode.
+/// in workers mode. #1820: every file's of the context (`cx.local_agents`),
+/// not only this file's: a handler constructing an agent declared in a
+/// sibling file passes the Worker's `env` to that agent's factory.
 fn sorted_local_agents(cx: &LowerCtx<'_>) -> Vec<String> {
-    let mut names: Vec<String> = cx
+    let names: std::collections::BTreeSet<String> = cx
         .commons()
         .commons
         .items
@@ -3355,9 +3403,9 @@ fn sorted_local_agents(cx: &LowerCtx<'_>) -> Vec<String> {
             CommonsItem::Agent(a) => Some(a.name.name.clone()),
             _ => None,
         })
+        .chain(cx.local_agents.iter().cloned())
         .collect();
-    names.sort();
-    names
+    names.into_iter().collect()
 }
 
 /// Workers-mode deps.env shape: one Service Binding per consumed context and
@@ -3533,9 +3581,26 @@ fn emit_context_deps_interface(
             _ => None,
         })
         .collect();
+    // #1820: and the capabilities a sibling file of a split context declares.
+    // A service here may call an agent there whose methods are `given` one,
+    // and its handler's `deps` then names it (`effective_given`).
+    let mut sibling_caps: Vec<&String> = ctx
+        .file_decl_index
+        .capabilities
+        .iter()
+        .filter(|(_, path)| **path != ctx.source_path)
+        .map(|(cap, _)| cap)
+        .collect();
+    sibling_caps.sort();
+    for cap in sibling_caps {
+        members.push(bynk_ts::TsTypeMember::readonly_prop(
+            cap.clone(),
+            bynk_ts::TsType::named(cap.clone()),
+        ));
+    }
     // v0.15: cross-context capabilities the context consumes appear in deps,
     // typed against the providing context's namespace.
-    for (key, consumed) in cross_context_caps_used(commons, &ctx.cross_context) {
+    for (key, consumed) in cross_context_caps_used(commons, ctx) {
         let ty = bynk_ts::TsType::named(format!("{}.{key}", qualified_to_ns(&consumed)));
         members.push(bynk_ts::TsTypeMember::readonly_prop(key, ty));
     }
