@@ -13,3 +13,14 @@ case "a sibling file's agent is constructed and called" {
     }
   }
 }
+
+case "an agent and a service in two more files" {
+  let a <- count.call("t")
+  let b <- count.call("t")
+  expect b == 2
+}
+
+case "every file's agents are reset between cases" {
+  let a <- count.call("t")
+  expect a == 1
+}

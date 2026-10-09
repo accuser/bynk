@@ -1,4 +1,4 @@
 ---
 level: patch
-changelog: "In a context split across files, one file can construct an agent another file declares (#1820, bundle target). The sibling import named the types and functions a file used, but not the agent's factory (`__make<Agent>`), so the output failed `tsc` (TS2304). Multi-file contexts on the workers target are still unsupported (each file overwrites the same `handlers.ts`); that is tracked in #1820"
+changelog: "A context split across files works on the bundle target when its files declare agents and services (#1820). A file constructing an agent another file declares now imports that file's factory (`__make<Agent>`), where the output failed `tsc` (TS2304). And when two or more files declare agents, or services, the unit's test barrel defines one `__resetAgents`, `__makeSurface` and context deps type over all of them, where each file's own made the barrel ambiguous (TS2308) and left a test's agent reset undefined. Multi-file contexts on the workers target are still unsupported (each file overwrites the same `handlers.ts`); that is tracked in #1820"
 ---

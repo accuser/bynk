@@ -34,7 +34,7 @@ async function test_a_sibling_file_s_agent_is_constructed_and_called() {
   try {
     __ns_shop_orders.__resetAgents();
     const deps = __makeTestDeps();
-    const { Book, OrderId, __makeBook, place } = __ns_shop_orders;
+    const { Book, OrderId, Tally, __makeBook, __makeTally, count, place } = __ns_shop_orders;
     type OrderId = __ns_shop_orders.OrderId;
     void (await (async (__d) => {
         switch (__d.tag) {
@@ -60,9 +60,48 @@ async function test_a_sibling_file_s_agent_is_constructed_and_called() {
   }
 }
 
+// case tier: unit
+async function test_an_agent_and_a_service_in_two_more_files() {
+  try {
+    __ns_shop_orders.__resetAgents();
+    const deps = __makeTestDeps();
+    const { Book, OrderId, Tally, __makeBook, __makeTally, count, place } = __ns_shop_orders;
+    type OrderId = __ns_shop_orders.OrderId;
+    const a = await count.call("t", deps);
+    const b = await count.call("t", deps);
+    if (!(__bynkEq(b, 2))) { throw __bynkExpectFailure("tests/orders.bynk:20:10", 463, 469, "expect b == 2\n  expected: b == 2\n  actual:   " + __bynkShow((b)) + " == " + __bynkShow((2))); }
+    return { pass: true };
+  } catch (e) {
+    if (e instanceof ExpectationError) {
+      return { pass: false, error: { message: e.message, location: e.location } };
+    }
+    return { pass: false, error: { message: String(e), location: "unknown" } };
+  }
+}
+
+// case tier: unit
+async function test_every_file_s_agents_are_reset_between_cases() {
+  try {
+    __ns_shop_orders.__resetAgents();
+    const deps = __makeTestDeps();
+    const { Book, OrderId, Tally, __makeBook, __makeTally, count, place } = __ns_shop_orders;
+    type OrderId = __ns_shop_orders.OrderId;
+    const a = await count.call("t", deps);
+    if (!(__bynkEq(a, 1))) { throw __bynkExpectFailure("tests/orders.bynk:25:10", 562, 568, "expect a == 1\n  expected: a == 1\n  actual:   " + __bynkShow((a)) + " == " + __bynkShow((1))); }
+    return { pass: true };
+  } catch (e) {
+    if (e instanceof ExpectationError) {
+      return { pass: false, error: { message: e.message, location: e.location } };
+    }
+    return { pass: false, error: { message: String(e), location: "unknown" } };
+  }
+}
+
 export async function run(only?: string) {
   const results = [];
   const want = (n: string): boolean => only === undefined || only === n;
   if (want("a sibling file's agent is constructed and called")) results.push({ name: "a sibling file's agent is constructed and called", ...(await test_a_sibling_file_s_agent_is_constructed_and_called()) });
+  if (want("an agent and a service in two more files")) results.push({ name: "an agent and a service in two more files", ...(await test_an_agent_and_a_service_in_two_more_files()) });
+  if (want("every file's agents are reset between cases")) results.push({ name: "every file's agents are reset between cases", ...(await test_every_file_s_agents_are_reset_between_cases()) });
   return results;
 }

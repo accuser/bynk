@@ -2403,7 +2403,14 @@ fn collect_refs_in_expr(
             // #1820: constructing an agent declared in a sibling file of a
             // multi-file unit lowers to its factory, `__make<Agent>`, which
             // that file exports.
+            // The checker's classification decides, as the lowering does
+            // (`Callee::AgentInit`): a sum variant spelled like an agent is
+            // not one. The index only supplies the declaring file.
             if !local_to_file.contains(&name.name)
+                && matches!(
+                    commons.callee(e.id),
+                    Some(bynk_check::checker::Callee::AgentInit(_))
+                )
                 && let Some(path) = ctx.file_decl_index.agents.get(&name.name)
                 && path != &ctx.source_path
             {

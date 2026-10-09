@@ -2368,12 +2368,114 @@ fn emit_commons_barrel(
         let spec = emitter::cross_commons_import_specifier_for_path(&barrel_loc, file, import_ext);
         stmts.push(TsStmt::decl(TsDecl::ReExportAll { from: spec }, None));
     }
+    stmts.extend(merged_unit_helpers(
+        name,
+        indices,
+        parsed,
+        &barrel_loc,
+        import_ext,
+    ));
     Some(StagedFile {
         output_path,
         document: Document::Ts(TsProgram { stmts }),
         source_map: None,
         debug_metadata: None,
     })
+}
+
+/// #1844 review: the barrel's own definitions of the helpers every file of a
+/// multi-file *context* generates for itself. User names are unique across a
+/// unit, but these are not: each file with agents exports `__resetAgents`
+/// (over its own agents), and each file with services exports `__makeSurface`
+/// and the context's `__<Ctx>Deps` (over its own services). Two files of
+/// either kind made the barrel's `export *` ambiguous (TS2308), and at
+/// runtime the ambiguous name is dropped from the namespace, so a test's
+/// `__resetAgents()` was `undefined`. Where two or more files contribute one,
+/// the barrel exports a merged definition, which takes precedence over the
+/// star exports: reset every file's agents; combine every file's surface over
+/// the intersection of their deps.
+fn merged_unit_helpers(
+    name: &str,
+    indices: &[usize],
+    parsed: &[ParsedFile],
+    barrel_loc: &Path,
+    import_ext: ImportExt,
+) -> Vec<TsStmt> {
+    let mut with_agents: Vec<PathBuf> = Vec::new();
+    let mut with_services: Vec<PathBuf> = Vec::new();
+    for &i in indices {
+        let pf = &parsed[i];
+        if pf.kind() != UnitKind::Context {
+            continue;
+        }
+        let items = pf.items();
+        if items.iter().any(|it| matches!(it, CommonsItem::Agent(_))) {
+            with_agents.push(pf.source_path());
+        }
+        if items.iter().any(|it| matches!(it, CommonsItem::Service(_))) {
+            with_services.push(pf.source_path());
+        }
+    }
+    with_agents.sort();
+    with_services.sort();
+    let mut stmts = Vec::new();
+    let mut aliases: BTreeMap<PathBuf, String> = BTreeMap::new();
+    let mut alias_of = |file: &PathBuf, stmts: &mut Vec<TsStmt>| -> String {
+        if let Some(a) = aliases.get(file) {
+            return a.clone();
+        }
+        let alias = format!("__file{}", aliases.len());
+        stmts.push(TsStmt::decl(
+            TsDecl::ImportNamespace {
+                type_only: false,
+                alias: alias.clone(),
+                from: emitter::cross_commons_import_specifier_for_path(
+                    barrel_loc, file, import_ext,
+                ),
+            },
+            None,
+        ));
+        aliases.insert(file.clone(), alias.clone());
+        alias
+    };
+    if with_agents.len() > 1 {
+        let calls: Vec<String> = with_agents
+            .iter()
+            .map(|f| format!("  {}.__resetAgents();", alias_of(f, &mut stmts)))
+            .collect();
+        stmts.push(TsStmt::raw(
+            format!(
+                "export function __resetAgents(): void {{\n{}\n}}\n",
+                calls.join("\n")
+            ),
+            None,
+        ));
+    }
+    if with_services.len() > 1 {
+        let deps = format!("__{}Deps", emitter::emit::context_pascal(name));
+        let files: Vec<String> = with_services
+            .iter()
+            .map(|f| alias_of(f, &mut stmts))
+            .collect();
+        let intersection = files
+            .iter()
+            .map(|a| format!("{a}.{deps}"))
+            .collect::<Vec<_>>()
+            .join(" & ");
+        let spreads = files
+            .iter()
+            .map(|a| format!("...{a}.__makeSurface(deps)"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        stmts.push(TsStmt::raw(
+            format!(
+                "export type {deps} = {intersection};\n\
+                 export function __makeSurface(deps: {deps}) {{\n  return {{ {spreads} }};\n}}\n"
+            ),
+            None,
+        ));
+    }
+    stmts
 }
 
 /// Render the relative import path from the `tests/` output directory to the
