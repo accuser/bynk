@@ -1,0 +1,15 @@
+---
+#1820: a service in one file of the context drives an agent declared in another.
+---
+suite shop.orders
+
+case "a sibling file's agent is constructed and called" {
+  match OrderId.of("o-1") {
+    Err(_) => expect false
+    Ok(id) => {
+      let first <- place.call(id, 2)
+      let second <- place.call(id, 3)
+      expect second == 5
+    }
+  }
+}

@@ -758,13 +758,16 @@ fn synthetic_render_fn() -> FnDecl {
     }
 }
 
-/// For each name declared in the unit (type, fn, method), record which
+/// For each name declared in the unit (type, fn, method, agent), record which
 /// source file declared it. Used by the emitter to render relative imports.
 #[derive(Clone)]
 pub struct FileDeclIndex {
     pub types: HashMap<String, PathBuf>,
     pub fns: HashMap<String, PathBuf>,
     pub methods: HashMap<String, HashMap<String, PathBuf>>,
+    /// #1820: an agent's declaring file. A sibling file that constructs it
+    /// calls its factory, `__make<Agent>`, which that file exports.
+    pub agents: HashMap<String, PathBuf>,
 }
 
 /// **Tree-relative, deliberately.** This is an *emit* structure, not an index:
@@ -779,6 +782,7 @@ pub fn build_file_decl_index(indices: &[usize], parsed: &[ParsedFile]) -> FileDe
         types: HashMap::new(),
         fns: HashMap::new(),
         methods: HashMap::new(),
+        agents: HashMap::new(),
     };
     for &i in indices {
         let path = parsed[i].source_path();
@@ -815,10 +819,14 @@ pub fn build_file_decl_index(indices: &[usize], parsed: &[ParsedFile]) -> FileDe
                             .or_insert_with(|| path.clone());
                     }
                 },
+                CommonsItem::Agent(a) => {
+                    idx.agents
+                        .entry(a.name.name.clone())
+                        .or_insert_with(|| path.clone());
+                }
                 CommonsItem::Capability(_)
                 | CommonsItem::Provider(_)
                 | CommonsItem::Service(_)
-                | CommonsItem::Agent(_)
                 | CommonsItem::Actor(_)
                 // `messages` bundles aren't cross-file-imported by name in
                 // slice 1 (no multi-file bundle merge yet).
