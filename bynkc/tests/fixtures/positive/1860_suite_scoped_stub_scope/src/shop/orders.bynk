@@ -1,0 +1,15 @@
+context shop.orders
+
+capability Stamp {
+  fn next() -> Effect[Int]
+}
+
+provides Stamp = FixedStamp {
+  fn next() -> Effect[Int] { 100 }
+}
+
+service place {
+  on call() -> Effect[Int] given Stamp {
+    Stamp.next()
+  }
+}
