@@ -74,7 +74,7 @@ fn a_clean_file_records_its_receiver_types() {
     // The receiver-typing use case: `xs` in `xs.fold(…)` is `List[Int]`.
     let recv = text.find("xs.fold").expect("fixture has `xs.fold`");
     assert_eq!(
-        type_at_offset(&entries, recv)
+        type_at_offset(&entries, recv, &result.ty_intern)
             .map(|t| result.ty_intern.get(t))
             .as_deref(),
         Some(&Ty::List(result.ty_intern.intern(Ty::Base(BaseType::Int)))),
@@ -109,7 +109,7 @@ fn an_erroring_file_still_records_its_well_typed_expressions() {
     // `Int` — so typing `n.` there would complete despite `bad` failing to check.
     let off = text.find("n * 2").expect("fixture has `n * 2` in `good`");
     assert_eq!(
-        type_at_offset(&entries, off)
+        type_at_offset(&entries, off, &result.ty_intern)
             .map(|t| result.ty_intern.get(t))
             .as_deref(),
         Some(&Ty::Base(BaseType::Int)),
@@ -143,7 +143,7 @@ fn an_erroring_handler_body_records_its_well_typed_receivers() {
         .find("cents + true")
         .expect("fixture has `cents + true`");
     assert_eq!(
-        type_at_offset(&entries, off)
+        type_at_offset(&entries, off, &result.ty_intern)
             .map(|t| result.ty_intern.get(t))
             .as_deref(),
         Some(&Ty::Base(BaseType::Int)),

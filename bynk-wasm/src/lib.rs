@@ -273,7 +273,7 @@ pub fn analyze_to_json(source: &str, platform: Platform) -> String {
 }
 
 /// The inferred type at a cursor position in a single in-memory source, or
-/// `None` if the expression at that position never typed at all — per ADR
+/// `None` if the expression at that position failed to type — per ADR
 /// 0094, a well-typed function still contributes types even when a *different*
 /// function in the same file has an error, so this isn't blanked by every
 /// mid-edit error, only by one at the position itself (or upstream of it, an
@@ -290,7 +290,8 @@ pub fn hover(source: &str, offset: usize, platform: Platform) -> HoverResult {
 
 fn hover_inner(source: &str, offset: usize, platform: Platform) -> HoverResult {
     let analysis = analyse_in_memory_with_types(source, BuildTarget::Bundle, platform);
-    let ty = type_at_offset(&analysis.expr_types, offset).map(|t| t.display(&analysis.ty_intern));
+    let ty = type_at_offset(&analysis.expr_types, offset, &analysis.ty_intern)
+        .map(|t| t.display(&analysis.ty_intern));
     HoverResult { ty }
 }
 
@@ -382,7 +383,7 @@ fn complete_inner(source: &str, offset: usize, platform: Platform) -> CompleteRe
         && let Some((rewritten, recv_offset)) = completion::value_receiver_rewrite(source, offset)
     {
         let analysis = analyse_in_memory_with_types(&rewritten, BuildTarget::Bundle, platform);
-        if let Some(ty) = type_at_offset(&analysis.expr_types, recv_offset) {
+        if let Some(ty) = type_at_offset(&analysis.expr_types, recv_offset, &analysis.ty_intern) {
             items = completion::value_member_candidates(ty, &analysis.ty_intern, source, None)
                 .into_iter()
                 .map(to_candidate)
@@ -611,6 +612,16 @@ mod tests {
         let offset = prog.find("42").expect("prog mentions 42");
         let r = hover(prog, offset, Platform::Browser);
         assert_eq!(r.ty.as_deref(), Some("Int"));
+    }
+
+    #[test]
+    fn hover_on_an_expression_that_failed_to_type_is_none() {
+        // The checker records `Ty::Error` for `"oops" + 1`; hover shows no
+        // type rather than the `<type error>` placeholder.
+        let prog = "commons app.demo\n\nfn bad() -> Int {\n  \"oops\" + 1\n}\n";
+        let offset = prog.find("+ 1").expect("prog mentions + 1");
+        let r = hover(prog, offset, Platform::Browser);
+        assert_eq!(r.ty, None);
     }
 
     #[test]

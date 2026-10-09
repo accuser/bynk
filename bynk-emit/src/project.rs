@@ -1519,8 +1519,9 @@ fn run_checks(
     // v0.99: the capability-requirement ledger — recorded at the checker's
     // capability-consuming sites. Same #1541 residue as `refs`/`hints`.
     let mut requirements = RequirementSink::new();
-    // v0.30.2 (ADR 0063): per-file expression types, captured on the Ok path so
-    // `.`-member completion can type a receiver. Carried like `hints`.
+    // v0.30.2 (ADR 0063): per-file expression types, so `.`-member completion
+    // can type a receiver — on the error paths too, as best-effort partial
+    // types (ADR 0094). Carried like `hints`.
     let mut exprs = ExprTypeSink::new();
     let mut snapshots: Vec<(PathBuf, String)> = Vec::new();
 
@@ -4405,7 +4406,7 @@ mod tests {
                 .collect::<Vec<_>>()
         );
         let offset = src.find("42").expect("source mentions 42");
-        let ty = bynk_check::expr_types::type_at_offset(&out.expr_types, offset);
+        let ty = bynk_check::expr_types::type_at_offset(&out.expr_types, offset, &out.ty_intern);
         assert_eq!(
             ty.map(|t| t.display(&out.ty_intern)),
             Some("Int".to_string())
@@ -4430,7 +4431,7 @@ mod tests {
             "the broken function must still be reported"
         );
         let offset = src.find("42").expect("source mentions 42");
-        let ty = bynk_check::expr_types::type_at_offset(&out.expr_types, offset);
+        let ty = bynk_check::expr_types::type_at_offset(&out.expr_types, offset, &out.ty_intern);
         assert_eq!(
             ty.map(|t| t.display(&out.ty_intern)),
             Some("Int".to_string()),
@@ -4471,14 +4472,22 @@ mod tests {
                 .map(|e| &e.error.message)
                 .collect::<Vec<_>>()
         );
-        let offset = src.find("[]").expect("source mentions []");
-        let ty = bynk_check::expr_types::type_at_offset(&out.expr_types, offset);
+        let start = src.find("[]").expect("source mentions []");
+        let recorded = out
+            .expr_types
+            .iter()
+            .find(|(span, _)| span.start == start && span.end == start + 2)
+            .map(|(_, t)| t.display(&out.ty_intern));
         assert_eq!(
-            ty.map(|t| t.display(&out.ty_intern)),
-            Some("<type error>".to_string()),
+            recorded.as_deref(),
+            Some("<type error>"),
             "T3.3b: a diagnosed type_of failure must record Ty::Error, not leave the span \
-             unrecorded — {:?}",
-            ty
+             unrecorded"
+        );
+        // An editor query reads that recorded `Ty::Error` as "no type".
+        assert_eq!(
+            bynk_check::expr_types::type_at_offset(&out.expr_types, start, &out.ty_intern),
+            None
         );
     }
 }
