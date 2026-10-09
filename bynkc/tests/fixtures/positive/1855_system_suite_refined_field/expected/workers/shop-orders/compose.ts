@@ -11,6 +11,12 @@ export interface Env {
 export function compose(env: Env) {
   const deps = { env };
   return {
+    async blob(text: string) {
+      return handlers.blob.call(text, deps);
+    },
+    async echo(line: handlers.Line) {
+      return handlers.echo.call(line, deps);
+    },
     async place(line: handlers.Line) {
       return handlers.place.call(line, deps);
     },

@@ -12,3 +12,11 @@ type Line = { sku: OrderId, qty: Int }
 service place {
   on call(line: Line) -> Effect[Bool] { Payment.authorise(line.qty) }
 }
+
+service echo {
+  on call(line: Line) -> Effect[Line] { Effect.pure(line) }
+}
+
+service blob {
+  on call(text: String) -> Effect[Bytes] { Effect.pure(Bytes.fromUtf8(text)) }
+}

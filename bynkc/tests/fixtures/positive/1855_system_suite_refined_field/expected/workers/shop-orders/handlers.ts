@@ -30,6 +30,18 @@ export const place = {
   },
 };
 
+export const echo = {
+  async call(line: Line, deps: {}): globalThis.Promise<Line> {
+    return line;
+  },
+};
+
+export const blob = {
+  async call(text: string, deps: {}): globalThis.Promise<globalThis.Uint8Array> {
+    return new globalThis.TextEncoder().encode(text);
+  },
+};
+
 export function __serialise_Line(value: Line): __JsonValue {
   return {
     sku: __serialise_OrderId(value.sku),

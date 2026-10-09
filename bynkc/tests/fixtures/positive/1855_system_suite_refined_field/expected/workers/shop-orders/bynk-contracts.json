@@ -1,6 +1,8 @@
 {
   "version": 1,
   "provides": {
+    "blob": "2f29763da5840247",
+    "echo": "9be80b6bc6ae95b2",
     "place": "f717b344c20d2ecb"
   },
   "expects": {
