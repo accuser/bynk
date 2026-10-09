@@ -1399,7 +1399,13 @@ pub fn phase_consumes_aliases(
             continue;
         }
         let mut aliases: HashMap<String, String> = HashMap::new();
-        let mut alias_spans: HashMap<String, Span> = HashMap::new();
+        // #1857: where each alias, and each aliased target, was first seen:
+        // `(the other half of the pair, file index, alias span)`. A context's
+        // `consumes` clauses apply to all its files, so a file may repeat one
+        // another file states, as it repeats `context`; only a pair that
+        // disagrees is a conflict.
+        let mut by_alias: HashMap<String, (String, usize, Span)> = HashMap::new();
+        let mut by_target: HashMap<String, (String, usize, Span)> = HashMap::new();
         for &i in indices {
             for c in parsed[i].consumes() {
                 let Some(alias) = &c.alias else { continue };
@@ -1408,25 +1414,58 @@ pub fn phase_consumes_aliases(
                     // Already reported as unknown context above.
                     continue;
                 }
-                if let Some(prev_span) = alias_spans.get(&alias.name) {
-                    errors.push_for(Some(&parsed[i].identity_path()),
-                        CompileError::new(
-                            "bynk.consumes.alias_conflict",
-                            alias.span,
-                            format!(
-                                "alias `{}` is used by more than one `consumes` clause in context `{}`",
-                                alias.name, name
-                            ),
+                let first = by_alias
+                    .get(&alias.name)
+                    .filter(|(t, _, _)| *t != target)
+                    .map(|(t, f, sp)| {
+                        (
+                            format!("alias `{}` already names `{t}`", alias.name),
+                            *f,
+                            *sp,
                         )
-                        .with_label(*prev_span, "previously defined here")
-                        .with_note(
-                            "each `consumes` clause may introduce at most one alias, and aliases must be unique within a context",
+                    })
+                    .or_else(|| {
+                        by_target
+                            .get(&target)
+                            .filter(|(a, _, _)| *a != alias.name)
+                            .map(|(a, f, sp)| {
+                                (format!("`{target}` is already consumed as `{a}`"), *f, *sp)
+                            })
+                    });
+                if let Some((what, prev_file, prev_span)) = first {
+                    let mut err = CompileError::new(
+                        "bynk.consumes.alias_conflict",
+                        alias.span,
+                        format!(
+                            "`consumes {target} as {}` conflicts with another `consumes` clause in context `{name}`: {what}",
+                            alias.name
+                        ),
+                    );
+                    // A label can point only into this file; another file's
+                    // clause is named in a note.
+                    err = if prev_file == i {
+                        err.with_label(prev_span, "previously defined here")
+                    } else {
+                        err.with_note(format!(
+                            "previously defined in `{}`",
+                            parsed[prev_file].identity_path().display()
+                        ))
+                    };
+                    errors.push_for(
+                        Some(&parsed[i].identity_path()),
+                        err.with_note(
+                            "a context may consume a unit under one alias, and an alias may name one unit; repeating the same clause in another file is fine",
                         ),
                     );
                     continue;
                 }
-                aliases.insert(alias.name.clone(), target);
-                alias_spans.insert(alias.name.clone(), alias.span);
+                if by_alias.contains_key(&alias.name) {
+                    // #1857: the same clause, repeated in another file.
+                    continue;
+                }
+                aliases.insert(alias.name.clone(), target.clone());
+                by_alias.insert(alias.name.clone(), (target.clone(), i, alias.span));
+                by_target.insert(target, (alias.name.clone(), i, alias.span));
             }
         }
         unit_consumes_aliases.insert(name.clone(), aliases);
