@@ -580,3 +580,38 @@ fn refuses_to_drop_a_comment_between_actor_scheme_arguments() {
         "context c\n\nactor O {\n  auth = Oidc(issuer = \"a\", -- keep me\n  audience = \"b\")\n}\n",
     );
 }
+
+/// #1808, #1859: a trailing comment ends its line and changes no vertical
+/// spacing. A suite `uses` and an agent `store` field each added a second
+/// newline after the comment: a blank line the uncommented form doesn't have.
+#[test]
+fn a_trailing_comment_adds_no_blank_line() {
+    for (name, source, expected) in [
+        (
+            "suite uses",
+            "suite demo.gen {\n  uses demo.a -- first\n  uses demo.b\n\n  case \"x\" {\n    expect 1 == 1\n  }\n}\n",
+            "\tuses demo.a  -- first\n\n\tuses demo.b\n",
+        ),
+        (
+            "store field",
+            "context c\n\nagent Meter {\n  key id: String\n\n  store totals: Cell[Int] -- c\n  store active: Cell[Bool]\n\n  on call get() -> Effect[Int] {\n    totals.get()\n  }\n}\n",
+            "\tstore totals: Cell[Int]  -- c\n\tstore active: Cell[Bool]\n",
+        ),
+    ] {
+        let out = format_source(source, &FormatOptions::default())
+            .unwrap_or_else(|e| panic!("{name}: refused: {}", e.errors[0].message));
+        assert!(out.contains(expected), "{name}: spacing differs:\n{out}");
+        let bare = source.replace(" -- first", "").replace(" -- c", "");
+        let bare_out = format_source(&bare, &FormatOptions::default()).expect("formats");
+        assert_eq!(
+            out.lines().count(),
+            bare_out.lines().count(),
+            "{name}: the comment changed the line count:\n{out}"
+        );
+        assert_eq!(
+            out,
+            format_source(&out, &FormatOptions::default()).expect("reformats"),
+            "{name}: not idempotent"
+        );
+    }
+}
