@@ -233,12 +233,8 @@ pub(crate) fn emit(program: &CheckedProgram) -> String {
         }
     }
     // v0.22b: module-local codec helpers for Json.encode/decode targets.
-    body_stmts.extend(emit_json_codec_helpers(
-        commons,
-        &dummy_ctx,
-        &HashSet::new(),
-        &HashSet::new(),
-    ));
+    body_stmts
+        .extend(emit_json_codec_helpers(commons, &dummy_ctx, &HashSet::new(), &HashSet::new()).0);
     let body_program = bynk_ts::TsProgram { stmts: body_stmts };
     let body = bynk_ts::print(&body_program, "", "", "").text;
     let mut out = String::new();
@@ -564,12 +560,15 @@ pub(crate) fn emit_project(
     body.extend(boundary_stmts);
     // v0.22b: module-local codec helpers for this file's Json.encode/decode
     // targets, deduped against the workers boundary helpers above.
-    body.extend(emit_json_codec_helpers(
-        commons,
-        ctx,
-        &boundary_names,
-        &boundary_insts,
-    ));
+    let (json_stmts, json_names) =
+        emit_json_codec_helpers(commons, ctx, &boundary_names, &boundary_insts);
+    body.extend(json_stmts);
+    // #1829: a helper this module emits for a commons type names the types
+    // that type reaches, and the source may never mention one (an agent
+    // stores a used commons' `Item`, or `Json.encode`s one, and nothing reads
+    // its `note`). Each is implied, so `settle_implied` imports it when a
+    // helper spells it.
+    references.imply_names(boundary_names.iter().chain(&json_names), commons, ctx);
     references.settle_implied(&body);
     let mut project_imports = emit_project_imports(commons, ctx, &references);
     let mut cross_context_imports = emit_cross_context_namespace_imports(commons, ctx);
@@ -1093,17 +1092,18 @@ fn collect_json_codec_roots(commons: &TypedCommons) -> Vec<TypeRef> {
 /// this module.
 /// #1478: returns real [`bynk_ts::TsStmt`]s (was `out: &mut String`) — the
 /// same `decls_as_stmts[_block]` conversion `emit_boundary_helpers`/
-/// `emit_consumed_context_helpers` just used.
+/// `emit_consumed_context_helpers` just used. #1829: also returns the type
+/// names it emitted helpers for, which the module must bring into scope.
 fn emit_json_codec_helpers(
     commons: &TypedCommons,
     ctx: &EmitProjectCtx,
     skip_names: &HashSet<String>,
     skip_insts: &HashSet<String>,
-) -> Vec<bynk_ts::TsStmt> {
+) -> (Vec<bynk_ts::TsStmt>, Vec<String>) {
     use serialisation::{collect_codec_closure, emit_generic_helpers, emit_helpers_for_owner};
     let roots = collect_json_codec_roots(commons);
     if roots.is_empty() {
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     }
     let (names, insts) = collect_codec_closure(&roots, &commons.types);
     let names: Vec<String> = names
@@ -1127,7 +1127,7 @@ fn emit_json_codec_helpers(
             &ctx.runtime_use,
         )));
     }
-    stmts
+    (stmts, names)
 }
 
 /// Emit boundary serialise/deserialise helpers (v0.8 §3.4 / §5.2) for
@@ -2180,6 +2180,37 @@ impl ExternalReferences {
         self.by_commons.is_empty() && self.by_sibling.is_empty() && self.types_by_sibling.is_empty()
     }
 
+    /// #1829: record each of `names`, the types a module's emitted helpers
+    /// name, as an *implied* import, resolved the way a source reference is.
+    /// A name this file declares, or a consumed context declares, is skipped,
+    /// as [`record_ty_refs`] skips it.
+    fn imply_names<'a>(
+        &mut self,
+        names: impl Iterator<Item = &'a String>,
+        commons: &TypedCommons,
+        ctx: &EmitProjectCtx,
+    ) {
+        let local_to_file = local_names(commons);
+        let mut found = ExternalReferences::default();
+        for name in names {
+            if ctx.imported_from_kind.get(name) != Some(&UnitKind::Context) {
+                record_name_ref(name, &local_to_file, ctx, &mut found);
+            }
+        }
+        for (unit, names) in found.by_commons {
+            self.implied_by_commons
+                .entry(unit)
+                .or_default()
+                .extend(names);
+        }
+        for (path, names) in found.by_sibling {
+            self.implied_by_sibling
+                .entry(path)
+                .or_default()
+                .extend(names);
+        }
+    }
+
     /// #1778: promote each implied name the emitted body spells, as a whole
     /// TypeScript identifier, to a real import, and drop the rest. Called
     /// once the body is built and before the imports and rebrands are, which
@@ -2215,17 +2246,22 @@ impl ExternalReferences {
     }
 }
 
-fn collect_external_references(commons: &TypedCommons, ctx: &EmitProjectCtx) -> ExternalReferences {
-    // Names declared in this file (so we know what's local-to-file).
-    // A `messages` block declares no importable identifier of its own (its
-    // `render` is synthesised separately), so `name()` is `None` there and it
-    // contributes nothing to the local-name set.
-    let local_to_file: HashSet<String> = commons
+/// The names this file declares, so a reference to one needs no import. A
+/// `messages` block declares no importable identifier of its own (its
+/// `render` is synthesised separately), so `name()` is `None` there and it
+/// contributes nothing.
+fn local_names(commons: &TypedCommons) -> HashSet<String> {
+    commons
         .commons
         .items
         .iter()
         .filter_map(|i| i.name().map(|n| n.name.clone()))
-        .collect();
+        .collect()
+}
+
+fn collect_external_references(commons: &TypedCommons, ctx: &EmitProjectCtx) -> ExternalReferences {
+    // Names declared in this file (so we know what's local-to-file).
+    let local_to_file = local_names(commons);
 
     let mut refs = ExternalReferences::default();
 
