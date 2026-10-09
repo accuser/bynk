@@ -3534,9 +3534,8 @@ event E = {
     #[test]
     fn qualified_payload_variant_call_lowers_the_same_as_the_bare_call() {
         // Regression: `Outcome.Won(100)` parses to `ExprKind::MethodCall`
-        // (confirmed by direct AST inspection), not `ConstructorCall` — a
-        // match against `ConstructorCall` alone silently fell through to
-        // "expected a variant" for this qualified spelling.
+        // with an `Ident` receiver — a match that missed that shape silently
+        // fell through to "expected a variant" for this qualified spelling.
         let src = r#"
 context test
 

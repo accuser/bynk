@@ -2308,14 +2308,6 @@ impl<'a> Formatter<'a> {
                 self.push(&format!("{}{}(", name.name, type_args_src(type_args)));
                 self.format_arg_list(args, reserve);
             }
-            ExprKind::ConstructorCall {
-                type_name,
-                method,
-                args,
-            } if !args.is_empty() => {
-                self.push(&format!("{}.{}(", type_name.name, method.name));
-                self.format_arg_list(args, reserve);
-            }
             ExprKind::Val { type_ref, args } if !args.is_empty() => {
                 self.push(&format!("Val[{}](", type_ref_to_string(type_ref)));
                 self.format_arg_list(args, reserve);
@@ -3176,14 +3168,6 @@ fn expr_with_prec(e: &Expr, parent_prec: u8) -> String {
         ExprKind::Some(v) => format!("Some({})", expr_with_prec(v, 0)),
         ExprKind::None => "None".to_string(),
         ExprKind::Question(v) => format!("{}?", expr_with_prec(v, 8)),
-        ExprKind::ConstructorCall {
-            type_name,
-            method,
-            args,
-        } => {
-            let parts: Vec<String> = args.iter().map(|a| expr_with_prec(a, 0)).collect();
-            format!("{}.{}({})", type_name.name, method.name, parts.join(", "))
-        }
         ExprKind::RecordConstruction { type_name, fields } => {
             let parts: Vec<String> = fields
                 .iter()
