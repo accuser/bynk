@@ -11,11 +11,13 @@ export default {
     const path = url.pathname;
     const method = request.method;
     const surface = compose(env);
+    let __route: string = "request";
     try {
       if (path.startsWith("/_bynk/call/")) {
         const servicePath = path.slice("/_bynk/call/".length);
         switch (servicePath) {
           case "blob": {
+            __route = "call blob";
             const __contract = request.headers.get("X-Bynk-Contract");
             if (__contract !== "2f29763da5840247") return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "blob", expected: "2f29763da5840247", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
             const args = await request.json() as __JsonValue;
@@ -27,6 +29,7 @@ export default {
             return new globalThis.Response(globalThis.JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
           }
           case "echo": {
+            __route = "call echo";
             const __contract = request.headers.get("X-Bynk-Contract");
             if (__contract !== "9be80b6bc6ae95b2") return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "echo", expected: "9be80b6bc6ae95b2", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
             const args = await request.json() as __JsonValue;
@@ -38,6 +41,7 @@ export default {
             return new globalThis.Response(globalThis.JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
           }
           case "place": {
+            __route = "call place";
             const __contract = request.headers.get("X-Bynk-Contract");
             if (__contract !== "f717b344c20d2ecb") return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "place", expected: "f717b344c20d2ecb", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
             const args = await request.json() as __JsonValue;
@@ -54,7 +58,8 @@ export default {
       }
 
       return new globalThis.Response("Not Found", { status: 404 });
-    } catch {
+    } catch (e) {
+      globalThis.console.error(`shop.orders ${__route} faulted`, e);
       return new globalThis.Response("Internal Server Error", { status: 500 });
     }
   },

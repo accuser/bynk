@@ -14,11 +14,13 @@ export default {
     const method = request.method;
     const surface = compose(env);
     const __security_api: __SecurityPolicy = { nosniff: true, hstsMaxAgeSecs: null };
+    let __route: string = "request";
     try {
       if (path.startsWith("/_bynk/call/")) {
         const servicePath = path.slice("/_bynk/call/".length);
         switch (servicePath) {
           case "echo": {
+            __route = "call echo";
             const __contract = request.headers.get("X-Bynk-Contract");
             if (__contract !== "d99db46e9a4cfb5e") return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "echo", expected: "d99db46e9a4cfb5e", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
             const args = await request.json() as __JsonValue;
@@ -30,6 +32,7 @@ export default {
             return new globalThis.Response(globalThis.JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
           }
           case "registry": {
+            __route = "call registry";
             const __contract = request.headers.get("X-Bynk-Contract");
             if (__contract !== "4410b6f9918570a9") return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "registry", expected: "4410b6f9918570a9", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
             const args = await request.json() as __JsonValue;
@@ -51,6 +54,7 @@ export default {
       }
 
       if (request.headers.get("Upgrade") === "websocket") {
+        __route = "ws ChatGateway";
         const __ws_export = url.searchParams.get("export");
         if (__ws_export === null) return new globalThis.Response("Missing parameter: export", { status: 400 });
         return surface.ws_ChatGateway_open(request, __ws_export);
@@ -59,6 +63,7 @@ export default {
       {
         const __m = __matchPath("/bearer/:delete", path);
         if ((method === "GET" || method === "HEAD") && __m) {
+          __route = "GET /bearer/:delete";
           const __raw_delete = __m.params["delete"];
           const __id_delete = __raw_delete;
           const result = await surface.http_GET_bearer_Param_delete(request, __id_delete);
@@ -69,6 +74,7 @@ export default {
       {
         const __m = __matchPath("/lookup/:class", path);
         if ((method === "GET" || method === "HEAD") && __m) {
+          __route = "GET /lookup/:class";
           const __raw_class = __m.params["class"];
           const __id_class = __raw_class;
           const result = await surface.http_GET_lookup_Param_class(__id_class);
@@ -79,6 +85,7 @@ export default {
       {
         const __m = __matchPath("/oidc/:function", path);
         if ((method === "GET" || method === "HEAD") && __m) {
+          __route = "GET /oidc/:function";
           const __raw_function = __m.params["function"];
           const __id_function = __raw_function;
           const result = await surface.http_GET_oidc_Param_function(request, __id_function);
@@ -89,6 +96,7 @@ export default {
       {
         const __m = __matchPath("/sum/:import", path);
         if ((method === "GET" || method === "HEAD") && __m) {
+          __route = "GET /sum/:import";
           const __raw_import = __m.params["import"];
           const __id_import = __raw_import;
           const result = await surface.http_GET_sum_Param_import(request, __id_import);
@@ -99,6 +107,7 @@ export default {
       {
         const __m = __matchPath("/tag/:public", path);
         if ((method === "GET" || method === "HEAD") && __m) {
+          __route = "GET /tag/:public";
           const __raw_public = __m.params["public"];
           const __r_public = handlers.Tag.of(__raw_public);
           if (__r_public.tag === "Err") return __applySecurityHeaders(new globalThis.Response(globalThis.JSON.stringify({ kind: "RefinementViolation", path: "path.public", violation: __r_public.error }), { status: 400, headers: { "content-type": "application/json" } }), __security_api);
@@ -134,7 +143,8 @@ export default {
         return __applySecurityHeaders(__res, __security_api);
       }
       return new globalThis.Response("Not Found", { status: 404 });
-    } catch {
+    } catch (e) {
+      globalThis.console.error(`gateway ${__route} faulted`, e);
       return new globalThis.Response("Internal Server Error", { status: 500 });
     }
   },

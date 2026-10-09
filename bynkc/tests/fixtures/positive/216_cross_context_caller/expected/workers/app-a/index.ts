@@ -11,11 +11,13 @@ export default {
     const path = url.pathname;
     const method = request.method;
     const surface = compose(env);
+    let __route: string = "request";
     try {
       if (path.startsWith("/_bynk/call/")) {
         const servicePath = path.slice("/_bynk/call/".length);
         switch (servicePath) {
           case "ask": {
+            __route = "call ask";
             const __contract = request.headers.get("X-Bynk-Contract");
             if (__contract !== "f4ac1e293c9adeb8") return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "ask", expected: "f4ac1e293c9adeb8", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
             const args = await request.json() as __JsonValue;
@@ -32,7 +34,8 @@ export default {
       }
 
       return new globalThis.Response("Not Found", { status: 404 });
-    } catch {
+    } catch (e) {
+      globalThis.console.error(`app.a ${__route} faulted`, e);
       return new globalThis.Response("Internal Server Error", { status: 500 });
     }
   },

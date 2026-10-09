@@ -13,6 +13,7 @@ export default {
     const path = url.pathname;
     const method = request.method;
     const surface = compose(env);
+    let __route: string = "request";
     try {
       if (path.startsWith("/_bynk/call/")) {
         const servicePath = path.slice("/_bynk/call/".length);
@@ -23,13 +24,15 @@ export default {
       }
 
       if (request.headers.get("Upgrade") === "websocket") {
+        __route = "ws ChatGateway";
         const __ws_roomId = url.searchParams.get("roomId");
         if (__ws_roomId === null) return new globalThis.Response("Missing parameter: roomId", { status: 400 });
         return surface.ws_ChatGateway_open(request, __ws_roomId);
       }
 
       return new globalThis.Response("Not Found", { status: 404 });
-    } catch {
+    } catch (e) {
+      globalThis.console.error(`chat ${__route} faulted`, e);
       return new globalThis.Response("Internal Server Error", { status: 500 });
     }
   },

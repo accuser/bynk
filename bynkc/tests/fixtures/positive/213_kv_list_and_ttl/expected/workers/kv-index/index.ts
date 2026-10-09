@@ -11,11 +11,13 @@ export default {
     const path = url.pathname;
     const method = request.method;
     const surface = compose(env);
+    let __route: string = "request";
     try {
       if (path.startsWith("/_bynk/call/")) {
         const servicePath = path.slice("/_bynk/call/".length);
         switch (servicePath) {
           case "allKeys": {
+            __route = "call allKeys";
             const __contract = request.headers.get("X-Bynk-Contract");
             if (__contract !== "4ca5743dc330a4ac") return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "allKeys", expected: "4ca5743dc330a4ac", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
             const args = await request.json() as __JsonValue;
@@ -27,6 +29,7 @@ export default {
             return new globalThis.Response(globalThis.JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
           }
           case "cache": {
+            __route = "call cache";
             const __contract = request.headers.get("X-Bynk-Contract");
             if (__contract !== "5c2188409f152319") return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "cache", expected: "5c2188409f152319", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
             const args = await request.json() as __JsonValue;
@@ -43,6 +46,7 @@ export default {
             return new globalThis.Response(globalThis.JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
           }
           case "scan": {
+            __route = "call scan";
             const __contract = request.headers.get("X-Bynk-Contract");
             if (__contract !== "6f9f79a650dc3db6") return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "scan", expected: "6f9f79a650dc3db6", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
             const args = await request.json() as __JsonValue;
@@ -59,7 +63,8 @@ export default {
       }
 
       return new globalThis.Response("Not Found", { status: 404 });
-    } catch {
+    } catch (e) {
+      globalThis.console.error(`kv.index ${__route} faulted`, e);
       return new globalThis.Response("Internal Server Error", { status: 500 });
     }
   },

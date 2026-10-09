@@ -176,3 +176,19 @@ test("deserialiseEventEnvelope: reports the custom path prefix on failure", () =
   const r = deserialiseEventEnvelope("nope", "$.envelope");
   assert.equal((r as { error: BoundaryError & { path: string } }).error.path, "$.envelope");
 });
+
+// #1825 review: a fault's payload is non-enumerable, so logging the error
+// object (a Worker's fault catch) prints neither a callee's body nor a value.
+test("boundaryError: the payload is readable but not enumerable", async () => {
+  const { inspect } = await import("node:util");
+  const binding = { fetch: async () => new Response("secret-body", { status: 502 }) };
+  await assert.rejects(
+    () => callService(binding, "svc", null, deser<number, string>()),
+    (e: Error) => {
+      assert.equal((e as { boundaryError?: { kind: string } }).boundaryError?.kind, "Transport");
+      assert.ok(!Object.keys(e).includes("boundaryError"));
+      assert.ok(!inspect(e).includes("secret-body"), inspect(e));
+      return true;
+    },
+  );
+});
