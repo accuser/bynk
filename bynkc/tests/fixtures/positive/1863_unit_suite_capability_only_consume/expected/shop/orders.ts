@@ -3,7 +3,9 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, type __DurableObjectState, type __DurableObjectNamespace, __StateRegistry, __makeAgent, __rehydrationViolation, type __JsonValue, type __BoundaryError } from "../runtime.js";
 
+import * as bynk from "../bynk.js";
 import * as shop_fees from "./fees.js";
+import * as shop_rates from "./rates.js";
 
 export interface Stamp {
   next(): globalThis.Promise<number>;
@@ -90,13 +92,28 @@ export const till = {
   },
 };
 
+export const clock = {
+  async call(deps: { Clock: bynk.Clock }): globalThis.Promise<number> {
+    const __r0 = await deps.Clock.now();
+    return 1;
+  },
+};
+
+export const rate = {
+  async call(deps: { Rates: shop_rates.Rates }): globalThis.Promise<number> {
+    return deps.Rates.rate();
+  },
+};
+
 export function __resetAgents(): void {
   __TillRegistry.reset();
 }
 
 export interface __ShopOrdersDeps {
   readonly Stamp: Stamp;
+  readonly Clock: bynk.Clock;
   readonly Fees: shop_fees.Fees;
+  readonly Rates: shop_rates.Rates;
   readonly Tax: shop_fees.Tax;
 }
 
@@ -110,6 +127,12 @@ export function __makeSurface(deps: __ShopOrdersDeps) {
     },
     async till(): globalThis.Promise<number> {
       return till.call(deps);
+    },
+    async clock(): globalThis.Promise<number> {
+      return clock.call(deps);
+    },
+    async rate(): globalThis.Promise<number> {
+      return rate.call(deps);
     },
   };
 }

@@ -2956,14 +2956,23 @@ pub(crate) struct LocaleNegotiationArgs {
 /// Where [`instantiate_provider_ts_expr`]'s expression finds each unit's
 /// provider classes: the module that constructs it imports each unit under a
 /// different namespace.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ProviderNamespaces {
+#[derive(Clone, Copy)]
+pub(crate) enum ProviderNamespaces<'a> {
     /// The bundle's `compose.ts`: `{ns}`.
     Bundle,
     /// A Worker's `compose.ts` or `handlers.ts`: `handlers_{ns}`.
     Workers,
     /// A test module (#1863): `__ns_{ns}`, the test scaffold's own.
-    Test,
+    ///
+    /// `prebuilt` names, by `(unit, capability)`, the local that holds a
+    /// capability the test deps build at the top level: a provider's `given`
+    /// that resolves to one is that local, not a fresh construction, so a
+    /// `stub` overlaid on it reaches every provider built over it (#1864
+    /// review). Each one so used is recorded in `used`.
+    Test {
+        prebuilt: &'a HashMap<(String, String), String>,
+        used: &'a std::cell::RefCell<BTreeSet<(String, String)>>,
+    },
 }
 
 /// `new {ns}.{class}({args})` as a real [`bynk_ts::TsExpr::New`] node.
@@ -3016,7 +3025,7 @@ pub(crate) fn instantiate_provider_ts_expr(
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
     unit_flattened: &HashMap<String, HashMap<String, String>>,
-    namespaces: ProviderNamespaces,
+    namespaces: ProviderNamespaces<'_>,
     env_ident: Option<&str>,
     locale_negotiation: Option<&LocaleNegotiationArgs>,
     referenced_units: &mut BTreeSet<String>,
@@ -3025,14 +3034,15 @@ pub(crate) fn instantiate_provider_ts_expr(
     let bodied_ns = match namespaces {
         ProviderNamespaces::Bundle => ns.clone(),
         ProviderNamespaces::Workers => format!("handlers_{ns}"),
-        ProviderNamespaces::Test => crate::emitter::emit::test_scaffold_ns(provider_ctx),
+        ProviderNamespaces::Test { .. } => crate::emitter::emit::test_scaffold_ns(provider_ctx),
     };
     let provider = unit_tables
         .get(provider_ctx)
         .and_then(|t| t.providers.get(cap));
     // #1863: a test module imports no binding module, so an external
     // provider is the same placeholder as a capability with no provider.
-    if namespaces == ProviderNamespaces::Test && provider.is_none_or(|p| p.external) {
+    if matches!(namespaces, ProviderNamespaces::Test { .. }) && provider.is_none_or(|p| p.external)
+    {
         return bynk_ts::TsExpr::As {
             expr: Box::new(bynk_ts::TsExpr::As {
                 expr: Box::new(bynk_ts::TsExpr::Ident("undefined".to_string())),
@@ -3074,6 +3084,13 @@ pub(crate) fn instantiate_provider_ts_expr(
                         .cloned()
                         .unwrap_or_else(|| provider_ctx.to_string()),
                 };
+                if let ProviderNamespaces::Test { prebuilt, used } = namespaces {
+                    let key = (target_ctx.clone(), g.name.clone());
+                    if let Some(local) = prebuilt.get(&key) {
+                        used.borrow_mut().insert(key);
+                        return (g.name.clone(), bynk_ts::TsExpr::Ident(local.clone()));
+                    }
+                }
                 let expr = instantiate_provider_ts_expr(
                     &target_ctx,
                     &g.name,
