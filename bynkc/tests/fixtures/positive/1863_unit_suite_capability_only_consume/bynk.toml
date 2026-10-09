@@ -1,0 +1,6 @@
+[project]
+name = "unit-suite-capability-only-consume"
+version = "0.1.0"
+
+[paths]
+include = ["src", "tests"]

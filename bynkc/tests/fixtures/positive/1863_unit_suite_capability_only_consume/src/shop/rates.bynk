@@ -1,0 +1,18 @@
+context shop.rates
+
+consumes shop.base as Base
+
+-- #1863: a context consumed only for its capability, by `shop.fees`, whose
+-- provider is `given` it, and by `shop.orders`.
+exports capability { Rates }
+
+capability Rates {
+  fn rate() -> Effect[Int]
+}
+
+provides Rates = FixedRates given Base.Base {
+  fn rate() -> Effect[Int] {
+    let b <- Base.Base.base()
+    Effect.pure(b + 2)
+  }
+}

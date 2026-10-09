@@ -1,0 +1,40 @@
+suite shop.orders {
+  case "a service is given the consumed context's provider" {
+    let n <- charge.call()
+    expect n == 30
+  }
+
+  case "a local provider is built with the consumed capability" {
+    let n <- stamp.call()
+    expect n == 31
+  }
+
+  case "an agent is given the consumed context's provider" {
+    let n <- till.call()
+    expect n == 5
+  }
+
+  case "a stub replaces the consumed context's provider" {
+    stub Fees.fee() returns each [7]
+    let n <- charge.call()
+    expect n == 7
+  }
+
+  case "a stub reaches a provider built over the stubbed capability" {
+    stub Fees.fee() returns each [7]
+    let n <- stamp.call()
+    expect n == 8
+  }
+
+  case "a prefixed platform capability is its test double" {
+    let n <- clock.call()
+    expect n == 1
+  }
+
+  case "a stub reaches every provider built over it" {
+    stub Rates.rate() returns each [2, 2]
+    let f <- charge.call()
+    let r <- rate.call()
+    expect f == 20 && r == 2
+  }
+}

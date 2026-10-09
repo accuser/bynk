@@ -1,0 +1,14 @@
+context shop.base
+
+-- #1863: reached only through a provider chain (`shop.rates`'s provider is
+-- `given` it). `shop.orders` never consumes this context, so its test module
+-- imports it only because the deps factory names it.
+exports capability { Base }
+
+capability Base {
+  fn base() -> Effect[Int]
+}
+
+provides Base = OneBase {
+  fn base() -> Effect[Int] { 1 }
+}
