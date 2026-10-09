@@ -59,11 +59,11 @@ const REFUSED: (usize, usize, usize) = (787, 499, 448);
 
 /// Where a comment was inserted: the line it went on or before, the line
 /// above that, and the construct a closing line ends (the nearest line above
-/// at the same indentation; the line itself otherwise). A [`KNOWN`] rule
-/// reads whichever it needs, so while no defect is open none is read.
-#[allow(dead_code)]
+/// at the same indentation; the line itself otherwise).
 struct Site<'a> {
     line: &'a str,
+    // No rule reads it while no open defect needs it (#1858 did).
+    #[allow(dead_code)]
     prev: &'a str,
     opener: &'a str,
 }

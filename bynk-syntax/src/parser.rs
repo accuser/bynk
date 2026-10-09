@@ -2615,6 +2615,22 @@ mod tests {
         }
     }
 
+    /// #1858, chosen uniformly: a match arm's pattern is followed only by `if`
+    /// or `=>`, so a next-line `(` there could not be the next statement, but
+    /// the same-line rule holds in every pattern position anyway. One lexical
+    /// rule, wherever a pattern appears, is the one a reader can apply without
+    /// knowing the position. The arm is rejected, not misparsed.
+    #[test]
+    fn match_arm_pattern_payload_on_a_later_line_is_rejected() {
+        let src = "commons c\n\nfn f() -> Int {\n  match m {\n    Settled\n      (amount) => 1,\n    _ => 0,\n  }\n}\n";
+        assert!(
+            parse_str(src).is_err(),
+            "a next-line `(` after an arm's variant must not open its payload list"
+        );
+        let same_line = src.replace("Settled\n      (amount)", "Settled(amount)");
+        parse_str(&same_line).unwrap_or_else(|e| panic!("same-line form must parse: {e:?}"));
+    }
+
     /// #981: the same same-line rule extends to a method call's parens — a
     /// `.method` immediately followed, on its own line, by a standalone `()`
     /// must not merge into `.method()`.
