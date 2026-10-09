@@ -1514,7 +1514,12 @@ nullary variant — in the concrete grammar both parse as `variant_pattern`.
 
 {{#grammar variant_pattern}}
 
-Matches a sum-type variant, optionally binding its payload fields.
+Matches a sum-type variant, optionally binding its payload fields. The
+payload list's `(` must sit on the same line as the variant name, as a call's
+does, in every pattern position: a `(` that opens a new line is not part of
+the pattern. So `expect r is None` above a `()` line is a nullary pattern and
+a unit, not `None()`, and a match arm's `Settled` above `(amount) =>` is a
+parse error.
 
 **Static semantics.**
 {{#grammar-semantics variant_pattern}}

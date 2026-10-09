@@ -531,7 +531,10 @@ fn emit_integration_module(
         debug_assert!(
             throwaway_errors.is_empty(),
             "a system case re-typed for emission reported errors the check pass did not: {:?}",
-            throwaway_errors.iter().map(|e| e.category).collect::<Vec<_>>()
+            throwaway_errors
+                .iter()
+                .map(|e| e.category)
+                .collect::<Vec<_>>()
         );
         let (body_src, body_smb) = emitter::lower_integration_case_body(
             &case.body,
@@ -4164,7 +4167,10 @@ fn emit_test_case_function(
         debug_assert!(
             throwaway_errors.is_empty(),
             "a unit case re-typed for emission reported errors the check pass did not: {:?}",
-            throwaway_errors.iter().map(|e| e.category).collect::<Vec<_>>()
+            throwaway_errors
+                .iter()
+                .map(|e| e.category)
+                .collect::<Vec<_>>()
         );
     }
     let cross = bynk_check::resolver::CrossContextInfo::default();
