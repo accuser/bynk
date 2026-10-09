@@ -17,5 +17,8 @@ export function compose(env: Env) {
     async label(id: string) {
       return handlers.label.call(id, deps);
     },
+    async sum(x: number, y: number) {
+      return handlers.sum.call(x, y, deps);
+    },
   };
 }

@@ -5,6 +5,7 @@ import { type __ServiceBinding } from "../../runtime.js";
 import * as handlers from "./handlers.js";
 
 export interface Env {
+  GRID: __DurableObjectNamespace;
   LABEL: __DurableObjectNamespace;
   ORDER: __DurableObjectNamespace;
   TALLY: __DurableObjectNamespace;
@@ -23,6 +24,9 @@ export function compose(env: Env) {
     },
     async name(id: handlers.OrderId) {
       return handlers.name.call(id, deps);
+    },
+    async sum(x: number, y: number) {
+      return handlers.sum.call(x, y, deps);
     },
   };
 }

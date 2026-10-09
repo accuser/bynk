@@ -3,9 +3,11 @@ context shop.one
 -- #1818: an agent reads its own key as `self.<key>`. It used to emit
 -- `this.state.id.toString() as id`: a cast to the key's *name* (TS2304), over
 -- a value that was never the key ("[object Object]" on bundle, the Durable
--- Object's hex id on workers). Three key types exercise the key codec: a
--- refined `String`, a `String` and an `Int`.
+-- Object's hex id on workers). Four key types exercise the key codec: a
+-- refined `String`, a `String`, an `Int` and a record.
 type OrderId = String where NonEmpty
+
+type Coord = { x: Int, y: Int }
 
 agent Order {
   key id: OrderId
@@ -34,6 +36,22 @@ agent Tally {
 
   on call doubled() -> Effect[Int] {
     self.n * 2
+  }
+}
+
+agent Grid {
+  key at: Coord
+
+  store hits: Cell[Int]
+
+  on call sum() -> Effect[Int] {
+    self.at.x + self.at.y
+  }
+}
+
+service sum {
+  on call(x: Int, y: Int) -> Effect[Int] {
+    Grid(Coord { x: x, y: y }).sum()
   }
 }
 

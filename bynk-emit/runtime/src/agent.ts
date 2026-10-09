@@ -164,7 +164,10 @@ export function makeWorkersAgent<C>(
   keyCodec?: WireCodec,
 ): C {
   const stub = binding.get(binding.idFromName(serialiseAgentKey(key)));
-  const sentKey = keyCodec === undefined ? undefined : keyCodec.enc(key as never);
+  // Encoded per call, not here, so a key that cannot encode fails at the call,
+  // as an argument that cannot encode does.
+  const sentKey = (): JsonValue | undefined =>
+    keyCodec === undefined ? undefined : keyCodec.enc(key as never);
   const proxy = new Proxy(
     {},
     {
@@ -173,10 +176,10 @@ export function makeWorkersAgent<C>(
         return async (...callArgs: unknown[]) => {
           const deps = callArgs.length > 0 ? callArgs[callArgs.length - 1] : {};
           const args = callArgs.length > 0 ? callArgs.slice(0, -1) : [];
-          if (wire === undefined) return callDurableObjectMethod(stub, prop, args, deps, sentKey);
+          if (wire === undefined) return callDurableObjectMethod(stub, prop, args, deps, sentKey());
           const m = agentWireMethod(wire, prop);
           const encoded = args.map((a, i) => (m.args[i] ?? AGENT_WIRE_PASS).enc(a as never));
-          const json = await callDurableObjectMethod(stub, prop, encoded, deps, sentKey);
+          const json = await callDurableObjectMethod(stub, prop, encoded, deps, sentKey());
           const r = m.result.dec(json);
           if (r.tag === "Err") throw boundaryError(r.error);
           return r.value;

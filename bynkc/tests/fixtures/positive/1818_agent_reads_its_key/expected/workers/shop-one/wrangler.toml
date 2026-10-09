@@ -4,6 +4,10 @@ main = "index.ts"
 compatibility_date = "2026-07-01"
 
 [[durable_objects.bindings]]
+name = "GRID"
+class_name = "Grid"
+
+[[durable_objects.bindings]]
 name = "LABEL"
 class_name = "Label"
 
@@ -14,6 +18,10 @@ class_name = "Order"
 [[durable_objects.bindings]]
 name = "TALLY"
 class_name = "Tally"
+
+[exports.Grid]
+type = "durable-object"
+storage = "sqlite"
 
 [exports.Label]
 type = "durable-object"

@@ -12,4 +12,9 @@ suite shop.front as system {
     let n <- shop.front.doubled(5)
     expect n == 10
   }
+
+  case "a Durable Object reads its record key" {
+    let n <- shop.front.sum(2, 3)
+    expect n == 5
+  }
 }

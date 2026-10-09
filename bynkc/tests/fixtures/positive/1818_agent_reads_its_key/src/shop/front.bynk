@@ -9,6 +9,12 @@ service label {
   }
 }
 
+service sum {
+  on call(x: Int, y: Int) -> Effect[Int] {
+    One.sum(x, y)
+  }
+}
+
 service doubled {
   on call(n: Int) -> Effect[Int] {
     One.doubled(n)

@@ -1144,6 +1144,11 @@ pub(crate) fn agent_call_boundary_roots(agents: &HashMap<String, AgentDecl>) -> 
             }
             roots.push(h.return_type.clone());
         }
+        // #1818: an agent that reads its own key is sent it with each call,
+        // through the key type's codec.
+        if crate::emitter::emit::agent_reads_key(&agents[name]) {
+            roots.push(agents[name].key_type.clone());
+        }
     }
     roots
         .into_iter()

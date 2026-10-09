@@ -4321,9 +4321,20 @@ pub(crate) fn agent_reads_key(a: &AgentDecl) -> bool {
     })
 }
 
+/// #1818: `this.__key = __decodeAgentKey(<codec>, <json>) as <K>;`, setting the
+/// key of an agent that reads it at an entry point: the agent dispatch, a
+/// forwarded WebSocket upgrade, or a waking WebSocket message or close.
+fn agent_key_assign(codec: &str, key_ts: &str, json: &str) -> bynk_ts::TsStmt {
+    bynk_ts::TsStmt::assign(
+        bynk_ts::TsExpr::Ident("this.__key".to_string()),
+        bynk_ts::TsExpr::Ident(format!("__decodeAgentKey({codec}, {json}) as {key_ts}")),
+        None,
+    )
+}
+
 /// #1818: the name of an agent's key codec, emitted on workers for an agent
 /// that reads its key.
-fn agent_key_codec_name(agent: &str) -> String {
+pub(crate) fn agent_key_codec_name(agent: &str) -> String {
     format!("__{agent}Key")
 }
 
@@ -4341,12 +4352,14 @@ fn agent_wire_name(agent: &str) -> String {
 /// #1818: `const __<Agent>Key = <codec>`, the key type's wire codec, shared by
 /// the caller's proxy (which encodes the key) and the DO (which decodes it).
 fn agent_key_codec(a: &AgentDecl, ru: &crate::emitter::runtime_use::RuntimeUse) -> bynk_ts::TsStmt {
+    // Exported: a WebSocket edge in `compose.ts` encodes the key it forwards
+    // with the upgrade.
     bynk_ts::TsStmt::decl(
-        bynk_ts::TsDecl::ConstDecl {
+        bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::ConstDecl {
             name: agent_key_codec_name(&a.name.name),
             ty: None,
             init: agent_wire_codec(&a.key_type, ru),
-        },
+        })),
         None,
     )
 }
@@ -6014,11 +6027,19 @@ pub(crate) fn emit_agent(
     // whose connection transfers to *this* agent are hosted in this Durable Object
     // (DECISION A) — the upgrade is authenticated at the edge then forwarded here,
     // where the socket is accepted and the body runs as a `this`-self-call.
-    let ws_open_hosts: Vec<WsOpenHost<'_>> = if is_workers {
+    let mut ws_open_hosts: Vec<WsOpenHost<'_>> = if is_workers {
         ws_open_hosts_for(&a.name.name, commons, &ctx.local_agents, &ctx.actors)
     } else {
         Vec::new()
     };
+    if reads_key {
+        for host in &mut ws_open_hosts {
+            host.agent_key = Some((
+                agent_key_codec_name(&a.name.name),
+                crate::emitter::ts_type_ref(&a.key_type),
+            ));
+        }
+    }
     for host in &ws_open_hosts {
         emit_ws_do_method(
             &mut out,
@@ -6158,14 +6179,10 @@ pub(crate) fn emit_agent(
         // #1818: an agent that reads its key learns it from the call, decoded
         // by its key codec, before the handler runs.
         if reads_key {
-            agent_dispatch_stmts.push(bynk_ts::TsStmt::assign(
-                bynk_ts::TsExpr::Ident("this.__key".to_string()),
-                bynk_ts::TsExpr::Ident(format!(
-                    "__decodeAgentKey({}, key) as {}",
-                    agent_key_codec_name(&a.name.name),
-                    crate::emitter::ts_type_ref(&a.key_type)
-                )),
-                None,
+            agent_dispatch_stmts.push(agent_key_assign(
+                &agent_key_codec_name(&a.name.name),
+                &crate::emitter::ts_type_ref(&a.key_type),
+                "key",
             ));
         }
         // #1678: the wire arguments are decoded through this agent's table
@@ -6700,6 +6717,10 @@ struct WsOpenHost<'a> {
     message: Option<&'a Handler>,
     close: Option<&'a Handler>,
     seam: Option<bynk_check::actors::BearerSeam>,
+    // #1818: for a hosting agent that reads its own key, the key codec's name
+    // and the key's TS type. A WebSocket body runs through these entry points,
+    // not the `/_bynk/agent/` dispatch, so each sets `this.__key` itself.
+    agent_key: Option<(String, String)>,
 }
 
 impl WsOpenHost<'_> {
@@ -6767,6 +6788,7 @@ fn ws_open_hosts_for<'a>(
                         .iter()
                         .find(|h| matches!(lower_handler_kind_ir(&h.kind), IrHandlerKind::Close)),
                     seam: bynk_check::actors::bearer_seam_for(h, actors),
+                    agent_key: None,
                 });
             }
         }
@@ -6926,10 +6948,11 @@ fn ws_open_fetch_branch_stmt(host: &WsOpenHost<'_>, tys: &Arc<Types>) -> bynk_ts
     // The trusted internal header carries the route args, and the verified
     // identity only when the actor binds one (a binder-less `by` forwards none).
     let binds_identity = host.seam.as_ref().is_some_and(|s| s.binder.is_some());
-    let payload_ty = if binds_identity {
-        "{ args: unknown[]; identity: string }"
-    } else {
-        "{ args: unknown[] }"
+    let payload_ty = match (binds_identity, host.agent_key.is_some()) {
+        (true, false) => "{ args: unknown[]; identity: string }",
+        (false, false) => "{ args: unknown[] }",
+        (true, true) => "{ args: unknown[]; identity: string; key: unknown }",
+        (false, true) => "{ args: unknown[]; key: unknown }",
     };
     let mut stmts = vec![
         bynk_ts::TsStmt::const_stmt(
@@ -6999,7 +7022,7 @@ fn ws_open_fetch_branch_stmt(host: &WsOpenHost<'_>, tys: &Arc<Types>) -> bynk_ts
         } else {
             bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(String::new()))
         };
-        accept_args.push(bynk_ts::TsExpr::object(vec![
+        let mut meta = vec![
             ("identity".to_string(), identity),
             (
                 "args".to_string(),
@@ -7008,7 +7031,23 @@ fn ws_open_fetch_branch_stmt(host: &WsOpenHost<'_>, tys: &Arc<Types>) -> bynk_ts
                     property: "args".to_string(),
                 },
             ),
-        ]));
+        ];
+        // #1818: a waking `webSocketMessage`/`webSocketClose` recovers the key
+        // from the attachment, as it does the identity and route args.
+        if host.agent_key.is_some() {
+            meta.push((
+                "key".to_string(),
+                bynk_ts::TsExpr::Member {
+                    object: Box::new(bynk_ts::TsExpr::Ident("__payload".to_string())),
+                    property: "key".to_string(),
+                },
+            ));
+        }
+        accept_args.push(bynk_ts::TsExpr::object(meta));
+    }
+    // #1818: the edge forwards the agent's key with the upgrade.
+    if let Some((codec, key_ts)) = &host.agent_key {
+        stmts.push(agent_key_assign(codec, key_ts, "__payload.key"));
     }
     stmts.push(bynk_ts::TsStmt::const_stmt(
         bynk_ts::TsBindingName::Ident("connection".to_string()),
@@ -7136,7 +7175,11 @@ fn emit_ws_dispatch_handlers(
         return;
     }
     let out_ts = ts_ty(host.out_ty, tys);
-    let att_ty = "{ connId: string; identity: string; args: unknown[] }";
+    let att_ty = if host.agent_key.is_some() {
+        "{ connId: string; identity: string; args: unknown[]; key: unknown }"
+    } else {
+        "{ connId: string; identity: string; args: unknown[] }"
+    };
     // The firing socket's minimal structural surface (attachment + send/close), so
     // emitted code stays free of `@cloudflare/workers-types`.
     let ws_ty = "{ deserializeAttachment(): unknown; send(data: string): void; close(code?: number, reason?: string): void }";
@@ -7215,6 +7258,10 @@ fn emit_ws_dispatch_handlers(
             },
             None,
         ));
+        // #1818: restore the key the `on open` attached.
+        if let Some((codec, key_ts)) = &host.agent_key {
+            stmts.push(agent_key_assign(codec, key_ts, "__att.key"));
+        }
     };
 
     if let Some(m) = host.message {

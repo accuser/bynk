@@ -14,6 +14,14 @@ export const OrderId = {
   },
 };
 
+export interface Coord {
+  readonly x: number;
+  readonly y: number;
+}
+
+export const Coord = {
+};
+
 export interface OrderState {
   readonly seen: boolean;
 }
@@ -71,7 +79,7 @@ const __OrderWire: __AgentWire = {
   name: { args: [], result: { enc: __serialise_OrderId, dec: __deserialise_OrderId } },
 };
 
-const __OrderKey = { enc: __serialise_OrderId, dec: __deserialise_OrderId };
+export const __OrderKey = { enc: __serialise_OrderId, dec: __deserialise_OrderId };
 
 export function __makeOrder(key: OrderId, env?: { ORDER?: __DurableObjectNamespace }): Order {
   return __makeAgent(__OrderRegistry, env?.ORDER, key, (state) => globalThis.Object.assign(new Order(state), { __key: key }), __OrderWire, __OrderKey);
@@ -134,7 +142,7 @@ const __LabelWire: __AgentWire = {
   text: { args: [], result: { enc: (__v: string) => __v as __JsonValue, dec: (__j: __JsonValue) => ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "string", actual: typeof __v } as __BoundaryError))(__j) } },
 };
 
-const __LabelKey = { enc: (__v: string) => __v as __JsonValue, dec: (__j: __JsonValue) => ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "string", actual: typeof __v } as __BoundaryError))(__j) };
+export const __LabelKey = { enc: (__v: string) => __v as __JsonValue, dec: (__j: __JsonValue) => ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "string", actual: typeof __v } as __BoundaryError))(__j) };
 
 export function __makeLabel(key: string, env?: { LABEL?: __DurableObjectNamespace }): Label {
   return __makeAgent(__LabelRegistry, env?.LABEL, key, (state) => globalThis.Object.assign(new Label(state), { __key: key }), __LabelWire, __LabelKey);
@@ -197,26 +205,95 @@ const __TallyWire: __AgentWire = {
   doubled: { args: [], result: { enc: (__v: number) => ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(__v), dec: (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j) } },
 };
 
-const __TallyKey = { enc: (__v: number) => ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(__v), dec: (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j) };
+export const __TallyKey = { enc: (__v: number) => ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(__v), dec: (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j) };
 
 export function __makeTally(key: number, env?: { TALLY?: __DurableObjectNamespace }): Tally {
   return __makeAgent(__TallyRegistry, env?.TALLY, key, (state) => globalThis.Object.assign(new Tally(state), { __key: key }), __TallyWire, __TallyKey);
 }
 
+export interface GridState {
+  readonly hits: number;
+}
+
+const __GridRegistry = new __StateRegistry();
+function __zeroOfGridState(): GridState { return { hits: 0 }; }
+
+function __rehydrateGridState(s: GridState, stored: GridState): void {
+  if (globalThis.Object.prototype.hasOwnProperty.call(stored, "hits")) { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "hits", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "hits", expected: "safe integer", actual: String(__v) } as __BoundaryError))((s.hits as unknown as __JsonValue)); if (__r.tag === "Err") throw __rehydrationViolation("Grid", __r.error); (s as { -readonly [K in keyof typeof s]: (typeof s)[K] }).hits = __r.value as unknown as (typeof s)["hits"]; }
+}
+
+function __encodeGridState(s: GridState): globalThis.Record<string, unknown> {
+  return { ...s, hits: ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(s.hits) };
+}
+
+export class Grid {
+  state: __DurableObjectState;
+  __key!: Coord;
+  constructor(state: __DurableObjectState) {
+    this.state = state;
+  }
+
+  private async loadState(): globalThis.Promise<GridState> {
+    const stored = await this.state.storage.get<GridState>("state");
+    if (stored === undefined) return __zeroOfGridState();
+    const __merged = { ...__zeroOfGridState(), ...stored };
+    __rehydrateGridState(__merged, stored);
+    return __merged;
+  }
+
+  private async commitState(s: GridState): globalThis.Promise<void> {
+    await this.state.storage.put("state", __encodeGridState(s));
+  }
+
+  async sum(deps: {}): globalThis.Promise<number> {
+    const __state = await this.loadState();
+    return this.__key.x + this.__key.y;
+  }
+
+  async fetch(request: globalThis.Request): globalThis.Promise<globalThis.Response> {
+    const url = new globalThis.URL(request.url);
+    if (url.pathname.startsWith("/_bynk/agent/")) {
+      const methodName = url.pathname.slice("/_bynk/agent/".length);
+      const { args, deps, key } = (await request.json()) as { args: unknown[]; deps: unknown; key: unknown };
+      this.__key = __decodeAgentKey(__GridKey, key) as Coord;
+      const result = await (this as unknown as globalThis.Record<string, (...bynkArgs: unknown[]) => unknown>)[methodName](...__decodeAgentArgs(__GridWire, methodName, args), deps);
+      return new globalThis.Response(globalThis.JSON.stringify(__encodeAgentResult(__GridWire, methodName, result)), { headers: { "content-type": "application/json" } });
+    }
+    return new globalThis.Response("Not Found", { status: 404 });
+  }
+
+}
+
+const __GridWire: __AgentWire = {
+  sum: { args: [], result: { enc: (__v: number) => ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(__v), dec: (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j) } },
+};
+
+export const __GridKey = { enc: __serialise_Coord, dec: __deserialise_Coord };
+
+export function __makeGrid(key: Coord, env?: { GRID?: __DurableObjectNamespace }): Grid {
+  return __makeAgent(__GridRegistry, env?.GRID, key, (state) => globalThis.Object.assign(new Grid(state), { __key: key }), __GridWire, __GridKey);
+}
+
+export const sum = {
+  async call(x: number, y: number, deps: { env: { GRID: __DurableObjectNamespace; LABEL: __DurableObjectNamespace; ORDER: __DurableObjectNamespace; TALLY: __DurableObjectNamespace } }): globalThis.Promise<number> {
+    return __makeGrid({ x: x, y: y }, deps.env).sum(deps);
+  },
+};
+
 export const name = {
-  async call(id: OrderId, deps: { env: { LABEL: __DurableObjectNamespace; ORDER: __DurableObjectNamespace; TALLY: __DurableObjectNamespace } }): globalThis.Promise<OrderId> {
+  async call(id: OrderId, deps: { env: { GRID: __DurableObjectNamespace; LABEL: __DurableObjectNamespace; ORDER: __DurableObjectNamespace; TALLY: __DurableObjectNamespace } }): globalThis.Promise<OrderId> {
     return __makeOrder(id, deps.env).name(deps);
   },
 };
 
 export const label = {
-  async call(id: string, deps: { env: { LABEL: __DurableObjectNamespace; ORDER: __DurableObjectNamespace; TALLY: __DurableObjectNamespace } }): globalThis.Promise<string> {
+  async call(id: string, deps: { env: { GRID: __DurableObjectNamespace; LABEL: __DurableObjectNamespace; ORDER: __DurableObjectNamespace; TALLY: __DurableObjectNamespace } }): globalThis.Promise<string> {
     return __makeLabel(id, deps.env).text(deps);
   },
 };
 
 export const doubled = {
-  async call(n: number, deps: { env: { LABEL: __DurableObjectNamespace; ORDER: __DurableObjectNamespace; TALLY: __DurableObjectNamespace } }): globalThis.Promise<number> {
+  async call(n: number, deps: { env: { GRID: __DurableObjectNamespace; LABEL: __DurableObjectNamespace; ORDER: __DurableObjectNamespace; TALLY: __DurableObjectNamespace } }): globalThis.Promise<number> {
     return __makeTally(n, deps.env).doubled(deps);
   },
 };
@@ -225,6 +302,36 @@ export function __resetAgents(): void {
   __OrderRegistry.reset();
   __LabelRegistry.reset();
   __TallyRegistry.reset();
+  __GridRegistry.reset();
+}
+
+export function __serialise_Coord(value: Coord): __JsonValue {
+  return {
+    x: ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(value.x),
+    y: ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(value.y),
+  };
+}
+
+export function __deserialise_Coord(json: __JsonValue, path: string = "$"): Result<Coord, __BoundaryError> {
+  if (typeof json !== "object" || json === null || globalThis.Array.isArray(json)) {
+    return Err({ kind: "StructuralMismatch", path, expected: "object", actual: typeof json });
+  }
+  const obj = json as { [k: string]: __JsonValue };
+  if (typeof obj["x"] !== "number") {
+    return Err({ kind: "StructuralMismatch", path: `${path}.x`, expected: "number", actual: typeof obj["x"] });
+  }
+  if (!globalThis.Number.isSafeInteger(obj["x"])) {
+    return Err({ kind: "StructuralMismatch", path: `${path}.x`, expected: "safe integer", actual: String(obj["x"]) });
+  }
+  const __x = obj["x"];
+  if (typeof obj["y"] !== "number") {
+    return Err({ kind: "StructuralMismatch", path: `${path}.y`, expected: "number", actual: typeof obj["y"] });
+  }
+  if (!globalThis.Number.isSafeInteger(obj["y"])) {
+    return Err({ kind: "StructuralMismatch", path: `${path}.y`, expected: "safe integer", actual: String(obj["y"]) });
+  }
+  const __y = obj["y"];
+  return Ok({ x: __x, y: __y } as Coord);
 }
 
 export function __serialise_OrderId(value: OrderId): __JsonValue {

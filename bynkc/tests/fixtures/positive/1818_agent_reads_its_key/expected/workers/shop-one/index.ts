@@ -5,7 +5,7 @@ import { Ok, Err, type Result, type __JsonValue, type __BoundaryError, __boundar
 import { compose, type Env } from "./compose.js";
 import * as handlers from "./handlers.js";
 
-export { Label, Order, Tally } from "./handlers.js";
+export { Grid, Label, Order, Tally } from "./handlers.js";
 
 export default {
   async fetch(request: globalThis.Request, env: Env): globalThis.Promise<globalThis.Response> {
@@ -48,6 +48,22 @@ export default {
             const id = __r_id.value;
             const result = await surface.name(id);
             const body = handlers.__serialise_OrderId(result);
+            return new globalThis.Response(globalThis.JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+          }
+          case "sum": {
+            const __contract = request.headers.get("X-Bynk-Contract");
+            if (__contract !== "025399e1676e2fc2") return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "sum", expected: "025399e1676e2fc2", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            const args = await request.json() as __JsonValue;
+            if (typeof args !== "object" || args === null || globalThis.Array.isArray(args)) return new globalThis.Response(globalThis.JSON.stringify({ kind: "StructuralMismatch", path: "$", expected: "object", actual: typeof args }), { status: 400, headers: { "content-type": "application/json" } });
+            const argsObj = args as { [k: string]: __JsonValue };
+            const __r_x = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$.x", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$.x", expected: "safe integer", actual: String(__v) } as __BoundaryError))(argsObj["x"]);
+            if (__r_x.tag === "Err") return new globalThis.Response(globalThis.JSON.stringify(__r_x.error), { status: 400, headers: { "content-type": "application/json" } });
+            const x = __r_x.value;
+            const __r_y = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$.y", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$.y", expected: "safe integer", actual: String(__v) } as __BoundaryError))(argsObj["y"]);
+            if (__r_y.tag === "Err") return new globalThis.Response(globalThis.JSON.stringify(__r_y.error), { status: 400, headers: { "content-type": "application/json" } });
+            const y = __r_y.value;
+            const result = await surface.sum(x, y);
+            const body = ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(result);
             return new globalThis.Response(globalThis.JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
           }
           default:

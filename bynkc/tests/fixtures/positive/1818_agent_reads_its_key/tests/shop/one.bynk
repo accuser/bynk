@@ -17,3 +17,8 @@ case "an agent reads its int key" {
   let n <- doubled.call(21)
   expect n == 42
 }
+
+case "an agent reads its record key" {
+  let n <- sum.call(2, 3)
+  expect n == 5
+}

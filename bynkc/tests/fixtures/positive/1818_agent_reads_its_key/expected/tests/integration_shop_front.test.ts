@@ -32,6 +32,7 @@ function __makeHarness() {
   const env___ns_shop_front: any = {};
   const env___ns_shop_one: any = {};
   env___ns_shop_front.SHOP_ONE = { fetch: (req: globalThis.Request) => worker___ns_shop_one.fetch(req, env___ns_shop_one) } as __ServiceBinding;
+  env___ns_shop_one.GRID = __makeIntegrationDoNamespace((state) => new __ns_shop_one.Grid(state));
   env___ns_shop_one.LABEL = __makeIntegrationDoNamespace((state) => new __ns_shop_one.Label(state));
   env___ns_shop_one.ORDER = __makeIntegrationDoNamespace((state) => new __ns_shop_one.Order(state));
   env___ns_shop_one.TALLY = __makeIntegrationDoNamespace((state) => new __ns_shop_one.Tally(state));
@@ -69,10 +70,25 @@ async function test_a_Durable_Object_reads_its_int_key() {
   }
 }
 
+async function test_a_Durable_Object_reads_its_record_key() {
+  try {
+    const deps = __makeHarness();
+    const n = await __callService(deps.env.SHOP_FRONT, "sum", { x: ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(2), y: ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(3) }, (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j), "integration", "025399e1676e2fc2");
+    if (!(__bynkEq(n, 5))) { throw __bynkExpectFailure("tests/shop/front_system.bynk:18:12", 463, 469, "expect n == 5\n  expected: n == 5\n  actual:   " + __bynkShow((n)) + " == " + __bynkShow((5))); }
+    return { pass: true };
+  } catch (e) {
+    if (e instanceof ExpectationError) {
+      return { pass: false, error: { message: e.message, location: e.location } };
+    }
+    return { pass: false, error: { message: String(e), location: "unknown" } };
+  }
+}
+
 export async function run(only?: string) {
   const results = [];
   const want = (n: string): boolean => only === undefined || only === n;
   if (want("a Durable Object reads its string key")) results.push({ name: "a Durable Object reads its string key", ...(await test_a_Durable_Object_reads_its_string_key()) });
   if (want("a Durable Object reads its int key")) results.push({ name: "a Durable Object reads its int key", ...(await test_a_Durable_Object_reads_its_int_key()) });
+  if (want("a Durable Object reads its record key")) results.push({ name: "a Durable Object reads its record key", ...(await test_a_Durable_Object_reads_its_record_key()) });
   return results;
 }
