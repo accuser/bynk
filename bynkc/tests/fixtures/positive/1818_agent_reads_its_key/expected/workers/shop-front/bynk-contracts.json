@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "provides": {
+    "doubled": "5429627284c73916",
+    "label": "f639af6dc8c31504"
+  },
+  "expects": {
+    "shop.one": {
+      "doubled": "5429627284c73916",
+      "label": "f639af6dc8c31504"
+    }
+  }
+}

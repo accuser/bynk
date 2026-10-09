@@ -1310,6 +1310,16 @@ export function decodeAgentArgs(wire: AgentWire, method: string, args: unknown[]
   });
 }
 
+// #1818: the DO side of an agent that reads its own key (`self.<key>`). A
+// Durable Object knows only its id, not the key it was addressed by, so the
+// caller's proxy sends the key with each call, encoded by the key type's codec,
+// and the DO decodes it here.
+export function decodeAgentKey(codec: WireCodec, json: unknown): unknown {
+  const r = codec.dec(json as JsonValue, "$.key");
+  if (r.tag === "Err") throw boundaryError(r.error);
+  return r.value;
+}
+
 // The DO side: encode a call's result.
 export function encodeAgentResult(wire: AgentWire, method: string, result: unknown): JsonValue {
   return agentWireMethod(wire, method).result.enc(result as never);
@@ -1323,11 +1333,13 @@ export async function callDurableObjectMethod(
   method: string,
   args: unknown[],
   deps: unknown,
+  key?: JsonValue,
 ): Promise<JsonValue> {
   const response = await stub.fetch(`https://_bynk/_bynk/agent/${method}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ args, deps }),
+    // #1818: the key rides along only for an agent that reads it.
+    body: JSON.stringify(key === undefined ? { args, deps } : { args, deps, key }),
   });
   if (!response.ok) throw new Error(await response.text());
   return (await response.json()) as JsonValue;
@@ -1342,8 +1354,10 @@ export function makeWorkersAgent<C>(
   binding: DurableObjectNamespace,
   key: unknown,
   wire?: AgentWire,
+  keyCodec?: WireCodec,
 ): C {
   const stub = binding.get(binding.idFromName(serialiseAgentKey(key)));
+  const sentKey = keyCodec === undefined ? undefined : keyCodec.enc(key as never);
   const proxy = new Proxy(
     {},
     {
@@ -1352,10 +1366,10 @@ export function makeWorkersAgent<C>(
         return async (...callArgs: unknown[]) => {
           const deps = callArgs.length > 0 ? callArgs[callArgs.length - 1] : {};
           const args = callArgs.length > 0 ? callArgs.slice(0, -1) : [];
-          if (wire === undefined) return callDurableObjectMethod(stub, prop, args, deps);
+          if (wire === undefined) return callDurableObjectMethod(stub, prop, args, deps, sentKey);
           const m = agentWireMethod(wire, prop);
           const encoded = args.map((a, i) => (m.args[i] ?? AGENT_WIRE_PASS).enc(a as never));
-          const json = await callDurableObjectMethod(stub, prop, encoded, deps);
+          const json = await callDurableObjectMethod(stub, prop, encoded, deps, sentKey);
           const r = m.result.dec(json);
           if (r.tag === "Err") throw boundaryError(r.error);
           return r.value;
@@ -1375,9 +1389,10 @@ export function makeAgent<C>(
   key: unknown,
   constructBundle: (state: DurableObjectState) => C,
   wire?: AgentWire,
+  keyCodec?: WireCodec,
 ): C {
   if (binding !== undefined) {
-    return makeWorkersAgent<C>(binding, key, wire);
+    return makeWorkersAgent<C>(binding, key, wire, keyCodec);
   }
   const state = registry.getOrCreate(key);
   return constructBundle(state);
@@ -2036,6 +2051,7 @@ export {
   connIdOf as __connIdOf,
   corsPreflightResponse as __corsPreflightResponse,
   decodeAgentArgs as __decodeAgentArgs,
+  decodeAgentKey as __decodeAgentKey,
   deliverEvent as __deliverEvent,
   deserialiseEventEnvelope as __deserialiseEventEnvelope,
   dispatchToEventsFanout as __dispatchToEventsFanout,

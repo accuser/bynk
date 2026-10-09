@@ -4302,6 +4302,31 @@ fn history_variant_tag(handler: &str) -> String {
 /// module map via `print_stmt_and_merge`, the same composition
 /// `emit_free_fn`/`emit_provider`/`emit_service` already use.
 /// #1678: the name of an agent's wire table, `__<Agent>Wire`.
+/// #1818: whether a handler of `a` reads the agent's own key as `self.<key>`.
+/// Only such an agent carries its key (a `__key` field, set by the bundle
+/// factory and, on workers, sent with each call), so every other agent's output
+/// is unchanged.
+pub(crate) fn agent_reads_key(a: &AgentDecl) -> bool {
+    a.handlers.iter().any(|h| {
+        let mut found = false;
+        bynk_ir::walk_block_exprs(&h.body, &mut |e| {
+            if let ExprKind::FieldAccess { receiver, field } = &e.kind
+                && matches!(&receiver.kind, ExprKind::Ident(id) if id.name == "self")
+                && field.name == a.key_name.name
+            {
+                found = true;
+            }
+        });
+        found
+    })
+}
+
+/// #1818: the name of an agent's key codec, emitted on workers for an agent
+/// that reads its key.
+fn agent_key_codec_name(agent: &str) -> String {
+    format!("__{agent}Key")
+}
+
 fn agent_wire_name(agent: &str) -> String {
     format!("__{agent}Wire")
 }
@@ -4313,6 +4338,38 @@ fn agent_wire_name(agent: &str) -> String {
 /// (`agent_call_boundary_roots`) emits them in this module. A position with no
 /// wire form passes through (`AGENT_WIRE_PASS`). The DO stub's proxy and the
 /// DO's `fetch` both read it.
+/// #1818: `const __<Agent>Key = <codec>`, the key type's wire codec, shared by
+/// the caller's proxy (which encodes the key) and the DO (which decodes it).
+fn agent_key_codec(a: &AgentDecl, ru: &crate::emitter::runtime_use::RuntimeUse) -> bynk_ts::TsStmt {
+    bynk_ts::TsStmt::decl(
+        bynk_ts::TsDecl::ConstDecl {
+            name: agent_key_codec_name(&a.name.name),
+            ty: None,
+            init: agent_wire_codec(&a.key_type, ru),
+        },
+        None,
+    )
+}
+
+/// One wire position's codec: `{ enc, dec }` from the type's boundary codec, or
+/// the pass-through for a type with no wire form.
+fn agent_wire_codec(t: &TypeRef, ru: &crate::emitter::runtime_use::RuntimeUse) -> bynk_ts::TsExpr {
+    if serialisation::agent_wire_passes_through(t) {
+        bynk_ts::TsExpr::Ident("__AGENT_WIRE_PASS".to_string())
+    } else {
+        bynk_ts::TsExpr::object(vec![
+            (
+                "enc".to_string(),
+                serialisation::serialise_ref_via(t, "", ru),
+            ),
+            (
+                "dec".to_string(),
+                serialisation::deserialise_ref_via(t, "", ru),
+            ),
+        ])
+    }
+}
+
 fn agent_wire_table(
     a: &AgentDecl,
     ru: &crate::emitter::runtime_use::RuntimeUse,
@@ -5269,6 +5326,17 @@ pub(crate) fn emit_agent(
     let source_map = Some(&class_smb);
     writeln!(out, "export class {name} {{", name = a.name.name).unwrap();
     writeln!(out, "  state: __DurableObjectState;").unwrap();
+    let reads_key = agent_reads_key(a);
+    if reads_key {
+        // #1818: set before any handler runs, by the bundle factory or the
+        // workers `fetch` dispatch.
+        writeln!(
+            out,
+            "  __key!: {};",
+            crate::emitter::ts_type_ref(&a.key_type)
+        )
+        .unwrap();
+    }
     // #527: an agent whose methods take `given` capabilities rebuilds those
     // deps *inside* the DO (providers cannot cross the JSON wire), and some
     // providers take the Worker `env` — workerd passes it as the DO
@@ -6053,7 +6121,11 @@ pub(crate) fn emit_agent(
                 None,
             ),
             bynk_ts::TsStmt::const_stmt(
-                bynk_ts::TsBindingName::ObjectPattern(vec!["args".to_string(), "deps".to_string()]),
+                bynk_ts::TsBindingName::ObjectPattern(if reads_key {
+                    vec!["args".to_string(), "deps".to_string(), "key".to_string()]
+                } else {
+                    vec!["args".to_string(), "deps".to_string()]
+                }),
                 None,
                 bynk_ts::TsExpr::As {
                     expr: Box::new(bynk_ts::TsExpr::Paren(Box::new(bynk_ts::TsExpr::Await(
@@ -6065,17 +6137,37 @@ pub(crate) fn emit_agent(
                             args: Vec::new(),
                         }),
                     )))),
-                    ty: bynk_ts::TsType::Object(vec![
-                        bynk_ts::TsTypeMember::prop(
-                            "args",
-                            bynk_ts::TsType::array(bynk_ts::TsType::named("unknown")),
-                        ),
-                        bynk_ts::TsTypeMember::prop("deps", bynk_ts::TsType::named("unknown")),
-                    ]),
+                    ty: bynk_ts::TsType::Object(
+                        vec![
+                            bynk_ts::TsTypeMember::prop(
+                                "args",
+                                bynk_ts::TsType::array(bynk_ts::TsType::named("unknown")),
+                            ),
+                            bynk_ts::TsTypeMember::prop("deps", bynk_ts::TsType::named("unknown")),
+                        ]
+                        .into_iter()
+                        .chain(reads_key.then(|| {
+                            bynk_ts::TsTypeMember::prop("key", bynk_ts::TsType::named("unknown"))
+                        }))
+                        .collect(),
+                    ),
                 },
                 None,
             ),
         ];
+        // #1818: an agent that reads its key learns it from the call, decoded
+        // by its key codec, before the handler runs.
+        if reads_key {
+            agent_dispatch_stmts.push(bynk_ts::TsStmt::assign(
+                bynk_ts::TsExpr::Ident("this.__key".to_string()),
+                bynk_ts::TsExpr::Ident(format!(
+                    "__decodeAgentKey({}, key) as {}",
+                    agent_key_codec_name(&a.name.name),
+                    crate::emitter::ts_type_ref(&a.key_type)
+                )),
+                None,
+            ));
+        }
         // #1678: the wire arguments are decoded through this agent's table
         // before the handler sees them (`decodeAgentArgs` throws on a decode
         // failure, an internal fault), and the result is encoded on the way out.
@@ -6337,6 +6429,9 @@ pub(crate) fn emit_agent(
     let workers = matches!(ctx.target, BuildTarget::Workers);
     if workers {
         stmts.push(agent_wire_table(a, &ctx.runtime_use));
+        if reads_key {
+            stmts.push(agent_key_codec(a, &ctx.runtime_use));
+        }
     }
     let key_ts = ts_type_ref_to_ts_type(&a.key_type, None);
     let bind = crate::emitter::wrangler::agent_binding_name(&a.name.name);
@@ -6356,9 +6451,17 @@ pub(crate) fn emit_agent(
             is_async: false,
             generics: Vec::new(),
             return_type: None,
-            body: Box::new(bynk_ts::TsArrowBody::Expr(Box::new(bynk_ts::TsExpr::New {
-                callee: Box::new(bynk_ts::TsExpr::Ident(a.name.name.clone())),
-                args: vec![bynk_ts::TsExpr::Ident("state".to_string())],
+            body: Box::new(bynk_ts::TsArrowBody::Expr(Box::new(if reads_key {
+                // #1818: the bundle instance learns its key here.
+                bynk_ts::TsExpr::Ident(format!(
+                    "globalThis.Object.assign(new {}(state), {{ __key: key }})",
+                    a.name.name
+                ))
+            } else {
+                bynk_ts::TsExpr::New {
+                    callee: Box::new(bynk_ts::TsExpr::Ident(a.name.name.clone())),
+                    args: vec![bynk_ts::TsExpr::Ident("state".to_string())],
+                }
             }))),
         },
     ];
@@ -6366,6 +6469,9 @@ pub(crate) fn emit_agent(
     // decodes the result through this agent's wire table.
     if workers {
         make_agent_args.push(bynk_ts::TsExpr::Ident(agent_wire_name(&a.name.name)));
+        if reads_key {
+            make_agent_args.push(bynk_ts::TsExpr::Ident(agent_key_codec_name(&a.name.name)));
+        }
     }
     let factory_decl = bynk_ts::TsStmt::decl(
         bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::Function {

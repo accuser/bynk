@@ -1,0 +1,56 @@
+context shop.one
+
+-- #1818: an agent reads its own key as `self.<key>`. It used to emit
+-- `this.state.id.toString() as id`: a cast to the key's *name* (TS2304), over
+-- a value that was never the key ("[object Object]" on bundle, the Durable
+-- Object's hex id on workers). Three key types exercise the key codec: a
+-- refined `String`, a `String` and an `Int`.
+type OrderId = String where NonEmpty
+
+agent Order {
+  key id: OrderId
+
+  store seen: Cell[Bool]
+
+  on call name() -> Effect[OrderId] {
+    self.id
+  }
+}
+
+agent Label {
+  key id: String
+
+  store seen: Cell[Bool]
+
+  on call text() -> Effect[String] {
+    self.id
+  }
+}
+
+agent Tally {
+  key n: Int
+
+  store hits: Cell[Int]
+
+  on call doubled() -> Effect[Int] {
+    self.n * 2
+  }
+}
+
+service name {
+  on call(id: OrderId) -> Effect[OrderId] {
+    Order(id).name()
+  }
+}
+
+service label {
+  on call(id: String) -> Effect[String] {
+    Label(id).text()
+  }
+}
+
+service doubled {
+  on call(n: Int) -> Effect[Int] {
+    Tally(n).doubled()
+  }
+}

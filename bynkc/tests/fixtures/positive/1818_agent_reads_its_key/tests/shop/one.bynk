@@ -1,0 +1,19 @@
+---
+#1818: the bundle target, where the factory hands each instance its key.
+---
+suite shop.one
+
+case "an agent reads its string key" {
+  match OrderId.of("o-7") {
+    Err(_) => expect false
+    Ok(id) => {
+      let got <- name.call(id)
+      expect got == id
+    }
+  }
+}
+
+case "an agent reads its int key" {
+  let n <- doubled.call(21)
+  expect n == 42
+}

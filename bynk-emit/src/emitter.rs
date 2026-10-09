@@ -2971,13 +2971,26 @@ fn write_header(commons: &TypedCommons, ctx: &EmitProjectCtx) -> Vec<bynk_ts::Ts
             parts.push("type __AgentWire");
             parts.push("__decodeAgentArgs");
             parts.push("__encodeAgentResult");
+            // #1818: an agent that reads its own key decodes it on the DO side.
+            let reads_key = |a: &AgentDecl| crate::emitter::emit::agent_reads_key(a);
+            if commons
+                .commons
+                .items
+                .iter()
+                .any(|i| matches!(i, CommonsItem::Agent(a) if reads_key(a)))
+            {
+                parts.push("__decodeAgentKey");
+            }
             let passes_through = commons.commons.items.iter().any(|i| match i {
-                CommonsItem::Agent(a) => a.handlers.iter().any(|h| {
-                    serialisation::agent_wire_passes_through(&h.return_type)
-                        || h.params
-                            .iter()
-                            .any(|p| serialisation::agent_wire_passes_through(&p.type_ref))
-                }),
+                CommonsItem::Agent(a) => {
+                    (reads_key(a) && serialisation::agent_wire_passes_through(&a.key_type))
+                        || a.handlers.iter().any(|h| {
+                            serialisation::agent_wire_passes_through(&h.return_type)
+                                || h.params
+                                    .iter()
+                                    .any(|p| serialisation::agent_wire_passes_through(&p.type_ref))
+                        })
+                }
                 _ => false,
             });
             if passes_through {

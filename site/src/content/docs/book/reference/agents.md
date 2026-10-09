@@ -24,7 +24,7 @@ agent Counter {
 
 | Part | Rule |
 |---|---|
-| `key <name>: <Type>` | the agent's identity; one key field. |
+| `key <name>: <Type>` | the agent's identity; one key field. A handler reads it as `self.<name>`: the key this instance was addressed by. |
 | `store <name>: <Kind>[…]` | a persistent field of a storage kind (`Cell`, `Map`, `Set`, `Cache`, `Log`). Every field needs an **initial value** — an explicit initialiser or an implicit zero (see below). |
 | `on call <name>(…) -> Effect[T]` | a handler. The return type must be an `Effect` (`bynk.agent.return_not_effect`). |
 
