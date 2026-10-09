@@ -498,8 +498,9 @@ fn render_state_hover(sig: &str, contextual_kw: &str) -> String {
 /// the type is the receiver's name; for an agent handler the checker gives
 /// `self` a synthetic record type `__<Agent>Self` (to resolve `self.<key>`),
 /// which is un-synthesised here to `<Agent>`. `None` when the cursor is not on
-/// the `self` keyword or its type is unknown (a broken buffer — `expr_types` is
-/// clean-file-only, so this degrades to the keyword doc, never a wrong type).
+/// the `self` keyword or its type is unknown (no `expr_types` entry for it —
+/// on a broken buffer ADR 0094's partial types usually still carry one; when
+/// they don't, this degrades to the keyword doc).
 pub fn describe_self_at(
     text: &str,
     offset: usize,

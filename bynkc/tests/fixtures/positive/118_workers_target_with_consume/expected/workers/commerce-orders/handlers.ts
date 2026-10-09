@@ -6,6 +6,7 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError, ty
 import { Money as __CommonsMoney } from "../../commerce/money.js";
 
 import type * as commerce_payment from "../commerce-payment/handlers.js";
+import { __serialise_CurrencyCode, __deserialise_CurrencyCode, __serialise_Money, __deserialise_Money } from "../../commerce/money.js";
 
 export type Money = __CommonsMoney & { readonly __ctxBrand?: "commerce.orders" };
 
@@ -88,7 +89,6 @@ export function __deserialise_OrderError(json: __JsonValue, path: string = "$"):
 }
 
 
-import { __serialise_CurrencyCode, __deserialise_CurrencyCode, __serialise_Money, __deserialise_Money } from "../../commerce/money.js";
 export { __serialise_CurrencyCode, __deserialise_CurrencyCode, __serialise_Money, __deserialise_Money };
 
 export function __serialise_Result_Unit_OrderError(value: Result<void, OrderError>): __JsonValue {

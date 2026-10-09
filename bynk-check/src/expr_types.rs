@@ -2,15 +2,17 @@
 //!
 //! The checker computes `expr_types: HashMap<ExprId, TypedExpr>` per file as
 //! it types each expression (T3.4, R2.4 — keyed by node identity, not
-//! position), but that map rides inside the `Ok(TypedCommons)` payload
-//! `check_record` drops on error, and the LSP `Analyse` path discards it
-//! entirely. This sink carries it out to the analysis so completion can ask
-//! *"what is the type of the expression at this offset?"* (the receiver before
-//! a `.`), mirroring [`HintSink`](crate::hints::HintSink).
+//! position). On the Ok path that map rides inside the `TypedCommons`; on the
+//! error path `check_record` hands it out as `RecordCheck::partial_expr_types`.
+//! This sink carries it out to the analysis so completion can ask *"what is
+//! the type of the expression at this offset?"* (the receiver before a `.`),
+//! mirroring [`HintSink`](crate::hints::HintSink).
 //!
-//! Capture is on the **Ok path** — a file's types are recorded only when it
-//! checks clean (`check_record` returns `Ok`), so a mid-edit file with errors
-//! yields nothing for that file (the slice-3 "clean-file ceiling", ADR 0063).
+//! Capture is at **every per-file exit** of the check, clean or not (ADR 0094,
+//! via [`record_analyse_types`](crate::check_pipeline::record_analyse_types)):
+//! a mid-edit file with an error still yields the best-effort types of its
+//! other expressions. ADR 0094 lifted the slice-3 "clean-file ceiling" of
+//! ADR 0063, under which a file with errors yielded nothing.
 //! Unlike hints, **test/integration files are not muted** (completion runs in
 //! them); only synthetic toolchain-injected files are.
 
@@ -47,8 +49,9 @@ impl ExprTypeSink {
         self.muted = muted;
     }
 
-    /// Record a whole file's `expr_types` map (the Ok-path capture). Dropped
-    /// when muted or before any `enter_file`.
+    /// Record a whole file's `expr_types` map — the Ok path's, or the error
+    /// path's best-effort partial one (ADR 0094). Dropped when muted or before
+    /// any `enter_file`.
     ///
     /// T3.4: the checker's own map is keyed by [`ExprId`] (R2.4) — position
     /// is never identity there. This sink's own storage stays position-keyed

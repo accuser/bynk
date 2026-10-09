@@ -1,0 +1,10 @@
+---
+#1815/#1823/#1817: the Worker loads, and the call crosses into
+`shop.payment` with a commons-typed argument.
+---
+suite shop.orders as system {
+  case "placing crosses the payment edge" {
+    let ok <- shop.orders.place()
+    expect ok
+  }
+}

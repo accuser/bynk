@@ -4,6 +4,7 @@
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, type __JsonValue, type __BoundaryError, type __ServiceBinding, __callService, __boundaryError } from "../../runtime.js";
 
 import { Paginated as __CommonsPaginated, User as __CommonsUser } from "../../shop/envelope.js";
+import { __serialise_User, __deserialise_User } from "../../shop/envelope.js";
 
 export type Paginated<T> = __CommonsPaginated<T> & { readonly __ctxBrand?: "shop.api" };
 export type User = __CommonsUser & { readonly __ctxBrand?: "shop.api" };
@@ -14,7 +15,6 @@ export const users = {
   },
 };
 
-import { __serialise_User, __deserialise_User } from "../../shop/envelope.js";
 export { __serialise_User, __deserialise_User };
 
 export function __serialise_Paginated_User(value: Paginated<User>): __JsonValue {
