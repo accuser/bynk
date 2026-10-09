@@ -5354,7 +5354,10 @@ fn lower_field_access(e: &Expr, receiver: &Expr, field: &Ident, cx: &mut LowerCt
         && let Some(k) = cx.agent_key_field()
         && field.name == *k
     {
-        return pre.finish(format!("(this.state.id.toString() as {})", k));
+        // #1818: the key this instance was addressed by. It used to read
+        // `this.state.id.toString()` (the Durable Object's hex id on workers,
+        // "[object Object]" on bundle) cast to the key's *name*.
+        return pre.finish("this.__key".to_string());
     }
     // v0.45: `<binder>.identity` on a verified actor binding. The binder is not
     // a runtime value; the identity is minted at the verification seam. For the

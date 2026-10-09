@@ -695,11 +695,19 @@ pub(crate) fn emit_worker_compose(
                 bynk_ir::IrHandlerKind::Open => {
                     let seam = bynk_check::actors::bearer_seam_for(h, &table.actors);
                     let local_agents: HashSet<String> = table.agents.keys().cloned().collect();
+                    // #1818: hosting agents that read their key are forwarded it.
+                    let key_readers: HashSet<String> = table
+                        .agents
+                        .iter()
+                        .filter(|(_, a)| crate::emitter::emit::agent_reads_key(a))
+                        .map(|(n, _)| n.clone())
+                        .collect();
                     return_entries.push(emit_websocket_upgrade(
                         sname,
                         h,
                         seam.as_ref(),
                         &local_agents,
+                        &key_readers,
                     ));
                 }
                 // v0.106 (slice 3b-iii): `on close` runs in the DO (`webSocketClose`),
@@ -1206,6 +1214,7 @@ fn emit_websocket_upgrade(
     h: &Handler,
     seam: Option<&bynk_check::actors::BearerSeam>,
     local_agents: &HashSet<String>,
+    key_readers: &HashSet<String>,
 ) -> TsObjectEntry {
     use crate::emitter::websocket::{WsOpenShape, analyse_open_shape};
     // The route params (e.g. `roomId`) ride as wrapper arguments — the entry
@@ -1489,7 +1498,7 @@ fn emit_websocket_upgrade(
             vec![method_call(
                 ident("__ns"),
                 "idFromName",
-                vec![call(ident("__serialiseAgentKey"), vec![key_ref])],
+                vec![call(ident("__serialiseAgentKey"), vec![key_ref.clone()])],
             )],
         ),
     ));
@@ -1503,6 +1512,21 @@ fn emit_websocket_upgrade(
     let mut fwd_entries = vec![("args".to_string(), TsExpr::array(args_json))];
     if has_identity {
         fwd_entries.push(("identity".to_string(), member(ident("__id"), "value")));
+    }
+    // #1818: the hosting agent reads its key, so the upgrade carries it, encoded
+    // by the agent's key codec.
+    if key_readers.contains(target.agent) {
+        fwd_entries.push((
+            "key".to_string(),
+            method_call(
+                member(
+                    ident("handlers"),
+                    crate::emitter::emit::agent_key_codec_name(target.agent),
+                ),
+                "enc",
+                vec![key_ref.clone()],
+            ),
+        ));
     }
     stmts.push(expr_stmt(method_call(
         ident("__fwd"),

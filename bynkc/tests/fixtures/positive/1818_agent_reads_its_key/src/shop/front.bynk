@@ -1,0 +1,22 @@
+context shop.front
+
+-- #1818: the `system` suite's edge into `shop.one`, whose agents read their keys.
+consumes shop.one as One
+
+service label {
+  on call(id: String) -> Effect[String] {
+    One.label(id)
+  }
+}
+
+service sum {
+  on call(x: Int, y: Int) -> Effect[Int] {
+    One.sum(x, y)
+  }
+}
+
+service doubled {
+  on call(n: Int) -> Effect[Int] {
+    One.doubled(n)
+  }
+}
