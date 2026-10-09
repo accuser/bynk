@@ -163,8 +163,9 @@ pub struct ProjectDiagnostics {
     /// span, label)`, span-ordered, spans against the analysed snapshots.
     pub hints: hints::FileHints,
     /// v0.30.2 (ADR 0063): per-file expression types — `(expr span, Ty)`,
-    /// captured on the Ok path, for `.`-member completion's receiver typing.
-    /// Empty for files with errors (the clean-file ceiling).
+    /// for `.`-member completion's receiver typing. A file with errors still
+    /// carries the best-effort partial types of its other expressions
+    /// (ADR 0094, which lifted ADR 0063's clean-file ceiling).
     pub expr_types: expr_types::FileExprTypes,
     /// T3.6b (R4.1): the intern table `expr_types`' `TyId`s resolve against —
     /// one per analysis, shared across every unit it checked.

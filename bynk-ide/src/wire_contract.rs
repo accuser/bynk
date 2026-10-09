@@ -459,9 +459,9 @@ struct ResponseWalk<'a> {
     /// T3.6b (R4.1): the table `expr_types`' ids resolve against.
     tys: &'a Types,
     /// #855 risk 7 ("the `Ok` overload"): the declared-return-type fallback
-    /// used whenever `expr_types` has no entry for a span (a file with
-    /// errors, ADR 0063's clean-file ceiling) — mirrors
-    /// `bynk-emit/src/emitter/lower.rs`'s own `Ok`/`HttpResult` overload
+    /// used whenever `expr_types` has no entry for a span (an expression the
+    /// checker never typed — ADR 0094's partial types still miss those) —
+    /// mirrors `bynk-emit/src/emitter/lower.rs`'s own `Ok`/`HttpResult` overload
     /// disambiguation, which has the identical ambiguity and the identical
     /// (checker-backed, so never actually degraded there) resolution.
     /// Applied to `Ok` and bare `Call` (see `is_http_result_expr` below) but

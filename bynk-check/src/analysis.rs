@@ -184,9 +184,13 @@ pub struct ProjectAnalysis {
     /// sites. Empty for files the pipeline never type-checked.
     pub hints: FileHints,
     /// v0.30.2 (ADR 0063): per-file expression types — `(expr span, Ty)`,
-    /// captured on the Ok path (a file that checks clean), for `.`-member
-    /// completion's receiver typing. Empty for files with errors (the
-    /// clean-file ceiling) and for synthetic files.
+    /// for `.`-member completion's and signature help's receiver typing.
+    /// Recorded at every per-file exit of the check, clean or not: a file
+    /// with errors still carries the best-effort partial types the checker
+    /// computed for its other expressions (ADR 0094, which lifted ADR 0063's
+    /// clean-file ceiling — see [`record_analyse_types`]).
+    /// Empty for files the pipeline never type-checked and for synthetic
+    /// files (muted).
     pub expr_types: FileExprTypes,
     /// T3.6b (R4.1): the intern table every `TyId` in `expr_types` resolves
     /// against — one table shared across the whole analysis.
