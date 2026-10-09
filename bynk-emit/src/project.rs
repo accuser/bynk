@@ -1482,8 +1482,9 @@ fn run_checks(
     // v0.99: the capability-requirement ledger — recorded at the checker's
     // capability-consuming sites. Same #1541 residue as `refs`/`hints`.
     let mut requirements = RequirementSink::new();
-    // v0.30.2 (ADR 0063): per-file expression types, captured on the Ok path so
-    // `.`-member completion can type a receiver. Carried like `hints`.
+    // v0.30.2 (ADR 0063): per-file expression types, so `.`-member completion
+    // can type a receiver — on the error paths too, as best-effort partial
+    // types (ADR 0094). Carried like `hints`.
     let mut exprs = ExprTypeSink::new();
     let mut snapshots: Vec<(PathBuf, String)> = Vec::new();
 

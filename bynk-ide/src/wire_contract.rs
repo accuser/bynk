@@ -980,9 +980,10 @@ service api from http {
             .expect("boundary_info entry for oddnames");
 
         let offset = find_offset(SRC, "GET(\"/x\")");
-        // Deliberately pass an empty `expr_types` — the degraded path (a
-        // file with errors, ADR 0063's clean-file ceiling) this fixture is
-        // standing in for, even though it type-checks cleanly on its own.
+        // Deliberately pass an empty `expr_types` — the degraded path (an
+        // expression the checker never typed, see `expr_types` above) this
+        // fixture is standing in for, even though it type-checks cleanly on
+        // its own.
         let model = wire_contract_at(
             "oddnames",
             SRC,

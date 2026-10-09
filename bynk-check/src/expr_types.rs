@@ -49,8 +49,9 @@ impl ExprTypeSink {
         self.muted = muted;
     }
 
-    /// Record a whole file's `expr_types` map (the Ok-path capture). Dropped
-    /// when muted or before any `enter_file`.
+    /// Record a whole file's `expr_types` map — the Ok path's, or the error
+    /// path's best-effort partial one (ADR 0094). Dropped when muted or before
+    /// any `enter_file`.
     ///
     /// T3.4: the checker's own map is keyed by [`ExprId`] (R2.4) — position
     /// is never identity there. This sink's own storage stays position-keyed
