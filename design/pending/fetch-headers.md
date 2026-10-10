@@ -1,6 +1,6 @@
 ---
 level: minor
-changelog: "`Fetch.send` sends extra request headers and returns the response's: `Request` and `Response` gain `headers: Map[String, String]` (a required field — existing literals add `headers: Map.empty()`), and `FetchError` gains `InvalidHeader` for a request whose headers conflict with a typed slot or name a header the platform owns (#1886)"
+changelog: "`Fetch.send` sends extra request headers and returns the response's: `Request` and `Response` gain `headers: Map[String, String]` (a required field — existing literals add `headers: Map.empty()`), and `FetchError` gains `InvalidHeader` for a request whose headers conflict with a typed slot, name a header the platform owns or are not legal headers, or whose `contentType`/`authorization` value is not a legal header value (#1886)"
 ---
 
 ## ADR: fetch-headers
@@ -49,7 +49,10 @@ service could not read `ETag`, `Retry-After` or rate-limit headers.
   because a server-side Worker or Node service legitimately sends them. A
   duplicate name differing only in case, and a name or value that is not a
   legal header (the platform's `Headers` throws), are also `InvalidHeader`
-  — never misreported as `Network`.
+  — never misreported as `Network`. So is a typed slot whose value is not a
+  legal header value: before this change a `contentType` or `authorization`
+  holding, say, a newline reached `fetch`, which threw, and surfaced as
+  `Network`; it is now `InvalidHeader`, even with an empty `headers`.
 - **`FetchError` gains `InvalidHeader`.** It is a distinct variant because it
   is a caller error that retrying cannot fix, unlike `Network`/`Timeout`. No
   exhaustive `match` on `FetchError` existed in the corpus, examples or docs,
@@ -57,8 +60,14 @@ service could not read `ETag`, `Retry-After` or rate-limit headers.
 - **`Response` gains `headers: Map[String, String]`, keys lowercased.** The
   platform's `Headers` iteration already yields lowercased names, so
   `res.headers.get("etag")` reads a header whatever case the server sent. A
-  header the server repeated (e.g. `set-cookie`) arrives as one comma-joined
-  value.
+  header the server repeated arrives as one value joined with ", ". The Fetch
+  standard yields `set-cookie` once per value rather than joined, and
+  runtimes have differed, so the bindings rebuild it from
+  `Headers.getSetCookie()` where available and join it the same way — undici
+  and workerd agree. For `set-cookie` the join is **lossy**: an `Expires`
+  attribute holds a comma, so the joined value cannot be split back into its
+  cookies reliably. A `List`-shaped slot for it is left to a later increment
+  if a service needs one.
 - **Where it lives.** The checks are in the `node` and `cloudflare` bindings'
   `FetchProvider` (kept textually identical); the `browser` binding still
   withholds `Fetch` (ADR 0138). Header values are not logged by any binding,

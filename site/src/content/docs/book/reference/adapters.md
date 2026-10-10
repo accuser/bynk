@@ -104,10 +104,14 @@ carries the full ambient set:
 | `Fetch` | `send(req: Request) -> Effect[Result[Response, FetchError]]` | typed core; see below |
 | `Secrets` | `get(name: String) -> Effect[Option[String]]` | env-backed per platform |
 
-`Fetch`'s `Request` carries `method` (`Method` enum), `url`, and
-`contentType`/`authorization`/`body` as `Option[String]` fields; a general
-`headers` list is deferred until Bynk has a sequence type, and widening
-`Request` later is additive.
+`Fetch`'s `Request` carries `method` (`Method` enum), `url`,
+`contentType`/`authorization`/`body` as `Option[String]` fields, and
+`headers: Map[String, String]` for any other request header. `headers` is a
+required field, so a request that sends no extra headers says
+`headers: Map.empty()`. `Response` carries `status`, `headers` (keys
+lowercased) and `body`. See
+[the `bynk` capabilities reference](/book/reference/bynk-capabilities/#request-and-response-headers)
+for the conflict and forbidden-header rules, which return `Err(InvalidHeader)`.
 
 ### Platforms
 

@@ -42,7 +42,9 @@ export const Method = {
  * Content-Type or Authorization while the matching typed slot was `Some`,
  * named a header the platform owns (`host`, `content-length`, and the other
  * framing/hop-by-hop headers), named one header twice in different case, or
- * held a name or value that is not a legal HTTP header.
+ * held a name or value that is not a legal HTTP header; or a typed slot
+ * (`contentType`, `authorization`) held a value that is not a legal header
+ * value — a secret with a stray newline, say. Retrying cannot fix it.
  */
 export type FetchError =
     { readonly tag: "Network" }
@@ -82,7 +84,9 @@ export const Request = {
 /**
  * An HTTP response: a status code, its headers, and a body. `headers` keys
  * are lowercased (`res.headers.get("etag")`); a header the server repeated
- * arrives as one comma-joined value.
+ * arrives as one value, joined with ", ". That includes `set-cookie`, and
+ * there the join is lossy: a cookie's `Expires` attribute holds a comma, so
+ * a joined `set-cookie` cannot be split back into its cookies reliably.
  */
 export interface Response {
   readonly status: number;

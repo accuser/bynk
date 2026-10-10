@@ -8,10 +8,13 @@
 //! - `headers` may supply Content-Type / Authorization while the typed slot is
 //!   `None`, but naming one (in any case) while the slot is `Some` is
 //!   `Err(InvalidHeader)` and nothing is sent;
-//! - a platform-owned name (`Host`, `Content-Length`, …), a duplicate name
-//!   differing only in case, and an illegal header value are refused the same
-//!   way;
-//! - `Response.headers` carries the response's headers, keys lowercased.
+//! - each of the nine platform-owned names (sent upper-cased), a duplicate
+//!   name differing only in case, an illegal header name or value, and an
+//!   illegal value in either typed slot are refused the same way;
+//! - `Response.headers` carries the response's headers, keys lowercased, with
+//!   a repeated header joined by ", " — `set-cookie` included, whether the
+//!   runtime has `Headers.getSetCookie()` or not (the `legacySetCookie` case
+//!   hides it, standing in for a runtime without it).
 //!
 //! The Workers pass also drives a compiled route end to end, so a Bynk `match`
 //! on `Err(InvalidHeader)` and a `r.headers.get("etag")` read are exercised
@@ -83,6 +86,7 @@ service api from http {
 /// result tag, the headers the stub saw (or `unsent`), and any response
 /// headers. `ROUTES` (Workers pass only) drives the compiled routes.
 fn driver(binding: &str, runtime: &str, bynk: &str, worker: Option<&str>) -> String {
+    let forbidden = format!("{FORBIDDEN:?}");
     let worker_import = worker
         .map(|w| format!("import worker from \"{w}\";\n"))
         .unwrap_or_default();
@@ -102,9 +106,24 @@ import {{ Some, None }} from \"{runtime}\";
 import {{ Method }} from \"{bynk}\";
 {worker_import}
 const calls = [];
+let legacy = false;
 globalThis.fetch = async (_url, init) => {{
   calls.push(Object.fromEntries(new Headers(init.headers)));
-  return new Response(\"hi\", {{ status: 200, headers: {{ ETag: '\"v1\"', \"X-Rate-Limit\": \"9\" }} }});
+  const res = new Response(\"hi\", {{
+    status: 200,
+    headers: new Headers([
+      [\"ETag\", '\"v1\"'],
+      [\"X-Rate-Limit\", \"9\"],
+      [\"X-Multi\", \"1\"],
+      [\"X-Multi\", \"2\"],
+      [\"Set-Cookie\", \"a=1; Expires=Wed, 09 Jun 2027 10:18:14 GMT\"],
+      [\"Set-Cookie\", \"b=2\"],
+    ]),
+  }});
+  if (legacy) {{
+    Object.defineProperty(res.headers, \"getSetCookie\", {{ value: undefined }});
+  }}
+  return res;
 }};
 const req = (contentType, authorization, entries) => ({{
   method: Method.Get,
@@ -114,19 +133,26 @@ const req = (contentType, authorization, entries) => ({{
   headers: new Map(entries),
   body: None,
 }});
+const FORBIDDEN = {forbidden};
 const cases = {{
   extra: req(None, None, [[\"User-Agent\", \"bynk-test/1\"], [\"Accept\", \"application/json\"]]),
+  legacySetCookie: req(None, None, []),
   slotFreeAuth: req(None, None, [[\"Authorization\", \"Bearer t\"]]),
   conflictType: req(Some(\"text/plain\"), None, [[\"CONTENT-TYPE\", \"application/json\"]]),
   conflictAuth: req(None, Some(\"Bearer a\"), [[\"authorization\", \"Bearer b\"]]),
-  forbiddenHost: req(None, None, [[\"Host\", \"evil.test\"]]),
-  forbiddenLength: req(None, None, [[\"content-length\", \"3\"]]),
   duplicate: req(None, None, [[\"X-A\", \"1\"], [\"x-a\", \"2\"]]),
   illegalValue: req(None, None, [[\"X-B\", \"a\\nb\"]]),
+  illegalName: req(None, None, [[\"X B\", \"1\"]]),
+  illegalTypeSlot: req(Some(\"text/plain\\nX-Evil: 1\"), None, []),
+  illegalAuthSlot: req(None, Some(\"Bearer a\\nb\"), []),
 }};
+for (const n of FORBIDDEN) {{
+  cases[`forbidden:${{n}}`] = req(None, None, [[n.toUpperCase(), \"x\"]]);
+}}
 const provider = new FetchProvider();
 for (const [name, r] of Object.entries(cases)) {{
   const before = calls.length;
+  legacy = name === \"legacySetCookie\";
   const res = await provider.send(r);
   const sent = calls.length > before ? JSON.stringify(calls[calls.length - 1]) : \"unsent\";
   const detail = res.tag === \"Ok\"
@@ -187,6 +213,26 @@ fn run_driver(tmp: &Path, file: &str, source: &str) -> String {
     stdout
 }
 
+/// The nine names a `Request.headers` entry may not set — both bindings' copies
+/// of `FORBIDDEN_REQUEST_HEADERS`, pinned by behaviour.
+const FORBIDDEN: [&str; 9] = [
+    "host",
+    "content-length",
+    "connection",
+    "keep-alive",
+    "te",
+    "trailer",
+    "transfer-encoding",
+    "upgrade",
+    "expect",
+];
+
+/// The comma-joined response headers every `Ok` case must carry.
+const JOINED: [&str; 2] = [
+    r#""x-multi":"1, 2""#,
+    r#""set-cookie":"a=1; Expires=Wed, 09 Jun 2027 10:18:14 GMT, b=2""#,
+];
+
 /// The `CASE <name> …` line, or a panic naming the missing case.
 fn case<'a>(stdout: &'a str, name: &str) -> &'a str {
     let prefix = format!("CASE {name} ");
@@ -209,6 +255,14 @@ fn assert_cases(platform: &str, stdout: &str) {
             && extra.contains(r#""x-rate-limit":"9""#),
         "[{platform}] the response's headers come back, keys lowercased:\n{stdout}"
     );
+    for name in ["extra", "legacySetCookie"] {
+        for joined in JOINED {
+            assert!(
+                case(stdout, name).contains(joined),
+                "[{platform}] `{name}`: a repeated response header arrives joined ({joined}):\n{stdout}"
+            );
+        }
+    }
     assert!(
         case(stdout, "slotFreeAuth").contains(r#""authorization":"Bearer t""#),
         "[{platform}] headers may supply a header whose typed slot is None:\n{stdout}"
@@ -222,17 +276,27 @@ fn assert_cases(platform: &str, stdout: &str) {
             "conflictAuth",
             "Authorization in headers while authorization is Some",
         ),
-        ("forbiddenHost", "a platform-owned header (host)"),
-        (
-            "forbiddenLength",
-            "a platform-owned header (content-length)",
-        ),
         ("duplicate", "a name repeated in a different case"),
         ("illegalValue", "a value that is not a legal header value"),
+        ("illegalName", "a name that is not a legal header name"),
+        (
+            "illegalTypeSlot",
+            "an illegal value in the contentType slot",
+        ),
+        (
+            "illegalAuthSlot",
+            "an illegal value in the authorization slot",
+        ),
     ] {
         assert!(
             case(stdout, name).ends_with("Err InvalidHeader unsent"),
             "[{platform}] {why} is Err(InvalidHeader), and nothing is sent:\n{stdout}"
+        );
+    }
+    for name in FORBIDDEN {
+        assert!(
+            case(stdout, &format!("forbidden:{name}")).ends_with("Err InvalidHeader unsent"),
+            "[{platform}] the platform-owned `{name}` is Err(InvalidHeader), and nothing is sent:\n{stdout}"
         );
     }
 }

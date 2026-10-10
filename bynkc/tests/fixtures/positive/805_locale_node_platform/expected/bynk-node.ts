@@ -91,15 +91,29 @@ export class FetchProvider implements Fetch {
         headers,
         body: req.body.tag === "Some" ? req.body.value : undefined,
       });
-      // `Headers` iteration yields lowercased names; a repeated header (e.g.
-      // `set-cookie`) is joined with ", " like every other. `forEach`, not
-      // `for…of`: the latter needs the `DOM.Iterable` lib, which a consumer's
-      // tsconfig may omit.
+      // `Headers` iteration yields lowercased names, and already joins a
+      // repeated header's values with ", " — except `set-cookie`, which the
+      // Fetch standard yields once per value (and an older runtime may join).
+      // So `set-cookie` is set aside and rebuilt from `getSetCookie()` where
+      // the runtime has it, then joined like every other header: undici and
+      // workerd agree on the result. The join is lossy for cookies — an
+      // `Expires` attribute holds a comma — as the `Response` doc says.
+      // `forEach`, not `for…of`: the latter needs the `DOM.Iterable` lib,
+      // which a consumer's tsconfig may omit.
       const resHeaders = new Map<string, string>();
+      const iterated: string[] = [];
       res.headers.forEach((value, name) => {
-        const prior = resHeaders.get(name);
-        resHeaders.set(name, prior === undefined ? value : `${prior}, ${value}`);
+        if (name === "set-cookie") {
+          iterated.push(value);
+        } else {
+          resHeaders.set(name, value);
+        }
       });
+      const getSetCookie = (res.headers as { getSetCookie?: () => string[] }).getSetCookie;
+      const cookies = typeof getSetCookie === "function" ? getSetCookie.call(res.headers) : iterated;
+      if (cookies.length > 0) {
+        resHeaders.set("set-cookie", cookies.join(", "));
+      }
       return Ok({ status: res.status, headers: resHeaders, body: await res.text() });
     } catch (e) {
       const name = e instanceof Error ? e.name : "";
