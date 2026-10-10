@@ -1,0 +1,7 @@
+context shop.orders
+
+consumes shop.payment as Pay
+
+service refund {
+  on call(qty: Int) -> Effect[Bool] { Pay.authorise(qty) }
+}
