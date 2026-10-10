@@ -141,6 +141,9 @@ type EventEnvelope = {
 }
 ```
 
+`EventEnvelope` is an `on event` handler's optional second parameter — see
+[Understand events](/book/guides/events/understand-events/#the-envelope-and-idempotent-handling).
+
 ### Request and response headers
 
 `contentType` and `authorization` are typed slots for the two common request
@@ -179,9 +182,6 @@ comma-joined value. A `stub Fetch.send(_) returns Ok(Response { … })` in a tes
 gives it `headers: Map.empty()` (or the headers the case needs), and an
 `expect Fetch.send called once with req.headers.get("user-agent") == Some("…")`
 matches on what was sent.
-
-`EventEnvelope` is an `on event` handler's optional second parameter — see
-[Understand events](/book/guides/events/understand-events/#the-envelope-and-idempotent-handling).
 
 ## The Cloudflare surface — `bynk.cloudflare`
 
