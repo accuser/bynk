@@ -202,6 +202,26 @@ combinator vocabulary as kernel methods, so a chain reads
 **Builders** (return a `List`): `map`, `filter`, `flatMap`, `sortBy`, `take`,
 `skip`, `distinct`, `distinctBy`.
 
+**Adding items** (return a new `List`; the receiver is unchanged): `prepend(x)`
+puts `x` at the front, `append(x)` puts it at the end, and `concat(other)`
+joins `other` after the receiver. A fold that builds a list in order uses
+`append` (or `concat`), with no `reverse` afterwards:
+
+```bynk
+fn labels(ns: List[Int]) -> List[String] {
+  let none: List[String] = []
+  ns.fold(none, (acc, n) => acc.append(n.toString()))
+}
+
+fn withTotal(ns: List[Int]) -> List[Int] {
+  ns.concat([ns.fold(0, (acc, n) => acc + n)])
+}
+```
+
+`labels([1, 2, 3])` is `["1", "2", "3"]`, and `withTotal([1, 2])` is
+`[1, 2, 3]`. `foldEff` builds in order the same way, its step returning
+`Effect.pure(acc.append(x))`.
+
 **Terminals**: `count`, `any`, `all`, `first`, `firstOrElse`, `sum`, `min`, `max`,
 `average`.
 
@@ -305,6 +325,11 @@ The tagged forms are tried first, so whatever `Json.encode` writes decodes back
 to the same value, even for an `Option[Option[T]]`. The same decoder runs at
 every boundary, so an HTTP request body, a cross-context call and a stored agent
 field accept these forms too.
+
+The tagged forms are recognised only when the object has exactly those keys.
+Every payload Bynk wrote decodes as before, but a hand-written tagged object
+with an extra key, such as `{"kind": "Some", "value": "d", "note": "x"}`, is
+read as a bare value, so it fails for an `Option[String]`.
 
 ## Type aliases
 

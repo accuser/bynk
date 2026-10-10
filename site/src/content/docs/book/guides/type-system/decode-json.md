@@ -50,8 +50,11 @@ commons registry {
 `{"repo": "a"}` and `{"repo": "a", "description": null}` decode with
 `description` set to `None`, and `{"repo": "a", "description": "d"}` decodes
 with it set to `Some("d")`. Bynk's own tagged form, which `Json.encode` writes,
-also works: `{"kind": "Some", "value": "d"}` and `{"kind": "None"}`. A bare
-value is still checked as the inner type, so `"description": 7` is an error.
+also works: `{"kind": "Some", "value": "d"}` and `{"kind": "None"}`, as long as
+the object has no other keys. A tagged object with an extra key, such as
+`{"kind": "Some", "value": "d", "note": "x"}`, is read as a bare value instead.
+A bare value is still checked as the inner type, so `"description": 7` is an
+error, and so is that extra-key object.
 See [the JSON codec](/book/reference/types/#the-json-codec) for the full rule.
 
 ## Decode straight into a refined type

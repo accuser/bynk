@@ -1,6 +1,6 @@
 ---
 level: minor
-changelog: "**An `Option` decodes from absent, `null` or a bare value** ([#1887](https://github.com/accuser/bynk/issues/1887)). Decoding an `Option[U]` now accepts an absent key and `null` as `None`, and a bare value as `Some`, checked and refinement-checked as `U`, as well as Bynk's tagged `{\"kind\": \"Some\", \"value\": …}` / `{\"kind\": \"None\"}`. It is the one `Option` codec, so the rule holds for `Json.decode`, HTTP request bodies, cross-context calls, agent-store rehydration and WebSocket frames. Encoding is unchanged, so contract hashes and stored payloads are unaffected. The tagged forms win where a value could be read both ways, so whatever the encoder writes decodes back to itself."
+changelog: "**An `Option` decodes from absent, `null` or a bare value** ([#1887](https://github.com/accuser/bynk/issues/1887)). Decoding an `Option[U]` now accepts an absent key and `null` as `None`, and a bare value as `Some`, checked and refinement-checked as `U`, as well as Bynk's tagged `{\"kind\": \"Some\", \"value\": …}` / `{\"kind\": \"None\"}`. It is the one `Option` codec, so the rule holds for `Json.decode`, HTTP request bodies, cross-context calls, agent-store rehydration and WebSocket frames. Encoding is unchanged, so contract hashes do not move and every payload Bynk wrote still decodes; a hand-written tagged object with extra keys, such as `{\"kind\": \"Some\", \"value\": \"d\", \"note\": \"x\"}`, is now read as a bare value. The tagged forms win where a value could be read both ways, so whatever the encoder writes decodes back to itself."
 ---
 
 ## ADR: lenient-option-decode
@@ -29,8 +29,14 @@ optional fields.
    refinement-checked as `U`.
 
 Encoding is unchanged. The encoder still writes only the tagged form, so
-contract hashes do not move and every payload written before this change still
-decodes. There is one `Option` codec, so the rule holds at every boundary that
+contract hashes do not move and every payload *Bynk* wrote before this change
+still decodes, because Bynk never writes a key beside `kind` and `value`. A
+tagged object carrying extra keys, such as `{"kind": "Some", "value": "d",
+"note": "x"}`, used to decode (the old decoder read `kind` and ignored the
+rest) and no longer does: it is not an exact tagged form, so it is read as a
+bare value and fails for an `Option[String]`. The exactness is kept on
+purpose, because it is what lets a bare record with its own `kind` and `value`
+keys through (see *Ambiguity*). There is one `Option` codec, so the rule holds at every boundary that
 decodes JSON: `Json.decode`, an HTTP request body, a cross-context call,
 agent-store rehydration and a WebSocket frame. No boundary can disagree with
 another.

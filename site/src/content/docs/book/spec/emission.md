@@ -623,7 +623,9 @@ platform adapter locks the deployment unit to its platform
 
 Kernel operations emit **inline** — typed IIFEs and spreads, no runtime
 imports — so a module that never touches collections emits byte-identically
-to v0.20a. `prepend` is the spread `[x, ...xs]`; `insert` copies
+to v0.20a. `prepend` is the spread `[x, ...xs]`, evaluating the argument first; `append`
+is `[...xs, x]` and `concat` is `[...xs, ...ys]`, each evaluating the receiver
+before the argument, as written; `insert` copies
 (`new Map(m).set(k, v)`) — the emitted value is never mutated in place.
 **`fold`, `foldEff`, `forEach`, `parTraverse`, `traverseAll`, and
 `parTraverseAll` emit as a single loop** (an IIFE; `async` for the effectful
@@ -709,7 +711,9 @@ frame. It tries these forms in order:
    refinement-checked as `U`.
 
 The tagged forms win when a value could be read both ways, so a value the
-encoder wrote always decodes back to itself. `U`'s checks are emitted once, in a
+encoder wrote always decodes back to itself. Recognition is exact, so a tagged
+object carrying any other key falls to rule 4 and is decoded as a bare `U`; the
+pre-#1887 decoder ignored such keys. `U`'s checks are emitted once, in a
 module-local `__option_value_<U>(raw, at)` that rules 3 and 4 share. A bare value
 that fails as a `StructuralMismatch` at the `Option`'s own path has its
 `expected` extended with every form the decoder accepts.
