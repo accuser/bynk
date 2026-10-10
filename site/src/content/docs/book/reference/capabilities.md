@@ -31,6 +31,12 @@ must match exactly (`bynk.provider.signature_mismatch`,
 `bynk.provider.missing_operation`, `bynk.provider.extra_operation`). There is one
 provider per capability in a context.
 
+A capability a context declares and requires with `given` needs a provider in
+that context when you build for Workers: a Worker's composition root builds
+every capability its handlers are given (`bynk.capability.not_provided`). On the
+bundle target a capability with no provider is left to the host, which supplies
+it through `__makeSurface(deps)`.
+
 ## Using a capability
 
 A handler lists the capabilities it needs with `given`, then calls them:
