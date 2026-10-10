@@ -1,0 +1,11 @@
+---
+#1887: an event field default meets the lenient `Option` decoder.
+---
+suite demo.evt
+
+case "an absent key takes the default, null and the tagged None do not" {
+  expect region("{\"id\": \"a\"}") == Some("eu")
+  expect region("{\"id\": \"a\", \"region\": null}") == None
+  expect region("{\"id\": \"a\", \"region\": {\"kind\": \"None\"}}") == None
+  expect region("{\"id\": \"a\", \"region\": \"us\"}") == Some("us")
+}

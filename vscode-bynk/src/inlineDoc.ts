@@ -48,8 +48,9 @@ export interface DocDecorationRange {
 // A doc-block marker line: optional leading whitespace, three-or-more hyphens,
 // optional trailing whitespace, end of line. Mirrors `doc_block_open_at` in
 // bynk-syntax/src/lexer.rs (which also permits ≥3 hyphens and surrounding
-// horizontal whitespace). Trailing `\r` is tolerated for CRLF sources.
-const MARKER = /^[ \t]*-{3,}[ \t]*\r?$/;
+// horizontal whitespace). Trailing `\r` is tolerated for CRLF sources. Group 1
+// is the dashes: a block closes only on a marker of its opener's length (#1885).
+const MARKER = /^[ \t]*(-{3,})[ \t]*\r?$/;
 
 // An ATX heading line: optional leading whitespace, 1–6 `#`, then whitespace or
 // end-of-line. `#Heading` (no space) is not a heading, matching CommonMark.
@@ -58,10 +59,11 @@ const HEADING = /^([ \t]*)(#{1,6})(?=[ \t]|\r?$)/;
 /**
  * Tokenize every `--- … ---` doc block in `text` into decoration ranges.
  *
- * Blocks are paired by scanning lines top-to-bottom: the first marker line
- * opens a block, the next marker line closes it, and scanning resumes after the
- * close — the same sequential pairing the lexer's `doc_block_close` performs. A
- * final unclosed `---` yields no decorations (its body is a lex error anyway).
+ * Blocks are paired by scanning lines top-to-bottom: a marker line opens a
+ * block, the next marker line of the same length closes it, and scanning
+ * resumes after the close — the same pairing the lexer's `doc_block_close`
+ * performs (#1885). A marker of another length inside a block is body text. A
+ * final unclosed block yields no decorations (its body is a lex error anyway).
  *
  * Marker lines themselves are never decorated. Within a block body, each line is
  * either a heading (whole line coloured) or scanned for inline emphasis.
@@ -72,23 +74,32 @@ export function docDecorations(text: string): DocDecorationRange[] {
   // columns are unaffected because `\r` only ever sits at end-of-line, past any
   // affordance. Line numbers are the split index — VS Code's own line numbering.
   const lines = text.split("\n");
-  let inBlock = false;
+  // The open block's opener: its dash count and line, or `null` outside one.
+  let open: { dashes: number; line: number } | null = null;
 
   for (let line = 0; line < lines.length; line++) {
     const raw = lines[line];
-    if (MARKER.test(raw)) {
-      // A marker line flips block state and is never itself decorated.
-      inBlock = !inBlock;
+    const marker = MARKER.exec(raw);
+    if (marker && open === null) {
+      open = { dashes: marker[1].length, line };
       continue;
     }
-    if (!inBlock) continue;
+    if (marker && open !== null && marker[1].length === open.dashes) {
+      // A closing marker is never itself decorated.
+      open = null;
+      continue;
+    }
+    if (open === null) continue;
     decorateLine(raw, line, ranges);
   }
 
-  // An odd number of markers means the last block never closed. The lexer treats
-  // that as an error; we simply drop what we speculatively decorated inside it so
-  // half a document doesn't light up while the writer is mid-block.
-  if (inBlock) return dropFromLastOpenMarker(text, ranges);
+  // The last block never closed. The lexer treats that as an error; we simply
+  // drop what we speculatively decorated inside it so half a document doesn't
+  // light up while the writer is mid-block.
+  if (open !== null) {
+    const opened = open.line;
+    return ranges.filter((r) => r.line < opened);
+  }
   return ranges;
 }
 
@@ -223,20 +234,4 @@ function leftFlank(s: string, i: number): boolean {
 /** A `_` closer is valid only if the char after the run is not a word char. */
 function rightFlank(s: string, after: number): boolean {
   return !isWord(s[after]);
-}
-
-/** Drop any range that fell inside the last, unclosed doc block. The last marker
- *  line in the text opened it; everything decorated at or after that line is
- *  speculative and removed. */
-function dropFromLastOpenMarker(
-  text: string,
-  ranges: DocDecorationRange[],
-): DocDecorationRange[] {
-  const lines = text.split("\n");
-  let lastMarker = -1;
-  for (let line = 0; line < lines.length; line++) {
-    if (MARKER.test(lines[line])) lastMarker = line;
-  }
-  if (lastMarker < 0) return ranges;
-  return ranges.filter((r) => r.line < lastMarker);
 }

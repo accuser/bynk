@@ -121,11 +121,42 @@ declaration that follows it. Like comments and whitespace, a doc-block is trivia
 The **opening and closing markers** are each a line whose only content is **three
 or more consecutive hyphens** (`---`, `----`, …), preceded only by optional
 horizontal whitespace and followed only by optional horizontal whitespace to the
-end of the line. There is **no standalone `---` divider**: a marker line always
-*opens* (or *closes*) a doc-block, so a lone `---` with no matching closing marker
-is the error `bynk.lex.unclosed_doc_block`, not a horizontal rule. The content
-between the markers is arbitrary text and may contain `--` fragments without
-closing the block.
+end of the line. The **closing marker has exactly as many hyphens as the opening
+one**, as with a Markdown code fence; a marker line of any other length inside the
+block is content. So a block opened with `----` can hold `---` lines: a Markdown
+horizontal rule, front matter, or a Bynk example with its own doc-block.
+
+```bynk
+----
+The answer, with a Markdown rule in its doc:
+
+---
+
+Below the rule.
+----
+fn answer() -> Int { 42 }
+```
+
+There is **no standalone `---` divider**: a marker line always *opens* (or
+*closes*) a doc-block, so a marker with no closing marker of its length is the
+error `bynk.lex.unclosed_doc_block`, not a horizontal rule. The content between
+the markers is arbitrary text and may contain `--` fragments without closing the
+block.
+
+A doc-block's content must not be code. If the content, with its Markdown code
+fences (```` ``` ```` or `~~~`) removed, parses as one or more declarations, the
+block is the error `bynk.parse.doc_block_contains_code`. This catches a pair of
+dash dividers around code, which would otherwise turn that code into
+documentation silently, whether or not a declaration follows. For a divider,
+write a line comment with text (`-- Helpers --`); to show code in a doc, put it in
+a code fence.
+
+```bynk,fail=bynk.parse.doc_block_contains_code
+--------------------------------
+fn helper() -> Int { 1 }
+--------------------------------
+fn f() -> Int { 2 }
+```
 
 ## §3.4 Trivia
 

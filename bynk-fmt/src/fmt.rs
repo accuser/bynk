@@ -362,6 +362,18 @@ fn comment_loss(source: &str, tokens: &[Token], output: &str) -> Option<CompileE
     })
 }
 
+/// #1885: the dash count of the fence [`Formatter::emit_doc`] prints around
+/// `doc`: one more than the longest marker-shaped line in it (a line of three
+/// or more dashes alone, surrounding whitespace aside), and never fewer than
+/// three. A shorter fence would close at that line.
+fn doc_fence_len(doc: &str) -> usize {
+    doc.lines()
+        .map(str::trim)
+        .filter(|l| l.len() >= 3 && l.bytes().all(|b| b == b'-'))
+        .map(|l| l.len() + 1)
+        .fold(3, usize::max)
+}
+
 /// #1664: the `---` counterpart of [`comment_loss`]. Returns a
 /// `bynk.fmt.comment_loss` error naming the first doc block of `source` (already
 /// tokenized as `tokens`) that has no counterpart in `output`, compared by
@@ -607,8 +619,14 @@ impl<'a> Formatter<'a> {
     /// Emit a doc block immediately above a declaration. The content is
     /// already normalised (common leading indent stripped) when stored in
     /// the AST; we re-emit with the current indent applied per line.
+    ///
+    /// #1885: a doc block closes only on a marker of its opener's length, so
+    /// the fence is the shortest (three or more dashes) that is longer than
+    /// every marker-shaped line in the content; the output re-lexes to the
+    /// same block. A doc with no such line keeps the canonical `---`.
     fn emit_doc(&mut self, doc: &str) {
-        self.push("---");
+        let fence = "-".repeat(doc_fence_len(doc));
+        self.push(&fence);
         self.newline();
         for line in doc.lines() {
             if line.is_empty() {
@@ -618,7 +636,7 @@ impl<'a> Formatter<'a> {
                 self.newline();
             }
         }
-        self.push("---");
+        self.push(&fence);
         self.newline();
     }
 
@@ -3431,6 +3449,27 @@ fn stmt_to_string(s: &Statement) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #1885: a doc holding a `---` line prints with a `----` fence, so the
+    /// output re-lexes as one block and is a fixed point; a doc with none
+    /// prints the canonical `---`, whatever fence it was written with.
+    #[test]
+    fn doc_fence_outgrows_the_marker_lines_it_holds() {
+        let held = "commons m\n\n-------\nAbove.\n---\nInner.\n-----\nBelow.\n-------\nfn f() -> Int { 1 }\n";
+        let out = format_source(held, &FormatOptions::default()).unwrap();
+        assert_eq!(
+            out,
+            "commons m\n\n------\nAbove.\n---\nInner.\n-----\nBelow.\n------\nfn f() -> Int { 1 }\n"
+        );
+        assert_eq!(format_source(&out, &FormatOptions::default()).unwrap(), out);
+        let plain = "commons m\n\n-----\nJust prose.\n-----\nfn f() -> Int { 1 }\n";
+        assert_eq!(
+            format_source(plain, &FormatOptions::default()).unwrap(),
+            "commons m\n\n---\nJust prose.\n---\nfn f() -> Int { 1 }\n"
+        );
+        assert_eq!(doc_fence_len("a\n  ---  \nb"), 4);
+        assert_eq!(doc_fence_len("a\n--\n- - -"), 3);
+    }
 
     /// #1763: a CRLF copy of a canonical file formats to the LF canonical form,
     /// and a doc block's lines lose their CR too (its text was kept verbatim).
