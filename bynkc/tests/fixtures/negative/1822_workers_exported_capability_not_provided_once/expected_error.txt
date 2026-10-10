@@ -1,0 +1,2 @@
+bynk.exports.capability_not_provided exported capability `Mailer` has no provider in context `shop.mail`
+# exact

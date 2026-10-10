@@ -1790,6 +1790,15 @@ fn run_checks(
         &unit_flattened,
         &mut errors,
     );
+    // #1822: on Workers, a required local capability needs a provider.
+    project_model::phase_workers_unprovided_capabilities(
+        target,
+        &parsed,
+        &groups,
+        &kinds,
+        &unit_tables,
+        &mut errors,
+    );
 
     // -- 5c. Detect `consumes` cycles. --
     project_model::phase_detect_consumes_cycles(&groups, &parsed, &unit_consumes, &mut errors);

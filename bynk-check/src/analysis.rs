@@ -359,6 +359,16 @@ pub fn analyse_project(roots: &Roots, overlay: &HashMap<PathBuf, String>) -> Pro
         &unit_flattened,
         &mut errors,
     );
+    // #1822: Workers-only, so a no-op on this Bundle path, called for the
+    // same structural reason as the phase above.
+    project_model::phase_workers_unprovided_capabilities(
+        project_model::BuildTarget::Bundle,
+        &parsed,
+        &groups,
+        &kinds,
+        &unit_tables,
+        &mut errors,
+    );
 
     // -- 5c. `consumes` cycles. --
     project_model::phase_detect_consumes_cycles(&groups, &parsed, &unit_consumes, &mut errors);
